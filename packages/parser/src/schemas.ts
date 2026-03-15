@@ -48,17 +48,35 @@ export const NumericWindowSchema = z.object({
 });
 
 /**
- * Zod schema for SourceWindow
- *
- * Validates data-source FOR loop specifications.
+ * Zod schema for FullSourceWindow — iterates all items from a data source.
  */
-export const SourceWindowSchema = z.object({
+export const FullSourceWindowSchema = z.object({
   variable: z.string().regex(NAMED_IDENTIFIER_PATTERN),
   start: z.number().int().positive().max(MAX_FOR_BOUND),
-  end: z.number().int().positive().max(MAX_FOR_BOUND).optional(),
   source: z.string().regex(NAMED_IDENTIFIER_PATTERN),
   transitions: z.lazy(() => TransitionsSchema.optional()),
 });
+
+/**
+ * Zod schema for WindowedSourceWindow — iterates a slice of a data source.
+ */
+export const WindowedSourceWindowSchema = z.object({
+  variable: z.string().regex(NAMED_IDENTIFIER_PATTERN),
+  start: z.number().int().positive().max(MAX_FOR_BOUND),
+  end: z.number().int().positive().max(MAX_FOR_BOUND),
+  source: z.string().regex(NAMED_IDENTIFIER_PATTERN),
+  transitions: z.lazy(() => TransitionsSchema.optional()),
+});
+
+/**
+ * Zod schema for SourceWindow (union of full and windowed).
+ *
+ * Validates data-source FOR loop specifications.
+ * WindowedSourceWindowSchema is listed first because it is stricter (requires `end`);
+ * Zod tries union members in order and the looser FullSourceWindowSchema would match
+ * windowed inputs if it were first, silently stripping the `end` field.
+ */
+export const SourceWindowSchema = z.union([WindowedSourceWindowSchema, FullSourceWindowSchema]);
 
 /**
  * Zod schema for ForClause
@@ -96,13 +114,13 @@ export const UnresolvedNumericWindowSchema = z.object({
 });
 
 /**
- * Zod schema for UnresolvedSourceWindow.
+ * Zod schema for UnresolvedSourceWindow (windowed only — end is required).
  */
 export const UnresolvedSourceWindowSchema = z.object({
   unresolved: z.literal(true),
   variable: z.string().regex(NAMED_IDENTIFIER_PATTERN),
   start: BoundSchema,
-  end: BoundSchema.optional(),
+  end: BoundSchema,
   source: z.string().regex(NAMED_IDENTIFIER_PATTERN),
   transitions: z.lazy(() => TransitionsSchema.optional()),
 });

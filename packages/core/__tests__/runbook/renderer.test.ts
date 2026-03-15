@@ -221,7 +221,7 @@ describe('renderForClause coverage', () => {
       kind: 'for',
       name: '1',
       description: 'Iterate',
-      forClause: { variable: 'item', start: 1, end: undefined, source: 'items' },
+      forClause: { variable: 'item', start: 1, source: 'items' },
       substeps: [{ id: '1', description: 'Process' }],
     };
     const result = renderStep(step);

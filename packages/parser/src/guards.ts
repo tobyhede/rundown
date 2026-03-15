@@ -4,6 +4,7 @@ import type {
   Command,
   ForClause,
   SourceWindow,
+  WindowedSourceWindow,
   StepHavingSubsteps,
   ResolvedStep,
   ResolvedStepHavingSubsteps,
@@ -89,6 +90,17 @@ export function hasForClause(step: Step): step is StepWithFor {
  */
 export function isSourced(fc: ForClause): fc is SourceWindow {
   return fc.source !== undefined;
+}
+
+/**
+ * Type guard: narrows a SourceWindow to WindowedSourceWindow (sliced data source).
+ *
+ * @param fc - The source window to check
+ * @returns True if the clause has an explicit end bound (`fc is WindowedSourceWindow`),
+ *   enabling type narrowing to guarantee `fc.end` is a number
+ */
+export function isWindowed(fc: SourceWindow): fc is WindowedSourceWindow {
+  return 'end' in fc;
 }
 
 /**

@@ -5,7 +5,7 @@ import {
   runCli,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
-import { writeFile } from 'node:fs/promises';
+import { writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
 describe('Per-step variable expansion ({{Step}}, {{Index}}, FOR loop variables)', () => {
@@ -663,5 +663,91 @@ rd echo step={{Step}}
 
     const allEventText = JSON.stringify(commandStartedEvents);
     expect(allEventText).not.toContain('{{context.vars.env}}');
+  });
+
+  it('windowed source fallback does not treat source as template variable', async () => {
+    await mkdir(join(workspace.cwd, '.rundown'), { recursive: true });
+    await writeFile(
+      join(workspace.cwd, '.rundown', 'config.yaml'),
+      `items:\n  - alpha\n  - beta\n  - gamma\n`,
+    );
+
+    await writeFile(
+      join(workspace.cwd, 'fallback.runbook.md'),
+      `---
+name: Fallback Source
+---
+# Fallback
+
+## 1. Process items
+- FOR item IN 1 TO {{N}} OF {{ items }}
+- PASS ALL CONTINUE
+
+### 1.1 Handle item
+- PASS CONTINUE
+
+\`\`\`bash
+rd echo item={{item}}
+\`\`\`
+`,
+    );
+
+    const result = runCli('resolve --json fallback.runbook.md', workspace);
+    const output = JSON.parse(result.stdout);
+
+    expect(output.valid).toBe(true);
+
+    if (output.unresolved) {
+      expect(output.unresolved).not.toContain('items');
+    }
+
+    const msgs = (output.warnings ?? []).map((w: { message: string }) => w.message);
+    expect(msgs).toEqual(expect.arrayContaining([expect.stringContaining('unresolved FOR bound')]));
+
+    const itemsWarning = msgs.find((m: string) => m.includes('{{items}}'));
+    expect(itemsWarning).toBeUndefined();
+  });
+
+  it('windowed source fallback with transitions resolves without error', async () => {
+    await mkdir(join(workspace.cwd, '.rundown'), { recursive: true });
+    await writeFile(
+      join(workspace.cwd, '.rundown', 'config.yaml'),
+      `items:\n  - alpha\n  - beta\n`,
+    );
+
+    await writeFile(
+      join(workspace.cwd, 'fallback-trans.runbook.md'),
+      `---
+name: Fallback Transitions
+---
+# Fallback
+
+## 1. Process items
+- FOR item IN 1 TO {{N}} OF {{ items }}
+- PASS CONTINUE
+- FAIL STOP
+
+### 1.1 Handle item
+- PASS CONTINUE
+
+\`\`\`bash
+rd echo item={{item}}
+\`\`\`
+`,
+    );
+
+    // Verify resolve succeeds and reports the fallback warning
+    const result = runCli('resolve --json fallback-trans.runbook.md', workspace);
+    const output = JSON.parse(result.stdout);
+
+    expect(output.valid).toBe(true);
+
+    // Fallback warning should be present
+    const msgs = (output.warnings ?? []).map((w: { message: string }) => w.message);
+    expect(msgs).toEqual(expect.arrayContaining([expect.stringContaining('unresolved FOR bound')]));
+
+    // 'items' should NOT appear as an unresolved variable (it's a source, not a template var)
+    const itemsWarning = msgs.find((m: string) => m.includes('{{items}}'));
+    expect(itemsWarning).toBeUndefined();
   });
 });

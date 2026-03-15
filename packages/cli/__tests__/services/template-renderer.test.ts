@@ -5,6 +5,7 @@ import type {
   Step,
   BaseStep,
   StepWithFor,
+  StepWithSubsteps,
   ParsedForClause,
   Transitions,
 } from '@rundown-org/parser';
@@ -651,14 +652,15 @@ describe('resolveForBounds', () => {
 
   it('passes through runbook with no FOR steps', () => {
     const runbook = makeRunbook([makeBaseStep()]);
-    const result = resolveForBounds(runbook, {});
+    const { runbook: result, warnings } = resolveForBounds(runbook, {});
     expect(result.steps).toEqual(runbook.steps);
+    expect(warnings).toEqual([]);
   });
 
   it('passes through already-resolved FOR clause', () => {
     const resolved: ParsedForClause = { variable: 'item', start: 1, end: 10 };
     const runbook = makeRunbook([makeForStep(resolved)]);
-    const result = resolveForBounds(runbook, {});
+    const { runbook: result } = resolveForBounds(runbook, {});
     expect(result.steps[0].forClause).toEqual(resolved);
   });
 
@@ -670,7 +672,7 @@ describe('resolveForBounds', () => {
       end: { ref: 'Max' },
     };
     const runbook = makeRunbook([makeForStep(unresolved)]);
-    const result = resolveForBounds(runbook, { Max: '5' });
+    const { runbook: result } = resolveForBounds(runbook, { Max: '5' });
     expect(result.steps[0].forClause).toEqual({ variable: 'batch', start: 1, end: 5 });
   });
 
@@ -682,7 +684,7 @@ describe('resolveForBounds', () => {
       end: { ref: 'Max' },
     };
     const runbook = makeRunbook([makeForStep(unresolved)]);
-    const result = resolveForBounds(runbook, { Min: '2', Max: '8' });
+    const { runbook: result } = resolveForBounds(runbook, { Min: '2', Max: '8' });
     expect(result.steps[0].forClause).toEqual({ variable: 'item', start: 2, end: 8 });
   });
 
@@ -695,11 +697,11 @@ describe('resolveForBounds', () => {
       source: 'items',
     };
     const runbook = makeRunbook([makeForStep(unresolved)]);
-    const result = resolveForBounds(runbook, { N: '5' });
+    const { runbook: result } = resolveForBounds(runbook, { N: '5' });
     expect(result.steps[0].forClause).toEqual({ variable: 'x', start: 1, end: 5, source: 'items' });
   });
 
-  it('throws for undefined variable', () => {
+  it('falls back to prompt text for undefined variable', () => {
     const unresolved: ParsedForClause = {
       unresolved: true as const,
       variable: 'item',
@@ -707,7 +709,27 @@ describe('resolveForBounds', () => {
       end: { ref: 'Missing' },
     };
     const runbook = makeRunbook([makeForStep(unresolved)]);
-    expect(() => resolveForBounds(runbook, {})).toThrow('not defined');
+    const { runbook: result, warnings } = resolveForBounds(runbook, {});
+    const step = result.steps[0] as StepWithSubsteps;
+    expect(step.kind).toBe('substeps');
+    expect(step.prompt).toContain('FOR item IN 1 TO {{Missing}}');
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('preserved as prompt text');
+  });
+
+  it('falls back when one bound defined and other undefined', () => {
+    const unresolved: ParsedForClause = {
+      unresolved: true as const,
+      variable: 'item',
+      start: { ref: 'Min' },
+      end: { ref: 'Max' },
+    };
+    const runbook = makeRunbook([makeForStep(unresolved)]);
+    const { runbook: result, warnings } = resolveForBounds(runbook, { Min: '2' });
+    const step = result.steps[0] as StepWithSubsteps;
+    expect(step.kind).toBe('substeps');
+    expect(step.prompt).toContain('FOR item IN {{Min}} TO {{Max}}');
+    expect(warnings).toHaveLength(1);
   });
 
   it('throws for non-integer value', () => {
@@ -756,7 +778,7 @@ describe('resolveForBounds', () => {
       transitions,
     };
     const runbook = makeRunbook([makeForStep(unresolved)]);
-    const result = resolveForBounds(runbook, { N: '3' });
+    const { runbook: result } = resolveForBounds(runbook, { N: '3' });
     expect(result.steps[0].forClause).toEqual({
       variable: 'item',
       start: 1,
@@ -772,7 +794,7 @@ describe('resolveForBounds', () => {
       end: { ref: 'Count' },
     };
     const runbook = makeRunbook([makeForStep(unresolved)]);
-    const result = resolveForBounds(runbook, { Count: '5' });
+    const { runbook: result } = resolveForBounds(runbook, { Count: '5' });
     expect(result.steps[0].forClause).toEqual({ start: 1, end: 5 });
   });
 
@@ -798,15 +820,167 @@ describe('resolveForBounds', () => {
     expect(() => resolveForBounds(runbook, { Neg: '-5' })).toThrow('must be a positive integer');
   });
 
-  it('resolves source window with start BoundRef and no end', () => {
+  it('resolves windowed source with both BoundRefs', () => {
     const unresolved: ParsedForClause = {
       unresolved: true as const,
       variable: 'item',
       start: { ref: 'Begin' },
+      end: { ref: 'End' },
       source: 'items',
     };
     const runbook = makeRunbook([makeForStep(unresolved)]);
-    const result = resolveForBounds(runbook, { Begin: '3' });
-    expect(result.steps[0].forClause).toEqual({ variable: 'item', start: 3, source: 'items' });
+    const { runbook: result } = resolveForBounds(runbook, { Begin: '3', End: '7' });
+    expect(result.steps[0].forClause).toEqual({
+      variable: 'item',
+      start: 3,
+      end: 7,
+      source: 'items',
+    });
+  });
+
+  it('falls back windowed source with undefined BoundRef', () => {
+    const unresolved: ParsedForClause = {
+      unresolved: true as const,
+      variable: 'x',
+      start: 1,
+      end: { ref: 'N' },
+      source: 'items',
+    };
+    const runbook = makeRunbook([makeForStep(unresolved)]);
+    const { runbook: result, warnings } = resolveForBounds(runbook, {});
+    const step = result.steps[0] as StepWithSubsteps;
+    expect(step.kind).toBe('substeps');
+    expect(step.prompt).toContain('FOR x IN 1 TO {{N}} OF items');
+    expect(warnings).toHaveLength(1);
+  });
+
+  it('fallback source ref is not treated as a template variable', () => {
+    const unresolved: ParsedForClause = {
+      unresolved: true as const,
+      variable: 'x',
+      start: 1,
+      end: { ref: 'N' },
+      source: 'items',
+    };
+    const runbook = makeRunbook([makeForStep(unresolved)]);
+    const { runbook: resolved } = resolveForBounds(runbook, {});
+    const substituted = substituteRunbookVariables(resolved, { items: 'a,b,c' });
+    const step = substituted.steps[0] as StepWithSubsteps;
+    expect(step.prompt).toContain('OF items');
+    expect(step.prompt).not.toContain('a,b,c');
+  });
+
+  it('fallback source ref does not trigger unresolved variable warning', () => {
+    const unresolved: ParsedForClause = {
+      unresolved: true as const,
+      variable: 'x',
+      start: 1,
+      end: { ref: 'N' },
+      source: 'myData',
+    };
+    const runbook = makeRunbook([makeForStep(unresolved)]);
+    const { runbook: resolved } = resolveForBounds(runbook, {});
+    const substituted = substituteRunbookVariables(resolved, {});
+    const warnings = warnUnresolvedRunbookVariables(substituted);
+    const sourceWarning = warnings.find((w) => w.includes('myData'));
+    expect(sourceWarning).toBeUndefined();
+  });
+
+  it('preserves iteration transitions in fallback prompt text', () => {
+    const transitions: Transitions = {
+      aggregation: 'none' as const,
+      pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+      fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+    };
+    const unresolved: ParsedForClause = {
+      unresolved: true as const,
+      variable: 'item',
+      start: 1,
+      end: { ref: 'Missing' },
+      transitions,
+    };
+    const runbook = makeRunbook([makeForStep(unresolved)]);
+    const { runbook: result } = resolveForBounds(runbook, {});
+    const step = result.steps[0] as StepWithSubsteps;
+    expect(step.prompt).toContain('FOR item IN 1 TO {{Missing}}');
+    expect(step.prompt).toContain('- PASS CONTINUE');
+    expect(step.prompt).toContain('- FAIL STOP');
+  });
+
+  it('preserves transitions with aggregation modifiers in fallback', () => {
+    const transitions: Transitions = {
+      aggregation: 'ALL' as const,
+      pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+      fail: { kind: 'fail' as const, retry: 0, action: { type: 'BREAK' as const } },
+    };
+    const unresolved: ParsedForClause = {
+      unresolved: true as const,
+      variable: 'item',
+      start: 1,
+      end: { ref: 'N' },
+      transitions,
+    };
+    const runbook = makeRunbook([makeForStep(unresolved)]);
+    const { runbook: result } = resolveForBounds(runbook, {});
+    const step = result.steps[0] as StepWithSubsteps;
+    expect(step.prompt).toContain('- PASS ALL DEFER');
+    expect(step.prompt).toContain('- FAIL ANY BREAK');
+  });
+
+  it('preserves transitions with retry in fallback', () => {
+    const transitions: Transitions = {
+      aggregation: 'none' as const,
+      pass: { kind: 'pass' as const, retry: 3, action: { type: 'CONTINUE' as const } },
+      fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+    };
+    const unresolved: ParsedForClause = {
+      unresolved: true as const,
+      variable: 'item',
+      start: 1,
+      end: { ref: 'N' },
+      transitions,
+    };
+    const runbook = makeRunbook([makeForStep(unresolved)]);
+    const { runbook: result } = resolveForBounds(runbook, {});
+    const step = result.steps[0] as StepWithSubsteps;
+    expect(step.prompt).toContain('- PASS RETRY 3 CONTINUE');
+    expect(step.prompt).toContain('- FAIL STOP');
+  });
+
+  it('does not add transition lines when forClause has no transitions', () => {
+    const unresolved: ParsedForClause = {
+      unresolved: true as const,
+      variable: 'item',
+      start: 1,
+      end: { ref: 'Missing' },
+    };
+    const runbook = makeRunbook([makeForStep(unresolved)]);
+    const { runbook: result } = resolveForBounds(runbook, {});
+    const step = result.steps[0] as StepWithSubsteps;
+    expect(step.prompt).toBe('FOR item IN 1 TO {{Missing}}');
+    expect(step.prompt).not.toContain('PASS');
+    expect(step.prompt).not.toContain('FAIL');
+  });
+
+  it('preserves transitions on windowed source fallback', () => {
+    const transitions: Transitions = {
+      aggregation: 'ANY' as const,
+      pass: { kind: 'pass' as const, retry: 0, action: { type: 'NEXT' as const } },
+      fail: { kind: 'fail' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+    };
+    const unresolved: ParsedForClause = {
+      unresolved: true as const,
+      variable: 'x',
+      start: 1,
+      end: { ref: 'N' },
+      source: 'items',
+      transitions,
+    };
+    const runbook = makeRunbook([makeForStep(unresolved)]);
+    const { runbook: result } = resolveForBounds(runbook, {});
+    const step = result.steps[0] as StepWithSubsteps;
+    expect(step.prompt).toContain('FOR x IN 1 TO {{N}} OF items');
+    expect(step.prompt).toContain('- PASS ANY NEXT');
+    expect(step.prompt).toContain('- FAIL ALL COMPLETE');
   });
 });

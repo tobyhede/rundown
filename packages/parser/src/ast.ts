@@ -47,22 +47,45 @@ export interface NumericWindow {
 }
 
 /**
- * Data-source FOR window — values come from a named source.
+ * Full data-source FOR window — iterates all items from a named source.
  *
- * `FOR server IN {{ servers }}` or `FOR item IN 1 TO 10 OF {{ items }}`.
+ * `FOR server IN {{ servers }}` — start is always 1, no end bound.
  */
-export interface SourceWindow {
+export interface FullSourceWindow {
   /** Named loop variable (required — data sources must name the binding) */
   readonly variable: string;
-  /** Start of iteration range (positive integer, defaults to 1) */
+  /** Start of iteration range (defaults to 1 when produced by the parser) */
   readonly start: number;
-  /** End of iteration range (undefined = open, iterate all items) */
-  readonly end?: number;
   /** Key in the sources map */
   readonly source: string;
   /** Iteration-level transition handlers for FOR loops */
   readonly transitions?: Transitions;
 }
+
+/**
+ * Windowed data-source FOR window — iterates a slice of a named source.
+ *
+ * `FOR item IN 1 TO 10 OF {{ items }}` — both start and end bounds required.
+ */
+export interface WindowedSourceWindow {
+  /** Named loop variable (required — data sources must name the binding) */
+  readonly variable: string;
+  /** Start of iteration range (positive integer) */
+  readonly start: number;
+  /** End of iteration range (positive integer, always present for windowed) */
+  readonly end: number;
+  /** Key in the sources map */
+  readonly source: string;
+  /** Iteration-level transition handlers for FOR loops */
+  readonly transitions?: Transitions;
+}
+
+/**
+ * Data-source FOR window — values come from a named source.
+ *
+ * Discriminated by the presence of `end`: absent = full source, present = windowed.
+ */
+export type SourceWindow = FullSourceWindow | WindowedSourceWindow;
 
 /**
  * A FOR clause defines a window over a source.
@@ -105,17 +128,20 @@ export interface UnresolvedNumericWindow {
 }
 
 /**
- * Data-source FOR window with at least one unresolved bound.
+ * Windowed data-source FOR window with at least one unresolved bound.
  *
- * Structurally mirrors {@link SourceWindow} but allows `BoundRef` values
+ * Structurally mirrors {@link WindowedSourceWindow} but allows `BoundRef` values
  * in `start` and/or `end`. Tagged with `unresolved: true` so consumers
  * can narrow with `'unresolved' in fc`.
+ *
+ * Only the windowed syntax (`start TO end OF {{ source }}`) can produce unresolved
+ * bounds — the full source syntax (`FOR var IN {{ source }}`) has no bounds to resolve.
  */
 export interface UnresolvedSourceWindow {
   readonly unresolved: true;
   readonly variable: string;
   readonly start: Bound;
-  readonly end?: Bound;
+  readonly end: Bound;
   readonly source: string;
   readonly transitions?: Transitions;
 }

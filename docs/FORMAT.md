@@ -96,6 +96,8 @@ Note: Transition keywords (`PASS`, `YES`, `FAIL`, `NO`) are matched as whole wor
 
 Aggregation always waits for all DEFER'd results before evaluating. `ALL`/`ANY` evaluates over the count of DEFER'd results.
 
+The parsed Transitions object includes an `aggregation` field (`'ALL'` | `'ANY'` | `'none'`) alongside the `pass` and `fail` handlers.
+
 where result is:
   action | RETRY [ count ] [ action ]
 
@@ -114,6 +116,8 @@ where message is:
 where target is:
   step-identifier [ "AT" index ]
   | substep-identifier [ "AT" index ]
+
+> **Internal:** The compiler internally represents "advance to next step" as `GOTO NEXT`. This cannot be written in runbook syntax — the parser rejects `NEXT` as a GOTO target. The `StepId` schema includes an optional `qualifier` field for this internal representation.
 
 where index is:
   positive_integer | "{{" [ ws ] variable_name [ ws ] "}}"
@@ -172,6 +176,8 @@ where vars_map is:
   (YAML mapping of variable names to string, number, or boolean values)
 
 Note: Frontmatter `vars` are not included in the parsed Runbook AST. They are consumed by the CLI template rendering pipeline. Reserved variable names (`step`, `index`, `context`, case-insensitive) are rejected with an error diagnostic.
+
+The `ParseResult` includes a `frontmatter` field containing the validated `RunbookFrontmatter` (or `null` if no frontmatter is present), alongside the parsed `Runbook` AST.
 
 ---
 
@@ -293,6 +299,8 @@ The fallback action cannot be RETRY (nested RETRY is invalid).
 | Only FAIL defined | Adds `PASS ALL CONTINUE` |
 
 **Convention:** Always write both transitions explicitly. The parser supports implicit defaults, but runbooks should be readable without memorizing the default table.
+
+> **Implementation note:** The parser produces `undefined` transitions when none are defined. The runtime compiler applies the defaults shown above via `DEFAULT_TRANSITIONS`. This is consistent with the existing note that aggregation modifier defaults are semantic rather than parser-level.
 
 ### Message Convention
 

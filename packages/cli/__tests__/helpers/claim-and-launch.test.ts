@@ -103,7 +103,7 @@ jest.unstable_mockModule('../../src/services/variable-discovery', () => ({
 // Mock template-renderer
 jest.unstable_mockModule('../../src/services/template-renderer', () => ({
   substituteRunbookVariables: jest.fn((runbook: unknown) => runbook),
-  resolveForBounds: jest.fn((runbook: unknown) => runbook),
+  resolveForBounds: jest.fn((runbook: unknown) => ({ runbook, warnings: [] })),
   expandLoopVariables: jest.fn((text: string) => text),
   warnUnresolvedRunbookVariables: jest.fn().mockReturnValue([]),
   collectUnresolvedRunbookVariables: jest.fn().mockReturnValue(new Set()),

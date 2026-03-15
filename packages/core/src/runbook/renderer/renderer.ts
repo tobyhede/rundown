@@ -114,12 +114,12 @@ function renderForClause(forClause: ParsedForClause): string[] {
   const lines: string[] = [];
 
   if (forClause.source !== undefined) {
-    if (forClause.start === 1 && forClause.end === undefined) {
-      lines.push(`- FOR ${forClause.variable} IN {{ ${forClause.source} }}`);
-    } else {
+    if ('end' in forClause) {
       lines.push(
         `- FOR ${forClause.variable} IN ${String(forClause.start)} TO ${String(forClause.end)} OF {{ ${forClause.source} }}`,
       );
+    } else {
+      lines.push(`- FOR ${forClause.variable} IN {{ ${forClause.source} }}`);
     }
   } else if (forClause.variable) {
     if (forClause.start === 1) {

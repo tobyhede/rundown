@@ -464,7 +464,9 @@ export async function prepareRunbook(
   // Resolve FOR clause bounds ({{Max}} → 10)
   let resolvedRunbook: ResolvedRunbook;
   try {
-    resolvedRunbook = resolveForBounds(rawRunbook, templateVars);
+    const result = resolveForBounds(rawRunbook, templateVars);
+    resolvedRunbook = result.runbook;
+    allWarnings.push(...result.warnings);
   } catch (err) {
     return {
       ok: false,
