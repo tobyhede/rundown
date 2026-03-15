@@ -369,6 +369,32 @@ name: "   "
     expect(result.frontmatter?.name).toBeUndefined();
   });
 
+  it('returns null frontmatter for array YAML', () => {
+    const markdown = `---
+- one
+- two
+- three
+---
+# Content`;
+
+    const result = extractFrontmatter(markdown);
+
+    expect(result.frontmatter).toBeNull();
+    expect(result.content.trim()).toBe('# Content');
+  });
+
+  it('returns null frontmatter for scalar YAML', () => {
+    const markdown = `---
+just a string
+---
+# Content`;
+
+    const result = extractFrontmatter(markdown);
+
+    expect(result.frontmatter).toBeNull();
+    expect(result.content.trim()).toBe('# Content');
+  });
+
   it('drops name when it has leading or trailing spaces', () => {
     const markdown = `---
 name: " my runbook "

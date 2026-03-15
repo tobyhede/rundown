@@ -88,6 +88,11 @@ export function extractFrontmatter(markdown: string): {
     return { frontmatter: null, content: markdown };
   }
 
+  // Non-object YAML (arrays, scalars) is not valid frontmatter
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+    return { frontmatter: null, content };
+  }
+
   // Validate with Zod — .catch(undefined) on each field ensures parse always succeeds.
   // Invalid fields become undefined; valid fields and unknown passthrough fields are preserved.
   const frontmatter = RunbookFrontmatterSchema.parse(data);
