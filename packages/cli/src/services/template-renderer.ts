@@ -341,6 +341,11 @@ function validateDemotedForSteps(
   for (const step of steps) {
     const inDemoted = demotedStepNames.has(step.name);
 
+    // Check FOR clause transitions (iteration-level PASS/FAIL handlers)
+    if (step.kind === 'for') {
+      checkTransitions(step.forClause.transitions, step.name, false);
+    }
+
     // Check step-level transitions
     checkTransitions(step.transitions, step.name, false);
 

@@ -1119,6 +1119,40 @@ describe('resolveForBounds', () => {
       expect(warnings[0]).toContain('preserved as prompt text');
     });
 
+    it('throws when forClause.transitions contain GOTO AT targeting a demoted step', () => {
+      // Step 1 is a FOR step with unresolved bounds (will be demoted)
+      const unresolvedFor: ParsedForClause = {
+        unresolved: true as const,
+        variable: 'item',
+        start: 1,
+        end: { ref: 'Missing' },
+      };
+      const demotedStep = makeForStep(unresolvedFor, '1');
+
+      // Step 2 is a resolved FOR step whose forClause.transitions has GOTO 1 AT 3
+      const resolvedFor: ParsedForClause = {
+        variable: 'x',
+        start: 1,
+        end: 5,
+        transitions: {
+          aggregation: 'none' as const,
+          pass: {
+            kind: 'pass' as const,
+            retry: 0,
+            action: { type: 'GOTO' as const, target: { step: '1', at: 3 } },
+          },
+          fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+        },
+      };
+      const resolvedStep = makeForStep(resolvedFor, '2');
+
+      const runbook = makeRunbook([demotedStep, resolvedStep]);
+      expect(() => resolveForBounds(runbook, {})).toThrow(RunbookSyntaxError);
+      expect(() => resolveForBounds(runbook, {})).toThrow(
+        'GOTO AT targets step "1" which has an unresolved FOR clause',
+      );
+    });
+
     it('does not throw for NEXT/BREAK in substep of a successfully resolved FOR step', () => {
       const resolvedFor: ParsedForClause = {
         unresolved: true as const,
