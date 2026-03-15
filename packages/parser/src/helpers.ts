@@ -595,7 +595,6 @@ export function parseAction(text: string): Action | null {
  * @returns Object with retry count and fallback action, or null if invalid
  */
 function parseRetryWithArgs(rest: string): { retry: number; action: Action } | null {
-  let retry = 1;
   let remaining = rest;
 
   // Parse leading digits manually to avoid ReDoS from (\d+)(?:\s+(.*))? backtracking
@@ -603,18 +602,17 @@ function parseRetryWithArgs(rest: string): { retry: number; action: Action } | n
   while (digitEnd < remaining.length && remaining[digitEnd] >= '0' && remaining[digitEnd] <= '9') {
     digitEnd++;
   }
-  if (digitEnd > 0 && (digitEnd >= remaining.length || /\s/.test(remaining[digitEnd]))) {
-    retry = parseInt(remaining.slice(0, digitEnd), 10);
-    remaining = remaining.slice(digitEnd).trimStart();
+  if (digitEnd === 0) {
+    return null;
   }
+  if (!(digitEnd >= remaining.length || /\s/.test(remaining[digitEnd]))) {
+    return null;
+  }
+  const retry = parseInt(remaining.slice(0, digitEnd), 10);
+  remaining = remaining.slice(digitEnd).trimStart();
 
   if (!remaining) {
-    return { retry, action: { type: 'STOP' } };
-  }
-
-  if (remaining.startsWith('"') && remaining.endsWith('"')) {
-    const message = remaining.slice(1, -1);
-    return { retry, action: { type: 'STOP', message } };
+    return null;
   }
 
   const action = parseAction(remaining);
@@ -644,16 +642,11 @@ function parseConditionalPrefix(
   let retry = 0;
   let action: Action | null = null;
 
-  if (actionStr.startsWith('RETRY')) {
-    if (actionStr === 'RETRY') {
-      retry = 1;
-      action = { type: 'STOP' };
-    } else if (actionStr.startsWith('RETRY ')) {
-      const retryResult = parseRetryWithArgs(actionStr.slice(6).trim());
-      if (retryResult) {
-        retry = retryResult.retry;
-        action = retryResult.action;
-      }
+  if (actionStr.startsWith('RETRY ')) {
+    const retryResult = parseRetryWithArgs(actionStr.slice(6).trim());
+    if (retryResult) {
+      retry = retryResult.retry;
+      action = retryResult.action;
     }
   } else {
     action = parseAction(actionStr);
@@ -671,7 +664,7 @@ function parseConditionalPrefix(
  *
  * Recognizes these formats:
  * - PASS/YES: triggers on step success (e.g., "PASS CONTINUE", "YES GOTO 2")
- * - FAIL/NO: triggers on step failure (e.g., "FAIL STOP", "NO RETRY 3")
+ * - FAIL/NO: triggers on step failure (e.g., "FAIL STOP", "NO RETRY 3 STOP")
  * - With aggregation: "PASS ALL CONTINUE", "FAIL ANY STOP"
  * - Standalone DEFER: shorthand for PASS DEFER + FAIL DEFER
  *
