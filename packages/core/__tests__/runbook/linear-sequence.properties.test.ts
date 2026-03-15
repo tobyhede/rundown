@@ -44,7 +44,7 @@ function buildLinearSteps(config: LinearConfig): StepInput[] {
   return Array.from({ length: config.numSteps }, (_, i) => ({
     name: String(i + 1),
     description: `Step ${String(i + 1)}`,
-    transitions: makeTransitions('ALL', config.passActions[i], config.failActions[i]),
+    transitions: makeTransitions(config.passActions[i], config.failActions[i]),
   }));
 }
 

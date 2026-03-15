@@ -51,10 +51,17 @@ interface CustomForOpts {
 }
 
 function buildCustomSteps(opts: CustomForOpts): Step[] {
+  const getAggregation = (
+    aggMode: 'ALL' | 'ANY' | 'none',
+  ): { strategy: 'ALL' | 'ANY' } | undefined => {
+    if (aggMode === 'none') return undefined;
+    return { strategy: aggMode };
+  };
+
   const substeps: Substep[] = opts.substeps.map((sub, i) => ({
     id: String(i + 1),
     description: `Substep ${String(i + 1)}`,
-    transitions: makeTransitions('ALL', sub.passAction, sub.failAction, sub.failRetry ?? 0),
+    transitions: makeTransitions(sub.passAction, sub.failAction, sub.failRetry ?? 0),
   }));
 
   const forStep: Step = {
@@ -64,15 +71,15 @@ function buildCustomSteps(opts: CustomForOpts): Step[] {
     forClause: {
       start: 1,
       end: opts.iterations,
+      aggregation: getAggregation(opts.iterationTransitions.aggMode),
       transitions: makeTransitions(
-        opts.iterationTransitions.aggMode,
         opts.iterationTransitions.passAction,
         opts.iterationTransitions.failAction,
         opts.iterationTransitions.failRetry ?? 0,
       ),
     },
+    aggregation: getAggregation(opts.parentTransitions.aggMode),
     transitions: makeTransitions(
-      opts.parentTransitions.aggMode,
       opts.parentTransitions.passAction,
       opts.parentTransitions.failAction,
     ),
@@ -84,7 +91,6 @@ function buildCustomSteps(opts: CustomForOpts): Step[] {
     name: '2',
     description: 'Terminal',
     transitions: {
-      aggregation: 'ALL',
       pass: makeTransitionObject('pass', 'COMPLETE'),
       fail: makeTransitionObject('fail', 'STOP'),
     },

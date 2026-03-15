@@ -14,6 +14,8 @@ import type {
   Command,
   Bound,
   ForClause,
+  WindowedSourceWindow,
+  NumericWindow,
   ResolvedRunbook,
   ResolvedStep,
   ResolvedStepWithFor,
@@ -22,8 +24,24 @@ import type {
   Transitions,
   TransitionObject,
   Action,
+  Aggregation,
 } from '@rundown-org/parser';
 import { isUnresolvedForClause, MAX_FOR_BOUND, stepIdToString } from '@rundown-org/parser';
+
+/**
+ * Mapped type that requires all keys of T to be present in object literals,
+ * while preserving original value types (including `| undefined` for optional fields).
+ * Used to get compile-time errors when a ForClause field is added but not handled.
+ */
+type AllKeysExplicit<T> = {
+  [K in keyof Required<T>]: T[K];
+};
+
+/** WindowedSourceWindow with all keys required — compile error on missing field. */
+type ExplicitWindowedSourceWindow = AllKeysExplicit<WindowedSourceWindow>;
+
+/** NumericWindow with all keys required, preserving `source` discriminant for narrowing. */
+type ExplicitNumericWindow = AllKeysExplicit<Omit<NumericWindow, 'source'>> & { source?: never };
 
 /**
  * Shared placeholder matcher used across startup and runtime substitution.
@@ -244,9 +262,10 @@ function aggregationModifier(aggregation: 'ALL' | 'ANY' | 'none', kind: 'pass' |
   return aggregation === 'ALL' ? ' ANY' : ' ALL';
 }
 
-function renderTransitionsText(transitions: Transitions): string {
-  const passAgg = aggregationModifier(transitions.aggregation, 'pass');
-  const failAgg = aggregationModifier(transitions.aggregation, 'fail');
+function renderTransitionsText(transitions: Transitions, aggregation?: Aggregation): string {
+  const agg = aggregation?.strategy ?? 'none';
+  const passAgg = aggregationModifier(agg, 'pass');
+  const failAgg = aggregationModifier(agg, 'fail');
   return [
     `- PASS${passAgg} ${renderTransitionActionText(transitions.pass)}`,
     `- FAIL${failAgg} ${renderTransitionActionText(transitions.fail)}`,
@@ -308,7 +327,7 @@ export function resolveForBounds(
     if (!allBoundRefsDefined(fc, variables)) {
       let forText = reconstructForLine(fc);
       if (fc.transitions) {
-        forText += `\n${renderTransitionsText(fc.transitions)}`;
+        forText += `\n${renderTransitionsText(fc.transitions, fc.aggregation)}`;
       }
       const { forClause: _, kind: __, ...rest } = step;
       const fallbackStep: StepWithSubsteps = {
@@ -326,22 +345,25 @@ export function resolveForBounds(
 
     let resolved: ForClause;
     if (fc.source !== undefined) {
-      // WindowedSourceWindow — both bounds required
-      resolved = {
+      // WindowedSourceWindow — both unresolved variants always have end: Bound
+      const explicit: ExplicitWindowedSourceWindow = {
         variable: fc.variable,
         start,
         end,
         source: fc.source,
-        ...(fc.transitions && { transitions: fc.transitions }),
+        transitions: fc.transitions,
+        aggregation: fc.aggregation,
       };
+      resolved = explicit;
     } else {
-      // NumericWindow — both bounds required
-      resolved = {
+      const explicit: ExplicitNumericWindow = {
+        variable: fc.variable,
         start,
         end,
-        ...(fc.variable !== undefined && { variable: fc.variable }),
-        ...(fc.transitions && { transitions: fc.transitions }),
+        transitions: fc.transitions,
+        aggregation: fc.aggregation,
       };
+      resolved = explicit;
     }
 
     const { forClause: _, ...rest } = step;
@@ -435,39 +457,33 @@ function substituteSubstep(substep: Substep, variables: Record<string, unknown>)
  * @returns Step with all string fields expanded
  */
 function substituteStep(step: ResolvedStep, variables: Record<string, unknown>): ResolvedStep {
-  const base = {
-    name: step.name,
+  // Spread-first: preserve all fields (including aggregation, line, etc.)
+  // Override only the text fields that need substitution.
+  const substituted = {
+    ...step,
     description: substituteText(step.description, variables),
     prompt: step.prompt ? substituteText(step.prompt, variables) : step.prompt,
-    transitions: step.transitions,
-    line: step.line,
   };
 
-  // Handle kind-specific fields
+  // Handle kind-specific fields that contain text
   switch (step.kind) {
     case 'base':
-      return { ...base, kind: 'base' as const };
+      return substituted as ResolvedStep;
     case 'command':
       return {
-        ...base,
-        kind: 'command' as const,
+        ...substituted,
         command: substituteCommand(step.command, variables)!,
-      };
+      } as ResolvedStep;
     case 'substeps':
       return {
-        ...base,
-        kind: 'substeps' as const,
+        ...substituted,
         substeps: step.substeps.map((ss) => substituteSubstep(ss, variables)),
-        substepsDerivedFromRunbookList: step.substepsDerivedFromRunbookList,
-      };
+      } as ResolvedStep;
     case 'for':
       return {
-        ...base,
-        kind: 'for' as const,
+        ...substituted,
         substeps: step.substeps.map((ss) => substituteSubstep(ss, variables)),
-        forClause: step.forClause,
-        substepsDerivedFromRunbookList: step.substepsDerivedFromRunbookList,
-      };
+      } as ResolvedStep;
   }
 }
 

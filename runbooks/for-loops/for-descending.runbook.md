@@ -17,6 +17,7 @@ scenarios:
 
 - FOR item IN 3 TO 1
 - PASS ALL COMPLETE
+- FAIL ANY STOP
 
 ### 1.1 Process {{item}}
 

@@ -25,6 +25,7 @@ rd echo "entry"
 
 - FOR item IN 1 TO 3
 - PASS ALL COMPLETE
+- FAIL ANY STOP
 
 ### Process.1 Handle {{item}}
 

@@ -682,6 +682,7 @@ name: Fallback Source
 ## 1. Process items
 - FOR item IN 1 TO {{N}} OF {{ items }}
 - PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 Handle item
 - PASS CONTINUE

@@ -58,7 +58,10 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
     ];
   }
 
-  // Schema validation for each step
+  // Schema validation for each step — track failures so the detailed
+  // validation loop below can skip structurally invalid steps that
+  // would otherwise throw TypeErrors on missing fields.
+  const schemaFailedSteps = new Set<Step>();
   for (const step of steps) {
     const result = StepSchema.safeParse(step);
     if (!result.success) {
@@ -68,6 +71,7 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
           `Step ${step.name} failed schema validation: ${result.error.issues.map((i) => i.message).join(', ')}`,
         ),
       );
+      schemaFailedSteps.add(step);
     }
   }
 
@@ -109,6 +113,10 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
   }
 
   for (const step of steps) {
+    // Skip detailed validation for steps that failed schema validation —
+    // accessing their fields (e.g., step.transitions.pass) could throw.
+    if (schemaFailedSteps.has(step)) continue;
+
     // Conformance Rule 4: Exclusivity (Step level)
     // The discriminated union enforces exclusivity by design:
     // 'command' steps have command, 'substeps'/'for' steps have substeps, 'base' has neither.
@@ -125,6 +133,11 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
         ),
       );
     }
+
+    // Track loop-control errors reported in FOR-specific validation to avoid
+    // duplicate reporting in the generic validateAction calls below.
+    let passLoopControlReported = false;
+    let failLoopControlReported = false;
 
     // FOR step validation
     if (step.kind === 'for') {
@@ -176,40 +189,77 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
         }
       }
 
-      // Parent FOR step must not use NEXT/BREAK in its own transitions
-      if (step.transitions) {
-        if (isLoopControlAction(step.transitions.pass.action)) {
+      // Parent FOR step must not use NEXT/BREAK in its own transitions.
+      if (isLoopControlAction(step.transitions.pass.action)) {
+        diagnostics.push(
+          error(
+            step.line,
+            `${step.transitions.pass.action.type} cannot appear on the FOR step itself, only on its substeps (step "${step.name}")`,
+          ),
+        );
+        passLoopControlReported = true;
+      }
+      if (isLoopControlAction(step.transitions.fail.action)) {
+        diagnostics.push(
+          error(
+            step.line,
+            `${step.transitions.fail.action.type} cannot appear on the FOR step itself, only on its substeps (step "${step.name}")`,
+          ),
+        );
+        failLoopControlReported = true;
+      }
+
+      // FOR iteration-level aggregation checks
+      if (step.forClause.aggregation) {
+        const allSubstepsExplicitNonDefer = step.substeps.every((sub) => {
+          return (
+            !isAccumulatingAction(sub.transitions.pass.action) &&
+            !isAccumulatingAction(sub.transitions.fail.action)
+          );
+        });
+        if (allSubstepsExplicitNonDefer && step.substeps.length > 0) {
           diagnostics.push(
             error(
               step.line,
-              `${step.transitions.pass.action.type} cannot appear on the FOR step itself, only on its substeps (step "${step.name}")`,
+              `FOR step "${step.name}" has iteration-level aggregation but no substep uses DEFER. ` +
+                `Use DEFER on at least one substep to propagate results.`,
             ),
           );
         }
-        if (isLoopControlAction(step.transitions.fail.action)) {
+      } else if (!step.aggregation) {
+        const hasSubstepDefer = step.substeps.some((sub) => {
+          return (
+            isAccumulatingAction(sub.transitions.pass.action) ||
+            isAccumulatingAction(sub.transitions.fail.action)
+          );
+        });
+        if (hasSubstepDefer) {
           diagnostics.push(
-            error(
+            warn(
               step.line,
-              `${step.transitions.fail.action.type} cannot appear on the FOR step itself, only on its substeps (step "${step.name}")`,
+              `FOR step "${step.name}" has substep using DEFER but no iteration-level aggregation (ALL/ANY). ` +
+                `DEFER results have no consumer.`,
             ),
           );
         }
       }
     }
 
-    if (step.transitions) {
-      if (
-        step.transitions.pass.action.type === 'DEFER' ||
-        step.transitions.fail.action.type === 'DEFER'
-      ) {
-        diagnostics.push(
-          error(
-            step.line,
-            `DEFER is only valid within substeps or FOR iteration-level transitions, not at step level (step "${step.name}")`,
-          ),
-        );
-      }
+    if (
+      step.transitions.pass.action.type === 'DEFER' ||
+      step.transitions.fail.action.type === 'DEFER'
+    ) {
+      diagnostics.push(
+        error(
+          step.line,
+          `DEFER is only valid within substeps or FOR iteration-level transitions, not at step level (step "${step.name}")`,
+        ),
+      );
+    }
+    if (!passLoopControlReported) {
       validateAction(step.transitions.pass.action, undefined, steps, step, diagnostics);
+    }
+    if (!failLoopControlReported) {
       validateAction(step.transitions.fail.action, undefined, steps, step, diagnostics);
     }
 
@@ -227,32 +277,44 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
           );
         }
 
-        if (substep.transitions) {
-          validateAction(substep.transitions.pass.action, substep.id, steps, step, diagnostics);
-          validateAction(substep.transitions.fail.action, substep.id, steps, step, diagnostics);
-        }
+        validateAction(substep.transitions.pass.action, substep.id, steps, step, diagnostics);
+        validateAction(substep.transitions.fail.action, substep.id, steps, step, diagnostics);
       }
 
-      // For non-FOR steps with explicit aggregation (ALL/ANY): parent transitions use
-      // deferredResults for aggregation. Only DEFER populates deferredResults —
-      // CONTINUE/NEXT/BREAK are flow control only. Substeps without explicit transitions
-      // auto-DEFER, so only error when every substep has explicit non-DEFER transitions
-      // (making aggregation vacuous). Steps with aggregation: 'none' use sequential flow
-      // control, not aggregation, so the check does not apply.
-      if (step.transitions && step.transitions.aggregation !== 'none' && step.kind !== 'for') {
-        const allSubstepsExplicitNonDefer = step.substeps.every((sub) => {
-          if (!sub.transitions) return false; // no explicit transitions → will auto-DEFER
+      // Rule 4: Aggregation ON but no substep DEFERs — aggregation is vacuous.
+      if (step.aggregation && step.kind !== 'for') {
+        const allSubstepsNonDefer = step.substeps.every((sub) => {
           const passIsDefer = isAccumulatingAction(sub.transitions.pass.action);
           const failIsDefer = isAccumulatingAction(sub.transitions.fail.action);
           return !passIsDefer && !failIsDefer;
         });
 
-        if (allSubstepsExplicitNonDefer && step.substeps.length > 0) {
+        if (allSubstepsNonDefer && step.substeps.length > 0) {
           diagnostics.push(
             error(
               step.line,
               `Step "${step.name}" has substeps but no substep uses DEFER. ` +
                 `Use DEFER on at least one substep to propagate results to parent.`,
+            ),
+          );
+        }
+      }
+
+      // Rule 5: DEFER without aggregation — DEFER results have no consumer.
+      if (!step.aggregation && step.kind !== 'for') {
+        const hasSubstepDefer = step.substeps.some((sub) => {
+          return (
+            isAccumulatingAction(sub.transitions.pass.action) ||
+            isAccumulatingAction(sub.transitions.fail.action)
+          );
+        });
+
+        if (hasSubstepDefer) {
+          diagnostics.push(
+            warn(
+              step.line,
+              `Step "${step.name}" has substep using DEFER but no aggregation (ALL/ANY). ` +
+                `DEFER results have no consumer.`,
             ),
           );
         }

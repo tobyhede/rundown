@@ -76,28 +76,24 @@ export function makeTransitionObject(
 }
 
 export function makeTransitions(
-  aggregation: 'ALL' | 'ANY' | 'none',
   passAction: string,
   failAction: string,
   failRetry = 0,
 ): Transitions {
   return {
-    aggregation,
     pass: makeTransitionObject('pass', passAction),
     fail: makeTransitionObject('fail', failAction, failRetry),
   };
 }
 
-/** Default transitions: PASS ALL → CONTINUE, FAIL → STOP */
+/** Default transitions: PASS → CONTINUE, FAIL → STOP */
 export const DEFAULT_TRANSITIONS: Transitions = {
-  aggregation: 'ALL',
   pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
   fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
 };
 
 /** DEFER transitions: PASS → DEFER, FAIL → DEFER */
 export const DEFER_TRANSITIONS: Transitions = {
-  aggregation: 'ALL',
   pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
   fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
 };

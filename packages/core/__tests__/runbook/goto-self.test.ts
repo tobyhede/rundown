@@ -12,7 +12,6 @@ describe('GOTO to self (implicit retry)', () => {
         name: '1',
         description: 'Retry Step',
         transitions: {
-          aggregation: 'ANY',
           pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
           fail: { kind: 'fail', retry: 0, action: { type: 'GOTO', target: { step: '1' } } },
         },
@@ -41,7 +40,6 @@ describe('GOTO to self (implicit retry)', () => {
         name: '1',
         description: 'Step One',
         transitions: {
-          aggregation: 'ANY',
           pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
           fail: { kind: 'fail', retry: 0, action: { type: 'GOTO', target: { step: '2' } } },
         },
@@ -51,7 +49,6 @@ describe('GOTO to self (implicit retry)', () => {
         name: '2',
         description: 'Step Two',
         transitions: {
-          aggregation: 'ANY',
           pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
           fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
         },
@@ -85,7 +82,6 @@ describe('GOTO to self (implicit retry)', () => {
             id: 'a',
             description: 'Substep A',
             transitions: {
-              aggregation: 'ANY',
               pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
               fail: {
                 kind: 'fail',
@@ -94,7 +90,14 @@ describe('GOTO to self (implicit retry)', () => {
               },
             },
           },
-          { id: 'b', description: 'Substep B' },
+          {
+            id: 'b',
+            description: 'Substep B',
+            transitions: {
+              pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+              fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+            },
+          },
         ],
       },
     ];
@@ -129,7 +132,6 @@ describe('GOTO to self (implicit retry)', () => {
             id: 'a',
             description: 'Substep A',
             transitions: {
-              aggregation: 'ANY',
               pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
               fail: {
                 kind: 'fail',
@@ -138,7 +140,14 @@ describe('GOTO to self (implicit retry)', () => {
               },
             },
           },
-          { id: 'b', description: 'Substep B' },
+          {
+            id: 'b',
+            description: 'Substep B',
+            transitions: {
+              pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+              fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+            },
+          },
         ],
       },
     ];

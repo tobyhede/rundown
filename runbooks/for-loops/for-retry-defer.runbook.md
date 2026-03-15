@@ -19,6 +19,7 @@ Normal DEFER flow with iteration-level retry. Retry re-runs the iteration, then 
 
 ## 1. Process items
 - FOR i IN 1 TO 2
+  - PASS ALL CONTINUE
   - FAIL ANY RETRY 1 DEFER
 - PASS ALL CONTINUE
 - FAIL ANY STOP

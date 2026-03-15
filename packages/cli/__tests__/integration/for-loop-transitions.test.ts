@@ -297,6 +297,7 @@ describe('FOR loop transitions integration', () => {
       const filename = 'substep-break-with-retry.runbook.md';
       const content = `## 1. Process
 - FOR i IN 1 TO 3
+  - PASS ALL CONTINUE
   - FAIL ANY RETRY 2 BREAK
 - PASS ALL CONTINUE
 - FAIL ANY STOP

@@ -16,6 +16,7 @@ scenarios:
 ## 1. Check position
 
 - PASS ALL COMPLETE
+- FAIL ANY STOP
 
 ### 1.1 Echo context
 

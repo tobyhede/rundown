@@ -258,7 +258,7 @@ describe('GOTO substep validation', () => {
 Do something.
 `;
     const steps = parseRunbook(markdown);
-    expect(steps[0].transitions?.pass).toEqual({
+    expect(steps[0].transitions.pass).toEqual({
       kind: 'pass',
       retry: 0,
       action: { type: 'GOTO', target: { step: '2', substep: '1' } },
@@ -375,20 +375,38 @@ Do check two.
 `;
     const steps = parseRunbook(markdown);
     // Step-level transitions should be preserved
-    expect(steps[0].transitions?.pass).toEqual({
+    expect(steps[0].transitions.pass).toEqual({
       kind: 'pass',
       retry: 0,
       action: { type: 'COMPLETE' },
     });
-    expect(steps[0].transitions?.fail).toEqual({
+    expect(steps[0].transitions.fail).toEqual({
       kind: 'fail',
       retry: 0,
       action: { type: 'STOP', message: 'A check failed' },
     });
-    expect(steps[0].transitions?.aggregation).toBe('ALL');
-    // Substeps should NOT have the step-level transitions
-    expect(steps[0].substeps?.[0].transitions).toBeUndefined();
-    expect(steps[0].substeps?.[1].transitions).toBeUndefined();
+    expect(steps[0].aggregation?.strategy).toBe('ALL');
+    // Substeps should have context-aware defaults (DEFER/DEFER under aggregation)
+    expect(steps[0].substeps?.[0].transitions?.pass).toEqual({
+      kind: 'pass',
+      retry: 0,
+      action: { type: 'DEFER' },
+    });
+    expect(steps[0].substeps?.[0].transitions?.fail).toEqual({
+      kind: 'fail',
+      retry: 0,
+      action: { type: 'DEFER' },
+    });
+    expect(steps[0].substeps?.[1].transitions?.pass).toEqual({
+      kind: 'pass',
+      retry: 0,
+      action: { type: 'DEFER' },
+    });
+    expect(steps[0].substeps?.[1].transitions?.fail).toEqual({
+      kind: 'fail',
+      retry: 0,
+      action: { type: 'DEFER' },
+    });
   });
 
   it('preserves step-level transitions with FOR clause and substeps', () => {
@@ -397,6 +415,7 @@ Do check two.
 - FOR item IN 1 TO 3
   - FAIL CONTINUE
 - PASS ALL COMPLETE
+- FAIL ANY STOP
 
 ### 1.1 Check {{item}}
 
@@ -404,7 +423,7 @@ Do the check.
 `;
     const steps = parseRunbook(markdown);
     // Step-level transitions should be preserved
-    expect(steps[0].transitions?.pass).toEqual({
+    expect(steps[0].transitions.pass).toEqual({
       kind: 'pass',
       retry: 0,
       action: { type: 'COMPLETE' },
@@ -415,8 +434,17 @@ Do the check.
       retry: 0,
       action: { type: 'CONTINUE' },
     });
-    // Substeps should NOT have transitions
-    expect(steps[0].substeps?.[0].transitions).toBeUndefined();
+    // Substeps should have context-aware defaults (DEFER/DEFER for runbooks)
+    expect(steps[0].substeps?.[0].transitions?.pass).toEqual({
+      kind: 'pass',
+      retry: 0,
+      action: { type: 'DEFER' },
+    });
+    expect(steps[0].substeps?.[0].transitions?.fail).toEqual({
+      kind: 'fail',
+      retry: 0,
+      action: { type: 'DEFER' },
+    });
   });
 });
 
@@ -783,8 +811,8 @@ Do the work.`;
 
 Do the work.`;
       const steps = parseRunbook(md);
-      expect(steps[0].transitions?.pass.action).toEqual({ type: 'CONTINUE' });
-      expect(steps[0].transitions?.fail.action).toEqual({ type: 'STOP' });
+      expect(steps[0].transitions.pass.action).toEqual({ type: 'CONTINUE' });
+      expect(steps[0].transitions.fail.action).toEqual({ type: 'STOP' });
     });
 
     it('rejects list transitions after code block', () => {
@@ -916,7 +944,7 @@ echo check
       const steps = parseRunbook(markdown);
       expect(steps[0].forClause).toBeDefined();
       expect(steps[0].forClause?.transitions).toBeDefined();
-      expect(steps[0].forClause?.transitions?.aggregation).toBe('ALL');
+      expect(steps[0].forClause?.aggregation?.strategy).toBe('ALL');
       expect(steps[0].forClause?.transitions?.pass).toEqual({
         kind: 'pass',
         retry: 0,
@@ -940,6 +968,7 @@ echo check
 `;
       const steps = parseRunbook(markdown);
       expect(steps[0].forClause).toBeDefined();
+      // Without nested transitions, forClause transitions should be undefined
       expect(steps[0].forClause?.transitions).toBeUndefined();
     });
 
@@ -988,7 +1017,7 @@ echo check
       const steps = parseRunbook(markdown);
       expect(steps[0].forClause).toBeDefined();
       expect(steps[0].forClause?.transitions).toBeDefined();
-      expect(steps[0].forClause?.transitions?.aggregation).toBe('ANY');
+      expect(steps[0].forClause?.aggregation?.strategy).toBe('ANY');
       expect(steps[0].forClause?.transitions?.pass).toEqual({
         kind: 'pass',
         retry: 0,
@@ -1018,7 +1047,10 @@ FAIL: STOP
       // Paragraph-style transitions are now treated as prompt text
       const steps = parseRunbook(md);
       const sub = steps[0].substeps?.[0];
-      expect(sub?.transitions).toBeUndefined();
+      // Substeps always have transitions (context-aware defaults CONTINUE/STOP)
+      expect(sub?.transitions).toBeDefined();
+      expect(sub?.transitions?.pass.action.type).toBe('CONTINUE');
+      expect(sub?.transitions?.fail.action.type).toBe('STOP');
       expect(sub?.prompt).toContain('Prompt text here.');
       expect(sub?.prompt).toContain('PASS: CONTINUE');
     });
@@ -1052,7 +1084,10 @@ FAIL: STOP
 `;
       // Paragraph-style transitions are now treated as prompt text
       const steps = parseRunbook(md);
-      expect(steps[0].transitions).toBeUndefined();
+      // Steps always have transitions (default CONTINUE/STOP)
+      expect(steps[0].transitions).toBeDefined();
+      expect(steps[0].transitions.pass.action.type).toBe('CONTINUE');
+      expect(steps[0].transitions.fail.action.type).toBe('STOP');
       expect(steps[0].prompt).toContain('Some prompt text.');
       expect(steps[0].prompt).toContain('PASS: CONTINUE');
     });
@@ -1224,6 +1259,7 @@ Review this checklist.
   it('canonicalizes FOR + step-level runbook list into runbook-list-derived substeps', () => {
     const md = `## 1. Review the plan
 - FOR pass IN 1 TO 2
+- PASS ALL CONTINUE
 - FAIL ANY GOTO Synthesize
 
 - review-technical-accuracy.runbook.md
@@ -1244,7 +1280,7 @@ Review this checklist.
       ['review-build-runtime.runbook.md'],
       ['review-risk-safety.runbook.md'],
     ]);
-    expect(steps[0].transitions?.fail.action).toEqual({
+    expect(steps[0].transitions.fail.action).toEqual({
       type: 'GOTO',
       target: { step: 'Synthesize' },
     });
@@ -1570,7 +1606,10 @@ Do the work.
 `;
     const steps = parseRunbook(md);
     // Paragraph-style transitions are not parsed as transitions — they become prompt text
-    expect(steps[0].transitions).toBeUndefined();
+    // Steps always have transitions (default CONTINUE/STOP)
+    expect(steps[0].transitions).toBeDefined();
+    expect(steps[0].transitions.pass.action.type).toBe('CONTINUE');
+    expect(steps[0].transitions.fail.action.type).toBe('STOP');
     expect(steps[0].prompt).toContain('PASS: CONTINUE');
     expect(steps[0].prompt).toContain('FAIL: STOP');
     expect(steps[0].prompt).toContain('Do the work.');
@@ -1589,7 +1628,10 @@ Do substep work.
     const steps = parseRunbook(md);
     const sub = steps[0].substeps?.[0];
     // Paragraph-style transitions are not parsed as transitions — they become prompt text
-    expect(sub?.transitions).toBeUndefined();
+    // Substeps always have transitions (context-aware defaults CONTINUE/STOP)
+    expect(sub?.transitions).toBeDefined();
+    expect(sub?.transitions?.pass.action.type).toBe('CONTINUE');
+    expect(sub?.transitions?.fail.action.type).toBe('STOP');
     expect(sub?.prompt).toContain('PASS: CONTINUE');
     expect(sub?.prompt).toContain('Do substep work.');
   });
@@ -1728,7 +1770,7 @@ Do second.
     expect(steps[0].prompt).toBeUndefined();
     expect(steps[0].command).toBeUndefined();
     expect(steps[0].substeps).toBeUndefined();
-    expect(steps[0].transitions?.pass.action).toEqual({ type: 'CONTINUE' });
+    expect(steps[0].transitions.pass.action).toEqual({ type: 'CONTINUE' });
   });
 
   it('validates NEXT usage in substep context with FOR clause', () => {

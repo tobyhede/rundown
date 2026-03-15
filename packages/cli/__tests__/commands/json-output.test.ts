@@ -161,6 +161,7 @@ echo hello
         runbookPath,
         `## 1. Review the plan
 - FOR pass IN 1 TO 2
+- PASS ALL CONTINUE
 - FAIL ANY STOP
 
 - review-technical-accuracy.runbook.md

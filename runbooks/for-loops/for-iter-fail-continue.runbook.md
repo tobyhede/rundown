@@ -30,7 +30,7 @@ scenarios:
   - PASS DEFER
   - FAIL CONTINUE
 - PASS ALL CONTINUE
-- FAIL STOP
+- FAIL ANY STOP
 
 ### 1.1 Check {{item}}
 

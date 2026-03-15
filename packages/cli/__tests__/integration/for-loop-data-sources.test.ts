@@ -42,6 +42,7 @@ name: Deploy Servers
 ## 1. Process servers
 - FOR server IN {{ servers }}
 - PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 Handle server
 - PASS CONTINUE
@@ -104,6 +105,7 @@ name: Windowed Iteration
 ## 1. Process items
 - FOR item IN 2 TO 4 OF {{ items }}
 - PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 Handle item
 - PASS CONTINUE
@@ -156,6 +158,7 @@ name: Empty Array
 ## 1. Process items
 - FOR item IN {{ items }}
 - PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 Handle item
 - PASS CONTINUE
@@ -212,6 +215,7 @@ name: Window Clamp
 ## 1. Process items
 - FOR item IN 1 TO 100 OF {{ items }}
 - PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 Handle item
 - PASS CONTINUE
@@ -248,6 +252,7 @@ name: Missing Source
 ## 1. Process items
 - FOR item IN {{ missing }}
 - PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 Handle item
 - PASS CONTINUE
@@ -283,6 +288,7 @@ name: File Loop
 ## 1. Process servers
 - FOR server IN {{ servers }}
 - PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 Handle server
 - PASS CONTINUE
@@ -333,6 +339,7 @@ name: Multiline Iteration
 ## 1. Process lines
 - FOR line IN {{ log }}
 - PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 Handle line
 - PASS CONTINUE
@@ -383,6 +390,7 @@ name: Special Chars
 ## 1. Process items
 - FOR item IN {{ items }}
 - PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 Handle item
 - PASS CONTINUE
@@ -431,6 +439,7 @@ name: Combined Variables
 ## 1. Process servers
 - FOR server IN {{ servers }}
 - PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 Handle server
 - PASS CONTINUE
@@ -479,6 +488,7 @@ name: Large Array
 ## 1. Process items
 - FOR item IN {{ items }}
 - PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 Handle item
 - PASS CONTINUE
@@ -525,6 +535,7 @@ name: JSONL Field Access
 ## 1. Process items
 - FOR item IN {{ items }}
 - PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 Handle item
 - PASS CONTINUE
@@ -592,6 +603,7 @@ name: JSONL Bad Data
 ## 1. Process items
 - FOR item IN {{ items }}
 - PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 Handle item
 - PASS CONTINUE
@@ -637,6 +649,7 @@ name: Descending Array
 ## 1. Process items
 - FOR item IN 4 TO 2 OF {{ items }}
 - PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 Handle item
 - PASS CONTINUE
@@ -674,6 +687,7 @@ name: Descending File
 ## 1. Process servers
 - FOR server IN 3 TO 1 OF {{ servers }}
 - PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 Handle server
 - PASS CONTINUE

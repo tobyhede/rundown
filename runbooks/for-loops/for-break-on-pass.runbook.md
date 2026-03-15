@@ -19,6 +19,7 @@ scenarios:
 
 - FOR item IN 1 TO 3
 - PASS ANY COMPLETE
+- FAIL ALL STOP
 
 ### 1.1 Try {{item}}
 

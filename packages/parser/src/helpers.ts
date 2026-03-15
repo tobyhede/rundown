@@ -7,6 +7,7 @@ import {
 import type {
   Action,
   AccumulatingAction,
+  Aggregation,
   BreakAction,
   LoopControlAction,
   StepExitAction,
@@ -735,7 +736,7 @@ export function parseConditional(text: string): ParseConditionalResult {
 function resolveAggregationMode(
   passModifier: AggregationModifier,
   failModifier: AggregationModifier,
-): 'ALL' | 'ANY' | 'none' {
+): 'ALL' | 'ANY' | undefined {
   if (passModifier && failModifier) {
     if (passModifier === 'ALL' && failModifier === 'ANY') return 'ALL';
     if (passModifier === 'ANY' && failModifier === 'ALL') return 'ANY';
@@ -745,12 +746,21 @@ function resolveAggregationMode(
     );
   }
 
-  if (passModifier === 'ALL') return 'ALL';
-  if (passModifier === 'ANY') return 'ANY';
-  if (failModifier === 'ANY') return 'ALL';
-  if (failModifier === 'ALL') return 'ANY';
+  // One-sided modifier — require explicit pairing
+  if (passModifier && !failModifier) {
+    const expected = passModifier === 'ALL' ? 'ANY' : 'ALL';
+    throw new RunbookSyntaxError(
+      `PASS ${passModifier} requires explicit FAIL ${expected}. Aggregation modifiers must appear on both sides`,
+    );
+  }
+  if (failModifier && !passModifier) {
+    const expected = failModifier === 'ALL' ? 'ANY' : 'ALL';
+    throw new RunbookSyntaxError(
+      `FAIL ${failModifier} requires explicit PASS ${expected}. Aggregation modifiers must appear on both sides`,
+    );
+  }
 
-  return 'none';
+  return undefined;
 }
 
 /**
@@ -808,16 +818,33 @@ export function validateDEFERUsage(
 }
 
 /**
- * Convert an array of parsed conditionals into a Transitions object.
+ * Result of converting parsed conditionals into separated transitions and aggregation.
+ *
+ * Returned by {@link convertToTransitions} when at least one conditional was provided.
+ * Transitions (pass/fail pair) are always present; aggregation is present only when
+ * the author specified ALL or ANY modifiers.
+ */
+export type ConvertedTransitions = {
+  /** The pass/fail transition pair. */
+  transitions: Transitions;
+  /** Aggregation strategy, present only when ALL/ANY was authored. */
+  aggregation?: Aggregation;
+};
+
+/**
+ * Convert an array of parsed conditionals into separated Transitions and Aggregation.
  *
  * Combines PASS and FAIL conditionals into a unified Transitions structure,
  * resolving aggregation mode (ALL vs ANY) and providing defaults for
  * missing conditions (PASS defaults to CONTINUE, FAIL defaults to STOP).
  *
  * @param conditionals - Array of parsed conditional objects from parseConditional
- * @returns Transitions object with pass/fail handlers, or null if no conditionals provided
+ * @returns ConvertedTransitions with transitions and optional aggregation, or null if no conditionals provided
+ * @throws {Error} If conditionals is non-empty but neither pass nor fail action was set (unreachable)
  */
-export function convertToTransitions(conditionals: ParsedConditional[]): Transitions | null {
+export function convertToTransitions(
+  conditionals: ParsedConditional[],
+): ConvertedTransitions | null {
   if (conditionals.length === 0) {
     return null;
   }
@@ -847,35 +874,32 @@ export function convertToTransitions(conditionals: ParsedConditional[]): Transit
     }
   }
 
-  const aggregation = resolveAggregationMode(passModifier, failModifier);
+  const strategy = resolveAggregationMode(passModifier, failModifier);
 
-  const base = { aggregation };
-
+  let transitions: Transitions;
   if (passAction && failAction) {
-    return {
-      ...base,
+    transitions = {
       pass: { kind: passKind, retry: passRetry, action: passAction },
       fail: { kind: failKind, retry: failRetry, action: failAction },
     };
-  }
-
-  if (passAction && !failAction) {
-    return {
-      ...base,
+  } else if (passAction) {
+    transitions = {
       pass: { kind: passKind, retry: passRetry, action: passAction },
       fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
     };
-  }
-
-  if (!passAction && failAction) {
-    return {
-      ...base,
+  } else if (failAction) {
+    transitions = {
       pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
       fail: { kind: failKind, retry: failRetry, action: failAction },
     };
+  } else {
+    throw new Error('Unreachable: at least one conditional must set an action');
   }
 
-  return null;
+  if (strategy) {
+    return { transitions, aggregation: { strategy } };
+  }
+  return { transitions };
 }
 
 /**

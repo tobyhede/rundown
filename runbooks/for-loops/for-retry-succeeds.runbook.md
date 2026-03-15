@@ -22,6 +22,7 @@ Retry gives the iteration another chance. If substeps pass on retry, BREAK never
 
 ## 1. Process items
 - FOR i IN 1 TO 2
+  - PASS ALL CONTINUE
   - FAIL ANY RETRY 1 BREAK
 - PASS ALL CONTINUE
 - FAIL ANY STOP

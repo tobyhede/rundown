@@ -13,6 +13,7 @@ import type {
   Step,
   Substep,
   Transitions,
+  Aggregation,
   TransitionObject,
   Action,
 } from '../../src/runbook/types.js';
@@ -37,13 +38,13 @@ export interface ForLoopConfig {
   // Layer 2: iteration transitions (forClause.transitions)
   iterationPassAction: IterationAction;
   iterationFailAction: IterationAction;
-  iterationAggMode: 'ALL' | 'ANY' | 'none'; // aggregation discriminant
+  iterationAggMode: 'ALL' | 'ANY' | undefined; // aggregation discriminant
   iterationFailRetry: number; // 0–2
 
   // Layer 3: parent aggregation (step.transitions)
   parentPassAction: ParentAction;
   parentFailAction: ParentAction;
-  parentAggMode: 'ALL' | 'ANY' | 'none'; // aggregation discriminant
+  parentAggMode: 'ALL' | 'ANY' | undefined; // aggregation discriminant
   parentFailRetry: number; // 0–2
 }
 
@@ -79,16 +80,18 @@ export function makeTransitionObject(
 }
 
 export function makeTransitions(
-  aggregation: 'ALL' | 'ANY' | 'none',
   passAction: string,
   failAction: string,
   failRetry = 0,
 ): Transitions {
   return {
-    aggregation,
     pass: makeTransitionObject('pass', passAction),
     fail: makeTransitionObject('fail', failAction, failRetry),
   };
+}
+
+export function makeAggregation(mode: 'ALL' | 'ANY' | undefined): Aggregation | undefined {
+  return mode ? { strategy: mode } : undefined;
 }
 
 /**
@@ -104,7 +107,6 @@ export function buildForLoopSteps(config: ForLoopConfig): Step[] {
       id: String(i),
       description: `Substep ${String(i)}`,
       transitions: makeTransitions(
-        'ALL',
         config.substepPassAction,
         config.substepFailAction,
         config.substepFailRetry,
@@ -119,19 +121,23 @@ export function buildForLoopSteps(config: ForLoopConfig): Step[] {
     forClause: {
       start: 1,
       end: config.iterations,
-      transitions: makeTransitions(
-        config.iterationAggMode,
-        config.iterationPassAction,
-        config.iterationFailAction,
-        config.iterationFailRetry,
-      ),
+      ...(config.iterationAggMode
+        ? {
+            transitions: makeTransitions(
+              config.iterationPassAction,
+              config.iterationFailAction,
+              config.iterationFailRetry,
+            ),
+            aggregation: makeAggregation(config.iterationAggMode),
+          }
+        : {}),
     },
     transitions: makeTransitions(
-      config.parentAggMode,
       config.parentPassAction,
       config.parentFailAction,
       config.parentFailRetry,
     ),
+    aggregation: makeAggregation(config.parentAggMode),
     substeps,
   };
 
@@ -139,11 +145,7 @@ export function buildForLoopSteps(config: ForLoopConfig): Step[] {
     kind: 'base',
     name: '2',
     description: 'Terminal',
-    transitions: {
-      aggregation: 'ALL',
-      pass: makeTransitionObject('pass', 'COMPLETE'),
-      fail: makeTransitionObject('fail', 'STOP'),
-    },
+    transitions: makeTransitions('COMPLETE', 'STOP'),
   };
 
   return [forStep, terminalStep];

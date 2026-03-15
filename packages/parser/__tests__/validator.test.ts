@@ -4,9 +4,20 @@ import { validateRunbook, type Step, type ValidationDiagnostic } from '../src/in
 const filterErrors = (d: ValidationDiagnostic[]) => d.filter((x) => x.severity === 'error');
 const filterWarnings = (d: ValidationDiagnostic[]) => d.filter((x) => x.severity === 'warning');
 
+// Default transitions for test fixtures (new structure without aggregation)
+const DEFAULT_TRANSITIONS = {
+  pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+  fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+};
+
 describe('validator strict rules', () => {
   const mockStep = (overrides: Record<string, unknown>): Step => {
-    const obj: Record<string, unknown> = { name: '1', description: 'Test', ...overrides };
+    const obj: Record<string, unknown> = {
+      name: '1',
+      description: 'Test',
+      transitions: DEFAULT_TRANSITIONS,
+      ...overrides,
+    };
     const kind =
       obj.forClause !== undefined
         ? 'for'
@@ -24,7 +35,6 @@ describe('validator strict rules', () => {
         mockStep({
           name: '1',
           transitions: {
-            aggregation: 'ALL',
             pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '1' } } },
             fail: { kind: 'fail', action: { type: 'STOP' } },
           },
@@ -43,12 +53,12 @@ describe('validator strict rules', () => {
       const steps = [
         mockStep({
           name: '1',
+          transitions: { ...DEFAULT_TRANSITIONS },
           substeps: [
             {
               id: '1',
               description: 'S1',
               transitions: {
-                aggregation: 'ALL',
                 pass: {
                   kind: 'pass',
                   action: { type: 'GOTO', target: { step: '1', substep: '1' } },
@@ -75,7 +85,6 @@ describe('validator strict rules', () => {
           name: '1',
           description: 'First',
           transitions: {
-            aggregation: 'ALL',
             pass: {
               kind: 'pass',
               action: { type: 'GOTO', target: { step: 'ErrorHandler', substep: 'NonExistent' } },
@@ -87,7 +96,8 @@ describe('validator strict rules', () => {
           kind: 'substeps',
           name: 'ErrorHandler',
           description: 'Handler',
-          substeps: [{ id: '1', description: 'Sub1' }],
+          transitions: { ...DEFAULT_TRANSITIONS },
+          substeps: [{ id: '1', description: 'Sub1', transitions: { ...DEFAULT_TRANSITIONS } }],
         },
       ];
       const diagnostics = validateRunbook(steps as any[]);
@@ -114,7 +124,7 @@ describe('validator strict rules', () => {
         mockStep({
           number: '1',
           prompt: 'P',
-          substeps: [{ id: '1', description: 'S' }],
+          substeps: [{ id: '1', description: 'S', transitions: { ...DEFAULT_TRANSITIONS } }],
         }),
       ];
       const errors = validateRunbook(steps);
@@ -129,7 +139,7 @@ describe('validator strict rules', () => {
         mockStep({
           number: '1',
           command: { code: 'echo', language: 'bash' },
-          substeps: [{ id: '1', description: 'S' }],
+          substeps: [{ id: '1', description: 'S', transitions: { ...DEFAULT_TRANSITIONS } }],
         }),
       ];
       const errors = validateRunbook(steps);
@@ -146,6 +156,7 @@ describe('validator strict rules', () => {
               description: 'S',
               command: { code: 'echo', language: 'bash' },
               runbooks: ['w.runbook.md'],
+              transitions: { ...DEFAULT_TRANSITIONS },
             },
           ],
         }),
@@ -164,9 +175,8 @@ describe('validator strict rules', () => {
         mockStep({
           name: '1',
           prompt: 'P',
-          substeps: [{ id: '1', description: 'S' }],
+          substeps: [{ id: '1', description: 'S', transitions: { ...DEFAULT_TRANSITIONS } }],
           transitions: {
-            aggregation: 'ALL',
             pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '99' } } },
             fail: { kind: 'fail', action: { type: 'STOP' } },
           },
@@ -174,7 +184,6 @@ describe('validator strict rules', () => {
         mockStep({
           name: '2',
           transitions: {
-            aggregation: 'ALL',
             pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '2' } } },
             fail: { kind: 'fail', action: { type: 'STOP' } },
           },
@@ -194,7 +203,6 @@ describe('validator strict rules', () => {
           line: 42,
           name: '1',
           transitions: {
-            aggregation: 'ALL',
             pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '99' } } },
             fail: { kind: 'fail', action: { type: 'STOP' } },
           },
@@ -210,9 +218,14 @@ describe('validator strict rules', () => {
   describe('validateRunbook with named steps', () => {
     it('allows named steps after static steps', () => {
       const steps = [
-        { kind: 'base', name: '1', description: 'First' },
-        { kind: 'base', name: '2', description: 'Second' },
-        { kind: 'base', name: 'Cleanup', description: 'Cleanup' },
+        { kind: 'base', name: '1', description: 'First', transitions: { ...DEFAULT_TRANSITIONS } },
+        { kind: 'base', name: '2', description: 'Second', transitions: { ...DEFAULT_TRANSITIONS } },
+        {
+          kind: 'base',
+          name: 'Cleanup',
+          description: 'Cleanup',
+          transitions: { ...DEFAULT_TRANSITIONS },
+        },
       ];
       const errors = validateRunbook(steps as any[]);
       expect(errors).toHaveLength(0);
@@ -225,12 +238,16 @@ describe('validator strict rules', () => {
           name: '1',
           description: 'First',
           transitions: {
-            aggregation: 'ALL',
             pass: { kind: 'pass', action: { type: 'GOTO', target: { step: 'Cleanup' } } },
             fail: { kind: 'fail', action: { type: 'STOP' } },
           },
         },
-        { kind: 'base', name: 'Cleanup', description: 'Cleanup' },
+        {
+          kind: 'base',
+          name: 'Cleanup',
+          description: 'Cleanup',
+          transitions: { ...DEFAULT_TRANSITIONS },
+        },
       ];
       const errors = validateRunbook(steps as any[]);
       expect(errors).toHaveLength(0);
@@ -243,7 +260,6 @@ describe('validator strict rules', () => {
           name: '1',
           description: 'First',
           transitions: {
-            aggregation: 'ALL',
             pass: { kind: 'pass', action: { type: 'GOTO', target: { step: 'NonExistent' } } },
             fail: { kind: 'fail', action: { type: 'STOP' } },
           },
@@ -261,11 +277,10 @@ describe('validator strict rules', () => {
           name: '1',
           description: 'First',
           substeps: [
-            { id: '1', description: 'Sub1' },
-            { id: 'Cleanup', description: 'SubCleanup' },
+            { id: '1', description: 'Sub1', transitions: { ...DEFAULT_TRANSITIONS } },
+            { id: 'Cleanup', description: 'SubCleanup', transitions: { ...DEFAULT_TRANSITIONS } },
           ],
           transitions: {
-            aggregation: 'ALL',
             pass: {
               kind: 'pass',
               action: { type: 'GOTO', target: { step: '1', substep: 'Cleanup' } },
@@ -304,7 +319,6 @@ describe('validator strict rules', () => {
         mockStep({
           name: '1',
           transitions: {
-            aggregation: 'ALL',
             pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '99' } } },
             fail: { kind: 'fail', action: { type: 'STOP' } },
           },
@@ -321,7 +335,6 @@ describe('validator strict rules', () => {
         mockStep({
           name: '1',
           transitions: {
-            aggregation: 'ALL',
             pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '2', substep: '1' } } },
             fail: { kind: 'fail', action: { type: 'STOP' } },
           },
@@ -337,7 +350,6 @@ describe('validator strict rules', () => {
         mockStep({
           name: '1',
           transitions: {
-            aggregation: 'ALL',
             pass: {
               kind: 'pass',
               action: { type: 'GOTO', target: { step: 'ErrorHandler', substep: '1' } },
@@ -360,8 +372,9 @@ describe('validator strict rules', () => {
           name: '1',
           description: 'Step with FOR but no substeps',
           forClause: { start: 1, end: 10 },
+          transitions: { ...DEFAULT_TRANSITIONS },
           substeps: [],
-        } as any as Step,
+        } as Step,
       ];
       const errors = validateRunbook(steps);
       expect(errors.some((e) => e.message.includes('must have at least one substep'))).toBe(true);
@@ -374,10 +387,12 @@ describe('validator strict rules', () => {
           name: '1',
           description: 'Step with FOR and substeps',
           forClause: { start: 1, end: 10 },
+          transitions: { ...DEFAULT_TRANSITIONS },
           substeps: [
             {
               id: '1',
               description: 'Substep',
+              transitions: { ...DEFAULT_TRANSITIONS },
             },
           ],
         },
@@ -392,12 +407,12 @@ describe('validator strict rules', () => {
           kind: 'substeps',
           name: '1',
           description: 'Non-FOR step',
+          transitions: { ...DEFAULT_TRANSITIONS },
           substeps: [
             {
               id: '1',
               description: 'Substep with NEXT',
               transitions: {
-                aggregation: 'ALL',
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'NEXT' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
               },
@@ -417,12 +432,12 @@ describe('validator strict rules', () => {
           kind: 'substeps',
           name: '1',
           description: 'Non-FOR step',
+          transitions: { ...DEFAULT_TRANSITIONS },
           substeps: [
             {
               id: '1',
               description: 'Substep with BREAK',
               transitions: {
-                aggregation: 'ALL',
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'BREAK' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
               },
@@ -443,12 +458,12 @@ describe('validator strict rules', () => {
           name: '1',
           description: 'FOR step',
           forClause: { start: 1, end: 10 },
+          transitions: { ...DEFAULT_TRANSITIONS },
           substeps: [
             {
               id: '1',
               description: 'Substep',
               transitions: {
-                aggregation: 'ALL',
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'NEXT' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
               },
@@ -468,7 +483,6 @@ describe('validator strict rules', () => {
           description: 'FOR step with NEXT on itself',
           forClause: { start: 1, end: 10 },
           transitions: {
-            aggregation: 'ALL',
             pass: { kind: 'pass' as const, retry: 0, action: { type: 'NEXT' as const } },
             fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
           },
@@ -476,6 +490,7 @@ describe('validator strict rules', () => {
             {
               id: '1',
               description: 'Substep',
+              transitions: { ...DEFAULT_TRANSITIONS },
             },
           ],
         },
@@ -493,7 +508,6 @@ describe('validator strict rules', () => {
           name: '1',
           description: 'Step with DEFER',
           transitions: {
-            aggregation: 'ALL',
             pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
             fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
           },
@@ -516,7 +530,6 @@ describe('validator strict rules', () => {
           name: '1',
           description: 'Step with DEFER on both',
           transitions: {
-            aggregation: 'ALL',
             pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
             fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
           },
@@ -536,12 +549,12 @@ describe('validator strict rules', () => {
           name: '1',
           description: 'FOR step that GOTOs itself with AT',
           forClause: { start: 1, end: 5 },
+          transitions: { ...DEFAULT_TRANSITIONS },
           substeps: [
             {
               id: '1',
               description: 'Substep',
               transitions: {
-                aggregation: 'ALL',
                 pass: {
                   kind: 'pass' as const,
                   retry: 0,
@@ -564,12 +577,12 @@ describe('validator strict rules', () => {
           name: '1',
           description: 'FOR step that GOTOs itself without AT',
           forClause: { start: 1, end: 5 },
+          transitions: { ...DEFAULT_TRANSITIONS },
           substeps: [
             {
               id: '1',
               description: 'Substep',
               transitions: {
-                aggregation: 'ALL',
                 pass: {
                   kind: 'pass' as const,
                   retry: 0,
@@ -592,13 +605,12 @@ describe('validator strict rules', () => {
 
     it('warns on named step GOTO self', () => {
       const steps: Step[] = [
-        { kind: 'base', name: '1', description: 'First' },
+        { kind: 'base', name: '1', description: 'First', transitions: { ...DEFAULT_TRANSITIONS } },
         {
           kind: 'base',
           name: 'Retry',
           description: 'Named step that GOTOs itself',
           transitions: {
-            aggregation: 'ALL',
             pass: {
               kind: 'pass' as const,
               retry: 0,
@@ -624,7 +636,6 @@ describe('validator strict rules', () => {
           name: '1',
           description: 'Source step',
           transitions: {
-            aggregation: 'ALL',
             pass: {
               kind: 'pass' as const,
               retry: 0,
@@ -637,6 +648,7 @@ describe('validator strict rules', () => {
           kind: 'base',
           name: '2',
           description: 'Target step without FOR',
+          transitions: { ...DEFAULT_TRANSITIONS },
         },
       ];
       const diagnostics = validateRunbook(steps);
@@ -654,7 +666,6 @@ describe('validator strict rules', () => {
           name: '1',
           description: 'Source step',
           transitions: {
-            aggregation: 'ALL',
             pass: {
               kind: 'pass' as const,
               retry: 0,
@@ -668,10 +679,12 @@ describe('validator strict rules', () => {
           name: '2',
           description: 'FOR target step',
           forClause: { start: 1, end: 10 },
+          transitions: { ...DEFAULT_TRANSITIONS },
           substeps: [
             {
               id: '1',
               description: 'Substep',
+              transitions: { ...DEFAULT_TRANSITIONS },
             },
           ],
         },
@@ -692,12 +705,12 @@ describe('validator strict rules', () => {
               start: 1,
               end: 3,
               transitions: {
-                aggregation: 'ALL',
                 pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'BREAK' } },
               },
             },
-            substeps: [{ id: '1', description: 'Check' }],
+            transitions: { ...DEFAULT_TRANSITIONS },
+            substeps: [{ id: '1', description: 'Check', transitions: { ...DEFAULT_TRANSITIONS } }],
           },
         ];
         const diagnostics = validateRunbook(steps);
@@ -716,7 +729,6 @@ describe('validator strict rules', () => {
               start: 1,
               end: 3,
               transitions: {
-                aggregation: 'ALL',
                 pass: {
                   kind: 'pass',
                   retry: 0,
@@ -725,13 +737,17 @@ describe('validator strict rules', () => {
                 fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
               },
             },
-            substeps: [{ id: '1', description: 'Check' }],
+            transitions: { ...DEFAULT_TRANSITIONS },
+            substeps: [{ id: '1', description: 'Check', transitions: { ...DEFAULT_TRANSITIONS } }],
           },
           {
             kind: 'substeps',
             name: '2',
             description: 'Follow-up',
-            substeps: [{ id: '1', description: 'Finalize' }],
+            transitions: { ...DEFAULT_TRANSITIONS },
+            substeps: [
+              { id: '1', description: 'Finalize', transitions: { ...DEFAULT_TRANSITIONS } },
+            ],
           },
         ];
         const diagnostics = validateRunbook(steps);
@@ -750,12 +766,12 @@ describe('validator strict rules', () => {
               start: 1,
               end: 3,
               transitions: {
-                aggregation: 'ALL',
                 pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
               },
             },
-            substeps: [{ id: '1', description: 'Check' }],
+            transitions: { ...DEFAULT_TRANSITIONS },
+            substeps: [{ id: '1', description: 'Check', transitions: { ...DEFAULT_TRANSITIONS } }],
           },
         ];
         const diagnostics = validateRunbook(steps);
@@ -774,12 +790,12 @@ describe('validator strict rules', () => {
               start: 1,
               end: 3,
               transitions: {
-                aggregation: 'ALL',
                 pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
               },
             },
-            substeps: [{ id: '1', description: 'Check' }],
+            transitions: { ...DEFAULT_TRANSITIONS },
+            substeps: [{ id: '1', description: 'Check', transitions: { ...DEFAULT_TRANSITIONS } }],
           },
         ];
         const diagnostics = validateRunbook(steps);
@@ -798,7 +814,6 @@ describe('validator strict rules', () => {
               start: 1,
               end: 3,
               transitions: {
-                aggregation: 'ALL',
                 pass: {
                   kind: 'pass' as const,
                   retry: 2,
@@ -811,7 +826,8 @@ describe('validator strict rules', () => {
                 },
               },
             },
-            substeps: [{ id: '1', description: 'Check' }],
+            transitions: { ...DEFAULT_TRANSITIONS },
+            substeps: [{ id: '1', description: 'Check', transitions: { ...DEFAULT_TRANSITIONS } }],
           },
         ];
         const diagnostics = validateRunbook(steps);
@@ -898,8 +914,8 @@ describe('validator strict rules', () => {
       const steps = [
         mockStep({
           name: '1',
+          aggregation: { strategy: 'ALL' },
           transitions: {
-            aggregation: 'ALL',
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -908,7 +924,6 @@ describe('validator strict rules', () => {
               id: '1',
               description: 'Sub 1',
               transitions: {
-                aggregation: 'ALL',
                 pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
               },
@@ -917,7 +932,6 @@ describe('validator strict rules', () => {
               id: '2',
               description: 'Sub 2',
               transitions: {
-                aggregation: 'ALL',
                 pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
               },
@@ -937,8 +951,8 @@ describe('validator strict rules', () => {
       const steps = [
         mockStep({
           name: '1',
+          aggregation: { strategy: 'ALL' },
           transitions: {
-            aggregation: 'ALL',
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -947,7 +961,6 @@ describe('validator strict rules', () => {
               id: '1',
               description: 'Sub 1',
               transitions: {
-                aggregation: 'ALL',
                 pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
               },
@@ -956,7 +969,6 @@ describe('validator strict rules', () => {
               id: '2',
               description: 'Sub 2',
               transitions: {
-                aggregation: 'ALL',
                 pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
               },
@@ -971,20 +983,36 @@ describe('validator strict rules', () => {
 
     it('passes when substeps have no explicit transitions (auto-DEFER)', () => {
       const steps = [
-        mockStep({
+        {
+          kind: 'substeps' as const,
           name: '1',
+          description: 'With substeps',
+          aggregation: { strategy: 'ALL' },
           transitions: {
-            aggregation: 'ALL',
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
           substeps: [
-            { id: '1', description: 'Sub 1' },
-            { id: '2', description: 'Sub 2' },
+            {
+              id: '1',
+              description: 'Sub 1',
+              transitions: {
+                pass: { kind: 'pass', action: { type: 'DEFER' } },
+                fail: { kind: 'fail', action: { type: 'DEFER' } },
+              },
+            },
+            {
+              id: '2',
+              description: 'Sub 2',
+              transitions: {
+                pass: { kind: 'pass', action: { type: 'DEFER' } },
+                fail: { kind: 'fail', action: { type: 'DEFER' } },
+              },
+            },
           ],
-        }),
+        },
       ];
-      const diagnostics = validateRunbook(steps);
+      const diagnostics = validateRunbook(steps as any[]);
       const errors = filterErrors(diagnostics);
       expect(errors).toHaveLength(0);
     });
@@ -995,7 +1023,6 @@ describe('validator strict rules', () => {
           name: '1',
           forClause: { start: 1, end: 3 },
           transitions: {
-            aggregation: 'ALL',
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -1004,7 +1031,6 @@ describe('validator strict rules', () => {
               id: '1',
               description: 'Sub 1',
               transitions: {
-                aggregation: 'ALL',
                 pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
               },
@@ -1021,12 +1047,12 @@ describe('validator strict rules', () => {
       const steps = [
         mockStep({
           name: '1',
+          transitions: { ...DEFAULT_TRANSITIONS },
           substeps: [
             {
               id: '1',
               description: 'Sub 1',
               transitions: {
-                aggregation: 'ALL',
                 pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
               },
@@ -1039,12 +1065,11 @@ describe('validator strict rules', () => {
       expect(deferErrors).toHaveLength(0);
     });
 
-    it('does not fire when parent transitions have no explicit aggregation', () => {
+    it('does not fire when step has no aggregation and no substep uses DEFER', () => {
       const steps = [
         mockStep({
           name: '1',
           transitions: {
-            aggregation: 'none',
             pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -1053,7 +1078,6 @@ describe('validator strict rules', () => {
               id: '1',
               description: 'Sub 1',
               transitions: {
-                aggregation: 'ALL',
                 pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
               },
@@ -1064,6 +1088,137 @@ describe('validator strict rules', () => {
       const diagnostics = validateRunbook(steps);
       const deferErrors = diagnostics.filter((d) => d.message.includes('no substep uses DEFER'));
       expect(deferErrors).toHaveLength(0);
+    });
+  });
+
+  describe('FOR iteration-level aggregation', () => {
+    it('errors when forClause.aggregation exists but no substep uses DEFER', () => {
+      const steps = [
+        mockStep({
+          name: '1',
+          forClause: { start: 1, end: 3, aggregation: { strategy: 'ALL' } },
+          transitions: { ...DEFAULT_TRANSITIONS },
+          substeps: [
+            {
+              id: '1',
+              description: 'Sub 1',
+              transitions: {
+                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+              },
+            },
+          ],
+        }),
+      ];
+      const diagnostics = validateRunbook(steps);
+      const errors = filterErrors(diagnostics).filter((d) =>
+        d.message.includes('iteration-level aggregation but no substep uses DEFER'),
+      );
+      expect(errors).toHaveLength(1);
+    });
+
+    it('passes when forClause.aggregation exists and substep uses DEFER', () => {
+      const steps = [
+        mockStep({
+          name: '1',
+          forClause: { start: 1, end: 3, aggregation: { strategy: 'ALL' } },
+          transitions: { ...DEFAULT_TRANSITIONS },
+          substeps: [
+            {
+              id: '1',
+              description: 'Sub 1',
+              transitions: {
+                pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
+              },
+            },
+          ],
+        }),
+      ];
+      const diagnostics = validateRunbook(steps);
+      const errors = filterErrors(diagnostics).filter((d) =>
+        d.message.includes('iteration-level aggregation'),
+      );
+      expect(errors).toHaveLength(0);
+    });
+
+    it('warns when substep uses DEFER but no forClause.aggregation', () => {
+      const steps = [
+        mockStep({
+          name: '1',
+          forClause: { start: 1, end: 3 },
+          transitions: { ...DEFAULT_TRANSITIONS },
+          substeps: [
+            {
+              id: '1',
+              description: 'Sub 1',
+              transitions: {
+                pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+              },
+            },
+          ],
+        }),
+      ];
+      const diagnostics = validateRunbook(steps);
+      const warnings = filterWarnings(diagnostics).filter((d) =>
+        d.message.includes('no iteration-level aggregation'),
+      );
+      expect(warnings).toHaveLength(1);
+    });
+
+    it('does not warn when substep uses DEFER and step has step-level aggregation', () => {
+      const steps = [
+        mockStep({
+          name: '1',
+          forClause: { start: 1, end: 10 },
+          aggregation: { strategy: 'ALL' },
+          transitions: {
+            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+          },
+          substeps: [
+            {
+              id: '1',
+              description: 'Sub 1',
+              transitions: {
+                pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
+              },
+            },
+          ],
+        }),
+      ];
+      const diagnostics = validateRunbook(steps);
+      const warnings = filterWarnings(diagnostics).filter((d) =>
+        d.message.includes('no iteration-level aggregation'),
+      );
+      expect(warnings).toHaveLength(0);
+    });
+
+    it('does not warn when no substep uses DEFER and no forClause.aggregation', () => {
+      const steps = [
+        mockStep({
+          name: '1',
+          forClause: { start: 1, end: 3 },
+          transitions: { ...DEFAULT_TRANSITIONS },
+          substeps: [
+            {
+              id: '1',
+              description: 'Sub 1',
+              transitions: {
+                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+              },
+            },
+          ],
+        }),
+      ];
+      const diagnostics = validateRunbook(steps);
+      const warnings = filterWarnings(diagnostics).filter((d) =>
+        d.message.includes('iteration-level aggregation'),
+      );
+      expect(warnings).toHaveLength(0);
     });
   });
 });

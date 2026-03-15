@@ -17,6 +17,7 @@ scenarios:
 
 - FOR item IN 1 TO 3
   - FAIL CONTINUE
+- PASS ALL CONTINUE
 - FAIL ANY CONTINUE
 
 ### 1.1 Check {{item}}

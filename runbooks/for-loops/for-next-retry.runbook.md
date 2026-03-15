@@ -21,6 +21,7 @@ Substep NEXT respects iteration-level retry. After retries exhausted, NEXT skips
 
 ## 1. Process items
 - FOR i IN 1 TO 3
+  - PASS ALL CONTINUE
   - FAIL ANY RETRY 1 DEFER
 - PASS ALL CONTINUE
 - FAIL ANY STOP

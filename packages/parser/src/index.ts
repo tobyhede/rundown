@@ -33,7 +33,7 @@ export {
   isStepExitAction,
   isTerminalAction,
 } from './helpers.js';
-export type { ParsedStepHeader, ParsedSubstepHeader } from './helpers.js';
+export type { ConvertedTransitions, ParsedStepHeader, ParsedSubstepHeader } from './helpers.js';
 export {
   parseStepIdFromString,
   stepIdToString,

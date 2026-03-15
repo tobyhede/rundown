@@ -40,12 +40,12 @@ function buildTerminalSteps(
       {
         name: '1',
         description: 'Base step',
-        transitions: makeTransitions('ALL', passAction, failAction),
+        transitions: makeTransitions(passAction, failAction),
       },
     ];
   }
 
-  const substepTransitions = makeTransitions('ALL', passAction, failAction);
+  const substepTransitions = makeTransitions(passAction, failAction);
   const substeps: Substep[] = [{ id: '1', description: 'Sub 1', transitions: substepTransitions }];
 
   if (topology === 'substep') {
@@ -102,12 +102,12 @@ describe('Terminal propagation properties', () => {
   it('direct STOP/COMPLETE from substep has no aggregated flag', () => {
     fc.assert(
       fc.property(terminalActionArb, eventArb, (action, event) => {
-        const substepTransitions = makeTransitions('ALL', action, action);
+        const substepTransitions = makeTransitions(action, action);
         const steps = inferSteps([
           {
             name: '1',
             description: 'Step with substep',
-            transitions: makeTransitions('ALL', 'CONTINUE', 'STOP'),
+            transitions: makeTransitions('CONTINUE', 'STOP'),
             substeps: [{ id: '1', description: 'Sub 1', transitions: substepTransitions }],
           },
         ]);
@@ -129,7 +129,8 @@ describe('Terminal propagation properties', () => {
           {
             name: '1',
             description: 'Step with substep',
-            transitions: makeTransitions('ALL', action, action),
+            transitions: makeTransitions(action, action),
+            aggregation: { strategy: 'ALL' },
             substeps: [{ id: '1', description: 'Sub 1', transitions: DEFER_TRANSITIONS }],
           },
         ]);

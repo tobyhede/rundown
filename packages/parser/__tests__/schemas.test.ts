@@ -2,6 +2,7 @@ import { describe, it, expect } from '@jest/globals';
 import {
   TransitionsSchema,
   TransitionObjectSchema,
+  AggregationSchema,
   StepIdSchema,
   ForClauseSchema,
   ActionSchema,
@@ -11,12 +12,15 @@ import {
   UnresolvedNumericWindowSchema,
   UnresolvedSourceWindowSchema,
   ParsedForClauseSchema,
+  BaseStepSchema,
+  StepWithCommandSchema,
+  StepWithSubstepsSchema,
+  StepWithForSchema,
 } from '../src/schemas.js';
 
 describe('TransitionsSchema with kind', () => {
   it('should validate transitions with kind', () => {
     const input = {
-      aggregation: 'ALL',
       pass: { kind: 'yes', action: { type: 'CONTINUE' } },
       fail: { kind: 'no', action: { type: 'STOP' } },
     };
@@ -26,7 +30,6 @@ describe('TransitionsSchema with kind', () => {
 
   it('should reject invalid kind', () => {
     const input = {
-      aggregation: 'ALL',
       pass: { kind: 'invalid', action: { type: 'CONTINUE' } },
       fail: { kind: 'no', action: { type: 'STOP' } },
     };
@@ -99,9 +102,8 @@ describe('TransitionObjectSchema', () => {
 });
 
 describe('TransitionsSchema validation', () => {
-  it('should validate ALL aggregation transitions', () => {
+  it('should validate transitions with pass and fail', () => {
     const input = {
-      aggregation: 'ALL',
       pass: { kind: 'pass', action: { type: 'CONTINUE' } },
       fail: { kind: 'fail', action: { type: 'STOP' } },
     };
@@ -109,9 +111,8 @@ describe('TransitionsSchema validation', () => {
     expect(result.success).toBe(true);
   });
 
-  it('should validate ANY aggregation transitions', () => {
+  it('should validate transitions with yes and no kinds', () => {
     const input = {
-      aggregation: 'ANY',
       pass: { kind: 'yes', action: { type: 'COMPLETE' } },
       fail: { kind: 'no', action: { type: 'CONTINUE' } },
     };
@@ -119,18 +120,8 @@ describe('TransitionsSchema validation', () => {
     expect(result.success).toBe(true);
   });
 
-  it('should reject transitions without all field', () => {
-    const input = {
-      pass: { kind: 'pass', action: { type: 'CONTINUE' } },
-      fail: { kind: 'fail', action: { type: 'STOP' } },
-    };
-    const result = TransitionsSchema.safeParse(input);
-    expect(result.success).toBe(false);
-  });
-
   it('should reject transitions without pass field', () => {
     const input = {
-      aggregation: 'ALL',
       fail: { kind: 'fail', action: { type: 'STOP' } },
     };
     const result = TransitionsSchema.safeParse(input);
@@ -139,8 +130,27 @@ describe('TransitionsSchema validation', () => {
 
   it('should reject transitions without fail field', () => {
     const input = {
-      aggregation: 'ALL',
       pass: { kind: 'pass', action: { type: 'CONTINUE' } },
+    };
+    const result = TransitionsSchema.safeParse(input);
+    expect(result.success).toBe(false);
+  });
+
+  it('should reject transitions with unknown fields (strict mode)', () => {
+    const input = {
+      pass: { kind: 'pass', action: { type: 'CONTINUE' } },
+      fail: { kind: 'fail', action: { type: 'STOP' } },
+      unknownField: 'rejected',
+    };
+    const result = TransitionsSchema.safeParse(input);
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects transitions with legacy aggregation field', () => {
+    const input = {
+      pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+      fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+      aggregation: { strategy: 'ALL' },
     };
     const result = TransitionsSchema.safeParse(input);
     expect(result.success).toBe(false);
@@ -465,6 +475,11 @@ describe('StepIdSchema with AT field', () => {
 });
 
 describe('E5: RunbookSchema with metadata fields', () => {
+  const defaultTransitions = {
+    pass: { kind: 'pass', action: { type: 'CONTINUE' } },
+    fail: { kind: 'fail', action: { type: 'STOP' } },
+  };
+
   it('validates runbook with all metadata fields', () => {
     const result = RunbookSchema.safeParse({
       title: 'My Runbook',
@@ -473,21 +488,21 @@ describe('E5: RunbookSchema with metadata fields', () => {
       version: '1.0.0',
       author: 'Test Author',
       tags: ['test', 'automation'],
-      steps: [{ kind: 'base', name: '1', description: 'Step 1' }],
+      steps: [{ kind: 'base', name: '1', description: 'Step 1', transitions: defaultTransitions }],
     });
     expect(result.success).toBe(true);
   });
 
   it('validates runbook with only steps (all metadata optional)', () => {
     const result = RunbookSchema.safeParse({
-      steps: [{ kind: 'base', name: '1', description: 'Step 1' }],
+      steps: [{ kind: 'base', name: '1', description: 'Step 1', transitions: defaultTransitions }],
     });
     expect(result.success).toBe(true);
   });
 
   it('rejects non-string tags', () => {
     const result = RunbookSchema.safeParse({
-      steps: [{ kind: 'base', name: '1', description: 'Step 1' }],
+      steps: [{ kind: 'base', name: '1', description: 'Step 1', transitions: defaultTransitions }],
       tags: [123, true],
     });
     expect(result.success).toBe(false);
@@ -495,7 +510,7 @@ describe('E5: RunbookSchema with metadata fields', () => {
 
   it('validates runbook with empty tags array', () => {
     const result = RunbookSchema.safeParse({
-      steps: [{ kind: 'base', name: '1', description: 'Step 1' }],
+      steps: [{ kind: 'base', name: '1', description: 'Step 1', transitions: defaultTransitions }],
       tags: [],
     });
     expect(result.success).toBe(true);
@@ -670,5 +685,86 @@ describe('ParsedForClauseSchema', () => {
   it('rejects invalid unresolved (missing unresolved flag with ref bound)', () => {
     // Without unresolved: true, BoundRef in end doesn't match ForClauseSchema
     expect(ParsedForClauseSchema.safeParse({ start: 1, end: { ref: 'Max' } }).success).toBe(false);
+  });
+});
+
+describe('AggregationSchema', () => {
+  it('validates ALL strategy', () => {
+    const result = AggregationSchema.safeParse({ strategy: 'ALL' });
+    expect(result.success).toBe(true);
+  });
+
+  it('validates ANY strategy', () => {
+    const result = AggregationSchema.safeParse({ strategy: 'ANY' });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects invalid strategy', () => {
+    const result = AggregationSchema.safeParse({ strategy: 'INVALID' });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects missing strategy', () => {
+    const result = AggregationSchema.safeParse({});
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('aggregation scoped to parent steps only', () => {
+  const defaultTransitions = {
+    pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+    fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+  };
+
+  it('strips aggregation from BaseStepSchema (not a recognized field)', () => {
+    const result = BaseStepSchema.safeParse({
+      kind: 'base',
+      name: '1',
+      description: 'Step 1',
+      transitions: defaultTransitions,
+      aggregation: { strategy: 'ALL' },
+    });
+    expect(result.success).toBe(true);
+    // aggregation is stripped because it is not defined on BaseStepSchema
+    expect(result.data).not.toHaveProperty('aggregation');
+  });
+
+  it('strips aggregation from StepWithCommandSchema (not a recognized field)', () => {
+    const result = StepWithCommandSchema.safeParse({
+      kind: 'command',
+      name: '1',
+      description: 'Step 1',
+      transitions: defaultTransitions,
+      command: { code: 'echo hello' },
+      aggregation: { strategy: 'ALL' },
+    });
+    expect(result.success).toBe(true);
+    // aggregation is stripped because it is not defined on StepWithCommandSchema
+    expect(result.data).not.toHaveProperty('aggregation');
+  });
+
+  it('accepts aggregation on StepWithSubstepsSchema', () => {
+    const result = StepWithSubstepsSchema.safeParse({
+      kind: 'substeps',
+      name: '1',
+      description: 'Step 1',
+      transitions: defaultTransitions,
+      aggregation: { strategy: 'ALL' },
+      substeps: [{ id: '1', description: 'sub', transitions: defaultTransitions }],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts aggregation on StepWithForSchema', () => {
+    const result = StepWithForSchema.safeParse({
+      kind: 'for',
+      name: '1',
+      description: 'Step 1',
+      transitions: defaultTransitions,
+      aggregation: { strategy: 'ANY' },
+      forClause: { start: 1, end: 3 },
+      substeps: [{ id: '1', description: 'sub', transitions: defaultTransitions }],
+    });
+    expect(result.success).toBe(true);
   });
 });

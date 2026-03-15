@@ -17,6 +17,7 @@ scenarios:
 
 - FOR item IN {{ records }}
 - PASS ALL COMPLETE
+- FAIL ANY STOP
 
 ### 1.1 Handle {{item.name}}
 

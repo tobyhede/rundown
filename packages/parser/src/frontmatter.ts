@@ -27,12 +27,16 @@ export const RunbookFrontmatterSchema = z
         /^[a-zA-Z0-9_-](?:[a-zA-Z0-9_ -]*[a-zA-Z0-9_-])?$/,
         'Name must contain only alphanumeric characters, spaces, underscores, and hyphens, and must not start or end with a space',
       )
-      .optional(),
-    description: z.string().optional(),
-    version: z.string().optional(),
-    author: z.string().optional(),
-    tags: z.array(z.string()).optional(),
-    vars: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
+      .optional()
+      .catch(undefined),
+    description: z.string().optional().catch(undefined),
+    version: z.string().optional().catch(undefined),
+    author: z.string().optional().catch(undefined),
+    tags: z.array(z.string()).optional().catch(undefined),
+    vars: z
+      .record(z.union([z.string(), z.number(), z.boolean()]))
+      .optional()
+      .catch(undefined),
   })
   .passthrough();
 
@@ -54,9 +58,10 @@ export type RunbookFrontmatterType = z.infer<typeof RunbookFrontmatterSchema>;
  * - Must be valid YAML conforming to RunbookFrontmatterSchema
  * - Unknown fields are preserved via .passthrough()
  *
- * Note: When validation fails, content is still stripped of frontmatter.
- * The original markdown is only returned when gray-matter itself fails to parse
- * the YAML syntax or when no frontmatter is present.
+ * Note: Individual field validation errors are handled gracefully — invalid
+ * fields become `undefined` while valid fields and unknown extension fields
+ * are preserved. The original markdown is only returned when gray-matter itself
+ * fails to parse the YAML syntax or when no frontmatter is present.
  *
  * @param markdown - The raw markdown content to parse
  * @returns Object containing parsed frontmatter (or null if missing/invalid)
@@ -66,7 +71,7 @@ export function extractFrontmatter(markdown: string): {
   frontmatter: RunbookFrontmatter | null;
   content: string;
 } {
-  let data: Record<string, unknown>;
+  let data: unknown;
   let content: string;
 
   try {
@@ -78,23 +83,21 @@ export function extractFrontmatter(markdown: string): {
     return { frontmatter: null, content: markdown };
   }
 
+  // Non-object YAML (arrays, scalars) is not valid frontmatter
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+    return { frontmatter: null, content };
+  }
+
   // No frontmatter present
   if (Object.keys(data).length === 0) {
     return { frontmatter: null, content: markdown };
   }
 
-  // Validate with Zod (passthrough allows unknown fields)
-  const result = RunbookFrontmatterSchema.safeParse(data);
+  // Validate with Zod — .catch(undefined) on each field ensures parse always succeeds.
+  // Invalid fields become undefined; valid fields and unknown passthrough fields are preserved.
+  const frontmatter = RunbookFrontmatterSchema.parse(data);
 
-  if (!result.success) {
-    // Log validation errors in debug mode, but still return content stripped of frontmatter
-    if (process.env.RUNDOWN_LOG_LEVEL === 'debug') {
-      console.error('Frontmatter validation error:', result.error.format());
-    }
-    return { frontmatter: null, content };
-  }
-
-  return { frontmatter: result.data, content };
+  return { frontmatter, content };
 }
 
 /**

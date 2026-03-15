@@ -32,10 +32,8 @@ function getFilesRecursively(dir: string): string[] {
 /** Check if any step (or substep) has a GOTO transition */
 function hasGotoTransition(steps: readonly Step[]): boolean {
   return steps.some((s) => {
-    if (s.transitions) {
-      const { pass, fail } = s.transitions;
-      if (pass.action.type === 'GOTO' || fail.action.type === 'GOTO') return true;
-    }
+    const { pass, fail } = s.transitions;
+    if (pass.action.type === 'GOTO' || fail.action.type === 'GOTO') return true;
     if (s.kind === 'substeps' || s.kind === 'for') {
       return hasGotoTransition(s.substeps);
     }
@@ -46,10 +44,8 @@ function hasGotoTransition(steps: readonly Step[]): boolean {
 /** Check if any step (or substep) has a retry > 0 */
 function hasRetry(steps: readonly Step[]): boolean {
   return steps.some((s) => {
-    if (s.transitions) {
-      const { pass, fail } = s.transitions;
-      if (pass.retry > 0 || fail.retry > 0) return true;
-    }
+    const { pass, fail } = s.transitions;
+    if (pass.retry > 0 || fail.retry > 0) return true;
     if (s.kind === 'substeps' || s.kind === 'for') {
       return hasRetry(s.substeps);
     }
@@ -57,10 +53,16 @@ function hasRetry(steps: readonly Step[]): boolean {
   });
 }
 
-/** Check if any step (or substep) has transitions defined */
+/** Check if any step (or substep) has non-default transitions */
 function hasTransitions(steps: readonly Step[]): boolean {
   return steps.some((s) => {
-    if (s.transitions) return true;
+    // Check for non-default transitions (not just PASS CONTINUE / FAIL STOP)
+    const hasNonDefault =
+      s.transitions.pass.action.type !== 'CONTINUE' ||
+      s.transitions.fail.action.type !== 'STOP' ||
+      s.transitions.pass.retry > 0 ||
+      s.transitions.fail.retry > 0;
+    if (hasNonDefault) return true;
     if (s.kind === 'substeps' || s.kind === 'for') {
       return hasTransitions(s.substeps);
     }

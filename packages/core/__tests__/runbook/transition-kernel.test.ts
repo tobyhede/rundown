@@ -512,7 +512,6 @@ describe('transition-kernel', () => {
         name: '1',
         description: 'Test step',
         transitions: {
-          aggregation: 'ANY',
           pass: {
             kind: 'pass',
             retry: 0,
@@ -535,7 +534,6 @@ describe('transition-kernel', () => {
         name: '1',
         description: 'Test step',
         transitions: {
-          aggregation: 'ANY',
           pass: {
             kind: 'pass',
             retry: 0,
@@ -558,7 +556,6 @@ describe('transition-kernel', () => {
         name: '1',
         description: 'Test step',
         transitions: {
-          aggregation: 'ANY',
           pass: {
             kind: 'pass',
             retry: 0,
@@ -581,7 +578,6 @@ describe('transition-kernel', () => {
         name: '1',
         description: 'Test step',
         transitions: {
-          aggregation: 'ANY',
           pass: {
             kind: 'pass',
             retry: 0,
@@ -604,7 +600,6 @@ describe('transition-kernel', () => {
         name: '1',
         description: 'Test step',
         transitions: {
-          aggregation: 'ANY',
           pass: {
             kind: 'pass',
             retry: 0,
