@@ -57,7 +57,7 @@ function renderTransitionAction(transition: TransitionObject): string {
  * Pass and fail use inverted modifiers: when aggregation is ALL,
  * PASS shows ALL but FAIL shows ANY (and vice-versa).
  *
- * @param aggregation - The aggregation mode (ALL, ANY, or none)
+ * @param aggregation - The aggregation strategy, or undefined for no aggregation
  * @param kind - Whether this is for a pass or fail transition
  * @returns The modifier suffix string (e.g., " ALL", " ANY", or empty)
  */
@@ -65,6 +65,23 @@ function aggregationModifier(aggregation: Aggregation | undefined, kind: 'pass' 
   if (!aggregation) return '';
   if (kind === 'pass') return aggregation.strategy === 'ALL' ? ' ALL' : ' ANY';
   return aggregation.strategy === 'ALL' ? ' ANY' : ' ALL';
+}
+
+/**
+ * Check whether transitions differ from the base defaults (PASS CONTINUE / FAIL STOP).
+ *
+ * @param transitions - The transitions to check
+ * @returns true if any transition is non-default
+ */
+function hasNonDefaultTransitions(transitions: Transitions): boolean {
+  const isDefaultPass = transitions.pass.action.type === 'CONTINUE' && transitions.pass.retry === 0;
+
+  const isDefaultFail =
+    transitions.fail.action.type === 'STOP' &&
+    !('message' in transitions.fail.action && transitions.fail.action.message) &&
+    transitions.fail.retry === 0;
+
+  return !(isDefaultPass && isDefaultFail);
 }
 
 /**
@@ -186,9 +203,11 @@ export function renderStep(step: Step): string {
     lines.push(...renderForClause(step.forClause));
   }
 
-  // Transitions
-  lines.push(renderTransitions(step.transitions, step.aggregation));
-  lines.push('');
+  // Transitions (only render when non-default or aggregation present)
+  if (step.aggregation || hasNonDefaultTransitions(step.transitions)) {
+    lines.push(renderTransitions(step.transitions, step.aggregation));
+    lines.push('');
+  }
 
   const shorthandSubsteps = getShorthandRunbookSubsteps(step);
   if (shorthandSubsteps?.length) {

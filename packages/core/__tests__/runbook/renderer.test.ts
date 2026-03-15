@@ -569,6 +569,7 @@ echo check
     expect((parsed1.steps[0] as any).forClause?.transitions).toBeDefined();
     expect((parsed1.steps[0] as any).forClause?.transitions?.pass.action.type).toBe('CONTINUE');
     expect((parsed1.steps[0] as any).forClause?.transitions?.fail.action.type).toBe('BREAK');
+    expect((parsed1.steps[0] as any).forClause?.aggregation).toEqual({ strategy: 'ALL' });
 
     const rendered = renderStep(parsed1.steps[0]);
     const { runbook: parsed2 } = parseRunbookDocument(rendered);
@@ -585,6 +586,7 @@ echo check
       retry: 0,
       action: { type: 'BREAK' },
     });
+    expect((parsed2.steps[0] as any).forClause?.aggregation).toEqual({ strategy: 'ALL' });
   });
 });
 
