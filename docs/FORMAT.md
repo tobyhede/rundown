@@ -109,10 +109,12 @@ for_variant ::= variable_name ws "IN" ws positive_integer ws "TO" ws positive_in
               | variable_name ws "IN" ws range
               | range
 
-range       ::= positive_integer ( ws "TO" ws positive_integer )?
+range_value ::= positive_integer | template_variable
+range       ::= range_value ( ws "TO" ws range_value )?
 source_ref  ::= "{{" ws? variable_name ws? "}}"
 
 nested_transition ::= ws "- " result_keyword ( ws aggregation )? ws action newline
+                    | ws "- " result_keyword ( ws aggregation )? ws "RETRY" ws positive_integer ws action newline
                     | ws "- DEFER" newline
 ```
 
@@ -131,6 +133,7 @@ Template variables (`{{var}}`) may appear in range bound positions. Source refer
 
 ```
 transition     ::= "- " result_keyword ( ws aggregation )? ws action newline
+                 | "- " result_keyword ( ws aggregation )? ws "RETRY" ws positive_integer ws action newline
                  | "- DEFER" newline
 
 result_keyword ::= "PASS" | "FAIL" | "YES" | "NO"
@@ -151,10 +154,9 @@ action ::= "CONTINUE"
          | "COMPLETE" ( ws message )?
          | "STOP" ( ws message )?
          | "GOTO" ws target
-         | "RETRY" ( ws positive_integer )? ( ws action )? ( ws message )?
 ```
 
-Reserved words cannot appear as bare messages. Use quoted form for reserved-word messages (e.g., `RETRY 3 STOP "COMPLETE"`). Bare `RETRY` defaults to `RETRY 1 STOP`. `RETRY N` without fallback action defaults to `RETRY N STOP`. A bare message after RETRY count (e.g., `RETRY 3 "error"`) is shorthand for `RETRY 3 STOP "error"`. RETRY fallback action cannot be RETRY.
+Reserved words cannot appear as bare messages. Use quoted form for reserved-word messages (e.g., `RETRY 3 STOP "COMPLETE"`). When RETRY is used, both count and fallback action are required. RETRY fallback action cannot be RETRY.
 
 Context constraints:
 
@@ -191,7 +193,7 @@ quoted_string ::= '"' text '"'
 code_block ::= backtick_fence info_string newline content backtick_fence newline
 
 info_string ::= executable_lang ( ws "prompt" )?
-              | display_lang
+              | display_lang ( ws "prompt" )?
               | "prompt"
 
 executable_lang ::= "bash" | "sh" | "shell"

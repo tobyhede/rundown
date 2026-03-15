@@ -199,7 +199,7 @@ Example of a step that auto-executes:
 ````markdown
 ## 3. Run tests
 - PASS CONTINUE
-- FAIL RETRY 2
+- FAIL RETRY 2 STOP
 
 ```bash
 npm test
