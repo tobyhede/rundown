@@ -806,11 +806,21 @@ function buildParentStateConfig(
 
   const always: AlwaysTransition[] = [];
 
-  // FOR iteration-level aggregation/transitions (both optional — present only in aggregating mode)
+  // FOR iteration-level aggregation/transitions — default when iteration machinery is needed
+  const needsIterationMachinery =
+    hasFor &&
+    (parentStep.forClause.transitions ?? parentStep.forClause.aggregation ?? hasAggregation);
   const forAggregation: Aggregation | undefined =
-    parentStep.kind === 'for' ? parentStep.forClause.aggregation : undefined;
+    hasFor && needsIterationMachinery
+      ? (parentStep.forClause.aggregation ?? { strategy: 'ALL' })
+      : undefined;
   const forTransitions: Transitions | undefined =
-    parentStep.kind === 'for' ? parentStep.forClause.transitions : undefined;
+    hasFor && needsIterationMachinery
+      ? (parentStep.forClause.transitions ?? {
+          pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
+          fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
+        })
+      : undefined;
 
   type GuardFn = (args: { context: RunbookContext }) => boolean;
 

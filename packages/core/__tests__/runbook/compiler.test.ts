@@ -3671,6 +3671,7 @@ describe('runbook compiler', () => {
 ## 1. Process items
 - FOR item IN {{ items }}
 - PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 Handle item
 - PASS CONTINUE
@@ -3701,6 +3702,7 @@ echo "processing"
 ## 1. Process items
 - FOR item IN {{ items }}
 - PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 Handle item
 - PASS CONTINUE
@@ -3749,6 +3751,7 @@ echo "processing"
 ## 1. Process items
 - FOR item IN 1 TO 100 OF {{ items }}
 - PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 Handle item
 - PASS CONTINUE
@@ -3777,6 +3780,7 @@ echo "processing"
 ## 1. Process items
 - FOR item IN {{ missing }}
 - PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 Handle item
 - PASS CONTINUE
@@ -3807,6 +3811,7 @@ echo "processing"
 ## 1. Process items
 - FOR item IN {{ items }}
 - PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 Handle item
 - PASS CONTINUE
@@ -3837,6 +3842,7 @@ echo "processing"
 ## 1. Process items
 - FOR item IN 2 TO 4 OF {{ items }}
 - PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 Handle item
 - PASS CONTINUE
@@ -4093,6 +4099,7 @@ echo "processing"
 ## 1. Process items
 - FOR item IN 4 TO 2 OF {{ items }}
 - PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 Handle item
 - PASS CONTINUE
@@ -4425,17 +4432,17 @@ echo "processing"
 
       expect(actor.getSnapshot().value).toBe('step::1::1');
 
-      actor.send({ type: 'PASS' }); // iteration 1 complete -> sequential loop-back
+      actor.send({ type: 'PASS' }); // iteration 1: DEFER → accumulates 'pass' → loop-back
       expect(actor.getSnapshot().value).toBe('step::1::1');
       expect(actor.getSnapshot().context.forStack[0]?.iteration).toBe(2);
 
-      actor.send({ type: 'PASS' }); // iteration 2 complete (final) -> sequential exit -> parent aggregation -> step 2
+      actor.send({ type: 'PASS' }); // iteration 2: DEFER → accumulates 'pass' → parent aggregation → PASS ALL → CONTINUE → step 2
       expect(actor.getSnapshot().value).toBe('step::2');
-      // Sequential mode: no iteration-level aggregation, iterationResults not populated
-      expect(actor.getSnapshot().context.iterationResults).toEqual([]);
+      // Aggregation mode: iteration results accumulated via default DEFER transitions
+      expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'pass']);
     });
 
-    it('sequential FOR shorthand — substep FAIL fires STOP directly (no iteration-level aggregation)', () => {
+    it('FOR shorthand with FAIL — iteration failure routes through parent FAIL ANY', () => {
       const steps = createRunbook(`
 ## 1. Review the plan
 - FOR pass IN 1 TO 2
@@ -4455,15 +4462,14 @@ echo "processing"
       const actor = createActor(machine);
       actor.start();
 
-      // Iteration 1: PASS → substep DEFER → sequential loop-back
+      // Iteration 1: PASS → DEFER → accumulates 'pass' → loop-back
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().value).toBe('step::1::1');
 
-      // Iteration 2: FAIL → substep DEFER → sequential exit → parent aggregation
-      // Sequential mode: no iteration-level aggregation, iterationResults stays empty
-      // Parent ALL aggregation over empty iterationResults = vacuous pass → CONTINUE → step 2
+      // Iteration 2: FAIL → DEFER → accumulates 'fail' → parent aggregation
+      // FAIL ANY fires (fail in results) → GOTO Synthesize
       actor.send({ type: 'FAIL' });
-      expect(actor.getSnapshot().value).toBe('step::2');
+      expect(actor.getSnapshot().value).toBe('step::Synthesize');
     });
 
     it('GOTO to shorthand-canonicalized FOR step enters substep .1', () => {
