@@ -23,6 +23,7 @@ reviews:
       - main
 
   path_filters:
+    - "**"
     - "!.worktrees/**"
     - "!.work/**"
     - "!site/node_modules/**"
