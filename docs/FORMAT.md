@@ -45,7 +45,7 @@ tags_field    ::= "tags:" newline tag_list
 vars_field    ::= "vars:" newline vars_map
 
 name_string   ::= [a-zA-Z0-9_-] ( [a-zA-Z0-9_ -]* [a-zA-Z0-9_-] )?
-tag_list      ::= ( ws "- " text newline )+
+tag_list      ::= ( ws "- " tag newline )+
 tag           ::= text
 vars_map      ::= ( ws variable_name ":" ws value newline )+
 value         ::= text

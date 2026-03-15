@@ -1,5 +1,6 @@
 import type { Step, Action, Transitions, TransitionObject, Substep, Runbook } from '../types.js';
 import type { ParsedForClause } from '@rundown-org/parser';
+import { isWindowed } from '@rundown-org/parser';
 import { stepIdToString } from '../step-id.js';
 import { renderCodeFence, renderHeading } from './primitives.js';
 
@@ -114,7 +115,7 @@ function renderForClause(forClause: ParsedForClause): string[] {
   const lines: string[] = [];
 
   if (forClause.source !== undefined) {
-    if ('end' in forClause) {
+    if (isWindowed(forClause)) {
       lines.push(
         `- FOR ${forClause.variable} IN ${String(forClause.start)} TO ${String(forClause.end)} OF {{ ${forClause.source} }}`,
       );
