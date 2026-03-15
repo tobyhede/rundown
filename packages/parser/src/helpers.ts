@@ -750,13 +750,13 @@ function resolveAggregationMode(
   if (passModifier && !failModifier) {
     const expected = passModifier === 'ALL' ? 'ANY' : 'ALL';
     throw new RunbookSyntaxError(
-      `PASS ${passModifier} requires explicit FAIL ${expected} — aggregation modifiers must appear on both sides`,
+      `PASS ${passModifier} requires explicit FAIL ${expected}. Aggregation modifiers must appear on both sides`,
     );
   }
   if (failModifier && !passModifier) {
     const expected = failModifier === 'ALL' ? 'ANY' : 'ALL';
     throw new RunbookSyntaxError(
-      `FAIL ${failModifier} requires explicit PASS ${expected} — aggregation modifiers must appear on both sides`,
+      `FAIL ${failModifier} requires explicit PASS ${expected}. Aggregation modifiers must appear on both sides`,
     );
   }
 

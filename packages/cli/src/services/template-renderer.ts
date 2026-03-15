@@ -43,8 +43,8 @@ type ExplicitFullSourceWindow = AllKeysExplicit<FullSourceWindow>;
 /** WindowedSourceWindow with all keys required — compile error on missing field. */
 type ExplicitWindowedSourceWindow = AllKeysExplicit<WindowedSourceWindow>;
 
-/** NumericWindow with all keys required (minus `source` discriminant). */
-type ExplicitNumericWindow = AllKeysExplicit<Omit<NumericWindow, 'source'>>;
+/** NumericWindow with all keys required, preserving `source` discriminant for narrowing. */
+type ExplicitNumericWindow = AllKeysExplicit<Omit<NumericWindow, 'source'>> & { source?: never };
 
 /**
  * Shared placeholder matcher used across startup and runtime substitution.

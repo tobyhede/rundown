@@ -810,17 +810,15 @@ function buildParentStateConfig(
   const needsIterationMachinery =
     hasFor &&
     (parentStep.forClause.transitions ?? parentStep.forClause.aggregation ?? hasAggregation);
-  const forAggregation: Aggregation | undefined =
-    hasFor && needsIterationMachinery
-      ? (parentStep.forClause.aggregation ?? { strategy: 'ALL' })
-      : undefined;
-  const forTransitions: Transitions | undefined =
-    hasFor && needsIterationMachinery
-      ? (parentStep.forClause.transitions ?? {
-          pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
-          fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
-        })
-      : undefined;
+  const forAggregation: Aggregation | undefined = needsIterationMachinery
+    ? (parentStep.forClause.aggregation ?? { strategy: 'ALL' })
+    : undefined;
+  const forTransitions: Transitions | undefined = needsIterationMachinery
+    ? (parentStep.forClause.transitions ?? {
+        pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
+        fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
+      })
+    : undefined;
 
   type GuardFn = (args: { context: RunbookContext }) => boolean;
 
