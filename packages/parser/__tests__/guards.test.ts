@@ -6,6 +6,7 @@ import {
   hasRunbooks,
   hasForClause,
   isSourced,
+  isWindowed,
   isBaseStep,
   isStepWithCommand,
   isStepWithSubsteps,
@@ -15,7 +16,15 @@ import {
   resolvedStepHasSubsteps,
   areAllStepsResolved,
 } from '../src/guards.js';
-import type { Step, Substep, ForClause, ResolvedStep } from '../src/ast.js';
+import type {
+  Step,
+  Substep,
+  ForClause,
+  ResolvedStep,
+  FullSourceWindow,
+  WindowedSourceWindow,
+  SourceWindow,
+} from '../src/ast.js';
 
 const createStep = (overrides: Record<string, unknown> = {}): Step => {
   const obj: Record<string, unknown> = { name: '1', description: 'Test step', ...overrides };
@@ -279,6 +288,26 @@ describe('isSourced', () => {
     if (!isSourced(fc)) {
       const _end: number = fc.end;
       expect(_end).toBe(10);
+    }
+  });
+});
+
+describe('isWindowed', () => {
+  it('returns true for a WindowedSourceWindow (has end)', () => {
+    const fc: WindowedSourceWindow = { variable: 'item', start: 1, end: 10, source: 'items' };
+    expect(isWindowed(fc)).toBe(true);
+  });
+
+  it('returns false for a FullSourceWindow (no end)', () => {
+    const fc: FullSourceWindow = { variable: 'server', start: 1, source: 'servers' };
+    expect(isWindowed(fc as SourceWindow)).toBe(false);
+  });
+
+  it('narrows type so fc.end is number after guard', () => {
+    const fc: SourceWindow = { variable: 'item', start: 1, end: 5, source: 'items' };
+    if (isWindowed(fc)) {
+      const _end: number = fc.end;
+      expect(_end).toBe(5);
     }
   });
 });

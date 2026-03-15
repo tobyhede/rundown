@@ -444,11 +444,13 @@ function createForContext(
       throw new Error(`Data source "${forClause.source}" is not defined`);
     }
 
+    const windowEnd = 'end' in forClause ? forClause.end : undefined;
+
     switch (ds.kind) {
       case 'array': {
         source = { kind: 'array', items: ds.items };
         start = Math.max(1, Math.min(forClause.start, ds.items.length));
-        const requestedEnd = forClause.end ?? ds.items.length;
+        const requestedEnd = windowEnd ?? ds.items.length;
         end = ds.items.length === 0 ? start : Math.max(1, Math.min(requestedEnd, ds.items.length));
         break;
       }
@@ -461,7 +463,7 @@ function createForContext(
           snapshot: null,
         };
         start = forClause.start;
-        end = forClause.end; // undefined for open windows
+        end = windowEnd; // undefined for full source (open) windows
         break;
       }
     }

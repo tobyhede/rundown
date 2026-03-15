@@ -204,11 +204,8 @@ function boundToString(bound: Bound): string {
  */
 function reconstructForLine(fc: UnresolvedForClause): string {
   if (fc.source !== undefined) {
-    const prefix = `FOR ${fc.variable} IN`;
-    if (fc.end !== undefined) {
-      return `${prefix} ${boundToString(fc.start)} TO ${boundToString(fc.end)} OF {{ ${fc.source} }}`;
-    }
-    return `${prefix} {{ ${fc.source} }}`;
+    // UnresolvedSourceWindow always has both start and end (windowed syntax only)
+    return `FOR ${fc.variable} IN ${boundToString(fc.start)} TO ${boundToString(fc.end)} OF {{ ${fc.source} }}`;
   }
   const prefix = fc.variable ? `FOR ${fc.variable} IN` : 'FOR';
   return `${prefix} ${boundToString(fc.start)} TO ${boundToString(fc.end)}`;
@@ -228,7 +225,7 @@ function allBoundRefsDefined(
   if (typeof fc.start !== 'number') {
     if (resolveTemplatePath(fc.start.ref, variables) === undefined) return false;
   }
-  if (fc.end !== undefined && typeof fc.end !== 'number') {
+  if (typeof fc.end !== 'number') {
     if (resolveTemplatePath(fc.end.ref, variables) === undefined) return false;
   }
   return true;
@@ -280,26 +277,20 @@ export function resolveForBounds(
     }
 
     const start = resolveBound(fc.start, variables, step.name, 'start');
-    const end =
-      fc.end !== undefined ? resolveBound(fc.end, variables, step.name, 'end') : undefined;
+    const end = resolveBound(fc.end, variables, step.name, 'end');
 
     let resolved: ForClause;
     if (fc.source !== undefined) {
-      // SourceWindow — end is optional
+      // WindowedSourceWindow — both bounds required
       resolved = {
         variable: fc.variable,
         start,
+        end,
         source: fc.source,
-        ...(end !== undefined && { end }),
         ...(fc.transitions && { transitions: fc.transitions }),
       };
     } else {
-      // NumericWindow — end is required (UnresolvedNumericWindow.end: Bound is non-optional)
-      if (end === undefined) {
-        throw new Error(
-          `FOR end bound in step "${step.name}" is required for numeric range — this indicates a parser bug`,
-        );
-      }
+      // NumericWindow — both bounds required
       resolved = {
         start,
         end,

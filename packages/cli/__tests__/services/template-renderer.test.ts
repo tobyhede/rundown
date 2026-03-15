@@ -820,19 +820,25 @@ describe('resolveForBounds', () => {
     expect(() => resolveForBounds(runbook, { Neg: '-5' })).toThrow('must be a positive integer');
   });
 
-  it('resolves source window with start BoundRef and no end', () => {
+  it('resolves windowed source with both BoundRefs', () => {
     const unresolved: ParsedForClause = {
       unresolved: true as const,
       variable: 'item',
       start: { ref: 'Begin' },
+      end: { ref: 'End' },
       source: 'items',
     };
     const runbook = makeRunbook([makeForStep(unresolved)]);
-    const { runbook: result } = resolveForBounds(runbook, { Begin: '3' });
-    expect(result.steps[0].forClause).toEqual({ variable: 'item', start: 3, source: 'items' });
+    const { runbook: result } = resolveForBounds(runbook, { Begin: '3', End: '7' });
+    expect(result.steps[0].forClause).toEqual({
+      variable: 'item',
+      start: 3,
+      end: 7,
+      source: 'items',
+    });
   });
 
-  it('falls back source window with undefined BoundRef', () => {
+  it('falls back windowed source with undefined BoundRef', () => {
     const unresolved: ParsedForClause = {
       unresolved: true as const,
       variable: 'x',

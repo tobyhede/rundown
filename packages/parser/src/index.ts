@@ -61,6 +61,7 @@ export {
   // eslint-disable-next-line @typescript-eslint/no-deprecated -- backward-compatible re-export
   hasForClause,
   isSourced,
+  isWindowed,
   isBaseStep,
   isStepWithCommand,
   isStepWithSubsteps,
