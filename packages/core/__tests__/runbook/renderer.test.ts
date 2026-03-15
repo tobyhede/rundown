@@ -543,6 +543,75 @@ Do the check.
     });
   });
 
+  it('round-trips FOR with default transitions and H3 substeps', () => {
+    const original = `## 1. Process items
+
+- FOR item IN 1 TO 3
+
+### 1.1 Check item
+
+Do the check.
+
+## 2. Done`;
+
+    const parsed1 = parseRunbook(original);
+    expect(parsed1[0].kind).toBe('for');
+
+    const rendered = parsed1.map(renderStep).join('\n\n');
+    // Blank line must separate FOR clause from H3
+    expect(rendered).toContain('- FOR item IN 3\n\n### 1.1');
+
+    const parsed2 = parseRunbook(rendered);
+    expect(parsed2[0].kind).toBe('for');
+    expect(parsed2[0].substeps).toHaveLength(1);
+    expect(parsed2[0].substeps?.[0].description).toBe('Check item');
+  });
+
+  it('round-trips FOR with default transitions and shorthand substeps with prompt', () => {
+    const original = `## 1. Review the plan
+
+- FOR pass IN 1 TO 2
+
+Review the following items carefully.
+
+- review.runbook.md
+
+## 2. Done`;
+
+    const parsed1 = parseRunbook(original);
+    expect(parsed1[0].kind).toBe('for');
+
+    const rendered = parsed1.map(renderStep).join('\n\n');
+    const parsed2 = parseRunbook(rendered);
+
+    expect(parsed2[0].kind).toBe('for');
+    expect((parsed2[0] as any).forClause).toEqual({ variable: 'pass', start: 1, end: 2 });
+    expect((parsed2[0] as any).substepsDerivedFromRunbookList).toBe(true);
+  });
+
+  it('round-trips FOR with default transitions and step prompt', () => {
+    const original = `## 1. Process items
+
+- FOR item IN 1 TO 3
+
+Process each item carefully.
+
+### 1.1 Check item
+
+## 2. Done`;
+
+    const parsed1 = parseRunbook(original);
+    expect(parsed1[0].kind).toBe('for');
+    expect(parsed1[0].prompt).toBe('Process each item carefully.');
+
+    const rendered = parsed1.map(renderStep).join('\n\n');
+    const parsed2 = parseRunbook(rendered);
+
+    expect(parsed2[0].kind).toBe('for');
+    expect(parsed2[0].prompt).toBe('Process each item carefully.');
+    expect(parsed2[0].substeps).toHaveLength(1);
+  });
+
   it('round-trips substeps without aggregation', () => {
     const original = `## 1. Sequential check
 
