@@ -48,6 +48,8 @@ export interface NumericWindow {
   readonly transitions?: Transitions;
   /** Iteration-level aggregation strategy for FOR loops */
   readonly aggregation?: Aggregation;
+  /** When true, bounds are synthetic — the agent drives iteration manually */
+  readonly prompted?: true;
 }
 
 /**
@@ -66,6 +68,8 @@ export interface FullSourceWindow {
   readonly transitions?: Transitions;
   /** Iteration-level aggregation strategy for FOR loops */
   readonly aggregation?: Aggregation;
+  /** When true, bounds are synthetic — the agent drives iteration manually */
+  readonly prompted?: true;
 }
 
 /**
@@ -86,6 +90,8 @@ export interface WindowedSourceWindow {
   readonly transitions?: Transitions;
   /** Iteration-level aggregation strategy for FOR loops */
   readonly aggregation?: Aggregation;
+  /** When true, bounds are synthetic — the agent drives iteration manually */
+  readonly prompted?: true;
 }
 
 /**

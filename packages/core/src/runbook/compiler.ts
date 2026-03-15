@@ -401,6 +401,20 @@ function createForContext(
   implicit = false,
   sources?: Readonly<Record<string, DataSource>>,
 ): ForContext {
+  // Prompted FOR steps use synthetic bounds — bypass source lookup
+  if (forClause.prompted) {
+    return {
+      stepId: stepName,
+      iteration: resolveAtValue(atValue, forClause.start),
+      start: forClause.start,
+      end: 'end' in forClause ? forClause.end : 1,
+      variable: forClause.variable,
+      implicit: false,
+      source: { kind: 'range' },
+      currentValue: undefined,
+    };
+  }
+
   let source: ForContext['source'];
   let start: number;
   let end: number | undefined;

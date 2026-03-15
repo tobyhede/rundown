@@ -608,9 +608,10 @@ export async function runExecutionLoop(
       prompted, // CRITICAL: Pass prompted flag for correct command display
     });
 
-    // If CLI prompted mode, OR no command
+    // If CLI prompted mode, per-step prompted FOR, OR no command
     // Use itemToRender which may be a substep with its own command
-    if (prompted || !command) {
+    const stepIsPrompted = currentStep.kind === 'for' && currentStep.forClause.prompted === true;
+    if (prompted || stepIsPrompted || !command) {
       return 'waiting';
     }
 

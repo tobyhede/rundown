@@ -5,7 +5,7 @@ import type {
   Step,
   BaseStep,
   StepWithFor,
-  StepWithSubsteps,
+  ResolvedStepWithFor,
   ParsedForClause,
   Transitions,
   Substep,
@@ -703,7 +703,7 @@ describe('resolveForBounds', () => {
     expect(result.steps[0].forClause).toEqual({ variable: 'x', start: 1, end: 5, source: 'items' });
   });
 
-  it('falls back to prompt text for undefined variable', () => {
+  it('falls back to prompted FOR for undefined variable', () => {
     const unresolved: ParsedForClause = {
       unresolved: true as const,
       variable: 'item',
@@ -712,14 +712,18 @@ describe('resolveForBounds', () => {
     };
     const runbook = makeRunbook([makeForStep(unresolved)]);
     const { runbook: result, warnings } = resolveForBounds(runbook, {});
-    const step = result.steps[0] as StepWithSubsteps;
-    expect(step.kind).toBe('substeps');
+    const step = result.steps[0] as ResolvedStepWithFor;
+    expect(step.kind).toBe('for');
+    expect(step.forClause.prompted).toBe(true);
+    expect(step.forClause.start).toBe(1);
+    expect(step.forClause.end).toBe(1);
     expect(step.prompt).toContain('FOR item IN 1 TO {{Missing}}');
+    expect(step.substeps).toBeDefined();
     expect(warnings).toHaveLength(1);
-    expect(warnings[0]).toContain('preserved as prompt text');
+    expect(warnings[0]).toContain('prompted');
   });
 
-  it('falls back when one bound defined and other undefined', () => {
+  it('falls back to prompted FOR when one bound defined and other undefined', () => {
     const unresolved: ParsedForClause = {
       unresolved: true as const,
       variable: 'item',
@@ -728,8 +732,9 @@ describe('resolveForBounds', () => {
     };
     const runbook = makeRunbook([makeForStep(unresolved)]);
     const { runbook: result, warnings } = resolveForBounds(runbook, { Min: '2' });
-    const step = result.steps[0] as StepWithSubsteps;
-    expect(step.kind).toBe('substeps');
+    const step = result.steps[0] as ResolvedStepWithFor;
+    expect(step.kind).toBe('for');
+    expect(step.forClause.prompted).toBe(true);
     expect(step.prompt).toContain('FOR item IN {{Min}} TO {{Max}}');
     expect(warnings).toHaveLength(1);
   });
@@ -840,7 +845,7 @@ describe('resolveForBounds', () => {
     });
   });
 
-  it('falls back windowed source with undefined BoundRef', () => {
+  it('falls back windowed source with undefined BoundRef to prompted FOR', () => {
     const unresolved: ParsedForClause = {
       unresolved: true as const,
       variable: 'x',
@@ -850,8 +855,10 @@ describe('resolveForBounds', () => {
     };
     const runbook = makeRunbook([makeForStep(unresolved)]);
     const { runbook: result, warnings } = resolveForBounds(runbook, {});
-    const step = result.steps[0] as StepWithSubsteps;
-    expect(step.kind).toBe('substeps');
+    const step = result.steps[0] as ResolvedStepWithFor;
+    expect(step.kind).toBe('for');
+    expect(step.forClause.prompted).toBe(true);
+    expect(step.forClause.source).toBe('items');
     expect(step.prompt).toContain('FOR x IN 1 TO {{N}} OF items');
     expect(warnings).toHaveLength(1);
   });
@@ -867,7 +874,7 @@ describe('resolveForBounds', () => {
     const runbook = makeRunbook([makeForStep(unresolved)]);
     const { runbook: resolved } = resolveForBounds(runbook, {});
     const substituted = substituteRunbookVariables(resolved, { items: 'a,b,c' });
-    const step = substituted.steps[0] as StepWithSubsteps;
+    const step = substituted.steps[0] as ResolvedStepWithFor;
     expect(step.prompt).toContain('OF items');
     expect(step.prompt).not.toContain('a,b,c');
   });
@@ -888,7 +895,7 @@ describe('resolveForBounds', () => {
     expect(sourceWarning).toBeUndefined();
   });
 
-  it('preserves iteration transitions in fallback prompt text', () => {
+  it('preserves iteration transitions in fallback prompt text and forClause', () => {
     const transitions: Transitions = {
       pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
       fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
@@ -902,7 +909,10 @@ describe('resolveForBounds', () => {
     };
     const runbook = makeRunbook([makeForStep(unresolved)]);
     const { runbook: result } = resolveForBounds(runbook, {});
-    const step = result.steps[0] as StepWithSubsteps;
+    const step = result.steps[0] as ResolvedStepWithFor;
+    expect(step.kind).toBe('for');
+    expect(step.forClause.prompted).toBe(true);
+    expect(step.forClause.transitions).toEqual(transitions);
     expect(step.prompt).toContain('FOR item IN 1 TO {{Missing}}');
     expect(step.prompt).toContain('- PASS CONTINUE');
     expect(step.prompt).toContain('- FAIL STOP');
@@ -913,17 +923,21 @@ describe('resolveForBounds', () => {
       pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
       fail: { kind: 'fail' as const, retry: 0, action: { type: 'BREAK' as const } },
     };
+    const aggregation = { strategy: 'ALL' as const };
     const unresolved: ParsedForClause = {
       unresolved: true as const,
       variable: 'item',
       start: 1,
       end: { ref: 'N' },
       transitions,
-      aggregation: { strategy: 'ALL' as const },
+      aggregation,
     };
     const runbook = makeRunbook([makeForStep(unresolved)]);
     const { runbook: result } = resolveForBounds(runbook, {});
-    const step = result.steps[0] as StepWithSubsteps;
+    const step = result.steps[0] as ResolvedStepWithFor;
+    expect(step.kind).toBe('for');
+    expect(step.forClause.prompted).toBe(true);
+    expect(step.forClause.aggregation).toEqual(aggregation);
     expect(step.prompt).toContain('- PASS ALL DEFER');
     expect(step.prompt).toContain('- FAIL ANY BREAK');
   });
@@ -942,7 +956,9 @@ describe('resolveForBounds', () => {
     };
     const runbook = makeRunbook([makeForStep(unresolved)]);
     const { runbook: result } = resolveForBounds(runbook, {});
-    const step = result.steps[0] as StepWithSubsteps;
+    const step = result.steps[0] as ResolvedStepWithFor;
+    expect(step.kind).toBe('for');
+    expect(step.forClause.prompted).toBe(true);
     expect(step.prompt).toContain('- PASS RETRY 3 CONTINUE');
     expect(step.prompt).toContain('- FAIL STOP');
   });
@@ -956,7 +972,9 @@ describe('resolveForBounds', () => {
     };
     const runbook = makeRunbook([makeForStep(unresolved)]);
     const { runbook: result } = resolveForBounds(runbook, {});
-    const step = result.steps[0] as StepWithSubsteps;
+    const step = result.steps[0] as ResolvedStepWithFor;
+    expect(step.kind).toBe('for');
+    expect(step.forClause.prompted).toBe(true);
     expect(step.prompt).toBe('FOR item IN 1 TO {{Missing}}');
     expect(step.prompt).not.toContain('PASS');
     expect(step.prompt).not.toContain('FAIL');
@@ -967,6 +985,7 @@ describe('resolveForBounds', () => {
       pass: { kind: 'pass' as const, retry: 0, action: { type: 'NEXT' as const } },
       fail: { kind: 'fail' as const, retry: 0, action: { type: 'COMPLETE' as const } },
     };
+    const aggregation = { strategy: 'ANY' as const };
     const unresolved: ParsedForClause = {
       unresolved: true as const,
       variable: 'x',
@@ -974,17 +993,49 @@ describe('resolveForBounds', () => {
       end: { ref: 'N' },
       source: 'items',
       transitions,
-      aggregation: { strategy: 'ANY' as const },
+      aggregation,
     };
     const runbook = makeRunbook([makeForStep(unresolved)]);
     const { runbook: result } = resolveForBounds(runbook, {});
-    const step = result.steps[0] as StepWithSubsteps;
+    const step = result.steps[0] as ResolvedStepWithFor;
+    expect(step.kind).toBe('for');
+    expect(step.forClause.prompted).toBe(true);
+    expect(step.forClause.source).toBe('items');
+    expect(step.forClause.transitions).toEqual(transitions);
+    expect(step.forClause.aggregation).toEqual(aggregation);
     expect(step.prompt).toContain('FOR x IN 1 TO {{N}} OF items');
     expect(step.prompt).toContain('- PASS ANY NEXT');
     expect(step.prompt).toContain('- FAIL ALL COMPLETE');
   });
 
-  describe('post-resolution validation of demoted FOR steps', () => {
+  it('prompted FOR retains forClause.variable', () => {
+    const unresolved: ParsedForClause = {
+      unresolved: true as const,
+      variable: 'server',
+      start: 1,
+      end: { ref: 'Count' },
+    };
+    const runbook = makeRunbook([makeForStep(unresolved)]);
+    const { runbook: result } = resolveForBounds(runbook, {});
+    const step = result.steps[0] as ResolvedStepWithFor;
+    expect(step.forClause.variable).toBe('server');
+    expect(step.forClause.prompted).toBe(true);
+  });
+
+  it('normal resolved FOR step has prompted undefined', () => {
+    const unresolved: ParsedForClause = {
+      unresolved: true as const,
+      variable: 'item',
+      start: 1,
+      end: { ref: 'N' },
+    };
+    const runbook = makeRunbook([makeForStep(unresolved)]);
+    const { runbook: result } = resolveForBounds(runbook, { N: '5' });
+    const step = result.steps[0] as ResolvedStepWithFor;
+    expect(step.forClause.prompted).toBeUndefined();
+  });
+
+  describe('post-resolution validation of prompted FOR steps', () => {
     /** Build a FOR step with substeps that have transitions. */
     function makeForStepWithSubstepTransitions(
       forClause: ParsedForClause,
@@ -1000,8 +1051,8 @@ describe('resolveForBounds', () => {
       };
     }
 
-    it('throws when GOTO AT targets a step with unresolved FOR bounds', () => {
-      // Step 1 is a FOR step with unresolved bounds (will be demoted)
+    it('throws when GOTO AT targets a step with prompted FOR clause', () => {
+      // Step 1 is a FOR step with unresolved bounds (will be prompted)
       const unresolvedFor: ParsedForClause = {
         unresolved: true as const,
         variable: 'item',
@@ -1010,7 +1061,7 @@ describe('resolveForBounds', () => {
       };
       const forStep = makeForStep(unresolvedFor, '1');
 
-      // Step 2 has GOTO 1 AT 3 — targets step 1 which will be demoted
+      // Step 2 has GOTO 1 AT 3 — targets step 1 which will be prompted
       const gotoStep: BaseStep = {
         kind: 'base',
         name: '2',
@@ -1029,11 +1080,11 @@ describe('resolveForBounds', () => {
       const runbook = makeRunbook([forStep, gotoStep]);
       expect(() => resolveForBounds(runbook, {})).toThrow(RunbookSyntaxError);
       expect(() => resolveForBounds(runbook, {})).toThrow(
-        'GOTO AT targets step "1" which has an unresolved FOR clause',
+        'GOTO AT targets step "1" which has a prompted FOR clause',
       );
     });
 
-    it('throws when NEXT is in substep of a step with unresolved FOR bounds', () => {
+    it('throws when NEXT is in substep of a step with prompted FOR clause', () => {
       const unresolvedFor: ParsedForClause = {
         unresolved: true as const,
         variable: 'item',
@@ -1055,11 +1106,11 @@ describe('resolveForBounds', () => {
       const runbook = makeRunbook([forStep]);
       expect(() => resolveForBounds(runbook, {})).toThrow(RunbookSyntaxError);
       expect(() => resolveForBounds(runbook, {})).toThrow(
-        'NEXT in step "1" requires a FOR loop, but the FOR clause is unresolved',
+        'NEXT in step "1" requires a FOR loop, but the FOR clause is prompted',
       );
     });
 
-    it('throws when BREAK is in substep of a step with unresolved FOR bounds', () => {
+    it('throws when BREAK is in substep of a step with prompted FOR clause', () => {
       const unresolvedFor: ParsedForClause = {
         unresolved: true as const,
         variable: 'item',
@@ -1081,11 +1132,11 @@ describe('resolveForBounds', () => {
       const runbook = makeRunbook([forStep]);
       expect(() => resolveForBounds(runbook, {})).toThrow(RunbookSyntaxError);
       expect(() => resolveForBounds(runbook, {})).toThrow(
-        'BREAK in step "1" requires a FOR loop, but the FOR clause is unresolved',
+        'BREAK in step "1" requires a FOR loop, but the FOR clause is prompted',
       );
     });
 
-    it('does not throw for GOTO (without AT) to a demoted step', () => {
+    it('does not throw for GOTO (without AT) to a prompted step', () => {
       const unresolvedFor: ParsedForClause = {
         unresolved: true as const,
         variable: 'item',
@@ -1094,7 +1145,7 @@ describe('resolveForBounds', () => {
       };
       const forStep = makeForStep(unresolvedFor, '1');
 
-      // Step 2 has GOTO 1 (no AT) — this is valid even for demoted steps
+      // Step 2 has GOTO 1 (no AT) — this is valid even for prompted steps
       const gotoStep: BaseStep = {
         kind: 'base',
         name: '2',
@@ -1114,18 +1165,18 @@ describe('resolveForBounds', () => {
       const { warnings } = resolveForBounds(runbook, {});
       // Should succeed with just the fallback warning
       expect(warnings).toHaveLength(1);
-      expect(warnings[0]).toContain('preserved as prompt text');
+      expect(warnings[0]).toContain('prompted');
     });
 
-    it('throws when forClause.transitions contain GOTO AT targeting a demoted step', () => {
-      // Step 1 is a FOR step with unresolved bounds (will be demoted)
+    it('throws when forClause.transitions contain GOTO AT targeting a prompted step', () => {
+      // Step 1 is a FOR step with unresolved bounds (will be prompted)
       const unresolvedFor: ParsedForClause = {
         unresolved: true as const,
         variable: 'item',
         start: 1,
         end: { ref: 'Missing' },
       };
-      const demotedStep = makeForStep(unresolvedFor, '1');
+      const promptedStep = makeForStep(unresolvedFor, '1');
 
       // Step 2 is a resolved FOR step whose forClause.transitions has GOTO 1 AT 3
       const resolvedFor: ParsedForClause = {
@@ -1144,10 +1195,10 @@ describe('resolveForBounds', () => {
       };
       const resolvedStep = makeForStep(resolvedFor, '2');
 
-      const runbook = makeRunbook([demotedStep, resolvedStep]);
+      const runbook = makeRunbook([promptedStep, resolvedStep]);
       expect(() => resolveForBounds(runbook, {})).toThrow(RunbookSyntaxError);
       expect(() => resolveForBounds(runbook, {})).toThrow(
-        'GOTO AT targets step "1" which has an unresolved FOR clause',
+        'GOTO AT targets step "1" which has a prompted FOR clause',
       );
     });
 
