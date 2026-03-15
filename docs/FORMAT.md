@@ -96,6 +96,8 @@ separator ::= ( "." | ":" | "\u2014" | "\u2192" | "-" | ")" | " " )+
 
 Unicode escapes: `\u2014` is em dash (—), `\u2192` is right arrow (→).
 
+Separators are matched greedily — the longest sequence of separator characters between identifier and description text is consumed.
+
 ## FOR Clauses
 
 ```
@@ -137,6 +139,8 @@ aggregation    ::= "ALL" | "ANY"
 
 `YES` is a syntactic alias for `PASS`. `NO` is a syntactic alias for `FAIL`. Transitions must use `-` bullet prefix. Transition keywords are matched as whole words — the keyword must be followed by whitespace.
 
+**Disambiguation:** A `- ` bullet inside a step is resolved by priority: (1) FOR clause (`FOR` keyword), (2) transition (`PASS`, `FAIL`, `YES`, `NO`, or standalone `DEFER`), (3) runbook reference (`.runbook.md` suffix), (4) prompt text.
+
 ## Actions
 
 ```
@@ -150,7 +154,7 @@ action ::= "CONTINUE"
          | "RETRY" ( ws positive_integer )? ( ws action )? ( ws message )?
 ```
 
-Action keywords are matched before `message` in all positions. A bare message after RETRY count (e.g., `RETRY 3 "error"`) is shorthand for `RETRY 3 STOP "error"`. RETRY fallback action cannot be RETRY.
+Reserved words cannot appear as bare messages. Use quoted form for reserved-word messages (e.g., `RETRY 3 STOP "COMPLETE"`). Bare `RETRY` defaults to `RETRY 1 STOP`. `RETRY N` without fallback action defaults to `RETRY N STOP`. A bare message after RETRY count (e.g., `RETRY 3 "error"`) is shorthand for `RETRY 3 STOP "error"`. RETRY fallback action cannot be RETRY.
 
 Context constraints:
 
@@ -174,14 +178,17 @@ index  ::= positive_integer | template_variable
 ## Messages
 
 ```
-message       ::= named_id | quoted_string
+message       ::= bare_message | quoted_string
+bare_message  ::= named_id    /* must not be a reserved word */
 quoted_string ::= '"' text '"'
 ```
+
+`bare_message` must not be a [reserved word](#reserved-words). To use a reserved word as a message, use the quoted form: `PASS STOP "COMPLETE"`, not `PASS STOP COMPLETE`.
 
 ## Code Blocks
 
 ```
-code_block ::= "```" info_string newline content "```" newline
+code_block ::= backtick_fence info_string newline content backtick_fence newline
 
 info_string ::= executable_lang ( ws "prompt" )?
               | display_lang
@@ -191,7 +198,7 @@ executable_lang ::= "bash" | "sh" | "shell"
 display_lang    ::= language_tag
 ```
 
-Language tag is required — bare code fences are invalid. Tags are matched case-insensitively. Non-executable tags (e.g., `json`, `yaml`) are display-only.
+Opening fence is 3 or more backticks. Closing fence must use at least as many backticks as the opening fence (CommonMark §4.5). Language tag is required — bare code fences are invalid. Tags are matched case-insensitively. Non-executable tags (e.g., `json`, `yaml`) are display-only.
 
 ## Template Variables
 
@@ -242,5 +249,6 @@ language_tag     ::= [a-zA-Z] [a-zA-Z0-9]*
 ws               ::= ( " " | "\t" )+
 newline          ::= "\n"
 yaml_block       ::= (* opaque YAML content *)
+backtick_fence   ::= "```" "`"*    /* 3 or more; closing fence >= opening count */
 content          ::= (* opaque code block content *)
 ```

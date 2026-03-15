@@ -140,6 +140,8 @@ Data sources are referenced in FOR clauses: `FOR item IN {{ items }}`.
 - File paths must stay within the project root (symlinks resolved, traversal blocked)
 - `file:` values are routed to sources only — they do NOT appear as template variables
 
+**Note:** The `scenarios` frontmatter field is an internal testing/demo feature, not part of the public Rundown format specification. See [docs/SCENARIOS.md](docs/SCENARIOS.md).
+
 ## Schema Output
 
 The `--schema` flag outputs the JSON Schema for a command's `--json` output (supported by all commands with `--json` output):
