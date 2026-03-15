@@ -14,7 +14,6 @@ import type {
   Command,
   Bound,
   ForClause,
-  FullSourceWindow,
   WindowedSourceWindow,
   NumericWindow,
   ResolvedRunbook,
@@ -37,9 +36,6 @@ import { isUnresolvedForClause, MAX_FOR_BOUND, stepIdToString } from '@rundown-o
 type AllKeysExplicit<T> = {
   [K in keyof Required<T>]: T[K];
 };
-
-/** FullSourceWindow with all keys required — compile error on missing field. */
-type ExplicitFullSourceWindow = AllKeysExplicit<FullSourceWindow>;
 
 /** WindowedSourceWindow with all keys required — compile error on missing field. */
 type ExplicitWindowedSourceWindow = AllKeysExplicit<WindowedSourceWindow>;
@@ -349,35 +345,17 @@ export function resolveForBounds(
 
     let resolved: ForClause;
     if (fc.source !== undefined) {
-      if (end !== undefined) {
-        // WindowedSourceWindow — both bounds required
-        const explicit: ExplicitWindowedSourceWindow = {
-          variable: fc.variable,
-          start,
-          end,
-          source: fc.source,
-          transitions: fc.transitions,
-          aggregation: fc.aggregation,
-        };
-        resolved = explicit;
-      } else {
-        // FullSourceWindow — no end bound
-        const explicit: ExplicitFullSourceWindow = {
-          variable: fc.variable,
-          start,
-          source: fc.source,
-          transitions: fc.transitions,
-          aggregation: fc.aggregation,
-        };
-        resolved = explicit;
-      }
+      // WindowedSourceWindow — both unresolved variants always have end: Bound
+      const explicit: ExplicitWindowedSourceWindow = {
+        variable: fc.variable,
+        start,
+        end,
+        source: fc.source,
+        transitions: fc.transitions,
+        aggregation: fc.aggregation,
+      };
+      resolved = explicit;
     } else {
-      // NumericWindow — end is required (UnresolvedNumericWindow.end: Bound is non-optional)
-      if (end === undefined) {
-        throw new Error(
-          `FOR end bound in step "${step.name}" is required for numeric range — this indicates a parser bug`,
-        );
-      }
       const explicit: ExplicitNumericWindow = {
         variable: fc.variable,
         start,
