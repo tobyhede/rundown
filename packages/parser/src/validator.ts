@@ -211,7 +211,7 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
             ),
           );
         }
-      } else {
+      } else if (!step.aggregation) {
         const hasSubstepDefer = step.substeps.some((sub) => {
           return (
             isAccumulatingAction(sub.transitions.pass.action) ||

@@ -71,7 +71,7 @@ export function extractFrontmatter(markdown: string): {
   frontmatter: RunbookFrontmatter | null;
   content: string;
 } {
-  let data: Record<string, unknown>;
+  let data: unknown;
   let content: string;
 
   try {
@@ -83,14 +83,14 @@ export function extractFrontmatter(markdown: string): {
     return { frontmatter: null, content: markdown };
   }
 
-  // No frontmatter present
-  if (Object.keys(data).length === 0) {
-    return { frontmatter: null, content: markdown };
-  }
-
   // Non-object YAML (arrays, scalars) is not valid frontmatter
   if (typeof data !== 'object' || data === null || Array.isArray(data)) {
     return { frontmatter: null, content };
+  }
+
+  // No frontmatter present
+  if (Object.keys(data).length === 0) {
+    return { frontmatter: null, content: markdown };
   }
 
   // Validate with Zod — .catch(undefined) on each field ensures parse always succeeds.

@@ -1167,6 +1167,35 @@ describe('validator strict rules', () => {
       expect(warnings).toHaveLength(1);
     });
 
+    it('does not warn when substep uses DEFER and step has step-level aggregation', () => {
+      const steps = [
+        mockStep({
+          name: '1',
+          forClause: { start: 1, end: 10 },
+          aggregation: { strategy: 'ALL' },
+          transitions: {
+            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+          },
+          substeps: [
+            {
+              id: '1',
+              description: 'Sub 1',
+              transitions: {
+                pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
+              },
+            },
+          ],
+        }),
+      ];
+      const diagnostics = validateRunbook(steps);
+      const warnings = filterWarnings(diagnostics).filter((d) =>
+        d.message.includes('no iteration-level aggregation'),
+      );
+      expect(warnings).toHaveLength(0);
+    });
+
     it('does not warn when no substep uses DEFER and no forClause.aggregation', () => {
       const steps = [
         mockStep({
