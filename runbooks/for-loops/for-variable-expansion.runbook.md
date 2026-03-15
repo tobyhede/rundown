@@ -17,6 +17,7 @@ scenarios:
 
 - FOR item IN 1 TO 3
 - PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 Handle item {{item}} index {{Index}}
 

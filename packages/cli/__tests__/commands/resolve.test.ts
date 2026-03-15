@@ -163,6 +163,7 @@ Deploy to {{ environment }}.
       `## 1. Process items
 - FOR item IN {{ items }}
 - PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 Handle item
 - PASS CONTINUE
@@ -193,6 +194,7 @@ echo {{ item }}
       `## 1. Process items
 - FOR item IN {{ missing_source }}
 - PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 Handle item
 - PASS CONTINUE
@@ -241,6 +243,7 @@ echo hello
       `## 1. Deploy servers
 - FOR server IN {{ servers }}
 - PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 Deploy server
 - PASS CONTINUE
@@ -467,6 +470,7 @@ vars:
 ## 1. Process batches
 - FOR batch IN 1 TO {{Max}}
 - PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 Handle batch
 - PASS CONTINUE

@@ -463,6 +463,7 @@ Region: us-west
 
 ## 1. Review
 - PASS ALL CONTINUE
+- FAIL ANY STOP
 
 ### 1.1 Code review
 Review code.

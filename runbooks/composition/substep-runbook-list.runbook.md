@@ -24,12 +24,14 @@ Explicit substep form for runbook references
 
 ### 1.1 Lint Check
 
+- PASS ALL CONTINUE
 - FAIL ANY STOP "Lint failed"
 
 - child-task.runbook.md
 
 ### 1.2 Type Check
 
+- PASS ALL CONTINUE
 - FAIL ANY STOP "Types failed"
 
 - child-task.runbook.md

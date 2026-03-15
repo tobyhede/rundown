@@ -20,6 +20,7 @@ scenarios:
 
 - FOR item IN 1 TO 3
 - PASS ALL COMPLETE
+- FAIL ANY STOP
 
 ### 1.1 Handle iteration {{item}}
 

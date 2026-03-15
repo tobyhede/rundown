@@ -415,6 +415,7 @@ Do check two.
 - FOR item IN 1 TO 3
   - FAIL CONTINUE
 - PASS ALL COMPLETE
+- FAIL ANY STOP
 
 ### 1.1 Check {{item}}
 
@@ -1258,6 +1259,7 @@ Review this checklist.
   it('canonicalizes FOR + step-level runbook list into runbook-list-derived substeps', () => {
     const md = `## 1. Review the plan
 - FOR pass IN 1 TO 2
+- PASS ALL CONTINUE
 - FAIL ANY GOTO Synthesize
 
 - review-technical-accuracy.runbook.md

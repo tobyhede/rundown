@@ -238,6 +238,7 @@ Step-level runbook lists are shorthand for implicit sequential substeps (`.1`, `
 ````markdown
 ## 2. Review the plan
 - FOR pass IN 1 TO 2
+- PASS ALL CONTINUE
 - FAIL ANY GOTO Synthesize
 
 - review-technical-accuracy.runbook.md
@@ -247,6 +248,7 @@ Step-level runbook lists are shorthand for implicit sequential substeps (`.1`, `
 ````markdown
 ## 2. Review the plan
 - FOR pass IN 1 TO 2
+- PASS ALL CONTINUE
 - FAIL ANY GOTO Synthesize
 
 ### 2.1

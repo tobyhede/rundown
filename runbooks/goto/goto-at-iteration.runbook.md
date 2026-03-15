@@ -27,6 +27,7 @@ rd echo "entry"
 
 - FOR item IN 1 TO 5
 - PASS ALL COMPLETE
+- FAIL ANY STOP
 
 ### 2.1 Handle {{item}}
 

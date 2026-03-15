@@ -21,6 +21,7 @@ Substep BREAK respects iteration-level retry. After retries exhausted, BREAK exi
 
 ## 1. Process items
 - FOR i IN 1 TO 3
+  - PASS ALL CONTINUE
   - FAIL ANY RETRY 1 BREAK
 - PASS ALL CONTINUE
 - FAIL ANY STOP

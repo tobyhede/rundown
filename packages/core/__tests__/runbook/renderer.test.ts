@@ -480,6 +480,7 @@ echo hello
   it('round-trips step-level runbook-list shorthand via implicit substep', () => {
     const original = `## 1. Review the plan
 - FOR pass IN 1 TO 2
+- PASS ALL CONTINUE
 - FAIL ANY GOTO Synthesize
 
 - review-technical-accuracy.runbook.md
