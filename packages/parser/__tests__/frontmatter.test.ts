@@ -77,7 +77,7 @@ name: invalid@name!
 
     // Raw data preserved so valid fields (vars, scenarios) survive
     expect(result.frontmatter).not.toBeNull();
-    expect(result.frontmatter?.name).toBe('invalid name with spaces');
+    expect(result.frontmatter?.name).toBe('invalid@name!');
     // gray-matter strips frontmatter even when validation fails
     expect(result.content.trim()).toBe('# Content');
   });
@@ -358,24 +358,28 @@ name: my runbook
     expect(result.frontmatter?.name).toBe('my runbook');
   });
 
-  it('rejects name with only whitespace', () => {
+  it('preserves raw data when name is only whitespace', () => {
     const markdown = `---
 name: "   "
 ---
 # Content`;
 
     const result = extractFrontmatter(markdown);
-    expect(result.frontmatter).toBeNull();
+    // Raw data preserved so valid fields survive validation failure
+    expect(result.frontmatter).not.toBeNull();
+    expect(result.frontmatter?.name).toBe('   ');
   });
 
-  it('rejects name with leading or trailing spaces', () => {
+  it('preserves raw data when name has leading or trailing spaces', () => {
     const markdown = `---
 name: " my runbook "
 ---
 # Content`;
 
     const result = extractFrontmatter(markdown);
-    expect(result.frontmatter).toBeNull();
+    // Raw data preserved so valid fields survive validation failure
+    expect(result.frontmatter).not.toBeNull();
+    expect(result.frontmatter?.name).toBe(' my runbook ');
   });
 });
 
