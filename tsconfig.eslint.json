@@ -7,7 +7,11 @@
     "lib": ["ES2022", "ESNext.Error"],
     "skipLibCheck": true,
     "esModuleInterop": true,
-    "noEmit": true
+    "noEmit": true,
+    "paths": {
+      "@rundown-org/parser": ["./packages/parser/src/index.ts"],
+      "@rundown-org/core": ["./packages/core/src/index.ts"]
+    }
   },
   "include": [
     "packages/parser/src/**/*.ts",
