@@ -341,7 +341,7 @@ Currently supported internally: `echo`, `prompt`. Unsupported commands fall back
 ## Documentation
 
 - [docs/SPEC.md](docs/SPEC.md) - Rundown specification
-- [docs/FORMAT.md](docs/FORMAT.md) - Formal BNF-style grammar
+- [docs/FORMAT.md](docs/FORMAT.md) - W3C EBNF grammar for runbook syntax
 - [docs/MCP.md](docs/MCP.md) - MCP server reference
 - [docs/SECURITY.md](docs/SECURITY.md) - Security policy configuration
 - [docs/RUNDOWN.md](docs/RUNDOWN.md) - Rundown internal architecture

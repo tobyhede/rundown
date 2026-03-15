@@ -145,11 +145,13 @@ When only one transition side specifies an aggregation modifier, the defaulted s
 | `STOP [msg]` | Any | Terminate execution immediately (failure). |
 | `COMPLETE [msg]` | Any | Terminate execution immediately (success). |
 | `GOTO {Target}` | Any | Jump to step/substep (e.g., `1`, `Error`). |
-| `RETRY [N] [Act]` | Any | Retry N times (default 1), then perform Action. |
+| `RETRY [N] [Act]` | Any | Retry N times (default 1), then perform Act (default STOP). |
 | `NEXT` | FOR Substep, FOR Iteration-Level | Skip to next iteration (no result accumulation). |
 | `BREAK` | FOR Substep, FOR Iteration-Level | Exit loop immediately. |
 
 > **Shorthand:** A standalone `- DEFER` bullet (without PASS/FAIL prefix) expands to `- PASS DEFER` + `- FAIL DEFER`. This is convenient for substeps where both outcomes should propagate to parent aggregation. DEFER is not valid at step level.
+
+> **RETRY defaults:** Count defaults to 1. Fallback action defaults to STOP. A bare message after count (e.g., `RETRY 3 "error"`) is shorthand for `RETRY 3 STOP "error"`. Nested RETRY (RETRY as fallback action) is invalid.
 
 GOTO targeting the containing step (self-reference) without an AT qualifier may create an infinite loop. Use RETRY for bounded re-execution.
 
