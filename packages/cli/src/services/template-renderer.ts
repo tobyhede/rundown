@@ -19,8 +19,11 @@ import type {
   ResolvedStepWithFor,
   StepWithSubsteps,
   UnresolvedForClause,
+  Transitions,
+  TransitionObject,
+  Action,
 } from '@rundown-org/parser';
-import { isUnresolvedForClause, MAX_FOR_BOUND } from '@rundown-org/parser';
+import { isUnresolvedForClause, MAX_FOR_BOUND, stepIdToString } from '@rundown-org/parser';
 
 /**
  * Shared placeholder matcher used across startup and runtime substitution.
@@ -205,10 +208,49 @@ function boundToString(bound: Bound): string {
 function reconstructForLine(fc: UnresolvedForClause): string {
   if (fc.source !== undefined) {
     // UnresolvedSourceWindow always has both start and end (windowed syntax only)
-    return `FOR ${fc.variable} IN ${boundToString(fc.start)} TO ${boundToString(fc.end)} OF {{ ${fc.source} }}`;
+    return `FOR ${fc.variable} IN ${boundToString(fc.start)} TO ${boundToString(fc.end)} OF ${fc.source}`;
   }
   const prefix = fc.variable ? `FOR ${fc.variable} IN` : 'FOR';
   return `${prefix} ${boundToString(fc.start)} TO ${boundToString(fc.end)}`;
+}
+
+function renderActionText(action: Action): string {
+  switch (action.type) {
+    case 'CONTINUE':
+      return 'CONTINUE';
+    case 'DEFER':
+      return 'DEFER';
+    case 'COMPLETE':
+      return action.message ? `COMPLETE "${action.message}"` : 'COMPLETE';
+    case 'STOP':
+      return action.message ? `STOP "${action.message}"` : 'STOP';
+    case 'GOTO':
+      return `GOTO ${stepIdToString(action.target)}`;
+    case 'NEXT':
+      return 'NEXT';
+    case 'BREAK':
+      return 'BREAK';
+  }
+}
+
+function renderTransitionActionText(transition: TransitionObject): string {
+  const actionStr = renderActionText(transition.action);
+  return transition.retry > 0 ? `RETRY ${String(transition.retry)} ${actionStr}` : actionStr;
+}
+
+function aggregationModifier(aggregation: 'ALL' | 'ANY' | 'none', kind: 'pass' | 'fail'): string {
+  if (aggregation === 'none') return '';
+  if (kind === 'pass') return aggregation === 'ALL' ? ' ALL' : ' ANY';
+  return aggregation === 'ALL' ? ' ANY' : ' ALL';
+}
+
+function renderTransitionsText(transitions: Transitions): string {
+  const passAgg = aggregationModifier(transitions.aggregation, 'pass');
+  const failAgg = aggregationModifier(transitions.aggregation, 'fail');
+  return [
+    `- PASS${passAgg} ${renderTransitionActionText(transitions.pass)}`,
+    `- FAIL${failAgg} ${renderTransitionActionText(transitions.fail)}`,
+  ].join('\n');
 }
 
 /**
@@ -264,13 +306,16 @@ export function resolveForBounds(
 
     // If any BoundRef variable is undefined, fall back to prompt text
     if (!allBoundRefsDefined(fc, variables)) {
-      const forLine = reconstructForLine(fc);
+      let forText = reconstructForLine(fc);
+      if (fc.transitions) {
+        forText += `\n${renderTransitionsText(fc.transitions)}`;
+      }
       const { forClause: _, kind: __, ...rest } = step;
       const fallbackStep: StepWithSubsteps = {
         ...rest,
         kind: 'substeps',
         substeps: step.substeps,
-        prompt: forLine + (step.prompt ? `\n${step.prompt}` : ''),
+        prompt: forText + (step.prompt ? `\n${step.prompt}` : ''),
       };
       warnings.push(`Step "${step.name}": unresolved FOR bound — preserved as prompt text`);
       return fallbackStep;
