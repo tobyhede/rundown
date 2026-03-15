@@ -1299,7 +1299,7 @@ function buildParentStateConfig(
     // Advance to next substep (both FOR and non-FOR)
     pushAdvanceGuards();
 
-    const exitAssign: Record<string, unknown> = {
+    const commonAssign = {
       forStack: [] as readonly ForContext[],
       retryCount: 0,
       parentRetryCount: 0,
@@ -1307,16 +1307,22 @@ function buildParentStateConfig(
       substep: extractSubstepFromStateId(nextTarget),
     };
 
-    if (!hasFor) {
+    if (hasFor) {
+      // Case C: FOR without transitions — preserve lastAction from substep
+      always.push({ target: nextTarget, actions: runbookSetup.assign(commonAssign) });
+    } else {
       // Case D: non-FOR pass-through — clear deferredResults, set CONTINUE
-      exitAssign.substepCompletedCount = 0;
-      exitAssign.deferredResults = undefined as ('pass' | 'fail')[] | undefined;
-      exitAssign.lastAction = { type: 'CONTINUE' as const };
-      exitAssign.lastMessage = undefined as string | undefined;
+      always.push({
+        target: nextTarget,
+        actions: runbookSetup.assign({
+          ...commonAssign,
+          substepCompletedCount: 0,
+          deferredResults: undefined as ('pass' | 'fail')[] | undefined,
+          lastAction: { type: 'CONTINUE' as const },
+          lastMessage: undefined as string | undefined,
+        }),
+      });
     }
-    // Case C: FOR without transitions — preserve lastAction from substep
-
-    always.push({ target: nextTarget, actions: runbookSetup.assign(exitAssign) });
   }
 
   return { always };
