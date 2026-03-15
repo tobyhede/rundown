@@ -609,7 +609,7 @@ function parseRetryWithArgs(rest: string): { retry: number; action: Action } | n
     return null;
   }
   const retryText = remaining.slice(0, digitEnd);
-  if (retryText[0] === '0') {
+  if (retryText.startsWith('0')) {
     return null;
   }
   const retry = parseInt(retryText, 10);

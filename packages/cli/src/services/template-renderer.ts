@@ -308,9 +308,6 @@ function validateDemotedForSteps(
 
   const errors: string[] = [];
 
-  // Build a quick lookup of step names for GOTO AT target resolution
-  const stepNames = new Set(steps.map((s) => s.name));
-
   const checkAction = (action: Action, parentStepName: string, inDemotedStep: boolean): void => {
     // GOTO with AT targeting a demoted step
     if (action.type === 'GOTO' && action.target.at !== undefined) {

@@ -1113,7 +1113,7 @@ describe('resolveForBounds', () => {
       };
 
       const runbook = makeRunbook([forStep, gotoStep]);
-      const { runbook: result, warnings } = resolveForBounds(runbook, {});
+      const { warnings } = resolveForBounds(runbook, {});
       // Should succeed with just the fallback warning
       expect(warnings).toHaveLength(1);
       expect(warnings[0]).toContain('preserved as prompt text');
