@@ -840,6 +840,7 @@ export type ConvertedTransitions = {
  *
  * @param conditionals - Array of parsed conditional objects from parseConditional
  * @returns ConvertedTransitions with transitions and optional aggregation, or null if no conditionals provided
+ * @throws {Error} If conditionals is non-empty but neither pass nor fail action was set (unreachable)
  */
 export function convertToTransitions(
   conditionals: ParsedConditional[],
@@ -892,7 +893,7 @@ export function convertToTransitions(
       fail: { kind: failKind, retry: failRetry, action: failAction },
     };
   } else {
-    return null;
+    throw new Error('Unreachable: at least one conditional must set an action');
   }
 
   if (strategy) {

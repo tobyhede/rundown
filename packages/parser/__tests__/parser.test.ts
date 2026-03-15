@@ -429,7 +429,7 @@ Do the check.
       action: { type: 'COMPLETE' },
     });
     // FOR clause transitions should also be set
-    expect(steps[0].forClause?.transitions.fail).toEqual({
+    expect(steps[0].forClause?.transitions?.fail).toEqual({
       kind: 'fail',
       retry: 0,
       action: { type: 'CONTINUE' },
@@ -945,12 +945,12 @@ echo check
       expect(steps[0].forClause).toBeDefined();
       expect(steps[0].forClause?.transitions).toBeDefined();
       expect(steps[0].forClause?.aggregation?.strategy).toBe('ALL');
-      expect(steps[0].forClause?.transitions.pass).toEqual({
+      expect(steps[0].forClause?.transitions?.pass).toEqual({
         kind: 'pass',
         retry: 0,
         action: { type: 'CONTINUE' },
       });
-      expect(steps[0].forClause?.transitions.fail).toEqual({
+      expect(steps[0].forClause?.transitions?.fail).toEqual({
         kind: 'fail',
         retry: 0,
         action: { type: 'BREAK' },
@@ -1018,12 +1018,12 @@ echo check
       expect(steps[0].forClause).toBeDefined();
       expect(steps[0].forClause?.transitions).toBeDefined();
       expect(steps[0].forClause?.aggregation?.strategy).toBe('ANY');
-      expect(steps[0].forClause?.transitions.pass).toEqual({
+      expect(steps[0].forClause?.transitions?.pass).toEqual({
         kind: 'pass',
         retry: 0,
         action: { type: 'CONTINUE' },
       });
-      expect(steps[0].forClause?.transitions.fail).toEqual({
+      expect(steps[0].forClause?.transitions?.fail).toEqual({
         kind: 'fail',
         retry: 0,
         action: { type: 'BREAK' },

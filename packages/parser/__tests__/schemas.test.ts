@@ -12,6 +12,10 @@ import {
   UnresolvedNumericWindowSchema,
   UnresolvedSourceWindowSchema,
   ParsedForClauseSchema,
+  BaseStepSchema,
+  StepWithCommandSchema,
+  StepWithSubstepsSchema,
+  StepWithForSchema,
 } from '../src/schemas.js';
 
 describe('TransitionsSchema with kind', () => {
@@ -132,15 +136,24 @@ describe('TransitionsSchema validation', () => {
     expect(result.success).toBe(false);
   });
 
-  it('should accept transitions and ignore unknown fields (Zod default)', () => {
+  it('should reject transitions with unknown fields (strict mode)', () => {
     const input = {
       pass: { kind: 'pass', action: { type: 'CONTINUE' } },
       fail: { kind: 'fail', action: { type: 'STOP' } },
-      unknownField: 'ignored',
+      unknownField: 'rejected',
     };
     const result = TransitionsSchema.safeParse(input);
-    expect(result.success).toBe(true);
-    expect(result.data?.unknownField).toBeUndefined();
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects transitions with legacy aggregation field', () => {
+    const input = {
+      pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+      fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+      aggregation: { strategy: 'ALL' },
+    };
+    const result = TransitionsSchema.safeParse(input);
+    expect(result.success).toBe(false);
   });
 });
 
@@ -694,5 +707,64 @@ describe('AggregationSchema', () => {
   it('rejects missing strategy', () => {
     const result = AggregationSchema.safeParse({});
     expect(result.success).toBe(false);
+  });
+});
+
+describe('aggregation scoped to parent steps only', () => {
+  const defaultTransitions = {
+    pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+    fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+  };
+
+  it('strips aggregation from BaseStepSchema (not a recognized field)', () => {
+    const result = BaseStepSchema.safeParse({
+      kind: 'base',
+      name: '1',
+      description: 'Step 1',
+      transitions: defaultTransitions,
+      aggregation: { strategy: 'ALL' },
+    });
+    expect(result.success).toBe(true);
+    // aggregation is stripped because it is not defined on BaseStepSchema
+    expect(result.data).not.toHaveProperty('aggregation');
+  });
+
+  it('strips aggregation from StepWithCommandSchema (not a recognized field)', () => {
+    const result = StepWithCommandSchema.safeParse({
+      kind: 'command',
+      name: '1',
+      description: 'Step 1',
+      transitions: defaultTransitions,
+      command: { code: 'echo hello' },
+      aggregation: { strategy: 'ALL' },
+    });
+    expect(result.success).toBe(true);
+    // aggregation is stripped because it is not defined on StepWithCommandSchema
+    expect(result.data).not.toHaveProperty('aggregation');
+  });
+
+  it('accepts aggregation on StepWithSubstepsSchema', () => {
+    const result = StepWithSubstepsSchema.safeParse({
+      kind: 'substeps',
+      name: '1',
+      description: 'Step 1',
+      transitions: defaultTransitions,
+      aggregation: { strategy: 'ALL' },
+      substeps: [{ id: '1', description: 'sub', transitions: defaultTransitions }],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts aggregation on StepWithForSchema', () => {
+    const result = StepWithForSchema.safeParse({
+      kind: 'for',
+      name: '1',
+      description: 'Step 1',
+      transitions: defaultTransitions,
+      aggregation: { strategy: 'ANY' },
+      forClause: { start: 1, end: 3 },
+      substeps: [{ id: '1', description: 'sub', transitions: defaultTransitions }],
+    });
+    expect(result.success).toBe(true);
   });
 });

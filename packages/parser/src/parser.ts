@@ -663,13 +663,13 @@ function finalizeStep(
       name: step.name,
       description: step.description,
       transitions: stepTransitions,
-      aggregation: stepAggregation,
       line: step.line,
     };
     if (step.forClause) {
       return {
         ...shared,
         kind: 'for' as const,
+        aggregation: stepAggregation,
         substepsDerivedFromRunbookList: true as const,
         forClause: step.forClause,
         substeps: syntheticSubsteps,
@@ -678,6 +678,7 @@ function finalizeStep(
     return {
       ...shared,
       kind: 'substeps' as const,
+      aggregation: stepAggregation,
       substepsDerivedFromRunbookList: true as const,
       substeps: syntheticSubsteps,
     };
@@ -686,13 +687,12 @@ function finalizeStep(
   // Resolve substep defaults
   const resolvedSubsteps = resolveSubstepDefaults(step.substeps);
 
-  // Build shared fields once
+  // Build shared fields once (aggregation excluded — only added to parent step kinds)
   const shared = {
     name: step.name,
     description: step.description,
     prompt,
     transitions: stepTransitions,
-    aggregation: stepAggregation,
     line: step.line,
   };
 
@@ -700,6 +700,7 @@ function finalizeStep(
     return {
       ...shared,
       kind: 'for' as const,
+      aggregation: stepAggregation,
       forClause: step.forClause,
       substeps: resolvedSubsteps.length > 0 ? resolvedSubsteps : [],
     };
@@ -709,6 +710,7 @@ function finalizeStep(
     return {
       ...shared,
       kind: 'substeps' as const,
+      aggregation: stepAggregation,
       substeps: resolvedSubsteps,
     };
   }

@@ -58,7 +58,10 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
     ];
   }
 
-  // Schema validation for each step
+  // Schema validation for each step — track failures so the detailed
+  // validation loop below can skip structurally invalid steps that
+  // would otherwise throw TypeErrors on missing fields.
+  const schemaFailedSteps = new Set<Step>();
   for (const step of steps) {
     const result = StepSchema.safeParse(step);
     if (!result.success) {
@@ -68,6 +71,7 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
           `Step ${step.name} failed schema validation: ${result.error.issues.map((i) => i.message).join(', ')}`,
         ),
       );
+      schemaFailedSteps.add(step);
     }
   }
 
@@ -109,6 +113,10 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
   }
 
   for (const step of steps) {
+    // Skip detailed validation for steps that failed schema validation —
+    // accessing their fields (e.g., step.transitions.pass) could throw.
+    if (schemaFailedSteps.has(step)) continue;
+
     // Conformance Rule 4: Exclusivity (Step level)
     // The discriminated union enforces exclusivity by design:
     // 'command' steps have command, 'substeps'/'for' steps have substeps, 'base' has neither.
@@ -125,6 +133,11 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
         ),
       );
     }
+
+    // Track loop-control errors reported in FOR-specific validation to avoid
+    // duplicate reporting in the generic validateAction calls below.
+    let passLoopControlReported = false;
+    let failLoopControlReported = false;
 
     // FOR step validation
     if (step.kind === 'for') {
@@ -176,7 +189,7 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
         }
       }
 
-      // Parent FOR step must not use NEXT/BREAK in its own transitions
+      // Parent FOR step must not use NEXT/BREAK in its own transitions.
       if (isLoopControlAction(step.transitions.pass.action)) {
         diagnostics.push(
           error(
@@ -184,6 +197,7 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
             `${step.transitions.pass.action.type} cannot appear on the FOR step itself, only on its substeps (step "${step.name}")`,
           ),
         );
+        passLoopControlReported = true;
       }
       if (isLoopControlAction(step.transitions.fail.action)) {
         diagnostics.push(
@@ -192,6 +206,7 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
             `${step.transitions.fail.action.type} cannot appear on the FOR step itself, only on its substeps (step "${step.name}")`,
           ),
         );
+        failLoopControlReported = true;
       }
 
       // FOR iteration-level aggregation checks
@@ -241,8 +256,12 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
         ),
       );
     }
-    validateAction(step.transitions.pass.action, undefined, steps, step, diagnostics);
-    validateAction(step.transitions.fail.action, undefined, steps, step, diagnostics);
+    if (!passLoopControlReported) {
+      validateAction(step.transitions.pass.action, undefined, steps, step, diagnostics);
+    }
+    if (!failLoopControlReported) {
+      validateAction(step.transitions.fail.action, undefined, steps, step, diagnostics);
+    }
 
     if (step.kind === 'substeps' || step.kind === 'for') {
       for (const substep of step.substeps) {

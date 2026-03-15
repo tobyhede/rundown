@@ -454,6 +454,10 @@ echo hello
 - PASS ALL CONTINUE
 - FAIL ANY STOP
 
+### 1.1 Sub
+- PASS DEFER
+- FAIL DEFER
+
 ## 2. Second step`;
 
     const parsed1 = parseRunbook(original);

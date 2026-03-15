@@ -290,10 +290,12 @@ export type TransitionObject = Readonly<z.output<typeof TransitionObjectSchema>>
  * Pass/fail transition pair without aggregation — aggregation is an orthogonal concern
  * handled by {@link AggregationSchema}.
  */
-export const TransitionsSchema = z.object({
-  pass: TransitionObjectSchema,
-  fail: TransitionObjectSchema,
-});
+export const TransitionsSchema = z
+  .object({
+    pass: TransitionObjectSchema,
+    fail: TransitionObjectSchema,
+  })
+  .strict();
 
 /** Pass/fail transition pair, inferred from TransitionsSchema. */
 export type Transitions = Readonly<z.output<typeof TransitionsSchema>>;
@@ -324,13 +326,12 @@ export const SubstepSchema = z.object({
   line: z.number().optional(),
 });
 
-/** Shared step fields schema. */
+/** Shared step fields schema (no aggregation — only parent step kinds include it). */
 const StepFieldsSchema = {
   name: StepNameSchema,
   description: z.string(),
   prompt: z.string().min(1).optional(),
   transitions: TransitionsSchema,
-  aggregation: AggregationSchema.optional(),
   line: z.number().optional(),
 };
 
@@ -351,6 +352,7 @@ export const StepWithCommandSchema = z.object({
 export const StepWithSubstepsSchema = z.object({
   ...StepFieldsSchema,
   kind: z.literal('substeps'),
+  aggregation: AggregationSchema.optional(),
   substeps: z.array(SubstepSchema).readonly(),
   substepsDerivedFromRunbookList: z.literal(true).optional(),
 });
@@ -359,6 +361,7 @@ export const StepWithSubstepsSchema = z.object({
 export const StepWithForSchema = z.object({
   ...StepFieldsSchema,
   kind: z.literal('for'),
+  aggregation: AggregationSchema.optional(),
   forClause: ParsedForClauseSchema,
   substeps: z.array(SubstepSchema).readonly(),
   substepsDerivedFromRunbookList: z.literal(true).optional(),

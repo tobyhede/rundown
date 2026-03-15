@@ -231,6 +231,16 @@ describe('Transitions schema-derived type', () => {
     expect(parsed.pass.action.type).toBe('GOTO');
     expect(parsed.pass.retry).toBe(0);
   });
+
+  it('rejects transitions with legacy aggregation field', () => {
+    expect(() =>
+      TransitionsSchema.parse({
+        pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+        fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+        aggregation: { strategy: 'ALL' },
+      }),
+    ).toThrow();
+  });
 });
 
 describe('RunbookStateSchema forStack', () => {
