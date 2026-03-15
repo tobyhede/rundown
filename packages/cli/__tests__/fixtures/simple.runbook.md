@@ -12,7 +12,7 @@ rd echo --result pass
 ## 2. Second step
 
 - PASS COMPLETE
-- FAIL RETRY 2
+- FAIL RETRY 2 STOP
 
 Do another thing.
 

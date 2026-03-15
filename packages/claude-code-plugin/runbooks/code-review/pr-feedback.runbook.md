@@ -29,7 +29,7 @@ rd echo gh pr view --comments
 ## 2 Make Changes
 
 - PASS CONTINUE
-- FAIL RETRY 3
+- FAIL RETRY 3 STOP
 
 Make the necessary code changes to address feedback.
 

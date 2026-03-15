@@ -140,6 +140,8 @@ Data sources are referenced in FOR clauses: `FOR item IN {{ items }}`.
 - File paths must stay within the project root (symlinks resolved, traversal blocked)
 - `file:` values are routed to sources only — they do NOT appear as template variables
 
+**Note:** The `scenarios` frontmatter field is an internal testing/demo feature, not part of the public Rundown format specification. See [docs/SCENARIOS.md](docs/SCENARIOS.md).
+
 ## Schema Output
 
 The `--schema` flag outputs the JSON Schema for a command's `--json` output (supported by all commands with `--json` output):
@@ -341,7 +343,7 @@ Currently supported internally: `echo`, `prompt`. Unsupported commands fall back
 ## Documentation
 
 - [docs/SPEC.md](docs/SPEC.md) - Rundown specification
-- [docs/FORMAT.md](docs/FORMAT.md) - Formal BNF-style grammar
+- [docs/FORMAT.md](docs/FORMAT.md) - W3C EBNF grammar for runbook syntax
 - [docs/MCP.md](docs/MCP.md) - MCP server reference
 - [docs/SECURITY.md](docs/SECURITY.md) - Security policy configuration
 - [docs/RUNDOWN.md](docs/RUNDOWN.md) - Rundown internal architecture

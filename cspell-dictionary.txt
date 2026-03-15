@@ -39,6 +39,7 @@ delegatable
 deps
 deserialized
 dotdot
+EBNF
 émoji
 env
 esac

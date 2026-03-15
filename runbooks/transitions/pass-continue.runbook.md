@@ -40,7 +40,7 @@ rd echo --result pass
 ## 2. Test
 
 - PASS COMPLETE
-- FAIL RETRY 2
+- FAIL RETRY 2 STOP
 
 ```bash
 rd echo --result fail --result fail --result pass

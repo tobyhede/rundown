@@ -520,7 +520,7 @@ export interface StepConfig {
   title: string;
   /** PASS transition (e.g., 'COMPLETE', 'CONTINUE', 'GOTO 2') */
   pass?: string;
-  /** FAIL transition (e.g., 'STOP', 'RETRY 2') */
+  /** FAIL transition (e.g., 'STOP', 'RETRY 2 STOP') */
   fail?: string;
   /** Bash command to execute */
   command?: string;

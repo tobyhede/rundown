@@ -22,6 +22,14 @@ A Rundown document (`.runbook.md`) is a Markdown file with an optional YAML fron
 *   **H3**: Substep.
 *   **H4+**: Invalid.
 
+### 1.2 Frontmatter
+
+Frontmatter fields beyond `name`, `description`, `version`, `author`, `tags`, and `vars` are preserved (open schema). This allows forward-compatible extensions and user-defined metadata.
+
+The frontmatter `description` field provides a summary for runbook discovery and listing (`rd ls --all`). The `Runbook.description` in the parsed AST is derived from preamble text between the H1 title and first H2 step. These are independent values.
+
+*Note: A follow-up task will rename `Runbook.description` → `Runbook.preamble` to eliminate this naming ambiguity.*
+
 ## 2. Steps
 
 Steps are the fundamental units of execution defined by H2 headers.
@@ -145,11 +153,13 @@ When only one transition side specifies an aggregation modifier, the defaulted s
 | `STOP [msg]` | Any | Terminate execution immediately (failure). |
 | `COMPLETE [msg]` | Any | Terminate execution immediately (success). |
 | `GOTO {Target}` | Any | Jump to step/substep (e.g., `1`, `Error`). |
-| `RETRY [N] [Act]` | Any | Retry N times (default 1), then perform Action. |
+| `RETRY N Act` | Any | Retry N times, then perform Act (both required). |
 | `NEXT` | FOR Substep, FOR Iteration-Level | Skip to next iteration (no result accumulation). |
 | `BREAK` | FOR Substep, FOR Iteration-Level | Exit loop immediately. |
 
 > **Shorthand:** A standalone `- DEFER` bullet (without PASS/FAIL prefix) expands to `- PASS DEFER` + `- FAIL DEFER`. This is convenient for substeps where both outcomes should propagate to parent aggregation. DEFER is not valid at step level.
+
+> **RETRY syntax:** Both count and fallback action are required (e.g., `RETRY 3 STOP`). Nested RETRY (RETRY as fallback action) is invalid.
 
 GOTO targeting the containing step (self-reference) without an AT qualifier may create an infinite loop. Use RETRY for bounded re-execution.
 

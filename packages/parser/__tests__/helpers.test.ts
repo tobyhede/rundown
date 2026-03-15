@@ -1365,6 +1365,65 @@ describe('ParsedConditional with retry property', () => {
   });
 });
 
+describe('strict RETRY syntax enforcement', () => {
+  it('rejects bare RETRY (no count, no action)', () => {
+    expect(() => parseConditional('FAIL RETRY')).toThrow('Invalid FAIL transition');
+  });
+
+  it('rejects RETRY with count but no action', () => {
+    expect(() => parseConditional('FAIL RETRY 2')).toThrow('Invalid FAIL transition');
+  });
+
+  it('rejects RETRY with quoted message shorthand', () => {
+    expect(() => parseConditional('FAIL RETRY 3 "error"')).toThrow('Invalid FAIL transition');
+  });
+
+  it('rejects RETRY without count (RETRY STOP)', () => {
+    expect(() => parseConditional('FAIL RETRY STOP')).toThrow('Invalid FAIL transition');
+  });
+
+  it('rejects RETRY with zero count', () => {
+    expect(() => parseConditional('FAIL RETRY 0 STOP')).toThrow('Invalid FAIL transition');
+  });
+
+  it('rejects RETRY with leading-zero count', () => {
+    expect(() => parseConditional('FAIL RETRY 03 STOP')).toThrow('Invalid FAIL transition');
+  });
+
+  it('accepts RETRY with count and action', () => {
+    const result = parseConditional('FAIL RETRY 3 STOP');
+    expect(result).toEqual({
+      type: 'fail',
+      retry: 3,
+      action: { type: 'STOP' },
+      modifier: null,
+      raw: 'RETRY 3 STOP',
+    });
+  });
+
+  it('accepts RETRY with count, action, and message', () => {
+    const result = parseConditional('FAIL RETRY 3 STOP "msg"');
+    expect(result).toEqual({
+      type: 'fail',
+      retry: 3,
+      action: { type: 'STOP', message: 'msg' },
+      modifier: null,
+      raw: 'RETRY 3 STOP "msg"',
+    });
+  });
+
+  it('accepts RETRY with aggregation', () => {
+    const result = parseConditional('FAIL ALL RETRY 3 STOP');
+    expect(result).toEqual({
+      type: 'fail',
+      retry: 3,
+      action: { type: 'STOP' },
+      modifier: 'ALL',
+      raw: 'RETRY 3 STOP',
+    });
+  });
+});
+
 describe('parseStepIdFromString with AT syntax', () => {
   it('parses numeric step with AT', () => {
     expect(parseStepIdFromString('3 AT 1')).toEqual({ step: '3', at: 1 });

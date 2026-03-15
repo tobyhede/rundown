@@ -13,6 +13,7 @@ import type { StepId } from './step-id.js';
 import type { ForClause } from '@rundown-org/parser';
 import {
   isSourced,
+  isWindowed,
   resolvedStepHasSubsteps,
   isAccumulatingAction,
   isBreakAction,
@@ -400,7 +401,7 @@ function createForContext(
       throw new Error(`Data source "${forClause.source}" is not defined`);
     }
 
-    const windowEnd = 'end' in forClause ? forClause.end : undefined;
+    const windowEnd = isWindowed(forClause) ? forClause.end : undefined;
 
     switch (ds.kind) {
       case 'array': {

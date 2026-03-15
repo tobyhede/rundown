@@ -1,333 +1,256 @@
----
-version: 1.0.0
----
+# Rundown Grammar
 
-# Rundown Format
+W3C EBNF grammar for Rundown runbook syntax.
+See [SPEC.md](./SPEC.md) for execution semantics.
 
-Formal BNF-style grammar for Rundown runbook syntax. See [SPEC.md](./SPEC.md) for prose explanations and examples.
-
-## Grammar Notation
+## Notation
 
 | Symbol | Meaning |
 |--------|---------|
-| `[ x ]` | Optional element |
-| `{ x }` | Zero or more repetitions |
-| `x \| y` | Choice (x or y) |
-| `"text"` | Literal text |
-| `x ...` | One or more of x |
-| `positive_integer` | Integer > 0 (1, 2, 3, ...) |
-| `ws` | One or more horizontal whitespace characters (space or tab) |
+| `::=` | Production rule |
+| `\|` | Alternative |
+| `?` | Optional (zero or one) |
+| `*` | Zero or more |
+| `+` | One or more |
+| `( )` | Grouping |
+| `" "` | Literal string |
+| `[ ]` | Character class |
+
+`ws` denotes required whitespace (space or tab). `newline` denotes a line break. Keywords are case-sensitive unless noted.
 
 ---
 
-[ frontmatter ]
-# title
-[ description ]
+## Document Structure
 
-steps
+```ebnf
+runbook  ::= frontmatter? title? preamble? step+
+title    ::= "# " text newline
+preamble ::= text+
+```
 
-where steps is:
-  step [ step ... ]
+## Frontmatter
 
-where step is:
-  "##" step-identifier [ separator ] title
-    [ for_clause ]
-    [ transition ... ]
-    [ prompt ]
-    [{ code_block | substeps | runbooks }]
+```ebnf
+frontmatter ::= "---" newline yaml_block "---" newline
+```
 
-where separator is:
-  [ "." | ":" | "—" | "→" | "-" | ")" | " " ]+
+Known fields:
 
-where prompt is:
-  [ text ]
+```ebnf
+name_field    ::= "name:" ws name_string
+desc_field    ::= "description:" ws text
+version_field ::= "version:" ws text
+author_field  ::= "author:" ws text
+tags_field    ::= "tags:" newline tag_list
+vars_field    ::= "vars:" newline vars_map
 
-where substeps is:
-  substep [ substep ... ]
+name_string   ::= [a-zA-Z0-9_-] ( [a-zA-Z0-9_ -]* [a-zA-Z0-9_-] )?
+tag_list      ::= ( ws "- " tag newline )+
+tag           ::= text
+vars_map      ::= ( ws variable_name ":" ws value newline )+
+value         ::= text
+```
 
-where substep is:
-  "###" substep_id [ separator ] [ title ]
-    [ transition ... ]
-    [ prompt ]
-    [{ code_block | runbooks }]
+Additional fields beyond those listed are preserved (open schema). All fields are optional.
 
-where substep_id is:
-  positive_integer                              -- bare numeric (parent positionally assigned)
-  | name                                        -- bare named (parent positionally assigned)
-  | parent_ref "." ( positive_integer | name )  -- qualified form
+## Steps
 
-where parent_ref is:
-  positive_integer    -- for static parent
-  | name              -- for named parent
+```ebnf
+step ::= "## " step_id separator? text? newline
+         for_clause?
+         transition*
+         prompt?
+         body?
+```
 
-where step-identifier is:
-  positive_integer | name
+Content must appear in the order shown: FOR, transitions, prompt, body.
 
-where substep-identifier is:
-  step-identifier "." ( positive_integer | name )
+## Substeps
 
-where name is:
-  [A-Za-z_][A-Za-z0-9_]*
-  (case-sensitive; must not be a reserved word: NEXT, CONTINUE, DEFER, COMPLETE, STOP, GOTO, RETRY, PASS, FAIL, YES, NO, ALL, ANY, BREAK, FOR, IN, TO, AT)
+```ebnf
+substep ::= "### " substep_id separator? text? newline
+            transition*
+            prompt?
+            ( code_block | runbook_list )?
+```
 
-where code_block is:
-  "```" info_string
-    content
-  "```"
+Substeps cannot contain nested substeps.
 
-where info_string is:
-  language [ ws "prompt" ]
+## Identifiers
 
-Note: A language tag is required — bare code fences (no info string) are invalid. `prompt` alone (without a language prefix) is valid for text-only prompts, e.g., ` ```prompt `. Non-executable language tags (e.g., `json`, `yaml`) are treated as prompt blocks.
+```ebnf
+step_id      ::= positive_integer | named_id
+substep_id   ::= positive_integer | named_id | qualified_id
+named_id     ::= [A-Za-z_] [A-Za-z0-9_]*
+qualified_id ::= step_ref "." ( positive_integer | named_id )
+step_ref     ::= positive_integer | named_id
+```
 
-where runbooks is:
-  - runbook_path [ ... ]
+`named_id` must not be a [reserved word](#reserved-words). Reserved word matching is case-sensitive.
 
-Step-level `runbooks` syntax is shorthand for implicit sequential substeps (`### N.1`, `### N.2`, ...), one workflow path per generated substep.
-If prompt text appears before a step-level `runbooks` shorthand body, it is attached to the first generated implicit substep only.
+## Separators
 
-where transition is:
-  - { PASS | FAIL | YES | NO } [ { ALL | ANY } ] result
-  | - DEFER                         -- shorthand for PASS DEFER + FAIL DEFER
+```ebnf
+separator ::= ( "." | ":" | "\u2014" | "\u2192" | "-" | ")" | " " )+
+```
 
-Transitions must appear as list items with the `-` bullet prefix (a dash followed by a space). Paragraph-style transitions (without prefix) are not valid.
+Unicode escapes: `\u2014` is em dash (—), `\u2192` is right arrow (→).
 
-Note: Transition keywords (`PASS`, `YES`, `FAIL`, `NO`) are matched as whole words — the keyword must be followed by a space. A bullet beginning with `NOTE` or `PASSING` is not treated as a transition.
+Separators are matched greedily — the longest sequence of separator characters between identifier and description text is consumed.
 
-Aggregation always waits for all DEFER'd results before evaluating. `ALL`/`ANY` evaluates over the count of DEFER'd results.
+## FOR Clauses
 
-The parsed Transitions object includes an `aggregation` field (`'ALL'` | `'ANY'` | `'none'`) alongside the `pass` and `fail` handlers.
+```ebnf
+for_clause  ::= "- FOR" ws for_variant newline
+                nested_transition*
 
-where result is:
-  action | RETRY [ count ] [ action ]
+for_variant ::= variable_name ws "IN" ws positive_integer ws "TO" ws positive_integer ws "OF" ws source_ref
+              | variable_name ws "IN" ws source_ref
+              | variable_name ws "IN" ws range
+              | range
 
-where action is:
-  CONTINUE | DEFER | COMPLETE [ message ] | STOP [ message ] | GOTO target | NEXT | BREAK
+range_value ::= positive_integer | template_variable
+range       ::= range_value ( ws "TO" ws range_value )?
+source_ref  ::= "{{" ws? variable_name ws? "}}"
+
+nested_transition ::= ws "- " result_keyword ( ws aggregation )? ws action newline
+                    | ws "- " result_keyword ( ws aggregation )? ws "RETRY" ws positive_integer ws action newline
+                    | ws "- DEFER" newline
+```
+
+Template variables (`{{var}}`) may appear in range bound positions. Source references (`{{ source }}`) in `FOR var IN {{ source }}` and `... OF {{ source }}` are data source identifiers.
+
+**Examples:**
+
+```markdown
+- FOR batch IN 1 TO 10
+- FOR 5
+- FOR item IN {{ tasks }}
+- FOR item IN 3 TO 7 OF {{ items }}
+```
+
+## Transitions
+
+```ebnf
+transition     ::= "- " result_keyword ( ws aggregation )? ws action newline
+                 | "- " result_keyword ( ws aggregation )? ws "RETRY" ws positive_integer ws action newline
+                 | "- DEFER" newline
+
+result_keyword ::= "PASS" | "FAIL" | "YES" | "NO"
+aggregation    ::= "ALL" | "ANY"
+```
+
+`YES` is a syntactic alias for `PASS`. `NO` is a syntactic alias for `FAIL`. Transitions must use `-` bullet prefix. Transition keywords are matched as whole words — the keyword must be followed by whitespace.
+
+**Disambiguation:** A `-`-prefixed bullet inside a step is resolved by priority: (1) FOR clause (`FOR` keyword), (2) transition (`PASS`, `FAIL`, `YES`, `NO`, or standalone `DEFER`), (3) runbook reference (`.runbook.md` suffix), (4) prompt text.
+
+## Actions
+
+```ebnf
+action ::= "CONTINUE"
+         | "DEFER"
+         | "NEXT"
+         | "BREAK"
+         | "COMPLETE" ( ws message )?
+         | "STOP" ( ws message )?
+         | "GOTO" ws target
+```
+
+Reserved words cannot appear as bare messages. Use quoted form for reserved-word messages (e.g., `RETRY 3 STOP "COMPLETE"`). When RETRY is used, both count and fallback action are required. RETRY fallback action cannot be RETRY.
 
 Context constraints:
-- `DEFER` is only valid inside substeps or FOR iteration-level nested transitions
-- `NEXT` is only valid inside substeps of a FOR step and FOR iteration-level transitions
-- `BREAK` is valid inside substeps of a FOR step and FOR-level nested transitions
-- FOR-level nested transitions (nested bullets under `- FOR ...`) only allow terminal actions: `CONTINUE` (exit loop), `DEFER`, `NEXT` (loop back without accumulation), `BREAK`, `GOTO`, `STOP`, `COMPLETE` (optionally wrapped in `RETRY`)
 
-where message is:
-  name | "\"" text "\""
+| Action | Valid in |
+|--------|---------|
+| `DEFER` | Substeps, FOR nested transitions |
+| `NEXT` | FOR substeps, FOR nested transitions |
+| `BREAK` | FOR substeps, FOR nested transitions |
 
-where target is:
-  step-identifier [ "AT" index ]
-  | substep-identifier [ "AT" index ]
+FOR nested transitions allow: `CONTINUE`, `DEFER`, `NEXT`, `BREAK`, `GOTO`, `STOP`, `COMPLETE` (with optional `RETRY` wrapper).
 
-> **Internal:** The compiler internally represents "advance to next step" as `GOTO NEXT`. This cannot be written in runbook syntax — the parser rejects `NEXT` as a GOTO target. The `StepId` schema includes an optional `qualifier` field for this internal representation.
+## Targets
 
-where index is:
-  positive_integer | "{{" [ ws ] variable_name [ ws ] "}}"
+```ebnf
+target ::= ( step_id | substep_id ) ( ws "AT" ws index )?
+index  ::= positive_integer | template_variable
+```
 
-where for_clause is:
-  "- FOR" [ variable_name "IN" ] range
-  | "- FOR" variable_name "IN" source_ref
-  | "- FOR" variable_name "IN" positive_integer "TO" positive_integer "OF" source_ref
+`NEXT` is not a valid GOTO target.
 
-where source_ref is:
-  "{{" [ ws ] variable_name [ ws ] "}}"    -- references a named data source
+## Messages
 
-where range is:
-  positive_integer                              -- implicit start (1), end is positive_integer
-  | positive_integer "TO" positive_integer      -- explicit start and end
+```ebnf
+message       ::= bare_message | quoted_string
+bare_message  ::= named_id    /* must not be a reserved word */
+quoted_string ::= '"' text '"'
+```
 
-Whitespace inside `{{ }}` delimiters is optional.
+`bare_message` must not be a [reserved word](#reserved-words). To use a reserved word as a message, use the quoted form: `PASS STOP "COMPLETE"`, not `PASS STOP COMPLETE`.
 
-Authoring note: Template variables (e.g., `{{count}}`, `1 TO {{max}}`) may be used in range positions. They are expanded to literal positive integers before parsing (see two-phase model below).
+## Code Blocks
 
-Note: Template variable bounds (e.g., `{{count}}`) are expanded to literal positive integers before the FOR clause is parsed (two-phase model: Handlebars expansion first, then parser processes the result). Source references in `FOR var IN {{ source }}` and `... OF {{ source }}` are NOT expanded — they are parsed as data source identifiers resolved at runtime.
+```ebnf
+code_block ::= backtick_fence info_string newline content backtick_fence newline
 
-When a template-variable bound cannot be resolved (undefined variable), the FOR clause line is preserved as literal prompt text rather than producing a parse error. This enables orchestrating agents to handle unresolved bounds.
+info_string ::= executable_lang ( ws "prompt" )?
+              | display_lang ( ws "prompt" )?
+              | "prompt"
 
-where variable_name is:
-  `[a-zA-Z_][a-zA-Z0-9_]*`
+executable_lang ::= "bash" | "sh" | "shell"
+display_lang    ::= language_tag
+```
 
-where frontmatter is:
-  "---"
-    [ "name:" name_string ]
-    [ "description:" text ]
-    [ "version:" text ]
-    [ "author:" text ]
-    [ "tags:" tag_list ]
-    [ "vars:" vars_map ]
-  "---"
-
-Additional fields beyond those listed are preserved in the parsed frontmatter (open schema). This allows forward-compatible extensions and user-defined metadata.
-
-Note: The frontmatter `description` field is used for runbook discovery and listing (e.g., `rd ls --all`). The Runbook's structural `description` in the parsed AST is derived from preamble text between the H1 title and first H2 step. These are independent values.
-
-where name_string is:
-  [a-zA-Z0-9_-]([a-zA-Z0-9_ -]*[a-zA-Z0-9_-])?
-  (alphanumeric with underscores, hyphens, and internal spaces;
-   must not start or end with a space)
-
-where tag_list is:
-  "- " tag { "- " tag }
-
-where tag is:
-  text
-  (any string - convention is lowercase alphanumeric with hyphens)
-
-where vars_map is:
-  variable_name ":" value { variable_name ":" value }
-  (YAML mapping of variable names to string, number, or boolean values)
-
-Note: Frontmatter `vars` are not included in the parsed Runbook AST. They are consumed by the CLI template rendering pipeline. Reserved variable names (`step`, `index`, `context`, case-insensitive) are rejected with an error diagnostic.
-
-The `ParseResult` includes a `frontmatter` field containing the validated `RunbookFrontmatter` (or `null` if no frontmatter is present), alongside the parsed `Runbook` AST.
-
----
-
-## FOR Clause
-
-The FOR clause is a step-level annotation that makes a step iterate its substeps. It appears as a bullet point before transitions.
-
-**Syntax variants:**
-
-| Form | Example | Description |
-|------|---------|-------------|
-| Named variable, ascending range | `- FOR batch IN 1 TO 10` | Iterates 1..10, `{{batch}}` available |
-| No variable, ascending range | `- FOR 1 TO 10` | Iterates 1..10, no named variable |
-| Named variable, descending range | `- FOR batch IN 10 TO 1` | Iterates 10..1, `{{batch}}` available |
-| No variable, descending range | `- FOR 10 TO 1` | Iterates 10..1, no named variable |
-| Named variable, implicit start | `- FOR batch IN 10` | Iterates 1..10, `{{batch}}` available |
-| No variable, implicit start | `- FOR 10` | Iterates 1..10, no named variable |
-| Variable bounds | `- FOR batch IN 1 TO {{Max}}` | End bound from template variable |
-| Named variable, source (all items) | `- FOR item IN {{ items }}` | Iterates all items from data source, `{{item}}` available |
-| Named variable, windowed source | `- FOR item IN 3 TO 7 OF {{ items }}` | Items 3–7 from data source, `{{item}}` available |
-
-**Direction inference:** When `start > end`, the loop iterates downward (step size −1). When `start <= end`, it iterates upward (step size +1). Single-number shorthand (`FOR N`) always ascends from 1.
-
-**Data source binding:** When a FOR clause references a data source, the named variable receives the data element at each iteration — not the iteration index. `{{Index}}` always holds the 1-based iteration number. A named variable is required for data source FOR clauses. Data sources are defined via `.rundown/config.yaml` or `--var-file`. See [RUNDOWN.md](./RUNDOWN.md#data-sources) for configuration details.
-
-**Rules:**
-- FOR must appear before transitions in the step's bullet list
-- `NEXT` is only valid inside substeps of a FOR step and FOR iteration-level transitions
-- `BREAK` is valid within substeps and FOR-level nested transitions
-- `AT` is only valid when the GOTO target is a FOR step (cross-step allowed, but the target must be FOR and have substeps)
-- Step-level runbook lists satisfy the FOR-substep requirement via implicit sequential substeps
-- Parent FOR step transitions aggregate across iterations using ALL/ANY modifiers
-- FOR-level nested transitions execute at iteration scope; RETRY evaluates before the exhausted action
-- Iteration-level `BREAK` exits the loop without recording the current iteration result (non-accumulating, same as NEXT); iteration-level `GOTO`/`STOP`/`COMPLETE` bypass parent aggregation
-- Nested bullets under `FOR` must be transition bullets; non-transition nested bullets are invalid
-
-### Execution Path Notation
-
-Runtime execution paths are often displayed as `STEP.INDEX.SUBSTEP` (for example `1.2.1`). This is display-only notation and not authoring syntax.
-
-Canonical runtime targeting is `step + substep + iteration`.
-
----
-
-## Built-In Variables
-
-| Variable | Value | Available |
-|----------|-------|-----------|
-| `{{Step}}` | Qualified step identifier (e.g., `3`, `3.1`, `ErrorHandler`; shorthand runbook-list steps execute as `N.1`, `N.2`, ...) | Always |
-| `{{Index}}` | Current loop iteration number (1-based) | Inside FOR steps |
-| `{{step}}` | Lowercase alias for current step identifier | Always |
-| `{{index}}` | Lowercase alias for current loop iteration number | Inside FOR steps |
-| `{{context.current.*}}` | Canonical current runbook context (`step`, `substep`, `index`, `at`) | Always |
-| `{{context.parent.*}}` | Parent runbook context (`step`, `substep`, `index`, `at`, `vars.*`) | Nested runbooks |
-| `{{context.ancestors.N.*}}` | Ancestor runbook contexts (`0` = nearest parent; includes `vars.*`) | Nested runbooks |
-| `{{context.vars.NAME}}` | User/config/frontmatter variables under canonical namespace | Always |
-
-`{{Step}}`/`{{Index}}` and lowercase aliases are expanded per-step/per-iteration. For data source loops, the named variable holds the data element while `{{Index}}`/`{{index}}` holds the iteration number. Runtime keys `step`, `index`, and `context` are reserved (matching is case-insensitive) and cannot be overridden by user variables.
-
----
+Opening fence is 3 or more backticks. Closing fence must use at least as many backticks as the opening fence (CommonMark §4.5). Language tag is required — bare code fences are invalid. Tags are matched case-insensitively. Non-executable tags (e.g., `json`, `yaml`) are display-only.
 
 ## Template Variables
 
-| Pattern             | Variable  | Expansion                               |
-|---------------------|-----------|-----------------------------------------|
-| `{{VariableName}}`  | defined   | literal variable value                  |
-| `{{VariableName}}`  | undefined | preserved as literal `{{VariableName}}` (warning emitted to stderr) |
-| `{{path.to.value}}` | missing path | preserved as literal `{{path.to.value}}` (warning emitted to stderr) |
+```ebnf
+template_variable ::= "{{" ws? variable_path ws? "}}"
+variable_path     ::= variable_name ( "." ( variable_name | digit+ ) )*
+variable_name     ::= [a-zA-Z_] [a-zA-Z0-9_]*
+```
 
+## Runbook Lists
 
- VariableName: `/^[a-zA-Z_][a-zA-Z0-9_]*$/`
+```ebnf
+runbook_list ::= ( "- " file_path newline )+
+```
 
----
+Step-level runbook lists are shorthand for implicit sequential substeps.
 
-## Expansion Rules
+## Body
 
-### Transition Aliases
+```ebnf
+body ::= code_block | substep+ | runbook_list
+```
 
-| Input | Expands To |
-|-------|------------|
-| `YES X` | `PASS X` |
-| `NO X` | `FAIL X` |
+A step contains at most one body type.
 
-### Modifier Defaults
+## Prompt
 
-When no aggregation modifier is written, the runtime applies these defaults:
+```ebnf
+prompt ::= text+
+```
 
-| Input | Runtime Behavior |
-|-------|------------------|
-| `PASS X` (no modifier) | Treated as `PASS ALL X` |
-| `FAIL X` (no modifier) | Treated as `FAIL ANY X` |
+Free-form text between transitions and body.
 
-Note: Unlike Transition Aliases and RETRY Defaults (which are literal parser expansions), modifier defaults are semantic — the parser stores no aggregation value, and the runtime applies ALL/ANY behavior implicitly.
+## Reserved Words
 
-### RETRY Defaults
+`ALL`, `ANY`, `AT`, `BREAK`, `COMPLETE`, `CONTINUE`, `DEFER`, `FAIL`, `FOR`, `GOTO`, `IN`, `NEXT`, `NO`, `PASS`, `RETRY`, `STOP`, `TO`, `YES`
 
-| Input | Expands To |
-|-------|------------|
-| `RETRY`              | `RETRY 1 STOP` |
-| `RETRY n`            | `RETRY n STOP` |
-| `RETRY n "message"`  | `RETRY n STOP "message"` |
-| `RETRY n action`     | `RETRY n action` |
+Case-sensitive: `NEXT` is reserved; `Next` and `NextStep` are valid.
 
-The fallback action cannot be RETRY (nested RETRY is invalid).
+## Lexical Rules
 
-### GOTO AT Defaults
-
-| Input | Expands To |
-|-------|------------|
-| `GOTO N` (FOR step) | `GOTO N AT <start>` (loop's start value) |
-| `GOTO N AT I` (FOR step) | `GOTO N AT I` |
-
-### Implicit Transitions
-
-| Condition         | Expands To |
-|-------------------|------------|
-| None defined      | `PASS ALL CONTINUE` + `FAIL ANY STOP` |
-| Only PASS defined | Adds `FAIL ANY STOP` |
-| Only FAIL defined | Adds `PASS ALL CONTINUE` |
-
-**Convention:** Always write both transitions explicitly. The parser supports implicit defaults, but runbooks should be readable without memorizing the default table.
-
-> **Implementation note:** The parser produces `undefined` transitions when none are defined. The runtime compiler applies the defaults shown above via `DEFAULT_TRANSITIONS`. This is consistent with the existing note that aggregation modifier defaults are semantic rather than parser-level.
-
-### Message Convention
-
-STOP and COMPLETE accept optional messages. Include a message only when it provides context beyond what the step title already communicates — such as actionable guidance or diagnostic hints. Omit when the step title makes the outcome self-evident.
-
-### Code Block Semantics
-
-| Info String | Behavior |
-|------------------------|----------|
-| `bash`, `sh`, `shell`  | Execute; exit 0=PASS, non-zero=FAIL |
-| `{language} prompt`    | Output only  |
-| other (e.g., `json`, `yaml`) | Output only (treated as prompt) |
-| *(none)*               | Invalid — bare code fences are rejected |
-
-Code block info string tags are matched case-insensitively. `BASH`, `Bash`, and `bash` are all treated as executable.
-
----
-
-## Formatting Notes
-
-Runbook files follow standard markdown formatting conventions:
-
-- **Blank lines around headings** (MD022) — headings should be surrounded by blank lines
-- **Blank lines around lists** (MD032) — transition bullet lists should be surrounded by blank lines
-- **Blank lines around fenced code blocks** (MD031) — code blocks should be surrounded by blank lines
-- **No multiple consecutive blank lines** (MD012)
-
-These rules are enforced by markdownlint. See `.markdownlint-cli2.yaml` for configuration.
-
-Note: All frontmatter fields (`name`, `description`, `version`, `author`, `tags`, `vars`) are optional per the schema. Preamble text between the H1 title and first H2 step is also optional.
+```ebnf
+positive_integer ::= [1-9] [0-9]*
+digit            ::= [0-9]
+text             ::= [^\n]+
+file_path        ::= [^\n]+
+language_tag     ::= [a-zA-Z] [a-zA-Z0-9]*
+ws               ::= ( " " | "\t" )+
+newline          ::= "\n"
+yaml_block       ::= (* opaque YAML content *)
+backtick_fence   ::= "```" "`"*    /* 3 or more; closing fence >= opening count */
+content          ::= (* opaque code block content *)
+```

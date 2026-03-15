@@ -110,7 +110,7 @@ Tool: Skill(skill: "rundown:writing-plans")
 
 ## 2. Write the plan
 - PASS COMPLETE
-- FAIL RETRY 2
+- FAIL RETRY 2 STOP
 
 Write and save the implementation plan.
 ```

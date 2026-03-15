@@ -327,7 +327,7 @@ describe('Template Variables Integration', () => {
           {
             title: 'First Step',
             pass: 'CONTINUE',
-            fail: 'RETRY 1',
+            fail: 'RETRY 1 STOP',
             command: 'rd echo {{message}}',
           },
           { title: 'Second Step', pass: 'COMPLETE', command: 'rd echo done' },

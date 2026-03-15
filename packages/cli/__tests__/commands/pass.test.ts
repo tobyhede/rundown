@@ -266,7 +266,7 @@ This step stops on pass.
       const retryRunbook = `## 1. Retry on pass fail
 
 - PASS CONTINUE
-- FAIL RETRY 3
+- FAIL RETRY 3 STOP
 
 This step has FAIL: RETRY.
 
