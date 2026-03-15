@@ -48,8 +48,6 @@ export interface NumericWindow {
   readonly transitions?: Transitions;
   /** Iteration-level aggregation strategy for FOR loops */
   readonly aggregation?: Aggregation;
-  /** When true, bounds are synthetic — the agent drives iteration manually */
-  readonly prompted?: true;
 }
 
 /**
@@ -68,8 +66,6 @@ export interface FullSourceWindow {
   readonly transitions?: Transitions;
   /** Iteration-level aggregation strategy for FOR loops */
   readonly aggregation?: Aggregation;
-  /** When true, bounds are synthetic — the agent drives iteration manually */
-  readonly prompted?: true;
 }
 
 /**
@@ -90,8 +86,6 @@ export interface WindowedSourceWindow {
   readonly transitions?: Transitions;
   /** Iteration-level aggregation strategy for FOR loops */
   readonly aggregation?: Aggregation;
-  /** When true, bounds are synthetic — the agent drives iteration manually */
-  readonly prompted?: true;
 }
 
 /**
@@ -250,6 +244,8 @@ export interface ResolvedStepWithFor extends StepFields {
   readonly substeps: readonly Substep[];
   /** Parser canonicalization marker for step-level runbook-list shorthand. */
   readonly substepsDerivedFromRunbookList?: true;
+  /** When true, FOR bounds are synthetic — the agent drives iteration manually */
+  readonly promptedFor?: true;
 }
 
 /**

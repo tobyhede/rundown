@@ -327,8 +327,8 @@ function validatePromptedForSteps(
 
   const errors: string[] = [];
 
-  const checkAction = (action: Action, parentStepName: string, inDemotedStep: boolean): void => {
-    // GOTO with AT targeting a demoted step
+  const checkAction = (action: Action, parentStepName: string, inPromptedStep: boolean): void => {
+    // GOTO with AT targeting a prompted step
     if (action.type === 'GOTO' && action.target.at !== undefined) {
       const targetStep = action.target.step === 'NEXT' ? undefined : action.target.step;
       if (targetStep && promptedStepNames.has(targetStep)) {
@@ -338,8 +338,8 @@ function validatePromptedForSteps(
       }
     }
 
-    // NEXT/BREAK in substeps of a demoted step
-    if (isLoopControlAction(action) && inDemotedStep) {
+    // NEXT/BREAK in substeps of a prompted step
+    if (isLoopControlAction(action) && inPromptedStep) {
       errors.push(
         `${action.type} in step "${parentStepName}" requires a FOR loop, but the FOR clause is prompted`,
       );
@@ -349,16 +349,16 @@ function validatePromptedForSteps(
   const checkTransitions = (
     transitions: Transitions | undefined,
     parentStepName: string,
-    inDemotedStep: boolean,
+    inPromptedStep: boolean,
   ): void => {
     if (!transitions) return;
     for (const action of collectActionsFromTransitions(transitions)) {
-      checkAction(action, parentStepName, inDemotedStep);
+      checkAction(action, parentStepName, inPromptedStep);
     }
   };
 
   for (const step of steps) {
-    const inDemoted = promptedStepNames.has(step.name);
+    const inPrompted = promptedStepNames.has(step.name);
 
     // Check FOR clause transitions (iteration-level PASS/FAIL handlers)
     if (step.kind === 'for') {
@@ -371,7 +371,7 @@ function validatePromptedForSteps(
     // Check substep transitions
     if (step.kind === 'substeps' || step.kind === 'for') {
       for (const substep of step.substeps) {
-        checkTransitions(substep.transitions, step.name, inDemoted);
+        checkTransitions(substep.transitions, step.name, inPrompted);
       }
     }
   }
@@ -399,7 +399,7 @@ function validatePromptedForSteps(
  * @param variables - Template variable map for bound resolution
  * @returns Result with resolved runbook and any fallback warnings
  * @throws {Error} When a bound variable is defined but resolves to a non-integer or out-of-range value
- * @throws {RunbookSyntaxError} When loop-only controls reference demoted FOR steps
+ * @throws {RunbookSyntaxError} When loop-only controls reference prompted FOR steps
  */
 export function resolveForBounds(
   runbook: Runbook,
@@ -433,7 +433,6 @@ export function resolveForBounds(
           source: fc.source,
           transitions: fc.transitions,
           aggregation: fc.aggregation,
-          prompted: true,
         };
         promptedClause = explicit;
       } else {
@@ -443,7 +442,6 @@ export function resolveForBounds(
           end: 1,
           transitions: fc.transitions,
           aggregation: fc.aggregation,
-          prompted: true,
         };
         promptedClause = explicit;
       }
@@ -453,6 +451,7 @@ export function resolveForBounds(
         ...rest,
         forClause: promptedClause,
         prompt: forText + (step.prompt ? `\n${step.prompt}` : ''),
+        promptedFor: true,
       } as ResolvedStepWithFor;
       warnings.push(`Step "${step.name}": unresolved FOR bound — prompted`);
       promptedStepNames.add(step.name);
@@ -472,7 +471,6 @@ export function resolveForBounds(
         source: fc.source,
         transitions: fc.transitions,
         aggregation: fc.aggregation,
-        prompted: undefined,
       };
       resolved = explicit;
     } else {
@@ -482,7 +480,6 @@ export function resolveForBounds(
         end,
         transitions: fc.transitions,
         aggregation: fc.aggregation,
-        prompted: undefined,
       };
       resolved = explicit;
     }
@@ -497,7 +494,7 @@ export function resolveForBounds(
 
   const resolvedRunbook: ResolvedRunbook = { ...runbook, steps: resolvedSteps };
 
-  // Post-resolution validation: detect loop-only controls referencing demoted steps
+  // Post-resolution validation: detect loop-only controls referencing prompted steps
   validatePromptedForSteps(resolvedSteps, promptedStepNames);
 
   return { runbook: resolvedRunbook, warnings };

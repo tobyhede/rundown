@@ -391,6 +391,7 @@ function resolveAtValueRuntime(
  * @param atValue - Optional AT value for starting iteration
  * @param implicit - Optional flag indicating implicit FOR context
  * @param sources - Data source bindings for sourced FOR loops
+ * @param promptedFor - When true, bypass source lookup and use synthetic bounds
  * @returns A new ForContext
  * @throws {Error} When a sourced FOR clause references an undefined data source
  */
@@ -400,9 +401,10 @@ function createForContext(
   atValue?: number | string,
   implicit = false,
   sources?: Readonly<Record<string, DataSource>>,
+  promptedFor = false,
 ): ForContext {
   // Prompted FOR steps use synthetic bounds — bypass source lookup
-  if (forClause.prompted) {
+  if (promptedFor) {
     return {
       stepId: stepName,
       iteration: resolveAtValue(atValue, forClause.start),
@@ -481,6 +483,7 @@ function createForContext(
  * @param atValue - Optional AT value from a GOTO action
  * @param implicit - Whether the FOR loop is implicit (no explicit FOR clause)
  * @param sources - Optional data sources for sourced FOR loops
+ * @param promptedFor - When true, bypass source lookup and use synthetic bounds
  * @returns The forStack to assign
  * @throws {Error} When the FOR clause contains unresolved template references
  */
@@ -491,13 +494,14 @@ function initForStack(
   atValue: number | string | undefined,
   implicit: boolean,
   sources?: Readonly<Record<string, DataSource>>,
+  promptedFor = false,
 ): readonly ForContext[] {
   const top = peekForStack(currentForStack);
   if (top?.stepId === targetStepName) {
     return currentForStack;
   }
   const iteration = resolveAtValueRuntime(atValue, forClause.start, currentForStack);
-  return [createForContext(targetStepName, forClause, iteration, implicit, sources)];
+  return [createForContext(targetStepName, forClause, iteration, implicit, sources, promptedFor)];
 }
 
 /**
@@ -744,7 +748,16 @@ function buildParentExitAssign(
               forClause.start,
               context.forStack,
             );
-            return [createForContext(targetStep.name, forClause, iteration, false, sources)];
+            return [
+              createForContext(
+                targetStep.name,
+                forClause,
+                iteration,
+                false,
+                sources,
+                !!targetStep.promptedFor,
+              ),
+            ];
           },
           iterationResults: EMPTY_RESULTS,
           substepCompletedCount: 0,
@@ -1693,6 +1706,7 @@ function buildGotoTransition(
             target.at,
             isImplicit,
             sources,
+            targetStepObj.kind === 'for' && !!targetStepObj.promptedFor,
           ),
         iterationResults: ({
           context,
@@ -1984,6 +1998,7 @@ export function compileRunbookToMachine(
                 undefined,
                 stepInfo.implicit,
                 options?.sources,
+                stepInfo.step.kind === 'for' && !!stepInfo.step.promptedFor,
               ),
             iterationResults: ({
               context,
@@ -2062,6 +2077,7 @@ export function compileRunbookToMachine(
                   event.target.at,
                   forStepForTarget.implicit,
                   options?.sources,
+                  forStepForTarget.step.kind === 'for' && !!forStepForTarget.step.promptedFor,
                 );
               },
               iterationResults: ({

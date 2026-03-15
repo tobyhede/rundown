@@ -714,7 +714,7 @@ describe('resolveForBounds', () => {
     const { runbook: result, warnings } = resolveForBounds(runbook, {});
     const step = result.steps[0] as ResolvedStepWithFor;
     expect(step.kind).toBe('for');
-    expect(step.forClause.prompted).toBe(true);
+    expect(step.promptedFor).toBe(true);
     expect(step.forClause.start).toBe(1);
     expect(step.forClause.end).toBe(1);
     expect(step.prompt).toContain('FOR item IN 1 TO {{Missing}}');
@@ -734,7 +734,7 @@ describe('resolveForBounds', () => {
     const { runbook: result, warnings } = resolveForBounds(runbook, { Min: '2' });
     const step = result.steps[0] as ResolvedStepWithFor;
     expect(step.kind).toBe('for');
-    expect(step.forClause.prompted).toBe(true);
+    expect(step.promptedFor).toBe(true);
     expect(step.prompt).toContain('FOR item IN {{Min}} TO {{Max}}');
     expect(warnings).toHaveLength(1);
   });
@@ -857,7 +857,7 @@ describe('resolveForBounds', () => {
     const { runbook: result, warnings } = resolveForBounds(runbook, {});
     const step = result.steps[0] as ResolvedStepWithFor;
     expect(step.kind).toBe('for');
-    expect(step.forClause.prompted).toBe(true);
+    expect(step.promptedFor).toBe(true);
     expect(step.forClause.source).toBe('items');
     expect(step.prompt).toContain('FOR x IN 1 TO {{N}} OF items');
     expect(warnings).toHaveLength(1);
@@ -911,7 +911,7 @@ describe('resolveForBounds', () => {
     const { runbook: result } = resolveForBounds(runbook, {});
     const step = result.steps[0] as ResolvedStepWithFor;
     expect(step.kind).toBe('for');
-    expect(step.forClause.prompted).toBe(true);
+    expect(step.promptedFor).toBe(true);
     expect(step.forClause.transitions).toEqual(transitions);
     expect(step.prompt).toContain('FOR item IN 1 TO {{Missing}}');
     expect(step.prompt).toContain('- PASS CONTINUE');
@@ -936,7 +936,7 @@ describe('resolveForBounds', () => {
     const { runbook: result } = resolveForBounds(runbook, {});
     const step = result.steps[0] as ResolvedStepWithFor;
     expect(step.kind).toBe('for');
-    expect(step.forClause.prompted).toBe(true);
+    expect(step.promptedFor).toBe(true);
     expect(step.forClause.aggregation).toEqual(aggregation);
     expect(step.prompt).toContain('- PASS ALL DEFER');
     expect(step.prompt).toContain('- FAIL ANY BREAK');
@@ -958,7 +958,7 @@ describe('resolveForBounds', () => {
     const { runbook: result } = resolveForBounds(runbook, {});
     const step = result.steps[0] as ResolvedStepWithFor;
     expect(step.kind).toBe('for');
-    expect(step.forClause.prompted).toBe(true);
+    expect(step.promptedFor).toBe(true);
     expect(step.prompt).toContain('- PASS RETRY 3 CONTINUE');
     expect(step.prompt).toContain('- FAIL STOP');
   });
@@ -974,7 +974,7 @@ describe('resolveForBounds', () => {
     const { runbook: result } = resolveForBounds(runbook, {});
     const step = result.steps[0] as ResolvedStepWithFor;
     expect(step.kind).toBe('for');
-    expect(step.forClause.prompted).toBe(true);
+    expect(step.promptedFor).toBe(true);
     expect(step.prompt).toBe('FOR item IN 1 TO {{Missing}}');
     expect(step.prompt).not.toContain('PASS');
     expect(step.prompt).not.toContain('FAIL');
@@ -999,7 +999,7 @@ describe('resolveForBounds', () => {
     const { runbook: result } = resolveForBounds(runbook, {});
     const step = result.steps[0] as ResolvedStepWithFor;
     expect(step.kind).toBe('for');
-    expect(step.forClause.prompted).toBe(true);
+    expect(step.promptedFor).toBe(true);
     expect(step.forClause.source).toBe('items');
     expect(step.forClause.transitions).toEqual(transitions);
     expect(step.forClause.aggregation).toEqual(aggregation);
@@ -1019,7 +1019,7 @@ describe('resolveForBounds', () => {
     const { runbook: result } = resolveForBounds(runbook, {});
     const step = result.steps[0] as ResolvedStepWithFor;
     expect(step.forClause.variable).toBe('server');
-    expect(step.forClause.prompted).toBe(true);
+    expect(step.promptedFor).toBe(true);
   });
 
   it('normal resolved FOR step has prompted undefined', () => {
@@ -1032,7 +1032,7 @@ describe('resolveForBounds', () => {
     const runbook = makeRunbook([makeForStep(unresolved)]);
     const { runbook: result } = resolveForBounds(runbook, { N: '5' });
     const step = result.steps[0] as ResolvedStepWithFor;
-    expect(step.forClause.prompted).toBeUndefined();
+    expect(step.promptedFor).toBeUndefined();
   });
 
   describe('post-resolution validation of prompted FOR steps', () => {

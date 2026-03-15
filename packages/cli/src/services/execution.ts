@@ -594,6 +594,9 @@ export async function runExecutionLoop(
         ? currentStep.command
         : undefined;
 
+    // Compute before STEP_ENTERED so the event includes the prompted FOR flag
+    const stepIsPrompted = currentStep.kind === 'for' && currentStep.promptedFor === true;
+
     emitter.emit('STEP_ENTERED', {
       position: stepPosition,
       stepName: isSubstep ? (itemToRender as Substep).id : (itemToRender as ResolvedStep).name,
@@ -605,12 +608,11 @@ export async function runExecutionLoop(
         : command?.code,
       commandLang: command?.lang,
       isSubstep,
-      prompted, // CRITICAL: Pass prompted flag for correct command display
+      prompted: prompted || stepIsPrompted,
     });
 
     // If CLI prompted mode, per-step prompted FOR, OR no command
     // Use itemToRender which may be a substep with its own command
-    const stepIsPrompted = currentStep.kind === 'for' && currentStep.forClause.prompted === true;
     if (prompted || stepIsPrompted || !command) {
       return 'waiting';
     }

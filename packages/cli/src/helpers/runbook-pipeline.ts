@@ -158,7 +158,7 @@ export function validateSources(
   sources: Readonly<Record<string, unknown>>,
 ): void {
   for (const step of steps) {
-    if (step.kind === 'for' && isSourced(step.forClause) && !step.forClause.prompted) {
+    if (step.kind === 'for' && isSourced(step.forClause) && !step.promptedFor) {
       const name = step.forClause.source;
       if (!Object.hasOwn(sources, name)) {
         throw new Error(
