@@ -87,12 +87,11 @@ describe('Substep interface', () => {
       id: '1',
       description: 'Test substep',
       transitions: {
-        aggregation: 'ALL',
         pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
         fail: { kind: 'fail', retry: 0, action: { type: 'STOP', message: 'BLOCKED' } },
       },
     };
-    expect(substep.transitions?.pass.action.type).toBe('CONTINUE');
+    expect(substep.transitions.pass.action.type).toBe('CONTINUE');
   });
 });
 

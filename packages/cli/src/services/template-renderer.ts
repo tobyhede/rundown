@@ -333,6 +333,7 @@ export function resolveForBounds(
         end,
         source: fc.source,
         ...(fc.transitions && { transitions: fc.transitions }),
+        ...(fc.aggregation && { aggregation: fc.aggregation }),
       };
     } else {
       // NumericWindow — both bounds required
@@ -341,6 +342,7 @@ export function resolveForBounds(
         end,
         ...(fc.variable !== undefined && { variable: fc.variable }),
         ...(fc.transitions && { transitions: fc.transitions }),
+        ...(fc.aggregation && { aggregation: fc.aggregation }),
       };
     }
 
@@ -435,39 +437,33 @@ function substituteSubstep(substep: Substep, variables: Record<string, unknown>)
  * @returns Step with all string fields expanded
  */
 function substituteStep(step: ResolvedStep, variables: Record<string, unknown>): ResolvedStep {
-  const base = {
-    name: step.name,
+  // Spread-first: preserve all fields (including aggregation, line, etc.)
+  // Override only the text fields that need substitution.
+  const substituted = {
+    ...step,
     description: substituteText(step.description, variables),
     prompt: step.prompt ? substituteText(step.prompt, variables) : step.prompt,
-    transitions: step.transitions,
-    line: step.line,
   };
 
-  // Handle kind-specific fields
+  // Handle kind-specific fields that contain text
   switch (step.kind) {
     case 'base':
-      return { ...base, kind: 'base' as const };
+      return substituted as ResolvedStep;
     case 'command':
       return {
-        ...base,
-        kind: 'command' as const,
+        ...substituted,
         command: substituteCommand(step.command, variables)!,
-      };
+      } as ResolvedStep;
     case 'substeps':
       return {
-        ...base,
-        kind: 'substeps' as const,
+        ...substituted,
         substeps: step.substeps.map((ss) => substituteSubstep(ss, variables)),
-        substepsDerivedFromRunbookList: step.substepsDerivedFromRunbookList,
-      };
+      } as ResolvedStep;
     case 'for':
       return {
-        ...base,
-        kind: 'for' as const,
+        ...substituted,
         substeps: step.substeps.map((ss) => substituteSubstep(ss, variables)),
-        forClause: step.forClause,
-        substepsDerivedFromRunbookList: step.substepsDerivedFromRunbookList,
-      };
+      } as ResolvedStep;
   }
 }
 

@@ -134,13 +134,13 @@ describe('TransitionsSchema validation', () => {
 
   it('should accept transitions and ignore unknown fields (Zod default)', () => {
     const input = {
-      aggregation: 'ALL',
       pass: { kind: 'pass', action: { type: 'CONTINUE' } },
       fail: { kind: 'fail', action: { type: 'STOP' } },
+      unknownField: 'ignored',
     };
     const result = TransitionsSchema.safeParse(input);
     expect(result.success).toBe(true);
-    expect(result.data?.aggregation).toBeUndefined();
+    expect(result.data?.unknownField).toBeUndefined();
   });
 });
 

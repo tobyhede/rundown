@@ -62,13 +62,6 @@ function evaluateTransition(
  * @returns A ConditionResult indicating the action to take
  */
 export function evaluateFailCondition(step: Step, currentRetryCount: number): ConditionResult {
-  if (!step.transitions) {
-    return {
-      action: 'stopped',
-      message: 'No FAIL condition defined for step',
-    };
-  }
-
   return evaluateTransition(step.transitions.fail, currentRetryCount);
 }
 
@@ -83,10 +76,6 @@ export function evaluateFailCondition(step: Step, currentRetryCount: number): Co
  * @returns A ConditionResult indicating the action to take
  */
 export function evaluatePassCondition(step: Step, currentRetryCount = 0): ConditionResult {
-  if (!step.transitions) {
-    return { action: 'continue' };
-  }
-
   return evaluateTransition(step.transitions.pass, currentRetryCount);
 }
 

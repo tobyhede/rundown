@@ -203,33 +203,28 @@ describe('RunbookStateSchema runbookSrc', () => {
 });
 
 describe('Transitions schema-derived type', () => {
-  it('parses ALL aggregation transitions', () => {
+  it('parses transitions without aggregation', () => {
     const parsed = TransitionsSchema.parse({
-      aggregation: 'ALL',
       pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
       fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
     });
-    expect(parsed.aggregation).toBe('ALL');
     expect(parsed.pass.action.type).toBe('CONTINUE');
     expect(parsed.fail.action.type).toBe('STOP');
     expect(parsed.pass.retry).toBe(0);
     expect(parsed.fail.retry).toBe(0);
   });
 
-  it('parses ANY aggregation transitions', () => {
+  it('parses transitions with retry', () => {
     const parsed = TransitionsSchema.parse({
-      aggregation: 'ANY',
       pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
       fail: { kind: 'fail', retry: 2, action: { type: 'STOP' } },
     });
-    expect(parsed.aggregation).toBe('ANY');
     expect(parsed.pass.retry).toBe(0);
     expect(parsed.fail.retry).toBe(2);
   });
 
   it('parses transitions with GOTO action', () => {
     const parsed = TransitionsSchema.parse({
-      aggregation: 'ALL',
       pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '3' } } },
       fail: { kind: 'fail', retry: 0, action: { type: 'STOP', message: 'Failed' } },
     });

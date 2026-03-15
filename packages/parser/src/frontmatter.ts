@@ -87,11 +87,13 @@ export function extractFrontmatter(markdown: string): {
   const result = RunbookFrontmatterSchema.safeParse(data);
 
   if (!result.success) {
-    // Log validation errors in debug mode, but still return content stripped of frontmatter
+    // Log validation errors in debug mode, but still return content stripped of frontmatter.
+    // Return raw data so valid fields (vars, scenarios) survive even when an unrelated
+    // field fails validation — callers already guard against missing/malformed fields.
     if (process.env.RUNDOWN_LOG_LEVEL === 'debug') {
       console.error('Frontmatter validation error:', result.error.format());
     }
-    return { frontmatter: null, content };
+    return { frontmatter: data as RunbookFrontmatter, content };
   }
 
   return { frontmatter: result.data, content };

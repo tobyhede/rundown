@@ -177,23 +177,21 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
       }
 
       // Parent FOR step must not use NEXT/BREAK in its own transitions
-      if (step.transitions) {
-        if (isLoopControlAction(step.transitions.pass.action)) {
-          diagnostics.push(
-            error(
-              step.line,
-              `${step.transitions.pass.action.type} cannot appear on the FOR step itself, only on its substeps (step "${step.name}")`,
-            ),
-          );
-        }
-        if (isLoopControlAction(step.transitions.fail.action)) {
-          diagnostics.push(
-            error(
-              step.line,
-              `${step.transitions.fail.action.type} cannot appear on the FOR step itself, only on its substeps (step "${step.name}")`,
-            ),
-          );
-        }
+      if (isLoopControlAction(step.transitions.pass.action)) {
+        diagnostics.push(
+          error(
+            step.line,
+            `${step.transitions.pass.action.type} cannot appear on the FOR step itself, only on its substeps (step "${step.name}")`,
+          ),
+        );
+      }
+      if (isLoopControlAction(step.transitions.fail.action)) {
+        diagnostics.push(
+          error(
+            step.line,
+            `${step.transitions.fail.action.type} cannot appear on the FOR step itself, only on its substeps (step "${step.name}")`,
+          ),
+        );
       }
 
       // FOR iteration-level aggregation checks
@@ -232,21 +230,19 @@ export function validateRunbook(steps: readonly Step[]): ValidationDiagnostic[] 
       }
     }
 
-    if (step.transitions) {
-      if (
-        step.transitions.pass.action.type === 'DEFER' ||
-        step.transitions.fail.action.type === 'DEFER'
-      ) {
-        diagnostics.push(
-          error(
-            step.line,
-            `DEFER is only valid within substeps or FOR iteration-level transitions, not at step level (step "${step.name}")`,
-          ),
-        );
-      }
-      validateAction(step.transitions.pass.action, undefined, steps, step, diagnostics);
-      validateAction(step.transitions.fail.action, undefined, steps, step, diagnostics);
+    if (
+      step.transitions.pass.action.type === 'DEFER' ||
+      step.transitions.fail.action.type === 'DEFER'
+    ) {
+      diagnostics.push(
+        error(
+          step.line,
+          `DEFER is only valid within substeps or FOR iteration-level transitions, not at step level (step "${step.name}")`,
+        ),
+      );
     }
+    validateAction(step.transitions.pass.action, undefined, steps, step, diagnostics);
+    validateAction(step.transitions.fail.action, undefined, steps, step, diagnostics);
 
     if (step.kind === 'substeps' || step.kind === 'for') {
       for (const substep of step.substeps) {

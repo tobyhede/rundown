@@ -85,8 +85,13 @@ describe('execution service', () => {
       expect(getStepRetryMax(step)).toBe(0);
     });
 
-    it('returns 0 if transitions missing', () => {
-      const step = {} as unknown as Step;
+    it('returns 0 if no retry configured', () => {
+      const step = {
+        transitions: {
+          pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+          fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+        },
+      } as unknown as Step;
       expect(getStepRetryMax(step)).toBe(0);
     });
   });

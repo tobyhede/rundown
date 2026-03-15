@@ -1,4 +1,12 @@
-import type { Step, Action, Transitions, TransitionObject, Substep, Runbook } from '../types.js';
+import type {
+  Step,
+  Action,
+  Aggregation,
+  Transitions,
+  TransitionObject,
+  Substep,
+  Runbook,
+} from '../types.js';
 import type { ParsedForClause } from '@rundown-org/parser';
 import { stepIdToString } from '../step-id.js';
 import { renderCodeFence, renderHeading } from './primitives.js';
@@ -52,22 +60,23 @@ function renderTransitionAction(transition: TransitionObject): string {
  * @param kind - Whether this is for a pass or fail transition
  * @returns The modifier suffix string (e.g., " ALL", " ANY", or empty)
  */
-function aggregationModifier(aggregation: 'ALL' | 'ANY' | 'none', kind: 'pass' | 'fail'): string {
-  if (aggregation === 'none') return '';
-  if (kind === 'pass') return aggregation === 'ALL' ? ' ALL' : ' ANY';
-  return aggregation === 'ALL' ? ' ANY' : ' ALL';
+function aggregationModifier(aggregation: Aggregation | undefined, kind: 'pass' | 'fail'): string {
+  if (!aggregation) return '';
+  if (kind === 'pass') return aggregation.strategy === 'ALL' ? ' ALL' : ' ANY';
+  return aggregation.strategy === 'ALL' ? ' ANY' : ' ALL';
 }
 
 /**
  * Render transitions block with retry prefix when configured.
  *
  * @param transitions - The transitions to render
+ * @param aggregation - Optional aggregation strategy for the transitions
  * @returns Markdown string with PASS/FAIL list items
  */
-export function renderTransitions(transitions: Transitions): string {
+export function renderTransitions(transitions: Transitions, aggregation?: Aggregation): string {
   const lines: string[] = [];
-  const passAgg = aggregationModifier(transitions.aggregation, 'pass');
-  const failAgg = aggregationModifier(transitions.aggregation, 'fail');
+  const passAgg = aggregationModifier(aggregation, 'pass');
+  const failAgg = aggregationModifier(aggregation, 'fail');
   lines.push(`- PASS${passAgg} ${renderTransitionAction(transitions.pass)}`);
   lines.push(`- FAIL${failAgg} ${renderTransitionAction(transitions.fail)}`);
   return lines.join('\n');
@@ -138,9 +147,10 @@ function renderForClause(forClause: ParsedForClause): string[] {
   }
 
   const transitions = (forClause as { transitions?: Transitions }).transitions;
+  const forAggregation = (forClause as { aggregation?: Aggregation }).aggregation;
   if (transitions) {
-    const passAgg = aggregationModifier(transitions.aggregation, 'pass');
-    const failAgg = aggregationModifier(transitions.aggregation, 'fail');
+    const passAgg = aggregationModifier(forAggregation, 'pass');
+    const failAgg = aggregationModifier(forAggregation, 'fail');
     lines.push(`  - PASS${passAgg} ${renderTransitionAction(transitions.pass)}`);
     lines.push(`  - FAIL${failAgg} ${renderTransitionAction(transitions.fail)}`);
   }
@@ -176,13 +186,8 @@ export function renderStep(step: Step): string {
   }
 
   // Transitions
-  if (step.transitions) {
-    lines.push(renderTransitions(step.transitions));
-  }
-
-  if (step.kind === 'for' || step.transitions) {
-    lines.push('');
-  }
+  lines.push(renderTransitions(step.transitions, step.aggregation));
+  lines.push('');
 
   const shorthandSubsteps = getShorthandRunbookSubsteps(step);
   if (shorthandSubsteps?.length) {

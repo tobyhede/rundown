@@ -12,7 +12,12 @@ const DEFAULT_TRANSITIONS = {
 
 describe('validator strict rules', () => {
   const mockStep = (overrides: Record<string, unknown>): Step => {
-    const obj: Record<string, unknown> = { name: '1', description: 'Test', ...overrides };
+    const obj: Record<string, unknown> = {
+      name: '1',
+      description: 'Test',
+      transitions: DEFAULT_TRANSITIONS,
+      ...overrides,
+    };
     const kind =
       obj.forClause !== undefined
         ? 'for'
@@ -314,7 +319,6 @@ describe('validator strict rules', () => {
         mockStep({
           name: '1',
           transitions: {
-            aggregation: 'ALL',
             pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '99' } } },
             fail: { kind: 'fail', action: { type: 'STOP' } },
           },
@@ -331,7 +335,6 @@ describe('validator strict rules', () => {
         mockStep({
           name: '1',
           transitions: {
-            aggregation: 'ALL',
             pass: { kind: 'pass', action: { type: 'GOTO', target: { step: '2', substep: '1' } } },
             fail: { kind: 'fail', action: { type: 'STOP' } },
           },
@@ -347,7 +350,6 @@ describe('validator strict rules', () => {
         mockStep({
           name: '1',
           transitions: {
-            aggregation: 'ALL',
             pass: {
               kind: 'pass',
               action: { type: 'GOTO', target: { step: 'ErrorHandler', substep: '1' } },

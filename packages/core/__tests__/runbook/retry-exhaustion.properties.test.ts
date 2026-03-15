@@ -31,7 +31,6 @@ describe('Retry exhaustion properties', () => {
           if (retryMax < 1) return; // need at least 1 retry to test
 
           const transitions: Transitions = {
-            aggregation: 'ALL',
             pass: makeTransitionObject('pass', 'COMPLETE'),
             fail: makeTransitionObject('fail', 'STOP', retryMax),
           };
@@ -62,7 +61,6 @@ describe('Retry exhaustion properties', () => {
     fc.assert(
       fc.property(fc.integer({ min: 1, max: 3 }), (retryMax) => {
         const transitions: Transitions = {
-          aggregation: 'ALL',
           pass: makeTransitionObject('pass', 'COMPLETE'),
           fail: makeTransitionObject('fail', 'STOP', retryMax),
         };
@@ -102,8 +100,8 @@ describe('Retry exhaustion properties', () => {
             {
               name: '1',
               description: 'Step with parent retry',
+              aggregation: { strategy: 'ALL' as const },
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: makeTransitionObject('pass', 'COMPLETE'),
                 fail: makeTransitionObject('fail', 'STOP', parentRetry),
               },
@@ -149,13 +147,14 @@ describe('Retry exhaustion properties', () => {
             forClause: {
               start: 1,
               end: 1, // single iteration to isolate iteration retry
+              aggregation: { strategy: 'ALL' as const },
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: makeTransitionObject('pass', 'DEFER'),
                 fail: makeTransitionObject('fail', 'DEFER', iterRetry),
               },
             },
-            transitions: makeTransitions('ALL', 'COMPLETE', 'STOP'),
+            aggregation: { strategy: 'ALL' as const },
+            transitions: makeTransitions('COMPLETE', 'STOP'),
             substeps,
           },
         ]);
@@ -183,7 +182,6 @@ describe('Retry exhaustion properties', () => {
       fc.property(fc.integer({ min: 1, max: 2 }), (retryMax) => {
         // Simple step with substep-level retry only — parent and iteration should stay 0
         const transitions: Transitions = {
-          aggregation: 'ALL',
           pass: makeTransitionObject('pass', 'COMPLETE'),
           fail: makeTransitionObject('fail', 'STOP', retryMax),
         };
@@ -224,14 +222,14 @@ describe('Retry exhaustion properties', () => {
             forClause: {
               start: 1,
               end: 1,
+              aggregation: { strategy: 'ALL' as const },
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: makeTransitionObject('pass', 'DEFER'),
                 fail: makeTransitionObject('fail', 'DEFER', retry),
               },
             },
+            aggregation: { strategy: 'ALL' as const },
             transitions: {
-              aggregation: 'ALL' as const,
               pass: makeTransitionObject('pass', 'COMPLETE'),
               fail: makeTransitionObject('fail', 'STOP', retry),
             },
@@ -271,14 +269,14 @@ describe('Retry exhaustion properties', () => {
             forClause: {
               start: 1,
               end: 1,
+              aggregation: { strategy: 'ALL' as const },
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: makeTransitionObject('pass', 'DEFER'),
                 fail: makeTransitionObject('fail', 'DEFER', retry),
               },
             },
+            aggregation: { strategy: 'ALL' as const },
             transitions: {
-              aggregation: 'ALL' as const,
               pass: makeTransitionObject('pass', 'COMPLETE'),
               fail: makeTransitionObject('fail', 'STOP', retry),
             },

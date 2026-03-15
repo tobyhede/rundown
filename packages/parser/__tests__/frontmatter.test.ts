@@ -67,7 +67,7 @@ invalid yaml: [unclosed bracket
     expect(result.content).toBe(markdown);
   });
 
-  it('returns null frontmatter when name format is invalid', () => {
+  it('returns raw data when name format is invalid', () => {
     const markdown = `---
 name: invalid@name!
 ---
@@ -75,7 +75,9 @@ name: invalid@name!
 
     const result = extractFrontmatter(markdown);
 
-    expect(result.frontmatter).toBeNull();
+    // Raw data preserved so valid fields (vars, scenarios) survive
+    expect(result.frontmatter).not.toBeNull();
+    expect(result.frontmatter?.name).toBe('invalid name with spaces');
     // gray-matter strips frontmatter even when validation fails
     expect(result.content.trim()).toBe('# Content');
   });
@@ -183,7 +185,7 @@ vars: {}
     expect(result.frontmatter?.vars).toEqual({});
   });
 
-  it('returns null frontmatter when vars contains invalid types (arrays)', () => {
+  it('returns raw data when vars contains invalid types (arrays)', () => {
     const markdown = `---
 name: my-runbook
 vars:
@@ -195,13 +197,14 @@ vars:
 
     const result = extractFrontmatter(markdown);
 
-    // Schema validation should fail for array values
-    expect(result.frontmatter).toBeNull();
+    // Raw data preserved so valid fields survive validation failure
+    expect(result.frontmatter).not.toBeNull();
+    expect(result.frontmatter?.name).toBe('my-runbook');
     // gray-matter strips frontmatter even when validation fails
     expect(result.content.trim()).toBe('# Content');
   });
 
-  it('returns null frontmatter when vars contains invalid types (nested objects)', () => {
+  it('returns raw data when vars contains invalid types (nested objects)', () => {
     const markdown = `---
 name: my-runbook
 vars:
@@ -212,8 +215,9 @@ vars:
 
     const result = extractFrontmatter(markdown);
 
-    // Schema validation should fail for nested object values
-    expect(result.frontmatter).toBeNull();
+    // Raw data preserved so valid fields survive validation failure
+    expect(result.frontmatter).not.toBeNull();
+    expect(result.frontmatter?.name).toBe('my-runbook');
     // gray-matter strips frontmatter even when validation fails
     expect(result.content.trim()).toBe('# Content');
   });

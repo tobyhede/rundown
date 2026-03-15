@@ -174,25 +174,32 @@ describe('evaluateFailCondition', () => {
 });
 
 describe('evaluateFailCondition edge cases', () => {
-  it('returns stopped when step has no transitions', () => {
+  it('returns stopped for default FAIL transition', () => {
     const step = {
       kind: 'base' as const,
       name: '1',
-      description: 'Test step without transitions',
+      description: 'Test step',
+      transitions: {
+        pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' as const } },
+        fail: { kind: 'fail', retry: 0, action: { type: 'STOP' as const } },
+      },
     };
 
     const result = evaluateFailCondition(step, 0);
     expect(result.action).toBe('stopped');
-    expect(result.message).toBe('No FAIL condition defined for step');
   });
 });
 
 describe('evaluatePassCondition edge cases', () => {
-  it('returns continue when step has no transitions', () => {
+  it('returns continue for default PASS transition', () => {
     const step = {
       kind: 'base' as const,
       name: '1',
-      description: 'Test step without transitions',
+      description: 'Test step',
+      transitions: {
+        pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' as const } },
+        fail: { kind: 'fail', retry: 0, action: { type: 'STOP' as const } },
+      },
     };
 
     const result = evaluatePassCondition(step);

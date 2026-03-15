@@ -20,9 +20,16 @@ describe('runbook compiler', () => {
     | Omit<ResolvedStepWithFor, 'kind'>;
 
   const DEFAULT_TRANSITIONS = {
-    aggregation: 'ALL' as const,
     pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
     fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+  };
+
+  const DEFAULT_FOR_ITERATION = {
+    transitions: {
+      pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+      fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
+    },
+    aggregation: { strategy: 'ALL' as const },
   };
 
   /** Infer and inject `kind` on each step object so raw literals satisfy the ResolvedStep union. */
@@ -55,10 +62,12 @@ describe('runbook compiler', () => {
         {
           name: '1',
           description: 'Parent',
+          aggregation: { strategy: 'ALL' },
           substeps: [
-            { id: '1', description: 'Child 1' },
-            { id: '2', description: 'Child 2' },
+            { id: '1', description: 'Child 1', transitions: DEFAULT_TRANSITIONS },
+            { id: '2', description: 'Child 2', transitions: DEFAULT_TRANSITIONS },
           ],
+          transitions: DEFAULT_TRANSITIONS,
         },
       ]);
       const machine = compileRunbookToMachine(steps);
@@ -74,6 +83,7 @@ describe('runbook compiler', () => {
         {
           name: '1',
           description: 'Simple',
+          transitions: DEFAULT_TRANSITIONS,
         },
       ]);
       const machine = compileRunbookToMachine(steps);
@@ -91,6 +101,7 @@ describe('runbook compiler', () => {
             { id: '1', description: 'Sub 1', transitions: DEFAULT_TRANSITIONS },
             { id: '2', description: 'Sub 2', transitions: DEFAULT_TRANSITIONS },
           ],
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '2',
@@ -144,8 +155,9 @@ describe('runbook compiler', () => {
         {
           name: '1',
           description: 'Step with substeps',
-          forClause: { start: 1, end: 3 },
+          forClause: { start: 1, end: 3, ...DEFAULT_FOR_ITERATION },
           transitions: DEFAULT_TRANSITIONS,
+          aggregation: { strategy: 'ALL' },
           substeps: [
             { id: '1', description: 'Sub 1', transitions: DEFAULT_TRANSITIONS },
             { id: '2', description: 'Sub 2', transitions: DEFAULT_TRANSITIONS },
@@ -173,12 +185,12 @@ describe('runbook compiler', () => {
           name: '1',
           description: 'Review step',
           transitions: DEFAULT_TRANSITIONS,
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Check 1',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
@@ -187,7 +199,6 @@ describe('runbook compiler', () => {
               id: '2',
               description: 'Check 2',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
@@ -223,6 +234,7 @@ describe('runbook compiler', () => {
         {
           name: 'ErrorHandler',
           description: 'Named step - should be skipped by CONTINUE',
+          transitions: DEFAULT_TRANSITIONS,
         },
       ]);
       const machine = compileRunbookToMachine(steps);
@@ -245,10 +257,12 @@ describe('runbook compiler', () => {
         {
           name: 'ErrorHandler',
           description: 'Named - skipped',
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '2',
           description: 'Second',
+          transitions: DEFAULT_TRANSITIONS,
         },
       ]);
       const machine = compileRunbookToMachine(steps);
@@ -279,6 +293,7 @@ describe('runbook compiler', () => {
         {
           name: '2',
           description: 'Step 2',
+          transitions: DEFAULT_TRANSITIONS,
         },
       ]);
       const machine = compileRunbookToMachine(steps);
@@ -297,25 +312,28 @@ describe('runbook compiler', () => {
           name: '1',
           description: 'Step 1',
           substeps: [
-            { id: '1', description: 'Substep 1.1' },
+            { id: '1', description: 'Substep 1.1', transitions: DEFAULT_TRANSITIONS },
             {
               id: '2',
               description: 'Substep 1.2',
               transitions: DEFAULT_TRANSITIONS,
             },
           ],
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '2',
           description: 'Step 2 (no substeps)',
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '3',
           description: 'Step 3',
           substeps: [
-            { id: '1', description: 'Substep 3.1' },
-            { id: '2', description: 'Substep 3.2' },
+            { id: '1', description: 'Substep 3.1', transitions: DEFAULT_TRANSITIONS },
+            { id: '2', description: 'Substep 3.2', transitions: DEFAULT_TRANSITIONS },
           ],
+          transitions: DEFAULT_TRANSITIONS,
         },
       ]);
       const machine = compileRunbookToMachine(steps);
@@ -360,7 +378,6 @@ describe('runbook compiler', () => {
           name: '1',
           description: 'Step 1',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -380,7 +397,6 @@ describe('runbook compiler', () => {
           name: '1',
           description: 'Step 1',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
             fail: {
               kind: 'fail',
@@ -392,6 +408,7 @@ describe('runbook compiler', () => {
         {
           name: 'ErrorHandler',
           description: 'Error handler',
+          transitions: DEFAULT_TRANSITIONS,
         },
       ]);
       const machine = compileRunbookToMachine(steps);
@@ -408,7 +425,6 @@ describe('runbook compiler', () => {
           name: '1',
           description: 'Step 1',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: {
               kind: 'pass',
               retry: 0,
@@ -420,11 +436,13 @@ describe('runbook compiler', () => {
         {
           name: '2',
           description: 'Step 2',
+          aggregation: { strategy: 'ALL' },
           substeps: [
-            { id: '1', description: 'Substep 2.1' },
-            { id: '2', description: 'Substep 2.2' },
-            { id: '3', description: 'Substep 2.3' },
+            { id: '1', description: 'Substep 2.1', transitions: DEFAULT_TRANSITIONS },
+            { id: '2', description: 'Substep 2.2', transitions: DEFAULT_TRANSITIONS },
+            { id: '3', description: 'Substep 2.3', transitions: DEFAULT_TRANSITIONS },
           ],
+          transitions: DEFAULT_TRANSITIONS,
         },
       ]);
       const machine = compileRunbookToMachine(steps);
@@ -441,7 +459,6 @@ describe('runbook compiler', () => {
           name: '1',
           description: 'Step 1',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
             fail: {
               kind: 'fail',
@@ -465,10 +482,12 @@ describe('runbook compiler', () => {
         {
           name: '1',
           description: 'Step 1',
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '2',
           description: 'Step 2',
+          transitions: DEFAULT_TRANSITIONS,
         },
       ]);
       const machine = compileRunbookToMachine(steps);
@@ -484,6 +503,7 @@ describe('runbook compiler', () => {
         {
           name: '1',
           description: 'Step 1',
+          transitions: DEFAULT_TRANSITIONS,
         },
       ]);
       const machine = compileRunbookToMachine(steps);
@@ -503,7 +523,6 @@ describe('runbook compiler', () => {
           name: '1',
           description: 'Step 1',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '2' } } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -512,7 +531,6 @@ describe('runbook compiler', () => {
           name: '2',
           description: 'Step 2',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -537,7 +555,6 @@ describe('runbook compiler', () => {
           name: '1',
           description: 'Step 1',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
             fail: { kind: 'fail', retry: 2, action: { type: 'GOTO', target: { step: '2' } } },
           },
@@ -546,7 +563,6 @@ describe('runbook compiler', () => {
           name: '2',
           description: 'Step 2',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -579,7 +595,6 @@ describe('runbook compiler', () => {
           name: '1',
           description: 'Step 1',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 2, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -611,7 +626,6 @@ describe('runbook compiler', () => {
           name: '1',
           description: 'Run Tests',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '3' } } },
             fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
           },
@@ -620,7 +634,6 @@ describe('runbook compiler', () => {
           name: '2',
           description: 'Recovery and Fix',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: {
               kind: 'pass',
               retry: 2,
@@ -633,7 +646,6 @@ describe('runbook compiler', () => {
           name: '3',
           description: 'Commit Changes',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -673,7 +685,6 @@ describe('runbook compiler', () => {
           name: '1',
           description: 'Run Tests',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '3' } } },
             fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
           },
@@ -682,7 +693,6 @@ describe('runbook compiler', () => {
           name: '2',
           description: 'Recovery and Fix',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: {
               kind: 'pass',
               retry: 2,
@@ -695,7 +705,6 @@ describe('runbook compiler', () => {
           name: '3',
           description: 'Commit Changes',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -741,8 +750,9 @@ describe('runbook compiler', () => {
         },
         {
           name: '3',
-          forClause: { start: 1, end: 3 },
+          forClause: { start: 1, end: 3, ...DEFAULT_FOR_ITERATION },
           description: 'Process batches',
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
@@ -755,12 +765,12 @@ describe('runbook compiler', () => {
               transitions: DEFAULT_TRANSITIONS,
             },
           ],
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '4',
           description: 'Commit',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -819,8 +829,9 @@ describe('runbook compiler', () => {
       const steps = inferSteps([
         {
           name: '1',
-          forClause: { start: 1, end: 2 },
+          forClause: { start: 1, end: 2, ...DEFAULT_FOR_ITERATION },
           description: 'First step is FOR',
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
@@ -828,12 +839,12 @@ describe('runbook compiler', () => {
               transitions: DEFAULT_TRANSITIONS,
             },
           ],
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '2',
           description: 'Done',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -869,8 +880,9 @@ describe('runbook compiler', () => {
       const steps = inferSteps([
         {
           name: '1',
-          forClause: { start: 5, end: 5 },
+          forClause: { start: 5, end: 5, ...DEFAULT_FOR_ITERATION },
           description: 'Single iteration',
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
@@ -878,12 +890,12 @@ describe('runbook compiler', () => {
               transitions: DEFAULT_TRANSITIONS,
             },
           ],
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '2',
           description: 'Done',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -909,8 +921,9 @@ describe('runbook compiler', () => {
       const steps = inferSteps([
         {
           name: '1',
-          forClause: { variable: 'batch', start: 1, end: 2 },
+          forClause: { variable: 'batch', start: 1, end: 2, ...DEFAULT_FOR_ITERATION },
           description: 'Named loop variable',
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
@@ -918,12 +931,12 @@ describe('runbook compiler', () => {
               transitions: DEFAULT_TRANSITIONS,
             },
           ],
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '2',
           description: 'Done',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -941,22 +954,26 @@ describe('runbook compiler', () => {
 
     it('records iteration results including failures', () => {
       const DEFER_ON_FAIL = {
-        aggregation: 'ALL' as const,
         pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
         fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
       };
       const steps = inferSteps([
         {
           name: '1',
-          forClause: { start: 1, end: 4, transitions: DEFER_ON_FAIL },
+          forClause: {
+            start: 1,
+            end: 4,
+            transitions: DEFER_ON_FAIL,
+            aggregation: { strategy: 'ALL' },
+          },
           description: 'Test with failures',
           transitions: DEFAULT_TRANSITIONS,
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Single substep',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
               },
@@ -967,7 +984,6 @@ describe('runbook compiler', () => {
           name: '2',
           description: 'Done',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -1016,6 +1032,7 @@ describe('runbook compiler', () => {
         {
           name: '1',
           forClause: { start: 1, end: 2 },
+          aggregation: { strategy: 'ALL' },
           substeps: [],
           description: 'For without substeps',
           transitions: DEFAULT_TRANSITIONS,
@@ -1024,7 +1041,6 @@ describe('runbook compiler', () => {
           name: '2',
           description: 'Next',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -1048,7 +1064,6 @@ describe('runbook compiler', () => {
           name: '1',
           description: 'Start',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '3' } } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -1056,11 +1071,13 @@ describe('runbook compiler', () => {
         {
           name: '2',
           description: 'Skipped',
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '3',
-          forClause: { start: 1, end: 2 },
+          forClause: { start: 1, end: 2, ...DEFAULT_FOR_ITERATION },
           description: 'FOR entered via GOTO',
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
@@ -1068,12 +1085,12 @@ describe('runbook compiler', () => {
               transitions: DEFAULT_TRANSITIONS,
             },
           ],
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '4',
           description: 'Done',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -1114,14 +1131,14 @@ describe('runbook compiler', () => {
         },
         {
           name: '3',
-          forClause: { start: 1, end: 3 },
+          forClause: { start: 1, end: 3, ...DEFAULT_FOR_ITERATION },
           description: 'Process batches',
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Fetch',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'NEXT' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
               },
@@ -1132,12 +1149,12 @@ describe('runbook compiler', () => {
               transitions: DEFAULT_TRANSITIONS,
             },
           ],
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '4',
           description: 'Commit',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -1187,15 +1204,15 @@ describe('runbook compiler', () => {
         },
         {
           name: '3',
-          forClause: { start: 1, end: 5 },
+          forClause: { start: 1, end: 5, ...DEFAULT_FOR_ITERATION },
           description: 'Process batches',
           transitions: DEFAULT_TRANSITIONS,
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Check',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'BREAK' } },
               },
@@ -1204,7 +1221,6 @@ describe('runbook compiler', () => {
               id: '2',
               description: 'Process',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
               },
@@ -1215,7 +1231,6 @@ describe('runbook compiler', () => {
           name: '4',
           description: 'Commit',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -1246,15 +1261,15 @@ describe('runbook compiler', () => {
       const steps = inferSteps([
         {
           name: '1',
-          forClause: { start: 1, end: 3 },
+          forClause: { start: 1, end: 3, ...DEFAULT_FOR_ITERATION },
           description: 'Loop with NEXT on fail',
           transitions: DEFAULT_TRANSITIONS,
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Step',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'NEXT' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'NEXT' } },
               },
@@ -1265,7 +1280,6 @@ describe('runbook compiler', () => {
           name: '2',
           description: 'Done',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -1302,15 +1316,15 @@ describe('runbook compiler', () => {
       const steps = inferSteps([
         {
           name: '1',
-          forClause: { start: 1, end: 5 },
+          forClause: { start: 1, end: 5, ...DEFAULT_FOR_ITERATION },
           description: 'Loop with early break',
           transitions: DEFAULT_TRANSITIONS,
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Increment',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
               },
@@ -1319,7 +1333,6 @@ describe('runbook compiler', () => {
               id: '2',
               description: 'Check and break',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'BREAK' } },
               },
@@ -1330,7 +1343,6 @@ describe('runbook compiler', () => {
           name: '2',
           description: 'Done',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -1379,7 +1391,6 @@ describe('runbook compiler', () => {
           name: '1',
           description: 'No FOR clause',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'NEXT' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -1401,7 +1412,6 @@ describe('runbook compiler', () => {
           name: '1',
           description: 'No FOR clause',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'BREAK' } },
           },
@@ -1423,7 +1433,6 @@ describe('runbook compiler', () => {
           name: '1',
           description: 'Start',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: {
               kind: 'pass',
               retry: 0,
@@ -1436,6 +1445,7 @@ describe('runbook compiler', () => {
           name: '2',
           forClause: { start: 1, end: 3 },
           description: 'FOR loop',
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
@@ -1443,12 +1453,12 @@ describe('runbook compiler', () => {
               transitions: DEFAULT_TRANSITIONS,
             },
           ],
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '3',
           description: 'Done',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -1487,7 +1497,6 @@ describe('runbook compiler', () => {
           name: '1',
           description: 'Start',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '2' } } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -1496,6 +1505,7 @@ describe('runbook compiler', () => {
           name: '2',
           forClause: { start: 1, end: 2 },
           description: 'FOR loop',
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
@@ -1503,12 +1513,12 @@ describe('runbook compiler', () => {
               transitions: DEFAULT_TRANSITIONS,
             },
           ],
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '3',
           description: 'Done',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -1534,11 +1544,13 @@ describe('runbook compiler', () => {
         {
           name: '1',
           description: 'Start',
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '2',
-          forClause: { variable: 'batch', start: 1, end: 5 },
+          forClause: { variable: 'batch', start: 1, end: 5, ...DEFAULT_FOR_ITERATION },
           description: 'FOR loop',
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
@@ -1546,12 +1558,12 @@ describe('runbook compiler', () => {
               transitions: DEFAULT_TRANSITIONS,
             },
           ],
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '3',
           description: 'Done',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -1586,11 +1598,13 @@ describe('runbook compiler', () => {
         {
           name: '1',
           description: 'Start',
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '2',
-          forClause: { start: 1, end: 3 },
+          forClause: { start: 1, end: 3, ...DEFAULT_FOR_ITERATION },
           description: 'FOR loop',
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
@@ -1598,6 +1612,7 @@ describe('runbook compiler', () => {
               transitions: DEFAULT_TRANSITIONS,
             },
           ],
+          transitions: DEFAULT_TRANSITIONS,
         },
       ]);
 
@@ -1631,7 +1646,6 @@ describe('runbook compiler', () => {
           name: '1',
           description: 'Non-FOR target',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '2' } } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -1640,12 +1654,12 @@ describe('runbook compiler', () => {
           name: '2',
           forClause: { start: 1, end: 3 },
           description: 'FOR step',
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Substep with GOTO out',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '1' } } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
               },
@@ -1656,12 +1670,12 @@ describe('runbook compiler', () => {
               transitions: DEFAULT_TRANSITIONS,
             },
           ],
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '3',
           description: 'After loop',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -1700,7 +1714,6 @@ describe('runbook compiler', () => {
           name: '1',
           description: 'Start',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: {
               kind: 'pass',
               retry: 0,
@@ -1713,6 +1726,7 @@ describe('runbook compiler', () => {
           name: '2',
           forClause: { start: 1, end: 3 },
           description: 'FOR loop',
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
@@ -1720,12 +1734,12 @@ describe('runbook compiler', () => {
               transitions: DEFAULT_TRANSITIONS,
             },
           ],
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '3',
           description: 'Done',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -1752,13 +1766,13 @@ describe('runbook compiler', () => {
         {
           name: '1',
           description: 'Loop A',
-          forClause: { start: 1, end: 5, variable: 'item' },
+          forClause: { start: 1, end: 5, variable: 'item', ...DEFAULT_FOR_ITERATION },
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Sub',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
                 fail: {
                   kind: 'fail',
@@ -1771,11 +1785,13 @@ describe('runbook compiler', () => {
               },
             },
           ],
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '2',
           description: 'Loop B',
-          forClause: { start: 1, end: 5 },
+          forClause: { start: 1, end: 5, ...DEFAULT_FOR_ITERATION },
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
@@ -1783,6 +1799,7 @@ describe('runbook compiler', () => {
               transitions: DEFAULT_TRANSITIONS,
             },
           ],
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '3',
@@ -1813,13 +1830,13 @@ describe('runbook compiler', () => {
         {
           name: '1',
           description: 'Loop A',
-          forClause: { start: 1, end: 5, variable: 'item' },
+          forClause: { start: 1, end: 5, variable: 'item', ...DEFAULT_FOR_ITERATION },
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Sub',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
                 fail: {
                   kind: 'fail',
@@ -1832,11 +1849,13 @@ describe('runbook compiler', () => {
               },
             },
           ],
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '2',
           description: 'Loop B',
-          forClause: { start: 1, end: 5 },
+          forClause: { start: 1, end: 5, ...DEFAULT_FOR_ITERATION },
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
@@ -1844,6 +1863,7 @@ describe('runbook compiler', () => {
               transitions: DEFAULT_TRANSITIONS,
             },
           ],
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '3',
@@ -1878,8 +1898,9 @@ describe('runbook compiler', () => {
         },
         {
           name: '2',
-          forClause: { start: 1, end: 3 },
+          forClause: { start: 1, end: 3, ...DEFAULT_FOR_ITERATION },
           description: 'FOR with 2 substeps',
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
@@ -1892,12 +1913,12 @@ describe('runbook compiler', () => {
               transitions: DEFAULT_TRANSITIONS,
             },
           ],
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '3',
           description: 'Done',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -1938,6 +1959,7 @@ describe('runbook compiler', () => {
             { id: '1', description: 'Sub 1', transitions: DEFAULT_TRANSITIONS },
             { id: '2', description: 'Sub 2', transitions: DEFAULT_TRANSITIONS },
           ],
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '2',
@@ -1974,6 +1996,7 @@ describe('runbook compiler', () => {
             { id: '1', description: 'Sub 1', transitions: DEFAULT_TRANSITIONS },
             { id: '2', description: 'Sub 2', transitions: DEFAULT_TRANSITIONS },
           ],
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '2',
@@ -2001,6 +2024,7 @@ describe('runbook compiler', () => {
           name: '1',
           description: 'Single substep, no FOR',
           substeps: [{ id: '1', description: 'Only sub', transitions: DEFAULT_TRANSITIONS }],
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '2',
@@ -2028,7 +2052,6 @@ describe('runbook compiler', () => {
           name: '1',
           description: 'Source',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '2' } } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -2040,6 +2063,7 @@ describe('runbook compiler', () => {
             { id: '1', description: 'Sub 1', transitions: DEFAULT_TRANSITIONS },
             { id: '2', description: 'Sub 2', transitions: DEFAULT_TRANSITIONS },
           ],
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '3',
@@ -2072,12 +2096,12 @@ describe('runbook compiler', () => {
               id: '1',
               description: 'Sub',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'NEXT' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
               },
             },
           ],
+          transitions: DEFAULT_TRANSITIONS,
         },
         { name: '2', description: 'Unreachable', transitions: DEFAULT_TRANSITIONS },
       ]);
@@ -2099,12 +2123,12 @@ describe('runbook compiler', () => {
               id: '1',
               description: 'Sub',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'BREAK' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
               },
             },
           ],
+          transitions: DEFAULT_TRANSITIONS,
         },
         { name: '2', description: 'Unreachable', transitions: DEFAULT_TRANSITIONS },
       ]);
@@ -2121,19 +2145,20 @@ describe('runbook compiler', () => {
       const steps = inferSteps([
         {
           name: '1',
-          forClause: { start: 1, end: 3 },
+          forClause: { start: 1, end: 3, ...DEFAULT_FOR_ITERATION },
           description: 'FOR step',
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Sub',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
               },
             },
           ],
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '2',
@@ -2172,12 +2197,12 @@ describe('runbook compiler', () => {
           name: '1',
           description: 'Loop step',
           forClause: { start: 1, end: 3 },
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'First sub',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
                 fail: {
                   kind: 'fail',
@@ -2195,6 +2220,7 @@ describe('runbook compiler', () => {
               transitions: DEFAULT_TRANSITIONS,
             },
           ],
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '2',
@@ -2246,7 +2272,6 @@ describe('runbook compiler', () => {
           name: '1',
           description: 'Source step',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: {
               kind: 'pass',
               retry: 0,
@@ -2258,11 +2283,13 @@ describe('runbook compiler', () => {
         {
           name: '2',
           description: 'FOR target',
-          forClause: { start: 1, end: 3, variable: 'i' },
+          forClause: { start: 1, end: 3, variable: 'i', ...DEFAULT_FOR_ITERATION },
+          aggregation: { strategy: 'ALL' },
           substeps: [
             { id: '1', description: 'Sub 1', transitions: DEFAULT_TRANSITIONS },
             { id: '2', description: 'Sub 2', transitions: DEFAULT_TRANSITIONS },
           ],
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '3',
@@ -2296,7 +2323,6 @@ describe('runbook compiler', () => {
           name: '1',
           description: 'Source step',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: {
               kind: 'pass',
               retry: 0,
@@ -2309,10 +2335,12 @@ describe('runbook compiler', () => {
           name: '2',
           description: 'FOR target',
           forClause: { start: 1, end: 3, variable: 'batch' },
+          aggregation: { strategy: 'ALL' },
           substeps: [
             { id: '1', description: 'Sub 1', transitions: DEFAULT_TRANSITIONS },
             { id: '2', description: 'Sub 2', transitions: DEFAULT_TRANSITIONS },
           ],
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '3',
@@ -2344,7 +2372,6 @@ describe('runbook compiler', () => {
           name: '1',
           description: 'Source step',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: {
               kind: 'pass',
               retry: 0,
@@ -2360,6 +2387,7 @@ describe('runbook compiler', () => {
             { id: '1', description: 'Sub 1', transitions: DEFAULT_TRANSITIONS },
             { id: '2', description: 'Sub 2', transitions: DEFAULT_TRANSITIONS },
           ],
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '3',
@@ -2387,15 +2415,19 @@ describe('runbook compiler', () => {
         {
           name: '1',
           description: 'Source step',
+          aggregation: { strategy: 'ALL' },
           substeps: [{ id: '1', description: 'Sub', transitions: DEFAULT_TRANSITIONS }],
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '2',
           description: 'Target with substeps, no FOR',
+          aggregation: { strategy: 'ALL' },
           substeps: [
             { id: '1', description: 'Sub 1', transitions: DEFAULT_TRANSITIONS },
             { id: '2', description: 'Sub 2', transitions: DEFAULT_TRANSITIONS },
           ],
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '3',
@@ -2423,7 +2455,7 @@ describe('runbook compiler', () => {
   describe('post-loop aggregation', () => {
     // Iteration-level DEFER on fail: loop continues past failed iterations with accumulation
     const FOR_DEFER_ON_FAIL = {
-      aggregation: 'ALL' as const,
+      aggregation: { strategy: 'ALL' },
       pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
       fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
     };
@@ -2432,15 +2464,20 @@ describe('runbook compiler', () => {
       const steps = inferSteps([
         {
           name: '1',
-          forClause: { start: 1, end: 3, transitions: FOR_DEFER_ON_FAIL },
+          forClause: {
+            start: 1,
+            end: 3,
+            transitions: FOR_DEFER_ON_FAIL,
+            aggregation: { strategy: 'ALL' },
+          },
           description: 'Loop with PASS ALL',
           transitions: DEFAULT_TRANSITIONS,
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Process',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
               },
@@ -2482,15 +2519,20 @@ describe('runbook compiler', () => {
       const steps = inferSteps([
         {
           name: '1',
-          forClause: { start: 1, end: 3, transitions: FOR_DEFER_ON_FAIL },
+          forClause: {
+            start: 1,
+            end: 3,
+            transitions: FOR_DEFER_ON_FAIL,
+            aggregation: { strategy: 'ALL' },
+          },
           description: 'Loop with PASS ALL',
           transitions: DEFAULT_TRANSITIONS,
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Check',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
               },
@@ -2530,15 +2572,15 @@ describe('runbook compiler', () => {
       const steps = inferSteps([
         {
           name: '1',
-          forClause: { start: 1, end: 3 },
+          forClause: { start: 1, end: 3, ...DEFAULT_FOR_ITERATION },
           description: 'Loop with all passes',
           transitions: DEFAULT_TRANSITIONS,
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Always pass',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
               },
@@ -2575,19 +2617,23 @@ describe('runbook compiler', () => {
       const steps = inferSteps([
         {
           name: '1',
-          forClause: { start: 1, end: 3, transitions: FOR_DEFER_ON_FAIL },
+          forClause: {
+            start: 1,
+            end: 3,
+            transitions: FOR_DEFER_ON_FAIL,
+            aggregation: { strategy: 'ANY' },
+          },
           description: 'Loop with PASS ANY',
           transitions: {
-            aggregation: 'ANY' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
+          aggregation: { strategy: 'ANY' },
           substeps: [
             {
               id: '1',
               description: 'Process',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
               },
@@ -2626,15 +2672,15 @@ describe('runbook compiler', () => {
       const steps = inferSteps([
         {
           name: '1',
-          forClause: { start: 1, end: 5 },
+          forClause: { start: 1, end: 5, ...DEFAULT_FOR_ITERATION },
           description: 'Loop with BREAK',
           transitions: DEFAULT_TRANSITIONS,
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Check',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
               },
@@ -2643,7 +2689,6 @@ describe('runbook compiler', () => {
               id: '2',
               description: 'Maybe break',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'BREAK' } },
               },
@@ -2687,15 +2732,15 @@ describe('runbook compiler', () => {
       const steps = inferSteps([
         {
           name: '1',
-          forClause: { start: 1, end: 2 },
+          forClause: { start: 1, end: 2, ...DEFAULT_FOR_ITERATION },
           description: 'Loop with NEXT',
           transitions: DEFAULT_TRANSITIONS,
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Check',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'NEXT' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'NEXT' } },
               },
@@ -2704,7 +2749,6 @@ describe('runbook compiler', () => {
               id: '2',
               description: 'Skipped by NEXT',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
               },
@@ -2742,19 +2786,23 @@ describe('runbook compiler', () => {
       const steps = inferSteps([
         {
           name: '1',
-          forClause: { start: 1, end: 3, transitions: FOR_DEFER_ON_FAIL },
+          forClause: {
+            start: 1,
+            end: 3,
+            transitions: FOR_DEFER_ON_FAIL,
+            aggregation: { strategy: 'ANY' },
+          },
           description: 'Loop with PASS ANY',
           transitions: {
-            aggregation: 'ANY' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
+          aggregation: { strategy: 'ANY' },
           substeps: [
             {
               id: '1',
               description: 'Process',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
               },
@@ -2791,10 +2839,9 @@ describe('runbook compiler', () => {
       const steps = inferSteps([
         {
           name: '1',
-          forClause: { start: 1, end: 2 },
+          forClause: { start: 1, end: 2, ...DEFAULT_FOR_ITERATION },
           description: 'Loop that GOTOs on pass',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: {
               kind: 'pass',
               retry: 0,
@@ -2802,12 +2849,12 @@ describe('runbook compiler', () => {
             },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Process',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
               },
@@ -2824,8 +2871,9 @@ describe('runbook compiler', () => {
         },
         {
           name: '3',
-          forClause: { start: 1, end: 3 },
+          forClause: { start: 1, end: 3, ...DEFAULT_FOR_ITERATION },
           description: 'Target FOR step',
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
@@ -2833,6 +2881,7 @@ describe('runbook compiler', () => {
               transitions: DEFAULT_TRANSITIONS,
             },
           ],
+          transitions: DEFAULT_TRANSITIONS,
         },
       ]);
 
@@ -2871,19 +2920,18 @@ describe('runbook compiler', () => {
       const steps = inferSteps([
         {
           name: '1',
-          forClause: { start: 1, end: 2 },
+          forClause: { start: 1, end: 2, ...DEFAULT_FOR_ITERATION },
           description: 'Loop that COMPLETEs on fail',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'COMPLETE' } },
           },
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Process',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
               },
@@ -2919,19 +2967,18 @@ describe('runbook compiler', () => {
       const steps = inferSteps([
         {
           name: '1',
-          forClause: { start: 1, end: 2 },
+          forClause: { start: 1, end: 2, ...DEFAULT_FOR_ITERATION },
           description: 'Loop that STOPs on pass',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'STOP' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
           },
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Process',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
               },
@@ -2966,19 +3013,18 @@ describe('runbook compiler', () => {
       const steps = inferSteps([
         {
           name: '1',
-          forClause: { start: 1, end: 2 },
+          forClause: { start: 1, end: 2, ...DEFAULT_FOR_ITERATION },
           description: 'Loop that GOTOs on fail',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'GOTO', target: { step: '3' } } },
           },
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Process',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
               },
@@ -3023,10 +3069,9 @@ describe('runbook compiler', () => {
       const steps = inferSteps([
         {
           name: '1',
-          forClause: { start: 1, end: 2 },
+          forClause: { start: 1, end: 2, ...DEFAULT_FOR_ITERATION },
           description: 'Loop that GOTOs AT on fail',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
             fail: {
               kind: 'fail',
@@ -3034,12 +3079,12 @@ describe('runbook compiler', () => {
               action: { type: 'GOTO', target: { step: '3', at: 2 } },
             },
           },
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Process',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
               },
@@ -3056,8 +3101,9 @@ describe('runbook compiler', () => {
         },
         {
           name: '3',
-          forClause: { start: 1, end: 4 },
+          forClause: { start: 1, end: 4, ...DEFAULT_FOR_ITERATION },
           description: 'Recovery loop',
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
@@ -3065,6 +3111,7 @@ describe('runbook compiler', () => {
               transitions: DEFAULT_TRANSITIONS,
             },
           ],
+          transitions: DEFAULT_TRANSITIONS,
         },
       ]);
 
@@ -3102,19 +3149,23 @@ describe('runbook compiler', () => {
       const steps = inferSteps([
         {
           name: '1',
-          forClause: { start: 1, end: 3, transitions: FOR_DEFER_ON_FAIL },
+          forClause: {
+            start: 1,
+            end: 3,
+            transitions: FOR_DEFER_ON_FAIL,
+            aggregation: { strategy: 'ANY' },
+          },
           description: 'Loop with PASS ANY and GOTO',
           transitions: {
-            aggregation: 'ANY' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '3' } } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
+          aggregation: { strategy: 'ANY' },
           substeps: [
             {
               id: '1',
               description: 'Process',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
               },
@@ -3160,19 +3211,18 @@ describe('runbook compiler', () => {
       const steps = inferSteps([
         {
           name: '1',
-          forClause: { start: 1, end: 5 },
+          forClause: { start: 1, end: 5, ...DEFAULT_FOR_ITERATION },
           description: 'Loop with BREAK and GOTO',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '3' } } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Check',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
               },
@@ -3181,7 +3231,6 @@ describe('runbook compiler', () => {
               id: '2',
               description: 'Maybe break',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'BREAK' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
               },
@@ -3230,19 +3279,20 @@ describe('runbook compiler', () => {
       const steps = inferSteps([
         {
           name: '1',
-          forClause: { start: 3, end: 1 },
+          forClause: { start: 3, end: 1, ...DEFAULT_FOR_ITERATION },
           description: 'Descending loop',
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Process',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
               },
             },
           ],
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '2',
@@ -3289,15 +3339,15 @@ describe('runbook compiler', () => {
       const steps = inferSteps([
         {
           name: '1',
-          forClause: { start: 5, end: 1 },
+          forClause: { start: 5, end: 1, ...DEFAULT_FOR_ITERATION },
           description: 'Descending with break',
           transitions: DEFAULT_TRANSITIONS,
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Check',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'BREAK' } },
               },
@@ -3331,14 +3381,14 @@ describe('runbook compiler', () => {
       const steps = inferSteps([
         {
           name: '1',
-          forClause: { start: 3, end: 1 },
+          forClause: { start: 3, end: 1, ...DEFAULT_FOR_ITERATION },
           description: 'Descending with NEXT',
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'First',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'NEXT' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
               },
@@ -3349,6 +3399,7 @@ describe('runbook compiler', () => {
               transitions: DEFAULT_TRANSITIONS,
             },
           ],
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '2',
@@ -3388,7 +3439,6 @@ describe('runbook compiler', () => {
           name: '1',
           description: 'Start',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: {
               kind: 'pass',
               retry: 0,
@@ -3399,8 +3449,9 @@ describe('runbook compiler', () => {
         },
         {
           name: '2',
-          forClause: { start: 5, end: 1 },
+          forClause: { start: 5, end: 1, ...DEFAULT_FOR_ITERATION },
           description: 'Descending FOR',
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
@@ -3408,6 +3459,7 @@ describe('runbook compiler', () => {
               transitions: DEFAULT_TRANSITIONS,
             },
           ],
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '3',
@@ -3453,8 +3505,9 @@ describe('runbook compiler', () => {
       const steps = inferSteps([
         {
           name: '1',
-          forClause: { start: 5, end: 5 },
+          forClause: { start: 5, end: 5, ...DEFAULT_FOR_ITERATION },
           description: 'Single iteration',
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
@@ -3462,6 +3515,7 @@ describe('runbook compiler', () => {
               transitions: DEFAULT_TRANSITIONS,
             },
           ],
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '2',
@@ -3493,19 +3547,19 @@ describe('runbook compiler', () => {
             start: 3,
             end: 1,
             transitions: {
-              aggregation: 'ALL' as const,
               pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
               fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
             },
+            aggregation: { strategy: 'ALL' },
           },
           description: 'Descending with mixed results',
           transitions: DEFAULT_TRANSITIONS,
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Process',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
               },
@@ -3547,14 +3601,14 @@ describe('runbook compiler', () => {
       const steps = inferSteps([
         {
           name: '1',
-          forClause: { start: 3, end: 1 },
+          forClause: { start: 3, end: 1, ...DEFAULT_FOR_ITERATION },
           description: 'Descending with two substeps',
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'First check',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
               },
@@ -3563,12 +3617,12 @@ describe('runbook compiler', () => {
               id: '2',
               description: 'Second check',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
                 fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
               },
             },
           ],
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '2',
@@ -3828,7 +3882,7 @@ echo "processing"
 
     it('GOTO intra-loop preserves forStack with array source', () => {
       const DEFAULT_TRANSITIONS_LOCAL = {
-        aggregation: 'ALL' as const,
+        aggregation: { strategy: 'ALL' },
         pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
         fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
       };
@@ -3837,13 +3891,19 @@ echo "processing"
         {
           name: '1',
           description: 'Loop step',
-          forClause: { start: 1, end: 2, variable: 'item', source: 'items' },
+          forClause: {
+            start: 1,
+            end: 2,
+            variable: 'item',
+            source: 'items',
+            ...DEFAULT_FOR_ITERATION,
+          },
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'First sub',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
                 fail: {
                   kind: 'fail' as const,
@@ -3858,6 +3918,7 @@ echo "processing"
               transitions: DEFAULT_TRANSITIONS_LOCAL,
             },
           ],
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '2',
@@ -3901,7 +3962,7 @@ echo "processing"
 
     it('GOTO cross-loop initializes forStack for array source step', () => {
       const DEFAULT_TRANSITIONS_LOCAL = {
-        aggregation: 'ALL' as const,
+        aggregation: { strategy: 'ALL' },
         pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
         fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
       };
@@ -3911,7 +3972,6 @@ echo "processing"
           name: '1',
           description: 'Source step',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: {
               kind: 'pass' as const,
               retry: 0,
@@ -3923,8 +3983,16 @@ echo "processing"
         {
           name: '2',
           description: 'FOR target',
-          forClause: { start: 1, end: 3, variable: 'item', source: 'items' },
+          forClause: {
+            start: 1,
+            end: 3,
+            variable: 'item',
+            source: 'items',
+            ...DEFAULT_FOR_ITERATION,
+          },
+          aggregation: { strategy: 'ALL' },
           substeps: [{ id: '1', description: 'Sub 1', transitions: DEFAULT_TRANSITIONS_LOCAL }],
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '3',
@@ -3958,7 +4026,7 @@ echo "processing"
 
     it('GOTO cross-loop with AT into array source resolves correct currentValue', () => {
       const DEFAULT_TRANSITIONS_LOCAL = {
-        aggregation: 'ALL' as const,
+        aggregation: { strategy: 'ALL' },
         pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
         fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
       };
@@ -3968,7 +4036,6 @@ echo "processing"
           name: '1',
           description: 'Source step',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: {
               kind: 'pass' as const,
               retry: 0,
@@ -3980,8 +4047,16 @@ echo "processing"
         {
           name: '2',
           description: 'FOR target',
-          forClause: { start: 1, end: 3, variable: 'item', source: 'items' },
+          forClause: {
+            start: 1,
+            end: 3,
+            variable: 'item',
+            source: 'items',
+            ...DEFAULT_FOR_ITERATION,
+          },
+          aggregation: { strategy: 'ALL' },
           substeps: [{ id: '1', description: 'Sub 1', transitions: DEFAULT_TRANSITIONS_LOCAL }],
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '3',
@@ -4062,7 +4137,7 @@ echo "processing"
 
     it('compiles descending file source window (3 TO 1)', () => {
       const DEFAULT_TRANSITIONS_LOCAL = {
-        aggregation: 'ALL' as const,
+        aggregation: { strategy: 'ALL' },
         pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
         fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
       };
@@ -4071,7 +4146,14 @@ echo "processing"
         {
           name: '1',
           description: 'File loop',
-          forClause: { start: 3, end: 1, variable: 'server', source: 'servers' },
+          forClause: {
+            start: 3,
+            end: 1,
+            variable: 'server',
+            source: 'servers',
+            ...DEFAULT_FOR_ITERATION,
+          },
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
@@ -4079,6 +4161,7 @@ echo "processing"
               transitions: DEFAULT_TRANSITIONS_LOCAL,
             },
           ],
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '2',
@@ -4133,6 +4216,7 @@ echo "processing"
             start: 1,
             source: 'lines',
           },
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
@@ -4140,6 +4224,7 @@ echo "processing"
               transitions: DEFAULT_TRANSITIONS,
             },
           ],
+          transitions: DEFAULT_TRANSITIONS,
         },
       ]);
 
@@ -4176,6 +4261,7 @@ echo "processing"
             start: 1,
             source: 'lines',
           },
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
@@ -4183,6 +4269,7 @@ echo "processing"
               transitions: DEFAULT_TRANSITIONS,
             },
           ],
+          transitions: DEFAULT_TRANSITIONS,
         },
       ]);
 
@@ -4224,6 +4311,7 @@ echo "processing"
             start: 20000,
             source: 'lines',
           },
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
@@ -4231,6 +4319,7 @@ echo "processing"
               transitions: DEFAULT_TRANSITIONS,
             },
           ],
+          transitions: DEFAULT_TRANSITIONS,
         },
       ]);
 
@@ -4278,6 +4367,7 @@ echo "processing"
             start: 1,
             source: 'data',
           },
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
@@ -4285,6 +4375,7 @@ echo "processing"
               transitions: DEFAULT_TRANSITIONS,
             },
           ],
+          transitions: DEFAULT_TRANSITIONS,
         },
       ]);
 
@@ -4334,17 +4425,17 @@ echo "processing"
 
       expect(actor.getSnapshot().value).toBe('step::1::1');
 
-      actor.send({ type: 'PASS' }); // iteration 1 complete -> loop back to iteration 2
+      actor.send({ type: 'PASS' }); // iteration 1 complete -> sequential loop-back
       expect(actor.getSnapshot().value).toBe('step::1::1');
       expect(actor.getSnapshot().context.forStack[0]?.iteration).toBe(2);
 
-      actor.send({ type: 'PASS' }); // iteration 2 complete (final) -> PASS ALL -> step 2
+      actor.send({ type: 'PASS' }); // iteration 2 complete (final) -> sequential exit -> parent aggregation -> step 2
       expect(actor.getSnapshot().value).toBe('step::2');
-      expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'pass']);
-      expect(actor.getSnapshot().context.deferredResults).toEqual(['pass']);
+      // Sequential mode: no iteration-level aggregation, iterationResults not populated
+      expect(actor.getSnapshot().context.iterationResults).toEqual([]);
     });
 
-    it('evaluates FAIL ANY across shorthand iterations and routes to GOTO target', () => {
+    it('sequential FOR shorthand — substep FAIL fires STOP directly (no iteration-level aggregation)', () => {
       const steps = createRunbook(`
 ## 1. Review the plan
 - FOR pass IN 1 TO 2
@@ -4364,12 +4455,15 @@ echo "processing"
       const actor = createActor(machine);
       actor.start();
 
-      actor.send({ type: 'PASS' }); // iteration 1
-      actor.send({ type: 'FAIL' }); // iteration 2 (final) -> FAIL ANY -> GOTO Synthesize
+      // Iteration 1: PASS → substep DEFER → sequential loop-back
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('step::1::1');
 
-      expect(actor.getSnapshot().value).toBe('step::Synthesize');
-      expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'fail']);
-      expect(actor.getSnapshot().context.deferredResults).toEqual(['fail']);
+      // Iteration 2: FAIL → substep DEFER → sequential exit → parent aggregation
+      // Sequential mode: no iteration-level aggregation, iterationResults stays empty
+      // Parent ALL aggregation over empty iterationResults = vacuous pass → CONTINUE → step 2
+      actor.send({ type: 'FAIL' });
+      expect(actor.getSnapshot().value).toBe('step::2');
     });
 
     it('GOTO to shorthand-canonicalized FOR step enters substep .1', () => {
@@ -4460,12 +4554,12 @@ echo "processing"
           name: '1',
           description: 'Review step',
           transitions: DEFAULT_TRANSITIONS,
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Check 1',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
@@ -4474,7 +4568,6 @@ echo "processing"
               id: '2',
               description: 'Check 2',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
@@ -4501,7 +4594,6 @@ echo "processing"
           name: '1',
           description: 'Review step',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
             fail: {
               kind: 'fail' as const,
@@ -4509,12 +4601,12 @@ echo "processing"
               action: { type: 'GOTO' as const, target: { step: '3' } },
             },
           },
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Check 1',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
@@ -4523,7 +4615,6 @@ echo "processing"
               id: '2',
               description: 'Check 2',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
@@ -4550,7 +4641,6 @@ echo "processing"
           name: '1',
           description: 'Source with mixed outcomes',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
             fail: {
               kind: 'fail' as const,
@@ -4558,12 +4648,12 @@ echo "processing"
               action: { type: 'GOTO' as const, target: { step: '2', substep: '2' } },
             },
           },
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Source check 1',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
@@ -4572,7 +4662,6 @@ echo "processing"
               id: '2',
               description: 'Source check 2',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
@@ -4583,7 +4672,6 @@ echo "processing"
           name: '2',
           description: 'Target implicit step',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: {
               kind: 'pass' as const,
               retry: 0,
@@ -4595,12 +4683,12 @@ echo "processing"
               action: { type: 'GOTO' as const, target: { step: '4' } },
             },
           },
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Target check 1',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
               },
@@ -4609,7 +4697,6 @@ echo "processing"
               id: '2',
               description: 'Target check 2',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
               },
@@ -4638,16 +4725,15 @@ echo "processing"
           name: '1',
           description: 'Review step',
           transitions: {
-            aggregation: 'ANY' as const,
             pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
             fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
           },
+          aggregation: { strategy: 'ANY' },
           substeps: [
             {
               id: '1',
               description: 'Check 1',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
@@ -4656,7 +4742,6 @@ echo "processing"
               id: '2',
               description: 'Check 2',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
@@ -4682,12 +4767,12 @@ echo "processing"
           name: '1',
           description: 'Review step',
           transitions: DEFAULT_TRANSITIONS,
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Only check',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
@@ -4718,12 +4803,12 @@ echo "processing"
           name: '1',
           description: 'Review step',
           transitions: DEFAULT_TRANSITIONS,
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Check 1',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
@@ -4732,7 +4817,6 @@ echo "processing"
               id: '2',
               description: 'Check 2',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
@@ -4741,7 +4825,6 @@ echo "processing"
               id: '3',
               description: 'Check 3',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
@@ -4770,14 +4853,14 @@ echo "processing"
         {
           name: '1',
           description: 'FOR loop',
-          forClause: { start: 1, end: 3 },
+          forClause: { start: 1, end: 3, ...DEFAULT_FOR_ITERATION },
           transitions: DEFAULT_TRANSITIONS,
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Sub 1',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
               },
@@ -4805,18 +4888,17 @@ echo "processing"
         {
           name: '1',
           description: 'FOR loop',
-          forClause: { start: 1, end: 3 },
+          forClause: { start: 1, end: 3, ...DEFAULT_FOR_ITERATION },
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
             fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
           },
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Sub 1',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'BREAK' as const } },
               },
@@ -4841,14 +4923,14 @@ echo "processing"
         {
           name: '1',
           description: 'FOR loop',
-          forClause: { start: 1, end: 3 },
+          forClause: { start: 1, end: 3, ...DEFAULT_FOR_ITERATION },
           transitions: DEFAULT_TRANSITIONS,
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Sub 1',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'NEXT' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
               },
@@ -4886,16 +4968,15 @@ echo "processing"
           name: '1',
           description: 'Review step',
           transitions: {
-            aggregation: 'ANY' as const,
             pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
             fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
           },
+          aggregation: { strategy: 'ANY' },
           substeps: [
             {
               id: '1',
               description: 'Check 1',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
@@ -4904,7 +4985,6 @@ echo "processing"
               id: '2',
               description: 'Check 2',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
@@ -4931,16 +5011,15 @@ echo "processing"
           name: '1',
           description: 'Retry step',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
             fail: { kind: 'fail' as const, retry: 1, action: { type: 'STOP' as const } },
           },
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Check 1',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
@@ -4970,16 +5049,15 @@ echo "processing"
           name: '1',
           description: 'Multi-substep retry',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
             fail: { kind: 'fail' as const, retry: 1, action: { type: 'STOP' as const } },
           },
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Check 1',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
@@ -4988,7 +5066,6 @@ echo "processing"
               id: '2',
               description: 'Check 2',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
@@ -5021,7 +5098,7 @@ echo "processing"
 
     it('cross-step substep GOTO resets parentRetryCount before target parent retries', () => {
       const substepDeferTransitions = {
-        aggregation: 'ALL' as const,
+        aggregation: { strategy: 'ALL' },
         pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
         fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
       };
@@ -5031,16 +5108,15 @@ echo "processing"
           name: '1',
           description: 'Source with parent retry',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
             fail: { kind: 'fail' as const, retry: 1, action: { type: 'STOP' as const } },
           },
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Jump to target',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: {
                   kind: 'pass' as const,
                   retry: 0,
@@ -5053,7 +5129,6 @@ echo "processing"
               id: '2',
               description: 'Fail to trigger parent retry',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
@@ -5064,10 +5139,10 @@ echo "processing"
           name: '2',
           description: 'Target with parent retry',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
             fail: { kind: 'fail' as const, retry: 1, action: { type: 'STOP' as const } },
           },
+          aggregation: { strategy: 'ALL' },
           substeps: [
             { id: '1', description: 'Target 1', transitions: substepDeferTransitions },
             { id: '2', description: 'Target 2', transitions: substepDeferTransitions },
@@ -5099,7 +5174,7 @@ echo "processing"
 
     it('cross-step GOTO event resets parentRetryCount before target parent retries', () => {
       const substepDeferTransitions = {
-        aggregation: 'ALL' as const,
+        aggregation: { strategy: 'ALL' },
         pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
         fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
       };
@@ -5109,10 +5184,10 @@ echo "processing"
           name: '1',
           description: 'Source with parent retry',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
             fail: { kind: 'fail' as const, retry: 1, action: { type: 'STOP' as const } },
           },
+          aggregation: { strategy: 'ALL' },
           substeps: [
             { id: '1', description: 'Source 1', transitions: substepDeferTransitions },
             { id: '2', description: 'Source 2', transitions: substepDeferTransitions },
@@ -5122,10 +5197,10 @@ echo "processing"
           name: '2',
           description: 'Target with parent retry',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
             fail: { kind: 'fail' as const, retry: 1, action: { type: 'STOP' as const } },
           },
+          aggregation: { strategy: 'ALL' },
           substeps: [
             { id: '1', description: 'Target 1', transitions: substepDeferTransitions },
             { id: '2', description: 'Target 2', transitions: substepDeferTransitions },
@@ -5161,16 +5236,15 @@ echo "processing"
           name: '1',
           description: 'Complete step',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
             fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
           },
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Check 1',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
               },
@@ -5200,16 +5274,15 @@ echo "processing"
             name: '1',
             description: 'Delegation step',
             transitions: {
-              aggregation: 'ALL' as const,
               pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
               fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
             },
+            aggregation: { strategy: 'ALL' },
             substeps: [
               {
                 id: '1',
                 description: 'Substep 1',
                 transitions: {
-                  aggregation: 'ALL' as const,
                   pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
                   fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
                 },
@@ -5218,7 +5291,6 @@ echo "processing"
                 id: '2',
                 description: 'Substep 2',
                 transitions: {
-                  aggregation: 'ALL' as const,
                   pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
                   fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
                 },
@@ -5243,16 +5315,15 @@ echo "processing"
             name: '1',
             description: 'Delegation step',
             transitions: {
-              aggregation: 'ALL' as const,
               pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
               fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
             },
+            aggregation: { strategy: 'ALL' },
             substeps: [
               {
                 id: '1',
                 description: 'Substep 1',
                 transitions: {
-                  aggregation: 'ALL' as const,
                   pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
                   fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
                 },
@@ -5261,7 +5332,6 @@ echo "processing"
                 id: '2',
                 description: 'Substep 2',
                 transitions: {
-                  aggregation: 'ALL' as const,
                   pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
                   fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
                 },
@@ -5290,16 +5360,15 @@ echo "processing"
             name: '1',
             description: 'Delegation step',
             transitions: {
-              aggregation: 'ALL' as const,
               pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
               fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
             },
+            aggregation: { strategy: 'ALL' },
             substeps: [
               {
                 id: '1',
                 description: 'Substep 1',
                 transitions: {
-                  aggregation: 'ALL' as const,
                   pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                   fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
                 },
@@ -5308,7 +5377,6 @@ echo "processing"
                 id: '2',
                 description: 'Substep 2',
                 transitions: {
-                  aggregation: 'ALL' as const,
                   pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                   fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
                 },
@@ -5328,25 +5396,31 @@ echo "processing"
       });
 
       it('Test D: no explicit substep transitions (inferred defaults) with PASS ALL: COMPLETE parent — PASS 1.1 advances to 1.2', () => {
+        const DEFER_TRANSITIONS = {
+          pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+          fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
+        };
         const steps = inferSteps([
           {
             name: '1',
             description: 'Delegation step',
             transitions: {
-              aggregation: 'ALL' as const,
               pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
               fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
             },
+            aggregation: { strategy: 'ALL' },
             substeps: [
               {
                 id: '1',
                 description: 'Substep 1',
-                // No transitions — rely on compiler inferring DEFAULT_AGGREGATION_SUBSTEP_TRANSITIONS
+                // Parser fills in DEFER defaults for substeps under aggregating parent
+                transitions: DEFER_TRANSITIONS,
               },
               {
                 id: '2',
                 description: 'Substep 2',
-                // No transitions — rely on compiler inferring DEFAULT_AGGREGATION_SUBSTEP_TRANSITIONS
+                // Parser fills in DEFER defaults for substeps under aggregating parent
+                transitions: DEFER_TRANSITIONS,
               },
             ],
           },
@@ -5368,16 +5442,15 @@ echo "processing"
             name: '1',
             description: 'Delegation step',
             transitions: {
-              aggregation: 'ALL' as const,
               pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
               fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
             },
+            aggregation: { strategy: 'ALL' },
             substeps: [
               {
                 id: '1',
                 description: 'Substep 1',
                 transitions: {
-                  aggregation: 'ALL' as const,
                   pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
                   fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
                 },
@@ -5386,7 +5459,6 @@ echo "processing"
                 id: '2',
                 description: 'Substep 2',
                 transitions: {
-                  aggregation: 'ALL' as const,
                   pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
                   fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
                 },
@@ -5411,16 +5483,15 @@ echo "processing"
             name: '1',
             description: 'Delegation step',
             transitions: {
-              aggregation: 'ALL' as const,
               pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
               fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
             },
+            aggregation: { strategy: 'ALL' },
             substeps: [
               {
                 id: '1',
                 description: 'Substep 1',
                 transitions: {
-                  aggregation: 'ALL' as const,
                   pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
                   fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
                 },
@@ -5429,7 +5500,6 @@ echo "processing"
                 id: '2',
                 description: 'Substep 2',
                 transitions: {
-                  aggregation: 'ALL' as const,
                   pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
                   fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
                 },
@@ -5448,18 +5518,22 @@ echo "processing"
       });
 
       it('PASS ANY (all=false) waits for all DEFER results before aggregation', () => {
+        const DEFER_TRANSITIONS = {
+          pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+          fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
+        };
         const steps = inferSteps([
           {
             name: '1',
             description: 'Delegation step',
             transitions: {
-              aggregation: 'ANY' as const,
               pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
               fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
             },
+            aggregation: { strategy: 'ANY' },
             substeps: [
-              { id: '1', description: 'Substep 1' },
-              { id: '2', description: 'Substep 2' },
+              { id: '1', description: 'Substep 1', transitions: DEFER_TRANSITIONS },
+              { id: '2', description: 'Substep 2', transitions: DEFER_TRANSITIONS },
             ],
           },
         ]);
@@ -5486,7 +5560,6 @@ echo "processing"
           name: '1',
           description: 'Step 1',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
             fail: {
               kind: 'fail' as const,
@@ -5510,7 +5583,6 @@ echo "processing"
           name: '1',
           description: 'Step 1',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass' as const, retry: 2, action: { type: 'COMPLETE' as const } },
             fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
           },
@@ -5527,12 +5599,12 @@ echo "processing"
         {
           name: '1',
           description: 'Step 1',
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Sub 1',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 3, action: { type: 'DEFER' as const } },
               },
@@ -5572,7 +5644,6 @@ echo "processing"
           name: '1',
           description: 'Step 1',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
             fail: { kind: 'fail' as const, retry: 2, action: { type: 'STOP' as const } },
           },
@@ -5618,7 +5689,6 @@ echo "processing"
           name: '1',
           description: 'Step 1',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass' as const, retry: 1, action: { type: 'COMPLETE' as const } },
             fail: { kind: 'fail' as const, retry: 1, action: { type: 'STOP' as const } },
           },
@@ -5656,19 +5726,19 @@ echo "processing"
             start: 1,
             end: 2,
             transitions: {
-              aggregation: 'ALL' as const,
               pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
               fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
             },
+            aggregation: { strategy: 'ALL' },
           },
           description: 'Loop with substeps',
           transitions: DEFAULT_TRANSITIONS,
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Substep 1',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
@@ -5677,7 +5747,6 @@ echo "processing"
               id: '2',
               description: 'Substep 2',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
@@ -5723,19 +5792,19 @@ echo "processing"
             start: 1,
             end: 3,
             transitions: {
-              aggregation: 'ALL' as const,
               pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
               fail: { kind: 'fail' as const, retry: 0, action: { type: 'BREAK' as const } },
             },
+            aggregation: { strategy: 'ALL' },
           },
           description: 'Loop with BREAK on fail',
           transitions: DEFAULT_TRANSITIONS,
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Check',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
@@ -5770,31 +5839,24 @@ echo "processing"
       expect(snapshot.context.deferredResults).toEqual([]);
     });
 
-    it('default FOR transitions (no explicit nested transitions) — DEFER loops back', () => {
+    it('sequential FOR (no explicit forClause transitions) — simple loop-back without aggregation', () => {
       const steps = inferSteps([
         {
           name: '1',
           forClause: { start: 1, end: 2 },
           description: 'Loop without explicit forClause transitions',
           transitions: DEFAULT_TRANSITIONS,
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Check A',
-              transitions: {
-                aggregation: 'ALL' as const,
-                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
-                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
-              },
+              transitions: DEFAULT_TRANSITIONS,
             },
             {
               id: '2',
               description: 'Check B',
-              transitions: {
-                aggregation: 'ALL' as const,
-                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
-                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
-              },
+              transitions: DEFAULT_TRANSITIONS,
             },
           ],
         },
@@ -5812,17 +5874,13 @@ echo "processing"
       const actor = createActor(machine);
       actor.start();
 
-      // Iteration 1: 1.1 PASS, 1.2 FAIL → iteration fails (ALL mode: hasFailed → fail)
-      actor.send({ type: 'PASS' });
-      actor.send({ type: 'FAIL' });
+      // Iteration 1: 1.1 PASS, 1.2 FAIL → sequential mode: substep FAIL fires STOP
+      // No iteration-level aggregation — substep results route directly
+      actor.send({ type: 'PASS' }); // 1.1 CONTINUE → 1.2
+      actor.send({ type: 'FAIL' }); // 1.2 STOP → STOPPED
 
-      // Default iteration transitions (DEFAULT_FOR_TRANSITIONS): FAIL → DEFER
-      // DEFER = loop-back with result accumulation
       const snapshot = actor.getSnapshot();
-      expect(snapshot.value).toBe('step::1::1');
-      expect(snapshot.context.forStack[0].iteration).toBe(2);
-      expect(snapshot.context.iterationResults).toEqual(['fail']);
-      expect(snapshot.context.deferredResults).toEqual([]);
+      expect(snapshot.value).toBe('STOPPED');
     });
 
     it('non-FOR steps are unaffected', () => {
@@ -5831,12 +5889,12 @@ echo "processing"
           name: '1',
           description: 'Non-FOR step with 2 substeps',
           transitions: DEFAULT_TRANSITIONS,
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Substep 1',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
@@ -5845,7 +5903,6 @@ echo "processing"
               id: '2',
               description: 'Substep 2',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
@@ -5888,19 +5945,19 @@ echo "processing"
             start: 1,
             end: 2,
             transitions: {
-              aggregation: 'ANY' as const,
               pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
               fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
             },
+            aggregation: { strategy: 'ANY' },
           },
           description: 'Loop with PASS ANY (aggregation: ANY)',
           transitions: DEFAULT_TRANSITIONS,
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Check X',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
@@ -5909,7 +5966,6 @@ echo "processing"
               id: '2',
               description: 'Check Y',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
@@ -5956,19 +6012,19 @@ echo "processing"
             start: 1,
             end: 3,
             transitions: {
-              aggregation: 'ALL' as const,
               pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
               fail: { kind: 'fail' as const, retry: 2, action: { type: 'BREAK' as const } },
             },
+            aggregation: { strategy: 'ALL' },
           },
           description: 'Loop with RETRY on fail',
           transitions: DEFAULT_TRANSITIONS,
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Check',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
@@ -6014,19 +6070,19 @@ echo "processing"
             start: 1,
             end: 2,
             transitions: {
-              aggregation: 'ALL' as const,
               pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
               fail: { kind: 'fail' as const, retry: 1, action: { type: 'DEFER' as const } },
             },
+            aggregation: { strategy: 'ALL' },
           },
           description: 'Loop with RETRY 1 DEFER on fail',
           transitions: DEFAULT_TRANSITIONS,
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Check',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
@@ -6074,19 +6130,19 @@ echo "processing"
             start: 1,
             end: 2,
             transitions: {
-              aggregation: 'ALL' as const,
               pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
               fail: { kind: 'fail' as const, retry: 2, action: { type: 'BREAK' as const } },
             },
+            aggregation: { strategy: 'ALL' },
           },
           description: 'Loop with RETRY on fail',
           transitions: DEFAULT_TRANSITIONS,
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Check',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
@@ -6136,19 +6192,19 @@ echo "processing"
             start: 1,
             end: 3,
             transitions: {
-              aggregation: 'ALL' as const,
               pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
               fail: { kind: 'fail' as const, retry: 1, action: { type: 'DEFER' as const } },
             },
+            aggregation: { strategy: 'ALL' },
           },
           description: 'Loop with RETRY 1 DEFER',
           transitions: DEFAULT_TRANSITIONS,
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Check',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
@@ -6211,19 +6267,19 @@ echo "processing"
             start: 1,
             end: 3,
             transitions: {
-              aggregation: 'ALL' as const,
               pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
               fail: { kind: 'fail' as const, retry: 2, action: { type: 'BREAK' as const } },
             },
+            aggregation: { strategy: 'ALL' },
           },
           description: 'Loop with RETRY on fail',
           transitions: DEFAULT_TRANSITIONS,
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'First check',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
@@ -6232,7 +6288,6 @@ echo "processing"
               id: '2',
               description: 'Second check',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'BREAK' as const } },
               },
@@ -6283,19 +6338,19 @@ echo "processing"
             start: 1,
             end: 3,
             transitions: {
-              aggregation: 'ALL' as const,
               pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
               fail: { kind: 'fail' as const, retry: 2, action: { type: 'DEFER' as const } },
             },
+            aggregation: { strategy: 'ALL' },
           },
           description: 'Loop with RETRY on fail',
           transitions: DEFAULT_TRANSITIONS,
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Check',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'NEXT' as const } },
               },
@@ -6347,19 +6402,19 @@ echo "processing"
             start: 1,
             end: 2,
             transitions: {
-              aggregation: 'ALL' as const,
               pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
               fail: { kind: 'fail' as const, retry: 2, action: { type: 'BREAK' as const } },
             },
+            aggregation: { strategy: 'ALL' },
           },
           description: 'Loop with RETRY on fail only',
           transitions: DEFAULT_TRANSITIONS,
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'First check',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
@@ -6368,7 +6423,6 @@ echo "processing"
               id: '2',
               description: 'Second check',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'BREAK' as const } },
               },
@@ -6426,19 +6480,19 @@ echo "processing"
             start: 1,
             end: 3,
             transitions: {
-              aggregation: 'ALL' as const,
               pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
               fail: { kind: 'fail' as const, retry: 0, action: { type: 'NEXT' as const } },
             },
+            aggregation: { strategy: 'ALL' },
           },
           description: 'Loop with NEXT on fail at iteration level',
           transitions: DEFAULT_TRANSITIONS,
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Check',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
@@ -6485,19 +6539,19 @@ echo "processing"
             start: 1,
             end: 3,
             transitions: {
-              aggregation: 'ALL' as const,
               pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
               fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
             },
+            aggregation: { strategy: 'ALL' },
           },
           description: 'Loop with CONTINUE exit on pass at iteration level',
           transitions: DEFAULT_TRANSITIONS,
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Check',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
@@ -6532,19 +6586,19 @@ echo "processing"
             start: 1,
             end: 3,
             transitions: {
-              aggregation: 'ALL' as const,
               pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
               fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
             },
+            aggregation: { strategy: 'ALL' },
           },
           description: 'Loop with CONTINUE exit on fail at iteration level',
           transitions: DEFAULT_TRANSITIONS,
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Check',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
@@ -6579,18 +6633,22 @@ echo "processing"
 
   describe('aggregation substep default transitions', () => {
     it('substeps default to DEFER on fail — advance to next substep under PASS ANY', () => {
+      const DEFER_TRANSITIONS = {
+        pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+        fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
+      };
       const steps = inferSteps([
         {
           name: '1',
           description: 'Aggregated check',
           transitions: {
-            aggregation: 'ANY' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
+          aggregation: { strategy: 'ANY' },
           substeps: [
-            { id: '1', description: 'First check' },
-            { id: '2', description: 'Second check' },
+            { id: '1', description: 'First check', transitions: DEFER_TRANSITIONS },
+            { id: '2', description: 'Second check', transitions: DEFER_TRANSITIONS },
           ],
         },
       ]);
@@ -6613,7 +6671,6 @@ echo "processing"
 
     it('substeps with explicit CONTINUE on fail advance to next substep but skip aggregation', () => {
       const SUBSTEP_CONTINUE = {
-        aggregation: 'ALL' as const,
         pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
         fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
       };
@@ -6622,10 +6679,10 @@ echo "processing"
           name: '1',
           description: 'Aggregated check',
           transitions: {
-            aggregation: 'ANY' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
+          aggregation: { strategy: 'ANY' },
           substeps: [
             { id: '1', description: 'First check', transitions: SUBSTEP_CONTINUE },
             { id: '2', description: 'Second check', transitions: SUBSTEP_CONTINUE },
@@ -6650,18 +6707,23 @@ echo "processing"
     });
 
     it('substeps under FOR default to DEFER — failure propagates to iteration aggregation', () => {
+      const DEFER_TRANSITIONS = {
+        pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+        fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
+      };
       const steps = inferSteps([
         {
           name: '1',
           description: 'FOR step',
-          forClause: { start: 1, end: 2 },
-          substeps: [{ id: '1', description: 'Check item' }],
+          forClause: { start: 1, end: 2, ...DEFAULT_FOR_ITERATION },
+          aggregation: { strategy: 'ALL' },
+          substeps: [{ id: '1', description: 'Check item', transitions: DEFER_TRANSITIONS }],
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '2',
           description: 'Done',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -6690,28 +6752,28 @@ echo "processing"
             start: 1,
             end: 2,
             transitions: {
-              aggregation: 'ALL' as const,
               pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
               fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
             },
+            aggregation: { strategy: 'ALL' },
           },
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Check item',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
               },
             },
           ],
+          transitions: DEFAULT_TRANSITIONS,
         },
         {
           name: '2',
           description: 'Done',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
             fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
           },
@@ -6744,19 +6806,16 @@ echo "processing"
     // (substepCompletedCount) but do NOT populate deferredResults.
 
     const PASS_ALL_TRANSITIONS = {
-      aggregation: 'ALL' as const,
       pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
       fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
     };
     const PASS_ANY_TRANSITIONS = {
-      aggregation: 'ANY' as const,
       pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
       fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
     };
 
     function makeSubstepTransitions(passAction: string, failAction: string) {
       return {
-        aggregation: 'ALL' as const,
         pass: { kind: 'pass' as const, retry: 0, action: { type: passAction as 'DEFER' } },
         fail: { kind: 'fail' as const, retry: 0, action: { type: failAction as 'DEFER' } },
       };
@@ -6775,6 +6834,7 @@ echo "processing"
             name: '1',
             description: 'Parent',
             transitions: PASS_ALL_TRANSITIONS,
+            aggregation: { strategy: 'ALL' },
             substeps: [
               {
                 id: '1',
@@ -6814,6 +6874,7 @@ echo "processing"
             name: '1',
             description: 'Parent',
             transitions: PASS_ALL_TRANSITIONS,
+            aggregation: { strategy: 'ALL' },
             substeps: [
               {
                 id: '1',
@@ -6855,6 +6916,7 @@ echo "processing"
             name: '1',
             description: 'Parent',
             transitions: PASS_ANY_TRANSITIONS,
+            aggregation: { strategy: 'ANY' },
             substeps: [
               {
                 id: '1',
@@ -6886,8 +6948,9 @@ echo "processing"
           {
             name: '1',
             description: 'Parent',
-            forClause: { start: 1, end: 2 },
+            forClause: { start: 1, end: 2, ...DEFAULT_FOR_ITERATION },
             transitions: PASS_ALL_TRANSITIONS,
+            aggregation: { strategy: 'ALL' },
             substeps: [
               {
                 id: '1',
@@ -6898,7 +6961,6 @@ echo "processing"
                 id: '2',
                 description: 'Sub 2',
                 transitions: {
-                  aggregation: 'ALL' as const,
                   pass: { kind: 'pass' as const, retry: 0, action: { type: 'BREAK' as const } },
                   fail: { kind: 'fail' as const, retry: 0, action: { type: 'BREAK' as const } },
                 },
@@ -6931,8 +6993,9 @@ echo "processing"
           {
             name: '1',
             description: 'Parent',
-            forClause: { start: 1, end: 2 },
+            forClause: { start: 1, end: 2, ...DEFAULT_FOR_ITERATION },
             transitions: PASS_ALL_TRANSITIONS,
+            aggregation: { strategy: 'ALL' },
             substeps: [
               {
                 id: '1',
@@ -6943,7 +7006,6 @@ echo "processing"
                 id: '2',
                 description: 'Sub 2',
                 transitions: {
-                  aggregation: 'ALL' as const,
                   pass: { kind: 'pass' as const, retry: 0, action: { type: 'BREAK' as const } },
                   fail: { kind: 'fail' as const, retry: 0, action: { type: 'BREAK' as const } },
                 },
@@ -6977,12 +7039,12 @@ echo "processing"
             name: '1',
             description: 'Parent',
             transitions: PASS_ALL_TRANSITIONS,
+            aggregation: { strategy: 'ALL' },
             substeps: [
               {
                 id: '1',
                 description: 'Sub 1',
                 transitions: {
-                  aggregation: 'ALL' as const,
                   pass: { kind: 'pass' as const, retry: 0, action: { type: 'NEXT' as const } },
                   fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
                 },
@@ -7001,7 +7063,6 @@ echo "processing"
 
     describe('FOR: substep action permutations with iteration aggregation', () => {
       const FOR_DEFER_TRANSITIONS = {
-        aggregation: 'ALL' as const,
         pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
         fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
       };
@@ -7022,9 +7083,15 @@ echo "processing"
         const steps = inferSteps([
           {
             name: '1',
-            forClause: { start: 1, end: 2, transitions: FOR_DEFER_TRANSITIONS },
+            forClause: {
+              start: 1,
+              end: 2,
+              transitions: FOR_DEFER_TRANSITIONS,
+              aggregation: { strategy: 'ALL' },
+            },
             description: 'FOR loop',
             transitions: PASS_ALL_TRANSITIONS,
+            aggregation: { strategy: 'ALL' },
             substeps: [
               {
                 id: '1',
@@ -7055,7 +7122,6 @@ echo "processing"
 
     describe('FOR: mixed substep actions in multi-substep iteration', () => {
       const FOR_DEFER_TRANSITIONS = {
-        aggregation: 'ALL' as const,
         pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
         fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
       };
@@ -7064,9 +7130,15 @@ echo "processing"
         const steps = inferSteps([
           {
             name: '1',
-            forClause: { start: 1, end: 1, transitions: FOR_DEFER_TRANSITIONS },
+            forClause: {
+              start: 1,
+              end: 1,
+              transitions: FOR_DEFER_TRANSITIONS,
+              aggregation: { strategy: 'ALL' },
+            },
             description: 'FOR loop',
             transitions: PASS_ALL_TRANSITIONS,
+            aggregation: { strategy: 'ALL' },
             substeps: [
               {
                 id: '1',
@@ -7098,9 +7170,15 @@ echo "processing"
         const steps = inferSteps([
           {
             name: '1',
-            forClause: { start: 1, end: 1, transitions: FOR_DEFER_TRANSITIONS },
+            forClause: {
+              start: 1,
+              end: 1,
+              transitions: FOR_DEFER_TRANSITIONS,
+              aggregation: { strategy: 'ALL' },
+            },
             description: 'FOR loop',
             transitions: PASS_ALL_TRANSITIONS,
+            aggregation: { strategy: 'ALL' },
             substeps: [
               {
                 id: '1',
@@ -7133,9 +7211,15 @@ echo "processing"
         const stepsAll = inferSteps([
           {
             name: '1',
-            forClause: { start: 1, end: 1, transitions: FOR_DEFER_TRANSITIONS },
+            forClause: {
+              start: 1,
+              end: 1,
+              transitions: FOR_DEFER_TRANSITIONS,
+              aggregation: { strategy: 'ALL' },
+            },
             description: 'FOR loop',
             transitions: PASS_ALL_TRANSITIONS,
+            aggregation: { strategy: 'ALL' },
             substeps: [
               {
                 id: '1',
@@ -7159,9 +7243,15 @@ echo "processing"
         const stepsAny = inferSteps([
           {
             name: '1',
-            forClause: { start: 1, end: 1, transitions: FOR_DEFER_TRANSITIONS },
+            forClause: {
+              start: 1,
+              end: 1,
+              transitions: FOR_DEFER_TRANSITIONS,
+              aggregation: { strategy: 'ALL' },
+            },
             description: 'FOR loop',
             transitions: PASS_ANY_TRANSITIONS,
+            aggregation: { strategy: 'ALL' },
             substeps: [
               {
                 id: '1',
@@ -7184,9 +7274,15 @@ echo "processing"
         const steps = inferSteps([
           {
             name: '1',
-            forClause: { start: 1, end: 2, transitions: FOR_DEFER_TRANSITIONS },
+            forClause: {
+              start: 1,
+              end: 2,
+              transitions: FOR_DEFER_TRANSITIONS,
+              aggregation: { strategy: 'ALL' },
+            },
             description: 'FOR loop',
             transitions: PASS_ALL_TRANSITIONS,
+            aggregation: { strategy: 'ALL' },
             substeps: [
               {
                 id: '1',
@@ -7230,9 +7326,15 @@ echo "processing"
         const steps = inferSteps([
           {
             name: '1',
-            forClause: { start: 1, end: 1, transitions: FOR_DEFER_TRANSITIONS },
+            forClause: {
+              start: 1,
+              end: 1,
+              transitions: FOR_DEFER_TRANSITIONS,
+              aggregation: { strategy: 'ALL' },
+            },
             description: 'FOR loop',
             transitions: PASS_ALL_TRANSITIONS,
+            aggregation: { strategy: 'ALL' },
             substeps: [
               {
                 id: '1',
@@ -7273,13 +7375,14 @@ echo "processing"
               start: 1,
               end: 3,
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
+              aggregation: { strategy: 'ALL' },
             },
             description: 'FOR loop',
             transitions: PASS_ALL_TRANSITIONS,
+            aggregation: { strategy: 'ALL' },
             substeps: [
               {
                 id: '1',
@@ -7314,13 +7417,14 @@ echo "processing"
               start: 1,
               end: 3,
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
               },
+              aggregation: { strategy: 'ALL' },
             },
             description: 'FOR loop',
             transitions: PASS_ALL_TRANSITIONS,
+            aggregation: { strategy: 'ALL' },
             substeps: [
               {
                 id: '1',
@@ -7364,9 +7468,15 @@ echo "processing"
         const steps = inferSteps([
           {
             name: '1',
-            forClause: { start: 1, end: 1, transitions: FOR_DEFER_TRANSITIONS },
+            forClause: {
+              start: 1,
+              end: 1,
+              transitions: FOR_DEFER_TRANSITIONS,
+              aggregation: { strategy: 'ALL' },
+            },
             description: 'FOR loop',
             transitions: PASS_ANY_TRANSITIONS,
+            aggregation: { strategy: 'ALL' },
             substeps: [
               {
                 id: '1',
@@ -7402,16 +7512,22 @@ echo "processing"
 
       it('S6: 3 substeps DEFER+CONTINUE+DEFER, PASS ANY at iteration level', () => {
         const FOR_ANY_DEFER_TRANSITIONS = {
-          aggregation: 'ANY' as const,
+          aggregation: { strategy: 'ANY' },
           pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
           fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
         };
         const steps = inferSteps([
           {
             name: '1',
-            forClause: { start: 1, end: 2, transitions: FOR_ANY_DEFER_TRANSITIONS },
+            forClause: {
+              start: 1,
+              end: 2,
+              transitions: FOR_ANY_DEFER_TRANSITIONS,
+              aggregation: { strategy: 'ANY' },
+            },
             description: 'FOR loop',
             transitions: PASS_ALL_TRANSITIONS,
+            aggregation: { strategy: 'ALL' },
             substeps: [
               {
                 id: '1',
@@ -7455,9 +7571,15 @@ echo "processing"
         const steps = inferSteps([
           {
             name: '1',
-            forClause: { start: 1, end: 3, transitions: FOR_DEFER_TRANSITIONS },
+            forClause: {
+              start: 1,
+              end: 3,
+              transitions: FOR_DEFER_TRANSITIONS,
+              aggregation: { strategy: 'ALL' },
+            },
             description: 'FOR loop',
             transitions: PASS_ANY_TRANSITIONS,
+            aggregation: { strategy: 'ALL' },
             substeps: [
               {
                 id: '1',
@@ -7497,9 +7619,15 @@ echo "processing"
         const steps = inferSteps([
           {
             name: '1',
-            forClause: { start: 1, end: 2, transitions: FOR_DEFER_TRANSITIONS },
+            forClause: {
+              start: 1,
+              end: 2,
+              transitions: FOR_DEFER_TRANSITIONS,
+              aggregation: { strategy: 'ALL' },
+            },
             description: 'FOR loop',
             transitions: PASS_ALL_TRANSITIONS,
+            aggregation: { strategy: 'ALL' },
             substeps: [
               {
                 id: '1',
@@ -7547,6 +7675,7 @@ echo "processing"
             name: '1',
             description: 'Parent',
             transitions: PASS_ANY_TRANSITIONS,
+            aggregation: { strategy: 'ANY' },
             substeps: [
               {
                 id: '1',
@@ -7573,6 +7702,7 @@ echo "processing"
             name: '1',
             description: 'Parent',
             transitions: PASS_ALL_TRANSITIONS,
+            aggregation: { strategy: 'ALL' },
             substeps: [
               {
                 id: '1',
@@ -7602,6 +7732,7 @@ echo "processing"
             name: '1',
             description: 'Parent',
             transitions: PASS_ALL_TRANSITIONS,
+            aggregation: { strategy: 'ALL' },
             substeps: [
               {
                 id: '1',
@@ -7631,6 +7762,7 @@ echo "processing"
             name: '1',
             description: 'Parent',
             transitions: PASS_ALL_TRANSITIONS,
+            aggregation: { strategy: 'ALL' },
             substeps: [
               {
                 id: '1',
@@ -7664,15 +7796,15 @@ echo "processing"
         const steps = inferSteps([
           {
             name: '1',
-            forClause: { start: 1, end: 2 },
+            forClause: { start: 1, end: 2, ...DEFAULT_FOR_ITERATION },
             description: 'FOR loop',
             transitions: PASS_ALL_TRANSITIONS,
+            aggregation: { strategy: 'ALL' },
             substeps: [
               {
                 id: '1',
                 description: 'Sub 1',
                 transitions: {
-                  aggregation: 'ALL' as const,
                   pass: { kind: 'pass' as const, retry: 0, action: { type: 'NEXT' as const } },
                   fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
                 },
@@ -7705,15 +7837,15 @@ echo "processing"
         const steps = inferSteps([
           {
             name: '1',
-            forClause: { start: 1, end: 3 },
+            forClause: { start: 1, end: 3, ...DEFAULT_FOR_ITERATION },
             description: 'FOR loop',
             transitions: PASS_ALL_TRANSITIONS,
+            aggregation: { strategy: 'ALL' },
             substeps: [
               {
                 id: '1',
                 description: 'Sub 1',
                 transitions: {
-                  aggregation: 'ALL' as const,
                   pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                   fail: { kind: 'fail' as const, retry: 0, action: { type: 'BREAK' as const } },
                 },
@@ -7754,12 +7886,12 @@ echo "processing"
             name: '1',
             description: 'Parent',
             transitions: PASS_ALL_TRANSITIONS,
+            aggregation: { strategy: 'ALL' },
             substeps: [
               {
                 id: '1',
                 description: 'Sub 1',
                 transitions: {
-                  aggregation: 'ALL' as const,
                   pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                   fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
                 },
@@ -7768,7 +7900,6 @@ echo "processing"
                 id: '2',
                 description: 'Sub 2',
                 transitions: {
-                  aggregation: 'ALL' as const,
                   pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                   fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
                 },
@@ -7795,12 +7926,12 @@ echo "processing"
             name: '1',
             description: 'Parent',
             transitions: PASS_ANY_TRANSITIONS,
+            aggregation: { strategy: 'ALL' },
             substeps: [
               {
                 id: '1',
                 description: 'Sub 1',
                 transitions: {
-                  aggregation: 'ALL' as const,
                   pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
                   fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
                 },
@@ -7809,7 +7940,6 @@ echo "processing"
                 id: '2',
                 description: 'Sub 2',
                 transitions: {
-                  aggregation: 'ALL' as const,
                   pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
                   fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
                 },
@@ -7868,7 +7998,6 @@ echo "processing"
           name: '1',
           description: 'Only step',
           transitions: {
-            aggregation: 'ALL' as const,
             pass: {
               kind: 'pass' as const,
               retry: 0,
@@ -7888,11 +8017,10 @@ echo "processing"
           name: '1',
           description: 'Step with substeps',
           substeps: [
-            { id: '1', description: 'Sub 1' },
-            { id: '2', description: 'Sub 2' },
+            { id: '1', description: 'Sub 1', transitions: DEFAULT_TRANSITIONS },
+            { id: '2', description: 'Sub 2', transitions: DEFAULT_TRANSITIONS },
           ],
           transitions: {
-            aggregation: 'ALL' as const,
             pass: {
               kind: 'pass' as const,
               retry: 0,
@@ -7900,6 +8028,7 @@ echo "processing"
             },
             fail: DEFAULT_TRANSITIONS.fail,
           },
+          aggregation: { strategy: 'ALL' },
         },
         {
           name: '2',
@@ -7917,11 +8046,10 @@ echo "processing"
           name: '1',
           description: 'Step with substeps',
           substeps: [
-            { id: '1', description: 'Sub 1' },
-            { id: '2', description: 'Sub 2' },
+            { id: '1', description: 'Sub 1', transitions: DEFAULT_TRANSITIONS },
+            { id: '2', description: 'Sub 2', transitions: DEFAULT_TRANSITIONS },
           ],
           transitions: {
-            aggregation: 'ALL' as const,
             pass: {
               kind: 'pass' as const,
               retry: 0,
@@ -7929,6 +8057,7 @@ echo "processing"
             },
             fail: DEFAULT_TRANSITIONS.fail,
           },
+          aggregation: { strategy: 'ALL' },
         },
         {
           name: '2',
@@ -7946,11 +8075,10 @@ echo "processing"
           name: '1',
           description: 'Step with substeps',
           substeps: [
-            { id: '1', description: 'Sub 1' },
-            { id: '2', description: 'Sub 2' },
+            { id: '1', description: 'Sub 1', transitions: DEFAULT_TRANSITIONS },
+            { id: '2', description: 'Sub 2', transitions: DEFAULT_TRANSITIONS },
           ],
           transitions: {
-            aggregation: 'ALL' as const,
             pass: DEFAULT_TRANSITIONS.pass,
             fail: {
               kind: 'fail' as const,
@@ -7958,6 +8086,7 @@ echo "processing"
               action: { type: 'DEFER' as const },
             },
           },
+          aggregation: { strategy: 'ALL' },
         },
         {
           name: '2',
@@ -7974,10 +8103,9 @@ echo "processing"
         {
           name: '1',
           description: 'FOR step',
-          forClause: { start: 1, end: 3 },
-          substeps: [{ id: '1', description: 'Sub 1' }],
+          forClause: { start: 1, end: 3, ...DEFAULT_FOR_ITERATION },
+          substeps: [{ id: '1', description: 'Sub 1', transitions: DEFAULT_TRANSITIONS }],
           transitions: {
-            aggregation: 'ALL' as const,
             pass: {
               kind: 'pass' as const,
               retry: 0,
@@ -7985,6 +8113,7 @@ echo "processing"
             },
             fail: DEFAULT_TRANSITIONS.fail,
           },
+          aggregation: { strategy: 'ALL' },
         },
         {
           name: '2',
@@ -8001,17 +8130,17 @@ echo "processing"
         {
           name: '1',
           description: 'Step with substeps',
+          aggregation: { strategy: 'ALL' },
           substeps: [
             {
               id: '1',
               description: 'Sub 1',
               transitions: {
-                aggregation: 'ALL' as const,
                 pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
                 fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
               },
             },
-            { id: '2', description: 'Sub 2' },
+            { id: '2', description: 'Sub 2', transitions: DEFAULT_TRANSITIONS },
           ],
           transitions: DEFAULT_TRANSITIONS,
         },

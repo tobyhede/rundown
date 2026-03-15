@@ -636,7 +636,8 @@ function finalizeStep(
     substeps.map((sub) => {
       if (sub.transitions !== DEFAULT_TRANSITIONS) return sub; // explicit — keep as-is
       if (sub.runbooks?.length) return { ...sub, transitions: DEFER_TRANSITIONS }; // delegation
-      if (stepAggregation) return { ...sub, transitions: DEFER_TRANSITIONS }; // under aggregation
+      if (stepAggregation) return { ...sub, transitions: DEFER_TRANSITIONS }; // under step aggregation
+      if (step.forClause?.aggregation) return { ...sub, transitions: DEFER_TRANSITIONS }; // under iteration aggregation
       return sub; // DEFAULT_TRANSITIONS is correct for sequential
     });
 

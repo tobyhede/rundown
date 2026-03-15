@@ -11,6 +11,11 @@ import { parseRunbook } from '../../src/runbook/index.js';
 import { parseRunbookDocument } from '@rundown-org/parser';
 import type { Step, Substep, Runbook } from '../../src/runbook/types.js';
 
+const DEFAULT_TRANSITIONS = {
+  pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+  fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+};
+
 describe('renderAction', () => {
   it('renders CONTINUE', () => {
     expect(renderAction({ type: 'CONTINUE' })).toBe('CONTINUE');
@@ -55,26 +60,29 @@ describe('renderAction', () => {
 
 describe('renderTransitions', () => {
   it('renders pass and fail transitions', () => {
-    const result = renderTransitions({
-      aggregation: 'ALL',
-      pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
-      fail: { kind: 'fail', retry: 0, action: { type: 'STOP', message: 'failed' } },
-    });
+    const result = renderTransitions(
+      {
+        pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+        fail: { kind: 'fail', retry: 0, action: { type: 'STOP', message: 'failed' } },
+      },
+      { strategy: 'ALL' },
+    );
     expect(result).toBe('- PASS ALL CONTINUE\n- FAIL ANY STOP "failed"');
   });
 
   it('renders transitions with retry prefix', () => {
-    const result = renderTransitions({
-      aggregation: 'ALL',
-      pass: { kind: 'pass', retry: 2, action: { type: 'STOP' } },
-      fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
-    });
+    const result = renderTransitions(
+      {
+        pass: { kind: 'pass', retry: 2, action: { type: 'STOP' } },
+        fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
+      },
+      { strategy: 'ALL' },
+    );
     expect(result).toBe('- PASS ALL RETRY 2 STOP\n- FAIL ANY CONTINUE');
   });
 
-  it('omits modifier when aggregation is none', () => {
+  it('omits modifier when no aggregation', () => {
     const result = renderTransitions({
-      aggregation: 'none',
       pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '2' } } },
       fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
     });
@@ -84,12 +92,20 @@ describe('renderTransitions', () => {
 
 describe('renderSubstep', () => {
   it('renders substep with parent step number (N.M format)', () => {
-    const substep: Substep = { id: '1', description: 'First reviewer' };
+    const substep: Substep = {
+      id: '1',
+      description: 'First reviewer',
+      transitions: DEFAULT_TRANSITIONS,
+    };
     expect(renderSubstep(substep, '3')).toBe('### 3.1 First reviewer');
   });
 
   it('renders substep without agent type', () => {
-    const substep: Substep = { id: '2', description: 'Second reviewer' };
+    const substep: Substep = {
+      id: '2',
+      description: 'Second reviewer',
+      transitions: DEFAULT_TRANSITIONS,
+    };
     expect(renderSubstep(substep, '1')).toBe('### 1.2 Second reviewer');
   });
 
@@ -98,6 +114,7 @@ describe('renderSubstep', () => {
       id: '1',
       description: 'With child runbook',
       runbooks: ['task.runbook.md'],
+      transitions: DEFAULT_TRANSITIONS,
     };
     expect(renderSubstep(substep, '1')).toBe('### 1.1 With child runbook\n\n- task.runbook.md');
   });
@@ -109,6 +126,7 @@ describe('renderStep', () => {
       kind: 'base',
       name: '1',
       description: 'First step',
+      transitions: DEFAULT_TRANSITIONS,
     };
     const result = renderStep(step);
     expect(result).toContain('## 1. First step');
@@ -119,9 +137,10 @@ describe('renderStep', () => {
       kind: 'substeps',
       name: '3',
       description: 'Dispatch reviewers',
+      transitions: DEFAULT_TRANSITIONS,
       substeps: [
-        { id: '1', description: 'First reviewer' },
-        { id: '2', description: 'Second reviewer' },
+        { id: '1', description: 'First reviewer', transitions: DEFAULT_TRANSITIONS },
+        { id: '2', description: 'Second reviewer', transitions: DEFAULT_TRANSITIONS },
       ],
     };
     const result = renderStep(step);
@@ -135,6 +154,7 @@ describe('renderStep', () => {
       name: '1',
       description: 'Run tests',
       command: { code: 'npm test' },
+      transitions: DEFAULT_TRANSITIONS,
     };
     const result = renderStep(step);
     expect(result).toContain('```bash');
@@ -148,6 +168,7 @@ describe('renderStep', () => {
       name: '1',
       description: 'Run script',
       command: { code: 'print("hello")', lang: 'python' },
+      transitions: DEFAULT_TRANSITIONS,
     };
     const result = renderStep(step);
     expect(result).toContain('```python');
@@ -162,11 +183,11 @@ describe('renderStep', () => {
       description: 'Review the plan',
       forClause: { variable: 'pass', start: 1, end: 2 },
       transitions: {
-        aggregation: 'ANY',
         pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
         fail: { kind: 'fail', retry: 0, action: { type: 'GOTO', target: { step: 'Synthesize' } } },
       },
-      substeps: [{ id: '1', description: 'Review' }],
+      aggregation: { strategy: 'ANY' },
+      substeps: [{ id: '1', description: 'Review', transitions: DEFAULT_TRANSITIONS }],
     };
     const result = renderStep(step);
     expect(result).toContain('- FOR pass IN 2');
@@ -180,11 +201,13 @@ describe('renderStep', () => {
       name: '2',
       substepsDerivedFromRunbookList: true,
       description: 'Review the plan',
+      transitions: DEFAULT_TRANSITIONS,
       substeps: [
         {
           id: '1',
           description: '',
           runbooks: ['review-technical-accuracy.runbook.md'],
+          transitions: DEFAULT_TRANSITIONS,
         },
       ],
     } as Step;
@@ -199,12 +222,14 @@ describe('renderStep', () => {
       name: '2',
       substepsDerivedFromRunbookList: true,
       description: 'Review the plan',
+      transitions: DEFAULT_TRANSITIONS,
       substeps: [
         {
           id: '1',
           description: '',
           prompt: 'Review the following items carefully.',
           runbooks: ['review.runbook.md'],
+          transitions: DEFAULT_TRANSITIONS,
         },
       ],
     } as Step;
@@ -222,7 +247,8 @@ describe('renderForClause coverage', () => {
       name: '1',
       description: 'Iterate',
       forClause: { variable: 'item', start: 1, source: 'items' },
-      substeps: [{ id: '1', description: 'Process' }],
+      transitions: DEFAULT_TRANSITIONS,
+      substeps: [{ id: '1', description: 'Process', transitions: DEFAULT_TRANSITIONS }],
     };
     const result = renderStep(step);
     expect(result).toContain('- FOR item IN {{ items }}');
@@ -234,7 +260,8 @@ describe('renderForClause coverage', () => {
       name: '1',
       description: 'Iterate',
       forClause: { variable: 'item', start: 2, end: 5, source: 'items' },
-      substeps: [{ id: '1', description: 'Process' }],
+      transitions: DEFAULT_TRANSITIONS,
+      substeps: [{ id: '1', description: 'Process', transitions: DEFAULT_TRANSITIONS }],
     };
     const result = renderStep(step);
     expect(result).toContain('- FOR item IN 2 TO 5 OF {{ items }}');
@@ -246,7 +273,8 @@ describe('renderForClause coverage', () => {
       name: '1',
       description: 'Iterate',
       forClause: { start: 2, end: 5 },
-      substeps: [{ id: '1', description: 'Process' }],
+      transitions: DEFAULT_TRANSITIONS,
+      substeps: [{ id: '1', description: 'Process', transitions: DEFAULT_TRANSITIONS }],
     };
     const result = renderStep(step);
     expect(result).toContain('- FOR 2 TO 5');
@@ -258,7 +286,8 @@ describe('renderForClause coverage', () => {
       name: '1',
       description: 'Iterate',
       forClause: { start: 1, end: 5 },
-      substeps: [{ id: '1', description: 'Process' }],
+      transitions: DEFAULT_TRANSITIONS,
+      substeps: [{ id: '1', description: 'Process', transitions: DEFAULT_TRANSITIONS }],
     };
     const result = renderStep(step);
     expect(result).toContain('- FOR 5');
@@ -270,7 +299,8 @@ describe('renderForClause coverage', () => {
       name: '1',
       description: 'Iterate',
       forClause: { unresolved: true as const, variable: 'item', start: 1, end: { ref: 'Max' } },
-      substeps: [{ id: '1', description: 'Process' }],
+      transitions: DEFAULT_TRANSITIONS,
+      substeps: [{ id: '1', description: 'Process', transitions: DEFAULT_TRANSITIONS }],
     } as Step;
     expect(() => renderStep(step)).toThrow('Cannot render unresolved FOR clause bounds');
   });
@@ -281,6 +311,7 @@ describe('renderSubstep with parent prefix', () => {
     const substep: Substep = {
       id: '1',
       description: 'First task',
+      transitions: DEFAULT_TRANSITIONS,
     };
 
     const rendered = renderSubstep(substep, '2');
@@ -291,6 +322,7 @@ describe('renderSubstep with parent prefix', () => {
     const substep: Substep = {
       id: 'Recover',
       description: 'Recovery task',
+      transitions: DEFAULT_TRANSITIONS,
     };
 
     const rendered = renderSubstep(substep, 'ErrorHandler');
@@ -375,7 +407,7 @@ echo hello
 - FAIL ANY STOP`;
 
     const parsed1 = parseRunbook(original);
-    expect(parsed1[0].transitions?.pass).toEqual({
+    expect(parsed1[0].transitions.pass).toEqual({
       kind: 'pass',
       retry: 0,
       action: { type: 'GOTO', target: { step: '2', substep: '1' } },
@@ -384,7 +416,7 @@ echo hello
     const rendered = parsed1.map(renderStep).join('\n\n');
     const parsed2 = parseRunbook(rendered);
 
-    expect(parsed2[0].transitions?.pass).toEqual({
+    expect(parsed2[0].transitions.pass).toEqual({
       kind: 'pass',
       retry: 0,
       action: { type: 'GOTO', target: { step: '2', substep: '1' } },
@@ -399,7 +431,7 @@ echo hello
 ## 2. Second step`;
 
     const parsed1 = parseRunbook(original);
-    expect(parsed1[0].transitions?.aggregation).toBe('none');
+    expect(parsed1[0].aggregation).toBeUndefined();
 
     const rendered = parsed1.map(renderStep).join('\n\n');
     expect(rendered).toContain('- PASS GOTO 2');
@@ -409,12 +441,12 @@ echo hello
 
     // Verify re-parse produces same result
     const parsed2 = parseRunbook(rendered);
-    expect(parsed2[0].transitions?.aggregation).toBe('none');
-    expect(parsed2[0].transitions?.pass.action).toEqual({
+    expect(parsed2[0].aggregation).toBeUndefined();
+    expect(parsed2[0].transitions.pass.action).toEqual({
       type: 'GOTO',
       target: { step: '2', substep: undefined },
     });
-    expect(parsed2[0].transitions?.fail.action).toEqual({ type: 'STOP' });
+    expect(parsed2[0].transitions.fail.action).toEqual({ type: 'STOP' });
   });
 
   it('round-trips transitions with explicit modifiers (ALL/ANY preserved)', () => {
@@ -425,7 +457,7 @@ echo hello
 ## 2. Second step`;
 
     const parsed1 = parseRunbook(original);
-    expect(parsed1[0].transitions?.aggregation).toBe('ALL');
+    expect(parsed1[0].aggregation?.strategy).toBe('ALL');
 
     const rendered = parsed1.map(renderStep).join('\n\n');
     expect(rendered).toContain('- PASS ALL CONTINUE');
@@ -479,12 +511,13 @@ describe('FOR clause with nested transitions', () => {
         start: 1,
         end: 3,
         transitions: {
-          aggregation: 'ALL',
           pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
           fail: { kind: 'fail', retry: 0, action: { type: 'BREAK' } },
         },
+        aggregation: { strategy: 'ALL' },
       },
-      substeps: [{ id: '1', description: 'Check' }],
+      transitions: DEFAULT_TRANSITIONS,
+      substeps: [{ id: '1', description: 'Check', transitions: DEFAULT_TRANSITIONS }],
     };
 
     const result = renderStep(step);
@@ -503,7 +536,8 @@ describe('FOR clause with nested transitions', () => {
         start: 1,
         end: 3,
       },
-      substeps: [{ id: '1', description: 'Check' }],
+      transitions: DEFAULT_TRANSITIONS,
+      substeps: [{ id: '1', description: 'Check', transitions: DEFAULT_TRANSITIONS }],
     };
 
     const result = renderStep(step);
@@ -555,8 +589,8 @@ describe('renderRunbook', () => {
       title: 'My Runbook',
       description: 'A test runbook',
       steps: [
-        { kind: 'base', name: '1', description: 'First step' },
-        { kind: 'base', name: '2', description: 'Second step' },
+        { kind: 'base', name: '1', description: 'First step', transitions: DEFAULT_TRANSITIONS },
+        { kind: 'base', name: '2', description: 'Second step', transitions: DEFAULT_TRANSITIONS },
       ],
     };
     const result = renderRunbook(runbook);
@@ -568,7 +602,9 @@ describe('renderRunbook', () => {
 
   it('renders runbook without title', () => {
     const runbook: Runbook = {
-      steps: [{ kind: 'base', name: '1', description: 'Only step' }],
+      steps: [
+        { kind: 'base', name: '1', description: 'Only step', transitions: DEFAULT_TRANSITIONS },
+      ],
     };
     const result = renderRunbook(runbook);
     expect(result).not.toMatch(/^# /m);

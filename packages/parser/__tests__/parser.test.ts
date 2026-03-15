@@ -258,7 +258,7 @@ describe('GOTO substep validation', () => {
 Do something.
 `;
     const steps = parseRunbook(markdown);
-    expect(steps[0].transitions?.pass).toEqual({
+    expect(steps[0].transitions.pass).toEqual({
       kind: 'pass',
       retry: 0,
       action: { type: 'GOTO', target: { step: '2', substep: '1' } },
@@ -375,12 +375,12 @@ Do check two.
 `;
     const steps = parseRunbook(markdown);
     // Step-level transitions should be preserved
-    expect(steps[0].transitions?.pass).toEqual({
+    expect(steps[0].transitions.pass).toEqual({
       kind: 'pass',
       retry: 0,
       action: { type: 'COMPLETE' },
     });
-    expect(steps[0].transitions?.fail).toEqual({
+    expect(steps[0].transitions.fail).toEqual({
       kind: 'fail',
       retry: 0,
       action: { type: 'STOP', message: 'A check failed' },
@@ -422,7 +422,7 @@ Do the check.
 `;
     const steps = parseRunbook(markdown);
     // Step-level transitions should be preserved
-    expect(steps[0].transitions?.pass).toEqual({
+    expect(steps[0].transitions.pass).toEqual({
       kind: 'pass',
       retry: 0,
       action: { type: 'COMPLETE' },
@@ -810,8 +810,8 @@ Do the work.`;
 
 Do the work.`;
       const steps = parseRunbook(md);
-      expect(steps[0].transitions?.pass.action).toEqual({ type: 'CONTINUE' });
-      expect(steps[0].transitions?.fail.action).toEqual({ type: 'STOP' });
+      expect(steps[0].transitions.pass.action).toEqual({ type: 'CONTINUE' });
+      expect(steps[0].transitions.fail.action).toEqual({ type: 'STOP' });
     });
 
     it('rejects list transitions after code block', () => {
@@ -1085,8 +1085,8 @@ FAIL: STOP
       const steps = parseRunbook(md);
       // Steps always have transitions (default CONTINUE/STOP)
       expect(steps[0].transitions).toBeDefined();
-      expect(steps[0].transitions?.pass.action.type).toBe('CONTINUE');
-      expect(steps[0].transitions?.fail.action.type).toBe('STOP');
+      expect(steps[0].transitions.pass.action.type).toBe('CONTINUE');
+      expect(steps[0].transitions.fail.action.type).toBe('STOP');
       expect(steps[0].prompt).toContain('Some prompt text.');
       expect(steps[0].prompt).toContain('PASS: CONTINUE');
     });
@@ -1278,7 +1278,7 @@ Review this checklist.
       ['review-build-runtime.runbook.md'],
       ['review-risk-safety.runbook.md'],
     ]);
-    expect(steps[0].transitions?.fail.action).toEqual({
+    expect(steps[0].transitions.fail.action).toEqual({
       type: 'GOTO',
       target: { step: 'Synthesize' },
     });
@@ -1606,8 +1606,8 @@ Do the work.
     // Paragraph-style transitions are not parsed as transitions — they become prompt text
     // Steps always have transitions (default CONTINUE/STOP)
     expect(steps[0].transitions).toBeDefined();
-    expect(steps[0].transitions?.pass.action.type).toBe('CONTINUE');
-    expect(steps[0].transitions?.fail.action.type).toBe('STOP');
+    expect(steps[0].transitions.pass.action.type).toBe('CONTINUE');
+    expect(steps[0].transitions.fail.action.type).toBe('STOP');
     expect(steps[0].prompt).toContain('PASS: CONTINUE');
     expect(steps[0].prompt).toContain('FAIL: STOP');
     expect(steps[0].prompt).toContain('Do the work.');
@@ -1768,7 +1768,7 @@ Do second.
     expect(steps[0].prompt).toBeUndefined();
     expect(steps[0].command).toBeUndefined();
     expect(steps[0].substeps).toBeUndefined();
-    expect(steps[0].transitions?.pass.action).toEqual({ type: 'CONTINUE' });
+    expect(steps[0].transitions.pass.action).toEqual({ type: 'CONTINUE' });
   });
 
   it('validates NEXT usage in substep context with FOR clause', () => {
