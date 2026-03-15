@@ -206,7 +206,7 @@ Opening fence is 3 or more backticks. Closing fence must use at least as many ba
 
 ```
 template_variable ::= "{{" ws? variable_path ws? "}}"
-variable_path     ::= variable_name ( "." variable_name )*
+variable_path     ::= variable_name ( "." ( variable_name | digit+ ) )*
 variable_name     ::= [a-zA-Z_] [a-zA-Z0-9_]*
 ```
 
