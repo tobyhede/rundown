@@ -14,6 +14,9 @@ import type {
   Command,
   Bound,
   ForClause,
+  FullSourceWindow,
+  WindowedSourceWindow,
+  NumericWindow,
   ResolvedRunbook,
   ResolvedStep,
   ResolvedStepWithFor,
@@ -24,6 +27,24 @@ import type {
   Action,
 } from '@rundown-org/parser';
 import { isUnresolvedForClause, MAX_FOR_BOUND, stepIdToString } from '@rundown-org/parser';
+
+/**
+ * Mapped type that requires all keys of T to be present in object literals,
+ * while preserving original value types (including `| undefined` for optional fields).
+ * Used to get compile-time errors when a ForClause field is added but not handled.
+ */
+type AllKeysExplicit<T> = {
+  [K in keyof Required<T>]: T[K];
+};
+
+/** FullSourceWindow with all keys required — compile error on missing field. */
+type ExplicitFullSourceWindow = AllKeysExplicit<FullSourceWindow>;
+
+/** WindowedSourceWindow with all keys required — compile error on missing field. */
+type ExplicitWindowedSourceWindow = AllKeysExplicit<WindowedSourceWindow>;
+
+/** NumericWindow with all keys required (minus `source` discriminant). */
+type ExplicitNumericWindow = AllKeysExplicit<Omit<NumericWindow, 'source'>>;
 
 /**
  * Shared placeholder matcher used across startup and runtime substitution.
@@ -326,24 +347,43 @@ export function resolveForBounds(
 
     let resolved: ForClause;
     if (fc.source !== undefined) {
-      // WindowedSourceWindow — both bounds required
-      resolved = {
+      if (end !== undefined) {
+        // WindowedSourceWindow — both bounds required
+        const explicit: ExplicitWindowedSourceWindow = {
+          variable: fc.variable,
+          start,
+          end,
+          source: fc.source,
+          transitions: fc.transitions,
+          aggregation: fc.aggregation,
+        };
+        resolved = explicit;
+      } else {
+        // FullSourceWindow — no end bound
+        const explicit: ExplicitFullSourceWindow = {
+          variable: fc.variable,
+          start,
+          source: fc.source,
+          transitions: fc.transitions,
+          aggregation: fc.aggregation,
+        };
+        resolved = explicit;
+      }
+    } else {
+      // NumericWindow — end is required (UnresolvedNumericWindow.end: Bound is non-optional)
+      if (end === undefined) {
+        throw new Error(
+          `FOR end bound in step "${step.name}" is required for numeric range — this indicates a parser bug`,
+        );
+      }
+      const explicit: ExplicitNumericWindow = {
         variable: fc.variable,
         start,
         end,
-        source: fc.source,
-        ...(fc.transitions && { transitions: fc.transitions }),
-        ...(fc.aggregation && { aggregation: fc.aggregation }),
+        transitions: fc.transitions,
+        aggregation: fc.aggregation,
       };
-    } else {
-      // NumericWindow — both bounds required
-      resolved = {
-        start,
-        end,
-        ...(fc.variable !== undefined && { variable: fc.variable }),
-        ...(fc.transitions && { transitions: fc.transitions }),
-        ...(fc.aggregation && { aggregation: fc.aggregation }),
-      };
+      resolved = explicit;
     }
 
     const { forClause: _, ...rest } = step;
