@@ -446,6 +446,83 @@ Do the check.
       action: { type: 'DEFER' },
     });
   });
+
+  it('substeps under non-aggregating parent get CONTINUE/STOP', () => {
+    const markdown = `## 1. Sequential check
+
+### 1.1 First check
+
+Do check one.
+
+### 1.2 Second check
+
+Do check two.
+`;
+    const steps = parseRunbook(markdown);
+    // No aggregation on parent step
+    expect(steps[0].aggregation).toBeUndefined();
+    // Substeps get CONTINUE/STOP defaults (no aggregation context)
+    expect(steps[0].substeps?.[0].transitions?.pass).toEqual({
+      kind: 'pass',
+      retry: 0,
+      action: { type: 'CONTINUE' },
+    });
+    expect(steps[0].substeps?.[0].transitions?.fail).toEqual({
+      kind: 'fail',
+      retry: 0,
+      action: { type: 'STOP' },
+    });
+    expect(steps[0].substeps?.[1].transitions?.pass).toEqual({
+      kind: 'pass',
+      retry: 0,
+      action: { type: 'CONTINUE' },
+    });
+    expect(steps[0].substeps?.[1].transitions?.fail).toEqual({
+      kind: 'fail',
+      retry: 0,
+      action: { type: 'STOP' },
+    });
+  });
+
+  it('explicit substep transitions preserved under aggregating parent', () => {
+    const markdown = `## 1. Aggregated check
+
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+### 1.1 Explicit substep
+- PASS DEFER
+- FAIL STOP
+
+### 1.2 Default substep
+
+Do check.
+`;
+    const steps = parseRunbook(markdown);
+    expect(steps[0].aggregation?.strategy).toBe('ALL');
+    // Substep 1: explicit transitions preserved (DEFER/STOP, not overridden)
+    expect(steps[0].substeps?.[0].transitions?.pass).toEqual({
+      kind: 'pass',
+      retry: 0,
+      action: { type: 'DEFER' },
+    });
+    expect(steps[0].substeps?.[0].transitions?.fail).toEqual({
+      kind: 'fail',
+      retry: 0,
+      action: { type: 'STOP' },
+    });
+    // Substep 2: no explicit transitions → gets default DEFER/DEFER under aggregation
+    expect(steps[0].substeps?.[1].transitions?.pass).toEqual({
+      kind: 'pass',
+      retry: 0,
+      action: { type: 'DEFER' },
+    });
+    expect(steps[0].substeps?.[1].transitions?.fail).toEqual({
+      kind: 'fail',
+      retry: 0,
+      action: { type: 'DEFER' },
+    });
+  });
 });
 
 describe('substep GOTO validation', () => {

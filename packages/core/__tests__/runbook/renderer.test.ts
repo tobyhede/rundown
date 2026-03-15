@@ -503,6 +503,77 @@ echo hello
       ['review-structural-integrity.runbook.md'],
     ]);
   });
+
+  it('round-trips FOR without forClause transitions', () => {
+    const original = `## 1. Process items
+
+- FOR item IN 1 TO 3
+- PASS GOTO 2
+- FAIL STOP "processing failed"
+
+### 1.1 Check item
+
+Do the check.
+
+## 2. Done`;
+
+    const parsed1 = parseRunbook(original);
+    expect((parsed1[0] as any).forClause?.transitions).toBeUndefined();
+    expect((parsed1[0] as any).forClause?.aggregation).toBeUndefined();
+
+    const rendered = parsed1.map(renderStep).join('\n\n');
+    // No indented forClause transitions rendered
+    expect(rendered).not.toMatch(/^ {2}- PASS/m);
+    expect(rendered).not.toMatch(/^ {2}- FAIL/m);
+    // Step-level non-default transitions ARE rendered
+    expect(rendered).toContain('- PASS GOTO 2');
+    expect(rendered).toContain('- FAIL STOP "processing failed"');
+
+    const parsed2 = parseRunbook(rendered);
+    expect((parsed2[0] as any).forClause?.transitions).toBeUndefined();
+    expect((parsed2[0] as any).forClause?.aggregation).toBeUndefined();
+    // Step-level transitions survive round-trip
+    expect(parsed2[0].transitions.pass.action).toEqual({
+      type: 'GOTO',
+      target: { step: '2', substep: undefined },
+    });
+    expect(parsed2[0].transitions.fail.action).toEqual({
+      type: 'STOP',
+      message: 'processing failed',
+    });
+  });
+
+  it('round-trips substeps without aggregation', () => {
+    const original = `## 1. Sequential check
+
+### 1.1 First check
+
+Do check one.
+
+### 1.2 Second check
+
+Do check two.
+
+## 2. Done`;
+
+    const parsed1 = parseRunbook(original);
+    expect(parsed1[0].aggregation).toBeUndefined();
+
+    const rendered = parsed1.map(renderStep).join('\n\n');
+    // Default transitions suppressed by hasNonDefaultTransitions
+    expect(rendered).not.toMatch(/- PASS\b/);
+    expect(rendered).not.toMatch(/- FAIL\b/);
+    // No ALL/ANY modifiers
+    expect(rendered).not.toMatch(/\bALL\b/);
+    expect(rendered).not.toMatch(/\bANY\b/);
+
+    const parsed2 = parseRunbook(rendered);
+    expect(parsed2[0].aggregation).toBeUndefined();
+    // Substeps survive round-trip
+    expect(parsed2[0].substeps).toHaveLength(2);
+    expect(parsed2[0].substeps?.[0].description).toBe('First check');
+    expect(parsed2[0].substeps?.[1].description).toBe('Second check');
+  });
 });
 
 describe('FOR clause with nested transitions', () => {

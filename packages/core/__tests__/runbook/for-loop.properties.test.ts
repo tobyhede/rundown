@@ -481,4 +481,75 @@ describe('FOR loop properties', () => {
       { numRuns: 200 },
     );
   });
+
+  // Property 14: Fully sequential FOR always terminates
+  // Config: both agg modes undefined (no iteration or parent aggregation),
+  // substepPassAction: CONTINUE, substepFailAction: random (CONTINUE/STOP/BREAK/NEXT).
+  it('fully sequential FOR always terminates', () => {
+    const seqConfig = fc.record({
+      iterations: fc.integer({ min: 1, max: 5 }),
+      numSubsteps: fc.integer({ min: 1, max: 3 }),
+      substepPassAction: fc.constant<SubstepAction>('CONTINUE'),
+      substepFailAction: fc.constantFrom<SubstepAction>('CONTINUE', 'STOP', 'BREAK', 'NEXT'),
+      substepFailRetry: fc.constant(0),
+      iterationPassAction: fc.constant<IterationAction>('CONTINUE'),
+      iterationFailAction: fc.constant<IterationAction>('CONTINUE'),
+      iterationAggMode: fc.constant(undefined),
+      iterationFailRetry: fc.constant(0),
+      parentPassAction: fc.constant<ParentAction>('CONTINUE'),
+      parentFailAction: fc.constant<ParentAction>('STOP'),
+      parentAggMode: fc.constant(undefined),
+      parentFailRetry: fc.constant(0),
+    });
+
+    fc.assert(
+      fc.property(
+        seqConfig,
+        fc.array(eventArb, { minLength: 1, maxLength: 30 }),
+        (config, events) => {
+          const result = runForLoop(config, events);
+          // Always terminates
+          expect(result.terminalState).toMatch(/^(COMPLETE|STOPPED)$/);
+          // No accumulation in sequential mode
+          expect(result.iterationResults).toEqual([]);
+        },
+      ),
+      { numRuns: 300 },
+    );
+  });
+
+  // Property 15: Fully sequential FOR all-pass yields COMPLETE
+  // All events PASS, all actions CONTINUE — loops exactly right number of times.
+  it('fully sequential FOR all-pass yields COMPLETE', () => {
+    const seqPassConfig = fc.record({
+      iterations: fc.integer({ min: 1, max: 5 }),
+      numSubsteps: fc.integer({ min: 1, max: 3 }),
+      substepPassAction: fc.constant<SubstepAction>('CONTINUE'),
+      substepFailAction: fc.constant<SubstepAction>('STOP'),
+      substepFailRetry: fc.constant(0),
+      iterationPassAction: fc.constant<IterationAction>('CONTINUE'),
+      iterationFailAction: fc.constant<IterationAction>('CONTINUE'),
+      iterationAggMode: fc.constant(undefined),
+      iterationFailRetry: fc.constant(0),
+      parentPassAction: fc.constant<ParentAction>('CONTINUE'),
+      parentFailAction: fc.constant<ParentAction>('STOP'),
+      parentAggMode: fc.constant(undefined),
+      parentFailRetry: fc.constant(0),
+    });
+
+    fc.assert(
+      fc.property(seqPassConfig, (cfg) => {
+        const total = cfg.iterations * cfg.numSubsteps;
+        const events = Array.from({ length: total + 10 }, () => 'PASS' as EventType);
+        const result = runForLoop(cfg, events);
+        // All pass → COMPLETE (via step 2 terminal)
+        expect(result.terminalState).toBe('COMPLETE');
+        // FOR loop consumes iterations * numSubsteps events, then step 2 consumes 1
+        expect(result.eventsConsumed).toBe(total + 1);
+        // No accumulation
+        expect(result.iterationResults).toEqual([]);
+      }),
+      { numRuns: 300 },
+    );
+  });
 });

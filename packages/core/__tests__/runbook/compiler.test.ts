@@ -150,6 +150,71 @@ describe('runbook compiler', () => {
       expect(actor.getSnapshot().value).toBe('step::2');
     });
 
+    it('non-aggregating substeps with sequential flow (Case D)', () => {
+      const steps = inferSteps([
+        {
+          name: '1',
+          description: 'Step with substeps, no aggregation',
+          transitions: DEFAULT_TRANSITIONS,
+          substeps: [
+            { id: '1', description: 'Sub 1', transitions: DEFAULT_TRANSITIONS },
+            { id: '2', description: 'Sub 2', transitions: DEFAULT_TRANSITIONS },
+            { id: '3', description: 'Sub 3', transitions: DEFAULT_TRANSITIONS },
+          ],
+        },
+        {
+          name: '2',
+          description: 'Next',
+          transitions: {
+            ...DEFAULT_TRANSITIONS,
+            pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+          },
+        },
+      ]);
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'PASS' }); // 1.1 CONTINUE → 1.2
+      actor.send({ type: 'PASS' }); // 1.2 CONTINUE → 1.3
+      actor.send({ type: 'PASS' }); // 1.3 CONTINUE → parent → Case D → step::2
+
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('step::2');
+      // Case D: non-FOR pass-through clears deferredResults
+      expect(snapshot.context.deferredResults).toBeUndefined();
+      expect(snapshot.context.iterationResults).toBeUndefined();
+    });
+
+    it('non-aggregating substep FAIL propagates STOP directly', () => {
+      const steps = inferSteps([
+        {
+          name: '1',
+          description: 'Step with substeps, no aggregation',
+          transitions: DEFAULT_TRANSITIONS,
+          substeps: [
+            { id: '1', description: 'Sub 1', transitions: DEFAULT_TRANSITIONS },
+            { id: '2', description: 'Sub 2', transitions: DEFAULT_TRANSITIONS },
+          ],
+        },
+        {
+          name: '2',
+          description: 'Next',
+          transitions: DEFAULT_TRANSITIONS,
+        },
+      ]);
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'PASS' }); // 1.1 CONTINUE → 1.2
+      actor.send({ type: 'FAIL' }); // 1.2 STOP → STOPPED
+
+      expect(actor.getSnapshot().value).toBe('STOPPED');
+    });
+
     it('last substep transitions to parent state', () => {
       const steps = inferSteps([
         {
@@ -6257,6 +6322,274 @@ echo "processing"
 
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('COMPLETE');
+    });
+  });
+
+  describe('sequential FOR (no aggregation)', () => {
+    it('all pass — loops through all iterations', () => {
+      const steps = inferSteps([
+        {
+          name: '1',
+          forClause: { start: 1, end: 3 },
+          description: 'Sequential loop',
+          transitions: DEFAULT_TRANSITIONS,
+          substeps: [
+            {
+              id: '1',
+              description: 'Check',
+              transitions: DEFAULT_TRANSITIONS,
+            },
+          ],
+        },
+        {
+          name: '2',
+          description: 'Done',
+          transitions: {
+            ...DEFAULT_TRANSITIONS,
+            pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+          },
+        },
+      ]);
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      // Iteration 1: substep PASS → CONTINUE → loop-back
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('step::1::1');
+      expect(actor.getSnapshot().context.forStack[0].iteration).toBe(2);
+
+      // Iteration 2
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('step::1::1');
+      expect(actor.getSnapshot().context.forStack[0].iteration).toBe(3);
+
+      // Iteration 3 — last iteration → exit loop → step::2
+      actor.send({ type: 'PASS' });
+
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('step::2');
+      expect(snapshot.context.forStack).toEqual([]);
+    });
+
+    it('multiple substeps, all pass', () => {
+      const steps = inferSteps([
+        {
+          name: '1',
+          forClause: { start: 1, end: 2 },
+          description: 'Sequential loop with substeps',
+          transitions: DEFAULT_TRANSITIONS,
+          substeps: [
+            {
+              id: '1',
+              description: 'Sub A',
+              transitions: DEFAULT_TRANSITIONS,
+            },
+            {
+              id: '2',
+              description: 'Sub B',
+              transitions: DEFAULT_TRANSITIONS,
+            },
+          ],
+        },
+        {
+          name: '2',
+          description: 'Done',
+          transitions: {
+            ...DEFAULT_TRANSITIONS,
+            pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+          },
+        },
+      ]);
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      // Iteration 1
+      actor.send({ type: 'PASS' }); // 1.1 CONTINUE → 1.2
+      expect(actor.getSnapshot().value).toBe('step::1::2');
+      actor.send({ type: 'PASS' }); // 1.2 CONTINUE → loop-back → iter 2
+      expect(actor.getSnapshot().value).toBe('step::1::1');
+      expect(actor.getSnapshot().context.forStack[0].iteration).toBe(2);
+
+      // Iteration 2
+      actor.send({ type: 'PASS' }); // 1.1 CONTINUE → 1.2
+      expect(actor.getSnapshot().value).toBe('step::1::2');
+      actor.send({ type: 'PASS' }); // 1.2 CONTINUE → exit → step::2
+      expect(actor.getSnapshot().value).toBe('step::2');
+    });
+
+    it('substep FAIL with STOP terminates immediately', () => {
+      const steps = inferSteps([
+        {
+          name: '1',
+          forClause: { start: 1, end: 3 },
+          description: 'Sequential loop',
+          transitions: DEFAULT_TRANSITIONS,
+          substeps: [
+            {
+              id: '1',
+              description: 'Check',
+              transitions: DEFAULT_TRANSITIONS,
+            },
+          ],
+        },
+        {
+          name: '2',
+          description: 'Done',
+          transitions: DEFAULT_TRANSITIONS,
+        },
+      ]);
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'PASS' }); // iter 1 PASS → loop-back
+      actor.send({ type: 'FAIL' }); // iter 2 FAIL → STOP → STOPPED
+
+      expect(actor.getSnapshot().value).toBe('STOPPED');
+    });
+
+    it('BREAK exits loop without aggregation', () => {
+      const steps = inferSteps([
+        {
+          name: '1',
+          forClause: { start: 1, end: 3 },
+          description: 'Sequential loop with BREAK',
+          transitions: DEFAULT_TRANSITIONS,
+          substeps: [
+            {
+              id: '1',
+              description: 'Check',
+              transitions: {
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'BREAK' as const } },
+              },
+            },
+          ],
+        },
+        {
+          name: '2',
+          description: 'Done',
+          transitions: {
+            ...DEFAULT_TRANSITIONS,
+            pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+          },
+        },
+      ]);
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'PASS' }); // iter 1 PASS → loop-back
+      actor.send({ type: 'FAIL' }); // iter 2 FAIL → BREAK → exit loop → step::2
+
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('step::2');
+      expect(snapshot.context.forStack).toEqual([]);
+    });
+
+    it('NEXT advances iteration without accumulation', () => {
+      const steps = inferSteps([
+        {
+          name: '1',
+          forClause: { start: 1, end: 3 },
+          description: 'Sequential loop with NEXT',
+          transitions: DEFAULT_TRANSITIONS,
+          substeps: [
+            {
+              id: '1',
+              description: 'Sub A',
+              transitions: {
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'NEXT' as const } },
+              },
+            },
+            {
+              id: '2',
+              description: 'Sub B',
+              transitions: DEFAULT_TRANSITIONS,
+            },
+          ],
+        },
+        {
+          name: '2',
+          description: 'Done',
+          transitions: {
+            ...DEFAULT_TRANSITIONS,
+            pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+          },
+        },
+      ]);
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      // Iteration 1: 1.1 FAIL → NEXT → skip 1.2, advance to iter 2
+      actor.send({ type: 'FAIL' });
+      expect(actor.getSnapshot().value).toBe('step::1::1');
+      expect(actor.getSnapshot().context.forStack[0].iteration).toBe(2);
+
+      // Iteration 2: both substeps pass
+      actor.send({ type: 'PASS' }); // 1.1 CONTINUE → 1.2
+      actor.send({ type: 'PASS' }); // 1.2 CONTINUE → loop-back → iter 3
+
+      // Iteration 3: both substeps pass → exit
+      actor.send({ type: 'PASS' }); // 1.1 CONTINUE → 1.2
+      actor.send({ type: 'PASS' }); // 1.2 CONTINUE → exit → step::2
+
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('step::2');
+      expect(snapshot.context.forStack).toEqual([]);
+    });
+
+    it('parent aggregation activates iteration machinery even without forClause transitions', () => {
+      // Regression guard: step.aggregation makes needsIterationMachinery true
+      // even without explicit forClause.transitions or forClause.aggregation
+      const steps = inferSteps([
+        {
+          name: '1',
+          forClause: { start: 1, end: 2 },
+          description: 'FOR with parent aggregation only',
+          transitions: {
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+          },
+          aggregation: { strategy: 'ALL' as const },
+          substeps: [
+            {
+              id: '1',
+              description: 'Check',
+              transitions: {
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
+              },
+            },
+          ],
+        },
+        {
+          name: '2',
+          description: 'Next',
+          transitions: DEFAULT_TRANSITIONS,
+        },
+      ]);
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      // All PASS → iteration machinery active → aggregation → COMPLETE
+      actor.send({ type: 'PASS' }); // iter 1: substep DEFER → iteration DEFER
+      actor.send({ type: 'PASS' }); // iter 2: substep DEFER → iteration DEFER
+
+      // Parent ALL aggregation: all pass → COMPLETE (directly, not via step 2)
+      expect(actor.getSnapshot().value).toBe('COMPLETE');
+      expect(actor.getSnapshot().context.iterationResults).toEqual(['pass', 'pass']);
     });
   });
 
