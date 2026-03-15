@@ -73,12 +73,14 @@ function aggregationModifier(aggregation: Aggregation | undefined, kind: 'pass' 
  * @returns true if any transition is non-default
  */
 function hasNonDefaultTransitions(transitions: Transitions): boolean {
-  return (
-    transitions.pass.action.type !== 'CONTINUE' ||
-    transitions.pass.retry > 0 ||
-    transitions.fail.action.type !== 'STOP' ||
-    transitions.fail.retry > 0
-  );
+  const isDefaultPass = transitions.pass.action.type === 'CONTINUE' && transitions.pass.retry === 0;
+
+  const isDefaultFail =
+    transitions.fail.action.type === 'STOP' &&
+    !('message' in transitions.fail.action && transitions.fail.action.message) &&
+    transitions.fail.retry === 0;
+
+  return !(isDefaultPass && isDefaultFail);
 }
 
 /**
