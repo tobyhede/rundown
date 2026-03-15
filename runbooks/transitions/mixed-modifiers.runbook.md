@@ -35,7 +35,7 @@ rd echo --result pass
 ## 2. Optimistic
 
 - PASS ANY GOTO 4
-- FAIL ALL RETRY 3
+- FAIL ALL RETRY 3 STOP
 
 ```bash
 rd echo --result pass

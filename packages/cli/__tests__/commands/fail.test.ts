@@ -258,7 +258,7 @@ Final step.
     it('consecutive fail commands maintain state consistency', async () => {
       // Create a runbook that transitions on second fail
       const multiFailRunbook = `## 1. Retry step
-- FAIL RETRY 2
+- FAIL RETRY 2 STOP
 - PASS CONTINUE
 
 Try this step.

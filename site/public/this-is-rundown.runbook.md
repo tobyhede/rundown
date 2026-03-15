@@ -60,7 +60,7 @@ Rundown works *with* agents, adding guardrails that enforce transitions and impr
 
 ## 4 Execute the right commands at the right time
 - PASS CONTINUE
-- FAIL RETRY GOTO RECOVER
+- FAIL RETRY 1 GOTO RECOVER
 
 Embed commands for automatic execution. Catch failure, retry, and recover gracefully.
 

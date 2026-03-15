@@ -1,7 +1,7 @@
 ## 1. Execute failing command
 
 - PASS CONTINUE
-- FAIL RETRY 2
+- FAIL RETRY 2 STOP
 
 Run a command that fails then succeeds.
 

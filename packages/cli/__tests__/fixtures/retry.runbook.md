@@ -1,7 +1,7 @@
 ## 1. Retry step
 
 - PASS CONTINUE
-- FAIL RETRY 3
+- FAIL RETRY 3 STOP
 
 May need multiple attempts.
 

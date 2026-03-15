@@ -15,7 +15,7 @@ rd echo --result pass
 ### 1.2 Substep B
 
 - PASS CONTINUE
-- FAIL RETRY 2
+- FAIL RETRY 2 STOP
 
 Second substep.
 

@@ -103,7 +103,7 @@ rd echo npm run database:migrate
 
 ### 3.3 Restart services
 
-- FAIL RETRY
+- FAIL RETRY 1 STOP
 
 ```bash
 rd echo npm run deploy:restart
