@@ -54,6 +54,9 @@ describe('FOR loop fallback (prompted FOR with unresolved bounds)', () => {
     const position = firstEntered.position as Record<string, unknown>;
     expect(position.for).toBeDefined();
 
+    // Prompted FOR step should emit prompted: true
+    expect(firstEntered.prompted).toBe(true);
+
     // Should NOT have any command_started events (prompted FOR prevents auto-execution)
     const commandEvents = events.filter((e) => e.type === 'command_started');
     expect(commandEvents).toHaveLength(0);

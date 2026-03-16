@@ -383,6 +383,10 @@ function resolveAtValueRuntime(
   return defaultValue;
 }
 
+function isPromptedForStep(step: ResolvedStep): boolean {
+  return step.kind === 'for' && !!step.promptedFor;
+}
+
 /**
  * Create a ForContext for a step's FOR clause.
  *
@@ -409,7 +413,7 @@ function createForContext(
       stepId: stepName,
       iteration: resolveAtValue(atValue, forClause.start),
       start: forClause.start,
-      end: 'end' in forClause ? forClause.end : 1,
+      end: isSourced(forClause) ? (isWindowed(forClause) ? forClause.end : 1) : forClause.end,
       variable: forClause.variable,
       implicit: false,
       source: { kind: 'range' },
@@ -755,7 +759,7 @@ function buildParentExitAssign(
                 iteration,
                 false,
                 sources,
-                !!targetStep.promptedFor,
+                isPromptedForStep(targetStep),
               ),
             ];
           },
@@ -1706,7 +1710,7 @@ function buildGotoTransition(
             target.at,
             isImplicit,
             sources,
-            targetStepObj.kind === 'for' && !!targetStepObj.promptedFor,
+            isPromptedForStep(targetStepObj),
           ),
         iterationResults: ({
           context,
@@ -1998,7 +2002,7 @@ export function compileRunbookToMachine(
                 undefined,
                 stepInfo.implicit,
                 options?.sources,
-                stepInfo.step.kind === 'for' && !!stepInfo.step.promptedFor,
+                isPromptedForStep(stepInfo.step),
               ),
             iterationResults: ({
               context,
@@ -2077,7 +2081,7 @@ export function compileRunbookToMachine(
                   event.target.at,
                   forStepForTarget.implicit,
                   options?.sources,
-                  forStepForTarget.step.kind === 'for' && !!forStepForTarget.step.promptedFor,
+                  isPromptedForStep(forStepForTarget.step),
                 );
               },
               iterationResults: ({

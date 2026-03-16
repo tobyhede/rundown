@@ -1202,6 +1202,32 @@ describe('resolveForBounds', () => {
       );
     });
 
+    it('reports all validation errors when multiple loop controls reference prompted steps', () => {
+      const unresolvedFor: ParsedForClause = {
+        unresolved: true as const,
+        variable: 'item',
+        start: 1,
+        end: { ref: 'Missing' },
+      };
+      // Substep with both NEXT and BREAK referencing a prompted FOR step
+      const substeps: Substep[] = [
+        {
+          id: '1',
+          description: 'Sub with NEXT',
+          transitions: {
+            aggregation: 'none' as const,
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'NEXT' as const } },
+            fail: { kind: 'fail' as const, retry: 0, action: { type: 'BREAK' as const } },
+          },
+        },
+      ];
+      const forStep = makeForStepWithSubstepTransitions(unresolvedFor, substeps, '1');
+      const runbook = makeRunbook([forStep]);
+      expect(() => resolveForBounds(runbook, {})).toThrow(RunbookSyntaxError);
+      // Both NEXT and BREAK errors should be reported
+      expect(() => resolveForBounds(runbook, {})).toThrow(/NEXT.*prompted.*; .*BREAK.*prompted/);
+    });
+
     it('does not throw for NEXT/BREAK in substep of a successfully resolved FOR step', () => {
       const resolvedFor: ParsedForClause = {
         unresolved: true as const,

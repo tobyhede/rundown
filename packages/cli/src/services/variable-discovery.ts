@@ -566,6 +566,7 @@ export async function resolveVariables(
 
   // Process each layer in precedence order (lowest to highest)
   for (const [layerIndex, layer] of layers.entries()) {
+    const reservedViolations: string[] = [];
     for (const [key, value] of Object.entries(layer)) {
       if (!VALID_IDENTIFIER.test(key)) {
         warnings.push(`Ignoring variable with invalid key: ${key}`);
@@ -574,10 +575,17 @@ export async function resolveVariables(
       // Keep runtime-owned identifiers deterministic by rejecting overrides
       // from all non-built-in layers (inherited/frontmatter/config/var-file/--var).
       if (layerIndex > 0 && isRuntimeReservedVariable(key)) {
-        warnings.push(`Ignoring reserved runtime variable: ${key}`);
+        reservedViolations.push(key);
         continue;
       }
       await routeVariable(key, value, vars, sources, cwd, projectRoot, security, warnings);
+    }
+    if (reservedViolations.length > 0) {
+      const keys = reservedViolations.map((k) => `"${k}"`).join(', ');
+      throw new Error(
+        `Reserved runtime variable${reservedViolations.length > 1 ? 's' : ''} ${keys} cannot be overridden. ` +
+          `Reserved names (case-insensitive): ${[...RUNTIME_RESERVED_VARIABLES].join(', ')}`,
+      );
     }
   }
 

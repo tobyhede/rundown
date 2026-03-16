@@ -48,6 +48,14 @@ type ExplicitWindowedSourceWindow = AllKeysExplicit<WindowedSourceWindow>;
 /** NumericWindow with all keys required, preserving `source` discriminant for narrowing. */
 type ExplicitNumericWindow = AllKeysExplicit<Omit<NumericWindow, 'source'>> & { source?: never };
 
+function buildResolvedForStep(
+  rest: Omit<ResolvedStepWithFor, 'forClause'>,
+  forClause: ForClause,
+  extras?: { prompt?: string; promptedFor?: true },
+): ResolvedStepWithFor {
+  return { ...rest, forClause, ...extras } as ResolvedStepWithFor;
+}
+
 /**
  * Shared placeholder matcher used across startup and runtime substitution.
  *
@@ -377,7 +385,7 @@ function validatePromptedForSteps(
   }
 
   if (errors.length > 0) {
-    throw new RunbookSyntaxError(errors[0]);
+    throw new RunbookSyntaxError(errors.join('; '));
   }
 }
 
@@ -412,7 +420,7 @@ export function resolveForBounds(
     if (step.kind !== 'for') return step;
     if (!isUnresolvedForClause(step.forClause)) {
       const { forClause, ...rest } = step;
-      return { ...rest, forClause } as ResolvedStepWithFor;
+      return buildResolvedForStep(rest, forClause);
     }
 
     const fc = step.forClause;
@@ -447,12 +455,10 @@ export function resolveForBounds(
       }
 
       const { forClause: _, ...rest } = step;
-      const promptedStep: ResolvedStepWithFor = {
-        ...rest,
-        forClause: promptedClause,
+      const promptedStep = buildResolvedForStep(rest, promptedClause, {
         prompt: forText + (step.prompt ? `\n${step.prompt}` : ''),
         promptedFor: true,
-      } as ResolvedStepWithFor;
+      });
       warnings.push(`Step "${step.name}": unresolved FOR bound — prompted`);
       promptedStepNames.add(step.name);
       return promptedStep;
@@ -485,11 +491,7 @@ export function resolveForBounds(
     }
 
     const { forClause: _, ...rest } = step;
-    const resolvedForStep: ResolvedStepWithFor = {
-      ...rest,
-      forClause: resolved,
-    } as ResolvedStepWithFor;
-    return resolvedForStep;
+    return buildResolvedForStep(rest, resolved);
   });
 
   const resolvedRunbook: ResolvedRunbook = { ...runbook, steps: resolvedSteps };
