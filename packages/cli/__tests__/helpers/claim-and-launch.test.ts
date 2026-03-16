@@ -244,6 +244,7 @@ describe('claimAndLaunch', () => {
 
     const parentState = {
       id: 'run-1',
+      variables: {},
       substepStates: [
         {
           id: '1',
@@ -295,6 +296,7 @@ describe('claimAndLaunch', () => {
 
     const parentState = {
       id: 'run-1',
+      variables: {},
       substepStates: [
         {
           id: '1',
@@ -345,6 +347,7 @@ describe('claimAndLaunch', () => {
 
     const parentState = {
       id: 'run-1',
+      variables: {},
       substepStates: [
         {
           id: '1',
@@ -528,6 +531,7 @@ describe('claimAndLaunch', () => {
     // Mock manager.load returning state without delegation
     (ctx.manager.load as jest.Mock).mockResolvedValue({
       id: 'run-1',
+      variables: {},
       substepStates: [{ id: '1', status: 'pending' }],
     });
 
@@ -581,6 +585,7 @@ describe('claimAndLaunch', () => {
     // Mock manager.load returning state with different hash
     (ctx.manager.load as jest.Mock).mockResolvedValue({
       id: 'run-1',
+      variables: {},
       substepStates: [
         {
           id: '1',
