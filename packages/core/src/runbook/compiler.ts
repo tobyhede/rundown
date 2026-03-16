@@ -54,6 +54,9 @@ type SetLastActionRef = {
 /** Union of all action types the compiler emits into XState transitions. */
 type CompilerAction = ReturnType<typeof runbookSetup.assign> | SetLastActionRef;
 
+/** XState state-node config type inferred from the runbook setup. */
+type RunbookStateConfig = Parameters<typeof runbookSetup.createStateConfig>[0];
+
 /**
  * Safety limit for file-backed data sources with open iteration windows.
  *
@@ -62,6 +65,12 @@ type CompilerAction = ReturnType<typeof runbookSetup.assign> | SetLastActionRef;
  * signal completion.
  */
 export const MAX_FILE_ITERATIONS = 10_000;
+
+// Typed constants for empty array values that need explicit types
+// (bare `[]` infers as `never[]`, not the required array type).
+const EMPTY_FOR_STACK: RunbookContext['forStack'] = [];
+const EMPTY_RESULTS: NonNullable<RunbookContext['iterationResults']> = [];
+const EMPTY_DEFERRED: NonNullable<RunbookContext['deferredResults']> = [];
 
 /**
  * Context passed through the XState runbook state machine.
@@ -119,15 +128,15 @@ export type RunbookEvent =
  * Guards and targets are properly typed.
  */
 interface TransitionEntry {
-  target?: string | null;
+  target?: string;
   actions?: CompilerAction | CompilerAction[];
   guard?: (args: { context: RunbookContext; event: RunbookEvent }) => boolean;
 }
 
 /** XState `always` transition configuration within parent aggregation states. */
 interface AlwaysTransition {
-  guard?: (args: { context: RunbookContext }) => boolean;
-  target?: string | null;
+  guard?: (args: { context: RunbookContext; event: RunbookEvent }) => boolean;
+  target?: string;
   actions?: CompilerAction | CompilerAction[];
 }
 
@@ -564,8 +573,8 @@ function buildSimpleGotoAssign(options: {
     ...(options.preserveForContext
       ? {}
       : {
-          forStack: [] as readonly ForContext[],
-          iterationResults: undefined as ('pass' | 'fail')[] | undefined,
+          forStack: EMPTY_FOR_STACK,
+          iterationResults: undefined,
           iterationRetryCount: 0,
         }),
   });
@@ -700,7 +709,10 @@ function buildParentExitAssign(
     parentRetryCount: 0,
     iterationRetryCount: 0,
     substep: extractSubstepFromStateId(exitTarget),
-  };
+  } satisfies Pick<
+    RunbookContext,
+    'retryCount' | 'parentRetryCount' | 'iterationRetryCount' | 'substep'
+  >;
 
   switch (parentAction.type) {
     case 'GOTO': {
@@ -719,9 +731,9 @@ function buildParentExitAssign(
             );
             return [createForContext(targetStep.name, forClause, iteration, false, sources)];
           },
-          iterationResults: [] as ('pass' | 'fail')[],
+          iterationResults: EMPTY_RESULTS,
           substepCompletedCount: 0,
-          deferredResults: [] as ('pass' | 'fail')[],
+          deferredResults: EMPTY_RESULTS,
           lastAction: { ...buildGotoLastAction(parentAction.target), aggregated: true },
           substep: parentAction.target.substep ?? targetStep.substeps[0]?.id,
         });
@@ -730,14 +742,12 @@ function buildParentExitAssign(
       const targetHasAggregationTransitions = !!targetStep?.transitions;
       return runbookSetup.assign({
         ...baseAssign,
-        forStack: [] as readonly ForContext[],
+        forStack: EMPTY_FOR_STACK,
         ...(targetHasSubsteps
           ? {
-              iterationResults: targetHasAggregationTransitions
-                ? ([] as ('pass' | 'fail')[])
-                : (undefined as ('pass' | 'fail')[] | undefined),
+              iterationResults: targetHasAggregationTransitions ? EMPTY_RESULTS : undefined,
               substepCompletedCount: 0,
-              deferredResults: [] as ('pass' | 'fail')[],
+              deferredResults: EMPTY_RESULTS,
             }
           : {}),
         lastAction: { ...buildGotoLastAction(parentAction.target), aggregated: true },
@@ -746,30 +756,30 @@ function buildParentExitAssign(
     case 'STOP':
       return runbookSetup.assign({
         ...baseAssign,
-        forStack: [] as readonly ForContext[],
+        forStack: EMPTY_FOR_STACK,
         lastAction: { type: 'STOP' as const, aggregated: true },
         lastMessage: parentAction.message,
       });
     case 'COMPLETE':
       return runbookSetup.assign({
         ...baseAssign,
-        forStack: [] as readonly ForContext[],
+        forStack: EMPTY_FOR_STACK,
         lastAction: { type: 'COMPLETE' as const, aggregated: true },
         lastMessage: parentAction.message,
       });
     case 'CONTINUE':
       return runbookSetup.assign({
         ...baseAssign,
-        forStack: [] as readonly ForContext[],
+        forStack: EMPTY_FOR_STACK,
         lastAction: { type: 'CONTINUE' as const, aggregated: true },
-        lastMessage: undefined as string | undefined,
+        lastMessage: undefined,
       });
     default:
       return runbookSetup.assign({
         ...baseAssign,
-        forStack: [] as readonly ForContext[],
+        forStack: EMPTY_FOR_STACK,
         lastAction: { type: parentAction.type, aggregated: true },
-        lastMessage: undefined as string | undefined,
+        lastMessage: undefined,
       });
   }
 }
@@ -796,7 +806,7 @@ function buildParentStateConfig(
   config: ParentStateConfig,
   steps: ResolvedStep[],
   sources?: Readonly<Record<string, DataSource>>,
-): { always: AlwaysTransition[]; entry?: unknown } {
+): { always: AlwaysTransition[]; entry?: CompilerAction | CompilerAction[] } {
   const parentStep = config.parentStep;
   const stepName = config.stepName;
   const hasFor = parentStep.kind === 'for';
@@ -857,12 +867,12 @@ function buildParentStateConfig(
           // retryCount is exposed to the execution layer (actor-service) for visibility.
           retryCount: ({ context }: { context: RunbookContext }) => context.retryCount + 1,
           retryMax: transition.retry,
-          forStack: [] as readonly ForContext[],
-          iterationResults: [] as ('pass' | 'fail')[],
+          forStack: EMPTY_FOR_STACK,
+          iterationResults: EMPTY_RESULTS,
           substepCompletedCount: 0,
-          deferredResults: [] as ('pass' | 'fail')[],
+          deferredResults: EMPTY_RESULTS,
           iterationRetryCount: 0,
-          lastMessage: undefined as string | undefined,
+          lastMessage: undefined,
           substep: firstSubstep?.id,
         }),
       },
@@ -942,7 +952,7 @@ function buildParentStateConfig(
             retryMax: transition.retry,
             lastAction: { type: 'RETRY' as const },
             substepCompletedCount: 0,
-            deferredResults: [] as ('pass' | 'fail')[],
+            deferredResults: EMPTY_RESULTS,
             substep: firstSubstep?.id,
           }),
         });
@@ -960,11 +970,11 @@ function buildParentStateConfig(
         },
         target: formatStateId(stepName),
         actions: runbookSetup.assign({
-          forStack: [] as readonly ForContext[],
+          forStack: EMPTY_FOR_STACK,
           lastAction: { type: 'BREAK' as const },
           iterationResults: ({ context }: { context: RunbookContext }): ('pass' | 'fail')[] =>
             context.iterationResults ?? [],
-          deferredResults: [] as ('pass' | 'fail')[],
+          deferredResults: EMPTY_RESULTS,
         }),
       });
 
@@ -986,7 +996,7 @@ function buildParentStateConfig(
           iterationResults: ({ context }: { context: RunbookContext }) =>
             context.iterationResults ?? [],
           substepCompletedCount: 0,
-          deferredResults: [] as ('pass' | 'fail')[],
+          deferredResults: EMPTY_RESULTS,
           retryCount: 0,
           iterationRetryCount: 0,
           substep: firstSubstep?.id,
@@ -1004,7 +1014,7 @@ function buildParentStateConfig(
         },
         target: formatStateId(stepName),
         actions: runbookSetup.assign({
-          forStack: [] as readonly ForContext[],
+          forStack: EMPTY_FOR_STACK,
         }),
       });
 
@@ -1061,11 +1071,11 @@ function buildParentStateConfig(
           },
           target: formatStateId(stepName),
           actions: runbookSetup.assign({
-            forStack: [] as readonly ForContext[],
+            forStack: EMPTY_FOR_STACK,
             lastAction: { type: 'CONTINUE' as const },
             iterationResults: ({ context }: { context: RunbookContext }): ('pass' | 'fail')[] =>
               context.iterationResults ?? [],
-            deferredResults: [] as ('pass' | 'fail')[],
+            deferredResults: EMPTY_RESULTS,
           }),
         });
       };
@@ -1091,11 +1101,11 @@ function buildParentStateConfig(
           },
           target: formatStateId(stepName),
           actions: runbookSetup.assign({
-            forStack: [] as readonly ForContext[],
+            forStack: EMPTY_FOR_STACK,
             lastAction: { type: 'BREAK' as const },
             iterationResults: ({ context }: { context: RunbookContext }): ('pass' | 'fail')[] =>
               context.iterationResults ?? [],
-            deferredResults: [] as ('pass' | 'fail')[],
+            deferredResults: EMPTY_RESULTS,
           }),
         });
       };
@@ -1131,7 +1141,7 @@ function buildParentStateConfig(
             return results;
           },
           substepCompletedCount: 0,
-          deferredResults: [] as ('pass' | 'fail')[],
+          deferredResults: EMPTY_RESULTS,
           retryCount: 0,
           iterationRetryCount: 0,
           substep: firstSubstep?.id,
@@ -1153,7 +1163,7 @@ function buildParentStateConfig(
         },
         target: formatStateId(stepName),
         actions: runbookSetup.assign({
-          forStack: [] as readonly ForContext[],
+          forStack: EMPTY_FOR_STACK,
           iterationResults: ({ context }: { context: RunbookContext }): ('pass' | 'fail')[] => {
             const results = context.iterationResults ?? [];
             const selected = getIterationTransition(context).transition;
@@ -1177,11 +1187,11 @@ function buildParentStateConfig(
         },
         target: formatStateId(stepName),
         actions: runbookSetup.assign({
-          forStack: [] as readonly ForContext[],
+          forStack: EMPTY_FOR_STACK,
           lastAction: { type: 'BREAK' as const },
           iterationResults: ({ context }: { context: RunbookContext }): ('pass' | 'fail')[] =>
             context.iterationResults ?? [],
-          deferredResults: [] as ('pass' | 'fail')[],
+          deferredResults: EMPTY_RESULTS,
         }),
       });
 
@@ -1203,7 +1213,7 @@ function buildParentStateConfig(
           iterationResults: ({ context }: { context: RunbookContext }) =>
             context.iterationResults ?? [],
           substepCompletedCount: 0,
-          deferredResults: [] as ('pass' | 'fail')[],
+          deferredResults: EMPTY_RESULTS,
           retryCount: 0,
           iterationRetryCount: 0,
           substep: firstSubstep?.id,
@@ -1221,7 +1231,7 @@ function buildParentStateConfig(
         },
         target: formatStateId(stepName),
         actions: runbookSetup.assign({
-          forStack: [] as readonly ForContext[],
+          forStack: EMPTY_FOR_STACK,
         }),
       });
 
@@ -1260,7 +1270,7 @@ function buildParentStateConfig(
         },
         target: formatStateId(stepName),
         actions: runbookSetup.assign({
-          forStack: [] as readonly ForContext[],
+          forStack: EMPTY_FOR_STACK,
         }),
       });
     }
@@ -1300,12 +1310,15 @@ function buildParentStateConfig(
     pushAdvanceGuards();
 
     const commonAssign = {
-      forStack: [] as readonly ForContext[],
+      forStack: EMPTY_FOR_STACK,
       retryCount: 0,
       parentRetryCount: 0,
       iterationRetryCount: 0,
       substep: extractSubstepFromStateId(nextTarget),
-    };
+    } satisfies Pick<
+      RunbookContext,
+      'forStack' | 'retryCount' | 'parentRetryCount' | 'iterationRetryCount' | 'substep'
+    >;
 
     if (hasFor) {
       // Case C: FOR without transitions — preserve lastAction from substep
@@ -1317,9 +1330,9 @@ function buildParentStateConfig(
         actions: runbookSetup.assign({
           ...commonAssign,
           substepCompletedCount: 0,
-          deferredResults: undefined as ('pass' | 'fail')[] | undefined,
+          deferredResults: undefined,
           lastAction: { type: 'CONTINUE' as const },
-          lastMessage: undefined as string | undefined,
+          lastMessage: undefined,
         }),
       });
     }
@@ -1489,8 +1502,8 @@ function buildLoopControlTransition(
       substepCompletedCount: ({ context }: { context: RunbookContext }) =>
         context.substepCompletedCount + 1,
       lastAction: { type: actionType },
-      lastMessage: undefined as string | undefined,
-      substep: undefined as string | undefined,
+      lastMessage: undefined,
+      substep: undefined,
     }),
   };
 }
@@ -1537,9 +1550,9 @@ function buildDeferTransition(
         substepCompletedCount: ({ context }: { context: RunbookContext }) =>
           context.substepCompletedCount + 1,
         lastAction: { type: 'DEFER' as const },
-        lastMessage: undefined as string | undefined,
+        lastMessage: undefined,
         // Keep substep set for non-last (advance guard signal); clear for last
-        substep: isLast ? (undefined as string | undefined) : substepId,
+        substep: isLast ? undefined : substepId,
       }),
     };
   }
@@ -1583,8 +1596,8 @@ function buildContinueTransition(
           substepCompletedCount: ({ context }: { context: RunbookContext }) =>
             context.substepCompletedCount + 1,
           lastAction: { type: 'CONTINUE' as const },
-          lastMessage: undefined as string | undefined,
-          substep: undefined as string | undefined,
+          lastMessage: undefined,
+          substep: undefined,
         }),
       };
     }
@@ -1596,7 +1609,7 @@ function buildContinueTransition(
         substepCompletedCount: ({ context }: { context: RunbookContext }) =>
           context.substepCompletedCount + 1,
         lastAction: { type: 'CONTINUE' as const },
-        lastMessage: undefined as string | undefined,
+        lastMessage: undefined,
         substep: extractSubstepFromStateId(target),
       }),
     };
@@ -1608,7 +1621,7 @@ function buildContinueTransition(
     target,
     actions: runbookSetup.assign({
       lastAction: { type: 'CONTINUE' as const },
-      lastMessage: undefined as string | undefined,
+      lastMessage: undefined,
       substep: extractSubstepFromStateId(target),
     }),
   };
@@ -1701,7 +1714,7 @@ function buildGotoTransition(
               if (top?.stepId === targetStepObj.name) return context.deferredResults;
               return [];
             }
-          : ([] as ('pass' | 'fail')[]),
+          : EMPTY_RESULTS,
       }),
     };
   }
@@ -1779,14 +1792,13 @@ function buildActionTransition(
  * @param config.always - Eventless always-transitions for transient states
  * @returns Array of target strings (may include duplicates)
  */
-function extractTargets(config: {
-  on?: Record<string, TransitionConfig | unknown[]>;
-  always?: AlwaysTransition[];
-}): string[] {
+function extractTargets(config: RunbookStateConfig): string[] {
   const targets: string[] = [];
 
   const collectFromEntry = (entry: unknown): void => {
-    if (entry && typeof entry === 'object' && 'target' in entry) {
+    if (typeof entry === 'string') {
+      targets.push(entry);
+    } else if (entry && typeof entry === 'object' && 'target' in entry) {
       const t = (entry as { target?: string | null }).target;
       if (typeof t === 'string') targets.push(t);
     }
@@ -1809,9 +1821,7 @@ function extractTargets(config: {
 
   // Walk always: [...]
   if (config.always) {
-    for (const entry of config.always) {
-      collectFromEntry(entry);
-    }
+    collectFromTransitionConfig(config.always);
   }
 
   return targets;
@@ -1831,10 +1841,7 @@ function extractTargets(config: {
  * @throws {Error} If any structural invariant is violated
  */
 function validateGraph(
-  states: Record<
-    string,
-    { on?: Record<string, TransitionConfig | unknown[]>; always?: AlwaysTransition[] }
-  >,
+  states: Record<string, RunbookStateConfig>,
   initialState: string,
   terminalStates: Set<string>,
 ): void {
@@ -1863,7 +1870,11 @@ function validateGraph(
  * @param config - The state configuration
  * @throws {Error} If a state with the given ID already exists
  */
-function checkedStateInsert(states: Record<string, unknown>, id: string, config: unknown): void {
+function checkedStateInsert(
+  states: Record<string, RunbookStateConfig>,
+  id: string,
+  config: RunbookStateConfig,
+): void {
   if (id in states) {
     throw new Error(`Compiler error: duplicate state ID "${id}"`);
   }
@@ -1891,14 +1902,7 @@ export function compileRunbookToMachine(
   steps: ResolvedStep[],
   options?: { sources?: Readonly<Record<string, DataSource>> },
 ) {
-  const states: Record<
-    string,
-    {
-      on?: Record<string, TransitionConfig | TransitionEntry[]>;
-      always?: AlwaysTransition[];
-      entry?: CompilerAction | CompilerAction[];
-    }
-  > = {};
+  const states: Record<string, RunbookStateConfig> = {};
 
   // Build a flat list of all states to generate GOTO transitions
   const allStates: StateConfig[] = [];
@@ -1940,7 +1944,7 @@ export function compileRunbookToMachine(
       checkedStateInsert(
         states,
         config.id,
-        buildParentStateConfig(config, steps, options?.sources),
+        runbookSetup.createStateConfig(buildParentStateConfig(config, steps, options?.sources)),
       );
       return;
     }
@@ -1995,7 +1999,7 @@ export function compileRunbookToMachine(
                   if (top?.stepId === stepInfo.step.name) return context.deferredResults;
                   return [];
                 }
-              : ([] as ('pass' | 'fail')[]),
+              : EMPTY_RESULTS,
             // Ensure substep is set so advance guards can use it
             substep: ({ context }: { context: RunbookContext }): string | undefined =>
               context.substep ?? config.substepId,
@@ -2084,7 +2088,7 @@ export function compileRunbookToMachine(
                     if (top?.stepId === forStepForTarget.step.name) return context.deferredResults;
                     return [];
                   }
-                : ([] as ('pass' | 'fail')[]),
+                : EMPTY_RESULTS,
             })
           : buildSimpleGotoAssign({
               lastAction: buildGotoLastActionFromEvent(target.substepId),
@@ -2096,51 +2100,57 @@ export function compileRunbookToMachine(
       };
     });
 
-    checkedStateInsert(states, config.id, {
-      ...entryActions,
-      on: {
-        PASS: buildTransition(
-          config.transitions.pass,
-          config.id,
-          config.stepName,
-          config.substepId,
-          steps,
-          options?.sources,
-        ),
-        FAIL: buildTransition(
-          config.transitions.fail,
-          config.id,
-          config.stepName,
-          config.substepId,
-          steps,
-          options?.sources,
-        ),
-        RETRY: {
-          actions: runbookSetup.assign({
-            lastAction: { type: 'RETRY' as const },
-            lastMessage: undefined as string | undefined,
-            retryCount: ({ context }) => context.retryCount + 1,
-            retryMax: retryMaxFromTransitions,
-          }),
-          target: config.id,
+    checkedStateInsert(
+      states,
+      config.id,
+      runbookSetup.createStateConfig({
+        ...entryActions,
+        on: {
+          PASS: buildTransition(
+            config.transitions.pass,
+            config.id,
+            config.stepName,
+            config.substepId,
+            steps,
+            options?.sources,
+          ),
+          FAIL: buildTransition(
+            config.transitions.fail,
+            config.id,
+            config.stepName,
+            config.substepId,
+            steps,
+            options?.sources,
+          ),
+          RETRY: {
+            actions: runbookSetup.assign({
+              lastAction: { type: 'RETRY' as const },
+              lastMessage: undefined,
+              retryCount: ({ context }) => context.retryCount + 1,
+              retryMax: retryMaxFromTransitions,
+            }),
+            target: config.id,
+          },
+          GOTO: buildGotoTransitionsForState,
         },
-        GOTO: buildGotoTransitionsForState,
-      },
-    });
+      }),
+    );
 
     // Register retry states for transitions with retry > 0
     if (config.transitions.pass.retry > 0) {
       checkedStateInsert(
         states,
         `${config.id}::pass-retry`,
-        buildRetryStateConfig(
-          config.transitions.pass,
-          config.id,
-          config.stepName,
-          config.substepId,
-          steps,
-          'pass',
-          options?.sources,
+        runbookSetup.createStateConfig(
+          buildRetryStateConfig(
+            config.transitions.pass,
+            config.id,
+            config.stepName,
+            config.substepId,
+            steps,
+            'pass',
+            options?.sources,
+          ),
         ),
       );
     }
@@ -2148,14 +2158,16 @@ export function compileRunbookToMachine(
       checkedStateInsert(
         states,
         `${config.id}::fail-retry`,
-        buildRetryStateConfig(
-          config.transitions.fail,
-          config.id,
-          config.stepName,
-          config.substepId,
-          steps,
-          'fail',
-          options?.sources,
+        runbookSetup.createStateConfig(
+          buildRetryStateConfig(
+            config.transitions.fail,
+            config.id,
+            config.stepName,
+            config.substepId,
+            steps,
+            'fail',
+            options?.sources,
+          ),
         ),
       );
     }
