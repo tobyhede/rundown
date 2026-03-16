@@ -14,7 +14,8 @@ Verify that all technical references in the plan are accurate.
 
 ## 1. Technical checks
 
-- FAIL ANY: CONTINUE
+- PASS ALL CONTINUE
+- FAIL ANY CONTINUE
 
 ### 1.1 File paths exist
 

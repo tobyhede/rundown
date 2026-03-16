@@ -471,7 +471,7 @@ async function discoverRawVariables(cwd: string): Promise<Record<string, unknown
  * earlier ones for the same key during processing in `resolveVariables`.
  *
  * ```
- * Layer 0: builtins        ← Date, WorkPath, RunId, ContextId (fresh)
+ * Layer 0: builtins        ← Date, Branch, WorkPath, RunId, ContextId (fresh)
  * Layer 1: inheritedVars   ← parent delegation vars (overrides builtins)
  * Layer 2: frontmatter     ← runbook YAML frontmatter vars:
  * Layer 3: discovered      ← .rundown/config.yaml (auto-discovered)

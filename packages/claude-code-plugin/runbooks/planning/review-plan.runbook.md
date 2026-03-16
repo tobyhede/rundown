@@ -14,8 +14,8 @@ Review the plan at `{{ PlanPath }}`.
 
 ## 1. Context and scope
 
-- PASS: CONTINUE
-- FAIL: STOP "Plan lacks clear goal or scope."
+- PASS CONTINUE
+- FAIL STOP "Plan lacks clear goal or scope."
 
 Verify the plan includes:
 - A specific, testable goal (one sentence)
@@ -28,7 +28,8 @@ Read the plan at `{{ PlanPath }}` and validate these elements exist and are cohe
 ## 2. Review the plan
 
 - FOR pass IN 1 TO 2
-- FAIL ANY: GOTO Synthesize
+- PASS ALL CONTINUE
+- FAIL ANY GOTO Synthesize
 
 - review-technical-accuracy.runbook.md
 - review-structural-integrity.runbook.md
@@ -37,10 +38,13 @@ Read the plan at `{{ PlanPath }}` and validate these elements exist and are cohe
 
 ## 3. Approved
 
-- PASS: COMPLETE "Plan approved — no issues found."
+- PASS COMPLETE "Plan approved — no issues found."
 
 Plan approved — no issues found across both review passes.
 
 ## Synthesize Collate findings and produce verdict
+
+- PASS ALL COMPLETE "Review complete."
+- FAIL ANY STOP "Review synthesis failed."
 
 - review-synthesize.runbook.md

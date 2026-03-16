@@ -64,6 +64,7 @@ describe('getBuiltinVariables', () => {
     expect(builtins).toHaveProperty('Year');
     expect(builtins).toHaveProperty('Month');
     expect(builtins).toHaveProperty('Day');
+    expect(builtins).toHaveProperty('Branch');
     expect(builtins).toHaveProperty('WorkPath');
     expect(builtins).toHaveProperty('RunId');
     expect(builtins).toHaveProperty('ContextId');

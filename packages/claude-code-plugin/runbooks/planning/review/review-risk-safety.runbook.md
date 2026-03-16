@@ -14,7 +14,8 @@ Assess risk, security, and safety concerns in the plan.
 
 ## 1. Risk and safety checks
 
-- FAIL ANY: CONTINUE
+- PASS ALL CONTINUE
+- FAIL ANY CONTINUE
 
 ### 1.1 Security implications assessed
 

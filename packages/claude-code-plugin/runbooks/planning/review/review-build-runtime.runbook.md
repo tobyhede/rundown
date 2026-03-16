@@ -14,7 +14,8 @@ Verify that build, test, and runtime concerns are addressed.
 
 ## 1. Build and runtime checks
 
-- FAIL ANY: CONTINUE
+- PASS ALL CONTINUE
+- FAIL ANY CONTINUE
 
 ### 1.1 Build commands correct
 
