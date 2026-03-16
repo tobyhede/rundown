@@ -5,12 +5,14 @@ tags:
   - planning
   - review
 vars:
-  PlanPath: .work/plan.md
+  PlanPath: ""
 ---
 
 # Review Implementation Plan
 
 Review the plan at `{{ PlanPath }}`.
+
+`PlanPath` must be supplied by the caller. Resolve with `rdpath --dir {{ WorkPath }} --file plan.md`.
 
 ## 1. Context and scope
 

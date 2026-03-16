@@ -2,8 +2,6 @@
 name: Write Plan
 description: Write detailed implementation plans using the Writing Plans skill
 skill: writing-plans
-vars:
-  FeatureName: feature
 ---
 
 # Write Plan

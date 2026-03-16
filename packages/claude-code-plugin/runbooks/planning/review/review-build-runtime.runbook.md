@@ -5,7 +5,7 @@ tags:
   - planning
   - review
 vars:
-  PlanPath: .work/plan.md
+  PlanPath: ""
 ---
 
 # Review Build and Runtime
@@ -49,4 +49,8 @@ Verify that changes won't break CI/CD pipelines and that any pipeline modificati
 
 ## 2. Write findings
 
-Write the results of each check above to `{{ WorkPath }}/reviews/build-runtime-pass{{ context.parent.index }}.md`. List each check with PASS/FAIL, provide evidence for each FAIL, and include an overall assessment.
+Write the results of each check above to the path resolved by `rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file build-runtime-pass{{ context.parent.index }}.md`. List each check with PASS/FAIL, provide evidence for each FAIL, and include an overall assessment. First ensure the output directory exists:
+
+```bash
+mkdir -p "$(rdpath --dir {{ WorkPath }} --ctx {{ ContextId }})"
+```
