@@ -7,8 +7,8 @@
  * @module
  */
 
-import type { Step, Substep } from '@rundown-org/parser';
-import { stepHasSubsteps, hasRunbooks } from '@rundown-org/parser';
+import type { Substep, ResolvedStep } from '@rundown-org/parser';
+import { resolvedStepHasSubsteps, hasRunbooks } from '@rundown-org/parser';
 import type { RunbookState, SubstepState } from '@rundown-org/core';
 import { Errors, findSubstepState, deriveActiveFrame, type FrameKey } from '@rundown-org/core';
 import { parseStepIdFromString } from '@rundown-org/parser';
@@ -55,11 +55,11 @@ function hasActiveDelegation(
  */
 export function inferDelegationTarget(
   state: RunbookState,
-  steps: readonly Step[],
+  steps: readonly ResolvedStep[],
 ): InferredDelegation {
   const currentStep = steps.find((s) => s.name === state.step);
 
-  if (!currentStep || !stepHasSubsteps(currentStep)) {
+  if (!currentStep || !resolvedStepHasSubsteps(currentStep)) {
     throw Errors.delegationNoDelegatableSubstep(state.step);
   }
 
@@ -90,7 +90,7 @@ export function inferDelegationTarget(
  */
 export function inferRunbookFromStep(
   state: RunbookState,
-  steps: readonly Step[],
+  steps: readonly ResolvedStep[],
   stepId: string,
 ): string {
   const parsed = parseStepIdFromString(stepId);
@@ -100,7 +100,7 @@ export function inferRunbookFromStep(
 
   const step = steps.find((s) => s.name === parsed.step);
 
-  if (!step || !stepHasSubsteps(step) || !parsed.substep) {
+  if (!step || !resolvedStepHasSubsteps(step) || !parsed.substep) {
     throw Errors.delegationSubstepNoRunbook(stepId, state.step);
   }
 

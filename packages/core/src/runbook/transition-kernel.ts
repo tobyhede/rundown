@@ -1,5 +1,5 @@
 import { evaluateFailCondition, evaluatePassCondition } from './transition-handler.js';
-import type { LastAction, Step } from './types.js';
+import type { LastAction, Step, ResolvedStep } from './types.js';
 
 /**
  * Action type derived from structured LastAction.
@@ -237,7 +237,7 @@ export function parseActionType(lastAction: LastAction | undefined): ActionType 
  */
 export function deriveTransitionMessage(
   result: 'pass' | 'fail',
-  step: Step,
+  step: Step | ResolvedStep,
   retryCount: number,
 ): string | undefined {
   return result === 'pass'

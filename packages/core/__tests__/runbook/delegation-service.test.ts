@@ -53,6 +53,37 @@ function makeSimpleSteps(stepName = '1'): readonly Step[] {
   ] as readonly Step[];
 }
 
+/** Helper: create FOR steps with substeps (supports three-level step IDs). */
+function makeForSteps(stepName = '1', substepIds: string[] = ['1', '2']): readonly Step[] {
+  return [
+    {
+      kind: 'for',
+      name: stepName,
+      description: 'FOR step',
+      forClause: { variable: 'i', start: 1, end: 10 },
+      substeps: substepIds.map((id) => ({
+        id,
+        description: `Substep ${id}`,
+      })),
+    },
+  ] as readonly Step[];
+}
+
+/** Helper: create prompted-for steps with substeps (supports three-level step IDs). */
+function makePromptedForSteps(stepName = '1', substepIds: string[] = ['1', '2']): readonly Step[] {
+  return [
+    {
+      kind: 'prompted-for',
+      name: stepName,
+      description: 'Prompted-FOR step',
+      substeps: substepIds.map((id) => ({
+        id,
+        description: `Substep ${id}`,
+      })),
+    },
+  ] as readonly Step[];
+}
+
 describe('createDelegation', () => {
   it('succeeds on a step with substeps', () => {
     const state = makeState();
@@ -409,17 +440,79 @@ describe('createDelegation', () => {
     ).toThrow(/step not found/i);
   });
 
-  it('throws for step ID with too many parts (e.g., 1.2.3)', () => {
+  it('throws for three-level step ID on non-FOR step (kind: substeps)', () => {
+    const state = makeState();
+    const steps = makeSteps(); // kind: 'substeps'
+
+    expect(() =>
+      createDelegation(
+        { state, stepId: '1.2.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1', 2) },
+        steps,
+      ),
+    ).toThrow(/step not found/i);
+  });
+
+  it('throws for three-level step ID when substep does not exist (e.g., 1.2.3)', () => {
     const state = makeState();
     const steps = makeSteps();
 
-    // parseStepIdFromString should reject this format
+    // Parses as step=1, at=2, substep=3 — throws because substep '3' is not in the step.
+    // Note: 3c (non-FOR/prompted-for step) would also reject this, but 3b fires first.
     expect(() =>
       createDelegation(
         { state, stepId: '1.2.3', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
         steps,
       ),
     ).toThrow(/step not found/i);
+  });
+
+  it('allows three-level step ID on prompted-for step', () => {
+    const state = makeState();
+    const steps = makePromptedForSteps();
+
+    // 1.2.1 → step=1, at=2, substep=1; prompted-for is allowed by 3c
+    const delegation = createDelegation(
+      { state, stepId: '1.2.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1', 2) },
+      steps,
+    );
+    expect(delegation).toBeDefined();
+  });
+
+  it('uses explicit iteration from three-level step ID in context snapshot', () => {
+    const state = makeState({ forStack: undefined });
+    const steps = makeForSteps();
+    const result = createDelegation(
+      { state, stepId: '1.2.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1', 2) },
+      steps,
+    );
+
+    expect(result.delegation.contextSnapshot.at).toBe('1.2.1');
+    expect(result.delegation.contextSnapshot.index).toBe(2);
+    expect(result.delegation.contextSnapshot.substep).toBe('1');
+  });
+
+  it('three-level step ID iteration overrides forStack iteration in context snapshot', () => {
+    const state = makeState({
+      forStack: [
+        {
+          stepId: '1',
+          iteration: 5,
+          start: 1,
+          end: 10,
+          implicit: false,
+          source: { kind: 'range' as const },
+        },
+      ],
+    });
+    const steps = makeForSteps();
+    const result = createDelegation(
+      { state, stepId: '1.3.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1', 3) },
+      steps,
+    );
+
+    // parsed.at=3 should override forStack iteration=5
+    expect(result.delegation.contextSnapshot.at).toBe('1.3.1');
+    expect(result.delegation.contextSnapshot.index).toBe(3);
   });
 
   it('captures empty templateVars when state has none', () => {

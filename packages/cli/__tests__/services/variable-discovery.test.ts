@@ -448,15 +448,35 @@ describe('resolveVariables', () => {
   });
 
   describe('reserved runtime keys', () => {
-    it('rejects reserved keys case-insensitively', async () => {
-      const result = await resolveVariables(
-        { var: ['Step=shadow', 'INDEX=9', 'ConText=shadow', 'env=staging'] },
-        tmpDir,
+    it('rejects reserved keys with an error', async () => {
+      await expect(resolveVariables({ var: ['Step=shadow'] }, tmpDir)).rejects.toThrow(
+        /reserved runtime variable/i,
       );
+    });
 
-      expect(result.vars.Step).toBeUndefined();
-      expect(result.vars.INDEX).toBeUndefined();
-      expect(result.vars.ConText).toBeUndefined();
+    it('rejects reserved keys case-insensitively', async () => {
+      await expect(resolveVariables({ var: ['INDEX=9'] }, tmpDir)).rejects.toThrow(
+        /reserved runtime variable/i,
+      );
+    });
+
+    it('reports all reserved key violations in a single error', async () => {
+      const error = await resolveVariables({ var: ['Step=a', 'Index=b'] }, tmpDir).catch(
+        (e: unknown) => e,
+      );
+      expect(error.message).toMatch(/reserved runtime variables/i);
+      expect(error.message).toContain('"Step"');
+      expect(error.message).toContain('"Index"');
+    });
+
+    it('does not route non-reserved keys when layer contains a reserved violation', async () => {
+      await expect(
+        resolveVariables({ var: ['safe=value', 'Step=shadow'] }, tmpDir),
+      ).rejects.toThrow(/reserved runtime variable/i);
+    });
+
+    it('allows non-reserved variables', async () => {
+      const result = await resolveVariables({ var: ['env=staging'] }, tmpDir);
       expect(result.vars.env).toBe('staging');
     });
   });

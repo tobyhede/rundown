@@ -36,6 +36,7 @@ import {
   parseRunbookDocument,
   isSourced,
   stepHasSubsteps,
+  resolvedStepHasSubsteps,
   type Step,
   type ResolvedStep,
   type ValidationDiagnostic,
@@ -574,7 +575,7 @@ async function launchRunbook(
 
   await sessionService.pushRunbook(state.id);
 
-  if (stepHasSubsteps(runbook.steps[0]) && runbook.steps[0].substeps.length > 0) {
+  if (resolvedStepHasSubsteps(runbook.steps[0]) && runbook.steps[0].substeps.length > 0) {
     const freshState = await manager.load(state.id);
     const frame = freshState ? deriveActiveFrame(freshState) : undefined;
     const frameKey =
@@ -760,6 +761,16 @@ export async function claimAndLaunch(
       };
     }
 
+    // Reject claims against stopped parents — the run has been aborted
+    if (freshParent.variables.stopped) {
+      return {
+        ok: false,
+        error: 'Parent run has been stopped. Delegation cannot be claimed.',
+        code: ErrorCodes.TOKEN_NOT_FOUND.code,
+        details: { parentRunId: freshParent.id },
+      };
+    }
+
     // Re-locate delegation on fresh state (match by tokenHash for precision)
     const tokenHash = hashDelegationToken(rawToken);
     const freshSubstep = (freshParent.substepStates ?? []).find(
@@ -851,15 +862,17 @@ export async function claimAndLaunch(
       output.warning(`Undefined variable "{{${name}}}" preserved as literal text`);
     }
 
-    // Build delegation linkage for the child run
-    const parentFrame = deriveActiveFrame(freshParent);
+    // Build delegation linkage for the child run.
+    // Use the delegation's stored frame key — not the parent's current frame.
+    // The parent may have advanced past the iteration where the delegation was created.
+    const delegationFrameKey = freshSubstep.frameKey;
     const delegationLinkage: DelegationLinkage = {
       parentRunId: freshParent.id,
       parentStepId: substepId ?? stepId,
       tokenHash,
       parentStep: freshParent.step,
-      parentFrameKey: parentFrame.frameKey,
-      parentEntry: inferEntryFromState(freshParent, parentFrame.frameKey),
+      parentFrameKey: delegationFrameKey,
+      parentEntry: inferEntryFromState(freshParent, delegationFrameKey),
     };
 
     const parentPrompted = freshParent.prompted ?? false;

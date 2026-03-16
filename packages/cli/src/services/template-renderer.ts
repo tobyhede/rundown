@@ -19,7 +19,7 @@ import type {
   ResolvedRunbook,
   ResolvedStep,
   ResolvedStepWithFor,
-  StepWithSubsteps,
+  ResolvedStepWithPromptedFor,
   UnresolvedForClause,
   Transitions,
   TransitionObject,
@@ -48,6 +48,14 @@ type ExplicitWindowedSourceWindow = AllKeysExplicit<WindowedSourceWindow>;
 
 /** NumericWindow with all keys required, preserving `source` discriminant for narrowing. */
 type ExplicitNumericWindow = AllKeysExplicit<Omit<NumericWindow, 'source'>> & { source?: never };
+
+function buildResolvedForStep(
+  rest: Omit<ResolvedStepWithFor, 'forClause'>,
+  forClause: ForClause,
+  extras?: { prompt?: string },
+): ResolvedStepWithFor {
+  return { ...rest, forClause, ...extras } as ResolvedStepWithFor;
+}
 
 /**
  * Shared placeholder matcher used across startup and runtime substitution.
@@ -309,39 +317,39 @@ function collectActionsFromTransitions(transitions: Transitions): Action[] {
 }
 
 /**
- * Validate that loop-only controls (GOTO...AT, NEXT, BREAK) don't reference demoted steps.
+ * Validate that loop-only controls (GOTO...AT, NEXT, BREAK) don't reference prompted FOR steps.
  *
- * After `resolveForBounds()` demotes FOR steps with unresolved bounds to `kind: 'substeps'`,
- * any loop-only controls that were validated against the original `kind: 'for'` become invalid.
+ * After `resolveForBounds()` marks FOR steps with unresolved bounds as prompted,
+ * any loop-only controls that were validated against the original FOR clause become invalid
+ * because the agent drives iteration manually for prompted steps.
  * This function detects those cases and throws a `RunbookSyntaxError`.
  *
  * @param steps - Resolved steps after FOR bound resolution
- * @param demotedStepNames - Set of step names that were demoted from FOR to substeps
- * @throws {RunbookSyntaxError} When loop-only controls reference demoted steps
+ * @throws {RunbookSyntaxError} When loop-only controls reference prompted steps
  */
-function validateDemotedForSteps(
-  steps: readonly ResolvedStep[],
-  demotedStepNames: ReadonlySet<string>,
-): void {
-  if (demotedStepNames.size === 0) return;
+function validatePromptedForSteps(steps: readonly ResolvedStep[]): void {
+  const promptedStepNames = new Set(
+    steps.filter((s) => s.kind === 'prompted-for').map((s) => s.name),
+  );
+  if (promptedStepNames.size === 0) return;
 
   const errors: string[] = [];
 
-  const checkAction = (action: Action, parentStepName: string, inDemotedStep: boolean): void => {
-    // GOTO with AT targeting a demoted step
+  const checkAction = (action: Action, parentStepName: string, inPromptedStep: boolean): void => {
+    // GOTO with AT targeting a prompted step
     if (action.type === 'GOTO' && action.target.at !== undefined) {
       const targetStep = action.target.step === 'NEXT' ? undefined : action.target.step;
-      if (targetStep && demotedStepNames.has(targetStep)) {
+      if (targetStep && promptedStepNames.has(targetStep)) {
         errors.push(
-          `GOTO AT targets step "${targetStep}" which has an unresolved FOR clause — AT requires a resolved loop`,
+          `GOTO AT targets step "${targetStep}" which has a prompted FOR clause — AT requires a resolved loop`,
         );
       }
     }
 
-    // NEXT/BREAK in substeps of a demoted step
-    if (isLoopControlAction(action) && inDemotedStep) {
+    // NEXT/BREAK in substeps of a prompted step
+    if (isLoopControlAction(action) && inPromptedStep) {
       errors.push(
-        `${action.type} in step "${parentStepName}" requires a FOR loop, but the FOR clause is unresolved`,
+        `${action.type} in step "${parentStepName}" requires a FOR loop, but the FOR clause is prompted`,
       );
     }
   };
@@ -349,16 +357,16 @@ function validateDemotedForSteps(
   const checkTransitions = (
     transitions: Transitions | undefined,
     parentStepName: string,
-    inDemotedStep: boolean,
+    inPromptedStep: boolean,
   ): void => {
     if (!transitions) return;
     for (const action of collectActionsFromTransitions(transitions)) {
-      checkAction(action, parentStepName, inDemotedStep);
+      checkAction(action, parentStepName, inPromptedStep);
     }
   };
 
   for (const step of steps) {
-    const inDemoted = demotedStepNames.has(step.name);
+    const inPrompted = promptedStepNames.has(step.name);
 
     // Check FOR clause transitions (iteration-level PASS/FAIL handlers)
     if (step.kind === 'for') {
@@ -369,15 +377,15 @@ function validateDemotedForSteps(
     checkTransitions(step.transitions, step.name, false);
 
     // Check substep transitions
-    if (step.kind === 'substeps' || step.kind === 'for') {
+    if (step.kind === 'substeps' || step.kind === 'for' || step.kind === 'prompted-for') {
       for (const substep of step.substeps) {
-        checkTransitions(substep.transitions, step.name, inDemoted);
+        checkTransitions(substep.transitions, step.name, inPrompted);
       }
     }
   }
 
   if (errors.length > 0) {
-    throw new RunbookSyntaxError(errors[0]);
+    throw new RunbookSyntaxError(errors.join('; '));
   }
 }
 
@@ -388,51 +396,52 @@ function validateDemotedForSteps(
  * numbers using the provided template variables. Steps without FOR clauses or
  * with already-resolved bounds are passed through unchanged.
  *
- * When a bound variable is undefined, the step falls back to a `StepWithSubsteps`
- * with the FOR line preserved as prompt text. This matches the spec behavior:
- * "the FOR clause is not parsed and the line is preserved as literal prompt text."
+ * When a bound variable is undefined, the step is demoted to
+ * `kind: 'prompted-for'` — a substeps-only step with no `forClause`.
+ * The original FOR text is preserved as `prompt` text for the agent to
+ * drive iteration manually.
  *
  * After resolution, validates that loop-only controls (GOTO...AT, NEXT, BREAK)
- * don't reference steps whose FOR clauses were demoted due to unresolved bounds.
+ * don't reference steps whose FOR clauses were marked as prompted.
  *
  * @param runbook - Parsed runbook AST (may contain unresolved FOR bounds)
  * @param variables - Template variable map for bound resolution
  * @returns Result with resolved runbook and any fallback warnings
  * @throws {Error} When a bound variable is defined but resolves to a non-integer or out-of-range value
- * @throws {RunbookSyntaxError} When loop-only controls reference demoted FOR steps
+ * @throws {RunbookSyntaxError} When loop-only controls reference prompted FOR steps
  */
 export function resolveForBounds(
   runbook: Runbook,
   variables: Readonly<Record<string, unknown>>,
 ): ResolveForBoundsResult {
   const warnings: string[] = [];
-  const demotedStepNames = new Set<string>();
 
   const resolvedSteps = runbook.steps.map((step): ResolvedStep => {
     if (step.kind !== 'for') return step;
     if (!isUnresolvedForClause(step.forClause)) {
       const { forClause, ...rest } = step;
-      return { ...rest, forClause } as ResolvedStepWithFor;
+      return buildResolvedForStep(rest, forClause);
     }
 
     const fc = step.forClause;
 
-    // If any BoundRef variable is undefined, fall back to prompt text
+    // If any BoundRef variable is undefined, keep as prompted FOR step
     if (!allBoundRefsDefined(fc, variables)) {
       let forText = reconstructForLine(fc);
       if (fc.transitions) {
         forText += `\n${renderTransitionsText(fc.transitions, fc.aggregation)}`;
       }
+
       const { forClause: _, kind: __, ...rest } = step;
-      const fallbackStep: StepWithSubsteps = {
+      const promptedStep: ResolvedStepWithPromptedFor = {
         ...rest,
-        kind: 'substeps',
+        kind: 'prompted-for',
         substeps: step.substeps,
+        variable: fc.variable,
         prompt: forText + (step.prompt ? `\n${step.prompt}` : ''),
       };
-      warnings.push(`Step "${step.name}": unresolved FOR bound — preserved as prompt text`);
-      demotedStepNames.add(step.name);
-      return fallbackStep;
+      warnings.push(`Step "${step.name}": unresolved FOR bound — prompted`);
+      return promptedStep;
     }
 
     const start = resolveBound(fc.start, variables, step.name, 'start');
@@ -462,17 +471,13 @@ export function resolveForBounds(
     }
 
     const { forClause: _, ...rest } = step;
-    const resolvedForStep: ResolvedStepWithFor = {
-      ...rest,
-      forClause: resolved,
-    } as ResolvedStepWithFor;
-    return resolvedForStep;
+    return buildResolvedForStep(rest, resolved);
   });
 
   const resolvedRunbook: ResolvedRunbook = { ...runbook, steps: resolvedSteps };
 
-  // Post-resolution validation: detect loop-only controls referencing demoted steps
-  validateDemotedForSteps(resolvedSteps, demotedStepNames);
+  // Post-resolution validation: detect loop-only controls referencing prompted steps
+  validatePromptedForSteps(resolvedSteps);
 
   return { runbook: resolvedRunbook, warnings };
 }
@@ -580,6 +585,11 @@ function substituteStep(step: ResolvedStep, variables: Record<string, unknown>):
         substeps: step.substeps.map((ss) => substituteSubstep(ss, variables)),
       } as ResolvedStep;
     case 'for':
+      return {
+        ...substituted,
+        substeps: step.substeps.map((ss) => substituteSubstep(ss, variables)),
+      } as ResolvedStep;
+    case 'prompted-for':
       return {
         ...substituted,
         substeps: step.substeps.map((ss) => substituteSubstep(ss, variables)),
@@ -697,7 +707,9 @@ export function collectUnresolvedRunbookVariables(runbook: ResolvedRunbook): Set
 
   for (const step of runbook.steps) {
     collect(step.description);
-    collect(step.prompt);
+    // prompted-for prompt text contains the reconstructed FOR line
+    // with unresolved bound variables — handled inside its case branch
+    if (step.kind !== 'prompted-for') collect(step.prompt);
     switch (step.kind) {
       case 'command':
         collect(step.command.code);
@@ -717,6 +729,24 @@ export function collectUnresolvedRunbookVariables(runbook: ResolvedRunbook): Set
           forSuppressed.add(step.forClause.variable);
           dottedPrefixes.add(step.forClause.variable);
         }
+        for (const ss of step.substeps) {
+          collectScoped(ss.description, forSuppressed, dottedPrefixes);
+          collectScoped(ss.prompt, forSuppressed, dottedPrefixes);
+          if (ss.command) collectScoped(ss.command.code, forSuppressed, dottedPrefixes);
+          if (ss.runbooks)
+            for (const rb of ss.runbooks) collectScoped(rb, forSuppressed, dottedPrefixes);
+        }
+        break;
+      }
+      case 'prompted-for': {
+        const forSuppressed = new Set([...GLOBAL_RUNTIME_VARIABLES, ...FOR_LOOP_RUNTIME_VARIABLES]);
+        const dottedPrefixes = new Set<string>();
+        if (step.variable) {
+          forSuppressed.add(step.variable);
+          dottedPrefixes.add(step.variable);
+        }
+        // Step-level prompt contains the reconstructed FOR line with
+        // unresolved bound variables — skip entirely (already warned by resolveForBounds)
         for (const ss of step.substeps) {
           collectScoped(ss.description, forSuppressed, dottedPrefixes);
           collectScoped(ss.prompt, forSuppressed, dottedPrefixes);

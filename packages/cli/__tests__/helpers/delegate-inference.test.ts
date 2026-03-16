@@ -133,6 +133,27 @@ describe('inferDelegationTarget', () => {
     );
   });
 
+  it('infers delegation target from prompted-for step', () => {
+    const substeps = [
+      makeSubstep({ id: '1', description: 'Handle item', runbooks: ['child.runbook.md'] }),
+    ];
+    const steps: Step[] = [
+      {
+        kind: 'prompted-for' as const,
+        name: '1',
+        description: 'Process items',
+        prompt: 'FOR item IN 1 TO {{N}}',
+        substeps,
+        transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+      },
+    ];
+    const state = makeState({ step: '1' });
+
+    const result = inferDelegationTarget(state, steps as any);
+
+    expect(result).toEqual({ runbookRef: 'child.runbook.md', stepId: '1.1' });
+  });
+
   it('finds next delegatable substep in FOR loop iteration 2 when iteration 1 has active delegation', () => {
     const substeps = [
       makeSubstep({ id: '1', description: 'First', runbooks: ['child.runbook.md'] }),

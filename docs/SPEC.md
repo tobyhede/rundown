@@ -59,7 +59,7 @@ Step content must appear in this strict order:
 
 A step must contain exactly one type of body content.
 
-Steps are represented as a discriminated union on `kind`: `'base'` (prompt-only), `'command'` (executable code block), `'substeps'` (nested H3 steps), `'for'` (loop with substeps).
+Steps are represented as a discriminated union on `kind`: `'base'` (prompt-only), `'command'` (executable code block), `'substeps'` (nested H3 steps), `'for'` (loop with substeps), `'prompted-for'` (unresolved FOR, prompt-only).
 
 ### 3.1 Code Blocks
 Executes a command or displays a prompt. Max one code block per step.
@@ -190,7 +190,7 @@ Steps annotated with `FOR` execute their substeps repeatedly.
 *   **Direction**: When `start > end`, iteration descends (step −1). When `start <= end`, it ascends (step +1). Single-number shorthand (`FOR N`) always ascends from 1.
 *   **Limits**: Open-ended data source iteration is capped at 10,000 iterations. Numeric bounds are capped at 10,000 at parse time.
 *   **Source references**: `{{ source }}` in FOR clauses is NOT template-expanded. It is a data source identifier resolved at runtime. Template-variable bounds (`{{ Max }}`) ARE expanded before parsing.
-*   **Unresolved bounds**: When a template-variable bound in a FOR clause cannot be resolved (undefined variable), the FOR clause is not parsed and the line is preserved as literal prompt text. This allows an orchestrating agent to handle unresolved FOR bounds manually.
+*   **Unresolved bounds**: When a template-variable bound in a FOR clause cannot be resolved (undefined variable), the step is demoted to `kind: 'prompted-for'` — a substeps-only step with no executable `forClause`. The original FOR text is preserved as prompt text. This allows an orchestrating agent to handle unresolved FOR bounds manually.
 *   **Named variable required**: Data source FOR clauses require a named variable. Unnamed syntax (`FOR {{source}}`) is invalid.
 *   **Data sources**: Provided at runtime as arrays (in-memory) or files (text or JSONL). Resolved against a sources map. See [RUNDOWN.md](./RUNDOWN.md#data-sources) for configuration.
 *   **Constraint**: FOR steps MUST have substeps. Step-level runbook-list shorthand qualifies because it is canonicalized to implicit substeps.

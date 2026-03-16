@@ -387,6 +387,176 @@ describe('runExecutionLoop', () => {
     expect(mockSessionService.popRunbook).toHaveBeenCalled();
   });
 
+  it('prompted-for step returns waiting without CLI prompted mode', async () => {
+    const promptedForSteps = [
+      {
+        kind: 'prompted-for',
+        name: '1',
+        description: 'Process items',
+        prompt: 'FOR item IN 1 TO {{N}}',
+        substeps: [
+          {
+            id: '1',
+            description: 'Handle {{item}}',
+            command: { code: 'rd echo item={{item}}', lang: 'bash' },
+            transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+          },
+        ],
+        transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+      },
+    ];
+
+    mockManager.load.mockResolvedValue({
+      id: runbookId,
+      step: '1',
+      substep: '1',
+      status: 'running',
+    });
+
+    const result = await runExecutionLoop(
+      mockManager,
+      runbookId,
+      promptedForSteps as any,
+      '/tmp',
+      false, // prompted=false — step itself gates execution
+      mockEmitter,
+    );
+
+    expect(result).toBe('waiting');
+  });
+
+  it('prompted-for step emits STEP_ENTERED with prompted: true', async () => {
+    const promptedForSteps = [
+      {
+        kind: 'prompted-for',
+        name: '1',
+        description: 'Process items',
+        prompt: 'FOR item IN 1 TO {{N}}',
+        substeps: [
+          {
+            id: '1',
+            description: 'Handle {{item}}',
+            command: { code: 'rd echo item={{item}}', lang: 'bash' },
+            transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+          },
+        ],
+        transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+      },
+    ];
+
+    mockManager.load.mockResolvedValue({
+      id: runbookId,
+      step: '1',
+      substep: '1',
+      status: 'running',
+    });
+
+    await runExecutionLoop(
+      mockManager,
+      runbookId,
+      promptedForSteps as any,
+      '/tmp',
+      false,
+      mockEmitter,
+    );
+
+    expect(mockEmitter.emit).toHaveBeenCalledWith(
+      'STEP_ENTERED',
+      expect.objectContaining({
+        prompted: true,
+      }),
+    );
+  });
+
+  it('prompted-for step falls back to step-level prompt', async () => {
+    const promptedForSteps = [
+      {
+        kind: 'prompted-for',
+        name: '1',
+        description: 'Process items',
+        prompt: 'FOR item IN 1 TO {{N}}',
+        substeps: [
+          {
+            id: '1',
+            description: 'Handle {{item}}',
+            // substep has no prompt field — falls back to step prompt
+            command: { code: 'rd echo item={{item}}', lang: 'bash' },
+            transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+          },
+        ],
+        transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+      },
+    ];
+
+    mockManager.load.mockResolvedValue({
+      id: runbookId,
+      step: '1',
+      substep: '1',
+      status: 'running',
+    });
+
+    await runExecutionLoop(
+      mockManager,
+      runbookId,
+      promptedForSteps as any,
+      '/tmp',
+      false,
+      mockEmitter,
+    );
+
+    expect(mockEmitter.emit).toHaveBeenCalledWith(
+      'STEP_ENTERED',
+      expect.objectContaining({
+        prompt: 'FOR item IN 1 TO {{N}}',
+      }),
+    );
+  });
+
+  it('prompted-for step does not inject loop variables', async () => {
+    const promptedForSteps = [
+      {
+        kind: 'prompted-for',
+        name: '1',
+        description: 'Process items',
+        prompt: 'FOR item IN 1 TO {{N}}',
+        substeps: [
+          {
+            id: '1',
+            description: 'Handle {{item}}',
+            command: { code: 'rd echo item={{item}}', lang: 'bash' },
+            transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+          },
+        ],
+        transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+      },
+    ];
+
+    mockManager.load.mockResolvedValue({
+      id: runbookId,
+      step: '1',
+      substep: '1',
+      status: 'running',
+    });
+
+    await runExecutionLoop(
+      mockManager,
+      runbookId,
+      promptedForSteps as any,
+      '/tmp',
+      false,
+      mockEmitter,
+    );
+
+    // {{item}} should stay literal since no forClause drives variable injection
+    expect(mockEmitter.emit).toHaveBeenCalledWith(
+      'STEP_ENTERED',
+      expect.objectContaining({
+        description: 'Handle {{item}}',
+        commandCode: 'rd echo item={{item}}',
+      }),
+    );
+  });
+
   it('emits expanded command text in STEP_ENTERED payload for prompted mode', async () => {
     const forSteps = [
       {

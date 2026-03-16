@@ -14,6 +14,7 @@ import {
   stepHasSubsteps,
   isResolvedStep,
   resolvedStepHasSubsteps,
+  isPromptedForStep,
   areAllStepsResolved,
 } from '../src/guards.js';
 import type {
@@ -475,6 +476,67 @@ describe('resolvedStepHasSubsteps', () => {
   it('returns false for a command step', () => {
     const step = createStep({ command: { code: 'echo hi' } }) as ResolvedStep;
     expect(resolvedStepHasSubsteps(step)).toBe(false);
+  });
+
+  it('returns true for a prompted-for step', () => {
+    const step = {
+      kind: 'prompted-for' as const,
+      name: '1',
+      description: 'Prompted',
+      substeps: [
+        {
+          id: '1',
+          description: 'Sub',
+          transitions: {
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+          },
+        },
+      ],
+      transitions: {
+        pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+        fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+      },
+    } as ResolvedStep;
+    expect(resolvedStepHasSubsteps(step)).toBe(true);
+  });
+});
+
+describe('isPromptedForStep', () => {
+  it('returns true for a prompted-for step', () => {
+    const step = {
+      kind: 'prompted-for' as const,
+      name: '1',
+      description: 'Prompted',
+      substeps: [],
+      transitions: {
+        pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+        fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+      },
+    } as ResolvedStep;
+    expect(isPromptedForStep(step)).toBe(true);
+  });
+
+  it('returns false for a for step', () => {
+    const step = createStep({
+      forClause: { start: 1, end: 3 },
+      substeps: [
+        {
+          id: '1',
+          description: 'Sub',
+          transitions: {
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+          },
+        },
+      ],
+    }) as ResolvedStep;
+    expect(isPromptedForStep(step)).toBe(false);
+  });
+
+  it('returns false for a base step', () => {
+    const step = createStep() as ResolvedStep;
+    expect(isPromptedForStep(step)).toBe(false);
   });
 });
 

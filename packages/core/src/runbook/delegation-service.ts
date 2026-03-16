@@ -1,4 +1,4 @@
-import { parseStepIdFromString, stepHasSubsteps } from '@rundown-org/parser';
+import { parseStepIdFromString, resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { Errors } from '../errors/factory.js';
 import { generateDelegationToken, hashDelegationToken } from './delegation-token.js';
 import {
@@ -11,7 +11,7 @@ import type {
   AncestorSnapshot,
   ContextSnapshot,
   RunbookState,
-  Step,
+  ResolvedStep,
   StepDelegation,
   SubstepState,
 } from './types.js';
@@ -104,7 +104,10 @@ export interface DelegateResult {
  * @throws {RundownError} RD-804 if an active delegation already exists on the substep
  * @throws {RundownError} RD-805 if substep specified but step has no substeps
  */
-export function createDelegation(options: DelegateOptions, steps: readonly Step[]): DelegateResult {
+export function createDelegation(
+  options: DelegateOptions,
+  steps: readonly ResolvedStep[],
+): DelegateResult {
   const { state, stepId, childRunbookPath, extraVars, ancestors, frameKey } = options;
 
   // 1. Parse step ID
@@ -120,7 +123,7 @@ export function createDelegation(options: DelegateOptions, steps: readonly Step[
   }
 
   // 3. If step has substeps and no substep specified, require it
-  if (stepHasSubsteps(step) && !parsed.substep) {
+  if (resolvedStepHasSubsteps(step) && !parsed.substep) {
     throw Errors.delegationSubstepRequired(
       parsed.step,
       step.substeps.map((ss) => ss.id),
@@ -129,13 +132,18 @@ export function createDelegation(options: DelegateOptions, steps: readonly Step[
 
   // 3b. If substep specified, validate it exists in the step
   if (parsed.substep) {
-    if (!stepHasSubsteps(step)) {
+    if (!resolvedStepHasSubsteps(step)) {
       throw Errors.delegationSubstepNotFound(parsed.substep, parsed.step, []);
     }
     const validIds = step.substeps.map((ss) => ss.id);
     if (!validIds.includes(parsed.substep)) {
       throw Errors.delegationSubstepNotFound(parsed.substep, parsed.step, validIds);
     }
+  }
+
+  // 3c. Three-level step ID (step.iteration.substep) requires a FOR-capable step
+  if (typeof parsed.at === 'number' && step.kind !== 'for' && step.kind !== 'prompted-for') {
+    throw Errors.delegationStepNotFound(stepId);
   }
 
   // 4. Verify step is at frontier
@@ -165,7 +173,7 @@ export function createDelegation(options: DelegateOptions, steps: readonly Step[
 
   // Capture structural fields from the delegation target, not the cursor
   const activeFor = getActiveForContext(state.forStack, state.step);
-  const iteration = activeFor?.iteration;
+  const iteration = (typeof parsed.at === 'number' ? parsed.at : undefined) ?? activeFor?.iteration;
   const at = deriveExecutionAt(state.step, parsed.substep, iteration);
 
   const contextSnapshot: ContextSnapshot = {

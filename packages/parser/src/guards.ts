@@ -8,6 +8,7 @@ import type {
   StepHavingSubsteps,
   ResolvedStep,
   ResolvedStepHavingSubsteps,
+  ResolvedStepWithPromptedFor,
   BaseStep,
   StepWithCommand,
   StepWithSubsteps,
@@ -194,7 +195,9 @@ export function isResolvedForClause(fc: ParsedForClause): fc is ForClause {
  * @param step - The Step to check
  * @returns True if `step` is a `ResolvedStep`, meaning all FOR bounds are concrete numbers
  */
-export function isResolvedStep(step: Step): step is ResolvedStep {
+export function isResolvedStep(
+  step: Step,
+): step is Exclude<ResolvedStep, ResolvedStepWithPromptedFor> {
   if (step.kind !== 'for') return true;
   return isResolvedForClause(step.forClause);
 }
@@ -206,7 +209,17 @@ export function isResolvedStep(step: Step): step is ResolvedStep {
  * @returns True if `step` is a `ResolvedStepHavingSubsteps`, guaranteeing `step.substeps` exists
  */
 export function resolvedStepHasSubsteps(step: ResolvedStep): step is ResolvedStepHavingSubsteps {
-  return step.kind === 'substeps' || step.kind === 'for';
+  return step.kind === 'substeps' || step.kind === 'for' || step.kind === 'prompted-for';
+}
+
+/**
+ * Type guard: checks if a resolved step is a prompted-for step (FOR demoted to prompt-only).
+ *
+ * @param step - The ResolvedStep to check
+ * @returns True if `step` is a `ResolvedStepWithPromptedFor`, meaning the FOR clause was unresolved
+ */
+export function isPromptedForStep(step: ResolvedStep): step is ResolvedStepWithPromptedFor {
+  return step.kind === 'prompted-for';
 }
 
 /**
@@ -215,6 +228,8 @@ export function resolvedStepHasSubsteps(step: ResolvedStep): step is ResolvedSte
  * @param steps - The steps to check
  * @returns True if every step is a `ResolvedStep`
  */
-export function areAllStepsResolved(steps: readonly Step[]): steps is readonly ResolvedStep[] {
+export function areAllStepsResolved(
+  steps: readonly Step[],
+): steps is readonly Exclude<ResolvedStep, ResolvedStepWithPromptedFor>[] {
   return steps.every(isResolvedStep);
 }

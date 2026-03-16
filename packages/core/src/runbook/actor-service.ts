@@ -16,7 +16,7 @@ import { createActor, type AnyActorRef } from 'xstate';
 import type { ResolvedStep, RunbookState, ForContext } from './types.js';
 import type { RunbookStateManager } from './state.js';
 import { compileRunbookToMachine, type RunbookEvent } from './compiler.js';
-import { stepHasSubsteps } from '@rundown-org/parser';
+import { resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { logger } from '../logger.js';
 
 /**
@@ -294,7 +294,7 @@ export class RunbookActorService {
           ? steps.find((s) => s.name === currentStepName)
           : undefined;
         const substepCount =
-          currentStep && stepHasSubsteps(currentStep) ? currentStep.substeps.length : 0;
+          currentStep && resolvedStepHasSubsteps(currentStep) ? currentStep.substeps.length : 0;
 
         void logger.debug('sendAndSync:pre-send', {
           runbookId: id,
@@ -323,7 +323,7 @@ export class RunbookActorService {
         if (
           (postValue === 'COMPLETE' || postValue === 'STOPPED') &&
           currentStep &&
-          stepHasSubsteps(currentStep) &&
+          resolvedStepHasSubsteps(currentStep) &&
           currentStep.substeps.length > 0 &&
           preSubstep
         ) {

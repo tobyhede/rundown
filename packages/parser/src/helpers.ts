@@ -107,6 +107,11 @@ export function parseQuotedOrIdentifier(text: string): string {
 
   // Check for valid identifier
   if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(trimmed)) {
+    if (isReservedWord(trimmed)) {
+      throw new Error(
+        `Reserved word "${trimmed}" cannot be used as a bare message. Use quoted form: "${trimmed}"`,
+      );
+    }
     return trimmed;
   }
 

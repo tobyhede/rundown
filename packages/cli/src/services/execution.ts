@@ -576,9 +576,10 @@ export async function runExecutionLoop(
       currentState.templateVars,
     );
     const expandedDescription = expandLoopVariables(itemToRender.description, stepVars);
-    const expandedPrompt = itemToRender.prompt
-      ? expandLoopVariables(itemToRender.prompt, stepVars)
-      : itemToRender.prompt;
+    // For prompted-for substeps, fall back to the step-level prompt (the reconstructed FOR text)
+    const rawPrompt =
+      itemToRender.prompt ?? (currentStep.kind === 'prompted-for' ? currentStep.prompt : undefined);
+    const expandedPrompt = rawPrompt ? expandLoopVariables(rawPrompt, stepVars) : rawPrompt;
 
     // Emit STEP_ENTERED event
     const stepPosition = buildStepPosition(
@@ -594,6 +595,9 @@ export async function runExecutionLoop(
         ? currentStep.command
         : undefined;
 
+    // Compute before STEP_ENTERED so the event includes the prompted FOR flag
+    const stepIsPrompted = currentStep.kind === 'prompted-for';
+
     emitter.emit('STEP_ENTERED', {
       position: stepPosition,
       stepName: isSubstep ? (itemToRender as Substep).id : (itemToRender as ResolvedStep).name,
@@ -605,12 +609,12 @@ export async function runExecutionLoop(
         : command?.code,
       commandLang: command?.lang,
       isSubstep,
-      prompted, // CRITICAL: Pass prompted flag for correct command display
+      prompted: prompted || stepIsPrompted,
     });
 
-    // If CLI prompted mode, OR no command
+    // If CLI prompted mode, per-step prompted FOR, OR no command
     // Use itemToRender which may be a substep with its own command
-    if (prompted || !command) {
+    if (prompted || stepIsPrompted || !command) {
       return 'waiting';
     }
 
@@ -727,7 +731,7 @@ export function isValidResult(r: string): r is 'pass' | 'fail' {
  * @param item - Runbook step or substep to get retry max from
  * @returns Maximum number of retries, or 0 if no retry configured
  */
-export function getStepRetryMax(item: Step | Substep): number {
+export function getStepRetryMax(item: Step | ResolvedStep | Substep): number {
   // Check FAIL transition first (more common to have retry on FAIL)
   if (item.transitions.fail.retry > 0) {
     return item.transitions.fail.retry;

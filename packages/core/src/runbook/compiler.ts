@@ -656,7 +656,7 @@ function findNextStateId(
   const currentStep = steps[currentStepIndex];
 
   // If we are in a substep, check if there is a next sibling
-  if (substepId && (currentStep.kind === 'substeps' || currentStep.kind === 'for')) {
+  if (substepId && resolvedStepHasSubsteps(currentStep)) {
     const currentIndex = currentStep.substeps.findIndex((s) => s.id === substepId);
     if (currentIndex !== -1 && currentIndex < currentStep.substeps.length - 1) {
       const nextSubstep = currentStep.substeps[currentIndex + 1];
@@ -670,7 +670,7 @@ function findNextStateId(
     // Skip named steps - they're only reachable via GOTO
     if (!isNumberedStep(nextStep)) continue;
 
-    if ((nextStep.kind === 'substeps' || nextStep.kind === 'for') && nextStep.substeps.length > 0) {
+    if (resolvedStepHasSubsteps(nextStep) && nextStep.substeps.length > 0) {
       return formatStateId(nextStep.name, nextStep.substeps[0].id);
     }
     return formatStateId(nextStep.name);
@@ -1424,10 +1424,9 @@ function resolveActionTarget(action: Action, stepName: string, steps: ResolvedSt
       if (!targetStep) {
         throw new Error(`Compiler error: GOTO target step "${action.target.step}" does not exist`);
       }
-      const substep =
-        targetStep.kind === 'substeps' || targetStep.kind === 'for'
-          ? (action.target.substep ?? targetStep.substeps[0]?.id)
-          : action.target.substep;
+      const substep = resolvedStepHasSubsteps(targetStep)
+        ? (action.target.substep ?? targetStep.substeps[0]?.id)
+        : action.target.substep;
       return formatStateId(targetStep.name, substep);
     }
     // DEFER/NEXT/BREAK are substep-only actions. This guard is the primary

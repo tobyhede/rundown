@@ -28,6 +28,8 @@ title    ::= "# " text newline
 preamble ::= text+
 ```
 
+Heading levels 4 and deeper are not allowed in runbooks.
+
 ## Frontmatter
 
 ```ebnf
@@ -104,12 +106,12 @@ Separators are matched greedily — the longest sequence of separator characters
 for_clause  ::= "- FOR" ws for_variant newline
                 nested_transition*
 
-for_variant ::= variable_name ws "IN" ws positive_integer ws "TO" ws positive_integer ws "OF" ws source_ref
+for_variant ::= variable_name ws "IN" ws range_value ws "TO" ws range_value ws "OF" ws source_ref
               | variable_name ws "IN" ws source_ref
               | variable_name ws "IN" ws range
               | range
 
-range_value ::= positive_integer | template_variable
+range_value ::= positive_integer | bound_ref
 range       ::= range_value ( ws "TO" ws range_value )?
 source_ref  ::= "{{" ws? variable_name ws? "}}"
 
@@ -118,7 +120,9 @@ nested_transition ::= ws "- " result_keyword ( ws aggregation )? ws action newli
                     | ws "- DEFER" newline
 ```
 
-Template variables (`{{var}}`) may appear in range bound positions. Source references (`{{ source }}`) in `FOR var IN {{ source }}` and `... OF {{ source }}` are data source identifiers.
+Template variables (`{{var}}`) may appear in range bound positions via `bound_ref`. Source references (`{{ source }}`) in `FOR var IN {{ source }}` and `... OF {{ source }}` are data source identifiers.
+
+A step may contain at most one FOR clause. The FOR clause must appear before transitions and content. A single-count range (`FOR batch IN 5`) is shorthand for `1 TO 5`.
 
 **Examples:**
 
@@ -141,6 +145,12 @@ aggregation    ::= "ALL" | "ANY"
 ```
 
 `YES` is a syntactic alias for `PASS`. `NO` is a syntactic alias for `FAIL`. Transitions must use `-` bullet prefix. Transition keywords are matched as whole words — the keyword must be followed by whitespace.
+
+Standalone `DEFER` expands to two transitions: `PASS DEFER` + `FAIL DEFER`.
+
+Aggregation modifiers must pair complementarily: `PASS ALL` + `FAIL ANY` (pessimistic) or `PASS ANY` + `FAIL ALL` (optimistic). One-sided or same-side combinations are rejected.
+
+**Default transitions:** When no transitions are authored, the parser supplies `PASS CONTINUE`, `FAIL STOP`. Substeps under aggregation or with runbook delegation default to `PASS DEFER`, `FAIL DEFER`.
 
 **Disambiguation:** A `-`-prefixed bullet inside a step is resolved by priority: (1) FOR clause (`FOR` keyword), (2) transition (`PASS`, `FAIL`, `YES`, `NO`, or standalone `DEFER`), (3) runbook reference (`.runbook.md` suffix), (4) prompt text.
 
@@ -172,7 +182,7 @@ FOR nested transitions allow: `CONTINUE`, `DEFER`, `NEXT`, `BREAK`, `GOTO`, `STO
 
 ```ebnf
 target ::= ( step_id | substep_id ) ( ws "AT" ws index )?
-index  ::= positive_integer | template_variable
+index  ::= positive_integer | bound_ref
 ```
 
 `NEXT` is not a valid GOTO target.
@@ -200,23 +210,27 @@ executable_lang ::= "bash" | "sh" | "shell"
 display_lang    ::= language_tag
 ```
 
-Opening fence is 3 or more backticks. Closing fence must use at least as many backticks as the opening fence (CommonMark §4.5). Language tag is required — bare code fences are invalid. Tags are matched case-insensitively. Non-executable tags (e.g., `json`, `yaml`) are display-only.
+Opening fence is 3 or more backticks. Closing fence must use at least as many backticks as the opening fence (CommonMark §4.5). Language tag is required — bare code fences are invalid. Tags are matched case-insensitively. Non-executable tags (e.g., `json`, `yaml`) are display-only. The `prompt` suffix on non-executable tags is accepted but redundant — all non-executable code blocks are prompt blocks.
 
 ## Template Variables
 
 ```ebnf
 template_variable ::= "{{" ws? variable_path ws? "}}"
+bound_ref         ::= "{{" ws? variable_name ws? "}}"
 variable_path     ::= variable_name ( "." ( variable_name | digit+ ) )*
 variable_name     ::= [a-zA-Z_] [a-zA-Z0-9_]*
 ```
 
+Template variables with dotted paths (`{{item.name}}`) are resolved at runtime. Parse-time positions (FOR bounds, GOTO AT index) accept only simple variable names via `bound_ref`.
+
 ## Runbook Lists
 
 ```ebnf
-runbook_list ::= ( "- " file_path newline )+
+runbook_list ::= ( "- " runbook_path newline )+
+runbook_path ::= non_ws_char+ ".runbook.md"
 ```
 
-Step-level runbook lists are shorthand for implicit sequential substeps.
+Step-level runbook lists are shorthand for implicit sequential substeps. See [Transitions](#transitions) for bullet disambiguation priority.
 
 ## Body
 
@@ -238,7 +252,7 @@ Free-form text between transitions and body.
 
 `ALL`, `ANY`, `AT`, `BREAK`, `COMPLETE`, `CONTINUE`, `DEFER`, `FAIL`, `FOR`, `GOTO`, `IN`, `NEXT`, `NO`, `PASS`, `RETRY`, `STOP`, `TO`, `YES`
 
-Case-sensitive: `NEXT` is reserved; `Next` and `NextStep` are valid.
+Case-sensitive: `NEXT` is reserved; `Next` and `NextStep` are valid. `OF` is a contextual keyword in `FOR...OF...` syntax but not a reserved word.
 
 ## Lexical Rules
 
@@ -246,7 +260,7 @@ Case-sensitive: `NEXT` is reserved; `Next` and `NextStep` are valid.
 positive_integer ::= [1-9] [0-9]*
 digit            ::= [0-9]
 text             ::= [^\n]+
-file_path        ::= [^\n]+
+non_ws_char      ::= [^ \t\n]
 language_tag     ::= [a-zA-Z] [a-zA-Z0-9]*
 ws               ::= ( " " | "\t" )+
 newline          ::= "\n"
@@ -254,3 +268,5 @@ yaml_block       ::= (* opaque YAML content *)
 backtick_fence   ::= "```" "`"*    /* 3 or more; closing fence >= opening count */
 content          ::= (* opaque code block content *)
 ```
+
+Upper bounds: step identifiers are capped at 999,999; FOR loop bounds at 10,000.

@@ -17,7 +17,7 @@ import {
   type RunbookStateManager,
   type RunbookStoppedPayload,
   type SessionService,
-  type Step,
+  type ResolvedStep,
   type StepPosition,
   type StepTransitionedPayload,
 } from '@rundown-org/core';
@@ -78,9 +78,9 @@ interface OrchestrateTransitionArgs {
   /** Unique identifier of the runbook being executed. */
   runbookId: string;
   /** All steps in the runbook, used for position calculations. */
-  steps: Step[];
+  steps: ResolvedStep[];
   /** The step that was just evaluated. */
-  currentStep: Step;
+  currentStep: ResolvedStep;
   /** Runbook state before the transition was applied. */
   previousState: RunbookState;
   /** Runbook state after the XState machine processed the event. */
@@ -118,7 +118,7 @@ export type OrchestrateTransitionResult =
 function buildTransitionPositions(
   previousState: RunbookState,
   updatedState: RunbookState,
-  steps: Step[],
+  steps: ResolvedStep[],
 ): { from: StepPosition; to: StepPosition } {
   const totalSteps = countNumberedSteps(steps);
   return {

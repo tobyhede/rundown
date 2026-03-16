@@ -11,7 +11,7 @@
  * @module
  */
 
-import type { Step, RunbookState, ForContext } from './types.js';
+import type { ResolvedStep, RunbookState, ForContext } from './types.js';
 import type { ActorSyncResult } from './actor-service.js';
 import type { RunbookEvent } from './compiler.js';
 import { resolveForValue } from './source-resolver.js';
@@ -68,7 +68,11 @@ export interface ForActorOperations {
    * @param event - The event to send (e.g., PASS to trigger loop-exit guard)
    * @returns The sync result, or null if the actor could not be created
    */
-  sendAndSync(id: string, steps: Step[], event: RunbookEvent): Promise<ActorSyncResult | null>;
+  sendAndSync(
+    id: string,
+    steps: ResolvedStep[],
+    event: RunbookEvent,
+  ): Promise<ActorSyncResult | null>;
 }
 
 /**
@@ -105,7 +109,7 @@ export class ForIterationService {
    * @returns An IterationResult indicating next action for the caller
    * @throws {Error} When runbook state is not found (null)
    */
-  async prepareIteration(id: string, steps: Step[]): Promise<IterationResult> {
+  async prepareIteration(id: string, steps: ResolvedStep[]): Promise<IterationResult> {
     const state = await this.manager.load(id);
     if (!state) {
       throw new Error(`Runbook ${id} not found`);
