@@ -865,7 +865,7 @@ export async function claimAndLaunch(
     // Build delegation linkage for the child run.
     // Use the delegation's stored frame key — not the parent's current frame.
     // The parent may have advanced past the iteration where the delegation was created.
-    const delegationFrameKey = freshSubstep!.frameKey;
+    const delegationFrameKey = freshSubstep.frameKey;
     const delegationLinkage: DelegationLinkage = {
       parentRunId: freshParent.id,
       parentStepId: substepId ?? stepId,

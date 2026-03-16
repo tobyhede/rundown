@@ -69,6 +69,21 @@ function makeForSteps(stepName = '1', substepIds: string[] = ['1', '2']): readon
   ] as readonly Step[];
 }
 
+/** Helper: create prompted-for steps with substeps (supports three-level step IDs). */
+function makePromptedForSteps(stepName = '1', substepIds: string[] = ['1', '2']): readonly Step[] {
+  return [
+    {
+      kind: 'prompted-for',
+      name: stepName,
+      description: 'Prompted-FOR step',
+      substeps: substepIds.map((id) => ({
+        id,
+        description: `Substep ${id}`,
+      })),
+    },
+  ] as readonly Step[];
+}
+
 describe('createDelegation', () => {
   it('succeeds on a step with substeps', () => {
     const state = makeState();
@@ -441,13 +456,26 @@ describe('createDelegation', () => {
     const state = makeState();
     const steps = makeSteps();
 
-    // Parses as step=1, at=2, substep=3 — throws because substep '3' is not in the step
+    // Parses as step=1, at=2, substep=3 — throws because substep '3' is not in the step.
+    // Note: 3c (non-FOR/prompted-for step) would also reject this, but 3b fires first.
     expect(() =>
       createDelegation(
         { state, stepId: '1.2.3', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
         steps,
       ),
     ).toThrow(/step not found/i);
+  });
+
+  it('allows three-level step ID on prompted-for step', () => {
+    const state = makeState();
+    const steps = makePromptedForSteps();
+
+    // 1.2.1 → step=1, at=2, substep=1; prompted-for is allowed by 3c
+    const delegation = createDelegation(
+      { state, stepId: '1.2.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1', 2) },
+      steps,
+    );
+    expect(delegation).toBeDefined();
   });
 
   it('uses explicit iteration from three-level step ID in context snapshot', () => {
