@@ -42,6 +42,7 @@ describe('FOR loop fallback (prompted FOR with unresolved bounds)', () => {
 
     // Run WITHOUT providing N — should wait (prompted FOR)
     const result = runCli('run --json unresolved-for.runbook.md', workspace);
+    expect(result.exitCode).toBe(0);
 
     const events = parseJsonEvents(result.stdout) as Record<string, unknown>[];
 

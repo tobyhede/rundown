@@ -538,6 +538,7 @@ async function enforceFileSourcePolicy(
  * @param security - Optional security context for file source policy enforcement
  * @returns ResolvedVariables with vars and sources maps
  * @throws {FileSourcePolicyError} When a file-backed data source is blocked by security policy
+ * @throws {Error} When a reserved runtime variable name is overridden by a non-builtin layer
  */
 export async function resolveVariables(
   options: {
