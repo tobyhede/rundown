@@ -63,7 +63,7 @@ rundown delegate                        # Infer substep and runbook from state
 rundown delegate --step <id>            # Infer runbook from substep reference
 rundown delegate <runbook> --step <id>  # Explicit delegation
 rundown delegate <runbook> --step <id> --var key=value  # With variables
-rundown delegate --index <number>       # FOR loop iteration to target
+rundown delegate --step <id> --index <number>  # FOR loop iteration to target
 rundown claim <token>                   # Claim a delegation token and launch child
 rundown claim <token> --var key=value   # Claim with variables
 rundown abort <token>                   # Cancel a delegation token (--force for claimed)

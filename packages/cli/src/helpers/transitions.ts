@@ -273,6 +273,13 @@ export async function executeTransition(
     activeStep.substeps.length
   );
 
+  // Guard: --step targets a substep, so reject if we're not in substep mode
+  if (explicitTarget && !isSubstepCompletion) {
+    throw new Error(
+      `--step requires the runbook to be at a substep, but step "${activeState.step}" has no active substep`,
+    );
+  }
+
   if (isSubstepCompletion) {
     // If explicit target, build RuntimeTarget from parsed step ID + resolved index
     let cursor: RuntimeTarget;
@@ -291,7 +298,8 @@ export async function executeTransition(
     } else {
       cursor = activeCursorTarget(activeState);
     }
-    const completionKey = buildCompletionKey(cursor.frameKey, cursor.entry, activeState.substep);
+    const targetSubstep = explicitTarget ? cursor.substep : activeState.substep;
+    const completionKey = buildCompletionKey(cursor.frameKey, cursor.entry, targetSubstep);
     const existing = await lifecycleService.getResolvedCompletion(activeState.id, completionKey);
     if (!existing) {
       const completion = buildResolvedCompletion({

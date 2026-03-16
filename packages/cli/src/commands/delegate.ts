@@ -64,6 +64,14 @@ export function registerDelegateCommand(program: Command): void {
         await withErrorHandling(
           async () => {
             const output = new OutputEmitter({ json: options.json });
+
+            // Validate option dependencies
+            if (options.index && !options.step) {
+              output.error('--index requires --step', 'INVALID_SYNTAX');
+              output.flush();
+              process.exit(1);
+            }
+
             const cwd = getCwd();
 
             const manager = new RunbookStateManager(cwd);
