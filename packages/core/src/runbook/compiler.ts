@@ -68,8 +68,10 @@ export const MAX_FILE_ITERATIONS = 10_000;
 
 // Typed constants for empty array values that need explicit types
 // (bare `[]` infers as `never[]`, not the required array type).
-const EMPTY_FOR_STACK: RunbookContext['forStack'] = [];
-const EMPTY_RESULTS: NonNullable<RunbookContext['iterationResults']> = [];
+const EMPTY_FOR_STACK: RunbookContext['forStack'] = Object.freeze([]);
+const EMPTY_RESULTS = Object.freeze([]) as unknown as NonNullable<
+  RunbookContext['iterationResults']
+>;
 
 /**
  * Context passed through the XState runbook state machine.
