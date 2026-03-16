@@ -192,8 +192,6 @@ describe('validateGotoTarget', () => {
         ] as any,
       }),
     ];
-    // Override kind since makeStep derives it
-    (steps[0] as any).kind = 'prompted-for';
     const result = validateGotoTarget('1.1', steps);
 
     expect(result.ok).toBe(true);
@@ -214,8 +212,6 @@ describe('validateGotoTarget', () => {
         substeps: [{ id: '1', description: 'Sub 1' }] as any,
       }),
     ];
-    // Override kind since makeStep derives it
-    (steps[0] as any).kind = 'prompted-for';
     const result = validateGotoTarget('1', steps);
 
     expect(result.ok).toBe(false);
