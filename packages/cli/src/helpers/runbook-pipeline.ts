@@ -761,6 +761,16 @@ export async function claimAndLaunch(
       };
     }
 
+    // Reject claims against stopped parents — the run has been aborted
+    if (freshParent.variables.stopped) {
+      return {
+        ok: false,
+        error: 'Parent run has been stopped. Delegation cannot be claimed.',
+        code: ErrorCodes.TOKEN_NOT_FOUND.code,
+        details: { parentRunId: freshParent.id },
+      };
+    }
+
     // Re-locate delegation on fresh state (match by tokenHash for precision)
     const tokenHash = hashDelegationToken(rawToken);
     const freshSubstep = (freshParent.substepStates ?? []).find(

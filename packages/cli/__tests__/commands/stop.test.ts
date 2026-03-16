@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { writeFile, mkdir } from 'node:fs/promises';
+import { writeFile, mkdir, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   createTestWorkspace,
@@ -36,15 +36,57 @@ describe('stop command', () => {
       expect(session.active).toBeNull();
     });
 
-    it('removes runbook from state directory', async () => {
+    it('persists stopped state with STOP action metadata', async () => {
       const stateBefore = await getActiveState(workspace);
       const runId = stateBefore!.id;
 
       await runCliInProcess('stop', workspace);
 
-      // State file should be deleted
+      // State should be preserved (not deleted)
       const stateAfter = await readRunbookState(workspace, runId);
-      expect(stateAfter).toBeNull();
+      expect(stateAfter).not.toBeNull();
+      expect(stateAfter!.lastAction).toEqual({ type: 'STOP' });
+      expect(stateAfter!.lastResult).toBe('fail');
+      expect(stateAfter!.variables.stopped).toBe(true);
+    });
+  });
+
+  describe('orphaned state recovery', () => {
+    it('pops orphaned stack entry when state file is missing', async () => {
+      // Start a runbook
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+      const state = await getActiveState(workspace);
+
+      // Simulate corruption: delete state file but leave session stack intact
+      const stateDir = join(workspace.cwd, '.claude', 'rundown', 'runs');
+      const stateId = state!.id as string;
+      await unlink(join(stateDir, `${stateId}.json`));
+
+      // Stop should clean up the orphaned stack entry
+      const result = await runCliInProcess('stop', workspace);
+      expect(result.exitCode).toBe(0);
+
+      // Session should be clean — stack entry popped
+      const session = await readSession(workspace);
+      expect(session.active).toBeNull();
+      expect(session.defaultStack).toHaveLength(0);
+    });
+
+    it('pops orphaned stack entry when state file is corrupted', async () => {
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+      const state = await getActiveState(workspace);
+
+      // Write invalid JSON to state file
+      const stateDir = join(workspace.cwd, '.claude', 'rundown', 'runs');
+      const stateId = state!.id as string;
+      await writeFile(join(stateDir, `${stateId}.json`), '{invalid');
+
+      const result = await runCliInProcess('stop', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const session = await readSession(workspace);
+      expect(session.active).toBeNull();
+      expect(session.defaultStack).toHaveLength(0);
     });
   });
 

@@ -25,19 +25,38 @@ export function registerStopCommand(program: Command): void {
           const output = new OutputEmitter({ json: options.json });
           const manager = new RunbookStateManager(cwd);
           const sessionService = new SessionService(manager);
-          const state = await sessionService.getActive();
+
+          let state: RunbookState | null = null;
+          try {
+            state = await sessionService.getActive();
+          } catch {
+            // State exists but can't be loaded (e.g., legacy snapshot)
+            // Fall through to orphan cleanup below
+          }
 
           if (!state) {
+            // P2: Check for orphaned stack entry
+            const session = await manager.loadSession();
+            const orphanId = session.defaultStack[session.defaultStack.length - 1];
+            if (orphanId) {
+              // Corrupted or missing state — delete the broken file and pop the stack
+              await manager.delete(orphanId);
+              await sessionService.popRunbook();
+              output.stopped('Removed unusable runbook state from session');
+              output.flush();
+              return;
+            }
             output.noActiveRunbook('stop');
             output.flush();
             return;
           }
 
-          // Capture delegation linkage before delete
-          const delegationLinkage = state.delegation;
-
-          // Delete and clear
-          await manager.delete(state.id);
+          // P3: Persist STOP metadata instead of deleting
+          const updatedState = await manager.update(state.id, {
+            lastAction: { type: 'STOP' },
+            lastResult: 'fail',
+            variables: { ...state.variables, stopped: true },
+          });
           await sessionService.popRunbook();
 
           // Emit structured output - renderer decides format
@@ -47,12 +66,8 @@ export function registerStopCommand(program: Command): void {
           // Propagate FAIL to parent if delegation exists.
           // The return value is intentionally ignored: a user-initiated stop
           // always succeeds (exit 0) even if the parent propagation itself stops.
-          if (delegationLinkage) {
-            const stoppedState: RunbookState = {
-              ...state,
-              variables: { ...state.variables, stopped: true },
-            };
-            await handleDelegationCompletion(stoppedState, 'fail', cwd, output);
+          if (updatedState.delegation) {
+            await handleDelegationCompletion(updatedState, 'fail', cwd, output);
           }
 
           output.flush();

@@ -395,10 +395,10 @@ rd echo --result fail
       result = await runCliInProcess('stop', workspace);
       expect(result.exitCode).toBe(0);
 
-      // Attempt to claim — parent state is deleted, token no longer resolvable
+      // Attempt to claim — parent is stopped, delegation cannot be claimed
       result = await runCliInProcess(`claim ${token}`, workspace);
       expect(result.exitCode).toBe(1);
-      expect(result.stdout + result.stderr).toMatch(/not found|no active/i);
+      expect(result.stdout + result.stderr).toMatch(/not found|no active|stopped/i);
     });
 
     it('fails to claim aborted delegation token', async () => {
