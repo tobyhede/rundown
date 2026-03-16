@@ -207,6 +207,8 @@ export function renderStep(step: Step): string {
   if (step.aggregation || hasNonDefaultTransitions(step.transitions)) {
     lines.push(renderTransitions(step.transitions, step.aggregation));
     lines.push('');
+  } else if (step.kind === 'for') {
+    lines.push(''); // Terminate FOR bullet list when default transitions are omitted
   }
 
   const shorthandSubsteps = getShorthandRunbookSubsteps(step);
