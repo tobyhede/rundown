@@ -18,6 +18,7 @@ import {
   startRunbook,
   type RunPipelineContext,
 } from '../helpers/runbook-pipeline.js';
+import { buildGotoContext, validateGotoTarget, executeGoto } from '../helpers/goto-workflow.js';
 
 /**
  * Registers the 'run' command for starting runbooks.
@@ -28,6 +29,8 @@ export function registerRunCommand(program: Command): void {
     .command('run [file]')
     .description('Start a runbook')
     .option('--prompted', 'Prompted mode: show commands without auto-executing')
+    .option('--step <stepId>', 'Jump to step after starting (requires --prompted)')
+    .option('--index <number>', 'FOR loop iteration to target (requires --step)')
     .option('--json', 'Output execution events as JSON')
     .option('--var-file <path>', 'Load variables from YAML file')
     .option('--var <key=value>', 'Set variable (repeatable)', collect, [])
@@ -36,6 +39,8 @@ export function registerRunCommand(program: Command): void {
         file: string | undefined,
         options: {
           prompted?: boolean;
+          step?: string;
+          index?: string;
           json?: boolean;
           varFile?: string;
           var?: string[];
@@ -58,6 +63,18 @@ export function registerRunCommand(program: Command): void {
             lifecycleService,
             cwd,
           };
+
+          // Validate --step / --index option dependencies
+          if (options.step && !options.prompted) {
+            output.error('--step requires --prompted', 'INVALID_SYNTAX');
+            output.flush();
+            process.exit(1);
+          }
+          if (options.index && !options.step) {
+            output.error('--index requires --step', 'INVALID_SYNTAX');
+            output.flush();
+            process.exit(1);
+          }
 
           const varOpts = { varFile: options.varFile, var: options.var };
 
@@ -87,6 +104,36 @@ export function registerRunCommand(program: Command): void {
               output.error(result.error, result.code, result.details);
               output.flush();
               process.exit(1);
+            }
+
+            // If --step provided and runbook is waiting (prompted mode), jump to the step
+            if (options.step && result.loopResult === 'waiting') {
+              const gotoCtx = await buildGotoContext(output, cwd);
+              if (!gotoCtx) {
+                output.error('Failed to build goto context after start', 'ENGINE_INIT_FAILED');
+                output.flush();
+                process.exit(1);
+              }
+
+              const validation = validateGotoTarget(options.step, gotoCtx.steps, options.index);
+              if (!validation.ok) {
+                output.error(validation.error, validation.code, validation.details);
+                output.flush();
+                process.exit(1);
+              }
+
+              const gotoResult = await executeGoto(gotoCtx, validation.target);
+              if (!gotoResult.ok) {
+                output.error(gotoResult.error, gotoResult.code);
+                output.flush();
+                process.exit(1);
+              }
+
+              output.flush();
+              if (gotoResult.loopResult === 'stopped') {
+                process.exit(1);
+              }
+              return;
             }
 
             output.flush();

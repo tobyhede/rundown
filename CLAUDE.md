@@ -24,9 +24,16 @@ rundown run [file] --json # Output execution events as JSON
 rundown run [file] --var key=value  # Set template variable (repeatable)
 rundown run [file] --var-file path  # Load variables from YAML file
 rundown run [file] --prompted  # Show commands without auto-executing
+rundown run [file] --step <stepId>   # Jump to step after starting (requires --prompted)
+rundown run [file] --index <number>  # FOR loop iteration to target (requires --step)
 rundown pass             # Mark current step as passed (aliases: yes, ok)
+rundown pass --step <stepId>         # Target specific substep
+rundown pass --index <number>        # FOR loop iteration (requires --step)
 rundown fail             # Mark current step as failed (alias: no)
+rundown fail --step <stepId>         # Target specific substep
+rundown fail --index <number>        # FOR loop iteration (requires --step)
 rundown goto <step>      # Jump to step (e.g., '3', '3.1' for substep)
+rundown goto <step> --index <number> # FOR loop iteration to target
 rundown status           # Show current state
 rundown stop [message]   # Abort runbook with optional message
 rundown complete [message] # Force early completion (runbooks auto-complete on final step)
@@ -56,6 +63,7 @@ rundown delegate                        # Infer substep and runbook from state
 rundown delegate --step <id>            # Infer runbook from substep reference
 rundown delegate <runbook> --step <id>  # Explicit delegation
 rundown delegate <runbook> --step <id> --var key=value  # With variables
+rundown delegate --index <number>       # FOR loop iteration to target
 rundown claim <token>                   # Claim a delegation token and launch child
 rundown claim <token> --var key=value   # Claim with variables
 rundown abort <token>                   # Cancel a delegation token (--force for claimed)

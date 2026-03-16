@@ -8,6 +8,7 @@ import {
   buildTransitionContext,
   createPassTransitionConfig,
   executeTransition,
+  type ExplicitTarget,
 } from '../helpers/transitions.js';
 import { handleDelegationCompletion } from '../helpers/delegation-completion.js';
 
@@ -20,11 +21,21 @@ export function registerPassCommand(program: Command): void {
     .command('pass')
     .aliases(['yes', 'ok'])
     .description('Mark current step as passed (triggers PASS transition)')
+    .option('--step <stepId>', 'Target specific substep')
+    .option('--index <number>', 'FOR loop iteration to target (requires --step)')
     .option('--json', 'Output as JSON')
-    .action(async (options: { json?: boolean }) => {
+    .action(async (options: { step?: string; index?: string; json?: boolean }) => {
       await withErrorHandling(
         async () => {
           const output = new OutputEmitter({ json: options.json });
+
+          // Validate option dependencies
+          if (options.index && !options.step) {
+            output.error('--index requires --step', 'INVALID_SYNTAX');
+            output.flush();
+            process.exit(1);
+          }
+
           const cwd = getCwd();
           const ctx = await buildTransitionContext(output, cwd);
 
@@ -37,8 +48,11 @@ export function registerPassCommand(program: Command): void {
           let shouldExitWithError = false;
           try {
             const passConfig = createPassTransitionConfig();
+            const explicitTarget: ExplicitTarget | undefined = options.step
+              ? { stepId: options.step, index: options.index }
+              : undefined;
 
-            const result = await executeTransition(ctx, passConfig);
+            const result = await executeTransition(ctx, passConfig, explicitTarget);
             if (result === 'stopped') shouldExitWithError = true;
 
             // Delegation propagation — fires when child run reaches terminal state

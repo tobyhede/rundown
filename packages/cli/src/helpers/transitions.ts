@@ -16,6 +16,7 @@ import {
   extractLastAction,
   formatTransitionAction,
   parseActionType,
+  parseStepIdFromString,
   type ActionType,
   buildCompletionKey,
   buildFrameKey,
@@ -31,6 +32,7 @@ import {
   type StepTransitionedPayload,
 } from '@rundown-org/core';
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
+import { resolveIndexOption } from './index-option.js';
 import { getRunbookFromState } from './runbook-loader.js';
 import {
   drainResolvedCompletions,
@@ -229,6 +231,19 @@ function activeCursorTarget(state: RunbookState): RuntimeTarget {
 }
 
 /**
+ * Explicit target for directing a transition at a specific substep and iteration.
+ *
+ * Used by `pass --step` and `fail --step` to target a specific substep
+ * rather than the current cursor position.
+ */
+export interface ExplicitTarget {
+  /** Step ID string (e.g., "1.1") */
+  stepId: string;
+  /** Optional `--index` value (raw string from CLI) */
+  index?: string;
+}
+
+/**
  * Execute a transition with the given configuration.
  *
  * Main entry point for transition execution. Sends event to actor,
@@ -237,13 +252,16 @@ function activeCursorTarget(state: RunbookState): RuntimeTarget {
  *
  * @param ctx - Transition context
  * @param config - Transition configuration
+ * @param explicitTarget - Optional explicit target for directing transition at a specific substep
  * @returns `'continue'` for normal flow including completed/done paths, `'stopped'` if it reached a terminal state
  * @throws {Error} from `findStepOrThrow` if the active step is missing (state corruption),
  *   from `ensureActiveEntry` on lifecycle violations, or from orchestration failures
+ * @throws {IndexOptionError} if `--index` validation fails
  */
 export async function executeTransition(
   ctx: TransitionContext,
   config: TransitionConfig,
+  explicitTarget?: ExplicitTarget,
 ): Promise<'continue' | 'stopped'> {
   const { output, manager, actorService, state, steps, actor, cwd, lifecycleService } = ctx;
   const ensured = await lifecycleService.ensureActiveEntry(state.id, undefined, state);
@@ -256,7 +274,23 @@ export async function executeTransition(
   );
 
   if (isSubstepCompletion) {
-    const cursor = activeCursorTarget(activeState);
+    // If explicit target, build RuntimeTarget from parsed step ID + resolved index
+    let cursor: RuntimeTarget;
+    if (explicitTarget) {
+      const parsed = parseStepIdFromString(explicitTarget.stepId);
+      if (!parsed) {
+        throw new Error(`Invalid step target: ${explicitTarget.stepId}`);
+      }
+      const resolvedIndex = resolveIndexOption(explicitTarget.index, parsed.at);
+      cursor = toRuntimeTarget(
+        parsed.step,
+        parsed.substep,
+        resolvedIndex,
+        activeState.activeEntry ?? 1,
+      );
+    } else {
+      cursor = activeCursorTarget(activeState);
+    }
     const completionKey = buildCompletionKey(cursor.frameKey, cursor.entry, activeState.substep);
     const existing = await lifecycleService.getResolvedCompletion(activeState.id, completionKey);
     if (!existing) {

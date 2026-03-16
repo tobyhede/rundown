@@ -24,6 +24,7 @@ import {
 import { runExecutionLoop } from '../services/execution.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
+import { resolveIndexOption, IndexOptionError } from './index-option.js';
 import { getRunbookFromState } from './runbook-loader.js';
 
 /**
@@ -93,17 +94,21 @@ export async function buildGotoContext(
  * Validate a goto target against the runbook steps.
  *
  * Checks: valid format, step exists, AT only on FOR steps, substep exists.
+ * When `indexOption` is provided, it is merged into the target's `at` field
+ * via `resolveIndexOption`.
  *
  * @param stepArg - Raw step argument string (e.g., "3" or "3.1")
  * @param steps - Parsed runbook steps
+ * @param indexOption - Raw `--index` value from CLI (optional)
  * @returns Validation result with parsed target or error details
  */
 export function validateGotoTarget(
   stepArg: string,
   steps: readonly ResolvedStep[],
+  indexOption?: string,
 ): GotoValidationResult {
-  const target = parseStepIdFromString(stepArg);
-  if (!target) {
+  const parsed = parseStepIdFromString(stepArg);
+  if (!parsed) {
     return {
       ok: false,
       error: `Invalid step target: ${stepArg}. Format: N (step) or N.M (step.substep)`,
@@ -111,6 +116,25 @@ export function validateGotoTarget(
       details: { provided: stepArg },
     };
   }
+
+  // Merge --index with any AT from the step ID string
+  let resolvedAt: number | undefined;
+  try {
+    resolvedAt = resolveIndexOption(indexOption, parsed.at);
+  } catch (error) {
+    if (error instanceof IndexOptionError) {
+      return { ok: false, error: error.message, code: error.code };
+    }
+    throw error;
+  }
+
+  // Build mutable target with merged AT
+  const target: StepId =
+    resolvedAt !== undefined
+      ? { ...parsed, at: resolvedAt }
+      : parsed.at !== undefined
+        ? parsed
+        : { step: parsed.step, substep: parsed.substep };
 
   const stepIndex = steps.findIndex((s) => s.name === target.step);
   if (stepIndex === -1) {
