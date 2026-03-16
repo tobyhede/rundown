@@ -409,17 +409,54 @@ describe('createDelegation', () => {
     ).toThrow(/step not found/i);
   });
 
-  it('throws for step ID with too many parts (e.g., 1.2.3)', () => {
+  it('throws for three-level step ID when substep does not exist (e.g., 1.2.3)', () => {
     const state = makeState();
     const steps = makeSteps();
 
-    // parseStepIdFromString should reject this format
+    // Parses as step=1, at=2, substep=3 — throws because substep '3' is not in the step
     expect(() =>
       createDelegation(
         { state, stepId: '1.2.3', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
         steps,
       ),
     ).toThrow(/step not found/i);
+  });
+
+  it('uses explicit iteration from three-level step ID in context snapshot', () => {
+    const state = makeState({ forStack: undefined });
+    const steps = makeSteps();
+    const result = createDelegation(
+      { state, stepId: '1.2.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1', 2) },
+      steps,
+    );
+
+    expect(result.delegation.contextSnapshot.at).toBe('1.2.1');
+    expect(result.delegation.contextSnapshot.index).toBe(2);
+    expect(result.delegation.contextSnapshot.substep).toBe('1');
+  });
+
+  it('three-level step ID iteration overrides forStack iteration in context snapshot', () => {
+    const state = makeState({
+      forStack: [
+        {
+          stepId: '1',
+          iteration: 5,
+          start: 1,
+          end: 10,
+          implicit: false,
+          source: { kind: 'range' as const },
+        },
+      ],
+    });
+    const steps = makeSteps();
+    const result = createDelegation(
+      { state, stepId: '1.3.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1', 3) },
+      steps,
+    );
+
+    // parsed.at=3 should override forStack iteration=5
+    expect(result.delegation.contextSnapshot.at).toBe('1.3.1');
+    expect(result.delegation.contextSnapshot.index).toBe(3);
   });
 
   it('captures empty templateVars when state has none', () => {

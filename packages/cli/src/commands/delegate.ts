@@ -6,7 +6,9 @@ import {
   createDelegation,
   Errors,
   deriveActiveFrame,
+  buildFrameKey,
 } from '@rundown-org/core';
+import { parseStepIdFromString } from '@rundown-org/parser';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
@@ -48,7 +50,7 @@ export function registerDelegateCommand(program: Command): void {
   program
     .command('delegate [runbook]')
     .description('Create a delegation token for a child runbook')
-    .option('--step <stepId>', 'Step or substep to delegate (e.g., 1.1)')
+    .option('--step <stepId>', 'Step to delegate (e.g., 1.1 or 1.2.1 for step.iteration.substep)')
     .option('--var <key=value>', 'Set variable for child context (repeatable)', collect, [])
     .option('--var-file <path>', 'Load variables from YAML file')
     .option('--json', 'Output as JSON')
@@ -118,8 +120,14 @@ export function registerDelegateCommand(program: Command): void {
               extraVars = extraVars ? { ...extraVars, ...flagVars } : flagVars;
             }
 
-            // Compute active frame key for FOR loop scoping
-            const activeFrameKey = state.activeFrameKey ?? deriveActiveFrame(state).frameKey;
+            // Compute frame key — use explicit iteration from three-level step ID if provided
+            const parsedTarget = parseStepIdFromString(resolvedStepId);
+            const explicitIteration =
+              typeof parsedTarget?.at === 'number' ? parsedTarget.at : undefined;
+            const activeFrameKey =
+              explicitIteration !== undefined
+                ? buildFrameKey(state.step, explicitIteration)
+                : (state.activeFrameKey ?? deriveActiveFrame(state).frameKey);
 
             // Create delegation (pure function — validates and returns token)
             const result = createDelegation(

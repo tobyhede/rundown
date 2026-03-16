@@ -168,7 +168,7 @@ export function createDelegation(
 
   // Capture structural fields from the delegation target, not the cursor
   const activeFor = getActiveForContext(state.forStack, state.step);
-  const iteration = activeFor?.iteration;
+  const iteration = (typeof parsed.at === 'number' ? parsed.at : undefined) ?? activeFor?.iteration;
   const at = deriveExecutionAt(state.step, parsed.substep, iteration);
 
   const contextSnapshot: ContextSnapshot = {
