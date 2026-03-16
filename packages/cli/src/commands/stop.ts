@@ -27,14 +27,18 @@ export function registerStopCommand(program: Command): void {
           const sessionService = new SessionService(manager);
 
           let state: RunbookState | null = null;
+          let getActiveError: Error | undefined;
           try {
             state = await sessionService.getActive();
-          } catch {
-            // State exists but can't be loaded (e.g., legacy snapshot)
-            // Fall through to orphan cleanup below
+          } catch (error: unknown) {
+            getActiveError = Error.isError(error) ? error : new Error(String(error));
           }
 
           if (!state) {
+            // Unexpected errors (e.g., legacy snapshot) must propagate
+            if (getActiveError) {
+              throw getActiveError;
+            }
             // P2: Check for orphaned stack entry
             const session = await manager.loadSession();
             const orphanId = session.defaultStack[session.defaultStack.length - 1];

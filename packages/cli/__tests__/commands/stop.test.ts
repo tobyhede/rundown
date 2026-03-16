@@ -88,6 +88,22 @@ describe('stop command', () => {
       expect(session.active).toBeNull();
       expect(session.defaultStack).toHaveLength(0);
     });
+
+    it('propagates unexpected getActive errors instead of swallowing', async () => {
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+      const state = await getActiveState(workspace);
+      const stateId = state!.id as string;
+      const stateDir = join(workspace.cwd, '.claude', 'rundown', 'runs');
+
+      // Write a legacy snapshot state that triggers a deliberate throw in load()
+      const legacyState = { ...state, lastAction: { type: 'GOTO_NEXT' } };
+      await writeFile(join(stateDir, `${stateId}.json`), JSON.stringify(legacyState));
+
+      // After fix: stop should propagate the error, not silently clean up
+      const result = await runCliInProcess('stop', workspace);
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stderr).toMatch(/dynamic-step snapshots/i);
+    });
   });
 
   describe('stop with message', () => {
