@@ -862,15 +862,17 @@ export async function claimAndLaunch(
       output.warning(`Undefined variable "{{${name}}}" preserved as literal text`);
     }
 
-    // Build delegation linkage for the child run
-    const parentFrame = deriveActiveFrame(freshParent);
+    // Build delegation linkage for the child run.
+    // Use the delegation's stored frame key — not the parent's current frame.
+    // The parent may have advanced past the iteration where the delegation was created.
+    const delegationFrameKey = freshSubstep!.frameKey;
     const delegationLinkage: DelegationLinkage = {
       parentRunId: freshParent.id,
       parentStepId: substepId ?? stepId,
       tokenHash,
       parentStep: freshParent.step,
-      parentFrameKey: parentFrame.frameKey,
-      parentEntry: inferEntryFromState(freshParent, parentFrame.frameKey),
+      parentFrameKey: delegationFrameKey,
+      parentEntry: inferEntryFromState(freshParent, delegationFrameKey),
     };
 
     const parentPrompted = freshParent.prompted ?? false;

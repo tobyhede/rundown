@@ -124,6 +124,14 @@ jest.unstable_mockModule('node:fs/promises', () => ({
 
 // Import after mocking
 const core = await import('@rundown-org/core');
+const parser = await import('@rundown-org/parser');
+const { resolveRunbookFile } = await import('../../src/helpers/resolve-runbook');
+const { resolveVariables } = await import('../../src/services/variable-discovery');
+const { substituteRunbookVariables, resolveForBounds, collectUnresolvedRunbookVariables } =
+  await import('../../src/services/template-renderer');
+const { validateFrontmatterVars } = await import('../../src/helpers/validate-frontmatter-vars');
+const { createBridgedEmitter } = await import('../../src/helpers/execution-emitter');
+const { runExecutionLoop } = await import('../../src/services/execution');
 const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline');
 
 /** Create a minimal RunPipelineContext with mock OutputEmitter. */
@@ -647,5 +655,115 @@ describe('claimAndLaunch', () => {
       // Should contain ellipsis for truncation
       expect(String(result.details.token)).toMatch(/\.\.\./);
     }
+  });
+
+  it('uses delegation frameKey for linkage, not parent current frame', async () => {
+    // Parent state: delegation on iteration 3 (frameKey '1|3'), parent now on iteration 5
+    const parentState = {
+      id: 'run-1',
+      step: '1',
+      variables: {},
+      substepStates: [
+        {
+          id: '1',
+          frameKey: '1|3', // Delegation was created on iteration 3
+          status: 'pending',
+          delegation: {
+            tokenHash: 'sha256:mock',
+            childRunbookPath: 'child.md',
+            childRunId: null,
+            cancelledAt: null,
+            contextSnapshot: { vars: {}, ancestors: [] },
+            createdAt: '2026-02-27T10:00:00.000Z',
+          },
+        },
+      ],
+    };
+
+    // Mock scan
+    (core.DelegationScanService as jest.Mock).mockImplementation(() => ({
+      findByToken: jest.fn<any>().mockResolvedValue({
+        parentState,
+        stepId: '1',
+        substepId: '1',
+        delegation: parentState.substepStates[0].delegation,
+      }),
+      findOrphanedChild: jest.fn<any>().mockResolvedValue(null),
+    }));
+
+    // Mock lock
+    (core.DelegationLock as jest.Mock).mockImplementation(() => ({
+      acquire: jest.fn<any>().mockResolvedValue(undefined),
+      release: jest.fn<any>().mockResolvedValue(undefined),
+    }));
+
+    // deriveActiveFrame returns the WRONG frame (parent has advanced to iteration 5)
+    (core.deriveActiveFrame as jest.Mock).mockReturnValue({
+      step: '1',
+      substep: undefined,
+      iteration: 5,
+      frameKey: '1|5',
+    });
+
+    // Set up prepareRunbook mocks (resetAllMocks clears these)
+    (resolveRunbookFile as jest.Mock).mockResolvedValue('/test/child.md');
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue({
+      runbook: { steps: [{ kind: 'base', name: '1', description: 'Step' }] },
+      frontmatter: null,
+      diagnostics: [],
+    } as any);
+    (validateFrontmatterVars as jest.Mock).mockReturnValue([]);
+    (resolveVariables as jest.Mock).mockResolvedValue({ vars: {}, sources: {}, warnings: [] });
+    (resolveForBounds as jest.Mock).mockImplementation((runbook: unknown) => ({
+      runbook,
+      warnings: [],
+    }));
+    (substituteRunbookVariables as jest.Mock).mockImplementation((runbook: unknown) => runbook);
+    (collectUnresolvedRunbookVariables as jest.Mock).mockReturnValue(new Set());
+    (createBridgedEmitter as jest.Mock).mockReturnValue({ emit: jest.fn() });
+    (runExecutionLoop as jest.Mock).mockResolvedValue('waiting');
+
+    const mockCreate = jest.fn<any>().mockResolvedValue({
+      id: 'new-child-id',
+      title: 'Child',
+    });
+
+    const ctx = makeCtx({
+      manager: {
+        load: jest.fn<any>().mockResolvedValue(parentState),
+        create: mockCreate,
+        update: jest.fn<any>().mockResolvedValue(undefined),
+        list: jest.fn<any>().mockResolvedValue([]),
+        initializeSubsteps: jest.fn<any>().mockResolvedValue(undefined),
+      },
+      actorService: { initializeState: jest.fn<any>().mockResolvedValue(undefined) },
+      sessionService: { pushRunbook: jest.fn<any>().mockResolvedValue(undefined) },
+      lifecycleService: {
+        ensureActiveEntry: jest.fn<any>().mockResolvedValue({
+          state: { activeEntry: 1, activeFrameKey: '1|5' },
+          frameKey: '1|5',
+          entry: 1,
+        }),
+      },
+    });
+
+    // cspell:disable-next-line
+    const result = await claimAndLaunch(ctx as any, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+
+    expect(result.ok).toBe(true);
+
+    // Critical assertion: delegation linkage should use the delegation's stored
+    // frameKey ('1|3'), NOT the parent's current frame ('1|5')
+    expect(mockCreate).toHaveBeenCalledWith(
+      'child.md',
+      expect.anything(),
+      expect.objectContaining({
+        delegation: expect.objectContaining({
+          parentFrameKey: '1|3',
+        }),
+      }),
+    );
   });
 });
