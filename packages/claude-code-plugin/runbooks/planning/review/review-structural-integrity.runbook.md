@@ -14,7 +14,8 @@ Validate the plan's structure, ordering, and completeness.
 
 ## 1. Structural checks
 
-- FAIL ANY: CONTINUE
+- PASS ALL CONTINUE
+- FAIL ANY CONTINUE
 
 ### 1.1 Step ordering logical
 
