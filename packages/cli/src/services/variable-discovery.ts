@@ -567,26 +567,32 @@ export async function resolveVariables(
 
   // Process each layer in precedence order (lowest to highest)
   for (const [layerIndex, layer] of layers.entries()) {
-    const reservedViolations: string[] = [];
-    for (const [key, value] of Object.entries(layer)) {
+    const entries = Object.entries(layer);
+
+    // Pass 1: preflight reserved-key check (before any routing side effects)
+    if (layerIndex > 0) {
+      const reservedViolations: string[] = [];
+      for (const [key] of entries) {
+        if (VALID_IDENTIFIER.test(key) && isRuntimeReservedVariable(key)) {
+          reservedViolations.push(key);
+        }
+      }
+      if (reservedViolations.length > 0) {
+        const keys = reservedViolations.map((k) => `"${k}"`).join(', ');
+        throw new Error(
+          `Reserved runtime variable${reservedViolations.length > 1 ? 's' : ''} ${keys} cannot be overridden. ` +
+            `Reserved names (case-insensitive): ${[...RUNTIME_RESERVED_VARIABLES].join(', ')}`,
+        );
+      }
+    }
+
+    // Pass 2: route variables (only reached when no reserved violations)
+    for (const [key, value] of entries) {
       if (!VALID_IDENTIFIER.test(key)) {
         warnings.push(`Ignoring variable with invalid key: ${key}`);
         continue;
       }
-      // Keep runtime-owned identifiers deterministic by rejecting overrides
-      // from all non-built-in layers (inherited/frontmatter/config/var-file/--var).
-      if (layerIndex > 0 && isRuntimeReservedVariable(key)) {
-        reservedViolations.push(key);
-        continue;
-      }
       await routeVariable(key, value, vars, sources, cwd, projectRoot, security, warnings);
-    }
-    if (reservedViolations.length > 0) {
-      const keys = reservedViolations.map((k) => `"${k}"`).join(', ');
-      throw new Error(
-        `Reserved runtime variable${reservedViolations.length > 1 ? 's' : ''} ${keys} cannot be overridden. ` +
-          `Reserved names (case-insensitive): ${[...RUNTIME_RESERVED_VARIABLES].join(', ')}`,
-      );
     }
   }
 

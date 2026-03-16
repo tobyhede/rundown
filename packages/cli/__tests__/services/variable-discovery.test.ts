@@ -461,9 +461,18 @@ describe('resolveVariables', () => {
     });
 
     it('reports all reserved key violations in a single error', async () => {
-      await expect(resolveVariables({ var: ['Step=a', 'Index=b'] }, tmpDir)).rejects.toThrow(
-        /reserved runtime variables "Step", "Index"/i,
+      const error = await resolveVariables({ var: ['Step=a', 'Index=b'] }, tmpDir).catch(
+        (e: unknown) => e,
       );
+      expect(error.message).toMatch(/reserved runtime variables/i);
+      expect(error.message).toContain('"Step"');
+      expect(error.message).toContain('"Index"');
+    });
+
+    it('does not route non-reserved keys when layer contains a reserved violation', async () => {
+      await expect(
+        resolveVariables({ var: ['safe=value', 'Step=shadow'] }, tmpDir),
+      ).rejects.toThrow(/reserved runtime variable/i);
     });
 
     it('allows non-reserved variables', async () => {
