@@ -53,6 +53,22 @@ function makeSimpleSteps(stepName = '1'): readonly Step[] {
   ] as readonly Step[];
 }
 
+/** Helper: create FOR steps with substeps (supports three-level step IDs). */
+function makeForSteps(stepName = '1', substepIds: string[] = ['1', '2']): readonly Step[] {
+  return [
+    {
+      kind: 'for',
+      name: stepName,
+      description: 'FOR step',
+      forClause: { variable: 'i', start: 1, end: 10 },
+      substeps: substepIds.map((id) => ({
+        id,
+        description: `Substep ${id}`,
+      })),
+    },
+  ] as readonly Step[];
+}
+
 describe('createDelegation', () => {
   it('succeeds on a step with substeps', () => {
     const state = makeState();
@@ -409,6 +425,18 @@ describe('createDelegation', () => {
     ).toThrow(/step not found/i);
   });
 
+  it('throws for three-level step ID on non-FOR step (kind: substeps)', () => {
+    const state = makeState();
+    const steps = makeSteps(); // kind: 'substeps'
+
+    expect(() =>
+      createDelegation(
+        { state, stepId: '1.2.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1', 2) },
+        steps,
+      ),
+    ).toThrow(/step not found/i);
+  });
+
   it('throws for three-level step ID when substep does not exist (e.g., 1.2.3)', () => {
     const state = makeState();
     const steps = makeSteps();
@@ -424,7 +452,7 @@ describe('createDelegation', () => {
 
   it('uses explicit iteration from three-level step ID in context snapshot', () => {
     const state = makeState({ forStack: undefined });
-    const steps = makeSteps();
+    const steps = makeForSteps();
     const result = createDelegation(
       { state, stepId: '1.2.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1', 2) },
       steps,
@@ -448,7 +476,7 @@ describe('createDelegation', () => {
         },
       ],
     });
-    const steps = makeSteps();
+    const steps = makeForSteps();
     const result = createDelegation(
       { state, stepId: '1.3.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1', 3) },
       steps,

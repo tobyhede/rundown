@@ -141,6 +141,11 @@ export function createDelegation(
     }
   }
 
+  // 3c. Three-level step ID (step.iteration.substep) requires a FOR-capable step
+  if (typeof parsed.at === 'number' && step.kind !== 'for' && step.kind !== 'prompted-for') {
+    throw Errors.delegationStepNotFound(stepId);
+  }
+
   // 4. Verify step is at frontier
   if (state.step !== parsed.step) {
     throw Errors.delegationStepNotCurrent(parsed.step, state.step);
