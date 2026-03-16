@@ -344,6 +344,40 @@ describe('parseQuotedOrIdentifier', () => {
       expect(() => parseQuotedOrIdentifier('"unclosed')).toThrow();
     });
   });
+
+  describe('reserved word rejection', () => {
+    it('throws on reserved word COMPLETE', () => {
+      expect(() => parseQuotedOrIdentifier('COMPLETE')).toThrow(/Reserved word/);
+    });
+
+    it('throws on reserved word CONTINUE', () => {
+      expect(() => parseQuotedOrIdentifier('CONTINUE')).toThrow(/Reserved word/);
+    });
+
+    it('throws on reserved word NEXT', () => {
+      expect(() => parseQuotedOrIdentifier('NEXT')).toThrow(/Reserved word/);
+    });
+
+    it('throws on reserved word STOP', () => {
+      expect(() => parseQuotedOrIdentifier('STOP')).toThrow(/Reserved word/);
+    });
+
+    it('throws on reserved word PASS', () => {
+      expect(() => parseQuotedOrIdentifier('PASS')).toThrow(/Reserved word/);
+    });
+
+    it('allows quoted reserved words', () => {
+      expect(parseQuotedOrIdentifier('"COMPLETE"')).toBe('COMPLETE');
+      expect(parseQuotedOrIdentifier('"NEXT"')).toBe('NEXT');
+      expect(parseQuotedOrIdentifier('"STOP"')).toBe('STOP');
+    });
+
+    it('allows non-reserved identifiers', () => {
+      expect(parseQuotedOrIdentifier('MyMessage')).toBe('MyMessage');
+      expect(parseQuotedOrIdentifier('BLOCKED')).toBe('BLOCKED');
+      expect(parseQuotedOrIdentifier('SUCCESS')).toBe('SUCCESS');
+    });
+  });
 });
 
 describe('parseAction STOP message validation', () => {
