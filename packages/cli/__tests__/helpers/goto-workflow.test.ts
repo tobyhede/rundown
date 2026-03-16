@@ -177,6 +177,53 @@ describe('validateGotoTarget', () => {
     }
   });
 
+  it('accepts substep target on prompted-for step', () => {
+    (
+      core.parseStepIdFromString as jest.MockedFunction<typeof core.parseStepIdFromString>
+    ).mockReturnValue({ step: '1', substep: '1' });
+
+    const steps = [
+      makeStep({
+        name: '1',
+        kind: 'prompted-for',
+        substeps: [
+          { id: '1', description: 'Sub 1' },
+          { id: '2', description: 'Sub 2' },
+        ] as any,
+      }),
+    ];
+    // Override kind since makeStep derives it
+    (steps[0] as any).kind = 'prompted-for';
+    const result = validateGotoTarget('1.1', steps);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.target).toEqual({ step: '1', substep: '1' });
+    }
+  });
+
+  it('rejects AT on prompted-for step', () => {
+    (
+      core.parseStepIdFromString as jest.MockedFunction<typeof core.parseStepIdFromString>
+    ).mockReturnValue({ step: '1', at: 3 });
+
+    const steps = [
+      makeStep({
+        name: '1',
+        kind: 'prompted-for',
+        substeps: [{ id: '1', description: 'Sub 1' }] as any,
+      }),
+    ];
+    // Override kind since makeStep derives it
+    (steps[0] as any).kind = 'prompted-for';
+    const result = validateGotoTarget('1', steps);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('INVALID_AT_TARGET');
+    }
+  });
+
   it('accepts valid step', () => {
     (
       core.parseStepIdFromString as jest.MockedFunction<typeof core.parseStepIdFromString>
