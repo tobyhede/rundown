@@ -629,6 +629,58 @@ describe('warnUnresolvedRunbookVariables', () => {
     const warnings = warnUnresolvedRunbookVariables(runbook);
     expect(warnings).toHaveLength(0);
   });
+
+  it('should suppress FOR variable inside prompted-for substeps', () => {
+    const rawMarkdown = [
+      '# Test',
+      '',
+      '## 1. Deploy',
+      '- FOR item IN 1 TO {{N}}',
+      '',
+      '### 1.1 Process',
+      '',
+      'Handle {{item}}.',
+    ].join('\n');
+    const { runbook } = parseRunbookDocument(rawMarkdown);
+    const resolved = resolveForBounds(runbook, {});
+    const warnings = warnUnresolvedRunbookVariables(resolved.runbook);
+    // {{item}} should be suppressed, {{N}} is in the FOR line (prompt text)
+    expect(warnings).toHaveLength(0);
+  });
+
+  it('should suppress Index inside prompted-for substeps', () => {
+    const rawMarkdown = [
+      '# Test',
+      '',
+      '## 1. Deploy',
+      '- FOR item IN 1 TO {{N}}',
+      '',
+      '### 1.1 Process',
+      '',
+      'Iteration {{Index}} of {{item}}.',
+    ].join('\n');
+    const { runbook } = parseRunbookDocument(rawMarkdown);
+    const resolved = resolveForBounds(runbook, {});
+    const warnings = warnUnresolvedRunbookVariables(resolved.runbook);
+    expect(warnings).toHaveLength(0);
+  });
+
+  it('should suppress dotted FOR variable paths inside prompted-for scope', () => {
+    const rawMarkdown = [
+      '# Test',
+      '',
+      '## 1. Deploy',
+      '- FOR item IN 1 TO {{N}}',
+      '',
+      '### 1.1 Process',
+      '',
+      'Name: {{item.name}}, Region: {{item.region}}.',
+    ].join('\n');
+    const { runbook } = parseRunbookDocument(rawMarkdown);
+    const resolved = resolveForBounds(runbook, {});
+    const warnings = warnUnresolvedRunbookVariables(resolved.runbook);
+    expect(warnings).toHaveLength(0);
+  });
 });
 
 describe('resolveForBounds', () => {

@@ -59,6 +59,9 @@ describe('FOR loop fallback (prompted FOR with unresolved bounds)', () => {
     // Prompted FOR step should emit prompted: true
     expect(firstEntered.prompted).toBe(true);
 
+    // Prompt should contain the reconstructed FOR text
+    expect(firstEntered.prompt).toContain('FOR item IN 1 TO {{N}}');
+
     // Should NOT have any command_started events (prompted FOR prevents auto-execution)
     const commandEvents = events.filter((e) => e.type === 'command_started');
     expect(commandEvents).toHaveLength(0);

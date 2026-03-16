@@ -396,9 +396,10 @@ function validatePromptedForSteps(steps: readonly ResolvedStep[]): void {
  * numbers using the provided template variables. Steps without FOR clauses or
  * with already-resolved bounds are passed through unchanged.
  *
- * When a bound variable is undefined, the step retains `kind: 'for'` with a
- * prompted ForClause (synthetic `start: 1, end: 1` bounds). The FOR text is
- * preserved as prompt text for the agent to drive iteration manually.
+ * When a bound variable is undefined, the step is demoted to
+ * `kind: 'prompted-for'` — a substeps-only step with no `forClause`.
+ * The original FOR text is preserved as `prompt` text for the agent to
+ * drive iteration manually.
  *
  * After resolution, validates that loop-only controls (GOTO...AT, NEXT, BREAK)
  * don't reference steps whose FOR clauses were marked as prompted.
@@ -436,6 +437,7 @@ export function resolveForBounds(
         ...rest,
         kind: 'prompted-for',
         substeps: step.substeps,
+        variable: fc.variable,
         prompt: forText + (step.prompt ? `\n${step.prompt}` : ''),
       };
       warnings.push(`Step "${step.name}": unresolved FOR bound — prompted`);
@@ -705,7 +707,9 @@ export function collectUnresolvedRunbookVariables(runbook: ResolvedRunbook): Set
 
   for (const step of runbook.steps) {
     collect(step.description);
-    collect(step.prompt);
+    // prompted-for prompt text contains the reconstructed FOR line
+    // with unresolved bound variables — handled inside its case branch
+    if (step.kind !== 'prompted-for') collect(step.prompt);
     switch (step.kind) {
       case 'command':
         collect(step.command.code);
@@ -734,14 +738,24 @@ export function collectUnresolvedRunbookVariables(runbook: ResolvedRunbook): Set
         }
         break;
       }
-      case 'prompted-for':
+      case 'prompted-for': {
+        const forSuppressed = new Set([...GLOBAL_RUNTIME_VARIABLES, ...FOR_LOOP_RUNTIME_VARIABLES]);
+        const dottedPrefixes = new Set<string>();
+        if (step.variable) {
+          forSuppressed.add(step.variable);
+          dottedPrefixes.add(step.variable);
+        }
+        // Step-level prompt contains the reconstructed FOR line with
+        // unresolved bound variables — skip entirely (already warned by resolveForBounds)
         for (const ss of step.substeps) {
-          collect(ss.description);
-          collect(ss.prompt);
-          if (ss.command) collect(ss.command.code);
-          if (ss.runbooks) for (const rb of ss.runbooks) collect(rb);
+          collectScoped(ss.description, forSuppressed, dottedPrefixes);
+          collectScoped(ss.prompt, forSuppressed, dottedPrefixes);
+          if (ss.command) collectScoped(ss.command.code, forSuppressed, dottedPrefixes);
+          if (ss.runbooks)
+            for (const rb of ss.runbooks) collectScoped(rb, forSuppressed, dottedPrefixes);
         }
         break;
+      }
     }
   }
 

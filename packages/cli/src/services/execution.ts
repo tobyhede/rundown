@@ -576,9 +576,10 @@ export async function runExecutionLoop(
       currentState.templateVars,
     );
     const expandedDescription = expandLoopVariables(itemToRender.description, stepVars);
-    const expandedPrompt = itemToRender.prompt
-      ? expandLoopVariables(itemToRender.prompt, stepVars)
-      : itemToRender.prompt;
+    // For prompted-for substeps, fall back to the step-level prompt (the reconstructed FOR text)
+    const rawPrompt =
+      itemToRender.prompt ?? (currentStep.kind === 'prompted-for' ? currentStep.prompt : undefined);
+    const expandedPrompt = rawPrompt ? expandLoopVariables(rawPrompt, stepVars) : rawPrompt;
 
     // Emit STEP_ENTERED event
     const stepPosition = buildStepPosition(

@@ -257,6 +257,8 @@ export interface ResolvedStepWithFor extends StepFields {
 export interface ResolvedStepWithPromptedFor extends StepFields {
   readonly kind: 'prompted-for';
   readonly substeps: readonly Substep[];
+  /** FOR loop variable name, preserved for scoped suppression of unresolved-variable warnings. */
+  readonly variable?: string;
   /** Parser canonicalization marker for step-level runbook-list shorthand. */
   readonly substepsDerivedFromRunbookList?: true;
 }
