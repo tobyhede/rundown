@@ -1798,7 +1798,7 @@ function extractTargets(config: RunbookStateConfig): string[] {
     if (typeof entry === 'string') {
       targets.push(entry);
     } else if (entry && typeof entry === 'object' && 'target' in entry) {
-      const t = (entry as { target?: string | null }).target;
+      const t = (entry as { target?: string }).target;
       if (typeof t === 'string') targets.push(t);
     }
   };
