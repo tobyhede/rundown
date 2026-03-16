@@ -5,7 +5,7 @@ tags:
   - planning
   - review
 vars:
-  PlanPath: .work/plan.md
+  PlanPath: ""
 ---
 
 # Synthesize Review Findings
@@ -14,7 +14,11 @@ Collate findings from both review passes and produce a final verdict.
 
 ## 1. Read all findings
 
-Read all review findings from `{{ WorkPath }}/reviews/*-pass*.md`. Collect every PASS/FAIL result and its evidence from both passes.
+Collect every PASS/FAIL result and its evidence from both passes. Read all review findings from the context directory:
+
+```bash
+ls "$(rdpath --dir {{ WorkPath }} --ctx {{ ContextId }})"/*-pass*.md
+```
 
 ## 2. Identify common issues
 
@@ -30,6 +34,6 @@ Categorize all findings into two severity levels. "Blocking" issues must be reso
 
 ## 5. Write verdict
 
-Write the final verdict to `{{ WorkPath }}/reviews/verdict.md`. Include the verdict label, a one-paragraph summary, numbered lists of blocking and non-blocking issues with evidence, common findings (high confidence — both passes agreed), and unique findings (lower confidence — only one pass found).
+Write the final verdict to the path resolved by `rdpath --dir {{ WorkPath }} --file plan-review-verdict.md`. Include the verdict label, a one-paragraph summary, numbered lists of blocking and non-blocking issues with evidence, common findings (high confidence — both passes agreed), and unique findings (lower confidence — only one pass found).
 
 Verdict labels: "Approved" means zero blocking issues. "Approved with changes" means non-blocking issues only. "Blocked" means blocking issues must be resolved first.

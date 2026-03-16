@@ -5,7 +5,7 @@ tags:
   - planning
   - review
 vars:
-  PlanPath: .work/plan.md
+  PlanPath: ""
 ---
 
 # Review Technical Accuracy
@@ -49,4 +49,8 @@ Check that proposed code changes follow the project's established patterns and c
 
 ## 2. Write findings
 
-Write the results of each check above to `{{ WorkPath }}/reviews/technical-accuracy-pass{{ context.parent.index }}.md`. List each check with PASS/FAIL, provide evidence for each FAIL, and include an overall assessment.
+Write the results of each check above to the path resolved by `rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file technical-accuracy-pass{{ context.parent.index }}.md`. List each check with PASS/FAIL, provide evidence for each FAIL, and include an overall assessment. First ensure the output directory exists:
+
+```bash
+mkdir -p "$(rdpath --dir {{ WorkPath }} --ctx {{ ContextId }})"
+```

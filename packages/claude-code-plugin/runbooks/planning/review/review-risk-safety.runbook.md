@@ -5,7 +5,7 @@ tags:
   - planning
   - review
 vars:
-  PlanPath: .work/plan.md
+  PlanPath: ""
 ---
 
 # Review Risk and Safety
@@ -67,4 +67,8 @@ Verify that changes include appropriate logging, metrics, or monitoring where th
 
 ## 2. Write findings
 
-Write the results of each check above to `{{ WorkPath }}/reviews/risk-safety-pass{{ context.parent.index }}.md`. List each check with PASS/FAIL, provide evidence for each FAIL, and include an overall assessment.
+Write the results of each check above to the path resolved by `rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file risk-safety-pass{{ context.parent.index }}.md`. List each check with PASS/FAIL, provide evidence for each FAIL, and include an overall assessment. First ensure the output directory exists:
+
+```bash
+mkdir -p "$(rdpath --dir {{ WorkPath }} --ctx {{ ContextId }})"
+```

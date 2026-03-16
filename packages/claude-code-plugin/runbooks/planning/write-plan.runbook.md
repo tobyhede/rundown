@@ -2,8 +2,6 @@
 name: Write Plan
 description: Write detailed implementation plans using the Writing Plans skill
 skill: writing-plans
-vars:
-  FeatureName: feature
 ---
 
 # Write Plan
@@ -18,7 +16,7 @@ Write a detailed implementation plan for a feature or task.
 
 Use the Writing Plans Skill.
 
-Path: `{{ WorkPath }}/{{ FeatureName }}/{{ Date }}-plan.md`
+Resolve the output path with: `rdpath --dir {{ WorkPath }} --file plan.md`
 
 ---
 
