@@ -72,5 +72,6 @@ export {
   isResolvedForClause,
   isResolvedStep,
   resolvedStepHasSubsteps,
+  isPromptedForStep,
   areAllStepsResolved,
 } from './guards.js';

@@ -244,8 +244,21 @@ export interface ResolvedStepWithFor extends StepFields {
   readonly substeps: readonly Substep[];
   /** Parser canonicalization marker for step-level runbook-list shorthand. */
   readonly substepsDerivedFromRunbookList?: true;
-  /** When true, FOR bounds are synthetic — the agent drives iteration manually */
-  readonly promptedFor?: true;
+}
+
+/**
+ * FOR step demoted to prompt-only due to unresolved bounds.
+ *
+ * Produced by `resolveForBounds()` when a FOR clause contains unresolved
+ * template variables. The original FOR text is preserved in `prompt`.
+ * No executable `forClause` — the compiler treats this as substeps-only
+ * with no iteration machinery.
+ */
+export interface ResolvedStepWithPromptedFor extends StepFields {
+  readonly kind: 'prompted-for';
+  readonly substeps: readonly Substep[];
+  /** Parser canonicalization marker for step-level runbook-list shorthand. */
+  readonly substepsDerivedFromRunbookList?: true;
 }
 
 /**
@@ -257,13 +270,21 @@ export interface ResolvedStepWithFor extends StepFields {
 export type Step = BaseStep | StepWithCommand | StepWithSubsteps | StepWithFor;
 
 /** A step where all FOR bounds are resolved. */
-export type ResolvedStep = BaseStep | StepWithCommand | StepWithSubsteps | ResolvedStepWithFor;
+export type ResolvedStep =
+  | BaseStep
+  | StepWithCommand
+  | StepWithSubsteps
+  | ResolvedStepWithFor
+  | ResolvedStepWithPromptedFor;
 
 /** Utility type for functions that accept any step with substeps. */
 export type StepHavingSubsteps = StepWithSubsteps | StepWithFor;
 
 /** Utility type for resolved steps with substeps. */
-export type ResolvedStepHavingSubsteps = StepWithSubsteps | ResolvedStepWithFor;
+export type ResolvedStepHavingSubsteps =
+  | StepWithSubsteps
+  | ResolvedStepWithFor
+  | ResolvedStepWithPromptedFor;
 
 /**
  * Parsed runbook definition

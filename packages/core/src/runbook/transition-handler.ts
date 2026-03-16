@@ -1,4 +1,12 @@
-import type { Step, SubstepState, Action, StepId, Transitions, Aggregation } from './types.js';
+import type {
+  Step,
+  ResolvedStep,
+  SubstepState,
+  Action,
+  StepId,
+  Transitions,
+  Aggregation,
+} from './types.js';
 
 /**
  * Result of evaluating a step condition (PASS or FAIL).
@@ -61,7 +69,10 @@ function evaluateTransition(
  * @param currentRetryCount - The current retry count for this step
  * @returns A ConditionResult indicating the action to take
  */
-export function evaluateFailCondition(step: Step, currentRetryCount: number): ConditionResult {
+export function evaluateFailCondition(
+  step: Step | ResolvedStep,
+  currentRetryCount: number,
+): ConditionResult {
   return evaluateTransition(step.transitions.fail, currentRetryCount);
 }
 
@@ -75,7 +86,10 @@ export function evaluateFailCondition(step: Step, currentRetryCount: number): Co
  * @param currentRetryCount - Current retry count (defaults to 0)
  * @returns A ConditionResult indicating the action to take
  */
-export function evaluatePassCondition(step: Step, currentRetryCount = 0): ConditionResult {
+export function evaluatePassCondition(
+  step: Step | ResolvedStep,
+  currentRetryCount = 0,
+): ConditionResult {
   return evaluateTransition(step.transitions.pass, currentRetryCount);
 }
 

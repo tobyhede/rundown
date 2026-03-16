@@ -19,6 +19,7 @@ import type {
   ResolvedRunbook,
   ResolvedStep,
   ResolvedStepWithFor,
+  ResolvedStepWithPromptedFor,
   UnresolvedForClause,
   Transitions,
   TransitionObject,
@@ -51,7 +52,7 @@ type ExplicitNumericWindow = AllKeysExplicit<Omit<NumericWindow, 'source'>> & { 
 function buildResolvedForStep(
   rest: Omit<ResolvedStepWithFor, 'forClause'>,
   forClause: ForClause,
-  extras?: { prompt?: string; promptedFor?: true },
+  extras?: { prompt?: string },
 ): ResolvedStepWithFor {
   return { ...rest, forClause, ...extras } as ResolvedStepWithFor;
 }
@@ -324,13 +325,12 @@ function collectActionsFromTransitions(transitions: Transitions): Action[] {
  * This function detects those cases and throws a `RunbookSyntaxError`.
  *
  * @param steps - Resolved steps after FOR bound resolution
- * @param promptedStepNames - Set of step names that were marked as prompted
  * @throws {RunbookSyntaxError} When loop-only controls reference prompted steps
  */
-function validatePromptedForSteps(
-  steps: readonly ResolvedStep[],
-  promptedStepNames: ReadonlySet<string>,
-): void {
+function validatePromptedForSteps(steps: readonly ResolvedStep[]): void {
+  const promptedStepNames = new Set(
+    steps.filter((s) => s.kind === 'prompted-for').map((s) => s.name),
+  );
   if (promptedStepNames.size === 0) return;
 
   const errors: string[] = [];
@@ -377,7 +377,7 @@ function validatePromptedForSteps(
     checkTransitions(step.transitions, step.name, false);
 
     // Check substep transitions
-    if (step.kind === 'substeps' || step.kind === 'for') {
+    if (step.kind === 'substeps' || step.kind === 'for' || step.kind === 'prompted-for') {
       for (const substep of step.substeps) {
         checkTransitions(substep.transitions, step.name, inPrompted);
       }
@@ -414,7 +414,6 @@ export function resolveForBounds(
   variables: Readonly<Record<string, unknown>>,
 ): ResolveForBoundsResult {
   const warnings: string[] = [];
-  const promptedStepNames = new Set<string>();
 
   const resolvedSteps = runbook.steps.map((step): ResolvedStep => {
     if (step.kind !== 'for') return step;
@@ -432,35 +431,14 @@ export function resolveForBounds(
         forText += `\n${renderTransitionsText(fc.transitions, fc.aggregation)}`;
       }
 
-      let promptedClause: ForClause;
-      if (fc.source !== undefined) {
-        const explicit: ExplicitWindowedSourceWindow = {
-          variable: fc.variable,
-          start: 1,
-          end: 1,
-          source: fc.source,
-          transitions: fc.transitions,
-          aggregation: fc.aggregation,
-        };
-        promptedClause = explicit;
-      } else {
-        const explicit: ExplicitNumericWindow = {
-          variable: fc.variable,
-          start: 1,
-          end: 1,
-          transitions: fc.transitions,
-          aggregation: fc.aggregation,
-        };
-        promptedClause = explicit;
-      }
-
-      const { forClause: _, ...rest } = step;
-      const promptedStep = buildResolvedForStep(rest, promptedClause, {
+      const { forClause: _, kind: __, ...rest } = step;
+      const promptedStep: ResolvedStepWithPromptedFor = {
+        ...rest,
+        kind: 'prompted-for',
+        substeps: step.substeps,
         prompt: forText + (step.prompt ? `\n${step.prompt}` : ''),
-        promptedFor: true,
-      });
+      };
       warnings.push(`Step "${step.name}": unresolved FOR bound — prompted`);
-      promptedStepNames.add(step.name);
       return promptedStep;
     }
 
@@ -497,7 +475,7 @@ export function resolveForBounds(
   const resolvedRunbook: ResolvedRunbook = { ...runbook, steps: resolvedSteps };
 
   // Post-resolution validation: detect loop-only controls referencing prompted steps
-  validatePromptedForSteps(resolvedSteps, promptedStepNames);
+  validatePromptedForSteps(resolvedSteps);
 
   return { runbook: resolvedRunbook, warnings };
 }
@@ -605,6 +583,11 @@ function substituteStep(step: ResolvedStep, variables: Record<string, unknown>):
         substeps: step.substeps.map((ss) => substituteSubstep(ss, variables)),
       } as ResolvedStep;
     case 'for':
+      return {
+        ...substituted,
+        substeps: step.substeps.map((ss) => substituteSubstep(ss, variables)),
+      } as ResolvedStep;
+    case 'prompted-for':
       return {
         ...substituted,
         substeps: step.substeps.map((ss) => substituteSubstep(ss, variables)),
@@ -751,6 +734,14 @@ export function collectUnresolvedRunbookVariables(runbook: ResolvedRunbook): Set
         }
         break;
       }
+      case 'prompted-for':
+        for (const ss of step.substeps) {
+          collect(ss.description);
+          collect(ss.prompt);
+          if (ss.command) collect(ss.command.code);
+          if (ss.runbooks) for (const rb of ss.runbooks) collect(rb);
+        }
+        break;
     }
   }
 

@@ -595,7 +595,7 @@ export async function runExecutionLoop(
         : undefined;
 
     // Compute before STEP_ENTERED so the event includes the prompted FOR flag
-    const stepIsPrompted = currentStep.kind === 'for' && currentStep.promptedFor === true;
+    const stepIsPrompted = currentStep.kind === 'prompted-for';
 
     emitter.emit('STEP_ENTERED', {
       position: stepPosition,
@@ -730,7 +730,7 @@ export function isValidResult(r: string): r is 'pass' | 'fail' {
  * @param item - Runbook step or substep to get retry max from
  * @returns Maximum number of retries, or 0 if no retry configured
  */
-export function getStepRetryMax(item: Step | Substep): number {
+export function getStepRetryMax(item: Step | ResolvedStep | Substep): number {
   // Check FAIL transition first (more common to have retry on FAIL)
   if (item.transitions.fail.retry > 0) {
     return item.transitions.fail.retry;

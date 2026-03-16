@@ -36,6 +36,7 @@ import {
   parseRunbookDocument,
   isSourced,
   stepHasSubsteps,
+  resolvedStepHasSubsteps,
   type Step,
   type ResolvedStep,
   type ValidationDiagnostic,
@@ -158,7 +159,7 @@ export function validateSources(
   sources: Readonly<Record<string, unknown>>,
 ): void {
   for (const step of steps) {
-    if (step.kind === 'for' && isSourced(step.forClause) && !step.promptedFor) {
+    if (step.kind === 'for' && isSourced(step.forClause)) {
       const name = step.forClause.source;
       if (!Object.hasOwn(sources, name)) {
         throw new Error(
@@ -574,7 +575,7 @@ async function launchRunbook(
 
   await sessionService.pushRunbook(state.id);
 
-  if (stepHasSubsteps(runbook.steps[0]) && runbook.steps[0].substeps.length > 0) {
+  if (resolvedStepHasSubsteps(runbook.steps[0]) && runbook.steps[0].substeps.length > 0) {
     const freshState = await manager.load(state.id);
     const frame = freshState ? deriveActiveFrame(freshState) : undefined;
     const frameKey =

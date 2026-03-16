@@ -383,10 +383,6 @@ function resolveAtValueRuntime(
   return defaultValue;
 }
 
-function isPromptedForStep(step: ResolvedStep): boolean {
-  return step.kind === 'for' && !!step.promptedFor;
-}
-
 /**
  * Create a ForContext for a step's FOR clause.
  *
@@ -395,7 +391,6 @@ function isPromptedForStep(step: ResolvedStep): boolean {
  * @param atValue - Optional AT value for starting iteration
  * @param implicit - Optional flag indicating implicit FOR context
  * @param sources - Data source bindings for sourced FOR loops
- * @param promptedFor - When true, bypass source lookup and use synthetic bounds
  * @returns A new ForContext
  * @throws {Error} When a sourced FOR clause references an undefined data source
  */
@@ -405,22 +400,7 @@ function createForContext(
   atValue?: number | string,
   implicit = false,
   sources?: Readonly<Record<string, DataSource>>,
-  promptedFor = false,
 ): ForContext {
-  // Prompted FOR steps use synthetic bounds — bypass source lookup
-  if (promptedFor) {
-    return {
-      stepId: stepName,
-      iteration: resolveAtValue(atValue, forClause.start),
-      start: forClause.start,
-      end: isSourced(forClause) ? (isWindowed(forClause) ? forClause.end : 1) : forClause.end,
-      variable: forClause.variable,
-      implicit: false,
-      source: { kind: 'range' },
-      currentValue: undefined,
-    };
-  }
-
   let source: ForContext['source'];
   let start: number;
   let end: number | undefined;
@@ -487,7 +467,6 @@ function createForContext(
  * @param atValue - Optional AT value from a GOTO action
  * @param implicit - Whether the FOR loop is implicit (no explicit FOR clause)
  * @param sources - Optional data sources for sourced FOR loops
- * @param promptedFor - When true, bypass source lookup and use synthetic bounds
  * @returns The forStack to assign
  * @throws {Error} When the FOR clause contains unresolved template references
  */
@@ -498,14 +477,13 @@ function initForStack(
   atValue: number | string | undefined,
   implicit: boolean,
   sources?: Readonly<Record<string, DataSource>>,
-  promptedFor = false,
 ): readonly ForContext[] {
   const top = peekForStack(currentForStack);
   if (top?.stepId === targetStepName) {
     return currentForStack;
   }
   const iteration = resolveAtValueRuntime(atValue, forClause.start, currentForStack);
-  return [createForContext(targetStepName, forClause, iteration, implicit, sources, promptedFor)];
+  return [createForContext(targetStepName, forClause, iteration, implicit, sources)];
 }
 
 /**
@@ -678,7 +656,7 @@ function findNextStateId(
   const currentStep = steps[currentStepIndex];
 
   // If we are in a substep, check if there is a next sibling
-  if (substepId && (currentStep.kind === 'substeps' || currentStep.kind === 'for')) {
+  if (substepId && resolvedStepHasSubsteps(currentStep)) {
     const currentIndex = currentStep.substeps.findIndex((s) => s.id === substepId);
     if (currentIndex !== -1 && currentIndex < currentStep.substeps.length - 1) {
       const nextSubstep = currentStep.substeps[currentIndex + 1];
@@ -692,7 +670,7 @@ function findNextStateId(
     // Skip named steps - they're only reachable via GOTO
     if (!isNumberedStep(nextStep)) continue;
 
-    if ((nextStep.kind === 'substeps' || nextStep.kind === 'for') && nextStep.substeps.length > 0) {
+    if (resolvedStepHasSubsteps(nextStep) && nextStep.substeps.length > 0) {
       return formatStateId(nextStep.name, nextStep.substeps[0].id);
     }
     return formatStateId(nextStep.name);
@@ -752,16 +730,7 @@ function buildParentExitAssign(
               forClause.start,
               context.forStack,
             );
-            return [
-              createForContext(
-                targetStep.name,
-                forClause,
-                iteration,
-                false,
-                sources,
-                isPromptedForStep(targetStep),
-              ),
-            ];
+            return [createForContext(targetStep.name, forClause, iteration, false, sources)];
           },
           iterationResults: EMPTY_RESULTS,
           substepCompletedCount: 0,
@@ -1455,10 +1424,9 @@ function resolveActionTarget(action: Action, stepName: string, steps: ResolvedSt
       if (!targetStep) {
         throw new Error(`Compiler error: GOTO target step "${action.target.step}" does not exist`);
       }
-      const substep =
-        targetStep.kind === 'substeps' || targetStep.kind === 'for'
-          ? (action.target.substep ?? targetStep.substeps[0]?.id)
-          : action.target.substep;
+      const substep = resolvedStepHasSubsteps(targetStep)
+        ? (action.target.substep ?? targetStep.substeps[0]?.id)
+        : action.target.substep;
       return formatStateId(targetStep.name, substep);
     }
     // DEFER/NEXT/BREAK are substep-only actions. This guard is the primary
@@ -1710,7 +1678,6 @@ function buildGotoTransition(
             target.at,
             isImplicit,
             sources,
-            isPromptedForStep(targetStepObj),
           ),
         iterationResults: ({
           context,
@@ -2002,7 +1969,6 @@ export function compileRunbookToMachine(
                 undefined,
                 stepInfo.implicit,
                 options?.sources,
-                isPromptedForStep(stepInfo.step),
               ),
             iterationResults: ({
               context,
@@ -2081,7 +2047,6 @@ export function compileRunbookToMachine(
                   event.target.at,
                   forStepForTarget.implicit,
                   options?.sources,
-                  isPromptedForStep(forStepForTarget.step),
                 );
               },
               iterationResults: ({

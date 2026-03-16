@@ -30,7 +30,7 @@ import {
   type RunbookStoppedPayload,
   type StepTransitionedPayload,
 } from '@rundown-org/core';
-import { stepHasSubsteps } from '@rundown-org/parser';
+import { resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { getRunbookFromState } from './runbook-loader.js';
 import {
   drainResolvedCompletions,
@@ -251,7 +251,7 @@ export async function executeTransition(
   const activeStep = findStepOrThrow(steps, activeState.step);
   const isSubstepCompletion = !!(
     activeState.substep &&
-    stepHasSubsteps(activeStep) &&
+    resolvedStepHasSubsteps(activeStep) &&
     activeStep.substeps.length
   );
 

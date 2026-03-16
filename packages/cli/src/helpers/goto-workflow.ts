@@ -136,7 +136,7 @@ export function validateGotoTarget(
 
   if (target.substep) {
     const step = steps[stepIndex];
-    if (step.kind !== 'substeps' && step.kind !== 'for') {
+    if (step.kind !== 'substeps' && step.kind !== 'for' && step.kind !== 'prompted-for') {
       return {
         ok: false,
         error: `Step ${stepIdToString({ step: target.step })} has no substeps`,

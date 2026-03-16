@@ -49,10 +49,11 @@ describe('FOR loop fallback (prompted FOR with unresolved bounds)', () => {
     const stepEnteredEvents = events.filter((e) => e.type === 'step_entered');
     expect(stepEnteredEvents.length).toBeGreaterThanOrEqual(1);
 
-    // The step_entered shows a FOR position (for.index / for.end)
+    // Prompted FOR step (kind: 'prompted-for') has no iteration machinery,
+    // so position does not include FOR data
     const firstEntered = stepEnteredEvents[0];
     const position = firstEntered.position as Record<string, unknown>;
-    expect(position.for).toBeDefined();
+    expect(position.for).toBeUndefined();
 
     // Prompted FOR step should emit prompted: true
     expect(firstEntered.prompted).toBe(true);

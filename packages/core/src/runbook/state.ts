@@ -8,6 +8,7 @@ import type {
   Substep,
   SubstepState,
   Runbook,
+  ResolvedRunbook,
   DataSource,
   DelegationLinkage,
 } from './types.js';
@@ -89,7 +90,7 @@ export class RunbookStateManager {
    */
   async create(
     runbookFile: string,
-    runbook: Runbook,
+    runbook: Runbook | ResolvedRunbook,
     options: CreateOptions,
   ): Promise<RunbookState> {
     const id = generateId();
