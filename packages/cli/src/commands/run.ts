@@ -19,6 +19,7 @@ import {
   type RunPipelineContext,
 } from '../helpers/runbook-pipeline.js';
 import { buildGotoContext, validateGotoTarget, executeGoto } from '../helpers/goto-workflow.js';
+import { validateIndexRequiresStep } from '../helpers/index-option.js';
 
 /**
  * Registers the 'run' command for starting runbooks.
@@ -70,8 +71,9 @@ export function registerRunCommand(program: Command): void {
             output.flush();
             process.exit(1);
           }
-          if (options.index && !options.step) {
-            output.error('--index requires --step', 'INVALID_SYNTAX');
+          const depError = validateIndexRequiresStep(options.index, options.step);
+          if (depError) {
+            output.error(depError, 'INVALID_SYNTAX');
             output.flush();
             process.exit(1);
           }
@@ -107,6 +109,11 @@ export function registerRunCommand(program: Command): void {
             }
 
             // If --step provided and runbook is waiting (prompted mode), jump to the step
+            if (options.step && result.loopResult !== 'waiting') {
+              output.warning(
+                `--step ${options.step} ignored: runbook did not enter prompted mode (result: ${result.loopResult})`,
+              );
+            }
             if (options.step && result.loopResult === 'waiting') {
               const gotoCtx = await buildGotoContext(output, cwd);
               if (!gotoCtx) {

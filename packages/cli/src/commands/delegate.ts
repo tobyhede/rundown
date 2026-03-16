@@ -15,7 +15,11 @@ import { OutputEmitter } from '../services/output-emitter.js';
 import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import { getRunbookFromState } from '../helpers/runbook-loader.js';
 import { inferDelegationTarget, inferRunbookFromStep } from '../helpers/delegate-inference.js';
-import { resolveIndexOption, IndexOptionError } from '../helpers/index-option.js';
+import {
+  resolveIndexOption,
+  IndexOptionError,
+  validateIndexRequiresStep,
+} from '../helpers/index-option.js';
 import { loadVariablesFromFile } from '../services/variable-discovery.js';
 import { collect } from './echo.js';
 
@@ -65,9 +69,9 @@ export function registerDelegateCommand(program: Command): void {
           async () => {
             const output = new OutputEmitter({ json: options.json });
 
-            // Validate option dependencies
-            if (options.index && !options.step) {
-              output.error('--index requires --step', 'INVALID_SYNTAX');
+            const depError = validateIndexRequiresStep(options.index, options.step);
+            if (depError) {
+              output.error(depError, 'INVALID_SYNTAX');
               output.flush();
               process.exit(1);
             }

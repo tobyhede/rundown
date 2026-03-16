@@ -1,5 +1,9 @@
 import { describe, it, expect } from '@jest/globals';
-import { resolveIndexOption, IndexOptionError } from '../../src/helpers/index-option.js';
+import {
+  resolveIndexOption,
+  IndexOptionError,
+  validateIndexRequiresStep,
+} from '../../src/helpers/index-option.js';
 
 describe('resolveIndexOption', () => {
   it('returns undefined when both inputs are undefined', () => {
@@ -67,11 +71,29 @@ describe('resolveIndexOption', () => {
 
   it('error has INVALID_SYNTAX code for bad input', () => {
     try {
-      resolveIndexOption('notanumber', undefined);
+      resolveIndexOption('bad-input', undefined);
       expect.unreachable('should have thrown');
     } catch (error) {
       expect(error).toBeInstanceOf(IndexOptionError);
       expect((error as IndexOptionError).code).toBe('INVALID_SYNTAX');
     }
+  });
+});
+
+describe('validateIndexRequiresStep', () => {
+  it('returns undefined when both are undefined', () => {
+    expect(validateIndexRequiresStep(undefined, undefined)).toBeUndefined();
+  });
+
+  it('returns undefined when --step is provided without --index', () => {
+    expect(validateIndexRequiresStep(undefined, '1.1')).toBeUndefined();
+  });
+
+  it('returns undefined when both --index and --step are provided', () => {
+    expect(validateIndexRequiresStep('3', '1.1')).toBeUndefined();
+  });
+
+  it('returns error when --index is provided without --step', () => {
+    expect(validateIndexRequiresStep('3', undefined)).toBe('--index requires --step');
   });
 });

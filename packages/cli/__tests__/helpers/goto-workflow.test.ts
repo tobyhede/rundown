@@ -269,6 +269,86 @@ describe('validateGotoTarget', () => {
       expect(result.target).toEqual({ step: '1', substep: '2' });
     }
   });
+
+  describe('--index option', () => {
+    it('sets target.at from --index on FOR step', () => {
+      (
+        core.parseStepIdFromString as jest.MockedFunction<typeof core.parseStepIdFromString>
+      ).mockReturnValue({ step: '1' });
+
+      const steps = [
+        makeStep({ name: '1', forClause: { variable: 'x', start: 1, end: 5 } as any }),
+      ];
+      const result = validateGotoTarget('1', steps, '3');
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.target.at).toBe(3);
+      }
+    });
+
+    it('rejects --index on non-FOR step', () => {
+      (
+        core.parseStepIdFromString as jest.MockedFunction<typeof core.parseStepIdFromString>
+      ).mockReturnValue({ step: '1' });
+
+      const steps = [makeStep({ name: '1' })]; // No forClause
+      const result = validateGotoTarget('1', steps, '3');
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.code).toBe('INVALID_AT_TARGET');
+      }
+    });
+
+    it('rejects conflicting --index and AT', () => {
+      (
+        core.parseStepIdFromString as jest.MockedFunction<typeof core.parseStepIdFromString>
+      ).mockReturnValue({ step: '1', at: 5 });
+
+      const steps = [
+        makeStep({ name: '1', forClause: { variable: 'x', start: 1, end: 10 } as any }),
+      ];
+      const result = validateGotoTarget('1 AT 5', steps, '3');
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.code).toBe('CONFLICTING_INDEX');
+      }
+    });
+
+    it('accepts matching --index and AT (idempotent)', () => {
+      (
+        core.parseStepIdFromString as jest.MockedFunction<typeof core.parseStepIdFromString>
+      ).mockReturnValue({ step: '1', at: 3 });
+
+      const steps = [
+        makeStep({ name: '1', forClause: { variable: 'x', start: 1, end: 5 } as any }),
+      ];
+      const result = validateGotoTarget('1 AT 3', steps, '3');
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.target.at).toBe(3);
+      }
+    });
+
+    it('rejects invalid --index value', () => {
+      (
+        core.parseStepIdFromString as jest.MockedFunction<typeof core.parseStepIdFromString>
+      ).mockReturnValue({ step: '1' });
+
+      const steps = [
+        makeStep({ name: '1', forClause: { variable: 'x', start: 1, end: 5 } as any }),
+      ];
+      const result = validateGotoTarget('1', steps, 'abc');
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.code).toBe('INVALID_SYNTAX');
+      }
+    });
+  });
 });
 
 describe('executeGoto', () => {

@@ -11,6 +11,7 @@ import {
   type ExplicitTarget,
 } from '../helpers/transitions.js';
 import { handleDelegationCompletion } from '../helpers/delegation-completion.js';
+import { validateIndexRequiresStep } from '../helpers/index-option.js';
 
 /**
  * Registers the 'fail' command for marking steps as failed.
@@ -29,9 +30,9 @@ export function registerFailCommand(program: Command): void {
         async () => {
           const output = new OutputEmitter({ json: options.json });
 
-          // Validate option dependencies
-          if (options.index && !options.step) {
-            output.error('--index requires --step', 'INVALID_SYNTAX');
+          const depError = validateIndexRequiresStep(options.index, options.step);
+          if (depError) {
+            output.error(depError, 'INVALID_SYNTAX');
             output.flush();
             process.exit(1);
           }

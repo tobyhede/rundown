@@ -44,7 +44,7 @@ export function resolveIndexOption(
   // Template variable AT (string) + numeric --index → error
   if (typeof parsedAt === 'string' && indexValue !== undefined) {
     throw new IndexOptionError(
-      `--index ${indexValue} conflicts with template AT expression "${parsedAt}"`,
+      `--index ${String(indexValue)} conflicts with template AT expression "${parsedAt}"`,
       'CONFLICTING_INDEX',
     );
   }
@@ -52,7 +52,7 @@ export function resolveIndexOption(
   // Both numeric and they differ → error
   if (typeof parsedAt === 'number' && indexValue !== undefined && parsedAt !== indexValue) {
     throw new IndexOptionError(
-      `--index ${indexValue} conflicts with AT ${parsedAt} from step ID`,
+      `--index ${String(indexValue)} conflicts with AT ${String(parsedAt)} from step ID`,
       'CONFLICTING_INDEX',
     );
   }
@@ -78,12 +78,38 @@ export function resolveIndexOption(
 }
 
 /**
+ * Validate that `--index` is only used with `--step`.
+ *
+ * Returns an error message string if validation fails, or `undefined` if valid.
+ * Callers are responsible for emitting the error and exiting.
+ *
+ * @param index - Raw `--index` value from CLI
+ * @param step - Raw `--step` value from CLI
+ * @returns Error message if invalid, undefined if valid
+ */
+export function validateIndexRequiresStep(
+  index: string | undefined,
+  step: string | undefined,
+): string | undefined {
+  if (index && !step) {
+    return '--index requires --step';
+  }
+  return undefined;
+}
+
+/**
  * Error thrown when `--index` validation fails.
  */
 export class IndexOptionError extends Error {
   /** Error code for structured output (e.g., 'INVALID_SYNTAX', 'CONFLICTING_INDEX') */
   readonly code: string;
 
+  /**
+   * Create a new IndexOptionError.
+   *
+   * @param message - Human-readable error description
+   * @param code - Machine-readable error code (e.g., 'INVALID_SYNTAX', 'CONFLICTING_INDEX')
+   */
   constructor(message: string, code: string) {
     super(message);
     this.name = 'IndexOptionError';
