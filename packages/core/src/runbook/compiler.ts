@@ -70,7 +70,6 @@ export const MAX_FILE_ITERATIONS = 10_000;
 // (bare `[]` infers as `never[]`, not the required array type).
 const EMPTY_FOR_STACK: RunbookContext['forStack'] = [];
 const EMPTY_RESULTS: NonNullable<RunbookContext['iterationResults']> = [];
-const EMPTY_DEFERRED: NonNullable<RunbookContext['deferredResults']> = [];
 
 /**
  * Context passed through the XState runbook state machine.
@@ -1787,9 +1786,7 @@ function buildActionTransition(
  * Walks `on`, `always`, and guarded transition arrays to collect every
  * `target` value referenced by the state.
  *
- * @param config - A state config object from the generated states record
- * @param config.on - Event-driven transition map (PASS, FAIL, GOTO, RETRY)
- * @param config.always - Eventless always-transitions for transient states
+ * @param config - A {@link RunbookStateConfig} from the generated states record
  * @returns Array of target strings (may include duplicates)
  */
 function extractTargets(config: RunbookStateConfig): string[] {
