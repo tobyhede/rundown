@@ -101,4 +101,21 @@ describe('start command', () => {
       expect(session.active).toBeNull();
     });
   });
+
+  describe('option validation', () => {
+    it('rejects --step without --prompted', async () => {
+      const result = await runCliInProcess('run runbooks/simple.runbook.md --step 1', workspace);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain('--step requires --prompted');
+    });
+
+    it('rejects --index without --step', async () => {
+      const result = await runCliInProcess(
+        'run runbooks/simple.runbook.md --prompted --index 1',
+        workspace,
+      );
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain('--index requires --step');
+    });
+  });
 });
