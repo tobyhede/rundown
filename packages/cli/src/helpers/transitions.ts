@@ -294,6 +294,12 @@ export async function executeTransition(
           `--step ${explicitTarget.stepId} targets step "${parsed.step}" but the active step is "${activeState.step}"`,
         );
       }
+      // Require substep — bare step IDs create unreachable completions
+      if (!parsed.substep) {
+        throw new Error(
+          `--step ${explicitTarget.stepId} must include a substep (e.g., "${parsed.step}.1")`,
+        );
+      }
       // Validate substep exists in the step definition
       if (parsed.substep && resolvedStepHasSubsteps(activeStep)) {
         const validIds = activeStep.substeps.map((s) => s.id);

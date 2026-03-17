@@ -355,4 +355,15 @@ describe('executeTransition with ExplicitTarget', () => {
     const runtimeTargetCall = completionKeyCalls.find((c: unknown[]) => c[1] === 2);
     expect(runtimeTargetCall).toBeDefined();
   });
+
+  it('throws when explicit target has no substep (bare step ID)', async () => {
+    const ctx = makeCtx({ substep: '1' });
+    // parseStepIdFromString('1') returns step without substep
+    (core.parseStepIdFromString as jest.Mock).mockReturnValue({ step: '1' });
+    const config = createPassTransitionConfig();
+
+    await expect(executeTransition(ctx, config, { stepId: '1' })).rejects.toThrow(
+      'must include a substep',
+    );
+  });
 });
