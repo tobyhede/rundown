@@ -500,6 +500,53 @@ describe('executeTransition with ExplicitTarget', () => {
     );
   });
 
+  it('cross-check uses target frame entry from frameEntries for non-active frames', async () => {
+    const forStep = {
+      name: '1',
+      kind: 'for',
+      forClause: { start: 1, end: 5, source: undefined },
+      substeps: [{ id: '1' }, { id: '2' }],
+    };
+    (findStepOrThrow as jest.Mock).mockReturnValue(forStep);
+    // Active frame is iteration 1, but we target iteration 3 (non-active frame)
+    // frameEntries records that iteration 3 was visited with entry 4
+    // Mock buildFrameKey produces "step[iteration]" format
+    const ctx = makeCtx({
+      substep: '1',
+      activeFrameKey: '1[1]',
+      activeEntry: 2,
+      frameEntries: { '1[3]': 4 },
+    });
+    ctx.steps = [forStep];
+    (core.parseStepIdFromString as jest.Mock).mockReturnValue({ step: '1', substep: '1' });
+    const builtKeys: Array<{ frameKey: string; entry: number; substep?: string; key: string }> = [];
+    (core.buildCompletionKey as jest.Mock).mockImplementation(
+      (frameKey: string, entry: number, substep?: string) => {
+        const key = `${frameKey}:${String(entry)}:${substep ?? ''}`;
+        builtKeys.push({ frameKey, entry, substep, key });
+        return key;
+      },
+    );
+    ctx.lifecycleService.getResolvedCompletion.mockImplementation(
+      async (_id: string, key: string) => {
+        // Primary key (sentinel) misses; cross-check (exact entry=4) hits
+        const crossCall = builtKeys.find((k) => k.entry === 4);
+        if (crossCall?.key === key) return { result: 'pass' };
+        return null;
+      },
+    );
+    const config = createPassTransitionConfig();
+
+    await executeTransition(ctx, config, { stepId: '1.1', index: '3' });
+
+    // Cross-check should use entry 4 from frameEntries['1|3'], not activeEntry (2)
+    const crossBuild = builtKeys.find((k) => k.entry === 4);
+    expect(crossBuild).toBeDefined();
+    expect(crossBuild!.frameKey).toBe('1[3]');
+    // Should NOT write a new completion (exact entry already covers it)
+    expect(ctx.lifecycleService.upsertResolvedCompletion).not.toHaveBeenCalled();
+  });
+
   it('passes frameKeyOverride to drain when explicit target provided', async () => {
     const forStep = {
       name: '1',
