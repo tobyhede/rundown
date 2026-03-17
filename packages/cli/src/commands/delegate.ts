@@ -56,7 +56,7 @@ export function registerDelegateCommand(program: Command): void {
     .command('delegate [runbook]')
     .description('Create a delegation token for a child runbook')
     .option('--step <stepId>', 'Step to delegate (e.g., 1.1 or 1.2.1 for step.iteration.substep)')
-    .option('--index <number>', 'FOR loop iteration to target')
+    .option('--index <number>', 'FOR loop iteration to target (requires --step)')
     .option('--var <key=value>', 'Set variable for child context (repeatable)', collect, [])
     .option('--var-file <path>', 'Load variables from YAML file')
     .option('--json', 'Output as JSON')

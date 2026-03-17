@@ -310,7 +310,16 @@ export async function executeTransition(
         }
       }
 
-      const resolvedIndex = resolveIndexOption(explicitTarget.index, parsed.at);
+      let resolvedIndex = resolveIndexOption(explicitTarget.index, parsed.at);
+
+      // Default to active iteration when inside a FOR step without explicit --index
+      if (
+        resolvedIndex === undefined &&
+        (activeStep.kind === 'for' || activeStep.kind === 'prompted-for')
+      ) {
+        const activeFrame = deriveActiveFrame(activeState);
+        resolvedIndex = activeFrame.iteration;
+      }
 
       // Validate iteration bounds against step definition
       if (resolvedIndex !== undefined) {
@@ -350,7 +359,13 @@ export async function executeTransition(
     }
     const targetSubstep = explicitTarget ? cursor.substep : activeState.substep;
     const completionKey = buildCompletionKey(cursor.frameKey, cursor.entry, targetSubstep);
-    const existing = await lifecycleService.getResolvedCompletion(activeState.id, completionKey);
+    let existing = await lifecycleService.getResolvedCompletion(activeState.id, completionKey);
+
+    // Also check sentinel key to prevent coexisting sentinel + exact completions
+    if (!existing && cursor.entry !== SENTINEL_ENTRY) {
+      const sentinelKey = buildCompletionKey(cursor.frameKey, SENTINEL_ENTRY, targetSubstep);
+      existing = await lifecycleService.getResolvedCompletion(activeState.id, sentinelKey);
+    }
     if (!existing) {
       const completion = buildResolvedCompletion({
         agentId: 'manual',

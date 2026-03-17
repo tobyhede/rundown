@@ -366,4 +366,59 @@ describe('executeTransition with ExplicitTarget', () => {
       'must include a substep',
     );
   });
+
+  it('defaults to active iteration when --step used in FOR loop without --index', async () => {
+    const forStep = {
+      name: '1',
+      kind: 'for',
+      forClause: { start: 1, end: 5, source: undefined },
+      substeps: [{ id: '1' }, { id: '2' }],
+    };
+    (findStepOrThrow as jest.Mock).mockReturnValue(forStep);
+    (core.deriveActiveFrame as jest.Mock).mockReturnValue({
+      step: '1',
+      iteration: 3,
+      frameKey: '1[3]',
+    });
+    const ctx = makeCtx({
+      substep: '1',
+      activeFrameKey: '1[3]',
+      activeEntry: 2,
+    });
+    ctx.steps = [forStep];
+    (core.parseStepIdFromString as jest.Mock).mockReturnValue({ step: '1', substep: '1' });
+    const config = createPassTransitionConfig();
+
+    await executeTransition(ctx, config, { stepId: '1.1' }); // No --index
+
+    // buildFrameKey should use iteration 3 (not undefined)
+    expect(core.buildFrameKey).toHaveBeenCalledWith('1', 3);
+    // Entry should be activeEntry (2), not sentinel (0), since frame matches
+    const completionKeyCalls = (core.buildCompletionKey as jest.Mock).mock.calls;
+    const call = completionKeyCalls.find((c: unknown[]) => c[1] === 2);
+    expect(call).toBeDefined();
+  });
+
+  it('detects duplicate when sentinel completion already exists for same substep', async () => {
+    const ctx = makeCtx({ substep: '1', activeFrameKey: '1', activeEntry: 2 });
+    (core.parseStepIdFromString as jest.Mock).mockReturnValue({ step: '1', substep: '1' });
+    ctx.lifecycleService.getResolvedCompletion.mockImplementation(
+      async (_id: string, key: string) => {
+        if (key.includes(':0:')) return { result: 'pass' }; // sentinel key
+        return null; // exact key
+      },
+    );
+    const config = createPassTransitionConfig();
+
+    await executeTransition(ctx, config, { stepId: '1.1' });
+
+    // Should NOT write a new completion (sentinel already covers it)
+    expect(ctx.lifecycleService.upsertResolvedCompletion).not.toHaveBeenCalled();
+    // Should emit duplicate status
+    expect(ctx.output.status).toHaveBeenCalledWith(
+      'completion_duplicate',
+      expect.any(String),
+      expect.any(Object),
+    );
+  });
 });

@@ -109,8 +109,8 @@ export function parseCompletionKey(
   if (parts.length !== 4) return null;
   const [step, iterationRaw, entryRaw, substepRaw] = parts;
   if (!step || !entryRaw) return null;
-  const entry = Number.parseInt(entryRaw, 10);
-  if (!Number.isFinite(entry) || entry < 0) return null;
+  if (!/^\d+$/.test(entryRaw)) return null;
+  const entry = Number(entryRaw);
   const frameKey = `${step}|${iterationRaw}` as FrameKey;
   return {
     frameKey,

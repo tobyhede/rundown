@@ -110,6 +110,14 @@ describe('targeting helpers', () => {
     it('returns null for negative entry', () => {
       expect(parseCompletionKey('1|2|-1|sub')).toBeNull();
     });
+
+    it('rejects entry with trailing non-numeric characters', () => {
+      expect(parseCompletionKey('1||3abc|sub')).toBeNull();
+    });
+
+    it('rejects entry with leading non-numeric characters', () => {
+      expect(parseCompletionKey('1||abc3|sub')).toBeNull();
+    });
   });
 
   describe('buildResolvedCompletion', () => {

@@ -82,20 +82,23 @@ export function validateIndexRequiresStep(
   return undefined;
 }
 
+/** Machine-readable error codes for IndexOptionError. */
+export type IndexOptionErrorCode = 'INVALID_SYNTAX' | 'CONFLICTING_INDEX';
+
 /**
  * Error thrown when `--index` validation fails.
  */
 export class IndexOptionError extends Error {
-  /** Error code for structured output (e.g., 'INVALID_SYNTAX', 'CONFLICTING_INDEX') */
-  readonly code: string;
+  /** Error code for structured output. */
+  readonly code: IndexOptionErrorCode;
 
   /**
    * Create a new IndexOptionError.
    *
    * @param message - Human-readable error description
-   * @param code - Machine-readable error code (e.g., 'INVALID_SYNTAX', 'CONFLICTING_INDEX')
+   * @param code - Machine-readable error code
    */
-  constructor(message: string, code: string) {
+  constructor(message: string, code: IndexOptionErrorCode) {
     super(message);
     this.name = 'IndexOptionError';
     this.code = code;
