@@ -147,6 +147,20 @@ export function registerDelegateCommand(program: Command): void {
               }
               throw error;
             }
+
+            // Validate --index requires a FOR step (three-level syntax validated in createDelegation)
+            if (explicitIteration !== undefined) {
+              const activeStep = steps.find((s) => s.name === state.step);
+              if (activeStep && activeStep.kind !== 'for' && activeStep.kind !== 'prompted-for') {
+                output.error(
+                  `--index requires step "${state.step}" to be a FOR step, but it is "${activeStep.kind}"`,
+                  'INVALID_INDEX',
+                );
+                output.flush();
+                process.exit(1);
+              }
+            }
+
             const activeFrameKey =
               explicitIteration !== undefined
                 ? buildFrameKey(state.step, explicitIteration)
