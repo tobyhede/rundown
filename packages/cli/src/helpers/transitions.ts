@@ -409,6 +409,7 @@ export async function executeTransition(
       currentState: activeState,
       transitionPolicy: config.policy,
       computeActionResult: config.computeActionResult,
+      ...(explicitTarget ? { frameKeyOverride: cursor.frameKey } : {}),
     });
     if (drained.status === 'stopped') {
       output.flush();

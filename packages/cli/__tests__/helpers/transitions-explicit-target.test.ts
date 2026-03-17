@@ -57,7 +57,7 @@ jest.unstable_mockModule('../../src/helpers/transition-orchestrator', () => ({
 
 const core = await import('@rundown-org/core');
 const { resolvedStepHasSubsteps } = await import('@rundown-org/parser');
-const { findStepOrThrow } = await import('../../src/services/execution');
+const { findStepOrThrow, drainResolvedCompletions } = await import('../../src/services/execution');
 const { executeTransition, createPassTransitionConfig } = await import(
   '../../src/helpers/transitions'
 );
@@ -498,5 +498,41 @@ describe('executeTransition with ExplicitTarget', () => {
       expect.any(String),
       expect.any(Object),
     );
+  });
+
+  it('passes frameKeyOverride to drain when explicit target provided', async () => {
+    const forStep = {
+      name: '1',
+      kind: 'for',
+      forClause: { start: 1, end: 5, source: undefined },
+      substeps: [{ id: '1' }, { id: '2' }],
+    };
+    (findStepOrThrow as jest.Mock).mockReturnValue(forStep);
+    const ctx = makeCtx({ substep: '1' });
+    ctx.steps = [forStep];
+    (core.parseStepIdFromString as jest.Mock).mockReturnValue({ step: '1', substep: '1' });
+    const config = createPassTransitionConfig();
+
+    await executeTransition(ctx, config, { stepId: '1.1', index: '3' });
+
+    expect(drainResolvedCompletions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        frameKeyOverride: expect.any(String),
+      }),
+    );
+    // The override should be the cursor's frameKey (built from step + index)
+    const drainCall = (drainResolvedCompletions as jest.Mock).mock.calls[0][0];
+    expect(drainCall.frameKeyOverride).toBe(core.buildFrameKey('1', 3));
+  });
+
+  it('does not pass frameKeyOverride when no explicit target', async () => {
+    const ctx = makeCtx({ substep: '1' });
+    const config = createPassTransitionConfig();
+
+    await executeTransition(ctx, config); // No explicit target
+
+    expect(drainResolvedCompletions).toHaveBeenCalled();
+    const drainCall = (drainResolvedCompletions as jest.Mock).mock.calls[0][0];
+    expect(drainCall.frameKeyOverride).toBeUndefined();
   });
 });

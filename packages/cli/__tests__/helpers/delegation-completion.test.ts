@@ -600,4 +600,61 @@ describe('handleDelegationCompletion', () => {
 
     expect(output.flush).toHaveBeenCalled();
   });
+
+  it('passes parentFrameKey as frameKeyOverride to drain', async () => {
+    const delegation = makeDelegationLinkage({ parentFrameKey: '1|3' as any });
+    const childState = makeState('child-run-id', { delegation });
+    const parentState = makeState('parent-run-id', {
+      substepStates: [{ id: '1', frameKey: '1|3', status: 'pending', delegation: null }],
+    });
+
+    const states = new Map([[parentState.id, parentState]]);
+    const manager = makeManager(states);
+    const _lock = makeLock();
+    const lifecycleService = makeLifecycleService();
+    const output = makeOutput();
+
+    wireMocks(manager, lifecycleService);
+
+    (drainResolvedCompletions as jest.Mock).mockResolvedValue({
+      status: 'continue',
+      applied: 0,
+      state: parentState,
+    });
+
+    await handleDelegationCompletion(childState, 'pass', '/test', output);
+
+    expect(drainResolvedCompletions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        frameKeyOverride: '1|3',
+      }),
+    );
+  });
+
+  it('does not pass frameKeyOverride when parentFrameKey is undefined', async () => {
+    const delegation = makeDelegationLinkage({ parentFrameKey: undefined });
+    const childState = makeState('child-run-id', { delegation });
+    const parentState = makeState('parent-run-id', {
+      substepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: null }],
+    });
+
+    const states = new Map([[parentState.id, parentState]]);
+    const manager = makeManager(states);
+    const _lock = makeLock();
+    const lifecycleService = makeLifecycleService();
+    const output = makeOutput();
+
+    wireMocks(manager, lifecycleService);
+
+    (drainResolvedCompletions as jest.Mock).mockResolvedValue({
+      status: 'continue',
+      applied: 0,
+      state: parentState,
+    });
+
+    await handleDelegationCompletion(childState, 'pass', '/test', output);
+
+    const drainCall = (drainResolvedCompletions as jest.Mock).mock.calls[0][0];
+    expect(drainCall.frameKeyOverride).toBeUndefined();
+  });
 });
