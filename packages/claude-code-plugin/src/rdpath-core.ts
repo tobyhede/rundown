@@ -41,7 +41,7 @@ export function validateCtx(ctx: string): void {
  * @param ctx - Optional context identifier — appends `.rd-<ctx>/` subdirectory
  * @returns The resolved directory path
  */
-export function resolveBaseDir(dir: string, ctx?: string): string {
+function resolveBaseDir(dir: string, ctx?: string): string {
   if (ctx) {
     return path.join(dir, `.rd-${ctx}`);
   }

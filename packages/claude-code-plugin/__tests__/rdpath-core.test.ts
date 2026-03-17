@@ -173,10 +173,7 @@ describe('findFiles', () => {
 
     const results = await findFiles({ dir: testDir }, '**/*.md');
 
-    expect(results).toEqual([
-      path.join(testDir, 'sub', 'nested.md'),
-      path.join(testDir, 'top.md'),
-    ]);
+    expect(results).toEqual([path.join(testDir, 'sub', 'nested.md'), path.join(testDir, 'top.md')]);
   });
 
   it('handles exact filename match', async () => {

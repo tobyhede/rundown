@@ -83,16 +83,16 @@ describe('rdpath find integration', () => {
   });
 
   it('supports ctx scoping', async () => {
-    const ctxDir = path.join(testDir, '.rd-myctx');
+    const ctxDir = path.join(testDir, '.rd-test-ctx');
     await fs.mkdir(ctxDir);
     await fs.writeFile(path.join(ctxDir, 'found.md'), '');
 
-    const result = await runRdpath(['find', '--dir', testDir, '--ctx', 'myctx', '*.md']);
+    const result = await runRdpath(['find', '--dir', testDir, '--ctx', 'test-ctx', '*.md']);
 
     expect(result.exitCode).toBe(0);
     const lines = result.stdout.trim().split('\n');
     expect(lines).toHaveLength(1);
-    expect(lines[0]).toContain('.rd-myctx');
+    expect(lines[0]).toContain('.rd-test-ctx');
     expect(lines[0]).toContain('found.md');
   });
 

@@ -9,7 +9,13 @@
  */
 
 import { Command } from 'commander';
-import { assemblePath, findFiles, type RdPathFindOptions, type RdPathOptions } from './rdpath-core.js';
+import {
+  assemblePath,
+  findFiles,
+  type RdPathFindOptions,
+  type RdPathOptions,
+} from './rdpath-core.js';
+import { getErrorMessage } from './shared/errors.js';
 
 const program = new Command();
 program.name('rdpath').description('Assemble artifact paths with optional context scoping');
@@ -23,7 +29,7 @@ const pathCmd = new Command('path')
     try {
       process.stdout.write(`${assemblePath(options)}\n`);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       process.stderr.write(`error: ${message}\n`);
       process.exitCode = 1;
     }
@@ -41,7 +47,7 @@ const findCmd = new Command('find')
         process.stdout.write(`${result}\n`);
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       process.stderr.write(`error: ${message}\n`);
       process.exitCode = 1;
     }
