@@ -15,6 +15,11 @@ import { OutputEmitter } from '../services/output-emitter.js';
 import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import { getRunbookFromState } from '../helpers/runbook-loader.js';
 import { inferDelegationTarget, inferRunbookFromStep } from '../helpers/delegate-inference.js';
+import {
+  resolveIndexOption,
+  IndexOptionError,
+  validateIndexRequiresStep,
+} from '../helpers/index-option.js';
 import { loadVariablesFromFile } from '../services/variable-discovery.js';
 import { collect } from './echo.js';
 
@@ -51,17 +56,26 @@ export function registerDelegateCommand(program: Command): void {
     .command('delegate [runbook]')
     .description('Create a delegation token for a child runbook')
     .option('--step <stepId>', 'Step to delegate (e.g., 1.1 or 1.2.1 for step.iteration.substep)')
+    .option('--index <number>', 'FOR loop iteration to target (requires --step)')
     .option('--var <key=value>', 'Set variable for child context (repeatable)', collect, [])
     .option('--var-file <path>', 'Load variables from YAML file')
     .option('--json', 'Output as JSON')
     .action(
       async (
         runbookArg: string | undefined,
-        options: { step?: string; var: string[]; varFile?: string; json?: boolean },
+        options: { step?: string; index?: string; var: string[]; varFile?: string; json?: boolean },
       ) => {
         await withErrorHandling(
           async () => {
             const output = new OutputEmitter({ json: options.json });
+
+            const depError = validateIndexRequiresStep(options.index, options.step);
+            if (depError) {
+              output.error(depError, 'INVALID_SYNTAX');
+              output.flush();
+              process.exit(1);
+            }
+
             const cwd = getCwd();
 
             const manager = new RunbookStateManager(cwd);
@@ -120,10 +134,34 @@ export function registerDelegateCommand(program: Command): void {
               extraVars = extraVars ? { ...extraVars, ...flagVars } : flagVars;
             }
 
-            // Compute frame key — use explicit iteration from three-level step ID if provided
+            // Compute frame key — use explicit iteration from --index or three-level step ID
             const parsedTarget = parseStepIdFromString(resolvedStepId);
-            const explicitIteration =
-              typeof parsedTarget?.at === 'number' ? parsedTarget.at : undefined;
+            let explicitIteration: number | undefined;
+            try {
+              explicitIteration = resolveIndexOption(options.index, parsedTarget?.at);
+            } catch (error) {
+              if (error instanceof IndexOptionError) {
+                output.error(error.message, error.code);
+                output.flush();
+                process.exit(1);
+              }
+              throw error;
+            }
+
+            // Validate --index requires a FOR step (three-level syntax validated in createDelegation)
+            if (explicitIteration !== undefined) {
+              const targetStepName = parsedTarget?.step ?? state.step;
+              const targetStep = steps.find((s) => s.name === targetStepName);
+              if (targetStep && targetStep.kind !== 'for' && targetStep.kind !== 'prompted-for') {
+                output.error(
+                  `--index requires step "${targetStepName}" to be a FOR step, but it is "${targetStep.kind}"`,
+                  'INVALID_INDEX',
+                );
+                output.flush();
+                process.exit(1);
+              }
+            }
+
             const activeFrameKey =
               explicitIteration !== undefined
                 ? buildFrameKey(state.step, explicitIteration)

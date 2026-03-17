@@ -14,8 +14,9 @@ export function registerGotoCommand(program: Command): void {
   program
     .command('goto <step>')
     .description('Jump to specific step (e.g., "3" or "3.1" for substep)')
+    .option('--index <number>', 'FOR loop iteration to target')
     .option('--json', 'Output as JSON for programmatic use')
-    .action(async (stepArg: string, options: { json?: boolean }) => {
+    .action(async (stepArg: string, options: { index?: string; json?: boolean }) => {
       await withErrorHandling(
         async () => {
           const output = new OutputEmitter({ json: options.json });
@@ -28,7 +29,7 @@ export function registerGotoCommand(program: Command): void {
             return;
           }
 
-          const validation = validateGotoTarget(stepArg, ctx.steps);
+          const validation = validateGotoTarget(stepArg, ctx.steps, options.index);
           if (!validation.ok) {
             output.error(validation.error, validation.code, validation.details);
             output.flush();

@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 import {
+  SENTINEL_ENTRY,
   buildCompletionKey,
   buildFrameKey,
   buildResolvedCompletion,
@@ -99,12 +100,24 @@ describe('targeting helpers', () => {
       expect(parseCompletionKey('1|2||sub')).toBeNull();
     });
 
-    it('returns null for zero entry', () => {
-      expect(parseCompletionKey('1|2|0|sub')).toBeNull();
+    it('accepts entry=0 as sentinel', () => {
+      expect(parseCompletionKey('1|2|0|sub')).toEqual({
+        frameKey: '1|2',
+        entry: SENTINEL_ENTRY,
+        substep: 'sub',
+      });
     });
 
     it('returns null for negative entry', () => {
       expect(parseCompletionKey('1|2|-1|sub')).toBeNull();
+    });
+
+    it('rejects entry with trailing non-numeric characters', () => {
+      expect(parseCompletionKey('1||3abc|sub')).toBeNull();
+    });
+
+    it('rejects entry with leading non-numeric characters', () => {
+      expect(parseCompletionKey('1||abc3|sub')).toBeNull();
     });
   });
 

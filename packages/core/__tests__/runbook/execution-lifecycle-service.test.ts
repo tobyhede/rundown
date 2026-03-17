@@ -401,6 +401,73 @@ describe('ExecutionLifecycleService', () => {
     });
   });
 
+  describe('listResolvedCompletions with sentinel', () => {
+    it('includes entry=0 sentinel alongside exact matches', async () => {
+      const state = await manager.create('test.md', mockRunbook, {
+        runbookPath: 'test.md',
+      });
+
+      const frameKey = buildFrameKey('1');
+      const sentinelCompletion = {
+        agentId: 'agent-sentinel',
+        result: 'pass' as const,
+        targetStep: '1',
+        targetFrameKey: frameKey,
+        targetEntry: 0,
+        completedAt: new Date().toISOString(),
+      };
+      const exactCompletion = {
+        agentId: 'agent-exact',
+        result: 'pass' as const,
+        targetStep: '1',
+        targetFrameKey: frameKey,
+        targetEntry: 2,
+        completedAt: new Date().toISOString(),
+      };
+
+      // Store sentinel (entry=0) and exact (entry=2)
+      await service.upsertResolvedCompletion(state.id, `${frameKey}|0|sub1`, sentinelCompletion);
+      await service.upsertResolvedCompletion(state.id, `${frameKey}|2|sub2`, exactCompletion);
+
+      // List with entry=2 should return both sentinel and exact
+      const listed = await service.listResolvedCompletions(state.id, frameKey, 2);
+      expect(listed).toHaveLength(2);
+      expect(listed.map((l) => l.completion.agentId).sort()).toEqual([
+        'agent-exact',
+        'agent-sentinel',
+      ]);
+    });
+  });
+
+  describe('consumeResolvedCompletion with sentinel', () => {
+    it('falls back to sentinel when exact key missing', async () => {
+      const state = await manager.create('test.md', mockRunbook, {
+        runbookPath: 'test.md',
+      });
+
+      const frameKey = buildFrameKey('1');
+      const sentinelCompletion = {
+        agentId: 'agent-sentinel',
+        result: 'pass' as const,
+        targetStep: '1',
+        targetFrameKey: frameKey,
+        targetEntry: 0,
+        completedAt: new Date().toISOString(),
+      };
+
+      // Store at sentinel key (entry=0)
+      await service.upsertResolvedCompletion(state.id, `${frameKey}|0|sub1`, sentinelCompletion);
+
+      // Try consuming with exact key (entry=3) — should fall back to sentinel
+      const consumed = await service.consumeResolvedCompletion(state.id, `${frameKey}|3|sub1`);
+      expect(consumed).toEqual(sentinelCompletion);
+
+      // Verify sentinel was removed
+      const remaining = await service.getResolvedCompletion(state.id, `${frameKey}|0|sub1`);
+      expect(remaining).toBeNull();
+    });
+  });
+
   describe('buildActiveCompletionKey', () => {
     it('builds key without substep', () => {
       // Use the created state directly (it has step='1')

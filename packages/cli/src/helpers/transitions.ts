@@ -16,12 +16,14 @@ import {
   extractLastAction,
   formatTransitionAction,
   parseActionType,
+  parseStepIdFromString,
   type ActionType,
   buildCompletionKey,
   buildFrameKey,
   buildResolvedCompletion,
   deriveExecutionAt,
   deriveActiveFrame,
+  SENTINEL_ENTRY,
   type FrameKey,
   type AnyActorRef,
   type ResolvedStep,
@@ -31,6 +33,7 @@ import {
   type StepTransitionedPayload,
 } from '@rundown-org/core';
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
+import { resolveIndexOption } from './index-option.js';
 import { getRunbookFromState } from './runbook-loader.js';
 import {
   drainResolvedCompletions,
@@ -229,6 +232,19 @@ function activeCursorTarget(state: RunbookState): RuntimeTarget {
 }
 
 /**
+ * Explicit target for directing a transition at a specific substep and iteration.
+ *
+ * Used by `pass --step` and `fail --step` to target a specific substep
+ * rather than the current cursor position.
+ */
+export interface ExplicitTarget {
+  /** Step ID string (e.g., "1.1") */
+  stepId: string;
+  /** Optional `--index` value (raw string from CLI) */
+  index?: string;
+}
+
+/**
  * Execute a transition with the given configuration.
  *
  * Main entry point for transition execution. Sends event to actor,
@@ -237,13 +253,16 @@ function activeCursorTarget(state: RunbookState): RuntimeTarget {
  *
  * @param ctx - Transition context
  * @param config - Transition configuration
+ * @param explicitTarget - Optional explicit target for directing transition at a specific substep
  * @returns `'continue'` for normal flow including completed/done paths, `'stopped'` if it reached a terminal state
  * @throws {Error} from `findStepOrThrow` if the active step is missing (state corruption),
  *   from `ensureActiveEntry` on lifecycle violations, or from orchestration failures
+ * @throws {IndexOptionError} if `--index` validation fails
  */
 export async function executeTransition(
   ctx: TransitionContext,
   config: TransitionConfig,
+  explicitTarget?: ExplicitTarget,
 ): Promise<'continue' | 'stopped'> {
   const { output, manager, actorService, state, steps, actor, cwd, lifecycleService } = ctx;
   const ensured = await lifecycleService.ensureActiveEntry(state.id, undefined, state);
@@ -255,10 +274,110 @@ export async function executeTransition(
     activeStep.substeps.length
   );
 
+  // Guard: --step targets a substep, so reject if we're not in substep mode
+  if (explicitTarget && !isSubstepCompletion) {
+    throw new Error(
+      `--step requires the runbook to be at a substep, but step "${activeState.step}" has no active substep`,
+    );
+  }
+
   if (isSubstepCompletion) {
-    const cursor = activeCursorTarget(activeState);
-    const completionKey = buildCompletionKey(cursor.frameKey, cursor.entry, activeState.substep);
-    const existing = await lifecycleService.getResolvedCompletion(activeState.id, completionKey);
+    // If explicit target, build RuntimeTarget from parsed step ID + resolved index
+    let cursor: RuntimeTarget;
+    if (explicitTarget) {
+      const parsed = parseStepIdFromString(explicitTarget.stepId);
+      if (!parsed) {
+        throw new Error(`Invalid step target: ${explicitTarget.stepId}`);
+      }
+      if (parsed.step !== activeState.step) {
+        throw new Error(
+          `--step ${explicitTarget.stepId} targets step "${parsed.step}" but the active step is "${activeState.step}"`,
+        );
+      }
+      // Require substep — bare step IDs create unreachable completions
+      if (!parsed.substep) {
+        throw new Error(
+          `--step ${explicitTarget.stepId} must include a substep (e.g., "${parsed.step}.1")`,
+        );
+      }
+      // Validate substep exists in the step definition
+      if (parsed.substep && resolvedStepHasSubsteps(activeStep)) {
+        const validIds = activeStep.substeps.map((s) => s.id);
+        if (!validIds.includes(parsed.substep)) {
+          throw new Error(
+            `--step ${explicitTarget.stepId}: substep "${parsed.substep}" does not exist in step "${parsed.step}". Valid substeps: ${validIds.join(', ')}`,
+          );
+        }
+      }
+
+      let resolvedIndex = resolveIndexOption(explicitTarget.index, parsed.at);
+
+      // Reject template AT expressions — they cannot be resolved in pass/fail context
+      if (typeof parsed.at === 'string') {
+        throw new Error(
+          `--step ${explicitTarget.stepId} uses template AT expression "${parsed.at}", which cannot be resolved here. Use --index <number> instead.`,
+        );
+      }
+
+      // Default to active iteration when inside a FOR step without explicit --index
+      if (
+        resolvedIndex === undefined &&
+        (activeStep.kind === 'for' || activeStep.kind === 'prompted-for')
+      ) {
+        const activeFrame = deriveActiveFrame(activeState);
+        resolvedIndex = activeFrame.iteration;
+      }
+
+      // Validate iteration bounds against step definition
+      if (resolvedIndex !== undefined) {
+        if (activeStep.kind !== 'for' && activeStep.kind !== 'prompted-for') {
+          throw new Error(
+            `--index requires step "${parsed.step}" to be a FOR or PROMPTED-FOR step, but it is "${activeStep.kind}"`,
+          );
+        }
+        // Bounds checks only apply to 'for' steps (prompted-for has no forClause)
+        if (activeStep.kind === 'for') {
+          const fc = activeStep.forClause;
+          if (resolvedIndex < fc.start) {
+            throw new Error(
+              `--index ${String(resolvedIndex)} is below FOR start ${String(fc.start)} for step "${parsed.step}"`,
+            );
+          }
+          if ('end' in fc && resolvedIndex > fc.end) {
+            throw new Error(
+              `--index ${String(resolvedIndex)} exceeds FOR end ${String(fc.end)} for step "${parsed.step}"`,
+            );
+          }
+        }
+      }
+
+      // Use sentinel entry (0) for non-active frames to avoid entry prediction issues
+      const targetFrameKey = buildFrameKey(parsed.step, resolvedIndex);
+      const isActiveFrame =
+        targetFrameKey === (activeState.activeFrameKey ?? buildFrameKey(activeState.step));
+      const entryForCompletion = isActiveFrame ? (activeState.activeEntry ?? 1) : SENTINEL_ENTRY;
+
+      cursor = toRuntimeTarget(
+        parsed.step,
+        parsed.substep,
+        resolvedIndex,
+        entryForCompletion,
+        targetFrameKey,
+      );
+    } else {
+      cursor = activeCursorTarget(activeState);
+    }
+    const targetSubstep = explicitTarget ? cursor.substep : activeState.substep;
+    const completionKey = buildCompletionKey(cursor.frameKey, cursor.entry, targetSubstep);
+    let existing = await lifecycleService.getResolvedCompletion(activeState.id, completionKey);
+
+    // Cross-check sentinel/exact keys to prevent coexisting completions for the same frame/substep
+    if (!existing) {
+      const crossEntry =
+        cursor.entry === SENTINEL_ENTRY ? (activeState.activeEntry ?? 1) : SENTINEL_ENTRY;
+      const crossKey = buildCompletionKey(cursor.frameKey, crossEntry, targetSubstep);
+      existing = await lifecycleService.getResolvedCompletion(activeState.id, crossKey);
+    }
     if (!existing) {
       const completion = buildResolvedCompletion({
         agentId: 'manual',
@@ -290,6 +409,7 @@ export async function executeTransition(
       currentState: activeState,
       transitionPolicy: config.policy,
       computeActionResult: config.computeActionResult,
+      ...(explicitTarget ? { frameKeyOverride: cursor.frameKey } : {}),
     });
     if (drained.status === 'stopped') {
       output.flush();

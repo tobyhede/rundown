@@ -164,6 +164,7 @@ export async function handleDelegationCompletion(
     currentState: parentState,
     transitionPolicy: delegationPolicy,
     computeActionResult: transitionConfig.computeActionResult,
+    ...(parentFrameKey ? { frameKeyOverride: parentFrameKey } : {}),
   });
 
   // 8. Check if parent reached terminal state — cascade if it also has delegation linkage

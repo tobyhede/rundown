@@ -31,6 +31,7 @@ import {
   type ExecutionEventEmitter,
   type ForContext,
   type DataSource,
+  type FrameKey,
 } from '@rundown-org/core';
 import { isSourced, resolvedStepHasSubsteps, type ForClause } from '@rundown-org/parser';
 import { isInternalRdCommand, executeRdCommandInternal } from './internal-commands.js';
@@ -296,6 +297,8 @@ export interface DrainResolvedCompletionsArgs {
   computeActionResult?: (actionType: ActionType) => boolean;
   /** Optional command string for event context. */
   command?: string;
+  /** Override frame key for frame-scoped lookups (e.g., prompted-for with explicit --index). */
+  frameKeyOverride?: FrameKey;
 }
 
 /** Result of draining resolved substep completions. */
@@ -335,6 +338,7 @@ export type DrainResolvedCompletionsResult =
  * @param args.transitionPolicy - Policy governing transition orchestration
  * @param args.computeActionResult - Optional function to compute action result for transitions
  * @param args.command - Optional command string for event context
+ * @param args.frameKeyOverride - Optional frame key override for frame-scoped lookups (e.g., prompted-for with explicit --index)
  * @returns Drain result indicating continue/done/stopped with counts of applied and unresolved completions
  */
 export async function drainResolvedCompletions({
@@ -349,6 +353,7 @@ export async function drainResolvedCompletions({
   transitionPolicy,
   computeActionResult,
   command,
+  frameKeyOverride,
 }: DrainResolvedCompletionsArgs): Promise<DrainResolvedCompletionsResult> {
   let state = currentState;
   let applied = 0;
@@ -366,14 +371,11 @@ export async function drainResolvedCompletions({
     const ensured = await lifecycleService.ensureActiveEntry(runbookId, undefined, state);
     state = ensured.state;
 
-    const frame = deriveActiveFrame(state);
+    const derivedFrame = deriveActiveFrame(state);
+    const frameKey = frameKeyOverride ?? derivedFrame.frameKey;
     const entry = state.activeEntry ?? ensured.entry;
     const orderedSubsteps = currentStep.substeps.map((s) => s.id);
-    const resolved = await lifecycleService.listResolvedCompletions(
-      runbookId,
-      frame.frameKey,
-      entry,
-    );
+    const resolved = await lifecycleService.listResolvedCompletions(runbookId, frameKey, entry);
     const resolvedBySubstep = new Map(
       resolved
         .filter(
@@ -385,7 +387,7 @@ export async function drainResolvedCompletions({
 
     const unresolved = orderedSubsteps.filter((id) => !resolvedBySubstep.has(id)).length;
 
-    const cursorKey = buildCompletionKey(frame.frameKey, entry, state.substep);
+    const cursorKey = buildCompletionKey(frameKey, entry, state.substep);
     const completion = await lifecycleService.consumeResolvedCompletion(runbookId, cursorKey);
     if (!completion) {
       return { status: 'continue', state, unresolved, applied };

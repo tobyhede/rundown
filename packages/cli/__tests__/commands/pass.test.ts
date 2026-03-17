@@ -376,4 +376,12 @@ This step stops on pass.
       expect(parseResult.success).toBe(true);
     });
   });
+
+  describe('option validation', () => {
+    it('rejects --index without --step', async () => {
+      const result = await runCliInProcess('pass --index 1', workspace);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain('--index requires --step');
+    });
+  });
 });
