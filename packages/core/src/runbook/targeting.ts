@@ -2,6 +2,15 @@ import type { StepPosition } from '../cli/types.js';
 import type { ForContext, ResolvedCompletion, RunbookState, SubstepState } from './types.js';
 
 /**
+ * Sentinel entry value for pre-recorded completions targeting non-active frames.
+ *
+ * Entry=0 means "matches any visit to this frame." The drain's exact-entry
+ * matching is preserved for inline completions (re-entry isolation), while
+ * pre-recorded completions use the sentinel for frame-only matching.
+ */
+export const SENTINEL_ENTRY = 0;
+
+/**
  * Nominal string type for frame identity keys.
  *
  * Format: `<step>|<iteration-or-empty>` (e.g., `"1|"`, `"1|2"`).
@@ -101,7 +110,7 @@ export function parseCompletionKey(
   const [step, iterationRaw, entryRaw, substepRaw] = parts;
   if (!step || !entryRaw) return null;
   const entry = Number.parseInt(entryRaw, 10);
-  if (!Number.isFinite(entry) || entry < 1) return null;
+  if (!Number.isFinite(entry) || entry < 0) return null;
   const frameKey = `${step}|${iterationRaw}` as FrameKey;
   return {
     frameKey,

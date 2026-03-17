@@ -11,6 +11,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   formatTransitionAction: jest.fn().mockReturnValue('CONTINUE'),
   parseActionType: jest.fn().mockReturnValue('CONTINUE'),
   parseStepIdFromString: jest.fn(),
+  SENTINEL_ENTRY: 0,
   buildCompletionKey: jest.fn(
     (frameKey: string, entry: number, substep?: string) =>
       `${frameKey}:${String(entry)}:${substep ?? ''}`,
@@ -145,7 +146,15 @@ describe('executeTransition with ExplicitTarget', () => {
   });
 
   it('uses explicit target with --index for iteration targeting', async () => {
+    const forStep = {
+      name: '1',
+      kind: 'for',
+      forClause: { start: 1, end: 5, source: undefined },
+      substeps: [{ id: '1' }, { id: '2' }],
+    };
+    (findStepOrThrow as jest.Mock).mockReturnValue(forStep);
     const ctx = makeCtx();
+    ctx.steps = [forStep];
     // parseStepIdFromString returns step without AT (index comes from --index flag)
     (core.parseStepIdFromString as jest.Mock).mockReturnValue({ step: '1', substep: '1' });
     const config = createPassTransitionConfig();
@@ -209,5 +218,141 @@ describe('executeTransition with ExplicitTarget', () => {
     // buildCompletionKey should use activeState.substep ('1')
     const completionKeyCall = (core.buildCompletionKey as jest.Mock).mock.calls[0];
     expect(completionKeyCall[2]).toBe('1');
+  });
+
+  it('throws when target substep does not exist in the step', async () => {
+    const ctx = makeCtx({ substep: '1' });
+    // Step has substeps ['1', '2'], but target references substep '99'
+    (core.parseStepIdFromString as jest.Mock).mockReturnValue({ step: '1', substep: '99' });
+    const config = createPassTransitionConfig();
+
+    await expect(executeTransition(ctx, config, { stepId: '1.99' })).rejects.toThrow(
+      'substep "99" does not exist',
+    );
+  });
+
+  it('throws when --index targets iteration above FOR end', async () => {
+    const forStep = {
+      name: '1',
+      kind: 'for',
+      forClause: { start: 1, end: 5, source: undefined },
+      substeps: [{ id: '1' }, { id: '2' }],
+    };
+    (findStepOrThrow as jest.Mock).mockReturnValue(forStep);
+    const ctx = makeCtx({ substep: '1' });
+    ctx.steps = [forStep];
+    (core.parseStepIdFromString as jest.Mock).mockReturnValue({ step: '1', substep: '1' });
+    const config = createPassTransitionConfig();
+
+    await expect(executeTransition(ctx, config, { stepId: '1.1', index: '6' })).rejects.toThrow(
+      'exceeds FOR end 5',
+    );
+  });
+
+  it('throws when --index targets iteration below FOR start', async () => {
+    const forStep = {
+      name: '1',
+      kind: 'for',
+      forClause: { start: 3, end: 5, source: undefined },
+      substeps: [{ id: '1' }, { id: '2' }],
+    };
+    (findStepOrThrow as jest.Mock).mockReturnValue(forStep);
+    const ctx = makeCtx({ substep: '1' });
+    ctx.steps = [forStep];
+    // resolveIndexOption rejects < 1, but FOR start > 1 can still be below start
+    (core.parseStepIdFromString as jest.Mock).mockReturnValue({ step: '1', substep: '1' });
+    const config = createPassTransitionConfig();
+
+    await expect(executeTransition(ctx, config, { stepId: '1.1', index: '2' })).rejects.toThrow(
+      'below FOR start 3',
+    );
+  });
+
+  it('allows --index within FOR bounds', async () => {
+    const forStep = {
+      name: '1',
+      kind: 'for',
+      forClause: { start: 1, end: 5, source: undefined },
+      substeps: [{ id: '1' }, { id: '2' }],
+    };
+    (findStepOrThrow as jest.Mock).mockReturnValue(forStep);
+    const ctx = makeCtx({ substep: '1' });
+    ctx.steps = [forStep];
+    (core.parseStepIdFromString as jest.Mock).mockReturnValue({ step: '1', substep: '1' });
+    const config = createPassTransitionConfig();
+
+    // Should not throw
+    await executeTransition(ctx, config, { stepId: '1.1', index: '3' });
+
+    expect(ctx.lifecycleService.upsertResolvedCompletion).toHaveBeenCalled();
+  });
+
+  it('skips upper bound check for open-window file source', async () => {
+    const forStep = {
+      name: '1',
+      kind: 'for',
+      forClause: { start: 1, source: 'items', variable: 'item' },
+      substeps: [{ id: '1' }, { id: '2' }],
+    };
+    (findStepOrThrow as jest.Mock).mockReturnValue(forStep);
+    const ctx = makeCtx({ substep: '1' });
+    ctx.steps = [forStep];
+    (core.parseStepIdFromString as jest.Mock).mockReturnValue({ step: '1', substep: '1' });
+    const config = createPassTransitionConfig();
+
+    // Index 999 should succeed since FullSourceWindow has no end bound
+    await executeTransition(ctx, config, { stepId: '1.1', index: '999' });
+
+    expect(ctx.lifecycleService.upsertResolvedCompletion).toHaveBeenCalled();
+  });
+
+  it('throws when --index provided but step is not a FOR step', async () => {
+    // Default step is kind: 'substeps' (not FOR)
+    const ctx = makeCtx({ substep: '1' });
+    (core.parseStepIdFromString as jest.Mock).mockReturnValue({ step: '1', substep: '1' });
+    const config = createPassTransitionConfig();
+
+    await expect(executeTransition(ctx, config, { stepId: '1.1', index: '3' })).rejects.toThrow(
+      '--index requires step "1" to be a FOR step',
+    );
+  });
+
+  it('uses entry=0 sentinel when targeting non-active frame', async () => {
+    const forStep = {
+      name: '1',
+      kind: 'for',
+      forClause: { start: 1, end: 5, source: undefined },
+      substeps: [{ id: '1' }, { id: '2' }],
+    };
+    (findStepOrThrow as jest.Mock).mockReturnValue(forStep);
+    // Active frame is '1|' (iteration undefined), targeting '1|3' via --index 3
+    const ctx = makeCtx({ substep: '1', activeFrameKey: '1|', activeEntry: 2 });
+    ctx.steps = [forStep];
+    (core.parseStepIdFromString as jest.Mock).mockReturnValue({ step: '1', substep: '1' });
+    // buildFrameKey mock returns '1[3]' for iteration 3, which differs from activeFrameKey '1|'
+    const config = createPassTransitionConfig();
+
+    await executeTransition(ctx, config, { stepId: '1.1', index: '3' });
+
+    // buildCompletionKey should have been called with entry=0 (sentinel)
+    const completionKeyCalls = (core.buildCompletionKey as jest.Mock).mock.calls;
+    // The toRuntimeTarget call uses buildCompletionKey; check entry argument
+    const runtimeTargetCall = completionKeyCalls.find((c: unknown[]) => c[1] === 0);
+    expect(runtimeTargetCall).toBeDefined();
+  });
+
+  it('uses activeEntry when targeting active frame', async () => {
+    // Active frame is '1' (mock default), target resolves to same frame
+    const ctx = makeCtx({ substep: '1', activeFrameKey: '1', activeEntry: 2 });
+    (core.parseStepIdFromString as jest.Mock).mockReturnValue({ step: '1', substep: '2' });
+    // buildFrameKey('1', undefined) returns '1' which matches activeFrameKey
+    const config = createPassTransitionConfig();
+
+    await executeTransition(ctx, config, { stepId: '1.2' });
+
+    // buildCompletionKey should have been called with entry=2 (activeEntry)
+    const completionKeyCalls = (core.buildCompletionKey as jest.Mock).mock.calls;
+    const runtimeTargetCall = completionKeyCalls.find((c: unknown[]) => c[1] === 2);
+    expect(runtimeTargetCall).toBeDefined();
   });
 });

@@ -99,8 +99,12 @@ describe('targeting helpers', () => {
       expect(parseCompletionKey('1|2||sub')).toBeNull();
     });
 
-    it('returns null for zero entry', () => {
-      expect(parseCompletionKey('1|2|0|sub')).toBeNull();
+    it('accepts entry=0 as sentinel', () => {
+      expect(parseCompletionKey('1|2|0|sub')).toEqual({
+        frameKey: '1|2',
+        entry: 0,
+        substep: 'sub',
+      });
     });
 
     it('returns null for negative entry', () => {

@@ -23,6 +23,7 @@ import {
   buildResolvedCompletion,
   deriveExecutionAt,
   deriveActiveFrame,
+  SENTINEL_ENTRY,
   type FrameKey,
   type AnyActorRef,
   type ResolvedStep,
@@ -293,12 +294,50 @@ export async function executeTransition(
           `--step ${explicitTarget.stepId} targets step "${parsed.step}" but the active step is "${activeState.step}"`,
         );
       }
+      // Validate substep exists in the step definition
+      if (parsed.substep && resolvedStepHasSubsteps(activeStep)) {
+        const validIds = activeStep.substeps.map((s) => s.id);
+        if (!validIds.includes(parsed.substep)) {
+          throw new Error(
+            `--step ${explicitTarget.stepId}: substep "${parsed.substep}" does not exist in step "${parsed.step}". Valid substeps: ${validIds.join(', ')}`,
+          );
+        }
+      }
+
       const resolvedIndex = resolveIndexOption(explicitTarget.index, parsed.at);
+
+      // Validate iteration bounds against step definition
+      if (resolvedIndex !== undefined) {
+        if (activeStep.kind !== 'for') {
+          throw new Error(
+            `--index requires step "${parsed.step}" to be a FOR step, but it is "${activeStep.kind}"`,
+          );
+        }
+        const fc = activeStep.forClause;
+        if (resolvedIndex < fc.start) {
+          throw new Error(
+            `--index ${String(resolvedIndex)} is below FOR start ${String(fc.start)} for step "${parsed.step}"`,
+          );
+        }
+        if ('end' in fc && resolvedIndex > fc.end) {
+          throw new Error(
+            `--index ${String(resolvedIndex)} exceeds FOR end ${String(fc.end)} for step "${parsed.step}"`,
+          );
+        }
+      }
+
+      // Use sentinel entry (0) for non-active frames to avoid entry prediction issues
+      const targetFrameKey = buildFrameKey(parsed.step, resolvedIndex);
+      const isActiveFrame =
+        targetFrameKey === (activeState.activeFrameKey ?? buildFrameKey(activeState.step));
+      const entryForCompletion = isActiveFrame ? (activeState.activeEntry ?? 1) : SENTINEL_ENTRY;
+
       cursor = toRuntimeTarget(
         parsed.step,
         parsed.substep,
         resolvedIndex,
-        activeState.activeEntry ?? 1,
+        entryForCompletion,
+        targetFrameKey,
       );
     } else {
       cursor = activeCursorTarget(activeState);

@@ -5,6 +5,7 @@ import {
   deriveActiveFrame,
   buildFrameKey,
   parseCompletionKey,
+  SENTINEL_ENTRY,
   type FrameKey,
 } from './targeting.js';
 import type { ResolvedCompletion, RunbookState } from './types.js';
@@ -175,11 +176,26 @@ export class ExecutionLifecycleService {
     const state = await this.manager.load(id);
     if (!state) return null;
 
-    const existing = state.resolvedCompletions?.[key];
+    let existing = state.resolvedCompletions?.[key];
+    let actualKey = key;
+
+    // Fall back to sentinel entry if exact key not found
+    if (!existing) {
+      const parsed = parseCompletionKey(key);
+      if (parsed && parsed.entry !== SENTINEL_ENTRY) {
+        const sentinelKey = buildCompletionKey(parsed.frameKey, SENTINEL_ENTRY, parsed.substep);
+        const sentinelMatch = state.resolvedCompletions?.[sentinelKey];
+        if (sentinelMatch) {
+          existing = sentinelMatch;
+          actualKey = sentinelKey;
+        }
+      }
+    }
+
     if (!existing) return null;
 
     const next = { ...(state.resolvedCompletions ?? {}) };
-    delete next[key];
+    delete next[actualKey];
     await this.manager.update(id, {
       resolvedCompletions: Object.keys(next).length > 0 ? next : {},
     });
@@ -202,9 +218,14 @@ export class ExecutionLifecycleService {
     const state = await this.manager.load(id);
     if (!state) return [];
 
-    const prefix = `${frameKey}|${String(entry)}|`;
+    const exactPrefix = `${frameKey}|${String(entry)}|`;
+    const sentinelPrefix = `${frameKey}|${String(SENTINEL_ENTRY)}|`;
     return Object.entries(state.resolvedCompletions ?? {})
-      .filter(([key]) => key.startsWith(prefix))
+      .filter(
+        ([key]) =>
+          key.startsWith(exactPrefix) ||
+          (entry !== SENTINEL_ENTRY && key.startsWith(sentinelPrefix)),
+      )
       .map(([key, completion]) => ({ key, completion }));
   }
 
