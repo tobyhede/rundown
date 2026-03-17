@@ -402,10 +402,21 @@ describe('executeTransition with ExplicitTarget', () => {
   it('detects duplicate when sentinel completion already exists for same substep', async () => {
     const ctx = makeCtx({ substep: '1', activeFrameKey: '1', activeEntry: 2 });
     (core.parseStepIdFromString as jest.Mock).mockReturnValue({ step: '1', substep: '1' });
+    // Track which keys were built so we can identify the cross-check key
+    const builtKeys: Array<{ frameKey: string; entry: number; substep?: string; key: string }> = [];
+    (core.buildCompletionKey as jest.Mock).mockImplementation(
+      (frameKey: string, entry: number, substep?: string) => {
+        const key = `${frameKey}:${String(entry)}:${substep ?? ''}`;
+        builtKeys.push({ frameKey, entry, substep, key });
+        return key;
+      },
+    );
     ctx.lifecycleService.getResolvedCompletion.mockImplementation(
       async (_id: string, key: string) => {
-        if (key.includes(':0:')) return { result: 'pass' }; // sentinel key
-        return null; // exact key
+        // Return match for the cross-check (sentinel) key, miss for the exact key
+        const sentinelCall = builtKeys.find((k) => k.entry === 0);
+        if (sentinelCall && key === sentinelCall.key) return { result: 'pass' };
+        return null;
       },
     );
     const config = createPassTransitionConfig();

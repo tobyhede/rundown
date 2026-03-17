@@ -361,10 +361,12 @@ export async function executeTransition(
     const completionKey = buildCompletionKey(cursor.frameKey, cursor.entry, targetSubstep);
     let existing = await lifecycleService.getResolvedCompletion(activeState.id, completionKey);
 
-    // Also check sentinel key to prevent coexisting sentinel + exact completions
-    if (!existing && cursor.entry !== SENTINEL_ENTRY) {
-      const sentinelKey = buildCompletionKey(cursor.frameKey, SENTINEL_ENTRY, targetSubstep);
-      existing = await lifecycleService.getResolvedCompletion(activeState.id, sentinelKey);
+    // Cross-check sentinel/exact keys to prevent coexisting completions for the same frame/substep
+    if (!existing) {
+      const crossEntry =
+        cursor.entry === SENTINEL_ENTRY ? (activeState.activeEntry ?? 1) : SENTINEL_ENTRY;
+      const crossKey = buildCompletionKey(cursor.frameKey, crossEntry, targetSubstep);
+      existing = await lifecycleService.getResolvedCompletion(activeState.id, crossKey);
     }
     if (!existing) {
       const completion = buildResolvedCompletion({
