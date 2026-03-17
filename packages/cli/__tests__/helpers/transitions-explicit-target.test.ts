@@ -306,14 +306,16 @@ describe('executeTransition with ExplicitTarget', () => {
     expect(ctx.lifecycleService.upsertResolvedCompletion).toHaveBeenCalled();
   });
 
-  it('throws when --index provided but step is not a FOR step', async () => {
+  it('throws when --index provided but step is not a FOR or PROMPTED-FOR step', async () => {
     // Default step is kind: 'substeps' (not FOR)
+    // This test also covers the delegate.ts validation path (Issue C),
+    // which uses the same kind-check pattern with parsedTarget?.step.
     const ctx = makeCtx({ substep: '1' });
     (core.parseStepIdFromString as jest.Mock).mockReturnValue({ step: '1', substep: '1' });
     const config = createPassTransitionConfig();
 
     await expect(executeTransition(ctx, config, { stepId: '1.1', index: '3' })).rejects.toThrow(
-      '--index requires step "1" to be a FOR step',
+      '--index requires step "1" to be a FOR or PROMPTED-FOR step',
     );
   });
 
@@ -399,6 +401,71 @@ describe('executeTransition with ExplicitTarget', () => {
     expect(call).toBeDefined();
   });
 
+  it('allows --index on prompted-for step without bounds check', async () => {
+    const promptedForStep = {
+      name: '1',
+      kind: 'prompted-for',
+      // No forClause — prompted-for has no executable bounds
+      substeps: [{ id: '1' }, { id: '2' }],
+    };
+    (findStepOrThrow as jest.Mock).mockReturnValue(promptedForStep);
+    const ctx = makeCtx({ substep: '1' });
+    ctx.steps = [promptedForStep];
+    (core.parseStepIdFromString as jest.Mock).mockReturnValue({ step: '1', substep: '1' });
+    const config = createPassTransitionConfig();
+
+    // Should NOT throw — prompted-for accepts --index without bounds validation
+    await executeTransition(ctx, config, { stepId: '1.1', index: '3' });
+
+    expect(core.buildFrameKey).toHaveBeenCalledWith('1', 3);
+    expect(ctx.lifecycleService.upsertResolvedCompletion).toHaveBeenCalled();
+  });
+
+  it('defaults to active iteration when --step used in prompted-for loop without --index', async () => {
+    const promptedForStep = {
+      name: '1',
+      kind: 'prompted-for',
+      substeps: [{ id: '1' }, { id: '2' }],
+    };
+    (findStepOrThrow as jest.Mock).mockReturnValue(promptedForStep);
+    (core.deriveActiveFrame as jest.Mock).mockReturnValue({
+      step: '1',
+      iteration: 3,
+      frameKey: '1[3]',
+    });
+    const ctx = makeCtx({ substep: '1', activeFrameKey: '1[3]', activeEntry: 2 });
+    ctx.steps = [promptedForStep];
+    (core.parseStepIdFromString as jest.Mock).mockReturnValue({ step: '1', substep: '1' });
+    const config = createPassTransitionConfig();
+
+    await executeTransition(ctx, config, { stepId: '1.1' }); // No --index
+
+    expect(core.buildFrameKey).toHaveBeenCalledWith('1', 3);
+  });
+
+  it('throws when --step uses template AT expression without --index', async () => {
+    const forStep = {
+      name: '1',
+      kind: 'for',
+      forClause: { start: 1, end: 5, source: undefined },
+      substeps: [{ id: '1' }, { id: '2' }],
+    };
+    (findStepOrThrow as jest.Mock).mockReturnValue(forStep);
+    const ctx = makeCtx({ substep: '1' });
+    ctx.steps = [forStep];
+    // parsed.at is a template string — not resolvable in pass/fail context
+    (core.parseStepIdFromString as jest.Mock).mockReturnValue({
+      step: '1',
+      substep: '1',
+      at: '{{Index}}',
+    });
+    const config = createPassTransitionConfig();
+
+    await expect(executeTransition(ctx, config, { stepId: '1.1' })).rejects.toThrow(
+      'template AT expression',
+    );
+  });
+
   it('detects duplicate when sentinel completion already exists for same substep', async () => {
     const ctx = makeCtx({ substep: '1', activeFrameKey: '1', activeEntry: 2 });
     (core.parseStepIdFromString as jest.Mock).mockReturnValue({ step: '1', substep: '1' });
@@ -415,7 +482,7 @@ describe('executeTransition with ExplicitTarget', () => {
       async (_id: string, key: string) => {
         // Return match for the cross-check (sentinel) key, miss for the exact key
         const sentinelCall = builtKeys.find((k) => k.entry === 0);
-        if (sentinelCall && key === sentinelCall.key) return { result: 'pass' };
+        if (sentinelCall?.key === key) return { result: 'pass' };
         return null;
       },
     );

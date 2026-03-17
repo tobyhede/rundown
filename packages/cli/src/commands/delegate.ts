@@ -150,10 +150,11 @@ export function registerDelegateCommand(program: Command): void {
 
             // Validate --index requires a FOR step (three-level syntax validated in createDelegation)
             if (explicitIteration !== undefined) {
-              const activeStep = steps.find((s) => s.name === state.step);
-              if (activeStep && activeStep.kind !== 'for' && activeStep.kind !== 'prompted-for') {
+              const targetStepName = parsedTarget?.step ?? state.step;
+              const targetStep = steps.find((s) => s.name === targetStepName);
+              if (targetStep && targetStep.kind !== 'for' && targetStep.kind !== 'prompted-for') {
                 output.error(
-                  `--index requires step "${state.step}" to be a FOR step, but it is "${activeStep.kind}"`,
+                  `--index requires step "${targetStepName}" to be a FOR step, but it is "${targetStep.kind}"`,
                   'INVALID_INDEX',
                 );
                 output.flush();

@@ -312,6 +312,13 @@ export async function executeTransition(
 
       let resolvedIndex = resolveIndexOption(explicitTarget.index, parsed.at);
 
+      // Reject template AT expressions — they cannot be resolved in pass/fail context
+      if (typeof parsed.at === 'string') {
+        throw new Error(
+          `--step ${explicitTarget.stepId} uses template AT expression "${parsed.at}", which cannot be resolved here. Use --index <number> instead.`,
+        );
+      }
+
       // Default to active iteration when inside a FOR step without explicit --index
       if (
         resolvedIndex === undefined &&
@@ -323,21 +330,24 @@ export async function executeTransition(
 
       // Validate iteration bounds against step definition
       if (resolvedIndex !== undefined) {
-        if (activeStep.kind !== 'for') {
+        if (activeStep.kind !== 'for' && activeStep.kind !== 'prompted-for') {
           throw new Error(
-            `--index requires step "${parsed.step}" to be a FOR step, but it is "${activeStep.kind}"`,
+            `--index requires step "${parsed.step}" to be a FOR or PROMPTED-FOR step, but it is "${activeStep.kind}"`,
           );
         }
-        const fc = activeStep.forClause;
-        if (resolvedIndex < fc.start) {
-          throw new Error(
-            `--index ${String(resolvedIndex)} is below FOR start ${String(fc.start)} for step "${parsed.step}"`,
-          );
-        }
-        if ('end' in fc && resolvedIndex > fc.end) {
-          throw new Error(
-            `--index ${String(resolvedIndex)} exceeds FOR end ${String(fc.end)} for step "${parsed.step}"`,
-          );
+        // Bounds checks only apply to 'for' steps (prompted-for has no forClause)
+        if (activeStep.kind === 'for') {
+          const fc = activeStep.forClause;
+          if (resolvedIndex < fc.start) {
+            throw new Error(
+              `--index ${String(resolvedIndex)} is below FOR start ${String(fc.start)} for step "${parsed.step}"`,
+            );
+          }
+          if ('end' in fc && resolvedIndex > fc.end) {
+            throw new Error(
+              `--index ${String(resolvedIndex)} exceeds FOR end ${String(fc.end)} for step "${parsed.step}"`,
+            );
+          }
         }
       }
 
