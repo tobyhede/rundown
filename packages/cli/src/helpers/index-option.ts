@@ -57,24 +57,9 @@ export function resolveIndexOption(
     );
   }
 
-  // Both match → return value (idempotent)
-  if (typeof parsedAt === 'number' && indexValue !== undefined && parsedAt === indexValue) {
-    return indexValue;
-  }
-
-  // Only --index provided
-  if (indexValue !== undefined) {
-    return indexValue;
-  }
-
-  // Only parsedAt provided (number)
-  if (typeof parsedAt === 'number') {
-    return parsedAt;
-  }
-
-  // parsedAt is a template string with no --index → pass through as undefined
-  // (the template will be resolved later by the execution engine)
-  return undefined;
+  // At this point: no conflicts. Return whichever numeric value is available.
+  // Template-string AT with no --index yields undefined (resolved later by execution engine).
+  return indexValue ?? (typeof parsedAt === 'number' ? parsedAt : undefined);
 }
 
 /**

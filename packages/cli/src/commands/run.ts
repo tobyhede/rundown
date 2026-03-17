@@ -109,11 +109,6 @@ export function registerRunCommand(program: Command): void {
             }
 
             // If --step provided and runbook is waiting (prompted mode), jump to the step
-            if (options.step && result.loopResult !== 'waiting') {
-              output.warning(
-                `--step ${options.step} ignored: runbook did not enter prompted mode (result: ${result.loopResult})`,
-              );
-            }
             if (options.step && result.loopResult === 'waiting') {
               const gotoCtx = await buildGotoContext(output, cwd);
               if (!gotoCtx) {
@@ -141,6 +136,10 @@ export function registerRunCommand(program: Command): void {
                 process.exit(1);
               }
               return;
+            } else if (options.step) {
+              output.warning(
+                `--step ${options.step} ignored: runbook did not enter prompted mode (result: ${result.loopResult})`,
+              );
             }
 
             output.flush();

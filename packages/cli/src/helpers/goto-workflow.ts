@@ -100,7 +100,8 @@ export async function buildGotoContext(
  * @param stepArg - Raw step argument string (e.g., "3" or "3.1")
  * @param steps - Parsed runbook steps
  * @param indexOption - Raw `--index` value from CLI (optional)
- * @returns Validation result with parsed target or error details
+ * @returns Validation result with parsed target or error details.
+ *   `IndexOptionError` from `resolveIndexOption` is caught and converted to a validation failure.
  * @throws {Error} if an unexpected (non-IndexOptionError) error occurs during index resolution
  */
 export function validateGotoTarget(

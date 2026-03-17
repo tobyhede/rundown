@@ -166,6 +166,17 @@ describe('executeTransition with ExplicitTarget', () => {
     );
   });
 
+  it('throws when explicit target step does not match active step', async () => {
+    const ctx = makeCtx({ step: '1', substep: '1' }); // Active step is '1'
+    // Explicit target points to step '2'
+    (core.parseStepIdFromString as jest.Mock).mockReturnValue({ step: '2', substep: '1' });
+    const config = createPassTransitionConfig();
+
+    await expect(executeTransition(ctx, config, { stepId: '2.1' })).rejects.toThrow(
+      'targets step "2" but the active step is "1"',
+    );
+  });
+
   it('throws IndexOptionError on conflicting --index and AT', async () => {
     const ctx = makeCtx();
     (core.parseStepIdFromString as jest.Mock).mockReturnValue({ step: '1', substep: '1', at: 5 });

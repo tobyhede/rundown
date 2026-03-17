@@ -288,6 +288,11 @@ export async function executeTransition(
       if (!parsed) {
         throw new Error(`Invalid step target: ${explicitTarget.stepId}`);
       }
+      if (parsed.step !== activeState.step) {
+        throw new Error(
+          `--step ${explicitTarget.stepId} targets step "${parsed.step}" but the active step is "${activeState.step}"`,
+        );
+      }
       const resolvedIndex = resolveIndexOption(explicitTarget.index, parsed.at);
       cursor = toRuntimeTarget(
         parsed.step,
