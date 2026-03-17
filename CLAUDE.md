@@ -71,6 +71,16 @@ rundown abort <token>                   # Cancel a delegation token (--force for
 
 The `rd` command is an alias for `rundown`.
 
+### rdpath (Path Assembly Tool)
+
+```bash
+rdpath --dir <path>                           # Assemble base path (default subcommand)
+rdpath --dir <path> --ctx <id>                # With context scope (.rd-<id>/)
+rdpath --dir <path> --ctx <id> --file <name>  # With date-prefixed filename
+rdpath find --dir <path> <pattern>            # Find files matching glob pattern
+rdpath find --dir <path> --ctx <id> <pattern> # Find within context scope
+```
+
 ## Template Variables
 
 Template variables use Handlebars syntax `{{variableName}}` and are expanded at run time.
