@@ -19,7 +19,7 @@
     "test": "jest",
     "test:unit": "jest --maxWorkers=2",
     "test:coverage": "jest --coverage",
-    "test:property": "jest --maxWorkers=2 --testPathPattern='\\.properties\\.test\\.ts$'",
+    "test:property": "jest --maxWorkers=2 --testPathPatterns='\\.properties\\.test\\.ts$'",
     "test:mutate": "stryker run",
     "clean": "rm -rf dist"
   },

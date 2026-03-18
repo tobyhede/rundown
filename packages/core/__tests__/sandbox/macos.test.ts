@@ -2,12 +2,16 @@ import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals
 import type { SandboxOptions } from '../../src/sandbox/types.js';
 
 // Mock child_process
+const actualChildProcess = await import('node:child_process');
 jest.unstable_mockModule('node:child_process', () => ({
+  ...actualChildProcess,
   spawn: jest.fn(),
 }));
 
 // Mock fs
+const actualFs = await import('node:fs');
 jest.unstable_mockModule('node:fs', () => ({
+  ...actualFs,
   existsSync: jest.fn(),
   writeFileSync: jest.fn(),
   unlinkSync: jest.fn(),

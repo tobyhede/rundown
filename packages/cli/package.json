@@ -16,7 +16,7 @@
     "build": "tsc && chmod +x dist/cli.js && node scripts/copy-runbooks.js",
     "test": "jest",
     "test:unit": "jest --maxWorkers=2 --testPathIgnorePatterns='integration'",
-    "test:integration": "jest --maxWorkers=2 --testPathPattern='integration'",
+    "test:integration": "jest --maxWorkers=2 --testPathPatterns='integration'",
     "test:coverage": "jest --coverage",
     "test:mutate": "stryker run",
     "clean": "rm -rf dist"

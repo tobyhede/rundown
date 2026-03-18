@@ -19,13 +19,17 @@ jest.unstable_mockModule('../../src/schemas/scenarios', () => ({
 }));
 
 // Mock node:fs/promises
+const actualFsPromises = await import('node:fs/promises');
 jest.unstable_mockModule('node:fs/promises', () => ({
+  ...actualFsPromises,
   readFile: jest.fn(),
   rm: jest.fn().mockResolvedValue(undefined),
 }));
 
 // Mock node:fs (sync functions used by executeScenario)
+const actualFs = await import('node:fs');
 jest.unstable_mockModule('node:fs', () => ({
+  ...actualFs,
   mkdtempSync: jest.fn().mockReturnValue('/tmp/rd-scenario-test'),
   mkdirSync: jest.fn(),
   copyFileSync: jest.fn(),

@@ -39,7 +39,7 @@ The security policy layer (`packages/core/src/policy/`) enforces permission cont
 
 ```bash
 # Run policy-specific tests
-npm test --workspace=packages/core -- --testPathPattern="policy"
+npm test --workspace=packages/core -- --testPathPatterns="policy"
 
 # Test CLI integration
 npm run cli -- run packages/cli/__tests__/fixtures/simple.runbook.md --allow-run git,npm
