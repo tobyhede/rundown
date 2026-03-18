@@ -2289,11 +2289,11 @@ describe('parser mutation killing - runbook reference detection', () => {
   it('does not detect non-runbook list items as references', () => {
     const md = `## 1 Test step
 
-\`\`\`bash
-echo hello
-\`\`\``;
+- not-a-runbook-item
+- another plain item`;
     const steps = parseRunbook(md);
-    expect(steps[0].kind).toBe('command');
+    expect(steps[0].kind).toBe('base');
+    expect(steps[0].prompt).toContain('- not-a-runbook-item');
   });
 
   it('rejects runbook ref with trailing text', () => {

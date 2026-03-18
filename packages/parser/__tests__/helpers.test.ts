@@ -2318,7 +2318,7 @@ describe('RunbookSyntaxError', () => {
 
   it('is an instance of Error', () => {
     const err = new RunbookSyntaxError('test');
-    expect(err).toBeInstanceOf(Error);
+    expect(Error.isError(err)).toBe(true);
   });
 
   it('preserves the message', () => {
