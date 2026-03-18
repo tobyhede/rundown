@@ -268,6 +268,7 @@ npm run verify        # Pre-PR: format, spell, lint, test (MUST run before push)
 npm run lint          # Lint all packages (biome + eslint)
 npm run check:lint:fast   # Fast lint (biome only)
 npm run check:lint:typed  # Typed lint (eslint only)
+npm run check:complexity  # Standalone complexity checks (biome + eslint)
 npm run fix:lint      # Auto-fix lint issues
 npm run fix:lint:fast # Auto-fix biome lint issues
 npm run fix:lint:typed # Auto-fix eslint lint issues
