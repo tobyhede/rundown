@@ -30,6 +30,7 @@ export default tseslint.config(
     linterOptions: {
       reportUnusedDisableDirectives: 'off',
     },
+    // Intentional: 'warn' severity — complexity checks are advisory, not CI-blocking.
     rules: {
       complexity: ['warn', { max: 15 }],
       'max-lines-per-function': ['warn', { max: 100, skipBlankLines: true, skipComments: true }],
