@@ -167,7 +167,7 @@ Not:
 - FAIL STOP "Compilation failed."
 ```
 
-See [FORMAT.md Message Convention](./FORMAT.md#message-convention) for the full rationale.
+See [FORMAT.md Messages](./FORMAT.md#messages) for the full rationale.
 
 ## Worked Example: `pr-feedback`
 

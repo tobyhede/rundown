@@ -294,14 +294,14 @@ FOR-level nested transitions (nested bullets directly under `- FOR ...`) run at 
 
 | Action | Effect |
 |--------|--------|
-| `CONTINUE` | Keep iterating |
+| `CONTINUE` | Exit loop (current result NOT recorded) → step-level handler |
 | `BREAK` | Exit loop immediately (non-accumulating — same as NEXT) |
 | `GOTO` | Jump immediately; bypass parent FOR aggregation |
 | `STOP` | Stop immediately; bypass parent FOR aggregation |
 | `COMPLETE` | Complete immediately; bypass parent FOR aggregation |
 | `RETRY N X` | Retry current iteration first, then execute exhausted action `X` |
 
-Parent FOR step transitions (`PASS ALL`, `FAIL ANY`, etc.) aggregate results across all iterations after normal loop completion or iteration-level `BREAK`.
+Parent FOR step transitions (`PASS ALL`, `FAIL ANY`, etc.) aggregate results across all iterations after normal loop completion, iteration-level `BREAK`, or iteration-level `CONTINUE`.
 
 **GOTO AT interaction:**
 

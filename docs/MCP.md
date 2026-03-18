@@ -55,7 +55,7 @@ npm install -g @rundown-org/mcp
 ```
 
 **Requirements:**
-- Node.js >= 20.12.0
+- Node.js >= 24.0.0
 - `@rundown-org/cli` installed (global or local)
 
 Verify installation:
@@ -512,7 +512,7 @@ Rundown MCP Server running
 | Check syntax | `validate` | `file` |
 | List runbooks | `list` | - |
 | Get status | `status` | - |
-| Start runbook | `run` | `file` |
+| Start runbook | `run` | - |
 | Step passed | `pass` | - |
 | Step failed | `fail` | - |
 | Jump to step | `goto` | `step` |

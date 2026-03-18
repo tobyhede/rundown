@@ -48,7 +48,7 @@ docker compose -f docker-compose.verify.yml run --rm test-npm
 
 The Dockerfile uses a multi-stage build:
 
-- **`base`** — Shared foundation: `node:22-slim`, git, sudo, Claude Code, non-root `testuser`
+- **`base`** — Shared foundation: `node:24-slim`, git, sudo, Claude Code, non-root `testuser`
 - **`local`** — Copies pre-packed tarballs from `dist/` and installs them globally
 - **`npm`** — Defers installation to the entrypoint, which runs `npm install -g` at container start
 

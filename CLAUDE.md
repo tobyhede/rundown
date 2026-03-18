@@ -311,13 +311,13 @@ All exported symbols must have TSDoc documentation following these requirements:
  * - H2 step definitions with commands, prompts, and transitions
  *
  * @param markdown - The raw markdown content to parse
- * @param filename - Optional filename used to derive runbook name if not in frontmatter
+ * @param basename - Optional filename used to derive runbook name if not in frontmatter
  * @returns ParseResult with runbook AST and structural validation diagnostics
  * @see parseRunbook for simplified parsing returning only steps
  */
 export function parseRunbookDocument(
   markdown: string,
-  filename?: string,
+  basename?: string,
 ): ParseResult { ... }
 ```
 
