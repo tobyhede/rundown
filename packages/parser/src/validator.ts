@@ -18,6 +18,17 @@ export interface ValidationDiagnostic {
 /** @deprecated Use ValidationDiagnostic */
 export type ValidationError = ValidationDiagnostic;
 
+/** Valid action types for FOR iteration-level transitions. */
+const FOR_ALLOWED_ACTIONS = [
+  'CONTINUE',
+  'DEFER',
+  'NEXT',
+  'BREAK',
+  'GOTO',
+  'STOP',
+  'COMPLETE',
+] as const satisfies readonly Action['type'][];
+
 function error(line: number | undefined, message: string): ValidationDiagnostic {
   return { severity: 'error', line, message };
 }
@@ -141,16 +152,6 @@ function validateForStep(
 
   // FOR iteration-level transitions allow full loop control and terminal routing.
   if (step.forClause.transitions) {
-    const FOR_ALLOWED_ACTIONS = [
-      'CONTINUE',
-      'DEFER',
-      'NEXT',
-      'BREAK',
-      'GOTO',
-      'STOP',
-      'COMPLETE',
-    ] as const satisfies readonly Action['type'][];
-
     if (
       !(FOR_ALLOWED_ACTIONS as readonly string[]).includes(
         step.forClause.transitions.pass.action.type,

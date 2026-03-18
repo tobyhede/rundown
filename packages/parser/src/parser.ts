@@ -132,7 +132,11 @@ interface StepBuilder {
   invalidH3s: Array<{ line: number; text: string }>;
 }
 
-/** Mutable state for the visit callback. */
+/**
+ * Mutable state threaded through all handler functions during AST walking.
+ * Each handler receives and mutates this context to accumulate parsing results.
+ * @see ActiveStepContext — narrowed variant where `currentStep` is guaranteed non-null
+ */
 interface VisitorContext {
   steps: Step[];
   title: string | undefined;
@@ -527,6 +531,13 @@ function handleListItemContent(
   }
 }
 
+/**
+ * Process a list item node within an active step.
+ *
+ * @param node - The list item AST node
+ * @param ctx - Active step context (currentStep guaranteed non-null)
+ * @returns `SKIP` when a FOR clause is handled (prevents child traversal), `void` otherwise
+ */
 function handleListItem(node: ListItem, ctx: ActiveStepContext): typeof SKIP | void {
   const firstParagraph = node.children.find((c) => c.type === 'paragraph');
   if (!firstParagraph) return;
