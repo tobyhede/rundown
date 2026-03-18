@@ -1852,6 +1852,239 @@ describe('parseForClause', () => {
       expect(parseForClause('FOR item IN 1 TO 10 OF {{ }}')).toBeNull();
     });
   });
+
+  describe('tab character handling', () => {
+    it('accepts tab between variable and IN keyword', () => {
+      expect(parseForClause('FOR batch\tIN 5')).toEqual({
+        variable: 'batch',
+        start: 1,
+        end: 5,
+      });
+    });
+
+    it('accepts tab after IN keyword', () => {
+      expect(parseForClause('FOR batch IN\t5')).toEqual({
+        variable: 'batch',
+        start: 1,
+        end: 5,
+      });
+    });
+
+    it('accepts multiple tabs between variable and IN', () => {
+      expect(parseForClause('FOR x\t\tIN 3')).toEqual({
+        variable: 'x',
+        start: 1,
+        end: 3,
+      });
+    });
+
+    it('accepts tab between IN and source ref', () => {
+      expect(parseForClause('FOR item IN\t{{items}}')).toEqual({
+        variable: 'item',
+        start: 1,
+        source: 'items',
+      });
+    });
+
+    it('accepts tabs throughout named FOR range', () => {
+      expect(parseForClause('FOR i\tIN\t1 TO 5')).toEqual({
+        variable: 'i',
+        start: 1,
+        end: 5,
+      });
+    });
+
+    it('accepts tab as variable separator with TO range', () => {
+      expect(parseForClause('FOR batch\tIN 1 TO 10')).toEqual({
+        variable: 'batch',
+        start: 1,
+        end: 10,
+      });
+    });
+
+    it('accepts tab before IN with data source', () => {
+      expect(parseForClause('FOR server\tIN {{servers}}')).toEqual({
+        variable: 'server',
+        start: 1,
+        source: 'servers',
+      });
+    });
+
+    it('rejects FOR x IN followed by tabs only', () => {
+      expect(parseForClause('FOR x IN \t  ')).toBeNull();
+    });
+  });
+
+  describe('whitespace trimming', () => {
+    it('trims leading whitespace from input', () => {
+      expect(parseForClause('  FOR 5')).toEqual({ start: 1, end: 5 });
+    });
+
+    it('trims trailing whitespace from input', () => {
+      expect(parseForClause('FOR 5  ')).toEqual({ start: 1, end: 5 });
+    });
+
+    it('trims leading tab from input', () => {
+      expect(parseForClause('\tFOR 5')).toEqual({ start: 1, end: 5 });
+    });
+
+    it('trims extra spaces after FOR keyword', () => {
+      expect(parseForClause('FOR   10')).toEqual({ start: 1, end: 10 });
+    });
+
+    it('trims extra spaces after FOR with named variable', () => {
+      expect(parseForClause('FOR   batch IN 5')).toEqual({
+        variable: 'batch',
+        start: 1,
+        end: 5,
+      });
+    });
+
+    it('trims surrounding whitespace with named form', () => {
+      expect(parseForClause('  FOR  batch IN 5  ')).toEqual({
+        variable: 'batch',
+        start: 1,
+        end: 5,
+      });
+    });
+
+    it('returns null for FOR followed by only tabs', () => {
+      expect(parseForClause('FOR \t')).toBeNull();
+    });
+  });
+
+  describe('MAX_FOR_BOUND boundary', () => {
+    it('accepts exactly 10000 as unnamed count', () => {
+      expect(parseForClause('FOR 10000')).toEqual({ start: 1, end: 10000 });
+    });
+
+    it('rejects 10001 as unnamed count', () => {
+      expect(parseForClause('FOR 10001')).toBeNull();
+    });
+
+    it('accepts 10000 as end in named range', () => {
+      expect(parseForClause('FOR i IN 1 TO 10000')).toEqual({
+        variable: 'i',
+        start: 1,
+        end: 10000,
+      });
+    });
+
+    it('rejects 10001 as end in named range', () => {
+      expect(parseForClause('FOR i IN 1 TO 10001')).toBeNull();
+    });
+
+    it('accepts 10000 as start in unnamed range', () => {
+      expect(parseForClause('FOR 10000 TO 10000')).toEqual({
+        start: 10000,
+        end: 10000,
+      });
+    });
+
+    it('rejects 10001 as start in unnamed range', () => {
+      expect(parseForClause('FOR 10001 TO 5')).toBeNull();
+    });
+  });
+
+  describe('parseBound strict validation', () => {
+    it('rejects leading zero (01)', () => {
+      expect(parseForClause('FOR 01')).toBeNull();
+    });
+
+    it('rejects leading zeros in named count (05)', () => {
+      expect(parseForClause('FOR x IN 05')).toBeNull();
+    });
+
+    it('rejects float-like string (1.5)', () => {
+      expect(parseForClause('FOR 1.5')).toBeNull();
+    });
+
+    it('rejects plus-prefixed number (+5)', () => {
+      expect(parseForClause('FOR +5')).toBeNull();
+    });
+
+    it('rejects zero as named count', () => {
+      expect(parseForClause('FOR x IN 0')).toBeNull();
+    });
+  });
+
+  describe('regex anchor enforcement', () => {
+    it('rejects template ref with leading text in bound', () => {
+      expect(parseForClause('FOR 1 TO abc{{Max}}')).toBeNull();
+    });
+
+    it('rejects template ref with trailing text in bound', () => {
+      expect(parseForClause('FOR 1 TO {{Max}}abc')).toBeNull();
+    });
+
+    it('rejects source ref with leading text', () => {
+      expect(parseForClause('FOR x IN 1{{items}}')).toBeNull();
+    });
+
+    it('rejects source ref with trailing text', () => {
+      expect(parseForClause('FOR x IN {{items}}abc')).toBeNull();
+    });
+
+    it('rejects variable name starting with digit', () => {
+      expect(parseForClause('FOR 2items IN 1 TO 5')).toBeNull();
+    });
+
+    it('rejects template ref with extra closing brace', () => {
+      expect(parseForClause('FOR {{Max}}}')).toBeNull();
+    });
+  });
+
+  describe('IN keyword and post-IN spacing', () => {
+    it('rejects OF keyword instead of IN', () => {
+      expect(parseForClause('FOR batch OF 1 TO 10')).toBeNull();
+    });
+
+    it('rejects IS keyword instead of IN', () => {
+      expect(parseForClause('FOR batch IS 5')).toBeNull();
+    });
+
+    it('rejects IN without space before ref', () => {
+      expect(parseForClause('FOR x IN{{items}}')).toBeNull();
+    });
+
+    it('rejects IN without space before number', () => {
+      expect(parseForClause('FOR x IN5')).toBeNull();
+    });
+
+    it('rejects FOR x IN followed by only spaces', () => {
+      expect(parseForClause('FOR x IN ')).toBeNull();
+    });
+  });
+
+  describe('named path bound parse failures', () => {
+    it('returns null when named start exceeds MAX_FOR_BOUND', () => {
+      expect(parseForClause('FOR i IN 10001 TO 5')).toBeNull();
+    });
+
+    it('returns null for non-numeric non-ref named count', () => {
+      expect(parseForClause('FOR x IN abc')).toBeNull();
+    });
+
+    it('returns null when windowed source end exceeds MAX_FOR_BOUND', () => {
+      expect(parseForClause('FOR x IN 1 TO 10001 OF {{ items }}')).toBeNull();
+    });
+
+    it('returns null when windowed source start exceeds MAX_FOR_BOUND', () => {
+      expect(parseForClause('FOR x IN 10001 TO 5 OF {{ items }}')).toBeNull();
+    });
+
+    it('returns null when both windowed source bounds exceed MAX_FOR_BOUND', () => {
+      expect(parseForClause('FOR x IN 10001 TO 10002 OF {{ items }}')).toBeNull();
+    });
+
+    it('parses single-character variable name', () => {
+      expect(parseForClause('FOR i IN 3')).toEqual({
+        variable: 'i',
+        start: 1,
+        end: 3,
+      });
+    });
+  });
 });
 
 describe('BoundRef type guards', () => {
