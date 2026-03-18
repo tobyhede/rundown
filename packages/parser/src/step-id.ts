@@ -60,6 +60,141 @@ export interface ParseStepIdOptions {
 }
 
 /**
+ * Validate a substep identifier: reject reserved words and non-positive numeric values.
+ *
+ * @param substep - The substep string to validate
+ * @returns True if the substep is valid, false if it should be rejected
+ */
+function isValidSubstepInStepId(substep: string): boolean {
+  if (NAMED_IDENTIFIER_PATTERN.test(substep) && isReservedWord(substep)) {
+    return false;
+  }
+  if (/^\d+$/.test(substep)) {
+    const substepNum = parseInt(substep, 10);
+    if (substepNum < 1) return false;
+  }
+  return true;
+}
+
+/**
+ * Parse the AT suffix from a step ID string.
+ *
+ * @param input - The full input string potentially containing " AT value"
+ * @returns Parsed AT value and remaining step input, or null if AT value is invalid
+ */
+function parseAtSuffix(input: string): { atValue: StepId['at']; stepInput: string } | null {
+  const atIndex = input.indexOf(' AT ');
+  if (atIndex === -1) return { atValue: undefined, stepInput: input };
+
+  const atStr = input.slice(atIndex + 4).trim();
+  const stepInput = input.slice(0, atIndex).trim();
+
+  // Parse AT value as positive integer or template variable
+  const num = parseInt(atStr, 10);
+  if (!Number.isNaN(num) && String(num) === atStr && num > 0) {
+    return { atValue: num, stepInput };
+  }
+  if (/^\{\{\s*[a-zA-Z_][a-zA-Z0-9_]*\s*\}\}$/.test(atStr)) {
+    return { atValue: atStr, stepInput };
+  }
+  return null; // Invalid AT value
+}
+
+/**
+ * Parse three-level numeric format: 1.2.1, 1.2.Cleanup (step.iteration.substep).
+ *
+ * @param stepInput - The step input string (AT suffix already removed)
+ * @param atValue - Parsed AT value (must be undefined for three-level — contradictory otherwise)
+ * @param requireSeparator - Whether a trailing separator is required
+ * @returns Parsed StepId or null if not matching
+ */
+function parseThreeLevelNumeric(
+  stepInput: string,
+  atValue: StepId['at'],
+  requireSeparator: boolean,
+): StepId | null {
+  const pattern = requireSeparator
+    ? /^(\d+)\.(\d+)\.(\d+|[A-Za-z_][A-Za-z0-9_]*)[\s\-:]/
+    : /^(\d+)\.(\d+)\.(\d+|[A-Za-z_][A-Za-z0-9_]*)$/;
+
+  const match = stepInput.match(pattern);
+  if (!match) return null;
+
+  // Three-level with explicit AT suffix is contradictory — reject
+  if (atValue !== undefined) return null;
+
+  const stepStr = match[1];
+  const iterationStr = match[2];
+  const substep = match[3];
+
+  const stepNum = parseInt(stepStr, 10);
+  if (stepNum <= 0) return null;
+
+  const iterationNum = parseInt(iterationStr, 10);
+  if (iterationNum < 1) return null;
+
+  if (substep && !isValidSubstepInStepId(substep)) return null;
+
+  return { step: stepStr, substep, at: iterationNum };
+}
+
+/**
+ * Parse two-level numeric format: 1, 1.2, 1.Name.
+ *
+ * @param stepInput - The step input string (AT suffix already removed)
+ * @param atValue - Parsed AT value to attach if present
+ * @param requireSeparator - Whether a trailing separator is required
+ * @returns Parsed StepId or null if not matching
+ */
+function parseTwoLevelNumeric(
+  stepInput: string,
+  atValue: StepId['at'],
+  requireSeparator: boolean,
+): StepId | null {
+  const pattern = requireSeparator
+    ? /^(\d+)(?:\.(\d+|[A-Za-z_][A-Za-z0-9_]*))?[\s\-:]/
+    : /^(\d+)(?:\.(\d+|[A-Za-z_][A-Za-z0-9_]*))?$/;
+
+  const match = stepInput.match(pattern);
+  if (!match) return null;
+
+  const stepStr = match[1];
+  const stepNum = parseInt(stepStr, 10);
+
+  // Validate step number is positive
+  if (stepNum <= 0) return null;
+
+  const substep = match[2];
+
+  if (substep && !isValidSubstepInStepId(substep)) return null;
+
+  return { step: stepStr, substep, ...(atValue !== undefined ? { at: atValue } : {}) };
+}
+
+/**
+ * Parse named step format: Cleanup, ErrorHandler.1, ErrorHandler.Recover.
+ *
+ * @param stepInput - The step input string (AT suffix already removed)
+ * @param atValue - Parsed AT value to attach if present
+ * @returns Parsed StepId or null if not matching
+ */
+function parseNamedStep(stepInput: string, atValue: StepId['at']): StepId | null {
+  const pattern = /^([A-Za-z_][A-Za-z0-9_]*)(?:\.(\d+|[A-Za-z_][A-Za-z0-9_]*))?$/;
+  const match = pattern.exec(stepInput);
+  if (!match) return null;
+
+  const stepName = match[1];
+  const substep = match[2];
+
+  // Reject reserved words as step names (NEXT already handled in caller)
+  if (isReservedWord(stepName)) return null;
+
+  if (substep && !isValidSubstepInStepId(substep)) return null;
+
+  return { step: stepName, substep, ...(atValue !== undefined ? { at: atValue } : {}) };
+}
+
+/**
  * Parse a StepId from a string representation.
  *
  * Supports these formats:
@@ -77,31 +212,13 @@ export function parseStepIdFromString(input: string, options?: ParseStepIdOption
   if (!input) return null;
 
   // Reject quoted strings - names must be identifiers
-  if (input.startsWith('"')) {
-    return null;
-  }
+  if (input.startsWith('"')) return null;
 
   const requireSeparator = options?.requireSeparator ?? false;
 
-  // Handle AT suffix: "3 AT 1", "3.1 AT {{Index}}"
-  const atIndex = input.indexOf(' AT ');
-  let atValue: number | string | undefined;
-  let stepInput = input;
-
-  if (atIndex !== -1) {
-    const atStr = input.slice(atIndex + 4).trim();
-    stepInput = input.slice(0, atIndex).trim();
-
-    // Parse AT value as positive integer or template variable
-    const num = parseInt(atStr, 10);
-    if (!Number.isNaN(num) && String(num) === atStr && num > 0) {
-      atValue = num;
-    } else if (/^\{\{\s*[a-zA-Z_][a-zA-Z0-9_]*\s*\}\}$/.test(atStr)) {
-      atValue = atStr;
-    } else {
-      return null; // Invalid AT value
-    }
-  }
+  const atResult = parseAtSuffix(input);
+  if (!atResult) return null;
+  const { atValue, stepInput } = atResult;
 
   // Reject dynamic format placeholders {N}, {n}, and NEXT
   if (
@@ -114,94 +231,11 @@ export function parseStepIdFromString(input: string, options?: ParseStepIdOption
     return null;
   }
 
-  // === THREE-LEVEL NUMERIC: 1.2.1, 1.2.Cleanup (step.iteration.substep) ===
-  const threeLevelPattern = requireSeparator
-    ? /^(\d+)\.(\d+)\.(\d+|[A-Za-z_][A-Za-z0-9_]*)[\s\-:]/
-    : /^(\d+)\.(\d+)\.(\d+|[A-Za-z_][A-Za-z0-9_]*)$/;
-
-  const threeLevelMatch = stepInput.match(threeLevelPattern);
-  if (threeLevelMatch) {
-    // Three-level with explicit AT suffix is contradictory — reject
-    if (atValue !== undefined) return null;
-
-    const stepStr = threeLevelMatch[1];
-    const iterationStr = threeLevelMatch[2];
-    const substep = threeLevelMatch[3];
-
-    const stepNum = parseInt(stepStr, 10);
-    if (stepNum <= 0) return null;
-
-    const iterationNum = parseInt(iterationStr, 10);
-    if (iterationNum < 1) return null;
-
-    if (substep && NAMED_IDENTIFIER_PATTERN.test(substep) && isReservedWord(substep)) {
-      return null;
-    }
-
-    if (substep && /^\d+$/.test(substep)) {
-      const substepNum = parseInt(substep, 10);
-      if (substepNum < 1) return null;
-    }
-
-    return { step: stepStr, substep, at: iterationNum };
-  }
-
-  // === NUMERIC STEP HANDLING: 1, 1.2, 1.Name ===
-  const numericPattern = requireSeparator
-    ? /^(\d+)(?:\.(\d+|[A-Za-z_][A-Za-z0-9_]*))?[\s\-:]/
-    : /^(\d+)(?:\.(\d+|[A-Za-z_][A-Za-z0-9_]*))?$/;
-
-  const numericMatch = stepInput.match(numericPattern);
-  if (numericMatch) {
-    const stepStr = numericMatch[1];
-    const stepNum = parseInt(stepStr, 10);
-
-    // Validate step number is positive
-    if (stepNum <= 0) return null;
-
-    const substep = numericMatch[2];
-
-    // Reject reserved words as named substeps (e.g., 1.CONTINUE)
-    if (substep && NAMED_IDENTIFIER_PATTERN.test(substep) && isReservedWord(substep)) {
-      return null;
-    }
-
-    // Validate numeric substep is positive
-    if (substep && /^\d+$/.test(substep)) {
-      const substepNum = parseInt(substep, 10);
-      if (substepNum < 1) return null;
-    }
-
-    return { step: stepStr, substep, ...(atValue !== undefined ? { at: atValue } : {}) };
-  }
-
-  // === NAMED STEP HANDLING: Cleanup, ErrorHandler.1, ErrorHandler.Recover ===
-  const namedPattern = /^([A-Za-z_][A-Za-z0-9_]*)(?:\.(\d+|[A-Za-z_][A-Za-z0-9_]*))?$/;
-  const namedMatch = namedPattern.exec(stepInput);
-  if (namedMatch) {
-    const stepName = namedMatch[1];
-    const substep = namedMatch[2];
-
-    // Reject reserved words as step names (NEXT already handled above)
-    if (isReservedWord(stepName)) {
-      return null;
-    }
-
-    // Reject reserved words as substep names
-    if (substep && NAMED_IDENTIFIER_PATTERN.test(substep) && isReservedWord(substep)) {
-      return null;
-    }
-
-    // Validate numeric substep is positive
-    if (substep && /^\d+$/.test(substep)) {
-      const substepNum = parseInt(substep, 10);
-      if (substepNum < 1) return null;
-    }
-
-    return { step: stepName, substep, ...(atValue !== undefined ? { at: atValue } : {}) };
-  }
-
-  return null;
+  return (
+    parseThreeLevelNumeric(stepInput, atValue, requireSeparator) ??
+    parseTwoLevelNumeric(stepInput, atValue, requireSeparator) ??
+    parseNamedStep(stepInput, atValue)
+  );
 }
 
 /**
