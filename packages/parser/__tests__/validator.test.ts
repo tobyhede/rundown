@@ -1235,7 +1235,6 @@ describe('validator mutation killing - empty steps', () => {
 });
 
 describe('validator mutation killing - step ordering', () => {
-
   it('detects non-sequential numeric steps', () => {
     const steps = [mockStep({ name: '1' }), mockStep({ name: '3' })];
     const diagnostics = validateRunbook(steps);
@@ -1259,7 +1258,6 @@ describe('validator mutation killing - step ordering', () => {
 });
 
 describe('validator mutation killing - exclusivity rules', () => {
-
   it('correctly distinguishes command steps from base steps', () => {
     const cmdStep = mockStep({ command: { code: 'echo hi' } });
     expect(cmdStep.kind).toBe('command');
@@ -1300,7 +1298,6 @@ describe('validator mutation killing - schema validation failure', () => {
 });
 
 describe('validator mutation killing - FOR transition validation', () => {
-
   it('reports error for NEXT on parent FOR step pass transition', () => {
     const step = mockStep({
       name: '1',
@@ -1337,7 +1334,6 @@ describe('validator mutation killing - FOR transition validation', () => {
 });
 
 describe('validator mutation killing - DEFER at step level', () => {
-
   it('reports error for DEFER on pass at step level', () => {
     const step = mockStep({
       name: '1',
@@ -1370,7 +1366,6 @@ describe('validator mutation killing - DEFER at step level', () => {
 });
 
 describe('validator mutation killing - DEFER aggregation', () => {
-
   it('warns when substep uses DEFER but no aggregation set', () => {
     const step = mockStep({
       name: '1',
@@ -1464,7 +1459,6 @@ describe('validator mutation killing - DEFER aggregation', () => {
 });
 
 describe('validator mutation killing - GOTO target validation', () => {
-
   it('reports error for GOTO to non-existent step', () => {
     const steps = [
       mockStep({
@@ -1612,7 +1606,6 @@ describe('validator mutation killing - GOTO target validation', () => {
 });
 
 describe('validator mutation killing - loop control context', () => {
-
   it('reports error for NEXT outside substep context', () => {
     const step = mockStep({
       name: '1',
@@ -1674,7 +1667,6 @@ describe('validator mutation killing - loop control context', () => {
 });
 
 describe('validator mutation killing - duplicate step names', () => {
-
   it('reports error for duplicate step names', () => {
     const steps = [mockStep({ name: '1' }), mockStep({ name: '1' })];
     const diagnostics = validateRunbook(steps);
@@ -1691,7 +1683,6 @@ describe('validator mutation killing - duplicate step names', () => {
 });
 
 describe('validator mutation killing - named GOTO targets', () => {
-
   it('validates GOTO to named step with substep', () => {
     const steps = [
       mockStep({

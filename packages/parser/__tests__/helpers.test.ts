@@ -2308,7 +2308,7 @@ describe('E3: bare numeric step headers', () => {
   });
 });
 
-// === Mutation-killing tests: Batch 0 ===
+// === Batch 0: helpers.ts mutation-killing tests ===
 
 describe('RunbookSyntaxError', () => {
   it('has name property set to RunbookSyntaxError', () => {
@@ -2355,7 +2355,7 @@ describe('formatAction mutation killing', () => {
   });
 });
 
-// === Mutation-killing tests: Batch 1 (H1, H2) ===
+// === Batch 1: helpers.ts mutation-killing tests ===
 
 describe('parseQuotedOrIdentifier mutation killing', () => {
   it('throws specific message for empty string', () => {
@@ -2429,7 +2429,7 @@ describe('stripSeparator mutation killing', () => {
   });
 });
 
-// === Mutation-killing tests: Batch 2 (H3, H4, H5) ===
+// === Batch 2: helpers.ts mutation-killing tests ===
 
 describe('extractStepHeader mutation killing', () => {
   it('returns null for step 0', () => {
@@ -2528,7 +2528,7 @@ describe('extractSubstepHeader mutation killing', () => {
   });
 });
 
-// === Mutation-killing tests: Batch 3 (H6, H7) ===
+// === Batch 3: helpers.ts mutation-killing tests ===
 
 describe('parseForClause mutation killing - parseNamedForPrefix', () => {
   it('handles tab-separated FOR var IN source', () => {
@@ -2608,7 +2608,7 @@ describe('parseForClause mutation killing - bounds and templates', () => {
   });
 });
 
-// === Mutation-killing tests: Batch 4 (H8, H9, H11, H12, H13) ===
+// === Batch 4: helpers.ts mutation-killing tests ===
 
 describe('parseAction catch block mutation killing', () => {
   it('returns null (not undefined) for COMPLETE with unclosed quote', () => {
