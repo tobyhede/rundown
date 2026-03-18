@@ -245,19 +245,18 @@ export interface ExplicitTarget {
 }
 
 /**
- * Execute a transition with the given configuration.
+ * Execute a configured transition (pass or fail) against the current runbook state.
  *
- * Main entry point for transition execution. Sends event to actor,
- * updates state, emits action output, handles terminal states,
- * and runs execution loop if needed.
+ * When targeting a substep (via an explicit target), records or reuses a resolved completion and drains completions;
+ * otherwise sends the transition event to the actor, orchestrates the step-level transition, and runs the execution loop
+ * as needed. Emits CLI output for actions, completions, and stopped conditions.
  *
- * @param ctx - Transition context
- * @param config - Transition configuration
- * @param explicitTarget - Optional explicit target for directing transition at a specific substep
- * @returns `'continue'` for normal flow including completed/done paths, `'stopped'` if it reached a terminal state
- * @throws {Error} from `findStepOrThrow` if the active step is missing (state corruption),
- *   from `ensureActiveEntry` on lifecycle violations, or from orchestration failures
- * @throws {IndexOptionError} if `--index` validation fails
+ * @param ctx - Runtime transition context (output, services, state, steps, actor, cwd)
+ * @param config - Transition configuration that determines event type, result semantics, and terminal policy
+ * @param explicitTarget - Optional explicit target step/substep string (e.g., "2.1") and optional raw --index value to apply the transition to a specific substep/iteration
+ * @returns `'continue'` when execution proceeds or completes normally, `'stopped'` when a terminal stop was reached
+ * @throws {Error} if the active step is missing or an explicit target is invalid, or when lifecycle/orchestration validations fail
+ * @throws {IndexOptionError} if `--index` validation or resolution fails
  */
 export async function executeTransition(
   ctx: TransitionContext,
