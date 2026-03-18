@@ -294,7 +294,7 @@ FOR-level nested transitions (nested bullets directly under `- FOR ...`) run at 
 
 | Action | Effect |
 |--------|--------|
-| `CONTINUE` | Keep iterating |
+| `CONTINUE` | Exit loop (current result NOT recorded) → step-level handler |
 | `BREAK` | Exit loop immediately (non-accumulating — same as NEXT) |
 | `GOTO` | Jump immediately; bypass parent FOR aggregation |
 | `STOP` | Stop immediately; bypass parent FOR aggregation |
