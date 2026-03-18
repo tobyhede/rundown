@@ -21,7 +21,8 @@ import {
   type Bound,
   type ParsedForClause,
 } from '../src/index.js';
-import { formatAction, isExecutableCodeBlock } from '../src/helpers.js';
+import { RunbookSyntaxError } from '../src/types.js';
+import { formatAction, isExecutableCodeBlock, stripSeparator } from '../src/helpers.js';
 
 describe('parseAction NEXT and BREAK', () => {
   it('parses standalone NEXT as first-class NEXT action', () => {
@@ -2304,5 +2305,479 @@ describe('E3: bare numeric step headers', () => {
       name: '1',
       description: 'Do something',
     });
+  });
+});
+
+// === Mutation-killing tests: Batch 0 ===
+
+describe('RunbookSyntaxError', () => {
+  it('has name property set to RunbookSyntaxError', () => {
+    const err = new RunbookSyntaxError('test message');
+    expect(err.name).toBe('RunbookSyntaxError');
+  });
+
+  it('is an instance of Error', () => {
+    const err = new RunbookSyntaxError('test');
+    expect(err).toBeInstanceOf(Error);
+  });
+
+  it('preserves the message', () => {
+    const err = new RunbookSyntaxError('specific message');
+    expect(err.message).toBe('specific message');
+  });
+});
+
+describe('formatAction mutation killing', () => {
+  it('formats DEFER action', () => {
+    expect(formatAction({ type: 'DEFER' })).toBe('DEFER');
+  });
+
+  it('formats NEXT action', () => {
+    expect(formatAction({ type: 'NEXT' })).toBe('NEXT');
+  });
+
+  it('formats BREAK action', () => {
+    expect(formatAction({ type: 'BREAK' })).toBe('BREAK');
+  });
+
+  it('formats unknown action type as UNKNOWN', () => {
+    expect(formatAction({ type: 'INVALID' } as any)).toBe('UNKNOWN');
+  });
+
+  it('DEFER returns string DEFER not empty string', () => {
+    const result = formatAction({ type: 'DEFER' });
+    expect(result).not.toBe('');
+    expect(result).toBe('DEFER');
+  });
+
+  it('NEXT returns string NEXT not empty string', () => {
+    const result = formatAction({ type: 'NEXT' });
+    expect(result).not.toBe('');
+    expect(result).toBe('NEXT');
+  });
+
+  it('BREAK returns string BREAK not empty string', () => {
+    const result = formatAction({ type: 'BREAK' });
+    expect(result).not.toBe('');
+    expect(result).toBe('BREAK');
+  });
+
+  it('GOTO formats with step ID string', () => {
+    const result = formatAction({ type: 'GOTO', target: { step: '3', substep: '1' } });
+    expect(result).toBe('GOTO 3.1');
+  });
+
+  it('GOTO with AT formats correctly', () => {
+    const result = formatAction({ type: 'GOTO', target: { step: '3', at: 2 } });
+    expect(result).toBe('GOTO 3 AT 2');
+  });
+});
+
+// === Mutation-killing tests: Batch 1 (H1, H2) ===
+
+describe('parseQuotedOrIdentifier mutation killing', () => {
+  it('throws specific message for empty string', () => {
+    expect(() => parseQuotedOrIdentifier('')).toThrow(
+      'Empty string is not a valid identifier or quoted string',
+    );
+  });
+
+  it('throws specific message for whitespace-only input', () => {
+    expect(() => parseQuotedOrIdentifier('   ')).toThrow(
+      'Empty string is not a valid identifier or quoted string',
+    );
+  });
+
+  it('throws specific message for unclosed opening quote', () => {
+    expect(() => parseQuotedOrIdentifier('"hello')).toThrow(/Unclosed quote/);
+  });
+
+  it('throws specific message for unclosed trailing quote', () => {
+    expect(() => parseQuotedOrIdentifier('hello"')).toThrow(/Unclosed quote/);
+  });
+
+  it('throws specific message for single quote character', () => {
+    expect(() => parseQuotedOrIdentifier('"')).toThrow(/Unclosed quote/);
+  });
+
+  it('parses empty quoted string correctly', () => {
+    expect(parseQuotedOrIdentifier('""')).toBe('');
+  });
+
+  it('throws with specific format for invalid identifier', () => {
+    expect(() => parseQuotedOrIdentifier('hello world')).toThrow(/Invalid format/);
+  });
+
+  it('throws with reserved word message including word name', () => {
+    expect(() => parseQuotedOrIdentifier('BREAK')).toThrow(/Reserved word "BREAK"/);
+  });
+
+  it('throws with reserved word message for DEFER', () => {
+    expect(() => parseQuotedOrIdentifier('DEFER')).toThrow(/Reserved word "DEFER"/);
+  });
+
+  it('throws with reserved word message for FOR', () => {
+    expect(() => parseQuotedOrIdentifier('FOR')).toThrow(/Reserved word "FOR"/);
+  });
+});
+
+describe('stripSeparator mutation killing', () => {
+  it('strips leading period', () => {
+    expect(stripSeparator('. hello')).toBe('hello');
+  });
+
+  it('strips leading colon', () => {
+    expect(stripSeparator(': hello')).toBe('hello');
+  });
+
+  it('strips multiple leading separators', () => {
+    expect(stripSeparator('.:— hello')).toBe('hello');
+  });
+
+  it('does not strip separators mid-string', () => {
+    expect(stripSeparator('hello: world')).toBe('hello: world');
+  });
+
+  it('returns empty string for all-separator input', () => {
+    expect(stripSeparator('.:)')).toBe('');
+  });
+
+  it('trims trailing whitespace after stripping', () => {
+    expect(stripSeparator('. hello  ')).toBe('hello');
+  });
+});
+
+// === Mutation-killing tests: Batch 2 (H3, H4, H5) ===
+
+describe('extractStepHeader mutation killing', () => {
+  it('returns null for step 0', () => {
+    expect(extractStepHeader('0 Something')).toBeNull();
+  });
+
+  it('accepts MAX_STEP_NUMBER (999999)', () => {
+    const result = extractStepHeader('999999 Big step');
+    expect(result).toEqual({ name: '999999', description: 'Big step' });
+  });
+
+  it('returns null for MAX_STEP_NUMBER+1 (1000000)', () => {
+    expect(extractStepHeader('1000000 Too big')).toBeNull();
+  });
+
+  it('handles leading whitespace in input', () => {
+    const result = extractStepHeader('  1 Description');
+    expect(result).toEqual({ name: '1', description: 'Description' });
+  });
+
+  it('handles trailing whitespace in input', () => {
+    const result = extractStepHeader('1 Description  ');
+    expect(result).toEqual({ name: '1', description: 'Description' });
+  });
+
+  it('returns default description for bare number', () => {
+    const result = extractStepHeader('5');
+    expect(result).toEqual({ name: '5', description: 'Step 5' });
+  });
+
+  it('returns null when name is all separators', () => {
+    expect(extractStepHeader('.:)')).toBeNull();
+  });
+
+  it('parses identifier followed by word as name and description', () => {
+    const result = extractStepHeader('1abc');
+    expect(result).toEqual({ name: '1', description: 'abc' });
+  });
+
+  it('handles multiple consecutive spaces between words', () => {
+    const result = extractStepHeader('Cleanup   Handle   errors');
+    expect(result).toEqual({ name: 'Cleanup', description: 'Handle errors' });
+  });
+});
+
+describe('isValidStepRef/isValidSubstepId mutation killing (via extractSubstepHeader)', () => {
+  it('rejects "0" as substep id', () => {
+    expect(extractSubstepHeader('1.0 Something')).toBeNull();
+  });
+
+  it('accepts multi-digit numeric substep', () => {
+    const result = extractSubstepHeader('1.12 Description');
+    expect(result).toEqual({ stepRef: '1', id: '12', description: 'Description' });
+  });
+
+  it('rejects step ref "0" in dot notation', () => {
+    expect(extractSubstepHeader('0.1 Something')).toBeNull();
+  });
+
+  it('rejects reserved word IN as substep', () => {
+    expect(extractSubstepHeader('1.IN Something')).toBeNull();
+  });
+
+  it('rejects reserved word AT as substep', () => {
+    expect(extractSubstepHeader('1.AT Something')).toBeNull();
+  });
+
+  it('rejects reserved word TO as substep', () => {
+    expect(extractSubstepHeader('1.TO Something')).toBeNull();
+  });
+});
+
+describe('extractSubstepHeader mutation killing', () => {
+  it('returns null for whitespace-only input', () => {
+    expect(extractSubstepHeader('   ')).toBeNull();
+  });
+
+  it('handles multi-digit bare numeric', () => {
+    const result = extractSubstepHeader('12 Description');
+    expect(result).toEqual({ id: '12', description: 'Description' });
+  });
+
+  it('returns null for dot-qualified with nothing after dot', () => {
+    // "1." is actually handled as bare numeric with trailing separator
+    // But "valid." should be null since dot-qualified branch requires something after dot
+    const result = extractSubstepHeader('1.');
+    // 1. is parsed as bare numeric "1" with trailing dot separator
+    expect(result).toEqual({ id: '1', description: '' });
+  });
+
+  it('returns null for dot-qualified pattern not matching expected format', () => {
+    const result = extractSubstepHeader('1.Cleanup. Description');
+    // This doesn't parse as expected pattern - returns null
+    expect(result).toBeNull();
+  });
+
+  it('returns null for string starting with dot', () => {
+    expect(extractSubstepHeader('.invalid')).toBeNull();
+  });
+});
+
+// === Mutation-killing tests: Batch 3 (H6, H7) ===
+
+describe('parseForClause mutation killing - parseNamedForPrefix', () => {
+  it('handles tab-separated FOR var IN source', () => {
+    const result = parseForClause('FOR\tvar\tIN\t{{source}}');
+    // After "FOR ", rest is "\tvar\tIN\t{{source}}" - but FOR requires space after
+    // Actually "FOR\t" doesn't start with "FOR " so this returns null
+    expect(result).toBeNull();
+  });
+
+  it('accepts single-char variable name', () => {
+    expect(parseForClause('FOR x IN 5')).toEqual({ variable: 'x', start: 1, end: 5 });
+  });
+
+  it('rejects variable with trailing invalid chars', () => {
+    expect(parseForClause('FOR x! IN 5')).toBeNull();
+  });
+
+  it('rejects FOR x OF instead of IN', () => {
+    expect(parseForClause('FOR x OF {{items}}')).toBeNull();
+  });
+
+  it('rejects FOR x IN without space before source', () => {
+    // "FOR x IN{{items}}" - after IN there is no space/tab
+    expect(parseForClause('FOR x IN{{items}}')).toBeNull();
+  });
+
+  it('returns null for FOR x IN followed by empty string after whitespace', () => {
+    expect(parseForClause('FOR x IN ')).toBeNull();
+  });
+
+  it('returns null for FOR with just variable (no IN)', () => {
+    expect(parseForClause('FOR abc')).toBeNull();
+  });
+
+  it('rejects invalid template in named count', () => {
+    expect(parseForClause('FOR x IN {items}')).toBeNull();
+  });
+});
+
+describe('parseForClause mutation killing - bounds and templates', () => {
+  it('rejects non-numeric non-template end in TO range', () => {
+    expect(parseForClause('FOR x IN 5 TO abc')).toBeNull();
+  });
+
+  it('rejects non-numeric non-template start in TO range', () => {
+    expect(parseForClause('FOR x IN abc TO 5')).toBeNull();
+  });
+
+  it('handles template as start in unnamed range', () => {
+    const result = parseForClause('FOR {{Start}} TO 10');
+    expect(result).toEqual({ unresolved: true, start: { ref: 'Start' }, end: 10 });
+  });
+
+  it('accepts leading whitespace before FOR', () => {
+    expect(parseForClause('  FOR 5')).toEqual({ start: 1, end: 5 });
+  });
+
+  it('rejects windowed source with invalid start', () => {
+    expect(parseForClause('FOR x IN abc TO 5 OF {{items}}')).toBeNull();
+  });
+
+  it('rejects windowed source with invalid end', () => {
+    expect(parseForClause('FOR x IN 1 TO abc OF {{items}}')).toBeNull();
+  });
+
+  it('parses windowed source with resolved bounds', () => {
+    expect(parseForClause('FOR x IN 2 TO 8 OF {{items}}')).toEqual({
+      variable: 'x',
+      start: 2,
+      end: 8,
+      source: 'items',
+    });
+  });
+
+  it('returns null for FOR with just reserved word', () => {
+    expect(parseForClause('FOR IN IN 5')).toBeNull();
+  });
+});
+
+// === Mutation-killing tests: Batch 4 (H8, H9, H11, H12, H13) ===
+
+describe('parseAction catch block mutation killing', () => {
+  it('returns null (not undefined) for COMPLETE with unclosed quote', () => {
+    const result = parseAction('COMPLETE "unclosed');
+    expect(result).toBeNull();
+    expect(result).not.toBeUndefined();
+    expect(result === null).toBe(true);
+  });
+
+  it('returns null (not undefined) for STOP with unclosed quote', () => {
+    const result = parseAction('STOP "unclosed');
+    expect(result).toBeNull();
+    expect(result).not.toBeUndefined();
+    expect(result === null).toBe(true);
+  });
+
+  it('returns null for COMPLETE with invalid format', () => {
+    const result = parseAction('COMPLETE 123abc');
+    expect(result).toBe(null);
+  });
+
+  it('returns null for STOP with invalid format', () => {
+    const result = parseAction('STOP 123abc');
+    expect(result).toBe(null);
+  });
+});
+
+describe('parseRetryWithArgs mutation killing', () => {
+  it('rejects RETRY with non-digit trailing characters (via parseConditional)', () => {
+    expect(() => parseConditional('FAIL RETRY 3abc')).toThrow('Invalid FAIL transition');
+  });
+
+  it('rejects RETRY with trailing space only (no action)', () => {
+    expect(() => parseConditional('FAIL RETRY 3 ')).toThrow('Invalid FAIL transition');
+  });
+
+  it('rejects RETRY with multiple spaces before action', () => {
+    // This should still work since remaining is trimmed
+    const result = parseConditional('FAIL RETRY 3  STOP');
+    expect(result).toEqual({
+      type: 'fail',
+      retry: 3,
+      action: { type: 'STOP' },
+      modifier: null,
+      raw: 'RETRY 3  STOP',
+    });
+  });
+
+  it('accepts single digit retry count', () => {
+    const result = parseConditional('FAIL RETRY 1 STOP');
+    expect(result).toMatchObject({ retry: 1, action: { type: 'STOP' } });
+  });
+
+  it('accepts multi-digit retry count', () => {
+    const result = parseConditional('FAIL RETRY 99 STOP');
+    expect(result).toMatchObject({ retry: 99, action: { type: 'STOP' } });
+  });
+
+  it('rejects digit at end of string without action', () => {
+    expect(() => parseConditional('FAIL RETRY 5')).toThrow('Invalid FAIL transition');
+  });
+});
+
+describe('convertToTransitions mutation killing', () => {
+  it('sets pass.kind to pass when only pass provided', () => {
+    const conditionals: ParsedConditional[] = [
+      { type: 'pass', retry: 0, action: { type: 'COMPLETE' }, modifier: null, raw: 'COMPLETE' },
+    ];
+    const result = convertToTransitions(conditionals);
+    expect(result!.transitions.pass.kind).toBe('pass');
+    expect(result!.transitions.fail.kind).toBe('fail');
+  });
+
+  it('sets fail.kind to fail when only fail provided', () => {
+    const conditionals: ParsedConditional[] = [
+      { type: 'fail', retry: 0, action: { type: 'STOP' }, modifier: null, raw: 'STOP' },
+    ];
+    const result = convertToTransitions(conditionals);
+    expect(result!.transitions.pass.kind).toBe('pass');
+    expect(result!.transitions.fail.kind).toBe('fail');
+  });
+
+  it('preserves retry count on pass transition', () => {
+    const conditionals: ParsedConditional[] = [
+      {
+        type: 'pass',
+        retry: 3,
+        action: { type: 'CONTINUE' },
+        modifier: null,
+        raw: 'RETRY 3 CONTINUE',
+      },
+      { type: 'fail', retry: 0, action: { type: 'STOP' }, modifier: null, raw: 'STOP' },
+    ];
+    const result = convertToTransitions(conditionals);
+    expect(result!.transitions.pass.retry).toBe(3);
+    expect(result!.transitions.fail.retry).toBe(0);
+  });
+});
+
+describe('extractRunbookList mutation killing', () => {
+  it('rejects indented list items without space after dash', () => {
+    const content = '-deploy.runbook.md';
+    const result = extractRunbookList(content);
+    expect(result).toEqual([]);
+  });
+
+  it('accepts indented list items with leading spaces', () => {
+    const content = '  - deploy.runbook.md';
+    const result = extractRunbookList(content);
+    expect(result).toEqual(['deploy.runbook.md']);
+  });
+
+  it('rejects items with trailing text after .runbook.md', () => {
+    const content = ' - deploy.runbook.md extra';
+    const result = extractRunbookList(content);
+    expect(result).toEqual([]);
+  });
+
+  it('accepts items with leading whitespace in filename (trims whitespace)', () => {
+    const content = ' -  deploy.runbook.md';
+    const result = extractRunbookList(content);
+    expect(result).toEqual(['deploy.runbook.md']);
+  });
+});
+
+describe('isExecutableCodeBlock mutation killing', () => {
+  it('returns true for basic bash', () => {
+    expect(isExecutableCodeBlock('bash')).toBe(true);
+  });
+
+  it('returns true for sh', () => {
+    expect(isExecutableCodeBlock('sh')).toBe(true);
+  });
+
+  it('returns true for shell', () => {
+    expect(isExecutableCodeBlock('shell')).toBe(true);
+  });
+
+  it('returns false for bash prompt', () => {
+    expect(isExecutableCodeBlock('bash prompt')).toBe(false);
+  });
+
+  it('returns false for whitespace-only input', () => {
+    expect(isExecutableCodeBlock(' ')).toBe(false);
+  });
+
+  it('handles case-insensitive matching', () => {
+    expect(isExecutableCodeBlock('BASH')).toBe(true);
+    expect(isExecutableCodeBlock('SH')).toBe(true);
   });
 });

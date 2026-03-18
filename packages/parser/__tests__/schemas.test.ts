@@ -16,6 +16,13 @@ import {
   StepWithCommandSchema,
   StepWithSubstepsSchema,
   StepWithForSchema,
+  StepNameSchema,
+  CommandSchema,
+  MAX_STEP_NUMBER,
+  TEMPLATE_VAR_PATTERN,
+  LoopControlActionSchema,
+  SubstepSchema,
+  StepSchema,
 } from '../src/schemas.js';
 
 describe('TransitionsSchema with kind', () => {
@@ -766,5 +773,271 @@ describe('aggregation scoped to parent steps only', () => {
       substeps: [{ id: '1', description: 'sub', transitions: defaultTransitions }],
     });
     expect(result.success).toBe(true);
+  });
+});
+
+// === Batch 6: schemas.ts mutation-killing tests ===
+
+describe('TEMPLATE_VAR_PATTERN mutation killing', () => {
+  it('rejects text before template variable', () => {
+    expect(TEMPLATE_VAR_PATTERN.test('text{{ var }}')).toBe(false);
+  });
+
+  it('rejects text after template variable', () => {
+    expect(TEMPLATE_VAR_PATTERN.test('{{ var }}text')).toBe(false);
+  });
+
+  it('accepts valid template variable', () => {
+    expect(TEMPLATE_VAR_PATTERN.test('{{ myVar }}')).toBe(true);
+  });
+
+  it('accepts template variable without spaces', () => {
+    expect(TEMPLATE_VAR_PATTERN.test('{{myVar}}')).toBe(true);
+  });
+
+  it('rejects empty braces', () => {
+    expect(TEMPLATE_VAR_PATTERN.test('{{ }}')).toBe(false);
+  });
+
+  it('rejects single brace template', () => {
+    expect(TEMPLATE_VAR_PATTERN.test('{ myVar }')).toBe(false);
+  });
+});
+
+describe('CommandSchema mutation killing', () => {
+  it('accepts valid command with code', () => {
+    expect(CommandSchema.safeParse({ code: 'echo hello' }).success).toBe(true);
+  });
+
+  it('rejects command without code', () => {
+    expect(CommandSchema.safeParse({}).success).toBe(false);
+  });
+
+  it('accepts command with lang', () => {
+    expect(CommandSchema.safeParse({ code: 'echo hi', lang: 'bash' }).success).toBe(true);
+  });
+
+  it('rejects non-string code', () => {
+    expect(CommandSchema.safeParse({ code: 123 }).success).toBe(false);
+  });
+});
+
+describe('StepNameSchema mutation killing', () => {
+  it('rejects step name "0"', () => {
+    expect(StepNameSchema.safeParse('0').success).toBe(false);
+  });
+
+  it('accepts MAX_STEP_NUMBER', () => {
+    expect(StepNameSchema.safeParse(String(MAX_STEP_NUMBER)).success).toBe(true);
+  });
+
+  it('rejects MAX_STEP_NUMBER + 1', () => {
+    expect(StepNameSchema.safeParse(String(MAX_STEP_NUMBER + 1)).success).toBe(false);
+  });
+
+  it('accepts positive integer "1"', () => {
+    expect(StepNameSchema.safeParse('1').success).toBe(true);
+  });
+
+  it('accepts valid identifier', () => {
+    expect(StepNameSchema.safeParse('ErrorHandler').success).toBe(true);
+  });
+
+  it('rejects reserved word CONTINUE', () => {
+    expect(StepNameSchema.safeParse('CONTINUE').success).toBe(false);
+  });
+
+  it('rejects reserved word STOP', () => {
+    expect(StepNameSchema.safeParse('STOP').success).toBe(false);
+  });
+
+  it('rejects invalid identifier with hyphen', () => {
+    expect(StepNameSchema.safeParse('error-handler').success).toBe(false);
+  });
+
+  it('rejects empty string', () => {
+    expect(StepNameSchema.safeParse('').success).toBe(false);
+  });
+
+  it('provides correct error message', () => {
+    const result = StepNameSchema.safeParse('CONTINUE');
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues[0].message).toBe(
+        'Step name must be a positive integer or valid identifier',
+      );
+    }
+  });
+});
+
+describe('StepIdSchema NEXT validation mutation killing', () => {
+  it('rejects NEXT with substep', () => {
+    expect(StepIdSchema.safeParse({ step: 'NEXT', substep: '1' }).success).toBe(false);
+  });
+
+  it('rejects NEXT with qualifier and substep', () => {
+    expect(
+      StepIdSchema.safeParse({
+        step: 'NEXT',
+        qualifier: { step: 'Cleanup' },
+        substep: '1',
+      }).success,
+    ).toBe(false);
+  });
+
+  it('accepts NEXT without substep', () => {
+    expect(StepIdSchema.safeParse({ step: 'NEXT' }).success).toBe(true);
+  });
+
+  it('accepts NEXT with qualifier only', () => {
+    expect(
+      StepIdSchema.safeParse({
+        step: 'NEXT',
+        qualifier: { step: 'ErrorHandler' },
+      }).success,
+    ).toBe(true);
+  });
+
+  it('provides correct error message for invalid NEXT', () => {
+    const result = StepIdSchema.safeParse({ step: 'NEXT', substep: '1' });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(
+        result.error.issues.some(
+          (i: { message: string }) => i.message === 'Invalid NEXT target structure',
+        ),
+      ).toBe(true);
+    }
+  });
+});
+
+describe('LoopControlActionSchema mutation killing', () => {
+  it('accepts NEXT action', () => {
+    expect(LoopControlActionSchema.safeParse({ type: 'NEXT' }).success).toBe(true);
+  });
+
+  it('accepts BREAK action', () => {
+    expect(LoopControlActionSchema.safeParse({ type: 'BREAK' }).success).toBe(true);
+  });
+
+  it('rejects CONTINUE action', () => {
+    expect(LoopControlActionSchema.safeParse({ type: 'CONTINUE' }).success).toBe(false);
+  });
+
+  it('rejects DEFER action', () => {
+    expect(LoopControlActionSchema.safeParse({ type: 'DEFER' }).success).toBe(false);
+  });
+});
+
+describe('ActionSchema discrimination mutation killing', () => {
+  it('accepts all 7 action types', () => {
+    expect(ActionSchema.safeParse({ type: 'CONTINUE' }).success).toBe(true);
+    expect(ActionSchema.safeParse({ type: 'DEFER' }).success).toBe(true);
+    expect(ActionSchema.safeParse({ type: 'COMPLETE' }).success).toBe(true);
+    expect(ActionSchema.safeParse({ type: 'STOP' }).success).toBe(true);
+    expect(ActionSchema.safeParse({ type: 'GOTO', target: { step: '1' } }).success).toBe(true);
+    expect(ActionSchema.safeParse({ type: 'NEXT' }).success).toBe(true);
+    expect(ActionSchema.safeParse({ type: 'BREAK' }).success).toBe(true);
+  });
+
+  it('rejects invalid action type', () => {
+    expect(ActionSchema.safeParse({ type: 'INVALID' }).success).toBe(false);
+  });
+
+  it('rejects GOTO without target', () => {
+    expect(ActionSchema.safeParse({ type: 'GOTO' }).success).toBe(false);
+  });
+});
+
+describe('SubstepSchema mutation killing', () => {
+  it('rejects empty prompt string', () => {
+    const result = SubstepSchema.safeParse({
+      id: '1',
+      description: 'Test',
+      transitions: {
+        pass: { kind: 'pass', action: { type: 'CONTINUE' } },
+        fail: { kind: 'fail', action: { type: 'STOP' } },
+      },
+      prompt: '',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts substep without prompt', () => {
+    const result = SubstepSchema.safeParse({
+      id: '1',
+      description: 'Test',
+      transitions: {
+        pass: { kind: 'pass', action: { type: 'CONTINUE' } },
+        fail: { kind: 'fail', action: { type: 'STOP' } },
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
+describe('StepSchema discrimination mutation killing', () => {
+  const defaultTransitions = {
+    pass: { kind: 'pass', action: { type: 'CONTINUE' } },
+    fail: { kind: 'fail', action: { type: 'STOP' } },
+  };
+
+  it('accepts base step', () => {
+    expect(
+      StepSchema.safeParse({
+        kind: 'base',
+        name: '1',
+        description: 'Test',
+        transitions: defaultTransitions,
+      }).success,
+    ).toBe(true);
+  });
+
+  it('accepts command step', () => {
+    expect(
+      StepSchema.safeParse({
+        kind: 'command',
+        name: '1',
+        description: 'Test',
+        transitions: defaultTransitions,
+        command: { code: 'echo' },
+      }).success,
+    ).toBe(true);
+  });
+
+  it('accepts substeps step', () => {
+    expect(
+      StepSchema.safeParse({
+        kind: 'substeps',
+        name: '1',
+        description: 'Test',
+        transitions: defaultTransitions,
+        substeps: [{ id: '1', description: 'Sub', transitions: defaultTransitions }],
+      }).success,
+    ).toBe(true);
+  });
+
+  it('accepts for step', () => {
+    expect(
+      StepSchema.safeParse({
+        kind: 'for',
+        name: '1',
+        description: 'Test',
+        transitions: defaultTransitions,
+        forClause: { start: 1, end: 3 },
+        substeps: [{ id: '1', description: 'Sub', transitions: defaultTransitions }],
+      }).success,
+    ).toBe(true);
+  });
+
+  it('rejects unknown kind', () => {
+    expect(
+      StepSchema.safeParse({
+        kind: 'unknown',
+        name: '1',
+        description: 'Test',
+        transitions: defaultTransitions,
+      }).success,
+    ).toBe(false);
   });
 });
