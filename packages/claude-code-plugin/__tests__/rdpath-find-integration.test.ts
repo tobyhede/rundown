@@ -40,7 +40,7 @@ describe('rdpath find integration', () => {
       });
 
       proc.on('close', (code) => {
-        resolve({ stdout, stderr, exitCode: code ?? 0 });
+        resolve({ stdout, stderr, exitCode: code ?? 1 });
       });
 
       proc.on('error', reject);

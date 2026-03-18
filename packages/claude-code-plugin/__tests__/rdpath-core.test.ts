@@ -145,6 +145,21 @@ describe('findFiles', () => {
     ]);
   });
 
+  it('rejects absolute glob patterns', async () => {
+    await expect(findFiles({ dir: testDir }, '/etc/*.md')).rejects.toThrow(
+      'Invalid pattern: must be relative to the target directory',
+    );
+  });
+
+  it('excludes directories matching the glob pattern', async () => {
+    await fs.writeFile(path.join(testDir, 'file.md'), 'content');
+    await fs.mkdir(path.join(testDir, 'dir.md'));
+
+    const results = await findFiles({ dir: testDir }, '*.md');
+
+    expect(results).toEqual([path.join(testDir, 'file.md')]);
+  });
+
   it('rejects pattern with .. traversal segments', async () => {
     await expect(findFiles({ dir: testDir }, '../*.md')).rejects.toThrow(
       'Invalid pattern: must not contain ".." path segments',

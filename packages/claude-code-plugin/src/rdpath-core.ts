@@ -111,6 +111,10 @@ export async function findFiles(options: RdPathFindOptions, pattern: string): Pr
     validateCtx(options.ctx);
   }
 
+  if (path.isAbsolute(pattern)) {
+    throw new Error('Invalid pattern: must be relative to the target directory');
+  }
+
   if (TRAVERSAL_PATTERN.test(pattern)) {
     throw new Error('Invalid pattern: must not contain ".." path segments');
   }
@@ -131,11 +135,13 @@ export async function findFiles(options: RdPathFindOptions, pattern: string): Pr
     throw error;
   }
 
-  // Collect glob matches
+  // Collect glob matches (files only)
   const matches: string[] = [];
   for await (const match of fs.glob(pattern, { cwd: absoluteDir })) {
     const absoluteMatch = path.resolve(absoluteDir, match);
-    if (isPathInside(absoluteDir, absoluteMatch)) {
+    if (!isPathInside(absoluteDir, absoluteMatch)) continue;
+    const stat = await fs.stat(absoluteMatch);
+    if (stat.isFile()) {
       matches.push(path.join(resolvedDir, match));
     }
   }
