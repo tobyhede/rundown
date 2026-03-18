@@ -10,25 +10,25 @@ const DEFAULT_TRANSITIONS = {
   fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
 };
 
-describe('validator strict rules', () => {
-  const mockStep = (overrides: Record<string, unknown>): Step => {
-    const obj: Record<string, unknown> = {
-      name: '1',
-      description: 'Test',
-      transitions: DEFAULT_TRANSITIONS,
-      ...overrides,
-    };
-    const kind =
-      obj.forClause !== undefined
-        ? 'for'
-        : Array.isArray(obj.substeps) && (obj.substeps as unknown[]).length > 0
-          ? 'substeps'
-          : obj.command !== undefined
-            ? 'command'
-            : 'base';
-    return { ...obj, kind } as Step;
+const mockStep = (overrides: Record<string, unknown>): Step => {
+  const obj: Record<string, unknown> = {
+    name: '1',
+    description: 'Test',
+    transitions: DEFAULT_TRANSITIONS,
+    ...overrides,
   };
+  const kind =
+    obj.forClause !== undefined
+      ? 'for'
+      : 'substeps' in obj
+        ? 'substeps'
+        : obj.command !== undefined
+          ? 'command'
+          : 'base';
+  return { ...obj, kind } as Step;
+};
 
+describe('validator strict rules', () => {
   describe('GOTO rules', () => {
     it('warns on GOTO self (step level)', () => {
       const steps = [
@@ -1220,5 +1220,554 @@ describe('validator strict rules', () => {
       );
       expect(warnings).toHaveLength(0);
     });
+  });
+});
+
+// === Batch 8: validator.ts mutation-killing tests ===
+
+describe('validator mutation killing - empty steps', () => {
+  it('returns error for empty steps array', () => {
+    const diagnostics = validateRunbook([]);
+    const errors = filterErrors(diagnostics);
+    expect(errors).toHaveLength(1);
+    expect(errors[0].message).toContain('at least one step');
+  });
+});
+
+describe('validator mutation killing - step ordering', () => {
+  it('detects non-sequential numeric steps', () => {
+    const steps = [mockStep({ name: '1' }), mockStep({ name: '3' })];
+    const diagnostics = validateRunbook(steps);
+    const errors = filterErrors(diagnostics);
+    expect(errors.some((e) => e.message.includes('sequential'))).toBe(true);
+  });
+
+  it('allows named steps between numeric steps', () => {
+    const steps = [mockStep({ name: '1' }), mockStep({ name: 'Cleanup' }), mockStep({ name: '2' })];
+    const diagnostics = validateRunbook(steps);
+    const errors = filterErrors(diagnostics);
+    expect(errors.filter((e) => e.message.includes('sequential'))).toHaveLength(0);
+  });
+
+  it('allows only named steps (no numeric)', () => {
+    const steps = [mockStep({ name: 'Setup' }), mockStep({ name: 'Deploy' })];
+    const diagnostics = validateRunbook(steps);
+    const errors = filterErrors(diagnostics);
+    expect(errors.filter((e) => e.message.includes('sequential'))).toHaveLength(0);
+  });
+});
+
+describe('validator mutation killing - exclusivity rules', () => {
+  it('correctly distinguishes command steps from base steps', () => {
+    const cmdStep = mockStep({ command: { code: 'echo hi' } });
+    expect(cmdStep.kind).toBe('command');
+  });
+
+  it('correctly distinguishes substeps from base steps', () => {
+    const substepsStep = mockStep({
+      substeps: [{ id: '1', description: 'Sub', transitions: DEFAULT_TRANSITIONS }],
+    });
+    expect(substepsStep.kind).toBe('substeps');
+  });
+});
+
+describe('validator mutation killing - schema validation failure', () => {
+  it('reports schema error for step with invalid name', () => {
+    const step = {
+      kind: 'base' as const,
+      name: '',
+      description: 'Test',
+      transitions: DEFAULT_TRANSITIONS,
+    } as unknown as Step;
+    const diagnostics = validateRunbook([step]);
+    const errors = filterErrors(diagnostics);
+    expect(errors.some((e) => e.message.includes('schema validation'))).toBe(true);
+  });
+
+  it('skips detailed validation for schema-failed steps', () => {
+    // A step that fails schema should not cause TypeError in detailed validation
+    const step = {
+      kind: 'base' as const,
+      name: '',
+      description: 'Test',
+      transitions: DEFAULT_TRANSITIONS,
+    } as unknown as Step;
+    // Should not throw
+    expect(() => validateRunbook([step])).not.toThrow();
+  });
+});
+
+describe('validator mutation killing - FOR transition validation', () => {
+  it('reports error for NEXT on parent FOR step pass transition', () => {
+    const step = mockStep({
+      name: '1',
+      forClause: { start: 1, end: 3 },
+      substeps: [{ id: '1', description: 'Sub', transitions: DEFAULT_TRANSITIONS }],
+      transitions: {
+        pass: { kind: 'pass', retry: 0, action: { type: 'NEXT' } },
+        fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+      },
+    });
+    const diagnostics = validateRunbook([step]);
+    const errors = filterErrors(diagnostics);
+    expect(
+      errors.some((e) => e.message.includes('NEXT cannot appear on the FOR step itself')),
+    ).toBe(true);
+  });
+
+  it('reports error for BREAK on parent FOR step fail transition', () => {
+    const step = mockStep({
+      name: '1',
+      forClause: { start: 1, end: 3 },
+      substeps: [{ id: '1', description: 'Sub', transitions: DEFAULT_TRANSITIONS }],
+      transitions: {
+        pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+        fail: { kind: 'fail', retry: 0, action: { type: 'BREAK' } },
+      },
+    });
+    const diagnostics = validateRunbook([step]);
+    const errors = filterErrors(diagnostics);
+    expect(
+      errors.some((e) => e.message.includes('BREAK cannot appear on the FOR step itself')),
+    ).toBe(true);
+  });
+});
+
+describe('validator mutation killing - DEFER at step level', () => {
+  it('reports error for DEFER on pass at step level', () => {
+    const step = mockStep({
+      name: '1',
+      transitions: {
+        pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
+        fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+      },
+    });
+    const diagnostics = validateRunbook([step]);
+    const errors = filterErrors(diagnostics);
+    expect(errors.some((e) => e.message.includes('DEFER is only valid within substeps'))).toBe(
+      true,
+    );
+  });
+
+  it('reports error for DEFER on fail at step level', () => {
+    const step = mockStep({
+      name: '1',
+      transitions: {
+        pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+        fail: { kind: 'fail', retry: 0, action: { type: 'DEFER' } },
+      },
+    });
+    const diagnostics = validateRunbook([step]);
+    const errors = filterErrors(diagnostics);
+    expect(errors.some((e) => e.message.includes('DEFER is only valid within substeps'))).toBe(
+      true,
+    );
+  });
+});
+
+describe('validator mutation killing - DEFER aggregation', () => {
+  it('warns when substep uses DEFER but no aggregation set', () => {
+    const step = mockStep({
+      name: '1',
+      substeps: [
+        {
+          id: '1',
+          description: 'Sub',
+          transitions: {
+            pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+          },
+        },
+      ],
+    });
+    const diagnostics = validateRunbook([step]);
+    const warnings = filterWarnings(diagnostics);
+    expect(
+      warnings.some((w) => w.message.includes('DEFER') && w.message.includes('no aggregation')),
+    ).toBe(true);
+  });
+
+  it('errors when aggregation set but no substep uses DEFER', () => {
+    const step = {
+      kind: 'substeps' as const,
+      name: '1',
+      description: 'Test',
+      aggregation: { strategy: 'ALL' as const },
+      substeps: [
+        {
+          id: '1',
+          description: 'Sub',
+          transitions: {
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+          },
+        },
+      ],
+      transitions: DEFAULT_TRANSITIONS,
+    } as Step;
+    const diagnostics = validateRunbook([step]);
+    const errors = filterErrors(diagnostics);
+    expect(errors.some((e) => e.message.includes('no substep uses DEFER'))).toBe(true);
+  });
+
+  it('warns when FOR substep uses DEFER but no iteration aggregation', () => {
+    const step = mockStep({
+      name: '1',
+      forClause: { start: 1, end: 3 },
+      substeps: [
+        {
+          id: '1',
+          description: 'Sub',
+          transitions: {
+            pass: { kind: 'pass', retry: 0, action: { type: 'DEFER' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+          },
+        },
+      ],
+    });
+    const diagnostics = validateRunbook([step]);
+    const warnings = filterWarnings(diagnostics);
+    expect(
+      warnings.some(
+        (w) => w.message.includes('DEFER') && w.message.includes('no iteration-level aggregation'),
+      ),
+    ).toBe(true);
+  });
+
+  it('errors when FOR has iteration aggregation but no substep DEFERs', () => {
+    const step = {
+      kind: 'for' as const,
+      name: '1',
+      description: 'Test',
+      forClause: { start: 1, end: 3, aggregation: { strategy: 'ALL' as const } },
+      substeps: [
+        {
+          id: '1',
+          description: 'Sub',
+          transitions: {
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+          },
+        },
+      ],
+      transitions: DEFAULT_TRANSITIONS,
+    } as Step;
+    const diagnostics = validateRunbook([step]);
+    const errors = filterErrors(diagnostics);
+    expect(errors.some((e) => e.message.includes('no substep uses DEFER'))).toBe(true);
+  });
+});
+
+describe('validator mutation killing - GOTO target validation', () => {
+  it('reports error for GOTO to non-existent step', () => {
+    const steps = [
+      mockStep({
+        name: '1',
+        transitions: {
+          pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '99' } } },
+          fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+        },
+      }),
+    ];
+    const diagnostics = validateRunbook(steps);
+    const errors = filterErrors(diagnostics);
+    expect(errors.some((e) => e.message.includes('does not exist'))).toBe(true);
+  });
+
+  it('reports error for GOTO to non-existent named step', () => {
+    const steps = [
+      mockStep({
+        name: '1',
+        transitions: {
+          pass: {
+            kind: 'pass',
+            retry: 0,
+            action: { type: 'GOTO', target: { step: 'Nonexistent' } },
+          },
+          fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+        },
+      }),
+    ];
+    const diagnostics = validateRunbook(steps);
+    const errors = filterErrors(diagnostics);
+    expect(errors.some((e) => e.message.includes('does not exist'))).toBe(true);
+  });
+
+  it('warns on GOTO self (step level)', () => {
+    const steps = [
+      mockStep({
+        name: '1',
+        transitions: {
+          pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '1' } } },
+          fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+        },
+      }),
+    ];
+    const diagnostics = validateRunbook(steps);
+    const warnings = filterWarnings(diagnostics);
+    expect(warnings.some((w) => w.message.includes('GOTO self'))).toBe(true);
+  });
+
+  it('does not warn on GOTO self with AT (changes iteration)', () => {
+    const steps = [
+      mockStep({
+        name: '1',
+        forClause: { start: 1, end: 3 },
+        substeps: [{ id: '1', description: 'Sub', transitions: DEFAULT_TRANSITIONS }],
+        transitions: {
+          pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '1', at: 2 } } },
+          fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+        },
+      }),
+    ];
+    const diagnostics = validateRunbook(steps);
+    const warnings = filterWarnings(diagnostics);
+    expect(warnings.filter((w) => w.message.includes('GOTO self'))).toHaveLength(0);
+  });
+
+  it('reports error for GOTO substep when target step has no substeps', () => {
+    const steps = [
+      mockStep({ name: '1' }),
+      mockStep({
+        name: '2',
+        transitions: {
+          pass: {
+            kind: 'pass',
+            retry: 0,
+            action: { type: 'GOTO', target: { step: '1', substep: '1' } },
+          },
+          fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+        },
+      }),
+    ];
+    const diagnostics = validateRunbook(steps);
+    const errors = filterErrors(diagnostics);
+    expect(errors.some((e) => e.message.includes('has no substeps'))).toBe(true);
+  });
+
+  it('reports error for GOTO to non-existent substep', () => {
+    const steps = [
+      mockStep({
+        name: '1',
+        substeps: [{ id: '1', description: 'Sub', transitions: DEFAULT_TRANSITIONS }],
+      }),
+      mockStep({
+        name: '2',
+        transitions: {
+          pass: {
+            kind: 'pass',
+            retry: 0,
+            action: { type: 'GOTO', target: { step: '1', substep: '99' } },
+          },
+          fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+        },
+      }),
+    ];
+    const diagnostics = validateRunbook(steps);
+    const errors = filterErrors(diagnostics);
+    expect(errors.some((e) => e.message.includes('substep does not exist'))).toBe(true);
+  });
+
+  it('reports error for GOTO AT when target has no FOR clause', () => {
+    const steps = [
+      mockStep({ name: '1' }),
+      mockStep({
+        name: '2',
+        transitions: {
+          pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '1', at: 3 } } },
+          fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+        },
+      }),
+    ];
+    const diagnostics = validateRunbook(steps);
+    const errors = filterErrors(diagnostics);
+    expect(errors.some((e) => e.message.includes('GOTO AT is only valid'))).toBe(true);
+  });
+
+  it('accepts GOTO AT when target has FOR clause', () => {
+    const steps = [
+      mockStep({
+        name: '1',
+        forClause: { start: 1, end: 3 },
+        substeps: [{ id: '1', description: 'Sub', transitions: DEFAULT_TRANSITIONS }],
+      }),
+      mockStep({
+        name: '2',
+        transitions: {
+          pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '1', at: 2 } } },
+          fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+        },
+      }),
+    ];
+    const diagnostics = validateRunbook(steps);
+    const errors = filterErrors(diagnostics);
+    expect(errors.filter((e) => e.message.includes('GOTO AT'))).toHaveLength(0);
+  });
+});
+
+describe('validator mutation killing - loop control context', () => {
+  it('reports error for NEXT outside substep context', () => {
+    const step = mockStep({
+      name: '1',
+      transitions: {
+        pass: { kind: 'pass', retry: 0, action: { type: 'NEXT' } },
+        fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+      },
+    });
+    const diagnostics = validateRunbook([step]);
+    const errors = filterErrors(diagnostics);
+    expect(
+      errors.some(
+        (e) => e.message.includes('NEXT') && e.message.includes('only valid within substeps'),
+      ),
+    ).toBe(true);
+  });
+
+  it('reports error for BREAK outside substep context', () => {
+    const step = mockStep({
+      name: '1',
+      transitions: {
+        pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+        fail: { kind: 'fail', retry: 0, action: { type: 'BREAK' } },
+      },
+    });
+    const diagnostics = validateRunbook([step]);
+    const errors = filterErrors(diagnostics);
+    expect(
+      errors.some(
+        (e) => e.message.includes('BREAK') && e.message.includes('only valid within substeps'),
+      ),
+    ).toBe(true);
+  });
+
+  it('reports error for NEXT in substep of non-FOR step', () => {
+    const step = mockStep({
+      name: '1',
+      substeps: [
+        {
+          id: '1',
+          description: 'Sub',
+          transitions: {
+            pass: { kind: 'pass', retry: 0, action: { type: 'NEXT' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+          },
+        },
+      ],
+    });
+    const diagnostics = validateRunbook([step]);
+    const errors = filterErrors(diagnostics);
+    expect(
+      errors.some(
+        (e) =>
+          e.message.includes('NEXT') &&
+          e.message.includes('only valid within substeps of a FOR step'),
+      ),
+    ).toBe(true);
+  });
+});
+
+describe('validator mutation killing - duplicate step names', () => {
+  it('reports error for duplicate step names', () => {
+    const steps = [mockStep({ name: '1' }), mockStep({ name: '1' })];
+    const diagnostics = validateRunbook(steps);
+    const errors = filterErrors(diagnostics);
+    expect(errors.some((e) => e.message.includes('Duplicate step name'))).toBe(true);
+  });
+
+  it('reports error for duplicate named steps', () => {
+    const steps = [mockStep({ name: 'Deploy' }), mockStep({ name: 'Deploy' })];
+    const diagnostics = validateRunbook(steps);
+    const errors = filterErrors(diagnostics);
+    expect(errors.some((e) => e.message.includes('Duplicate step name'))).toBe(true);
+  });
+});
+
+describe('validator mutation killing - named GOTO targets', () => {
+  it('validates GOTO to named step with substep', () => {
+    const steps = [
+      mockStep({
+        name: 'ErrorHandler',
+        substeps: [{ id: 'Recover', description: 'Recovery', transitions: DEFAULT_TRANSITIONS }],
+      }),
+      mockStep({
+        name: '1',
+        transitions: {
+          pass: {
+            kind: 'pass',
+            retry: 0,
+            action: { type: 'GOTO', target: { step: 'ErrorHandler', substep: 'Recover' } },
+          },
+          fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+        },
+      }),
+    ];
+    const diagnostics = validateRunbook(steps);
+    const errors = filterErrors(diagnostics);
+    // Should be valid - no errors about GOTO target
+    expect(
+      errors.filter((e) => e.message.includes('GOTO') && e.message.includes('does not exist')),
+    ).toHaveLength(0);
+  });
+
+  it('errors for GOTO to named step with non-existent substep', () => {
+    const steps = [
+      mockStep({
+        name: 'ErrorHandler',
+        substeps: [{ id: 'Recover', description: 'Recovery', transitions: DEFAULT_TRANSITIONS }],
+      }),
+      mockStep({
+        name: '1',
+        transitions: {
+          pass: {
+            kind: 'pass',
+            retry: 0,
+            action: { type: 'GOTO', target: { step: 'ErrorHandler', substep: 'Missing' } },
+          },
+          fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+        },
+      }),
+    ];
+    const diagnostics = validateRunbook(steps);
+    const errors = filterErrors(diagnostics);
+    expect(errors.some((e) => e.message.includes('substep does not exist'))).toBe(true);
+  });
+
+  it('errors for GOTO to named step substep when target has no substeps', () => {
+    const steps = [
+      mockStep({ name: 'ErrorHandler' }),
+      mockStep({
+        name: '1',
+        transitions: {
+          pass: {
+            kind: 'pass',
+            retry: 0,
+            action: { type: 'GOTO', target: { step: 'ErrorHandler', substep: '1' } },
+          },
+          fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+        },
+      }),
+    ];
+    const diagnostics = validateRunbook(steps);
+    const errors = filterErrors(diagnostics);
+    expect(errors.some((e) => e.message.includes('has no substeps'))).toBe(true);
+  });
+
+  it('warns on GOTO self for named step', () => {
+    const steps = [
+      mockStep({
+        name: 'ErrorHandler',
+        transitions: {
+          pass: {
+            kind: 'pass',
+            retry: 0,
+            action: { type: 'GOTO', target: { step: 'ErrorHandler' } },
+          },
+          fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+        },
+      }),
+    ];
+    const diagnostics = validateRunbook(steps);
+    const warnings = filterWarnings(diagnostics);
+    expect(warnings.some((w) => w.message.includes('GOTO self'))).toBe(true);
   });
 });

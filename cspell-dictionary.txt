@@ -78,6 +78,7 @@ myrepo
 myrunbook
 ncat
 netcat
+NEXTX
 nocase
 nodenext
 nodenv

@@ -427,3 +427,80 @@ describe('nameFromFilename()', () => {
     expect(name).toBe('Test');
   });
 });
+
+describe('extractFrontmatter() mutation killing', () => {
+  it('rejects name with leading space', () => {
+    const markdown = `---
+name: " test"
+---
+# Content`;
+    const result = extractFrontmatter(markdown);
+    expect(result.frontmatter).not.toBeNull();
+    expect(result.frontmatter?.name).toBeUndefined();
+  });
+
+  it('accepts single-character name', () => {
+    const markdown = `---
+name: a
+---
+# Content`;
+    const result = extractFrontmatter(markdown);
+    expect(result.frontmatter).not.toBeNull();
+    expect(result.frontmatter?.name).toBe('a');
+  });
+
+  it('validates name regex end anchor (rejects name ending with space)', () => {
+    const markdown = `---
+name: "test "
+---
+# Content`;
+    const result = extractFrontmatter(markdown);
+    expect(result.frontmatter).not.toBeNull();
+    expect(result.frontmatter?.name).toBeUndefined();
+  });
+
+  it('returns null frontmatter for YAML null value', () => {
+    const markdown = `---
+null
+---
+# Content`;
+    const result = extractFrontmatter(markdown);
+    expect(result.frontmatter).toBeNull();
+  });
+
+  it('returns null frontmatter for YAML number value', () => {
+    const markdown = `---
+42
+---
+# Content`;
+    const result = extractFrontmatter(markdown);
+    expect(result.frontmatter).toBeNull();
+  });
+
+  it('returns null frontmatter for YAML boolean value', () => {
+    const markdown = `---
+true
+---
+# Content`;
+    const result = extractFrontmatter(markdown);
+    expect(result.frontmatter).toBeNull();
+  });
+});
+
+describe('nameFromFilename() mutation killing', () => {
+  it('does not strip non-.runbook.md suffix', () => {
+    expect(nameFromFilename('test.runbook.md.bak')).toBe('test.runbook.md.bak');
+  });
+
+  it('handles filename with only the extension', () => {
+    expect(nameFromFilename('.runbook.md')).toBe('');
+  });
+
+  it('is case-insensitive for extension', () => {
+    expect(nameFromFilename('test.RUNBOOK.MD')).toBe('test');
+  });
+
+  it('only removes trailing .runbook.md (not embedded)', () => {
+    expect(nameFromFilename('my.runbook.md.runbook.md')).toBe('my.runbook.md');
+  });
+});

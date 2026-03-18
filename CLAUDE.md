@@ -283,6 +283,10 @@ npm run test:property # Property-based tests
 npm run test:perf     # Performance benchmarks
 ```
 
+## Testing Conventions
+
+- **Use `Error.isError()` instead of `instanceof Error`** in tests and production code. `instanceof` fails across ESM realm boundaries (e.g. Jest module sandboxing). Node 24+ provides `Error.isError()` (TC39). Centralized guards `isError()`, `isNodeError()`, `getErrorMessage()` are in `packages/core/src/errors.ts` (and `packages/claude-code-plugin/src/shared/errors.ts`). Keep `instanceof` only for same-realm custom error classes (e.g. `RunbookSyntaxError`, `RundownError`).
+
 ## TSDoc Standards
 
 All exported symbols must have TSDoc documentation following these requirements:

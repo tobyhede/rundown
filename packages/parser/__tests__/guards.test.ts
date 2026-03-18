@@ -565,3 +565,27 @@ describe('areAllStepsResolved', () => {
     expect(areAllStepsResolved(steps)).toBe(false);
   });
 });
+
+describe('stepHasSubsteps mutation killing', () => {
+  it('returns true specifically for kind=for (not just substeps)', () => {
+    const forStep = createStep({
+      forClause: { start: 1, end: 3 },
+      substeps: [createSubstep()],
+    });
+    // This kills mutants that change 'for' literal or remove the || branch
+    expect(forStep.kind).toBe('for');
+    expect(stepHasSubsteps(forStep)).toBe(true);
+  });
+
+  it('returns true specifically for kind=substeps (not just for)', () => {
+    const substepsStep = createStep({ substeps: [createSubstep()] });
+    expect(substepsStep.kind).toBe('substeps');
+    expect(stepHasSubsteps(substepsStep)).toBe(true);
+  });
+
+  it('returns false for kind=command (not substeps or for)', () => {
+    const commandStep = createStep({ command: { code: 'echo hi' } });
+    expect(commandStep.kind).toBe('command');
+    expect(stepHasSubsteps(commandStep)).toBe(false);
+  });
+});

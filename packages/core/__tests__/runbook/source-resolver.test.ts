@@ -202,7 +202,7 @@ describe('resolveForValue', () => {
         };
 
         const err = await resolveForValue(fc).catch((e: unknown) => e);
-        expect(err).toBeInstanceOf(Error);
+        expect(Error.isError(err)).toBe(true);
         const message = (err as Error).message;
         expect(message).toContain(file);
         expect(message).toContain('line 2');

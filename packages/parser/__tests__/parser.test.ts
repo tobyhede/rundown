@@ -2120,3 +2120,370 @@ echo "check"
     expect(() => parseRunbook(md)).toThrow(/DEFER is only valid/);
   });
 });
+
+// === Batch 7: parser.ts mutation-killing tests ===
+
+describe('parser mutation killing - code block processing', () => {
+  it('throws on code block without language tag', () => {
+    const md = `## 1 Test step
+
+\`\`\`
+echo hello
+\`\`\``;
+    expect(() => parseRunbook(md)).toThrow(/Code block without language tag/);
+  });
+
+  it('handles code block with meta but no lang (bash prompt)', () => {
+    const md = `## 1 Test step
+
+\`\`\`bash prompt
+echo hello
+\`\`\``;
+    const steps = parseRunbook(md);
+    // bash prompt → not executable (prompt block)
+    expect(steps[0].kind).toBe('command');
+  });
+
+  it('preserves code value whitespace trimming', () => {
+    const md = `## 1 Test step
+
+\`\`\`bash
+  echo hello  
+\`\`\``;
+    const steps = parseRunbook(md);
+    expect(steps[0].kind).toBe('command');
+    if (steps[0].kind === 'command') {
+      expect(steps[0].command.code).toBe('echo hello');
+    }
+  });
+});
+
+describe('parser mutation killing - step content and prompts', () => {
+  it('handles step with only whitespace content (no prompt)', () => {
+    const md = `## 1 Test step
+
+\`\`\`bash
+echo hello
+\`\`\``;
+    const steps = parseRunbook(md);
+    expect(steps[0].prompt).toBeUndefined();
+  });
+
+  it('captures text before code block as prompt', () => {
+    const md = `## 1 Test step
+
+Run the following command
+
+\`\`\`bash
+echo hello
+\`\`\``;
+    const steps = parseRunbook(md);
+    expect(steps[0].prompt).toBe('Run the following command');
+  });
+
+  it('parses multiple steps correctly', () => {
+    const md = `## 1 First step
+
+Step 1 content
+
+\`\`\`bash
+echo first
+\`\`\`
+
+## 2 Second step
+
+Step 2 content
+
+\`\`\`bash
+echo second
+\`\`\``;
+    const steps = parseRunbook(md);
+    expect(steps).toHaveLength(2);
+    expect(steps[0].name).toBe('1');
+    expect(steps[1].name).toBe('2');
+  });
+});
+
+describe('parser mutation killing - H2 heading step creation', () => {
+  it('captures step line number from position', () => {
+    const md = `# Title
+
+## 1 Step One
+
+Content`;
+    const { runbook } = parseRunbookDocument(md);
+    expect(runbook.steps[0].line).toBeDefined();
+    expect(typeof runbook.steps[0].line).toBe('number');
+  });
+
+  it('uses step name as default description for named step', () => {
+    const md = `## Cleanup`;
+    const steps = parseRunbook(md);
+    expect(steps[0].name).toBe('Cleanup');
+    expect(steps[0].description).toBe('Cleanup');
+  });
+
+  it('generates default description for bare numeric step', () => {
+    const md = `## 1`;
+    const steps = parseRunbook(md);
+    expect(steps[0].description).toBe('Step 1');
+  });
+});
+
+describe('parser mutation killing - substep processing', () => {
+  it('parses substep with command', () => {
+    const md = `## 1 Test step
+
+### 1.1 First substep
+
+\`\`\`bash
+echo sub1
+\`\`\`
+
+### 1.2 Second substep
+
+\`\`\`bash
+echo sub2
+\`\`\``;
+    const steps = parseRunbook(md);
+    expect(steps[0].kind).toBe('substeps');
+    if (steps[0].kind === 'substeps') {
+      expect(steps[0].substeps).toHaveLength(2);
+      expect(steps[0].substeps[0].id).toBe('1');
+      expect(steps[0].substeps[0].command?.code).toBe('echo sub1');
+      expect(steps[0].substeps[1].id).toBe('2');
+      expect(steps[0].substeps[1].command?.code).toBe('echo sub2');
+    }
+  });
+
+  it('handles substep with prompt text', () => {
+    const md = `## 1 Test step
+
+### 1.1 First substep
+
+Do this thing
+
+\`\`\`bash
+echo sub1
+\`\`\``;
+    const steps = parseRunbook(md);
+    expect(steps[0].kind).toBe('substeps');
+    if (steps[0].kind === 'substeps') {
+      expect(steps[0].substeps[0].prompt).toBe('Do this thing');
+    }
+  });
+});
+
+describe('parser mutation killing - runbook reference detection', () => {
+  it('detects runbook references in step content', () => {
+    const md = `## 1 Dispatch
+
+- verify.runbook.md
+- cleanup.runbook.md`;
+    const steps = parseRunbook(md);
+    expect(steps[0].kind).toBe('substeps');
+    if (steps[0].kind === 'substeps') {
+      expect(steps[0].substeps).toHaveLength(2);
+      expect(steps[0].substeps[0].runbooks).toEqual(['verify.runbook.md']);
+    }
+  });
+
+  it('does not detect non-runbook list items as references', () => {
+    const md = `## 1 Test step
+
+- not-a-runbook-item
+- another plain item`;
+    const steps = parseRunbook(md);
+    expect(steps[0].kind).toBe('base');
+    expect(steps[0].prompt).toContain('- not-a-runbook-item');
+  });
+
+  it('rejects runbook ref with trailing text', () => {
+    const md = `## 1 Test step
+
+- verify.runbook.md some extra text`;
+    const steps = parseRunbook(md);
+    expect(steps[0].kind).toBe('base');
+    expect(steps[0]).not.toHaveProperty('runbooks');
+  });
+});
+
+describe('parser mutation killing - step finalization', () => {
+  it('creates base step when no command or substeps', () => {
+    const md = `## 1 Simple step
+
+Just some text`;
+    const steps = parseRunbook(md);
+    expect(steps[0].kind).toBe('base');
+    expect(steps[0].prompt).toBe('Just some text');
+  });
+
+  it('creates command step when code block present', () => {
+    const md = `## 1 Command step
+
+\`\`\`bash
+echo hello
+\`\`\``;
+    const steps = parseRunbook(md);
+    expect(steps[0].kind).toBe('command');
+  });
+
+  it('creates for step when FOR clause present', () => {
+    const md = `## 1 Loop step
+
+- FOR 3
+
+### 1.1 Iteration body
+
+\`\`\`bash
+echo iteration
+\`\`\``;
+    const steps = parseRunbook(md);
+    expect(steps[0].kind).toBe('for');
+    if (steps[0].kind === 'for') {
+      expect(steps[0].forClause.start).toBe(1);
+      expect(steps[0].forClause.end).toBe(3);
+    }
+  });
+
+  it('assigns DEFER transitions to substeps with runbook refs', () => {
+    const md = `## 1 Delegation step
+
+### 1.1 Run sub
+
+- verify.runbook.md`;
+    const steps = parseRunbook(md);
+    expect(steps[0].kind).toBe('substeps');
+    if (steps[0].kind === 'substeps') {
+      expect(steps[0].substeps[0].transitions.pass.action.type).toBe('DEFER');
+      expect(steps[0].substeps[0].transitions.fail.action.type).toBe('DEFER');
+    }
+  });
+
+  it('multi-substep step preserves prompt on parent', () => {
+    const md = `## 1 Step with text
+
+Some prompt text
+
+### 1.1 Sub A
+
+\`\`\`bash
+echo a
+\`\`\`
+
+### 1.2 Sub B
+
+\`\`\`bash
+echo b
+\`\`\``;
+    const steps = parseRunbook(md);
+    // Parent step should have the prompt text
+    expect(steps[0].prompt).toBe('Some prompt text');
+  });
+});
+
+describe('parser mutation killing - H1 and H4+ rejection', () => {
+  it('throws on H4 heading', () => {
+    const md = `## 1 Step
+
+#### 1.1.1 Too deep`;
+    expect(() => parseRunbook(md)).toThrow(/H4\+ headings are not allowed/);
+  });
+
+  it('throws on H1 that looks like a step number', () => {
+    const md = `# 1. Step One`;
+    expect(() => parseRunbook(md)).toThrow(/H1 headers.*cannot be used as step headers/);
+  });
+
+  it('does not throw on H1 title (non-step)', () => {
+    const md = `# My Runbook
+
+## 1 First step`;
+    expect(() => parseRunbook(md)).not.toThrow();
+  });
+});
+
+describe('parser mutation killing - preamble and title', () => {
+  it('captures H1 as title', () => {
+    const md = `# My Runbook
+
+## 1 First step`;
+    const { runbook } = parseRunbookDocument(md);
+    expect(runbook.title).toBe('My Runbook');
+  });
+
+  it('captures preamble text', () => {
+    const md = `# My Runbook
+
+This is the preamble description.
+
+## 1 First step`;
+    const { runbook } = parseRunbookDocument(md);
+    expect(runbook.description).toBe('This is the preamble description.');
+  });
+
+  it('extracts name from frontmatter', () => {
+    const md = `---
+name: my-runbook
+---
+## 1 First step`;
+    const { runbook } = parseRunbookDocument(md);
+    expect(runbook.name).toBe('my-runbook');
+  });
+
+  it('falls back to basename for name', () => {
+    const md = `## 1 First step`;
+    const { runbook } = parseRunbookDocument(md, 'deploy.runbook.md');
+    expect(runbook.name).toBe('deploy');
+  });
+});
+
+describe('parser mutation killing - FOR list processing', () => {
+  it('handles FOR clause with nested transitions', () => {
+    const md = `## 1 Loop step
+
+- FOR i IN 1 TO 3
+  - PASS CONTINUE
+  - FAIL STOP
+
+### 1.1 Body
+
+\`\`\`bash
+echo iteration
+\`\`\``;
+    const steps = parseRunbook(md);
+    expect(steps[0].kind).toBe('for');
+    if (steps[0].kind === 'for') {
+      expect(steps[0].forClause.transitions).toBeDefined();
+      expect(steps[0].forClause.transitions!.pass.action.type).toBe('CONTINUE');
+      expect(steps[0].forClause.transitions!.fail.action.type).toBe('STOP');
+    }
+  });
+
+  it('throws on FOR in substep context', () => {
+    const md = `## 1 Step
+
+### 1.1 Sub
+
+- FOR 3`;
+    expect(() => parseRunbook(md)).toThrow(/FOR is only valid on steps/);
+  });
+
+  it('throws on multiple FOR clauses', () => {
+    const md = `## 1 Step
+
+- FOR 3
+- FOR 5
+
+### 1.1 Body`;
+    expect(() => parseRunbook(md)).toThrow(/multiple FOR clauses/);
+  });
+});
+
+describe('parser mutation killing - inline code in text extraction', () => {
+  it('handles inline code in step description', () => {
+    const md = '## 1 Run `npm test` command\n\n```bash\nnpm test\n```';
+    const steps = parseRunbook(md);
+    expect(steps[0].description).toContain('`npm test`');
+  });
+});
