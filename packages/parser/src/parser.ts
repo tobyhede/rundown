@@ -537,6 +537,7 @@ function handleListItemContent(
  * @param node - The list item AST node
  * @param ctx - Active step context (currentStep guaranteed non-null)
  * @returns `SKIP` when a FOR clause is handled (prevents child traversal), `void` otherwise
+ * @throws {RunbookSyntaxError} If text looks like a FOR clause but fails to parse, or if FOR appears in a substep context
  */
 function handleListItem(node: ListItem, ctx: ActiveStepContext): typeof SKIP | void {
   const firstParagraph = node.children.find((c) => c.type === 'paragraph');
