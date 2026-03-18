@@ -301,7 +301,7 @@ FOR-level nested transitions (nested bullets directly under `- FOR ...`) run at 
 | `COMPLETE` | Complete immediately; bypass parent FOR aggregation |
 | `RETRY N X` | Retry current iteration first, then execute exhausted action `X` |
 
-Parent FOR step transitions (`PASS ALL`, `FAIL ANY`, etc.) aggregate results across all iterations after normal loop completion or iteration-level `BREAK`.
+Parent FOR step transitions (`PASS ALL`, `FAIL ANY`, etc.) aggregate results across all iterations after normal loop completion, iteration-level `BREAK`, or iteration-level `CONTINUE`.
 
 **GOTO AT interaction:**
 
