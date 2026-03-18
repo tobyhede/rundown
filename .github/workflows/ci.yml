@@ -34,6 +34,22 @@ jobs:
       - name: Fast lint (Biome)
         run: npm run check:lint:fast
 
+  complexity-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f  # v6
+        with:
+          node-version: 24
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Complexity checks
+        run: npm run check:complexity
+
   setup-build:
     runs-on: ubuntu-latest
 
@@ -168,7 +184,7 @@ jobs:
 
   # Trigger turboshovel tests after successful CI on main
   notify-dependents:
-    needs: [quality-checks, lint-typed, test, playwright]
+    needs: [quality-checks, complexity-checks, lint-typed, test, playwright]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:

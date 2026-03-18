@@ -156,6 +156,24 @@ function hasActiveStep(ctx: VisitorContext): ctx is ActiveStepContext {
   return ctx.currentStep !== null;
 }
 
+/** Node with optional source position for error reporting. */
+interface Positioned {
+  position?: { start: { line: number } };
+}
+
+/**
+ * Format a source line number for error messages.
+ *
+ * Accepts either an AST node with an optional position or a raw line number.
+ *
+ * @param nodeOrLine - An AST node with an optional position, or a line number
+ * @returns Formatted string like ` (line 42)`, or empty string if position is unavailable
+ */
+export function formatLineNum(nodeOrLine: Positioned | number | undefined): string {
+  const line = typeof nodeOrLine === 'number' ? nodeOrLine : nodeOrLine?.position?.start.line;
+  return line ? ` (line ${String(line)})` : '';
+}
+
 function finalizePendingSubstep(ctx: VisitorContext): void {
   if (ctx.currentStep?.pendingSubstep) {
     const ps = ctx.currentStep.pendingSubstep;
@@ -200,7 +218,7 @@ function handleH1Heading(node: Heading, ctx: VisitorContext): void {
   const looksLikeStep = /^\d+[.:\-)\s]/.test(headingText);
   if (looksLikeStep) {
     throw new RunbookSyntaxError(
-      `H1 headers (# ...) cannot be used as step headers. Use H2 (## ${headingText}) instead.`,
+      `H1 headers (# ...) cannot be used as step headers${formatLineNum(node)}. Use H2 (## ${headingText}) instead.`,
     );
   }
   ctx.title ??= headingText;
@@ -208,7 +226,7 @@ function handleH1Heading(node: Heading, ctx: VisitorContext): void {
 
 function handleH4PlusHeading(node: Heading): void {
   throw new RunbookSyntaxError(
-    `H4+ headings are not allowed in runbooks. Found heading at depth ${String(node.depth)}. Use ## for steps and ### for substeps only.`,
+    `H4+ headings are not allowed in runbooks${formatLineNum(node)}. Use ## for steps and ### for substeps only. Found heading at depth ${String(node.depth)}.`,
   );
 }
 
@@ -262,14 +280,16 @@ function handleH3Heading(node: Heading, ctx: ActiveStepContext): void {
     ctx.currentStep.hasSeenContent = true;
     if (parsed.stepRef !== undefined && parsed.stepRef !== ctx.currentStep.name) {
       throw new RunbookSyntaxError(
-        `Substep ${headingText} does not belong to step ${ctx.currentStep.name}`,
+        `Substep ${headingText} does not belong to step ${ctx.currentStep.name}${formatLineNum(node)}`,
       );
     }
 
     const duplicateId = ctx.currentStep.substeps.find((s) => s.id === parsed.id);
     if (duplicateId) {
       const stepLabel = ctx.currentStep.name;
-      throw new RunbookSyntaxError(`Duplicate substep ID '${parsed.id}' in step ${stepLabel}`);
+      throw new RunbookSyntaxError(
+        `Duplicate substep ID '${parsed.id}' in step ${stepLabel}${formatLineNum(node)}`,
+      );
     }
 
     ctx.currentStep.pendingSubstep = {
@@ -318,7 +338,7 @@ function handleCodeBlock(node: Code, ctx: ActiveStepContext): void {
   } else {
     // Bare code fence (no info string) — reject as invalid
     throw new RunbookSyntaxError(
-      `Code block without language tag in Step ${ctx.currentStep.name}. ` +
+      `Code block without language tag in Step ${ctx.currentStep.name}${formatLineNum(node)}. ` +
         `Use a language tag (e.g., \`\`\`bash) or \`\`\`prompt for display-only blocks.`,
     );
   }
@@ -326,7 +346,7 @@ function handleCodeBlock(node: Code, ctx: ActiveStepContext): void {
   if (ctx.currentStep.pendingSubstep) {
     if (ctx.currentStep.pendingSubstep.command) {
       throw new RunbookSyntaxError(
-        `Multiple code blocks per substep not allowed in substep ${ctx.currentStep.pendingSubstep.id} (display-only fences like json/yaml count as code blocks)`,
+        `Multiple code blocks per substep not allowed in substep ${ctx.currentStep.pendingSubstep.id}${formatLineNum(node)} (display-only fences like json/yaml count as code blocks)`,
       );
     }
     ctx.currentStep.pendingSubstep.command = cmd;
@@ -335,7 +355,7 @@ function handleCodeBlock(node: Code, ctx: ActiveStepContext): void {
     if (ctx.currentStep.command) {
       const stepLabel = ctx.currentStep.name;
       throw new RunbookSyntaxError(
-        `Multiple code blocks per step not allowed in Step ${stepLabel} (display-only fences like json/yaml count as code blocks).`,
+        `Multiple code blocks per step not allowed in Step ${stepLabel}${formatLineNum(node)} (display-only fences like json/yaml count as code blocks).`,
       );
     }
     ctx.currentStep.command = cmd;
@@ -348,6 +368,31 @@ function handlePreambleParagraph(node: Paragraph, ctx: VisitorContext): void {
   ctx.preamble += `${text}\n`;
 }
 
+function appendPromptToSubstep(
+  line: string,
+  substep: SubstepBuilder,
+  stepName: string,
+  lineNum: string,
+): void {
+  if (substep.hasSeenContent) {
+    throw new RunbookSyntaxError(
+      `Substep ${stepName}.${substep.id}${lineNum}: Prompt text must appear before code blocks or runbooks.`,
+    );
+  }
+  substep.promptText += `${line.trim()}\n`;
+  substep.hasSeenPromptText = true;
+}
+
+function appendPromptToStep(line: string, ctx: ActiveStepContext, lineNum: string): void {
+  if (ctx.currentStep.hasSeenContent) {
+    throw new RunbookSyntaxError(
+      `Step ${ctx.currentStep.name}${lineNum}: Prompt text must appear before code blocks, substeps, or runbooks.`,
+    );
+  }
+  ctx.implicitText += `${line.trim()}\n`;
+  ctx.currentStep.hasSeenPromptText = true;
+}
+
 function handleStepParagraph(node: Paragraph, ctx: ActiveStepContext): void {
   const text = extractText(node);
   const lines = text.split('\n');
@@ -357,32 +402,14 @@ function handleStepParagraph(node: Paragraph, ctx: ActiveStepContext): void {
       // Paragraphs are always treated as prompt text — transitions must use bullet-prefix (list items)
       // Check ordering - text must come before content (code blocks, runbooks)
       if (ctx.currentStep.pendingSubstep) {
-        // In substeps: text cannot appear after code blocks/runbooks
-        if (ctx.currentStep.pendingSubstep.hasSeenContent) {
-          const stepLabel = ctx.currentStep.name;
-          // E17-R2: Include line number in error for better DX
-          const lineNum = node.position?.start.line
-            ? ` (line ${String(node.position.start.line)})`
-            : '';
-          throw new RunbookSyntaxError(
-            `Substep ${stepLabel}.${ctx.currentStep.pendingSubstep.id}${lineNum}: Prompt text must appear before code blocks or runbooks.`,
-          );
-        }
-        ctx.currentStep.pendingSubstep.promptText += `${line.trim()}\n`;
-        ctx.currentStep.pendingSubstep.hasSeenPromptText = true;
+        appendPromptToSubstep(
+          line,
+          ctx.currentStep.pendingSubstep,
+          ctx.currentStep.name,
+          formatLineNum(node),
+        );
       } else {
-        if (ctx.currentStep.hasSeenContent) {
-          const stepLabel = ctx.currentStep.name;
-          // E17-R2: Include line number in error for better DX
-          const lineNum = node.position?.start.line
-            ? ` (line ${String(node.position.start.line)})`
-            : '';
-          throw new RunbookSyntaxError(
-            `Step ${stepLabel}${lineNum}: Prompt text must appear before code blocks, substeps, or runbooks.`,
-          );
-        }
-        ctx.implicitText += `${line.trim()}\n`;
-        ctx.currentStep.hasSeenPromptText = true;
+        appendPromptToStep(line, ctx, formatLineNum(node));
       }
     }
   }
@@ -396,18 +423,18 @@ function handleForClause(
   // Enforce: only one FOR per step
   if (ctx.currentStep.hasSeenForClause) {
     throw new RunbookSyntaxError(
-      `Step "${ctx.currentStep.name}" has multiple FOR clauses; only one is allowed`,
+      `Step "${ctx.currentStep.name}" has multiple FOR clauses; only one is allowed${formatLineNum(listItemNode)}`,
     );
   }
   // Enforce ordering: FOR must appear before transitions and content
   if (ctx.currentStep.hasSeenTransitions) {
     throw new RunbookSyntaxError(
-      `Step "${ctx.currentStep.name}": FOR clause must appear before transitions`,
+      `Step "${ctx.currentStep.name}": FOR clause must appear before transitions${formatLineNum(listItemNode)}`,
     );
   }
   if (ctx.currentStep.hasSeenContent || ctx.currentStep.hasSeenPromptText) {
     throw new RunbookSyntaxError(
-      `Step "${ctx.currentStep.name}": FOR clause must appear before content`,
+      `Step "${ctx.currentStep.name}": FOR clause must appear before content${formatLineNum(listItemNode)}`,
     );
   }
   ctx.currentStep.forClause = forClause;
@@ -421,7 +448,7 @@ function handleForClause(
       const nestedParagraph = nestedItem.children.find((c) => c.type === 'paragraph');
       if (!nestedParagraph) {
         throw new RunbookSyntaxError(
-          `Invalid nested bullet under FOR clause in step "${ctx.currentStep.name}": only transitions (PASS/FAIL/DEFER) are allowed`,
+          `Invalid nested bullet under FOR clause in step "${ctx.currentStep.name}": only transitions (PASS/FAIL/DEFER) are allowed${formatLineNum(nestedItem)}`,
         );
       }
       const nestedText = extractText(
@@ -430,7 +457,7 @@ function handleForClause(
       const cond = parseConditional(nestedText);
       if (!cond) {
         throw new RunbookSyntaxError(
-          `Invalid nested bullet under FOR clause in step "${ctx.currentStep.name}": only transitions (PASS/FAIL/DEFER) are allowed`,
+          `Invalid nested bullet under FOR clause in step "${ctx.currentStep.name}": only transitions (PASS/FAIL/DEFER) are allowed${formatLineNum(nestedItem)}`,
         );
       }
       if (Array.isArray(cond)) {
@@ -450,18 +477,15 @@ function handleListItemTransition(
   node: Node,
   ctx: ActiveStepContext,
 ): void {
+  const lineNum = formatLineNum(node);
   if (ctx.currentStep.pendingSubstep) {
     // Reject transitions after prompt text or content (header-adjacent requirement)
     if (
       ctx.currentStep.pendingSubstep.hasSeenPromptText ||
       ctx.currentStep.pendingSubstep.hasSeenContent
     ) {
-      const stepLabel = ctx.currentStep.name;
-      const lineNum = node.position?.start.line
-        ? ` (line ${String(node.position.start.line)})`
-        : '';
       throw new RunbookSyntaxError(
-        `Substep ${stepLabel}.${ctx.currentStep.pendingSubstep.id}${lineNum}: Transitions must appear immediately after the substep header, before any content.`,
+        `Substep ${ctx.currentStep.name}.${ctx.currentStep.pendingSubstep.id}${lineNum}: Transitions must appear immediately after the substep header, before any content.`,
       );
     }
     ctx.currentStep.pendingSubstep.pendingConditionals.push(...conditionals);
@@ -469,12 +493,8 @@ function handleListItemTransition(
   } else {
     // Reject transitions after prompt text or content (header-adjacent requirement)
     if (ctx.currentStep.hasSeenPromptText || ctx.currentStep.hasSeenContent) {
-      const stepLabel = ctx.currentStep.name;
-      const lineNum = node.position?.start.line
-        ? ` (line ${String(node.position.start.line)})`
-        : '';
       throw new RunbookSyntaxError(
-        `Step ${stepLabel}${lineNum}: Transitions must appear immediately after the step header, before any content.`,
+        `Step ${ctx.currentStep.name}${lineNum}: Transitions must appear immediately after the step header, before any content.`,
       );
     }
     ctx.pendingConditionals.push(...conditionals);
@@ -488,17 +508,13 @@ function handleListItemContent(
   node: Node,
   ctx: ActiveStepContext,
 ): void {
+  const lineNum = formatLineNum(node);
   if (ctx.currentStep.pendingSubstep) {
-    // FIXED: Check ordering BEFORE adding content (C2 fix)
+    // Check ordering BEFORE adding content
     // In substeps: text cannot appear after transitions
     if (ctx.currentStep.pendingSubstep.hasSeenTransitions && !isRunbookRef) {
-      const stepLabel = ctx.currentStep.name;
-      // E17-R2: Include line number in error for better DX
-      const lineNum = node.position?.start.line
-        ? ` (line ${String(node.position.start.line)})`
-        : '';
       throw new RunbookSyntaxError(
-        `Substep ${stepLabel}.${ctx.currentStep.pendingSubstep.id}${lineNum}: Prompt text must appear before code blocks or runbooks.`,
+        `Substep ${ctx.currentStep.name}.${ctx.currentStep.pendingSubstep.id}${lineNum}: Prompt text must appear before code blocks or runbooks.`,
       );
     }
     // Only add content after validation passes
@@ -508,15 +524,10 @@ function handleListItemContent(
       ctx.currentStep.pendingSubstep.hasSeenContent = true;
     }
   } else {
-    // FIXED: Check ordering BEFORE adding content (C2 fix)
+    // Check ordering BEFORE adding content
     if (ctx.currentStep.hasSeenContent && !isRunbookRef) {
-      const stepLabel = ctx.currentStep.name;
-      // E17-R2: Include line number in error for better DX
-      const lineNum = node.position?.start.line
-        ? ` (line ${String(node.position.start.line)})`
-        : '';
       throw new RunbookSyntaxError(
-        `Step ${stepLabel}${lineNum}: Prompt text must appear before code blocks, substeps, or runbooks.`,
+        `Step ${ctx.currentStep.name}${lineNum}: Prompt text must appear before code blocks, substeps, or runbooks.`,
       );
     }
     // Only add content after validation passes
@@ -537,7 +548,7 @@ function handleListItemContent(
  * @param node - The list item AST node
  * @param ctx - Active step context (currentStep guaranteed non-null)
  * @returns `SKIP` when a FOR clause is handled (prevents child traversal), `void` otherwise
- * @throws {RunbookSyntaxError} If text looks like a FOR clause but fails to parse, or if FOR appears in a substep context
+ * @throws {RunbookSyntaxError} When a FOR clause is invalid or appears in a substep context
  */
 function handleListItem(node: ListItem, ctx: ActiveStepContext): typeof SKIP | void {
   const firstParagraph = node.children.find((c) => c.type === 'paragraph');
@@ -551,7 +562,7 @@ function handleListItem(node: ListItem, ctx: ActiveStepContext): typeof SKIP | v
   // Throw if text looks like a FOR clause but didn't parse,
   // unless it contains template variables ({{...}}) that need runtime expansion
   if (forResult === null && text.trim().startsWith('FOR ')) {
-    throw new RunbookSyntaxError(`Invalid FOR clause: ${text.trim()}`);
+    throw new RunbookSyntaxError(`Invalid FOR clause${formatLineNum(node)}: ${text.trim()}`);
   }
 
   if (forResult && !ctx.currentStep.pendingSubstep) {
@@ -563,7 +574,7 @@ function handleListItem(node: ListItem, ctx: ActiveStepContext): typeof SKIP | v
   // If FOR text appears in a substep context, that's an error
   if (forResult && ctx.currentStep.pendingSubstep) {
     throw new RunbookSyntaxError(
-      `FOR is only valid on steps (H2), not substeps (H3) (found on "${ctx.currentStep.name}.${ctx.currentStep.pendingSubstep.id}")`,
+      `FOR is only valid on steps (H2), not substeps (H3)${formatLineNum(node)}. Found on "${ctx.currentStep.name}.${ctx.currentStep.pendingSubstep.id}".`,
     );
   }
 
@@ -575,6 +586,47 @@ function handleListItem(node: ListItem, ctx: ActiveStepContext): typeof SKIP | v
     const isRunbookRef = /^\S+\.runbook\.md$/.test(text.trim());
     handleListItemContent(text, isRunbookRef, node, ctx);
   }
+}
+
+function dispatchHeading(node: Heading, ctx: VisitorContext): void {
+  if (node.depth === 1) {
+    handleH1Heading(node, ctx);
+    return;
+  }
+  if (node.depth >= 4) {
+    handleH4PlusHeading(node);
+    return;
+  }
+  if (node.depth === 2) {
+    handleH2Heading(node, ctx);
+    return;
+  }
+  if (node.depth === 3 && hasActiveStep(ctx)) {
+    handleH3Heading(node, ctx);
+  }
+}
+
+function visitNode(node: Node, parent: Node | undefined, ctx: VisitorContext): typeof SKIP | void {
+  if (isHeading(node)) {
+    dispatchHeading(node, ctx);
+    return;
+  }
+  if (isCode(node) && hasActiveStep(ctx)) {
+    handleCodeBlock(node, ctx);
+    return;
+  }
+  if (isParagraph(node) && parent && parent.type !== 'listItem') {
+    if (ctx.inPreamble) {
+      handlePreambleParagraph(node, ctx);
+      return;
+    }
+    if (hasActiveStep(ctx)) {
+      handleStepParagraph(node, ctx);
+      return;
+    }
+    return;
+  }
+  if (isListItem(node) && hasActiveStep(ctx)) return handleListItem(node, ctx);
 }
 
 /**
@@ -595,7 +647,9 @@ export function parseRunbook(markdown: string): Step[] {
   const { runbook, diagnostics } = parseRunbookDocument(markdown);
   const errors = diagnostics.filter((d) => d.severity === 'error');
   if (errors.length > 0) {
-    throw new RunbookSyntaxError(errors[0].message);
+    const diag = errors[0];
+    const msg = diag.line ? `${diag.message}${formatLineNum(diag.line)}` : diag.message;
+    throw new RunbookSyntaxError(msg);
   }
   return [...runbook.steps];
 }
@@ -636,43 +690,7 @@ export function parseRunbookDocument(markdown: string, basename?: string): Parse
     inPreamble: true,
   };
 
-  visit(tree, (node: Node, _index, parent: Node | undefined) => {
-    if (isHeading(node)) {
-      if (node.depth === 1) {
-        handleH1Heading(node, ctx);
-        return;
-      }
-      if (node.depth >= 4) {
-        handleH4PlusHeading(node);
-        return;
-      }
-      if (node.depth === 2) {
-        handleH2Heading(node, ctx);
-        return;
-      }
-      if (node.depth === 3 && hasActiveStep(ctx)) {
-        handleH3Heading(node, ctx);
-        return;
-      }
-      return;
-    }
-    if (isCode(node) && hasActiveStep(ctx)) {
-      handleCodeBlock(node, ctx);
-      return;
-    }
-    if (isParagraph(node) && parent && parent.type !== 'listItem') {
-      if (ctx.inPreamble) {
-        handlePreambleParagraph(node, ctx);
-        return;
-      }
-      if (hasActiveStep(ctx)) {
-        handleStepParagraph(node, ctx);
-        return;
-      }
-      return;
-    }
-    if (isListItem(node) && hasActiveStep(ctx)) return handleListItem(node, ctx);
-  });
+  visit(tree, (node: Node, _index, parent: Node | undefined) => visitNode(node, parent, ctx));
 
   finalizePendingSubstep(ctx);
 

@@ -1,5 +1,10 @@
 import { describe, it, expect } from '@jest/globals';
-import { parseRunbook, parseRunbookDocument, RunbookSyntaxError } from '../src/index.js';
+import {
+  parseRunbook,
+  parseRunbookDocument,
+  formatLineNum,
+  RunbookSyntaxError,
+} from '../src/index.js';
 
 describe('Step-level runbooks', () => {
   it('parses runbook list in substep', () => {
@@ -2148,7 +2153,7 @@ echo hello
     const md = `## 1 Test step
 
 \`\`\`bash
-  echo hello  
+  echo hello
 \`\`\``;
     const steps = parseRunbook(md);
     expect(steps[0].kind).toBe('command');
@@ -2485,5 +2490,91 @@ describe('parser mutation killing - inline code in text extraction', () => {
     const md = '## 1 Run `npm test` command\n\n```bash\nnpm test\n```';
     const steps = parseRunbook(md);
     expect(steps[0].description).toContain('`npm test`');
+  });
+});
+describe('formatLineNum', () => {
+  it('returns formatted line number when position exists', () => {
+    expect(formatLineNum({ position: { start: { line: 42 } } })).toBe(' (line 42)');
+  });
+
+  it('returns empty string when position is undefined', () => {
+    expect(formatLineNum({})).toBe('');
+  });
+
+  it('returns empty string when line is 0', () => {
+    expect(formatLineNum({ position: { start: { line: 0 } } })).toBe('');
+  });
+
+  it('accepts a raw line number', () => {
+    expect(formatLineNum(10)).toBe(' (line 10)');
+  });
+
+  it('returns empty string for raw 0', () => {
+    expect(formatLineNum(0)).toBe('');
+  });
+
+  it('returns empty string for undefined', () => {
+    expect(formatLineNum(undefined)).toBe('');
+  });
+});
+
+describe('parse errors include source line numbers', () => {
+  it('H1 step header error includes line number', () => {
+    const md = '# 1. My Step\n\nSome content';
+    expect(() => parseRunbook(md)).toThrow(/\(line 1\)/);
+  });
+
+  it('bare code fence error includes line number', () => {
+    const md = '## 1. Step\n\n```\ncode\n```';
+    expect(() => parseRunbook(md)).toThrow(/\(line 3\)/);
+  });
+
+  it('duplicate code block error includes line number', () => {
+    const md = '## 1. Step\n\n```bash\nfirst\n```\n\n```bash\nsecond\n```';
+    expect(() => parseRunbook(md)).toThrow(/\(line 7\)/);
+  });
+
+  it('H4+ heading error includes line number', () => {
+    const md = '## 1. Step\n\n#### Deep heading';
+    expect(() => parseRunbook(md)).toThrow(/\(line 3\)/);
+  });
+
+  it('duplicate substep error includes line number', () => {
+    const md = '## 1. Step\n\n### 1.1 Sub\n\n```bash\necho hi\n```\n\n### 1.1 Sub';
+    expect(() => parseRunbook(md)).toThrow(/\(line 9\)/);
+  });
+
+  it('validator diagnostic error includes line number', () => {
+    const md = '## 1. Step\n- PASS GOTO 99\n- FAIL STOP';
+    expect(() => parseRunbook(md)).toThrow(/\(line 1\)/);
+  });
+});
+
+describe('prompt accumulation (extracted helpers)', () => {
+  it('accumulates prompt text into substep', () => {
+    const md = `## 1. Step
+
+### 1.1 Sub
+Prompt line one
+Prompt line two
+
+\`\`\`bash
+echo "go"
+\`\`\`
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].substeps?.[0].prompt).toBe('Prompt line one\nPrompt line two');
+  });
+
+  it('accumulates prompt text into step (no substeps)', () => {
+    const md = `## 1. Step
+Some prompt text
+
+\`\`\`bash
+echo "go"
+\`\`\`
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].prompt).toBe('Some prompt text');
   });
 });
