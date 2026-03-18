@@ -245,17 +245,17 @@ export interface ExplicitTarget {
 }
 
 /**
- * Execute a configured transition (pass or fail) against the current runbook state.
+ * Perform a pass/fail transition against the active runbook state.
  *
- * When targeting a substep (via an explicit target), records or reuses a resolved completion and drains completions;
- * otherwise sends the transition event to the actor, orchestrates the step-level transition, and runs the execution loop
- * as needed. Emits CLI output for actions, completions, and stopped conditions.
+ * Records or reuses a resolved completion when targeting a substep; otherwise sends the configured
+ * transition event to the runbook actor, orchestrates step-level changes, and runs the execution loop
+ * as required. Emits CLI output for actions, completions, runbook completion, and stopped conditions.
  *
- * @param ctx - Runtime transition context (output, services, state, steps, actor, cwd)
- * @param config - Transition configuration that determines event type, result semantics, and terminal policy
- * @param explicitTarget - Optional explicit target step/substep string (e.g., "2.1") and optional raw --index value to apply the transition to a specific substep/iteration
+ * @param ctx - Runtime transition context containing output, services, current state, parsed steps, actor, and cwd
+ * @param config - Transition configuration that determines the event type, persisted result, action-result mapping, and terminal policy
+ * @param explicitTarget - Optional explicit step/substep target (e.g., "2.1") and optional raw `--index` value to target a specific iteration
  * @returns `'continue'` when execution proceeds or completes normally, `'stopped'` when a terminal stop was reached
- * @throws {Error} if the active step is missing or an explicit target is invalid, or when lifecycle/orchestration validations fail
+ * @throws {Error} if the active step is missing, an explicit target is invalid, or lifecycle/orchestration validations fail
  * @throws {IndexOptionError} if `--index` validation or resolution fails
  */
 export async function executeTransition(
