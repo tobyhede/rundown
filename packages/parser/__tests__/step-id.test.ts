@@ -99,8 +99,46 @@ describe('parseStepIdFromString AT clause mutation killing', () => {
   it('rejects AT with single-brace template', () => {
     expect(parseStepIdFromString('3 AT {Index}')).toBeNull();
   });
+
+  // --- Mutation-killing: AT value trim, strict integer equality, template regex anchors ---
+
+  it('trims trailing space from AT value', () => {
+    expect(parseStepIdFromString('3 AT  5 ')).toEqual({ step: '3', at: 5 });
+  });
+
+  it('trims spaces from step before AT', () => {
+    expect(parseStepIdFromString('  3  AT 5')).toEqual({ step: '3', at: 5 });
+  });
+
+  it('rejects AT with leading-zero integer', () => {
+    expect(parseStepIdFromString('3 AT 01')).toBeNull();
+  });
+
+  it('rejects AT with template trailing text', () => {
+    expect(parseStepIdFromString('3 AT {{var}}x')).toBeNull();
+  });
+
+  it('rejects AT with template leading text', () => {
+    expect(parseStepIdFromString('3 AT x{{var}}')).toBeNull();
+  });
+
+  it('no at property when AT absent (numeric)', () => {
+    const result = parseStepIdFromString('1.2');
+    expect(result).not.toHaveProperty('at');
+  });
+
+  it('no at property when AT absent (named)', () => {
+    const result = parseStepIdFromString('deploy');
+    expect(result).not.toHaveProperty('at');
+  });
 });
 
+// Equivalent mutants: The NEXT/{N} early-exit block is purely an optimization.
+// All ~15 Stryker mutants here are equivalent because:
+// - '{N}', '{N}.1' start with '{' — no later pattern matches → final null return
+// - 'NEXT', 'NEXT.1' match the named pattern but isReservedWord('NEXT') rejects → null
+// - '{n}' contains invalid chars — no pattern matches → final null return
+// Removing or mutating the early-exit produces the same result via downstream logic.
 describe('parseStepIdFromString NEXT/{N} detection mutation killing', () => {
   it('rejects NEXT as step', () => {
     expect(parseStepIdFromString('NEXT')).toBeNull();
@@ -178,8 +216,70 @@ describe('parseStepIdFromString three-part step ID mutation killing', () => {
   it('rejects three-level with AT suffix (contradictory)', () => {
     expect(parseStepIdFromString('1.2.3 AT 5')).toBeNull();
   });
+
+  // --- Mutation-killing: threeLevelPattern requireSeparator branch ---
+
+  it('three-part rejects leading non-digit (requireSep)', () => {
+    expect(parseStepIdFromString('x1.2.3 Desc', { requireSeparator: true })).toBeNull();
+  });
+
+  it('three-part multi-digit step (requireSep)', () => {
+    expect(parseStepIdFromString('12.2.3 Desc', { requireSeparator: true })).toEqual({
+      step: '12',
+      substep: '3',
+      at: 2,
+    });
+  });
+
+  it('three-part multi-digit iteration (requireSep)', () => {
+    expect(parseStepIdFromString('1.23.4 Desc', { requireSeparator: true })).toEqual({
+      step: '1',
+      substep: '4',
+      at: 23,
+    });
+  });
+
+  it('three-part multi-digit substep (requireSep)', () => {
+    expect(parseStepIdFromString('1.2.34 Desc', { requireSeparator: true })).toEqual({
+      step: '1',
+      substep: '34',
+      at: 2,
+    });
+  });
+
+  it('three-part named substep (requireSep)', () => {
+    expect(parseStepIdFromString('1.2.setup Desc', { requireSeparator: true })).toEqual({
+      step: '1',
+      substep: 'setup',
+      at: 2,
+    });
+  });
+
+  // --- Mutation-killing: threeLevelPattern exact-match branch ---
+
+  it('three-part rejects leading content (no requireSep)', () => {
+    expect(parseStepIdFromString('x1.2.3')).toBeNull();
+  });
+
+  it('three-part multi-digit step', () => {
+    expect(parseStepIdFromString('12.2.3')).toEqual({ step: '12', substep: '3', at: 2 });
+  });
+
+  it('three-part multi-digit iteration', () => {
+    expect(parseStepIdFromString('1.23.4')).toEqual({ step: '1', substep: '4', at: 23 });
+  });
+
+  it('three-part multi-digit substep', () => {
+    expect(parseStepIdFromString('1.2.34')).toEqual({ step: '1', substep: '34', at: 2 });
+  });
 });
 
+// Equivalent mutants in reserved-word and numeric-substep validation:
+// - Removing ^/$ anchors from /^\d+$/ is equivalent (captured values are already constrained by
+//   the capture group regex)
+// - Replacing && with || on `substep && X` is equivalent (substep from capture is always truthy)
+// - Removing NAMED_IDENTIFIER_PATTERN.test(substep) guard before isReservedWord(substep) is
+//   equivalent (all reserved words pass the pattern test)
 describe('parseStepIdFromString reserved word substep checks mutation killing', () => {
   it('rejects 1.BREAK', () => {
     expect(parseStepIdFromString('1.BREAK')).toBeNull();
@@ -240,6 +340,20 @@ describe('parseStepIdFromString reserved word substep checks mutation killing', 
   it('rejects 1.0 (substep 0 invalid)', () => {
     expect(parseStepIdFromString('1.0')).toBeNull();
   });
+
+  // --- Mutation-killing: \d+ → \d on /^\d+$/ in three-part, numeric, and named sections ---
+
+  it('rejects multi-digit zero substep (3-part)', () => {
+    expect(parseStepIdFromString('1.2.00')).toBeNull();
+  });
+
+  it('rejects multi-digit zero substep (numeric)', () => {
+    expect(parseStepIdFromString('1.00')).toBeNull();
+  });
+
+  it('rejects multi-digit zero substep (named)', () => {
+    expect(parseStepIdFromString('deploy.00')).toBeNull();
+  });
 });
 
 describe('parseStepIdFromString two-part step ID mutation killing', () => {
@@ -257,6 +371,27 @@ describe('parseStepIdFromString two-part step ID mutation killing', () => {
 
   it('parses step with substep and AT', () => {
     expect(parseStepIdFromString('1.2 AT 3')).toEqual({ step: '1', substep: '2', at: 3 });
+  });
+
+  // --- Mutation-killing: numericPattern requireSeparator branch ---
+
+  it('two-part rejects leading non-digit (requireSep)', () => {
+    expect(parseStepIdFromString('x1 Desc', { requireSeparator: true })).toBeNull();
+  });
+
+  it('two-part multi-digit step (requireSep)', () => {
+    expect(parseStepIdFromString('12 Desc', { requireSeparator: true })).toEqual({ step: '12' });
+  });
+
+  it('two-part multi-digit substep (requireSep)', () => {
+    expect(parseStepIdFromString('1.23 Desc', { requireSeparator: true })).toEqual({
+      step: '1',
+      substep: '23',
+    });
+  });
+
+  it('two-part step-only with separator (requireSep)', () => {
+    expect(parseStepIdFromString('1 Desc', { requireSeparator: true })).toEqual({ step: '1' });
   });
 });
 
@@ -297,6 +432,12 @@ describe('parseStepIdFromString named step pattern mutation killing', () => {
 
   it('rejects named step.0 (substep 0)', () => {
     expect(parseStepIdFromString('deploy.0')).toBeNull();
+  });
+
+  // --- Mutation-killing: \d+ → \d in namedPattern regex ---
+
+  it('multi-digit numeric substep', () => {
+    expect(parseStepIdFromString('deploy.12')).toEqual({ step: 'deploy', substep: '12' });
   });
 });
 
