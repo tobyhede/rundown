@@ -2543,6 +2543,11 @@ describe('parse errors include source line numbers', () => {
     const md = '## 1. Step\n\n### 1.1 Sub\n\n```bash\necho hi\n```\n\n### 1.1 Sub';
     expect(() => parseRunbook(md)).toThrow(/\(line 9\)/);
   });
+
+  it('validator diagnostic error includes line number', () => {
+    const md = '## 1. Step\n- PASS GOTO 99\n- FAIL STOP';
+    expect(() => parseRunbook(md)).toThrow(/\(line 1\)/);
+  });
 });
 
 describe('prompt accumulation (extracted helpers)', () => {

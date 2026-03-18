@@ -647,7 +647,9 @@ export function parseRunbook(markdown: string): Step[] {
   const { runbook, diagnostics } = parseRunbookDocument(markdown);
   const errors = diagnostics.filter((d) => d.severity === 'error');
   if (errors.length > 0) {
-    throw new RunbookSyntaxError(errors[0].message);
+    const diag = errors[0];
+    const msg = diag.line ? `${diag.message}${formatLineNum(diag.line)}` : diag.message;
+    throw new RunbookSyntaxError(msg);
   }
   return [...runbook.steps];
 }
@@ -773,7 +775,7 @@ function finalizeStep(
   if (runbooks.length > 0) {
     if (step.command || step.substeps.length > 0) {
       throw new RunbookSyntaxError(
-        `Step ${step.name}${formatLineNum(step.line)}: Violates Exclusivity Rule. A step must have exactly one of {Body, Substeps}.`,
+        `Step ${step.name}: Violates Exclusivity Rule. A step must have exactly one of {Body, Substeps}.`,
       );
     }
     // Canonicalize each step-level runbook bullet into its own synthetic substep.
