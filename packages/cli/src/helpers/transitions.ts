@@ -245,19 +245,18 @@ export interface ExplicitTarget {
 }
 
 /**
- * Execute a transition with the given configuration.
+ * Perform a pass/fail transition against the active runbook state.
  *
- * Main entry point for transition execution. Sends event to actor,
- * updates state, emits action output, handles terminal states,
- * and runs execution loop if needed.
+ * Records or reuses a resolved completion when targeting a substep; otherwise sends the configured
+ * transition event to the runbook actor, orchestrates step-level changes, and runs the execution loop
+ * as required. Emits CLI output for actions, completions, runbook completion, and stopped conditions.
  *
- * @param ctx - Transition context
- * @param config - Transition configuration
- * @param explicitTarget - Optional explicit target for directing transition at a specific substep
- * @returns `'continue'` for normal flow including completed/done paths, `'stopped'` if it reached a terminal state
- * @throws {Error} from `findStepOrThrow` if the active step is missing (state corruption),
- *   from `ensureActiveEntry` on lifecycle violations, or from orchestration failures
- * @throws {IndexOptionError} if `--index` validation fails
+ * @param ctx - Runtime transition context containing output, services, current state, parsed steps, actor, and cwd
+ * @param config - Transition configuration that determines the event type, persisted result, action-result mapping, and terminal policy
+ * @param explicitTarget - Optional explicit step/substep target (e.g., "2.1") and optional raw `--index` value to target a specific iteration
+ * @returns `'continue'` when execution proceeds or completes normally, `'stopped'` when a terminal stop was reached
+ * @throws {Error} if the active step is missing, an explicit target is invalid, or lifecycle/orchestration validations fail
+ * @throws {IndexOptionError} if `--index` validation or resolution fails
  */
 export async function executeTransition(
   ctx: TransitionContext,
@@ -373,8 +372,12 @@ export async function executeTransition(
 
     // Cross-check sentinel/exact keys to prevent coexisting completions for the same frame/substep
     if (!existing) {
-      const crossEntry =
-        cursor.entry === SENTINEL_ENTRY ? (activeState.activeEntry ?? 1) : SENTINEL_ENTRY;
+      // Look up the target frame's entry (not the active frame's) for correct cross-check
+      const targetFrameEntry =
+        activeState.activeFrameKey === cursor.frameKey
+          ? (activeState.activeEntry ?? 1)
+          : (activeState.frameEntries?.[cursor.frameKey] ?? 1);
+      const crossEntry = cursor.entry === SENTINEL_ENTRY ? targetFrameEntry : SENTINEL_ENTRY;
       const crossKey = buildCompletionKey(cursor.frameKey, crossEntry, targetSubstep);
       existing = await lifecycleService.getResolvedCompletion(activeState.id, crossKey);
     }
