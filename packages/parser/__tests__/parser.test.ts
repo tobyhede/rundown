@@ -2504,6 +2504,18 @@ describe('formatLineNum', () => {
   it('returns empty string when line is 0', () => {
     expect(formatLineNum({ position: { start: { line: 0 } } })).toBe('');
   });
+
+  it('accepts a raw line number', () => {
+    expect(formatLineNum(10)).toBe(' (line 10)');
+  });
+
+  it('returns empty string for raw 0', () => {
+    expect(formatLineNum(0)).toBe('');
+  });
+
+  it('returns empty string for undefined', () => {
+    expect(formatLineNum(undefined)).toBe('');
+  });
 });
 
 describe('parse errors include source line numbers', () => {

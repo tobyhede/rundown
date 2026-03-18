@@ -162,13 +162,16 @@ interface Positioned {
 }
 
 /**
- * Format a node's source line number for error messages.
+ * Format a source line number for error messages.
  *
- * @param node - An AST node with an optional position
+ * Accepts either an AST node with an optional position or a raw line number.
+ *
+ * @param nodeOrLine - An AST node with an optional position, or a line number
  * @returns Formatted string like ` (line 42)`, or empty string if position is unavailable
  */
-export function formatLineNum(node: Positioned): string {
-  return node.position?.start.line ? ` (line ${String(node.position.start.line)})` : '';
+export function formatLineNum(nodeOrLine: Positioned | number | undefined): string {
+  const line = typeof nodeOrLine === 'number' ? nodeOrLine : nodeOrLine?.position?.start.line;
+  return line ? ` (line ${String(line)})` : '';
 }
 
 function finalizePendingSubstep(ctx: VisitorContext): void {
@@ -223,7 +226,7 @@ function handleH1Heading(node: Heading, ctx: VisitorContext): void {
 
 function handleH4PlusHeading(node: Heading): void {
   throw new RunbookSyntaxError(
-    `H4+ headings are not allowed in runbooks${formatLineNum(node)}. Found heading at depth ${String(node.depth)}. Use ## for steps and ### for substeps only.`,
+    `H4+ headings are not allowed in runbooks${formatLineNum(node)}. Use ## for steps and ### for substeps only. Found heading at depth ${String(node.depth)}.`,
   );
 }
 
@@ -571,7 +574,7 @@ function handleListItem(node: ListItem, ctx: ActiveStepContext): typeof SKIP | v
   // If FOR text appears in a substep context, that's an error
   if (forResult && ctx.currentStep.pendingSubstep) {
     throw new RunbookSyntaxError(
-      `FOR is only valid on steps (H2), not substeps (H3)${formatLineNum(node)} (found on "${ctx.currentStep.name}.${ctx.currentStep.pendingSubstep.id}")`,
+      `FOR is only valid on steps (H2), not substeps (H3)${formatLineNum(node)}. Found on "${ctx.currentStep.name}.${ctx.currentStep.pendingSubstep.id}".`,
     );
   }
 
@@ -769,9 +772,8 @@ function finalizeStep(
   // Step-level runbook lists are syntax sugar for implicit substeps.
   if (runbooks.length > 0) {
     if (step.command || step.substeps.length > 0) {
-      const lineRef = step.line ? ` (line ${String(step.line)})` : '';
       throw new RunbookSyntaxError(
-        `Step ${step.name}${lineRef}: Violates Exclusivity Rule. A step must have exactly one of {Body, Substeps}.`,
+        `Step ${step.name}${formatLineNum(step.line)}: Violates Exclusivity Rule. A step must have exactly one of {Body, Substeps}.`,
       );
     }
     // Canonicalize each step-level runbook bullet into its own synthetic substep.
