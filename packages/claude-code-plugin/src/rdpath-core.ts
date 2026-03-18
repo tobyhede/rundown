@@ -104,7 +104,7 @@ export interface RdPathFindOptions {
  * @param options - Directory and optional context scope
  * @param pattern - Glob pattern to match files against
  * @returns Sorted array of matching file paths (relative to cwd, assembled with dir/ctx prefix)
- * @throws {Error} When ctx is invalid, pattern contains traversal, or directory doesn't exist
+ * @throws {Error} When ctx is invalid, pattern contains traversal, directory doesn't exist, or dir is not a directory
  */
 export async function findFiles(options: RdPathFindOptions, pattern: string): Promise<string[]> {
   if (options.ctx != null) {
@@ -135,14 +135,29 @@ export async function findFiles(options: RdPathFindOptions, pattern: string): Pr
     throw error;
   }
 
-  // Collect glob matches (files only)
+  // Collect glob matches (files only, symlink-safe)
+  const realDir = await fs.realpath(absoluteDir);
   const matches: string[] = [];
   for await (const match of fs.glob(pattern, { cwd: absoluteDir })) {
     const absoluteMatch = path.resolve(absoluteDir, match);
-    if (!isPathInside(absoluteDir, absoluteMatch)) continue;
-    const stat = await fs.stat(absoluteMatch);
-    if (stat.isFile()) {
-      matches.push(path.join(resolvedDir, match));
+    try {
+      const realMatch = await fs.realpath(absoluteMatch);
+      if (!isPathInside(realDir, realMatch)) continue;
+      const stat = await fs.lstat(realMatch);
+      if (stat.isFile()) {
+        matches.push(path.join(resolvedDir, match));
+      }
+    } catch (error) {
+      if (
+        isNodeError(error) &&
+        (error.code === 'ENOENT' ||
+          error.code === 'EACCES' ||
+          error.code === 'EPERM' ||
+          error.code === 'ELOOP')
+      ) {
+        continue;
+      }
+      throw error;
     }
   }
 

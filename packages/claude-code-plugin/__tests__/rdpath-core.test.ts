@@ -111,6 +111,12 @@ describe('findFiles', () => {
     );
   });
 
+  it('throws when dir points to a file', async () => {
+    const filePath = path.join(testDir, 'not-a-dir.md');
+    await fs.writeFile(filePath, 'x');
+    await expect(findFiles({ dir: filePath }, '*.md')).rejects.toThrow('Not a directory');
+  });
+
   it('handles ctx scoping', async () => {
     const ctxDir = path.join(testDir, '.rd-ctx1');
     await fs.mkdir(ctxDir);
@@ -198,5 +204,42 @@ describe('findFiles', () => {
     const results = await findFiles({ dir: testDir }, 'exact.md');
 
     expect(results).toEqual([path.join(testDir, 'exact.md')]);
+  });
+
+  it('excludes symlinks that resolve outside the search directory', async () => {
+    // Create a file outside the search directory
+    const outsideDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rdpath-outside-'));
+    try {
+      await fs.writeFile(path.join(outsideDir, 'secret.md'), 'sensitive');
+      // Create a symlink inside the search dir pointing outside
+      await fs.symlink(path.join(outsideDir, 'secret.md'), path.join(testDir, 'leak.md'));
+      // Also create a legitimate file to confirm it still works
+      await fs.writeFile(path.join(testDir, 'legit.md'), 'ok');
+
+      const results = await findFiles({ dir: testDir }, '*.md');
+
+      expect(results).toEqual([path.join(testDir, 'legit.md')]);
+      expect(results).not.toContainEqual(expect.stringContaining('leak.md'));
+    } finally {
+      await fs.rm(outsideDir, { recursive: true, force: true });
+    }
+  });
+
+  it('includes symlinks that resolve within the search directory', async () => {
+    await fs.writeFile(path.join(testDir, 'original.md'), 'content');
+    await fs.symlink(path.join(testDir, 'original.md'), path.join(testDir, 'alias.md'));
+
+    const results = await findFiles({ dir: testDir }, '*.md');
+
+    expect(results).toEqual([path.join(testDir, 'alias.md'), path.join(testDir, 'original.md')]);
+  });
+
+  it('ignores dangling symlinks', async () => {
+    await fs.symlink(path.join(testDir, 'missing.md'), path.join(testDir, 'dangling.md'));
+    await fs.writeFile(path.join(testDir, 'ok.md'), 'ok');
+
+    const results = await findFiles({ dir: testDir }, '*.md');
+
+    expect(results).toEqual([path.join(testDir, 'ok.md')]);
   });
 });
