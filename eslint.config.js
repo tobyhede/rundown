@@ -105,12 +105,6 @@ export default tseslint.config(
           varsIgnorePattern: '^_',
         },
       ],
-
-      // Complexity warnings (non-blocking)
-      complexity: ['warn', { max: 15 }],
-      'max-lines-per-function': ['warn', { max: 100, skipBlankLines: true, skipComments: true }],
-      'max-depth': ['warn', { max: 4 }],
-      'max-params': ['warn', { max: 4 }],
     },
   },
 
