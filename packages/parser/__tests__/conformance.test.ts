@@ -72,7 +72,17 @@ function hasTransitions(steps: readonly Step[]): boolean {
 
 describe('Rundown Conformance (Fixture Driven)', () => {
   describe('Valid Runbooks (Patterns)', () => {
-    const files = getFilesRecursively(PATTERNS_DIR);
+    const dirExists = fs.existsSync(PATTERNS_DIR);
+    const files = dirExists ? getFilesRecursively(PATTERNS_DIR) : [];
+
+    // PATTERNS_DIR resolves to the monorepo root runbooks/ directory via a
+    // relative path (../../../../runbooks). Stryker mutation testing copies only
+    // the package under test into a temp sandbox, so that directory won't exist.
+    // Skip gracefully rather than crashing on a missing path.
+    if (!dirExists) {
+      it.skip('runbooks directory not found (e.g. Stryker sandbox)', () => {});
+      return;
+    }
 
     it.each(files)('should parse valid runbook: %s', (filePath) => {
       const content = fs.readFileSync(filePath, 'utf8');
