@@ -371,7 +371,7 @@ export async function executeTransition(
     let existing = await lifecycleService.getResolvedCompletion(activeState.id, completionKey);
 
     // Cross-check sentinel/exact keys to prevent coexisting completions for the same frame/substep
-    if (!existing) {
+    if (!existing && cursor.entry !== SENTINEL_ENTRY) {
       // Look up the target frame's entry (not the active frame's) for correct cross-check
       const targetFrameEntry =
         activeState.activeFrameKey === cursor.frameKey

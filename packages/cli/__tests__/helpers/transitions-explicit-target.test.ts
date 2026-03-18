@@ -539,12 +539,9 @@ describe('executeTransition with ExplicitTarget', () => {
 
     await executeTransition(ctx, config, { stepId: '1.1', index: '3' });
 
-    // Cross-check should use entry 4 from frameEntries['1|3'], not activeEntry (2)
-    const crossBuild = builtKeys.find((k) => k.entry === 4);
-    expect(crossBuild).toBeDefined();
-    expect(crossBuild!.frameKey).toBe('1[3]');
-    // Should NOT write a new completion (exact entry already covers it)
-    expect(ctx.lifecycleService.upsertResolvedCompletion).not.toHaveBeenCalled();
+    // Sentinel write should NOT be suppressed — cross-check is skipped for sentinel entries
+    // because the drain needs the sentinel as a bridge (it can't look up arbitrary frameEntries)
+    expect(ctx.lifecycleService.upsertResolvedCompletion).toHaveBeenCalled();
   });
 
   it('passes frameKeyOverride to drain when explicit target provided', async () => {
@@ -570,6 +567,75 @@ describe('executeTransition with ExplicitTarget', () => {
     // The override should be the cursor's frameKey (built from step + index)
     const drainCall = (drainResolvedCompletions as jest.Mock).mock.calls[0][0];
     expect(drainCall.frameKeyOverride).toBe(core.buildFrameKey('1', 3));
+  });
+
+  it('sentinel write is not suppressed when non-active frame has exact-entry completion', async () => {
+    const forStep = {
+      name: '1',
+      kind: 'for',
+      forClause: { start: 1, end: 5, source: undefined },
+      substeps: [{ id: '1' }, { id: '2' }],
+    };
+    (findStepOrThrow as jest.Mock).mockReturnValue(forStep);
+    // Active frame is iteration 1, but we target iteration 3 (non-active frame)
+    // frameEntries records that iteration 3 was visited with entry 4
+    const ctx = makeCtx({
+      substep: '1',
+      activeFrameKey: '1[1]',
+      activeEntry: 2,
+      frameEntries: { '1[3]': 4 },
+    });
+    ctx.steps = [forStep];
+    (core.parseStepIdFromString as jest.Mock).mockReturnValue({ step: '1', substep: '1' });
+    // Cross-check for exact entry 4 finds an existing completion
+    ctx.lifecycleService.getResolvedCompletion.mockImplementation(
+      async (_id: string, key: string) => {
+        // Only the exact-entry key (entry=4) hits — sentinel (entry=0) misses
+        if (key.includes(':4:')) return { result: 'pass' };
+        return null;
+      },
+    );
+    const config = createPassTransitionConfig();
+
+    await executeTransition(ctx, config, { stepId: '1.1', index: '3' });
+
+    // Sentinel MUST still be written — the drain needs it since it uses activeEntry, not frameEntries
+    expect(ctx.lifecycleService.upsertResolvedCompletion).toHaveBeenCalled();
+  });
+
+  it('drain consumes sentinel after explicit target on non-active frame with existing exact completion', async () => {
+    const forStep = {
+      name: '1',
+      kind: 'for',
+      forClause: { start: 1, end: 5, source: undefined },
+      substeps: [{ id: '1' }, { id: '2' }],
+    };
+    (findStepOrThrow as jest.Mock).mockReturnValue(forStep);
+    const ctx = makeCtx({
+      substep: '1',
+      activeFrameKey: '1[1]',
+      activeEntry: 2,
+      frameEntries: { '1[3]': 4 },
+    });
+    ctx.steps = [forStep];
+    (core.parseStepIdFromString as jest.Mock).mockReturnValue({ step: '1', substep: '1' });
+    // Cross-check for exact entry 4 finds an existing completion
+    ctx.lifecycleService.getResolvedCompletion.mockImplementation(
+      async (_id: string, key: string) => {
+        if (key.includes(':4:')) return { result: 'pass' };
+        return null;
+      },
+    );
+    const config = createPassTransitionConfig();
+
+    await executeTransition(ctx, config, { stepId: '1.1', index: '3' });
+
+    // Drain should be called with frameKeyOverride so it can consume the sentinel
+    expect(drainResolvedCompletions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        frameKeyOverride: '1[3]',
+      }),
+    );
   });
 
   it('does not pass frameKeyOverride when no explicit target', async () => {
