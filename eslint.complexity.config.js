@@ -1,23 +1,10 @@
 // @ts-check
 import tseslint from 'typescript-eslint';
 import globals from 'globals';
+import { ignores } from './eslint.ignores.js';
 
 export default tseslint.config(
-  {
-    ignores: [
-      '**/node_modules/**',
-      '**/dist/**',
-      '**/coverage/**',
-      '**/*.js',
-      '**/stryker.config.mjs',
-      '**/*.d.ts',
-      'site/**',
-      '.work/**',
-      '.worktree/**',
-      '.worktrees/**',
-      '**/.stryker-tmp/**',
-    ],
-  },
+  { ignores },
   {
     files: ['**/*.ts'],
     languageOptions: {

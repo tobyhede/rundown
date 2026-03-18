@@ -2,24 +2,11 @@
 import tseslint from 'typescript-eslint';
 import globals from 'globals';
 import jsdoc from 'eslint-plugin-jsdoc';
+import { ignores } from './eslint.ignores.js';
 
 export default tseslint.config(
   // Ignore patterns (replaces .eslintignore)
-  {
-    ignores: [
-      '**/node_modules/**',
-      '**/dist/**',
-      '**/coverage/**',
-      '**/*.js',
-      '**/stryker.config.mjs',
-      '**/*.d.ts',
-      'site/**',
-      '.work/**',
-      '.worktree/**',
-      '.worktrees/**',
-      '**/.stryker-tmp/**',
-    ],
-  },
+  { ignores },
 
   // TypeScript type-checked rules only (non-type-aware rules handled by Biome)
   ...tseslint.configs.strictTypeCheckedOnly,
