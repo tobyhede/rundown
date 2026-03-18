@@ -20,7 +20,7 @@ const mockStep = (overrides: Record<string, unknown>): Step => {
   const kind =
     obj.forClause !== undefined
       ? 'for'
-      : Array.isArray(obj.substeps) && (obj.substeps as unknown[]).length > 0
+      : 'substeps' in obj
         ? 'substeps'
         : obj.command !== undefined
           ? 'command'

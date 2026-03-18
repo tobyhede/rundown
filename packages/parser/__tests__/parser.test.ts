@@ -2250,7 +2250,9 @@ echo sub2
     if (steps[0].kind === 'substeps') {
       expect(steps[0].substeps).toHaveLength(2);
       expect(steps[0].substeps[0].id).toBe('1');
+      expect(steps[0].substeps[0].command?.code).toBe('echo sub1');
       expect(steps[0].substeps[1].id).toBe('2');
+      expect(steps[0].substeps[1].command?.code).toBe('echo sub2');
     }
   });
 
