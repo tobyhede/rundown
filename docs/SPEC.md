@@ -197,7 +197,7 @@ Steps annotated with `FOR` execute their substeps repeatedly.
 *   **Scope**: Loop variable available in substeps as `{{var}}`.
 *   **Aggregation**: Transitions on the parent FOR step evaluate the aggregate result of all iterations.
 *   **Iteration-level transitions**: Nested `PASS`/`FAIL` transitions under a `FOR` clause are stored on the `forClause.transitions` field and execute per iteration. Allowed actions: `DEFER` (default, loop back with accumulation), `NEXT` (loop back without accumulation), `CONTINUE` (exit loop), `BREAK` (exit loop), `GOTO`, `STOP`, `COMPLETE` (optionally wrapped by `RETRY`).
-*   **CONTINUE at iteration scope**: At step level, CONTINUE proceeds to the next step. At FOR iteration level, CONTINUE exits the loop — the current iteration result is NOT accumulated (same as NEXT/BREAK), and execution continues with the step after the FOR step.
+* **CONTINUE at iteration scope**: At step level, CONTINUE proceeds to the next step. At FOR iteration level, CONTINUE exits the loop — the current iteration result is NOT accumulated (same as NEXT/BREAK), and execution continues with the step after the FOR step.
 *   **Nested bullet rule**: Nested bullets under `FOR` must be transition bullets; non-transition nested bullets are invalid and fail parse.
 *   **Retry order**: Iteration-level `RETRY` semantics are deterministic: retry first, then execute the exhausted action. RETRY is universal — it fires for ALL substep actions (including `BREAK` and `NEXT`) based on the iteration result, not the substep action. After retries are exhausted, the substep's action takes effect:
     *   `BREAK` → exit loop (non-accumulating, same as NEXT)
