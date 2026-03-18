@@ -9,25 +9,24 @@
  */
 
 import { Command } from 'commander';
-import {
-  assemblePath,
-  findFiles,
-  type RdPathFindOptions,
-  type RdPathOptions,
-} from './rdpath-core.js';
+import { assemblePath, findFiles } from './rdpath-core.js';
 import { getErrorMessage } from './shared/errors.js';
 
 const program = new Command();
-program.name('rdpath').description('Assemble artifact paths with optional context scoping');
+program
+  .name('rdpath')
+  .description('Assemble artifact paths with optional context scoping')
+  .enablePositionalOptions()
+  .requiredOption('--dir <path>', 'Base directory')
+  .option('--ctx <id>', 'Context scope (creates .rd-<id>/ subdirectory)');
 
 const pathCmd = new Command('path')
   .description('Assemble an artifact path')
-  .requiredOption('--dir <path>', 'Base directory')
-  .option('--ctx <id>', 'Context scope (creates .rd-<id>/ subdirectory)')
   .option('--file <name>', 'Filename to date-prefix (YYYY-MM-DD)')
-  .action((options: RdPathOptions) => {
+  .action((options: { file?: string }) => {
+    const { dir, ctx } = program.opts<{ dir: string; ctx?: string }>();
     try {
-      process.stdout.write(`${assemblePath(options)}\n`);
+      process.stdout.write(`${assemblePath({ dir, ctx, file: options.file })}\n`);
     } catch (error) {
       const message = getErrorMessage(error);
       process.stderr.write(`error: ${message}\n`);
@@ -37,12 +36,11 @@ const pathCmd = new Command('path')
 
 const findCmd = new Command('find')
   .description('Find files matching a glob pattern in an artifact directory')
-  .requiredOption('--dir <path>', 'Base directory')
-  .option('--ctx <id>', 'Context scope (searches in .rd-<id>/ subdirectory)')
   .argument('<pattern>', 'Glob pattern to match files against')
-  .action(async (pattern: string, options: RdPathFindOptions) => {
+  .action(async (pattern: string) => {
+    const { dir, ctx } = program.opts<{ dir: string; ctx?: string }>();
     try {
-      const results = await findFiles(options, pattern);
+      const results = await findFiles({ dir, ctx }, pattern);
       for (const result of results) {
         process.stdout.write(`${result}\n`);
       }

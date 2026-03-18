@@ -51,7 +51,7 @@ function resolveBaseDir(dir: string, ctx?: string): string {
 /**
  * Options for assembling an artifact path.
  */
-export interface RdPathOptions {
+interface RdPathOptions {
   /** Base directory for the artifact path. */
   dir: string;
   /** Optional context scope — creates a `.rd-<ctx>/` subdirectory. */
@@ -88,7 +88,7 @@ export function assemblePath(options: RdPathOptions): string {
 /**
  * Options for finding files via glob pattern.
  */
-export interface RdPathFindOptions {
+interface RdPathFindOptions {
   /** Base directory for the search. */
   dir: string;
   /** Optional context scope — searches within `.rd-<ctx>/` subdirectory. */

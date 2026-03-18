@@ -52,7 +52,7 @@ describe('rdpath find integration', () => {
     await fs.writeFile(path.join(testDir, '2026-03-17-pass2.md'), '');
     await fs.writeFile(path.join(testDir, '2026-03-17-fail.md'), '');
 
-    const result = await runRdpath(['find', '--dir', testDir, '*-pass*.md']);
+    const result = await runRdpath(['--dir', testDir, 'find', '*-pass*.md']);
 
     expect(result.exitCode).toBe(0);
     const lines = result.stdout.trim().split('\n');
@@ -62,21 +62,21 @@ describe('rdpath find integration', () => {
   });
 
   it('exits 0 with no output when nothing matches', async () => {
-    const result = await runRdpath(['find', '--dir', testDir, '*.md']);
+    const result = await runRdpath(['--dir', testDir, 'find', '*.md']);
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toBe('');
   });
 
   it('exits 1 with error to stderr for invalid pattern', async () => {
-    const result = await runRdpath(['find', '--dir', testDir, '../*.md']);
+    const result = await runRdpath(['--dir', testDir, 'find', '../*.md']);
 
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain('error:');
   });
 
   it('exits 1 with error to stderr for nonexistent directory', async () => {
-    const result = await runRdpath(['find', '--dir', path.join(testDir, 'nope'), '*.md']);
+    const result = await runRdpath(['--dir', path.join(testDir, 'nope'), 'find', '*.md']);
 
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain('Directory not found');
@@ -87,7 +87,7 @@ describe('rdpath find integration', () => {
     await fs.mkdir(ctxDir);
     await fs.writeFile(path.join(ctxDir, 'found.md'), '');
 
-    const result = await runRdpath(['find', '--dir', testDir, '--ctx', 'test-ctx', '*.md']);
+    const result = await runRdpath(['--dir', testDir, '--ctx', 'test-ctx', 'find', '*.md']);
 
     expect(result.exitCode).toBe(0);
     const lines = result.stdout.trim().split('\n');
