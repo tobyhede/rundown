@@ -215,7 +215,7 @@ function handleH1Heading(node: Heading, ctx: VisitorContext): void {
   const looksLikeStep = /^\d+[.:\-)\s]/.test(headingText);
   if (looksLikeStep) {
     throw new RunbookSyntaxError(
-      `H1 headers (# ...) cannot be used as step headers. Use H2 (## ${headingText}) instead.`,
+      `H1 headers (# ...) cannot be used as step headers${formatLineNum(node)}. Use H2 (## ${headingText}) instead.`,
     );
   }
   ctx.title ??= headingText;
@@ -223,7 +223,7 @@ function handleH1Heading(node: Heading, ctx: VisitorContext): void {
 
 function handleH4PlusHeading(node: Heading): void {
   throw new RunbookSyntaxError(
-    `H4+ headings are not allowed in runbooks. Found heading at depth ${String(node.depth)}. Use ## for steps and ### for substeps only.`,
+    `H4+ headings are not allowed in runbooks${formatLineNum(node)}. Found heading at depth ${String(node.depth)}. Use ## for steps and ### for substeps only.`,
   );
 }
 
@@ -277,14 +277,16 @@ function handleH3Heading(node: Heading, ctx: ActiveStepContext): void {
     ctx.currentStep.hasSeenContent = true;
     if (parsed.stepRef !== undefined && parsed.stepRef !== ctx.currentStep.name) {
       throw new RunbookSyntaxError(
-        `Substep ${headingText} does not belong to step ${ctx.currentStep.name}`,
+        `Substep ${headingText} does not belong to step ${ctx.currentStep.name}${formatLineNum(node)}`,
       );
     }
 
     const duplicateId = ctx.currentStep.substeps.find((s) => s.id === parsed.id);
     if (duplicateId) {
       const stepLabel = ctx.currentStep.name;
-      throw new RunbookSyntaxError(`Duplicate substep ID '${parsed.id}' in step ${stepLabel}`);
+      throw new RunbookSyntaxError(
+        `Duplicate substep ID '${parsed.id}' in step ${stepLabel}${formatLineNum(node)}`,
+      );
     }
 
     ctx.currentStep.pendingSubstep = {
@@ -333,7 +335,7 @@ function handleCodeBlock(node: Code, ctx: ActiveStepContext): void {
   } else {
     // Bare code fence (no info string) — reject as invalid
     throw new RunbookSyntaxError(
-      `Code block without language tag in Step ${ctx.currentStep.name}. ` +
+      `Code block without language tag in Step ${ctx.currentStep.name}${formatLineNum(node)}. ` +
         `Use a language tag (e.g., \`\`\`bash) or \`\`\`prompt for display-only blocks.`,
     );
   }
@@ -341,7 +343,7 @@ function handleCodeBlock(node: Code, ctx: ActiveStepContext): void {
   if (ctx.currentStep.pendingSubstep) {
     if (ctx.currentStep.pendingSubstep.command) {
       throw new RunbookSyntaxError(
-        `Multiple code blocks per substep not allowed in substep ${ctx.currentStep.pendingSubstep.id} (display-only fences like json/yaml count as code blocks)`,
+        `Multiple code blocks per substep not allowed in substep ${ctx.currentStep.pendingSubstep.id}${formatLineNum(node)} (display-only fences like json/yaml count as code blocks)`,
       );
     }
     ctx.currentStep.pendingSubstep.command = cmd;
@@ -350,7 +352,7 @@ function handleCodeBlock(node: Code, ctx: ActiveStepContext): void {
     if (ctx.currentStep.command) {
       const stepLabel = ctx.currentStep.name;
       throw new RunbookSyntaxError(
-        `Multiple code blocks per step not allowed in Step ${stepLabel} (display-only fences like json/yaml count as code blocks).`,
+        `Multiple code blocks per step not allowed in Step ${stepLabel}${formatLineNum(node)} (display-only fences like json/yaml count as code blocks).`,
       );
     }
     ctx.currentStep.command = cmd;
@@ -418,18 +420,18 @@ function handleForClause(
   // Enforce: only one FOR per step
   if (ctx.currentStep.hasSeenForClause) {
     throw new RunbookSyntaxError(
-      `Step "${ctx.currentStep.name}" has multiple FOR clauses; only one is allowed`,
+      `Step "${ctx.currentStep.name}" has multiple FOR clauses; only one is allowed${formatLineNum(listItemNode)}`,
     );
   }
   // Enforce ordering: FOR must appear before transitions and content
   if (ctx.currentStep.hasSeenTransitions) {
     throw new RunbookSyntaxError(
-      `Step "${ctx.currentStep.name}": FOR clause must appear before transitions`,
+      `Step "${ctx.currentStep.name}": FOR clause must appear before transitions${formatLineNum(listItemNode)}`,
     );
   }
   if (ctx.currentStep.hasSeenContent || ctx.currentStep.hasSeenPromptText) {
     throw new RunbookSyntaxError(
-      `Step "${ctx.currentStep.name}": FOR clause must appear before content`,
+      `Step "${ctx.currentStep.name}": FOR clause must appear before content${formatLineNum(listItemNode)}`,
     );
   }
   ctx.currentStep.forClause = forClause;
@@ -443,7 +445,7 @@ function handleForClause(
       const nestedParagraph = nestedItem.children.find((c) => c.type === 'paragraph');
       if (!nestedParagraph) {
         throw new RunbookSyntaxError(
-          `Invalid nested bullet under FOR clause in step "${ctx.currentStep.name}": only transitions (PASS/FAIL/DEFER) are allowed`,
+          `Invalid nested bullet under FOR clause in step "${ctx.currentStep.name}": only transitions (PASS/FAIL/DEFER) are allowed${formatLineNum(nestedItem)}`,
         );
       }
       const nestedText = extractText(
@@ -452,7 +454,7 @@ function handleForClause(
       const cond = parseConditional(nestedText);
       if (!cond) {
         throw new RunbookSyntaxError(
-          `Invalid nested bullet under FOR clause in step "${ctx.currentStep.name}": only transitions (PASS/FAIL/DEFER) are allowed`,
+          `Invalid nested bullet under FOR clause in step "${ctx.currentStep.name}": only transitions (PASS/FAIL/DEFER) are allowed${formatLineNum(nestedItem)}`,
         );
       }
       if (Array.isArray(cond)) {
@@ -557,7 +559,7 @@ function handleListItem(node: ListItem, ctx: ActiveStepContext): typeof SKIP | v
   // Throw if text looks like a FOR clause but didn't parse,
   // unless it contains template variables ({{...}}) that need runtime expansion
   if (forResult === null && text.trim().startsWith('FOR ')) {
-    throw new RunbookSyntaxError(`Invalid FOR clause: ${text.trim()}`);
+    throw new RunbookSyntaxError(`Invalid FOR clause${formatLineNum(node)}: ${text.trim()}`);
   }
 
   if (forResult && !ctx.currentStep.pendingSubstep) {
@@ -569,7 +571,7 @@ function handleListItem(node: ListItem, ctx: ActiveStepContext): typeof SKIP | v
   // If FOR text appears in a substep context, that's an error
   if (forResult && ctx.currentStep.pendingSubstep) {
     throw new RunbookSyntaxError(
-      `FOR is only valid on steps (H2), not substeps (H3) (found on "${ctx.currentStep.name}.${ctx.currentStep.pendingSubstep.id}")`,
+      `FOR is only valid on steps (H2), not substeps (H3)${formatLineNum(node)} (found on "${ctx.currentStep.name}.${ctx.currentStep.pendingSubstep.id}")`,
     );
   }
 
@@ -767,8 +769,9 @@ function finalizeStep(
   // Step-level runbook lists are syntax sugar for implicit substeps.
   if (runbooks.length > 0) {
     if (step.command || step.substeps.length > 0) {
+      const lineRef = step.line ? ` (line ${String(step.line)})` : '';
       throw new RunbookSyntaxError(
-        `Step ${step.name}: Violates Exclusivity Rule. A step must have exactly one of {Body, Substeps}.`,
+        `Step ${step.name}${lineRef}: Violates Exclusivity Rule. A step must have exactly one of {Body, Substeps}.`,
       );
     }
     // Canonicalize each step-level runbook bullet into its own synthetic substep.

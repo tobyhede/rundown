@@ -2506,6 +2506,33 @@ describe('formatLineNum', () => {
   });
 });
 
+describe('parse errors include source line numbers', () => {
+  it('H1 step header error includes line number', () => {
+    const md = '# 1. My Step\n\nSome content';
+    expect(() => parseRunbook(md)).toThrow(/\(line 1\)/);
+  });
+
+  it('bare code fence error includes line number', () => {
+    const md = '## 1. Step\n\n```\ncode\n```';
+    expect(() => parseRunbook(md)).toThrow(/\(line 3\)/);
+  });
+
+  it('duplicate code block error includes line number', () => {
+    const md = '## 1. Step\n\n```bash\nfirst\n```\n\n```bash\nsecond\n```';
+    expect(() => parseRunbook(md)).toThrow(/\(line 7\)/);
+  });
+
+  it('H4+ heading error includes line number', () => {
+    const md = '## 1. Step\n\n#### Deep heading';
+    expect(() => parseRunbook(md)).toThrow(/\(line 3\)/);
+  });
+
+  it('duplicate substep error includes line number', () => {
+    const md = '## 1. Step\n\n### 1.1 Sub\n\n```bash\necho hi\n```\n\n### 1.1 Sub';
+    expect(() => parseRunbook(md)).toThrow(/\(line 9\)/);
+  });
+});
+
 describe('prompt accumulation (extracted helpers)', () => {
   it('accumulates prompt text into substep', () => {
     const md = `## 1. Step
