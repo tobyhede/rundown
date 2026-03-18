@@ -32,6 +32,12 @@
         "useNodejsImportProtocol": "error",
         "noNonNullAssertion": "off"
       },
+      "complexity": {
+        "noExcessiveCognitiveComplexity": {
+          "level": "warn",
+          "options": { "maxAllowedComplexity": 15 }
+        }
+      },
       "suspicious": {
         "noExplicitAny": "off",
         "noTemplateCurlyInString": "off"
