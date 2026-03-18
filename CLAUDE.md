@@ -77,8 +77,8 @@ The `rd` command is an alias for `rundown`.
 rdpath --dir <path>                           # Assemble base path (default subcommand)
 rdpath --dir <path> --ctx <id>                # With context scope (.rd-<id>/)
 rdpath --dir <path> --ctx <id> --file <name>  # With date-prefixed filename
-rdpath find --dir <path> <pattern>            # Find files matching glob pattern
-rdpath find --dir <path> --ctx <id> <pattern> # Find within context scope
+rdpath --dir <path> find <pattern>            # Find files matching glob pattern
+rdpath --dir <path> --ctx <id> find <pattern> # Find within context scope
 ```
 
 ## Template Variables
