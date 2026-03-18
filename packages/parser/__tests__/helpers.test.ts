@@ -1573,6 +1573,14 @@ describe('parseForClause', () => {
     it('parses numeric count (start defaults to 1)', () => {
       expect(parseForClause('FOR batch IN 10')).toEqual({ variable: 'batch', start: 1, end: 10 });
     });
+
+    it('parses single-character variable name', () => {
+      expect(parseForClause('FOR i IN 3')).toEqual({
+        variable: 'i',
+        start: 1,
+        end: 3,
+      });
+    });
   });
 
   describe('unnamed count: FOR count', () => {
@@ -2025,6 +2033,8 @@ describe('parseForClause', () => {
       expect(parseForClause('FOR x IN {{items}}abc')).toBeNull();
     });
 
+    // Targets L358 ^ anchor mutant — existing 'FOR 1batch' test covers the same regex
+    // but with a different digit prefix; this variant ensures the anchor is load-bearing
     it('rejects variable name starting with digit', () => {
       expect(parseForClause('FOR 2items IN 1 TO 5')).toBeNull();
     });
@@ -2075,14 +2085,6 @@ describe('parseForClause', () => {
 
     it('returns null when both windowed source bounds exceed MAX_FOR_BOUND', () => {
       expect(parseForClause('FOR x IN 10001 TO 10002 OF {{ items }}')).toBeNull();
-    });
-
-    it('parses single-character variable name', () => {
-      expect(parseForClause('FOR i IN 3')).toEqual({
-        variable: 'i',
-        start: 1,
-        end: 3,
-      });
     });
   });
 });
