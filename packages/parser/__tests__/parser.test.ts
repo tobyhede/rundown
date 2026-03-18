@@ -2265,6 +2265,7 @@ Do this thing
 echo sub1
 \`\`\``;
     const steps = parseRunbook(md);
+    expect(steps[0].kind).toBe('substeps');
     if (steps[0].kind === 'substeps') {
       expect(steps[0].substeps[0].prompt).toBe('Do this thing');
     }
@@ -2298,14 +2299,10 @@ echo hello
   it('rejects runbook ref with trailing text', () => {
     const md = `## 1 Test step
 
-\`\`\`bash
-echo hello
-\`\`\``;
+- verify.runbook.md some extra text`;
     const steps = parseRunbook(md);
-    // Step with only a command has no runbooks
-    if (steps[0].kind === 'command') {
-      expect(steps[0]).not.toHaveProperty('runbooks');
-    }
+    expect(steps[0].kind).toBe('base');
+    expect(steps[0]).not.toHaveProperty('runbooks');
   });
 });
 
@@ -2354,6 +2351,7 @@ echo iteration
 
 - verify.runbook.md`;
     const steps = parseRunbook(md);
+    expect(steps[0].kind).toBe('substeps');
     if (steps[0].kind === 'substeps') {
       expect(steps[0].substeps[0].transitions.pass.action.type).toBe('DEFER');
       expect(steps[0].substeps[0].transitions.fail.action.type).toBe('DEFER');

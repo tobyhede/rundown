@@ -2344,24 +2344,6 @@ describe('formatAction mutation killing', () => {
     expect(formatAction({ type: 'INVALID' } as any)).toBe('UNKNOWN');
   });
 
-  it('DEFER returns string DEFER not empty string', () => {
-    const result = formatAction({ type: 'DEFER' });
-    expect(result).not.toBe('');
-    expect(result).toBe('DEFER');
-  });
-
-  it('NEXT returns string NEXT not empty string', () => {
-    const result = formatAction({ type: 'NEXT' });
-    expect(result).not.toBe('');
-    expect(result).toBe('NEXT');
-  });
-
-  it('BREAK returns string BREAK not empty string', () => {
-    const result = formatAction({ type: 'BREAK' });
-    expect(result).not.toBe('');
-    expect(result).toBe('BREAK');
-  });
-
   it('GOTO formats with step ID string', () => {
     const result = formatAction({ type: 'GOTO', target: { step: '3', substep: '1' } });
     expect(result).toBe('GOTO 3.1');
@@ -2530,11 +2512,8 @@ describe('extractSubstepHeader mutation killing', () => {
     expect(result).toEqual({ id: '12', description: 'Description' });
   });
 
-  it('returns null for dot-qualified with nothing after dot', () => {
-    // "1." is actually handled as bare numeric with trailing separator
-    // But "valid." should be null since dot-qualified branch requires something after dot
+  it('parses trailing dot as bare numeric with empty description', () => {
     const result = extractSubstepHeader('1.');
-    // 1. is parsed as bare numeric "1" with trailing dot separator
     expect(result).toEqual({ id: '1', description: '' });
   });
 

@@ -10,25 +10,25 @@ const DEFAULT_TRANSITIONS = {
   fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
 };
 
-describe('validator strict rules', () => {
-  const mockStep = (overrides: Record<string, unknown>): Step => {
-    const obj: Record<string, unknown> = {
-      name: '1',
-      description: 'Test',
-      transitions: DEFAULT_TRANSITIONS,
-      ...overrides,
-    };
-    const kind =
-      obj.forClause !== undefined
-        ? 'for'
-        : Array.isArray(obj.substeps) && (obj.substeps as unknown[]).length > 0
-          ? 'substeps'
-          : obj.command !== undefined
-            ? 'command'
-            : 'base';
-    return { ...obj, kind } as Step;
+const mockStep = (overrides: Record<string, unknown>): Step => {
+  const obj: Record<string, unknown> = {
+    name: '1',
+    description: 'Test',
+    transitions: DEFAULT_TRANSITIONS,
+    ...overrides,
   };
+  const kind =
+    obj.forClause !== undefined
+      ? 'for'
+      : Array.isArray(obj.substeps) && (obj.substeps as unknown[]).length > 0
+        ? 'substeps'
+        : obj.command !== undefined
+          ? 'command'
+          : 'base';
+  return { ...obj, kind } as Step;
+};
 
+describe('validator strict rules', () => {
   describe('GOTO rules', () => {
     it('warns on GOTO self (step level)', () => {
       const steps = [
@@ -1235,23 +1235,6 @@ describe('validator mutation killing - empty steps', () => {
 });
 
 describe('validator mutation killing - step ordering', () => {
-  const mockStep = (overrides: Record<string, unknown>): Step => {
-    const obj: Record<string, unknown> = {
-      name: '1',
-      description: 'Test',
-      transitions: DEFAULT_TRANSITIONS,
-      ...overrides,
-    };
-    const kind =
-      obj.forClause !== undefined
-        ? 'for'
-        : Array.isArray(obj.substeps) && (obj.substeps as unknown[]).length > 0
-          ? 'substeps'
-          : obj.command !== undefined
-            ? 'command'
-            : 'base';
-    return { ...obj, kind } as Step;
-  };
 
   it('detects non-sequential numeric steps', () => {
     const steps = [mockStep({ name: '1' }), mockStep({ name: '3' })];
@@ -1276,23 +1259,6 @@ describe('validator mutation killing - step ordering', () => {
 });
 
 describe('validator mutation killing - exclusivity rules', () => {
-  const mockStep = (overrides: Record<string, unknown>): Step => {
-    const obj: Record<string, unknown> = {
-      name: '1',
-      description: 'Test',
-      transitions: DEFAULT_TRANSITIONS,
-      ...overrides,
-    };
-    const kind =
-      obj.forClause !== undefined
-        ? 'for'
-        : Array.isArray(obj.substeps) && (obj.substeps as unknown[]).length > 0
-          ? 'substeps'
-          : obj.command !== undefined
-            ? 'command'
-            : 'base';
-    return { ...obj, kind } as Step;
-  };
 
   it('correctly distinguishes command steps from base steps', () => {
     const cmdStep = mockStep({ command: { code: 'echo hi' } });
@@ -1334,23 +1300,6 @@ describe('validator mutation killing - schema validation failure', () => {
 });
 
 describe('validator mutation killing - FOR transition validation', () => {
-  const mockStep = (overrides: Record<string, unknown>): Step => {
-    const obj: Record<string, unknown> = {
-      name: '1',
-      description: 'Test',
-      transitions: DEFAULT_TRANSITIONS,
-      ...overrides,
-    };
-    const kind =
-      obj.forClause !== undefined
-        ? 'for'
-        : Array.isArray(obj.substeps) && (obj.substeps as unknown[]).length > 0
-          ? 'substeps'
-          : obj.command !== undefined
-            ? 'command'
-            : 'base';
-    return { ...obj, kind } as Step;
-  };
 
   it('reports error for NEXT on parent FOR step pass transition', () => {
     const step = mockStep({
@@ -1388,23 +1337,6 @@ describe('validator mutation killing - FOR transition validation', () => {
 });
 
 describe('validator mutation killing - DEFER at step level', () => {
-  const mockStep = (overrides: Record<string, unknown>): Step => {
-    const obj: Record<string, unknown> = {
-      name: '1',
-      description: 'Test',
-      transitions: DEFAULT_TRANSITIONS,
-      ...overrides,
-    };
-    const kind =
-      obj.forClause !== undefined
-        ? 'for'
-        : Array.isArray(obj.substeps) && (obj.substeps as unknown[]).length > 0
-          ? 'substeps'
-          : obj.command !== undefined
-            ? 'command'
-            : 'base';
-    return { ...obj, kind } as Step;
-  };
 
   it('reports error for DEFER on pass at step level', () => {
     const step = mockStep({
@@ -1438,23 +1370,6 @@ describe('validator mutation killing - DEFER at step level', () => {
 });
 
 describe('validator mutation killing - DEFER aggregation', () => {
-  const mockStep = (overrides: Record<string, unknown>): Step => {
-    const obj: Record<string, unknown> = {
-      name: '1',
-      description: 'Test',
-      transitions: DEFAULT_TRANSITIONS,
-      ...overrides,
-    };
-    const kind =
-      obj.forClause !== undefined
-        ? 'for'
-        : Array.isArray(obj.substeps) && (obj.substeps as unknown[]).length > 0
-          ? 'substeps'
-          : obj.command !== undefined
-            ? 'command'
-            : 'base';
-    return { ...obj, kind } as Step;
-  };
 
   it('warns when substep uses DEFER but no aggregation set', () => {
     const step = mockStep({
@@ -1549,23 +1464,6 @@ describe('validator mutation killing - DEFER aggregation', () => {
 });
 
 describe('validator mutation killing - GOTO target validation', () => {
-  const mockStep = (overrides: Record<string, unknown>): Step => {
-    const obj: Record<string, unknown> = {
-      name: '1',
-      description: 'Test',
-      transitions: DEFAULT_TRANSITIONS,
-      ...overrides,
-    };
-    const kind =
-      obj.forClause !== undefined
-        ? 'for'
-        : Array.isArray(obj.substeps) && (obj.substeps as unknown[]).length > 0
-          ? 'substeps'
-          : obj.command !== undefined
-            ? 'command'
-            : 'base';
-    return { ...obj, kind } as Step;
-  };
 
   it('reports error for GOTO to non-existent step', () => {
     const steps = [
@@ -1714,23 +1612,6 @@ describe('validator mutation killing - GOTO target validation', () => {
 });
 
 describe('validator mutation killing - loop control context', () => {
-  const mockStep = (overrides: Record<string, unknown>): Step => {
-    const obj: Record<string, unknown> = {
-      name: '1',
-      description: 'Test',
-      transitions: DEFAULT_TRANSITIONS,
-      ...overrides,
-    };
-    const kind =
-      obj.forClause !== undefined
-        ? 'for'
-        : Array.isArray(obj.substeps) && (obj.substeps as unknown[]).length > 0
-          ? 'substeps'
-          : obj.command !== undefined
-            ? 'command'
-            : 'base';
-    return { ...obj, kind } as Step;
-  };
 
   it('reports error for NEXT outside substep context', () => {
     const step = mockStep({
@@ -1793,23 +1674,6 @@ describe('validator mutation killing - loop control context', () => {
 });
 
 describe('validator mutation killing - duplicate step names', () => {
-  const mockStep = (overrides: Record<string, unknown>): Step => {
-    const obj: Record<string, unknown> = {
-      name: '1',
-      description: 'Test',
-      transitions: DEFAULT_TRANSITIONS,
-      ...overrides,
-    };
-    const kind =
-      obj.forClause !== undefined
-        ? 'for'
-        : Array.isArray(obj.substeps) && (obj.substeps as unknown[]).length > 0
-          ? 'substeps'
-          : obj.command !== undefined
-            ? 'command'
-            : 'base';
-    return { ...obj, kind } as Step;
-  };
 
   it('reports error for duplicate step names', () => {
     const steps = [mockStep({ name: '1' }), mockStep({ name: '1' })];
@@ -1827,23 +1691,6 @@ describe('validator mutation killing - duplicate step names', () => {
 });
 
 describe('validator mutation killing - named GOTO targets', () => {
-  const mockStep = (overrides: Record<string, unknown>): Step => {
-    const obj: Record<string, unknown> = {
-      name: '1',
-      description: 'Test',
-      transitions: DEFAULT_TRANSITIONS,
-      ...overrides,
-    };
-    const kind =
-      obj.forClause !== undefined
-        ? 'for'
-        : Array.isArray(obj.substeps) && (obj.substeps as unknown[]).length > 0
-          ? 'substeps'
-          : obj.command !== undefined
-            ? 'command'
-            : 'base';
-    return { ...obj, kind } as Step;
-  };
 
   it('validates GOTO to named step with substep', () => {
     const steps = [
