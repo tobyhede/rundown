@@ -148,7 +148,7 @@ When only one transition side specifies an aggregation modifier, the defaulted s
 | Action | Context | Effect |
 | :--- | :--- | :--- |
 | `CONTINUE` | Step | Proceed to next step. |
-| `CONTINUE` | FOR Iteration-Level | Exit loop (result accumulated). |
+| `CONTINUE` | FOR Iteration-Level | Exit loop (result NOT accumulated). |
 | `DEFER` | Substep, FOR Iteration-Level | Pass result up one level for aggregation. |
 | `STOP [msg]` | Any | Terminate execution immediately (failure). |
 | `COMPLETE [msg]` | Any | Terminate execution immediately (success). |
