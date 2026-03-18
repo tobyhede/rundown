@@ -34,12 +34,12 @@
     "validate:runbooks": "node scripts/validate-runbooks.js",
     "test": "jest",
     "test:unit": "jest --maxWorkers=2 --testPathIgnorePatterns='(integration|\\.properties\\.test\\.ts$|perf/)'",
-    "test:integration": "jest --maxWorkers=2 --testPathPattern='(integration/|integration\\.test\\.ts$)'",
-    "test:property": "jest --maxWorkers=2 --testPathPattern='\\.properties\\.test\\.ts$'",
+    "test:integration": "jest --maxWorkers=2 --testPathPatterns='(integration/|integration\\.test\\.ts$)'",
+    "test:property": "jest --maxWorkers=2 --testPathPatterns='\\.properties\\.test\\.ts$'",
     "test:coverage": "jest --coverage",
     "test:watch": "jest --watch",
     "test:ci": "jest --ci --coverage --maxWorkers=2",
-    "test:perf": "jest --maxWorkers=2 --testPathPattern=perf",
+    "test:perf": "jest --maxWorkers=2 --testPathPatterns=perf",
     "test:smoke": "bash scripts/smoke-test.sh",
     "test:mutate": "stryker run",
     "clean": "rm -rf dist",
@@ -72,12 +72,12 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
-    "@types/jest": "^29.5.0",
+    "@types/jest": "^30.0.0",
     "@types/js-yaml": "^4.0.9",
     "@types/mdast": "^4.0.4",
     "@types/node": "^25.5.0",
     "fast-check": "^4.6.0",
-    "jest": "^29.7.0",
+    "jest": "^30.3.0",
     "ts-jest": "^29.2.0",
     "typescript": "^5.0.0"
   }

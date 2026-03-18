@@ -88,7 +88,7 @@ npm run test:smoke
 
 ```bash
 # Run tests matching a pattern
-npm test -- --testPathPattern=dispatcher
+npm test -- --testPathPatterns=dispatcher
 
 # Run a specific test file
 npm test -- __tests__/dispatcher.test.ts

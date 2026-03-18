@@ -117,7 +117,9 @@ jest.unstable_mockModule('../../src/helpers/validate-frontmatter-vars', () => ({
 }));
 
 // Mock node:fs/promises
+const actualFsPromises = await import('node:fs/promises');
 jest.unstable_mockModule('node:fs/promises', () => ({
+  ...actualFsPromises,
   readFile: jest.fn().mockResolvedValue('# Test\n\n## 1. Step\n- PASS CONTINUE'),
   mkdir: jest.fn().mockResolvedValue(undefined),
 }));

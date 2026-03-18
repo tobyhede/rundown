@@ -9,7 +9,9 @@ jest.unstable_mockModule('../../src/workflow/hooks/rundown.js', () => ({
   rundown: mockRundown,
 }));
 
+const actualFs = await import('node:fs');
 jest.unstable_mockModule('node:fs', () => ({
+  ...actualFs,
   readFileSync: mockReadFileSync,
 }));
 

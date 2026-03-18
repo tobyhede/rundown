@@ -16,7 +16,7 @@
     "build": "tsc && chmod +x dist/cli.js && node scripts/copy-runbooks.js",
     "test": "jest",
     "test:unit": "jest --maxWorkers=2 --testPathIgnorePatterns='integration'",
-    "test:integration": "jest --maxWorkers=2 --testPathPattern='integration'",
+    "test:integration": "jest --maxWorkers=2 --testPathPatterns='integration'",
     "test:coverage": "jest --coverage",
     "test:mutate": "stryker run",
     "clean": "rm -rf dist"
@@ -49,11 +49,11 @@
     "zod-to-json-schema": "^3.24.5"
   },
   "devDependencies": {
-    "@types/jest": "^29.5.0",
+    "@types/jest": "^30.0.0",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^25.5.0",
     "@types/shell-quote": "^1.7.5",
-    "jest": "^29.7.0",
+    "jest": "^30.3.0",
     "ts-jest": "^29.2.0",
     "typescript": "^5.0.0"
   }
