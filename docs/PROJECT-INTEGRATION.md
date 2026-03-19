@@ -140,6 +140,12 @@ log_file: file:data/results.jsonl
 
 Arrays become data sources for `FOR item IN {{ items }}`. The `file:` prefix creates file-backed sources. Scalar values remain regular template variables.
 
+Or pass arrays inline with `--var-json`:
+
+```bash
+rd run runbook.md --var-json 'items=["alpha","bravo","charlie"]'
+```
+
 ## Authoring Conventions
 
 ### Always write explicit transitions

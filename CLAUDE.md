@@ -144,7 +144,7 @@ Server running on port {{ port }} in {{ environment }} mode.
 **Notes:**
 - Variable names must match pattern `/^[a-zA-Z_][a-zA-Z0-9_]*$/`
 - Undefined variables are preserved as literal `{{variable}}` text
-- Frontmatter vars support string, number, and boolean values (converted to strings). For arrays and file data sources, use `.rundown/config.yaml` or `--var-file`
+- Frontmatter vars support string, number, and boolean values (converted to strings). For arrays, use `--var-json` inline or `.rundown/config.yaml` / `--var-file`. For `file:` data sources, use `.rundown/config.yaml` or `--var-file`
 - `--var KEY` (without `=`) inherits the value of environment variable `KEY`
 
 ### Data Sources
@@ -153,6 +153,7 @@ Variables whose values are arrays or `file:`-prefixed paths become **data source
 
 | Value Type | Template Variable | Data Source | Example |
 |------------|-------------------|-------------|---------|
+| JSON array (`--var-json`) | Comma-joined | Array DataSource | `--var-json items='["a","b","c"]'` |
 | `file:path/to/data.txt` | Not set | File DataSource | `--var items=file:data.txt` |
 | Array (YAML) | Comma-joined | Array DataSource | `items: [a, b, c]` in config |
 | Multiline string | Raw string | Array DataSource (split on newlines) | YAML block scalar |
@@ -163,7 +164,7 @@ Data sources are referenced in FOR clauses: `FOR item IN {{ items }}`.
 **File formats:** `.jsonl` files are parsed as JSON Lines (one JSON value per line). Each line may contain any JSON value (string, number, boolean, null, array, or object). When the loop variable holds a parsed JSON object, dotted field access is supported in templates (e.g., `{{item.name}}`). Using `{{item}}` alone renders the serialized JSON string. All other extensions (e.g., `.txt`) use plain text (one value per non-empty line). Users who need raw line strings from a `.jsonl` file should rename it to a `.txt` extension.
 
 **Notes:**
-- Arrays and `file:` values are supported in `.rundown/config.yaml` and `--var-file`, not in frontmatter `vars:`
+- Arrays can be passed inline via `--var-json` or in `.rundown/config.yaml` and `--var-file` (not in frontmatter `vars:`). `file:` values are supported in `.rundown/config.yaml` and `--var-file` only
 - File paths must stay within the project root (symlinks resolved, traversal blocked)
 - `file:` values are routed to sources only — they do NOT appear as template variables
 
