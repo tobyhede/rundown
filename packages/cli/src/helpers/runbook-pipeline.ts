@@ -60,10 +60,12 @@ import { validateFrontmatterVars } from './validate-frontmatter-vars.js';
  * Variable options from CLI flags.
  */
 export interface VarOptions {
-  /** Path to a YAML file containing variable definitions */
-  varFile?: string;
+  /** Paths to YAML files containing variable definitions (repeatable) */
+  varFile?: string[];
   /** Inline key=value variable overrides (repeatable) */
   var?: string[];
+  /** Inline key=json variable overrides with JSON values (repeatable) */
+  varJson?: string[];
 }
 
 /**
@@ -405,6 +407,7 @@ export async function prepareRunbook(
       {
         varFile: varOpts.varFile,
         var: varOpts.var,
+        varJson: varOpts.varJson,
         frontmatterVars: frontmatter?.vars,
         inheritedVars: options?.inheritedUserVars,
       },

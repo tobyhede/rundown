@@ -5,18 +5,7 @@ import { getErrorMessage } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { DEFAULT_RESULT_SEQUENCE, executeEchoLogic } from '../helpers/echo-command.js';
 import { OutputEmitter } from '../services/output-emitter.js';
-
-/**
- * Collect option values into an array.
- * Used for repeatable --result options.
- *
- * @param value - The new value to add
- * @param previous - Previously collected values
- * @returns Updated array with new value appended
- */
-export function collect(value: string, previous: string[]): string[] {
-  return previous.concat([value]);
-}
+import { collect } from '../helpers/option-utils.js';
 
 /**
  * Registers the 'echo' command for runbook testing.

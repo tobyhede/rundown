@@ -1,5 +1,5 @@
 import path from 'node:path';
-import type { Command } from 'commander';
+import { type Command, Option } from 'commander';
 import {
   RunbookStateManager,
   SessionService,
@@ -20,28 +20,8 @@ import {
   IndexOptionError,
   validateIndexRequiresStep,
 } from '../helpers/index-option.js';
-import { loadVariablesFromFile } from '../services/variable-discovery.js';
-import { collect } from './echo.js';
-
-/**
- * Parse `--var key=value` entries into a record.
- * @param vars - Array of `key=value` strings from CLI flags
- * @returns Record mapping variable names to their string values
- */
-function parseVarFlags(vars: string[]): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const entry of vars) {
-    const eqIndex = entry.indexOf('=');
-    if (eqIndex > 0) {
-      result[entry.slice(0, eqIndex)] = entry.slice(eqIndex + 1);
-    } else {
-      process.stderr.write(
-        `Warning: ignored malformed --var entry '${entry}' (expected key=value)\n`,
-      );
-    }
-  }
-  return result;
-}
+import { loadVariablesFromFile, parseVarFlag } from '../services/variable-discovery.js';
+import { parseVarOption, parseVarJsonOption, collect } from '../helpers/option-utils.js';
 
 /**
  * Registers the 'delegate' command for creating delegation tokens.
@@ -57,13 +37,39 @@ export function registerDelegateCommand(program: Command): void {
     .description('Create a delegation token for a child runbook')
     .option('--step <stepId>', 'Step to delegate (e.g., 1.1 or 1.2.1 for step.iteration.substep)')
     .option('--index <number>', 'FOR loop iteration to target (requires --step)')
-    .option('--var <key=value>', 'Set variable for child context (repeatable)', collect, [])
-    .option('--var-file <path>', 'Load variables from YAML file')
+    .addOption(
+      new Option(
+        '--var <key=value>',
+        'Set variable for child context (repeatable, omit =value to inherit from env)',
+      )
+        .argParser(parseVarOption)
+        .default([])
+        .helpGroup('Variable options:'),
+    )
+    .addOption(
+      new Option('--var-json <key=json>', 'Set variable with JSON value (repeatable)')
+        .argParser(parseVarJsonOption)
+        .default([])
+        .helpGroup('Variable options:'),
+    )
+    .addOption(
+      new Option('--var-file <path>', 'Load variables from YAML file (repeatable)')
+        .argParser(collect)
+        .default([])
+        .helpGroup('Variable options:'),
+    )
     .option('--json', 'Output as JSON')
     .action(
       async (
         runbookArg: string | undefined,
-        options: { step?: string; index?: string; var: string[]; varFile?: string; json?: boolean },
+        options: {
+          step?: string;
+          index?: string;
+          var: string[];
+          varJson?: string[];
+          varFile?: string[];
+          json?: boolean;
+        },
       ) => {
         await withErrorHandling(
           async () => {
@@ -121,17 +127,32 @@ export function registerDelegateCommand(program: Command): void {
               throw Errors.delegationRunbookNotFound(resolvedRunbook);
             }
 
-            // Parse extra vars: --var-file (lower precedence) merged with --var (higher precedence)
+            // Parse extra vars: --var-file (lower), --var (higher), --var-json (highest)
             let extraVars: Record<string, string> | undefined;
-            if (options.varFile) {
-              const varFilePath = path.isAbsolute(options.varFile)
-                ? options.varFile
-                : path.join(cwd, options.varFile);
-              extraVars = await loadVariablesFromFile(varFilePath, { optional: false });
+            for (const vf of options.varFile ?? []) {
+              const varFilePath = path.isAbsolute(vf) ? vf : path.join(cwd, vf);
+              const fileVars = await loadVariablesFromFile(varFilePath, { optional: false });
+              extraVars = extraVars ? { ...extraVars, ...fileVars } : fileVars;
             }
             if (options.var.length > 0) {
-              const flagVars = parseVarFlags(options.var);
+              const flagVars: Record<string, string> = {};
+              for (const flag of options.var) {
+                const parsed = parseVarFlag(flag);
+                if (parsed) {
+                  flagVars[parsed.key] = parsed.value;
+                }
+              }
               extraVars = extraVars ? { ...extraVars, ...flagVars } : flagVars;
+            }
+            if ((options.varJson ?? []).length > 0) {
+              const jsonVars: Record<string, string> = {};
+              for (const flag of options.varJson ?? []) {
+                const eqIndex = flag.indexOf('=');
+                const key = flag.slice(0, eqIndex);
+                const jsonValue = flag.slice(eqIndex + 1);
+                jsonVars[key] = jsonValue;
+              }
+              extraVars = extraVars ? { ...extraVars, ...jsonVars } : jsonVars;
             }
 
             // Compute frame key — use explicit iteration from --index or three-level step ID

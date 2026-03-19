@@ -525,7 +525,7 @@ describe('resolveVariables', () => {
       const varFile = path.join(tmpDir, 'vars.yaml');
       await fs.writeFile(varFile, 'servers:\n  - alpha\n  - beta\n  - gamma\n');
 
-      const result = await resolveVariables({ varFile }, tmpDir);
+      const result = await resolveVariables({ varFile: [varFile] }, tmpDir);
       expect(result.vars.servers).toBe('alpha, beta, gamma');
       expect(result.sources.servers).toEqual({
         kind: 'array',
@@ -539,7 +539,7 @@ describe('resolveVariables', () => {
       const varFile = path.join(tmpDir, 'vars.yaml');
       await fs.writeFile(varFile, 'log: |\n  line1\n  line2\n  line3\n');
 
-      const result = await resolveVariables({ varFile }, tmpDir);
+      const result = await resolveVariables({ varFile: [varFile] }, tmpDir);
       expect(result.vars.log).toBe('line1\nline2\nline3');
       expect(result.sources.log).toEqual({
         kind: 'array',
@@ -555,7 +555,7 @@ describe('resolveVariables', () => {
       const varFile = path.join(tmpDir, 'vars.yaml');
       await fs.writeFile(varFile, `items: "file:${dataFile}"\n`);
 
-      const result = await resolveVariables({ varFile }, tmpDir);
+      const result = await resolveVariables({ varFile: [varFile] }, tmpDir);
       expect(result.vars.items).toBeUndefined();
       expect(result.sources.items).toEqual({
         kind: 'file',
@@ -615,7 +615,10 @@ describe('resolveVariables', () => {
       const varFile = path.join(tmpDir, 'vars.yaml');
       await fs.writeFile(varFile, `items: "file:${fileA}"\n`);
 
-      const result = await resolveVariables({ varFile, var: [`items=file:${fileB}`] }, tmpDir);
+      const result = await resolveVariables(
+        { varFile: [varFile], var: [`items=file:${fileB}`] },
+        tmpDir,
+      );
       expect(result.sources.items).toEqual({
         kind: 'file',
         path: await fs.realpath(fileB),
@@ -629,7 +632,7 @@ describe('resolveVariables', () => {
       const varFile = path.join(tmpDir, 'vars.yaml');
       await fs.writeFile(varFile, 'servers:\n  - alpha\n  - beta\n');
 
-      const result = await resolveVariables({ varFile, var: ['servers=prod'] }, tmpDir);
+      const result = await resolveVariables({ varFile: [varFile], var: ['servers=prod'] }, tmpDir);
       expect(result.vars.servers).toBe('prod');
       expect(result.sources.servers).toBeUndefined();
     });
@@ -640,7 +643,10 @@ describe('resolveVariables', () => {
       const varFile = path.join(tmpDir, 'vars.yaml');
       await fs.writeFile(varFile, 'items:\n  - x\n  - y\n');
 
-      const result = await resolveVariables({ varFile, var: [`items=file:${dataFile}`] }, tmpDir);
+      const result = await resolveVariables(
+        { varFile: [varFile], var: [`items=file:${dataFile}`] },
+        tmpDir,
+      );
       expect(result.sources.items).toEqual({
         kind: 'file',
         path: await fs.realpath(dataFile),
@@ -653,7 +659,7 @@ describe('resolveVariables', () => {
       await fs.writeFile(varFile, 'servers:\n  - a\n  - b\n');
 
       const result = await resolveVariables(
-        { frontmatterVars: { servers: 'single' }, varFile },
+        { frontmatterVars: { servers: 'single' }, varFile: [varFile] },
         tmpDir,
       );
       expect(result.sources.servers).toEqual({
@@ -670,7 +676,7 @@ describe('resolveVariables', () => {
       await fs.mkdir(configDir, { recursive: true });
       await fs.writeFile(path.join(configDir, 'config.yaml'), 'items:\n  - x\n  - "y"\n');
 
-      const result = await resolveVariables({ varFile }, tmpDir);
+      const result = await resolveVariables({ varFile: [varFile] }, tmpDir);
       expect(result.vars.items).toBe('override');
       expect(result.sources.items).toBeUndefined();
     });
@@ -679,7 +685,7 @@ describe('resolveVariables', () => {
       const varFile = path.join(tmpDir, 'vars.yaml');
       await fs.writeFile(varFile, 'log: |\n  line1\n  line2\n');
 
-      const result = await resolveVariables({ varFile, var: ['log=override'] }, tmpDir);
+      const result = await resolveVariables({ varFile: [varFile], var: ['log=override'] }, tmpDir);
       expect(result.vars.log).toBe('override');
       expect(result.sources.log).toBeUndefined();
     });
@@ -800,6 +806,150 @@ describe('resolveVariables', () => {
           } as any,
         }),
       ).rejects.toThrow('Prompt before read');
+    });
+  });
+
+  describe('collectEnvBridgeVars (via resolveVariables)', () => {
+    afterEach(() => {
+      // Clean up any RD_VAR_* env vars set during tests
+      for (const key of Object.keys(process.env)) {
+        if (key.startsWith('RD_VAR_')) {
+          delete process.env[key];
+        }
+      }
+    });
+
+    it('collects RD_VAR_foo=bar as variable foo with value bar', async () => {
+      process.env.RD_VAR_foo = 'bar';
+
+      const result = await resolveVariables({}, tmpDir);
+
+      expect(result.vars.foo).toBe('bar');
+    });
+
+    it('ignores RD_VAR_ with invalid identifier suffix and produces warning', async () => {
+      process.env.RD_VAR_1bad = 'value';
+
+      const result = await resolveVariables({}, tmpDir);
+
+      expect(result.vars['1bad']).toBeUndefined();
+      expect(result.warnings.some((w) => w.includes('1bad'))).toBe(true);
+    });
+
+    it('--var-file overrides RD_VAR_* for same key', async () => {
+      process.env.RD_VAR_message = 'from-env';
+      const varFile = path.join(tmpDir, 'vars.yaml');
+      await fs.writeFile(varFile, 'message: from-file\n');
+
+      const result = await resolveVariables({ varFile: [varFile] }, tmpDir);
+
+      expect(result.vars.message).toBe('from-file');
+    });
+
+    it('RD_VAR_* overrides config discovery for same key', async () => {
+      process.env.RD_VAR_greeting = 'from-env';
+      const configDir = path.join(tmpDir, '.rundown');
+      await fs.mkdir(configDir, { recursive: true });
+      await fs.writeFile(path.join(configDir, 'config.yaml'), 'greeting: from-config\n');
+
+      const result = await resolveVariables({}, tmpDir);
+
+      expect(result.vars.greeting).toBe('from-env');
+    });
+
+    it('--var flag overrides RD_VAR_* for same key', async () => {
+      process.env.RD_VAR_message = 'from-env';
+
+      const result = await resolveVariables({ var: ['message=from-flag'] }, tmpDir);
+
+      expect(result.vars.message).toBe('from-flag');
+    });
+  });
+
+  describe('repeatable --var-file', () => {
+    it('merges multiple files with non-overlapping keys', async () => {
+      const fileA = path.join(tmpDir, 'a.yaml');
+      const fileB = path.join(tmpDir, 'b.yaml');
+      await fs.writeFile(fileA, 'alpha: one\n');
+      await fs.writeFile(fileB, 'beta: two\n');
+
+      const result = await resolveVariables({ varFile: [fileA, fileB] }, tmpDir);
+
+      expect(result.vars.alpha).toBe('one');
+      expect(result.vars.beta).toBe('two');
+    });
+
+    it('later file wins for overlapping keys', async () => {
+      const fileA = path.join(tmpDir, 'a.yaml');
+      const fileB = path.join(tmpDir, 'b.yaml');
+      await fs.writeFile(fileA, 'shared: from-a\n');
+      await fs.writeFile(fileB, 'shared: from-b\n');
+
+      const result = await resolveVariables({ varFile: [fileA, fileB] }, tmpDir);
+
+      expect(result.vars.shared).toBe('from-b');
+    });
+
+    it('single file in array works (backward compatibility)', async () => {
+      const varFile = path.join(tmpDir, 'vars.yaml');
+      await fs.writeFile(varFile, 'greeting: hello\n');
+
+      const result = await resolveVariables({ varFile: [varFile] }, tmpDir);
+
+      expect(result.vars.greeting).toBe('hello');
+    });
+
+    it('empty array produces no file vars', async () => {
+      const result = await resolveVariables({ varFile: [] }, tmpDir);
+
+      // Only built-in vars should be present
+      expect(result.vars).toHaveProperty('Date');
+      expect(result.vars).not.toHaveProperty('any_file_var');
+    });
+  });
+
+  describe('--var-json', () => {
+    it('array value produces array data source', async () => {
+      const result = await resolveVariables({ varJson: ['items=["a","b","c"]'] }, tmpDir);
+
+      expect(result.vars.items).toBe('a, b, c');
+      expect(result.sources.items).toEqual({
+        kind: 'array',
+        items: ['a', 'b', 'c'],
+      });
+    });
+
+    it('object value produces warning and is ignored', async () => {
+      const result = await resolveVariables({ varJson: ['config={"host":"localhost"}'] }, tmpDir);
+
+      expect(result.vars.config).toBeUndefined();
+      expect(result.warnings.some((w) => w.includes('config') && w.includes('complex'))).toBe(true);
+    });
+
+    it('number value produces string var', async () => {
+      const result = await resolveVariables({ varJson: ['count=42'] }, tmpDir);
+
+      expect(result.vars.count).toBe('42');
+      expect(result.sources.count).toBeUndefined();
+    });
+
+    it('boolean value produces string var', async () => {
+      const result = await resolveVariables({ varJson: ['debug=true'] }, tmpDir);
+
+      expect(result.vars.debug).toBe('true');
+    });
+
+    it('string value produces string var', async () => {
+      const result = await resolveVariables({ varJson: ['name="hello"'] }, tmpDir);
+
+      expect(result.vars.name).toBe('hello');
+    });
+
+    it('--var-json overrides --var for same key', async () => {
+      const result = await resolveVariables({ var: ['count=10'], varJson: ['count=99'] }, tmpDir);
+
+      // varJson is processed after var in collectRawLayers, so it wins
+      expect(result.vars.count).toBe('99');
     });
   });
 });

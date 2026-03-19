@@ -547,10 +547,10 @@ function handleListItemContent(
  *
  * @param node - The list item AST node
  * @param ctx - Active step context (currentStep guaranteed non-null)
- * @returns `SKIP` when a FOR clause is handled (prevents child traversal), `void` otherwise
+ * @returns `SKIP` when a FOR clause is handled (prevents child traversal), `undefined` otherwise
  * @throws {RunbookSyntaxError} When a FOR clause is invalid or appears in a substep context
  */
-function handleListItem(node: ListItem, ctx: ActiveStepContext): typeof SKIP | void {
+function handleListItem(node: ListItem, ctx: ActiveStepContext): typeof SKIP | undefined {
   const firstParagraph = node.children.find((c) => c.type === 'paragraph');
   if (!firstParagraph) return;
 
@@ -606,7 +606,11 @@ function dispatchHeading(node: Heading, ctx: VisitorContext): void {
   }
 }
 
-function visitNode(node: Node, parent: Node | undefined, ctx: VisitorContext): typeof SKIP | void {
+function visitNode(
+  node: Node,
+  parent: Node | undefined,
+  ctx: VisitorContext,
+): typeof SKIP | undefined {
   if (isHeading(node)) {
     dispatchHeading(node, ctx);
     return;

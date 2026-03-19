@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // packages/cli/src/cli.ts
 
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { registerRunCommand } from './commands/run.js';
 import { registerGotoCommand } from './commands/goto.js';
 import { registerPassCommand } from './commands/pass.js';
@@ -73,20 +73,67 @@ export function createProgram(): Command {
 
   // Policy options
   program
-    .option('--allow-run <commands>', 'Allow specific commands (comma-separated)')
-    .option('--allow-read <paths>', 'Allow reading specific paths (comma-separated)')
-    .option('--allow-write <paths>', 'Allow writing to specific paths (comma-separated)')
-    .option('--allow-env <vars>', 'Allow specific environment variables (comma-separated)')
-    .option('--allow-all', 'Allow all operations (bypass policy)')
-    .option('--deny-all', 'Deny all operations')
-    .option('--policy <file>', 'Path to policy configuration file')
-    .option('--trust-js-policy', 'Trust executable JavaScript policy config files')
-    .option('-y, --yes', 'Skip confirmation prompts')
-    .option('--non-interactive', 'Non-interactive mode (no prompts, CI-friendly)')
+    .addOption(
+      new Option('--allow-run <commands>', 'Allow specific commands (comma-separated)').helpGroup(
+        'Policy options:',
+      ),
+    )
+    .addOption(
+      new Option(
+        '--allow-read <paths>',
+        'Allow reading specific paths (comma-separated)',
+      ).helpGroup('Policy options:'),
+    )
+    .addOption(
+      new Option(
+        '--allow-write <paths>',
+        'Allow writing to specific paths (comma-separated)',
+      ).helpGroup('Policy options:'),
+    )
+    .addOption(
+      new Option(
+        '--allow-env <vars>',
+        'Allow specific environment variables (comma-separated)',
+      ).helpGroup('Policy options:'),
+    )
+    .addOption(
+      new Option('--allow-all', 'Allow all operations (bypass policy)').helpGroup(
+        'Policy options:',
+      ),
+    )
+    .addOption(new Option('--deny-all', 'Deny all operations').helpGroup('Policy options:'))
+    .addOption(
+      new Option('--policy <file>', 'Path to policy configuration file').helpGroup(
+        'Policy options:',
+      ),
+    )
+    .addOption(
+      new Option('--trust-js-policy', 'Trust executable JavaScript policy config files').helpGroup(
+        'Policy options:',
+      ),
+    )
+    .addOption(new Option('-y, --yes', 'Skip confirmation prompts').helpGroup('Policy options:'))
+    .addOption(
+      new Option('--non-interactive', 'Non-interactive mode (no prompts, CI-friendly)').helpGroup(
+        'Policy options:',
+      ),
+    )
     // Sandbox options
-    .option('--sandbox', 'Enable OS-level sandbox for file access enforcement')
-    .option('--no-sandbox', 'Disable sandbox enforcement (trust mode)')
-    .option('--sandbox-strict', 'Fail if sandbox is unavailable (strict mode)');
+    .addOption(
+      new Option('--sandbox', 'Enable OS-level sandbox for file access enforcement').helpGroup(
+        'Policy options:',
+      ),
+    )
+    .addOption(
+      new Option('--no-sandbox', 'Disable sandbox enforcement (trust mode)').helpGroup(
+        'Policy options:',
+      ),
+    )
+    .addOption(
+      new Option('--sandbox-strict', 'Fail if sandbox is unavailable (strict mode)').helpGroup(
+        'Policy options:',
+      ),
+    );
 
   // Initialize policy before subcommands
   program.hook('preSubcommand', async (thisCommand) => {

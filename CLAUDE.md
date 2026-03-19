@@ -21,8 +21,9 @@ npm install -g @rundown-org/cli
 ```bash
 rundown run [file]       # Run a runbook
 rundown run [file] --json # Output execution events as JSON
-rundown run [file] --var key=value  # Set template variable (repeatable)
-rundown run [file] --var-file path  # Load variables from YAML file
+rundown run [file] --var key=value  # Set template variable (repeatable, omit =value to inherit from env)
+rundown run [file] --var-json key=json  # Set variable with JSON value (repeatable)
+rundown run [file] --var-file path  # Load variables from YAML file (repeatable)
 rundown run [file] --prompted  # Show commands without auto-executing
 rundown run [file] --step <stepId>   # Jump to step after starting (requires --prompted)
 rundown run [file] --index <number>  # FOR loop iteration to target (requires --step)
@@ -62,10 +63,12 @@ rundown prompt <content> # Output content in markdown fences
 rundown delegate                        # Infer substep and runbook from state
 rundown delegate --step <id>            # Infer runbook from substep reference
 rundown delegate <runbook> --step <id>  # Explicit delegation
-rundown delegate <runbook> --step <id> --var key=value  # With variables
+rundown delegate <runbook> --step <id> --var key=value  # With variables (repeatable)
+rundown delegate <runbook> --step <id> --var-json key=json  # With JSON variables
 rundown delegate --step <id> --index <number>  # FOR loop iteration to target
 rundown claim <token>                   # Claim a delegation token and launch child
-rundown claim <token> --var key=value   # Claim with variables
+rundown claim <token> --var key=value   # Claim with variables (repeatable)
+rundown claim <token> --var-json key=json  # Claim with JSON variables
 rundown abort <token>                   # Cancel a delegation token (--force for claimed)
 ```
 
@@ -86,12 +89,13 @@ rdpath --dir <path> --ctx <id> find <pattern> # Find within context scope
 Template variables use Handlebars syntax `{{variableName}}` and are expanded at run time.
 
 **Variable Sources (Precedence: High to Low):**
-1. `--var key=value` flags (highest priority, repeatable)
-2. `--var-file path` contents (YAML format)
-3. `.rundown/config.yaml` (auto-discovered from cwd upward, stops at git root)
-4. Frontmatter `vars:` field
-5. Inherited delegation variables (parent context in delegation tree)
-6. Built-in defaults (lowest priority)
+1. `--var key=value` / `--var-json key=json` flags (highest priority, repeatable)
+2. `--var-file path` contents (YAML format, repeatable)
+3. `RD_VAR_*` environment variables (prefix stripped)
+4. `.rundown/config.yaml` (auto-discovered from cwd upward, stops at git root)
+5. Frontmatter `vars:` field
+6. Inherited delegation variables (parent context in delegation tree)
+7. Built-in defaults (lowest priority)
 
 **Built-in Variables:**
 | Variable | Example Value | Description |
@@ -116,6 +120,10 @@ Built-in variables use PascalCase. Lowercase aliases `step` and `index` are also
 **CLI Example:**
 ```bash
 rundown run deploy.md --var environment=staging --var version=1.2.3
+rundown run deploy.md --var-file base.yaml --var-file env.yaml  # Layer multiple files
+rundown run deploy.md --var API_KEY                              # Inherit from env
+rundown run deploy.md --var-json 'items=["a","b","c"]'          # JSON array value
+RD_VAR_environment=staging rundown run deploy.md                 # Environment bridge
 ```
 
 **Frontmatter Example:**
@@ -137,6 +145,7 @@ Server running on port {{ port }} in {{ environment }} mode.
 - Variable names must match pattern `/^[a-zA-Z_][a-zA-Z0-9_]*$/`
 - Undefined variables are preserved as literal `{{variable}}` text
 - Frontmatter vars support string, number, and boolean values (converted to strings). For arrays and file data sources, use `.rundown/config.yaml` or `--var-file`
+- `--var KEY` (without `=`) inherits the value of environment variable `KEY`
 
 ### Data Sources
 
@@ -248,6 +257,7 @@ See [docs/SECURITY.md](docs/SECURITY.md) for full security policy documentation.
 
 - `RUNDOWN_LOG=0` - Disable logging (enabled by default)
 - `RUNDOWN_LOG_LEVEL=debug|info|warn|error` - Set log verbosity (default: info)
+- `RD_VAR_<name>=<value>` - Set template variable `<name>` via environment (prefix stripped). E.g., `RD_VAR_environment=staging` sets `{{environment}}`
 - `NO_COLOR=1` - Disable colored output (standard convention)
 - `FORCE_COLOR=1` - Force colored output even in non-TTY environments
 
