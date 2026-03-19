@@ -221,20 +221,12 @@ export function buildContextVars(vars: Readonly<Record<string, string>>): Record
 export function buildTemplateVars(
   localVars: Readonly<Record<string, string>>,
   options?: {
-    inheritedUserVars?: Readonly<Record<string, unknown>>;
+    inheritedUserVars?: Readonly<Record<string, string>>;
     inheritedContextVars?: Readonly<Record<string, string>>;
   },
 ): Record<string, string> {
-  // Filter inherited user vars to strings — complex types (arrays, objects)
-  // are handled by routeVariable in the resolution pipeline, not here.
-  const stringUserVars: Record<string, string> = {};
-  for (const [key, value] of Object.entries(options?.inheritedUserVars ?? {})) {
-    if (typeof value === 'string') {
-      stringUserVars[key] = value;
-    }
-  }
   const effectiveUserVars: Record<string, string> = {
-    ...stringUserVars, // parent --var (overridable, strings only)
+    ...(options?.inheritedUserVars ?? {}), // parent --var (overridable)
     ...localVars, // child frontmatter + claim --var (overrides)
   };
   return {
@@ -389,6 +381,7 @@ export async function loadAndParseRunbook(file: string, cwd: string): Promise<Lo
  * @param options - Optional settings including inherited variables from parent runbook
  * @param options.inheritedContextVars - Context variables inherited from a parent delegation
  * @param options.inheritedUserVars - User variables inherited from a parent delegation
+ * @param options.inheritedSources - Data sources inherited from a parent delegation
  * @returns PrepareResult — success with full data, or failure with partial results
  * @throws {Error} On unexpected errors during variable resolution or parsing
  */
@@ -398,7 +391,8 @@ export async function prepareRunbook(
   cwd: string,
   options?: {
     inheritedContextVars?: Readonly<Record<string, string>>;
-    inheritedUserVars?: Readonly<Record<string, unknown>>;
+    inheritedUserVars?: Readonly<Record<string, string>>;
+    inheritedSources?: Readonly<Record<string, DataSource>>;
   },
 ): Promise<PrepareResult> {
   // Phase 1-2: Parse + Validate
@@ -426,7 +420,8 @@ export async function prepareRunbook(
       },
     );
     mergedVariables = { ...resolvedVariables.vars };
-    sources = { ...resolvedVariables.sources };
+    // Merge inherited sources (lower precedence) with locally resolved sources
+    sources = { ...(options?.inheritedSources ?? {}), ...resolvedVariables.sources };
     allWarnings.push(...resolvedVariables.warnings);
   } catch (error) {
     if (error instanceof FileSourcePolicyError) {
@@ -843,17 +838,21 @@ export async function claimAndLaunch(
     const inheritedContextVars = reconstituteContextVars(freshDelegation.contextSnapshot);
 
     // Extract parent user-level vars for top-level inheritance in child
-    const inheritedUserVars: Record<string, unknown> = {};
+    const inheritedUserVars: Record<string, string> = {};
     for (const [key, value] of Object.entries(freshDelegation.contextSnapshot.vars)) {
       if (!key.startsWith('context.') && key !== 'RunId') {
         inheritedUserVars[key] = value;
       }
     }
 
+    // Extract inherited sources from delegation snapshot
+    const inheritedSources = freshDelegation.contextSnapshot.sources;
+
     // 4f. Prepare child runbook
     const prepResult = await prepareRunbook(freshDelegation.childRunbookPath, varOpts, cwd, {
       inheritedContextVars,
       inheritedUserVars,
+      inheritedSources,
     });
     if (!prepResult.ok) {
       return {

@@ -7,6 +7,7 @@ import {
   loadVariablesFromFile,
   getBuiltinVariables,
   resolveVariables,
+  routeExtraVars,
 } from '../../src/services/variable-discovery.js';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
@@ -836,6 +837,28 @@ describe('resolveVariables', () => {
       expect(result.warnings.some((w) => w.includes('1bad'))).toBe(true);
     });
 
+    it('ignores RD_VAR_step and produces warning instead of throwing', async () => {
+      process.env.RD_VAR_step = 'from-env';
+
+      const result = await resolveVariables({}, tmpDir);
+
+      expect(result.vars.step).toBeUndefined();
+      expect(result.warnings.some((w) => w.includes('RD_VAR_step') && w.includes('reserved'))).toBe(
+        true,
+      );
+    });
+
+    it('ignores reserved names case-insensitively in RD_VAR_* bridge', async () => {
+      process.env.RD_VAR_Step = 'from-env';
+
+      const result = await resolveVariables({}, tmpDir);
+
+      expect(result.vars.Step).toBeUndefined();
+      expect(result.warnings.some((w) => w.includes('RD_VAR_Step') && w.includes('reserved'))).toBe(
+        true,
+      );
+    });
+
     it('--var-file overrides RD_VAR_* for same key', async () => {
       process.env.RD_VAR_message = 'from-env';
       const varFile = path.join(tmpDir, 'vars.yaml');
@@ -951,5 +974,63 @@ describe('resolveVariables', () => {
       // varJson is processed after var in collectRawLayers, so it wins
       expect(result.vars.count).toBe('99');
     });
+  });
+});
+
+describe('routeExtraVars', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'route-extra-vars-test-'));
+  });
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('routes arrays to both vars and sources', async () => {
+    const result = await routeExtraVars({ items: ['a', 'b', 'c'] }, tmpDir);
+    expect(result.vars.items).toBe('a, b, c');
+    expect(result.sources.items).toEqual({ kind: 'array', items: ['a', 'b', 'c'] });
+    expect(result.warnings).toHaveLength(0);
+  });
+
+  it('warns and drops object values', async () => {
+    const result = await routeExtraVars({ config: { nested: true } }, tmpDir);
+    expect(result.vars.config).toBeUndefined();
+    expect(result.sources.config).toBeUndefined();
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toContain('complex value');
+  });
+
+  it('converts scalar values to strings', async () => {
+    const result = await routeExtraVars({ port: 8080, debug: true, name: 'test' }, tmpDir);
+    expect(result.vars.port).toBe('8080');
+    expect(result.vars.debug).toBe('true');
+    expect(result.vars.name).toBe('test');
+    expect(result.warnings).toHaveLength(0);
+  });
+
+  it('warns and skips reserved runtime variables', async () => {
+    const result = await routeExtraVars({ step: '5', env: 'prod' }, tmpDir);
+    expect(result.vars.step).toBeUndefined();
+    expect(result.vars.env).toBe('prod');
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toContain('reserved');
+  });
+
+  it('routes file: values to sources only', async () => {
+    // Create the file within tmpDir to avoid path traversal rejection
+    const dataFile = path.join(tmpDir, 'data.txt');
+    await fs.writeFile(dataFile, 'line1\nline2\n');
+
+    const result = await routeExtraVars({ items: `file:${dataFile}` }, tmpDir);
+    expect(result.vars.items).toBeUndefined();
+    expect(result.sources.items).toEqual({
+      kind: 'file',
+      path: expect.any(String),
+      format: 'text',
+    });
+    expect(result.warnings).toHaveLength(0);
   });
 });

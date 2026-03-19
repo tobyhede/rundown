@@ -433,6 +433,10 @@ function collectEnvBridgeVars(warnings?: string[]): Record<string, unknown> {
         warnings?.push(`Ignoring env ${envKey}: "${varName}" is not a valid identifier`);
         continue;
       }
+      if (isRuntimeReservedVariable(varName)) {
+        warnings?.push(`Ignoring env ${envKey}: "${varName}" is a reserved runtime variable`);
+        continue;
+      }
       result[varName] = value;
     }
   }
@@ -474,7 +478,7 @@ async function collectRawLayers(
     var?: string[];
     varJson?: string[];
     frontmatterVars?: Record<string, string | number | boolean>;
-    inheritedVars?: Record<string, unknown>;
+    inheritedVars?: Record<string, string>;
   },
   cwd: string,
   warnings?: string[],
@@ -594,7 +598,7 @@ export async function resolveVariables(
     var?: string[];
     varJson?: string[];
     frontmatterVars?: Record<string, string | number | boolean>;
-    inheritedVars?: Record<string, unknown>;
+    inheritedVars?: Record<string, string>;
   },
   cwd: string,
   security?: VariableSecurityContext,
@@ -643,6 +647,56 @@ export async function resolveVariables(
       }
       await routeVariable(key, value, vars, sources, cwd, projectRoot, security, warnings);
     }
+  }
+
+  return { vars, sources, warnings };
+}
+
+/**
+ * Route raw extra variables through the standard normalization pipeline.
+ *
+ * Used by the delegate command to normalize --var, --var-file, and --var-json
+ * values into string vars and typed data sources, matching the same pipeline
+ * that the run command uses via {@link resolveVariables}.
+ *
+ * @param rawVars - Raw variables with potentially complex types (arrays, objects, scalars)
+ * @param cwd - Current working directory for resolving file paths
+ * @param security - Optional security context for file source policy enforcement
+ * @returns Normalized string vars, typed data sources, and any warnings
+ */
+export async function routeExtraVars(
+  rawVars: Readonly<Record<string, unknown>>,
+  cwd: string,
+  security?: VariableSecurityContext,
+): Promise<{
+  vars: Record<string, string>;
+  sources: Record<string, DataSource>;
+  warnings: string[];
+}> {
+  const vars: Record<string, string> = {};
+  const sources: Record<string, DataSource> = {};
+  const warnings: string[] = [];
+
+  let projectRoot = path.resolve(cwd);
+  try {
+    projectRoot = await fs.realpath(projectRoot);
+  } catch {
+    // cwd doesn't exist? — use resolved path
+  }
+
+  for (const [key, value] of Object.entries(rawVars)) {
+    if (!VALID_IDENTIFIER.test(key)) {
+      warnings.push(`Ignoring variable with invalid key: ${key}`);
+      continue;
+    }
+    if (isRuntimeReservedVariable(key)) {
+      warnings.push(
+        `Ignoring reserved runtime variable "${key}". ` +
+          `Reserved names (case-insensitive): ${[...RUNTIME_RESERVED_VARIABLES].join(', ')}`,
+      );
+      continue;
+    }
+    await routeVariable(key, value, vars, sources, cwd, projectRoot, security, warnings);
   }
 
   return { vars, sources, warnings };

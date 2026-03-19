@@ -147,10 +147,23 @@ export const AncestorSnapshotSchema = z.object({
 });
 
 /**
+ * Zod schema for data source bindings (array or file-backed).
+ */
+export const DataSourceSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('array'), items: z.array(z.string()).readonly() }),
+  z.object({
+    kind: z.literal('file'),
+    path: z.string(),
+    format: z.enum(['text', 'jsonl']),
+  }),
+]);
+
+/**
  * Zod schema for execution context snapshot at delegation time.
  */
 export const ContextSnapshotSchema = z.object({
   vars: z.record(z.string(), z.string()),
+  sources: z.record(z.string(), DataSourceSchema).optional(),
   ancestors: z.array(AncestorSnapshotSchema).readonly(),
   step: z.string().optional(),
   substep: z.string().optional(),
@@ -333,19 +346,7 @@ export const RunbookStateSchema = z
     runbookSrc: z.string().optional(),
     templateVars: z.record(z.string(), z.string()).optional(),
     /** Data source bindings for sourced FOR loops (array or file-backed). */
-    sources: z
-      .record(
-        z.string(),
-        z.discriminatedUnion('kind', [
-          z.object({ kind: z.literal('array'), items: z.array(z.string()).readonly() }),
-          z.object({
-            kind: z.literal('file'),
-            path: z.string(),
-            format: z.enum(['text', 'jsonl']),
-          }),
-        ]),
-      )
-      .optional(),
+    sources: z.record(z.string(), DataSourceSchema).optional(),
   })
   // passthrough() allows unknown fields (e.g., legacy pendingSteps, agentBindings,
   // agentId, parentRunbookId) to survive schema validation without breaking existing

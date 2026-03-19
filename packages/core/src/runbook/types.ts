@@ -214,7 +214,8 @@ export interface StepDelegation {
 
 /** Snapshot of execution context at delegation time. */
 export interface ContextSnapshot {
-  readonly vars: Readonly<Record<string, unknown>>;
+  readonly vars: Readonly<Record<string, string>>;
+  readonly sources?: Readonly<Record<string, DataSource>>;
   readonly ancestors: readonly AncestorSnapshot[];
   /** Current step identifier at delegation time (e.g., "1"). */
   readonly step?: string;
