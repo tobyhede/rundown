@@ -27,8 +27,8 @@ The homepage IS the demo - an interactive runbook runner that lets visitors expe
 
 ## Tech Stack
 
-- Astro 5.x (static output)
-- Tailwind CSS 3.x (@astrojs/tailwind)
+- Astro 6.x (static output)
+- Tailwind CSS 4.x (@tailwindcss/vite)
 - WebContainer API (in-browser Node.js)
 - React + Xterm.js (terminal component)
 - Deployed to Cloudflare Pages
