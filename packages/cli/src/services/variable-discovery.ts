@@ -594,7 +594,7 @@ export async function resolveVariables(
     var?: string[];
     varJson?: string[];
     frontmatterVars?: Record<string, string | number | boolean>;
-    inheritedVars?: Record<string, string>;
+    inheritedVars?: Record<string, unknown>;
   },
   cwd: string,
   security?: VariableSecurityContext,

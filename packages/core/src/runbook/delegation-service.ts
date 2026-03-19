@@ -67,8 +67,8 @@ export interface DelegateOptions {
   readonly stepId: string;
   /** Path to the child runbook to delegate to. */
   readonly childRunbookPath: string;
-  /** Extra variables to merge into the context snapshot. */
-  readonly extraVars?: Readonly<Record<string, string>>;
+  /** Extra variables to merge into the context snapshot (supports complex types for --var-json). */
+  readonly extraVars?: Readonly<Record<string, unknown>>;
   /** Ancestor chain built by the caller. */
   readonly ancestors?: readonly AncestorSnapshot[];
   /** Frame key scoping this delegation to a FOR iteration. */

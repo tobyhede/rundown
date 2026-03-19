@@ -221,12 +221,20 @@ export function buildContextVars(vars: Readonly<Record<string, string>>): Record
 export function buildTemplateVars(
   localVars: Readonly<Record<string, string>>,
   options?: {
-    inheritedUserVars?: Readonly<Record<string, string>>;
+    inheritedUserVars?: Readonly<Record<string, unknown>>;
     inheritedContextVars?: Readonly<Record<string, string>>;
   },
 ): Record<string, string> {
+  // Filter inherited user vars to strings — complex types (arrays, objects)
+  // are handled by routeVariable in the resolution pipeline, not here.
+  const stringUserVars: Record<string, string> = {};
+  for (const [key, value] of Object.entries(options?.inheritedUserVars ?? {})) {
+    if (typeof value === 'string') {
+      stringUserVars[key] = value;
+    }
+  }
   const effectiveUserVars: Record<string, string> = {
-    ...(options?.inheritedUserVars ?? {}), // parent --var (overridable)
+    ...stringUserVars, // parent --var (overridable, strings only)
     ...localVars, // child frontmatter + claim --var (overrides)
   };
   return {
@@ -390,7 +398,7 @@ export async function prepareRunbook(
   cwd: string,
   options?: {
     inheritedContextVars?: Readonly<Record<string, string>>;
-    inheritedUserVars?: Readonly<Record<string, string>>;
+    inheritedUserVars?: Readonly<Record<string, unknown>>;
   },
 ): Promise<PrepareResult> {
   // Phase 1-2: Parse + Validate
@@ -835,7 +843,7 @@ export async function claimAndLaunch(
     const inheritedContextVars = reconstituteContextVars(freshDelegation.contextSnapshot);
 
     // Extract parent user-level vars for top-level inheritance in child
-    const inheritedUserVars: Record<string, string> = {};
+    const inheritedUserVars: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(freshDelegation.contextSnapshot.vars)) {
       if (!key.startsWith('context.') && key !== 'RunId') {
         inheritedUserVars[key] = value;

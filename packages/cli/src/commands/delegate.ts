@@ -128,7 +128,7 @@ export function registerDelegateCommand(program: Command): void {
             }
 
             // Parse extra vars: --var-file (lower), --var (higher), --var-json (highest)
-            let extraVars: Record<string, string> | undefined;
+            let extraVars: Record<string, unknown> | undefined;
             for (const vf of options.varFile ?? []) {
               const varFilePath = path.isAbsolute(vf) ? vf : path.join(cwd, vf);
               const fileVars = await loadVariablesFromFile(varFilePath, { optional: false });
@@ -144,13 +144,13 @@ export function registerDelegateCommand(program: Command): void {
               }
               extraVars = extraVars ? { ...extraVars, ...flagVars } : flagVars;
             }
-            if (options.varJson.length > 0) {
-              const jsonVars: Record<string, string> = {};
+            if (options.varJson && options.varJson.length > 0) {
+              const jsonVars: Record<string, unknown> = {};
               for (const flag of options.varJson) {
                 const eqIndex = flag.indexOf('=');
                 const key = flag.slice(0, eqIndex);
                 const jsonValue = flag.slice(eqIndex + 1);
-                jsonVars[key] = jsonValue;
+                jsonVars[key] = JSON.parse(jsonValue);
               }
               extraVars = extraVars ? { ...extraVars, ...jsonVars } : jsonVars;
             }

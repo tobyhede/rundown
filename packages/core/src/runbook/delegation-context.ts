@@ -52,8 +52,9 @@ export function reconstituteContextVars(snapshot: ContextSnapshot): Record<strin
   // Parent vars: context.parent.vars.* and context.ancestors.0.vars.* (parent is ancestor 0)
   for (const [key, value] of Object.entries(snapshot.vars)) {
     if (key.startsWith('context.')) continue;
-    result[`context.parent.vars.${key}`] = value;
-    result[`context.ancestors.0.vars.${key}`] = value;
+    const strValue = typeof value === 'string' ? value : JSON.stringify(value);
+    result[`context.parent.vars.${key}`] = strValue;
+    result[`context.ancestors.0.vars.${key}`] = strValue;
   }
 
   // Ancestor chain from snapshot.ancestors: index offset by 1
