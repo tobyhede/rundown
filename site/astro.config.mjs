@@ -1,5 +1,5 @@
 import { defineConfig } from 'astro/config';
-import tailwind from '@astrojs/tailwind';
+import tailwindcss from '@tailwindcss/vite';
 import react from '@astrojs/react';
 
 // Plugin to add COOP/COEP headers required for WebContainers (SharedArrayBuffer)
@@ -18,16 +18,11 @@ function crossOriginIsolationPlugin() {
 
 export default defineConfig({
   site: 'https://rundown.cool',
-  integrations: [
-    tailwind({
-      applyBaseStyles: false,
-    }),
-    react(),
-  ],
+  integrations: [react()],
   build: {
     assets: '_assets',
   },
   vite: {
-    plugins: [crossOriginIsolationPlugin()],
+    plugins: [tailwindcss(), crossOriginIsolationPlugin()],
   },
 });
