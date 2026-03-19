@@ -8,6 +8,7 @@ import {
   getBuiltinVariables,
   resolveVariables,
   routeExtraVars,
+  collectCliFlags,
 } from '../../src/services/variable-discovery.js';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
@@ -1032,5 +1033,63 @@ describe('routeExtraVars', () => {
       format: 'text',
     });
     expect(result.warnings).toHaveLength(0);
+  });
+
+  it('routes YAML file array values through routeExtraVars', async () => {
+    const varFile = path.join(tmpDir, 'vars.yaml');
+    await fs.writeFile(varFile, 'items:\n  - x\n  - "y"\n  - z\n');
+
+    const loaded = await loadVariablesFromFile(varFile, { normalize: false });
+    const result = await routeExtraVars(loaded, tmpDir);
+
+    expect(result.vars.items).toBe('x, y, z');
+    expect(result.sources.items).toEqual({ kind: 'array', items: ['x', 'y', 'z'] });
+    expect(result.warnings).toHaveLength(0);
+  });
+});
+
+describe('collectCliFlags', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'collect-cli-flags-test-'));
+  });
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('collects --var flags', async () => {
+    const result = await collectCliFlags({ var: ['env=staging', 'port=3000'] }, tmpDir);
+    expect(result).toEqual({ env: 'staging', port: '3000' });
+  });
+
+  it('collects --var-json flags', async () => {
+    const result = await collectCliFlags({ varJson: ['items=["a","b"]'] }, tmpDir);
+    expect(result).toEqual({ items: ['a', 'b'] });
+  });
+
+  it('collects --var-file contents', async () => {
+    const varFile = path.join(tmpDir, 'vars.yaml');
+    await fs.writeFile(varFile, 'greeting: hello\ncount: 42\n');
+
+    const result = await collectCliFlags({ varFile: [varFile] }, tmpDir);
+    expect(result).toEqual({ greeting: 'hello', count: 42 });
+  });
+
+  it('preserves precedence: var-json > var > var-file', async () => {
+    const varFile = path.join(tmpDir, 'vars.yaml');
+    await fs.writeFile(varFile, 'key: from-file\n');
+
+    const result = await collectCliFlags(
+      { varFile: [varFile], var: ['key=from-var'], varJson: ['key="from-json"'] },
+      tmpDir,
+    );
+    expect(result.key).toBe('from-json');
+  });
+
+  it('returns empty object when no flags provided', async () => {
+    const result = await collectCliFlags({}, tmpDir);
+    expect(result).toEqual({});
   });
 });

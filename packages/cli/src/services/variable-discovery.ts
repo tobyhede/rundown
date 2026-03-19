@@ -190,6 +190,60 @@ export function parseVarFlag(flag: string): { key: string; value: string } | nul
 
   return { key, value };
 }
+
+/**
+ * Collect CLI flag variables (--var-file, --var, --var-json) into a single dict.
+ *
+ * Merges in internal precedence order: var-file < var < var-json.
+ * Used by both {@link collectRawLayers} and the delegate command to avoid
+ * duplicating flag-collection logic.
+ *
+ * @param options - CLI flag arrays
+ * @param options.varFile - Array of paths to YAML files containing variable definitions (repeatable)
+ * @param options.var - Array of key=value flag strings from CLI
+ * @param options.varJson - Array of key=json flag strings from CLI for structured values
+ * @param cwd - Current working directory for resolving relative var-file paths
+ * @returns Merged variable record with raw types preserved
+ */
+export async function collectCliFlags(
+  options: { varFile?: string[]; var?: string[]; varJson?: string[] },
+  cwd: string,
+): Promise<Record<string, unknown>> {
+  const result: Record<string, unknown> = {};
+
+  // var-file(s) — repeatable, later overrides earlier
+  for (const vf of options.varFile ?? []) {
+    const varFilePath = path.isAbsolute(vf) ? vf : path.join(cwd, vf);
+    const fileVars = await loadVariablesFromFile(varFilePath, {
+      normalize: false,
+      optional: false,
+    });
+    Object.assign(result, fileVars);
+  }
+
+  // --var flags
+  if (options.var) {
+    for (const flag of options.var) {
+      const parsed = parseVarFlag(flag);
+      if (parsed) {
+        result[parsed.key] = parsed.value;
+      }
+    }
+  }
+
+  // --var-json values (processed after --var, so wins for same key)
+  if (options.varJson) {
+    for (const flag of options.varJson) {
+      const eqIndex = flag.indexOf('=');
+      const key = flag.slice(0, eqIndex);
+      const jsonValue = flag.slice(eqIndex + 1);
+      result[key] = JSON.parse(jsonValue);
+    }
+  }
+
+  return result;
+}
+
 /**
  * Load variables from a YAML file.
  *
@@ -455,8 +509,7 @@ function collectEnvBridgeVars(warnings?: string[]): Record<string, unknown> {
  * Layer 2: frontmatter     ← runbook YAML frontmatter vars:
  * Layer 3: discovered      ← .rundown/config.yaml (auto-discovered)
  * Layer 4: envBridge        ← RD_VAR_* environment variables
- * Layer 5: varFile(s)      ← --var-file contents (repeatable, later overrides earlier)
- * Layer 6: flags           ← --var CLI flags (highest precedence)
+ * Layer 5: cliFlags        ← --var-file, --var, --var-json (highest precedence)
  * ```
  *
  * The inherited layer ensures that parent ContextId survives into child
@@ -498,39 +551,29 @@ async function collectRawLayers(
   // Layer 4: Environment bridge (RD_VAR_* env vars)
   const envBridge = collectEnvBridgeVars(warnings);
 
-  // Layer 5: Var-files (repeatable, later overrides earlier)
-  const fromFile: Record<string, unknown> = {};
-  for (const vf of options.varFile ?? []) {
-    const varFilePath = path.isAbsolute(vf) ? vf : path.join(cwd, vf);
-    const fileVars = await loadVariablesFromFile(varFilePath, {
-      normalize: false,
-      optional: false,
-    });
-    Object.assign(fromFile, fileVars);
-  }
+  // Layer 5: CLI flags (--var-file, --var, --var-json merged)
+  const cliFlags = await collectCliFlags(options, cwd);
 
-  // Layer 6: CLI flags (highest) — --var and --var-json merged
-  const fromFlags: Record<string, unknown> = {};
-  if (options.var) {
-    for (const flag of options.var) {
-      const parsed = parseVarFlag(flag);
-      if (parsed) {
-        fromFlags[parsed.key] = parsed.value;
-      }
-    }
-  }
+  return [builtins, inherited, frontmatter, discovered, envBridge, cliFlags];
+}
 
-  // --var-json values merged into flags layer (processed after --var, so wins for same key)
-  if (options.varJson) {
-    for (const flag of options.varJson) {
-      const eqIndex = flag.indexOf('=');
-      const key = flag.slice(0, eqIndex);
-      const jsonValue = flag.slice(eqIndex + 1);
-      fromFlags[key] = JSON.parse(jsonValue);
-    }
+/**
+ * Canonicalize project root path for file source validation.
+ *
+ * Resolves symlinks when possible, falling back to the resolved path
+ * if the directory doesn't exist.
+ *
+ * @param cwd - Current working directory to resolve
+ * @returns Canonical project root path
+ */
+async function resolveProjectRoot(cwd: string): Promise<string> {
+  let projectRoot = path.resolve(cwd);
+  try {
+    projectRoot = await fs.realpath(projectRoot);
+  } catch {
+    // cwd doesn't exist? — use resolved path
   }
-
-  return [builtins, inherited, frontmatter, discovered, envBridge, fromFile, fromFlags];
+  return projectRoot;
 }
 
 async function enforceFileSourcePolicy(
@@ -608,12 +651,7 @@ export async function resolveVariables(
   const warnings: string[] = [];
 
   // Canonicalize project root once for validation
-  let projectRoot = path.resolve(cwd);
-  try {
-    projectRoot = await fs.realpath(projectRoot);
-  } catch {
-    // cwd doesn't exist? (unlikely) - use resolved path
-  }
+  const projectRoot = await resolveProjectRoot(cwd);
 
   // Collect raw inputs at each precedence level
   const layers = await collectRawLayers(options, cwd, warnings);
@@ -677,12 +715,7 @@ export async function routeExtraVars(
   const sources: Record<string, DataSource> = {};
   const warnings: string[] = [];
 
-  let projectRoot = path.resolve(cwd);
-  try {
-    projectRoot = await fs.realpath(projectRoot);
-  } catch {
-    // cwd doesn't exist? — use resolved path
-  }
+  const projectRoot = await resolveProjectRoot(cwd);
 
   for (const [key, value] of Object.entries(rawVars)) {
     if (!VALID_IDENTIFIER.test(key)) {

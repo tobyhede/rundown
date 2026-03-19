@@ -1,4 +1,3 @@
-import path from 'node:path';
 import { type Command, Option } from 'commander';
 import {
   RunbookStateManager,
@@ -20,11 +19,7 @@ import {
   IndexOptionError,
   validateIndexRequiresStep,
 } from '../helpers/index-option.js';
-import {
-  loadVariablesFromFile,
-  parseVarFlag,
-  routeExtraVars,
-} from '../services/variable-discovery.js';
+import { collectCliFlags, routeExtraVars } from '../services/variable-discovery.js';
 import { parseVarOption, parseVarJsonOption, collect } from '../helpers/option-utils.js';
 import type { DataSource } from '@rundown-org/core';
 
@@ -133,31 +128,10 @@ export function registerDelegateCommand(program: Command): void {
             }
 
             // Parse extra vars through the standard normalization pipeline
-            const rawVars: Record<string, unknown> = {};
-            for (const vf of options.varFile ?? []) {
-              const varFilePath = path.isAbsolute(vf) ? vf : path.join(cwd, vf);
-              const fileVars = await loadVariablesFromFile(varFilePath, {
-                normalize: false,
-                optional: false,
-              });
-              Object.assign(rawVars, fileVars);
-            }
-            if (options.var.length > 0) {
-              for (const flag of options.var) {
-                const parsed = parseVarFlag(flag);
-                if (parsed) {
-                  rawVars[parsed.key] = parsed.value;
-                }
-              }
-            }
-            if (options.varJson && options.varJson.length > 0) {
-              for (const flag of options.varJson) {
-                const eqIndex = flag.indexOf('=');
-                const key = flag.slice(0, eqIndex);
-                const jsonValue = flag.slice(eqIndex + 1);
-                rawVars[key] = JSON.parse(jsonValue);
-              }
-            }
+            const rawVars = await collectCliFlags(
+              { varFile: options.varFile, var: options.var, varJson: options.varJson },
+              cwd,
+            );
 
             let extraVars: Record<string, string> | undefined;
             let extraSources: Record<string, DataSource> | undefined;
