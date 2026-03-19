@@ -22,6 +22,21 @@ import type { DataSource, FileFormat, PolicyEvaluator, PolicyPrompter } from '@r
  */
 export const VALID_IDENTIFIER = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 
+/** Property names that could poison plain objects via prototype pollution. */
+const POISONED_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+/**
+ * Check if a key is a valid, safe variable name.
+ *
+ * Combines identifier syntax validation with prototype pollution protection.
+ *
+ * @param key - The variable name to validate
+ * @returns True if the key is a syntactically valid identifier and not a poisoned property name
+ */
+export function isValidVariableName(key: string): boolean {
+  return VALID_IDENTIFIER.test(key) && !POISONED_KEYS.has(key);
+}
+
 /**
  * Runtime-reserved keys (normalized to lowercase) that cannot be overridden
  * by user-provided variables.
@@ -135,7 +150,7 @@ function normalizeVariables(
 ): Record<string, string> {
   const result: Record<string, string> = {};
   for (const [key, value] of Object.entries(vars)) {
-    if (!VALID_IDENTIFIER.test(key)) {
+    if (!isValidVariableName(key)) {
       warnings?.push(`Ignoring ${source} with invalid key: ${key}`);
       continue;
     }
@@ -186,7 +201,7 @@ export function parseVarFlag(flag: string): { key: string; value: string } | nul
   const key = flag.slice(0, eqIndex);
   const value = flag.slice(eqIndex + 1);
 
-  if (!key || !VALID_IDENTIFIER.test(key)) return null;
+  if (!key || !isValidVariableName(key)) return null;
 
   return { key, value };
 }
@@ -483,7 +498,7 @@ function collectEnvBridgeVars(warnings?: string[]): Record<string, unknown> {
   for (const [envKey, value] of Object.entries(process.env)) {
     if (envKey.startsWith(ENV_VAR_PREFIX) && value !== undefined) {
       const varName = envKey.slice(ENV_VAR_PREFIX.length);
-      if (!VALID_IDENTIFIER.test(varName)) {
+      if (!isValidVariableName(varName)) {
         warnings?.push(`Ignoring env ${envKey}: "${varName}" is not a valid identifier`);
         continue;
       }
@@ -664,7 +679,7 @@ export async function resolveVariables(
     if (layerIndex > 0) {
       const reservedViolations: string[] = [];
       for (const [key] of entries) {
-        if (VALID_IDENTIFIER.test(key) && isRuntimeReservedVariable(key)) {
+        if (isValidVariableName(key) && isRuntimeReservedVariable(key)) {
           reservedViolations.push(key);
         }
       }
@@ -679,7 +694,7 @@ export async function resolveVariables(
 
     // Pass 2: route variables (only reached when no reserved violations)
     for (const [key, value] of entries) {
-      if (!VALID_IDENTIFIER.test(key)) {
+      if (!isValidVariableName(key)) {
         warnings.push(`Ignoring variable with invalid key: ${key}`);
         continue;
       }
@@ -718,7 +733,7 @@ export async function routeExtraVars(
   const projectRoot = await resolveProjectRoot(cwd);
 
   for (const [key, value] of Object.entries(rawVars)) {
-    if (!VALID_IDENTIFIER.test(key)) {
+    if (!isValidVariableName(key)) {
       warnings.push(`Ignoring variable with invalid key: ${key}`);
       continue;
     }

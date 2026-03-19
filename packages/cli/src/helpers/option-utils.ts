@@ -8,7 +8,7 @@
  */
 
 import { InvalidArgumentError } from 'commander';
-import { parseVarFlag, VALID_IDENTIFIER } from '../services/variable-discovery.js';
+import { isValidVariableName, parseVarFlag, VALID_IDENTIFIER } from '../services/variable-discovery.js';
 
 /**
  * Collect option values into an array.
@@ -45,7 +45,7 @@ export function parseVarOption(value: string, previous: string[]): string[] {
     }
     return [...previous, value];
   }
-  if (!VALID_IDENTIFIER.test(value)) {
+  if (!isValidVariableName(value)) {
     throw new InvalidArgumentError(
       `Invalid variable name: "${value}" — must match [a-zA-Z_][a-zA-Z0-9_]*`,
     );
@@ -73,7 +73,7 @@ export function parseVarJsonOption(value: string, previous: string[]): string[] 
     throw new InvalidArgumentError('Expected key=json format');
   }
   const key = value.slice(0, eqIndex);
-  if (!VALID_IDENTIFIER.test(key)) {
+  if (!isValidVariableName(key)) {
     throw new InvalidArgumentError(
       `Invalid variable name: "${key}" — must match [a-zA-Z_][a-zA-Z0-9_]*`,
     );

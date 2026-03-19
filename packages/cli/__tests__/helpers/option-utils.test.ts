@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from '@jest/globals';
 import { InvalidArgumentError } from 'commander';
 import { collect, parseVarOption, parseVarJsonOption } from '../../src/helpers/option-utils.js';
+import { isValidVariableName } from '../../src/services/variable-discovery.js';
 
 describe('collect', () => {
   it('accumulates values into array', () => {
@@ -134,5 +135,41 @@ describe('parseVarJsonOption', () => {
     result = parseVarJsonOption('b=["x"]', result);
 
     expect(result).toEqual(['a=42', 'b=["x"]']);
+  });
+});
+
+describe('prototype pollution protection', () => {
+  const POISONED_KEYS = ['__proto__', 'constructor', 'prototype'];
+
+  describe('isValidVariableName', () => {
+    it.each(POISONED_KEYS)('rejects poisoned key: %s', (key) => {
+      expect(isValidVariableName(key)).toBe(false);
+    });
+
+    it('accepts normal underscore-prefixed keys', () => {
+      expect(isValidVariableName('_normal')).toBe(true);
+      expect(isValidVariableName('__double')).toBe(true);
+    });
+  });
+
+  describe('parseVarOption', () => {
+    it.each(POISONED_KEYS)('throws for --var %s=value', (key) => {
+      expect(() => parseVarOption(`${key}=value`, [])).toThrow(InvalidArgumentError);
+    });
+
+    it.each(POISONED_KEYS)('throws for --var %s (env inherit form)', (key) => {
+      process.env[key] = 'injected';
+      try {
+        expect(() => parseVarOption(key, [])).toThrow(InvalidArgumentError);
+      } finally {
+        delete process.env[key];
+      }
+    });
+  });
+
+  describe('parseVarJsonOption', () => {
+    it.each(POISONED_KEYS)('throws for --var-json %s=42', (key) => {
+      expect(() => parseVarJsonOption(`${key}=42`, [])).toThrow(InvalidArgumentError);
+    });
   });
 });
