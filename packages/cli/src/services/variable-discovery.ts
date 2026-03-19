@@ -479,22 +479,22 @@ async function collectRawLayers(
   cwd: string,
   warnings?: string[],
 ): Promise<Record<string, unknown>[]> {
-  // 1. Built-ins (lowest)
+  // Layer 0: Built-ins (lowest)
   const builtins: Record<string, unknown> = getBuiltinVariables();
 
-  // 1b. Inherited vars from parent delegation (overrides builtins)
+  // Layer 1: Inherited vars from parent delegation (overrides builtins)
   const inherited: Record<string, unknown> = options.inheritedVars ?? {};
 
-  // 2. Frontmatter vars — pre-extracted from parser's validated RunbookFrontmatter
+  // Layer 2: Frontmatter vars — pre-extracted from parser's validated RunbookFrontmatter
   const frontmatter: Record<string, unknown> = options.frontmatterVars ?? {};
 
-  // 3. Auto-discovered config
+  // Layer 3: Auto-discovered config
   const discovered: Record<string, unknown> = await discoverRawVariables(cwd);
 
-  // 3b. Environment bridge (RD_VAR_* env vars)
+  // Layer 4: Environment bridge (RD_VAR_* env vars)
   const envBridge = collectEnvBridgeVars(warnings);
 
-  // 4. Var-files (repeatable, later overrides earlier)
+  // Layer 5: Var-files (repeatable, later overrides earlier)
   const fromFile: Record<string, unknown> = {};
   for (const vf of options.varFile ?? []) {
     const varFilePath = path.isAbsolute(vf) ? vf : path.join(cwd, vf);
@@ -505,7 +505,7 @@ async function collectRawLayers(
     Object.assign(fromFile, fileVars);
   }
 
-  // 5. CLI flags (highest)
+  // Layer 6: CLI flags (highest) — --var and --var-json merged
   const fromFlags: Record<string, unknown> = {};
   if (options.var) {
     for (const flag of options.var) {
@@ -516,7 +516,7 @@ async function collectRawLayers(
     }
   }
 
-  // 5b. --var-json flags (same precedence as --var, merged after)
+  // --var-json values merged into flags layer (processed after --var, so wins for same key)
   if (options.varJson) {
     for (const flag of options.varJson) {
       const eqIndex = flag.indexOf('=');

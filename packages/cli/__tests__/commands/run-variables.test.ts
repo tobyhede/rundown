@@ -152,4 +152,25 @@ rd echo {{message}}
       delete process.env.RD_VAR_message;
     }
   });
+
+  it('should accept --var-json for inline JSON values', async () => {
+    const runbookContent = `# Test Runbook
+
+## 1. Echo Test
+- PASS COMPLETE
+
+\`\`\`bash
+rd echo {{count}}
+\`\`\`
+`;
+    await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
+
+    const result = await runCliInProcess(
+      'run test.runbook.md --var-json count=42 --json',
+      workspace,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('42');
+  });
 });

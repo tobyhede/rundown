@@ -7,10 +7,8 @@
  * @module helpers/option-utils
  */
 
-import { InvalidArgumentError, Option } from 'commander';
+import { InvalidArgumentError } from 'commander';
 import { parseVarFlag, VALID_IDENTIFIER } from '../services/variable-discovery.js';
-
-export { InvalidArgumentError, Option };
 
 /**
  * Collect option values into an array.

@@ -144,9 +144,9 @@ export function registerDelegateCommand(program: Command): void {
               }
               extraVars = extraVars ? { ...extraVars, ...flagVars } : flagVars;
             }
-            if ((options.varJson ?? []).length > 0) {
+            if (options.varJson.length > 0) {
               const jsonVars: Record<string, string> = {};
-              for (const flag of options.varJson ?? []) {
+              for (const flag of options.varJson) {
                 const eqIndex = flag.indexOf('=');
                 const key = flag.slice(0, eqIndex);
                 const jsonValue = flag.slice(eqIndex + 1);
