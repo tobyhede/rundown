@@ -8,7 +8,11 @@
  */
 
 import { InvalidArgumentError } from 'commander';
-import { isValidVariableName, parseVarFlag, VALID_IDENTIFIER } from '../services/variable-discovery.js';
+import {
+  isValidVariableName,
+  parseVarFlag,
+  VALID_IDENTIFIER,
+} from '../services/variable-discovery.js';
 
 /**
  * Collect option values into an array.
@@ -39,16 +43,19 @@ export function parseVarOption(value: string, previous: string[]): string[] {
   if (eqIndex !== -1) {
     const parsed = parseVarFlag(value);
     if (!parsed) {
-      throw new InvalidArgumentError(
-        `Invalid variable: "${value}" — key must match [a-zA-Z_][a-zA-Z0-9_]*`,
-      );
+      const key = value.slice(0, eqIndex);
+      const msg = VALID_IDENTIFIER.test(key)
+        ? `Reserved variable name: "${key}" — cannot use __proto__, constructor, or prototype`
+        : `Invalid variable: "${value}" — key must match [a-zA-Z_][a-zA-Z0-9_]*`;
+      throw new InvalidArgumentError(msg);
     }
     return [...previous, value];
   }
   if (!isValidVariableName(value)) {
-    throw new InvalidArgumentError(
-      `Invalid variable name: "${value}" — must match [a-zA-Z_][a-zA-Z0-9_]*`,
-    );
+    const msg = VALID_IDENTIFIER.test(value)
+      ? `Reserved variable name: "${value}" — cannot use __proto__, constructor, or prototype`
+      : `Invalid variable name: "${value}" — must match [a-zA-Z_][a-zA-Z0-9_]*`;
+    throw new InvalidArgumentError(msg);
   }
   const envValue = process.env[value];
   if (envValue === undefined) {
@@ -74,9 +81,10 @@ export function parseVarJsonOption(value: string, previous: string[]): string[] 
   }
   const key = value.slice(0, eqIndex);
   if (!isValidVariableName(key)) {
-    throw new InvalidArgumentError(
-      `Invalid variable name: "${key}" — must match [a-zA-Z_][a-zA-Z0-9_]*`,
-    );
+    const msg = VALID_IDENTIFIER.test(key)
+      ? `Reserved variable name: "${key}" — cannot use __proto__, constructor, or prototype`
+      : `Invalid variable name: "${key}" — must match [a-zA-Z_][a-zA-Z0-9_]*`;
+    throw new InvalidArgumentError(msg);
   }
   const jsonStr = value.slice(eqIndex + 1);
   let parsed: unknown;

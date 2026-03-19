@@ -153,14 +153,18 @@ describe('prototype pollution protection', () => {
   });
 
   describe('parseVarOption', () => {
-    it.each(POISONED_KEYS)('throws for --var %s=value', (key) => {
+    it.each(POISONED_KEYS)('throws for --var %s=value with reserved message', (key) => {
       expect(() => parseVarOption(`${key}=value`, [])).toThrow(InvalidArgumentError);
+      expect(() => parseVarOption(`${key}=value`, [])).toThrow(/reserved variable name/i);
     });
 
-    it.each(POISONED_KEYS)('throws for --var %s (env inherit form)', (key) => {
+    it.each(
+      POISONED_KEYS,
+    )('throws for --var %s (env inherit form) with reserved message', (key) => {
       process.env[key] = 'injected';
       try {
         expect(() => parseVarOption(key, [])).toThrow(InvalidArgumentError);
+        expect(() => parseVarOption(key, [])).toThrow(/reserved variable name/i);
       } finally {
         delete process.env[key];
       }
@@ -168,8 +172,9 @@ describe('prototype pollution protection', () => {
   });
 
   describe('parseVarJsonOption', () => {
-    it.each(POISONED_KEYS)('throws for --var-json %s=42', (key) => {
+    it.each(POISONED_KEYS)('throws for --var-json %s=42 with reserved message', (key) => {
       expect(() => parseVarJsonOption(`${key}=42`, [])).toThrow(InvalidArgumentError);
+      expect(() => parseVarJsonOption(`${key}=42`, [])).toThrow(/reserved variable name/i);
     });
   });
 });

@@ -53,12 +53,9 @@ describe('parseVarFlag', () => {
     expect(parseVarFlag('key=')).toEqual({ key: 'key', value: '' });
   });
 
-  it.each(['__proto__', 'constructor', 'prototype'])(
-    'should reject poisoned key: %s',
-    (key) => {
-      expect(parseVarFlag(`${key}=value`)).toBeNull();
-    },
-  );
+  it.each(['__proto__', 'constructor', 'prototype'])('should reject poisoned key: %s', (key) => {
+    expect(parseVarFlag(`${key}=value`)).toBeNull();
+  });
 });
 
 describe('getBuiltinVariables', () => {
@@ -1054,15 +1051,16 @@ describe('routeExtraVars', () => {
     expect(result.warnings).toHaveLength(0);
   });
 
-  it.each(['__proto__', 'constructor', 'prototype'])(
-    'drops poisoned key %s with warning',
-    async (key) => {
-      const result = await routeExtraVars({ [key]: 'injected' }, tmpDir);
-      expect(Object.hasOwn(result.vars, key)).toBe(false);
-      expect(result.warnings.length).toBeGreaterThan(0);
-      expect(result.warnings[0]).toContain('invalid key');
-    },
-  );
+  it.each([
+    '__proto__',
+    'constructor',
+    'prototype',
+  ])('drops poisoned key %s with warning', async (key) => {
+    const result = await routeExtraVars({ [key]: 'injected' }, tmpDir);
+    expect(Object.hasOwn(result.vars, key)).toBe(false);
+    expect(result.warnings.length).toBeGreaterThan(0);
+    expect(result.warnings[0]).toContain('invalid key');
+  });
 });
 
 describe('collectCliFlags', () => {
