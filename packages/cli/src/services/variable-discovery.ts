@@ -240,9 +240,12 @@ export async function collectCliFlags(
   if (options.var) {
     for (const flag of options.var) {
       const parsed = parseVarFlag(flag);
-      if (parsed) {
-        result[parsed.key] = parsed.value;
+      if (!parsed) {
+        throw new Error(
+          `Unexpected invalid --var entry: ${flag} (parseVarOption should have rejected this)`,
+        );
       }
+      result[parsed.key] = parsed.value;
     }
   }
 
