@@ -17,6 +17,7 @@ import * as yaml from 'js-yaml';
 import type {
   DataSource,
   FileFormat,
+  JsonObject,
   PolicyEvaluator,
   PolicyPrompter,
   TemplateVarValue,
@@ -470,8 +471,8 @@ async function routeVariable(
   }
 
   // Non-array object → vars only as JsonObject (for dotted template access)
-  if (typeof value === 'object' && value !== null) {
-    vars[key] = value as TemplateVarValue;
+  if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+    vars[key] = value as JsonObject;
     delete sources[key];
     return;
   }
@@ -661,10 +662,12 @@ async function enforceFileSourcePolicy(
  * 5. --var flags (highest precedence)
  *
  * Each variable value is routed based on its type:
- * - String with file: prefix → file source only
- * - Array → both vars (comma-joined) and sources (array)
+ * - String with `file:` prefix → file source only (not in vars)
+ * - Array → both vars (comma-joined) and sources (array of items)
  * - Multiline string → both vars and sources (array of lines)
- * - Scalar → vars only
+ * - Non-array object (JsonObject) → vars only (for dotted template access)
+ * - Number → vars only (preserved, not stringified)
+ * - Other scalar (boolean, null, plain string) → vars only (stringified)
  *
  * @param options - Variable sources from CLI flags, var-file, frontmatter vars, and inherited vars
  * @param options.varFile - Array of paths to YAML files containing variable definitions (repeatable)

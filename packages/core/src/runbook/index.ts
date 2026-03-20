@@ -1,4 +1,5 @@
 export type * from './types.js';
+export { isJsonObject } from './types.js';
 export * from './step-id.js';
 export * from './step-utils.js';
 export * from './targeting.js';
