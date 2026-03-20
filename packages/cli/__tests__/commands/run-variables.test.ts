@@ -173,4 +173,26 @@ rd echo {{count}}
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain('42');
   });
+
+  it('should reject malformed --var-json values', async () => {
+    const runbookContent = `# Test Runbook
+
+## 1. Echo Test
+- PASS COMPLETE
+
+\`\`\`bash
+rd echo {{count}}
+\`\`\`
+`;
+    await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
+
+    const result = await runCliInProcess(
+      'run test.runbook.md --var-json count=not-json --json',
+      workspace,
+    );
+
+    expect(result.exitCode).not.toBe(0);
+    const output = result.stderr + result.stdout;
+    expect(output).toContain('count');
+  });
 });

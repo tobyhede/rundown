@@ -89,13 +89,12 @@ rdpath --dir <path> --ctx <id> find <pattern> # Find within context scope
 Template variables use Handlebars syntax `{{variableName}}` and are expanded at run time.
 
 **Variable Sources (Precedence: High to Low):**
-1. `--var key=value` / `--var-json key=json` flags (highest priority, repeatable)
-2. `--var-file path` contents (YAML format, repeatable)
-3. `RD_VAR_*` environment variables (prefix stripped)
-4. `.rundown/config.yaml` (auto-discovered from cwd upward, stops at git root)
-5. Frontmatter `vars:` field
-6. Inherited delegation variables (parent context in delegation tree)
-7. Built-in defaults (lowest priority)
+1. CLI flags (`--var-file`, `--var`, `--var-json`) — highest priority; within this layer: `--var-json` > `--var` > `--var-file` (repeatable)
+2. `RD_VAR_*` environment variables (prefix stripped)
+3. `.rundown/config.yaml` (auto-discovered from cwd upward, stops at git root)
+4. Frontmatter `vars:` field
+5. Inherited delegation variables (parent context in delegation tree)
+6. Built-in defaults (lowest priority)
 
 **Built-in Variables:**
 | Variable | Example Value | Description |

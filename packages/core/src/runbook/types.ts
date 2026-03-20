@@ -215,6 +215,7 @@ export interface StepDelegation {
 /** Snapshot of execution context at delegation time. */
 export interface ContextSnapshot {
   readonly vars: Readonly<Record<string, string>>;
+  /** Data source bindings for FOR loop iteration in delegated runbooks. */
   readonly sources?: Readonly<Record<string, DataSource>>;
   readonly ancestors: readonly AncestorSnapshot[];
   /** Current step identifier at delegation time (e.g., "1"). */

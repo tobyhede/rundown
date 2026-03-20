@@ -254,6 +254,11 @@ export async function collectCliFlags(
     for (const flag of options.varJson) {
       const eqIndex = flag.indexOf('=');
       const key = flag.slice(0, eqIndex);
+      if (!isValidVariableName(key)) {
+        throw new Error(
+          `Unexpected invalid --var-json key: ${key} (parseVarJsonOption should have rejected this)`,
+        );
+      }
       const jsonValue = flag.slice(eqIndex + 1);
       result[key] = JSON.parse(jsonValue);
     }
