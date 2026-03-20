@@ -1,5 +1,6 @@
 import { describe, it, expect } from '@jest/globals';
 import type { Action, SubstepState, Substep, RunbookState } from '../../src/runbook/types.js';
+import { isJsonValue } from '../../src/runbook/types.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 
 describe('SubstepState type', () => {
@@ -111,5 +112,68 @@ describe('RunbookState runbookSrc field', () => {
       runbookSrc: '# Test Runbook\n\n## 1. Test Step',
     };
     expect(state.runbookSrc).toBe('# Test Runbook\n\n## 1. Test Step');
+  });
+});
+
+describe('isJsonValue', () => {
+  it('accepts null', () => {
+    expect(isJsonValue(null)).toBe(true);
+  });
+
+  it('accepts string', () => {
+    expect(isJsonValue('hello')).toBe(true);
+  });
+
+  it('accepts number', () => {
+    expect(isJsonValue(42)).toBe(true);
+  });
+
+  it('accepts boolean', () => {
+    expect(isJsonValue(true)).toBe(true);
+    expect(isJsonValue(false)).toBe(true);
+  });
+
+  it('accepts empty array', () => {
+    expect(isJsonValue([])).toBe(true);
+  });
+
+  it('accepts nested array', () => {
+    expect(isJsonValue(['a', 1, [true, null]])).toBe(true);
+  });
+
+  it('accepts plain object', () => {
+    expect(isJsonValue({ host: 'localhost', port: 8080 })).toBe(true);
+  });
+
+  it('accepts deeply nested object', () => {
+    expect(isJsonValue({ a: { b: { c: [1, 'x', null] } } })).toBe(true);
+  });
+
+  it('rejects undefined', () => {
+    expect(isJsonValue(undefined)).toBe(false);
+  });
+
+  it('rejects function', () => {
+    expect(isJsonValue(() => {})).toBe(false);
+  });
+
+  it('rejects Date', () => {
+    expect(isJsonValue(new Date())).toBe(false);
+  });
+
+  it('rejects RegExp', () => {
+    expect(isJsonValue(/foo/)).toBe(false);
+  });
+
+  it('rejects object containing Date value', () => {
+    expect(isJsonValue({ created: new Date() })).toBe(false);
+  });
+
+  it('rejects object containing undefined value', () => {
+    expect(isJsonValue({ key: undefined })).toBe(false);
+  });
+
+  it('rejects array containing undefined', () => {
+    expect(isJsonValue([1, undefined, 'a'])).toBe(false);
   });
 });

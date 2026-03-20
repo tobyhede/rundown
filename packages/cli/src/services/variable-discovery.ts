@@ -14,13 +14,14 @@ import { randomBytes } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as yaml from 'js-yaml';
-import type {
-  DataSource,
-  FileFormat,
-  JsonObject,
-  PolicyEvaluator,
-  PolicyPrompter,
-  TemplateVarValue,
+import {
+  isJsonValue,
+  type DataSource,
+  type FileFormat,
+  type JsonObject,
+  type PolicyEvaluator,
+  type PolicyPrompter,
+  type TemplateVarValue,
 } from '@rundown-org/core';
 
 /**
@@ -153,7 +154,7 @@ export class FileSourcePolicyError extends Error {
  * @param warnings - Optional array to collect normalization warnings
  * @returns Normalized variables with string values only
  */
-function normalizeVariables(
+function normalizeToStringVariables(
   vars: Record<string, unknown>,
   source = 'variable',
   warnings?: string[],
@@ -312,7 +313,7 @@ export async function loadVariablesFromFile(
       return raw;
     }
     // eslint-disable-next-line @typescript-eslint/no-deprecated -- legacy frontmatter path
-    return normalizeVariables(raw);
+    return normalizeToStringVariables(raw);
   } catch (error) {
     if (options?.optional === false) {
       throw error;
@@ -473,9 +474,14 @@ async function routeVariable(
   }
 
   // Non-array object → vars only as JsonObject (for dotted template access)
-  // Safe cast: values originate from yaml.load() or JSON.parse(), which produce JSON-compatible objects
+  // Validate recursively: yaml.load() can produce Date, undefined, etc.
   if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-    vars[key] = value as JsonObject;
+    if (isJsonValue(value)) {
+      vars[key] = value as JsonObject;
+    } else {
+      warnings?.push(`Variable "${key}" contains non-JSON values; converting to string`);
+      vars[key] = JSON.stringify(value);
+    }
     delete sources[key];
     return;
   }

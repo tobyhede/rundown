@@ -160,6 +160,36 @@ export function isJsonObject(value: TemplateVarValue): value is JsonObject {
 }
 
 /**
+ * Recursive type guard that validates an unknown value is a valid JSON value.
+ *
+ * Walks objects and arrays recursively, checking that all primitives are
+ * string, number, boolean, or null. Rejects Date, undefined, functions,
+ * and other non-JSON types that `yaml.load()` can produce.
+ *
+ * @param value - The value to validate
+ * @returns True if the value is a valid JSON value (primitives, arrays, or plain objects)
+ */
+export function isJsonValue(value: unknown): value is JsonValue {
+  if (value === null) return true;
+  switch (typeof value) {
+    case 'string':
+    case 'number':
+    case 'boolean':
+      return true;
+    case 'object': {
+      if (Array.isArray(value)) {
+        return value.every(isJsonValue);
+      }
+      // Reject Date, RegExp, etc. — only plain objects are valid
+      if (Object.getPrototypeOf(value) !== Object.prototype) return false;
+      return Object.values(value as Record<string, unknown>).every(isJsonValue);
+    }
+    default:
+      return false;
+  }
+}
+
+/**
  * Structured discriminated union for the last action taken by the state machine.
  *
  * Replaces the previous string-based representation to preserve full transition

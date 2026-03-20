@@ -563,6 +563,31 @@ describe('resolveVariables', () => {
 
       expect(result.vars.config).toEqual({ host: 'localhost', port: 3000 });
     });
+
+    it('stringifies YAML object with Date value and warns', async () => {
+      const tmpFile = path.join(tmpDir, 'date-obj.yaml');
+      // YAML parses unquoted timestamps as Date objects
+      await fs.writeFile(tmpFile, 'event:\n  name: launch\n  date: 2026-03-20\n');
+
+      const result = await resolveVariables({ varFile: [tmpFile] }, tmpDir);
+
+      // Date gets parsed by yaml.load() as a JS Date, failing isJsonValue
+      expect(typeof result.vars.event).toBe('string');
+      expect(result.warnings).toContain(
+        'Variable "event" contains non-JSON values; converting to string',
+      );
+    });
+
+    it('preserves normal YAML object as JsonObject', async () => {
+      const tmpFile = path.join(tmpDir, 'normal-obj.yaml');
+      // Quoted strings prevent YAML date parsing
+      await fs.writeFile(tmpFile, 'config:\n  host: localhost\n  port: 3000\n  debug: true\n');
+
+      const result = await resolveVariables({ varFile: [tmpFile] }, tmpDir);
+
+      expect(result.vars.config).toEqual({ host: 'localhost', port: 3000, debug: true });
+      expect(result.warnings).toHaveLength(0);
+    });
   });
 
   describe('YAML file: prefix routing', () => {
