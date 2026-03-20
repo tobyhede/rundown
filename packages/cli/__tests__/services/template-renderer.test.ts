@@ -486,9 +486,9 @@ describe('expandLoopVariablesForCommand', () => {
     const variables: Record<string, unknown> = {
       'context.parent.vars.config': { host: 'parent-host' },
     };
-    expect(
-      expandLoopVariables('Parent: {{context.parent.vars.config.host}}', variables),
-    ).toBe('Parent: parent-host');
+    expect(expandLoopVariables('Parent: {{context.parent.vars.config.host}}', variables)).toBe(
+      'Parent: parent-host',
+    );
   });
 
   it('prefers exact key over progressive prefix match', () => {
@@ -503,9 +503,7 @@ describe('expandLoopVariablesForCommand', () => {
     const variables: Record<string, unknown> = {
       'context.vars.config': { host: 'localhost' },
     };
-    expect(expandLoopVariables('{{context.vars.config}}', variables)).toBe(
-      '{"host":"localhost"}',
-    );
+    expect(expandLoopVariables('{{context.vars.config}}', variables)).toBe('{"host":"localhost"}');
   });
 
   it('preserves placeholder when flattened key value lacks the remainder path', () => {
