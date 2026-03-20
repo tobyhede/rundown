@@ -134,10 +134,11 @@ export { StepIdSchema, ActionSchema, TransitionsSchema };
 const RunbookStepSchema = z.string().min(1);
 
 /**
- * Recursive JSON value schema for loop iteration values.
+ * Recursive JSON value schema for loop iteration values and template variable objects.
  *
  * Supports arbitrary JSON structures: primitives, arrays, and objects.
- * Used to validate currentValue in ForStackEntry when iterating over JSONL files.
+ * Used to validate currentValue in ForStackEntry when iterating over JSONL files,
+ * and as the basis for TemplateVarValueSchema for template variable validation.
  * Uses z.lazy() for recursive reference handling.
  *
  * When used with .optional(), allows either a JSON value or absence (undefined),

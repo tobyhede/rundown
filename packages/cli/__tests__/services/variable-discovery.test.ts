@@ -554,6 +554,17 @@ describe('resolveVariables', () => {
     });
   });
 
+  describe('YAML object routing', () => {
+    it('preserves object values from --var-file', async () => {
+      const tmpFile = path.join(tmpDir, 'objects.yaml');
+      await fs.writeFile(tmpFile, 'config:\n  host: localhost\n  port: 3000\n');
+
+      const result = await resolveVariables({ varFile: [tmpFile] }, tmpDir);
+
+      expect(result.vars.config).toEqual({ host: 'localhost', port: 3000 });
+    });
+  });
+
   describe('YAML file: prefix routing', () => {
     it('routes YAML file: value to sources only', async () => {
       const dataFile = path.join(tmpDir, 'data.txt');

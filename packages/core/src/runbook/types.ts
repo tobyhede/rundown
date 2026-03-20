@@ -154,7 +154,9 @@ export type TemplateVarValue = string | number | JsonObject;
  * @returns True if the value is a structured JSON object (not a string or number)
  */
 export function isJsonObject(value: TemplateVarValue): value is JsonObject {
-  return typeof value === 'object';
+  // Defensive: null check guards against untyped callers even though TemplateVarValue excludes null
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+  return value !== null && typeof value === 'object';
 }
 
 /**
