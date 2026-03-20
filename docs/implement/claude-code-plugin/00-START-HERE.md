@@ -26,7 +26,7 @@
 
 ## Package Contents
 
-```
+```text
 claude-code-plugin/
   00-START-HERE.md           # You are here
   README.md                   # TL;DR + conceptual overview

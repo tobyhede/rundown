@@ -59,7 +59,7 @@ Why Claude Code plugin path handling works this way.
 
 > **Rundown Plugin:** This example uses `rundown-plugin.json`, which is specific to the rundown plugin.
 
-```
+```text
 rundown-plugin.json priority:
 1. .claude/rundown-plugin.json (project overrides)
 2. rundown-plugin.json (project root)

@@ -63,7 +63,7 @@ Claude Code substitutes the variable before the content reaches the model.
 
 Skills can include supporting files alongside `SKILL.md`:
 
-```
+```text
 skills/
   pdf-processor/
     SKILL.md

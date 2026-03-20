@@ -86,7 +86,7 @@
 
 **Standard Claude Code:**
 
-```
+```text
 my-plugin/
   .claude-plugin/plugin.json     # Manifest (only this in .claude-plugin/)
   skills/{name}/SKILL.md         # Skills
@@ -102,7 +102,7 @@ my-plugin/
 
 > **Rundown Plugin** (additional directories):
 
-```
+```text
   runbooks/                      # Auto-discovered
   context/                       # Auto-discovered
   rundown-plugin.json            # Rundown plugin config

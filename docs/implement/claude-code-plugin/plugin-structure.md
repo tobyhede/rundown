@@ -6,7 +6,7 @@ How to organize a Claude Code plugin so file references work correctly.
 
 ## Standard Layout
 
-```
+```text
 my-plugin/
   .claude-plugin/
     plugin.json              # Manifest (name, version, description)
@@ -35,7 +35,7 @@ my-plugin/
 
 > **Rundown Plugin:** The following directories are specific to the rundown plugin, not standard Claude Code components.
 
-```
+```text
 my-plugin/
   runbooks/                  # Auto-discovered runbooks
     planning/
@@ -94,7 +94,7 @@ For marketplace plugins, the entire plugin directory is copied to `~/.claude/plu
 
 Marketplace-installed plugins are copied to `~/.claude/plugins/cache/` rather than used in-place:
 
-```
+```text
 ~/.claude/plugins/cache/
   my-plugin@my-marketplace/
     1.0.0/
@@ -166,7 +166,7 @@ Full:
 
 The `@rundown-org/claude-code-plugin` uses this layout:
 
-```
+```text
 packages/claude-code-plugin/
   .claude-plugin/
     plugin.json                    # name: "rundown"
