@@ -1004,6 +1004,24 @@ describe('resolveVariables', () => {
 
       expect(result.vars.val).toBe('null');
     });
+
+    it('non-finite numbers are stringified with warning', async () => {
+      // YAML .inf/-.inf/.nan produce non-finite JS numbers that break JSON.stringify
+      const configPath = path.join(tmpDir, '.rundown', 'config.yaml');
+      await fs.mkdir(path.dirname(configPath), { recursive: true });
+      await fs.writeFile(configPath, 'timeout: .inf\nretries: .nan\n');
+
+      const result = await resolveVariables({}, tmpDir);
+
+      expect(result.vars.timeout).toBe('Infinity');
+      expect(result.vars.retries).toBe('NaN');
+      expect(result.warnings).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining('non-finite'),
+          expect.stringContaining('non-finite'),
+        ]),
+      );
+    });
   });
 });
 

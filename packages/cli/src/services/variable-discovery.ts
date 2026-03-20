@@ -471,6 +471,7 @@ async function routeVariable(
   }
 
   // Non-array object → vars only as JsonObject (for dotted template access)
+  // Safe cast: values originate from yaml.load() or JSON.parse(), which produce JSON-compatible objects
   if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
     vars[key] = value as JsonObject;
     delete sources[key];
@@ -478,8 +479,16 @@ async function routeVariable(
   }
 
   // Number → vars only (preserved, not stringified)
+  // Guard against YAML .inf/-.inf/.nan which produce non-finite JS numbers
   if (typeof value === 'number') {
-    vars[key] = value;
+    if (!Number.isFinite(value)) {
+      warnings?.push(
+        `Variable "${key}" has non-finite numeric value (${String(value)}); converting to string`,
+      );
+      vars[key] = String(value);
+    } else {
+      vars[key] = value;
+    }
     delete sources[key];
     return;
   }
