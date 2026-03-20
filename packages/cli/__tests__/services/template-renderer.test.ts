@@ -153,6 +153,40 @@ describe('substituteText', () => {
   it('should handle spaces in braces', () => {
     expect(substituteText('{{ name }}', { name: 'test' })).toBe('test');
   });
+
+  it('should resolve dotted access on object values', () => {
+    expect(substituteText('{{config.host}}', { config: { host: 'localhost' } })).toBe('localhost');
+  });
+
+  it('should serialize object to JSON when accessed directly', () => {
+    expect(substituteText('{{config}}', { config: { host: 'localhost' } })).toBe(
+      '{"host":"localhost"}',
+    );
+  });
+
+  it('should resolve deeply nested dotted access', () => {
+    expect(substituteText('{{config.db.host}}', { config: { db: { host: 'localhost' } } })).toBe(
+      'localhost',
+    );
+  });
+
+  it('should resolve number values from objects', () => {
+    expect(substituteText('port={{config.port}}', { config: { port: 3000 } })).toBe('port=3000');
+  });
+
+  it('should resolve null-in-object as "null"', () => {
+    expect(substituteText('{{config.host}}', { config: { host: null } })).toBe('null');
+  });
+
+  it('should preserve literal for nonexistent dotted path', () => {
+    expect(substituteText('{{config.nonexistent}}', { config: { host: 'localhost' } })).toBe(
+      '{{config.nonexistent}}',
+    );
+  });
+
+  it('should handle number template variable values', () => {
+    expect(substituteText('port={{port}}', { port: 42 })).toBe('port=42');
+  });
 });
 
 describe('substituteRunbookVariables', () => {

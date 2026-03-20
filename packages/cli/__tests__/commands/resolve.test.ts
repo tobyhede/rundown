@@ -71,7 +71,7 @@ Server on port {{ port }} in {{ environment }} mode.
 
     expect(output.valid).toBe(true);
     expect(output.variables).toHaveProperty('environment', 'development');
-    expect(output.variables).toHaveProperty('port', '3000');
+    expect(output.variables).toHaveProperty('port', 3000);
   });
 
   it('resolves with --var flags — CLI vars override frontmatter', async () => {

@@ -142,9 +142,8 @@ const {
 } = await import('../../src/services/template-renderer');
 const { validateFrontmatterVars } = await import('../../src/helpers/validate-frontmatter-vars');
 const fsPromises = await import('node:fs/promises');
-const { validateSources, prepareRunbook, startRunbook } = await import(
-  '../../src/helpers/runbook-pipeline'
-);
+const { validateSources, prepareRunbook, startRunbook, buildContextVars, buildTemplateVars } =
+  await import('../../src/helpers/runbook-pipeline');
 
 function makeState(id: string, overrides: Record<string, unknown> = {}): any {
   return {
@@ -1188,5 +1187,63 @@ describe('claimAndLaunch', () => {
         prompted: true,
       }),
     );
+  });
+});
+
+describe('buildContextVars', () => {
+  it('creates context.vars.* aliases for string values', () => {
+    const result = buildContextVars({ env: 'prod', version: '1.0' });
+    expect(result['context.vars.env']).toBe('prod');
+    expect(result['context.vars.version']).toBe('1.0');
+  });
+
+  it('preserves JsonObject values in context.vars.*', () => {
+    const result = buildContextVars({ config: { host: 'localhost', port: 3000 } });
+    expect(result['context.vars.config']).toEqual({ host: 'localhost', port: 3000 });
+  });
+
+  it('preserves number values in context.vars.*', () => {
+    const result = buildContextVars({ port: 8080 });
+    expect(result['context.vars.port']).toBe(8080);
+  });
+});
+
+describe('buildTemplateVars', () => {
+  it('merges inherited and local vars', () => {
+    const result = buildTemplateVars({ env: 'staging' }, { inheritedUserVars: { region: 'us' } });
+    expect(result.env).toBe('staging');
+    expect(result.region).toBe('us');
+  });
+
+  it('local vars override inherited', () => {
+    const result = buildTemplateVars({ env: 'prod' }, { inheritedUserVars: { env: 'staging' } });
+    expect(result.env).toBe('prod');
+  });
+
+  it('preserves JsonObject values through merge', () => {
+    const result = buildTemplateVars(
+      { name: 'child' },
+      { inheritedUserVars: { config: { host: 'localhost' } } },
+    );
+    expect(result.config).toEqual({ host: 'localhost' });
+    expect(result['context.vars.config']).toEqual({ host: 'localhost' });
+  });
+
+  it('preserves number values through merge', () => {
+    const result = buildTemplateVars({ port: 8080 });
+    expect(result.port).toBe(8080);
+    expect(result['context.vars.port']).toBe(8080);
+  });
+
+  it('preserves inherited context vars with object values', () => {
+    const result = buildTemplateVars(
+      { env: 'staging' },
+      {
+        inheritedContextVars: {
+          'context.parent.vars.config': { host: 'parent-host' },
+        },
+      },
+    );
+    expect(result['context.parent.vars.config']).toEqual({ host: 'parent-host' });
   });
 });

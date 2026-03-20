@@ -435,7 +435,7 @@ describe('resolveVariables', () => {
         tmpDir,
       );
       expect(result.vars.greeting).toBe('Hello');
-      expect(result.vars.count).toBe('42');
+      expect(result.vars.count).toBe(42);
     });
 
     it('returns no frontmatter vars when frontmatterVars is undefined', async () => {
@@ -947,17 +947,17 @@ describe('resolveVariables', () => {
       });
     });
 
-    it('object value produces warning and is ignored', async () => {
+    it('object value is preserved as JsonObject', async () => {
       const result = await resolveVariables({ varJson: ['config={"host":"localhost"}'] }, tmpDir);
 
-      expect(result.vars.config).toBeUndefined();
-      expect(result.warnings.some((w) => w.includes('config') && w.includes('complex'))).toBe(true);
+      expect(result.vars.config).toEqual({ host: 'localhost' });
+      expect(result.warnings).toHaveLength(0);
     });
 
-    it('number value produces string var', async () => {
+    it('number value is preserved as number', async () => {
       const result = await resolveVariables({ varJson: ['count=42'] }, tmpDir);
 
-      expect(result.vars.count).toBe('42');
+      expect(result.vars.count).toBe(42);
       expect(result.sources.count).toBeUndefined();
     });
 
@@ -977,7 +977,32 @@ describe('resolveVariables', () => {
       const result = await resolveVariables({ var: ['count=10'], varJson: ['count=99'] }, tmpDir);
 
       // varJson is processed after var in collectRawLayers, so it wins
-      expect(result.vars.count).toBe('99');
+      expect(result.vars.count).toBe(99);
+    });
+
+    it('empty object is preserved', async () => {
+      const result = await resolveVariables({ varJson: ['config={}'] }, tmpDir);
+
+      expect(result.vars.config).toEqual({});
+      expect(result.warnings).toHaveLength(0);
+    });
+
+    it('deeply nested object is preserved', async () => {
+      const result = await resolveVariables({ varJson: ['config={"a":{"b":{"c":1}}}'] }, tmpDir);
+
+      expect(result.vars.config).toEqual({ a: { b: { c: 1 } } });
+    });
+
+    it('object with array field is preserved', async () => {
+      const result = await resolveVariables({ varJson: ['config={"items":["a","b"]}'] }, tmpDir);
+
+      expect(result.vars.config).toEqual({ items: ['a', 'b'] });
+    });
+
+    it('null value is stringified', async () => {
+      const result = await resolveVariables({ varJson: ['val=null'] }, tmpDir);
+
+      expect(result.vars.val).toBe('null');
     });
   });
 });
@@ -1000,17 +1025,16 @@ describe('routeExtraVars', () => {
     expect(result.warnings).toHaveLength(0);
   });
 
-  it('warns and drops object values', async () => {
+  it('preserves object values as JsonObject', async () => {
     const result = await routeExtraVars({ config: { nested: true } }, tmpDir);
-    expect(result.vars.config).toBeUndefined();
+    expect(result.vars.config).toEqual({ nested: true });
     expect(result.sources.config).toBeUndefined();
-    expect(result.warnings).toHaveLength(1);
-    expect(result.warnings[0]).toContain('complex value');
+    expect(result.warnings).toHaveLength(0);
   });
 
-  it('converts scalar values to strings', async () => {
+  it('preserves numbers and stringifies booleans', async () => {
     const result = await routeExtraVars({ port: 8080, debug: true, name: 'test' }, tmpDir);
-    expect(result.vars.port).toBe('8080');
+    expect(result.vars.port).toBe(8080);
     expect(result.vars.debug).toBe('true');
     expect(result.vars.name).toBe('test');
     expect(result.warnings).toHaveLength(0);
