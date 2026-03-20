@@ -34,6 +34,17 @@ Follow any project‑specific guidelines provided for this task.
 "I'm using the writing-plans skill to create the implementation plan."
 
 
+## Scope Check
+
+Before writing the plan, assess whether the work covers multiple independent subsystems. If so, recommend splitting into separate plans — each producing working, testable software independently.
+
+Indicators that the work should be split:
+
+- Changes span unrelated packages with no shared types or interfaces
+- Tasks have no ordering dependency between them
+- Each piece is independently mergeable and deployable
+
+
 ## Implementation Plan
 
 The plan header must include these sections:
@@ -59,6 +70,13 @@ Required services, frameworks, libraries, documentation, upstream changes, etc.
 Any additional useful context.
 
 
+## File Structure Mapping
+
+Before defining tasks, map all files to be created, modified, or deleted. Design units with clear boundaries. Prefer smaller, focused files. Follow established patterns in the existing codebase.
+
+List every file with disposition (create/modify/delete) and affected symbols. This mapping drives task grouping.
+
+
 ## Task & Subtask Definitions
 
 ### Granularity
@@ -77,8 +95,14 @@ Decompose the work into small, self-contained, granular tasks.
   - Ensure no interpretation required.
 - Always use symbols (function/class names) and not line numbers.
   - Line numbers are brittle and drift.
-- Always use Test-Driven Development (test/code/verify).
-  - Prove the implementation before continuing.
+- Always follow the TDD micro-cycle for each unit of behavior:
+  1. Write the failing test
+  2. Run it to confirm it fails
+  3. Implement the minimal code to make it pass
+  4. Run tests to verify the pass
+  5. Commit the passing test and implementation
+- Always end each task with an explicit commit step.
+  - Include exact `git add` and `git commit` commands.
 
 ### Exclusions
 
@@ -138,8 +162,8 @@ The rendered Markdown structure is shown in the template for reference:
 ## 1. Add Step ID Equality Check
 
 ### Files
-- `packages/parser/src/step-id.ts`
-- `packages/parser/__tests__/helpers.test.ts`
+- `packages/parser/src/step-id.ts` (modify)
+- `packages/parser/__tests__/helpers.test.ts` (modify)
 
 ### 1.1 Write failing test
 
@@ -155,7 +179,17 @@ describe('stepIdEquals', () => {
 });
 ```
 
-### 1.2 Implement
+### 1.2 Run to confirm failure
+
+```bash
+npm test -- helpers.test.ts
+```
+
+Expected: tests fail (stepIdEquals not yet implemented).
+
+### 1.3 Implement
+
+In `packages/parser/src/step-id.ts`, add the `stepIdEquals` function:
 
 ```typescript
 export function stepIdEquals(a: StepId, b: StepId): boolean {
@@ -163,9 +197,23 @@ export function stepIdEquals(a: StepId, b: StepId): boolean {
 }
 ```
 
-### 1.3 Verify
+### 1.4 Run tests to verify pass
 
 ```bash
 npm test -- helpers.test.ts
 ```
+
+Expected: all tests pass.
+
+### 1.5 Commit
+
+```bash
+git add packages/parser/src/step-id.ts packages/parser/__tests__/helpers.test.ts
+git commit -m "feat(parser): add stepIdEquals helper"
+```
 ````
+
+
+## Review
+
+After writing and validating the plan, review it using the `review-plan` runbook.
