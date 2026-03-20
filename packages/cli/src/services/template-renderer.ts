@@ -118,9 +118,12 @@ function renderTemplateValue(value: unknown): string {
  *
  * Resolution order:
  * 1. Exact key match (supports flattened dotted keys like "context.parent.index")
- * 2. Dotted traversal from a root object key
+ * 2. Progressive prefix matching — tries each dotted prefix as a potential key,
+ *    then traverses the remainder via dotted path into the value. This handles
+ *    flattened dotted keys whose values are objects (e.g. `context.vars.config`
+ *    holding `{host: "localhost"}` resolves `context.vars.config.host`).
  *
- * @param path - Placeholder path (e.g. `item.name`, `context.ancestors.0.step`)
+ * @param path - Placeholder path (e.g. `item.name`, `context.vars.config.host`)
  * @param variables - Runtime/template variable map
  * @returns Rendered value string or undefined when unresolved
  */
@@ -133,17 +136,24 @@ function resolveTemplatePath(path: string, variables: Record<string, unknown>): 
     return undefined;
   }
 
-  const [rootVar, ...pathSegments] = path.split('.');
-  if (!Object.hasOwn(variables, rootVar)) {
-    return undefined;
+  // Try progressively longer key prefixes.
+  // For "context.vars.config.host", tries:
+  //   prefix="context"             remainder="vars.config.host"
+  //   prefix="context.vars"        remainder="config.host"
+  //   prefix="context.vars.config" remainder="host"
+  const segments = path.split('.');
+  for (let i = 1; i < segments.length; i++) {
+    const prefix = segments.slice(0, i).join('.');
+    if (!Object.hasOwn(variables, prefix)) continue;
+
+    const remainder = segments.slice(i).join('.');
+    const resolved = resolveDottedPath(variables[prefix], remainder);
+    if (resolved !== undefined) {
+      return renderTemplateValue(resolved);
+    }
   }
 
-  const resolved = resolveDottedPath(variables[rootVar], pathSegments.join('.'));
-  if (resolved === undefined) {
-    return undefined;
-  }
-
-  return renderTemplateValue(resolved);
+  return undefined;
 }
 
 /**
