@@ -87,16 +87,10 @@ export function parseVarJsonOption(value: string, previous: string[]): string[] 
     throw new InvalidArgumentError(msg);
   }
   const jsonStr = value.slice(eqIndex + 1);
-  let parsed: unknown;
   try {
-    parsed = JSON.parse(jsonStr);
+    JSON.parse(jsonStr);
   } catch {
     throw new InvalidArgumentError(`Invalid JSON for "${key}": ${jsonStr}`);
-  }
-  if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-    throw new InvalidArgumentError(
-      `--var-json values must be scalars or arrays, not objects (got "${key}")`,
-    );
   }
   return [...previous, value];
 }

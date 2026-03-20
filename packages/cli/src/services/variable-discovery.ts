@@ -142,10 +142,11 @@ export class FileSourcePolicyError extends Error {
 }
 
 /**
- * Normalize a raw variables object to Record<string, string>.
+ * Normalize raw variable values to string-only records.
  *
- * Validates keys match identifier pattern, converts values to strings,
- * and warns on invalid keys or complex values.
+ * @deprecated Used only by the default `loadVariablesFromFile` overload for legacy
+ * frontmatter normalization. Do NOT use for `--var-file`, config, or any path where
+ * structured values (arrays, objects) should be preserved. Use `routeVariable` instead.
  *
  * @param vars - Raw variables object with unknown value types
  * @param source - Label for warning messages (e.g., "frontmatter var", "variable")
@@ -310,6 +311,7 @@ export async function loadVariablesFromFile(
     if (options?.normalize === false) {
       return raw;
     }
+    // eslint-disable-next-line @typescript-eslint/no-deprecated -- legacy frontmatter path
     return normalizeVariables(raw);
   } catch (error) {
     if (options?.optional === false) {
