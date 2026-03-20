@@ -8,10 +8,10 @@
  * @module commands/resolve
  */
 
-import type { Command } from 'commander';
+import { type Command, Option } from 'commander';
 import type { DataSource, ResolveSourceInfo, CheckValidationWarning } from '@rundown-org/core';
 import { OutputEmitter } from '../services/output-emitter.js';
-import { collect } from './echo.js';
+import { parseVarOption, parseVarJsonOption, collect } from '../helpers/option-utils.js';
 import { prepareRunbook } from '../helpers/runbook-pipeline.js';
 
 /**
@@ -41,10 +41,12 @@ function buildSourceInfo(
  * Commander dispatch and is not part of these options.
  */
 interface ResolveOptions {
-  /** Path to YAML variable file */
-  varFile?: string;
+  /** Paths to YAML variable files (repeatable) */
+  varFile?: string[];
   /** CLI variable assignments (key=value) */
   var?: string[];
+  /** CLI variable assignments with JSON values (key=json) */
+  varJson?: string[];
   /** Output as JSON */
   json?: boolean;
 }
@@ -58,8 +60,24 @@ export function registerResolveCommand(program: Command): void {
   program
     .command('resolve <file>')
     .description('Resolve and validate runbook variables and data sources')
-    .option('--var-file <path>', 'Load variables from YAML file')
-    .option('--var <key=value>', 'Set variable (repeatable)', collect, [])
+    .addOption(
+      new Option('--var-file <path>', 'Load variables from YAML file (repeatable)')
+        .argParser(collect)
+        .default([])
+        .helpGroup('Variable options:'),
+    )
+    .addOption(
+      new Option('--var <key=value>', 'Set variable (repeatable, omit =value to inherit from env)')
+        .argParser(parseVarOption)
+        .default([])
+        .helpGroup('Variable options:'),
+    )
+    .addOption(
+      new Option('--var-json <key=json>', 'Set variable with JSON value (repeatable)')
+        .argParser(parseVarJsonOption)
+        .default([])
+        .helpGroup('Variable options:'),
+    )
     .option('--json', 'Output as JSON')
     .action(async (file: string, options: ResolveOptions) => {
       const output = new OutputEmitter({ json: options.json });
@@ -67,7 +85,7 @@ export function registerResolveCommand(program: Command): void {
 
       const result = await prepareRunbook(
         file,
-        { varFile: options.varFile, var: options.var },
+        { varFile: options.varFile, var: options.var, varJson: options.varJson },
         cwd,
       );
 

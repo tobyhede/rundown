@@ -60,10 +60,12 @@ import { validateFrontmatterVars } from './validate-frontmatter-vars.js';
  * Variable options from CLI flags.
  */
 export interface VarOptions {
-  /** Path to a YAML file containing variable definitions */
-  varFile?: string;
+  /** Paths to YAML files containing variable definitions (repeatable) */
+  varFile?: string[];
   /** Inline key=value variable overrides (repeatable) */
   var?: string[];
+  /** Inline key=json variable overrides with JSON values (repeatable) */
+  varJson?: string[];
 }
 
 /**
@@ -379,6 +381,7 @@ export async function loadAndParseRunbook(file: string, cwd: string): Promise<Lo
  * @param options - Optional settings including inherited variables from parent runbook
  * @param options.inheritedContextVars - Context variables inherited from a parent delegation
  * @param options.inheritedUserVars - User variables inherited from a parent delegation
+ * @param options.inheritedSources - Data sources inherited from a parent delegation
  * @returns PrepareResult — success with full data, or failure with partial results
  * @throws {Error} On unexpected errors during variable resolution or parsing
  */
@@ -389,6 +392,7 @@ export async function prepareRunbook(
   options?: {
     inheritedContextVars?: Readonly<Record<string, string>>;
     inheritedUserVars?: Readonly<Record<string, string>>;
+    inheritedSources?: Readonly<Record<string, DataSource>>;
   },
 ): Promise<PrepareResult> {
   // Phase 1-2: Parse + Validate
@@ -405,6 +409,7 @@ export async function prepareRunbook(
       {
         varFile: varOpts.varFile,
         var: varOpts.var,
+        varJson: varOpts.varJson,
         frontmatterVars: frontmatter?.vars,
         inheritedVars: options?.inheritedUserVars,
       },
@@ -415,7 +420,8 @@ export async function prepareRunbook(
       },
     );
     mergedVariables = { ...resolvedVariables.vars };
-    sources = { ...resolvedVariables.sources };
+    // Merge inherited sources (lower precedence) with locally resolved sources
+    sources = { ...(options?.inheritedSources ?? {}), ...resolvedVariables.sources };
     allWarnings.push(...resolvedVariables.warnings);
   } catch (error) {
     if (error instanceof FileSourcePolicyError) {
@@ -839,10 +845,14 @@ export async function claimAndLaunch(
       }
     }
 
+    // Extract inherited sources from delegation snapshot
+    const inheritedSources = freshDelegation.contextSnapshot.sources;
+
     // 4f. Prepare child runbook
     const prepResult = await prepareRunbook(freshDelegation.childRunbookPath, varOpts, cwd, {
       inheritedContextVars,
       inheritedUserVars,
+      inheritedSources,
     });
     if (!prepResult.ok) {
       return {

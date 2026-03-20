@@ -388,7 +388,7 @@ echo hello
     expect(output.kind).toBe('resolve');
   });
 
-  it('surfaces variable-discovery warnings in JSON output', async () => {
+  it('rejects invalid --var key at parse time', async () => {
     const runbookPath = path.join(workspace.cwd, 'warn-vars.runbook.md');
     fs.writeFileSync(
       runbookPath,
@@ -397,21 +397,15 @@ echo hello
 `,
     );
 
-    // bad!=value has an invalid key (contains '!'), which triggers a discovery warning
+    // bad!=value has an invalid key (contains '!'), which now fails at parse time
     const result = await runCliInProcess(
       `resolve ${runbookPath} --var bad!=value --json`,
       workspace,
     );
-    const output = JSON.parse(result.stdout);
 
-    // Should still be valid (warning, not error)
-    expect(output.valid).toBe(true);
-    // Discovery warning should appear with kind discriminant
-    const discoveryWarning = output.warnings?.find(
-      (w: { kind?: string }) => w.kind === 'variable-discovery',
-    );
-    expect(discoveryWarning).toBeDefined();
-    expect(discoveryWarning.message).toContain('bad!=value');
+    // parseVarOption rejects invalid identifiers at parse time via InvalidArgumentError
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain('Invalid variable');
   });
 
   it('validates expanded AST after FOR expansion', async () => {

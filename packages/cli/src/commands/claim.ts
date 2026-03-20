@@ -1,4 +1,4 @@
-import type { Command } from 'commander';
+import { type Command, Option } from 'commander';
 import {
   RunbookStateManager,
   RunbookActorService,
@@ -9,7 +9,7 @@ import {
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
-import { collect } from './echo.js';
+import { parseVarOption, parseVarJsonOption, collect } from '../helpers/option-utils.js';
 import { claimAndLaunch, type RunPipelineContext } from '../helpers/runbook-pipeline.js';
 import { handleDelegationCompletion } from '../helpers/delegation-completion.js';
 
@@ -26,15 +26,32 @@ export function registerClaimCommand(program: Command): void {
     .command('claim <token>')
     .description('Claim a delegation token and launch the child runbook')
     .option('--json', 'Output as JSON')
-    .option('--var-file <path>', 'Load variables from YAML file')
-    .option('--var <key=value>', 'Set variable (repeatable)', collect, [])
+    .addOption(
+      new Option('--var-file <path>', 'Load variables from YAML file (repeatable)')
+        .argParser(collect)
+        .default([])
+        .helpGroup('Variable options:'),
+    )
+    .addOption(
+      new Option('--var <key=value>', 'Set variable (repeatable, omit =value to inherit from env)')
+        .argParser(parseVarOption)
+        .default([])
+        .helpGroup('Variable options:'),
+    )
+    .addOption(
+      new Option('--var-json <key=json>', 'Set variable with JSON value (repeatable)')
+        .argParser(parseVarJsonOption)
+        .default([])
+        .helpGroup('Variable options:'),
+    )
     .action(
       async (
         token: string,
         options: {
           json?: boolean;
-          varFile?: string;
+          varFile?: string[];
           var?: string[];
+          varJson?: string[];
         },
       ) => {
         await withErrorHandling(
@@ -55,7 +72,11 @@ export function registerClaimCommand(program: Command): void {
               cwd,
             };
 
-            const varOpts = { varFile: options.varFile, var: options.var };
+            const varOpts = {
+              varFile: options.varFile,
+              var: options.var,
+              varJson: options.varJson,
+            };
             const result = await claimAndLaunch(ctx, token, varOpts);
 
             if (!result.ok) {

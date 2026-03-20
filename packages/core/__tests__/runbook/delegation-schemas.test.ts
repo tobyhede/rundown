@@ -102,6 +102,31 @@ describe('ContextSnapshotSchema', () => {
     });
     expect(result.success).toBe(true);
   });
+
+  it('accepts snapshot with sources (array kind)', () => {
+    const result = ContextSnapshotSchema.safeParse({
+      vars: { env: 'prod' },
+      ancestors: [],
+      sources: { items: { kind: 'array', items: ['a', 'b', 'c'] } },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts snapshot without sources (backward compat)', () => {
+    const result = ContextSnapshotSchema.safeParse({
+      vars: { env: 'prod' },
+      ancestors: [],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects non-string vars values', () => {
+    const result = ContextSnapshotSchema.safeParse({
+      vars: { env: 'prod', items: ['a', 'b'] },
+      ancestors: [],
+    });
+    expect(result.success).toBe(false);
+  });
 });
 
 describe('StepDelegationSchema', () => {

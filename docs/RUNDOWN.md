@@ -327,10 +327,11 @@ FOR loops can iterate over arrays or files instead of numeric ranges.
 
 **Defining sources:**
 
-Sources are defined via `.rundown/config.yaml`, `--var-file`, or `--var` flags. Values are routed based on type:
+Sources are defined via `--var-json`, `.rundown/config.yaml`, `--var-file`, or `--var` flags. Values are routed based on type:
 
 | Value Pattern | Routing |
 |---------------|---------|
+| `--var-json items='["a","b"]'` | Both: comma-joined in vars, array in sources |
 | `file:path/to/data.txt` | File source only (not a template var) |
 | YAML array `[a, b, c]` | Both: comma-joined in vars, array in sources |
 | Multiline YAML string | Both: raw in vars, lines split into array source |
@@ -526,7 +527,7 @@ items:
 log_file: file:data/results.jsonl
 ```
 
-Arrays become data sources for `FOR item IN {{ items }}`. The `file:` prefix creates file-backed sources. Scalar values remain regular template variables. See [Data Sources](#data-sources) for details.
+Arrays become data sources for `FOR item IN {{ items }}` — pass inline via `--var-json items='["a","b"]'` or define in YAML config. The `file:` prefix creates file-backed sources. Scalar values remain regular template variables. See [Data Sources](#data-sources) for details.
 
 ### Usage Examples
 
@@ -1143,7 +1144,7 @@ JSON output compatibility:
 | "Runbook file not found" | Missing runbook | Check file path |
 | "Step N does not exist" | Invalid GOTO target | Check step numbers |
 | "Invalid step target" | Bad goto format | Use "N" or "N.M" |
-| "FOR loop references undefined data source" | Sourced FOR clause without matching source | Define source in config.yaml or --var-file |
+| "FOR loop references undefined data source" | Sourced FOR clause without matching source | Define source via --var-json, config.yaml, or --var-file |
 | "File drift detected" | Data file changed during iteration | Ensure file stability or restart runbook |
 
 ### State Recovery

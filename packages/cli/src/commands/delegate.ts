@@ -1,5 +1,4 @@
-import path from 'node:path';
-import type { Command } from 'commander';
+import { type Command, Option } from 'commander';
 import {
   RunbookStateManager,
   SessionService,
@@ -20,28 +19,9 @@ import {
   IndexOptionError,
   validateIndexRequiresStep,
 } from '../helpers/index-option.js';
-import { loadVariablesFromFile } from '../services/variable-discovery.js';
-import { collect } from './echo.js';
-
-/**
- * Parse `--var key=value` entries into a record.
- * @param vars - Array of `key=value` strings from CLI flags
- * @returns Record mapping variable names to their string values
- */
-function parseVarFlags(vars: string[]): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const entry of vars) {
-    const eqIndex = entry.indexOf('=');
-    if (eqIndex > 0) {
-      result[entry.slice(0, eqIndex)] = entry.slice(eqIndex + 1);
-    } else {
-      process.stderr.write(
-        `Warning: ignored malformed --var entry '${entry}' (expected key=value)\n`,
-      );
-    }
-  }
-  return result;
-}
+import { collectCliFlags, routeExtraVars } from '../services/variable-discovery.js';
+import { parseVarOption, parseVarJsonOption, collect } from '../helpers/option-utils.js';
+import type { DataSource } from '@rundown-org/core';
 
 /**
  * Registers the 'delegate' command for creating delegation tokens.
@@ -57,13 +37,39 @@ export function registerDelegateCommand(program: Command): void {
     .description('Create a delegation token for a child runbook')
     .option('--step <stepId>', 'Step to delegate (e.g., 1.1 or 1.2.1 for step.iteration.substep)')
     .option('--index <number>', 'FOR loop iteration to target (requires --step)')
-    .option('--var <key=value>', 'Set variable for child context (repeatable)', collect, [])
-    .option('--var-file <path>', 'Load variables from YAML file')
+    .addOption(
+      new Option(
+        '--var <key=value>',
+        'Set variable for child context (repeatable, omit =value to inherit from env)',
+      )
+        .argParser(parseVarOption)
+        .default([])
+        .helpGroup('Variable options:'),
+    )
+    .addOption(
+      new Option('--var-json <key=json>', 'Set variable with JSON value (repeatable)')
+        .argParser(parseVarJsonOption)
+        .default([])
+        .helpGroup('Variable options:'),
+    )
+    .addOption(
+      new Option('--var-file <path>', 'Load variables from YAML file (repeatable)')
+        .argParser(collect)
+        .default([])
+        .helpGroup('Variable options:'),
+    )
     .option('--json', 'Output as JSON')
     .action(
       async (
         runbookArg: string | undefined,
-        options: { step?: string; index?: string; var: string[]; varFile?: string; json?: boolean },
+        options: {
+          step?: string;
+          index?: string;
+          var: string[];
+          varJson?: string[];
+          varFile?: string[];
+          json?: boolean;
+        },
       ) => {
         await withErrorHandling(
           async () => {
@@ -121,17 +127,33 @@ export function registerDelegateCommand(program: Command): void {
               throw Errors.delegationRunbookNotFound(resolvedRunbook);
             }
 
-            // Parse extra vars: --var-file (lower precedence) merged with --var (higher precedence)
+            // Parse extra vars through the standard normalization pipeline
+            const rawVars = await collectCliFlags(
+              { varFile: options.varFile, var: options.var, varJson: options.varJson },
+              cwd,
+            );
+
             let extraVars: Record<string, string> | undefined;
-            if (options.varFile) {
-              const varFilePath = path.isAbsolute(options.varFile)
-                ? options.varFile
-                : path.join(cwd, options.varFile);
-              extraVars = await loadVariablesFromFile(varFilePath, { optional: false });
-            }
-            if (options.var.length > 0) {
-              const flagVars = parseVarFlags(options.var);
-              extraVars = extraVars ? { ...extraVars, ...flagVars } : flagVars;
+            let extraSources: Record<string, DataSource> | undefined;
+            if (Object.keys(rawVars).length > 0) {
+              const routed = await routeExtraVars(rawVars, cwd);
+              for (const w of routed.warnings) {
+                output.warning(w);
+              }
+              extraVars = Object.keys(routed.vars).length > 0 ? routed.vars : undefined;
+
+              // Exclude file: sources — file paths are local, unreliable across delegation
+              const arraySources: Record<string, DataSource> = {};
+              for (const [k, src] of Object.entries(routed.sources)) {
+                if (src.kind === 'file') {
+                  output.warning(
+                    `Ignoring file data source "${k}" — file paths cannot be delegated`,
+                  );
+                } else {
+                  arraySources[k] = src;
+                }
+              }
+              extraSources = Object.keys(arraySources).length > 0 ? arraySources : undefined;
             }
 
             // Compute frame key — use explicit iteration from --index or three-level step ID
@@ -174,6 +196,7 @@ export function registerDelegateCommand(program: Command): void {
                 stepId: resolvedStepId,
                 childRunbookPath: childPath,
                 extraVars,
+                extraSources,
                 ancestors: [],
                 frameKey: activeFrameKey,
               },

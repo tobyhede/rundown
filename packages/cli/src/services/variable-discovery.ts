@@ -20,7 +20,22 @@ import type { DataSource, FileFormat, PolicyEvaluator, PolicyPrompter } from '@r
  * Valid identifier pattern for variable names.
  * Must start with letter or underscore, followed by letters, digits, or underscores.
  */
-const VALID_IDENTIFIER = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+export const VALID_IDENTIFIER = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+
+/** Property names that could poison plain objects via prototype pollution. */
+const POISONED_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+/**
+ * Check if a key is a valid, safe variable name.
+ *
+ * Combines identifier syntax validation with prototype pollution protection.
+ *
+ * @param key - The variable name to validate
+ * @returns True if the key is a syntactically valid identifier and not a poisoned property name
+ */
+export function isValidVariableName(key: string): boolean {
+  return VALID_IDENTIFIER.test(key) && !POISONED_KEYS.has(key);
+}
 
 /**
  * Runtime-reserved keys (normalized to lowercase) that cannot be overridden
@@ -135,7 +150,7 @@ function normalizeVariables(
 ): Record<string, string> {
   const result: Record<string, string> = {};
   for (const [key, value] of Object.entries(vars)) {
-    if (!VALID_IDENTIFIER.test(key)) {
+    if (!isValidVariableName(key)) {
       warnings?.push(`Ignoring ${source} with invalid key: ${key}`);
       continue;
     }
@@ -186,10 +201,72 @@ export function parseVarFlag(flag: string): { key: string; value: string } | nul
   const key = flag.slice(0, eqIndex);
   const value = flag.slice(eqIndex + 1);
 
-  if (!key || !VALID_IDENTIFIER.test(key)) return null;
+  if (!key || !isValidVariableName(key)) return null;
 
   return { key, value };
 }
+
+/**
+ * Collect CLI flag variables (--var-file, --var, --var-json) into a single dict.
+ *
+ * Merges in internal precedence order: var-file < var < var-json.
+ * Used by both {@link collectRawLayers} and the delegate command to avoid
+ * duplicating flag-collection logic.
+ *
+ * @param options - CLI flag arrays
+ * @param options.varFile - Array of paths to YAML files containing variable definitions (repeatable)
+ * @param options.var - Array of key=value flag strings from CLI
+ * @param options.varJson - Array of key=json flag strings from CLI for structured values
+ * @param cwd - Current working directory for resolving relative var-file paths
+ * @returns Merged variable record with raw types preserved
+ */
+export async function collectCliFlags(
+  options: { varFile?: string[]; var?: string[]; varJson?: string[] },
+  cwd: string,
+): Promise<Record<string, unknown>> {
+  const result: Record<string, unknown> = {};
+
+  // var-file(s) — repeatable, later overrides earlier
+  for (const vf of options.varFile ?? []) {
+    const varFilePath = path.isAbsolute(vf) ? vf : path.join(cwd, vf);
+    const fileVars = await loadVariablesFromFile(varFilePath, {
+      normalize: false,
+      optional: false,
+    });
+    Object.assign(result, fileVars);
+  }
+
+  // --var flags
+  if (options.var) {
+    for (const flag of options.var) {
+      const parsed = parseVarFlag(flag);
+      if (!parsed) {
+        throw new Error(
+          `Unexpected invalid --var entry: ${flag} (parseVarOption should have rejected this)`,
+        );
+      }
+      result[parsed.key] = parsed.value;
+    }
+  }
+
+  // --var-json values (processed after --var, so wins for same key)
+  if (options.varJson) {
+    for (const flag of options.varJson) {
+      const eqIndex = flag.indexOf('=');
+      const key = flag.slice(0, eqIndex);
+      if (!isValidVariableName(key)) {
+        throw new Error(
+          `Unexpected invalid --var-json key: ${key} (parseVarJsonOption should have rejected this)`,
+        );
+      }
+      const jsonValue = flag.slice(eqIndex + 1);
+      result[key] = JSON.parse(jsonValue);
+    }
+  }
+
+  return result;
+}
+
 /**
  * Load variables from a YAML file.
  *
@@ -410,6 +487,40 @@ async function discoverRawVariables(cwd: string): Promise<Record<string, unknown
 }
 
 /**
+ * Environment variable prefix for the variable bridge.
+ * Variables matching `RD_VAR_<name>` are mapped to template variable `<name>`.
+ */
+const ENV_VAR_PREFIX = 'RD_VAR_';
+
+/**
+ * Collect variables from environment using the RD_VAR_* prefix convention.
+ *
+ * Environment variables matching RD_VAR_<name> are mapped to variable <name>.
+ * Variable names are validated against the identifier pattern.
+ *
+ * @param warnings - Optional array to collect discovery warnings
+ * @returns Collected environment bridge variables
+ */
+function collectEnvBridgeVars(warnings?: string[]): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [envKey, value] of Object.entries(process.env)) {
+    if (envKey.startsWith(ENV_VAR_PREFIX) && value !== undefined) {
+      const varName = envKey.slice(ENV_VAR_PREFIX.length);
+      if (!isValidVariableName(varName)) {
+        warnings?.push(`Ignoring env ${envKey}: "${varName}" is not a valid identifier`);
+        continue;
+      }
+      if (isRuntimeReservedVariable(varName)) {
+        warnings?.push(`Ignoring env ${envKey}: "${varName}" is a reserved runtime variable`);
+        continue;
+      }
+      result[varName] = value;
+    }
+  }
+  return result;
+}
+
+/**
  * Collect raw (pre-normalization) variable layers in precedence order.
  *
  * Returns array from lowest to highest precedence. Later layers override
@@ -420,16 +531,17 @@ async function discoverRawVariables(cwd: string): Promise<Record<string, unknown
  * Layer 1: inheritedVars   ← parent delegation vars (overrides builtins)
  * Layer 2: frontmatter     ← runbook YAML frontmatter vars:
  * Layer 3: discovered      ← .rundown/config.yaml (auto-discovered)
- * Layer 4: varFile         ← --var-file contents
- * Layer 5: flags           ← --var CLI flags (highest precedence)
+ * Layer 4: envBridge        ← RD_VAR_* environment variables
+ * Layer 5: cliFlags        ← --var-file, --var, --var-json (highest precedence)
  * ```
  *
  * The inherited layer ensures that parent ContextId survives into child
  * runbooks during delegation, rather than being replaced by a fresh builtin.
  *
  * @param options - Variable sources from CLI flags, var-file, frontmatter vars, and inherited vars
- * @param options.varFile - Path to YAML file containing variable definitions
+ * @param options.varFile - Array of paths to YAML files containing variable definitions (repeatable)
  * @param options.var - Array of key=value flag strings from CLI
+ * @param options.varJson - Array of key=json flag strings from CLI for structured values
  * @param options.frontmatterVars - Pre-extracted frontmatter vars (from parser's validated RunbookFrontmatter)
  * @param options.inheritedVars - Variables inherited from parent delegation
  * @param cwd - Current working directory for resolving relative paths
@@ -438,49 +550,53 @@ async function discoverRawVariables(cwd: string): Promise<Record<string, unknown
  */
 async function collectRawLayers(
   options: {
-    varFile?: string;
+    varFile?: string[];
     var?: string[];
+    varJson?: string[];
     frontmatterVars?: Record<string, string | number | boolean>;
-    inheritedVars?: Record<string, unknown>;
+    inheritedVars?: Record<string, string>;
   },
   cwd: string,
   warnings?: string[],
 ): Promise<Record<string, unknown>[]> {
-  // 1. Built-ins (lowest)
+  // Layer 0: Built-ins (lowest)
   const builtins: Record<string, unknown> = getBuiltinVariables();
 
-  // 1b. Inherited vars from parent delegation (overrides builtins)
+  // Layer 1: Inherited vars from parent delegation (overrides builtins)
   const inherited: Record<string, unknown> = options.inheritedVars ?? {};
 
-  // 2. Frontmatter vars — pre-extracted from parser's validated RunbookFrontmatter
+  // Layer 2: Frontmatter vars — pre-extracted from parser's validated RunbookFrontmatter
   const frontmatter: Record<string, unknown> = options.frontmatterVars ?? {};
 
-  // 3. Auto-discovered config
+  // Layer 3: Auto-discovered config
   const discovered: Record<string, unknown> = await discoverRawVariables(cwd);
 
-  // 4. Var-file
-  let fromFile: Record<string, unknown> = {};
-  if (options.varFile) {
-    const varFilePath = path.isAbsolute(options.varFile)
-      ? options.varFile
-      : path.join(cwd, options.varFile);
-    fromFile = await loadVariablesFromFile(varFilePath, { normalize: false, optional: false });
-  }
+  // Layer 4: Environment bridge (RD_VAR_* env vars)
+  const envBridge = collectEnvBridgeVars(warnings);
 
-  // 5. CLI flags (highest)
-  const fromFlags: Record<string, unknown> = {};
-  if (options.var) {
-    for (const flag of options.var) {
-      const parsed = parseVarFlag(flag);
-      if (parsed) {
-        fromFlags[parsed.key] = parsed.value;
-      } else {
-        warnings?.push(`Ignoring invalid --var flag: ${flag}`);
-      }
-    }
-  }
+  // Layer 5: CLI flags (--var-file, --var, --var-json merged)
+  const cliFlags = await collectCliFlags(options, cwd);
 
-  return [builtins, inherited, frontmatter, discovered, fromFile, fromFlags];
+  return [builtins, inherited, frontmatter, discovered, envBridge, cliFlags];
+}
+
+/**
+ * Canonicalize project root path for file source validation.
+ *
+ * Resolves symlinks when possible, falling back to the resolved path
+ * if the directory doesn't exist.
+ *
+ * @param cwd - Current working directory to resolve
+ * @returns Canonical project root path
+ */
+async function resolveProjectRoot(cwd: string): Promise<string> {
+  let projectRoot = path.resolve(cwd);
+  try {
+    projectRoot = await fs.realpath(projectRoot);
+  } catch {
+    // cwd doesn't exist? — use resolved path
+  }
+  return projectRoot;
 }
 
 async function enforceFileSourcePolicy(
@@ -520,7 +636,8 @@ async function enforceFileSourcePolicy(
  * 1b. Inherited vars from parent delegation (overrides builtins)
  * 2. Frontmatter vars
  * 3. Auto-discovered .rundown/config.yaml
- * 4. --var-file contents
+ * 3b. Environment bridge (RD_VAR_* env vars)
+ * 4. --var-file contents (repeatable, later overrides earlier)
  * 5. --var flags (highest precedence)
  *
  * Each variable value is routed based on its type:
@@ -530,8 +647,9 @@ async function enforceFileSourcePolicy(
  * - Scalar → vars only
  *
  * @param options - Variable sources from CLI flags, var-file, frontmatter vars, and inherited vars
- * @param options.varFile - Path to YAML file containing variable definitions
+ * @param options.varFile - Array of paths to YAML files containing variable definitions (repeatable)
  * @param options.var - Array of key=value flag strings from CLI
+ * @param options.varJson - Array of key=json flag strings from CLI for structured values
  * @param options.frontmatterVars - Pre-extracted frontmatter vars (from parser's validated RunbookFrontmatter)
  * @param options.inheritedVars - Variables inherited from parent delegation (overrides builtins)
  * @param cwd - Current working directory for resolving relative paths
@@ -542,8 +660,9 @@ async function enforceFileSourcePolicy(
  */
 export async function resolveVariables(
   options: {
-    varFile?: string;
+    varFile?: string[];
     var?: string[];
+    varJson?: string[];
     frontmatterVars?: Record<string, string | number | boolean>;
     inheritedVars?: Record<string, string>;
   },
@@ -555,12 +674,7 @@ export async function resolveVariables(
   const warnings: string[] = [];
 
   // Canonicalize project root once for validation
-  let projectRoot = path.resolve(cwd);
-  try {
-    projectRoot = await fs.realpath(projectRoot);
-  } catch {
-    // cwd doesn't exist? (unlikely) - use resolved path
-  }
+  const projectRoot = await resolveProjectRoot(cwd);
 
   // Collect raw inputs at each precedence level
   const layers = await collectRawLayers(options, cwd, warnings);
@@ -573,7 +687,7 @@ export async function resolveVariables(
     if (layerIndex > 0) {
       const reservedViolations: string[] = [];
       for (const [key] of entries) {
-        if (VALID_IDENTIFIER.test(key) && isRuntimeReservedVariable(key)) {
+        if (isValidVariableName(key) && isRuntimeReservedVariable(key)) {
           reservedViolations.push(key);
         }
       }
@@ -588,12 +702,57 @@ export async function resolveVariables(
 
     // Pass 2: route variables (only reached when no reserved violations)
     for (const [key, value] of entries) {
-      if (!VALID_IDENTIFIER.test(key)) {
+      if (!isValidVariableName(key)) {
         warnings.push(`Ignoring variable with invalid key: ${key}`);
         continue;
       }
       await routeVariable(key, value, vars, sources, cwd, projectRoot, security, warnings);
     }
+  }
+
+  return { vars, sources, warnings };
+}
+
+/**
+ * Route raw extra variables through the standard normalization pipeline.
+ *
+ * Used by the delegate command to normalize --var, --var-file, and --var-json
+ * values into string vars and typed data sources, matching the same pipeline
+ * that the run command uses via {@link resolveVariables}.
+ *
+ * @param rawVars - Raw variables with potentially complex types (arrays, objects, scalars)
+ * @param cwd - Current working directory for resolving file paths
+ * @param security - Optional security context for file source policy enforcement
+ * @returns Normalized string vars, typed data sources, and any warnings
+ */
+export async function routeExtraVars(
+  rawVars: Readonly<Record<string, unknown>>,
+  cwd: string,
+  security?: VariableSecurityContext,
+): Promise<{
+  vars: Record<string, string>;
+  sources: Record<string, DataSource>;
+  warnings: string[];
+}> {
+  const vars: Record<string, string> = {};
+  const sources: Record<string, DataSource> = {};
+  const warnings: string[] = [];
+
+  const projectRoot = await resolveProjectRoot(cwd);
+
+  for (const [key, value] of Object.entries(rawVars)) {
+    if (!isValidVariableName(key)) {
+      warnings.push(`Ignoring variable with invalid key: ${key}`);
+      continue;
+    }
+    if (isRuntimeReservedVariable(key)) {
+      warnings.push(
+        `Ignoring reserved runtime variable "${key}". ` +
+          `Reserved names (case-insensitive): ${[...RUNTIME_RESERVED_VARIABLES].join(', ')}`,
+      );
+      continue;
+    }
+    await routeVariable(key, value, vars, sources, cwd, projectRoot, security, warnings);
   }
 
   return { vars, sources, warnings };

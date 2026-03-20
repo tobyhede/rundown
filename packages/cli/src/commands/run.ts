@@ -1,6 +1,6 @@
 // packages/cli/src/commands/run.ts
 
-import type { Command } from 'commander';
+import { type Command, Option } from 'commander';
 import {
   RunbookStateManager,
   RunbookActorService,
@@ -12,7 +12,7 @@ import {
 } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { OutputEmitter } from '../services/output-emitter.js';
-import { collect } from './echo.js';
+import { parseVarOption, parseVarJsonOption, collect } from '../helpers/option-utils.js';
 import {
   prepareRunbook,
   startRunbook,
@@ -33,8 +33,24 @@ export function registerRunCommand(program: Command): void {
     .option('--step <stepId>', 'Jump to step after starting (requires --prompted)')
     .option('--index <number>', 'FOR loop iteration to target (requires --step)')
     .option('--json', 'Output execution events as JSON')
-    .option('--var-file <path>', 'Load variables from YAML file')
-    .option('--var <key=value>', 'Set variable (repeatable)', collect, [])
+    .addOption(
+      new Option('--var-file <path>', 'Load variables from YAML file (repeatable)')
+        .argParser(collect)
+        .default([])
+        .helpGroup('Variable options:'),
+    )
+    .addOption(
+      new Option('--var <key=value>', 'Set variable (repeatable, omit =value to inherit from env)')
+        .argParser(parseVarOption)
+        .default([])
+        .helpGroup('Variable options:'),
+    )
+    .addOption(
+      new Option('--var-json <key=json>', 'Set variable with JSON value (repeatable)')
+        .argParser(parseVarJsonOption)
+        .default([])
+        .helpGroup('Variable options:'),
+    )
     .action(
       async (
         file: string | undefined,
@@ -43,8 +59,9 @@ export function registerRunCommand(program: Command): void {
           step?: string;
           index?: string;
           json?: boolean;
-          varFile?: string;
+          varFile?: string[];
           var?: string[];
+          varJson?: string[];
         },
       ) => {
         const output = new OutputEmitter({ json: options.json });
@@ -78,7 +95,7 @@ export function registerRunCommand(program: Command): void {
             process.exit(1);
           }
 
-          const varOpts = { varFile: options.varFile, var: options.var };
+          const varOpts = { varFile: options.varFile, var: options.var, varJson: options.varJson };
 
           if (file) {
             const prepResult = await prepareRunbook(file, varOpts, cwd);
