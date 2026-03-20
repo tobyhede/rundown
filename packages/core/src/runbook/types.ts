@@ -128,6 +128,68 @@ export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { readonly [key: string]: JsonValue };
 
 /**
+ * JSON object with arbitrary nested JSON values.
+ *
+ * Used for structured template variable values that support dotted field access
+ * in templates (e.g., `{{config.host}}`).
+ */
+export type JsonObject = { readonly [key: string]: JsonValue };
+
+/**
+ * Values that can appear in the template variable map.
+ *
+ * - `string`: the dominant case (CLI vars, env, builtins, stringified booleans/nulls)
+ * - `number`: preserved from `--var-json` and YAML config (not stringified)
+ * - `JsonObject`: structured values for dotted template access (`{{config.host}}`)
+ *
+ * Top-level arrays are routed to DataSources, not stored in vars.
+ * Top-level booleans and nulls are stringified at routing time.
+ */
+export type TemplateVarValue = string | number | JsonObject;
+
+/**
+ * Type guard for JSON object values within the template variable map.
+ *
+ * @param value - Template variable value to check
+ * @returns True if the value is a structured JSON object (not a string or number)
+ */
+export function isJsonObject(value: TemplateVarValue): value is JsonObject {
+  // Defensive: null check guards against untyped callers even though TemplateVarValue excludes null
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+  return value !== null && typeof value === 'object';
+}
+
+/**
+ * Recursive type guard that validates an unknown value is a valid JSON value.
+ *
+ * Walks objects and arrays recursively, checking that all primitives are
+ * string, number, boolean, or null. Rejects Date, undefined, functions,
+ * and other non-JSON types that `yaml.load()` can produce.
+ *
+ * @param value - The value to validate
+ * @returns True if the value is a valid JSON value (primitives, arrays, or plain objects)
+ */
+export function isJsonValue(value: unknown): value is JsonValue {
+  if (value === null) return true;
+  switch (typeof value) {
+    case 'string':
+    case 'number':
+    case 'boolean':
+      return true;
+    case 'object': {
+      if (Array.isArray(value)) {
+        return value.every(isJsonValue);
+      }
+      // Reject Date, RegExp, etc. — only plain objects are valid
+      if (Object.getPrototypeOf(value) !== Object.prototype) return false;
+      return Object.values(value as Record<string, unknown>).every(isJsonValue);
+    }
+    default:
+      return false;
+  }
+}
+
+/**
  * Structured discriminated union for the last action taken by the state machine.
  *
  * Replaces the previous string-based representation to preserve full transition
@@ -214,7 +276,7 @@ export interface StepDelegation {
 
 /** Snapshot of execution context at delegation time. */
 export interface ContextSnapshot {
-  readonly vars: Readonly<Record<string, string>>;
+  readonly vars: Readonly<Record<string, TemplateVarValue>>;
   /** Data source bindings for FOR loop iteration in delegated runbooks. */
   readonly sources?: Readonly<Record<string, DataSource>>;
   readonly ancestors: readonly AncestorSnapshot[];
@@ -234,7 +296,7 @@ export interface AncestorSnapshot {
   readonly runbook: string;
   readonly step: string;
   readonly substep: string | null;
-  readonly vars: Readonly<Record<string, string>>;
+  readonly vars: Readonly<Record<string, TemplateVarValue>>;
   /** Qualified execution location at delegation time (e.g., "1.2.1"). */
   readonly at?: string;
   /** FOR loop iteration number at delegation time (1-based). */
@@ -476,7 +538,7 @@ export interface RunbookState {
   readonly runbookSrc?: string;
 
   /** Template variables used for AST-level substitution, frozen at run time */
-  readonly templateVars?: Readonly<Record<string, string>>;
+  readonly templateVars?: Readonly<Record<string, TemplateVarValue>>;
 
   /** Data source bindings for FOR loop iteration (arrays and file references) */
   readonly sources?: Readonly<Record<string, DataSource>>;

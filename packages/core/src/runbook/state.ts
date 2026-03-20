@@ -11,6 +11,7 @@ import type {
   ResolvedRunbook,
   DataSource,
   DelegationLinkage,
+  TemplateVarValue,
 } from './types.js';
 import { RunbookStateSchema } from '../schemas.js';
 
@@ -44,7 +45,7 @@ interface CreateOptions {
   readonly delegation?: DelegationLinkage;
   readonly runbookSrc?: string;
   /** Optional record of template variable replacements to populate placeholders at run time. */
-  readonly templateVars?: Record<string, string>;
+  readonly templateVars?: Record<string, TemplateVarValue>;
   /** Data source bindings for FOR loop iteration (arrays and file references). */
   readonly sources?: Readonly<Record<string, DataSource>>;
 }

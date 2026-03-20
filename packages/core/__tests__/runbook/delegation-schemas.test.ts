@@ -120,9 +120,52 @@ describe('ContextSnapshotSchema', () => {
     expect(result.success).toBe(true);
   });
 
-  it('rejects non-string vars values', () => {
+  it('rejects array vars values', () => {
     const result = ContextSnapshotSchema.safeParse({
       vars: { env: 'prod', items: ['a', 'b'] },
+      ancestors: [],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts number vars values', () => {
+    const result = ContextSnapshotSchema.safeParse({
+      vars: { env: 'prod', port: 3000 },
+      ancestors: [],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts object vars values', () => {
+    const result = ContextSnapshotSchema.safeParse({
+      vars: { config: { host: 'localhost', port: 3000 } },
+      ancestors: [],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts deeply nested object vars values', () => {
+    const result = ContextSnapshotSchema.safeParse({
+      vars: { config: { db: { host: 'localhost', port: 5432 } } },
+      ancestors: [],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.vars.config).toEqual({ db: { host: 'localhost', port: 5432 } });
+    }
+  });
+
+  it('rejects boolean vars values', () => {
+    const result = ContextSnapshotSchema.safeParse({
+      vars: { debug: true },
+      ancestors: [],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects null vars values', () => {
+    const result = ContextSnapshotSchema.safeParse({
+      vars: { val: null },
       ancestors: [],
     });
     expect(result.success).toBe(false);

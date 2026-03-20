@@ -422,4 +422,49 @@ describe('reconstituteContextVars', () => {
     );
     expect(contextKeys).toHaveLength(0);
   });
+
+  it('preserves JsonObject values in parent vars', () => {
+    const snapshot: ContextSnapshot = {
+      vars: { config: { host: 'localhost', port: 3000 } },
+      ancestors: [],
+    };
+
+    const result = reconstituteContextVars(snapshot);
+
+    expect(result['context.parent.vars.config']).toEqual({ host: 'localhost', port: 3000 });
+    expect(result['context.ancestors.0.vars.config']).toEqual({ host: 'localhost', port: 3000 });
+  });
+
+  it('preserves JsonObject values in ancestor vars', () => {
+    const ancestor: AncestorSnapshot = {
+      runId: 'gp-1',
+      runbook: 'grandparent.md',
+      step: '1',
+      substep: null,
+      vars: { db: { host: 'db.example.com', port: 5432 } },
+    };
+    const snapshot: ContextSnapshot = {
+      vars: { env: 'prod' },
+      ancestors: [ancestor],
+    };
+
+    const result = reconstituteContextVars(snapshot);
+
+    expect(result['context.ancestors.1.vars.db']).toEqual({ host: 'db.example.com', port: 5432 });
+    expect(result['context.parent.parent.vars.db']).toEqual({
+      host: 'db.example.com',
+      port: 5432,
+    });
+  });
+
+  it('preserves number values in parent vars', () => {
+    const snapshot: ContextSnapshot = {
+      vars: { port: 8080 },
+      ancestors: [],
+    };
+
+    const result = reconstituteContextVars(snapshot);
+
+    expect(result['context.parent.vars.port']).toBe(8080);
+  });
 });

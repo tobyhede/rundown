@@ -14,7 +14,15 @@ import { randomBytes } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as yaml from 'js-yaml';
-import type { DataSource, FileFormat, PolicyEvaluator, PolicyPrompter } from '@rundown-org/core';
+import {
+  isJsonValue,
+  type DataSource,
+  type FileFormat,
+  type JsonObject,
+  type PolicyEvaluator,
+  type PolicyPrompter,
+  type TemplateVarValue,
+} from '@rundown-org/core';
 
 /**
  * Valid identifier pattern for variable names.
@@ -65,13 +73,15 @@ export function isRuntimeReservedVariable(name: string): boolean {
  */
 export interface ResolvedVariables {
   /**
-   * Readonly map of string values used for template substitution.
+   * Readonly map of template variable values used for template substitution.
    *
    * Feeds the Handlebars template rendering pipeline — every entry is
-   * substituted into `{{key}}` placeholders at render time.  The map is
-   * immutable for the lifetime of a single resolution pass.
+   * substituted into `{{key}}` placeholders at render time. Values are
+   * strings, numbers (preserved from `--var-json`), or JSON objects
+   * (for dotted field access like `{{config.host}}`).
+   * The map is immutable for the lifetime of a single resolution pass.
    */
-  readonly vars: Readonly<Record<string, string>>;
+  readonly vars: Readonly<Record<string, TemplateVarValue>>;
   /**
    * Readonly map of {@link DataSource} objects consumed only at FOR loop
    * entry time.
@@ -133,17 +143,18 @@ export class FileSourcePolicyError extends Error {
 }
 
 /**
- * Normalize a raw variables object to Record<string, string>.
+ * Normalize raw variable values to string-only records.
  *
- * Validates keys match identifier pattern, converts values to strings,
- * and warns on invalid keys or complex values.
+ * @deprecated Used only by the default `loadVariablesFromFile` overload for legacy
+ * frontmatter normalization. Do NOT use for `--var-file`, config, or any path where
+ * structured values (arrays, objects) should be preserved. Use `routeVariable` instead.
  *
  * @param vars - Raw variables object with unknown value types
  * @param source - Label for warning messages (e.g., "frontmatter var", "variable")
  * @param warnings - Optional array to collect normalization warnings
  * @returns Normalized variables with string values only
  */
-function normalizeVariables(
+function normalizeToStringVariables(
   vars: Record<string, unknown>,
   source = 'variable',
   warnings?: string[],
@@ -301,7 +312,8 @@ export async function loadVariablesFromFile(
     if (options?.normalize === false) {
       return raw;
     }
-    return normalizeVariables(raw);
+    // eslint-disable-next-line @typescript-eslint/no-deprecated -- legacy frontmatter path
+    return normalizeToStringVariables(raw);
   } catch (error) {
     if (options?.optional === false) {
       throw error;
@@ -393,11 +405,13 @@ function inferFileFormat(filePath: string): FileFormat {
  * - String with file: prefix → file source only (not in vars)
  * - Array → both maps (comma-joined in vars, array DataSource in sources)
  * - Multiline string → both maps (raw in vars, split lines as array DataSource in sources)
- * - Other scalar → vars only
+ * - Non-array object → vars only as JsonObject (for dotted template access)
+ * - Number → vars only (preserved, not stringified)
+ * - Other scalar (boolean, null) → vars only (stringified)
  *
  * @param key - Variable name
  * @param value - Variable value (unknown type)
- * @param vars - Accumulator for string variables
+ * @param vars - Accumulator for template variable values
  * @param sources - Accumulator for data sources
  * @param cwd - Current working directory for resolving relative paths
  * @param projectRoot - Canonical project root path (pre-resolved)
@@ -407,7 +421,7 @@ function inferFileFormat(filePath: string): FileFormat {
 async function routeVariable(
   key: string,
   value: unknown,
-  vars: Record<string, string>,
+  vars: Record<string, TemplateVarValue>,
   sources: Record<string, DataSource>,
   cwd: string,
   projectRoot: string,
@@ -459,11 +473,35 @@ async function routeVariable(
     return;
   }
 
-  // Scalar → vars only (clear any stale source from lower-precedence layer)
-  if (typeof value === 'object' && value !== null) {
-    warnings?.push(`Ignoring variable "${key}" with complex value`);
+  // Non-array object → vars only as JsonObject (for dotted template access)
+  // Validate recursively: yaml.load() can produce Date, undefined, etc.
+  if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+    if (isJsonValue(value)) {
+      vars[key] = value as JsonObject;
+    } else {
+      warnings?.push(`Variable "${key}" contains non-JSON values; converting to string`);
+      vars[key] = JSON.stringify(value);
+    }
+    delete sources[key];
     return;
   }
+
+  // Number → vars only (preserved, not stringified)
+  // Guard against YAML .inf/-.inf/.nan which produce non-finite JS numbers
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) {
+      warnings?.push(
+        `Variable "${key}" has non-finite numeric value (${String(value)}); converting to string`,
+      );
+      vars[key] = String(value);
+    } else {
+      vars[key] = value;
+    }
+    delete sources[key];
+    return;
+  }
+
+  // Other scalar (string, boolean, null) → vars only (stringified)
   vars[key] = String(value);
 
   delete sources[key];
@@ -554,7 +592,7 @@ async function collectRawLayers(
     var?: string[];
     varJson?: string[];
     frontmatterVars?: Record<string, string | number | boolean>;
-    inheritedVars?: Record<string, string>;
+    inheritedVars?: Record<string, TemplateVarValue>;
   },
   cwd: string,
   warnings?: string[],
@@ -641,10 +679,12 @@ async function enforceFileSourcePolicy(
  * 5. --var flags (highest precedence)
  *
  * Each variable value is routed based on its type:
- * - String with file: prefix → file source only
- * - Array → both vars (comma-joined) and sources (array)
+ * - String with `file:` prefix → file source only (not in vars)
+ * - Array → both vars (comma-joined) and sources (array of items)
  * - Multiline string → both vars and sources (array of lines)
- * - Scalar → vars only
+ * - Non-array object (JsonObject) → vars only (for dotted template access)
+ * - Number → vars only (preserved, not stringified)
+ * - Other scalar (boolean, null, plain string) → vars only (stringified)
  *
  * @param options - Variable sources from CLI flags, var-file, frontmatter vars, and inherited vars
  * @param options.varFile - Array of paths to YAML files containing variable definitions (repeatable)
@@ -664,12 +704,12 @@ export async function resolveVariables(
     var?: string[];
     varJson?: string[];
     frontmatterVars?: Record<string, string | number | boolean>;
-    inheritedVars?: Record<string, string>;
+    inheritedVars?: Record<string, TemplateVarValue>;
   },
   cwd: string,
   security?: VariableSecurityContext,
 ): Promise<ResolvedVariables> {
-  const vars: Record<string, string> = {};
+  const vars: Record<string, TemplateVarValue> = {};
   const sources: Record<string, DataSource> = {};
   const warnings: string[] = [];
 
@@ -730,11 +770,11 @@ export async function routeExtraVars(
   cwd: string,
   security?: VariableSecurityContext,
 ): Promise<{
-  vars: Record<string, string>;
+  vars: Record<string, TemplateVarValue>;
   sources: Record<string, DataSource>;
   warnings: string[];
 }> {
-  const vars: Record<string, string> = {};
+  const vars: Record<string, TemplateVarValue> = {};
   const sources: Record<string, DataSource> = {};
   const warnings: string[] = [];
 

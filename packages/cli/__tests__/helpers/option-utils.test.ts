@@ -87,13 +87,9 @@ describe('parseVarJsonOption', () => {
     expect(result).toEqual(['items=["a","b"]']);
   });
 
-  it('throws InvalidArgumentError for JSON objects', () => {
-    expect(() => parseVarJsonOption('config={"host":"localhost"}', [])).toThrow(
-      InvalidArgumentError,
-    );
-    expect(() => parseVarJsonOption('config={"host":"localhost"}', [])).toThrow(
-      /must be scalars or arrays, not objects/,
-    );
+  it('accepts JSON objects (passthrough for downstream routing)', () => {
+    const result = parseVarJsonOption('config={"host":"localhost"}', []);
+    expect(result).toEqual(['config={"host":"localhost"}']);
   });
 
   it('accepts valid JSON number', () => {

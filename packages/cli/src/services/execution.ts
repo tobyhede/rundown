@@ -32,6 +32,7 @@ import {
   type ForContext,
   type DataSource,
   type FrameKey,
+  type TemplateVarValue,
 } from '@rundown-org/core';
 import { isSourced, resolvedStepHasSubsteps, type ForClause } from '@rundown-org/parser';
 import { isInternalRdCommand, executeRdCommandInternal } from './internal-commands.js';
@@ -61,7 +62,7 @@ export type StepVariables = Record<string, unknown>;
  * Template variables for AST-level substitution (e.g., `environment`, `port`).
  * Sourced from frontmatter, CLI flags, or config files.
  */
-export type TemplateVariables = Record<string, string>;
+export type TemplateVariables = Record<string, TemplateVarValue>;
 
 /**
  * Build per-step dynamic variables for Phase 2 expansion.
@@ -89,7 +90,7 @@ export function buildStepVariables(
   forStack?: readonly ForContext[],
   forClause?: ForClause,
   sources?: Readonly<Record<string, DataSource>>,
-  templateVars?: Readonly<Record<string, string>>,
+  templateVars?: Readonly<Record<string, TemplateVarValue>>,
 ): StepVariables {
   const step = substepId ? `${stepId}.${substepId}` : stepId;
   const vars: StepVariables = {
