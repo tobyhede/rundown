@@ -14,7 +14,13 @@ import { randomBytes } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as yaml from 'js-yaml';
-import type { DataSource, FileFormat, PolicyEvaluator, PolicyPrompter } from '@rundown-org/core';
+import type {
+  DataSource,
+  FileFormat,
+  PolicyEvaluator,
+  PolicyPrompter,
+  TemplateVarValue,
+} from '@rundown-org/core';
 
 /**
  * Valid identifier pattern for variable names.
@@ -65,13 +71,15 @@ export function isRuntimeReservedVariable(name: string): boolean {
  */
 export interface ResolvedVariables {
   /**
-   * Readonly map of string values used for template substitution.
+   * Readonly map of template variable values used for template substitution.
    *
    * Feeds the Handlebars template rendering pipeline — every entry is
-   * substituted into `{{key}}` placeholders at render time.  The map is
-   * immutable for the lifetime of a single resolution pass.
+   * substituted into `{{key}}` placeholders at render time. Values are
+   * strings, numbers (preserved from `--var-json`), or JSON objects
+   * (for dotted field access like `{{config.host}}`).
+   * The map is immutable for the lifetime of a single resolution pass.
    */
-  readonly vars: Readonly<Record<string, string>>;
+  readonly vars: Readonly<Record<string, TemplateVarValue>>;
   /**
    * Readonly map of {@link DataSource} objects consumed only at FOR loop
    * entry time.
@@ -393,11 +401,13 @@ function inferFileFormat(filePath: string): FileFormat {
  * - String with file: prefix → file source only (not in vars)
  * - Array → both maps (comma-joined in vars, array DataSource in sources)
  * - Multiline string → both maps (raw in vars, split lines as array DataSource in sources)
- * - Other scalar → vars only
+ * - Non-array object → vars only as JsonObject (for dotted template access)
+ * - Number → vars only (preserved, not stringified)
+ * - Other scalar (boolean, null) → vars only (stringified)
  *
  * @param key - Variable name
  * @param value - Variable value (unknown type)
- * @param vars - Accumulator for string variables
+ * @param vars - Accumulator for template variable values
  * @param sources - Accumulator for data sources
  * @param cwd - Current working directory for resolving relative paths
  * @param projectRoot - Canonical project root path (pre-resolved)
@@ -407,7 +417,7 @@ function inferFileFormat(filePath: string): FileFormat {
 async function routeVariable(
   key: string,
   value: unknown,
-  vars: Record<string, string>,
+  vars: Record<string, TemplateVarValue>,
   sources: Record<string, DataSource>,
   cwd: string,
   projectRoot: string,
@@ -459,11 +469,21 @@ async function routeVariable(
     return;
   }
 
-  // Scalar → vars only (clear any stale source from lower-precedence layer)
+  // Non-array object → vars only as JsonObject (for dotted template access)
   if (typeof value === 'object' && value !== null) {
-    warnings?.push(`Ignoring variable "${key}" with complex value`);
+    vars[key] = value as TemplateVarValue;
+    delete sources[key];
     return;
   }
+
+  // Number → vars only (preserved, not stringified)
+  if (typeof value === 'number') {
+    vars[key] = value;
+    delete sources[key];
+    return;
+  }
+
+  // Other scalar (string, boolean, null) → vars only (stringified)
   vars[key] = String(value);
 
   delete sources[key];
@@ -554,7 +574,7 @@ async function collectRawLayers(
     var?: string[];
     varJson?: string[];
     frontmatterVars?: Record<string, string | number | boolean>;
-    inheritedVars?: Record<string, string>;
+    inheritedVars?: Record<string, TemplateVarValue>;
   },
   cwd: string,
   warnings?: string[],
@@ -664,12 +684,12 @@ export async function resolveVariables(
     var?: string[];
     varJson?: string[];
     frontmatterVars?: Record<string, string | number | boolean>;
-    inheritedVars?: Record<string, string>;
+    inheritedVars?: Record<string, TemplateVarValue>;
   },
   cwd: string,
   security?: VariableSecurityContext,
 ): Promise<ResolvedVariables> {
-  const vars: Record<string, string> = {};
+  const vars: Record<string, TemplateVarValue> = {};
   const sources: Record<string, DataSource> = {};
   const warnings: string[] = [];
 
@@ -730,11 +750,11 @@ export async function routeExtraVars(
   cwd: string,
   security?: VariableSecurityContext,
 ): Promise<{
-  vars: Record<string, string>;
+  vars: Record<string, TemplateVarValue>;
   sources: Record<string, DataSource>;
   warnings: string[];
 }> {
-  const vars: Record<string, string> = {};
+  const vars: Record<string, TemplateVarValue> = {};
   const sources: Record<string, DataSource> = {};
   const warnings: string[] = [];
 

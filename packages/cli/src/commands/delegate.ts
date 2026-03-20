@@ -21,7 +21,7 @@ import {
 } from '../helpers/index-option.js';
 import { collectCliFlags, routeExtraVars } from '../services/variable-discovery.js';
 import { parseVarOption, parseVarJsonOption, collect } from '../helpers/option-utils.js';
-import type { DataSource } from '@rundown-org/core';
+import type { DataSource, TemplateVarValue } from '@rundown-org/core';
 
 /**
  * Registers the 'delegate' command for creating delegation tokens.
@@ -133,7 +133,7 @@ export function registerDelegateCommand(program: Command): void {
               cwd,
             );
 
-            let extraVars: Record<string, string> | undefined;
+            let extraVars: Record<string, TemplateVarValue> | undefined;
             let extraSources: Record<string, DataSource> | undefined;
             if (Object.keys(rawVars).length > 0) {
               const routed = await routeExtraVars(rawVars, cwd);

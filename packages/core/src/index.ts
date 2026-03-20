@@ -18,6 +18,7 @@ export {
   StepDelegationSchema,
   ContextSnapshotSchema,
   AncestorSnapshotSchema,
+  TemplateVarValueSchema,
 } from './schemas.js';
 
 // Errors

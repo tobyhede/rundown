@@ -15,6 +15,7 @@ import type {
   ResolvedStep,
   StepDelegation,
   SubstepState,
+  TemplateVarValue,
 } from './types.js';
 
 /**
@@ -69,7 +70,7 @@ export interface DelegateOptions {
   /** Path to the child runbook to delegate to. */
   readonly childRunbookPath: string;
   /** Extra variables to merge into the context snapshot. */
-  readonly extraVars?: Readonly<Record<string, string>>;
+  readonly extraVars?: Readonly<Record<string, TemplateVarValue>>;
   /** Extra data sources to include in the context snapshot for FOR loop iteration. */
   readonly extraSources?: Readonly<Record<string, DataSource>>;
   /** Ancestor chain built by the caller. */

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { FrameKey } from './runbook/targeting.js';
-import type { JsonValue } from './runbook/types.js';
+import type { JsonValue, TemplateVarValue } from './runbook/types.js';
 import { getErrorMessage } from './errors.js';
 
 /** Zod schema that parses strings and brands them as {@link FrameKey}. */
@@ -134,6 +134,39 @@ export { StepIdSchema, ActionSchema, TransitionsSchema };
 const RunbookStepSchema = z.string().min(1);
 
 /**
+ * Recursive JSON value schema for loop iteration values.
+ *
+ * Supports arbitrary JSON structures: primitives, arrays, and objects.
+ * Used to validate currentValue in ForStackEntry when iterating over JSONL files.
+ * Uses z.lazy() for recursive reference handling.
+ *
+ * When used with .optional(), allows either a JSON value or absence (undefined),
+ * but explicitly rejects undefined values that are passed through objects.
+ */
+const JsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
+  z.union([
+    z.string(),
+    z.number(),
+    z.boolean(),
+    z.null(),
+    z.array(JsonValueSchema),
+    z.record(z.string(), JsonValueSchema),
+  ]),
+);
+
+/**
+ * Schema for template variable values: string, number, or JSON object.
+ *
+ * Matches the {@link TemplateVarValue} type — excludes top-level arrays,
+ * booleans, and nulls which are routed/stringified at variable resolution time.
+ */
+export const TemplateVarValueSchema: z.ZodType<TemplateVarValue> = z.union([
+  z.string(),
+  z.number(),
+  z.record(z.string(), JsonValueSchema),
+]);
+
+/**
  * Zod schema for a single ancestor in the runbook lineage snapshot.
  */
 export const AncestorSnapshotSchema = z.object({
@@ -141,7 +174,7 @@ export const AncestorSnapshotSchema = z.object({
   runbook: z.string(),
   step: z.string(),
   substep: z.string().nullable(),
-  vars: z.record(z.string(), z.string()),
+  vars: z.record(z.string(), TemplateVarValueSchema),
   at: z.string().optional(),
   index: z.number().int().positive().optional(),
 });
@@ -162,7 +195,7 @@ export const DataSourceSchema = z.discriminatedUnion('kind', [
  * Zod schema for execution context snapshot at delegation time.
  */
 export const ContextSnapshotSchema = z.object({
-  vars: z.record(z.string(), z.string()),
+  vars: z.record(z.string(), TemplateVarValueSchema),
   sources: z.record(z.string(), DataSourceSchema).optional(),
   ancestors: z.array(AncestorSnapshotSchema).readonly(),
   step: z.string().optional(),
@@ -229,27 +262,6 @@ const ResolvedSourceSchema = z.discriminatedUnion('kind', [
       .nullable(),
   }),
 ]);
-
-/**
- * Recursive JSON value schema for loop iteration values.
- *
- * Supports arbitrary JSON structures: primitives, arrays, and objects.
- * Used to validate currentValue in ForStackEntry when iterating over JSONL files.
- * Uses z.lazy() for recursive reference handling.
- *
- * When used with .optional(), allows either a JSON value or absence (undefined),
- * but explicitly rejects undefined values that are passed through objects.
- */
-const JsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
-  z.union([
-    z.string(),
-    z.number(),
-    z.boolean(),
-    z.null(),
-    z.array(JsonValueSchema),
-    z.record(z.string(), JsonValueSchema),
-  ]),
-);
 
 /**
  * Zod schema for ForStack entry with optional source field for backward compat
@@ -344,7 +356,7 @@ export const RunbookStateSchema = z
       ])
       .optional(),
     runbookSrc: z.string().optional(),
-    templateVars: z.record(z.string(), z.string()).optional(),
+    templateVars: z.record(z.string(), TemplateVarValueSchema).optional(),
     /** Data source bindings for sourced FOR loops (array or file-backed). */
     sources: z.record(z.string(), DataSourceSchema).optional(),
   })

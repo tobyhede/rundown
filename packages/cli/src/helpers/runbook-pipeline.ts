@@ -31,6 +31,7 @@ import {
   DELEGATION_TOKEN_PREFIX,
   ErrorCodes,
   getErrorMessage,
+  type TemplateVarValue,
 } from '@rundown-org/core';
 import {
   parseRunbookDocument,
@@ -97,7 +98,7 @@ export interface PreparedRunbook {
   /** Parsed and variable-substituted runbook AST (all FOR bounds resolved) */
   runbook: ResolvedRunbook;
   /** Merged template variables from all sources */
-  mergedVariables: Record<string, string>;
+  mergedVariables: Record<string, TemplateVarValue>;
   /** Resolved data sources for FOR loop iteration */
   sources: Record<string, DataSource>;
   /** Step and substep counts */
@@ -198,8 +199,10 @@ function emitRunbookStarted(
  * @param vars - User/config template variables to namespace under `context.vars.*`
  * @returns Record mapping `context.vars.{key}` to corresponding values
  */
-export function buildContextVars(vars: Readonly<Record<string, string>>): Record<string, string> {
-  const contextVars: Record<string, string> = {};
+export function buildContextVars(
+  vars: Readonly<Record<string, TemplateVarValue>>,
+): Record<string, TemplateVarValue> {
+  const contextVars: Record<string, TemplateVarValue> = {};
   for (const [key, value] of Object.entries(vars)) {
     contextVars[`context.vars.${key}`] = value;
   }
@@ -219,13 +222,13 @@ export function buildContextVars(vars: Readonly<Record<string, string>>): Record
  * @returns Complete template variable map ready for substitution
  */
 export function buildTemplateVars(
-  localVars: Readonly<Record<string, string>>,
+  localVars: Readonly<Record<string, TemplateVarValue>>,
   options?: {
-    inheritedUserVars?: Readonly<Record<string, string>>;
-    inheritedContextVars?: Readonly<Record<string, string>>;
+    inheritedUserVars?: Readonly<Record<string, TemplateVarValue>>;
+    inheritedContextVars?: Readonly<Record<string, TemplateVarValue>>;
   },
-): Record<string, string> {
-  const effectiveUserVars: Record<string, string> = {
+): Record<string, TemplateVarValue> {
+  const effectiveUserVars: Record<string, TemplateVarValue> = {
     ...(options?.inheritedUserVars ?? {}), // parent --var (overridable)
     ...localVars, // child frontmatter + claim --var (overrides)
   };
@@ -254,7 +257,7 @@ export interface PrepareFailure {
   code: string;
   details?: Record<string, unknown>;
   /** Partial results — available when pipeline progressed past parse */
-  variables?: Record<string, string>;
+  variables?: Record<string, TemplateVarValue>;
   sources?: Record<string, DataSource>;
   stats?: { steps: number; substeps: number };
   diagnostics?: readonly ValidationDiagnostic[];
@@ -390,8 +393,8 @@ export async function prepareRunbook(
   varOpts: VarOptions,
   cwd: string,
   options?: {
-    inheritedContextVars?: Readonly<Record<string, string>>;
-    inheritedUserVars?: Readonly<Record<string, string>>;
+    inheritedContextVars?: Readonly<Record<string, TemplateVarValue>>;
+    inheritedUserVars?: Readonly<Record<string, TemplateVarValue>>;
     inheritedSources?: Readonly<Record<string, DataSource>>;
   },
 ): Promise<PrepareResult> {
@@ -401,7 +404,7 @@ export async function prepareRunbook(
   const { filePath, rawContent, runbook: rawRunbook, frontmatter, diagnostics, stats } = parsed;
 
   // Variable resolution
-  let mergedVariables: Record<string, string>;
+  let mergedVariables: Record<string, TemplateVarValue>;
   let sources: Record<string, DataSource>;
   const allWarnings: string[] = [];
   try {
@@ -838,7 +841,7 @@ export async function claimAndLaunch(
     const inheritedContextVars = reconstituteContextVars(freshDelegation.contextSnapshot);
 
     // Extract parent user-level vars for top-level inheritance in child
-    const inheritedUserVars: Record<string, string> = {};
+    const inheritedUserVars: Record<string, TemplateVarValue> = {};
     for (const [key, value] of Object.entries(freshDelegation.contextSnapshot.vars)) {
       if (!key.startsWith('context.') && key !== 'RunId') {
         inheritedUserVars[key] = value;
