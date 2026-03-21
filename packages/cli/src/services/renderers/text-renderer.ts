@@ -481,7 +481,8 @@ export class TextRenderer implements OutputRenderer {
       this.writer.writeLine('Variables:');
       const maxKeyLen = Math.max(...Object.keys(variables).map((k) => k.length));
       for (const [key, value] of Object.entries(variables)) {
-        this.writer.writeLine(`  ${key.padEnd(maxKeyLen + 2)}${value}`);
+        const display = typeof value === 'object' ? JSON.stringify(value) : String(value);
+        this.writer.writeLine(`  ${key.padEnd(maxKeyLen + 2)}${display}`);
       }
     }
 

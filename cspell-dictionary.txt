@@ -13,6 +13,7 @@
 # Technical terms
 # Test fixture words
 # Turborepo reference
+agentic
 aindex
 AKIA
 ancvar
@@ -44,6 +45,9 @@ EBNF
 env
 esac
 esm
+GOPATH
+gopath
+gopls
 Eventless
 exfiltration
 fdisk
@@ -163,6 +167,7 @@ userdel
 usermod
 userns
 varfile
+venvs
 vitest
 workflow
 workflows

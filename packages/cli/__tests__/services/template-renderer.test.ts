@@ -462,6 +462,58 @@ describe('expandLoopVariablesForCommand', () => {
     };
     expect(expandLoopVariables('Index={{context.parent.index}}', variables)).toBe('Index=7');
   });
+
+  // Progressive prefix matching: flattened dotted keys with object values
+  it('resolves dotted path through flattened key holding an object', () => {
+    const variables: Record<string, unknown> = {
+      'context.vars.config': { host: 'localhost', port: 5432 },
+    };
+    expect(expandLoopVariables('Host: {{context.vars.config.host}}', variables)).toBe(
+      'Host: localhost',
+    );
+  });
+
+  it('resolves deep path through flattened key holding nested object', () => {
+    const variables: Record<string, unknown> = {
+      'context.vars.config': { db: { host: 'pg.local', port: 5432 } },
+    };
+    expect(expandLoopVariables('DB: {{context.vars.config.db.host}}', variables)).toBe(
+      'DB: pg.local',
+    );
+  });
+
+  it('resolves context.parent.vars through flattened key', () => {
+    const variables: Record<string, unknown> = {
+      'context.parent.vars.config': { host: 'parent-host' },
+    };
+    expect(expandLoopVariables('Parent: {{context.parent.vars.config.host}}', variables)).toBe(
+      'Parent: parent-host',
+    );
+  });
+
+  it('prefers exact key over progressive prefix match', () => {
+    const variables: Record<string, unknown> = {
+      'context.vars.config.host': 'exact-match',
+      'context.vars.config': { host: 'from-object' },
+    };
+    expect(expandLoopVariables('{{context.vars.config.host}}', variables)).toBe('exact-match');
+  });
+
+  it('renders flattened object key as JSON when no remainder path', () => {
+    const variables: Record<string, unknown> = {
+      'context.vars.config': { host: 'localhost' },
+    };
+    expect(expandLoopVariables('{{context.vars.config}}', variables)).toBe('{"host":"localhost"}');
+  });
+
+  it('preserves placeholder when flattened key value lacks the remainder path', () => {
+    const variables: Record<string, unknown> = {
+      'context.vars.config': { host: 'localhost' },
+    };
+    expect(expandLoopVariables('{{context.vars.config.missing}}', variables)).toBe(
+      '{{context.vars.config.missing}}',
+    );
+  });
 });
 
 describe('collectUnresolvedVariables', () => {

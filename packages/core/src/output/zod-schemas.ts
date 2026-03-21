@@ -15,6 +15,7 @@
  */
 
 import { z } from 'zod';
+import { TemplateVarValueSchema } from '../schemas.js';
 
 // ============================================================================
 // CLI Error Codes
@@ -486,7 +487,10 @@ export const ResolveResponseSchema = z
     /** Runbook statistics (only present when structurally valid) */
     stats: RunbookStatsSchema.optional().describe('Runbook statistics'),
     /** Resolved template variables */
-    variables: z.record(z.string(), z.string()).optional().describe('Resolved template variables'),
+    variables: z
+      .record(z.string(), TemplateVarValueSchema)
+      .optional()
+      .describe('Resolved template variables'),
     /** Data sources for FOR loop iteration */
     sources: z
       .record(z.string(), ResolveSourceInfoSchema)
