@@ -1,0 +1,24 @@
+{
+  "name": "test-app",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "NODE_OPTIONS=--experimental-sqlite tsx src/server.ts",
+    "test": "NODE_OPTIONS=--experimental-sqlite vitest run"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.14.1",
+    "hono": "^4.7.10"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.1"
+  }
+}
