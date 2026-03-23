@@ -14,19 +14,19 @@
     "astro": "astro"
   },
   "dependencies": {
-    "@astrojs/check": "^0.9.7",
-    "@astrojs/react": "^5.0.0",
+    "@astrojs/check": "^0.9.8",
+    "@astrojs/react": "^5.0.1",
     "@webcontainer/api": "^1.6.1",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
-    "astro": "^6.0.4",
+    "astro": "^6.0.8",
     "clsx": "^2.1.1",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "tailwind-merge": "^3.4.0",
-    "tailwindcss": "^4.2.1",
+    "tailwindcss": "^4.2.2",
     "typescript": "^5.9.3",
-    "yaml": "^2.8.2"
+    "yaml": "^2.8.3"
   },
   "devDependencies": {
     "@playwright/test": "^1.57.0",
