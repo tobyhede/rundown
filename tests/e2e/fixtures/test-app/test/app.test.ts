@@ -1,7 +1,17 @@
-import { describe, it, expect } from 'vitest';
-import { app } from '../src/app.js';
+import { describe, it, expect, beforeEach } from 'vitest';
+import { createApp } from '../src/app.js';
+import { createDatabase, seedDatabase } from '../src/db.js';
+import type { Hono } from 'hono';
 
 describe('Test App API', () => {
+  let app: Hono;
+
+  beforeEach(() => {
+    const db = createDatabase();
+    seedDatabase(db);
+    ({ app } = createApp(db));
+  });
+
   it('GET / returns API info', async () => {
     const res = await app.request('/');
     expect(res.status).toBe(200);
@@ -13,9 +23,10 @@ describe('Test App API', () => {
     const res = await app.request('/items');
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.items).toBeInstanceOf(Array);
-    expect(body.items.length).toBeGreaterThanOrEqual(3);
-    expect(body.items[0]).toHaveProperty('name');
+    expect(body.items).toHaveLength(3);
+    expect(body.items[0].name).toBe('Widget');
+    expect(body.items[1].name).toBe('Gadget');
+    expect(body.items[2].name).toBe('Doohickey');
   });
 
   it('POST /items creates a new item', async () => {

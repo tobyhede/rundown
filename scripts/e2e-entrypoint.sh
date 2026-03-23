@@ -75,7 +75,7 @@ hr
 log "Phase 3: Checking Claude credentials..."
 
 CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
-CRED_FILE="$CLAUDE_DIR/.credentials.json"
+CRED_FILE="$CLAUDE_DIR/credentials.json"
 
 if [ -f "$CRED_FILE" ]; then
   pass "Credentials file exists: $CRED_FILE"
