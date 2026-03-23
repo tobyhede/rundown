@@ -1,0 +1,19 @@
+# docker-compose.e2e.yml — Rundown E2E test harness
+# Usage:
+#   docker compose -f docker-compose.e2e.yml build e2e
+#   docker compose -f docker-compose.e2e.yml run --rm e2e
+
+services:
+  e2e:
+    build:
+      context: .
+      dockerfile: scripts/Dockerfile.e2e
+    image: rundown-e2e:latest
+    volumes:
+      - ./.claude-docker:/home/testuser/.claude
+      - ./logs:/home/testuser/logs
+    environment:
+      - RUNDOWN_LOG=1
+      - RUNDOWN_LOG_LEVEL=debug
+    stdin_open: true
+    tty: true

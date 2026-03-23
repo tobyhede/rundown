@@ -53,7 +53,9 @@
     "release": "changeset publish",
     "prepare": "husky || true",
     "verify:claude": "./scripts/verify-install.sh local",
-    "verify:claude:npm": "./scripts/verify-install.sh npm"
+    "verify:claude:npm": "./scripts/verify-install.sh npm",
+    "test:e2e": "./scripts/run-e2e.sh",
+    "test:e2e:shell": "docker compose -f docker-compose.e2e.yml run --rm --entrypoint bash e2e"
   },
   "lint-staged": {
     "*.{ts,tsx,js,jsx,json,css}": [

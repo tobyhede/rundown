@@ -1,0 +1,57 @@
+# Dockerfile.e2e — E2E test harness for Rundown plugin workflow
+# Validates that claude -p can trigger the full plugin chain
+# (hook dispatch, slash command detection, runbook execution)
+# against a realistic test application.
+#
+# Build:
+#   docker build -f scripts/Dockerfile.e2e -t rundown-e2e .
+#
+# Prerequisites:
+#   Run scripts/run-e2e.sh (which cleans dist/*.tgz before packing)
+#   to ensure exactly one tarball per package.
+
+FROM node:24-slim
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      sudo \
+      git \
+      curl \
+      ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+# Claude Code blocks root — create non-root user
+RUN useradd -m -s /bin/bash testuser && \
+    echo "testuser ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
+# Install Claude Code globally
+RUN npm install -g @anthropic-ai/claude-code@2
+
+# Copy entrypoint
+COPY --chmod=755 scripts/e2e-entrypoint.sh /usr/local/bin/e2e-entrypoint.sh
+
+USER testuser
+WORKDIR /home/testuser
+
+# Switch to root to install tarballs and copy fixture
+USER root
+
+# Copy and install packed tarballs (same pattern as Dockerfile.verify local stage)
+COPY dist/rundown-org-parser-*.tgz /tmp/tarballs/
+COPY dist/rundown-org-core-*.tgz /tmp/tarballs/
+COPY dist/rundown-org-cli-*.tgz /tmp/tarballs/
+COPY dist/rundown-org-claude-code-plugin-*.tgz /tmp/tarballs/
+
+RUN npm install -g \
+    /tmp/tarballs/rundown-org-parser-*.tgz \
+    /tmp/tarballs/rundown-org-core-*.tgz \
+    /tmp/tarballs/rundown-org-cli-*.tgz \
+    /tmp/tarballs/rundown-org-claude-code-plugin-*.tgz && \
+    rm -rf /tmp/tarballs
+
+# Copy test app fixture
+COPY --chown=testuser:testuser tests/e2e/fixtures/test-app /home/testuser/fixture
+
+USER testuser
+
+ENTRYPOINT ["/usr/local/bin/e2e-entrypoint.sh"]
