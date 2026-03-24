@@ -8,7 +8,7 @@ Rundown is a format for defining executable runbooks using Markdown.
 - `@rundown-org/core` - Core runbook state management and execution
 - `@rundown-org/cli` - Command-line interface (`rundown`, `rd`)
 - `@rundown-org/mcp` - MCP server for AI agent integration
-- `@rundown-org/Codex-plugin` - Codex plugin for runbook orchestration
+- `@rundown-org/claude-code-plugin` - Claude Code plugin for runbook orchestration
 
 ## Installation
 
