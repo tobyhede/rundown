@@ -125,48 +125,52 @@ export class RunbookStateManager {
    * Load a runbook state from disk by ID.
    *
    * @param id - The runbook state ID (e.g., 'wf-2025-01-12-abc123')
-   * @returns The loaded RunbookState, or null if not found or invalid
+   * @returns The loaded RunbookState, or null if file not found
+   * @throws {Error} If the state file exists but fails schema validation (stale state)
    * @throws {Error} If the runbook state uses deprecated dynamic-step snapshots
    */
   async load(id: string): Promise<RunbookState | null> {
+    let content: string;
     try {
-      const content = await fs.readFile(this.statePath(id), 'utf8');
-      const parsed = JSON.parse(content) as unknown;
-
-      // Reject legacy dynamic-step snapshots: GOTO_NEXT action or instance field
-      if (typeof parsed === 'object' && parsed !== null) {
-        const obj = parsed as Record<string, unknown>;
-        const lastAction = obj.lastAction;
-        if (
-          typeof lastAction === 'object' &&
-          lastAction !== null &&
-          (lastAction as Record<string, unknown>).type === 'GOTO_NEXT'
-        ) {
-          throw new Error(
-            'This runbook used dynamic-step snapshots (GOTO_NEXT), which are no longer supported. ' +
-              'Please restart execution from the runbook entrypoint.',
-          );
-        }
-        if (obj.instance !== undefined) {
-          throw new Error(
-            'This runbook used dynamic-step snapshots (instance field), which are no longer supported. ' +
-              'Please restart execution from the runbook entrypoint.',
-          );
-        }
-      }
-
-      const result = RunbookStateSchema.safeParse(parsed);
-      if (!result.success) return null;
-      // Zod's .regex() refinement narrows at runtime but infers as `string` at the type level.
-      // The schema guarantees GOTO `at` matches TEMPLATE_VAR_PATTERN; cast to the stricter TS type.
-      return result.data as RunbookState;
-    } catch (e) {
-      // Re-throw legacy snapshot errors
-      if (Error.isError(e) && e.message.includes('dynamic-step snapshots')) {
-        throw e;
-      }
-      return null;
+      content = await fs.readFile(this.statePath(id), 'utf8');
+    } catch {
+      return null; // File not found — genuinely missing
     }
+
+    const parsed = JSON.parse(content) as unknown;
+
+    // Reject legacy dynamic-step snapshots: GOTO_NEXT action or instance field
+    if (typeof parsed === 'object' && parsed !== null) {
+      const obj = parsed as Record<string, unknown>;
+      const lastAction = obj.lastAction;
+      if (
+        typeof lastAction === 'object' &&
+        lastAction !== null &&
+        (lastAction as Record<string, unknown>).type === 'GOTO_NEXT'
+      ) {
+        throw new Error(
+          'This runbook used dynamic-step snapshots (GOTO_NEXT), which are no longer supported. ' +
+            'Please restart execution from the runbook entrypoint.',
+        );
+      }
+      if (obj.instance !== undefined) {
+        throw new Error(
+          'This runbook used dynamic-step snapshots (instance field), which are no longer supported. ' +
+            'Please restart execution from the runbook entrypoint.',
+        );
+      }
+    }
+
+    const result = RunbookStateSchema.safeParse(parsed);
+    if (!result.success) {
+      throw new Error(
+        `Stale runbook state for "${id}": schema validation failed. ` +
+          'Run `rundown prune` and restart execution.',
+      );
+    }
+    // Zod's .regex() refinement narrows at runtime but infers as `string` at the type level.
+    // The schema guarantees GOTO `at` matches TEMPLATE_VAR_PATTERN; cast to the stricter TS type.
+    return result.data as RunbookState;
   }
 
   /**

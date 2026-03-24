@@ -35,8 +35,14 @@ export function registerStopCommand(program: Command): void {
           }
 
           if (!state) {
-            // Unexpected errors (e.g., legacy snapshot) must propagate
-            if (getActiveError) {
+            // Unexpected errors must propagate — but stale/corrupted state errors
+            // fall through to the orphan cleanup path since stop is a cleanup command.
+            if (
+              getActiveError &&
+              !getActiveError.message.includes('Stale runbook state') &&
+              !getActiveError.message.includes('dynamic-step snapshots') &&
+              !(getActiveError instanceof SyntaxError)
+            ) {
               throw getActiveError;
             }
             // P2: Check for orphaned stack entry

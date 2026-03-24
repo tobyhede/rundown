@@ -3,9 +3,9 @@
 /**
  * Stateless resolver for FOR loop iteration values.
  *
- * Resolves values from the unified variable map based on variable type
- * (range, JsonArray, JsonArrayStream) so the XState machine and CLI
- * share a single code path.
+ * Resolves values from the unified variable map based on variable type.
+ * For variable-sourced loops, only {@link IterableVarValue} types
+ * (JsonArray, JsonArrayStream) are accepted. Range sources are stateless.
  *
  * @module
  */
@@ -24,11 +24,15 @@ import { isJsonArray, isJsonArrayStream } from './types.js';
  * Discriminated union for the result of resolving a FOR loop iteration value.
  *
  * - `resolved`: The iteration has a value and execution can proceed.
+ *   The `context` is guaranteed to have `currentValue` set (not undefined).
  * - `exhausted`: The data source has no more values; `capped` contains
  *    the ForContext with `end` set to the current iteration.
  */
 export type ResolvedIteration =
-  | { readonly kind: 'resolved'; readonly context: ForContext }
+  | {
+      readonly kind: 'resolved';
+      readonly context: ForContext & { readonly currentValue: JsonValue };
+    }
   | { readonly kind: 'exhausted'; readonly capped: ForContext };
 
 /**
@@ -72,7 +76,7 @@ export async function resolveForValue(
 
       const typeDesc = typeof value === 'object' ? 'JsonObject' : typeof value;
       throw new Error(
-        `Type error: FOR variable "${varName}" is ${typeDesc}, expected JsonArray or JsonArrayStream`,
+        `Type error: FOR variable "${varName}" is ${typeDesc}, expected IterableVarValue (JsonArray or JsonArrayStream)`,
       );
     }
   }
@@ -107,7 +111,7 @@ async function resolveFromJsonArrayStream(
   stream: JsonArrayStream,
 ): Promise<ResolvedIteration> {
   const skipLines = fc.iteration - 1;
-  const provider = await createFileProvider(stream.path, 'jsonl', { skipLines });
+  const provider = await createFileProvider(stream.path, { skipLines });
   try {
     const { value, done } = await provider.next();
     if (done) {

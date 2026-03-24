@@ -192,25 +192,10 @@ export const AncestorSnapshotSchema = z.object({
 });
 
 /**
- * Zod schema for data source bindings (array or file-backed).
- */
-export const DataSourceSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('array'), items: z.array(z.string()).readonly() }),
-  z.object({
-    kind: z.literal('file'),
-    path: z.string(),
-    format: z.enum(['text', 'jsonl']),
-  }),
-]);
-
-/**
  * Zod schema for execution context snapshot at delegation time.
  */
 export const ContextSnapshotSchema = z.object({
   vars: z.record(z.string(), TemplateVarValueSchema),
-  // Backward compat: persisted delegation state from pre-unified-variable model may contain
-  // sources. Zod accepts them for deserialization but the TS interface types sources as undefined.
-  sources: z.record(z.string(), DataSourceSchema).optional(),
   ancestors: z.array(AncestorSnapshotSchema).readonly(),
   step: z.string().optional(),
   substep: z.string().optional(),
@@ -254,31 +239,7 @@ const ResolvedCompletionSchema = z.object({
 });
 
 /**
- * Zod schema for ResolvedSource discriminated union
- */
-const ResolvedSourceSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('range') }),
-  z.object({
-    kind: z.literal('array'),
-    items: z.array(z.string()).readonly(),
-  }),
-  z.object({
-    kind: z.literal('file'),
-    path: z.string(),
-    format: z.enum(['text', 'jsonl']),
-    snapshot: z
-      .object({
-        line: z.number().int().positive(),
-        size: z.number().nonnegative(),
-        mtimeMs: z.number().nonnegative(),
-        fingerprint: z.string().optional(),
-      })
-      .nullable(),
-  }),
-]);
-
-/**
- * Zod schema for {@link ForSource} — simplified source descriptor for the unified variable model.
+ * Zod schema for {@link ForSource} — source descriptor for the unified variable model.
  */
 export const ForSourceSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('range') }),
@@ -287,33 +248,25 @@ export const ForSourceSchema = z.discriminatedUnion('kind', [
 
 /**
  * Zod schema for ForStack entry.
- *
- * Accepts both the new ForSource shape and legacy ResolvedSource shapes
- * for backward compatibility with persisted state files.
  */
-const ForStackEntrySchema = z
-  .object({
-    stepId: z.string(),
-    iteration: z.number().int().positive().max(MAX_FOR_BOUND),
-    start: z.number().int().positive().max(MAX_FOR_BOUND),
-    end: z.number().int().positive().max(MAX_FOR_BOUND).optional(),
-    variable: z.string().optional(),
-    implicit: z.boolean().default(false),
-    source: z.union([ForSourceSchema, ResolvedSourceSchema]).optional(),
-    currentValue: JsonValueSchema.optional(),
-    snapshot: z
-      .object({
-        line: z.number().int().positive(),
-        size: z.number().nonnegative(),
-        mtimeMs: z.number().nonnegative(),
-        fingerprint: z.string().optional(),
-      })
-      .optional(),
-  })
-  .transform((entry) => ({
-    ...entry,
-    source: entry.source ?? { kind: 'range' as const },
-  }));
+const ForStackEntrySchema = z.object({
+  stepId: z.string(),
+  iteration: z.number().int().positive().max(MAX_FOR_BOUND),
+  start: z.number().int().positive().max(MAX_FOR_BOUND),
+  end: z.number().int().positive().max(MAX_FOR_BOUND).optional(),
+  variable: z.string().optional(),
+  implicit: z.boolean().default(false),
+  source: ForSourceSchema,
+  currentValue: JsonValueSchema.optional(),
+  snapshot: z
+    .object({
+      line: z.number().int().positive(),
+      size: z.number().nonnegative(),
+      mtimeMs: z.number().nonnegative(),
+      fingerprint: z.string().optional(),
+    })
+    .optional(),
+});
 
 /**
  * Runbook State Schema - Runtime Validation for Persisted RunbookState
@@ -390,8 +343,6 @@ export const RunbookStateSchema = z
       .optional(),
     runbookSrc: z.string().optional(),
     templateVars: z.record(z.string(), TemplateVarValueSchema).optional(),
-    /** Data source bindings for sourced FOR loops (array or file-backed). */
-    sources: z.record(z.string(), DataSourceSchema).optional(),
   })
   // passthrough() allows unknown fields (e.g., legacy pendingSteps, agentBindings,
   // agentId, parentRunbookId) to survive schema validation without breaking existing

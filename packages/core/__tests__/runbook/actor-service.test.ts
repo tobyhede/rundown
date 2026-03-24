@@ -364,8 +364,8 @@ describe('RunbookActorService', () => {
     });
   });
 
-  describe('sources persistence via actor', () => {
-    it('persists forStack with array source through actor update and reload', async () => {
+  describe('forStack persistence via actor', () => {
+    it('persists forStack with variable source through actor update and reload', async () => {
       const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
 
       const actor = mockActor({
@@ -380,7 +380,7 @@ describe('RunbookActorService', () => {
               start: 1,
               end: 3,
               variable: 'item',
-              source: { kind: 'array' as const, items: ['x', 'y', 'z'] },
+              source: { kind: 'variable' as const, name: 'item' },
               currentValue: 'y',
             },
           ],
@@ -391,11 +391,11 @@ describe('RunbookActorService', () => {
 
       const { state: updated } = await actorService.updateFromActor(state.id, actor, mockSteps);
 
-      // Verify forStack with array source is set
+      // Verify forStack with variable source is set
       expect(updated.forStack).toHaveLength(1);
       expect(updated.forStack?.[0].source).toEqual({
-        kind: 'array',
-        items: ['x', 'y', 'z'],
+        kind: 'variable',
+        name: 'item',
       });
       expect(updated.forStack?.[0].currentValue).toBe('y');
 
@@ -403,13 +403,13 @@ describe('RunbookActorService', () => {
       const loaded = await manager.load(state.id);
       expect(loaded?.forStack).toHaveLength(1);
       expect(loaded?.forStack?.[0].source).toEqual({
-        kind: 'array',
-        items: ['x', 'y', 'z'],
+        kind: 'variable',
+        name: 'item',
       });
       expect(loaded?.forStack?.[0].currentValue).toBe('y');
     });
 
-    it('persists forStack with file source through actor update and reload', async () => {
+    it('persists forStack with variable source and snapshot through actor update and reload', async () => {
       const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
 
       const actor = mockActor({
@@ -424,13 +424,13 @@ describe('RunbookActorService', () => {
               start: 1,
               end: 2,
               variable: 'line',
-              source: {
-                kind: 'file' as const,
-                path: '/tmp/data.txt',
-                format: 'text' as const,
-                snapshot: null,
-              },
+              source: { kind: 'variable' as const, name: 'lines' },
               currentValue: 'line1',
+              snapshot: {
+                line: 1,
+                size: 100,
+                mtimeMs: 1700000000,
+              },
             },
           ],
           iterationResults: ['pass'],
@@ -440,26 +440,27 @@ describe('RunbookActorService', () => {
 
       const { state: updated } = await actorService.updateFromActor(state.id, actor, mockSteps);
 
-      // Verify forStack with file source is set
+      // Verify forStack with variable source is set
       expect(updated.forStack).toHaveLength(1);
-      expect(updated.forStack?.[0].source.kind).toBe('file');
       expect(updated.forStack?.[0].source).toEqual({
-        kind: 'file',
-        path: '/tmp/data.txt',
-        format: 'text',
-        snapshot: null,
+        kind: 'variable',
+        name: 'lines',
+      });
+      expect(updated.forStack?.[0].currentValue).toBe('line1');
+      expect(updated.forStack?.[0].snapshot).toEqual({
+        line: 1,
+        size: 100,
+        mtimeMs: 1700000000,
       });
 
       // Load from disk and verify persistence
       const loaded = await manager.load(state.id);
       expect(loaded?.forStack).toHaveLength(1);
-      expect(loaded?.forStack?.[0].source.kind).toBe('file');
       expect(loaded?.forStack?.[0].source).toEqual({
-        kind: 'file',
-        path: '/tmp/data.txt',
-        format: 'text',
-        snapshot: null,
+        kind: 'variable',
+        name: 'lines',
       });
+      expect(loaded?.forStack?.[0].currentValue).toBe('line1');
     });
 
     it('templateVars with arrays survive across multiple updates (unified model)', async () => {

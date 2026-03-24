@@ -274,8 +274,8 @@ rd echo item={{ item }}
   });
 
   it('iterates over file source variable', async () => {
-    // Create a data file with 3 lines
-    await writeFile(join(workspace.cwd, 'servers.txt'), 'alpha\nbeta\ngamma\n');
+    // Create a JSONL data file with 3 JSON string values
+    await writeFile(join(workspace.cwd, 'servers.jsonl'), '"alpha"\n"beta"\n"gamma"\n');
 
     // Create runbook that iterates over file source
     await writeFile(
@@ -300,7 +300,7 @@ rd echo server={{ server }}
     );
 
     const result = runCli(
-      'run --json --var servers=file:servers.txt file-loop.runbook.md',
+      'run --json --var servers=file:servers.jsonl file-loop.runbook.md',
       workspace,
     );
     expect(result.exitCode).toBe(0);
@@ -317,22 +317,22 @@ rd echo server={{ server }}
     expect(commandStartedEvents[2].command).toContain('server=gamma');
   });
 
-  it('handles multiline string iteration from var-file', async () => {
-    // Create var-file with multiline string
+  it('handles array iteration from var-file', async () => {
+    // Create var-file with YAML array (multiline strings are no longer iterable data sources)
     await writeFile(
       join(workspace.cwd, 'vars.yaml'),
-      `log: |
-  alpha
-  beta
-  gamma
+      `log:
+  - alpha
+  - beta
+  - gamma
 `,
     );
 
-    // Create runbook that iterates over multiline string
+    // Create runbook that iterates over array from var-file
     await writeFile(
       join(workspace.cwd, 'iterate.runbook.md'),
       `---
-name: Multiline Iteration
+name: Array Iteration
 ---
 # Iterate
 
@@ -357,14 +357,13 @@ rd echo line={{ line }}
 
     const commandStartedEvents = events.filter((e) => e.type === 'command_started');
 
-    // 4 iterations: alpha, beta, gamma, plus trailing empty line from YAML block scalar
-    expect(commandStartedEvents).toHaveLength(4);
+    // 3 iterations: alpha, beta, gamma
+    expect(commandStartedEvents).toHaveLength(3);
 
     // Verify each iteration has correct line value
     expect(commandStartedEvents[0].command).toContain('line=alpha');
     expect(commandStartedEvents[1].command).toContain('line=beta');
     expect(commandStartedEvents[2].command).toContain('line=gamma');
-    expect(commandStartedEvents[3].command).toContain("line=''");
   });
 
   it('handles shell special chars in array source values', async () => {
@@ -675,7 +674,10 @@ rd echo item={{ item }}
   });
 
   it('iterates descending file source (3 TO 1) in reverse order', async () => {
-    await writeFile(join(workspace.cwd, 'servers.txt'), 'alpha\nbeta\ngamma\ndelta\nepsilon\n');
+    await writeFile(
+      join(workspace.cwd, 'servers.jsonl'),
+      '"alpha"\n"beta"\n"gamma"\n"delta"\n"epsilon"\n',
+    );
 
     await writeFile(
       join(workspace.cwd, 'descending-file.runbook.md'),
@@ -699,7 +701,7 @@ rd echo server={{ server }}
     );
 
     const result = runCli(
-      'run --json --var servers=file:servers.txt descending-file.runbook.md',
+      'run --json --var servers=file:servers.jsonl descending-file.runbook.md',
       workspace,
     );
     expect(result.exitCode).toBe(0);

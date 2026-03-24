@@ -89,20 +89,23 @@ describe('stop command', () => {
       expect(session.defaultStack).toHaveLength(0);
     });
 
-    it('propagates unexpected getActive errors instead of swallowing', async () => {
+    it('cleans up stale state with legacy snapshot instead of propagating error', async () => {
       await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
       const state = await getActiveState(workspace);
       const stateId = state!.id as string;
       const stateDir = join(workspace.cwd, '.claude', 'rundown', 'runs');
 
-      // Write a legacy snapshot state that triggers a deliberate throw in load()
+      // Write a legacy snapshot state that triggers a stale-state error in load()
       const legacyState = { ...state, lastAction: { type: 'GOTO_NEXT' } };
       await writeFile(join(stateDir, `${stateId}.json`), JSON.stringify(legacyState));
 
-      // After fix: stop should propagate the error, not silently clean up
+      // stop is a cleanup command — it should handle stale state gracefully
       const result = await runCliInProcess('stop', workspace);
-      expect(result.exitCode).not.toBe(0);
-      expect(result.stderr).toMatch(/dynamic-step snapshots/i);
+      expect(result.exitCode).toBe(0);
+
+      const session = await readSession(workspace);
+      expect(session.active).toBeNull();
+      expect(session.defaultStack).toHaveLength(0);
     });
   });
 
