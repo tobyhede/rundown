@@ -12,6 +12,12 @@ export interface Item {
   created_at: string;
 }
 
+/**
+ * Creates and initializes a SQLite database with the items schema.
+ *
+ * @param dbPath - Path to database file or ':memory:' for in-memory. Defaults to ':memory:'.
+ * @returns Initialized DatabaseSync instance with items table created.
+ */
 export function createDatabase(dbPath = ':memory:') {
   const db = new DatabaseSync(dbPath);
   db.exec('PRAGMA journal_mode = WAL');
@@ -27,6 +33,11 @@ export function createDatabase(dbPath = ':memory:') {
   return db;
 }
 
+/**
+ * Seeds the database with sample item records.
+ *
+ * @param db - The SQLite database instance to seed.
+ */
 export function seedDatabase(db: DatabaseSync) {
   const insert = db.prepare('INSERT INTO items (name, description) VALUES (?, ?)');
   insert.run('Widget', 'A standard widget');
@@ -34,11 +45,25 @@ export function seedDatabase(db: DatabaseSync) {
   insert.run('Doohickey', 'An indispensable doohickey');
 }
 
+/**
+ * Retrieves all items from the database.
+ *
+ * @param db - The SQLite database instance.
+ * @returns Array of all items in the database.
+ */
 export function getAllItems(db: DatabaseSync): Item[] {
   const stmt = db.prepare('SELECT id, name, description, created_at FROM items');
   return stmt.all() as unknown as Item[];
 }
 
+/**
+ * Inserts a new item into the database.
+ *
+ * @param db - The SQLite database instance.
+ * @param name - Display name for the item.
+ * @param description - Optional description, may be null.
+ * @returns The newly created item with generated id and timestamp.
+ */
 export function insertItem(db: DatabaseSync, name: string, description: string | null): Item {
   const stmt = db.prepare(
     'INSERT INTO items (name, description) VALUES (?, ?) RETURNING id, name, description, created_at',
