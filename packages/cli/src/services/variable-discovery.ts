@@ -69,7 +69,7 @@ export function isRuntimeReservedVariable(name: string): boolean {
  * Resolved variables from the unified template variable map.
  *
  * All variable values — scalars, JSON arrays, and file-backed streams — are
- * routed into `vars`. The `sources` field is deprecated and always empty.
+ * routed into `vars`.
  */
 export interface ResolvedVariables {
   /**
@@ -82,8 +82,6 @@ export interface ResolvedVariables {
    * The map is immutable for the lifetime of a single resolution pass.
    */
   readonly vars: Readonly<Record<string, TemplateVarValue>>;
-  /** @deprecated Always empty. Kept for backward compat during migration. */
-  readonly sources: Readonly<Record<string, never>>;
   /**
    * Structured warnings produced during variable resolution.
    *
@@ -392,7 +390,7 @@ async function loadJsonFile(canonical: string): Promise<JsonObject | JsonArray> 
   const content = await fs.readFile(canonical, 'utf-8');
   const parsed: unknown = JSON.parse(content);
   if (!isJsonValue(parsed) || parsed === null || typeof parsed !== 'object') {
-    throw new Error(`File "${canonical}" does not contain a JSON object or array`);
+    throw new Error(`File "${canonical}" contains ${typeof parsed}, expected JSON object or array`);
   }
   return parsed as JsonObject | JsonArray;
 }
@@ -749,7 +747,7 @@ export async function resolveVariables(
     }
   }
 
-  return { vars, sources: {} as Record<string, never>, warnings };
+  return { vars, warnings };
 }
 
 /**
@@ -762,7 +760,7 @@ export async function resolveVariables(
  * @param rawVars - Raw variables with potentially complex types (arrays, objects, scalars)
  * @param cwd - Current working directory for resolving file paths
  * @param security - Optional security context for file source policy enforcement
- * @returns Normalized vars map and any warnings (sources is always empty)
+ * @returns Normalized vars map and any warnings
  */
 export async function routeExtraVars(
   rawVars: Readonly<Record<string, unknown>>,
@@ -770,7 +768,6 @@ export async function routeExtraVars(
   security?: VariableSecurityContext,
 ): Promise<{
   vars: Record<string, TemplateVarValue>;
-  sources: Record<string, never>;
   warnings: string[];
 }> {
   const vars: Record<string, TemplateVarValue> = {};
@@ -793,5 +790,5 @@ export async function routeExtraVars(
     await routeVariable(key, value, vars, cwd, projectRoot, security, warnings);
   }
 
-  return { vars, sources: {} as Record<string, never>, warnings };
+  return { vars, warnings };
 }

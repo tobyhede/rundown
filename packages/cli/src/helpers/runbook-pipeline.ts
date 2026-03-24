@@ -164,9 +164,15 @@ export function validateForVariables(
     if (step.kind === 'for' && isSourced(step.forClause)) {
       const name = step.forClause.source;
       const value = vars[name];
-      if (!value || (!isJsonArray(value) && !isJsonArrayStream(value))) {
+      if (value === undefined) {
         throw new Error(
-          `FOR loop references undefined or non-iterable variable "{{${name}}}". ` +
+          `FOR loop references undefined variable "{{${name}}}". ` +
+            `Define "${name}" as an array in .rundown/config.yaml or pass --var-file with an array value.`,
+        );
+      }
+      if (!isJsonArray(value) && !isJsonArrayStream(value)) {
+        throw new Error(
+          `FOR loop variable "{{${name}}}" is not iterable (got ${typeof value}). ` +
             `Define "${name}" as an array in .rundown/config.yaml or pass --var-file with an array value.`,
         );
       }
