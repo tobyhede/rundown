@@ -136,27 +136,83 @@ export type JsonValue = JsonPrimitive | JsonValue[] | { readonly [key: string]: 
 export type JsonObject = { readonly [key: string]: JsonValue };
 
 /**
+ * In-memory JSON array for eager iteration in FOR loops.
+ *
+ * Loaded from JSON files, YAML arrays, or `--var-json` CLI flags.
+ * Items retain their original JSON types (not stringified).
+ */
+export type JsonArray = readonly JsonValue[];
+
+/**
+ * File-backed lazy array for streaming iteration in FOR loops.
+ *
+ * Created from `file:path.jsonl` variable values. The file is streamed
+ * line-by-line at iteration time via {@link FileProvider}, never fully
+ * materialised in memory.
+ */
+export interface JsonArrayStream {
+  readonly kind: 'json-array-stream';
+  /** Absolute filesystem path to the JSONL data file. */
+  readonly path: string;
+}
+
+/**
  * Values that can appear in the template variable map.
  *
  * - `string`: the dominant case (CLI vars, env, builtins, stringified booleans/nulls)
  * - `number`: preserved from `--var-json` and YAML config (not stringified)
  * - `JsonObject`: structured values for dotted template access (`{{config.host}}`)
+ * - `JsonArray`: in-memory array for eager FOR loop iteration
+ * - `JsonArrayStream`: file-backed lazy array for streaming FOR loop iteration
  *
- * Top-level arrays are routed to DataSources, not stored in vars.
  * Top-level booleans and nulls are stringified at routing time.
  */
-export type TemplateVarValue = string | number | JsonObject;
+export type TemplateVarValue = string | number | JsonObject | JsonArray | JsonArrayStream;
 
 /**
  * Type guard for JSON object values within the template variable map.
  *
+ * Excludes arrays and JsonArrayStream — only plain objects match.
+ *
  * @param value - Template variable value to check
- * @returns True if the value is a structured JSON object (not a string or number)
+ * @returns True if the value is a structured JSON object (not a string, number, array, or stream)
  */
 export function isJsonObject(value: TemplateVarValue): value is JsonObject {
   // Defensive: null check guards against untyped callers even though TemplateVarValue excludes null
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-  return value !== null && typeof value === 'object';
+  return (
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+    value !== null &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    !isJsonArrayStream(value)
+  );
+}
+
+/**
+ * Type guard for in-memory JSON array values within the template variable map.
+ *
+ * @param value - Template variable value to check
+ * @returns True if the value is a JsonArray (JavaScript array of JsonValue)
+ */
+export function isJsonArray(value: TemplateVarValue): value is JsonArray {
+  return Array.isArray(value);
+}
+
+/**
+ * Type guard for file-backed lazy array stream values within the template variable map.
+ *
+ * @param value - Template variable value to check
+ * @returns True if the value is a JsonArrayStream with kind 'json-array-stream'
+ */
+export function isJsonArrayStream(value: TemplateVarValue): value is JsonArrayStream {
+  // Defensive: null check guards against untyped callers even though TemplateVarValue excludes null
+  return (
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+    value !== null &&
+    typeof value === 'object' &&
+    'kind' in value &&
+    value.kind === 'json-array-stream'
+  );
 }
 
 /**
@@ -277,8 +333,8 @@ export interface StepDelegation {
 /** Snapshot of execution context at delegation time. */
 export interface ContextSnapshot {
   readonly vars: Readonly<Record<string, TemplateVarValue>>;
-  /** Data source bindings for FOR loop iteration in delegated runbooks. */
-  readonly sources?: Readonly<Record<string, DataSource>>;
+  /** @deprecated Sources map removed in unified variable model. */
+  readonly sources?: undefined;
   readonly ancestors: readonly AncestorSnapshot[];
   /** Current step identifier at delegation time (e.g., "1"). */
   readonly step?: string;
@@ -464,6 +520,27 @@ export type ResolvedSource =
     };
 
 /**
+ * Simplified FOR loop source descriptor for the unified variable model.
+ *
+ * The compiler records only whether the loop is a numeric range or a named
+ * variable reference. The execution layer resolves the variable from the
+ * vars map and determines iteration strategy based on the variable type.
+ *
+ * Discriminated on `kind`.
+ */
+export type ForSource =
+  | {
+      /** Discriminant for the numeric range variant (stateless iteration). */
+      readonly kind: 'range';
+    }
+  | {
+      /** Discriminant for the variable reference variant. */
+      readonly kind: 'variable';
+      /** Variable name to look up in the vars map at execution time. */
+      readonly name: string;
+    };
+
+/**
  * State for a single FOR loop level on the execution stack.
  */
 export interface ForContext {
@@ -479,10 +556,12 @@ export interface ForContext {
   readonly variable?: string;
   /** True for synthetic 1..1 loops on non-FOR steps. Filtered from persistence. */
   readonly implicit: boolean;
-  /** Resolved data source — always present. Determines value resolution strategy. */
-  readonly source: ResolvedSource;
-  /** Value at current position (set after first iteration for array/file sources). Supports JSON values for JSONL iteration. */
+  /** Source descriptor — determines how values are resolved at execution time. */
+  readonly source: ForSource;
+  /** Value at current position (set after first iteration for variable sources). Supports JSON values for JSONL iteration. */
   readonly currentValue?: JsonValue;
+  /** File snapshot for resumability with JsonArrayStream sources. */
+  readonly snapshot?: FileSnapshot;
 }
 
 /**
@@ -540,6 +619,6 @@ export interface RunbookState {
   /** Template variables used for AST-level substitution, frozen at run time */
   readonly templateVars?: Readonly<Record<string, TemplateVarValue>>;
 
-  /** Data source bindings for FOR loop iteration (arrays and file references) */
-  readonly sources?: Readonly<Record<string, DataSource>>;
+  /** @deprecated Sources map removed in unified variable model. Kept for schema backward compat. */
+  readonly sources?: undefined;
 }

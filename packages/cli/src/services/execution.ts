@@ -30,9 +30,10 @@ import {
   extractDisplayCommand,
   type ExecutionEventEmitter,
   type ForContext,
-  type DataSource,
   type FrameKey,
   type TemplateVarValue,
+  isJsonArray,
+  isJsonArrayStream,
 } from '@rundown-org/core';
 import { isSourced, resolvedStepHasSubsteps, type ForClause } from '@rundown-org/parser';
 import { isInternalRdCommand, executeRdCommandInternal } from './internal-commands.js';
@@ -78,7 +79,6 @@ export type TemplateVariables = Record<string, TemplateVarValue>;
  * @param substepId - Optional substep identifier (e.g., "1")
  * @param forStack - Current FOR loop stack from persisted state
  * @param forClause - FOR clause from the step definition (bootstrap fallback)
- * @param sources - Data-source bindings for sourced FOR clauses
  * @param templateVars - Static template variables for context-aware expansion
  * @returns Variable map with `Step` and optional `Index` / named variable
  * @throws {Error} if a sourced FOR clause references a missing data source
@@ -89,7 +89,6 @@ export function buildStepVariables(
   substepId: string | undefined,
   forStack?: readonly ForContext[],
   forClause?: ForClause,
-  sources?: Readonly<Record<string, DataSource>>,
   templateVars?: Readonly<Record<string, TemplateVarValue>>,
 ): StepVariables {
   const step = substepId ? `${stepId}.${substepId}` : stepId;
@@ -117,14 +116,10 @@ export function buildStepVariables(
           case 'range':
             vars[top.variable] = String(top.iteration);
             break;
-          case 'array':
+          case 'variable':
             // currentValue is set by ForIterationService before each iteration.
             // If missing (undefined), the service did not resolve it — fall back to empty string.
             // Preserve all other values including null, false, 0, etc.
-            vars[top.variable] = top.currentValue !== undefined ? top.currentValue : '';
-            break;
-          case 'file':
-            // Same handling for file sources: preserve JSON values, fall back to empty string on undefined
             vars[top.variable] = top.currentValue !== undefined ? top.currentValue : '';
             break;
           default: {
@@ -137,22 +132,24 @@ export function buildStepVariables(
   } else if (forClause) {
     // Bootstrap: first iteration before actor has run
     if (isSourced(forClause)) {
-      const ds = sources?.[forClause.source];
-      if (!ds) {
-        throw new Error(
-          `Data source "${forClause.source}" not found for FOR loop in step ${stepId}`,
-        );
-      }
-      if (ds.kind === 'array') {
-        // Clamp start to match compiler behavior (compiler.ts buildForContext)
-        const clampedStart = Math.max(1, Math.min(forClause.start, ds.items.length));
+      const varValue = templateVars?.[forClause.source];
+      if (varValue !== undefined && isJsonArray(varValue)) {
+        // JsonArray: clamp start and index into array
+        const clampedStart = Math.max(1, Math.min(forClause.start, varValue.length));
         vars.Index = String(clampedStart);
         vars.index = String(clampedStart);
         vars['context.current.index'] = String(clampedStart);
         vars['context.current.at'] = deriveExecutionAt(stepId, substepId, clampedStart);
-        vars[forClause.variable] = ds.items[clampedStart - 1] ?? '';
+        vars[forClause.variable] = varValue[clampedStart - 1] ?? '';
+      } else if (varValue !== undefined && isJsonArrayStream(varValue)) {
+        // JsonArrayStream: value resolved lazily by actor
+        vars.Index = String(forClause.start);
+        vars.index = String(forClause.start);
+        vars['context.current.index'] = String(forClause.start);
+        vars['context.current.at'] = deriveExecutionAt(stepId, substepId, forClause.start);
+        vars[forClause.variable] = '';
       } else {
-        // ds.kind === 'file': iteration starts at forClause.start, value resolved lazily by actor
+        // Variable undefined or not iterable — set defaults
         vars.Index = String(forClause.start);
         vars.index = String(forClause.start);
         vars['context.current.index'] = String(forClause.start);
@@ -575,7 +572,6 @@ export async function runExecutionLoop(
       currentState.substep,
       currentState.forStack,
       currentStep.kind === 'for' ? currentStep.forClause : undefined,
-      currentState.sources,
       currentState.templateVars,
     );
     const expandedDescription = expandLoopVariables(itemToRender.description, stepVars);

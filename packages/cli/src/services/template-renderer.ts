@@ -33,6 +33,8 @@ import {
   stepIdToString,
   RunbookSyntaxError,
 } from '@rundown-org/parser';
+import { isJsonArrayStream } from '@rundown-org/core';
+import type { TemplateVarValue } from '@rundown-org/core';
 
 /**
  * Mapped type that requires all keys of T to be present in object literals,
@@ -105,10 +107,17 @@ function resolveDottedPath(obj: unknown, path: string): unknown {
  *
  * @param value - Resolved template value
  * @returns String representation for interpolation
+ * @throws {Error} if value is a JsonArrayStream, which cannot be rendered in templates
  */
 function renderTemplateValue(value: unknown): string {
   if (typeof value === 'string') {
     return value;
+  }
+  // JsonArrayStream cannot be rendered in templates — it's a lazy file reference
+  if (typeof value === 'object' && value !== null && isJsonArrayStream(value as TemplateVarValue)) {
+    throw new Error(
+      'Cannot render stream variable in template — JsonArrayStream is iterable, not renderable',
+    );
   }
   return JSON.stringify(value);
 }

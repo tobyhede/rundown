@@ -69,7 +69,7 @@ export class RunbookActorService {
     const state = await this.manager.load(id);
     if (!state) return null;
 
-    const machine = compileRunbookToMachine(steps, { sources: state.sources });
+    const machine = compileRunbookToMachine(steps);
 
     // Migrate old snapshot context: flat FOR fields → forStack
     // Intentionally shallow copy — only snapshot.context is replaced during

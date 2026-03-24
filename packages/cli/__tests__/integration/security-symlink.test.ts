@@ -46,7 +46,6 @@ describe('Security: Symlink Traversal', () => {
     // If secured, my_source WILL NOT be in sources (it would have been ignored with a warning).
 
     // CURRENT BEHAVIOR: It is now BLOCKED (SECURED)
-    expect(result.sources).not.toHaveProperty('my_source');
     expect(result.vars).not.toHaveProperty('my_source');
   });
 });

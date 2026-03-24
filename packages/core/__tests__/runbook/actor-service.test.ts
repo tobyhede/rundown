@@ -462,25 +462,23 @@ describe('RunbookActorService', () => {
       });
     });
 
-    it('sources survive across multiple updates', async () => {
-      const sources = {
-        items: {
-          kind: 'array' as const,
-          items: ['a', 'b', 'c'],
-        },
+    it('templateVars with arrays survive across multiple updates (unified model)', async () => {
+      const templateVars = {
+        items: ['a', 'b', 'c'],
+        env: 'staging',
       };
 
-      // Create with sources
+      // Create with templateVars containing arrays
       const state = await manager.create('test.md', mockRunbook, {
         runbookPath: 'test.md',
-        sources,
+        templateVars: templateVars as Record<string, any>,
       });
 
-      expect(state.sources).toEqual(sources);
+      expect(state.templateVars?.items).toEqual(['a', 'b', 'c']);
 
       // Update step
       const updated1 = await manager.update(state.id, { step: '1' });
-      expect(updated1.sources).toEqual(sources);
+      expect(updated1.templateVars?.items).toEqual(['a', 'b', 'c']);
 
       // updateFromActor
       const actor = mockActor({
@@ -493,11 +491,11 @@ describe('RunbookActorService', () => {
       });
 
       const { state: updated2 } = await actorService.updateFromActor(state.id, actor, mockSteps);
-      expect(updated2.sources).toEqual(sources);
+      expect(updated2.templateVars?.items).toEqual(['a', 'b', 'c']);
 
-      // Load from disk and verify sources still present
+      // Load from disk and verify templateVars still present
       const loaded = await manager.load(state.id);
-      expect(loaded?.sources).toEqual(sources);
+      expect(loaded?.templateVars?.items).toEqual(['a', 'b', 'c']);
     });
   });
 });

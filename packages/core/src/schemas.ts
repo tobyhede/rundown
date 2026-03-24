@@ -156,14 +156,25 @@ const JsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
 );
 
 /**
- * Schema for template variable values: string, number, or JSON object.
+ * Zod schema for {@link JsonArrayStream} — file-backed lazy array.
+ */
+const JsonArrayStreamSchema = z.object({
+  kind: z.literal('json-array-stream'),
+  path: z.string(),
+});
+
+/**
+ * Schema for template variable values.
  *
- * Matches the {@link TemplateVarValue} type — excludes top-level arrays,
- * booleans, and nulls which are routed/stringified at variable resolution time.
+ * Matches the {@link TemplateVarValue} type: string, number, JsonObject,
+ * JsonArray, or JsonArrayStream.
+ * Top-level booleans and nulls are stringified at variable resolution time.
  */
 export const TemplateVarValueSchema: z.ZodType<TemplateVarValue> = z.union([
   z.string(),
   z.number(),
+  z.array(JsonValueSchema),
+  JsonArrayStreamSchema,
   z.record(z.string(), JsonValueSchema),
 ]);
 
@@ -197,6 +208,8 @@ export const DataSourceSchema = z.discriminatedUnion('kind', [
  */
 export const ContextSnapshotSchema = z.object({
   vars: z.record(z.string(), TemplateVarValueSchema),
+  // Backward compat: persisted delegation state from pre-unified-variable model may contain
+  // sources. Zod accepts them for deserialization but the TS interface types sources as undefined.
   sources: z.record(z.string(), DataSourceSchema).optional(),
   ancestors: z.array(AncestorSnapshotSchema).readonly(),
   step: z.string().optional(),
@@ -265,7 +278,18 @@ const ResolvedSourceSchema = z.discriminatedUnion('kind', [
 ]);
 
 /**
- * Zod schema for ForStack entry with optional source field for backward compat
+ * Zod schema for {@link ForSource} — simplified source descriptor for the unified variable model.
+ */
+export const ForSourceSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('range') }),
+  z.object({ kind: z.literal('variable'), name: z.string() }),
+]);
+
+/**
+ * Zod schema for ForStack entry.
+ *
+ * Accepts both the new ForSource shape and legacy ResolvedSource shapes
+ * for backward compatibility with persisted state files.
  */
 const ForStackEntrySchema = z
   .object({
@@ -275,8 +299,16 @@ const ForStackEntrySchema = z
     end: z.number().int().positive().max(MAX_FOR_BOUND).optional(),
     variable: z.string().optional(),
     implicit: z.boolean().default(false),
-    source: ResolvedSourceSchema.optional(),
+    source: z.union([ForSourceSchema, ResolvedSourceSchema]).optional(),
     currentValue: JsonValueSchema.optional(),
+    snapshot: z
+      .object({
+        line: z.number().int().positive(),
+        size: z.number().nonnegative(),
+        mtimeMs: z.number().nonnegative(),
+        fingerprint: z.string().optional(),
+      })
+      .optional(),
   })
   .transform((entry) => ({
     ...entry,

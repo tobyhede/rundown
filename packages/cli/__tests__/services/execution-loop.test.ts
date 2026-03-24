@@ -127,6 +127,13 @@ jest.unstable_mockModule('@rundown-org/core', () => {
       getLogFilePath: jest.fn().mockReturnValue('/tmp/rundown-test.log'),
       getLogDir: jest.fn().mockReturnValue('/tmp'),
     },
+    isJsonArray: jest.fn((v: unknown) => Array.isArray(v)),
+    isJsonArrayStream: jest.fn(
+      (v: unknown) =>
+        typeof v === 'object' &&
+        v !== null &&
+        (v as Record<string, unknown>).kind === 'json-array-stream',
+    ),
     ...mockErrorHelpers,
   };
 });

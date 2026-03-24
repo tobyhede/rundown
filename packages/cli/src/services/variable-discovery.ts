@@ -16,8 +16,8 @@ import * as path from 'node:path';
 import * as yaml from 'js-yaml';
 import {
   isJsonValue,
-  type DataSource,
-  type FileFormat,
+  type JsonArray,
+  type JsonArrayStream,
   type JsonObject,
   type PolicyEvaluator,
   type PolicyPrompter,
@@ -82,15 +82,8 @@ export interface ResolvedVariables {
    * The map is immutable for the lifetime of a single resolution pass.
    */
   readonly vars: Readonly<Record<string, TemplateVarValue>>;
-  /**
-   * Readonly map of {@link DataSource} objects consumed only at FOR loop
-   * entry time.
-   *
-   * Each entry provides the iteration data for a `FOR variable IN {{ key }}`
-   * clause.  The map is immutable once resolved and is not used by the
-   * template rendering pipeline.
-   */
-  readonly sources: Readonly<Record<string, DataSource>>;
+  /** @deprecated Always empty. Kept for backward compat during migration. */
+  readonly sources: Readonly<Record<string, never>>;
   /**
    * Structured warnings produced during variable resolution.
    *
@@ -389,30 +382,37 @@ export async function discoverVariables(cwd: string): Promise<Record<string, str
 }
 
 /**
- * Infer file format from extension.
+ * Load a JSON file and return the parsed value as a template variable.
  *
- * @param filePath - The file path to inspect
- * @returns 'jsonl' for .jsonl files, 'text' for all others
+ * @param canonical - Absolute filesystem path to the JSON file
+ * @returns Parsed JSON value as JsonObject or JsonArray
+ * @throws {Error} When the file cannot be read or contains invalid JSON
  */
-function inferFileFormat(filePath: string): FileFormat {
-  return filePath.endsWith('.jsonl') ? 'jsonl' : 'text';
+async function loadJsonFile(canonical: string): Promise<JsonObject | JsonArray> {
+  const content = await fs.readFile(canonical, 'utf-8');
+  const parsed: unknown = JSON.parse(content);
+  if (!isJsonValue(parsed) || parsed === null || typeof parsed !== 'object') {
+    throw new Error(`File "${canonical}" does not contain a JSON object or array`);
+  }
+  return parsed as JsonObject | JsonArray;
 }
 
 /**
- * Route a single variable value into vars and/or sources based on its type.
+ * Route a single variable value into vars based on its type.
  *
- * Routing rules:
- * - String with file: prefix → file source only (not in vars)
- * - Array → both maps (comma-joined in vars, array DataSource in sources)
- * - Multiline string → both maps (raw in vars, split lines as array DataSource in sources)
- * - Non-array object → vars only as JsonObject (for dotted template access)
- * - Number → vars only (preserved, not stringified)
- * - Other scalar (boolean, null) → vars only (stringified)
+ * Unified routing rules (all values go into vars only):
+ * - String with file: prefix → load file into vars:
+ *   - `.json` → eager load as JsonObject or JsonArray
+ *   - `.jsonl` → lazy JsonArrayStream reference
+ *   - Other extensions → error (text support deferred)
+ * - Array → vars as JsonArray (type-preserving)
+ * - Non-array object → vars as JsonObject (for dotted template access)
+ * - Number → vars (preserved, not stringified)
+ * - Other scalar (boolean, null, string) → vars (stringified)
  *
  * @param key - Variable name
  * @param value - Variable value (unknown type)
  * @param vars - Accumulator for template variable values
- * @param sources - Accumulator for data sources
  * @param cwd - Current working directory for resolving relative paths
  * @param projectRoot - Canonical project root path (pre-resolved)
  * @param security - Optional security context for file source policy enforcement
@@ -422,13 +422,12 @@ async function routeVariable(
   key: string,
   value: unknown,
   vars: Record<string, TemplateVarValue>,
-  sources: Record<string, DataSource>,
   cwd: string,
   projectRoot: string,
   security?: VariableSecurityContext,
   warnings?: string[],
 ): Promise<void> {
-  // String with file: prefix → file source only (not in vars)
+  // String with file: prefix → load into vars based on extension
   if (typeof value === 'string' && value.startsWith('file:')) {
     const rawPath = value.slice(5);
     const resolved = path.resolve(cwd, rawPath);
@@ -450,26 +449,32 @@ async function routeVariable(
 
     await enforceFileSourcePolicy(key, canonical, security);
 
-    sources[key] = { kind: 'file', path: canonical, format: inferFileFormat(canonical) };
+    if (canonical.endsWith('.jsonl')) {
+      // JSONL → lazy stream (file read at iteration time)
+      vars[key] = { kind: 'json-array-stream', path: canonical } satisfies JsonArrayStream;
+    } else if (canonical.endsWith('.json')) {
+      // JSON → eager load as JsonObject or JsonArray
+      vars[key] = await loadJsonFile(canonical);
+    } else {
+      throw new Error(
+        `Unsupported file extension for variable "${key}": ${path.extname(canonical) || '(none)'}. ` +
+          `Supported: .json, .jsonl`,
+      );
+    }
 
-    delete vars[key];
     return;
   }
 
-  // Array → both maps
+  // Array → vars as JsonArray (type-preserving, not comma-joined)
   if (Array.isArray(value)) {
-    const items = value.map(String);
-    vars[key] = items.join(', ');
-    sources[key] = { kind: 'array', items };
-    return;
-  }
-
-  // Multiline string → both maps
-  if (typeof value === 'string' && value.includes('\n')) {
-    const lines = value.split('\n');
-    // Store the value but strip trailing newline if present
-    vars[key] = value.endsWith('\n') ? value.slice(0, -1) : value;
-    sources[key] = { kind: 'array', items: lines };
+    if (value.every(isJsonValue)) {
+      vars[key] = value as JsonArray;
+    } else {
+      warnings?.push(
+        `Variable "${key}" array contains non-JSON values; converting items to strings`,
+      );
+      vars[key] = value.map(String) as unknown as JsonArray;
+    }
     return;
   }
 
@@ -482,7 +487,6 @@ async function routeVariable(
       warnings?.push(`Variable "${key}" contains non-JSON values; converting to string`);
       vars[key] = JSON.stringify(value);
     }
-    delete sources[key];
     return;
   }
 
@@ -497,14 +501,11 @@ async function routeVariable(
     } else {
       vars[key] = value;
     }
-    delete sources[key];
     return;
   }
 
   // Other scalar (string, boolean, null) → vars only (stringified)
   vars[key] = String(value);
-
-  delete sources[key];
 }
 
 /**
@@ -710,7 +711,6 @@ export async function resolveVariables(
   security?: VariableSecurityContext,
 ): Promise<ResolvedVariables> {
   const vars: Record<string, TemplateVarValue> = {};
-  const sources: Record<string, DataSource> = {};
   const warnings: string[] = [];
 
   // Canonicalize project root once for validation
@@ -746,11 +746,11 @@ export async function resolveVariables(
         warnings.push(`Ignoring variable with invalid key: ${key}`);
         continue;
       }
-      await routeVariable(key, value, vars, sources, cwd, projectRoot, security, warnings);
+      await routeVariable(key, value, vars, cwd, projectRoot, security, warnings);
     }
   }
 
-  return { vars, sources, warnings };
+  return { vars, sources: {} as Record<string, never>, warnings };
 }
 
 /**
@@ -771,11 +771,10 @@ export async function routeExtraVars(
   security?: VariableSecurityContext,
 ): Promise<{
   vars: Record<string, TemplateVarValue>;
-  sources: Record<string, DataSource>;
+  sources: Record<string, never>;
   warnings: string[];
 }> {
   const vars: Record<string, TemplateVarValue> = {};
-  const sources: Record<string, DataSource> = {};
   const warnings: string[] = [];
 
   const projectRoot = await resolveProjectRoot(cwd);
@@ -792,8 +791,8 @@ export async function routeExtraVars(
       );
       continue;
     }
-    await routeVariable(key, value, vars, sources, cwd, projectRoot, security, warnings);
+    await routeVariable(key, value, vars, cwd, projectRoot, security, warnings);
   }
 
-  return { vars, sources, warnings };
+  return { vars, sources: {} as Record<string, never>, warnings };
 }

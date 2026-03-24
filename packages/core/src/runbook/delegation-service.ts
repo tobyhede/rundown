@@ -10,7 +10,6 @@ import {
 import type {
   AncestorSnapshot,
   ContextSnapshot,
-  DataSource,
   RunbookState,
   ResolvedStep,
   StepDelegation,
@@ -71,8 +70,6 @@ export interface DelegateOptions {
   readonly childRunbookPath: string;
   /** Extra variables to merge into the context snapshot. */
   readonly extraVars?: Readonly<Record<string, TemplateVarValue>>;
-  /** Extra data sources to include in the context snapshot for FOR loop iteration. */
-  readonly extraSources?: Readonly<Record<string, DataSource>>;
   /** Ancestor chain built by the caller. */
   readonly ancestors?: readonly AncestorSnapshot[];
   /** Frame key scoping this delegation to a FOR iteration. */
@@ -112,7 +109,7 @@ export function createDelegation(
   options: DelegateOptions,
   steps: readonly ResolvedStep[],
 ): DelegateResult {
-  const { state, stepId, childRunbookPath, extraVars, extraSources, ancestors, frameKey } = options;
+  const { state, stepId, childRunbookPath, extraVars, ancestors, frameKey } = options;
 
   // 1. Parse step ID
   const parsed = parseStepIdFromString(stepId);
@@ -174,8 +171,6 @@ export function createDelegation(
   // 8. Build context snapshot
   const baseVars = { ...(state.templateVars ?? {}) };
   const mergedVars = extraVars ? { ...baseVars, ...extraVars } : baseVars;
-  const mergedSources =
-    extraSources && Object.keys(extraSources).length > 0 ? extraSources : undefined;
 
   // Capture structural fields from the delegation target, not the cursor
   const activeFor = getActiveForContext(state.forStack, state.step);
@@ -184,7 +179,6 @@ export function createDelegation(
 
   const contextSnapshot: ContextSnapshot = {
     vars: mergedVars,
-    ...(mergedSources ? { sources: mergedSources } : {}),
     ancestors: ancestors ?? [],
     step: state.step,
     substep: parsed.substep,

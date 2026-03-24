@@ -513,26 +513,25 @@ describe('RunbookStateManager', () => {
     });
   });
 
-  describe('sources persistence', () => {
-    it('persists sources through create/load round-trip', async () => {
-      const sources = {
-        items: {
-          kind: 'array' as const,
-          items: ['a', 'b'],
-        },
+  describe('templateVars persistence (unified model)', () => {
+    it('persists templateVars with arrays through create/load round-trip', async () => {
+      const templateVars = {
+        items: ['a', 'b'] as const,
+        env: 'prod',
       };
 
       const state = await manager.create('test.md', mockRunbook, {
         runbookPath: 'test.md',
-        sources,
+        templateVars: templateVars as Record<string, any>,
       });
 
-      // Verify sources are present in created state
-      expect(state.sources).toEqual(sources);
+      // Verify templateVars are present in created state
+      expect(state.templateVars?.items).toEqual(['a', 'b']);
+      expect(state.templateVars?.env).toBe('prod');
 
       // Load from disk and verify persistence
       const loaded = await manager.load(state.id);
-      expect(loaded?.sources).toEqual(sources);
+      expect(loaded?.templateVars?.items).toEqual(['a', 'b']);
     });
   });
 });

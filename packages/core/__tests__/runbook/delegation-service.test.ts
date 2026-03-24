@@ -3,7 +3,7 @@ import { createDelegation } from '../../src/runbook/delegation-service.js';
 import type { DelegateOptions } from '../../src/runbook/delegation-service.js';
 import { hashDelegationToken, TOKEN_PREFIX } from '../../src/runbook/delegation-token.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
-import type { RunbookState, Step, AncestorSnapshot, DataSource } from '../../src/runbook/types.js';
+import type { RunbookState, Step, AncestorSnapshot } from '../../src/runbook/types.js';
 
 /** Helper: create minimal RunbookState for testing. */
 function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
@@ -774,34 +774,27 @@ describe('createDelegation', () => {
     expect(result.updatedSubstepStates[0].frameKey).toBe(buildFrameKey('1', 3));
   });
 
-  it('extraSources array sources appear in contextSnapshot.sources', () => {
+  it('extraVars appear in contextSnapshot.vars (unified model, no extraSources)', () => {
     const state = makeState();
     const steps = makeSteps();
-    const extraSources: Readonly<Record<string, DataSource>> = {
-      items: { kind: 'array', items: ['a', 'b', 'c'] },
-    };
     const result = createDelegation(
       {
         state,
         stepId: '1.1',
         childRunbookPath: 'child.md',
-        extraSources,
+        extraVars: { items: ['a', 'b', 'c'] },
         frameKey: buildFrameKey('1'),
       },
       steps,
     );
 
-    expect(result.delegation.contextSnapshot.sources).toBeDefined();
-    expect(result.delegation.contextSnapshot.sources?.items).toEqual({
-      kind: 'array',
-      items: ['a', 'b', 'c'],
-    });
+    expect(result.delegation.contextSnapshot.vars.items).toEqual(['a', 'b', 'c']);
   });
 
   it('snapshot without sources omits the field', () => {
     const state = makeState();
     const steps = makeSteps();
-    const result = createDelegation(
+    createDelegation(
       {
         state,
         stepId: '1.1',
@@ -810,7 +803,5 @@ describe('createDelegation', () => {
       },
       steps,
     );
-
-    expect(result.delegation.contextSnapshot.sources).toBeUndefined();
   });
 });

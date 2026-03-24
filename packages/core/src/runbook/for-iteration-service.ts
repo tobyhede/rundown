@@ -134,7 +134,7 @@ export class ForIterationService {
       return { status: 'no-resolution-needed', state };
     }
 
-    const result = await resolveForValue(top);
+    const result = await resolveForValue(top, state.templateVars);
 
     if (result.kind === 'resolved') {
       // Build updated forStack with resolved value

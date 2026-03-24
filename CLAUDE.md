@@ -153,19 +153,19 @@ Variables whose values are arrays or `file:`-prefixed paths become **data source
 | Value Type | Template Variable | Data Source | Example |
 |------------|-------------------|-------------|---------|
 | JSON array (`--var-json`) | Comma-joined | Array DataSource | `--var-json items='["a","b","c"]'` |
-| `file:path/to/data.txt` | Not set | File DataSource | `--var items=file:data.txt` |
+| `file:path/to/data.jsonl` | JsonArrayStream ref | File DataSource | `--var items=file:data.jsonl` |
+| `file:path/to/data.json` | JsonArray/JsonObject | File DataSource (if array) | `--var items=file:data.json` |
 | Array (YAML) | Comma-joined | Array DataSource | `items: [a, b, c]` in config |
-| Multiline string | Raw string | Array DataSource (split on newlines) | YAML block scalar |
 | Scalar | String value | Not set | `--var name=value` |
 
 Data sources are referenced in FOR clauses: `FOR item IN {{ items }}`.
 
-**File formats:** `.jsonl` files are parsed as JSON Lines (one JSON value per line). Each line may contain any JSON value (string, number, boolean, null, array, or object). When the loop variable holds a parsed JSON object, dotted field access is supported in templates (e.g., `{{item.name}}`). Using `{{item}}` alone renders the serialized JSON string. All other extensions (e.g., `.txt`) use plain text (one value per non-empty line). Users who need raw line strings from a `.jsonl` file should rename it to a `.txt` extension.
+**File formats:** Only `.json` and `.jsonl` extensions are supported. `.jsonl` files are parsed as JSON Lines (one JSON value per line). Each line may contain any JSON value (string, number, boolean, null, array, or object). When the loop variable holds a parsed JSON object, dotted field access is supported in templates (e.g., `{{item.name}}`). Using `{{item}}` alone renders the serialized JSON string. `.json` files are eagerly loaded as a `JsonObject` or `JsonArray` value.
 
 **Notes:**
 - Arrays can be passed inline via `--var-json` or in `.rundown/config.yaml` and `--var-file` (not in frontmatter `vars:`). `file:` values are supported in `.rundown/config.yaml` and `--var-file` only
 - File paths must stay within the project root (symlinks resolved, traversal blocked)
-- `file:` values are routed to sources only — they do NOT appear as template variables
+- `file:` values are routed into `vars` as typed values (`JsonArrayStream` for `.jsonl`, `JsonArray`/`JsonObject` for `.json`)
 
 **Note:** The `scenarios` frontmatter field is an internal testing/demo feature, not part of the public Rundown format specification. See [docs/SCENARIOS.md](docs/SCENARIOS.md).
 

@@ -3,14 +3,22 @@
 /**
  * Stateless resolver for FOR loop iteration values.
  *
- * Unifies value resolution across all source types (range, array, file)
- * so the XState machine and CLI share a single code path.
+ * Resolves values from the unified variable map based on variable type
+ * (range, JsonArray, JsonArrayStream) so the XState machine and CLI
+ * share a single code path.
  *
  * @module
  */
 
 import { createFileProvider, computeFileSnapshot } from './file-provider.js';
-import type { ForContext, FileSnapshot, JsonValue } from './types.js';
+import type {
+  ForContext,
+  FileSnapshot,
+  JsonValue,
+  TemplateVarValue,
+  JsonArrayStream,
+} from './types.js';
+import { isJsonArray, isJsonArrayStream } from './types.js';
 
 /**
  * Discriminated union for the result of resolving a FOR loop iteration value.
@@ -27,13 +35,17 @@ export type ResolvedIteration =
  * Resolve the `currentValue` for a FOR loop iteration.
  *
  * This is a stateless, async function that reads the value for the current
- * iteration from the appropriate source. For file sources it streams lazily
- * and computes a snapshot for resumability.
+ * iteration from the appropriate source. For JsonArrayStream sources it
+ * streams lazily and computes a snapshot for resumability.
  *
  * @param fc - The ForContext whose `currentValue` needs resolution
+ * @param vars - The unified template variable map for variable source lookups
  * @returns A discriminated result: either the resolved context or an exhaustion signal
  */
-export async function resolveForValue(fc: ForContext): Promise<ResolvedIteration> {
+export async function resolveForValue(
+  fc: ForContext,
+  vars?: Readonly<Record<string, TemplateVarValue>>,
+): Promise<ResolvedIteration> {
   switch (fc.source.kind) {
     case 'range':
       // Range sources use iteration number as the value
@@ -42,50 +54,86 @@ export async function resolveForValue(fc: ForContext): Promise<ResolvedIteration
         context: { ...fc, currentValue: String(fc.iteration) },
       };
 
-    case 'array': {
-      // Array sources index into items (1-based); out-of-bounds returns undefined
-      const value = fc.source.items[fc.iteration - 1];
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-      if (value === undefined) {
-        return { kind: 'exhausted', capped: { ...fc, end: fc.iteration } };
-      }
-      return { kind: 'resolved', context: { ...fc, currentValue: value } };
-    }
+    case 'variable': {
+      const varName = fc.source.name;
+      const value = vars?.[varName];
 
-    case 'file': {
-      // File sources read lazily via streaming FileProvider
-      const skipLines = fc.iteration - 1;
-      const provider = await createFileProvider(fc.source.path, fc.source.format, { skipLines });
-      try {
-        const { value, done } = await provider.next();
-        if (done) {
-          return { kind: 'exhausted', capped: { ...fc, end: fc.iteration } };
-        }
-        // Parse value based on format
-        let currentValue: JsonValue = value;
-        if (fc.source.format === 'jsonl') {
-          try {
-            currentValue = JSON.parse(value) as JsonValue;
-          } catch (cause) {
-            const truncated = value.length > 120 ? `${value.substring(0, 120)}...` : value;
-            throw new Error(
-              `Failed to parse JSONL at ${fc.source.path} line ${String(fc.iteration)}: ${truncated}`,
-              { cause },
-            );
-          }
-        }
-        const snapshot: FileSnapshot = await computeFileSnapshot(fc.source.path, fc.iteration);
-        return {
-          kind: 'resolved',
-          context: {
-            ...fc,
-            currentValue,
-            source: { ...fc.source, snapshot },
-          },
-        };
-      } finally {
-        provider.close();
+      if (value === undefined) {
+        throw new Error(`FOR variable "${varName}" is not defined in the template variable map`);
       }
+
+      if (isJsonArray(value)) {
+        return resolveFromJsonArray(fc, value);
+      }
+
+      if (isJsonArrayStream(value)) {
+        return resolveFromJsonArrayStream(fc, value);
+      }
+
+      const typeDesc = typeof value === 'object' ? 'JsonObject' : typeof value;
+      throw new Error(
+        `Type error: FOR variable "${varName}" is ${typeDesc}, expected JsonArray or JsonArrayStream`,
+      );
     }
+  }
+}
+
+/**
+ * Resolve iteration value from an in-memory JsonArray.
+ *
+ * @param fc - The ForContext whose currentValue needs resolution from the array
+ * @param items - The array of JSON values to iterate over
+ * @returns A discriminated result: either the resolved context or an exhaustion signal
+ */
+function resolveFromJsonArray(fc: ForContext, items: readonly JsonValue[]): ResolvedIteration {
+  // Defensive: index access on readonly arrays could theoretically return undefined
+  const value = items[fc.iteration - 1];
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+  if (value === undefined) {
+    return { kind: 'exhausted', capped: { ...fc, end: fc.iteration } };
+  }
+  return { kind: 'resolved', context: { ...fc, currentValue: value } };
+}
+
+/**
+ * Resolve iteration value from a file-backed JsonArrayStream (JSONL).
+ *
+ * @param fc - The ForContext whose currentValue needs resolution from the file stream
+ * @param stream - The JsonArrayStream metadata (path and format information)
+ * @returns A promise resolving to a discriminated result: either the resolved context or an exhaustion signal
+ */
+async function resolveFromJsonArrayStream(
+  fc: ForContext,
+  stream: JsonArrayStream,
+): Promise<ResolvedIteration> {
+  const skipLines = fc.iteration - 1;
+  const provider = await createFileProvider(stream.path, 'jsonl', { skipLines });
+  try {
+    const { value, done } = await provider.next();
+    if (done) {
+      return { kind: 'exhausted', capped: { ...fc, end: fc.iteration } };
+    }
+    // JSONL: parse each line as JSON
+    let currentValue: JsonValue;
+    try {
+      currentValue = JSON.parse(value) as JsonValue;
+    } catch (cause) {
+      const truncated = value.length > 120 ? `${value.substring(0, 120)}...` : value;
+      throw new Error(
+        `Failed to parse JSONL at ${stream.path} line ${String(fc.iteration)}: ${truncated}`,
+        { cause },
+      );
+    }
+    const snapshot: FileSnapshot = await computeFileSnapshot(stream.path, fc.iteration);
+    return {
+      kind: 'resolved',
+      context: {
+        ...fc,
+        currentValue,
+        snapshot,
+      },
+    };
+  } finally {
+    provider.close();
   }
 }

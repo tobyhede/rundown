@@ -3747,24 +3747,21 @@ describe('runbook compiler', () => {
 echo "processing"
 \`\`\`
 `);
-      const sources = {
-        items: { kind: 'array' as const, items: ['alpha', 'beta', 'gamma'] },
-      };
-      const machine = compileRunbookToMachine(steps, { sources });
+      const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
 
       const ctx = actor.getSnapshot().context;
       const top = ctx.forStack[0];
-      expect(top.source).toEqual({ kind: 'array', items: ['alpha', 'beta', 'gamma'] });
+      expect(top.source).toEqual({ kind: 'variable', name: 'items' });
       expect(top.start).toBe(1);
-      expect(top.end).toBe(3); // clamped to items.length
+      expect(top.end).toBeUndefined(); // open-ended; resolved at execution time
       expect(top.variable).toBe('item');
 
       actor.stop();
     });
 
-    it('iterates over array source values with currentValue advancing each iteration', () => {
+    it('variable source loop exits on first PASS without execution layer (currentValue undefined)', () => {
       const steps = createRunbook(`
 ## 1. Process items
 - FOR item IN {{ items }}
@@ -3778,37 +3775,20 @@ echo "processing"
 echo "processing"
 \`\`\`
 `);
-      const sources = {
-        items: { kind: 'array' as const, items: ['alpha', 'beta', 'gamma'] },
-      };
-      const machine = compileRunbookToMachine(steps, { sources });
+      const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
 
-      // Iteration 1: currentValue is undefined (resolved by ForIterationService)
-      let ctx = actor.getSnapshot().context;
-      let top = ctx.forStack[0];
+      // Iteration 1: currentValue is undefined (must be resolved by ForIterationService)
+      const ctx = actor.getSnapshot().context;
+      const top = ctx.forStack[0];
       expect(top.iteration).toBe(1);
       expect(top.currentValue).toBeUndefined();
 
-      // Send PASS to advance to iteration 2
+      // Without execution layer resolving currentValue, PASS exits the loop
+      // (hasMoreIterations returns false for variable sources without currentValue)
       actor.send({ type: 'PASS' });
-      ctx = actor.getSnapshot().context;
-      top = ctx.forStack[0];
-      expect(top.iteration).toBe(2);
-      expect(top.currentValue).toBeUndefined();
-
-      // Send PASS to advance to iteration 3
-      actor.send({ type: 'PASS' });
-      ctx = actor.getSnapshot().context;
-      top = ctx.forStack[0];
-      expect(top.iteration).toBe(3);
-      expect(top.currentValue).toBeUndefined();
-
-      // Send PASS to exit loop (no more iterations)
-      actor.send({ type: 'PASS' });
-      ctx = actor.getSnapshot().context;
-      expect(ctx.forStack).toEqual([]);
+      expect(actor.getSnapshot().context.forStack).toEqual([]);
 
       actor.stop();
     });
@@ -3827,22 +3807,19 @@ echo "processing"
 echo "processing"
 \`\`\`
 `);
-      const sources = {
-        items: { kind: 'array' as const, items: ['a', 'b', 'c'] },
-      };
-      const machine = compileRunbookToMachine(steps, { sources });
+      const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
 
       const ctx = actor.getSnapshot().context;
       const top = ctx.forStack[0];
-      expect(top.end).toBe(3); // clamped from 100 to items.length
-      expect(top.source).toEqual({ kind: 'array', items: ['a', 'b', 'c'] });
+      expect(top.end).toBe(100); // window end preserved; execution layer resolves bounds
+      expect(top.source).toEqual({ kind: 'variable', name: 'items' });
 
       actor.stop();
     });
 
-    it('rejects undefined source variable', () => {
+    it('compiles machine with undefined variable source (validation deferred to execution)', () => {
       const steps = createRunbook(`
 ## 1. Process items
 - FOR item IN {{ missing }}
@@ -3856,11 +3833,10 @@ echo "processing"
 echo "processing"
 \`\`\`
 `);
-      // No sources entry for 'missing'
-      const machine = compileRunbookToMachine(steps, { sources: {} });
+      // Compiler no longer validates sources — variable sources are resolved at execution time
+      const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
 
-      // XState v5 surfaces entry action errors through the actor's error state
       let capturedError: unknown;
       actor.subscribe({
         error: (err) => {
@@ -3868,9 +3844,11 @@ echo "processing"
         },
       });
       actor.start();
-      expect(capturedError).toBeDefined();
-      expect(String(capturedError)).toMatch(/Data source "missing" is not defined/);
-      expect(actor.getSnapshot().status).toBe('error');
+      // Machine starts successfully with a variable source reference
+      expect(capturedError).toBeUndefined();
+      expect(actor.getSnapshot().status).toBe('active');
+
+      actor.stop();
     });
 
     it('handles empty array source (0 iterations)', () => {
@@ -3887,19 +3865,15 @@ echo "processing"
 echo "processing"
 \`\`\`
 `);
-      const sources = {
-        items: { kind: 'array' as const, items: [] },
-      };
-      const machine = compileRunbookToMachine(steps, { sources });
+      const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
 
       const ctx = actor.getSnapshot().context;
       const top = ctx.forStack[0];
-      expect(top.end).toBe(1); // empty → end equals start, no iterations
-      // Loop should exit immediately on first PASS
-      actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().context.forStack).toEqual([]);
+      // Open-ended variable source — end is undefined, resolved at execution time
+      expect(top.end).toBeUndefined();
+      expect(top.source).toEqual({ kind: 'variable', name: 'items' });
 
       actor.stop();
     });
@@ -3918,10 +3892,7 @@ echo "processing"
 echo "processing"
 \`\`\`
 `);
-      const sources = {
-        items: { kind: 'array' as const, items: ['a', 'b', 'c', 'd', 'e'] },
-      };
-      const machine = compileRunbookToMachine(steps, { sources });
+      const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
 
@@ -4002,8 +3973,7 @@ echo "processing"
           },
         },
       ]);
-      const sources = { items: { kind: 'array' as const, items: ['x', 'y'] } };
-      const machine = compileRunbookToMachine(steps, { sources });
+      const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
 
@@ -4012,7 +3982,7 @@ echo "processing"
       let top = ctx.forStack[0];
       expect(top.iteration).toBe(1);
       expect(top.currentValue).toBeUndefined();
-      expect(top.source).toEqual({ kind: 'array', items: ['x', 'y'] });
+      expect(top.source).toEqual({ kind: 'variable', name: 'items' });
 
       // Send FAIL to trigger GOTO 1.2
       actor.send({ type: 'FAIL' });
@@ -4021,7 +3991,7 @@ echo "processing"
       // forStack should still be preserved with same iteration
       expect(top.iteration).toBe(1);
       expect(top.currentValue).toBeUndefined();
-      expect(top.source).toEqual({ kind: 'array', items: ['x', 'y'] });
+      expect(top.source).toEqual({ kind: 'variable', name: 'items' });
 
       // Send PASS at 1.2 to loop back to 1.1 iteration 2
       actor.send({ type: 'PASS' });
@@ -4076,8 +4046,7 @@ echo "processing"
           },
         },
       ]);
-      const sources = { items: { kind: 'array' as const, items: ['a', 'b', 'c'] } };
-      const machine = compileRunbookToMachine(steps, { sources });
+      const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
 
@@ -4088,7 +4057,7 @@ echo "processing"
 
       // Verify forStack initialized with array source at iteration 1
       // currentValue is undefined — resolved by ForIterationService before execution
-      expect(top.source).toEqual({ kind: 'array', items: ['a', 'b', 'c'] });
+      expect(top.source).toEqual({ kind: 'variable', name: 'items' });
       expect(top.start).toBe(1);
       expect(top.end).toBe(3);
       expect(top.iteration).toBe(1);
@@ -4140,8 +4109,7 @@ echo "processing"
           },
         },
       ]);
-      const sources = { items: { kind: 'array' as const, items: ['a', 'b', 'c'] } };
-      const machine = compileRunbookToMachine(steps, { sources });
+      const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
 
@@ -4152,7 +4120,7 @@ echo "processing"
 
       // Verify forStack initialized with array source at iteration 2
       // currentValue is undefined — resolved by ForIterationService before execution
-      expect(top.source).toEqual({ kind: 'array', items: ['a', 'b', 'c'] });
+      expect(top.source).toEqual({ kind: 'variable', name: 'items' });
       expect(top.start).toBe(1);
       expect(top.end).toBe(3);
       expect(top.iteration).toBe(2);
@@ -4175,10 +4143,7 @@ echo "processing"
 echo "processing"
 \`\`\`
 `);
-      const sources = {
-        items: { kind: 'array' as const, items: ['a', 'b', 'c', 'd', 'e'] },
-      };
-      const machine = compileRunbookToMachine(steps, { sources });
+      const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
 
@@ -4247,23 +4212,14 @@ echo "processing"
         },
       ]);
 
-      const sources = {
-        servers: { kind: 'file' as const, path: '/tmp/servers.txt', format: 'text' as const },
-      };
-
-      const machine = compileRunbookToMachine(steps, { sources });
+      const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
 
       const ctx = actor.getSnapshot().context;
       const top = ctx.forStack[0];
 
-      expect(top.source).toEqual({
-        kind: 'file',
-        path: '/tmp/servers.txt',
-        format: 'text',
-        snapshot: null,
-      });
+      expect(top.source).toEqual({ kind: 'variable', name: 'servers' });
       expect(top.start).toBe(3);
       expect(top.end).toBe(1);
       expect(top.iteration).toBe(3);
@@ -4465,9 +4421,9 @@ echo "processing"
       const ctx = actor.getSnapshot().context;
       expect(ctx.forStack.length).toBe(1);
       const source = ctx.forStack[0].source;
-      expect(source.kind).toBe('file');
-      if (source.kind === 'file') {
-        expect(source.snapshot).toBeNull();
+      expect(source.kind).toBe('variable');
+      if (source.kind === 'variable') {
+        expect(source.name).toBe('data');
       }
 
       actor.stop();

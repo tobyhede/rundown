@@ -120,12 +120,12 @@ describe('ContextSnapshotSchema', () => {
     expect(result.success).toBe(true);
   });
 
-  it('rejects array vars values', () => {
+  it('accepts array vars values (unified variable model)', () => {
     const result = ContextSnapshotSchema.safeParse({
       vars: { env: 'prod', items: ['a', 'b'] },
       ancestors: [],
     });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 
   it('accepts number vars values', () => {

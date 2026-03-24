@@ -9,7 +9,6 @@ import type {
   SubstepState,
   Runbook,
   ResolvedRunbook,
-  DataSource,
   DelegationLinkage,
   TemplateVarValue,
 } from './types.js';
@@ -46,8 +45,6 @@ interface CreateOptions {
   readonly runbookSrc?: string;
   /** Optional record of template variable replacements to populate placeholders at run time. */
   readonly templateVars?: Record<string, TemplateVarValue>;
-  /** Data source bindings for FOR loop iteration (arrays and file references). */
-  readonly sources?: Readonly<Record<string, DataSource>>;
 }
 
 /**
@@ -118,7 +115,6 @@ export class RunbookStateManager {
       prompted: options.prompted,
       runbookSrc: options.runbookSrc,
       templateVars: options.templateVars,
-      sources: options.sources,
     };
 
     await this.save(state);
