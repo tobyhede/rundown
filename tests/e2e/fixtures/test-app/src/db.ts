@@ -1,9 +1,14 @@
 import { DatabaseSync } from 'node:sqlite';
 
+/** Represents an item stored in the SQLite database. */
 export interface Item {
+  /** Unique auto-incremented identifier. */
   id: number;
+  /** Display name of the item. */
   name: string;
+  /** Optional description, may be null. */
   description: string | null;
+  /** ISO 8601 timestamp when the item was created. */
   created_at: string;
 }
 
@@ -31,12 +36,12 @@ export function seedDatabase(db: DatabaseSync) {
 
 export function getAllItems(db: DatabaseSync): Item[] {
   const stmt = db.prepare('SELECT id, name, description, created_at FROM items');
-  return stmt.all() as Item[];
+  return stmt.all() as unknown as Item[];
 }
 
 export function insertItem(db: DatabaseSync, name: string, description: string | null): Item {
   const stmt = db.prepare(
     'INSERT INTO items (name, description) VALUES (?, ?) RETURNING id, name, description, created_at',
   );
-  return stmt.get(name, description) as Item;
+  return stmt.get(name, description) as unknown as Item;
 }

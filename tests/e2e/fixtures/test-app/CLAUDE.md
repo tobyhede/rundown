@@ -11,7 +11,7 @@ A simple REST API built with Hono + SQLite (node:sqlite).
 
 ## Structure
 
-```
+```text
 src/
   db.ts       — Database setup (schema, seed data, query functions)
   app.ts      — Hono routes (GET /, GET /items, POST /items)
