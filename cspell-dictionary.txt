@@ -1,5 +1,6 @@
 
 # Abbreviations used in code
+AUTOINCREMENT
 # British English spellings (used in codebase)
 # Capitalizations
 # CLI and config terms
@@ -54,6 +55,7 @@ fdisk
 frontmatter
 gitdir
 handlebars
+hono
 Hede
 idempotently
 iife
@@ -127,6 +129,7 @@ sarif
 selfref
 serializable
 shellquote
+sqlite
 specialised
 statelessly
 stderr

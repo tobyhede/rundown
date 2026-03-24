@@ -11,6 +11,7 @@ Thumbs.db
 .serena/
 .work/
 .worktree/
+.worktrees/
 coverage/
 **/coverage/
 *.log
