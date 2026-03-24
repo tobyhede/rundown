@@ -1,4 +1,4 @@
-# CLAUDE.md
+# AGENTS.md
 
 Rundown is a format for defining executable runbooks using Markdown.
 
@@ -97,6 +97,7 @@ Template variables use Handlebars syntax `{{variableName}}` and are expanded at 
 6. Built-in defaults (lowest priority)
 
 **Built-in Variables:**
+
 | Variable | Example Value | Description |
 |----------|---------------|-------------|
 | `Date` | `2026-02-04` | Current date (YYYY-MM-DD) |
@@ -165,7 +166,7 @@ Data sources are referenced in FOR clauses: `FOR item IN {{ items }}`.
 **Notes:**
 - Arrays can be passed inline via `--var-json` or in `.rundown/config.yaml` and `--var-file` (not in frontmatter `vars:`). `file:` values are supported in `.rundown/config.yaml` and `--var-file` only
 - File paths must stay within the project root (symlinks resolved, traversal blocked)
-- `file:` values are routed into `vars` as typed values (`JsonArrayStream` for `.jsonl`, `JsonArray`/`JsonObject` for `.json`)
+- `file:` values are routed as `JsonArrayStream` (for `.jsonl`) or `JsonArray`/`JsonObject` (for `.json`) in the unified variable map
 
 **Note:** The `scenarios` frontmatter field is an internal testing/demo feature, not part of the public Rundown format specification. See [docs/SCENARIOS.md](docs/SCENARIOS.md).
 
@@ -183,7 +184,7 @@ This enables programmatic validation of CLI output against the schema.
 
 ## State Persistence
 
-State persists in `.claude/rundown/runs/` (execution state) and `.claude/rundown/session.json` (active runbook tracking). Runbook source files are discovered from multiple locations (see [Runbook Discovery](#runbook-discovery)). State files persist across context clears.
+State persists in `.Codex/rundown/runs/` (execution state) and `.Codex/rundown/session.json` (active runbook tracking). Runbook source files are discovered from multiple locations (see [Runbook Discovery](#runbook-discovery)). State files persist across context clears.
 
 **Principle:** Never migrate persisted runbook state between versions. On schema changes, running runbooks should be completed/closed and restarted. The CLI should detect stale state and prompt the user rather than attempting silent migration.
 
@@ -193,7 +194,7 @@ Runbooks are discovered from multiple sources with the following priority (highe
 
 | Source | Location | Description |
 |--------|----------|-------------|
-| Project | `.claude/rundown/runbooks/` | Project-local runbooks |
+| Project | `.Codex/rundown/runbooks/` | Project-local runbooks |
 | Plugin | `$CLAUDE_PLUGIN_ROOT/runbooks/` | Plugin-provided runbooks |
 | Bundled | CLI package `dist/runbooks/` | Bundled pattern runbooks |
 
@@ -216,7 +217,7 @@ rd run rundown:write-plan      # Explicit: from plugin
 rd run rundown:nonexistent     # Error: not found in rundown namespace
 ```
 
-The `rundown` namespace maps to the plugin source (`@rundown-org/claude-code-plugin`).
+The `rundown` namespace maps to the plugin source (`@rundown-org/Codex-plugin`).
 
 ### Listing Runbooks
 
@@ -296,7 +297,7 @@ npm run test:perf     # Performance benchmarks
 
 ## Testing Conventions
 
-- **Use `Error.isError()` instead of `instanceof Error`** in tests and production code. `instanceof` fails across ESM realm boundaries (e.g. Jest module sandboxing). Node 24+ provides `Error.isError()` (TC39). Centralized guards `isError()`, `isNodeError()`, `getErrorMessage()` are in `packages/core/src/errors.ts` (and `packages/claude-code-plugin/src/shared/errors.ts`). Keep `instanceof` only for same-realm custom error classes (e.g. `RunbookSyntaxError`, `RundownError`).
+- **Use `Error.isError()` instead of `instanceof Error`** in tests and production code. `instanceof` fails across ESM realm boundaries (e.g. Jest module sandboxing). Node 24+ provides `Error.isError()` (TC39). Centralized guards `isError()`, `isNodeError()`, `getErrorMessage()` are in `packages/core/src/errors.ts` (and `packages/Codex-plugin/src/shared/errors.ts`). Keep `instanceof` only for same-realm custom error classes (e.g. `RunbookSyntaxError`, `RundownError`).
 
 ## TSDoc Standards
 

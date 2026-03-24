@@ -127,6 +127,29 @@ jest.unstable_mockModule('@rundown-org/core', () => {
       getLogFilePath: jest.fn().mockReturnValue('/tmp/rundown-test.log'),
       getLogDir: jest.fn().mockReturnValue('/tmp'),
     },
+    isJsonArray: jest.fn((v: unknown) => Array.isArray(v)),
+    isJsonArrayStream: jest.fn(
+      (v: unknown) =>
+        typeof v === 'object' &&
+        v !== null &&
+        (v as Record<string, unknown>).kind === 'json-array-stream',
+    ),
+    assertResolvedVariableForContext: jest.fn(
+      (fc: {
+        currentValue?: unknown;
+        source?: { kind: string; name?: string };
+        stepId?: string;
+        iteration?: number;
+      }) => {
+        if (fc.currentValue === undefined) {
+          const name = fc.source?.kind === 'variable' ? String(fc.source.name) : '(unknown)';
+          throw new Error(
+            `ForContext for step "${String(fc.stepId)}" (variable source "${name}") ` +
+              `has not been resolved — currentValue is undefined at iteration ${String(fc.iteration)}`,
+          );
+        }
+      },
+    ),
     ...mockErrorHelpers,
   };
 });

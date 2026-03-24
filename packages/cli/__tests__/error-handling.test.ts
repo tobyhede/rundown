@@ -64,8 +64,8 @@ This doesn't have proper ## headers
       // Try to use the runbook
       const result = runCli('pass', workspace);
 
-      // Should handle gracefully (may show error or "no active runbook")
-      expect(result.exitCode).toBe(0); // May fallback to "no active runbook"
+      // Corrupted state files now fail fast with an error
+      expect(result.exitCode).toBe(1);
     });
   });
 

@@ -364,8 +364,8 @@ describe('RunbookActorService', () => {
     });
   });
 
-  describe('sources persistence via actor', () => {
-    it('persists forStack with array source through actor update and reload', async () => {
+  describe('forStack persistence via actor', () => {
+    it('persists forStack with variable source through actor update and reload', async () => {
       const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
 
       const actor = mockActor({
@@ -380,7 +380,7 @@ describe('RunbookActorService', () => {
               start: 1,
               end: 3,
               variable: 'item',
-              source: { kind: 'array' as const, items: ['x', 'y', 'z'] },
+              source: { kind: 'variable' as const, name: 'item' },
               currentValue: 'y',
             },
           ],
@@ -391,11 +391,11 @@ describe('RunbookActorService', () => {
 
       const { state: updated } = await actorService.updateFromActor(state.id, actor, mockSteps);
 
-      // Verify forStack with array source is set
+      // Verify forStack with variable source is set
       expect(updated.forStack).toHaveLength(1);
       expect(updated.forStack?.[0].source).toEqual({
-        kind: 'array',
-        items: ['x', 'y', 'z'],
+        kind: 'variable',
+        name: 'item',
       });
       expect(updated.forStack?.[0].currentValue).toBe('y');
 
@@ -403,13 +403,13 @@ describe('RunbookActorService', () => {
       const loaded = await manager.load(state.id);
       expect(loaded?.forStack).toHaveLength(1);
       expect(loaded?.forStack?.[0].source).toEqual({
-        kind: 'array',
-        items: ['x', 'y', 'z'],
+        kind: 'variable',
+        name: 'item',
       });
       expect(loaded?.forStack?.[0].currentValue).toBe('y');
     });
 
-    it('persists forStack with file source through actor update and reload', async () => {
+    it('persists forStack with variable source and snapshot through actor update and reload', async () => {
       const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
 
       const actor = mockActor({
@@ -424,13 +424,13 @@ describe('RunbookActorService', () => {
               start: 1,
               end: 2,
               variable: 'line',
-              source: {
-                kind: 'file' as const,
-                path: '/tmp/data.txt',
-                format: 'text' as const,
-                snapshot: null,
-              },
+              source: { kind: 'variable' as const, name: 'lines' },
               currentValue: 'line1',
+              snapshot: {
+                line: 1,
+                size: 100,
+                mtimeMs: 1700000000,
+              },
             },
           ],
           iterationResults: ['pass'],
@@ -440,47 +440,51 @@ describe('RunbookActorService', () => {
 
       const { state: updated } = await actorService.updateFromActor(state.id, actor, mockSteps);
 
-      // Verify forStack with file source is set
+      // Verify forStack with variable source is set
       expect(updated.forStack).toHaveLength(1);
-      expect(updated.forStack?.[0].source.kind).toBe('file');
       expect(updated.forStack?.[0].source).toEqual({
-        kind: 'file',
-        path: '/tmp/data.txt',
-        format: 'text',
-        snapshot: null,
+        kind: 'variable',
+        name: 'lines',
+      });
+      expect(updated.forStack?.[0].currentValue).toBe('line1');
+      expect(updated.forStack?.[0].snapshot).toEqual({
+        line: 1,
+        size: 100,
+        mtimeMs: 1700000000,
       });
 
       // Load from disk and verify persistence
       const loaded = await manager.load(state.id);
       expect(loaded?.forStack).toHaveLength(1);
-      expect(loaded?.forStack?.[0].source.kind).toBe('file');
       expect(loaded?.forStack?.[0].source).toEqual({
-        kind: 'file',
-        path: '/tmp/data.txt',
-        format: 'text',
-        snapshot: null,
+        kind: 'variable',
+        name: 'lines',
+      });
+      expect(loaded?.forStack?.[0].currentValue).toBe('line1');
+      expect(loaded?.forStack?.[0].snapshot).toEqual({
+        line: 1,
+        size: 100,
+        mtimeMs: 1700000000,
       });
     });
 
-    it('sources survive across multiple updates', async () => {
-      const sources = {
-        items: {
-          kind: 'array' as const,
-          items: ['a', 'b', 'c'],
-        },
+    it('templateVars with arrays survive across multiple updates (unified model)', async () => {
+      const templateVars = {
+        items: ['a', 'b', 'c'],
+        env: 'staging',
       };
 
-      // Create with sources
+      // Create with templateVars containing arrays
       const state = await manager.create('test.md', mockRunbook, {
         runbookPath: 'test.md',
-        sources,
+        templateVars: templateVars as Record<string, any>,
       });
 
-      expect(state.sources).toEqual(sources);
+      expect(state.templateVars?.items).toEqual(['a', 'b', 'c']);
 
       // Update step
       const updated1 = await manager.update(state.id, { step: '1' });
-      expect(updated1.sources).toEqual(sources);
+      expect(updated1.templateVars?.items).toEqual(['a', 'b', 'c']);
 
       // updateFromActor
       const actor = mockActor({
@@ -493,11 +497,11 @@ describe('RunbookActorService', () => {
       });
 
       const { state: updated2 } = await actorService.updateFromActor(state.id, actor, mockSteps);
-      expect(updated2.sources).toEqual(sources);
+      expect(updated2.templateVars?.items).toEqual(['a', 'b', 'c']);
 
-      // Load from disk and verify sources still present
+      // Load from disk and verify templateVars still present
       const loaded = await manager.load(state.id);
-      expect(loaded?.sources).toEqual(sources);
+      expect(loaded?.templateVars?.items).toEqual(['a', 'b', 'c']);
     });
   });
 });

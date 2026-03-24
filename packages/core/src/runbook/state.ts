@@ -9,11 +9,11 @@ import type {
   SubstepState,
   Runbook,
   ResolvedRunbook,
-  DataSource,
   DelegationLinkage,
   TemplateVarValue,
 } from './types.js';
 import { RunbookStateSchema } from '../schemas.js';
+import { isNodeError } from '../errors.js';
 
 /** Directory path (relative to project root) where runbook execution state files are stored. */
 export const STATE_DIR = '.claude/rundown/runs';
@@ -46,8 +46,6 @@ interface CreateOptions {
   readonly runbookSrc?: string;
   /** Optional record of template variable replacements to populate placeholders at run time. */
   readonly templateVars?: Record<string, TemplateVarValue>;
-  /** Data source bindings for FOR loop iteration (arrays and file references). */
-  readonly sources?: Readonly<Record<string, DataSource>>;
 }
 
 /**
@@ -118,7 +116,6 @@ export class RunbookStateManager {
       prompted: options.prompted,
       runbookSrc: options.runbookSrc,
       templateVars: options.templateVars,
-      sources: options.sources,
     };
 
     await this.save(state);
@@ -129,48 +126,55 @@ export class RunbookStateManager {
    * Load a runbook state from disk by ID.
    *
    * @param id - The runbook state ID (e.g., 'wf-2025-01-12-abc123')
-   * @returns The loaded RunbookState, or null if not found or invalid
+   * @returns The loaded RunbookState, or null if file not found
+   * @throws {Error} If the state file exists but fails schema validation (stale state)
    * @throws {Error} If the runbook state uses deprecated dynamic-step snapshots
    */
   async load(id: string): Promise<RunbookState | null> {
+    let content: string;
     try {
-      const content = await fs.readFile(this.statePath(id), 'utf8');
-      const parsed = JSON.parse(content) as unknown;
-
-      // Reject legacy dynamic-step snapshots: GOTO_NEXT action or instance field
-      if (typeof parsed === 'object' && parsed !== null) {
-        const obj = parsed as Record<string, unknown>;
-        const lastAction = obj.lastAction;
-        if (
-          typeof lastAction === 'object' &&
-          lastAction !== null &&
-          (lastAction as Record<string, unknown>).type === 'GOTO_NEXT'
-        ) {
-          throw new Error(
-            'This runbook used dynamic-step snapshots (GOTO_NEXT), which are no longer supported. ' +
-              'Please restart execution from the runbook entrypoint.',
-          );
-        }
-        if (obj.instance !== undefined) {
-          throw new Error(
-            'This runbook used dynamic-step snapshots (instance field), which are no longer supported. ' +
-              'Please restart execution from the runbook entrypoint.',
-          );
-        }
+      content = await fs.readFile(this.statePath(id), 'utf8');
+    } catch (error: unknown) {
+      if (isNodeError(error) && error.code === 'ENOENT') {
+        return null; // File not found — genuinely missing
       }
-
-      const result = RunbookStateSchema.safeParse(parsed);
-      if (!result.success) return null;
-      // Zod's .regex() refinement narrows at runtime but infers as `string` at the type level.
-      // The schema guarantees GOTO `at` matches TEMPLATE_VAR_PATTERN; cast to the stricter TS type.
-      return result.data as RunbookState;
-    } catch (e) {
-      // Re-throw legacy snapshot errors
-      if (Error.isError(e) && e.message.includes('dynamic-step snapshots')) {
-        throw e;
-      }
-      return null;
+      throw error; // Permission denied, disk errors, etc. — propagate
     }
+
+    const parsed = JSON.parse(content) as unknown;
+
+    // Reject legacy dynamic-step snapshots: GOTO_NEXT action or instance field
+    if (typeof parsed === 'object' && parsed !== null) {
+      const obj = parsed as Record<string, unknown>;
+      const lastAction = obj.lastAction;
+      if (
+        typeof lastAction === 'object' &&
+        lastAction !== null &&
+        (lastAction as Record<string, unknown>).type === 'GOTO_NEXT'
+      ) {
+        throw new Error(
+          'This runbook used dynamic-step snapshots (GOTO_NEXT), which are no longer supported. ' +
+            'Please restart execution from the runbook entrypoint.',
+        );
+      }
+      if (obj.instance !== undefined) {
+        throw new Error(
+          'This runbook used dynamic-step snapshots (instance field), which are no longer supported. ' +
+            'Please restart execution from the runbook entrypoint.',
+        );
+      }
+    }
+
+    const result = RunbookStateSchema.safeParse(parsed);
+    if (!result.success) {
+      throw new Error(
+        `Stale runbook state for "${id}": schema validation failed. ` +
+          'Run `rundown prune` and restart execution.',
+      );
+    }
+    // Zod's .regex() refinement narrows at runtime but infers as `string` at the type level.
+    // The schema guarantees GOTO `at` matches TEMPLATE_VAR_PATTERN; cast to the stricter TS type.
+    return result.data as RunbookState;
   }
 
   /**
@@ -252,8 +256,12 @@ export class RunbookStateManager {
       for (const file of files) {
         if (file.endsWith('.json')) {
           const id = file.replace('.json', '');
-          const state = await this.load(id);
-          if (state) states.push(state);
+          try {
+            const state = await this.load(id);
+            if (state) states.push(state);
+          } catch {
+            // Stale/corrupt state — skip, handled by `rundown prune`
+          }
         }
       }
       return states;

@@ -1,7 +1,7 @@
 // packages/cli/src/commands/stop.ts
 
 import type { Command } from 'commander';
-import { RunbookStateManager, SessionService, type RunbookState } from '@rundown-org/core';
+import { RunbookStateManager, SessionService, isError, type RunbookState } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { buildMetadata } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
@@ -35,8 +35,14 @@ export function registerStopCommand(program: Command): void {
           }
 
           if (!state) {
-            // Unexpected errors (e.g., legacy snapshot) must propagate
-            if (getActiveError) {
+            // Unexpected errors must propagate — but stale/corrupted state errors
+            // fall through to the orphan cleanup path since stop is a cleanup command.
+            if (
+              getActiveError &&
+              !getActiveError.message.includes('Stale runbook state') &&
+              !getActiveError.message.includes('dynamic-step snapshots') &&
+              !(isError(getActiveError) && getActiveError.name === 'SyntaxError')
+            ) {
               throw getActiveError;
             }
             // P2: Check for orphaned stack entry

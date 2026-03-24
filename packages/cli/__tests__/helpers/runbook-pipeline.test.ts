@@ -53,6 +53,13 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     TOKEN_CANCELLED: { code: 'RD-809' },
     DELEGATION_LOCK_TIMEOUT: { code: 'RD-810' },
   },
+  isJsonArray: jest.fn((v: unknown) => Array.isArray(v)),
+  isJsonArrayStream: jest.fn(
+    (v: unknown) =>
+      typeof v === 'object' &&
+      v !== null &&
+      (v as Record<string, unknown>).kind === 'json-array-stream',
+  ),
   ...mockErrorHelpers,
 }));
 
@@ -142,8 +149,9 @@ const {
 } = await import('../../src/services/template-renderer');
 const { validateFrontmatterVars } = await import('../../src/helpers/validate-frontmatter-vars');
 const fsPromises = await import('node:fs/promises');
-const { validateSources, prepareRunbook, startRunbook, buildContextVars, buildTemplateVars } =
-  await import('../../src/helpers/runbook-pipeline');
+const { prepareRunbook, startRunbook, buildContextVars, buildTemplateVars } = await import(
+  '../../src/helpers/runbook-pipeline'
+);
 
 function makeState(id: string, overrides: Record<string, unknown> = {}): any {
   return {
@@ -250,37 +258,8 @@ beforeEach(() => {
   });
 });
 
-describe('validateSources', () => {
-  it('passes when no FOR clauses', () => {
-    expect(() => validateSources([makeStep()], {})).not.toThrow();
-  });
-
-  it('passes when sourced FOR clause has defined source', () => {
-    (parser.isSourced as jest.MockedFunction<typeof parser.isSourced>).mockReturnValue(true);
-
-    const step = { kind: 'for', forClause: { source: 'items' } };
-    expect(() => validateSources([step as any], { items: ['a', 'b'] })).not.toThrow();
-  });
-
-  it('throws when sourced FOR clause references undefined source', () => {
-    (parser.isSourced as jest.MockedFunction<typeof parser.isSourced>).mockReturnValue(true);
-
-    const step = { kind: 'for', forClause: { source: 'missing' } };
-    expect(() => validateSources([step as any], {})).toThrow(
-      'FOR loop references undefined data source "{{missing}}"',
-    );
-  });
-
-  it('skips non-sourced FOR clauses', () => {
-    (parser.isSourced as jest.MockedFunction<typeof parser.isSourced>).mockReturnValue(false);
-
-    const step = { kind: 'for', forClause: { variable: 'i', start: 1, end: 5 } };
-    expect(() => validateSources([step as any], {})).not.toThrow();
-  });
-
-  // Unresolved FOR clauses cannot reach validateSources — the type signature
-  // requires ResolvedStep[], enforced by resolveForBounds upstream.
-});
+// validateSources was removed in the unified variable model refactoring.
+// Source validation now happens during variable resolution.
 
 describe('prepareRunbook', () => {
   it('returns error when file not found', async () => {

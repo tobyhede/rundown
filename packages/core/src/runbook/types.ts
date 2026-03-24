@@ -136,27 +136,118 @@ export type JsonValue = JsonPrimitive | JsonValue[] | { readonly [key: string]: 
 export type JsonObject = { readonly [key: string]: JsonValue };
 
 /**
+ * In-memory JSON array for eager iteration in FOR loops.
+ *
+ * Loaded from JSON files, YAML arrays, or `--var-json` CLI flags.
+ * Items retain their original JSON types (not stringified).
+ */
+export type JsonArray = readonly JsonValue[];
+
+/**
+ * File-backed lazy array for streaming iteration in FOR loops.
+ *
+ * Created from `file:path.jsonl` variable values. The file is streamed
+ * line-by-line at iteration time via {@link FileProvider}, never fully
+ * materialised in memory.
+ */
+export interface JsonArrayStream {
+  readonly kind: 'json-array-stream';
+  /** Absolute filesystem path to the JSONL data file. */
+  readonly path: string;
+}
+
+// ── Variable Value Taxonomy ──────────────────────────────
+//
+// TemplateVarValue   = everything in the unified variable map
+//   ├─ RenderableVarValue = string | number | JsonObject | JsonArray
+//   │   (safe for template interpolation)
+//   └─ JsonArrayStream
+//       (file-backed lazy iteration only — NOT renderable)
+//
+// IterableVarValue   = JsonArray | JsonArrayStream
+//   (drives FOR loop iteration via source-resolver)
+//
+// Overlap: JsonArray is both renderable (comma-joined) and iterable.
+
+/**
+ * Values safe for template rendering (no lazy streams).
+ *
+ * This subset of {@link TemplateVarValue} excludes {@link JsonArrayStream},
+ * which cannot be interpolated into templates and throws at render time.
+ */
+export type RenderableVarValue = string | number | JsonObject | JsonArray;
+
+/**
+ * Values that can drive FOR loop iteration.
+ *
+ * The source-resolver accepts these types for variable-sourced FOR loops.
+ * {@link JsonArray} is indexed eagerly; {@link JsonArrayStream} streams lazily from disk.
+ */
+export type IterableVarValue = JsonArray | JsonArrayStream;
+
+/**
  * Values that can appear in the template variable map.
  *
  * - `string`: the dominant case (CLI vars, env, builtins, stringified booleans/nulls)
  * - `number`: preserved from `--var-json` and YAML config (not stringified)
  * - `JsonObject`: structured values for dotted template access (`{{config.host}}`)
+ * - `JsonArray`: in-memory array for eager FOR loop iteration
+ * - `JsonArrayStream`: file-backed lazy array for streaming FOR loop iteration
  *
- * Top-level arrays are routed to DataSources, not stored in vars.
  * Top-level booleans and nulls are stringified at routing time.
+ *
+ * @see RenderableVarValue for the subset safe for template interpolation
+ * @see IterableVarValue for the subset that drives FOR loop iteration
  */
-export type TemplateVarValue = string | number | JsonObject;
+export type TemplateVarValue = string | number | JsonObject | JsonArray | JsonArrayStream;
 
 /**
  * Type guard for JSON object values within the template variable map.
  *
+ * Excludes arrays and JsonArrayStream — only plain objects match.
+ *
  * @param value - Template variable value to check
- * @returns True if the value is a structured JSON object (not a string or number)
+ * @returns True if the value is a structured JSON object (not a string, number, array, or stream)
  */
 export function isJsonObject(value: TemplateVarValue): value is JsonObject {
   // Defensive: null check guards against untyped callers even though TemplateVarValue excludes null
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-  return value !== null && typeof value === 'object';
+  return (
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+    value !== null &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    !isJsonArrayStream(value)
+  );
+}
+
+/**
+ * Type guard for in-memory JSON array values within the template variable map.
+ *
+ * @param value - Template variable value to check
+ * @returns True if the value is a JsonArray (JavaScript array of JsonValue)
+ */
+export function isJsonArray(value: TemplateVarValue): value is JsonArray {
+  return Array.isArray(value);
+}
+
+/**
+ * Type guard for file-backed lazy array stream values within the template variable map.
+ *
+ * @param value - Template variable value to check
+ * @returns True if the value is a JsonArrayStream with kind 'json-array-stream' and a valid string path
+ */
+export function isJsonArrayStream(value: TemplateVarValue): value is JsonArrayStream {
+  // Defensive: null check guards against untyped callers even though TemplateVarValue excludes null.
+  // Path validation prevents crafted --var-json values from bypassing file path checks.
+  return (
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+    value !== null &&
+    typeof value === 'object' &&
+    'kind' in value &&
+    value.kind === 'json-array-stream' &&
+    'path' in value &&
+    typeof value.path === 'string'
+  );
 }
 
 /**
@@ -187,6 +278,26 @@ export function isJsonValue(value: unknown): value is JsonValue {
     default:
       return false;
   }
+}
+
+/**
+ * Type guard for renderable variable values (excludes {@link JsonArrayStream}).
+ *
+ * @param value - Template variable value to check
+ * @returns True if the value can be safely interpolated into templates
+ */
+export function isRenderableVarValue(value: TemplateVarValue): value is RenderableVarValue {
+  return !isJsonArrayStream(value);
+}
+
+/**
+ * Type guard for iterable variable values ({@link JsonArray} or {@link JsonArrayStream}).
+ *
+ * @param value - Template variable value to check
+ * @returns True if the value can drive FOR loop iteration
+ */
+export function isIterableVarValue(value: TemplateVarValue): value is IterableVarValue {
+  return isJsonArray(value) || isJsonArrayStream(value);
 }
 
 /**
@@ -277,8 +388,6 @@ export interface StepDelegation {
 /** Snapshot of execution context at delegation time. */
 export interface ContextSnapshot {
   readonly vars: Readonly<Record<string, TemplateVarValue>>;
-  /** Data source bindings for FOR loop iteration in delegated runbooks. */
-  readonly sources?: Readonly<Record<string, DataSource>>;
   readonly ancestors: readonly AncestorSnapshot[];
   /** Current step identifier at delegation time (e.g., "1"). */
   readonly step?: string;
@@ -328,49 +437,6 @@ export interface StepState {
 }
 
 /**
- * File format for file-backed data sources.
- *
- * - `'text'` — one value per line (empty lines skipped)
- * - `'jsonl'` — one JSON value per line (JSON Lines format)
- */
-export type FileFormat = 'text' | 'jsonl';
-
-/**
- * Data source binding passed from CLI/discovery into the compiler and runtime.
- *
- * Represents the raw source configuration before the compiler resolves it into
- * a {@link ResolvedSource} for the FOR loop stack. Discriminated on `kind`.
- *
- * - `'array'` — values are held in memory as a string array.
- * - `'file'`  — values are streamed lazily from a file on disk.
- */
-export type DataSource =
-  | {
-      /** Discriminant for the in-memory array variant. */
-      readonly kind: 'array';
-      /**
-       * Array of string values supplied to the FOR loop.
-       *
-       * Uses 1-based indexing at runtime: iteration N reads `items[N - 1]`.
-       * The array is immutable for the lifetime of the runbook execution.
-       */
-      readonly items: readonly string[];
-    }
-  | {
-      /** Discriminant for the file-backed streaming variant. */
-      readonly kind: 'file';
-      /** Absolute filesystem path to the data file. */
-      readonly path: string;
-      /**
-       * Format used to parse file content into iteration values.
-       *
-       * `'text'` reads one value per non-empty line; `'jsonl'` reads one
-       * JSON value per line (JSON Lines).
-       */
-      readonly format: FileFormat;
-    };
-
-/**
  * Point-in-time snapshot of a file's position and metadata.
  *
  * Captured after each successful file-backed iteration so the runtime can
@@ -412,55 +478,24 @@ export interface FileSnapshot {
 }
 
 /**
- * Resolved source for FOR loop iteration, stored on the {@link ForContext} stack.
+ * FOR loop source descriptor for the unified variable model.
  *
- * Each variant determines how values are resolved at runtime:
- * - `'range'` — value = `String(iteration)`, computed statelessly.
- * - `'array'` — value = `items[iteration - 1]`, direct 1-based index lookup.
- * - `'file'`  — value streamed from disk via FileProvider, never fully materialised.
+ * The compiler records only whether the loop is a numeric range or a named
+ * variable reference. The execution layer resolves the variable from the
+ * vars map and determines iteration strategy based on the variable type.
  *
  * Discriminated on `kind`.
  */
-export type ResolvedSource =
+export type ForSource =
   | {
-      /**
-       * Discriminant for the numeric range variant.
-       *
-       * Range sources are stateless — the value is always `String(iteration)`
-       * and requires no persistence or I/O.
-       */
+      /** Discriminant for the numeric range variant (stateless iteration). */
       readonly kind: 'range';
     }
   | {
-      /** Discriminant for the in-memory array variant. */
-      readonly kind: 'array';
-      /**
-       * Array of string values for the FOR loop.
-       *
-       * Uses 1-based indexing: iteration N reads `items[N - 1]`.
-       * When `iteration - 1` exceeds the array length the source is exhausted.
-       */
-      readonly items: readonly string[];
-    }
-  | {
-      /** Discriminant for the file-backed streaming variant. */
-      readonly kind: 'file';
-      /** Absolute filesystem path to the data file. */
-      readonly path: string;
-      /**
-       * Format used to parse file content into iteration values.
-       *
-       * `'text'` reads one value per non-empty line; `'jsonl'` reads one
-       * JSON value per line.
-       */
-      readonly format: FileFormat;
-      /**
-       * Resumption snapshot captured after each successful file read.
-       *
-       * `null` before the first iteration persists a value. After that,
-       * contains file position and metadata for resume and drift detection.
-       */
-      readonly snapshot: FileSnapshot | null;
+      /** Discriminant for the variable reference variant. */
+      readonly kind: 'variable';
+      /** Variable name to look up in the vars map at execution time. */
+      readonly name: string;
     };
 
 /**
@@ -479,10 +514,75 @@ export interface ForContext {
   readonly variable?: string;
   /** True for synthetic 1..1 loops on non-FOR steps. Filtered from persistence. */
   readonly implicit: boolean;
-  /** Resolved data source — always present. Determines value resolution strategy. */
-  readonly source: ResolvedSource;
-  /** Value at current position (set after first iteration for array/file sources). Supports JSON values for JSONL iteration. */
+  /** Source descriptor — determines how values are resolved at execution time. */
+  readonly source: ForSource;
+  /** Value at current position (set after first iteration for variable sources). Supports JSON values for JSONL iteration. */
   readonly currentValue?: JsonValue;
+  /** File snapshot for resumability with JsonArrayStream sources. */
+  readonly snapshot?: FileSnapshot;
+}
+
+/**
+ * A variable-sourced ForContext whose iteration value has been resolved.
+ *
+ * Produced by {@link resolveForValue} when a variable-sourced loop
+ * resolves successfully. Guarantees both `source.kind === 'variable'`
+ * and `currentValue` is present (non-undefined).
+ *
+ * Range-sourced loops do NOT use this type — their value derives from
+ * `String(iteration)` at consumption time and never populates `currentValue`.
+ */
+export type ResolvedVariableForContext = ForContext & {
+  readonly source: { readonly kind: 'variable'; readonly name: string };
+  readonly currentValue: JsonValue;
+};
+
+/**
+ * A resolved ForContext from a file-backed stream source (JSONL).
+ *
+ * Extends {@link ResolvedVariableForContext} with a guaranteed `snapshot`
+ * for resumability. Only produced by the JSONL resolution path in
+ * source-resolver.
+ */
+export type StreamResolvedForContext = ResolvedVariableForContext & {
+  readonly snapshot: FileSnapshot;
+};
+
+/**
+ * Check if a variable-sourced ForContext has been resolved.
+ *
+ * Returns true only when `source.kind === 'variable'` AND `currentValue`
+ * is defined. Range-sourced contexts always return false — they don't
+ * use `currentValue` (value derives from `String(iteration)`).
+ *
+ * @param fc - The ForContext to check
+ * @returns True if the context is a resolved variable-sourced loop
+ */
+export function isResolvedVariableForContext(fc: ForContext): fc is ResolvedVariableForContext {
+  return fc.source.kind === 'variable' && fc.currentValue !== undefined;
+}
+
+/**
+ * Assert that a variable-sourced ForContext has been resolved.
+ *
+ * Only meaningful for variable-sourced contexts — range-sourced loops
+ * derive their value from `String(iteration)` and never populate
+ * `currentValue`. Call this in the `case 'variable':` branch after
+ * narrowing on `source.kind`.
+ *
+ * @param fc - A ForContext known to have `source.kind === 'variable'`
+ * @throws {Error} If currentValue is undefined (protocol violation)
+ */
+export function assertResolvedVariableForContext(
+  fc: ForContext,
+): asserts fc is ResolvedVariableForContext {
+  if (fc.currentValue === undefined) {
+    const name = fc.source.kind === 'variable' ? fc.source.name : '(unknown)';
+    throw new Error(
+      `ForContext for step "${fc.stepId}" (variable source "${name}") ` +
+        `has not been resolved — currentValue is undefined at iteration ${String(fc.iteration)}`,
+    );
+  }
 }
 
 /**
@@ -539,7 +639,4 @@ export interface RunbookState {
 
   /** Template variables used for AST-level substitution, frozen at run time */
   readonly templateVars?: Readonly<Record<string, TemplateVarValue>>;
-
-  /** Data source bindings for FOR loop iteration (arrays and file references) */
-  readonly sources?: Readonly<Record<string, DataSource>>;
 }

@@ -5,10 +5,10 @@ import type {
   Transitions,
   LastAction,
   ForContext,
-  DataSource,
   ResolvedStep,
   ResolvedStepHavingSubsteps,
 } from './types.js';
+import { isResolvedVariableForContext } from './types.js';
 import type { StepId } from './step-id.js';
 import type { ForClause } from '@rundown-org/parser';
 import {
@@ -329,10 +329,10 @@ function nextIteration(fc: ForContext): number {
  */
 function hasMoreIterations(fc: ForContext): boolean {
   if (fc.end === undefined) {
-    // Safety net for file sources: if the resolver hasn't populated
+    // Safety net for variable sources: if the resolver hasn't populated
     // currentValue, don't iterate. In normal operation, exhaustion
     // is handled by the ForIterationService capping `end`.
-    if (fc.source.kind === 'file' && fc.currentValue === undefined) return false;
+    if (fc.source.kind === 'variable' && !isResolvedVariableForContext(fc)) return false;
     return fc.iteration - fc.start < MAX_FILE_ITERATIONS;
   }
   return isDescending(fc) ? fc.iteration > fc.end : fc.iteration < fc.end;
@@ -390,50 +390,23 @@ function resolveAtValueRuntime(
  * @param forClause - The FOR clause definition
  * @param atValue - Optional AT value for starting iteration
  * @param implicit - Optional flag indicating implicit FOR context
- * @param sources - Data source bindings for sourced FOR loops
  * @returns A new ForContext
- * @throws {Error} When a sourced FOR clause references an undefined data source
  */
 function createForContext(
   stepName: string,
   forClause: ForClause,
   atValue?: number | string,
   implicit = false,
-  sources?: Readonly<Record<string, DataSource>>,
 ): ForContext {
   let source: ForContext['source'];
   let start: number;
   let end: number | undefined;
 
   if (isSourced(forClause)) {
-    const ds = sources?.[forClause.source];
-    if (!ds) {
-      throw new Error(`Data source "${forClause.source}" is not defined`);
-    }
-
-    const windowEnd = isWindowed(forClause) ? forClause.end : undefined;
-
-    switch (ds.kind) {
-      case 'array': {
-        source = { kind: 'array', items: ds.items };
-        start = Math.max(1, Math.min(forClause.start, ds.items.length));
-        const requestedEnd = windowEnd ?? ds.items.length;
-        end = ds.items.length === 0 ? start : Math.max(1, Math.min(requestedEnd, ds.items.length));
-        break;
-      }
-      case 'file': {
-        // FileSnapshot is computed at runtime in the execution layer
-        source = {
-          kind: 'file',
-          path: ds.path,
-          format: ds.format,
-          snapshot: null,
-        };
-        start = forClause.start;
-        end = windowEnd; // undefined for full source (open) windows
-        break;
-      }
-    }
+    // Record variable name — execution layer resolves value and bounds at runtime
+    source = { kind: 'variable', name: forClause.source };
+    start = forClause.start;
+    end = isWindowed(forClause) ? forClause.end : undefined;
   } else {
     source = { kind: 'range' };
     start = forClause.start;
@@ -466,7 +439,6 @@ function createForContext(
  * @param forClause - The FOR clause of the target step
  * @param atValue - Optional AT value from a GOTO action
  * @param implicit - Whether the FOR loop is implicit (no explicit FOR clause)
- * @param sources - Optional data sources for sourced FOR loops
  * @returns The forStack to assign
  * @throws {Error} When the FOR clause contains unresolved template references
  */
@@ -476,14 +448,13 @@ function initForStack(
   forClause: ForClause,
   atValue: number | string | undefined,
   implicit: boolean,
-  sources?: Readonly<Record<string, DataSource>>,
 ): readonly ForContext[] {
   const top = peekForStack(currentForStack);
   if (top?.stepId === targetStepName) {
     return currentForStack;
   }
   const iteration = resolveAtValueRuntime(atValue, forClause.start, currentForStack);
-  return [createForContext(targetStepName, forClause, iteration, implicit, sources)];
+  return [createForContext(targetStepName, forClause, iteration, implicit)];
 }
 
 /**
@@ -542,7 +513,7 @@ type GotoAssignValue<T> = T | ((args: { event: RunbookEvent }) => T);
  * Handles retry count increment for GOTO-to-self and clears next instance flags.
  * Skips lastAction update when GOTO is internal (raised by RETRY) to preserve the originating action.
  *
- * @param options - Configuration for the GOTO assign action
+ * @param options - Configuration object for the GOTO assign action
  * @param options.lastAction - The lastAction value or factory function
  * @param options.resolvedSubstepId - Substep ID value or factory function
  * @param options.isGotoToSelf - Whether this GOTO targets the current state
@@ -612,7 +583,6 @@ function isNumberedStep(step: ResolvedStep): boolean {
  * @param stepName - The step name for target resolution
  * @param substepId - Optional substep ID within the step
  * @param steps - All parsed runbook steps for target lookup
- * @param sources - Optional data sources for GOTO to FOR step initialization
  * @returns XState transition configuration
  */
 function buildTransition(
@@ -621,7 +591,6 @@ function buildTransition(
   stepName: string,
   substepId: string | undefined,
   steps: ResolvedStep[],
-  sources?: Readonly<Record<string, DataSource>>,
 ): TransitionConfig {
   const { retry, action, kind } = transition;
   // Normalize kind to pass/fail for iteration result recording
@@ -634,7 +603,7 @@ function buildTransition(
   }
 
   // No retry: execute action directly
-  return buildActionTransition(action, stepName, substepId, steps, resultKind, sources);
+  return buildActionTransition(action, stepName, substepId, steps, resultKind);
 }
 
 /**
@@ -695,7 +664,6 @@ function findNextStateId(
  * @param parentAction - The parent step's transition action
  * @param exitTarget - The resolved XState target state ID
  * @param steps - The full steps array (for GOTO target lookup)
- * @param sources - Optional data sources for GOTO to FOR step initialization
  * @returns XState assign action
  * @throws {Error} When a GOTO target's FOR clause contains unresolved template references
  */
@@ -703,7 +671,6 @@ function buildParentExitAssign(
   parentAction: Action,
   exitTarget: string,
   steps: ResolvedStep[],
-  sources?: Readonly<Record<string, DataSource>>,
 ): ReturnType<typeof runbookSetup.assign> {
   const baseAssign = {
     retryCount: 0,
@@ -730,7 +697,7 @@ function buildParentExitAssign(
               forClause.start,
               context.forStack,
             );
-            return [createForContext(targetStep.name, forClause, iteration, false, sources)];
+            return [createForContext(targetStep.name, forClause, iteration, false)];
           },
           iterationResults: EMPTY_RESULTS,
           substepCompletedCount: 0,
@@ -800,13 +767,11 @@ function buildParentExitAssign(
  *
  * @param config - The parent state config (discriminated by isParentState=true)
  * @param steps - The full steps array
- * @param sources - Optional data sources for GOTO to FOR step initialization
  * @returns XState state config with `always` transitions
  */
 function buildParentStateConfig(
   config: ParentStateConfig,
   steps: ResolvedStep[],
-  sources?: Readonly<Record<string, DataSource>>,
 ): { always: AlwaysTransition[]; entry?: CompilerAction | CompilerAction[] } {
   const parentStep = config.parentStep;
   const stepName = config.stepName;
@@ -846,7 +811,7 @@ function buildParentStateConfig(
         (transition.retry <= 0 || context.parentRetryCount >= transition.retry),
       target,
       actions: [
-        buildParentExitAssign(transition.action, target, steps, sources),
+        buildParentExitAssign(transition.action, target, steps),
         runbookSetup.assign({
           retryMax: transition.retry > 0 ? transition.retry : undefined,
         }),
@@ -1042,7 +1007,7 @@ function buildParentStateConfig(
           },
           target,
           actions: [
-            buildParentExitAssign(transition.action, target, steps, sources),
+            buildParentExitAssign(transition.action, target, steps),
             runbookSetup.assign({
               retryMax: transition.retry > 0 ? transition.retry : undefined,
             }),
@@ -1358,7 +1323,6 @@ function buildParentStateConfig(
  * @param substepId - Substep ID for the exhausted action builder
  * @param steps - All parsed steps
  * @param resultKind - 'pass' or 'fail' for iteration result recording
- * @param sources - Optional data sources
  * @returns XState state config with `always` transitions
  */
 function buildRetryStateConfig(
@@ -1368,7 +1332,6 @@ function buildRetryStateConfig(
   substepId: string | undefined,
   steps: ResolvedStep[],
   resultKind: 'pass' | 'fail',
-  sources?: Readonly<Record<string, DataSource>>,
 ): { always: AlwaysTransition[] } {
   const exhaustedTransition = buildActionTransition(
     transition.action,
@@ -1376,7 +1339,6 @@ function buildRetryStateConfig(
     substepId,
     steps,
     resultKind,
-    sources,
   );
   const rawEntries = Array.isArray(exhaustedTransition)
     ? exhaustedTransition
@@ -1640,7 +1602,6 @@ function buildContinueTransition(
  * @param stepName - The current step name (for self-goto detection)
  * @param substepId - The current substep ID (for self-goto detection)
  * @param steps - The full array of runbook steps
- * @param sources - Data sources available for FOR loop initialization
  * @returns XState transition configuration
  * @throws {Error} If the GOTO target step does not exist
  */
@@ -1649,7 +1610,6 @@ function buildGotoTransition(
   stepName: string,
   substepId: string | undefined,
   steps: ResolvedStep[],
-  sources?: Readonly<Record<string, DataSource>>,
 ): TransitionConfig {
   const targetStep = target.step;
 
@@ -1671,14 +1631,7 @@ function buildGotoTransition(
       target: targetStateId,
       actions: runbookSetup.assign({
         forStack: ({ context }: { context: RunbookContext }): readonly ForContext[] =>
-          initForStack(
-            context.forStack,
-            targetStepObj.name,
-            forClause,
-            target.at,
-            isImplicit,
-            sources,
-          ),
+          initForStack(context.forStack, targetStepObj.name, forClause, target.at, isImplicit),
         iterationResults: ({
           context,
         }: {
@@ -1750,7 +1703,6 @@ function buildGotoTransition(
  * @param substepId - Optional current substep ID
  * @param steps - All parsed runbook steps
  * @param kind - Whether this transition is for 'pass' or 'fail'
- * @param sources - Optional data sources for GOTO to FOR step initialization
  * @returns XState transition configuration
  */
 function buildActionTransition(
@@ -1759,7 +1711,6 @@ function buildActionTransition(
   substepId: string | undefined,
   steps: ResolvedStep[],
   kind: 'pass' | 'fail',
-  sources?: Readonly<Record<string, DataSource>>,
 ): TransitionConfig {
   const resultKind: 'pass' | 'fail' = kind === 'fail' ? 'fail' : 'pass';
 
@@ -1773,7 +1724,7 @@ function buildActionTransition(
     case 'STOP':
       return buildTerminalTransition('STOPPED', 'STOP', action.message);
     case 'GOTO':
-      return buildGotoTransition(action.target, stepName, substepId, steps, sources);
+      return buildGotoTransition(action.target, stepName, substepId, steps);
     case 'NEXT':
       return buildLoopControlTransition('NEXT', stepName, steps);
     case 'BREAK':
@@ -1888,18 +1839,13 @@ function checkedStateInsert(
  * - COMPLETE and STOPPED final states
  *
  * @param steps - The parsed runbook steps to compile
- * @param options - Optional compilation options including data sources
- * @param options.sources - Data source bindings for FOR loop iteration (keyed by source name)
  * @returns An XState state machine definition
  * @throws {Error} When a GOTO target references a non-existent step or when graph invariants are violated (e.g., duplicate state IDs)
  */
 // Return type validated via `satisfies RunbookMachine` at the return site.
 // Explicit annotation would erase XState's inferred event types, breaking actor.send() downstream.
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type, @typescript-eslint/explicit-module-boundary-types
-export function compileRunbookToMachine(
-  steps: ResolvedStep[],
-  options?: { sources?: Readonly<Record<string, DataSource>> },
-) {
+export function compileRunbookToMachine(steps: ResolvedStep[]) {
   const states: Record<string, RunbookStateConfig> = {};
 
   // Build a flat list of all states to generate GOTO transitions
@@ -1942,7 +1888,7 @@ export function compileRunbookToMachine(
       checkedStateInsert(
         states,
         config.id,
-        runbookSetup.createStateConfig(buildParentStateConfig(config, steps, options?.sources)),
+        runbookSetup.createStateConfig(buildParentStateConfig(config, steps)),
       );
       return;
     }
@@ -1968,7 +1914,6 @@ export function compileRunbookToMachine(
                 stepInfo.forClause,
                 undefined,
                 stepInfo.implicit,
-                options?.sources,
               ),
             iterationResults: ({
               context,
@@ -2046,7 +1991,6 @@ export function compileRunbookToMachine(
                   forStepForTarget.forClause,
                   event.target.at,
                   forStepForTarget.implicit,
-                  options?.sources,
                 );
               },
               iterationResults: ({
@@ -2110,7 +2054,6 @@ export function compileRunbookToMachine(
             config.stepName,
             config.substepId,
             steps,
-            options?.sources,
           ),
           FAIL: buildTransition(
             config.transitions.fail,
@@ -2118,7 +2061,6 @@ export function compileRunbookToMachine(
             config.stepName,
             config.substepId,
             steps,
-            options?.sources,
           ),
           RETRY: {
             actions: runbookSetup.assign({
@@ -2147,7 +2089,6 @@ export function compileRunbookToMachine(
             config.substepId,
             steps,
             'pass',
-            options?.sources,
           ),
         ),
       );
@@ -2164,7 +2105,6 @@ export function compileRunbookToMachine(
             config.substepId,
             steps,
             'fail',
-            options?.sources,
           ),
         ),
       );

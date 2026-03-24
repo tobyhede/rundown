@@ -23,7 +23,7 @@ describe('FileProvider', () => {
       const file = path.join(tmpDir, 'servers.txt');
       await fs.writeFile(file, 'alpha\nbeta\ngamma\n');
 
-      const provider = await createFileProvider(file, 'text');
+      const provider = await createFileProvider(file);
       const results: string[] = [];
       let item = await provider.next();
       while (!item.done) {
@@ -39,7 +39,7 @@ describe('FileProvider', () => {
       const file = path.join(tmpDir, 'hosts.txt');
       await fs.writeFile(file, 'host1\nhost2');
 
-      const provider = await createFileProvider(file, 'text');
+      const provider = await createFileProvider(file);
       const results: string[] = [];
       let item = await provider.next();
       while (!item.done) {
@@ -55,7 +55,7 @@ describe('FileProvider', () => {
       const file = path.join(tmpDir, 'data.txt');
       await fs.writeFile(file, 'a\n\nb\n\n');
 
-      const provider = await createFileProvider(file, 'text');
+      const provider = await createFileProvider(file);
       const results: string[] = [];
       let item = await provider.next();
       while (!item.done) {
@@ -71,7 +71,7 @@ describe('FileProvider', () => {
       const file = path.join(tmpDir, 'empty.txt');
       await fs.writeFile(file, '');
 
-      const provider = await createFileProvider(file, 'text');
+      const provider = await createFileProvider(file);
       const item = await provider.next();
       expect(item.done).toBe(true);
       provider.close();
@@ -81,7 +81,7 @@ describe('FileProvider', () => {
       const file = path.join(tmpDir, 'crlf.txt');
       await fs.writeFile(file, 'host1\r\nhost2\r\n');
 
-      const provider = await createFileProvider(file, 'text');
+      const provider = await createFileProvider(file);
       const results: string[] = [];
       let item = await provider.next();
       while (!item.done) {
@@ -98,7 +98,7 @@ describe('FileProvider', () => {
       const longLine = 'a'.repeat(100000);
       await fs.writeFile(file, `${longLine}\n`);
 
-      const provider = await createFileProvider(file, 'text');
+      const provider = await createFileProvider(file);
       const results: string[] = [];
       let item = await provider.next();
       while (!item.done) {
@@ -117,7 +117,7 @@ describe('FileProvider', () => {
       const file = path.join(tmpDir, 'data.jsonl');
       await fs.writeFile(file, '{"host":"a"}\n{"host":"b"}\n');
 
-      const provider = await createFileProvider(file, 'jsonl');
+      const provider = await createFileProvider(file);
       const results: string[] = [];
       let item = await provider.next();
       while (!item.done) {
@@ -133,7 +133,7 @@ describe('FileProvider', () => {
       const file = path.join(tmpDir, 'data.jsonl');
       await fs.writeFile(file, '{"a":1}\n\n{"b":2}\n');
 
-      const provider = await createFileProvider(file, 'jsonl');
+      const provider = await createFileProvider(file);
       const results: string[] = [];
       let item = await provider.next();
       while (!item.done) {
@@ -151,7 +151,7 @@ describe('FileProvider', () => {
       const file = path.join(tmpDir, 'data.txt');
       await fs.writeFile(file, 'line1\nline2\nline3\nline4\n');
 
-      const provider = await createFileProvider(file, 'text', { skipLines: 2 });
+      const provider = await createFileProvider(file, { skipLines: 2 });
       const item = await provider.next();
       expect(item.done).toBe(false);
       expect(item.value).toBe('line3');
@@ -162,7 +162,7 @@ describe('FileProvider', () => {
       const file = path.join(tmpDir, 'data.txt');
       await fs.writeFile(file, 'first\nsecond\nthird\n');
 
-      const provider = await createFileProvider(file, 'text', { skipLines: 1 });
+      const provider = await createFileProvider(file, { skipLines: 1 });
       const item = await provider.next();
       expect(item.done).toBe(false);
       expect(item.value).toBe('second');
@@ -175,7 +175,7 @@ describe('FileProvider', () => {
       const file = path.join(tmpDir, 'data.txt');
       await fs.writeFile(file, 'line1\nline2\n');
 
-      const provider = await createFileProvider(file, 'text');
+      const provider = await createFileProvider(file);
       const first = await provider.next();
       expect(first.value).toBe('line1');
 
@@ -188,7 +188,7 @@ describe('FileProvider', () => {
       const file = path.join(tmpDir, 'data.txt');
       await fs.writeFile(file, 'line1\n');
 
-      const provider = await createFileProvider(file, 'text');
+      const provider = await createFileProvider(file);
       provider.close();
       expect(() => {
         provider.close();
@@ -201,7 +201,7 @@ describe('FileProvider', () => {
       const file = path.join(tmpDir, 'data.txt');
       await fs.writeFile(file, 'line1\nline2\nline3\n');
 
-      const provider = await createFileProvider(file, 'text');
+      const provider = await createFileProvider(file);
       const first = await provider.next();
       expect(first.done).toBe(false);
       expect(first.value).toBe('line1');

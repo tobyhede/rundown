@@ -11,7 +11,7 @@
  * @module
  */
 
-import type { ResolvedStep, RunbookState, ForContext } from './types.js';
+import type { ResolvedStep, RunbookState, ForContext, JsonValue } from './types.js';
 import type { ActorSyncResult } from './actor-service.js';
 import type { RunbookEvent } from './compiler.js';
 import { resolveForValue } from './source-resolver.js';
@@ -108,6 +108,7 @@ export class ForIterationService {
    * @param steps - Parsed step definitions for actor creation
    * @returns An IterationResult indicating next action for the caller
    * @throws {Error} When runbook state is not found (null)
+   * @throws {ForResolutionError} When variable source resolution fails (undefined, type mismatch, or JSONL parse failure)
    */
   async prepareIteration(id: string, steps: ResolvedStep[]): Promise<IterationResult> {
     const state = await this.manager.load(id);
@@ -134,12 +135,18 @@ export class ForIterationService {
       return { status: 'no-resolution-needed', state };
     }
 
-    const result = await resolveForValue(top);
+    const result = await resolveForValue(top, state.templateVars);
 
     if (result.kind === 'resolved') {
-      // Build updated forStack with resolved value
+      // Build updated forStack with resolved value.
+      // When the source is a finite array and end is unknown, populate it
+      // from the total so progress reporting can show "iteration X of Y".
+      let resolved: ForContext & { readonly currentValue: JsonValue } = result.context;
+      if (result.total !== undefined && resolved.end === undefined) {
+        resolved = { ...resolved, end: result.total };
+      }
       const updatedStack = [...state.forStack];
-      updatedStack[updatedStack.length - 1] = result.context;
+      updatedStack[updatedStack.length - 1] = resolved;
       const updated = await this.manager.updateForContext(id, updatedStack);
       return { status: 'ready', state: updated };
     }

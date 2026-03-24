@@ -9,26 +9,34 @@
  */
 
 import { type Command, Option } from 'commander';
-import type { DataSource, ResolveSourceInfo, CheckValidationWarning } from '@rundown-org/core';
+import type {
+  ResolveSourceInfo,
+  CheckValidationWarning,
+  TemplateVarValue,
+} from '@rundown-org/core';
+import { isJsonArray, isJsonArrayStream } from '@rundown-org/core';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { parseVarOption, parseVarJsonOption, collect } from '../helpers/option-utils.js';
 import { prepareRunbook } from '../helpers/runbook-pipeline.js';
 
 /**
- * Build source info for JSON/text output from resolved data sources.
+ * Build source info for JSON/text output from resolved template variables.
  *
- * @param sources - Resolved data sources from the variable discovery pipeline
+ * Extracts source information from JsonArray and JsonArrayStream variables
+ * that are used for FOR loop iteration.
+ *
+ * @param vars - Template variables that may contain JsonArray or JsonArrayStream
  * @returns Source info map suitable for output rendering
  */
 function buildSourceInfo(
-  sources: Readonly<Record<string, DataSource>>,
+  vars: Readonly<Record<string, TemplateVarValue>>,
 ): Record<string, ResolveSourceInfo> {
   const result: Record<string, ResolveSourceInfo> = {};
-  for (const [key, source] of Object.entries(sources)) {
-    if (source.kind === 'array') {
-      result[key] = { kind: 'array', items: source.items.length };
-    } else {
-      result[key] = { kind: 'file', path: source.path, format: source.format };
+  for (const [key, value] of Object.entries(vars)) {
+    if (isJsonArray(value)) {
+      result[key] = { kind: 'array', items: value.length };
+    } else if (isJsonArrayStream(value)) {
+      result[key] = { kind: 'file', path: value.path, format: 'jsonl' };
     }
   }
   return result;
@@ -112,7 +120,7 @@ export function registerResolveCommand(program: Command): void {
           }
         }
 
-        const sourceInfo = result.sources ? buildSourceInfo(result.sources) : undefined;
+        const sourceInfo = result.variables ? buildSourceInfo(result.variables) : undefined;
 
         output.detail(
           {
@@ -161,7 +169,7 @@ export function registerResolveCommand(program: Command): void {
         }
       }
 
-      const sourceInfo = buildSourceInfo(prepared.sources);
+      const sourceInfo = buildSourceInfo(prepared.mergedVariables);
       const hasErrors = errors.length > 0;
 
       output.detail(

@@ -1,5 +1,12 @@
 export type * from './types.js';
-export { isJsonObject, isJsonValue } from './types.js';
+export {
+  isJsonObject,
+  isJsonArray,
+  isJsonArrayStream,
+  isJsonValue,
+  isResolvedVariableForContext,
+  assertResolvedVariableForContext,
+} from './types.js';
 export * from './step-id.js';
 export * from './step-utils.js';
 export * from './targeting.js';
@@ -21,7 +28,7 @@ export { renderRunbook, renderStep } from './renderer/renderer.js';
 export { evaluateFailCondition, evaluatePassCondition } from './transition-handler.js';
 export { createFileProvider, computeFileSnapshot, validateFileSnapshot } from './file-provider.js';
 export type { FileProvider } from './file-provider.js';
-export { resolveForValue, type ResolvedIteration } from './source-resolver.js';
+export { resolveForValue, ForResolutionError, type ResolvedIteration } from './source-resolver.js';
 export {
   ForIterationService,
   type IterationResult,

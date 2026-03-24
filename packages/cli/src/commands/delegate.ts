@@ -21,7 +21,7 @@ import {
 } from '../helpers/index-option.js';
 import { collectCliFlags, routeExtraVars } from '../services/variable-discovery.js';
 import { parseVarOption, parseVarJsonOption, collect } from '../helpers/option-utils.js';
-import type { DataSource, TemplateVarValue } from '@rundown-org/core';
+import type { TemplateVarValue } from '@rundown-org/core';
 
 /**
  * Registers the 'delegate' command for creating delegation tokens.
@@ -134,26 +134,12 @@ export function registerDelegateCommand(program: Command): void {
             );
 
             let extraVars: Record<string, TemplateVarValue> | undefined;
-            let extraSources: Record<string, DataSource> | undefined;
             if (Object.keys(rawVars).length > 0) {
               const routed = await routeExtraVars(rawVars, cwd);
               for (const w of routed.warnings) {
                 output.warning(w);
               }
               extraVars = Object.keys(routed.vars).length > 0 ? routed.vars : undefined;
-
-              // Exclude file: sources — file paths are local, unreliable across delegation
-              const arraySources: Record<string, DataSource> = {};
-              for (const [k, src] of Object.entries(routed.sources)) {
-                if (src.kind === 'file') {
-                  output.warning(
-                    `Ignoring file data source "${k}" — file paths cannot be delegated`,
-                  );
-                } else {
-                  arraySources[k] = src;
-                }
-              }
-              extraSources = Object.keys(arraySources).length > 0 ? arraySources : undefined;
             }
 
             // Compute frame key — use explicit iteration from --index or three-level step ID
@@ -196,7 +182,6 @@ export function registerDelegateCommand(program: Command): void {
                 stepId: resolvedStepId,
                 childRunbookPath: childPath,
                 extraVars,
-                extraSources,
                 ancestors: [],
                 frameKey: activeFrameKey,
               },

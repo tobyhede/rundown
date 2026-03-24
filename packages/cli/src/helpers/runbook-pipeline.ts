@@ -20,7 +20,6 @@ import {
   type RunbookState,
   type ExecutionEventEmitter,
   type ResolvedRunbook,
-  type DataSource,
   type DelegationLinkage,
   STATE_DIR,
   DelegationScanService,
@@ -32,6 +31,8 @@ import {
   ErrorCodes,
   getErrorMessage,
   type TemplateVarValue,
+  isJsonArray,
+  isJsonArrayStream,
 } from '@rundown-org/core';
 import {
   parseRunbookDocument,
@@ -99,8 +100,6 @@ export interface PreparedRunbook {
   runbook: ResolvedRunbook;
   /** Merged template variables from all sources */
   mergedVariables: Record<string, TemplateVarValue>;
-  /** Resolved data sources for FOR loop iteration */
-  sources: Record<string, DataSource>;
   /** Step and substep counts */
   stats: { steps: number; substeps: number };
 }
@@ -151,23 +150,30 @@ export type ClaimResult =
     };
 
 /**
- * Validate that all sourced FOR clauses reference defined data sources.
+ * Validate that all sourced FOR clauses reference defined iterable variables.
  *
  * @param steps - Resolved runbook steps (all FOR bounds already resolved)
- * @param sources - Resolved data sources
- * @throws {Error} if any step references an undefined source
+ * @param vars - Template variables (must include JsonArray or JsonArrayStream for sources)
+ * @throws {Error} if any step references an undefined or non-iterable variable
  */
-export function validateSources(
+export function validateForVariables(
   steps: readonly ResolvedStep[],
-  sources: Readonly<Record<string, unknown>>,
+  vars: Readonly<Partial<Record<string, TemplateVarValue>>>,
 ): void {
   for (const step of steps) {
     if (step.kind === 'for' && isSourced(step.forClause)) {
       const name = step.forClause.source;
-      if (!Object.hasOwn(sources, name)) {
+      const value = vars[name];
+      if (value === undefined) {
         throw new Error(
-          `FOR loop references undefined data source "{{${name}}}". ` +
-            `Define "${name}" in .rundown/config.yaml or pass --var-file with an array value.`,
+          `FOR loop references undefined variable "{{${name}}}". ` +
+            `Define "${name}" as an array in .rundown/config.yaml or pass --var-file with an array value.`,
+        );
+      }
+      if (!isJsonArray(value) && !isJsonArrayStream(value)) {
+        throw new Error(
+          `FOR loop variable "{{${name}}}" is not iterable (got ${typeof value}). ` +
+            `Define "${name}" as an array in .rundown/config.yaml or pass --var-file with an array value.`,
         );
       }
     }
@@ -258,7 +264,6 @@ export interface PrepareFailure {
   details?: Record<string, unknown>;
   /** Partial results — available when pipeline progressed past parse */
   variables?: Record<string, TemplateVarValue>;
-  sources?: Record<string, DataSource>;
   stats?: { steps: number; substeps: number };
   diagnostics?: readonly ValidationDiagnostic[];
   warnings?: readonly string[];
@@ -384,7 +389,6 @@ export async function loadAndParseRunbook(file: string, cwd: string): Promise<Lo
  * @param options - Optional settings including inherited variables from parent runbook
  * @param options.inheritedContextVars - Context variables inherited from a parent delegation
  * @param options.inheritedUserVars - User variables inherited from a parent delegation
- * @param options.inheritedSources - Data sources inherited from a parent delegation
  * @returns PrepareResult — success with full data, or failure with partial results
  * @throws {Error} On unexpected errors during variable resolution or parsing
  */
@@ -395,7 +399,6 @@ export async function prepareRunbook(
   options?: {
     inheritedContextVars?: Readonly<Record<string, TemplateVarValue>>;
     inheritedUserVars?: Readonly<Record<string, TemplateVarValue>>;
-    inheritedSources?: Readonly<Record<string, DataSource>>;
   },
 ): Promise<PrepareResult> {
   // Phase 1-2: Parse + Validate
@@ -405,7 +408,6 @@ export async function prepareRunbook(
 
   // Variable resolution
   let mergedVariables: Record<string, TemplateVarValue>;
-  let sources: Record<string, DataSource>;
   const allWarnings: string[] = [];
   try {
     const resolvedVariables = await resolveVariables(
@@ -423,8 +425,6 @@ export async function prepareRunbook(
       },
     );
     mergedVariables = { ...resolvedVariables.vars };
-    // Merge inherited sources (lower precedence) with locally resolved sources
-    sources = { ...(options?.inheritedSources ?? {}), ...resolvedVariables.sources };
     allWarnings.push(...resolvedVariables.warnings);
   } catch (error) {
     if (error instanceof FileSourcePolicyError) {
@@ -448,7 +448,6 @@ export async function prepareRunbook(
       code: 'VARIABLE_RESOLUTION_ERROR',
       details: { runbook: file },
       variables: {},
-      sources: {},
       stats,
       diagnostics,
     };
@@ -464,7 +463,6 @@ export async function prepareRunbook(
       code: 'VALIDATION_ERROR',
       details: { runbook: file },
       variables: templateVars,
-      sources,
       stats,
       diagnostics,
       warnings: allWarnings.length > 0 ? allWarnings : undefined,
@@ -484,7 +482,6 @@ export async function prepareRunbook(
       code: 'VALIDATION_ERROR',
       details: { runbook: file },
       variables: templateVars,
-      sources,
       stats,
       diagnostics,
       warnings: allWarnings.length > 0 ? allWarnings : undefined,
@@ -495,9 +492,9 @@ export async function prepareRunbook(
   const runbook = substituteRunbookVariables(resolvedRunbook, templateVars);
   const unresolvedNames = [...collectUnresolvedRunbookVariables(runbook)];
 
-  // Validate sourced FOR clauses reference defined data sources
+  // Validate sourced FOR clauses reference defined iterable variables
   try {
-    validateSources(runbook.steps, sources);
+    validateForVariables(runbook.steps, templateVars);
   } catch (err) {
     return {
       ok: false,
@@ -505,7 +502,6 @@ export async function prepareRunbook(
       code: 'VALIDATION_ERROR',
       details: { runbook: file },
       variables: templateVars,
-      sources,
       stats,
       diagnostics,
       warnings: allWarnings.length > 0 ? allWarnings : undefined,
@@ -519,7 +515,6 @@ export async function prepareRunbook(
       code: 'VALIDATION_ERROR',
       details: { runbook: file },
       variables: templateVars,
-      sources,
       stats,
       diagnostics,
       warnings: allWarnings.length > 0 ? allWarnings : undefined,
@@ -528,7 +523,7 @@ export async function prepareRunbook(
 
   return {
     ok: true,
-    prepared: { filePath, rawContent, runbook, mergedVariables: templateVars, sources, stats },
+    prepared: { filePath, rawContent, runbook, mergedVariables: templateVars, stats },
     warnings: allWarnings.length > 0 ? allWarnings : undefined,
     diagnostics,
     unresolved: unresolvedNames,
@@ -561,7 +556,7 @@ async function launchRunbook(
   },
 ): Promise<RunbookStartResult> {
   const { output, manager, actorService, sessionService, lifecycleService, cwd } = ctx;
-  const { filePath, rawContent, runbook, mergedVariables, sources } = prepared;
+  const { filePath, rawContent, runbook, mergedVariables } = prepared;
 
   const runbookPath = path.relative(cwd, filePath);
   const state = await manager.create(options.runbookName, runbook, {
@@ -570,7 +565,6 @@ async function launchRunbook(
     delegation: options.delegationLinkage,
     runbookSrc: rawContent,
     templateVars: mergedVariables,
-    sources,
   });
 
   // Initialize actor state (populates forStack for first step)
@@ -848,14 +842,10 @@ export async function claimAndLaunch(
       }
     }
 
-    // Extract inherited sources from delegation snapshot
-    const inheritedSources = freshDelegation.contextSnapshot.sources;
-
     // 4f. Prepare child runbook
     const prepResult = await prepareRunbook(freshDelegation.childRunbookPath, varOpts, cwd, {
       inheritedContextVars,
       inheritedUserVars,
-      inheritedSources,
     });
     if (!prepResult.ok) {
       return {

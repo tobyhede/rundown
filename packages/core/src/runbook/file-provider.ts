@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as fsp from 'node:fs/promises';
 import * as readline from 'node:readline';
 import * as crypto from 'node:crypto';
-import type { FileFormat, FileSnapshot } from './types.js';
+import type { FileSnapshot } from './types.js';
 import { logger } from '../logger.js';
 
 /** Maximum bytes to read for fingerprint computation */
@@ -41,8 +41,6 @@ export interface FileProvider {
  * Create a FileProvider for lazy line-by-line streaming.
  *
  * @param filePath - Absolute path to the data file
- * @param _format - File format metadata from the source descriptor (line-level
- *   processing is format-agnostic since both text and jsonl are line-oriented)
  * @param options - Optional resume configuration
  * @param options.skipLines - Number of non-empty lines to skip for resume
  * @returns A FileProvider that streams non-empty lines
@@ -50,7 +48,6 @@ export interface FileProvider {
  */
 export async function createFileProvider(
   filePath: string,
-  _format: FileFormat,
   options?: { skipLines?: number },
 ): Promise<FileProvider> {
   const stream = fs.createReadStream(filePath, { encoding: 'utf-8' });
@@ -102,7 +99,7 @@ export async function createFileProvider(
             return { value: '', done: true };
           }
           const line = result.value.trim();
-          // Skip empty lines (both text and jsonl formats)
+          // Skip empty lines
           if (line.length === 0) continue;
           return { value: line, done: false };
         }

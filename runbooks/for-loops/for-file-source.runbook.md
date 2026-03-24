@@ -5,7 +5,7 @@ tags:
   - for-loops
 scenarios:
   completed:
-    description: Iterates three lines from text file
+    description: Iterates three values from JSONL file
     commands:
       - rd run --var-file data/sources.yaml for-file-source.runbook.md
     result: COMPLETE

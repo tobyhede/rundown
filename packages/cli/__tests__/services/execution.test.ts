@@ -9,7 +9,7 @@ import {
   isRunbookStopped,
   type Step,
   type ForContext,
-  type DataSource,
+  type TemplateVarValue,
 } from '@rundown-org/core';
 
 describe('execution service', () => {
@@ -177,7 +177,7 @@ describe('execution service', () => {
   });
 
   describe('buildStepVariables with data sources', () => {
-    it('resolves array source value from currentValue', () => {
+    it('resolves variable source value from currentValue', () => {
       const forStack: ForContext[] = [
         {
           stepId: '1',
@@ -186,7 +186,7 @@ describe('execution service', () => {
           end: 3,
           variable: 'server',
           implicit: false,
-          source: { kind: 'array', items: ['alpha', 'beta', 'gamma'] },
+          source: { kind: 'variable', name: 'servers' },
           currentValue: 'beta',
         },
       ];
@@ -214,7 +214,7 @@ describe('execution service', () => {
       expect(vars.Index).toBe('3');
     });
 
-    it('resolves file source value from currentValue', () => {
+    it('resolves variable source value from currentValue (file-backed)', () => {
       const forStack: ForContext[] = [
         {
           stepId: '1',
@@ -222,12 +222,7 @@ describe('execution service', () => {
           start: 1,
           variable: 'host',
           implicit: false,
-          source: {
-            kind: 'file',
-            path: '/tmp/hosts.txt',
-            format: 'text' as const,
-            snapshot: null,
-          },
+          source: { kind: 'variable', name: 'hosts' },
           currentValue: 'web-server-01',
         },
       ];
@@ -237,10 +232,9 @@ describe('execution service', () => {
       expect(vars.Index).toBe('1');
     });
 
-    it('uses empty string for array source when currentValue is undefined (no silent fallback)', () => {
-      // When currentValue is not set, we should get empty string,
-      // not silently fall back to items[iteration-1]. An unset currentValue
-      // for an array source indicates a compiler bug that should surface.
+    it('throws on unresolved variable source (array)', () => {
+      // An unset currentValue for a variable source is a protocol violation —
+      // ForIterationService must resolve before buildStepVariables runs.
       const forStack: ForContext[] = [
         {
           stepId: '1',
@@ -249,17 +243,15 @@ describe('execution service', () => {
           end: 3,
           variable: 'server',
           implicit: false,
-          source: { kind: 'array', items: ['alpha', 'beta', 'gamma'] },
+          source: { kind: 'variable', name: 'servers' },
           // currentValue intentionally omitted
         },
       ];
 
-      const vars = buildStepVariables('1', '1', forStack);
-      // After the fix, should be '' not 'beta'
-      expect(vars.server).toBe('');
+      expect(() => buildStepVariables('1', '1', forStack)).toThrow(/has not been resolved/);
     });
 
-    it('uses empty string for file source when currentValue is undefined', () => {
+    it('throws on unresolved variable source (file-backed)', () => {
       const forStack: ForContext[] = [
         {
           stepId: '1',
@@ -267,24 +259,17 @@ describe('execution service', () => {
           start: 1,
           variable: 'line',
           implicit: false,
-          source: {
-            kind: 'file',
-            path: '/tmp/f.txt',
-            format: 'text' as const,
-            snapshot: null,
-          },
+          source: { kind: 'variable', name: 'lines' },
           // currentValue intentionally omitted
         },
       ];
 
-      const vars = buildStepVariables('1', '1', forStack);
-      expect(vars.line).toBe('');
-      expect(vars.Index).toBe('1');
+      expect(() => buildStepVariables('1', '1', forStack)).toThrow(/has not been resolved/);
     });
 
-    it('falls back to forClause for array source bootstrap (no forStack)', () => {
-      const sources: Readonly<Record<string, DataSource>> = {
-        items: { kind: 'array', items: ['a', 'b', 'c'] },
+    it('falls back to forClause for array variable bootstrap (no forStack)', () => {
+      const templateVars: Readonly<Record<string, TemplateVarValue>> = {
+        items: ['a', 'b', 'c'],
       };
       const forClause = {
         start: 1,
@@ -293,18 +278,14 @@ describe('execution service', () => {
         source: 'items',
       } as unknown as Step['forClause'];
 
-      const vars = buildStepVariables('1', '1', [], forClause, sources);
+      const vars = buildStepVariables('1', '1', [], forClause, templateVars);
       expect(vars.item).toBe('a');
       expect(vars.Index).toBe('1');
     });
 
-    it('falls back to forClause for file source bootstrap (no forStack)', () => {
-      const sources: Readonly<Record<string, DataSource>> = {
-        data: {
-          kind: 'file',
-          path: '/tmp/data.txt',
-          format: 'text' as const,
-        },
+    it('falls back to forClause for stream variable bootstrap (no forStack)', () => {
+      const templateVars: Readonly<Record<string, TemplateVarValue>> = {
+        data: { kind: 'json-array-stream', path: '/tmp/data.txt' },
       };
       const forClause = {
         start: 1,
@@ -312,7 +293,7 @@ describe('execution service', () => {
         source: 'data',
       } as unknown as Step['forClause'];
 
-      const vars = buildStepVariables('1', '1', [], forClause, sources);
+      const vars = buildStepVariables('1', '1', [], forClause, templateVars);
       expect(vars.line).toBe('');
       expect(vars.Index).toBe('1');
     });
@@ -326,7 +307,7 @@ describe('execution service', () => {
           end: 1,
           variable: 'item',
           implicit: true,
-          source: { kind: 'array', items: ['x'] },
+          source: { kind: 'variable', name: 'items' },
           currentValue: 'x',
         },
       ];
@@ -337,7 +318,7 @@ describe('execution service', () => {
       expect(vars).not.toHaveProperty('item');
     });
 
-    it('resolves currentValue from array source at windowed position', () => {
+    it('resolves currentValue from variable source at windowed position', () => {
       const forStack: ForContext[] = [
         {
           stepId: '1',
@@ -346,7 +327,7 @@ describe('execution service', () => {
           end: 4,
           variable: 'item',
           implicit: false,
-          source: { kind: 'array', items: ['a', 'b', 'c', 'd'] },
+          source: { kind: 'variable', name: 'items' },
           currentValue: 'c',
         },
       ];
@@ -357,8 +338,8 @@ describe('execution service', () => {
     });
 
     it('clamps bootstrap array index when forClause.start exceeds array length', () => {
-      const sources: Readonly<Record<string, DataSource>> = {
-        items: { kind: 'array', items: ['a', 'b', 'c'] },
+      const templateVars: Readonly<Record<string, TemplateVarValue>> = {
+        items: ['a', 'b', 'c'],
       };
       const forClause = {
         start: 100,
@@ -367,7 +348,7 @@ describe('execution service', () => {
         source: 'items',
       } as unknown as Step['forClause'];
 
-      const vars = buildStepVariables('1', '1', [], forClause, sources);
+      const vars = buildStepVariables('1', '1', [], forClause, templateVars);
       // Clamped to array length (3), matching compiler behavior
       expect(vars.Index).toBe('3');
       expect(vars.item).toBe('c');
@@ -382,12 +363,7 @@ describe('execution service', () => {
           end: 2,
           variable: 'record',
           implicit: false,
-          source: {
-            kind: 'file',
-            path: '/tmp/data.jsonl',
-            format: 'jsonl' as const,
-            snapshot: null,
-          },
+          source: { kind: 'variable', name: 'records' },
           currentValue: { host: 'server-a', region: 'us-west' },
         },
       ];
@@ -406,12 +382,7 @@ describe('execution service', () => {
           end: 3,
           variable: 'count',
           implicit: false,
-          source: {
-            kind: 'file',
-            path: '/tmp/nums.jsonl',
-            format: 'jsonl' as const,
-            snapshot: null,
-          },
+          source: { kind: 'variable', name: 'counts' },
           currentValue: 42,
         },
       ];
@@ -429,12 +400,7 @@ describe('execution service', () => {
           end: 2,
           variable: 'enabled',
           implicit: false,
-          source: {
-            kind: 'file',
-            path: '/tmp/bools.jsonl',
-            format: 'jsonl' as const,
-            snapshot: null,
-          },
+          source: { kind: 'variable', name: 'flags' },
           currentValue: false,
         },
       ];
@@ -452,12 +418,7 @@ describe('execution service', () => {
           end: 2,
           variable: 'nullable',
           implicit: false,
-          source: {
-            kind: 'file',
-            path: '/tmp/nulls.jsonl',
-            format: 'jsonl' as const,
-            snapshot: null,
-          },
+          source: { kind: 'variable', name: 'nullables' },
           currentValue: null,
         },
       ];
@@ -475,12 +436,7 @@ describe('execution service', () => {
           end: 5,
           variable: 'config',
           implicit: false,
-          source: {
-            kind: 'file',
-            path: '/tmp/config.jsonl',
-            format: 'jsonl' as const,
-            snapshot: null,
-          },
+          source: { kind: 'variable', name: 'configs' },
           currentValue: { name: 'test', value: 100 },
         },
       ];
@@ -493,7 +449,7 @@ describe('execution service', () => {
       expect(vars.config).toEqual({ name: 'test', value: 100 });
     });
 
-    it('falls back to empty string for file JSONL when currentValue is undefined', () => {
+    it('throws on unresolved variable source (JSONL)', () => {
       const forStack: ForContext[] = [
         {
           stepId: '1',
@@ -501,18 +457,12 @@ describe('execution service', () => {
           start: 1,
           variable: 'item',
           implicit: false,
-          source: {
-            kind: 'file',
-            path: '/tmp/data.jsonl',
-            format: 'jsonl' as const,
-            snapshot: null,
-          },
+          source: { kind: 'variable', name: 'data' },
           // currentValue intentionally omitted
         },
       ];
 
-      const vars = buildStepVariables('1', '1', forStack);
-      expect(vars.item).toBe('');
+      expect(() => buildStepVariables('1', '1', forStack)).toThrow(/has not been resolved/);
     });
   });
 });

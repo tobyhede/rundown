@@ -156,14 +156,25 @@ const JsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
 );
 
 /**
- * Schema for template variable values: string, number, or JSON object.
+ * Zod schema for {@link JsonArrayStream} — file-backed lazy array.
+ */
+const JsonArrayStreamSchema = z.object({
+  kind: z.literal('json-array-stream'),
+  path: z.string(),
+});
+
+/**
+ * Schema for template variable values.
  *
- * Matches the {@link TemplateVarValue} type — excludes top-level arrays,
- * booleans, and nulls which are routed/stringified at variable resolution time.
+ * Matches the {@link TemplateVarValue} type: string, number, JsonObject,
+ * JsonArray, or JsonArrayStream.
+ * Top-level booleans and nulls are stringified at variable resolution time.
  */
 export const TemplateVarValueSchema: z.ZodType<TemplateVarValue> = z.union([
   z.string(),
   z.number(),
+  z.array(JsonValueSchema),
+  JsonArrayStreamSchema,
   z.record(z.string(), JsonValueSchema),
 ]);
 
@@ -181,29 +192,27 @@ export const AncestorSnapshotSchema = z.object({
 });
 
 /**
- * Zod schema for data source bindings (array or file-backed).
- */
-export const DataSourceSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('array'), items: z.array(z.string()).readonly() }),
-  z.object({
-    kind: z.literal('file'),
-    path: z.string(),
-    format: z.enum(['text', 'jsonl']),
-  }),
-]);
-
-/**
  * Zod schema for execution context snapshot at delegation time.
  */
-export const ContextSnapshotSchema = z.object({
-  vars: z.record(z.string(), TemplateVarValueSchema),
-  sources: z.record(z.string(), DataSourceSchema).optional(),
-  ancestors: z.array(AncestorSnapshotSchema).readonly(),
-  step: z.string().optional(),
-  substep: z.string().optional(),
-  at: z.string().optional(),
-  index: z.number().int().positive().optional(),
-});
+export const ContextSnapshotSchema = z
+  .object({
+    vars: z.record(z.string(), TemplateVarValueSchema),
+    ancestors: z.array(AncestorSnapshotSchema).readonly(),
+    step: z.string().optional(),
+    substep: z.string().optional(),
+    at: z.string().optional(),
+    index: z.number().int().positive().optional(),
+  })
+  .passthrough()
+  .superRefine((val, ctx) => {
+    if ('sources' in val) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          'Legacy delegation snapshot detected (contains "sources" field). Run `rundown prune` and restart.',
+      });
+    }
+  });
 
 /**
  * Zod schema for delegation metadata attached to a substep.
@@ -241,47 +250,34 @@ const ResolvedCompletionSchema = z.object({
 });
 
 /**
- * Zod schema for ResolvedSource discriminated union
+ * Zod schema for {@link ForSource} — source descriptor for the unified variable model.
  */
-const ResolvedSourceSchema = z.discriminatedUnion('kind', [
+export const ForSourceSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('range') }),
-  z.object({
-    kind: z.literal('array'),
-    items: z.array(z.string()).readonly(),
-  }),
-  z.object({
-    kind: z.literal('file'),
-    path: z.string(),
-    format: z.enum(['text', 'jsonl']),
-    snapshot: z
-      .object({
-        line: z.number().int().positive(),
-        size: z.number().nonnegative(),
-        mtimeMs: z.number().nonnegative(),
-        fingerprint: z.string().optional(),
-      })
-      .nullable(),
-  }),
+  z.object({ kind: z.literal('variable'), name: z.string() }),
 ]);
 
 /**
- * Zod schema for ForStack entry with optional source field for backward compat
+ * Zod schema for ForStack entry.
  */
-const ForStackEntrySchema = z
-  .object({
-    stepId: z.string(),
-    iteration: z.number().int().positive().max(MAX_FOR_BOUND),
-    start: z.number().int().positive().max(MAX_FOR_BOUND),
-    end: z.number().int().positive().max(MAX_FOR_BOUND).optional(),
-    variable: z.string().optional(),
-    implicit: z.boolean().default(false),
-    source: ResolvedSourceSchema.optional(),
-    currentValue: JsonValueSchema.optional(),
-  })
-  .transform((entry) => ({
-    ...entry,
-    source: entry.source ?? { kind: 'range' as const },
-  }));
+const ForStackEntrySchema = z.object({
+  stepId: z.string(),
+  iteration: z.number().int().positive().max(MAX_FOR_BOUND),
+  start: z.number().int().positive().max(MAX_FOR_BOUND),
+  end: z.number().int().positive().max(MAX_FOR_BOUND).optional(),
+  variable: z.string().optional(),
+  implicit: z.boolean().default(false),
+  source: ForSourceSchema,
+  currentValue: JsonValueSchema.optional(),
+  snapshot: z
+    .object({
+      line: z.number().int().positive(),
+      size: z.number().nonnegative(),
+      mtimeMs: z.number().nonnegative(),
+      fingerprint: z.string().optional(),
+    })
+    .optional(),
+});
 
 /**
  * Runbook State Schema - Runtime Validation for Persisted RunbookState
@@ -358,8 +354,6 @@ export const RunbookStateSchema = z
       .optional(),
     runbookSrc: z.string().optional(),
     templateVars: z.record(z.string(), TemplateVarValueSchema).optional(),
-    /** Data source bindings for sourced FOR loops (array or file-backed). */
-    sources: z.record(z.string(), DataSourceSchema).optional(),
   })
   // passthrough() allows unknown fields (e.g., legacy pendingSteps, agentBindings,
   // agentId, parentRunbookId) to survive schema validation without breaking existing

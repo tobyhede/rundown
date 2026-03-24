@@ -246,7 +246,9 @@ describe('Transitions schema-derived type', () => {
 describe('RunbookStateSchema forStack', () => {
   it('passes through new forStack format unchanged', () => {
     const newState = createValidState({
-      forStack: [{ stepId: '2', iteration: 3, start: 1, end: 5, variable: 'x' }],
+      forStack: [
+        { stepId: '2', iteration: 3, start: 1, end: 5, variable: 'x', source: { kind: 'range' } },
+      ],
     });
 
     const result = RunbookStateSchema.safeParse(newState);
@@ -305,7 +307,7 @@ describe('RunbookStateSchema forStack', () => {
 });
 
 describe('RunbookStateSchema sources field', () => {
-  it('accepts state with sources containing array DataSource', () => {
+  it('passes through unknown fields via passthrough', () => {
     const state = createValidState({
       sources: {
         items: {
@@ -317,43 +319,14 @@ describe('RunbookStateSchema sources field', () => {
 
     const result = RunbookStateSchema.safeParse(state);
     expect(result.success).toBe(true);
+    if (result.success) {
+      // passthrough preserves unknown fields without validation
+      const data = result.data as Record<string, unknown>;
+      expect(data.sources).toBeDefined();
+    }
   });
 
-  it('accepts state with sources containing file DataSource', () => {
-    const state = createValidState({
-      sources: {
-        hosts: {
-          kind: 'file',
-          path: '/tmp/hosts.txt',
-          format: 'text',
-        },
-      },
-    });
-
-    const result = RunbookStateSchema.safeParse(state);
-    expect(result.success).toBe(true);
-  });
-
-  it('accepts state with multiple mixed sources', () => {
-    const state = createValidState({
-      sources: {
-        items: {
-          kind: 'array',
-          items: ['a', 'b', 'c'],
-        },
-        hosts: {
-          kind: 'file',
-          path: '/tmp/hosts.txt',
-          format: 'text',
-        },
-      },
-    });
-
-    const result = RunbookStateSchema.safeParse(state);
-    expect(result.success).toBe(true);
-  });
-
-  it('accepts forStack entry with array source and currentValue', () => {
+  it('rejects forStack entry with legacy array source', () => {
     const state = createValidState({
       forStack: [
         {
@@ -372,13 +345,10 @@ describe('RunbookStateSchema sources field', () => {
     });
 
     const result = RunbookStateSchema.safeParse(state);
-    expect(result.success).toBe(true);
-    if (result.success && result.data.forStack) {
-      expect(result.data.forStack[0].currentValue).toBe('beta');
-    }
+    expect(result.success).toBe(false);
   });
 
-  it('accepts forStack entry with file source and snapshot', () => {
+  it('rejects forStack entry with legacy file source', () => {
     const state = createValidState({
       forStack: [
         {
@@ -403,10 +373,7 @@ describe('RunbookStateSchema sources field', () => {
     });
 
     const result = RunbookStateSchema.safeParse(state);
-    expect(result.success).toBe(true);
-    if (result.success && result.data.forStack) {
-      expect(result.data.forStack[0].source.kind).toBe('file');
-    }
+    expect(result.success).toBe(false);
   });
 });
 
@@ -420,12 +387,7 @@ describe('RunbookStateSchema - JSON loop values (currentValue)', () => {
           start: 1,
           end: 2,
           variable: 'record',
-          source: {
-            kind: 'file',
-            path: '/tmp/data.jsonl',
-            format: 'jsonl',
-            snapshot: null,
-          },
+          source: { kind: 'variable', name: 'record' },
           currentValue: { host: 'server-a', count: 1 },
         },
       ],
@@ -447,12 +409,7 @@ describe('RunbookStateSchema - JSON loop values (currentValue)', () => {
           start: 1,
           end: 3,
           variable: 'item',
-          source: {
-            kind: 'file',
-            path: '/tmp/items.jsonl',
-            format: 'jsonl',
-            snapshot: null,
-          },
+          source: { kind: 'variable', name: 'item' },
           currentValue: ['a', 1, true],
         },
       ],
@@ -474,12 +431,7 @@ describe('RunbookStateSchema - JSON loop values (currentValue)', () => {
           start: 1,
           end: 5,
           variable: 'num',
-          source: {
-            kind: 'file',
-            path: '/tmp/numbers.jsonl',
-            format: 'jsonl',
-            snapshot: null,
-          },
+          source: { kind: 'variable', name: 'num' },
           currentValue: 42,
         },
       ],
@@ -501,12 +453,7 @@ describe('RunbookStateSchema - JSON loop values (currentValue)', () => {
           start: 1,
           end: 4,
           variable: 'flag',
-          source: {
-            kind: 'file',
-            path: '/tmp/flags.jsonl',
-            format: 'jsonl',
-            snapshot: null,
-          },
+          source: { kind: 'variable', name: 'flag' },
           currentValue: false,
         },
       ],
@@ -528,12 +475,7 @@ describe('RunbookStateSchema - JSON loop values (currentValue)', () => {
           start: 1,
           end: 2,
           variable: 'value',
-          source: {
-            kind: 'file',
-            path: '/tmp/nullable.jsonl',
-            format: 'jsonl',
-            snapshot: null,
-          },
+          source: { kind: 'variable', name: 'value' },
           currentValue: null,
         },
       ],
@@ -555,12 +497,7 @@ describe('RunbookStateSchema - JSON loop values (currentValue)', () => {
           start: 1,
           end: 2,
           variable: 'item',
-          source: {
-            kind: 'file',
-            path: '/tmp/data.jsonl',
-            format: 'jsonl',
-            snapshot: null,
-          },
+          source: { kind: 'variable', name: 'item' },
           currentValue: (() => 'not json') as unknown,
         },
       ],
@@ -579,12 +516,7 @@ describe('RunbookStateSchema - JSON loop values (currentValue)', () => {
           start: 1,
           end: 1,
           variable: 'complex',
-          source: {
-            kind: 'file',
-            path: '/tmp/complex.jsonl',
-            format: 'jsonl',
-            snapshot: null,
-          },
+          source: { kind: 'variable', name: 'complex' },
           currentValue: {
             name: 'test',
             count: 5,

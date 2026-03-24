@@ -103,13 +103,13 @@ describe('ContextSnapshotSchema', () => {
     expect(result.success).toBe(true);
   });
 
-  it('accepts snapshot with sources (array kind)', () => {
+  it('rejects legacy snapshot with sources field', () => {
     const result = ContextSnapshotSchema.safeParse({
       vars: { env: 'prod' },
       ancestors: [],
       sources: { items: { kind: 'array', items: ['a', 'b', 'c'] } },
     });
-    expect(result.success).toBe(true);
+    expect(result.success).toBe(false);
   });
 
   it('accepts snapshot without sources (backward compat)', () => {
@@ -120,12 +120,12 @@ describe('ContextSnapshotSchema', () => {
     expect(result.success).toBe(true);
   });
 
-  it('rejects array vars values', () => {
+  it('accepts array vars values (unified variable model)', () => {
     const result = ContextSnapshotSchema.safeParse({
       vars: { env: 'prod', items: ['a', 'b'] },
       ancestors: [],
     });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 
   it('accepts number vars values', () => {
