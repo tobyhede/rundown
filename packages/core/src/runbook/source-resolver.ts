@@ -57,6 +57,8 @@ export type ResolvedIteration =
   | {
       readonly kind: 'resolved';
       readonly context: ForContext & { readonly currentValue: JsonValue };
+      /** Total item count for finite sources (JsonArray). Undefined for streams. */
+      readonly total?: number;
     }
   | { readonly kind: 'exhausted'; readonly capped: ForContext };
 
@@ -142,7 +144,7 @@ function resolveFromJsonArray(
   if (value === undefined) {
     return { kind: 'exhausted', capped: { ...fc, end: fc.iteration } };
   }
-  return { kind: 'resolved', context: { ...fc, currentValue: value } };
+  return { kind: 'resolved', context: { ...fc, currentValue: value }, total: items.length };
 }
 
 /**
