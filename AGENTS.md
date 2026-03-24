@@ -97,6 +97,7 @@ Template variables use Handlebars syntax `{{variableName}}` and are expanded at 
 6. Built-in defaults (lowest priority)
 
 **Built-in Variables:**
+
 | Variable | Example Value | Description |
 |----------|---------------|-------------|
 | `Date` | `2026-02-04` | Current date (YYYY-MM-DD) |

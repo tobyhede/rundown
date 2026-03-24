@@ -461,6 +461,11 @@ describe('RunbookActorService', () => {
         name: 'lines',
       });
       expect(loaded?.forStack?.[0].currentValue).toBe('line1');
+      expect(loaded?.forStack?.[0].snapshot).toEqual({
+        line: 1,
+        size: 100,
+        mtimeMs: 1700000000,
+      });
     });
 
     it('templateVars with arrays survive across multiple updates (unified model)', async () => {

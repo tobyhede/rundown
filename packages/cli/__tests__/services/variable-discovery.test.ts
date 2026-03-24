@@ -733,8 +733,11 @@ describe('resolveVariables', () => {
       const siblingFile = path.join(siblingDir, 'data.txt');
       await fs.writeFile(siblingFile, 'evil\n');
 
-      await resolveVariables({ var: [`data=file:${siblingFile}`] }, cwd);
-      // File source should be rejected — not in sources
+      const result = await resolveVariables({ var: [`data=file:${siblingFile}`] }, cwd);
+      expect(result.vars).not.toHaveProperty('data');
+      expect(result.warnings).toEqual(
+        expect.arrayContaining([expect.stringContaining('path escapes project directory')]),
+      );
     });
 
     it('accepts file within subdirectory', async () => {
@@ -751,7 +754,11 @@ describe('resolveVariables', () => {
       const nested = path.join(tmpDir, 'project');
       await fs.mkdir(nested, { recursive: true });
 
-      await resolveVariables({ var: ['data=file:../escape.txt'] }, nested);
+      const result = await resolveVariables({ var: ['data=file:../escape.txt'] }, nested);
+      expect(result.vars).not.toHaveProperty('data');
+      expect(result.warnings).toEqual(
+        expect.arrayContaining([expect.stringContaining('path escapes project directory')]),
+      );
     });
 
     it('accepts directory whose name starts with double-dot', async () => {

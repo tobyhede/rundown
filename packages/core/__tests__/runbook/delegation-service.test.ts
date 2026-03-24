@@ -794,7 +794,7 @@ describe('createDelegation', () => {
   it('snapshot without sources omits the field', () => {
     const state = makeState();
     const steps = makeSteps();
-    createDelegation(
+    const result = createDelegation(
       {
         state,
         stepId: '1.1',
@@ -803,5 +803,6 @@ describe('createDelegation', () => {
       },
       steps,
     );
+    expect(result.delegation.contextSnapshot).not.toHaveProperty('sources');
   });
 });

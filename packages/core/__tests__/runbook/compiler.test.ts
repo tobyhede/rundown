@@ -3793,7 +3793,7 @@ echo "processing"
       actor.stop();
     });
 
-    it('clamps window end to array length', () => {
+    it('preserves window end for execution-time resolution', () => {
       const steps = createRunbook(`
 ## 1. Process items
 - FOR item IN 1 TO 100 OF {{ items }}
@@ -3851,7 +3851,7 @@ echo "processing"
       actor.stop();
     });
 
-    it('handles empty array source (0 iterations)', () => {
+    it('initialises open-ended variable source with undefined end', () => {
       const steps = createRunbook(`
 ## 1. Process items
 - FOR item IN {{ items }}
@@ -3878,7 +3878,7 @@ echo "processing"
       actor.stop();
     });
 
-    it('iterates windowed array source (2 TO 4) with correct currentValue', () => {
+    it('initialises windowed variable source with deferred value resolution', () => {
       const steps = createRunbook(`
 ## 1. Process items
 - FOR item IN 2 TO 4 OF {{ items }}
@@ -4387,7 +4387,7 @@ echo "processing"
   });
 
   describe('file source snapshot initialisation', () => {
-    it('initialises file source snapshot as null instead of a sentinel object', () => {
+    it('normalizes file source to variable reference in unified model', () => {
       const steps = inferSteps([
         {
           name: '1',
