@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { type DatabaseSync } from 'node:sqlite';
+import type { DatabaseSync } from 'node:sqlite';
 import { createDatabase, seedDatabase, getAllItems, insertItem } from './db.js';
 
 interface CreateItemBody {
