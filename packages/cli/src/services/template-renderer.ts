@@ -102,11 +102,12 @@ function resolveDottedPath(obj: unknown, path: string): unknown {
 /**
  * Render a template value for interpolation.
  *
- * Accepts {@link RenderableVarValue} types (string, number, JsonObject, JsonArray).
+ * Accepts renderable variable types: string, number, JsonObject, or JsonArray
+ * (i.e. TemplateVarValue excluding JsonArrayStream).
  * Strings are preserved as-is. Non-strings are serialized with JSON to keep
  * deterministic display behavior across text and command expansion paths.
  *
- * @param value - Resolved template value (should be a RenderableVarValue, not JsonArrayStream)
+ * @param value - Resolved template value (must not be JsonArrayStream, which is iterable-only)
  * @returns String representation for interpolation
  * @throws {Error} if value is a JsonArrayStream, which is iterable but not renderable
  */

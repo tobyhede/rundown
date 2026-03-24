@@ -234,16 +234,19 @@ export function isJsonArray(value: TemplateVarValue): value is JsonArray {
  * Type guard for file-backed lazy array stream values within the template variable map.
  *
  * @param value - Template variable value to check
- * @returns True if the value is a JsonArrayStream with kind 'json-array-stream'
+ * @returns True if the value is a JsonArrayStream with kind 'json-array-stream' and a valid string path
  */
 export function isJsonArrayStream(value: TemplateVarValue): value is JsonArrayStream {
-  // Defensive: null check guards against untyped callers even though TemplateVarValue excludes null
+  // Defensive: null check guards against untyped callers even though TemplateVarValue excludes null.
+  // Path validation prevents crafted --var-json values from bypassing file path checks.
   return (
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     value !== null &&
     typeof value === 'object' &&
     'kind' in value &&
-    value.kind === 'json-array-stream'
+    value.kind === 'json-array-stream' &&
+    'path' in value &&
+    typeof value.path === 'string'
   );
 }
 

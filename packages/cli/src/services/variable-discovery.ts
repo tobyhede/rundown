@@ -66,10 +66,10 @@ export function isRuntimeReservedVariable(name: string): boolean {
 }
 
 /**
- * Resolved variables: string vars for template substitution + data sources for FOR loops.
+ * Resolved variables from the unified template variable map.
  *
- * `vars` feeds the template rendering pipeline (unchanged).
- * `sources` is consumed only at FOR loop entry time.
+ * All variable values — scalars, JSON arrays, and file-backed streams — are
+ * routed into `vars`. The `sources` field is deprecated and always empty.
  */
 export interface ResolvedVariables {
   /**
@@ -668,7 +668,7 @@ async function enforceFileSourcePolicy(
 }
 
 /**
- * Resolve variables into dual maps: string vars for templates + data sources for FOR loops.
+ * Resolve variables into the unified template variable map.
  *
  * Processes variable layers in precedence order (lowest to highest):
  * 1. Built-in defaults (Date, DateTime, Year, Month, Day, WorkPath, RunId, ContextId)
@@ -679,13 +679,12 @@ async function enforceFileSourcePolicy(
  * 4. --var-file contents (repeatable, later overrides earlier)
  * 5. --var flags (highest precedence)
  *
- * Each variable value is routed based on its type:
- * - String with `file:` prefix → file source only (not in vars)
- * - Array → both vars (comma-joined) and sources (array of items)
- * - Multiline string → both vars and sources (array of lines)
- * - Non-array object (JsonObject) → vars only (for dotted template access)
- * - Number → vars only (preserved, not stringified)
- * - Other scalar (boolean, null, plain string) → vars only (stringified)
+ * Each variable value is routed into `vars` based on its type:
+ * - String with `file:` prefix → JsonArrayStream (.jsonl) or JsonArray/JsonObject (.json)
+ * - Array → JsonArray (type-preserving, not comma-joined)
+ * - Non-array object (JsonObject) → preserved for dotted template access
+ * - Number → preserved, not stringified
+ * - Other scalar (boolean, null, plain string) → stringified
  *
  * @param options - Variable sources from CLI flags, var-file, frontmatter vars, and inherited vars
  * @param options.varFile - Array of paths to YAML files containing variable definitions (repeatable)
@@ -695,7 +694,7 @@ async function enforceFileSourcePolicy(
  * @param options.inheritedVars - Variables inherited from parent delegation (overrides builtins)
  * @param cwd - Current working directory for resolving relative paths
  * @param security - Optional security context for file source policy enforcement
- * @returns ResolvedVariables with vars and sources maps
+ * @returns ResolvedVariables with unified vars map and any warnings
  * @throws {FileSourcePolicyError} When a file-backed data source is blocked by security policy
  * @throws {Error} When a reserved runtime variable name is overridden by a non-builtin layer
  */
@@ -757,13 +756,13 @@ export async function resolveVariables(
  * Route raw extra variables through the standard normalization pipeline.
  *
  * Used by the delegate command to normalize --var, --var-file, and --var-json
- * values into string vars and typed data sources, matching the same pipeline
+ * values into the unified template variable map, matching the same pipeline
  * that the run command uses via {@link resolveVariables}.
  *
  * @param rawVars - Raw variables with potentially complex types (arrays, objects, scalars)
  * @param cwd - Current working directory for resolving file paths
  * @param security - Optional security context for file source policy enforcement
- * @returns Normalized string vars, typed data sources, and any warnings
+ * @returns Normalized vars map and any warnings (sources is always empty)
  */
 export async function routeExtraVars(
   rawVars: Readonly<Record<string, unknown>>,

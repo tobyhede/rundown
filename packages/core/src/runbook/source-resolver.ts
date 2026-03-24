@@ -11,6 +11,23 @@
  */
 
 import { createFileProvider, computeFileSnapshot } from './file-provider.js';
+
+/**
+ * Domain error for FOR loop variable resolution failures.
+ *
+ * Thrown when a variable-sourced FOR loop cannot resolve its iteration value.
+ * The `code` discriminant identifies the failure category for structured handling.
+ */
+export class ForResolutionError extends Error {
+  constructor(
+    message: string,
+    readonly code: 'undefined-variable' | 'type-mismatch' | 'parse-failure',
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = 'ForResolutionError';
+  }
+}
 import type {
   ForContext,
   FileSnapshot,
@@ -67,7 +84,10 @@ export async function resolveForValue(
       const value = vars?.[varName];
 
       if (value === undefined) {
-        throw new Error(`FOR variable "${varName}" is not defined in the template variable map`);
+        throw new ForResolutionError(
+          `FOR variable "${varName}" is not defined in the template variable map`,
+          'undefined-variable',
+        );
       }
 
       if (isJsonArray(value)) {
@@ -79,8 +99,9 @@ export async function resolveForValue(
       }
 
       const typeDesc = typeof value === 'object' ? 'JsonObject' : typeof value;
-      throw new Error(
+      throw new ForResolutionError(
         `Type error: FOR variable "${varName}" is ${typeDesc}, expected IterableVarValue (JsonArray or JsonArrayStream)`,
+        'type-mismatch',
       );
     }
   }
@@ -138,8 +159,9 @@ async function resolveFromJsonArrayStream(
       currentValue = JSON.parse(value) as JsonValue;
     } catch (cause) {
       const truncated = value.length > 120 ? `${value.substring(0, 120)}...` : value;
-      throw new Error(
+      throw new ForResolutionError(
         `Failed to parse JSONL at ${stream.path} line ${String(fc.iteration)}: ${truncated}`,
+        'parse-failure',
         { cause },
       );
     }

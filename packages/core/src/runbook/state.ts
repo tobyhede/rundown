@@ -13,6 +13,7 @@ import type {
   TemplateVarValue,
 } from './types.js';
 import { RunbookStateSchema } from '../schemas.js';
+import { isNodeError } from '../errors.js';
 
 /** Directory path (relative to project root) where runbook execution state files are stored. */
 export const STATE_DIR = '.claude/rundown/runs';
@@ -133,8 +134,11 @@ export class RunbookStateManager {
     let content: string;
     try {
       content = await fs.readFile(this.statePath(id), 'utf8');
-    } catch {
-      return null; // File not found — genuinely missing
+    } catch (error: unknown) {
+      if (isNodeError(error) && error.code === 'ENOENT') {
+        return null; // File not found — genuinely missing
+      }
+      throw error; // Permission denied, disk errors, etc. — propagate
     }
 
     const parsed = JSON.parse(content) as unknown;
@@ -252,8 +256,12 @@ export class RunbookStateManager {
       for (const file of files) {
         if (file.endsWith('.json')) {
           const id = file.replace('.json', '');
-          const state = await this.load(id);
-          if (state) states.push(state);
+          try {
+            const state = await this.load(id);
+            if (state) states.push(state);
+          } catch {
+            // Stale/corrupt state — skip, handled by `rundown prune`
+          }
         }
       }
       return states;
