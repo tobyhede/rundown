@@ -716,4 +716,84 @@ rd echo server={{ server }}
     expect(commandStartedEvents[1].command).toContain('server=beta');
     expect(commandStartedEvents[2].command).toContain('server=alpha');
   });
+
+  it('resolves array variable values before template expansion (protocol proof)', async () => {
+    await mkdir(join(workspace.cwd, '.rundown'), { recursive: true });
+    await writeFile(
+      join(workspace.cwd, '.rundown', 'config.yaml'),
+      'hosts:\n  - web-01\n  - web-02\n',
+    );
+
+    await writeFile(
+      join(workspace.cwd, 'protocol-proof.runbook.md'),
+      `---
+name: Protocol Proof
+---
+# Protocol Proof
+
+## 1. Deploy hosts
+- FOR host IN {{ hosts }}
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+### 1.1 Deploy
+- PASS CONTINUE
+
+\`\`\`bash
+rd echo host={{ host }}
+\`\`\`
+`,
+    );
+
+    const result = runCli('run --json protocol-proof.runbook.md', workspace);
+    expect(result.exitCode).toBe(0);
+
+    const events = parseJsonEvents(result.stdout);
+    const commands = events.filter((e) => e.type === 'command_started');
+    expect(commands).toHaveLength(2);
+    expect(commands[0].command).toContain('host=web-01');
+    expect(commands[1].command).toContain('host=web-02');
+
+    // No empty-string values — proves ForIterationService resolved before buildStepVariables
+    const allText = JSON.stringify(events);
+    expect(allText).not.toContain('host=\n');
+    expect(allText).not.toContain("host=''");
+  });
+
+  it('resolves JSONL file values before template expansion (protocol proof)', async () => {
+    await writeFile(join(workspace.cwd, 'items.jsonl'), '"first"\n"second"\n');
+
+    await writeFile(
+      join(workspace.cwd, 'jsonl-protocol.runbook.md'),
+      `---
+name: JSONL Protocol Proof
+---
+# JSONL Protocol
+
+## 1. Process items
+- FOR item IN {{ items }}
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+### 1.1 Handle
+- PASS CONTINUE
+
+\`\`\`bash
+rd echo item={{ item }}
+\`\`\`
+`,
+    );
+
+    const result = runCli(
+      'run --json --var items=file:items.jsonl jsonl-protocol.runbook.md',
+      workspace,
+    );
+    expect(result.exitCode).toBe(0);
+
+    const events = parseJsonEvents(result.stdout);
+    const commands = events.filter((e) => e.type === 'command_started');
+    expect(commands).toHaveLength(2);
+    expect(commands[0].command).toContain('item=first');
+    expect(commands[1].command).toContain('item=second');
+  });
 });

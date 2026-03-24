@@ -34,6 +34,7 @@ import {
   type TemplateVarValue,
   isJsonArray,
   isJsonArrayStream,
+  assertResolvedVariableForContext,
 } from '@rundown-org/core';
 import { isSourced, resolvedStepHasSubsteps, type ForClause } from '@rundown-org/parser';
 import { isInternalRdCommand, executeRdCommandInternal } from './internal-commands.js';
@@ -117,10 +118,10 @@ export function buildStepVariables(
             vars[top.variable] = String(top.iteration);
             break;
           case 'variable':
-            // currentValue is set by ForIterationService before each iteration.
-            // If missing (undefined), the service did not resolve it — fall back to empty string.
-            // Preserve all other values including null, false, 0, etc.
-            vars[top.variable] = top.currentValue !== undefined ? top.currentValue : '';
+            // currentValue must be set by ForIterationService before each iteration.
+            // If missing, it is a protocol violation — fail hard rather than silently producing ''.
+            assertResolvedVariableForContext(top);
+            vars[top.variable] = top.currentValue;
             break;
           default: {
             const _exhaustive: never = top.source;

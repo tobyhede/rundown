@@ -31,7 +31,12 @@ export * from './logger.js';
 // Runbook system
 export * from './runbook/index.js';
 // Explicit re-exports for Jest ESM VM module compatibility
-export { isJsonArray, isJsonArrayStream } from './runbook/types.js';
+export {
+  isJsonArray,
+  isJsonArrayStream,
+  isResolvedVariableForContext,
+  assertResolvedVariableForContext,
+} from './runbook/types.js';
 
 // Events module (domain types for execution events)
 export * from './events/index.js';

@@ -232,10 +232,9 @@ describe('execution service', () => {
       expect(vars.Index).toBe('1');
     });
 
-    it('uses empty string for variable source when currentValue is undefined (no silent fallback)', () => {
-      // When currentValue is not set, we should get empty string.
-      // An unset currentValue for a variable source indicates the iteration
-      // service did not resolve it — fall back to empty string.
+    it('throws on unresolved variable source (array)', () => {
+      // An unset currentValue for a variable source is a protocol violation —
+      // ForIterationService must resolve before buildStepVariables runs.
       const forStack: ForContext[] = [
         {
           stepId: '1',
@@ -249,12 +248,10 @@ describe('execution service', () => {
         },
       ];
 
-      const vars = buildStepVariables('1', '1', forStack);
-      // After the fix, should be '' not 'beta'
-      expect(vars.server).toBe('');
+      expect(() => buildStepVariables('1', '1', forStack)).toThrow(/has not been resolved/);
     });
 
-    it('uses empty string for variable source when currentValue is undefined (file-backed)', () => {
+    it('throws on unresolved variable source (file-backed)', () => {
       const forStack: ForContext[] = [
         {
           stepId: '1',
@@ -267,9 +264,7 @@ describe('execution service', () => {
         },
       ];
 
-      const vars = buildStepVariables('1', '1', forStack);
-      expect(vars.line).toBe('');
-      expect(vars.Index).toBe('1');
+      expect(() => buildStepVariables('1', '1', forStack)).toThrow(/has not been resolved/);
     });
 
     it('falls back to forClause for array variable bootstrap (no forStack)', () => {
@@ -454,7 +449,7 @@ describe('execution service', () => {
       expect(vars.config).toEqual({ name: 'test', value: 100 });
     });
 
-    it('falls back to empty string for variable source when currentValue is undefined (JSONL)', () => {
+    it('throws on unresolved variable source (JSONL)', () => {
       const forStack: ForContext[] = [
         {
           stepId: '1',
@@ -467,8 +462,7 @@ describe('execution service', () => {
         },
       ];
 
-      const vars = buildStepVariables('1', '1', forStack);
-      expect(vars.item).toBe('');
+      expect(() => buildStepVariables('1', '1', forStack)).toThrow(/has not been resolved/);
     });
   });
 });

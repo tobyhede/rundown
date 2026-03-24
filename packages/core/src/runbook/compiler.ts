@@ -8,6 +8,7 @@ import type {
   ResolvedStep,
   ResolvedStepHavingSubsteps,
 } from './types.js';
+import { isResolvedVariableForContext } from './types.js';
 import type { StepId } from './step-id.js';
 import type { ForClause } from '@rundown-org/parser';
 import {
@@ -331,7 +332,7 @@ function hasMoreIterations(fc: ForContext): boolean {
     // Safety net for variable sources: if the resolver hasn't populated
     // currentValue, don't iterate. In normal operation, exhaustion
     // is handled by the ForIterationService capping `end`.
-    if (fc.source.kind === 'variable' && fc.currentValue === undefined) return false;
+    if (fc.source.kind === 'variable' && !isResolvedVariableForContext(fc)) return false;
     return fc.iteration - fc.start < MAX_FILE_ITERATIONS;
   }
   return isDescending(fc) ? fc.iteration > fc.end : fc.iteration < fc.end;

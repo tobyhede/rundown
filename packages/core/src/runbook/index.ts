@@ -1,5 +1,12 @@
 export type * from './types.js';
-export { isJsonObject, isJsonArray, isJsonArrayStream, isJsonValue } from './types.js';
+export {
+  isJsonObject,
+  isJsonArray,
+  isJsonArrayStream,
+  isJsonValue,
+  isResolvedVariableForContext,
+  assertResolvedVariableForContext,
+} from './types.js';
 export * from './step-id.js';
 export * from './step-utils.js';
 export * from './targeting.js';

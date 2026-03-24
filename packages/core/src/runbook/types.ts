@@ -520,6 +520,69 @@ export interface ForContext {
 }
 
 /**
+ * A variable-sourced ForContext whose iteration value has been resolved.
+ *
+ * Produced by {@link resolveForValue} when a variable-sourced loop
+ * resolves successfully. Guarantees both `source.kind === 'variable'`
+ * and `currentValue` is present (non-undefined).
+ *
+ * Range-sourced loops do NOT use this type — their value derives from
+ * `String(iteration)` at consumption time and never populates `currentValue`.
+ */
+export type ResolvedVariableForContext = ForContext & {
+  readonly source: { readonly kind: 'variable'; readonly name: string };
+  readonly currentValue: JsonValue;
+};
+
+/**
+ * A resolved ForContext from a file-backed stream source (JSONL).
+ *
+ * Extends {@link ResolvedVariableForContext} with a guaranteed `snapshot`
+ * for resumability. Only produced by the JSONL resolution path in
+ * source-resolver.
+ */
+export type StreamResolvedForContext = ResolvedVariableForContext & {
+  readonly snapshot: FileSnapshot;
+};
+
+/**
+ * Check if a variable-sourced ForContext has been resolved.
+ *
+ * Returns true only when `source.kind === 'variable'` AND `currentValue`
+ * is defined. Range-sourced contexts always return false — they don't
+ * use `currentValue` (value derives from `String(iteration)`).
+ *
+ * @param fc - The ForContext to check
+ * @returns True if the context is a resolved variable-sourced loop
+ */
+export function isResolvedVariableForContext(fc: ForContext): fc is ResolvedVariableForContext {
+  return fc.source.kind === 'variable' && fc.currentValue !== undefined;
+}
+
+/**
+ * Assert that a variable-sourced ForContext has been resolved.
+ *
+ * Only meaningful for variable-sourced contexts — range-sourced loops
+ * derive their value from `String(iteration)` and never populate
+ * `currentValue`. Call this in the `case 'variable':` branch after
+ * narrowing on `source.kind`.
+ *
+ * @param fc - A ForContext known to have `source.kind === 'variable'`
+ * @throws {Error} If currentValue is undefined (protocol violation)
+ */
+export function assertResolvedVariableForContext(
+  fc: ForContext,
+): asserts fc is ResolvedVariableForContext {
+  if (fc.currentValue === undefined) {
+    const name = fc.source.kind === 'variable' ? fc.source.name : '(unknown)';
+    throw new Error(
+      `ForContext for step "${fc.stepId}" (variable source "${name}") ` +
+        `has not been resolved — currentValue is undefined at iteration ${String(fc.iteration)}`,
+    );
+  }
+}
+
+/**
  * Runbook execution state (persisted)
  */
 export interface RunbookState {

@@ -17,6 +17,7 @@ import type {
   JsonValue,
   TemplateVarValue,
   JsonArrayStream,
+  StreamResolvedForContext,
 } from './types.js';
 import { isJsonArray, isJsonArrayStream } from './types.js';
 
@@ -59,7 +60,10 @@ export async function resolveForValue(
       };
 
     case 'variable': {
-      const varName = fc.source.name;
+      // Narrow fc to VariableForContext — TypeScript narrows fc.source but
+      // not fc itself in a switch on fc.source.kind.
+      const vfc: VariableForContext = fc as VariableForContext;
+      const varName = vfc.source.name;
       const value = vars?.[varName];
 
       if (value === undefined) {
@@ -67,11 +71,11 @@ export async function resolveForValue(
       }
 
       if (isJsonArray(value)) {
-        return resolveFromJsonArray(fc, value);
+        return resolveFromJsonArray(vfc, value);
       }
 
       if (isJsonArrayStream(value)) {
-        return resolveFromJsonArrayStream(fc, value);
+        return resolveFromJsonArrayStream(vfc, value);
       }
 
       const typeDesc = typeof value === 'object' ? 'JsonObject' : typeof value;
@@ -82,6 +86,11 @@ export async function resolveForValue(
   }
 }
 
+/** ForContext narrowed to variable source — used by internal helpers called from the variable branch. */
+type VariableForContext = ForContext & {
+  readonly source: { readonly kind: 'variable'; readonly name: string };
+};
+
 /**
  * Resolve iteration value from an in-memory JsonArray.
  *
@@ -89,7 +98,10 @@ export async function resolveForValue(
  * @param items - The array of JSON values to iterate over
  * @returns A discriminated result: either the resolved context or an exhaustion signal
  */
-function resolveFromJsonArray(fc: ForContext, items: readonly JsonValue[]): ResolvedIteration {
+function resolveFromJsonArray(
+  fc: VariableForContext,
+  items: readonly JsonValue[],
+): ResolvedIteration {
   // Defensive: index access on readonly arrays could theoretically return undefined
   const value = items[fc.iteration - 1];
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
@@ -104,12 +116,15 @@ function resolveFromJsonArray(fc: ForContext, items: readonly JsonValue[]): Reso
  *
  * @param fc - The ForContext whose currentValue needs resolution from the file stream
  * @param stream - The JsonArrayStream metadata (path and format information)
- * @returns A promise resolving to a discriminated result: either the resolved context or an exhaustion signal
+ * @returns A promise resolving to a discriminated result: either the resolved context (with snapshot) or an exhaustion signal
  */
 async function resolveFromJsonArrayStream(
-  fc: ForContext,
+  fc: VariableForContext,
   stream: JsonArrayStream,
-): Promise<ResolvedIteration> {
+): Promise<
+  | { readonly kind: 'resolved'; readonly context: StreamResolvedForContext }
+  | { readonly kind: 'exhausted'; readonly capped: ForContext }
+> {
   const skipLines = fc.iteration - 1;
   const provider = await createFileProvider(stream.path, { skipLines });
   try {
