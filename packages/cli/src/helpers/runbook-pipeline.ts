@@ -158,7 +158,7 @@ export type ClaimResult =
  */
 export function validateForVariables(
   steps: readonly ResolvedStep[],
-  vars: Readonly<Record<string, TemplateVarValue>>,
+  vars: Readonly<Partial<Record<string, TemplateVarValue>>>,
 ): void {
   for (const step of steps) {
     if (step.kind === 'for' && isSourced(step.forClause)) {
