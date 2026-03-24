@@ -19,6 +19,13 @@ import { createFileProvider, computeFileSnapshot } from './file-provider.js';
  * The `code` discriminant identifies the failure category for structured handling.
  */
 export class ForResolutionError extends Error {
+  /**
+   * Create a ForResolutionError with a failure category code.
+   *
+   * @param message - Human-readable description of the resolution failure
+   * @param code - Discriminant identifying the failure category
+   * @param options - Standard Error options (e.g. cause)
+   */
   constructor(
     message: string,
     readonly code: 'undefined-variable' | 'type-mismatch' | 'parse-failure',
@@ -107,7 +114,13 @@ export async function resolveForValue(
   }
 }
 
-/** ForContext narrowed to variable source — used by internal helpers called from the variable branch. */
+/**
+ * ForContext narrowed to variable source.
+ *
+ * Used by internal helpers called from the `case 'variable':` branch of
+ * {@link resolveForValue}, where TypeScript has narrowed `fc.source.kind`
+ * but not `fc` itself.
+ */
 type VariableForContext = ForContext & {
   readonly source: { readonly kind: 'variable'; readonly name: string };
 };
