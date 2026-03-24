@@ -331,11 +331,11 @@ Sources are defined via `--var-json`, `.rundown/config.yaml`, `--var-file`, or `
 
 | Value Pattern | Routing |
 |---------------|---------|
-| `--var-json items='["a","b"]'` | Both: comma-joined in vars, array in sources |
-| `file:path/to/data.txt` | File source only (not a template var) |
-| YAML array `[a, b, c]` | Both: comma-joined in vars, array in sources |
-| Multiline YAML string | Both: raw in vars, lines split into array source |
-| Scalar string/number | Template vars only (no source created) |
+| `--var-json items='["a","b"]'` | Comma-joined in vars, JsonArray for iteration |
+| `file:path/to/data.jsonl` | JsonArrayStream in vars (lazy streaming) |
+| `file:path/to/data.json` | JsonArray or JsonObject in vars (eager load) |
+| YAML array `[a, b, c]` | Comma-joined in vars, JsonArray for iteration |
+| Scalar string/number | Template vars only (no iteration source) |
 
 **Example `.rundown/config.yaml`:**
 ```yaml
@@ -364,11 +364,13 @@ Handle {{item}} (iteration {{Index}}).
 | Extension | Format | Parsing |
 |-----------|--------|---------|
 | `.jsonl` | JSON Lines | One JSON value per line (string, number, boolean, null, array, or object) |
-| All others | Plain text | One value per non-empty line |
+| `.json` | JSON | Eagerly loaded as JsonArray or JsonObject |
+
+Only `.json` and `.jsonl` extensions are supported for `file:` sources.
 
 `file:` sources are resolved to a canonical path, confined to the project root, and checked against the active security policy before execution starts. A denied source fails the runbook before the first step.
 
-**JSONL semantics:** Each `.jsonl` line is parsed as a JSON value. When the loop variable holds a parsed JSON object, dotted field access is supported in templates (e.g., `{{item.name}}`). Using `{{item}}` alone renders the serialized JSON string. Users who need raw line strings should use a text source (e.g., `.txt`) instead of `.jsonl`.
+**JSONL semantics:** Each `.jsonl` line is parsed as a JSON value. When the loop variable holds a parsed JSON object, dotted field access is supported in templates (e.g., `{{item.name}}`). Using `{{item}}` alone renders the serialized JSON string.
 
 **Open-ended iteration:** `FOR item IN {{ source }}` iterates until the source is exhausted, capped at 10,000 iterations.
 
