@@ -194,14 +194,25 @@ export const AncestorSnapshotSchema = z.object({
 /**
  * Zod schema for execution context snapshot at delegation time.
  */
-export const ContextSnapshotSchema = z.object({
-  vars: z.record(z.string(), TemplateVarValueSchema),
-  ancestors: z.array(AncestorSnapshotSchema).readonly(),
-  step: z.string().optional(),
-  substep: z.string().optional(),
-  at: z.string().optional(),
-  index: z.number().int().positive().optional(),
-});
+export const ContextSnapshotSchema = z
+  .object({
+    vars: z.record(z.string(), TemplateVarValueSchema),
+    ancestors: z.array(AncestorSnapshotSchema).readonly(),
+    step: z.string().optional(),
+    substep: z.string().optional(),
+    at: z.string().optional(),
+    index: z.number().int().positive().optional(),
+  })
+  .passthrough()
+  .superRefine((val, ctx) => {
+    if ('sources' in val) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          'Legacy delegation snapshot detected (contains "sources" field). Run `rundown prune` and restart.',
+      });
+    }
+  });
 
 /**
  * Zod schema for delegation metadata attached to a substep.
