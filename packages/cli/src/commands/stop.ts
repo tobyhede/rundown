@@ -1,7 +1,7 @@
 // packages/cli/src/commands/stop.ts
 
 import type { Command } from 'commander';
-import { RunbookStateManager, SessionService, type RunbookState } from '@rundown-org/core';
+import { RunbookStateManager, SessionService, isError, type RunbookState } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { buildMetadata } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
@@ -41,7 +41,7 @@ export function registerStopCommand(program: Command): void {
               getActiveError &&
               !getActiveError.message.includes('Stale runbook state') &&
               !getActiveError.message.includes('dynamic-step snapshots') &&
-              !(getActiveError instanceof SyntaxError)
+              !(isError(getActiveError) && getActiveError.name === 'SyntaxError')
             ) {
               throw getActiveError;
             }
