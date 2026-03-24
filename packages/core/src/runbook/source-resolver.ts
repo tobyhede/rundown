@@ -11,6 +11,15 @@
  */
 
 import { createFileProvider, computeFileSnapshot } from './file-provider.js';
+import type {
+  ForContext,
+  FileSnapshot,
+  JsonValue,
+  TemplateVarValue,
+  JsonArrayStream,
+  StreamResolvedForContext,
+} from './types.js';
+import { isJsonArray, isJsonArrayStream } from './types.js';
 
 /**
  * Domain error for FOR loop variable resolution failures.
@@ -35,15 +44,6 @@ export class ForResolutionError extends Error {
     this.name = 'ForResolutionError';
   }
 }
-import type {
-  ForContext,
-  FileSnapshot,
-  JsonValue,
-  TemplateVarValue,
-  JsonArrayStream,
-  StreamResolvedForContext,
-} from './types.js';
-import { isJsonArray, isJsonArrayStream } from './types.js';
 
 /**
  * Discriminated union for the result of resolving a FOR loop iteration value.

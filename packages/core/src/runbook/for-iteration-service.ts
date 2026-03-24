@@ -108,6 +108,7 @@ export class ForIterationService {
    * @param steps - Parsed step definitions for actor creation
    * @returns An IterationResult indicating next action for the caller
    * @throws {Error} When runbook state is not found (null)
+   * @throws {ForResolutionError} When variable source resolution fails (undefined, type mismatch, or JSONL parse failure)
    */
   async prepareIteration(id: string, steps: ResolvedStep[]): Promise<IterationResult> {
     const state = await this.manager.load(id);
