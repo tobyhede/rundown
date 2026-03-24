@@ -29,11 +29,7 @@ RUN npm install -g @anthropic-ai/claude-code@2
 # Copy entrypoint
 COPY --chmod=755 scripts/e2e-entrypoint.sh /usr/local/bin/e2e-entrypoint.sh
 
-USER testuser
 WORKDIR /home/testuser
-
-# Switch to root to install tarballs and copy fixture
-USER root
 
 # Copy and install packed tarballs (same pattern as Dockerfile.verify local stage)
 COPY dist/rundown-org-parser-*.tgz /tmp/tarballs/

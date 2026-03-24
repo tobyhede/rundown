@@ -109,8 +109,12 @@ if [ "$CLAUDE_EXIT" -eq 0 ]; then
   pass "claude -p exited with code 0"
 elif [ "$CLAUDE_EXIT" -eq 124 ]; then
   fail "claude -p timed out (600s limit)"
+  log "Logs: $LOG_DIR"
+  exit 1
 else
   fail "claude -p exited with code $CLAUDE_EXIT"
+  log "Logs: $LOG_DIR"
+  exit 1
 fi
 
 # ── 5. Verify runbook execution ──────────────────────────────────────────────
@@ -121,7 +125,7 @@ log "Phase 5: Verifying runbook execution artifacts..."
 RUNBOOK_CONFIRMED=false
 
 # Check for plan file (write-plan runbook creates this via rdpath)
-if ls .work/main/*plan*.md 1>/dev/null 2>&1; then
+if find .work/main -maxdepth 1 -name '*plan*.md' 2>/dev/null | grep -q .; then
   pass "Plan file found in .work/main/"
   RUNBOOK_CONFIRMED=true
 fi
