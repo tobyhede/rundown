@@ -143,13 +143,51 @@ describe('PlanSchema', () => {
             tasks: [
               {
                 name: 'Task',
-                files: [],
+                files: [{ path: 'src/foo.ts', action: 'create' }],
                 subtasks: [],
                 commit: { files: ['src/foo.ts'], message: 'feat: add foo' },
               },
             ],
           }),
         ),
+      ).toThrow(ZodError);
+    });
+  });
+
+  describe('strict mode', () => {
+    it('rejects plan with extra root-level property', () => {
+      expect(() => PlanSchema.parse(validPlan({ extra: 'nope' }))).toThrow(ZodError);
+    });
+
+    it('rejects task with extra property', () => {
+      expect(() =>
+        PlanSchema.parse(
+          validPlan({
+            tasks: [
+              {
+                name: 'Task',
+                files: [{ path: 'src/foo.ts', action: 'create' }],
+                subtasks: [{ name: 'Sub', description: 'desc' }],
+                commit: { files: ['src/foo.ts'], message: 'feat: add foo' },
+                priority: 'high',
+              },
+            ],
+          }),
+        ),
+      ).toThrow(ZodError);
+    });
+
+    it('rejects file entry with extra property', () => {
+      expect(() =>
+        PlanSchema.parse(
+          validPlan({ files: [{ path: 'src/foo.ts', action: 'create', size: 100 }] }),
+        ),
+      ).toThrow(ZodError);
+    });
+
+    it('rejects meta with extra property', () => {
+      expect(() =>
+        PlanSchema.parse(validPlan({ meta: { version: '1.0.0', draft: true } })),
       ).toThrow(ZodError);
     });
   });
@@ -199,9 +237,12 @@ describe('plan.schema.json', () => {
   });
 
   it('has format: filepath on file path fields', () => {
-    const props = schema.properties as Record<string, Record<string, unknown>>;
-    const filesItems = props.files.items as Record<string, unknown>;
-    const fileProps = filesItems.properties as Record<string, Record<string, unknown>>;
+    const defs = (schema as Record<string, unknown>).$defs as Record<
+      string,
+      Record<string, unknown>
+    >;
+    const fileEntry = defs.FileEntry;
+    const fileProps = fileEntry.properties as Record<string, Record<string, unknown>>;
     expect(fileProps.path.format).toBe('filepath');
   });
 });

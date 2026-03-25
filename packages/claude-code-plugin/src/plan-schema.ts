@@ -26,54 +26,66 @@ const filepath = (): z.ZodString => z.string().min(1).describe('filepath');
 /**
  * A file entry describing a file affected by the plan.
  */
-const FileEntry = z.object({
-  path: filepath(),
-  action: z.enum(['create', 'edit', 'delete']),
-  notes: z.string().optional(),
-});
+const FileEntry = z
+  .object({
+    path: filepath(),
+    action: z.enum(['create', 'edit', 'delete']),
+    notes: z.string().optional(),
+  })
+  .strict();
 
 /**
  * A fenced code block with language annotation.
  */
-const CodeBlock = z.object({
-  language: z.string(),
-  content: z.string(),
-});
+const CodeBlock = z
+  .object({
+    language: z.string(),
+    content: z.string(),
+  })
+  .strict();
 
 /**
  * A subtask within a task. Numbering is derived from ordinal position.
  */
-const Subtask = z.object({
-  name: z.string().min(1),
-  description: markdown().nullable(),
-  code: CodeBlock.nullable().optional(),
-});
+const Subtask = z
+  .object({
+    name: z.string().min(1),
+    description: markdown().nullable(),
+    code: CodeBlock.nullable().optional(),
+  })
+  .strict();
 
 /**
  * Commit step specifying files to stage and commit message.
  */
-const CommitStep = z.object({
-  files: z.array(filepath()),
-  message: z.string().min(1),
-});
+const CommitStep = z
+  .object({
+    files: z.array(filepath()),
+    message: z.string().min(1),
+  })
+  .strict();
 
 /**
  * A task grouping related subtasks. Numbering is derived from ordinal position.
  */
-const Task = z.object({
-  name: z.string().min(1),
-  files: z.array(FileEntry),
-  subtasks: z.array(Subtask).min(1),
-  commit: CommitStep,
-});
+const Task = z
+  .object({
+    name: z.string().min(1),
+    files: z.array(FileEntry),
+    subtasks: z.array(Subtask).min(1),
+    commit: CommitStep,
+  })
+  .strict();
 
 /**
  * Document metadata rendered as YAML frontmatter by the generic renderer.
  * Named `Meta` (not `PlanMeta`) for reuse across document types.
  */
-const Meta = z.object({
-  version: z.literal('1.0.0'),
-});
+const Meta = z
+  .object({
+    version: z.literal('1.0.0'),
+  })
+  .strict();
 
 /**
  * Schema for a complete implementation plan.
@@ -82,18 +94,20 @@ const Meta = z.object({
  * The `meta` field is rendered as YAML frontmatter by the generic renderer.
  * The `name` field is rendered as the H1 heading.
  */
-export const PlanSchema = z.object({
-  name: z.string().min(1),
-  meta: Meta,
-  goal: markdown(),
-  architecture_and_approach: markdown(),
-  constraints_and_assumptions: markdown(),
-  dependencies: markdown().nullable(),
-  context: markdown().nullable(),
-  scope_assessment: z.string().optional(),
-  files: z.array(FileEntry).min(1),
-  tasks: z.array(Task).min(1),
-});
+export const PlanSchema = z
+  .object({
+    name: z.string().min(1),
+    meta: Meta,
+    goal: markdown(),
+    architecture_and_approach: markdown(),
+    constraints_and_assumptions: markdown(),
+    dependencies: markdown().nullable(),
+    context: markdown().nullable(),
+    scope_assessment: z.string().optional(),
+    files: z.array(FileEntry).min(1),
+    tasks: z.array(Task).min(1),
+  })
+  .strict();
 
 /** Validated plan type inferred from PlanSchema. */
 export type Plan = z.infer<typeof PlanSchema>;
@@ -113,10 +127,22 @@ export type Meta = z.infer<typeof Meta>;
 /**
  * Validate unknown data against the plan schema.
  *
+ * Convention export for generic rdx schema discovery.
+ * Schema modules export `validate(data)` so rdx can load them by name.
+ *
  * @param data - Unknown data to validate
  * @returns Typed Plan object
  * @throws {ZodError} If data does not conform to PlanSchema
  */
-export function validatePlan(data: unknown): Plan {
+export function validate(data: unknown): Plan {
   return PlanSchema.parse(data);
 }
+
+/**
+ * Alias for {@link validate} — retained for backward compatibility.
+ *
+ * @param data - Unknown data to validate
+ * @returns Typed Plan object
+ * @throws {ZodError} If data does not conform to PlanSchema
+ */
+export const validatePlan = validate;

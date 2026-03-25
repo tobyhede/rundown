@@ -4,6 +4,27 @@
   "title": "Plan",
   "description": "Implementation plan for the Rundown planning workflow.",
   "type": "object",
+  "$defs": {
+    "FileEntry": {
+      "type": "object",
+      "required": ["path", "action"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "format": "filepath"
+        },
+        "action": {
+          "type": "string",
+          "enum": ["create", "edit", "delete"]
+        },
+        "notes": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
   "required": [
     "name",
     "meta",
@@ -54,25 +75,7 @@
     "files": {
       "type": "array",
       "minItems": 1,
-      "items": {
-        "type": "object",
-        "required": ["path", "action"],
-        "properties": {
-          "path": {
-            "type": "string",
-            "minLength": 1,
-            "format": "filepath"
-          },
-          "action": {
-            "type": "string",
-            "enum": ["create", "edit", "delete"]
-          },
-          "notes": {
-            "type": "string"
-          }
-        },
-        "additionalProperties": false
-      }
+      "items": { "$ref": "#/$defs/FileEntry" }
     },
     "tasks": {
       "type": "array",
@@ -87,25 +90,7 @@
           },
           "files": {
             "type": "array",
-            "items": {
-              "type": "object",
-              "required": ["path", "action"],
-              "properties": {
-                "path": {
-                  "type": "string",
-                  "minLength": 1,
-                  "format": "filepath"
-                },
-                "action": {
-                  "type": "string",
-                  "enum": ["create", "edit", "delete"]
-                },
-                "notes": {
-                  "type": "string"
-                }
-              },
-              "additionalProperties": false
-            }
+            "items": { "$ref": "#/$defs/FileEntry" }
           },
           "subtasks": {
             "type": "array",
