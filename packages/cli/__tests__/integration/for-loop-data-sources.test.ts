@@ -1,12 +1,53 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import {
   createTestWorkspace,
+  createRunbook,
   runCli,
   parseJsonEvents,
   type TestWorkspace,
+  type StepConfig,
 } from '../helpers/test-utils.js';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
+
+/**
+ * Create a standard FOR-source runbook: one FOR step with one substep.
+ * Covers ~15 of the 20 tests in this file. Tests with dotted field access,
+ * multi-step runbooks, or unusual substep titles use createRunbook() directly.
+ */
+type ForSourceOpts = {
+  name: string;
+  title: string;
+  variable: string;
+  source: string;
+  command: string;
+  extraSteps?: StepConfig[];
+} & ({ start?: never; end?: never } | { start: number | string; end: number | string });
+
+function forSourceRunbook(opts: ForSourceOpts): string {
+  return createRunbook({
+    name: opts.name,
+    title: opts.title,
+    steps: [
+      {
+        title: `Process ${opts.source}`,
+        for:
+          'start' in opts && opts.start != null
+            ? { variable: opts.variable, start: opts.start, end: opts.end, source: opts.source }
+            : { variable: opts.variable, source: opts.source },
+        pass: 'CONTINUE',
+        substeps: [
+          {
+            title: `Handle ${opts.variable}`,
+            pass: 'CONTINUE',
+            command: opts.command,
+          },
+        ],
+      },
+      ...(opts.extraSteps ?? []),
+    ],
+  });
+}
 
 describe('FOR loop data source integration', () => {
   let workspace: TestWorkspace;
@@ -32,26 +73,14 @@ describe('FOR loop data source integration', () => {
     );
 
     // Create runbook that uses the array variable
-    await writeFile(
-      join(workspace.cwd, 'deploy.runbook.md'),
-      `---
-name: Deploy Servers
----
-# Deploy
-
-## 1. Process servers
-- FOR server IN {{ servers }}
-- PASS ALL CONTINUE
-- FAIL ANY STOP
-
-### 1.1 Handle server
-- PASS CONTINUE
-
-\`\`\`bash
-rd echo server={{ server }}
-\`\`\`
-`,
-    );
+    const content = forSourceRunbook({
+      name: 'Deploy Servers',
+      title: 'Deploy',
+      variable: 'server',
+      source: 'servers',
+      command: 'rd echo server={{ server }}',
+    });
+    await writeFile(join(workspace.cwd, 'deploy.runbook.md'), content);
 
     const result = runCli('run --json deploy.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
@@ -95,26 +124,16 @@ rd echo server={{ server }}
     );
 
     // Create runbook with windowed iteration
-    await writeFile(
-      join(workspace.cwd, 'windowed.runbook.md'),
-      `---
-name: Windowed Iteration
----
-# Windowed
-
-## 1. Process items
-- FOR item IN 2 TO 4 OF {{ items }}
-- PASS ALL CONTINUE
-- FAIL ANY STOP
-
-### 1.1 Handle item
-- PASS CONTINUE
-
-\`\`\`bash
-rd echo item={{ item }} index={{ Index }}
-\`\`\`
-`,
-    );
+    const content = forSourceRunbook({
+      name: 'Windowed Iteration',
+      title: 'Windowed',
+      variable: 'item',
+      source: 'items',
+      command: 'rd echo item={{ item }} index={{ Index }}',
+      start: 2,
+      end: 4,
+    });
+    await writeFile(join(workspace.cwd, 'windowed.runbook.md'), content);
 
     const result = runCli('run --json windowed.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
@@ -148,31 +167,15 @@ rd echo item={{ item }} index={{ Index }}
     );
 
     // Create runbook that iterates over empty array
-    await writeFile(
-      join(workspace.cwd, 'empty.runbook.md'),
-      `---
-name: Empty Array
----
-# Empty
-
-## 1. Process items
-- FOR item IN {{ items }}
-- PASS ALL CONTINUE
-- FAIL ANY STOP
-
-### 1.1 Handle item
-- PASS CONTINUE
-
-\`\`\`bash
-rd echo item={{ item }}
-\`\`\`
-
-## 2. Done
-\`\`\`bash
-rd echo done
-\`\`\`
-`,
-    );
+    const content = forSourceRunbook({
+      name: 'Empty Array',
+      title: 'Empty',
+      variable: 'item',
+      source: 'items',
+      command: 'rd echo item={{ item }}',
+      extraSteps: [{ title: 'Done', command: 'rd echo done' }],
+    });
+    await writeFile(join(workspace.cwd, 'empty.runbook.md'), content);
 
     const result = runCli('run --json empty.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
@@ -205,26 +208,16 @@ rd echo done
     );
 
     // Create runbook with window larger than array
-    await writeFile(
-      join(workspace.cwd, 'clamp.runbook.md'),
-      `---
-name: Window Clamp
----
-# Clamp
-
-## 1. Process items
-- FOR item IN 1 TO 100 OF {{ items }}
-- PASS ALL CONTINUE
-- FAIL ANY STOP
-
-### 1.1 Handle item
-- PASS CONTINUE
-
-\`\`\`bash
-rd echo item={{ item }}
-\`\`\`
-`,
-    );
+    const content = forSourceRunbook({
+      name: 'Window Clamp',
+      title: 'Clamp',
+      variable: 'item',
+      source: 'items',
+      command: 'rd echo item={{ item }}',
+      start: 1,
+      end: 100,
+    });
+    await writeFile(join(workspace.cwd, 'clamp.runbook.md'), content);
 
     const result = runCli('run --json clamp.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
@@ -242,26 +235,14 @@ rd echo item={{ item }}
 
   it('errors on undefined source variable', async () => {
     // Create runbook with missing source variable
-    await writeFile(
-      join(workspace.cwd, 'missing.runbook.md'),
-      `---
-name: Missing Source
----
-# Missing
-
-## 1. Process items
-- FOR item IN {{ missing }}
-- PASS ALL CONTINUE
-- FAIL ANY STOP
-
-### 1.1 Handle item
-- PASS CONTINUE
-
-\`\`\`bash
-rd echo item={{ item }}
-\`\`\`
-`,
-    );
+    const content = forSourceRunbook({
+      name: 'Missing Source',
+      title: 'Missing',
+      variable: 'item',
+      source: 'missing',
+      command: 'rd echo item={{ item }}',
+    });
+    await writeFile(join(workspace.cwd, 'missing.runbook.md'), content);
 
     const result = runCli('run missing.runbook.md', workspace);
 
@@ -278,26 +259,14 @@ rd echo item={{ item }}
     await writeFile(join(workspace.cwd, 'servers.jsonl'), '"alpha"\n"beta"\n"gamma"\n');
 
     // Create runbook that iterates over file source
-    await writeFile(
-      join(workspace.cwd, 'file-loop.runbook.md'),
-      `---
-name: File Loop
----
-# File Loop
-
-## 1. Process servers
-- FOR server IN {{ servers }}
-- PASS ALL CONTINUE
-- FAIL ANY STOP
-
-### 1.1 Handle server
-- PASS CONTINUE
-
-\`\`\`bash
-rd echo server={{ server }}
-\`\`\`
-`,
-    );
+    const content = forSourceRunbook({
+      name: 'File Loop',
+      title: 'File Loop',
+      variable: 'server',
+      source: 'servers',
+      command: 'rd echo server={{ server }}',
+    });
+    await writeFile(join(workspace.cwd, 'file-loop.runbook.md'), content);
 
     const result = runCli(
       'run --json --var servers=file:servers.jsonl file-loop.runbook.md',
@@ -329,26 +298,14 @@ rd echo server={{ server }}
     );
 
     // Create runbook that iterates over array from var-file
-    await writeFile(
-      join(workspace.cwd, 'iterate.runbook.md'),
-      `---
-name: Array Iteration
----
-# Iterate
-
-## 1. Process lines
-- FOR line IN {{ log }}
-- PASS ALL CONTINUE
-- FAIL ANY STOP
-
-### 1.1 Handle line
-- PASS CONTINUE
-
-\`\`\`bash
-rd echo line={{ line }}
-\`\`\`
-`,
-    );
+    const content = forSourceRunbook({
+      name: 'Array Iteration',
+      title: 'Iterate',
+      variable: 'line',
+      source: 'log',
+      command: 'rd echo line={{ line }}',
+    });
+    await writeFile(join(workspace.cwd, 'iterate.runbook.md'), content);
 
     const result = runCli('run --json iterate.runbook.md --var-file vars.yaml', workspace);
     expect(result.exitCode).toBe(0);
@@ -379,26 +336,14 @@ rd echo line={{ line }}
     );
 
     // Create runbook that echoes items
-    await writeFile(
-      join(workspace.cwd, 'special.runbook.md'),
-      `---
-name: Special Chars
----
-# Special
-
-## 1. Process items
-- FOR item IN {{ items }}
-- PASS ALL CONTINUE
-- FAIL ANY STOP
-
-### 1.1 Handle item
-- PASS CONTINUE
-
-\`\`\`bash
-rd echo item={{ item }}
-\`\`\`
-`,
-    );
+    const content = forSourceRunbook({
+      name: 'Special Chars',
+      title: 'Special',
+      variable: 'item',
+      source: 'items',
+      command: 'rd echo item={{ item }}',
+    });
+    await writeFile(join(workspace.cwd, 'special.runbook.md'), content);
 
     const result = runCli('run --json special.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
@@ -428,26 +373,14 @@ rd echo item={{ item }}
     );
 
     // Create runbook that uses both loop and CLI variable in command
-    await writeFile(
-      join(workspace.cwd, 'combined.runbook.md'),
-      `---
-name: Combined Variables
----
-# Combined
-
-## 1. Process servers
-- FOR server IN {{ servers }}
-- PASS ALL CONTINUE
-- FAIL ANY STOP
-
-### 1.1 Handle server
-- PASS CONTINUE
-
-\`\`\`bash
-rd echo env={{ env }} server={{ server }}
-\`\`\`
-`,
-    );
+    const content = forSourceRunbook({
+      name: 'Combined Variables',
+      title: 'Combined',
+      variable: 'server',
+      source: 'servers',
+      command: 'rd echo env={{ env }} server={{ server }}',
+    });
+    await writeFile(join(workspace.cwd, 'combined.runbook.md'), content);
 
     const result = runCli('run --json combined.runbook.md --var env=staging', workspace);
     expect(result.exitCode).toBe(0);
@@ -477,26 +410,14 @@ rd echo env={{ env }} server={{ server }}
     );
 
     // Create runbook that iterates
-    await writeFile(
-      join(workspace.cwd, 'large.runbook.md'),
-      `---
-name: Large Array
----
-# Large
-
-## 1. Process items
-- FOR item IN {{ items }}
-- PASS ALL CONTINUE
-- FAIL ANY STOP
-
-### 1.1 Handle item
-- PASS CONTINUE
-
-\`\`\`bash
-rd echo item={{ item }}
-\`\`\`
-`,
-    );
+    const content = forSourceRunbook({
+      name: 'Large Array',
+      title: 'Large',
+      variable: 'item',
+      source: 'items',
+      command: 'rd echo item={{ item }}',
+    });
+    await writeFile(join(workspace.cwd, 'large.runbook.md'), content);
 
     const result = runCli('run --json large.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
@@ -524,26 +445,14 @@ rd echo item={{ item }}
     );
 
     // Create runbook that accesses object fields via dotted paths
-    await writeFile(
-      join(workspace.cwd, 'jsonl-fields.runbook.md'),
-      `---
-name: JSONL Field Access
----
-# JSONL Field Access
-
-## 1. Process items
-- FOR item IN {{ items }}
-- PASS ALL CONTINUE
-- FAIL ANY STOP
-
-### 1.1 Handle item
-- PASS CONTINUE
-
-\`\`\`bash
-rd echo name={{ item.name }} count={{ item.count }} full={{ item }}
-\`\`\`
-`,
-    );
+    const content = forSourceRunbook({
+      name: 'JSONL Field Access',
+      title: 'JSONL Field Access',
+      variable: 'item',
+      source: 'items',
+      command: 'rd echo name={{ item.name }} count={{ item.count }} full={{ item }}',
+    });
+    await writeFile(join(workspace.cwd, 'jsonl-fields.runbook.md'), content);
 
     const result = runCli(
       'run --json --var items=file:items.jsonl jsonl-fields.runbook.md',
@@ -592,26 +501,14 @@ rd echo name={{ item.name }} count={{ item.count }} full={{ item }}
     );
 
     // Create runbook that tries to iterate
-    await writeFile(
-      join(workspace.cwd, 'jsonl-bad.runbook.md'),
-      `---
-name: JSONL Bad Data
----
-# JSONL Bad
-
-## 1. Process items
-- FOR item IN {{ items }}
-- PASS ALL CONTINUE
-- FAIL ANY STOP
-
-### 1.1 Handle item
-- PASS CONTINUE
-
-\`\`\`bash
-rd echo item={{ item.name }}
-\`\`\`
-`,
-    );
+    const content = forSourceRunbook({
+      name: 'JSONL Bad Data',
+      title: 'JSONL Bad',
+      variable: 'item',
+      source: 'items',
+      command: 'rd echo item={{ item.name }}',
+    });
+    await writeFile(join(workspace.cwd, 'jsonl-bad.runbook.md'), content);
 
     const result = runCli('run --var items=file:bad-items.jsonl jsonl-bad.runbook.md', workspace);
 
@@ -638,26 +535,16 @@ rd echo item={{ item.name }}
 `,
     );
 
-    await writeFile(
-      join(workspace.cwd, 'descending-array.runbook.md'),
-      `---
-name: Descending Array
----
-# Descending
-
-## 1. Process items
-- FOR item IN 4 TO 2 OF {{ items }}
-- PASS ALL CONTINUE
-- FAIL ANY STOP
-
-### 1.1 Handle item
-- PASS CONTINUE
-
-\`\`\`bash
-rd echo item={{ item }}
-\`\`\`
-`,
-    );
+    const content = forSourceRunbook({
+      name: 'Descending Array',
+      title: 'Descending',
+      variable: 'item',
+      source: 'items',
+      command: 'rd echo item={{ item }}',
+      start: 4,
+      end: 2,
+    });
+    await writeFile(join(workspace.cwd, 'descending-array.runbook.md'), content);
 
     const result = runCli('run --json descending-array.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
@@ -679,26 +566,16 @@ rd echo item={{ item }}
       '"alpha"\n"beta"\n"gamma"\n"delta"\n"epsilon"\n',
     );
 
-    await writeFile(
-      join(workspace.cwd, 'descending-file.runbook.md'),
-      `---
-name: Descending File
----
-# Descending File
-
-## 1. Process servers
-- FOR server IN 3 TO 1 OF {{ servers }}
-- PASS ALL CONTINUE
-- FAIL ANY STOP
-
-### 1.1 Handle server
-- PASS CONTINUE
-
-\`\`\`bash
-rd echo server={{ server }}
-\`\`\`
-`,
-    );
+    const content = forSourceRunbook({
+      name: 'Descending File',
+      title: 'Descending File',
+      variable: 'server',
+      source: 'servers',
+      command: 'rd echo server={{ server }}',
+      start: 3,
+      end: 1,
+    });
+    await writeFile(join(workspace.cwd, 'descending-file.runbook.md'), content);
 
     const result = runCli(
       'run --json --var servers=file:servers.jsonl descending-file.runbook.md',
@@ -724,26 +601,14 @@ rd echo server={{ server }}
       'hosts:\n  - web-01\n  - web-02\n',
     );
 
-    await writeFile(
-      join(workspace.cwd, 'protocol-proof.runbook.md'),
-      `---
-name: Protocol Proof
----
-# Protocol Proof
-
-## 1. Deploy hosts
-- FOR host IN {{ hosts }}
-- PASS ALL CONTINUE
-- FAIL ANY STOP
-
-### 1.1 Deploy
-- PASS CONTINUE
-
-\`\`\`bash
-rd echo host={{ host }}
-\`\`\`
-`,
-    );
+    const content = forSourceRunbook({
+      name: 'Protocol Proof',
+      title: 'Protocol Proof',
+      variable: 'host',
+      source: 'hosts',
+      command: 'rd echo host={{ host }}',
+    });
+    await writeFile(join(workspace.cwd, 'protocol-proof.runbook.md'), content);
 
     const result = runCli('run --json protocol-proof.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
@@ -761,26 +626,14 @@ rd echo host={{ host }}
   });
 
   it('iterates over --var-json array', async () => {
-    await writeFile(
-      join(workspace.cwd, 'json-array.runbook.md'),
-      `---
-name: JSON Array
----
-# JSON Array
-
-## 1. Process items
-- FOR item IN {{ items }}
-- PASS ALL CONTINUE
-- FAIL ANY STOP
-
-### 1.1 Handle item
-- PASS CONTINUE
-
-\`\`\`bash
-rd echo item={{ item }}
-\`\`\`
-`,
-    );
+    const content = forSourceRunbook({
+      name: 'JSON Array',
+      title: 'JSON Array',
+      variable: 'item',
+      source: 'items',
+      command: 'rd echo item={{ item }}',
+    });
+    await writeFile(join(workspace.cwd, 'json-array.runbook.md'), content);
 
     const result = runCli(
       'run --json --var-json items=["alpha","bravo","charlie"] json-array.runbook.md',
@@ -798,26 +651,14 @@ rd echo item={{ item }}
   });
 
   it('iterates over --var-json array of objects with dotted access', async () => {
-    await writeFile(
-      join(workspace.cwd, 'json-objects.runbook.md'),
-      `---
-name: JSON Objects
----
-# JSON Objects
-
-## 1. Process items
-- FOR item IN {{ items }}
-- PASS ALL CONTINUE
-- FAIL ANY STOP
-
-### 1.1 Handle item
-- PASS CONTINUE
-
-\`\`\`bash
-rd echo name={{ item.name }} count={{ item.count }}
-\`\`\`
-`,
-    );
+    const content = forSourceRunbook({
+      name: 'JSON Objects',
+      title: 'JSON Objects',
+      variable: 'item',
+      source: 'items',
+      command: 'rd echo name={{ item.name }} count={{ item.count }}',
+    });
+    await writeFile(join(workspace.cwd, 'json-objects.runbook.md'), content);
 
     const result = runCli(
       'run --json --var-json items=[{"name":"alice","count":10},{"name":"bob","count":20}] json-objects.runbook.md',
@@ -836,31 +677,15 @@ rd echo name={{ item.name }} count={{ item.count }}
   });
 
   it('handles empty --var-json array with 0 iterations', async () => {
-    await writeFile(
-      join(workspace.cwd, 'json-empty.runbook.md'),
-      `---
-name: JSON Empty
----
-# JSON Empty
-
-## 1. Process items
-- FOR item IN {{ items }}
-- PASS ALL CONTINUE
-- FAIL ANY STOP
-
-### 1.1 Handle item
-- PASS CONTINUE
-
-\`\`\`bash
-rd echo item={{ item }}
-\`\`\`
-
-## 2. Done
-\`\`\`bash
-rd echo done
-\`\`\`
-`,
-    );
+    const content = forSourceRunbook({
+      name: 'JSON Empty',
+      title: 'JSON Empty',
+      variable: 'item',
+      source: 'items',
+      command: 'rd echo item={{ item }}',
+      extraSteps: [{ title: 'Done', command: 'rd echo done' }],
+    });
+    await writeFile(join(workspace.cwd, 'json-empty.runbook.md'), content);
 
     const result = runCli('run --json --var-json items=[] json-empty.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
@@ -877,26 +702,16 @@ rd echo done
   });
 
   it('iterates over windowed --var-json array', async () => {
-    await writeFile(
-      join(workspace.cwd, 'json-windowed.runbook.md'),
-      `---
-name: JSON Windowed
----
-# JSON Windowed
-
-## 1. Process items
-- FOR item IN 2 TO 4 OF {{ items }}
-- PASS ALL CONTINUE
-- FAIL ANY STOP
-
-### 1.1 Handle item
-- PASS CONTINUE
-
-\`\`\`bash
-rd echo item={{ item }}
-\`\`\`
-`,
-    );
+    const content = forSourceRunbook({
+      name: 'JSON Windowed',
+      title: 'JSON Windowed',
+      variable: 'item',
+      source: 'items',
+      command: 'rd echo item={{ item }}',
+      start: 2,
+      end: 4,
+    });
+    await writeFile(join(workspace.cwd, 'json-windowed.runbook.md'), content);
 
     const result = runCli(
       'run --json --var-json items=["a","b","c","d","e"] json-windowed.runbook.md',
@@ -917,26 +732,14 @@ rd echo item={{ item }}
   it('resolves JSONL file values before template expansion (protocol proof)', async () => {
     await writeFile(join(workspace.cwd, 'items.jsonl'), '"first"\n"second"\n');
 
-    await writeFile(
-      join(workspace.cwd, 'jsonl-protocol.runbook.md'),
-      `---
-name: JSONL Protocol Proof
----
-# JSONL Protocol
-
-## 1. Process items
-- FOR item IN {{ items }}
-- PASS ALL CONTINUE
-- FAIL ANY STOP
-
-### 1.1 Handle
-- PASS CONTINUE
-
-\`\`\`bash
-rd echo item={{ item }}
-\`\`\`
-`,
-    );
+    const content = forSourceRunbook({
+      name: 'JSONL Protocol Proof',
+      title: 'JSONL Protocol',
+      variable: 'item',
+      source: 'items',
+      command: 'rd echo item={{ item }}',
+    });
+    await writeFile(join(workspace.cwd, 'jsonl-protocol.runbook.md'), content);
 
     const result = runCli(
       'run --json --var items=file:items.jsonl jsonl-protocol.runbook.md',

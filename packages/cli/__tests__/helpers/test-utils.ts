@@ -7,6 +7,7 @@ import { CommanderError } from 'commander';
 import { createProgram } from '../../src/cli.js';
 import { resetPolicyContext } from '../../src/services/policy-context.js';
 import { resetColorCache, setWriter, ConsoleWriter, getErrorMessage } from '@rundown-org/core';
+import { NAMED_IDENTIFIER_PATTERN, isReservedWord } from '@rundown-org/parser';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -502,20 +503,58 @@ export interface SubstepConfig {
 
 /**
  * Configuration for a FOR clause on a step.
+ *
+ * Discriminated union — invalid combinations are unrepresentable:
+ * - Numeric range: `{ start, end }` → `FOR var IN 1 TO 5`
+ * - Single count: `{ count }` → `FOR 5` or `FOR var IN 5`
+ * - Full source: `{ source }` → `FOR var IN {{ source }}`
+ * - Windowed source: `{ start, end, source }` → `FOR var IN 2 TO 4 OF {{ source }}`
  */
-export interface ForClauseConfig {
-  /** Loop variable name (e.g., "item" → `FOR item IN start TO end`) */
+
+/** Numeric range: `FOR var IN 1 TO 5` */
+interface ForNumericRange {
   variable?: string;
-  /** Loop start value (number or template var like "{{Min}}") */
   start: number | string;
-  /** Loop end value (number or template var like "{{Max}}") */
   end: number | string;
+  source?: never;
+  count?: never;
 }
+
+/** Single count: `FOR 5` or `FOR var IN 5` */
+interface ForCount {
+  variable?: string;
+  count: number | string;
+  start?: never;
+  end?: never;
+  source?: never;
+}
+
+/** Full source: `FOR var IN {{ source }}` */
+interface ForFullSource {
+  variable: string;
+  source: string;
+  start?: never;
+  end?: never;
+  count?: never;
+}
+
+/** Windowed source: `FOR var IN 2 TO 4 OF {{ source }}` */
+interface ForWindowedSource {
+  variable: string;
+  source: string;
+  start: number | string;
+  end: number | string;
+  count?: never;
+}
+
+export type ForClauseConfig = ForNumericRange | ForCount | ForFullSource | ForWindowedSource;
 
 /**
  * Configuration for a runbook step.
  */
 export interface StepConfig {
+  /** Custom step identifier (e.g., 'ErrorHandler') — overrides auto-numbering */
+  id?: string;
   /** Step title (after the number) */
   title: string;
   /** PASS transition (e.g., 'COMPLETE', 'CONTINUE', 'GOTO 2') */
@@ -585,15 +624,64 @@ export function createRunbook(options: CreateRunbookOptions): string {
   lines.push(`# ${title}`);
   lines.push('');
 
-  // Steps
-  steps.forEach((step, index) => {
-    const stepNum = index + 1;
-    lines.push(`## ${String(stepNum)}. ${step.title}`);
+  // Validate step IDs up front — catch duplicates and invalid identifiers before rendering
+  const usedStepIds = new Set<string>();
+  for (const step of steps) {
+    if (step.id != null) {
+      if (!NAMED_IDENTIFIER_PATTERN.test(step.id)) {
+        throw new Error(
+          `StepConfig.id "${step.id}" is not a valid named identifier (must match ${NAMED_IDENTIFIER_PATTERN.source})`,
+        );
+      }
+      if (isReservedWord(step.id)) {
+        throw new Error(
+          `StepConfig.id "${step.id}" is a reserved word and cannot be used as a step identifier`,
+        );
+      }
+      if (usedStepIds.has(step.id)) {
+        throw new Error(`Duplicate StepConfig.id "${step.id}"`);
+      }
+      usedStepIds.add(step.id);
+    }
+  }
+
+  // Steps — track numeric counter separately so named steps don't consume numbers
+  let numericStepCounter = 0;
+  steps.forEach((step) => {
+    let stepId: string;
+    if (step.id != null) {
+      stepId = step.id;
+    } else {
+      numericStepCounter++;
+      stepId = String(numericStepCounter);
+    }
+    lines.push(`## ${stepId}. ${step.title}`);
 
     // FOR clause (before transitions)
     if (step.for) {
-      const varName = step.for.variable ?? 'i';
-      lines.push(`- FOR ${varName} IN ${String(step.for.start)} TO ${String(step.for.end)}`);
+      const f = step.for;
+      const varName = f.variable ?? 'i';
+      if ('source' in f && f.source != null) {
+        if ('start' in f && f.start != null) {
+          // Windowed source: FOR var IN M TO N OF {{ source }}
+          lines.push(
+            `- FOR ${varName} IN ${String(f.start)} TO ${String(f.end)} OF {{ ${f.source} }}`,
+          );
+        } else {
+          // Full source: FOR var IN {{ source }}
+          lines.push(`- FOR ${varName} IN {{ ${f.source} }}`);
+        }
+      } else if ('count' in f && f.count != null) {
+        // Single count: FOR N or FOR var IN N
+        if (f.variable) {
+          lines.push(`- FOR ${varName} IN ${String(f.count)}`);
+        } else {
+          lines.push(`- FOR ${String(f.count)}`);
+        }
+      } else {
+        // Numeric range: FOR var IN start TO end
+        lines.push(`- FOR ${varName} IN ${String(f.start)} TO ${String(f.end)}`);
+      }
     }
 
     // Step-level transitions (use ALL/ANY qualifiers when step has substeps or FOR)
@@ -610,7 +698,7 @@ export function createRunbook(options: CreateRunbookOptions): string {
     if (step.substeps) {
       // Render substeps as H3 headers with qualified numbering
       step.substeps.forEach((sub, subIndex) => {
-        lines.push(`### ${String(stepNum)}.${String(subIndex + 1)} ${sub.title}`);
+        lines.push(`### ${stepId}.${String(subIndex + 1)} ${sub.title}`);
         if (sub.pass) lines.push(`- PASS ${sub.pass}`);
         if (sub.fail) lines.push(`- FAIL ${sub.fail}`);
         lines.push('');

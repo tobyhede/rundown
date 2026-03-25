@@ -297,29 +297,19 @@ describe('Per-step variable expansion ({{Step}}, {{Index}}, FOR loop variables)'
   });
 
   it('{{Step}} expands to named identifier for named step', async () => {
-    // Named steps use a non-numeric identifier (e.g., "ErrorHandler.") which
-    // can't be expressed with createRunbook's auto-numbering, so use raw markdown
-    await writeFile(
-      join(workspace.cwd, 'step-named.runbook.md'),
-      `---
-name: Step Named
----
-# Named Step Test
-
-## 1. Setup
-- PASS GOTO ErrorHandler
-- FAIL STOP
-
-\`\`\`bash
-rd echo setup
-\`\`\`
-
-## ErrorHandler. Handle errors at {{Step}}
-\`\`\`bash
-rd echo step={{Step}}
-\`\`\`
-`,
-    );
+    const content = createRunbook({
+      name: 'Step Named',
+      title: 'Named Step Test',
+      steps: [
+        { title: 'Setup', pass: 'GOTO ErrorHandler', fail: 'STOP', command: 'rd echo setup' },
+        {
+          id: 'ErrorHandler',
+          title: 'Handle errors at {{Step}}',
+          command: 'rd echo step={{Step}}',
+        },
+      ],
+    });
+    await writeFile(join(workspace.cwd, 'step-named.runbook.md'), content);
 
     const result = runCli('run --json step-named.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
