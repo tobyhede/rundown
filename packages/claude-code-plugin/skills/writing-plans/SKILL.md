@@ -93,13 +93,14 @@ Decompose the work into small, self-contained, granular tasks.
 The canonical plan format is **JSON** conforming to the plan schema. After writing the JSON plan, render it to Markdown with `rdx`.
 
 **Schema:** `${CLAUDE_PLUGIN_ROOT}schemas/plan.schema.json`
-**Validation:** `validatePlan()` from `plan-schema.ts`
+**Validation:** Include `"$schema": "plan"` in the JSON — `rdx` auto-discovers and validates against the plan schema.
 **Rendering:** `rdx <plan.json> --output <plan.md>`
 
 ### JSON Structure
 
 ```json
 {
+  "$schema": "plan",
   "name": "Feature Name",
   "meta": { "version": "1.0.0" },
   "goal": "...",

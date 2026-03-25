@@ -16,7 +16,7 @@ Write a detailed implementation plan for a feature or task.
 
 ## 2. Write & save the plan
 
-Use the Writing Plans Skill. Output the plan as JSON conforming to the plan schema.
+Use the Writing Plans Skill. Output the plan as JSON conforming to the plan schema. Include `"$schema": "plan"` in the JSON for automatic validation.
 
 JSON path: `{{ WorkPath }}/{{ FeatureName }}/{{ Date }}-plan.json`
 

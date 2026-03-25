@@ -237,10 +237,7 @@ describe('plan.schema.json', () => {
   });
 
   it('has format: filepath on file path fields', () => {
-    const defs = (schema as Record<string, unknown>).$defs as Record<
-      string,
-      Record<string, unknown>
-    >;
+    const defs = (schema as Record<string, Record<string, unknown>>).$defs;
     const fileEntry = defs.FileEntry;
     const fileProps = fileEntry.properties as Record<string, Record<string, unknown>>;
     expect(fileProps.path.format).toBe('filepath');

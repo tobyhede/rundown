@@ -61,7 +61,7 @@ export function resolveSchemaName(
 export async function loadValidator(name: string): Promise<(data: unknown) => unknown> {
   let mod: Record<string, unknown>;
   try {
-    mod = await import(`./${name}-schema.js`);
+    mod = (await import(`./${name}-schema.js`)) as Record<string, unknown>;
   } catch {
     throw new Error(`Unknown schema: ${name}`);
   }
