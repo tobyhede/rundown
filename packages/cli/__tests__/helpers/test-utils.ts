@@ -7,6 +7,7 @@ import { CommanderError } from 'commander';
 import { createProgram } from '../../src/cli.js';
 import { resetPolicyContext } from '../../src/services/policy-context.js';
 import { resetColorCache, setWriter, ConsoleWriter, getErrorMessage } from '@rundown-org/core';
+import { NAMED_IDENTIFIER_PATTERN, isReservedWord } from '@rundown-org/parser';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -622,6 +623,27 @@ export function createRunbook(options: CreateRunbookOptions): string {
   // Title
   lines.push(`# ${title}`);
   lines.push('');
+
+  // Validate step IDs up front — catch duplicates and invalid identifiers before rendering
+  const usedStepIds = new Set<string>();
+  for (const step of steps) {
+    if (step.id != null) {
+      if (!NAMED_IDENTIFIER_PATTERN.test(step.id)) {
+        throw new Error(
+          `StepConfig.id "${step.id}" is not a valid named identifier (must match ${NAMED_IDENTIFIER_PATTERN.source})`,
+        );
+      }
+      if (isReservedWord(step.id)) {
+        throw new Error(
+          `StepConfig.id "${step.id}" is a reserved word and cannot be used as a step identifier`,
+        );
+      }
+      if (usedStepIds.has(step.id)) {
+        throw new Error(`Duplicate StepConfig.id "${step.id}"`);
+      }
+      usedStepIds.add(step.id);
+    }
+  }
 
   // Steps — track numeric counter separately so named steps don't consume numbers
   let numericStepCounter = 0;

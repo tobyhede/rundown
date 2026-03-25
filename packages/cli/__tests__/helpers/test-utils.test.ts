@@ -119,6 +119,41 @@ describe('createRunbook', () => {
       // Must NOT produce ## 3.
       expect(md).not.toContain('## 3.');
     });
+
+    it('rejects numeric string id (would collide with auto-numbering)', () => {
+      expect(() =>
+        createRunbook({
+          steps: [{ id: '1', title: 'Bad' }],
+        }),
+      ).toThrow('not a valid named identifier');
+    });
+
+    it('rejects hyphenated id (not a valid identifier)', () => {
+      expect(() =>
+        createRunbook({
+          steps: [{ id: 'bad-id', title: 'Bad' }],
+        }),
+      ).toThrow('not a valid named identifier');
+    });
+
+    it('rejects reserved word as id', () => {
+      expect(() =>
+        createRunbook({
+          steps: [{ id: 'PASS', title: 'Bad' }],
+        }),
+      ).toThrow('reserved word');
+    });
+
+    it('rejects duplicate step ids', () => {
+      expect(() =>
+        createRunbook({
+          steps: [
+            { id: 'Handler', title: 'First' },
+            { id: 'Handler', title: 'Second' },
+          ],
+        }),
+      ).toThrow('Duplicate StepConfig.id "Handler"');
+    });
   });
 
   describe('FOR clause: numeric range', () => {
