@@ -1,0 +1,167 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rundown.org/schemas/plan.schema.json",
+  "title": "Plan",
+  "description": "Implementation plan for the Rundown planning workflow.",
+  "type": "object",
+  "required": [
+    "name",
+    "meta",
+    "goal",
+    "architecture_and_approach",
+    "constraints_and_assumptions",
+    "dependencies",
+    "context",
+    "files",
+    "tasks"
+  ],
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "meta": {
+      "type": "object",
+      "required": ["version"],
+      "properties": {
+        "version": {
+          "const": "1.0.0"
+        }
+      },
+      "additionalProperties": false
+    },
+    "goal": {
+      "type": "string",
+      "format": "markdown"
+    },
+    "architecture_and_approach": {
+      "type": "string",
+      "format": "markdown"
+    },
+    "constraints_and_assumptions": {
+      "type": "string",
+      "format": "markdown"
+    },
+    "dependencies": {
+      "oneOf": [{ "type": "string", "format": "markdown" }, { "type": "null" }]
+    },
+    "context": {
+      "oneOf": [{ "type": "string", "format": "markdown" }, { "type": "null" }]
+    },
+    "scope_assessment": {
+      "type": "string"
+    },
+    "files": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["path", "action"],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "format": "filepath"
+          },
+          "action": {
+            "type": "string",
+            "enum": ["create", "edit", "delete"]
+          },
+          "notes": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "tasks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["name", "files", "subtasks", "commit"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["path", "action"],
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "minLength": 1,
+                  "format": "filepath"
+                },
+                "action": {
+                  "type": "string",
+                  "enum": ["create", "edit", "delete"]
+                },
+                "notes": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "subtasks": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["name", "description"],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "description": {
+                  "oneOf": [{ "type": "string", "format": "markdown" }, { "type": "null" }]
+                },
+                "code": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "required": ["language", "content"],
+                      "properties": {
+                        "language": { "type": "string" },
+                        "content": { "type": "string" }
+                      },
+                      "additionalProperties": false
+                    },
+                    { "type": "null" }
+                  ]
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "commit": {
+            "type": "object",
+            "required": ["files", "message"],
+            "properties": {
+              "files": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "format": "filepath"
+                }
+              },
+              "message": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}
