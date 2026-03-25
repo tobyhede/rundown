@@ -253,89 +253,83 @@ describe('createRunbook', () => {
     });
   });
 
-  describe('FOR clause: validation errors', () => {
-    it('throws on empty ForClauseConfig', () => {
-      expect(() =>
-        createRunbook({
-          steps: [
-            {
-              title: 'Bad',
-              for: {} as never,
-              substeps: [{ title: 'Item' }],
-            },
-          ],
-        }),
-      ).toThrow('numeric range requires both start and end');
+  describe('FOR clause: type-level validation', () => {
+    it('rejects empty ForClauseConfig at compile time', () => {
+      createRunbook({
+        steps: [
+          {
+            title: 'Bad',
+            // @ts-expect-error — empty object is not assignable to ForClauseConfig
+            for: {},
+            substeps: [{ title: 'Item' }],
+          },
+        ],
+      });
     });
 
-    it('throws on partial windowed source (start without end)', () => {
-      expect(() =>
-        createRunbook({
-          steps: [
-            {
-              title: 'Bad',
-              for: { source: 'items', start: 2 },
-              substeps: [{ title: 'Item' }],
-            },
-          ],
-        }),
-      ).toThrow('windowed source requires both start and end');
+    it('rejects partial windowed source (start without end) at compile time', () => {
+      createRunbook({
+        steps: [
+          {
+            title: 'Bad',
+            // @ts-expect-error — start without end is not assignable to ForClauseConfig
+            for: { source: 'items', start: 2 },
+            substeps: [{ title: 'Item' }],
+          },
+        ],
+      });
     });
 
-    it('throws on partial windowed source (end without start)', () => {
-      expect(() =>
-        createRunbook({
-          steps: [
-            {
-              title: 'Bad',
-              for: { source: 'items', end: 4 },
-              substeps: [{ title: 'Item' }],
-            },
-          ],
-        }),
-      ).toThrow('windowed source requires both start and end');
+    it('rejects partial windowed source (end without start) at compile time', () => {
+      createRunbook({
+        steps: [
+          {
+            title: 'Bad',
+            // @ts-expect-error — end without start is not assignable to ForClauseConfig
+            for: { source: 'items', end: 4 },
+            substeps: [{ title: 'Item' }],
+          },
+        ],
+      });
     });
 
-    it('throws on count with start/end', () => {
-      expect(() =>
-        createRunbook({
-          steps: [
-            {
-              title: 'Bad',
-              for: { count: 5, start: 1, end: 5 },
-              substeps: [{ title: 'Item' }],
-            },
-          ],
-        }),
-      ).toThrow('count is mutually exclusive');
+    it('rejects count with start/end at compile time', () => {
+      createRunbook({
+        steps: [
+          {
+            title: 'Bad',
+            // @ts-expect-error — count is mutually exclusive with start/end
+            for: { count: 5, start: 1, end: 5 },
+            substeps: [{ title: 'Item' }],
+          },
+        ],
+      });
     });
 
-    it('throws on count with source', () => {
-      expect(() =>
-        createRunbook({
-          steps: [
-            {
-              title: 'Bad',
-              for: { count: 5, source: 'items' },
-              substeps: [{ title: 'Item' }],
-            },
-          ],
-        }),
-      ).toThrow('count is mutually exclusive');
+    it('rejects count with source at compile time', () => {
+      createRunbook({
+        steps: [
+          {
+            title: 'Bad',
+            // @ts-expect-error — count is mutually exclusive with source
+            for: { count: 5, source: 'items' },
+            substeps: [{ title: 'Item' }],
+          },
+        ],
+      });
     });
 
-    it('throws on numeric range with only start', () => {
-      expect(() =>
-        createRunbook({
-          steps: [
-            {
-              title: 'Bad',
-              for: { start: 1 },
-              substeps: [{ title: 'Item' }],
-            },
-          ],
-        }),
-      ).toThrow('numeric range requires both start and end');
+    it('rejects numeric range with only start at compile time', () => {
+      createRunbook({
+        steps: [
+          {
+            title: 'Bad',
+            // @ts-expect-error — numeric range requires both start and end
+            for: { start: 1 },
+            substeps: [{ title: 'Item' }],
+          },
+        ],
+      });
     });
   });
 });

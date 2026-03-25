@@ -503,24 +503,50 @@ export interface SubstepConfig {
 /**
  * Configuration for a FOR clause on a step.
  *
- * Mutually exclusive shapes:
+ * Discriminated union — invalid combinations are unrepresentable:
  * - Numeric range: `{ start, end }` → `FOR var IN 1 TO 5`
  * - Single count: `{ count }` → `FOR 5` or `FOR var IN 5`
  * - Full source: `{ source }` → `FOR var IN {{ source }}`
  * - Windowed source: `{ start, end, source }` → `FOR var IN 2 TO 4 OF {{ source }}`
  */
-export interface ForClauseConfig {
-  /** Loop variable name (e.g., "item" → `FOR item IN ...`) */
+
+/** Numeric range: `FOR var IN 1 TO 5` */
+interface ForNumericRange {
   variable?: string;
-  /** Loop start value — required for numeric range, optional for windowed source */
-  start?: number | string;
-  /** Loop end value — required for numeric range, optional for windowed source */
-  end?: number | string;
-  /** Data source variable name (e.g., 'items' → `{{ items }}`) */
-  source?: string;
-  /** Single count shorthand (e.g., 5 → `FOR 5` or `FOR var IN 5`) */
-  count?: number | string;
+  start: number | string;
+  end: number | string;
+  source?: never;
+  count?: never;
 }
+
+/** Single count: `FOR 5` or `FOR var IN 5` */
+interface ForCount {
+  variable?: string;
+  count: number | string;
+  start?: never;
+  end?: never;
+  source?: never;
+}
+
+/** Full source: `FOR var IN {{ source }}` */
+interface ForFullSource {
+  variable: string;
+  source: string;
+  start?: never;
+  end?: never;
+  count?: never;
+}
+
+/** Windowed source: `FOR var IN 2 TO 4 OF {{ source }}` */
+interface ForWindowedSource {
+  variable: string;
+  source: string;
+  start: number | string;
+  end: number | string;
+  count?: never;
+}
+
+export type ForClauseConfig = ForNumericRange | ForCount | ForFullSource | ForWindowedSource;
 
 /**
  * Configuration for a runbook step.
@@ -612,19 +638,9 @@ export function createRunbook(options: CreateRunbookOptions): string {
     // FOR clause (before transitions)
     if (step.for) {
       const f = step.for;
-      // Validate mutually exclusive shapes
-      if (f.source != null && (f.start != null) !== (f.end != null)) {
-        throw new Error('ForClauseConfig: windowed source requires both start and end, or neither');
-      }
-      if (f.source == null && f.count == null && (f.start == null || f.end == null)) {
-        throw new Error('ForClauseConfig: numeric range requires both start and end');
-      }
-      if (f.count != null && (f.start != null || f.end != null || f.source != null)) {
-        throw new Error('ForClauseConfig: count is mutually exclusive with start/end/source');
-      }
       const varName = f.variable ?? 'i';
-      if (f.source != null) {
-        if (f.start != null && f.end != null) {
+      if ('source' in f && f.source != null) {
+        if ('start' in f && f.start != null) {
           // Windowed source: FOR var IN M TO N OF {{ source }}
           lines.push(
             `- FOR ${varName} IN ${String(f.start)} TO ${String(f.end)} OF {{ ${f.source} }}`,
@@ -633,7 +649,7 @@ export function createRunbook(options: CreateRunbookOptions): string {
           // Full source: FOR var IN {{ source }}
           lines.push(`- FOR ${varName} IN {{ ${f.source} }}`);
         }
-      } else if (f.count != null) {
+      } else if ('count' in f && f.count != null) {
         // Single count: FOR N or FOR var IN N
         if (f.variable) {
           lines.push(`- FOR ${varName} IN ${String(f.count)}`);

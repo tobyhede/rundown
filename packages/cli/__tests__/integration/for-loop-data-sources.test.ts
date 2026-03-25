@@ -15,16 +15,16 @@ import { join } from 'node:path';
  * Covers ~15 of the 20 tests in this file. Tests with dotted field access,
  * multi-step runbooks, or unusual substep titles use createRunbook() directly.
  */
-function forSourceRunbook(opts: {
+type ForSourceOpts = {
   name: string;
   title: string;
   variable: string;
   source: string;
   command: string;
-  start?: number | string;
-  end?: number | string;
   extraSteps?: StepConfig[];
-}): string {
+} & ({ start?: never; end?: never } | { start: number | string; end: number | string });
+
+function forSourceRunbook(opts: ForSourceOpts): string {
   return createRunbook({
     name: opts.name,
     title: opts.title,
@@ -32,7 +32,7 @@ function forSourceRunbook(opts: {
       {
         title: `Process ${opts.source}`,
         for:
-          opts.start != null && opts.end != null
+          'start' in opts && opts.start != null
             ? { variable: opts.variable, start: opts.start, end: opts.end, source: opts.source }
             : { variable: opts.variable, source: opts.source },
         pass: 'CONTINUE',
