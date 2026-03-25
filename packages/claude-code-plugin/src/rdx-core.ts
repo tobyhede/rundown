@@ -36,7 +36,10 @@ function toHeading(field: string): string {
  * @returns Escaped string safe for pipe tables
  */
 function escapeCell(s: string): string {
-  return s.replace(/\\/g, '\\\\').replace(/\|/g, '\\|');
+  return s
+    .replace(/\r\n?|\n/g, ' ')
+    .replace(/\\/g, '\\\\')
+    .replace(/\|/g, '\\|');
 }
 
 /**

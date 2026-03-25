@@ -117,6 +117,14 @@ describe('renderToMarkdown', () => {
       expect(md).not.toMatch(/\| a\|b \|/);
     });
 
+    it('normalizes newlines in table cell values', () => {
+      const md = renderToMarkdown({
+        name: 'Root',
+        items: [{ value: 'line1\nline2', other: 'a\r\nb' }],
+      });
+      expect(md).toContain('| line1 line2 | a b |');
+    });
+
     it('escapes backslash characters in table cell values', () => {
       const md = renderToMarkdown({
         name: 'Root',
