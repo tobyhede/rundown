@@ -16,15 +16,27 @@ const MAX_DEPTH = 6;
  * Convert a field name or value to a Title Case heading.
  *
  * Splits on underscores and spaces, capitalizes every word.
+ * Returns empty string for empty input.
  *
  * @param field - The field name (e.g. `architecture_and_approach`) or value (e.g. `Write failing test`)
- * @returns Title-cased heading text (e.g. `Architecture And Approach`)
+ * @returns Title-cased heading text (e.g. `Architecture And Approach`), or empty string
  */
 function toHeading(field: string): string {
+  if (!field) return '';
   return field
     .split(/[_ ]+/)
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(' ');
+}
+
+/**
+ * Escape pipe characters in a string for use in Markdown table cells.
+ *
+ * @param s - Cell content
+ * @returns Escaped string safe for pipe tables
+ */
+function escapeCell(s: string): string {
+  return s.replace(/\|/g, '\\|');
 }
 
 /**
@@ -115,14 +127,14 @@ function renderTable(items: Array<Record<string, unknown>>): string {
     const cells = keys.map((k) => {
       const val = item[k];
       if (val === undefined || val === null) return '';
-      if (typeof val === 'string') return val;
+      if (typeof val === 'string') return escapeCell(val);
       if (typeof val === 'number' || typeof val === 'boolean') return String(val);
-      return JSON.stringify(val);
+      return escapeCell(JSON.stringify(val));
     });
     lines.push(`| ${cells.join(' | ')} |`);
   }
 
-  return lines.join('\n') + '\n';
+  return `${lines.join('\n')}\n`;
 }
 
 /**
@@ -299,6 +311,7 @@ function renderObjectFields(obj: Record<string, unknown>, depth: number, prefix:
   const lines: string[] = [];
 
   for (const [key, val] of Object.entries(obj)) {
+    if (!key) continue;
     if (val === null || val === undefined) continue;
     if (Array.isArray(val) && val.length === 0) continue;
 
@@ -345,7 +358,7 @@ function renderObjectFields(obj: Record<string, unknown>, depth: number, prefix:
  */
 export function renderToMarkdown(data: unknown): string {
   if (typeof data !== 'object' || data === null || Array.isArray(data)) {
-    return String(data) + '\n';
+    return `${String(data)}\n`;
   }
 
   const obj = data as Record<string, unknown>;
@@ -366,7 +379,7 @@ export function renderToMarkdown(data: unknown): string {
 
   // Render remaining fields at depth 2
   for (const [key, val] of Object.entries(obj)) {
-    if (key === 'name' || key === 'meta') continue;
+    if (!key || key === 'name' || key === 'meta') continue;
     if (val === null || val === undefined) continue;
     if (Array.isArray(val) && val.length === 0) continue;
 

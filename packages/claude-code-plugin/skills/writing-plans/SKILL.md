@@ -88,8 +88,47 @@ Decompose the work into small, self-contained, granular tasks.
 - Avoid exposition and verbosity
 
 
-## Template
+## Output Format
 
+The canonical plan format is **JSON** conforming to the plan schema. After writing the JSON plan, render it to Markdown with `rdx`.
+
+**Schema:** `${CLAUDE_PLUGIN_ROOT}schemas/plan.schema.json`
+**Validation:** `validatePlan()` from `plan-schema.ts`
+**Rendering:** `rdx <plan.json> --output <plan.md>`
+
+### JSON Structure
+
+```json
+{
+  "name": "Feature Name",
+  "meta": { "version": "1.0.0" },
+  "goal": "...",
+  "architecture_and_approach": "...",
+  "constraints_and_assumptions": "...",
+  "dependencies": null,
+  "context": null,
+  "files": [{ "path": "src/foo.ts", "action": "create", "notes": "..." }],
+  "tasks": [{
+    "name": "Task Name",
+    "files": [{ "path": "src/foo.ts", "action": "create" }],
+    "subtasks": [
+      { "name": "Write failing test", "description": "...", "code": { "language": "typescript", "content": "..." } },
+      { "name": "Implement", "description": "...", "code": null }
+    ],
+    "commit": { "files": ["src/foo.ts"], "message": "feat: add foo" }
+  }]
+}
+```
+
+### Workflow
+
+1. Write the plan as JSON
+2. Validate: `rdx --check <plan.json>`
+3. Render: `rdx <plan.json> --output <plan.md>`
+
+## Template (Reference)
+
+The rendered Markdown structure is shown in the template for reference:
 - `${CLAUDE_PLUGIN_ROOT}templates/planning/plan.template.md`
 
 ### Example Task Definition

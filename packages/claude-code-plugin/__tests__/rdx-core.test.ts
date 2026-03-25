@@ -51,6 +51,12 @@ describe('renderToMarkdown', () => {
       expect(md).toContain('## Goal\n');
       expect(md).not.toContain('## Meta');
     });
+
+    it('skips fields with empty-string keys', () => {
+      const md = renderToMarkdown({ name: 'Root', '': 'hidden' });
+      // Empty key should not produce a bare "## \n" heading
+      expect(md).not.toMatch(/^##\s*$/m);
+    });
   });
 
   describe('arrays', () => {
@@ -100,6 +106,15 @@ describe('renderToMarkdown', () => {
         ],
       });
       expect(md).toContain('| A | B | C |');
+    });
+
+    it('escapes pipe characters in table cell values', () => {
+      const md = renderToMarkdown({
+        name: 'Root',
+        items: [{ value: 'a|b', other: 'ok' }],
+      });
+      expect(md).toContain('| a\\|b | ok |');
+      expect(md).not.toMatch(/\| a\|b \|/);
     });
 
     it('renders nested named arrays with cascading numbers', () => {

@@ -1,6 +1,6 @@
 ---
 name: Implementation Plan Template
-description: Template for writing detailed plans structured into small, self-contained, granular tasks and subtasks.
+description: Template showing the rendered Markdown structure for implementation plans. The canonical format is JSON validated against schemas/plan.schema.json.
 use_when: Writing detailed implementation plans.
 version: 1.0.0
 ---
