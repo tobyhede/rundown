@@ -267,6 +267,166 @@ describe('Template Variables Integration', () => {
     });
   });
 
+  describe('--var-json integration', () => {
+    it('scalar number renders in template', async () => {
+      const runbookContent = createRunbook({
+        steps: [{ title: 'Echo', pass: 'COMPLETE', command: 'rd echo {{count}}' }],
+      });
+      await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
+
+      const result = runCli('run test.runbook.md --var-json count=42 --json', workspace);
+
+      expect(result.exitCode).toBe(0);
+      const events = parseJsonlEvents(result.stdout);
+      const commandStartedEvent = events.find((e) => e.type === 'command_started');
+      expect(commandStartedEvent).toBeDefined();
+      expect(commandStartedEvent.command).toBe('rd echo 42');
+    });
+
+    it('boolean value stringified in template', async () => {
+      const runbookContent = createRunbook({
+        steps: [{ title: 'Echo', pass: 'COMPLETE', command: 'rd echo {{debug}}' }],
+      });
+      await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
+
+      const result = runCli('run test.runbook.md --var-json debug=true --json', workspace);
+
+      expect(result.exitCode).toBe(0);
+      const events = parseJsonlEvents(result.stdout);
+      const commandStartedEvent = events.find((e) => e.type === 'command_started');
+      expect(commandStartedEvent).toBeDefined();
+      expect(commandStartedEvent.command).toBe('rd echo true');
+    });
+
+    it('null value stringified in template', async () => {
+      const runbookContent = createRunbook({
+        steps: [{ title: 'Echo', pass: 'COMPLETE', command: 'rd echo {{val}}' }],
+      });
+      await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
+
+      const result = runCli('run test.runbook.md --var-json val=null --json', workspace);
+
+      expect(result.exitCode).toBe(0);
+      const events = parseJsonlEvents(result.stdout);
+      const commandStartedEvent = events.find((e) => e.type === 'command_started');
+      expect(commandStartedEvent).toBeDefined();
+      expect(commandStartedEvent.command).toBe('rd echo null');
+    });
+
+    it('object with dotted field access in template', async () => {
+      await writeFile(
+        join(workspace.cwd, 'test.runbook.md'),
+        `---
+name: dotted-access
+---
+# Dotted Access
+
+## 1. Echo config
+- PASS COMPLETE
+
+\`\`\`bash
+rd echo host={{config.host}} port={{config.port}}
+\`\`\`
+`,
+      );
+
+      const result = runCli(
+        'run test.runbook.md --var-json config={"host":"localhost","port":3000} --json',
+        workspace,
+      );
+
+      expect(result.exitCode).toBe(0);
+      const events = parseJsonlEvents(result.stdout);
+      const commandStartedEvent = events.find((e) => e.type === 'command_started');
+      expect(commandStartedEvent).toBeDefined();
+      expect(commandStartedEvent.command).toContain('host=localhost');
+      expect(commandStartedEvent.command).toContain('port=3000');
+    });
+
+    it('object renders as serialized JSON when used directly', async () => {
+      const runbookContent = createRunbook({
+        steps: [{ title: 'Echo', pass: 'COMPLETE', command: 'rd echo {{config}}' }],
+      });
+      await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
+
+      const result = runCli(
+        'run test.runbook.md --var-json config={"host":"localhost"} --json',
+        workspace,
+      );
+
+      expect(result.exitCode).toBe(0);
+      const events = parseJsonlEvents(result.stdout);
+      const commandStartedEvent = events.find((e) => e.type === 'command_started');
+      expect(commandStartedEvent).toBeDefined();
+      // Object is JSON-stringified and shell-escaped
+      expect(commandStartedEvent.command).toContain('"host":"localhost"');
+    });
+
+    it('--var-json overrides --var for same key', async () => {
+      const runbookContent = createRunbook({
+        steps: [{ title: 'Echo', pass: 'COMPLETE', command: 'rd echo {{count}}' }],
+      });
+      await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
+
+      const result = runCli(
+        'run test.runbook.md --var count=10 --var-json count=99 --json',
+        workspace,
+      );
+
+      expect(result.exitCode).toBe(0);
+      const events = parseJsonlEvents(result.stdout);
+      const commandStartedEvent = events.find((e) => e.type === 'command_started');
+      expect(commandStartedEvent).toBeDefined();
+      expect(commandStartedEvent.command).toBe('rd echo 99');
+    });
+
+    it('--var-json overrides --var-file for same key', async () => {
+      const runbookContent = createRunbook({
+        steps: [{ title: 'Echo', pass: 'COMPLETE', command: 'rd echo {{count}}' }],
+      });
+      await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
+      await writeFile(join(workspace.cwd, 'vars.yaml'), 'count: 10');
+
+      const result = runCli(
+        'run test.runbook.md --var-file vars.yaml --var-json count=99 --json',
+        workspace,
+      );
+
+      expect(result.exitCode).toBe(0);
+      const events = parseJsonlEvents(result.stdout);
+      const commandStartedEvent = events.find((e) => e.type === 'command_started');
+      expect(commandStartedEvent).toBeDefined();
+      expect(commandStartedEvent.command).toBe('rd echo 99');
+    });
+
+    it('multiple --var-json flags', async () => {
+      await writeFile(
+        join(workspace.cwd, 'test.runbook.md'),
+        `---
+name: multi-json
+---
+# Multi JSON
+
+## 1. Echo values
+- PASS COMPLETE
+
+\`\`\`bash
+rd echo a={{a}} b={{b}}
+\`\`\`
+`,
+      );
+
+      const result = runCli('run test.runbook.md --var-json a=1 --var-json b=2 --json', workspace);
+
+      expect(result.exitCode).toBe(0);
+      const events = parseJsonlEvents(result.stdout);
+      const commandStartedEvent = events.find((e) => e.type === 'command_started');
+      expect(commandStartedEvent).toBeDefined();
+      expect(commandStartedEvent.command).toContain('a=1');
+      expect(commandStartedEvent.command).toContain('b=2');
+    });
+  });
+
   describe('missing variables', () => {
     it('preserves undefined variables as literal text', async () => {
       const runbookContent = createRunbook({
