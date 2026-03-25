@@ -73,7 +73,7 @@ const Task = z
     name: z.string().min(1),
     files: z.array(FileEntry),
     subtasks: z.array(Subtask).min(1),
-    commit: CommitStep,
+    commit: CommitStep.optional(),
   })
   .strict();
 

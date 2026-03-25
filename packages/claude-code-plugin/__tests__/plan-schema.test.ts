@@ -88,6 +88,54 @@ describe('PlanSchema', () => {
       expect(() => PlanSchema.parse(plan)).not.toThrow();
     });
 
+    it('accepts task with files but no commit', () => {
+      const plan = PlanSchema.parse(
+        validPlan({
+          tasks: [
+            {
+              name: 'Review docs',
+              files: [{ path: 'docs/api.md', action: 'edit' }],
+              subtasks: [{ name: 'Check accuracy', description: 'Verify examples' }],
+            },
+          ],
+        }),
+      );
+      expect(plan.tasks[0].commit).toBeUndefined();
+    });
+
+    it('accepts task with empty files and commit', () => {
+      expect(() =>
+        PlanSchema.parse(
+          validPlan({
+            tasks: [
+              {
+                name: 'Config update',
+                files: [],
+                subtasks: [{ name: 'Update settings', description: 'Change config' }],
+                commit: { files: ['config.json'], message: 'chore: update config' },
+              },
+            ],
+          }),
+        ),
+      ).not.toThrow();
+    });
+
+    it('accepts task with empty files and no commit', () => {
+      const plan = PlanSchema.parse(
+        validPlan({
+          tasks: [
+            {
+              name: 'Research',
+              files: [],
+              subtasks: [{ name: 'Investigate', description: 'Review alternatives' }],
+            },
+          ],
+        }),
+      );
+      expect(plan.tasks[0].files).toHaveLength(0);
+      expect(plan.tasks[0].commit).toBeUndefined();
+    });
+
     it('accepts subtask with null description', () => {
       const plan = validPlan({
         tasks: [
@@ -146,6 +194,23 @@ describe('PlanSchema', () => {
                 files: [{ path: 'src/foo.ts', action: 'create' }],
                 subtasks: [{ name: 'Sub', description: 'Do it' }],
                 commit: { files: [], message: 'feat: add foo' },
+              },
+            ],
+          }),
+        ),
+      ).toThrow(ZodError);
+    });
+
+    it('rejects commit with empty message', () => {
+      expect(() =>
+        PlanSchema.parse(
+          validPlan({
+            tasks: [
+              {
+                name: 'Task',
+                files: [{ path: 'src/foo.ts', action: 'create' }],
+                subtasks: [{ name: 'Sub', description: 'Do it' }],
+                commit: { files: ['src/foo.ts'], message: '' },
               },
             ],
           }),

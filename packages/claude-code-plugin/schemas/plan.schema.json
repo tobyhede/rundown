@@ -82,7 +82,7 @@
       "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["name", "files", "subtasks", "commit"],
+        "required": ["name", "files", "subtasks"],
         "properties": {
           "name": {
             "type": "string",
