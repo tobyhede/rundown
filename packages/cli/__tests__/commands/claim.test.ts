@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import {
   createTestWorkspace,
+  createRunbook,
   runCliInProcess,
   getActiveState,
   readRunbookState,
@@ -22,32 +23,29 @@ describe('claim command', () => {
 
   /** Helper: write parent runbook with substeps */
   async function writeParentRunbook(): Promise<void> {
-    const content = `## 1. Review
-- PASS ALL CONTINUE
-- FAIL ANY STOP
-
-### 1.1 Code review
-Do code review.
-
-### 1.2 Security review
-Do security review.
-
-## 2. Done
-- PASS COMPLETE
-
-Final step.
-`;
+    const content = createRunbook({
+      title: 'Parent',
+      steps: [
+        {
+          title: 'Review',
+          pass: 'CONTINUE',
+          substeps: [
+            { title: 'Code review', content: 'Do code review.' },
+            { title: 'Security review', content: 'Do security review.' },
+          ],
+        },
+        { title: 'Done', pass: 'COMPLETE', content: 'Final step.' },
+      ],
+    });
     await writeFile(join(workspace.cwd, 'parent.runbook.md'), content);
   }
 
   /** Helper: write child runbook */
   async function writeChildRunbook(): Promise<void> {
-    const content = `## 1. Execute
-- PASS COMPLETE
-- FAIL STOP
-
-Run the child task.
-`;
+    const content = createRunbook({
+      title: 'Child',
+      steps: [{ title: 'Execute', pass: 'COMPLETE', fail: 'STOP', content: 'Run the child task.' }],
+    });
     await writeFile(join(workspace.cwd, 'child.runbook.md'), content);
   }
 

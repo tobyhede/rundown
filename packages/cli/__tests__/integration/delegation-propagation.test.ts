@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import {
   createTestWorkspace,
+  createRunbook,
   runCliInProcess,
   getActiveState,
   readRunbookState,
@@ -22,32 +23,29 @@ describe('Delegation propagation integration', () => {
 
   /** Helper: write a parent runbook with substeps. */
   async function writeParentRunbook(): Promise<void> {
-    const content = `## 1. Review
-- PASS ALL CONTINUE
-- FAIL ANY STOP
-
-### 1.1 Code review
-Do code review.
-
-### 1.2 Security review
-Do security review.
-
-## 2. Done
-- PASS COMPLETE
-
-Final step.
-`;
+    const content = createRunbook({
+      title: 'Parent',
+      steps: [
+        {
+          title: 'Review',
+          pass: 'CONTINUE',
+          substeps: [
+            { title: 'Code review', content: 'Do code review.' },
+            { title: 'Security review', content: 'Do security review.' },
+          ],
+        },
+        { title: 'Done', pass: 'COMPLETE', content: 'Final step.' },
+      ],
+    });
     await writeFile(join(workspace.cwd, 'parent.runbook.md'), content);
   }
 
   /** Helper: write a single-step child runbook (prompted). */
   async function writeChildRunbook(): Promise<void> {
-    const content = `## 1. Execute
-- PASS COMPLETE
-- FAIL STOP
-
-Run the child task.
-`;
+    const content = createRunbook({
+      title: 'Child',
+      steps: [{ title: 'Execute', pass: 'COMPLETE', fail: 'STOP', content: 'Run the child task.' }],
+    });
     await writeFile(join(workspace.cwd, 'child.runbook.md'), content);
   }
 
@@ -207,29 +205,35 @@ Run the child task.
   describe('3-level chain propagation', () => {
     it('child completion cascades through parent to grandparent', async () => {
       // Grandparent with 2 substeps
-      const grandparentContent = `## 1. Pipeline
-- PASS ALL COMPLETE
-- FAIL ANY STOP
-
-### 1.1 Deploy
-Deploy step.
-
-### 1.2 Verify
-Verify step.
-`;
+      const grandparentContent = createRunbook({
+        title: 'Grandparent',
+        steps: [
+          {
+            title: 'Pipeline',
+            pass: 'COMPLETE',
+            substeps: [
+              { title: 'Deploy', content: 'Deploy step.' },
+              { title: 'Verify', content: 'Verify step.' },
+            ],
+          },
+        ],
+      });
       await writeFile(join(workspace.cwd, 'grandparent.runbook.md'), grandparentContent);
 
       // Parent with 2 substeps
-      const parentContent = `## 1. Review
-- PASS ALL COMPLETE
-- FAIL ANY STOP
-
-### 1.1 Task
-Review the deployment.
-
-### 1.2 Approve
-Approve the deployment.
-`;
+      const parentContent = createRunbook({
+        title: 'Parent',
+        steps: [
+          {
+            title: 'Review',
+            pass: 'COMPLETE',
+            substeps: [
+              { title: 'Task', content: 'Review the deployment.' },
+              { title: 'Approve', content: 'Approve the deployment.' },
+            ],
+          },
+        ],
+      });
       await writeFile(join(workspace.cwd, 'parent.runbook.md'), parentContent);
 
       await writeChildRunbook();
@@ -353,19 +357,20 @@ Approve the deployment.
   describe('3-child concurrent out-of-order completion', () => {
     it('3 delegated substeps completed in reverse order — parent completes after all resolve', async () => {
       // Parent with 3 substeps
-      const tripleParentContent = `## 1. Pipeline
-- PASS ALL COMPLETE
-- FAIL ANY STOP
-
-### 1.1 Task A
-Task A.
-
-### 1.2 Task B
-Task B.
-
-### 1.3 Task C
-Task C.
-`;
+      const tripleParentContent = createRunbook({
+        title: 'Triple Parent',
+        steps: [
+          {
+            title: 'Pipeline',
+            pass: 'COMPLETE',
+            substeps: [
+              { title: 'Task A', content: 'Task A.' },
+              { title: 'Task B', content: 'Task B.' },
+              { title: 'Task C', content: 'Task C.' },
+            ],
+          },
+        ],
+      });
       await writeFile(join(workspace.cwd, 'triple-parent.runbook.md'), tripleParentContent);
       await writeChildRunbook();
 
@@ -425,12 +430,10 @@ Task C.
   describe('edge cases', () => {
     it('handles completion when parent has no substep states', async () => {
       // Create a parent runbook without substeps
-      const simpleParentContent = `## 1. Task
-- PASS COMPLETE
-- FAIL STOP
-
-Do the task.
-`;
+      const simpleParentContent = createRunbook({
+        title: 'Simple Parent',
+        steps: [{ title: 'Task', pass: 'COMPLETE', fail: 'STOP', content: 'Do the task.' }],
+      });
       await writeFile(join(workspace.cwd, 'simple-parent.runbook.md'), simpleParentContent);
 
       // This scenario shouldn't normally happen with delegation, but test defensive handling
