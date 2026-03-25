@@ -357,9 +357,9 @@ function renderObjectFields(obj: Record<string, unknown>, depth: number, prefix:
  * @returns Markdown string
  */
 export function renderToMarkdown(data: unknown): string {
-  if (typeof data !== 'object' || data === null || Array.isArray(data)) {
-    return `${String(data)}\n`;
-  }
+  if (data === null || data === undefined) return '\n';
+  if (Array.isArray(data)) return renderArray(data, 1, '').join('\n');
+  if (typeof data !== 'object') return `${String(data)}\n`;
 
   const obj = data as Record<string, unknown>;
   const lines: string[] = [];
@@ -379,7 +379,7 @@ export function renderToMarkdown(data: unknown): string {
 
   // Render remaining fields at depth 2
   for (const [key, val] of Object.entries(obj)) {
-    if (!key || key === 'name' || key === 'meta') continue;
+    if (!key || key === 'name' || key === 'meta' || key === '$schema') continue;
     if (val === null || val === undefined) continue;
     if (Array.isArray(val) && val.length === 0) continue;
 

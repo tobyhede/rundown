@@ -266,4 +266,66 @@ describe('renderToMarkdown', () => {
       expect(md).toContain('```typescript\nexport class Widget {}\n```');
     });
   });
+
+  describe('root-level arrays', () => {
+    it('renders primitive array as bullet list', () => {
+      const md = renderToMarkdown(['apple', 'banana', 'cherry']);
+      expect(md).toContain('- apple');
+      expect(md).toContain('- banana');
+      expect(md).toContain('- cherry');
+    });
+
+    it('renders named object array as numbered sections', () => {
+      const md = renderToMarkdown([
+        { name: 'First', description: 'One' },
+        { name: 'Second', description: 'Two' },
+      ]);
+      expect(md).toContain('# 1. First');
+      expect(md).toContain('# 2. Second');
+      expect(md).toContain('One');
+      expect(md).toContain('Two');
+    });
+
+    it('renders plain object array as pipe table', () => {
+      const md = renderToMarkdown([
+        { path: 'src/a.ts', action: 'create' },
+        { path: 'src/b.ts', action: 'edit' },
+      ]);
+      expect(md).toContain('| Path | Action |');
+      expect(md).toContain('| src/a.ts | create |');
+      expect(md).toContain('| src/b.ts | edit |');
+    });
+
+    it('renders empty array as empty string', () => {
+      expect(renderToMarkdown([])).toBe('');
+    });
+  });
+
+  describe('$schema stripping', () => {
+    it('omits $schema field from rendered output', () => {
+      const md = renderToMarkdown({
+        $schema: 'plan',
+        name: 'My Doc',
+        goal: 'Do stuff',
+      });
+      expect(md).toContain('# My Doc');
+      expect(md).toContain('Do stuff');
+      expect(md).not.toContain('$schema');
+      expect(md).not.toContain('plan');
+    });
+
+    it('renders all other fields normally alongside $schema', () => {
+      const md = renderToMarkdown({
+        $schema: 'plan',
+        name: 'Title',
+        meta: { version: '1.0.0' },
+        summary: 'A summary',
+      });
+      expect(md).toContain('# Title');
+      expect(md).toContain('---');
+      expect(md).toContain('version:');
+      expect(md).toContain('A summary');
+      expect(md).not.toContain('$schema');
+    });
+  });
 });
