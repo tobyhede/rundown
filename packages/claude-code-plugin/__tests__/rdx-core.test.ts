@@ -117,6 +117,14 @@ describe('renderToMarkdown', () => {
       expect(md).not.toMatch(/\| a\|b \|/);
     });
 
+    it('escapes backslash characters in table cell values', () => {
+      const md = renderToMarkdown({
+        name: 'Root',
+        items: [{ value: 'a\\b', other: 'c\\|d' }],
+      });
+      expect(md).toContain('| a\\\\b | c\\\\\\|d |');
+    });
+
     it('renders nested named arrays with cascading numbers', () => {
       const md = renderToMarkdown({
         name: 'Root',
