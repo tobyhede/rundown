@@ -597,35 +597,52 @@ export function createRunbook(options: CreateRunbookOptions): string {
   lines.push(`# ${title}`);
   lines.push('');
 
-  // Steps
-  steps.forEach((step, index) => {
-    const stepNum = index + 1;
-    const stepId = step.id ?? String(stepNum);
+  // Steps — track numeric counter separately so named steps don't consume numbers
+  let numericStepCounter = 0;
+  steps.forEach((step) => {
+    let stepId: string;
+    if (step.id != null) {
+      stepId = step.id;
+    } else {
+      numericStepCounter++;
+      stepId = String(numericStepCounter);
+    }
     lines.push(`## ${stepId}. ${step.title}`);
 
     // FOR clause (before transitions)
     if (step.for) {
-      const varName = step.for.variable ?? 'i';
-      if (step.for.source != null) {
-        if (step.for.start != null && step.for.end != null) {
+      const f = step.for;
+      // Validate mutually exclusive shapes
+      if (f.source != null && (f.start != null) !== (f.end != null)) {
+        throw new Error('ForClauseConfig: windowed source requires both start and end, or neither');
+      }
+      if (f.source == null && f.count == null && (f.start == null || f.end == null)) {
+        throw new Error('ForClauseConfig: numeric range requires both start and end');
+      }
+      if (f.count != null && (f.start != null || f.end != null || f.source != null)) {
+        throw new Error('ForClauseConfig: count is mutually exclusive with start/end/source');
+      }
+      const varName = f.variable ?? 'i';
+      if (f.source != null) {
+        if (f.start != null && f.end != null) {
           // Windowed source: FOR var IN M TO N OF {{ source }}
           lines.push(
-            `- FOR ${varName} IN ${String(step.for.start)} TO ${String(step.for.end)} OF {{ ${step.for.source} }}`,
+            `- FOR ${varName} IN ${String(f.start)} TO ${String(f.end)} OF {{ ${f.source} }}`,
           );
         } else {
           // Full source: FOR var IN {{ source }}
-          lines.push(`- FOR ${varName} IN {{ ${step.for.source} }}`);
+          lines.push(`- FOR ${varName} IN {{ ${f.source} }}`);
         }
-      } else if (step.for.count != null) {
+      } else if (f.count != null) {
         // Single count: FOR N or FOR var IN N
-        if (step.for.variable) {
-          lines.push(`- FOR ${varName} IN ${String(step.for.count)}`);
+        if (f.variable) {
+          lines.push(`- FOR ${varName} IN ${String(f.count)}`);
         } else {
-          lines.push(`- FOR ${String(step.for.count)}`);
+          lines.push(`- FOR ${String(f.count)}`);
         }
       } else {
         // Numeric range: FOR var IN start TO end
-        lines.push(`- FOR ${varName} IN ${String(step.for.start)} TO ${String(step.for.end)}`);
+        lines.push(`- FOR ${varName} IN ${String(f.start)} TO ${String(f.end)}`);
       }
     }
 
