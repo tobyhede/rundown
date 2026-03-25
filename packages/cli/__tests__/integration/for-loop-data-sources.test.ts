@@ -760,6 +760,160 @@ rd echo host={{ host }}
     expect(allText).not.toContain("host=''");
   });
 
+  it('iterates over --var-json array', async () => {
+    await writeFile(
+      join(workspace.cwd, 'json-array.runbook.md'),
+      `---
+name: JSON Array
+---
+# JSON Array
+
+## 1. Process items
+- FOR item IN {{ items }}
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+### 1.1 Handle item
+- PASS CONTINUE
+
+\`\`\`bash
+rd echo item={{ item }}
+\`\`\`
+`,
+    );
+
+    const result = runCli(
+      'run --json --var-json items=["alpha","bravo","charlie"] json-array.runbook.md',
+      workspace,
+    );
+    expect(result.exitCode).toBe(0);
+
+    const events = parseJsonEvents(result.stdout);
+    const commandStartedEvents = events.filter((e) => e.type === 'command_started');
+
+    expect(commandStartedEvents).toHaveLength(3);
+    expect(commandStartedEvents[0].command).toContain('item=alpha');
+    expect(commandStartedEvents[1].command).toContain('item=bravo');
+    expect(commandStartedEvents[2].command).toContain('item=charlie');
+  });
+
+  it('iterates over --var-json array of objects with dotted access', async () => {
+    await writeFile(
+      join(workspace.cwd, 'json-objects.runbook.md'),
+      `---
+name: JSON Objects
+---
+# JSON Objects
+
+## 1. Process items
+- FOR item IN {{ items }}
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+### 1.1 Handle item
+- PASS CONTINUE
+
+\`\`\`bash
+rd echo name={{ item.name }} count={{ item.count }}
+\`\`\`
+`,
+    );
+
+    const result = runCli(
+      'run --json --var-json items=[{"name":"alice","count":10},{"name":"bob","count":20}] json-objects.runbook.md',
+      workspace,
+    );
+    expect(result.exitCode).toBe(0);
+
+    const events = parseJsonEvents(result.stdout);
+    const commandStartedEvents = events.filter((e) => e.type === 'command_started');
+
+    expect(commandStartedEvents).toHaveLength(2);
+    expect(commandStartedEvents[0].command).toContain('name=alice');
+    expect(commandStartedEvents[0].command).toContain('count=10');
+    expect(commandStartedEvents[1].command).toContain('name=bob');
+    expect(commandStartedEvents[1].command).toContain('count=20');
+  });
+
+  it('handles empty --var-json array with 0 iterations', async () => {
+    await writeFile(
+      join(workspace.cwd, 'json-empty.runbook.md'),
+      `---
+name: JSON Empty
+---
+# JSON Empty
+
+## 1. Process items
+- FOR item IN {{ items }}
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+### 1.1 Handle item
+- PASS CONTINUE
+
+\`\`\`bash
+rd echo item={{ item }}
+\`\`\`
+
+## 2. Done
+\`\`\`bash
+rd echo done
+\`\`\`
+`,
+    );
+
+    const result = runCli('run --json --var-json items=[] json-empty.runbook.md', workspace);
+    expect(result.exitCode).toBe(0);
+
+    const events = parseJsonEvents(result.stdout);
+    const stepEnteredEvents = events.filter((e) => e.type === 'step_entered');
+    const commandStartedEvents = events.filter((e) => e.type === 'command_started');
+
+    // Empty array: 0 iterations, only the "Done" step runs
+    expect(stepEnteredEvents).toHaveLength(1);
+    expect(commandStartedEvents).toHaveLength(1);
+    expect(stepEnteredEvents[0].description).toContain('Done');
+    expect(commandStartedEvents[0].command).toContain('done');
+  });
+
+  it('iterates over windowed --var-json array', async () => {
+    await writeFile(
+      join(workspace.cwd, 'json-windowed.runbook.md'),
+      `---
+name: JSON Windowed
+---
+# JSON Windowed
+
+## 1. Process items
+- FOR item IN 2 TO 4 OF {{ items }}
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+### 1.1 Handle item
+- PASS CONTINUE
+
+\`\`\`bash
+rd echo item={{ item }}
+\`\`\`
+`,
+    );
+
+    const result = runCli(
+      'run --json --var-json items=["a","b","c","d","e"] json-windowed.runbook.md',
+      workspace,
+    );
+    expect(result.exitCode).toBe(0);
+
+    const events = parseJsonEvents(result.stdout);
+    const commandStartedEvents = events.filter((e) => e.type === 'command_started');
+
+    // Positions 2-4 map to items[1], items[2], items[3]
+    expect(commandStartedEvents).toHaveLength(3);
+    expect(commandStartedEvents[0].command).toContain('item=b');
+    expect(commandStartedEvents[1].command).toContain('item=c');
+    expect(commandStartedEvents[2].command).toContain('item=d');
+  });
+
   it('resolves JSONL file values before template expansion (protocol proof)', async () => {
     await writeFile(join(workspace.cwd, 'items.jsonl'), '"first"\n"second"\n');
 
