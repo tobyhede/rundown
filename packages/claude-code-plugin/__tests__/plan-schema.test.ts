@@ -136,6 +136,23 @@ describe('PlanSchema', () => {
       ).toThrow(ZodError);
     });
 
+    it('rejects commit with empty files array', () => {
+      expect(() =>
+        PlanSchema.parse(
+          validPlan({
+            tasks: [
+              {
+                name: 'Task',
+                files: [{ path: 'src/foo.ts', action: 'create' }],
+                subtasks: [{ name: 'Sub', description: 'Do it' }],
+                commit: { files: [], message: 'feat: add foo' },
+              },
+            ],
+          }),
+        ),
+      ).toThrow(ZodError);
+    });
+
     it('rejects task with empty subtasks', () => {
       expect(() =>
         PlanSchema.parse(

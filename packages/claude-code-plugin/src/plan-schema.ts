@@ -60,7 +60,7 @@ const Subtask = z
  */
 const CommitStep = z
   .object({
-    files: z.array(filepath()),
+    files: z.array(filepath()).min(1),
     message: z.string().min(1),
   })
   .strict();
