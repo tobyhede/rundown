@@ -387,6 +387,7 @@ Currently supported internally: `echo`, `prompt`. Unsupported commands fall back
 - [docs/PROJECT-INTEGRATION.md](docs/PROJECT-INTEGRATION.md) - Project integration guide
 - [docs/DOCKER.md](docs/DOCKER.md) - Docker verification pipeline
 - [docs/SCENARIOS.md](docs/SCENARIOS.md) - Scenarios and test runbook standard
+- [docs/RDX.md](docs/RDX.md) - RDX JSON-to-Markdown CLI reference
 
 ## Conceptual Model
 

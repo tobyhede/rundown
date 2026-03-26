@@ -359,4 +359,190 @@ describe('renderToMarkdown', () => {
       expect(md).not.toContain('$schema');
     });
   });
+
+  // Re-verify key rendering scenarios with exact (toBe) output matching
+  // to catch regressions in whitespace, ordering, and separator formatting
+  describe('exact output', () => {
+    it('simple object with name, string, and number fields', () => {
+      expect(renderToMarkdown({ name: 'Title', goal: 'Do X', count: 42 })).toBe(
+        '# Title\n' + '\n' + '## Goal\n' + '\n' + 'Do X\n' + '\n' + '## Count\n' + '\n' + '42\n',
+      );
+    });
+
+    it('primitive array as bullet list', () => {
+      expect(renderToMarkdown({ name: 'Root', items: ['a', 'b', 'c'] })).toBe(
+        '# Root\n' + '\n' + '## Items\n' + '\n' + '- a\n' + '- b\n' + '- c\n',
+      );
+    });
+
+    it('pipe table with missing fields', () => {
+      expect(
+        renderToMarkdown({
+          name: 'Root',
+          files: [
+            { path: 'src/a.ts', action: 'create', notes: 'Widget' },
+            { path: 'src/b.ts', action: 'edit' },
+          ],
+        }),
+      ).toBe(
+        '# Root\n' +
+          '\n' +
+          '## Files\n' +
+          '\n' +
+          '| Path | Action | Notes |\n' +
+          '|------|------|------|\n' +
+          '| src/a.ts | create | Widget |\n' +
+          '| src/b.ts | edit |  |\n',
+      );
+    });
+
+    it('named array with nested subtasks', () => {
+      expect(
+        renderToMarkdown({
+          name: 'Root',
+          tasks: [
+            {
+              name: 'Task One',
+              description: 'Do first',
+              subtasks: [
+                { name: 'Sub A', description: 'Do A' },
+                { name: 'Sub B', description: 'Do B' },
+              ],
+            },
+          ],
+        }),
+      ).toBe(
+        '# Root\n' +
+          '\n' +
+          '## 1. Task One\n' +
+          '\n' +
+          'Do first\n' +
+          '\n' +
+          '### 1.1 Sub A\n' +
+          '\n' +
+          'Do A\n' +
+          '\n' +
+          '### 1.2 Sub B\n' +
+          '\n' +
+          'Do B\n',
+      );
+    });
+
+    it('code block in named item', () => {
+      expect(
+        renderToMarkdown({
+          name: 'Root',
+          tasks: [
+            {
+              name: 'Task',
+              code: { language: 'typescript', content: 'const x = 1;' },
+            },
+          ],
+        }),
+      ).toBe(
+        '# Root\n' + '\n' + '## 1. Task\n' + '\n' + '```typescript\n' + 'const x = 1;\n' + '```\n',
+      );
+    });
+
+    it('full plan with frontmatter, tables, named arrays, subtasks, and code', () => {
+      expect(
+        renderToMarkdown({
+          name: 'Add Widget',
+          meta: { version: '1.0.0' },
+          goal: 'Create a widget component.',
+          architecture_and_approach: 'Simple component following existing patterns.',
+          dependencies: null,
+          files: [{ path: 'src/widget.ts', action: 'create', notes: 'Widget class' }],
+          tasks: [
+            {
+              name: 'Implement Widget',
+              files: [{ path: 'src/widget.ts', action: 'create' }],
+              subtasks: [
+                {
+                  name: 'Write failing test',
+                  description: 'Test widget construction.',
+                  code: { language: 'typescript', content: 'expect(new Widget()).toBeDefined();' },
+                },
+                {
+                  name: 'Implement widget',
+                  description: 'Create the widget class.',
+                  code: { language: 'typescript', content: 'export class Widget {}' },
+                },
+              ],
+            },
+          ],
+        }),
+      ).toBe(
+        '---\n' +
+          'version: 1.0.0\n' +
+          '---\n' +
+          '\n' +
+          '# Add Widget\n' +
+          '\n' +
+          '## Goal\n' +
+          '\n' +
+          'Create a widget component.\n' +
+          '\n' +
+          '## Architecture And Approach\n' +
+          '\n' +
+          'Simple component following existing patterns.\n' +
+          '\n' +
+          '## Files\n' +
+          '\n' +
+          '| Path | Action | Notes |\n' +
+          '|------|------|------|\n' +
+          '| src/widget.ts | create | Widget class |\n' +
+          '\n' +
+          '## 1. Implement Widget\n' +
+          '\n' +
+          '### Files\n' +
+          '\n' +
+          '| Path | Action |\n' +
+          '|------|------|\n' +
+          '| src/widget.ts | create |\n' +
+          '\n' +
+          '### 1.1 Write Failing Test\n' +
+          '\n' +
+          'Test widget construction.\n' +
+          '\n' +
+          '```typescript\n' +
+          'expect(new Widget()).toBeDefined();\n' +
+          '```\n' +
+          '\n' +
+          '### 1.2 Implement Widget\n' +
+          '\n' +
+          'Create the widget class.\n' +
+          '\n' +
+          '```typescript\n' +
+          'export class Widget {}\n' +
+          '```\n',
+      );
+    });
+
+    it('root-level named array as H1 numbered sections', () => {
+      expect(
+        renderToMarkdown([
+          { name: 'First', description: 'One' },
+          { name: 'Second', description: 'Two' },
+        ]),
+      ).toBe('# 1. First\n' + '\n' + 'One\n' + '\n' + '# 2. Second\n' + '\n' + 'Two\n');
+    });
+
+    it('table cell escaping for pipes and newlines', () => {
+      expect(
+        renderToMarkdown({
+          name: 'Root',
+          items: [{ value: 'a|b', other: 'line1\nline2' }],
+        }),
+      ).toBe(
+        '# Root\n' +
+          '\n' +
+          '## Items\n' +
+          '\n' +
+          '| Value | Other |\n' +
+          '|------|------|\n' +
+          '| a\\|b | line1 line2 |\n',
+      );
+    });
+  });
 });
