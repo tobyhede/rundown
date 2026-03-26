@@ -16,9 +16,13 @@ Write a detailed implementation plan for a feature or task.
 
 ## 2. Write & save the plan
 
-Use the Writing Plans Skill.
+Use the Writing Plans Skill. Output the plan as JSON conforming to the plan schema. Include `"$schema": "https://rundown.org/schemas/plan.schema.json"` in the JSON for automatic validation.
 
-Path: `{{ WorkPath }}/{{ FeatureName }}/{{ Date }}-plan.md`
+JSON path: `{{ WorkPath }}/{{ FeatureName }}/{{ Date }}-plan.json`
+
+Validate: `rdx --check {{ WorkPath }}/{{ FeatureName }}/{{ Date }}-plan.json`
+
+Render: `rdx {{ WorkPath }}/{{ FeatureName }}/{{ Date }}-plan.json --output {{ WorkPath }}/{{ FeatureName }}/{{ Date }}-plan.md`
 
 ---
 

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://rundown.org/schemas/plan.schema.json",
+  "name": "Test Plan",
+  "meta": { "version": "1.0.0" },
+  "goal": "Test the rdx CLI",
+  "architecture_and_approach": "Simple approach",
+  "constraints_and_assumptions": "None",
+  "files": [{ "path": "src/foo.ts", "action": "create" }],
+  "tasks": [
+    {
+      "name": "First Task",
+      "files": [{ "path": "src/foo.ts", "action": "create" }],
+      "subtasks": [{ "name": "Write test", "description": "Test it" }],
+      "commit": { "files": ["src/foo.ts"], "message": "feat: add foo" }
+    }
+  ]
+}

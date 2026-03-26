@@ -39,6 +39,41 @@ export function getErrorMessage(error: unknown): string {
 }
 
 /**
+ * Check if a value looks like a single Zod issue entry.
+ *
+ * @param value - The value to check
+ * @returns True if value has `path` (array) and `message` (string) fields
+ */
+function isZodIssueLike(
+  value: unknown,
+): value is { path: Array<string | number>; message: string } {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'path' in value &&
+    Array.isArray((value as { path: unknown }).path) &&
+    'message' in value &&
+    typeof (value as { message: unknown }).message === 'string'
+  );
+}
+
+/**
+ * Structural type guard for ZodError.
+ * Uses property checking instead of `instanceof` to work across ESM realm boundaries.
+ *
+ * @param error - The unknown value to check
+ * @returns True if error has a ZodError-shaped `issues` array
+ */
+export function isZodError(
+  error: unknown,
+): error is { issues: Array<{ path: Array<string | number>; message: string }> } {
+  if (typeof error !== 'object' || error === null || !('issues' in error)) return false;
+  const issues = (error as { issues: unknown }).issues;
+  if (!Array.isArray(issues) || issues.length === 0) return false;
+  return issues.every(isZodIssueLike);
+}
+
+/**
  * Discriminated union for session load errors
  * Allows callers to handle each error type appropriately
  */
