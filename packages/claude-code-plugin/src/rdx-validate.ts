@@ -8,8 +8,7 @@
  * @module rdx-validate
  */
 
-import { ZodError } from 'zod';
-import { getErrorMessage } from './shared/errors.js';
+import { getErrorMessage, isZodError } from './shared/errors.js';
 
 /**
  * Extract and strip the `$schema` field from parsed JSON data.
@@ -59,6 +58,9 @@ export function resolveSchemaName(
  * @throws {Error} If the module is not found or does not export `validate`
  */
 export async function loadValidator(name: string): Promise<(data: unknown) => unknown> {
+  if (!/^[a-z][a-z0-9-]*$/.test(name)) {
+    throw new Error(`Invalid schema name: ${name}`);
+  }
   let mod: Record<string, unknown>;
   try {
     mod = (await import(`./${name}-schema.js`)) as Record<string, unknown>;
@@ -81,7 +83,7 @@ export async function loadValidator(name: string): Promise<(data: unknown) => un
 export function formatValidationErrors(error: unknown, schemaName?: string): string {
   const label = schemaName ? ` (${schemaName})` : '';
 
-  if (error instanceof ZodError) {
+  if (isZodError(error)) {
     const details = error.issues
       .map((issue) => {
         const path = issue.path.length > 0 ? `/${issue.path.join('/')}` : '(root)';

@@ -64,6 +64,18 @@ describe('loadValidator', () => {
     await expect(loadValidator('nonexistent')).rejects.toThrow('Unknown schema: nonexistent');
   });
 
+  it('rejects path traversal in schema name', async () => {
+    await expect(loadValidator('../shared/errors')).rejects.toThrow('Invalid schema name');
+  });
+
+  it('rejects uppercase schema names', async () => {
+    await expect(loadValidator('PLAN')).rejects.toThrow('Invalid schema name');
+  });
+
+  it('rejects schema names with underscores', async () => {
+    await expect(loadValidator('plan_v2')).rejects.toThrow('Invalid schema name');
+  });
+
   it('loaded validator rejects invalid data', async () => {
     const validate = await loadValidator('plan');
     expect(() => validate({ name: 'Incomplete' })).toThrow();

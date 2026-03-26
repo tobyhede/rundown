@@ -174,6 +174,19 @@ describe('renderToMarkdown', () => {
       expect(md).toContain('```typescript\nconst x = 1;\n```\n');
     });
 
+    it('renders code block shape with extra fields as fenced code block', () => {
+      const md = renderToMarkdown({
+        name: 'Root',
+        tasks: [
+          {
+            name: 'Task',
+            code: { language: 'typescript', content: 'const x = 1;', description: 'optional note' },
+          },
+        ],
+      });
+      expect(md).toContain('```typescript\nconst x = 1;\n```\n');
+    });
+
     it('renders nested object as subsection at depth+1', () => {
       const md = renderToMarkdown({
         name: 'Root',

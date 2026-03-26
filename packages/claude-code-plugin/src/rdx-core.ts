@@ -55,21 +55,43 @@ function heading(text: string, depth: number): string {
 }
 
 /**
+ * Render a `code` field as a fenced code block.
+ *
+ * Strings render as bare fences. Objects with `{ language, content }` shape
+ * delegate to {@link renderValue} for language-annotated fences.
+ *
+ * @param val - The code field value
+ * @param depth - Current heading depth (for nested code block objects)
+ * @param prefix - Numbering prefix for nested arrays
+ * @returns Array of markdown lines
+ */
+function renderCodeField(val: unknown, depth: number, prefix: string): string[] {
+  if (typeof val === 'string') {
+    return ['```', val, '```', ''];
+  }
+  return renderValue(val, depth, prefix);
+}
+
+/**
+ * Check if an object has a string-valued property.
+ *
+ * @param obj - The object to check
+ * @param key - The property name to look for
+ * @returns True if `obj[key]` exists and is a string
+ */
+function hasStringProp<K extends string>(obj: object, key: K): obj is object & Record<K, string> {
+  return key in obj && typeof (obj as Record<string, unknown>)[key] === 'string';
+}
+
+/**
  * Check if a value is a code block shape: `{ language, content }`.
  *
  * @param value - The value to check
- * @returns True if value is an object with exactly `language` and `content` string fields
+ * @returns True if value is an object with `language` and `content` string fields
  */
 function isCodeBlockShape(value: unknown): value is { language: string; content: string } {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
-  const keys = Object.keys(value);
-  return (
-    keys.length === 2 &&
-    keys.includes('language') &&
-    keys.includes('content') &&
-    typeof (value as Record<string, unknown>).language === 'string' &&
-    typeof (value as Record<string, unknown>).content === 'string'
-  );
+  return hasStringProp(value, 'language') && hasStringProp(value, 'content');
 }
 
 /**
@@ -86,7 +108,7 @@ function isNamedObjectArray(
       typeof item === 'object' &&
       item !== null &&
       !Array.isArray(item) &&
-      typeof (item as Record<string, unknown>).name === 'string',
+      hasStringProp(item, 'name'),
   );
 }
 
@@ -262,14 +284,7 @@ function renderNamedArray(
 
       // Code field — fenced code block (no heading)
       if (key === 'code') {
-        if (typeof val === 'string') {
-          lines.push('```');
-          lines.push(val);
-          lines.push('```');
-          lines.push('');
-        } else {
-          lines.push(...renderValue(val, depth + 1, childPrefix));
-        }
+        lines.push(...renderCodeField(val, depth + 1, childPrefix));
         continue;
       }
 
@@ -320,14 +335,7 @@ function renderObjectFields(obj: Record<string, unknown>, depth: number, prefix:
 
     // Code field — fenced code block
     if (key === 'code') {
-      if (typeof val === 'string') {
-        lines.push('```');
-        lines.push(val);
-        lines.push('```');
-        lines.push('');
-      } else {
-        lines.push(...renderValue(val, depth, prefix));
-      }
+      lines.push(...renderCodeField(val, depth, prefix));
       continue;
     }
 
@@ -390,14 +398,7 @@ export function renderToMarkdown(data: unknown): string {
 
     // Code field at root
     if (key === 'code') {
-      if (typeof val === 'string') {
-        lines.push('```');
-        lines.push(val);
-        lines.push('```');
-        lines.push('');
-      } else {
-        lines.push(...renderValue(val, 2, ''));
-      }
+      lines.push(...renderCodeField(val, 2, ''));
       continue;
     }
 

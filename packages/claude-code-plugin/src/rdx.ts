@@ -37,11 +37,12 @@ program
       const { cleanData, schemaName: dataSchema } = stripSchema(data);
       const schema = resolveSchemaName(options.schema, dataSchema);
 
-      // Validate against schema when available
+      // Validate against schema when available, capturing typed result
+      let dataToRender: unknown = cleanData;
       if (schema) {
         try {
           const validate = await loadValidator(schema);
-          validate(cleanData);
+          dataToRender = validate(cleanData);
         } catch (error) {
           process.stderr.write(formatValidationErrors(error, schema));
           process.exitCode = 1;
@@ -54,7 +55,7 @@ program
         return;
       }
 
-      const md = renderToMarkdown(cleanData);
+      const md = renderToMarkdown(dataToRender);
       if (options.output) {
         await fs.writeFile(options.output, md);
       } else {

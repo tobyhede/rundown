@@ -39,6 +39,24 @@ export function getErrorMessage(error: unknown): string {
 }
 
 /**
+ * Structural type guard for ZodError.
+ * Uses property checking instead of `instanceof` to work across ESM realm boundaries.
+ *
+ * @param error - The unknown value to check
+ * @returns True if error has a ZodError-shaped `issues` array
+ */
+export function isZodError(
+  error: unknown,
+): error is { issues: Array<{ path: Array<string | number>; message: string }> } {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'issues' in error &&
+    Array.isArray((error as { issues: unknown }).issues)
+  );
+}
+
+/**
  * Discriminated union for session load errors
  * Allows callers to handle each error type appropriately
  */

@@ -122,7 +122,7 @@ export type PlanSubtask = z.infer<typeof Subtask>;
 export type PlanFileEntry = z.infer<typeof FileEntry>;
 
 /** Document metadata type inferred from Meta schema. */
-export type Meta = z.infer<typeof Meta>;
+export type PlanMeta = z.infer<typeof Meta>;
 
 /**
  * Validate unknown data against the plan schema.
