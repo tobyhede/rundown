@@ -155,21 +155,21 @@ Schema names are extracted from URIs matching `https://rundown.org/schemas/<name
 
 If a `$schema` URI is present but cannot be parsed to a known schema name, `rdx` **rejects** it with an error rather than silently skipping validation:
 
-```
+```text
 error: unrecognized schema: https://example.com/unknown.json
 ```
 
 ### Validation Error Format
 
 **Zod validation errors** (structured):
-```
+```text
 error: schema validation failed (plan)
   /goal: Required
   /files/0/action: Invalid enum value. Expected 'create' | 'edit' | 'delete'
 ```
 
 **Other errors:**
-```
+```text
 error: schema validation failed (plan)
   error message text
 ```
@@ -319,15 +319,15 @@ See `docs/implement/claude-code-plugin/schema-design.md` for full guidance.
 
 ## Execution Flow
 
-```
+```text
 Read JSON file
   → Parse JSON
   → Extract $schema → { cleanData, schemaName, rawSchema }
   → Resolve schema (--schema flag > $schema field)
   → If rawSchema present but unresolvable → error, exit 1
-  → If schema resolved → validate cleanData → error on failure, exit 1
+  → If schema resolved → validate cleanData → dataToRender (or cleanData if no schema)
   → If --check → output "Valid.", exit 0
-  → renderToMarkdown(cleanData)
+  → renderToMarkdown(dataToRender)
   → Output to --output file or stdout
 ```
 
