@@ -37,6 +37,12 @@
     "tasks"
   ],
   "properties": {
+    "$schema": {
+      "type": "string",
+      "format": "uri",
+      "const": "https://rundown.org/schemas/plan.schema.json",
+      "description": "Schema URI for editor autocomplete and rdx validation dispatch."
+    },
     "name": {
       "type": "string",
       "minLength": 1
@@ -69,9 +75,6 @@
     "context": {
       "oneOf": [{ "type": "string", "format": "markdown" }, { "type": "null" }]
     },
-    "scope_assessment": {
-      "type": "string"
-    },
     "files": {
       "type": "array",
       "minItems": 1,
@@ -90,7 +93,8 @@
           },
           "files": {
             "type": "array",
-            "items": { "$ref": "#/$defs/FileEntry" }
+            "items": { "$ref": "#/$defs/FileEntry" },
+            "description": "Files affected by this task. May be empty for research or config-only tasks; commit.files independently enforces staged files."
           },
           "subtasks": {
             "type": "array",

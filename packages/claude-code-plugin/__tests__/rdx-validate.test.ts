@@ -1,18 +1,54 @@
 import { describe, it, expect } from '@jest/globals';
 import { type ZodError, z } from 'zod';
 import {
+  parseSchemaName,
   stripSchema,
   resolveSchemaName,
   loadValidator,
   formatValidationErrors,
 } from '../src/rdx-validate.js';
 
+describe('parseSchemaName', () => {
+  it('extracts name from full URI', () => {
+    expect(parseSchemaName('https://rundown.org/schemas/plan.schema.json')).toBe('plan');
+  });
+
+  it('accepts bare name for backward compat', () => {
+    expect(parseSchemaName('plan')).toBe('plan');
+  });
+
+  it('accepts hyphenated names', () => {
+    expect(parseSchemaName('https://rundown.org/schemas/my-schema.schema.json')).toBe('my-schema');
+    expect(parseSchemaName('my-schema')).toBe('my-schema');
+  });
+
+  it('returns undefined for unrecognized URI', () => {
+    expect(parseSchemaName('https://other.org/schemas/plan.schema.json')).toBeUndefined();
+  });
+
+  it('returns undefined for invalid bare name', () => {
+    expect(parseSchemaName('PLAN')).toBeUndefined();
+    expect(parseSchemaName('../traversal')).toBeUndefined();
+  });
+});
+
 describe('stripSchema', () => {
-  it('extracts $schema field and returns clean data', () => {
-    const data = { $schema: 'plan', name: 'Test', goal: 'Do it' };
+  it('extracts $schema URI and returns clean data with resolved name', () => {
+    const data = {
+      $schema: 'https://rundown.org/schemas/plan.schema.json',
+      name: 'Test',
+      goal: 'Do it',
+    };
     const { cleanData, schemaName } = stripSchema(data);
     expect(schemaName).toBe('plan');
     expect(cleanData).toEqual({ name: 'Test', goal: 'Do it' });
+  });
+
+  it('extracts bare $schema name for backward compat', () => {
+    const data = { $schema: 'plan', name: 'Test' };
+    const { cleanData, schemaName } = stripSchema(data);
+    expect(schemaName).toBe('plan');
+    expect(cleanData).toEqual({ name: 'Test' });
   });
 
   it('returns undefined schemaName when no $schema', () => {

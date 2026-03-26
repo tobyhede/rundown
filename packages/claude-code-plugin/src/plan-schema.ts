@@ -67,6 +67,10 @@ const CommitStep = z
 
 /**
  * A task grouping related subtasks. Numbering is derived from ordinal position.
+ *
+ * `files` intentionally allows an empty array — research or config-only tasks
+ * may not touch any files directly. `commit.files` independently enforces that
+ * commits stage at least one file.
  */
 const Task = z
   .object({
@@ -96,6 +100,7 @@ const Meta = z
  */
 export const PlanSchema = z
   .object({
+    $schema: z.string().url().optional(),
     name: z.string().min(1),
     meta: Meta,
     goal: markdown(),
@@ -103,7 +108,6 @@ export const PlanSchema = z
     constraints_and_assumptions: markdown(),
     dependencies: markdown().nullable(),
     context: markdown().nullable(),
-    scope_assessment: z.string().optional(),
     files: z.array(FileEntry).min(1),
     tasks: z.array(Task).min(1),
   })

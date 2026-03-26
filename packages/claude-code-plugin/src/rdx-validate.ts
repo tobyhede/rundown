@@ -10,11 +10,35 @@
 
 import { getErrorMessage, isZodError } from './shared/errors.js';
 
+/** URI prefix for Rundown schema identifiers. */
+const SCHEMA_URI_PREFIX = 'https://rundown.org/schemas/';
+
+/** Suffix for schema URI filenames. */
+const SCHEMA_URI_SUFFIX = '.schema.json';
+
+/**
+ * Extract a schema name from a `$schema` value.
+ *
+ * Accepts both full URIs (`https://rundown.org/schemas/plan.schema.json` → `"plan"`)
+ * and bare names (`"plan"` → `"plan"`) for backward compatibility with the `--schema` flag.
+ *
+ * @param raw - The raw `$schema` string value
+ * @returns The extracted schema name, or undefined if the value is unrecognized
+ */
+export function parseSchemaName(raw: string): string | undefined {
+  if (raw.startsWith(SCHEMA_URI_PREFIX) && raw.endsWith(SCHEMA_URI_SUFFIX)) {
+    const name = raw.slice(SCHEMA_URI_PREFIX.length, -SCHEMA_URI_SUFFIX.length);
+    return /^[a-z][a-z0-9-]*$/.test(name) ? name : undefined;
+  }
+  // Bare name fallback (e.g. --schema plan)
+  return /^[a-z][a-z0-9-]*$/.test(raw) ? raw : undefined;
+}
+
 /**
  * Extract and strip the `$schema` field from parsed JSON data.
  *
  * @param data - Parsed JSON data (may or may not contain `$schema`)
- * @returns Object with `cleanData` (data without `$schema`) and `schemaName` (extracted value or undefined)
+ * @returns Object with `cleanData` (data without `$schema`) and `schemaName` (extracted name or undefined)
  */
 export function stripSchema(data: unknown): {
   cleanData: unknown;
@@ -29,8 +53,8 @@ export function stripSchema(data: unknown): {
     return { cleanData: data, schemaName: undefined };
   }
 
-  const { $schema: schemaName, ...cleanData } = obj;
-  return { cleanData, schemaName };
+  const { $schema: rawSchema, ...cleanData } = obj;
+  return { cleanData, schemaName: parseSchemaName(rawSchema) };
 }
 
 /**

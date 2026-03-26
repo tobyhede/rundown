@@ -93,14 +93,14 @@ Decompose the work into small, self-contained, granular tasks.
 The canonical plan format is **JSON** conforming to the plan schema. After writing the JSON plan, render it to Markdown with `rdx`.
 
 **Schema:** `${CLAUDE_PLUGIN_ROOT}schemas/plan.schema.json`
-**Validation:** Include `"$schema": "plan"` in the JSON — `rdx` auto-discovers and validates against the plan schema.
+**Validation:** Include `"$schema": "https://rundown.org/schemas/plan.schema.json"` in the JSON — `rdx` auto-discovers and validates against the plan schema.
 **Rendering:** `rdx <plan.json> --output <plan.md>`
 
 ### JSON Structure
 
 ```json
 {
-  "$schema": "plan",
+  "$schema": "https://rundown.org/schemas/plan.schema.json",
   "name": "Feature Name",
   "meta": { "version": "1.0.0" },
   "goal": "...",

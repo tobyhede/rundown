@@ -1,5 +1,5 @@
 {
-  "$schema": "plan",
+  "$schema": "https://rundown.org/schemas/plan.schema.json",
   "name": "Test Plan",
   "meta": { "version": "1.0.0" },
   "goal": "Test the rdx CLI",

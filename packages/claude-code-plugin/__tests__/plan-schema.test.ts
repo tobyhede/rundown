@@ -50,14 +50,16 @@ describe('PlanSchema', () => {
       expect(() => PlanSchema.parse(validPlan({ dependencies: 'Some dep' }))).not.toThrow();
     });
 
-    it('accepts optional scope_assessment', () => {
-      const plan = validPlan();
-      delete plan.scope_assessment;
-      expect(() => PlanSchema.parse(plan)).not.toThrow();
+    it('accepts plan with $schema URI', () => {
+      expect(() =>
+        PlanSchema.parse(validPlan({ $schema: 'https://rundown.org/schemas/plan.schema.json' })),
+      ).not.toThrow();
     });
 
-    it('accepts scope_assessment when provided', () => {
-      expect(() => PlanSchema.parse(validPlan({ scope_assessment: 'Small' }))).not.toThrow();
+    it('accepts plan without $schema', () => {
+      const plan = validPlan();
+      expect(plan).not.toHaveProperty('$schema');
+      expect(() => PlanSchema.parse(plan)).not.toThrow();
     });
 
     it('accepts optional notes on file entries', () => {
