@@ -360,6 +360,8 @@ describe('renderToMarkdown', () => {
     });
   });
 
+  // Re-verify key rendering scenarios with exact (toBe) output matching
+  // to catch regressions in whitespace, ordering, and separator formatting
   describe('exact output', () => {
     it('simple object with name, string, and number fields', () => {
       expect(renderToMarkdown({ name: 'Title', goal: 'Do X', count: 42 })).toBe(

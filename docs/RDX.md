@@ -261,7 +261,7 @@ Must support dark mode.
 ## Files
 
 | Path | Action | Notes |
-|------|--------|-------|
+|------|------|------|
 | src/widget.ts | create | Widget class |
 | src/widget.test.ts | create | Unit tests |
 
@@ -285,9 +285,13 @@ export class Widget {}
 
 ### Commit
 
-| Files | Message |
-|------|---------|
-| src/widget.ts | feat: add widget component |
+#### Files
+
+- src/widget.ts
+
+#### Message
+
+feat: add widget component
 ```
 
 ---
