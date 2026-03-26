@@ -12,6 +12,25 @@ import * as yaml from 'js-yaml';
 /** Maximum heading depth (H6). */
 const MAX_DEPTH = 6;
 
+/** Scalar values that can appear in renderable JSON. */
+type RenderableScalar = string | number | boolean | null;
+
+/** Recursive type for any JSON-renderable value. */
+type RenderableValue = RenderableScalar | RenderableValue[] | RenderableObject;
+
+/** JSON object whose values are all renderable. */
+type RenderableObject = { [key: string]: RenderableValue };
+
+/**
+ * Check if a value is a non-null, non-array object (renderable JSON object).
+ *
+ * @param value - The value to check
+ * @returns True if value is a plain object
+ */
+function isRenderableObject(value: unknown): value is RenderableObject {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 /**
  * Convert a field name or value to a Title Case heading.
  *
@@ -107,9 +126,7 @@ function isCodeBlockShape(value: unknown): value is { language: string; content:
  * @param arr - The array to check
  * @returns True if every element is an object with a string `name` field
  */
-function isNamedObjectArray(
-  arr: unknown[],
-): arr is Array<Record<string, unknown> & { name: string }> {
+function isNamedObjectArray(arr: unknown[]): arr is Array<RenderableObject & { name: string }> {
   return arr.every(
     (item) =>
       typeof item === 'object' &&
@@ -125,7 +142,7 @@ function isNamedObjectArray(
  * @param arr - The array to check
  * @returns True if every element is a plain object
  */
-function isObjectArray(arr: unknown[]): arr is Array<Record<string, unknown>> {
+function isObjectArray(arr: unknown[]): arr is Array<RenderableObject> {
   return arr.every((item) => typeof item === 'object' && item !== null && !Array.isArray(item));
 }
 
@@ -138,7 +155,7 @@ function isObjectArray(arr: unknown[]): arr is Array<Record<string, unknown>> {
  * @param items - Array of objects to render as a table
  * @returns Markdown pipe table string
  */
-function renderTable(items: Array<Record<string, unknown>>): string {
+function renderTable(items: Array<RenderableObject>): string {
   // Collect all unique keys in insertion order
   const keys: string[] = [];
   for (const item of items) {
@@ -157,8 +174,9 @@ function renderTable(items: Array<Record<string, unknown>>): string {
   // Data rows
   for (const item of items) {
     const cells = keys.map((k) => {
+      if (!(k in item)) return '';
       const val = item[k];
-      if (val === undefined || val === null) return '';
+      if (val === null) return '';
       if (typeof val === 'string') return escapeCell(val);
       if (typeof val === 'number' || typeof val === 'boolean') return String(val);
       return escapeCell(JSON.stringify(val));
@@ -214,8 +232,8 @@ function renderValue(value: unknown, depth: number, prefix: string): string[] {
   }
 
   // Object — render fields as subsections
-  if (typeof value === 'object') {
-    return renderObjectFields(value as Record<string, unknown>, depth, prefix);
+  if (isRenderableObject(value)) {
+    return renderObjectFields(value, depth, prefix);
   }
 
   return lines;
@@ -268,7 +286,7 @@ function renderArray(arr: unknown[], depth: number, prefix: string): string[] {
  * @returns Array of markdown lines
  */
 function renderNamedArray(
-  arr: Array<Record<string, unknown> & { name: string }>,
+  arr: Array<RenderableObject & { name: string }>,
   depth: number,
   prefix: string,
 ): string[] {
@@ -286,7 +304,7 @@ function renderNamedArray(
     const childPrefix = `${num}.`;
     for (const [key, val] of Object.entries(item)) {
       if (key === 'name') continue;
-      if (val === null || val === undefined) continue;
+      if (val === null) continue;
       if (Array.isArray(val) && val.length === 0) continue;
 
       // Code field — fenced code block (no heading)
@@ -332,12 +350,12 @@ function renderNamedArray(
  * @param prefix - Numbering prefix for nested arrays
  * @returns Array of markdown lines
  */
-function renderObjectFields(obj: Record<string, unknown>, depth: number, prefix: string): string[] {
+function renderObjectFields(obj: RenderableObject, depth: number, prefix: string): string[] {
   const lines: string[] = [];
 
   for (const [key, val] of Object.entries(obj)) {
     if (!key) continue;
-    if (val === null || val === undefined) continue;
+    if (val === null) continue;
     if (Array.isArray(val) && val.length === 0) continue;
 
     // Code field — fenced code block
@@ -379,13 +397,13 @@ export function renderToMarkdown(data: unknown): string {
   if (Array.isArray(data)) return renderArray(data, 1, '').join('\n');
   if (typeof data === 'string') return `${data}\n`;
   if (typeof data === 'number' || typeof data === 'boolean') return `${String(data)}\n`;
-  if (typeof data !== 'object') return '\n';
+  if (!isRenderableObject(data)) return '\n';
 
-  const obj = data as Record<string, unknown>;
+  const obj = data;
   const lines: string[] = [];
 
   // Extract meta → YAML frontmatter
-  if (obj.meta !== undefined && obj.meta !== null) {
+  if ('meta' in obj && obj.meta !== null) {
     lines.push('---');
     lines.push(yaml.dump(obj.meta, { lineWidth: -1 }).trimEnd());
     lines.push('---');
@@ -400,7 +418,7 @@ export function renderToMarkdown(data: unknown): string {
   // Render remaining fields at depth 2
   for (const [key, val] of Object.entries(obj)) {
     if (!key || key === 'name' || key === 'meta' || key === '$schema') continue;
-    if (val === null || val === undefined) continue;
+    if (val === null) continue;
     if (Array.isArray(val) && val.length === 0) continue;
 
     // Code field at root

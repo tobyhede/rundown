@@ -5,14 +5,12 @@
   "goal": "Test the rdx CLI",
   "architecture_and_approach": "Simple approach",
   "constraints_and_assumptions": "None",
-  "dependencies": null,
-  "context": null,
   "files": [{ "path": "src/foo.ts", "action": "create" }],
   "tasks": [
     {
       "name": "First Task",
       "files": [{ "path": "src/foo.ts", "action": "create" }],
-      "subtasks": [{ "name": "Write test", "description": "Test it", "code": null }],
+      "subtasks": [{ "name": "Write test", "description": "Test it" }],
       "commit": { "files": ["src/foo.ts"], "message": "feat: add foo" }
     }
   ]

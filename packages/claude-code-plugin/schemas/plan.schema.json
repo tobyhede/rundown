@@ -12,7 +12,7 @@
         "path": {
           "type": "string",
           "minLength": 1,
-          "format": "filepath"
+          "description": "Relative file path from project root (e.g. src/foo.ts)"
         },
         "action": {
           "type": "string",
@@ -31,8 +31,6 @@
     "goal",
     "architecture_and_approach",
     "constraints_and_assumptions",
-    "dependencies",
-    "context",
     "files",
     "tasks"
   ],
@@ -59,21 +57,23 @@
     },
     "goal": {
       "type": "string",
-      "format": "markdown"
+      "description": "Clear, concise description of the desired outcome"
     },
     "architecture_and_approach": {
       "type": "string",
-      "format": "markdown"
+      "description": "High-level solution design, critical components, data and integrations"
     },
     "constraints_and_assumptions": {
       "type": "string",
-      "format": "markdown"
+      "description": "Hard constraints and assumptions"
     },
     "dependencies": {
-      "oneOf": [{ "type": "string", "format": "markdown" }, { "type": "null" }]
+      "type": "string",
+      "description": "Required services, frameworks, libraries, or upstream changes"
     },
     "context": {
-      "oneOf": [{ "type": "string", "format": "markdown" }, { "type": "null" }]
+      "type": "string",
+      "description": "Additional context useful for implementation"
     },
     "files": {
       "type": "array",
@@ -101,28 +101,24 @@
             "minItems": 1,
             "items": {
               "type": "object",
-              "required": ["name", "description"],
+              "required": ["name"],
               "properties": {
                 "name": {
                   "type": "string",
                   "minLength": 1
                 },
                 "description": {
-                  "oneOf": [{ "type": "string", "format": "markdown" }, { "type": "null" }]
+                  "type": "string",
+                  "description": "What this subtask does and how"
                 },
                 "code": {
-                  "oneOf": [
-                    {
-                      "type": "object",
-                      "required": ["language", "content"],
-                      "properties": {
-                        "language": { "type": "string" },
-                        "content": { "type": "string" }
-                      },
-                      "additionalProperties": false
-                    },
-                    { "type": "null" }
-                  ]
+                  "type": "object",
+                  "required": ["language", "content"],
+                  "properties": {
+                    "language": { "type": "string" },
+                    "content": { "type": "string" }
+                  },
+                  "additionalProperties": false
                 }
               },
               "additionalProperties": false
@@ -138,7 +134,7 @@
                 "items": {
                   "type": "string",
                   "minLength": 1,
-                  "format": "filepath"
+                  "description": "File path to stage for commit"
                 }
               },
               "message": {

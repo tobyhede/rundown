@@ -10,6 +10,26 @@
 
 import { getErrorMessage, isZodError } from './shared/errors.js';
 
+/** Type contract for schema modules loaded by the registry. */
+type ValidatorModule<T = unknown> = { validate(data: unknown): T };
+
+const schemaLoaders = {
+  plan: () => import('./plan-schema.js') as Promise<ValidatorModule>,
+} as const;
+
+/** Known schema names from the registry. */
+type SchemaName = keyof typeof schemaLoaders;
+
+/**
+ * Check if a name is a known schema in the registry.
+ *
+ * @param name - The schema name to check
+ * @returns True if name is a registered schema
+ */
+function isSchemaName(name: string): name is SchemaName {
+  return name in schemaLoaders;
+}
+
 /** URI prefix for Rundown schema identifiers. */
 const SCHEMA_URI_PREFIX = 'https://rundown.org/schemas/';
 
@@ -37,24 +57,29 @@ export function parseSchemaName(raw: string): string | undefined {
 /**
  * Extract and strip the `$schema` field from parsed JSON data.
  *
+ * Always strips `$schema` from `cleanData`. Returns `schemaName` when
+ * parseable, plus `rawSchema` so callers can detect and reject
+ * unrecognized `$schema` values (rawSchema present but schemaName undefined).
+ *
  * @param data - Parsed JSON data (may or may not contain `$schema`)
- * @returns Object with `cleanData` (data without `$schema`) and `schemaName` (extracted name or undefined)
+ * @returns Object with `cleanData`, resolved `schemaName`, and `rawSchema`
  */
 export function stripSchema(data: unknown): {
   cleanData: unknown;
   schemaName: string | undefined;
+  rawSchema: string | undefined;
 } {
   if (typeof data !== 'object' || data === null || Array.isArray(data)) {
-    return { cleanData: data, schemaName: undefined };
+    return { cleanData: data, schemaName: undefined, rawSchema: undefined };
   }
 
   const obj = data as Record<string, unknown>;
   if (typeof obj.$schema !== 'string') {
-    return { cleanData: data, schemaName: undefined };
+    return { cleanData: data, schemaName: undefined, rawSchema: undefined };
   }
 
   const { $schema: rawSchema, ...cleanData } = obj;
-  return { cleanData, schemaName: parseSchemaName(rawSchema) };
+  return { cleanData, schemaName: parseSchemaName(rawSchema), rawSchema };
 }
 
 /**
@@ -72,29 +97,24 @@ export function resolveSchemaName(
 }
 
 /**
- * Dynamically load a schema validator by convention name.
+ * Load a schema validator by name from the typed registry.
  *
- * Resolves schema name to a sibling module: `<name>-schema.js`.
- * The module must export a `validate(data: unknown): unknown` function.
+ * Schema modules are registered in `schemaLoaders`. The name must pass
+ * a format check (security boundary) and exist in the registry.
  *
- * @param name - Schema name (e.g. "plan" resolves to "./plan-schema.js")
+ * @param name - Schema name (e.g. "plan")
  * @returns The validate function from the schema module
- * @throws {Error} If the module is not found or does not export `validate`
+ * @throws {Error} If the name is invalid or not in the registry
  */
 export async function loadValidator(name: string): Promise<(data: unknown) => unknown> {
   if (!/^[a-z][a-z0-9-]*$/.test(name)) {
     throw new Error(`Invalid schema name: ${name}`);
   }
-  let mod: Record<string, unknown>;
-  try {
-    mod = (await import(`./${name}-schema.js`)) as Record<string, unknown>;
-  } catch {
+  if (!isSchemaName(name)) {
     throw new Error(`Unknown schema: ${name}`);
   }
-  if (typeof mod.validate !== 'function') {
-    throw new Error(`Schema module '${name}-schema' does not export a validate() function`);
-  }
-  return mod.validate as (data: unknown) => unknown;
+  const mod = await schemaLoaders[name]();
+  return (data: unknown) => mod.validate(data);
 }
 
 /**

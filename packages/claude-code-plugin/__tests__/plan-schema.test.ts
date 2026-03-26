@@ -3,8 +3,8 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ZodError } from 'zod';
-import { PlanSchema, validatePlan } from '../src/plan-schema.js';
-import type { Plan } from '../src/plan-schema.js';
+import { PlanSchema, type validate, validatePlan } from '../src/plan-schema.js';
+import type { Plan, PlanTask, PlanSubtask, PlanFileEntry, PlanMeta } from '../src/plan-schema.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -17,14 +17,12 @@ function validPlan(overrides: Record<string, unknown> = {}): Record<string, unkn
     goal: 'Do the thing',
     architecture_and_approach: 'Simple approach',
     constraints_and_assumptions: 'None',
-    dependencies: null,
-    context: null,
     files: [{ path: 'src/foo.ts', action: 'create' }],
     tasks: [
       {
         name: 'First Task',
         files: [{ path: 'src/foo.ts', action: 'create' }],
-        subtasks: [{ name: 'Write test', description: 'Test it', code: null }],
+        subtasks: [{ name: 'Write test', description: 'Test it' }],
         commit: { files: ['src/foo.ts'], message: 'feat: add foo' },
       },
     ],
@@ -38,12 +36,16 @@ describe('PlanSchema', () => {
       expect(() => PlanSchema.parse(validPlan())).not.toThrow();
     });
 
-    it('accepts null dependencies', () => {
-      expect(() => PlanSchema.parse(validPlan({ dependencies: null }))).not.toThrow();
+    it('accepts absent dependencies', () => {
+      const plan = validPlan();
+      expect(plan).not.toHaveProperty('dependencies');
+      expect(() => PlanSchema.parse(plan)).not.toThrow();
     });
 
-    it('accepts null context', () => {
-      expect(() => PlanSchema.parse(validPlan({ context: null }))).not.toThrow();
+    it('accepts absent context', () => {
+      const plan = validPlan();
+      expect(plan).not.toHaveProperty('context');
+      expect(() => PlanSchema.parse(plan)).not.toThrow();
     });
 
     it('accepts string dependencies', () => {
@@ -138,13 +140,13 @@ describe('PlanSchema', () => {
       expect(plan.tasks[0].commit).toBeUndefined();
     });
 
-    it('accepts subtask with null description', () => {
+    it('accepts subtask without description', () => {
       const plan = validPlan({
         tasks: [
           {
             name: 'Task',
             files: [{ path: 'src/foo.ts', action: 'create' }],
-            subtasks: [{ name: 'Run tests', description: null }],
+            subtasks: [{ name: 'Run tests' }],
             commit: { files: ['src/foo.ts'], message: 'feat: add foo' },
           },
         ],
@@ -220,6 +222,14 @@ describe('PlanSchema', () => {
       ).toThrow(ZodError);
     });
 
+    it('rejects null dependencies', () => {
+      expect(() => PlanSchema.parse(validPlan({ dependencies: null }))).toThrow(ZodError);
+    });
+
+    it('rejects null context', () => {
+      expect(() => PlanSchema.parse(validPlan({ context: null }))).toThrow(ZodError);
+    });
+
     it('rejects task with empty subtasks', () => {
       expect(() =>
         PlanSchema.parse(
@@ -239,6 +249,12 @@ describe('PlanSchema', () => {
   });
 
   describe('strict mode', () => {
+    it('rejects plan with wrong $schema URI', () => {
+      expect(() =>
+        PlanSchema.parse(validPlan({ $schema: 'https://other.org/schemas/plan.schema.json' })),
+      ).toThrow(ZodError);
+    });
+
     it('rejects plan with extra root-level property', () => {
       expect(() => PlanSchema.parse(validPlan({ extra: 'nope' }))).toThrow(ZodError);
     });
@@ -313,17 +329,94 @@ describe('plan.schema.json', () => {
     expect(required).toContain('tasks');
   });
 
-  it('has format: markdown on prose fields', () => {
+  it('has description on prose fields', () => {
     const props = schema.properties as Record<string, Record<string, unknown>>;
-    expect(props.goal.format).toBe('markdown');
-    expect(props.architecture_and_approach.format).toBe('markdown');
-    expect(props.constraints_and_assumptions.format).toBe('markdown');
+    expect(props.goal.description).toEqual(expect.any(String));
+    expect(props.architecture_and_approach.description).toEqual(expect.any(String));
+    expect(props.constraints_and_assumptions.description).toEqual(expect.any(String));
   });
 
-  it('has format: filepath on file path fields', () => {
+  it('has description on file path fields', () => {
     const defs = (schema as Record<string, Record<string, unknown>>).$defs;
     const fileEntry = defs.FileEntry;
     const fileProps = fileEntry.properties as Record<string, Record<string, unknown>>;
-    expect(fileProps.path.format).toBe('filepath');
+    expect(fileProps.path.description).toEqual(expect.any(String));
+  });
+
+  it('does not use unsupported format values', () => {
+    const props = schema.properties as Record<string, Record<string, unknown>>;
+    expect(props.goal).not.toHaveProperty('format');
+    expect(props.architecture_and_approach).not.toHaveProperty('format');
+    expect(props.constraints_and_assumptions).not.toHaveProperty('format');
+  });
+});
+
+describe('type-level API', () => {
+  it('validate() returns Plan', () => {
+    const _check: Plan = null as unknown as ReturnType<typeof validate>;
+    expect(true).toBe(true);
+  });
+
+  it('validatePlan() returns Plan', () => {
+    const _check: Plan = null as unknown as ReturnType<typeof validatePlan>;
+    expect(true).toBe(true);
+  });
+
+  it('Plan has required fields', () => {
+    const plan = {} as Plan;
+    const _name: string = plan.name;
+    const _goal: string = plan.goal;
+    const _meta: PlanMeta = plan.meta;
+    const _tasks: PlanTask[] = plan.tasks;
+    const _files: PlanFileEntry[] = plan.files;
+    expect(true).toBe(true);
+  });
+
+  it('PlanTask has required fields', () => {
+    const task = {} as PlanTask;
+    const _name: string = task.name;
+    const _files: PlanFileEntry[] = task.files;
+    const _subtasks: PlanSubtask[] = task.subtasks;
+    expect(true).toBe(true);
+  });
+
+  it('PlanSubtask has required fields', () => {
+    const subtask = {} as PlanSubtask;
+    const _name: string = subtask.name;
+    const _description: string | undefined = subtask.description;
+    expect(true).toBe(true);
+  });
+
+  it('PlanFileEntry has required fields', () => {
+    const entry = {} as PlanFileEntry;
+    const _path: string = entry.path;
+    const _action: 'create' | 'edit' | 'delete' = entry.action;
+    expect(true).toBe(true);
+  });
+
+  it('PlanMeta has version literal', () => {
+    const meta = {} as PlanMeta;
+    const _version: '1.0.0' = meta.version;
+    expect(true).toBe(true);
+  });
+
+  it('validate() does not return string', () => {
+    // @ts-expect-error - validate returns Plan, not string
+    const _bad: string = null as unknown as ReturnType<typeof validate>;
+    expect(true).toBe(true);
+  });
+
+  it('PlanFileEntry action rejects invalid values', () => {
+    const entry = {} as PlanFileEntry;
+    // @ts-expect-error - action is 'create' | 'edit' | 'delete', not 'rename'
+    const _bad: 'rename' = entry.action;
+    expect(true).toBe(true);
+  });
+
+  it('PlanMeta version rejects non-literal', () => {
+    const meta = {} as PlanMeta;
+    // @ts-expect-error - version is '1.0.0', not '2.0.0'
+    const _bad: '2.0.0' = meta.version;
+    expect(true).toBe(true);
   });
 });

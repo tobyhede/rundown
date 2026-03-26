@@ -34,8 +34,15 @@ program
       const data: unknown = JSON.parse(raw);
 
       // Extract $schema and prepare clean data
-      const { cleanData, schemaName: dataSchema } = stripSchema(data);
+      const { cleanData, schemaName: dataSchema, rawSchema } = stripSchema(data);
       const schema = resolveSchemaName(options.schema, dataSchema);
+
+      // Reject unrecognized $schema URIs — don't silently skip validation
+      if (rawSchema && !schema) {
+        process.stderr.write(`error: unrecognized schema: ${rawSchema}\n`);
+        process.exitCode = 1;
+        return;
+      }
 
       // Validate against schema when available, capturing typed result
       let dataToRender: unknown = cleanData;

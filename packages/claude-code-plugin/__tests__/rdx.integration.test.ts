@@ -71,6 +71,12 @@ describe('rdx --check', () => {
     expect(result.stderr).toContain('Unknown schema: nonexistent');
   });
 
+  test('unrecognized $schema URI prints error and exits 1', async () => {
+    const result = await runRdx(['--check', path.join(fixturesDir, 'unknown-schema.json')]);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('unrecognized schema');
+  });
+
   test('--schema flag validates file without $schema field', async () => {
     // no-schema.json has no $schema, but --schema plan should validate (and fail)
     const result = await runRdx([

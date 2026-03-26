@@ -10,25 +10,11 @@
 import { z } from 'zod';
 
 /**
- * String field that may contain markdown content.
- *
- * @returns Zod string schema with 'markdown' description
- */
-const markdown = (): z.ZodString => z.string().describe('markdown');
-
-/**
- * String field representing a file path.
- *
- * @returns Zod string schema with min(1) and 'filepath' description
- */
-const filepath = (): z.ZodString => z.string().min(1).describe('filepath');
-
-/**
  * A file entry describing a file affected by the plan.
  */
 const FileEntry = z
   .object({
-    path: filepath(),
+    path: z.string().min(1).describe('Relative file path from project root (e.g. src/foo.ts)'),
     action: z.enum(['create', 'edit', 'delete']),
     notes: z.string().optional(),
   })
@@ -50,8 +36,8 @@ const CodeBlock = z
 const Subtask = z
   .object({
     name: z.string().min(1),
-    description: markdown().nullable(),
-    code: CodeBlock.nullable().optional(),
+    description: z.string().describe('What this subtask does and how').optional(),
+    code: CodeBlock.optional(),
   })
   .strict();
 
@@ -60,7 +46,7 @@ const Subtask = z
  */
 const CommitStep = z
   .object({
-    files: z.array(filepath()).min(1),
+    files: z.array(z.string().min(1).describe('File path to stage for commit')).min(1),
     message: z.string().min(1),
   })
   .strict();
@@ -100,14 +86,19 @@ const Meta = z
  */
 export const PlanSchema = z
   .object({
-    $schema: z.string().url().optional(),
+    $schema: z.literal('https://rundown.org/schemas/plan.schema.json').optional(),
     name: z.string().min(1),
     meta: Meta,
-    goal: markdown(),
-    architecture_and_approach: markdown(),
-    constraints_and_assumptions: markdown(),
-    dependencies: markdown().nullable(),
-    context: markdown().nullable(),
+    goal: z.string().describe('Clear, concise description of the desired outcome'),
+    architecture_and_approach: z
+      .string()
+      .describe('High-level solution design, critical components, data and integrations'),
+    constraints_and_assumptions: z.string().describe('Hard constraints and assumptions'),
+    dependencies: z
+      .string()
+      .describe('Required services, frameworks, libraries, or upstream changes')
+      .optional(),
+    context: z.string().describe('Additional context useful for implementation').optional(),
     files: z.array(FileEntry).min(1),
     tasks: z.array(Task).min(1),
   })

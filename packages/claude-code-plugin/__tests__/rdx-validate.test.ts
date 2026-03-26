@@ -39,36 +39,57 @@ describe('stripSchema', () => {
       name: 'Test',
       goal: 'Do it',
     };
-    const { cleanData, schemaName } = stripSchema(data);
+    const { cleanData, schemaName, rawSchema } = stripSchema(data);
     expect(schemaName).toBe('plan');
+    expect(rawSchema).toBe('https://rundown.org/schemas/plan.schema.json');
     expect(cleanData).toEqual({ name: 'Test', goal: 'Do it' });
   });
 
   it('extracts bare $schema name for backward compat', () => {
     const data = { $schema: 'plan', name: 'Test' };
-    const { cleanData, schemaName } = stripSchema(data);
+    const { cleanData, schemaName, rawSchema } = stripSchema(data);
     expect(schemaName).toBe('plan');
+    expect(rawSchema).toBe('plan');
     expect(cleanData).toEqual({ name: 'Test' });
   });
 
-  it('returns undefined schemaName when no $schema', () => {
-    const data = { name: 'Test' };
-    const { cleanData, schemaName } = stripSchema(data);
+  it('returns rawSchema but undefined schemaName for unrecognized URI', () => {
+    const data = { $schema: 'https://other.org/schemas/plan.schema.json', name: 'Test' };
+    const { cleanData, schemaName, rawSchema } = stripSchema(data);
     expect(schemaName).toBeUndefined();
+    expect(rawSchema).toBe('https://other.org/schemas/plan.schema.json');
+    expect(cleanData).toEqual({ name: 'Test' });
+  });
+
+  it('returns undefined schemaName and rawSchema when no $schema', () => {
+    const data = { name: 'Test' };
+    const { cleanData, schemaName, rawSchema } = stripSchema(data);
+    expect(schemaName).toBeUndefined();
+    expect(rawSchema).toBeUndefined();
     expect(cleanData).toEqual({ name: 'Test' });
   });
 
   it('returns data unchanged when $schema is not a string', () => {
     const data = { $schema: 42, name: 'Test' };
-    const { cleanData, schemaName } = stripSchema(data);
+    const { cleanData, schemaName, rawSchema } = stripSchema(data);
     expect(schemaName).toBeUndefined();
+    expect(rawSchema).toBeUndefined();
     expect(cleanData).toBe(data);
   });
 
   it('handles non-object data', () => {
-    expect(stripSchema('hello')).toEqual({ cleanData: 'hello', schemaName: undefined });
-    expect(stripSchema(null)).toEqual({ cleanData: null, schemaName: undefined });
-    expect(stripSchema([1, 2])).toEqual({ cleanData: [1, 2], schemaName: undefined });
+    const none = { cleanData: 'hello', schemaName: undefined, rawSchema: undefined };
+    expect(stripSchema('hello')).toEqual(none);
+    expect(stripSchema(null)).toEqual({
+      cleanData: null,
+      schemaName: undefined,
+      rawSchema: undefined,
+    });
+    expect(stripSchema([1, 2])).toEqual({
+      cleanData: [1, 2],
+      schemaName: undefined,
+      rawSchema: undefined,
+    });
   });
 });
 
@@ -125,14 +146,12 @@ describe('loadValidator', () => {
       goal: 'Do the thing',
       architecture_and_approach: 'Simple approach',
       constraints_and_assumptions: 'None',
-      dependencies: null,
-      context: null,
       files: [{ path: 'src/foo.ts', action: 'create' }],
       tasks: [
         {
           name: 'First Task',
           files: [{ path: 'src/foo.ts', action: 'create' }],
-          subtasks: [{ name: 'Write test', description: 'Test it', code: null }],
+          subtasks: [{ name: 'Write test', description: 'Test it' }],
           commit: { files: ['src/foo.ts'], message: 'feat: add foo' },
         },
       ],

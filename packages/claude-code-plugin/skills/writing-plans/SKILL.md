@@ -106,15 +106,14 @@ The canonical plan format is **JSON** conforming to the plan schema. After writi
   "goal": "...",
   "architecture_and_approach": "...",
   "constraints_and_assumptions": "...",
-  "dependencies": null,
-  "context": null,
+  "dependencies": "...",
   "files": [{ "path": "src/foo.ts", "action": "create", "notes": "..." }],
   "tasks": [{
     "name": "Task Name",
     "files": [{ "path": "src/foo.ts", "action": "create" }],
     "subtasks": [
       { "name": "Write failing test", "description": "...", "code": { "language": "typescript", "content": "..." } },
-      { "name": "Implement", "description": "...", "code": null }
+      { "name": "Implement", "description": "..." }
     ],
     "commit": { "files": ["src/foo.ts"], "message": "feat: add foo" }
   }]
