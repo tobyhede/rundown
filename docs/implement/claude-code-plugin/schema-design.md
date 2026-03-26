@@ -14,7 +14,7 @@ Claude's structured output engine enforces schemas at the grammar level. Only a 
 | `enum` | Yes | Fixed list of allowed values |
 | `const` | Yes | Single fixed value |
 | `properties` / `required` | Yes | |
-| `additionalProperties: false` | Yes | Recommended always |
+| `additionalProperties: false` | Yes | Always recommended |
 | `items` | Yes | Array element types |
 | `description` | Yes | Primary way to communicate constraints |
 | `format` (date, time, email, uri) | Yes | Only these four |
