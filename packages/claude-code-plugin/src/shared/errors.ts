@@ -48,11 +48,17 @@ export function getErrorMessage(error: unknown): string {
 export function isZodError(
   error: unknown,
 ): error is { issues: Array<{ path: Array<string | number>; message: string }> } {
+  if (typeof error !== 'object' || error === null || !('issues' in error)) return false;
+  const issues = (error as { issues: unknown }).issues;
+  if (!Array.isArray(issues) || issues.length === 0) return false;
+  const first: unknown = issues[0];
   return (
-    typeof error === 'object' &&
-    error !== null &&
-    'issues' in error &&
-    Array.isArray((error as { issues: unknown }).issues)
+    typeof first === 'object' &&
+    first !== null &&
+    'path' in first &&
+    Array.isArray((first as { path: unknown }).path) &&
+    'message' in first &&
+    typeof (first as { message: unknown }).message === 'string'
   );
 }
 

@@ -174,7 +174,7 @@ describe('renderToMarkdown', () => {
       expect(md).toContain('```typescript\nconst x = 1;\n```\n');
     });
 
-    it('renders code block shape with extra fields as fenced code block', () => {
+    it('preserves extra fields on code-like objects instead of treating as code block', () => {
       const md = renderToMarkdown({
         name: 'Root',
         tasks: [
@@ -184,7 +184,9 @@ describe('renderToMarkdown', () => {
           },
         ],
       });
-      expect(md).toContain('```typescript\nconst x = 1;\n```\n');
+      // Extra field means this is NOT a code block — all fields rendered
+      expect(md).not.toContain('```typescript\nconst x = 1;\n```\n');
+      expect(md).toContain('optional note');
     });
 
     it('renders nested object as subsection at depth+1', () => {

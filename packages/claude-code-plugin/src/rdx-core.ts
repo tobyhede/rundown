@@ -84,14 +84,21 @@ function hasStringProp<K extends string>(obj: object, key: K): obj is object & R
 }
 
 /**
- * Check if a value is a code block shape: `{ language, content }`.
+ * Check if a value is a code block shape: exactly `{ language, content }`.
+ *
+ * Requires exactly two keys to avoid silently dropping sibling fields
+ * on objects that happen to contain `language` and `content`.
  *
  * @param value - The value to check
- * @returns True if value is an object with `language` and `content` string fields
+ * @returns True if value is an object with exactly `language` and `content` string fields
  */
 function isCodeBlockShape(value: unknown): value is { language: string; content: string } {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
-  return hasStringProp(value, 'language') && hasStringProp(value, 'content');
+  return (
+    Object.keys(value).length === 2 &&
+    hasStringProp(value, 'language') &&
+    hasStringProp(value, 'content')
+  );
 }
 
 /**
