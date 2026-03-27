@@ -388,6 +388,7 @@ Currently supported internally: `echo`, `prompt`. Unsupported commands fall back
 - [docs/DOCKER.md](docs/DOCKER.md) - Docker verification pipeline
 - [docs/SCENARIOS.md](docs/SCENARIOS.md) - Scenarios and test runbook standard
 - [docs/RDX.md](docs/RDX.md) - RDX JSON-to-Markdown CLI reference
+- [docs/RDPATH.md](docs/RDPATH.md) - rdpath path assembly CLI reference
 
 ## Conceptual Model
 
