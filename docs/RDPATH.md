@@ -127,6 +127,32 @@ The `find` subcommand resolves symlinks via `realpath()` and verifies that resol
 
 ---
 
+## Execution Flow
+
+### path (default)
+
+```text
+Resolve --dir
+  → If --ctx → validate, append .rd-<ctx>/
+  → If --file → validate, prepend YYYY-MM-DD-
+  → Output assembled path
+```
+
+### find
+
+```text
+Resolve --dir
+  → If --ctx → validate, append .rd-<ctx>/
+  → Verify directory exists
+  → Resolve realpath for symlink safety
+  → Glob match pattern within directory
+  → Filter: files only, inside search dir
+  → Sort lexicographically
+  → Output one path per line
+```
+
+---
+
 ## Typical Workflow
 
 ```bash
