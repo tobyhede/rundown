@@ -143,6 +143,7 @@ Resolve --dir
 ```text
 Resolve --dir
   → If --ctx → validate, append .rd-<ctx>/
+  → Validate pattern (reject absolute paths and .. traversal)
   → Verify directory exists
   → Resolve realpath for symlink safety
   → Glob match pattern within directory

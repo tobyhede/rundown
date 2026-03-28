@@ -194,11 +194,11 @@ The plan schema validates implementation plans. Include `"$schema": "https://run
   meta: { version: "1.0.0" },               // Must be exactly "1.0.0"
   goal: string,                              // Desired outcome
   architecture_and_approach: string,          // Solution design
-  constraints_and_assumptions: string,        // Boundaries and assumptions
+  constraints_and_assumptions: string,        // Hard constraints and assumptions
+  dependencies?: string,                      // Optional dependencies
+  context?: string,                          // Optional context
   files: FileEntry[],                        // Files affected (min 1)
   tasks: Task[],                             // Implementation tasks (min 1)
-  dependencies?: string,                      // Optional dependencies
-  context?: string                           // Optional context
 }
 ```
 
@@ -245,6 +245,7 @@ Given this plan JSON:
   "meta": { "version": "1.0.0" },
   "goal": "Create a widget component.",
   "architecture_and_approach": "Simple component following existing patterns.",
+  "constraints_and_assumptions": "Must support dark mode.",
   "files": [
     { "path": "src/widget.ts", "action": "create", "notes": "Widget class" }
   ],
@@ -285,6 +286,10 @@ Create a widget component.
 ## Architecture And Approach
 
 Simple component following existing patterns.
+
+## Constraints And Assumptions
+
+Must support dark mode.
 
 ## Files
 
