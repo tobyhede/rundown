@@ -87,6 +87,17 @@ rdpath --dir <path> find <pattern>            # Find files matching glob pattern
 rdpath --dir <path> --ctx <id> find <pattern> # Find within context scope
 ```
 
+### rdx (JSON-to-Markdown CLI)
+
+```bash
+rdx <file>                        # Render JSON to Markdown (stdout)
+rdx <file> -o, --output <path>    # Write Markdown to file
+rdx <file> --check                # Validate only, no rendering
+rdx <file> --schema <name>        # Explicit schema for validation
+```
+
+Schema validation is automatic when the JSON includes `"$schema": "https://rundown.org/schemas/<name>.schema.json"`. See [docs/RDX.md](docs/RDX.md) for full reference.
+
 ## Template Variables
 
 Template variables use Handlebars syntax `{{variableName}}` and are expanded at run time.
