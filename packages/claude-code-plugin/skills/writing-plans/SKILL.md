@@ -1,12 +1,22 @@
 ---
 name: writing-plans
-description: Write clean, clear, complete & comprehensive implementation plans that provide the complete context for an engineer with zero domain knowledge and no experience with the codebase.
-use_when: Writing detailed implementation plans.
+description: Use when decomposiing before making any code changes.
+
+Use when you have a spec or requirements for a multi-step task, before touching code
+
 runbook: ${CLAUDE_PLUGIN_ROOT}runbooks/planning/write-plan.runbook.md
-template: ${CLAUDE_PLUGIN_ROOT}templates/planning/plan.template.md
+schema: ${CLAUDE_PLUGIN_ROOT}schemas/plan.schema.json
 ---
 
 # Writing Plans
+
+
+<important>
+## Rundown-Supported Skill
+This skill has a supporting Rundown runbook.
+Read the skill and then use the Rundown CLI to step through the workflow.
+</important>
+
 
 ## Overview
 
@@ -36,7 +46,8 @@ Follow any project‑specific guidelines provided for this task.
 
 ## Scope Check
 
-Before writing the plan, assess whether the work covers multiple independent subsystems. If so, recommend splitting into separate plans — each producing working, testable software independently.
+Before writing the plan, assess whether the work covers multiple independent subsystems.
+If so, recommend splitting into separate plans — each producing working, testable software independently.
 
 Indicators that the work should be split:
 
@@ -45,9 +56,37 @@ Indicators that the work should be split:
 - Each piece is independently mergeable and deployable
 
 
-## Implementation Plan
+## Research Codebase
 
-The plan header must include these sections:
+Read the relevant source files, tests, and documentation to understand:
+
+- Current architecture and patterns in the affected area
+- Existing types, interfaces, and conventions
+- Test patterns and coverage
+- Project standards and expectations
+
+Plans written without reading the code produce incorrect file paths, miss existing abstractions, and invent unnecessary ones.
+
+
+## File Structure Mapping
+
+Before defining tasks, map the files to be created, edited, or deleted.
+Lock decomposition decisions  locked in.
+
+- Design units with clear boundaries and well-defined interfaces.
+- Each file should have one clear responsibility.
+- Prefer smaller, focused files to reduce context and make edits more reliable
+- Files that change together should live together. Split by responsibility, not by technical layer.
+- Follow any established patterns in the existing codebase.
+- If the codebase uses large files, don't unilaterally restructure - but if a file you're modifying has grown unwieldy, including a split in the plan is reasonable.
+
+The file structure mapping informs the task decomposition.
+Each task should produce self-contained changes that make sense independently.
+
+
+## Plan Structure & Content
+
+The plan includes these sections:
 
 ### Goal
 
@@ -70,150 +109,95 @@ Required services, frameworks, libraries, documentation, upstream changes, etc.
 Any additional useful context.
 
 
-## File Structure Mapping
-
-Before defining tasks, map all files to be created, modified, or deleted. Design units with clear boundaries. Prefer smaller, focused files. Follow established patterns in the existing codebase.
-
-List every file with disposition (create/modify/delete) and affected symbols. This mapping drives task grouping.
-
 
 ## Task & Subtask Definitions
 
 ### Granularity
 
-Decompose the work into small, self-contained, granular tasks.
+Decompose the work into small, self-contained, and granular tasks & subtasks.
 
+- A task contains a sequence of subtasks.
 - Each subtask is one action (2–5 minutes).
-- Tasks group 2–5 subtasks.
-- Tasks should usually map to a logical atomic commit.
-
-### Requirements
-
+- A task should map to a logical atomic commit.
 - Always include exact file paths.
   - Eliminates ambiguity and reduces cognitive load.
-- Always include exact commands.
+- Always include complete code and exact commands with expected output
   - Ensure no interpretation required.
 - Always use symbols (function/class names) and not line numbers.
   - Line numbers are brittle and drift.
-- Always follow the TDD micro-cycle for each unit of behavior:
+- Reference relevant skills with @ syntax.
+- Always follow the TDD cycle for each unit of behavior:
   1. Write the failing test
   2. Run it to confirm it fails
   3. Implement the minimal code to make it pass
   4. Run tests to verify the pass
   5. Commit the passing test and implementation
-- Always end each task with an explicit commit step.
-  - Include exact `git add` and `git commit` commands.
+- The commit should include the exact `git add` and `git commit` commands.
+
 
 ### Exclusions
 
-- Avoid scope creep and planning superfluous features
-- Avoid unnecessary layers of abstraction
+- Avoid duplication (DRY)
+- Avoid scope creep and planning superfluous features (YAGNI)
+- Avoid unnecessary layers of abstraction (KISS, AHA)
 - Avoid trivial tasks ("save the file")
 - Avoid exposition and verbosity
 
 
-## Output Format
+## JSON Output Format
 
-The canonical plan format is **JSON** conforming to the plan schema. After writing the JSON plan, render it to Markdown with `rdx`.
+The canonical plan format is **JSON** conforming to the Plan JSON Schema.
+- `${CLAUDE_PLUGIN_ROOT}schemas/plan.schema.json`
 
-**Schema:** `${CLAUDE_PLUGIN_ROOT}schemas/plan.schema.json`
-**Validation:** Include `"$schema": "https://rundown.org/schemas/plan.schema.json"` in the JSON — `rdx` auto-discovers and validates against the plan schema.
-**Rendering:** `rdx <plan.json> --output <plan.md>`
-
-### JSON Structure
-
-```json
-{
-  "$schema": "https://rundown.org/schemas/plan.schema.json",
-  "name": "Feature Name",
-  "meta": { "version": "1.0.0" },
-  "goal": "...",
-  "architecture_and_approach": "...",
-  "constraints_and_assumptions": "...",
-  "dependencies": "...",
-  "files": [{ "path": "src/foo.ts", "action": "create", "notes": "..." }],
-  "tasks": [{
-    "name": "Task Name",
-    "files": [{ "path": "src/foo.ts", "action": "create" }],
-    "subtasks": [
-      { "name": "Write failing test", "description": "...", "code": { "language": "typescript", "content": "..." } },
-      { "name": "Implement", "description": "..." }
-    ],
-    "commit": { "files": ["src/foo.ts"], "message": "feat: add foo" }
-  }]
-}
-```
-
-### Workflow
-
-1. Write the plan as JSON
-2. Validate: `rdx --check <plan.json>`
-3. Render: `rdx <plan.json> --output <plan.md>`
-
-## Template (Reference)
-
-The rendered Markdown structure is shown in the template for reference:
-- `${CLAUDE_PLUGIN_ROOT}templates/planning/plan.template.md`
 
 ### Example Task Definition
 
-````markdown
-
-## 1. Add Step ID Equality Check
-
-### Files
-- `packages/parser/src/step-id.ts` (modify)
-- `packages/parser/__tests__/helpers.test.ts` (modify)
-
-### 1.1 Write failing test
-
-```typescript
-describe('stepIdEquals', () => {
-  it('returns true for equal numeric steps', () => {
-    expect(stepIdEquals({ step: '1' }, { step: '1' })).toBe(true);
-  });
-
-  it('returns false for different steps', () => {
-    expect(stepIdEquals({ step: '1' }, { step: '2' })).toBe(false);
-  });
-});
-```
-
-### 1.2 Run to confirm failure
-
-```bash
-npm test -- helpers.test.ts
-```
-
-Expected: tests fail (stepIdEquals not yet implemented).
-
-### 1.3 Implement
-
-In `packages/parser/src/step-id.ts`, add the `stepIdEquals` function:
-
-```typescript
-export function stepIdEquals(a: StepId, b: StepId): boolean {
-  return a.step === b.step && a.substep === b.substep;
+```json
+{
+  "name": "Add Step ID Equality Check",
+  "files": [
+    { "path": "packages/parser/src/step-id.ts", "action": "edit" },
+    { "path": "packages/parser/__tests__/helpers.test.ts", "action": "edit" }
+  ],
+  "subtasks": [
+    {
+      "name": "Write failing test",
+      "code": {
+        "language": "typescript",
+        "content": "describe('stepIdEquals', () => {\n  it('returns true for equal numeric steps', () => {\n    expect(stepIdEquals({ step: '1' }, { step: '1' })).toBe(true);\n  });\n\n  it('returns false for different steps', () => {\n    expect(stepIdEquals({ step: '1' }, { step: '2' })).toBe(false);\n  });\n});"
+      }
+    },
+    {
+      "name": "Run to confirm failure",
+      "description": "Expected: tests fail (stepIdEquals not yet implemented).",
+      "code": {
+        "language": "bash",
+        "content": "npm test -- helpers.test.ts"
+      }
+    },
+    {
+      "name": "Implement",
+      "description": "In packages/parser/src/step-id.ts, add the stepIdEquals function.",
+      "code": {
+        "language": "typescript",
+        "content": "export function stepIdEquals(a: StepId, b: StepId): boolean {\n  return a.step === b.step && a.substep === b.substep;\n}"
+      }
+    },
+    {
+      "name": "Run tests to verify pass",
+      "description": "Expected: all tests pass.",
+      "code": {
+        "language": "bash",
+        "content": "npm test -- helpers.test.ts"
+      }
+    }
+  ],
+  "commit": {
+    "files": [
+      "packages/parser/src/step-id.ts",
+      "packages/parser/__tests__/helpers.test.ts"
+    ],
+    "message": "feat(parser): add stepIdEquals helper"
+  }
 }
 ```
-
-### 1.4 Run tests to verify pass
-
-```bash
-npm test -- helpers.test.ts
-```
-
-Expected: all tests pass.
-
-### 1.5 Commit
-
-```bash
-git add packages/parser/src/step-id.ts packages/parser/__tests__/helpers.test.ts
-git commit -m "feat(parser): add stepIdEquals helper"
-```
-````
-
-
-## Review
-
-After writing and validating the plan, review it using the `review-plan` runbook.

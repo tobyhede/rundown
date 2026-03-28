@@ -8,91 +8,100 @@ tags:
 
 # Write Plan
 
-Write a detailed implementation plan for a feature or task.
-
-**OBJECTIVE:** Produce a complete, actionable implementation plan.
-
-**DONE WHEN:** Plan is written, saved, and passes structural validation.
-
-## 1. Gather requirements
-
+## 1. Invoke the Writing Plans skill
 - PASS CONTINUE
-- FAIL STOP "Cannot proceed without a clear task description."
+- FAIL STOP
+
+Skill: `rundown:writing-plans`
+
+
+## 2. Review the schema
+- PASS CONTINUE
+- FAIL STOP
+
+Schema: `${CLAUDE_PLUGIN_ROOT}schemas/plan.schema.json`
+
+
+## 3. Check the Scope
+- PASS CONTINUE
+- FAIL STOP
+
+Assess and confirm the scope of the work.
+
+- Should the work be split into smaller deliverables?
+
+
+## 4. Gather Requirements
+- PASS CONTINUE
+- FAIL STOP
 
 Confirm the task or feature to be planned is clearly understood.
 
 - What is the goal?
-- What are the constraints?
-- Is there an existing issue, spec, or discussion to reference?
+- What are the constraints and assumptions?
+- Are there any existing issues, design documents, specifications or other references?
 
-## 2. Research the codebase
 
+## 5. Research Codebase
 - PASS CONTINUE
-- FAIL STOP "Unable to understand the relevant codebase."
+- FAIL STOP
 
-Read the relevant source files, tests, and documentation to understand:
+Read the relevant source files, tests, and documentation to confirm:
 
-- Current architecture and patterns in the affected area
-- Existing types, interfaces, and conventions
-- Test patterns and coverage
+- Patterns and conventions in the affected area
+- Existing types and abstractions that can be reused
+- Test structure and helpers
+- File organization (where new files go)
 
-Do not skip this step. Plans written without reading the code produce incorrect file paths, miss existing abstractions, and invent unnecessary ones.
 
-## 3. Load the Writing Plans skill
-
-- NO GOTO InvokeSkill
-
-Check if the Writing Plans skill has been loaded into context.
-
-## 4. Read the plan template
-
+## 6. Map File Structure
 - PASS CONTINUE
-- FAIL CONTINUE
+- FAIL STOP
 
-Read the plan template for reference:
+Map the files to be created, edited, or deleted.
+The file structure mapping informs the task decomposition.
+Each task should produce self-contained changes that make sense independently.
 
-`rdpath --dir {{ WorkPath }} find plan.template.md`
 
-Fallback: `packages/claude-code-plugin/templates/planning/plan.template.md`
-
-## 5. Write the plan
-
+## 7. Output Path
 - PASS CONTINUE
-- FAIL RETRY 2 STOP "Failed to write the plan."
+- FAIL STOP
 
-Follow the Writing Plans skill methodology. Write the full plan.
+```bash
+rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file plan.json
+```
 
-Resolve the output path: `rdpath --dir {{ WorkPath }} --file plan.json`
 
-Validate: `rdx --check <resolved-path>`
+## 8. Write the plan
+- PASS CONTINUE
+- FAIL STOP
 
-Render: `rdx <resolved-path> --output <resolved-path with .md extension>`
+Write the plan to the output path.
+If revising the plan, address the issues identified.
 
-## 6. Validate plan structure
 
-- PASS COMPLETE "Plan written and validated."
-- FAIL GOTO 5
+## 9. Check Schema
+- PASS CONTINUE
+- FAIL GOTO 8
+
+```bash
+  rdx --check $(rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file plan.json)
+```
+
+
+## 10. Verify Plan Structure
+
+- PASS COMPLETE
+- FAIL GOTO 8
 
 Verify the saved plan includes all required sections:
 
-- [ ] Scope assessed — single plan appropriate, or split recommended
 - [ ] Goal — clear, testable, one sentence
 - [ ] Architecture & Approach
 - [ ] Constraints & Assumptions
-- [ ] File Structure — all files listed with disposition (create/modify/delete)
-- [ ] Tasks decomposed into subtasks (2-5 min each)
-- [ ] Every subtask has exact file paths
-- [ ] Every subtask has exact commands
-- [ ] TDD micro-cycle (test/fail/implement/verify/commit)
-- [ ] Each task ends with explicit commit step
-- [ ] No line numbers (symbols only)
+- [ ] Dependencies (Optional)
+- [ ] Context (Optional)
+- [ ] Files & Actions
+- [ ] Tasks decomposed into granular subtasks
+- [ ] Tasks include atomic commit if required
 
-**Next:** Review the plan with `rd run review-plan --var PlanPath=<resolved-path>`.
-
----
-
-## InvokeSkill Load the Writing Plans skill
-
-- YES GOTO 4
-
-Tool: `Skill(skill: "rundown:writing-plans")`
