@@ -1,0 +1,174 @@
+# rdpath — Path Assembly CLI
+
+`rdpath` is a path assembly and file discovery tool shipped with `@rundown-org/claude-code-plugin`. It builds artifact paths with optional context scoping and date-prefixed filenames, and provides glob-based file discovery within artifact directories.
+
+## Usage
+
+```bash
+rdpath --dir <path>                           # Assemble base path (default subcommand)
+rdpath --dir <path> --ctx <id>                # With context scope (.rd-<id>/)
+rdpath --dir <path> --file <name>             # With date-prefixed filename
+rdpath --dir <path> --ctx <id> --file <name>  # Combined context + filename
+rdpath --dir <path> find <pattern>            # Find files matching glob pattern
+rdpath --dir <path> --ctx <id> find <pattern> # Find within context scope
+```
+
+### Examples
+
+```bash
+# Base directory only
+rdpath --dir .work
+# → .work
+
+# Context-scoped directory
+rdpath --dir .work --ctx sprint-42
+# → .work/.rd-sprint-42
+
+# Date-prefixed filename
+rdpath --dir .work --file plan.md
+# → .work/2026-03-27-plan.md
+
+# Combined: context + date-prefixed file
+rdpath --dir .work --ctx sprint-42 --file review.md
+# → .work/.rd-sprint-42/2026-03-27-review.md
+
+# Find files matching a glob
+rdpath --dir .work find '*.md'
+
+# Find within a context scope
+rdpath --dir .work --ctx sprint-42 find '*-plan*.md'
+
+# Recursive search
+rdpath --dir .work find '**/*.json'
+```
+
+### Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Success |
+| `1` | Error (invalid input, directory not found, traversal attempt) |
+
+Errors are written to stderr with an `error:` prefix.
+
+---
+
+## Subcommands
+
+### `path` (default)
+
+Assembles an artifact path from `--dir`, optional `--ctx`, and optional `--file`. This is the default subcommand — invoked when no subcommand is specified.
+
+| Option | Required | Description |
+|--------|----------|-------------|
+| `--dir <path>` | Yes | Base directory |
+| `--ctx <id>` | No | Context scope — appends `.rd-<id>/` subdirectory |
+| `--file <name>` | No | Filename — prepends today's date (`YYYY-MM-DD-<name>`) |
+
+Output is the assembled path, written to stdout with a trailing newline.
+
+### `find`
+
+Discovers files matching a glob pattern within an artifact directory.
+
+| Option/Argument | Required | Description |
+|-----------------|----------|-------------|
+| `--dir <path>` | Yes | Base directory to search |
+| `--ctx <id>` | No | Context scope — searches within `.rd-<id>/` subdirectory |
+| `<pattern>` | Yes | Glob pattern (relative to target directory) |
+
+Output is one matching file path per line, sorted lexicographically. Empty output (exit 0) when no files match. Only regular files are returned — directories matching the pattern are excluded.
+
+---
+
+## Path Assembly
+
+The `path` subcommand builds paths by composing three layers:
+
+```text
+<dir> / [.rd-<ctx>/] [YYYY-MM-DD-<file>]
+```
+
+| Input | Output |
+|-------|--------|
+| `--dir .work` | `.work` |
+| `--dir .work --ctx abc` | `.work/.rd-abc` |
+| `--dir .work --file plan.md` | `.work/2026-03-27-plan.md` |
+| `--dir .work --ctx abc --file plan.md` | `.work/.rd-abc/2026-03-27-plan.md` |
+
+The date prefix uses the current date in `YYYY-MM-DD` format (ISO 8601).
+
+---
+
+## Security
+
+### Input Validation
+
+| Input | Constraint | Regex |
+|-------|-----------|-------|
+| `--ctx` | Alphanumeric, hyphens, underscores | `^[a-zA-Z0-9_-]+$` |
+| `--file` | Alphanumeric, dots, hyphens, underscores | `^[a-zA-Z0-9._-]+$` |
+| `<pattern>` | Must be relative, no `..` segments | Rejects absolute paths and `..` traversal |
+
+### Directory Traversal Prevention
+
+- `--ctx` and `--file` values are validated against strict character sets — path separators (`/`, `\`) and `..` are rejected
+- Glob patterns must be relative to the target directory — absolute patterns and `..` segments are rejected
+- Pattern: `(?:^|[/\\])\.\.(?:$|[/\\])` catches traversal in any position
+
+### Symlink Safety
+
+The `find` subcommand resolves symlinks via `realpath()` and verifies that resolved targets remain within the search directory:
+
+- Symlinks resolving **inside** the search directory are included
+- Symlinks resolving **outside** the search directory are silently excluded
+- Dangling symlinks (broken targets) are silently skipped
+- Permission errors (`EACCES`, `EPERM`) and symlink loops (`ELOOP`) are silently skipped
+
+---
+
+## Execution Flow
+
+### path (default)
+
+```text
+Resolve --dir
+  → If --ctx → validate, append .rd-<ctx>/
+  → If --file → validate, prepend YYYY-MM-DD-
+  → Output assembled path
+```
+
+### find
+
+```text
+Resolve --dir
+  → If --ctx → validate, append .rd-<ctx>/
+  → Validate pattern (reject absolute paths and .. traversal)
+  → Verify directory exists
+  → Resolve realpath for symlink safety
+  → Glob match pattern within directory
+  → Filter: files only, inside search dir
+  → Sort lexicographically
+  → Output one path per line
+```
+
+---
+
+## Typical Workflow
+
+```bash
+# 1. Assemble a path for a new artifact
+ARTIFACT_DIR=$(rdpath --dir .work --ctx sprint-42)
+mkdir -p "$ARTIFACT_DIR"
+
+# 2. Create a date-prefixed file
+PLAN_PATH=$(rdpath --dir .work --ctx sprint-42 --file plan.json)
+echo '{"name": "my plan"}' > "$PLAN_PATH"
+
+# 3. Find artifacts later
+rdpath --dir .work --ctx sprint-42 find '*-plan*.json'
+
+# 4. Combine with rdx for rendering
+PLAN=$(rdpath --dir .work --ctx sprint-42 find '*-plan.json')
+rdx "$PLAN" --output "$(rdpath --dir .work --ctx sprint-42 --file plan.md)"
+```

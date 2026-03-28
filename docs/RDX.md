@@ -1,4 +1,4 @@
-# RDX — JSON-to-Markdown CLI
+# rdx — JSON-to-Markdown CLI
 
 `rdx` is a schema-aware JSON-to-Markdown transformation tool shipped with `@rundown-org/claude-code-plugin`. It renders arbitrary JSON to readable Markdown following structural conventions and optionally validates against discoverable schemas.
 
@@ -55,7 +55,7 @@ The renderer is **schema-unaware** — output is driven entirely by the JSON sha
 
 | JSON Type | Rendered As |
 |-----------|-------------|
-| `null` / `undefined` | Omitted |
+| `null` | Omitted |
 | `string` | Paragraph |
 | `number` / `boolean` | Stringified paragraph |
 | Array of primitives | Bullet list (`- item`) |
@@ -189,16 +189,16 @@ The plan schema validates implementation plans. Include `"$schema": "https://run
 
 ```typescript
 {
-  $schema?: string,                          // Optional schema URI
+  $schema?: "https://rundown.org/schemas/plan.schema.json",  // Optional schema URI (literal)
   name: string,                              // Plan name (min 1 char)
   meta: { version: "1.0.0" },               // Must be exactly "1.0.0"
   goal: string,                              // Desired outcome
   architecture_and_approach: string,          // Solution design
-  constraints_and_assumptions: string,        // Boundaries and assumptions
+  constraints_and_assumptions: string,        // Hard constraints and assumptions
+  dependencies?: string,                      // Optional dependencies
+  context?: string,                          // Optional context
   files: FileEntry[],                        // Files affected (min 1)
   tasks: Task[],                             // Implementation tasks (min 1)
-  dependencies?: string,                      // Optional dependencies
-  context?: string                           // Optional context
 }
 ```
 
@@ -237,18 +237,51 @@ All objects use strict mode — no additional properties are allowed.
 
 #### Example Rendered Output
 
-Given a plan JSON:
+Given this plan JSON:
 
-```markdown
+```json
+{
+  "name": "Add Widget",
+  "meta": { "version": "1.0.0" },
+  "goal": "Create a widget component.",
+  "architecture_and_approach": "Simple component following existing patterns.",
+  "constraints_and_assumptions": "Must support dark mode.",
+  "files": [
+    { "path": "src/widget.ts", "action": "create", "notes": "Widget class" }
+  ],
+  "tasks": [
+    {
+      "name": "Implement Widget",
+      "files": [{ "path": "src/widget.ts", "action": "create" }],
+      "subtasks": [
+        {
+          "name": "Write failing test",
+          "description": "Test widget construction.",
+          "code": { "language": "typescript", "content": "expect(new Widget()).toBeDefined();" }
+        },
+        {
+          "name": "Implement widget",
+          "description": "Create the widget class.",
+          "code": { "language": "typescript", "content": "export class Widget {}" }
+        }
+      ]
+    }
+  ]
+}
+```
+
+Renders to:
+
+````markdown
 ---
 version: 1.0.0
 ---
 
-# Add Widget Component
+# Add Widget
 
 ## Goal
 
-Create a reusable widget component.
+Create a widget component.
 
 ## Architecture And Approach
 
@@ -263,9 +296,14 @@ Must support dark mode.
 | Path | Action | Notes |
 |------|------|------|
 | src/widget.ts | create | Widget class |
-| src/widget.test.ts | create | Unit tests |
 
 ## 1. Implement Widget
+
+### Files
+
+| Path | Action |
+|------|------|
+| src/widget.ts | create |
 
 ### 1.1 Write Failing Test
 
@@ -275,24 +313,16 @@ Test widget construction.
 expect(new Widget()).toBeDefined();
 ```
 
-### 1.2 Create Widget Class
+### 1.2 Implement Widget
 
-Implement the widget.
+Create the widget class.
 
 ```typescript
 export class Widget {}
 ```
+````
 
-### Commit
-
-#### Files
-
-- src/widget.ts
-
-#### Message
-
-feat: add widget component
-```
+Note: The task-level `### Files` table appears between the task heading and subtasks when the task has a non-empty `files` array.
 
 ---
 
@@ -326,7 +356,7 @@ Read JSON file
   → Resolve schema (--schema flag > $schema field)
   → If rawSchema present but unresolvable → error, exit 1
   → If schema resolved → validate cleanData → dataToRender (or cleanData if no schema)
-  → If --check → output "Valid.", exit 0
+  → If --check → output "Valid.", exit 0 (schema validation only if schema resolved; otherwise confirms valid JSON only)
   → renderToMarkdown(dataToRender)
   → Output to --output file or stdout
 ```

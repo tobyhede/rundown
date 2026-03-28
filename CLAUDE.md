@@ -79,7 +79,8 @@ The `rd` command is an alias for `rundown`.
 ```bash
 rdpath --dir <path>                           # Assemble base path (default subcommand)
 rdpath --dir <path> --ctx <id>                # With context scope (.rd-<id>/)
-rdpath --dir <path> --ctx <id> --file <name>  # With date-prefixed filename
+rdpath --dir <path> --file <name>             # With date-prefixed filename
+rdpath --dir <path> --ctx <id> --file <name>  # With date-prefixed filename in context
 rdpath --dir <path> find <pattern>            # Find files matching glob pattern
 rdpath --dir <path> --ctx <id> find <pattern> # Find within context scope
 ```
@@ -388,6 +389,7 @@ Currently supported internally: `echo`, `prompt`. Unsupported commands fall back
 - [docs/DOCKER.md](docs/DOCKER.md) - Docker verification pipeline
 - [docs/SCENARIOS.md](docs/SCENARIOS.md) - Scenarios and test runbook standard
 - [docs/RDX.md](docs/RDX.md) - RDX JSON-to-Markdown CLI reference
+- [docs/RDPATH.md](docs/RDPATH.md) - rdpath path assembly CLI reference
 
 ## Conceptual Model
 

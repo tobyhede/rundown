@@ -41,7 +41,11 @@ delegatable
 deps
 deserialized
 dotdot
+EACCES
 EBNF
+ELOOP
+ENOENT
+EPERM
 émoji
 env
 esac
