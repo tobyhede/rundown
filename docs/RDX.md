@@ -272,7 +272,7 @@ Given this plan JSON:
 
 Renders to:
 
-```markdown
+````markdown
 ---
 version: 1.0.0
 ---
@@ -320,7 +320,7 @@ Create the widget class.
 ```typescript
 export class Widget {}
 ```
-```
+````
 
 Note: The task-level `### Files` table appears between the task heading and subtasks when the task has a non-empty `files` array.
 
