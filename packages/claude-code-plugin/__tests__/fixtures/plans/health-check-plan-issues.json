@@ -1,0 +1,39 @@
+{
+  "$schema": "https://rundown.org/schemas/plan.schema.json",
+  "name": "Add Health Check Endpoint (With Issues)",
+  "meta": { "version": "1.0.0" },
+  "goal": "Add a GET /health endpoint",
+  "architecture_and_approach": "Add a route",
+  "constraints_and_assumptions": "None",
+  "files": [
+    { "path": "src/legacy/app.ts", "action": "edit", "notes": "Legacy path" },
+    { "path": "src/app.ts", "action": "edit" }
+  ],
+  "tasks": [
+    {
+      "name": "Make some changes",
+      "files": [
+        { "path": "src/app.ts", "action": "edit" },
+        { "path": "test/health.test.ts", "action": "create" }
+      ],
+      "subtasks": [
+        {
+          "name": "Make changes to the app",
+          "description": "Edit the route handler on line 42 to add health check support.",
+          "code": {
+            "language": "typescript",
+            "content": "app.get('/health', (c) => c.json({ status: 'ok' }));"
+          }
+        },
+        {
+          "name": "Update the code",
+          "description": "Change lines 10-20 in the test file to add new assertions. Also update L15 with the import."
+        }
+      ],
+      "commit": {
+        "files": ["src/app.ts", "src/health.ts"],
+        "message": "add health check"
+      }
+    }
+  ]
+}

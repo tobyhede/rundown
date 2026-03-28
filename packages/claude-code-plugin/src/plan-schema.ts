@@ -14,7 +14,14 @@ import { z } from 'zod';
  */
 const FileEntry = z
   .object({
-    path: z.string().min(1).describe('Relative file path from project root (e.g. src/foo.ts)'),
+    path: z
+      .string()
+      .min(1)
+      .regex(
+        /^(?!\/)(?![A-Za-z]:[/\\])(?!.*(?:^|\/)\.\.(?:\/|$))(?!.*\\)/,
+        'Must be a relative path without traversal or backslashes',
+      )
+      .describe('Relative file path from project root (e.g. src/foo.ts)'),
     action: z.enum(['create', 'edit', 'delete']),
     notes: z.string().optional(),
   })
@@ -25,7 +32,7 @@ const FileEntry = z
  */
 const CodeBlock = z
   .object({
-    language: z.string(),
+    language: z.string().min(1),
     content: z.string(),
   })
   .strict();

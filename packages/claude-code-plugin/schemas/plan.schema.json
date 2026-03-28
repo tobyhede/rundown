@@ -12,6 +12,7 @@
         "path": {
           "type": "string",
           "minLength": 1,
+          "pattern": "^(?!\\/)(?![A-Za-z]:[\\/\\\\])(?!.*(?:^|\\/)\\.\\.(?:\\/|$))(?!.*\\\\)",
           "description": "Relative file path from project root (e.g. src/foo.ts)"
         },
         "action": {
@@ -115,7 +116,7 @@
                   "type": "object",
                   "required": ["language", "content"],
                   "properties": {
-                    "language": { "type": "string" },
+                    "language": { "type": "string", "minLength": 1 },
                     "content": { "type": "string" }
                   },
                   "additionalProperties": false

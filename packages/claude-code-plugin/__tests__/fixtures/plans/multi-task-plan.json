@@ -1,0 +1,94 @@
+{
+  "$schema": "https://rundown.org/schemas/plan.schema.json",
+  "name": "Multi-Task Feature",
+  "meta": { "version": "1.0.0" },
+  "goal": "Demonstrate a plan with multiple tasks and varied optional field combinations",
+  "architecture_and_approach": "Three tasks covering different patterns: full TDD, research-only, and description-only subtasks.",
+  "constraints_and_assumptions": "Test fixture only. Not a real implementation plan.",
+  "dependencies": "Node.js 24+, Vitest",
+  "context": "Used for testing schema validation with realistic multi-task plans.",
+  "files": [
+    { "path": "src/feature.ts", "action": "create", "notes": "New feature module" },
+    { "path": "test/feature.test.ts", "action": "create", "notes": "Feature tests" },
+    { "path": "docs/feature.md", "action": "create", "notes": "Feature documentation" }
+  ],
+  "tasks": [
+    {
+      "name": "Implement core feature",
+      "files": [
+        { "path": "src/feature.ts", "action": "create" },
+        { "path": "test/feature.test.ts", "action": "create" }
+      ],
+      "subtasks": [
+        {
+          "name": "Write failing test for feature",
+          "description": "Create initial test file with feature expectations.",
+          "code": {
+            "language": "typescript",
+            "content": "import { feature } from '../src/feature';\n\ndescribe('feature', () => {\n  it('returns expected value', () => {\n    expect(feature()).toBe('hello');\n  });\n});"
+          }
+        },
+        {
+          "name": "Run to confirm failure",
+          "code": {
+            "language": "bash",
+            "content": "npm test"
+          }
+        },
+        {
+          "name": "Implement feature function",
+          "description": "Create the feature module with the exported function.",
+          "code": {
+            "language": "typescript",
+            "content": "export function feature(): string {\n  return 'hello';\n}"
+          }
+        },
+        {
+          "name": "Run tests to verify pass",
+          "code": {
+            "language": "bash",
+            "content": "npm test"
+          }
+        }
+      ],
+      "commit": {
+        "files": ["src/feature.ts", "test/feature.test.ts"],
+        "message": "feat: add core feature module"
+      }
+    },
+    {
+      "name": "Research existing patterns",
+      "files": [],
+      "subtasks": [
+        {
+          "name": "Review existing codebase patterns",
+          "description": "Read src/app.ts and src/db.ts to understand conventions."
+        },
+        {
+          "name": "Document findings",
+          "description": "Note naming conventions, error handling patterns, and test structure."
+        }
+      ]
+    },
+    {
+      "name": "Add documentation",
+      "files": [
+        { "path": "docs/feature.md", "action": "create" }
+      ],
+      "subtasks": [
+        {
+          "name": "Write feature documentation",
+          "description": "Create docs/feature.md with usage examples and API reference."
+        },
+        {
+          "name": "Verify documentation renders",
+          "description": "Check that the markdown renders correctly."
+        }
+      ],
+      "commit": {
+        "files": ["docs/feature.md"],
+        "message": "docs: add feature documentation"
+      }
+    }
+  ]
+}
