@@ -19,14 +19,32 @@ describe('detectDelegationMarker', () => {
     expect(result).toEqual({ token: VALID_TOKEN });
   });
 
-  it('returns null for bare token without RD_CLAIM_TOKEN= prefix', () => {
-    const text = VALID_TOKEN;
+  it('finds token mid-line', () => {
+    const text = `prefix RD_CLAIM_TOKEN=${VALID_TOKEN}`;
     const result = detectDelegationMarker(text);
-    expect(result).toBeNull();
+    expect(result).toEqual({ token: VALID_TOKEN });
   });
 
-  it('returns null for marker mid-line (not at line start)', () => {
-    const text = `prefix RD_CLAIM_TOKEN=${VALID_TOKEN}`;
+  it('finds token embedded in a sentence', () => {
+    const text = `Review the code. RD_CLAIM_TOKEN=${VALID_TOKEN} Then proceed.`;
+    const result = detectDelegationMarker(text);
+    expect(result).toEqual({ token: VALID_TOKEN });
+  });
+
+  it('finds token with leading whitespace', () => {
+    const text = `  \tRD_CLAIM_TOKEN=${VALID_TOKEN}`;
+    const result = detectDelegationMarker(text);
+    expect(result).toEqual({ token: VALID_TOKEN });
+  });
+
+  it('finds token in markdown prose', () => {
+    const text = `## Task\n\nDelegation marker: RD_CLAIM_TOKEN=${VALID_TOKEN}\n\nProceed with review.`;
+    const result = detectDelegationMarker(text);
+    expect(result).toEqual({ token: VALID_TOKEN });
+  });
+
+  it('returns null for bare token without RD_CLAIM_TOKEN= prefix', () => {
+    const text = VALID_TOKEN;
     const result = detectDelegationMarker(text);
     expect(result).toBeNull();
   });
