@@ -2,6 +2,18 @@
 import type { HookInput } from '../../shared/index.js';
 import { rundown } from './rundown.js';
 
+/** Tool names that are tracked as workflow step dispatches. */
+type TrackableToolName = 'Agent' | 'Step' | 'Task';
+
+/**
+ * Determine whether a tool name should be tracked as a workflow step dispatch.
+ * @param toolName - Tool name from hook input
+ * @returns True when the tool is Agent, Step, or Task
+ */
+function isTrackableToolName(toolName: HookInput['tool_name']): toolName is TrackableToolName {
+  return toolName === 'Agent' || toolName === 'Step' || toolName === 'Task';
+}
+
 /**
  * Result of processing an Agent/Step/Task tool dispatch for workflow tracking.
  */
@@ -49,7 +61,7 @@ function extractStepId(description: string): string | null {
  */
 export function trackStepDispatch(input: HookInput): StepDispatchResult {
   // Handle Agent, Step, and Task tools (Task/Step for backward compatibility)
-  if (input.tool_name !== 'Agent' && input.tool_name !== 'Step' && input.tool_name !== 'Task') {
+  if (!isTrackableToolName(input.tool_name)) {
     return {};
   }
 
