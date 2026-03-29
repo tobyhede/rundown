@@ -4,10 +4,10 @@ import { handleDelegationDispatch } from '../workflow/hooks/delegation-dispatch.
 /**
  * Delegation Dispatch Gate
  *
- * Detects delegation markers in PreToolUse(Task) events and enriches
+ * Detects delegation markers in PreToolUse(Agent/Task) events and enriches
  * subagent prompts with claim instructions.
  *
- * @param input - Hook input containing Task tool metadata
+ * @param input - Hook input containing Agent/Task tool metadata
  * @returns Gate result: block on violation, context on marker detection, or empty
  * @throws {Error} Propagates errors from handleDelegationDispatch if session I/O fails
  */

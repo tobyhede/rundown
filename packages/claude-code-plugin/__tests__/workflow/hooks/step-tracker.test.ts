@@ -49,6 +49,20 @@ describe('trackStepDispatch', () => {
       expect(result).toEqual({});
       expect(mockExec).toHaveBeenCalled();
     });
+
+    it('processes Agent tool name', () => {
+      const mockExec = jest.fn().mockReturnValue('ok');
+      setExecSync(mockExec as never);
+
+      const input = createMockHookInput('PostToolUse', {
+        tool_name: 'Agent',
+        tool_input: { description: '2.1 - Run integration tests' },
+      });
+
+      const result = trackStepDispatch(input);
+      expect(result).toEqual({});
+      expect(mockExec).toHaveBeenCalled();
+    });
   });
 
   describe('description validation', () => {

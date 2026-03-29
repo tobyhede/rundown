@@ -179,7 +179,7 @@ Multiple independent agents are dispatched in parallel, their results collected 
 
 | Phase | Description |
 |-------|-------------|
-| **Dispatch** | Launch N agents with `Step(subagent_type="...")` (`Task` is accepted as an alias for `Step` for backward compatibility) |
+| **Dispatch** | Launch N agents with `Agent(subagent_type="...")` (`Task` and `Step` are accepted as aliases for backward compatibility) |
 | **Execute** | Each agent works independently, writes findings to `.work/` |
 | **Collate** | Main agent reads all findings, categorises as Common (N/N agreement) vs Exclusive |
 | **Cross-check** | Optional: dispatch agent to validate exclusive findings |
@@ -196,8 +196,8 @@ Multiple independent agents are dispatched in parallel, their results collected 
 
 **Example** (from `verifying-by-consensus`):
 ```text
-Step(description="1.1 - Review auth changes", subagent_type="code-review-agent")
-Step(description="1.2 - Review auth changes", subagent_type="code-review-agent")
+Agent(description="1.1 - Review auth changes", subagent_type="code-review-agent")
+Agent(description="1.2 - Review auth changes", subagent_type="code-review-agent")
 ```
 
 Each agent writes its findings to `.work/{date}-verify-{agentId}.md`, ending with a `STATUS: PASS` or `STATUS: FAIL` line. The main agent then collates results.

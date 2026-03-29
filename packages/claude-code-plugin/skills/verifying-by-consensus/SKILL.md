@@ -41,15 +41,15 @@ Dispatch N agents to independently review the same subject. Collate findings:
 3. Start workflow: `rundown run runbooks/verify.runbook.md`
 4. Dispatch agents with StepId prefix in description:
    ```
-   Step(description="1.1 - Review [subject]", prompt="...", subagent_type="...")
-   Step(description="1.2 - Review [subject]", prompt="...", subagent_type="...")
+   Agent(description="1.1 - Review [subject]", prompt="...", subagent_type="...")
+   Agent(description="1.2 - Review [subject]", prompt="...", subagent_type="...")
    ```
 
 **Hooks automate step binding:**
 
 | Manual command | Hook trigger | When |
 |----------------|--------------|------|
-| `rundown run --step 1.1` | PostToolUse (Step) | StepId detected in description |
+| `rundown run --step 1.1` | PostToolUse (Agent/Step) | StepId detected in description |
 | `rundown run --agent {id}` | SubagentStart | Agent spawns |
 
 **Subagent protocol:**

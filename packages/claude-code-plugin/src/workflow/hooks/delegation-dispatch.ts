@@ -16,7 +16,7 @@ export interface DelegationDispatchResult {
 }
 
 /**
- * Detect delegation markers in a PreToolUse Task event, persist the delegation token in
+ * Detect delegation markers in a PreToolUse Agent/Task event, persist the delegation token in
  * session metadata for abort correlation, and produce a Markdown context instructing
  * the subagent to claim the token and report results.
  *
@@ -30,7 +30,10 @@ export interface DelegationDispatchResult {
 export async function handleDelegationDispatch(
   input: HookInput,
 ): Promise<DelegationDispatchResult> {
-  if (input.hook_event_name !== 'PreToolUse' || input.tool_name !== 'Task') {
+  if (
+    input.hook_event_name !== 'PreToolUse' ||
+    (input.tool_name !== 'Agent' && input.tool_name !== 'Task')
+  ) {
     return {};
   }
 

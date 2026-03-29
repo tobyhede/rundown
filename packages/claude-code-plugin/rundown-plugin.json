@@ -12,14 +12,14 @@
   },
   "hooks": {
     "PreToolUse": {
-      "enabled_tools": ["Task"],
+      "enabled_tools": ["Agent", "Task"],
       "gates": ["on-delegation-dispatch"]
     },
     "SubagentStop": {
       "gates": ["on-subagent-stop"]
     },
     "PostToolUse": {
-      "enabled_tools": ["Edit", "Write", "Step", "Task"],
+      "enabled_tools": ["Agent", "Edit", "Write", "Step", "Task"],
       "gates": ["check"]
     },
     "SlashCommandStart": {

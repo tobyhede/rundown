@@ -157,6 +157,20 @@ runbook: ${runbook}
     expect(result.blockReason).toBeUndefined();
   });
 
+  it('dispatches PreToolUse(Agent) through on-delegation-dispatch gate', async () => {
+    const input: HookInput = {
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Agent',
+      tool_input: { prompt: 'No delegation marker here', description: 'Just an agent' },
+      cwd: testDir,
+    };
+
+    // Should not block - no delegation marker means gate passes through
+    const result = await dispatch(input);
+
+    expect(result.blockReason).toBeUndefined();
+  });
+
   it('dispatches SubagentStop through on-subagent-stop gate', async () => {
     const input: HookInput = {
       hook_event_name: 'SubagentStop',

@@ -3,7 +3,7 @@ import type { HookInput } from '../../shared/index.js';
 import { rundown } from './rundown.js';
 
 /**
- * Result of processing a Step/Task tool dispatch for workflow tracking.
+ * Result of processing an Agent/Step/Task tool dispatch for workflow tracking.
  */
 export interface StepDispatchResult {
   violation?: string;
@@ -48,8 +48,8 @@ function extractStepId(description: string): string | null {
  * @returns Result with optional violation message if step identifier is invalid
  */
 export function trackStepDispatch(input: HookInput): StepDispatchResult {
-  // Handle both Step and Task tool (Task for backward compatibility/LLM training)
-  if (input.tool_name !== 'Step' && input.tool_name !== 'Task') {
+  // Handle Agent, Step, and Task tools (Task/Step for backward compatibility)
+  if (input.tool_name !== 'Agent' && input.tool_name !== 'Step' && input.tool_name !== 'Task') {
     return {};
   }
 
