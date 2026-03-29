@@ -44,6 +44,20 @@ describe('on-delegation-dispatch gate', () => {
     });
   });
 
+  it('passes Agent tool through to handler', async () => {
+    mockHandleDelegationDispatch.mockResolvedValue({});
+
+    const input: HookInput = {
+      hook_event_name: 'PreToolUse',
+      cwd: '/test',
+      tool_name: 'Agent',
+    };
+
+    const result = await execute(input);
+    expect(result).toEqual({});
+    expect(mockHandleDelegationDispatch).toHaveBeenCalledWith(input);
+  });
+
   it('returns block decision when handler returns violation', async () => {
     mockHandleDelegationDispatch.mockResolvedValue({
       violation: 'Token expired',

@@ -2,8 +2,20 @@
 
 import type { HookInput } from '../../shared/index.js';
 import { Session } from '../../session.js';
-import { detectDelegationInTaskInput } from './delegation-detector.js';
+import { detectDelegationInToolInput } from './delegation-detector.js';
 import { rundown } from './rundown.js';
+
+/** Tool names that carry delegation context. */
+type DelegationToolName = 'Agent' | 'Task';
+
+/**
+ * Type guard for tool names that support delegation dispatch.
+ * @param toolName - Tool name from hook input
+ * @returns True when the tool is Agent or Task
+ */
+function isDelegationToolName(toolName: HookInput['tool_name']): toolName is DelegationToolName {
+  return toolName === 'Agent' || toolName === 'Task';
+}
 
 /**
  * Result from delegation dispatch handling.
@@ -16,7 +28,7 @@ export interface DelegationDispatchResult {
 }
 
 /**
- * Detect delegation markers in a PreToolUse Task event, persist the delegation token in
+ * Detect delegation markers in a PreToolUse Agent/Task event, persist the delegation token in
  * session metadata for abort correlation, and produce a Markdown context instructing
  * the subagent to claim the token and report results.
  *
@@ -26,15 +38,16 @@ export interface DelegationDispatchResult {
  * @param input - Hook input received from Claude Code for the event
  * @returns A Dispatch result containing `context` with the delegation instructions when a token
  *          is found; an empty object when no delegation is detected or the event is not applicable.
+ * @throws {Error} When session metadata cannot be read or written
  */
 export async function handleDelegationDispatch(
   input: HookInput,
 ): Promise<DelegationDispatchResult> {
-  if (input.hook_event_name !== 'PreToolUse' || input.tool_name !== 'Task') {
+  if (input.hook_event_name !== 'PreToolUse' || !isDelegationToolName(input.tool_name)) {
     return {};
   }
 
-  const detection = detectDelegationInTaskInput(
+  const detection = detectDelegationInToolInput(
     input.tool_input?.prompt,
     input.tool_input?.description,
   );

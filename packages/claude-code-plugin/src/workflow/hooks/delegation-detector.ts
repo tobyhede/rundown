@@ -41,14 +41,14 @@ export function detectDelegationMarker(text: string): DelegationDetection | null
 }
 
 /**
- * Detect a delegation marker in Task tool input fields.
+ * Detect a delegation marker in Agent/Task tool input fields.
  * Scans prompt first, then falls back to description.
  *
- * @param prompt - Task prompt field
- * @param description - Task description field
+ * @param prompt - Agent/Task prompt field
+ * @param description - Agent/Task description field
  * @returns Detection result with token, or null if no marker found
  */
-export function detectDelegationInTaskInput(
+export function detectDelegationInToolInput(
   prompt?: string,
   description?: string,
 ): DelegationDetection | null {

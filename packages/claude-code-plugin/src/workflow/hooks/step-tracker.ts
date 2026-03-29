@@ -2,8 +2,20 @@
 import type { HookInput } from '../../shared/index.js';
 import { rundown } from './rundown.js';
 
+/** Tool names that are tracked as workflow step dispatches. */
+type TrackableToolName = 'Agent' | 'Step' | 'Task';
+
 /**
- * Result of processing a Step/Task tool dispatch for workflow tracking.
+ * Determine whether a tool name should be tracked as a workflow step dispatch.
+ * @param toolName - Tool name from hook input
+ * @returns True when the tool is Agent, Step, or Task
+ */
+function isTrackableToolName(toolName: HookInput['tool_name']): toolName is TrackableToolName {
+  return toolName === 'Agent' || toolName === 'Step' || toolName === 'Task';
+}
+
+/**
+ * Result of processing an Agent/Step/Task tool dispatch for workflow tracking.
  */
 export interface StepDispatchResult {
   violation?: string;
@@ -16,14 +28,14 @@ const EXACT_STEP_ID = new RegExp(`^${STEP_ID_PATTERN}$`);
 const PREFIXED_STEP_ID = new RegExp(`^\\s*(${STEP_ID_PATTERN})\\s*[-–—:]\\s+`);
 
 /**
- * Extract a normalized step identifier from a Step/Task description.
+ * Extract a normalized step identifier from an Agent/Step/Task description.
  *
  * Accepted forms:
  * - "1.1"
  * - "NamedStep"
  * - "1.1 - Description"
  * - "NamedStep: Description"
- * @param description - Raw Step/Task tool description text
+ * @param description - Raw Agent/Step/Task tool description text
  * @returns Normalized step identifier, or null if no valid identifier found
  */
 function extractStepId(description: string): string | null {
@@ -43,13 +55,13 @@ function extractStepId(description: string): string | null {
 }
 
 /**
- * Track Step tool dispatches in workflow state
+ * Track Agent/Step/Task tool dispatches in workflow state
  * @param input - Hook input containing tool name and description
  * @returns Result with optional violation message if step identifier is invalid
  */
 export function trackStepDispatch(input: HookInput): StepDispatchResult {
-  // Handle both Step and Task tool (Task for backward compatibility/LLM training)
-  if (input.tool_name !== 'Step' && input.tool_name !== 'Task') {
+  // Handle Agent, Step, and Task tools (Task/Step for backward compatibility)
+  if (!isTrackableToolName(input.tool_name)) {
     return {};
   }
 
@@ -60,7 +72,7 @@ export function trackStepDispatch(input: HookInput): StepDispatchResult {
     if (!stepId) {
       return {
         violation:
-          'Step description must include a valid step identifier (e.g. "1.1 - Do work" or "ErrorHandler: Recover").',
+          'Tool description must include a valid step identifier (e.g. "1.1 - Do work" or "ErrorHandler: Recover").',
       };
     }
 

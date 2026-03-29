@@ -6,7 +6,7 @@ export {
 } from './delegation-dispatch.js';
 export {
   detectDelegationMarker,
-  detectDelegationInTaskInput,
+  detectDelegationInToolInput,
   type DelegationDetection,
 } from './delegation-detector.js';
 export { handleSubagentStop, type SubagentStopResult } from './subagent-stop.js';

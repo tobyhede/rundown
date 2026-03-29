@@ -49,11 +49,25 @@ describe('trackStepDispatch', () => {
       expect(result).toEqual({});
       expect(mockExec).toHaveBeenCalled();
     });
+
+    it('processes Agent tool name', () => {
+      const mockExec = jest.fn().mockReturnValue('ok');
+      setExecSync(mockExec as never);
+
+      const input = createMockHookInput('PostToolUse', {
+        tool_name: 'Agent',
+        tool_input: { description: '2.1 - Run integration tests' },
+      });
+
+      const result = trackStepDispatch(input);
+      expect(result).toEqual({});
+      expect(mockExec).toHaveBeenCalled();
+    });
   });
 
   describe('description validation', () => {
     const expectedViolation =
-      'Step description must include a valid step identifier (e.g. "1.1 - Do work" or "ErrorHandler: Recover").';
+      'Tool description must include a valid step identifier (e.g. "1.1 - Do work" or "ErrorHandler: Recover").';
 
     it('returns violation when description is empty', () => {
       const input = createMockHookInput('PostToolUse', {

@@ -5,7 +5,7 @@ import { trackStepDispatch } from '../workflow/hooks/step-tracker.js';
  * Workflow Step Tracker Gate
  *
  * Wraps trackStepDispatch logic as a configurable gate.
- * Validates that Step/Task tool descriptions are non-empty and forwards
+ * Validates that Agent/Step/Task tool descriptions are non-empty and forwards
  * them to the rundown CLI for workflow state tracking.
  * @param input - Hook input containing tool name and description
  * @returns Gate result with block decision on violation, or empty on success

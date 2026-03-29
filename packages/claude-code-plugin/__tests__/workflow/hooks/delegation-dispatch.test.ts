@@ -42,7 +42,7 @@ describe('handleDelegationDispatch', () => {
     expect(result).toEqual({});
   });
 
-  it('returns empty for PreToolUse where tool_name !== Task', async () => {
+  it('returns empty for PreToolUse where tool_name is neither Agent nor Task', async () => {
     const input = createMockHookInput('PreToolUse', {
       tool_name: 'Edit',
       tool_input: { file_path: '/test/file.ts' },
@@ -90,6 +90,49 @@ describe('handleDelegationDispatch', () => {
 
     const input = createMockHookInput('PreToolUse', {
       tool_name: 'Task',
+      tool_input: {
+        prompt: `RD_CLAIM_TOKEN=${VALID_TOKEN}`,
+      },
+    });
+
+    await handleDelegationDispatch(input);
+
+    expect(mockSet).toHaveBeenCalledWith('metadata', {
+      existing_key: 'value',
+      delegation_active_token: VALID_TOKEN,
+    });
+  });
+
+  it('returns context for Agent tool with marker in prompt', async () => {
+    const input = createMockHookInput('PreToolUse', {
+      tool_name: 'Agent',
+      tool_input: {
+        prompt: `Do the work\nRD_CLAIM_TOKEN=${VALID_TOKEN}\nThen report`,
+        description: 'A description',
+      },
+    });
+    const result = await handleDelegationDispatch(input);
+    expect(result.context).toContain(`rd claim ${VALID_TOKEN}`);
+    expect(result.context).toContain('Delegation Context');
+  });
+
+  it('returns context for Agent tool with marker in description', async () => {
+    const input = createMockHookInput('PreToolUse', {
+      tool_name: 'Agent',
+      tool_input: {
+        prompt: 'No marker here',
+        description: `Delegated agent\nRD_CLAIM_TOKEN=${VALID_TOKEN}`,
+      },
+    });
+    const result = await handleDelegationDispatch(input);
+    expect(result.context).toContain(`rd claim ${VALID_TOKEN}`);
+  });
+
+  it('stores token in session metadata on Agent tool detection', async () => {
+    mockGet.mockResolvedValue({ existing_key: 'value' });
+
+    const input = createMockHookInput('PreToolUse', {
+      tool_name: 'Agent',
       tool_input: {
         prompt: `RD_CLAIM_TOKEN=${VALID_TOKEN}`,
       },

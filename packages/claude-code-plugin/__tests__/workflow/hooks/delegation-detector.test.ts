@@ -1,7 +1,7 @@
 import { describe, it, expect } from '@jest/globals';
 import {
   detectDelegationMarker,
-  detectDelegationInTaskInput,
+  detectDelegationInToolInput,
 } from '../../../src/workflow/hooks/delegation-detector.js';
 
 describe('detectDelegationMarker', () => {
@@ -58,13 +58,13 @@ describe('detectDelegationMarker', () => {
   });
 });
 
-describe('detectDelegationInTaskInput', () => {
+describe('detectDelegationInToolInput', () => {
   const VALID_TOKEN = 'rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 
   it('checks prompt before description', () => {
     const promptToken = 'rdtk_PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP';
     const descToken = 'rdtk_DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD';
-    const result = detectDelegationInTaskInput(
+    const result = detectDelegationInToolInput(
       `RD_CLAIM_TOKEN=${promptToken}`,
       `RD_CLAIM_TOKEN=${descToken}`,
     );
@@ -72,22 +72,22 @@ describe('detectDelegationInTaskInput', () => {
   });
 
   it('falls back to description when prompt has no marker', () => {
-    const result = detectDelegationInTaskInput('No marker here', `RD_CLAIM_TOKEN=${VALID_TOKEN}`);
+    const result = detectDelegationInToolInput('No marker here', `RD_CLAIM_TOKEN=${VALID_TOKEN}`);
     expect(result).toEqual({ token: VALID_TOKEN });
   });
 
   it('returns null when both undefined', () => {
-    const result = detectDelegationInTaskInput(undefined, undefined);
+    const result = detectDelegationInToolInput(undefined, undefined);
     expect(result).toBeNull();
   });
 
   it('returns null when both empty', () => {
-    const result = detectDelegationInTaskInput('', '');
+    const result = detectDelegationInToolInput('', '');
     expect(result).toBeNull();
   });
 
   it('returns null when prompt is undefined and description has no marker', () => {
-    const result = detectDelegationInTaskInput(undefined, 'Just a description');
+    const result = detectDelegationInToolInput(undefined, 'Just a description');
     expect(result).toBeNull();
   });
 });
