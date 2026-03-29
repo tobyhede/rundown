@@ -1,20 +1,16 @@
 ---
 name: writing-plans
-description: Use when decomposiing before making any code changes.
-
-Use when you have a spec or requirements for a multi-step task, before touching code
-
+description: Use when planning and decomposing work before making any code changes.
 runbook: ${CLAUDE_PLUGIN_ROOT}runbooks/planning/write-plan.runbook.md
 schema: ${CLAUDE_PLUGIN_ROOT}schemas/plan.schema.json
 ---
 
 # Writing Plans
 
-
 <important>
-## Rundown-Supported Skill
+## Runbook-Activated Skill
 This skill has a supporting Rundown runbook.
-Read the skill and then use the Rundown CLI to step through the workflow.
+Read the skill, and use the Rundown CLI to step through the runbook workflow.
 </important>
 
 
@@ -71,7 +67,8 @@ Plans written without reading the code produce incorrect file paths, miss existi
 ## File Structure Mapping
 
 Before defining tasks, map the files to be created, edited, or deleted.
-Lock decomposition decisions  locked in.
+File structure mapping informs the task decomposition.
+Each task should produce self-contained changes that make sense independently.
 
 - Design units with clear boundaries and well-defined interfaces.
 - Each file should have one clear responsibility.
@@ -79,9 +76,6 @@ Lock decomposition decisions  locked in.
 - Files that change together should live together. Split by responsibility, not by technical layer.
 - Follow any established patterns in the existing codebase.
 - If the codebase uses large files, don't unilaterally restructure - but if a file you're modifying has grown unwieldy, including a split in the plan is reasonable.
-
-The file structure mapping informs the task decomposition.
-Each task should produce self-contained changes that make sense independently.
 
 
 ## Plan Structure & Content

@@ -103,5 +103,6 @@ Verify the saved plan includes all required sections:
 - [ ] Context (Optional)
 - [ ] Files & Actions
 - [ ] Tasks decomposed into granular subtasks
+- [ ] Tasks structured with TDD principles
 - [ ] Tasks include atomic commit if required
 
