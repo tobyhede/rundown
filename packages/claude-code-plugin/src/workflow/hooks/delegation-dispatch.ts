@@ -2,7 +2,7 @@
 
 import type { HookInput } from '../../shared/index.js';
 import { Session } from '../../session.js';
-import { detectDelegationInTaskInput } from './delegation-detector.js';
+import { detectDelegationInToolInput } from './delegation-detector.js';
 import { rundown } from './rundown.js';
 
 /**
@@ -37,7 +37,7 @@ export async function handleDelegationDispatch(
     return {};
   }
 
-  const detection = detectDelegationInTaskInput(
+  const detection = detectDelegationInToolInput(
     input.tool_input?.prompt,
     input.tool_input?.description,
   );

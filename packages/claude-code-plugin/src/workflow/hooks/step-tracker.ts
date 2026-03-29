@@ -60,7 +60,7 @@ export function trackStepDispatch(input: HookInput): StepDispatchResult {
     if (!stepId) {
       return {
         violation:
-          'Step description must include a valid step identifier (e.g. "1.1 - Do work" or "ErrorHandler: Recover").',
+          'Tool description must include a valid step identifier (e.g. "1.1 - Do work" or "ErrorHandler: Recover").',
       };
     }
 

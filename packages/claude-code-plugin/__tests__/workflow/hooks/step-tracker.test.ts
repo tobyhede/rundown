@@ -67,7 +67,7 @@ describe('trackStepDispatch', () => {
 
   describe('description validation', () => {
     const expectedViolation =
-      'Step description must include a valid step identifier (e.g. "1.1 - Do work" or "ErrorHandler: Recover").';
+      'Tool description must include a valid step identifier (e.g. "1.1 - Do work" or "ErrorHandler: Recover").';
 
     it('returns violation when description is empty', () => {
       const input = createMockHookInput('PostToolUse', {

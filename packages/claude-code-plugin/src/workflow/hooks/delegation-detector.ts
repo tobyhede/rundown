@@ -48,7 +48,7 @@ export function detectDelegationMarker(text: string): DelegationDetection | null
  * @param description - Agent/Task description field
  * @returns Detection result with token, or null if no marker found
  */
-export function detectDelegationInTaskInput(
+export function detectDelegationInToolInput(
   prompt?: string,
   description?: string,
 ): DelegationDetection | null {
