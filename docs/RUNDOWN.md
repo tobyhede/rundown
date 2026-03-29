@@ -5,7 +5,7 @@ This document provides a comprehensive guide and reference for the Rundown CLI (
 **For syntax and format details, see:**
 - [SPEC.md](./SPEC.md) - Rundown specification
 - [FORMAT.md](./FORMAT.md) - Format grammar and expansion rules
-- [AGENT-ORCHESTRATION.md](./AGENT-ORCHESTRATION.md) - Agent orchestration models and patterns
+- [AGENT-ORCHESTRATION.md](./AGENT-ORCHESTRATION.md) - Subagent delegation, context discovery, and status protocol
 
 ---
 
@@ -966,7 +966,7 @@ rundown prune --all
 
 ## Delegation Patterns
 
-> **See also:** [AGENT-ORCHESTRATION.md](./AGENT-ORCHESTRATION.md) for the five orchestration models, agent type conventions, and guidance on choosing a model.
+> **See also:** [AGENT-ORCHESTRATION.md](./AGENT-ORCHESTRATION.md) for subagent delegation workflow, context file discovery, and status protocol.
 
 ### Pattern 1: Orchestrator Control
 
@@ -1161,7 +1161,7 @@ If state becomes corrupted:
 
 ## Integration with Claude Code
 
-See [AGENT-ORCHESTRATION.md](./AGENT-ORCHESTRATION.md) for agent type conventions and context file discovery.
+See [AGENT-ORCHESTRATION.md](./AGENT-ORCHESTRATION.md) for context file discovery and subagent delegation.
 
 ### Context Injection
 

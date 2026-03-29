@@ -65,10 +65,12 @@ rundown delegate --step <id>            # Infer runbook from substep reference
 rundown delegate <runbook> --step <id>  # Explicit delegation
 rundown delegate <runbook> --step <id> --var key=value  # With variables (repeatable)
 rundown delegate <runbook> --step <id> --var-json key=json  # With JSON variables
+rundown delegate <runbook> --step <id> --var-file path  # Load variables from YAML file (repeatable)
 rundown delegate --step <id> --index <number>  # FOR loop iteration to target
 rundown claim <token>                   # Claim a delegation token and launch child
 rundown claim <token> --var key=value   # Claim with variables (repeatable)
 rundown claim <token> --var-json key=json  # Claim with JSON variables
+rundown claim <token> --var-file path   # Load variables from YAML file (repeatable)
 rundown abort <token>                   # Cancel a delegation token (--force for claimed)
 ```
 
@@ -384,7 +386,7 @@ Currently supported internally: `echo`, `prompt`. Unsupported commands fall back
 - [docs/CLI-OUTPUT-SPEC.md](docs/CLI-OUTPUT-SPEC.md) - CLI output format specification
 - [runbooks/README.md](runbooks/README.md) - Runbook authoring patterns
 - [docs/SCRIPTING.md](docs/SCRIPTING.md) - Scripting and automation guide
-- [docs/AGENT-ORCHESTRATION.md](docs/AGENT-ORCHESTRATION.md) - Agent orchestration models and patterns
+- [docs/AGENT-ORCHESTRATION.md](docs/AGENT-ORCHESTRATION.md) - Subagent delegation, context discovery, and status protocol
 - [docs/PROJECT-INTEGRATION.md](docs/PROJECT-INTEGRATION.md) - Project integration guide
 - [docs/DOCKER.md](docs/DOCKER.md) - Docker verification pipeline
 - [docs/SCENARIOS.md](docs/SCENARIOS.md) - Scenarios and test runbook standard
