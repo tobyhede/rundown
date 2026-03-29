@@ -350,13 +350,16 @@ See `docs/implement/claude-code-plugin/schema-design.md` for full guidance.
 ## Execution Flow
 
 ```text
-Read JSON file
-  → Parse JSON
+Read JSON file → error: file not found / cannot read (exit 1)
+  → Parse JSON → error: invalid JSON in <file> (exit 1)
   → Extract $schema → { cleanData, schemaName, rawSchema }
   → Resolve schema (--schema flag > $schema field)
   → If rawSchema present but unresolvable → error, exit 1
-  → If schema resolved → validate cleanData → dataToRender (or cleanData if no schema)
-  → If --check → output "Valid.", exit 0 (schema validation only if schema resolved; otherwise confirms valid JSON only)
+  → If no schema discoverable:
+      → If --check → error: --check requires a schema (exit 1)
+      → If render → warning: no schema found, skipping validation
+  → If schema resolved → validate cleanData → dataToRender
+  → If --check → output "Valid.", exit 0
   → renderToMarkdown(dataToRender)
   → Output to --output file or stdout
 ```

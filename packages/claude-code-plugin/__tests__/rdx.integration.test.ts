@@ -34,10 +34,10 @@ const runRdx = (args: string[]): Promise<{ stdout: string; stderr: string; exitC
 };
 
 describe('rdx --check', () => {
-  test('valid JSON without schema prints Valid', async () => {
+  test('--check without schema errors', async () => {
     const result = await runRdx(['--check', path.join(fixturesDir, 'no-schema.json')]);
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toBe('Valid.\n');
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('--check requires a schema');
   });
 
   test('valid plan with $schema field prints Valid', async () => {
@@ -46,10 +46,18 @@ describe('rdx --check', () => {
     expect(result.stdout).toBe('Valid.\n');
   });
 
-  test('invalid JSON syntax prints error and exits 1', async () => {
+  test('invalid JSON syntax prints error with filename', async () => {
     const result = await runRdx(['--check', path.join(fixturesDir, 'invalid-json.txt')]);
     expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain('error:');
+    expect(result.stderr).toContain('invalid JSON in');
+    expect(result.stderr).toContain('invalid-json.txt');
+  });
+
+  test('missing file prints file-not-found error', async () => {
+    const result = await runRdx(['--check', path.join(fixturesDir, 'nonexistent.json')]);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('file not found');
+    expect(result.stderr).toContain('nonexistent.json');
   });
 
   test('valid JSON failing schema prints validation errors and exits 1', async () => {
@@ -104,11 +112,19 @@ describe('rdx render', () => {
     expect(result.stderr).toContain('schema validation failed');
   });
 
-  test('no schema renders without validation', async () => {
+  test('no schema renders with warning', async () => {
     const result = await runRdx([path.join(fixturesDir, 'no-schema.json')]);
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain('# Simple Doc');
     expect(result.stdout).toContain('A plain JSON document with no schema');
+    expect(result.stderr).toContain('warning: no schema found');
+  });
+
+  test('missing file prints file-not-found error', async () => {
+    const result = await runRdx([path.join(fixturesDir, 'nonexistent.json')]);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('file not found');
+    expect(result.stderr).toContain('nonexistent.json');
   });
 
   test('--output writes to file', async () => {
