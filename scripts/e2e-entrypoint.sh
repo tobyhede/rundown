@@ -124,10 +124,41 @@ log "Phase 5: Verifying runbook execution artifacts..."
 
 RUNBOOK_CONFIRMED=false
 
-# Check for plan file (write-plan runbook creates this via rdpath)
-if find .work/main -maxdepth 1 -name '*plan*.md' 2>/dev/null | grep -q .; then
-  pass "Plan file found in .work/main/"
-  RUNBOOK_CONFIRMED=true
+# Check for plan JSON (write-plan runbook creates this via rdpath, date-prefixed).
+# Search .work/ recursively — rdpath uses context-scoped subdirs (.rd-<ctx>/).
+PLAN_FILE="$(find .work -name '*plan*.json' -type f 2>/dev/null | head -1)"
+
+if [ -n "$PLAN_FILE" ]; then
+  pass "Plan file found: $PLAN_FILE"
+  PLAN_VALID=true
+
+  # Schema validation
+  set +e
+  rdx --check "$PLAN_FILE" 2>&1 | tee -a "$LOG_FILE"
+  RDX_EXIT=${PIPESTATUS[0]}
+  set -e
+  if [ "$RDX_EXIT" -eq 0 ]; then
+    pass "Plan passes schema validation"
+  else
+    fail "Plan fails schema validation"
+    PLAN_VALID=false
+  fi
+
+  # Structural validation
+  set +e
+  node "$PLUGIN_DIR/scripts/validate-plan.js" "$PLAN_FILE" 2>&1 | tee -a "$LOG_FILE"
+  VALIDATE_EXIT=${PIPESTATUS[0]}
+  set -e
+  if [ "$VALIDATE_EXIT" -eq 0 ]; then
+    pass "Plan passes structural validation"
+  else
+    fail "Plan fails structural validation"
+    PLAN_VALID=false
+  fi
+
+  if [ "$PLAN_VALID" = true ]; then
+    RUNBOOK_CONFIRMED=true
+  fi
 fi
 
 # Check for rundown execution state
