@@ -16,14 +16,14 @@ const EXACT_STEP_ID = new RegExp(`^${STEP_ID_PATTERN}$`);
 const PREFIXED_STEP_ID = new RegExp(`^\\s*(${STEP_ID_PATTERN})\\s*[-–—:]\\s+`);
 
 /**
- * Extract a normalized step identifier from a Step/Task description.
+ * Extract a normalized step identifier from an Agent/Step/Task description.
  *
  * Accepted forms:
  * - "1.1"
  * - "NamedStep"
  * - "1.1 - Description"
  * - "NamedStep: Description"
- * @param description - Raw Step/Task tool description text
+ * @param description - Raw Agent/Step/Task tool description text
  * @returns Normalized step identifier, or null if no valid identifier found
  */
 function extractStepId(description: string): string | null {
@@ -43,7 +43,7 @@ function extractStepId(description: string): string | null {
 }
 
 /**
- * Track Step tool dispatches in workflow state
+ * Track Agent/Step/Task tool dispatches in workflow state
  * @param input - Hook input containing tool name and description
  * @returns Result with optional violation message if step identifier is invalid
  */

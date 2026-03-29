@@ -42,7 +42,7 @@ describe('handleDelegationDispatch', () => {
     expect(result).toEqual({});
   });
 
-  it('returns empty for PreToolUse where tool_name !== Task', async () => {
+  it('returns empty for PreToolUse where tool_name is neither Agent nor Task', async () => {
     const input = createMockHookInput('PreToolUse', {
       tool_name: 'Edit',
       tool_input: { file_path: '/test/file.ts' },
