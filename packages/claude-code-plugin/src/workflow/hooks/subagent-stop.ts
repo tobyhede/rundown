@@ -16,137 +16,251 @@ export interface SubagentStopResult {
   violation?: string;
 }
 
-/**
- * Delegation entry from `rd status --json` output.
- */
-interface DelegationInfo {
-  substep: string;
-  runbook: string;
-  state: 'pending' | 'claimed' | 'cancelled';
-  childRunId?: string;
-}
+// ---------------------------------------------------------------------------
+// Domain types — discriminated unions for runbook status and delegation state
+// ---------------------------------------------------------------------------
 
-/**
- * Minimal subset of `rd status --json` output needed by the subagent-stop hook.
- */
-interface StatusInfo {
-  /** Whether a runbook is currently active on the session stack. */
-  active: boolean;
-  /** Whether the active runbook is stashed (enforcement paused). */
-  stashed: boolean;
-  /** Runbook file path. */
-  file?: string;
-  /** Current position in the runbook. */
+/** Shared fields for runbook states that carry position information. */
+interface RunbookPosition {
+  file: string;
   position?: { current: string; total: number; substep?: string };
-  /** Current step details. */
   step?: { name: string; description?: string };
-  /** Active delegations on substeps. */
-  delegations?: DelegationInfo[];
+}
+
+/** Delegation status as a discriminated union — each state carries only its valid fields. */
+type DelegationStatus =
+  | { readonly state: 'pending'; readonly substep: string; readonly runbook: string }
+  | {
+      readonly state: 'claimed';
+      readonly substep: string;
+      readonly runbook: string;
+      readonly childRunId: string;
+    }
+  | { readonly state: 'cancelled'; readonly substep: string; readonly runbook: string };
+
+/** Runbook status as a discriminated union — impossible combinations are unrepresentable. */
+type RunbookStatus =
+  | { readonly kind: 'inactive' }
+  | ({ readonly kind: 'stashed' } & RunbookPosition)
+  | ({
+      readonly kind: 'active';
+      readonly delegations: readonly DelegationStatus[];
+    } & RunbookPosition);
+
+/**
+ * Delegation outcome — the hook's decision as a discriminated union.
+ * Each variant carries exactly the data needed for its context message.
+ */
+type DelegationOutcome =
+  | { readonly kind: 'completed' }
+  | { readonly kind: 'child_active'; readonly status: RunbookPosition }
+  | { readonly kind: 'child_stashed'; readonly status: RunbookPosition }
+  | { readonly kind: 'unclaimed'; readonly delegation: DelegationStatus & { state: 'pending' } }
+  | { readonly kind: 'unknown' };
+
+// ---------------------------------------------------------------------------
+// Parsing — raw JSON to discriminated union
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse a validated position field from raw JSON.
+ */
+function parsePosition(raw: unknown): RunbookPosition['position'] {
+  if (!raw || typeof raw !== 'object') return undefined;
+  return raw as RunbookPosition['position'];
 }
 
 /**
- * Query child runbook state via `rd status --json`.
+ * Parse a validated step field from raw JSON.
+ */
+function parseStep(raw: unknown): RunbookPosition['step'] {
+  if (!raw || typeof raw !== 'object') return undefined;
+  return raw as RunbookPosition['step'];
+}
+
+/**
+ * Parse delegation entries from raw JSON array.
+ */
+function parseDelegations(raw: unknown): readonly DelegationStatus[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(
+    (d): d is DelegationStatus =>
+      d != null &&
+      typeof d === 'object' &&
+      typeof d.substep === 'string' &&
+      typeof d.runbook === 'string' &&
+      (d.state === 'pending' || d.state === 'claimed' || d.state === 'cancelled'),
+  );
+}
+
+/**
+ * Query runbook state via `rd status --json` and parse into a discriminated union.
  *
  * Best-effort: returns undefined if the CLI call fails for any reason.
- * Follows the same pattern as delegation-dispatch.ts.
  *
  * @param cwd - Working directory for the CLI call
- * @returns Parsed status info, or undefined on failure
+ * @returns Parsed runbook status, or undefined on failure
  */
-function getChildRunbookStatus(cwd: string): StatusInfo | undefined {
+function queryRunbookStatus(cwd: string): RunbookStatus | undefined {
   try {
     const output = rundown(['status', '--json'], cwd);
     const parsed = JSON.parse(output) as Record<string, unknown>;
+
+    const active = parsed.active === true;
+    const stashed = parsed.stashed === true;
+    const file = typeof parsed.file === 'string' ? parsed.file : undefined;
+
+    // Stashed: runbook paused via `rd stash`, not completed
+    if (stashed && file) {
+      return {
+        kind: 'stashed',
+        file,
+        position: parsePosition(parsed.position),
+        step: parseStep(parsed.step),
+      };
+    }
+
+    // Not active and not stashed: nothing running
+    if (!active) {
+      return { kind: 'inactive' };
+    }
+
+    // Active: runbook is running (could be parent or child)
     return {
-      active: parsed.active === true,
-      stashed: parsed.stashed === true,
-      file: typeof parsed.file === 'string' ? parsed.file : undefined,
-      position:
-        parsed.position && typeof parsed.position === 'object'
-          ? (parsed.position as StatusInfo['position'])
-          : undefined,
-      step:
-        parsed.step && typeof parsed.step === 'object'
-          ? (parsed.step as StatusInfo['step'])
-          : undefined,
-      delegations: Array.isArray(parsed.delegations)
-        ? (parsed.delegations as DelegationInfo[])
-        : undefined,
+      kind: 'active',
+      file: file ?? '(unknown)',
+      position: parsePosition(parsed.position),
+      step: parseStep(parsed.step),
+      delegations: parseDelegations(parsed.delegations),
     };
   } catch {
     return undefined;
   }
 }
 
-/**
- * Build a context message for the parent agent when a child runbook was not completed.
- *
- * @param status - Child runbook status info
- * @returns Formatted context message with runbook position and actionable instructions
- */
-function buildIncompleteRunbookContext(status: StatusInfo): string {
-  const lines: string[] = [
-    '## Delegation Incomplete',
-    '',
-    'The subagent stopped but the child runbook is still active.',
-    '',
-  ];
+// ---------------------------------------------------------------------------
+// Outcome classification
+// ---------------------------------------------------------------------------
 
-  if (status.file) {
-    lines.push(`**Runbook:** ${status.file}`);
+/**
+ * Classify the delegation outcome from the runbook status.
+ *
+ * @param status - Parsed runbook status from `rd status --json`
+ * @returns The delegation outcome determining which context message to produce
+ */
+function classifyOutcome(status: RunbookStatus): DelegationOutcome {
+  switch (status.kind) {
+    case 'inactive':
+      // Child completed and was popped from session stack
+      return { kind: 'completed' };
+
+    case 'stashed':
+      // Child was stashed, not completed
+      return { kind: 'child_stashed', status };
+
+    case 'active': {
+      // Check for pending (unclaimed) delegation — means the parent is active,
+      // not the child, because the child was never created
+      const pending = status.delegations.find(
+        (d): d is DelegationStatus & { state: 'pending' } => d.state === 'pending',
+      );
+      if (pending) {
+        return { kind: 'unclaimed', delegation: pending };
+      }
+
+      // Child runbook is active — subagent didn't complete it
+      return { kind: 'child_active', status };
+    }
   }
-  if (status.step) {
-    const stepDesc = status.step.description
-      ? `${status.step.name} — ${status.step.description}`
-      : status.step.name;
+}
+
+// ---------------------------------------------------------------------------
+// Context message builders
+// ---------------------------------------------------------------------------
+
+/**
+ * Build position detail lines from runbook position info.
+ */
+function formatPositionLines(pos: RunbookPosition): string[] {
+  const lines: string[] = [];
+
+  lines.push(`**Runbook:** ${pos.file}`);
+
+  if (pos.step) {
+    const stepDesc = pos.step.description
+      ? `${pos.step.name} — ${pos.step.description}`
+      : pos.step.name;
     lines.push(`**Current step:** ${stepDesc}`);
   }
-  if (status.position) {
-    lines.push(`**Position:** step ${status.position.current} of ${String(status.position.total)}`);
+  if (pos.position) {
+    lines.push(`**Position:** step ${pos.position.current} of ${String(pos.position.total)}`);
   }
 
-  lines.push('');
-  lines.push('The child runbook was not completed by the subagent. You should:');
-  lines.push('1. Run `rd status` to inspect the current state');
-  lines.push(
-    '2. Decide whether to retry the delegation, complete the work yourself, or fail the step',
-  );
-  lines.push('3. Do NOT assume the work was completed — verify before proceeding');
-
-  return lines.join('\n');
+  return lines;
 }
 
 /**
- * Build a context message when the delegation was never claimed by the subagent.
+ * Build a context message from a delegation outcome.
  *
- * @param delegation - The pending delegation info from the parent's status
- * @returns Formatted context message explaining the unclaimed delegation
+ * @param outcome - The classified delegation outcome
+ * @returns Formatted context message, or undefined if no context needed
  */
-function buildUnclaimedDelegationContext(delegation: DelegationInfo): string {
-  const lines: string[] = [
-    '## Delegation Never Claimed',
-    '',
-    `The subagent stopped without claiming delegation for substep ${delegation.substep}.`,
-    `**Child runbook:** ${delegation.runbook}`,
-    '',
-    'The delegation token was never claimed — no child runbook was started. You should:',
-    '1. Run `rd status` to inspect the current delegation state',
-    '2. Retry the delegation with a new subagent, or fail the step',
-  ];
+function buildContextMessage(outcome: DelegationOutcome): string | undefined {
+  switch (outcome.kind) {
+    case 'completed':
+      return undefined;
 
-  return lines.join('\n');
+    case 'unknown':
+      return 'Subagent stopped with an active delegation. Unable to verify child runbook state — check with `rd status`.';
+
+    case 'child_active':
+    case 'child_stashed': {
+      const lines: string[] = [
+        '## Delegation Incomplete',
+        '',
+        'The subagent stopped but the child runbook is still active.',
+        '',
+        ...formatPositionLines(outcome.status),
+        '',
+        'The child runbook was not completed by the subagent. You should:',
+        '1. Run `rd status` to inspect the current state',
+        '2. Decide whether to retry the delegation, complete the work yourself, or fail the step',
+        '3. Do NOT assume the work was completed — verify before proceeding',
+      ];
+      return lines.join('\n');
+    }
+
+    case 'unclaimed': {
+      const { delegation } = outcome;
+      const lines: string[] = [
+        '## Delegation Never Claimed',
+        '',
+        `The subagent stopped without claiming delegation for substep ${delegation.substep}.`,
+        `**Child runbook:** ${delegation.runbook}`,
+        '',
+        'The delegation token was never claimed — no child runbook was started. You should:',
+        '1. Run `rd status` to inspect the current delegation state',
+        '2. Retry the delegation with a new subagent, or fail the step',
+      ];
+      return lines.join('\n');
+    }
+  }
 }
+
+// ---------------------------------------------------------------------------
+// Hook handler
+// ---------------------------------------------------------------------------
 
 /**
  * Handle a SubagentStop hook by consuming any active delegation token and checking
  * whether the child runbook was completed.
  *
- * Distinguishes three incomplete states:
- * - **Never claimed**: The subagent stopped before calling `rd claim`. The parent
- *   runbook is still active with a pending delegation.
- * - **Stashed**: The child runbook was stashed via `rd stash` but not completed.
- * - **Still active**: The child runbook is running but the subagent stopped without
- *   calling `rd pass` or `rd fail`.
+ * Classifies the delegation state into one of five outcomes:
+ * - **completed**: Child runbook finished (`rd pass`/`rd fail`) and was popped.
+ * - **child_active**: Child runbook is running but subagent stopped without completing.
+ * - **child_stashed**: Child runbook was stashed via `rd stash` but not completed.
+ * - **unclaimed**: Subagent stopped before calling `rd claim`. Parent is still active.
+ * - **unknown**: Status check failed. Fallback context returned.
  *
  * Never destroys child runbook state.
  *
@@ -175,40 +289,10 @@ export async function handleSubagentStop(input: HookInput): Promise<SubagentStop
     return {};
   }
 
-  // Check runbook state via rd status --json
-  const status = getChildRunbookStatus(input.cwd);
+  // Query runbook state and classify the delegation outcome
+  const status = queryRunbookStatus(input.cwd);
+  const outcome: DelegationOutcome = status ? classifyOutcome(status) : { kind: 'unknown' };
+  const context = buildContextMessage(outcome);
 
-  // Status check failed — return fallback context
-  if (!status) {
-    return {
-      context:
-        'Subagent stopped with an active delegation. Unable to verify child runbook state — check with `rd status`.',
-    };
-  }
-
-  // Stashed runbook is not completed — treat as incomplete
-  if (status.stashed) {
-    return {
-      context: buildIncompleteRunbookContext(status),
-    };
-  }
-
-  // Nothing active and not stashed — child completed and was popped from session stack
-  if (!status.active) {
-    return {};
-  }
-
-  // Active runbook has a pending delegation — subagent never claimed the token.
-  // The active runbook is the parent, not the child.
-  const pendingDelegation = status.delegations?.find((d) => d.state === 'pending');
-  if (pendingDelegation) {
-    return {
-      context: buildUnclaimedDelegationContext(pendingDelegation),
-    };
-  }
-
-  // Child runbook still active — subagent didn't complete it
-  return {
-    context: buildIncompleteRunbookContext(status),
-  };
+  return context ? { context } : {};
 }
