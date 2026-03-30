@@ -5,7 +5,7 @@ This document provides a comprehensive guide and reference for the Rundown CLI (
 **For syntax and format details, see:**
 - [SPEC.md](./SPEC.md) - Rundown specification
 - [FORMAT.md](./FORMAT.md) - Format grammar and expansion rules
-- [AGENT-ORCHESTRATION.md](./AGENT-ORCHESTRATION.md) - Subagent delegation, context discovery, and status protocol
+- [AGENT-ORCHESTRATION.md](./AGENT-ORCHESTRATION.md) - Subagent delegation, context discovery, and delegation completion
 
 ---
 
@@ -966,7 +966,7 @@ rundown prune --all
 
 ## Delegation Patterns
 
-> **See also:** [AGENT-ORCHESTRATION.md](./AGENT-ORCHESTRATION.md) for subagent delegation workflow, context file discovery, and status protocol.
+> **See also:** [AGENT-ORCHESTRATION.md](./AGENT-ORCHESTRATION.md) for subagent delegation workflow, context file discovery, and delegation completion.
 
 ### Pattern 1: Orchestrator Control
 

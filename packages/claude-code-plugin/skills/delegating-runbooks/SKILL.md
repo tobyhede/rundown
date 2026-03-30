@@ -121,7 +121,7 @@ rd abort <token>           # Cancel unclaimed delegation
 rd abort <token> --force   # Cancel already-claimed delegation
 ```
 
-- **Unclaimed**: token is cancelled, substep reverts to undelegated state
+- **Unclaimed**: token is cancelled, substep reverts to un-delegated state
 - **Claimed**: requires `--force` since a child is actively working; the child's next CLI call will fail
 
 ## Variable Pass-Through
@@ -152,7 +152,7 @@ rd delegate --step 2.3
 
 ## Reference
 
-- [Agent orchestration models](../../../../docs/AGENT-ORCHESTRATION.md)
+- [Subagent delegation](../../../../docs/AGENT-ORCHESTRATION.md)
 - [Delegation patterns](../../../../runbooks/delegation/)
 - [Rundown specification](../../../../docs/SPEC.md)
 - [CLI reference](../../../../CLAUDE.md)

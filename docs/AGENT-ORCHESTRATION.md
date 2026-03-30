@@ -45,19 +45,10 @@ rd pass   # or: rd fail
 ### Dispatch Frontier and Identity
 
 - `delegate --step` requires a parseable step identifier; when the active step has substeps, step-only dispatch (`N`) is rejected — use qualified IDs (`N.M`).
-- `delegate <runbook> --step <id>` takes the child runbook as a required positional argument.
+- `delegate [runbook] --step <id>` accepts an optional runbook argument; when omitted, the runbook is inferred from the substep's `runbooks` field.
 - `delegate --step` is constrained to the active step frontier.
 - If the active step is in a FOR loop, queueing is constrained to the active iteration frontier.
-
-### Completion Routing
-
-- Canonical target identity is `step + substep + iteration`.
-- Completion acceptance is scoped by `frame + entry + substep`; stale completions from prior re-entry are rejected.
-- Resolved completions drain in deterministic substep order. Aggregation waits for all DEFER'd results before evaluating the step-level transition.
-- When a completion arrives for a frontier substep that is not at the active cursor, it is **deferred** — stored and applied when the cursor reaches that substep.
-- `frame = step|iteration`, `entry = re-entry counter for that frame`.
-
-See [Section 4: Control Flow](SPEC.md#4-control-flow) for transition semantics.
+- Plugin dispatch descriptions must include a parseable identifier prefix (e.g., `1.2 - Review` or `ErrorHandler: Recover`).
 
 ---
 
@@ -110,6 +101,7 @@ When a subagent stops, the plugin checks the child runbook state via `rd status 
 The plugin never destroys child runbook state. Incomplete delegations preserve their context for inspection.
 
 **Routing behavior:**
+- Canonical target identity is `step + substep + iteration` (`frame = step|iteration`, `entry = re-entry counter`).
 - Completion keys are scoped to `frame + entry + substep`; stale completions from previous entries are rejected.
 - Resolved completions drain in deterministic substep order. Aggregation waits for all DEFER'd results before evaluating the step-level transition.
 - When a completion arrives for a frontier substep that is not at the active cursor, it is **deferred** — stored and applied when the cursor reaches that substep.

@@ -157,7 +157,7 @@ The `rd` command is an alias for `rundown`.
 - [RUNDOWN.md](docs/RUNDOWN.md) - Rundown internal architecture
 - [CLI-OUTPUT-SPEC.md](docs/CLI-OUTPUT-SPEC.md) - CLI output format specification
 - [SCRIPTING.md](docs/SCRIPTING.md) - Scripting and automation guide
-- [AGENT-ORCHESTRATION.md](docs/AGENT-ORCHESTRATION.md) - Subagent delegation, context discovery, and status protocol
+- [AGENT-ORCHESTRATION.md](docs/AGENT-ORCHESTRATION.md) - Subagent delegation, context discovery, and delegation completion
 - [PROJECT-INTEGRATION.md](docs/PROJECT-INTEGRATION.md) - Project integration guide
 - [DOCKER.md](docs/DOCKER.md) - Docker verification pipeline
 - [SCENARIOS.md](docs/SCENARIOS.md) - Scenarios and test runbook standard
