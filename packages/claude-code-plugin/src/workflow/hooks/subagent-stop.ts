@@ -213,15 +213,16 @@ function classifyOutcome(status: RunbookStatus, tokenHash: string): DelegationOu
       const ours = status.delegations.find((d) => d.tokenHash === tokenHash);
 
       if (!ours) {
-        // Our delegation not found — either the active runbook is the child
-        // (children don't have delegations) or the parent is active and our
-        // delegation has already been fully resolved
+        // Our delegation not found — two possible scenarios:
+        // 1. Parent resumed after child completed (no delegations remain)
+        // 2. Child is active with its own nested delegations (grandchild)
         if (status.delegations.length > 0) {
-          // Parent is active with other delegations, but ours isn't here — completed
-          return { kind: 'completed' };
+          // Active runbook has delegations we don't recognize — likely a child
+          // with nested delegations still in progress
+          return { kind: 'child_active', status };
         }
-        // No delegations at all — active runbook is the child, still running
-        return { kind: 'child_active', status };
+        // No delegations — delegation was resolved and parent resumed
+        return { kind: 'completed' };
       }
 
       // Found our delegation — classify by its state

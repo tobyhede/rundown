@@ -141,16 +141,15 @@ describe('subagent-stop contract tests', () => {
       expect(result).toEqual({});
     });
 
-    it('parses active status mid-execution', async () => {
+    it('parses active status mid-execution (no delegations → completed)', async () => {
       writeFileSync(join(tempDir, 'test.runbook.md'), SIMPLE_RUNBOOK);
       const runResult = runCli(['run', join(tempDir, 'test.runbook.md'), '--prompted'], tempDir);
       expect(runResult.exitCode).toBe(0);
 
       const result = await captureStatusAndHandle(FAKE_TOKEN);
 
-      expect(result.context).toBeDefined();
-      expect(result.context).toContain('Delegation Incomplete');
-      expect(result.context).toContain('First step');
+      // Active with no delegations → treated as completed (parent resumed)
+      expect(result).toEqual({});
     });
 
     it('parses stashed status', async () => {
@@ -179,7 +178,7 @@ describe('subagent-stop contract tests', () => {
       expect(result.context).toContain('child.runbook.md');
     });
 
-    it('detects child active after claim (no delegations visible)', async () => {
+    it('treats claimed child with no delegations as completed', async () => {
       const token = setupDelegation();
 
       const claimResult = runCli(`claim ${token}`, tempDir);
@@ -187,13 +186,12 @@ describe('subagent-stop contract tests', () => {
 
       const result = await captureStatusAndHandle(token);
 
-      // After claim, child is active with no delegations → child_active
-      expect(result.context).toBeDefined();
-      expect(result.context).toContain('Delegation Incomplete');
-      expect(result.context).toContain('Child work');
+      // After claim, child is active with no delegations → completed
+      // (cannot distinguish from parent-resumed; no-delegations = completed)
+      expect(result).toEqual({});
     });
 
-    it('reports parent active after child completes (no delegations)', async () => {
+    it('treats parent resumed after child pass as completed', async () => {
       const token = setupDelegation();
 
       let cliResult = runCli(`claim ${token}`, tempDir);
@@ -204,34 +202,30 @@ describe('subagent-stop contract tests', () => {
 
       const result = await captureStatusAndHandle(token);
 
-      // Parent resumes at step 2, no delegations → child_active (conservative)
-      expect(result.context).toBeDefined();
-      expect(result.context).toContain('Delegation Incomplete');
-      expect(result.context).toContain('Final step');
+      // Parent resumes at step 2, no delegations → completed
+      expect(result).toEqual({});
     });
   });
 
   describe('delegation lifecycle', () => {
-    it('full lifecycle: delegate → claim → child active → pass', async () => {
+    it('full lifecycle: delegate → claim → pass → completed', async () => {
       const token = setupDelegation();
 
-      // Claim — child becomes active
+      // Claim — child becomes active (no delegations visible)
       let cliResult = runCli(`claim ${token}`, tempDir);
       expect(cliResult.exitCode).toBe(0);
 
-      // Child still active
+      // After claim: no delegations → treated as completed
       let result = await captureStatusAndHandle(token);
-      expect(result.context).toBeDefined();
-      expect(result.context).toContain('Delegation Incomplete');
+      expect(result).toEqual({});
 
       // Complete child
       cliResult = runCli('pass', tempDir);
       expect(cliResult.exitCode).toBe(0);
 
-      // Parent active — handler still flags as incomplete (conservative)
+      // After child pass: parent resumed, no delegations → completed
       result = await captureStatusAndHandle(token);
-      expect(result.context).toBeDefined();
-      expect(result.context).toContain('Delegation Incomplete');
+      expect(result).toEqual({});
     });
   });
 });

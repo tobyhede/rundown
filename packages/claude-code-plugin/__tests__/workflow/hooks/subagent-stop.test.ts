@@ -133,17 +133,34 @@ describe('handleSubagentStop', () => {
       expect(result).toEqual({});
     });
 
-    it('returns empty when parent has delegations but ours is not found', async () => {
+    it('returns empty when no delegations remain (parent resumed)', async () => {
       mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
       setExecSync(
         createStatusMock({
           active: true,
           stashed: false,
           file: 'parent.runbook.md',
+        }) as never,
+      );
+
+      const input = createMockHookInput('SubagentStop');
+      const result = await handleSubagentStop(input);
+
+      // No delegations and our token not found — parent resumed after completion
+      expect(result).toEqual({});
+    });
+
+    it('treats unrecognized delegations as child with nested delegations', async () => {
+      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setExecSync(
+        createStatusMock({
+          active: true,
+          stashed: false,
+          file: 'child.runbook.md',
           delegations: [
             {
-              substep: '3.2',
-              runbook: 'other-child.runbook.md',
+              substep: '1.1',
+              runbook: 'grandchild.runbook.md',
               state: 'pending',
               tokenHash: OTHER_TOKEN_HASH,
             },
@@ -154,8 +171,9 @@ describe('handleSubagentStop', () => {
       const input = createMockHookInput('SubagentStop');
       const result = await handleSubagentStop(input);
 
-      // Our delegation isn't in the list — parent has sibling delegations only
-      expect(result).toEqual({});
+      // Delegations present but none match our token — child with nested delegations
+      expect(result.context).toContain('Delegation Incomplete');
+      expect(result.context).toContain('child.runbook.md');
     });
   });
 
@@ -181,14 +199,29 @@ describe('handleSubagentStop', () => {
     });
   });
 
-  describe('child runbook still active', () => {
-    it('returns context when child is active (no delegations)', async () => {
+  describe('child runbook still active (nested delegations)', () => {
+    /** Status mock for a child runbook that has its own nested delegations. */
+    function childWithNestedDelegations(overrides: Record<string, unknown> = {}) {
+      return createStatusMock({
+        active: true,
+        stashed: false,
+        file: 'child.runbook.md',
+        delegations: [
+          {
+            substep: '1.1',
+            runbook: 'grandchild.runbook.md',
+            state: 'pending',
+            tokenHash: OTHER_TOKEN_HASH,
+          },
+        ],
+        ...overrides,
+      });
+    }
+
+    it('returns context when child has nested delegations', async () => {
       mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
       setExecSync(
-        createStatusMock({
-          active: true,
-          stashed: false,
-          file: 'child.runbook.md',
+        childWithNestedDelegations({
           step: { name: '2. Review changes' },
           position: { current: '2', total: 5 },
         }) as never,
@@ -205,13 +238,7 @@ describe('handleSubagentStop', () => {
 
     it('includes actionable instructions in context', async () => {
       mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
-      setExecSync(
-        createStatusMock({
-          active: true,
-          stashed: false,
-          file: 'child.runbook.md',
-        }) as never,
-      );
+      setExecSync(childWithNestedDelegations() as never);
 
       const input = createMockHookInput('SubagentStop');
       const result = await handleSubagentStop(input);
@@ -224,10 +251,7 @@ describe('handleSubagentStop', () => {
     it('includes step description when available', async () => {
       mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
       setExecSync(
-        createStatusMock({
-          active: true,
-          stashed: false,
-          file: 'child.runbook.md',
+        childWithNestedDelegations({
           step: { name: '3. Deploy', description: 'Deploy to staging' },
         }) as never,
       );
