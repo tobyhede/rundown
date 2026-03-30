@@ -200,7 +200,7 @@ Agent(description="1.1 - Review auth changes", subagent_type="code-review-agent"
 Agent(description="1.2 - Review auth changes", subagent_type="code-review-agent")
 ```
 
-Each agent writes its findings to `.work/{date}-verify-{agentId}.md`, ending with a `STATUS: PASS` or `STATUS: FAIL` line. The main agent then collates results.
+Each agent writes its findings to `.work/{date}-verify-{agentId}.md` and uses `rd pass` or `rd fail` to report the result. The main agent then collates results.
 
 ---
 

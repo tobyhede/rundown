@@ -46,8 +46,14 @@ function getChildRunbookStatus(cwd: string): StatusInfo | undefined {
     return {
       active: parsed.active === true,
       file: typeof parsed.file === 'string' ? parsed.file : undefined,
-      position: parsed.position as StatusInfo['position'],
-      step: parsed.step as StatusInfo['step'],
+      position:
+        parsed.position && typeof parsed.position === 'object'
+          ? (parsed.position as StatusInfo['position'])
+          : undefined,
+      step:
+        parsed.step && typeof parsed.step === 'object'
+          ? (parsed.step as StatusInfo['step'])
+          : undefined,
     };
   } catch {
     return undefined;

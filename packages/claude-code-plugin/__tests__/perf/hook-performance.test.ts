@@ -95,7 +95,7 @@ describe('Hook Performance Budget', () => {
       const input = createMockHookInput('SubagentStop', {
         cwd: testDir.path,
         agent_type: 'test-agent',
-        last_assistant_message: 'STATUS: PASS',
+        last_assistant_message: 'Agent completed successfully.',
       });
 
       // Warm up
