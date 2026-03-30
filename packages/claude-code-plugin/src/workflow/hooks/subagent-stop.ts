@@ -1,4 +1,5 @@
 // src/workflow/hooks/subagent-stop.ts
+import { createHash } from 'node:crypto';
 import type { HookInput } from '../../shared/index.js';
 import { Session } from '../../session.js';
 import { rundown } from './rundown.js';
@@ -29,14 +30,25 @@ interface RunbookPosition {
 
 /** Delegation status as a discriminated union — each state carries only its valid fields. */
 type DelegationStatus =
-  | { readonly state: 'pending'; readonly substep: string; readonly runbook: string }
+  | {
+      readonly state: 'pending';
+      readonly substep: string;
+      readonly runbook: string;
+      readonly tokenHash?: string;
+    }
   | {
       readonly state: 'claimed';
       readonly substep: string;
       readonly runbook: string;
       readonly childRunId: string;
+      readonly tokenHash?: string;
     }
-  | { readonly state: 'cancelled'; readonly substep: string; readonly runbook: string };
+  | {
+      readonly state: 'cancelled';
+      readonly substep: string;
+      readonly runbook: string;
+      readonly tokenHash?: string;
+    };
 
 /** Runbook status as a discriminated union — impossible combinations are unrepresentable. */
 type RunbookStatus =
@@ -57,6 +69,23 @@ type DelegationOutcome =
   | { readonly kind: 'child_stashed'; readonly status: RunbookPosition }
   | { readonly kind: 'unclaimed'; readonly delegation: DelegationStatus & { state: 'pending' } }
   | { readonly kind: 'unknown' };
+
+// ---------------------------------------------------------------------------
+// Token hashing
+// ---------------------------------------------------------------------------
+
+/**
+ * Hash a raw delegation token using SHA-256.
+ *
+ * Replicates the same algorithm as `hashDelegationToken` in `@rundown-org/core`
+ * to allow correlation without a direct core dependency.
+ *
+ * @param token - Raw delegation token string
+ * @returns Hash in `sha256:<hex>` format
+ */
+function hashToken(token: string): string {
+  return `sha256:${createHash('sha256').update(token).digest('hex')}`;
+}
 
 // ---------------------------------------------------------------------------
 // Parsing — raw JSON to discriminated union
@@ -96,7 +125,8 @@ function isDelegationStatus(d: unknown): d is DelegationStatus {
   return (
     typeof obj.substep === 'string' &&
     typeof obj.runbook === 'string' &&
-    (obj.state === 'pending' || obj.state === 'claimed' || obj.state === 'cancelled')
+    (obj.state === 'pending' || obj.state === 'claimed' || obj.state === 'cancelled') &&
+    (obj.tokenHash === undefined || typeof obj.tokenHash === 'string')
   );
 }
 
@@ -161,12 +191,14 @@ function queryRunbookStatus(cwd: string): RunbookStatus | undefined {
 // ---------------------------------------------------------------------------
 
 /**
- * Classify the delegation outcome from the runbook status.
+ * Classify the delegation outcome by correlating the token hash with the
+ * active runbook's delegation state.
  *
  * @param status - Parsed runbook status from `rd status --json`
+ * @param tokenHash - SHA-256 hash of the consumed delegation token
  * @returns The delegation outcome determining which context message to produce
  */
-function classifyOutcome(status: RunbookStatus): DelegationOutcome {
+function classifyOutcome(status: RunbookStatus, tokenHash: string): DelegationOutcome {
   switch (status.kind) {
     case 'inactive':
       // Child completed and was popped from session stack
@@ -177,17 +209,33 @@ function classifyOutcome(status: RunbookStatus): DelegationOutcome {
       return { kind: 'child_stashed', status };
 
     case 'active': {
-      // Check for pending (unclaimed) delegation — means the parent is active,
-      // not the child, because the child was never created
-      const pending = status.delegations.find(
-        (d): d is DelegationStatus & { state: 'pending' } => d.state === 'pending',
-      );
-      if (pending) {
-        return { kind: 'unclaimed', delegation: pending };
+      // Find the delegation matching our token
+      const ours = status.delegations.find((d) => d.tokenHash === tokenHash);
+
+      if (!ours) {
+        // Our delegation not found — either the active runbook is the child
+        // (children don't have delegations) or the parent is active and our
+        // delegation has already been fully resolved
+        if (status.delegations.length > 0) {
+          // Parent is active with other delegations, but ours isn't here — completed
+          return { kind: 'completed' };
+        }
+        // No delegations at all — active runbook is the child, still running
+        return { kind: 'child_active', status };
       }
 
-      // Child runbook is active — subagent didn't complete it
-      return { kind: 'child_active', status };
+      // Found our delegation — classify by its state
+      switch (ours.state) {
+        case 'pending':
+          // Never claimed — subagent stopped before calling rd claim
+          return { kind: 'unclaimed', delegation: ours };
+        case 'claimed':
+          // Claimed and parent is active — child completed and was popped
+          return { kind: 'completed' };
+        case 'cancelled':
+          // Already cancelled — treat as completed (nothing more to do)
+          return { kind: 'completed' };
+      }
     }
   }
 }
@@ -276,6 +324,9 @@ function buildContextMessage(outcome: DelegationOutcome): string | undefined {
  * Handle a SubagentStop hook by consuming any active delegation token and checking
  * whether the child runbook was completed.
  *
+ * Hashes the consumed token and correlates it with the delegation entries in
+ * `rd status --json` to identify the exact delegation belonging to this subagent.
+ *
  * Classifies the delegation state into one of five outcomes:
  * - **completed**: Child runbook finished (`rd pass`/`rd fail`) and was popped.
  * - **child_active**: Child runbook is running but subagent stopped without completing.
@@ -312,7 +363,8 @@ export async function handleSubagentStop(input: HookInput): Promise<SubagentStop
 
   // Query runbook state and classify the delegation outcome
   const status = queryRunbookStatus(input.cwd);
-  const outcome: DelegationOutcome = status ? classifyOutcome(status) : { kind: 'unknown' };
+  const hash = hashToken(token);
+  const outcome: DelegationOutcome = status ? classifyOutcome(status, hash) : { kind: 'unknown' };
   const context = buildContextMessage(outcome);
 
   return context ? { context } : {};

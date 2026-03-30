@@ -70,6 +70,7 @@ export interface StatusOutputData {
     runbook: string;
     state: 'pending' | 'claimed' | 'cancelled';
     childRunId?: string;
+    tokenHash?: string;
   }>;
 }
 
@@ -215,6 +216,7 @@ export function buildActiveStatus(
             ? ('claimed' as const)
             : ('pending' as const),
       ...(ss.delegation!.childRunId != null ? { childRunId: ss.delegation!.childRunId } : {}),
+      ...(ss.delegation!.tokenHash ? { tokenHash: ss.delegation!.tokenHash } : {}),
     }));
 
   return {

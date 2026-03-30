@@ -1,4 +1,5 @@
 // __tests__/workflow/hooks/subagent-stop.test.ts
+import { createHash } from 'node:crypto';
 import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { setExecSync } from '../../../src/workflow/hooks/rundown.js';
 import { createMockHookInput, createMockExecSync } from '../../helpers/test-utils.js';
@@ -17,6 +18,8 @@ jest.unstable_mockModule('../../../src/session.js', () => ({
 const { handleSubagentStop } = await import('../../../src/workflow/hooks/subagent-stop.js');
 
 const VALID_TOKEN = 'rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+const VALID_TOKEN_HASH = `sha256:${createHash('sha256').update(VALID_TOKEN).digest('hex')}`;
+const OTHER_TOKEN_HASH = `sha256:${createHash('sha256').update('rdtk_OTHER00000000000000000000000').digest('hex')}`;
 
 /** Helper to create a mock that returns `rd status --json` output. */
 function createStatusMock(status: Record<string, unknown>) {
@@ -95,13 +98,63 @@ describe('handleSubagentStop', () => {
   });
 
   describe('child runbook completed', () => {
-    it('returns empty when child completed (not active, not stashed)', async () => {
+    it('returns empty when session is inactive (child popped)', async () => {
       mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
       setExecSync(createStatusMock({ active: false, stashed: false }) as never);
 
       const input = createMockHookInput('SubagentStop');
       const result = await handleSubagentStop(input);
 
+      expect(result).toEqual({});
+    });
+
+    it('returns empty when parent is active with our delegation claimed', async () => {
+      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setExecSync(
+        createStatusMock({
+          active: true,
+          stashed: false,
+          file: 'parent.runbook.md',
+          delegations: [
+            {
+              substep: '3.1',
+              runbook: 'child.runbook.md',
+              state: 'claimed',
+              childRunId: 'run-1',
+              tokenHash: VALID_TOKEN_HASH,
+            },
+          ],
+        }) as never,
+      );
+
+      const input = createMockHookInput('SubagentStop');
+      const result = await handleSubagentStop(input);
+
+      expect(result).toEqual({});
+    });
+
+    it('returns empty when parent has delegations but ours is not found', async () => {
+      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setExecSync(
+        createStatusMock({
+          active: true,
+          stashed: false,
+          file: 'parent.runbook.md',
+          delegations: [
+            {
+              substep: '3.2',
+              runbook: 'other-child.runbook.md',
+              state: 'pending',
+              tokenHash: OTHER_TOKEN_HASH,
+            },
+          ],
+        }) as never,
+      );
+
+      const input = createMockHookInput('SubagentStop');
+      const result = await handleSubagentStop(input);
+
+      // Our delegation isn't in the list — parent has sibling delegations only
       expect(result).toEqual({});
     });
   });
@@ -128,51 +181,8 @@ describe('handleSubagentStop', () => {
     });
   });
 
-  describe('delegation never claimed', () => {
-    it('reports unclaimed when parent is active with pending delegation', async () => {
-      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
-      setExecSync(
-        createStatusMock({
-          active: true,
-          stashed: false,
-          file: 'parent.runbook.md',
-          step: { name: '3. Deploy' },
-          delegations: [{ substep: '3.1', runbook: 'child.runbook.md', state: 'pending' }],
-        }) as never,
-      );
-
-      const input = createMockHookInput('SubagentStop');
-      const result = await handleSubagentStop(input);
-
-      expect(result.context).toContain('Delegation Never Claimed');
-      expect(result.context).toContain('substep 3.1');
-      expect(result.context).toContain('child.runbook.md');
-      expect(result.context).not.toContain('parent.runbook.md');
-    });
-
-    it('treats claimed delegation as active child (not unclaimed)', async () => {
-      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
-      setExecSync(
-        createStatusMock({
-          active: true,
-          stashed: false,
-          file: 'child.runbook.md',
-          delegations: [
-            { substep: '3.1', runbook: 'child.runbook.md', state: 'claimed', childRunId: 'run-1' },
-          ],
-        }) as never,
-      );
-
-      const input = createMockHookInput('SubagentStop');
-      const result = await handleSubagentStop(input);
-
-      expect(result.context).toContain('Delegation Incomplete');
-      expect(result.context).not.toContain('Never Claimed');
-    });
-  });
-
   describe('child runbook still active', () => {
-    it('returns context when child runbook is still active', async () => {
+    it('returns context when child is active (no delegations)', async () => {
       mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
       setExecSync(
         createStatusMock({
@@ -227,16 +237,66 @@ describe('handleSubagentStop', () => {
 
       expect(result.context).toContain('3. Deploy — Deploy to staging');
     });
+  });
 
-    it('handles minimal status (active but no step/position info)', async () => {
+  describe('delegation never claimed', () => {
+    it('reports unclaimed when our token matches a pending delegation', async () => {
       mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
-      setExecSync(createStatusMock({ active: true, stashed: false }) as never);
+      setExecSync(
+        createStatusMock({
+          active: true,
+          stashed: false,
+          file: 'parent.runbook.md',
+          step: { name: '3. Deploy' },
+          delegations: [
+            {
+              substep: '3.1',
+              runbook: 'child.runbook.md',
+              state: 'pending',
+              tokenHash: VALID_TOKEN_HASH,
+            },
+          ],
+        }) as never,
+      );
 
       const input = createMockHookInput('SubagentStop');
       const result = await handleSubagentStop(input);
 
-      expect(result.context).toContain('Delegation Incomplete');
-      expect(result.context).toContain('child runbook was not completed');
+      expect(result.context).toContain('Delegation Never Claimed');
+      expect(result.context).toContain('substep 3.1');
+      expect(result.context).toContain('child.runbook.md');
+    });
+
+    it('does not report sibling pending delegation as unclaimed', async () => {
+      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setExecSync(
+        createStatusMock({
+          active: true,
+          stashed: false,
+          file: 'parent.runbook.md',
+          delegations: [
+            {
+              substep: '3.1',
+              runbook: 'child-a.runbook.md',
+              state: 'claimed',
+              childRunId: 'run-1',
+              tokenHash: VALID_TOKEN_HASH,
+            },
+            {
+              substep: '3.2',
+              runbook: 'child-b.runbook.md',
+              state: 'pending',
+              tokenHash: OTHER_TOKEN_HASH,
+            },
+          ],
+        }) as never,
+      );
+
+      const input = createMockHookInput('SubagentStop');
+      const result = await handleSubagentStop(input);
+
+      // Our delegation (3.1) is claimed — completed. Don't report 3.2 as unclaimed.
+      expect(result).toEqual({});
     });
   });
 
