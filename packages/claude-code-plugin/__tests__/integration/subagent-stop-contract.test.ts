@@ -107,7 +107,9 @@ describe('subagent-stop contract tests', () => {
    *
    * @param token - Delegation token to place in Session mock (use real token for delegation tests)
    */
-  async function captureStatusAndHandle(token: string) {
+  async function captureStatusAndHandle(
+    token: string,
+  ): Promise<{ context?: string; violation?: string }> {
     mockGet.mockResolvedValue({ delegation_active_token: token });
 
     const statusResult = runCli('status --json', tempDir);
@@ -146,6 +148,7 @@ describe('subagent-stop contract tests', () => {
 
       const result = await captureStatusAndHandle(FAKE_TOKEN);
 
+      expect(result.context).toBeDefined();
       expect(result.context).toContain('Delegation Incomplete');
       expect(result.context).toContain('First step');
     });
@@ -160,6 +163,7 @@ describe('subagent-stop contract tests', () => {
 
       const result = await captureStatusAndHandle(FAKE_TOKEN);
 
+      expect(result.context).toBeDefined();
       expect(result.context).toContain('Delegation Incomplete');
     });
   });
@@ -170,6 +174,7 @@ describe('subagent-stop contract tests', () => {
 
       const result = await captureStatusAndHandle(token);
 
+      expect(result.context).toBeDefined();
       expect(result.context).toContain('Delegation Never Claimed');
       expect(result.context).toContain('child.runbook.md');
     });
@@ -183,6 +188,7 @@ describe('subagent-stop contract tests', () => {
       const result = await captureStatusAndHandle(token);
 
       // After claim, child is active with no delegations → child_active
+      expect(result.context).toBeDefined();
       expect(result.context).toContain('Delegation Incomplete');
       expect(result.context).toContain('Child work');
     });
@@ -199,21 +205,13 @@ describe('subagent-stop contract tests', () => {
       const result = await captureStatusAndHandle(token);
 
       // Parent resumes at step 2, no delegations → child_active (conservative)
+      expect(result.context).toBeDefined();
       expect(result.context).toContain('Delegation Incomplete');
       expect(result.context).toContain('Final step');
     });
   });
 
   describe('delegation lifecycle', () => {
-    it('unclaimed: delegate without claim', async () => {
-      const token = setupDelegation();
-
-      const result = await captureStatusAndHandle(token);
-
-      expect(result.context).toContain('Delegation Never Claimed');
-      expect(result.context).toContain('substep');
-    });
-
     it('full lifecycle: delegate → claim → child active → pass', async () => {
       const token = setupDelegation();
 
@@ -223,15 +221,16 @@ describe('subagent-stop contract tests', () => {
 
       // Child still active
       let result = await captureStatusAndHandle(token);
+      expect(result.context).toBeDefined();
       expect(result.context).toContain('Delegation Incomplete');
 
-      // Reset mock for second call (token consumed by first call)
       // Complete child
       cliResult = runCli('pass', tempDir);
       expect(cliResult.exitCode).toBe(0);
 
       // Parent active — handler still flags as incomplete (conservative)
       result = await captureStatusAndHandle(token);
+      expect(result.context).toBeDefined();
       expect(result.context).toContain('Delegation Incomplete');
     });
   });
