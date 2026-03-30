@@ -123,7 +123,7 @@ echo '{"hook_event_name":"PreToolUse","cwd":"'$(pwd)'","tool_name":"Skill","tool
 ### SubagentStop
 
 ```bash
-echo '{"hook_event_name":"SubagentStop","cwd":"'$(pwd)'","agent_id":"test-agent","agent_type":"code-review-agent","last_assistant_message":"STATUS: PASS"}' | node dist/cli.js
+echo '{"hook_event_name":"SubagentStop","cwd":"'$(pwd)'","agent_id":"test-agent","agent_type":"code-review-agent","last_assistant_message":"Agent completed successfully."}' | node dist/cli.js
 ```
 
 ### UserPromptSubmit

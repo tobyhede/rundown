@@ -17,41 +17,97 @@ export interface SubagentStopResult {
 }
 
 /**
- * Pattern for parsing STATUS field from agent output.
- * Expected format: STATUS: OK|PASS|BLOCKED|FAIL (case-insensitive)
+ * Minimal subset of `rd status --json` output needed by the subagent-stop hook.
  */
-const STATUS_PATTERN = /STATUS:\s*(OK|PASS|BLOCKED|FAIL)/i;
-
-/**
- * Determine whether a subagent STATUS in the given output indicates a pass or a fail.
- *
- * @param output - Raw subagent output text to search for a `STATUS:` field
- * @returns `pass` if `STATUS` is `OK` or `PASS` (case-insensitive) or if no `STATUS` is present; `fail` otherwise
- */
-export function parseAgentStatus(output?: string): 'pass' | 'fail' {
-  if (!output) return 'pass';
-
-  const match = STATUS_PATTERN.exec(output);
-  if (!match) return 'pass';
-
-  const status = match[1].toUpperCase();
-  return status === 'OK' || status === 'PASS' ? 'pass' : 'fail';
+interface StatusInfo {
+  /** Whether a runbook is currently active on the session stack. */
+  active: boolean;
+  /** Runbook file path. */
+  file?: string;
+  /** Current position in the runbook. */
+  position?: { current: string; total: number; substep?: string };
+  /** Current step details. */
+  step?: { name: string; description?: string };
 }
 
 /**
- * Handle a SubagentStop hook by consuming any active delegation token and aborting its delegation if the subagent failed.
+ * Query child runbook state via `rd status --json`.
  *
- * Consumes the session's `delegation_active_token` (if present). If the parsed agent status is a failure and a token was active, attempts a best-effort abort of the delegation and returns a context message; otherwise returns an empty result.
+ * Best-effort: returns undefined if the CLI call fails for any reason.
+ * Follows the same pattern as delegation-dispatch.ts.
+ *
+ * @param cwd - Working directory for the CLI call
+ * @returns Parsed status info, or undefined on failure
+ */
+function getChildRunbookStatus(cwd: string): StatusInfo | undefined {
+  try {
+    const output = rundown(['status', '--json'], cwd);
+    const parsed = JSON.parse(output) as Record<string, unknown>;
+    return {
+      active: parsed.active === true,
+      file: typeof parsed.file === 'string' ? parsed.file : undefined,
+      position: parsed.position as StatusInfo['position'],
+      step: parsed.step as StatusInfo['step'],
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Build a context message for the parent agent when a child runbook was not completed.
+ *
+ * @param status - Child runbook status info
+ * @returns Formatted context message with runbook position and actionable instructions
+ */
+function buildIncompleteRunbookContext(status: StatusInfo): string {
+  const lines: string[] = [
+    '## Delegation Incomplete',
+    '',
+    'The subagent stopped but the child runbook is still active.',
+    '',
+  ];
+
+  if (status.file) {
+    lines.push(`**Runbook:** ${status.file}`);
+  }
+  if (status.step) {
+    const stepDesc = status.step.description
+      ? `${status.step.name} — ${status.step.description}`
+      : status.step.name;
+    lines.push(`**Current step:** ${stepDesc}`);
+  }
+  if (status.position) {
+    lines.push(`**Position:** step ${status.position.current} of ${String(status.position.total)}`);
+  }
+
+  lines.push('');
+  lines.push('The child runbook was not completed by the subagent. You should:');
+  lines.push('1. Run `rd status` to inspect the current state');
+  lines.push(
+    '2. Decide whether to retry the delegation, complete the work yourself, or fail the step',
+  );
+  lines.push('3. Do NOT assume the work was completed — verify before proceeding');
+
+  return lines.join('\n');
+}
+
+/**
+ * Handle a SubagentStop hook by consuming any active delegation token and checking
+ * whether the child runbook was completed.
+ *
+ * If the child runbook is still active (the subagent stopped without calling
+ * `rd pass` or `rd fail`), returns a context message to the parent agent with
+ * the child's current position and actionable instructions. Never destroys
+ * child runbook state.
  *
  * @param input - Hook event payload (includes cwd, hook_event_name, and last_assistant_message)
- * @returns An object with `context` when an abort was attempted, or an empty object if no action was taken
+ * @returns An object with `context` when the child runbook is incomplete, or an empty object if no action was needed
  */
 export async function handleSubagentStop(input: HookInput): Promise<SubagentStopResult> {
   if (input.hook_event_name !== 'SubagentStop') {
     return {};
   }
-
-  const status = parseAgentStatus(input.last_assistant_message);
 
   // Read and consume delegation token from session metadata
   const session = new Session(input.cwd);
@@ -65,19 +121,29 @@ export async function handleSubagentStop(input: HookInput): Promise<SubagentStop
     await session.set('metadata', rest);
   }
 
-  // Successful delegations self-complete via child run
-  if (status === 'pass' || !token) {
+  // No delegation token — no action needed
+  if (!token) {
     return {};
   }
 
-  // Agent failed with an active delegation token — abort the delegation
-  try {
-    rundown(['abort', token, '--force'], input.cwd);
+  // Check child runbook state via rd status --json
+  const status = getChildRunbookStatus(input.cwd);
+
+  // Status check failed — return fallback context
+  if (!status) {
     return {
-      context: `Delegation ${token} aborted due to agent failure.`,
+      context:
+        'Subagent stopped with an active delegation. Unable to verify child runbook state — check with `rd status`.',
     };
-  } catch {
-    // Best-effort abort — continue without error
+  }
+
+  // Child completed (popped from session stack) — delegation already propagated
+  if (!status.active) {
     return {};
   }
+
+  // Child runbook still active — subagent didn't complete it
+  return {
+    context: buildIncompleteRunbookContext(status),
+  };
 }

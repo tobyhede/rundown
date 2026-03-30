@@ -106,7 +106,7 @@ export function createMockHookInput(
         ...base,
         agent_id: 'test-agent-123',
         agent_type: 'test-namespace:test-agent',
-        last_assistant_message: 'STATUS: PASS\nAgent completed successfully.',
+        last_assistant_message: 'Agent completed successfully.',
         ...rest,
       };
 

@@ -14,11 +14,14 @@ jest.unstable_mockModule('../../../src/session.js', () => ({
   })),
 }));
 
-const { handleSubagentStop, parseAgentStatus } = await import(
-  '../../../src/workflow/hooks/subagent-stop.js'
-);
+const { handleSubagentStop } = await import('../../../src/workflow/hooks/subagent-stop.js');
 
 const VALID_TOKEN = 'rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+
+/** Helper to create a mock that returns `rd status --json` output. */
+function createStatusMock(status: Record<string, unknown>) {
+  return createMockExecSync(JSON.stringify(status));
+}
 
 describe('handleSubagentStop', () => {
   beforeEach(() => {
@@ -40,138 +43,166 @@ describe('handleSubagentStop', () => {
     });
   });
 
-  describe('delegation-aware abort', () => {
-    it('returns empty when status is pass (no abort needed)', async () => {
-      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
-
-      const input = createMockHookInput('SubagentStop', {
-        last_assistant_message: 'STATUS: PASS',
-      });
-
-      const result = await handleSubagentStop(input);
-      expect(result).toEqual({});
-    });
-
-    it('returns empty when status is fail but no delegation_active_token in session', async () => {
+  describe('no delegation token', () => {
+    it('returns empty when no delegation_active_token in session', async () => {
       mockGet.mockResolvedValue({});
-
-      const input = createMockHookInput('SubagentStop', {
-        last_assistant_message: 'STATUS: FAIL',
-      });
-
+      const input = createMockHookInput('SubagentStop');
       const result = await handleSubagentStop(input);
       expect(result).toEqual({});
     });
 
-    it('calls rd abort <token> --force when status is fail and token exists', async () => {
-      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
-      const mockExec = createMockExecSync('Delegation aborted');
+    it('does not call rd status when no token', async () => {
+      mockGet.mockResolvedValue({});
+      const mockExec = createMockExecSync('{}');
       setExecSync(mockExec as never);
 
-      const input = createMockHookInput('SubagentStop', {
-        last_assistant_message: 'STATUS: FAIL',
-        cwd: '/my/project',
-      });
-
+      const input = createMockHookInput('SubagentStop');
       await handleSubagentStop(input);
 
-      expect(mockExec).toHaveBeenCalledWith(
-        'node',
-        expect.arrayContaining(['abort', VALID_TOKEN, '--force']),
-        expect.objectContaining({ cwd: '/my/project' }),
-      );
+      expect(mockExec).not.toHaveBeenCalled();
     });
+  });
 
-    it('clears delegation_active_token from session after abort', async () => {
+  describe('token consumption', () => {
+    it('clears delegation_active_token from session (consume-once)', async () => {
       mockGet.mockResolvedValue({
         delegation_active_token: VALID_TOKEN,
         other_key: 'preserved',
       });
-      setExecSync(createMockExecSync('OK') as never);
+      setExecSync(createStatusMock({ active: false, stashed: false }) as never);
 
-      const input = createMockHookInput('SubagentStop', {
-        last_assistant_message: 'STATUS: FAIL',
-      });
-
+      const input = createMockHookInput('SubagentStop');
       await handleSubagentStop(input);
 
       expect(mockSet).toHaveBeenCalledWith('metadata', { other_key: 'preserved' });
     });
 
-    it('returns context describing abort on success', async () => {
+    it('clears token regardless of child runbook state', async () => {
       mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
-      setExecSync(createMockExecSync('OK') as never);
+      setExecSync(
+        createStatusMock({
+          active: true,
+          stashed: false,
+          file: 'child.runbook.md',
+        }) as never,
+      );
 
-      const input = createMockHookInput('SubagentStop', {
-        last_assistant_message: 'STATUS: FAIL',
-      });
-
-      const result = await handleSubagentStop(input);
-      expect(result.context).toContain(VALID_TOKEN);
-      expect(result.context).toContain('aborted');
-    });
-
-    it('returns empty when abort call fails (best-effort)', async () => {
-      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
-      const mockExec = jest.fn().mockImplementation(() => {
-        throw new Error('abort failed');
-      });
-      setExecSync(mockExec as never);
-
-      const input = createMockHookInput('SubagentStop', {
-        last_assistant_message: 'STATUS: FAIL',
-      });
-
-      const result = await handleSubagentStop(input);
-      // Abort was attempted but failed gracefully
-      expect(mockExec).toHaveBeenCalled();
-      expect(result).toEqual({});
-    });
-
-    it('clears token even on pass (consume-once)', async () => {
-      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
-
-      const input = createMockHookInput('SubagentStop', {
-        last_assistant_message: 'STATUS: PASS',
-      });
-
+      const input = createMockHookInput('SubagentStop');
       await handleSubagentStop(input);
 
       expect(mockSet).toHaveBeenCalledWith('metadata', {});
     });
   });
-});
 
-describe('parseAgentStatus', () => {
-  it('returns pass for undefined output', () => {
-    expect(parseAgentStatus(undefined)).toBe('pass');
+  describe('child runbook completed', () => {
+    it('returns empty when child completed (not active)', async () => {
+      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setExecSync(createStatusMock({ active: false, stashed: false }) as never);
+
+      const input = createMockHookInput('SubagentStop');
+      const result = await handleSubagentStop(input);
+
+      expect(result).toEqual({});
+    });
   });
 
-  it('returns pass for empty string', () => {
-    expect(parseAgentStatus('')).toBe('pass');
+  describe('child runbook still active', () => {
+    it('returns context when child runbook is still active', async () => {
+      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setExecSync(
+        createStatusMock({
+          active: true,
+          stashed: false,
+          file: 'child.runbook.md',
+          step: { name: '2. Review changes' },
+          position: { current: '2', total: 5 },
+        }) as never,
+      );
+
+      const input = createMockHookInput('SubagentStop');
+      const result = await handleSubagentStop(input);
+
+      expect(result.context).toContain('Delegation Incomplete');
+      expect(result.context).toContain('child.runbook.md');
+      expect(result.context).toContain('2. Review changes');
+      expect(result.context).toContain('step 2 of 5');
+    });
+
+    it('includes actionable instructions in context', async () => {
+      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setExecSync(
+        createStatusMock({
+          active: true,
+          stashed: false,
+          file: 'child.runbook.md',
+        }) as never,
+      );
+
+      const input = createMockHookInput('SubagentStop');
+      const result = await handleSubagentStop(input);
+
+      expect(result.context).toContain('rd status');
+      expect(result.context).toContain('retry');
+      expect(result.context).toContain('verify before proceeding');
+    });
+
+    it('includes step description when available', async () => {
+      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setExecSync(
+        createStatusMock({
+          active: true,
+          stashed: false,
+          file: 'child.runbook.md',
+          step: { name: '3. Deploy', description: 'Deploy to staging' },
+        }) as never,
+      );
+
+      const input = createMockHookInput('SubagentStop');
+      const result = await handleSubagentStop(input);
+
+      expect(result.context).toContain('3. Deploy — Deploy to staging');
+    });
+
+    it('handles minimal status (active but no step/position info)', async () => {
+      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setExecSync(createStatusMock({ active: true, stashed: false }) as never);
+
+      const input = createMockHookInput('SubagentStop');
+      const result = await handleSubagentStop(input);
+
+      expect(result.context).toContain('Delegation Incomplete');
+      expect(result.context).toContain('child runbook was not completed');
+    });
   });
 
-  it('parses STATUS: OK as pass', () => {
-    expect(parseAgentStatus('STATUS: OK')).toBe('pass');
+  describe('status check failure', () => {
+    it('returns fallback context when rd status --json fails', async () => {
+      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      const mockExec = jest.fn().mockImplementation(() => {
+        throw new Error('CLI error');
+      });
+      setExecSync(mockExec as never);
+
+      const input = createMockHookInput('SubagentStop');
+      const result = await handleSubagentStop(input);
+
+      expect(result.context).toContain('Unable to verify child runbook state');
+      expect(result.context).toContain('rd status');
+    });
   });
 
-  it('parses STATUS: PASS as pass', () => {
-    expect(parseAgentStatus('STATUS: PASS')).toBe('pass');
-  });
+  describe('last_assistant_message is not parsed', () => {
+    it('does not use agent output to determine result', async () => {
+      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      // Child completed — should return empty regardless of message content
+      setExecSync(createStatusMock({ active: false, stashed: false }) as never);
 
-  it('parses STATUS: FAIL as fail', () => {
-    expect(parseAgentStatus('STATUS: FAIL')).toBe('fail');
-  });
+      const input = createMockHookInput('SubagentStop', {
+        last_assistant_message: 'STATUS: FAIL\nEverything broke',
+      });
+      const result = await handleSubagentStop(input);
 
-  it('parses STATUS: BLOCKED as fail', () => {
-    expect(parseAgentStatus('STATUS: BLOCKED')).toBe('fail');
-  });
-
-  it('is case-insensitive', () => {
-    expect(parseAgentStatus('status: blocked')).toBe('fail');
-  });
-
-  it('returns pass when no STATUS field found', () => {
-    expect(parseAgentStatus('Agent completed without status')).toBe('pass');
+      expect(result).toEqual({});
+    });
   });
 });

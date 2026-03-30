@@ -73,7 +73,7 @@ else
 fi
 
 # Test 4: SubagentStop hook dispatch
-HOOK_INPUT='{"hook_event_name":"SubagentStop","cwd":"'"$TEMP_DIR"'","agent_id":"test-agent","agent_type":"general-purpose","last_assistant_message":"STATUS: PASS"}'
+HOOK_INPUT='{"hook_event_name":"SubagentStop","cwd":"'"$TEMP_DIR"'","agent_id":"test-agent","agent_type":"general-purpose","last_assistant_message":"Agent completed successfully."}'
 if echo "$HOOK_INPUT" | node "$PLUGIN_DIR/dist/cli.js" 2>/dev/null; then
     pass "SubagentStop hook dispatch"
 else
