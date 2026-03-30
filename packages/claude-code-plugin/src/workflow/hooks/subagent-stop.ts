@@ -64,6 +64,9 @@ type DelegationOutcome =
 
 /**
  * Parse a validated position field from raw JSON.
+ *
+ * @param raw - Raw value from parsed JSON
+ * @returns Position info if the value is an object, otherwise undefined
  */
 function parsePosition(raw: unknown): RunbookPosition['position'] {
   if (!raw || typeof raw !== 'object') return undefined;
@@ -72,6 +75,9 @@ function parsePosition(raw: unknown): RunbookPosition['position'] {
 
 /**
  * Parse a validated step field from raw JSON.
+ *
+ * @param raw - Raw value from parsed JSON
+ * @returns Step info if the value is an object, otherwise undefined
  */
 function parseStep(raw: unknown): RunbookPosition['step'] {
   if (!raw || typeof raw !== 'object') return undefined;
@@ -79,18 +85,30 @@ function parseStep(raw: unknown): RunbookPosition['step'] {
 }
 
 /**
+ * Type guard for raw delegation objects from `rd status --json`.
+ *
+ * @param d - Raw value from the delegations array
+ * @returns True if the value is a valid DelegationStatus
+ */
+function isDelegationStatus(d: unknown): d is DelegationStatus {
+  if (d == null || typeof d !== 'object') return false;
+  const obj = d as Record<string, unknown>;
+  return (
+    typeof obj.substep === 'string' &&
+    typeof obj.runbook === 'string' &&
+    (obj.state === 'pending' || obj.state === 'claimed' || obj.state === 'cancelled')
+  );
+}
+
+/**
  * Parse delegation entries from raw JSON array.
+ *
+ * @param raw - Raw value from parsed JSON
+ * @returns Array of validated delegation status entries
  */
 function parseDelegations(raw: unknown): readonly DelegationStatus[] {
   if (!Array.isArray(raw)) return [];
-  return raw.filter(
-    (d): d is DelegationStatus =>
-      d != null &&
-      typeof d === 'object' &&
-      typeof d.substep === 'string' &&
-      typeof d.runbook === 'string' &&
-      (d.state === 'pending' || d.state === 'claimed' || d.state === 'cancelled'),
-  );
+  return raw.filter(isDelegationStatus);
 }
 
 /**
@@ -180,6 +198,9 @@ function classifyOutcome(status: RunbookStatus): DelegationOutcome {
 
 /**
  * Build position detail lines from runbook position info.
+ *
+ * @param pos - Runbook position info containing file, step, and position
+ * @returns Array of formatted markdown lines
  */
 function formatPositionLines(pos: RunbookPosition): string[] {
   const lines: string[] = [];
