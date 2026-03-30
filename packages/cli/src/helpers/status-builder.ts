@@ -70,6 +70,8 @@ export interface StatusOutputData {
     runbook: string;
     state: 'pending' | 'claimed' | 'cancelled';
     childRunId?: string;
+    /** SHA-256 hash of the delegation token for cross-system correlation. */
+    tokenHash?: string;
   }>;
 }
 
@@ -215,6 +217,7 @@ export function buildActiveStatus(
             ? ('claimed' as const)
             : ('pending' as const),
       ...(ss.delegation!.childRunId != null ? { childRunId: ss.delegation!.childRunId } : {}),
+      ...(ss.delegation!.tokenHash ? { tokenHash: ss.delegation!.tokenHash } : {}),
     }));
 
   return {

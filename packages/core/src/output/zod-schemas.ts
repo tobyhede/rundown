@@ -247,6 +247,8 @@ export const DelegationStatusEntrySchema = z
       .describe('Delegation state: pending, claimed, or cancelled'),
     /** Child run ID (when claimed) */
     childRunId: z.string().optional().describe('Child run ID when delegation is claimed'),
+    /** SHA-256 hash of the delegation token for correlation */
+    tokenHash: z.string().optional().describe('SHA-256 hash of the delegation token'),
   })
   .refine((entry) => entry.state !== 'claimed' || !!entry.childRunId, {
     message: 'childRunId is required when state is claimed',

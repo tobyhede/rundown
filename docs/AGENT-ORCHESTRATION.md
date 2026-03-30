@@ -1,6 +1,6 @@
 # Agent Orchestration Models
 
-How Rundown orchestrates work through agents. This document covers the five orchestration models, when to use each, agent type conventions, and the status protocol.
+How Rundown orchestrates work through agents. This document covers the five orchestration models, when to use each, agent type conventions, and delegation completion.
 
 **Related docs:**
 - [RUNDOWN.md](./RUNDOWN.md) - CLI reference including subagent commands
@@ -22,7 +22,7 @@ How Rundown orchestrates work through agents. This document covers the five orch
   - [Naming](#naming)
   - [Namespaces](#namespaces)
   - [Context File Discovery](#context-file-discovery)
-- [Status Protocol](#status-protocol)
+- [Delegation Completion](#delegation-completion)
 - [Runbook Transitions for Agents](#runbook-transitions-for-agents)
 
 ---
@@ -200,7 +200,7 @@ Agent(description="1.1 - Review auth changes", subagent_type="code-review-agent"
 Agent(description="1.2 - Review auth changes", subagent_type="code-review-agent")
 ```
 
-Each agent writes its findings to `.work/{date}-verify-{agentId}.md`, ending with a `STATUS: PASS` or `STATUS: FAIL` line. The main agent then collates results.
+Each agent writes its findings to `.work/{date}-verify-{agentId}.md` and uses `rd pass` or `rd fail` to report the result. The main agent then collates results.
 
 ---
 
@@ -270,37 +270,23 @@ This is how agent types get their instructions without a central registry — pl
 
 ---
 
-## Status Protocol
+## Delegation Completion
 
-Subagents signal completion via a `STATUS` line in their output:
+Subagents complete delegated work using `rd pass` or `rd fail`, which updates the child runbook state directly. The parent agent observes results via `rd status`.
 
-```
-STATUS: PASS
-```
+When a subagent stops, the plugin checks the child runbook state via `rd status --json`:
 
-or
+- **Child completed** (`rd pass`/`rd fail` was called): The child runbook has already been popped from the session stack and the result propagated to the parent. No action needed.
+- **Child still active** (subagent stopped without completing): The plugin surfaces context to the parent agent with the child's current position and step, so the parent can decide how to proceed (retry, complete manually, or fail the step).
 
-```
-STATUS: FAIL
-```
-
-**Supported values:**
-
-| Status | Meaning |
-|--------|---------|
-| `PASS` | Agent completed successfully |
-| `FAIL` | Agent encountered issues or rejected the work |
-| `BLOCKED` | Agent could not proceed (used in plan execution) |
-
-The plugin parses this from agent output and translates it to `rd pass` or `rd fail` within the child runbook context. See [Section 4: Control Flow](SPEC.md#4-control-flow) for transition semantics.
+The plugin never destroys child runbook state. Incomplete delegations preserve their context for inspection.
 
 Routing behavior:
-- Agent completion and plain `pass/fail` share one record-and-drain transition path.
 - Completion keys are scoped to `frame + entry + substep`; stale completions from previous entries are rejected.
 - Resolved completions drain in deterministic substep order. Aggregation waits for all DEFER'd results before evaluating the step-level transition.
-- When a completion arrives for a frontier substep that is not at the active cursor, it is **deferred** — stored and applied when the cursor reaches that substep. See [Section 4: Control Flow](SPEC.md#4-control-flow) for transition semantics.
+- When a completion arrives for a frontier substep that is not at the active cursor, it is **deferred** — stored and applied when the cursor reaches that substep.
 
-**Important:** The STATUS line should appear at the end of the agent's response. If no STATUS line is found, the plugin treats the result based on the agent's exit behaviour.
+See [Section 4: Control Flow](SPEC.md#4-control-flow) for transition semantics.
 
 ---
 

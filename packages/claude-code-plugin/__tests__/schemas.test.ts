@@ -36,7 +36,7 @@ describe('HookInputSchema', () => {
       permission_mode: 'default',
       agent_id: 'agent-123',
       agent_type: 'code-review-agent',
-      last_assistant_message: 'STATUS: PASS',
+      last_assistant_message: 'Agent completed successfully.',
       tool_input: {
         file_path: '/Users/test/project/src/index.ts',
       },
@@ -83,7 +83,7 @@ describe('HookInputSchema', () => {
       {
         hook_event_name: 'SubagentStop',
         cwd: '/Users/test/project',
-        output: 'STATUS: PASS',
+        output: 'Agent completed successfully.',
       },
       {
         hook_event_name: 'PostToolUse',

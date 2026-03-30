@@ -1,6 +1,7 @@
 // __tests__/perf/hook-performance.test.ts
 // Performance budget tests for hook processing
 
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
   dispatch,
@@ -18,6 +19,7 @@ import {
   createTempTestDir,
   writeTestConfig,
 } from '../helpers/test-utils.js';
+import { setExecSync } from '../../src/workflow/hooks/rundown.js';
 import type { GateConfig, HookConfig } from '../../src/shared/index.js';
 
 /**
@@ -95,7 +97,7 @@ describe('Hook Performance Budget', () => {
       const input = createMockHookInput('SubagentStop', {
         cwd: testDir.path,
         agent_type: 'test-agent',
-        last_assistant_message: 'STATUS: PASS',
+        last_assistant_message: 'Agent completed successfully.',
       });
 
       // Warm up
@@ -103,6 +105,61 @@ describe('Hook Performance Budget', () => {
 
       const { durationMs } = await measureExecutionTime(() => dispatch(input));
       expect(durationMs).toBeLessThan(HOOK_BUDGET_MS);
+    });
+
+    it('processes SubagentStop with delegation under budget', async () => {
+      const config = createMockConfig({
+        hooks: {
+          SubagentStop: {
+            enabled_agents: ['test-agent'],
+            gates: [],
+          },
+        },
+        gates: {},
+      });
+      await writeTestConfig(testDir.path, config);
+
+      // Session expects token under metadata (SessionStateSchema)
+      const sessionDir = path.join(testDir.path, '.claude', 'session');
+      fs.mkdirSync(sessionDir, { recursive: true });
+      const sessionFile = path.join(sessionDir, 'state.json');
+      const seedSession = () => {
+        fs.writeFileSync(
+          sessionFile,
+          JSON.stringify({
+            metadata: { delegation_active_token: 'rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ234567' },
+          }),
+        );
+      };
+
+      // Mock rd status --json to return a deterministic response
+      const statusJson = JSON.stringify({
+        active: true,
+        stashed: false,
+        file: 'parent.runbook.md',
+        delegations: [],
+      });
+      setExecSync((() => statusJson) as never);
+
+      try {
+        const input = createMockHookInput('SubagentStop', {
+          cwd: testDir.path,
+          agent_type: 'test-agent',
+          last_assistant_message: 'Agent completed successfully.',
+        });
+
+        // Warm up (consumes the one-shot token)
+        seedSession();
+        await dispatch(input);
+
+        // Re-seed so the timed run exercises the full delegation path
+        seedSession();
+        const { durationMs } = await measureExecutionTime(() => dispatch(input));
+        expect(durationMs).toBeLessThan(HOOK_BUDGET_MS);
+      } finally {
+        // Reset to a no-op to avoid leaking the mock
+        setExecSync((() => '') as never);
+      }
     });
 
     it('handles missing config gracefully and quickly', async () => {

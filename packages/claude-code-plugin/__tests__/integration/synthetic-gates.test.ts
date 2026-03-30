@@ -175,7 +175,7 @@ runbook: ${runbook}
     const input: HookInput = {
       hook_event_name: 'SubagentStop',
       agent_id: 'test-agent-123',
-      last_assistant_message: 'STATUS: PASS',
+      last_assistant_message: 'Agent completed successfully.',
       cwd: testDir,
     };
 

@@ -54,7 +54,7 @@ Dispatch N agents to independently review the same subject. Collate findings:
 
 **Subagent protocol:**
 - Write findings to `.work/{date}-verify-{agentId}.md`
-- End response with `STATUS: PASS` or `STATUS: FAIL`
+- Use `rd pass` or `rd fail` to report the result
 
 ### Phase 2: Collate
 
