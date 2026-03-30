@@ -193,9 +193,40 @@ describe('handleSubagentStop', () => {
       const input = createMockHookInput('SubagentStop');
       const result = await handleSubagentStop(input);
 
-      expect(result.context).toContain('Delegation Incomplete');
+      expect(result.context).toContain('Delegation Stashed');
+      expect(result.context).toContain('stashed without being completed');
       expect(result.context).toContain('child.runbook.md');
       expect(result.context).toContain('2. Review');
+      expect(result.context).toContain('rd pop');
+    });
+
+    it('preserves delegations when active+stashed (active child + stashed parent)', async () => {
+      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setExecSync(
+        createStatusMock({
+          active: true,
+          stashed: true,
+          file: 'child.runbook.md',
+          step: { name: '3. Deploy' },
+          position: { current: '3', total: 5 },
+          delegations: [
+            {
+              substep: '3.1',
+              runbook: 'grandchild.runbook.md',
+              state: 'claimed',
+              childRunId: 'run-gc-1',
+              tokenHash: OTHER_TOKEN_HASH,
+            },
+          ],
+        }) as never,
+      );
+
+      const input = createMockHookInput('SubagentStop');
+      const result = await handleSubagentStop(input);
+
+      // Should be classified as active (preserving delegations), not stashed
+      expect(result.context).toContain('Delegation Incomplete');
+      expect(result.context).toContain('child.runbook.md');
     });
   });
 
@@ -321,6 +352,33 @@ describe('handleSubagentStop', () => {
 
       // Our delegation (3.1) is claimed — completed. Don't report 3.2 as unclaimed.
       expect(result).toEqual({});
+    });
+  });
+
+  describe('unverifiable delegations (missing tokenHash)', () => {
+    it('returns unknown when no delegations have tokenHash', async () => {
+      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setExecSync(
+        createStatusMock({
+          active: true,
+          stashed: false,
+          file: 'parent.runbook.md',
+          delegations: [
+            {
+              substep: '2.1',
+              runbook: 'child.runbook.md',
+              state: 'claimed',
+              childRunId: 'run-old',
+            },
+          ],
+        }) as never,
+      );
+
+      const input = createMockHookInput('SubagentStop');
+      const result = await handleSubagentStop(input);
+
+      expect(result.context).toContain('Unable to verify');
+      expect(result.context).toContain('rd status');
     });
   });
 

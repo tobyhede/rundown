@@ -70,6 +70,7 @@ export interface StatusOutputData {
     runbook: string;
     state: 'pending' | 'claimed' | 'cancelled';
     childRunId?: string;
+    /** SHA-256 hash of the delegation token for cross-system correlation. */
     tokenHash?: string;
   }>;
 }

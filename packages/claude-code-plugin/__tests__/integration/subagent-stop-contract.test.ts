@@ -163,7 +163,8 @@ describe('subagent-stop contract tests', () => {
       const result = await captureStatusAndHandle(FAKE_TOKEN);
 
       expect(result.context).toBeDefined();
-      expect(result.context).toContain('Delegation Incomplete');
+      expect(result.context).toContain('Delegation Stashed');
+      expect(result.context).toContain('stashed without being completed');
     });
   });
 

@@ -47,6 +47,7 @@ type DelegationStatus =
       readonly state: 'cancelled';
       readonly substep: string;
       readonly runbook: string;
+      readonly childRunId?: string;
       readonly tokenHash?: string;
     };
 
@@ -122,12 +123,21 @@ function parseStep(raw: unknown): RunbookPosition['step'] {
 function isDelegationStatus(d: unknown): d is DelegationStatus {
   if (d == null || typeof d !== 'object') return false;
   const obj = d as Record<string, unknown>;
-  return (
+  const shared =
     typeof obj.substep === 'string' &&
     typeof obj.runbook === 'string' &&
-    (obj.state === 'pending' || obj.state === 'claimed' || obj.state === 'cancelled') &&
-    (obj.tokenHash === undefined || typeof obj.tokenHash === 'string')
-  );
+    (obj.tokenHash === undefined || typeof obj.tokenHash === 'string');
+  if (!shared) return false;
+  switch (obj.state) {
+    case 'pending':
+      return obj.childRunId === undefined;
+    case 'claimed':
+      return typeof obj.childRunId === 'string';
+    case 'cancelled':
+      return obj.childRunId === undefined || typeof obj.childRunId === 'string';
+    default:
+      return false;
+  }
 }
 
 /**
@@ -158,8 +168,10 @@ function queryRunbookStatus(cwd: string): RunbookStatus | undefined {
     const stashed = parsed.stashed === true;
     const file = typeof parsed.file === 'string' ? parsed.file : undefined;
 
-    // Stashed: runbook paused via `rd stash`, not completed
-    if (stashed && file) {
+    // Stashed-only: runbook paused via `rd stash`, not completed.
+    // When both active and stashed are true (active child + stashed parent),
+    // fall through to the active branch which preserves delegations.
+    if (stashed && !active && file) {
       return {
         kind: 'stashed',
         file,
@@ -209,6 +221,14 @@ function classifyOutcome(status: RunbookStatus, tokenHash: string): DelegationOu
       return { kind: 'child_stashed', status };
 
     case 'active': {
+      // If no delegations carry token hashes, correlation is impossible (stale session state)
+      if (
+        status.delegations.length > 0 &&
+        !status.delegations.some((d) => d.tokenHash !== undefined)
+      ) {
+        return { kind: 'unknown' };
+      }
+
       // Find the delegation matching our token
       const ours = status.delegations.find((d) => d.tokenHash === tokenHash);
 
@@ -283,8 +303,7 @@ function buildContextMessage(outcome: DelegationOutcome): string | undefined {
     case 'unknown':
       return 'Subagent stopped with an active delegation. Unable to verify child runbook state — check with `rd status`.';
 
-    case 'child_active':
-    case 'child_stashed': {
+    case 'child_active': {
       const lines: string[] = [
         '## Delegation Incomplete',
         '',
@@ -296,6 +315,22 @@ function buildContextMessage(outcome: DelegationOutcome): string | undefined {
         '1. Run `rd status` to inspect the current state',
         '2. Decide whether to retry the delegation, complete the work yourself, or fail the step',
         '3. Do NOT assume the work was completed — verify before proceeding',
+      ];
+      return lines.join('\n');
+    }
+
+    case 'child_stashed': {
+      const lines: string[] = [
+        '## Delegation Stashed',
+        '',
+        'The subagent stopped and the child runbook was stashed without being completed.',
+        '',
+        ...formatPositionLines(outcome.status),
+        '',
+        'The stashed runbook needs to be resumed or resolved. You should:',
+        '1. Run `rd status` to inspect the current state',
+        '2. Run `rd pop` to resume the stashed runbook, or fail the step',
+        '3. Verify the runbook state before proceeding',
       ];
       return lines.join('\n');
     }
