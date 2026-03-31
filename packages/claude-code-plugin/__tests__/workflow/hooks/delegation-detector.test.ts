@@ -61,6 +61,19 @@ describe('detectDelegationMarker', () => {
     expect(result).toBeNull();
   });
 
+  it('returns null for overlong token (33+ chars after rdtk_)', () => {
+    const overlong = 'rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ2345678'; // 33 chars
+    const text = `RD_CLAIM_TOKEN=${overlong}`;
+    const result = detectDelegationMarker(text);
+    expect(result).toBeNull();
+  });
+
+  it('returns null when RD_CLAIM_TOKEN is part of a longer key name', () => {
+    const text = `NOT_RD_CLAIM_TOKEN=${VALID_TOKEN}`;
+    const result = detectDelegationMarker(text);
+    expect(result).toBeNull();
+  });
+
   it('returns first match with multiple markers', () => {
     const token1 = 'rdtk_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
     const token2 = 'rdtk_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';

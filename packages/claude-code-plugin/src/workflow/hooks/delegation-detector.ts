@@ -15,10 +15,15 @@ export interface DelegationDetection {
  * Character class uses [A-Z0-9] (broader than strict RFC 4648 base32 [A-Z2-7])
  * to match the token format defined in `@rundown-org/core`'s token generator.
  *
- * The `rdtk_` prefix + 32 uppercase alphanumeric chars is distinctive enough
- * to match reliably without line anchoring. First match wins.
+ * Boundary constraints:
+ * - Negative lookbehind `(?<![A-Za-z0-9_])` prevents matching inside longer
+ *   key names (e.g. `NOT_RD_CLAIM_TOKEN=...`).
+ * - Negative lookahead `(?![A-Z0-9])` prevents truncating overlong tokens
+ *   (e.g. capturing 32 chars from a 33-char suffix).
+ *
+ * First match wins.
  */
-const CLAIM_MARKER_PATTERN = /RD_CLAIM_TOKEN=(rdtk_[A-Z0-9]{32})/;
+const CLAIM_MARKER_PATTERN = /(?<![A-Za-z0-9_])RD_CLAIM_TOKEN=(rdtk_[A-Z0-9]{32})(?![A-Z0-9])/;
 
 /**
  * Finds a delegation marker in a text field.
