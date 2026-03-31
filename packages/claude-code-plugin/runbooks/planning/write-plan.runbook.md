@@ -84,7 +84,7 @@ If revising the plan, address the issues identified.
 
 ## 9. Verify Plan Structure
 
-- PASS COMPLETE
+- PASS CONTINUE
 - FAIL GOTO 7
 
 Verify the saved plan includes all required sections:
@@ -98,4 +98,15 @@ Verify the saved plan includes all required sections:
 - [ ] Tasks decomposed into granular subtasks
 - [ ] Tasks structured with TDD principles
 - [ ] Tasks include atomic commit if required
+
+
+## 10. Feedback
+- PASS COMPLETE
+- FAIL COMPLETE
+
+Rate each step for clarity and friction. Note any instructions that were ambiguous, missing, or required improvisation. Include an overall assessment of the skill and runbook quality. Write execution feedback to the output path. Schema: `${CLAUDE_PLUGIN_ROOT}schemas/feedback.schema.json`
+
+```bash
+rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file feedback.json
+```
 

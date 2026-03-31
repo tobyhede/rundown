@@ -19,6 +19,24 @@ cases:
       - rd pass   # 7. Write the plan
       - rd pass   # 8. Check schema
       - rd pass   # 9. Verify plan structure
+      - rd pass   # 10. Feedback
+    result: COMPLETE
+
+  write-plan-feedback-fail-still-completes:
+    description: FAIL at feedback still completes (non-blocking)
+    file: runbooks/planning/write-plan.runbook.md
+    commands:
+      - rd run --prompted write-plan.runbook.md
+      - rd pass   # 1. Review schema
+      - rd pass   # 2. Check scope
+      - rd pass   # 3. Gather requirements
+      - rd pass   # 4. Research codebase
+      - rd pass   # 5. Map file structure
+      - rd pass   # 6. Output path
+      - rd pass   # 7. Write the plan
+      - rd pass   # 8. Check schema
+      - rd pass   # 9. Verify plan structure
+      - rd fail   # 10. Feedback → COMPLETE (non-blocking)
     result: COMPLETE
 
   # --- write-plan: early termination ---
@@ -118,6 +136,7 @@ cases:
       - rd pass   # 7. Write the plan (retry)
       - rd pass   # 8. Check schema
       - rd pass   # 9. Verify plan structure
+      - rd pass   # 10. Feedback
     result: COMPLETE
 
   write-plan-verify-retry:
@@ -137,4 +156,5 @@ cases:
       - rd pass   # 7. Write the plan (retry)
       - rd pass   # 8. Check schema (retry)
       - rd pass   # 9. Verify plan structure
+      - rd pass   # 10. Feedback
     result: COMPLETE

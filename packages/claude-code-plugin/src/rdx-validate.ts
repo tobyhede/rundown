@@ -15,6 +15,7 @@ type ValidatorModule<T = unknown> = { validate(data: unknown): T };
 
 const schemaLoaders = {
   plan: () => import('./plan-schema.js') as Promise<ValidatorModule>,
+  feedback: () => import('./feedback-schema.js') as Promise<ValidatorModule>,
 } as const;
 
 /** Known schema names from the registry. */
