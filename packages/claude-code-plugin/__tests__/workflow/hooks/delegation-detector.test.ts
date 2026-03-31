@@ -19,14 +19,32 @@ describe('detectDelegationMarker', () => {
     expect(result).toEqual({ token: VALID_TOKEN });
   });
 
-  it('returns null for bare token without RD_CLAIM_TOKEN= prefix', () => {
-    const text = VALID_TOKEN;
+  it('finds token mid-line', () => {
+    const text = `prefix RD_CLAIM_TOKEN=${VALID_TOKEN}`;
     const result = detectDelegationMarker(text);
-    expect(result).toBeNull();
+    expect(result).toEqual({ token: VALID_TOKEN });
   });
 
-  it('returns null for marker mid-line (not at line start)', () => {
-    const text = `prefix RD_CLAIM_TOKEN=${VALID_TOKEN}`;
+  it('finds token embedded in a sentence', () => {
+    const text = `Review the code. RD_CLAIM_TOKEN=${VALID_TOKEN} Then proceed.`;
+    const result = detectDelegationMarker(text);
+    expect(result).toEqual({ token: VALID_TOKEN });
+  });
+
+  it('finds token with leading whitespace', () => {
+    const text = `  \tRD_CLAIM_TOKEN=${VALID_TOKEN}`;
+    const result = detectDelegationMarker(text);
+    expect(result).toEqual({ token: VALID_TOKEN });
+  });
+
+  it('finds token in markdown prose', () => {
+    const text = `## Task\n\nDelegation marker: RD_CLAIM_TOKEN=${VALID_TOKEN}\n\nProceed with review.`;
+    const result = detectDelegationMarker(text);
+    expect(result).toEqual({ token: VALID_TOKEN });
+  });
+
+  it('returns null for bare token without RD_CLAIM_TOKEN= prefix', () => {
+    const text = VALID_TOKEN;
     const result = detectDelegationMarker(text);
     expect(result).toBeNull();
   });
@@ -39,6 +57,19 @@ describe('detectDelegationMarker', () => {
   it('returns null for wrong-length token', () => {
     const shortToken = 'rdtk_ABCDEF';
     const text = `RD_CLAIM_TOKEN=${shortToken}`;
+    const result = detectDelegationMarker(text);
+    expect(result).toBeNull();
+  });
+
+  it('returns null for overlong token (33+ chars after rdtk_)', () => {
+    const overlong = 'rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ2345678'; // 33 chars
+    const text = `RD_CLAIM_TOKEN=${overlong}`;
+    const result = detectDelegationMarker(text);
+    expect(result).toBeNull();
+  });
+
+  it('returns null when RD_CLAIM_TOKEN is part of a longer key name', () => {
+    const text = `NOT_RD_CLAIM_TOKEN=${VALID_TOKEN}`;
     const result = detectDelegationMarker(text);
     expect(result).toBeNull();
   });

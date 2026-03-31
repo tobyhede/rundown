@@ -384,7 +384,7 @@ Currently supported internally: `echo`, `prompt`. Unsupported commands fall back
 - [docs/CLI-OUTPUT-SPEC.md](docs/CLI-OUTPUT-SPEC.md) - CLI output format specification
 - [runbooks/README.md](runbooks/README.md) - Runbook authoring patterns
 - [docs/SCRIPTING.md](docs/SCRIPTING.md) - Scripting and automation guide
-- [docs/AGENT-ORCHESTRATION.md](docs/AGENT-ORCHESTRATION.md) - Agent orchestration models and patterns
+- [docs/AGENT-ORCHESTRATION.md](docs/AGENT-ORCHESTRATION.md) - Subagent delegation, context discovery, and delegation completion
 - [docs/PROJECT-INTEGRATION.md](docs/PROJECT-INTEGRATION.md) - Project integration guide
 - [docs/DOCKER.md](docs/DOCKER.md) - Docker verification pipeline
 - [docs/SCENARIOS.md](docs/SCENARIOS.md) - Scenarios and test runbook standard

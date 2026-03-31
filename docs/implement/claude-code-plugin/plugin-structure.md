@@ -175,7 +175,7 @@ packages/claude-code-plugin/
     writing-plans/SKILL.md         # runbook: ${CLAUDE_PLUGIN_ROOT}runbooks/planning/write-plan.runbook.md
     verifying-by-consensus/SKILL.md
     running-runbooks/SKILL.md
-    delegating-work/SKILL.md
+    delegating-runbooks/SKILL.md
     writing-runbooks/SKILL.md
   runbooks/
     planning/write-plan.runbook.md

@@ -1,131 +1,19 @@
-# Agent Orchestration Models
+# Subagent Delegation
 
-How Rundown orchestrates work through agents. This document covers the five orchestration models, when to use each, agent type conventions, and delegation completion.
+How Rundown delegates substep execution to subagents via the plugin's hook system.
 
 **Related docs:**
-- [RUNDOWN.md](./RUNDOWN.md) - CLI reference including subagent commands
-- [SPEC.md](./SPEC.md) - Rundown format specification (steps, substeps, transitions)
-- [runbooks/](../runbooks/) - Concrete runbook pattern examples
+- [RUNDOWN.md](./RUNDOWN.md) — CLI architecture, execution model, and command reference
+- [SPEC.md](./SPEC.md) — Rundown format specification (steps, substeps, transitions)
+- [runbooks/](../runbooks/) — Runbook pattern examples
 
 ---
 
-## Table of Contents
+## Delegation Workflow
 
-- [The Five Models](#the-five-models)
-  - [1. Sequential Runbook Steps](#1-sequential-runbook-steps)
-  - [2. Skill-Guided Single Agent](#2-skill-guided-single-agent)
-  - [3. Runbook + Skill Composition](#3-runbook--skill-composition)
-  - [4. Substeps with Agent Dispatch](#4-substeps-with-agent-dispatch)
-  - [5. Parallel Fan-Out / Fan-In](#5-parallel-fan-out--fan-in)
-- [Choosing a Model](#choosing-a-model)
-- [Agent Type Conventions](#agent-type-conventions)
-  - [Naming](#naming)
-  - [Namespaces](#namespaces)
-  - [Context File Discovery](#context-file-discovery)
-- [Delegation Completion](#delegation-completion)
-- [Runbook Transitions for Agents](#runbook-transitions-for-agents)
+A runbook defines substeps, each delegated to a subagent. The parent agent orchestrates; subagents execute. The plugin's hook system handles token detection, context injection, and result routing.
 
----
-
-## The Five Models
-
-### 1. Sequential Runbook Steps
-
-The simplest model. A runbook defines steps executed in order. Each step is either a **command step** (auto-executes, exit code determines pass/fail) or a **prompt step** (instructions for the agent, requires `rd pass` or `rd fail`).
-
-No subagents are involved — the main agent works through steps sequentially.
-
-**When to use:** Linear workflows, checklists, CI-style pipelines, anything where one agent handles all steps in order.
-
-**Example:**
-````markdown
-## 1. Run tests
-- PASS CONTINUE
-- FAIL STOP "Tests failed"
-
-```bash
-npm test
-```
-
-## 2. Check coverage
-- PASS CONTINUE
-- FAIL GOTO 1
-
-```bash
-npm run coverage -- --threshold 80
-```
-
-## 3. Deploy
-- PASS COMPLETE "Deployed"
-- FAIL STOP "Deploy failed"
-
-```bash
-npm run deploy
-```
-````
-
-**Transition rules:** CONTINUE, STOP, GOTO, RETRY, COMPLETE. See [SPEC.md](./SPEC.md) for full syntax.
-
----
-
-### 2. Skill-Guided Single Agent
-
-A skill provides domain-specific instructions that guide the main agent's behaviour. The skill is loaded via Claude's `Skill` tool and shapes *how* the agent works, but the agent does all the work itself.
-
-No runbook flow control is involved — the skill is pure instruction.
-
-**When to use:** Tasks that need specialised knowledge or methodology but not flow control. The agent should be free to adapt its approach.
-
-**Example:** The `writing-plans` skill teaches an agent how to write implementation plans — what structure to follow, what sections to include, how to decompose tasks. The agent reads the skill and follows the methodology.
-
-```
-User: /write-plan
-  → Skill(skill: "rundown:writing-plans")
-  → Skill instructions loaded into agent context
-  → Agent writes plan following skill guidance
-```
-
----
-
-### 3. Runbook + Skill Composition
-
-Combines a runbook (for flow control) with a skill (for domain knowledge). The runbook orchestrates *when* things happen; the skill provides *how* to do them.
-
-**When to use:** Workflows that need enforced ordering AND specialised methodology. The runbook ensures steps happen in sequence; the skill ensures quality at each step.
-
-**Example:** `write-plan.runbook.md` orchestrates the plan-writing flow, invoking the `writing-plans` skill for the actual authoring step:
-
-```markdown
-## 1. Check prerequisites
-- PASS CONTINUE
-- FAIL GOTO InvokeSkill
-
-Verify the Writing Plans skill has been invoked.
-
-## InvokeSkill Load skill
-- PASS GOTO 2
-- FAIL STOP
-
-Tool: Skill(skill: "rundown:writing-plans")
-
-## 2. Write the plan
-- PASS COMPLETE
-- FAIL RETRY 2 STOP
-
-Write and save the implementation plan.
-```
-
-The runbook handles flow (check → invoke skill → write); the skill handles content (plan structure, task decomposition, verification criteria).
-
----
-
-### 4. Substeps with Agent Dispatch
-
-A runbook defines substeps, each delegated to a subagent. The parent agent orchestrates; subagents execute. Agent type context injection is driven by runtime hook events, not substep header syntax.
-
-**When to use:** Tasks with distinct subtasks that benefit from specialised agents. Each subagent gets its own context and instructions via context injection.
-
-**Example:**
+**Example runbook:**
 ```markdown
 ## 2. Review changes
 - PASS ALL CONTINUE
@@ -141,119 +29,46 @@ Verify test coverage and assertions.
 **Command sequence:**
 
 ```bash
-# Parent delegates substep to child runbook
+# 1. Parent delegates substep to child runbook
 rd delegate <runbook> --step 2.1
 
-# Subagent claims the delegation token
+# 2. Parent dispatches a subagent with the token in its prompt
+#    The plugin detects the token and injects claim instructions
+
+# 3. Subagent claims the delegation token
 rd claim <token>
 
-# Subagent works, then reports result
-rd pass
+# 4. Subagent works through the delegated runbook, then reports result
+rd pass   # or: rd fail
 ```
 
-Agent type context injection is driven by runtime hook events — see [Context File Discovery](#context-file-discovery).
+### Dispatch Frontier and Identity
 
-**Dispatch frontier and identity:**
-- `delegate --step` requires a parseable step identifier; when the active step has substeps, step-only dispatch (`N`) is rejected and `N.M` is required.
-- `delegate <runbook> --step <id>` takes the child runbook as a required positional argument.
-- Plugin Step/Task dispatch must include a parseable identifier prefix (for example `1.2 - Review` or `ErrorHandler: Recover`).
+- `delegate --step` requires a parseable step identifier; when the active step has substeps, step-only dispatch (`N`) is rejected — use qualified IDs (`N.M`).
+- `delegate [runbook] --step <id>` accepts an optional runbook argument; when omitted, the runbook is inferred from the substep's `runbooks` field.
 - `delegate --step` is constrained to the active step frontier.
 - If the active step is in a FOR loop, queueing is constrained to the active iteration frontier.
-- Canonical target identity is `step + substep + iteration`.
-- Display path (`STEP.INDEX.SUBSTEP`, e.g. `2.3.1`) is output-only.
-- Completion acceptance is scoped by frame + entry identity so stale completions from prior re-entry are rejected.
-- `frame` and `entry` are internal runtime identity terms, not runbook authoring syntax.
-- `frame = step|iteration`
-- `entry = re-entry counter for that frame`
-- Completion routing uses `frame + entry + substep` to reject stale completions after re-entry.
+- Plugin dispatch descriptions must begin with a step identifier matching the runbook's ID format — either a numeric qualified ID (e.g., `1.2 - Review`) or a named identifier (e.g., `ErrorHandler: Recover`).
 
 ---
 
-### 5. Parallel Fan-Out / Fan-In
+## Context File Discovery
 
-Multiple independent agents are dispatched in parallel, their results collected and collated into a unified assessment. This is the most complex model, used when you want consensus or multi-perspective analysis.
+When a subagent is dispatched, the plugin injects context files based on agent type and lifecycle stage.
 
-**When to use:** Reviews, verification, audits — any task that benefits from independent perspectives. Multiple agents prevent single-point-of-failure in judgement.
+**Discovery locations** — for each directory (project first, then plugin), the following paths are checked in order:
 
-**Phases:**
+| Priority | Pattern |
+|----------|---------|
+| 1 | `{dir}/{name}-{stage}.md` |
+| 2 | `{dir}/slash-command/{name}-{stage}.md` |
+| 3 | `{dir}/slash-command/{name}/{stage}.md` |
+| 4 | `{dir}/skill/{name}-{stage}.md` |
+| 5 | `{dir}/skill/{name}/{stage}.md` |
 
-| Phase | Description |
-|-------|-------------|
-| **Dispatch** | Launch N agents with `Agent(subagent_type="...")` (`Task` and `Step` are accepted as aliases for backward compatibility) |
-| **Execute** | Each agent works independently, writes findings to `.work/` |
-| **Collate** | Main agent reads all findings, categorises as Common (N/N agreement) vs Exclusive |
-| **Cross-check** | Optional: dispatch agent to validate exclusive findings |
-| **Complete** | Unified report with confidence levels |
+Where `{dir}` is `.claude/context/` (project-level, highest priority) then `${CLAUDE_PLUGIN_ROOT}/context/` (plugin-level fallback).
 
-**Agent count heuristics:**
-
-| Scope | Agents |
-|-------|--------|
-| Single file change | 2 |
-| Multi-file feature | 2–3 |
-| Architecture change | 3 |
-| Security-sensitive | 3+ |
-
-**Example** (from `verifying-by-consensus`):
-```text
-Agent(description="1.1 - Review auth changes", subagent_type="code-review-agent")
-Agent(description="1.2 - Review auth changes", subagent_type="code-review-agent")
-```
-
-Each agent writes its findings to `.work/{date}-verify-{agentId}.md` and uses `rd pass` or `rd fail` to report the result. The main agent then collates results.
-
----
-
-## Choosing a Model
-
-| Need | Model | Complexity |
-|------|-------|------------|
-| Linear checklist, CI pipeline | [Sequential Steps](#1-sequential-runbook-steps) | Low |
-| Methodology guidance, flexible execution | [Skill-Guided](#2-skill-guided-single-agent) | Low |
-| Enforced ordering + methodology | [Runbook + Skill](#3-runbook--skill-composition) | Medium |
-| Distinct subtasks, specialised agents | [Substeps with Agent Dispatch](#4-substeps-with-agent-dispatch) | Medium |
-| Independent review, consensus | [Parallel Fan-Out](#5-parallel-fan-out--fan-in) | High |
-
-**Decision flow:**
-
-1. Does the task need enforced step ordering? → Yes: use a runbook (models 1, 3, 4, 5)
-2. Does it need specialised domain knowledge? → Yes: use a skill (models 2, 3)
-3. Does it need multiple agents? → Yes: use substeps or fan-out (models 4, 5)
-4. Do agents need to work independently with collation? → Yes: fan-out (model 5)
-
-Models compose — a fan-out (model 5) might use skill-guided agents (model 2) that each follow a runbook (model 1).
-
----
-
-## Agent Type Conventions
-
-### Naming
-
-Agent types are free-form strings. No central registry exists — any string works as an agent type. Convention:
-
-- Use kebab-case: `code-review-agent`, `test-agent`, `lint-agent`
-- Suffix with `-agent` for clarity
-- Name describes the role: what the agent *does*, not how it's configured
-
-### Namespaces
-
-Agent types support namespace prefixes using `namespace:name` syntax:
-
-| Format | Example | Meaning |
-|--------|---------|---------|
-| Plain | `code-review-agent` | Resolved via discovery chain |
-| Namespaced | `cipherpowers:code-review-agent` | Explicit: from `cipherpowers` plugin |
-| Namespaced | `rundown:verify-agent` | Explicit: from rundown plugin |
-
-The namespace is stripped for context file discovery — `cipherpowers:code-review-agent` maps to `code-review-agent-start.md`.
-
-### Context File Discovery
-
-When a subagent is dispatched, the plugin injects context files based on agent type and lifecycle stage:
-
-**Discovery locations** (priority order):
-1. `.claude/context/{agent-type}-{stage}.md` — project-level (highest priority)
-2. `${CLAUDE_PLUGIN_ROOT}/context/{agent-type}-{stage}.md` — plugin-level (fallback)
+> **Note:** The plugin-level context directory is an extension point; no plugin-level context files are shipped by default. All agent context customization is project-level.
 
 **Lifecycle stages:**
 
@@ -266,7 +81,11 @@ When a subagent is dispatched, the plugin injects context files based on agent t
 - `{agent-type}-{command}-end.md` — most specific, e.g. `code-review-agent-verify-end.md`
 - `{agent-type}-end.md` — agent-specific fallback
 
-This is how agent types get their instructions without a central registry — place a `code-review-agent-start.md` file and it's automatically injected when that agent type is dispatched.
+Place a `code-review-agent-start.md` file in `.claude/context/` and it is automatically injected when that agent type is dispatched.
+
+### Namespaces
+
+Agent types support namespace prefixes using `namespace:name` syntax (e.g., `cipherpowers:code-review-agent`). The namespace is stripped for context file discovery — `cipherpowers:code-review-agent` maps to `code-review-agent-start.md`.
 
 ---
 
@@ -281,7 +100,8 @@ When a subagent stops, the plugin checks the child runbook state via `rd status 
 
 The plugin never destroys child runbook state. Incomplete delegations preserve their context for inspection.
 
-Routing behavior:
+**Routing behavior:**
+- Canonical target identity is `step + substep + iteration` (`frame = step|iteration`, `entry = re-entry counter`).
 - Completion keys are scoped to `frame + entry + substep`; stale completions from previous entries are rejected.
 - Resolved completions drain in deterministic substep order. Aggregation waits for all DEFER'd results before evaluating the step-level transition.
 - When a completion arrives for a frontier substep that is not at the active cursor, it is **deferred** — stored and applied when the cursor reaches that substep.
@@ -290,7 +110,7 @@ See [Section 4: Control Flow](SPEC.md#4-control-flow) for transition semantics.
 
 ---
 
-## Runbook Transitions for Agents
+## Aggregate Transitions
 
 When substeps involve agents, transition rules use aggregate conditions:
 
@@ -305,9 +125,10 @@ When substeps involve agents, transition rules use aggregate conditions:
 
 | Condition | Meaning |
 |-----------|---------|
-| `PASS ALL` | All substep agents passed |
-| `FAIL ANY` | At least one substep agent failed |
-| `PASS ANY` | At least one substep agent passed |
+| `PASS ALL` | All substep agents passed (pair with `FAIL ANY`) |
+| `FAIL ANY` | At least one substep agent failed (pair with `PASS ALL`) |
+| `PASS ANY` | At least one substep agent passed (pair with `FAIL ALL`) |
+| `FAIL ALL` | All substep agents failed (pair with `PASS ANY`) |
 | `PASS` / `FAIL` | Standard single-result transitions |
 
 See [SPEC.md](./SPEC.md) for the full transition grammar.

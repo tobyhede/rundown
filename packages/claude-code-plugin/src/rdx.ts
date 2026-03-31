@@ -18,7 +18,7 @@ import {
   loadValidator,
   formatValidationErrors,
 } from './rdx-validate.js';
-import { getErrorMessage } from './shared/errors.js';
+import { getErrorMessage, isNodeError } from './shared/errors.js';
 
 const program = new Command();
 program
@@ -29,10 +29,32 @@ program
   .option('--schema <name>', 'Schema name for validation (e.g. "plan")')
   .option('-o, --output <path>', 'Write to file instead of stdout')
   .action(async (file: string, options: { check?: boolean; schema?: string; output?: string }) => {
+    // Stage 1: Read file
+    let raw: string;
     try {
-      const raw = await fs.readFile(file, 'utf-8');
-      const data: unknown = JSON.parse(raw);
+      raw = await fs.readFile(file, 'utf-8');
+    } catch (error) {
+      if (isNodeError(error) && error.code === 'ENOENT') {
+        process.stderr.write(`error: file not found: ${file}\n`);
+      } else {
+        process.stderr.write(`error: cannot read ${file}: ${getErrorMessage(error)}\n`);
+      }
+      process.exitCode = 1;
+      return;
+    }
 
+    // Stage 2: Parse JSON
+    let data: unknown;
+    try {
+      data = JSON.parse(raw);
+    } catch (error) {
+      process.stderr.write(`error: invalid JSON in ${file}: ${getErrorMessage(error)}\n`);
+      process.exitCode = 1;
+      return;
+    }
+
+    // Stage 3: Schema resolution, validation, rendering
+    try {
       // Extract $schema and prepare clean data
       const { cleanData, schemaName: dataSchema, rawSchema } = stripSchema(data);
       const schema = resolveSchemaName(options.schema, dataSchema);
@@ -42,6 +64,18 @@ program
         process.stderr.write(`error: unrecognized schema: ${rawSchema}\n`);
         process.exitCode = 1;
         return;
+      }
+
+      // No schema discoverable — error in check mode, warn in render mode
+      if (!schema) {
+        if (options.check) {
+          process.stderr.write(
+            'error: --check requires a schema (use $schema in JSON or --schema flag)\n',
+          );
+          process.exitCode = 1;
+          return;
+        }
+        process.stderr.write('warning: no schema found, skipping validation\n');
       }
 
       // Validate against schema when available, capturing typed result
