@@ -48,7 +48,7 @@ rd pass   # or: rd fail
 - `delegate [runbook] --step <id>` accepts an optional runbook argument; when omitted, the runbook is inferred from the substep's `runbooks` field.
 - `delegate --step` is constrained to the active step frontier.
 - If the active step is in a FOR loop, queueing is constrained to the active iteration frontier.
-- Plugin dispatch descriptions must include a parseable identifier prefix (e.g., `1.2 - Review` or `ErrorHandler: Recover`).
+- Plugin dispatch descriptions must begin with a step identifier matching the runbook's ID format — either a numeric qualified ID (e.g., `1.2 - Review`) or a named identifier (e.g., `ErrorHandler: Recover`).
 
 ---
 
@@ -68,7 +68,7 @@ When a subagent is dispatched, the plugin injects context files based on agent t
 
 Where `{dir}` is `.claude/context/` (project-level, highest priority) then `${CLAUDE_PLUGIN_ROOT}/context/` (plugin-level fallback).
 
-> **Note:** The plugin-level context directory is available as an extension point but currently ships with no context files. All agent context customization is project-level.
+> **Note:** The plugin-level context directory is an extension point; no plugin-level context files are shipped by default. All agent context customization is project-level.
 
 **Lifecycle stages:**
 
