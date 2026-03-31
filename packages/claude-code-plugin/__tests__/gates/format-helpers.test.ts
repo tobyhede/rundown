@@ -22,8 +22,34 @@ describe('extractExecError', () => {
     expect(extractExecError({ code: 'ERR' })).toBe('Unknown error');
   });
 
-  it('handles non-object errors', () => {
-    expect(extractExecError('string error')).toBe('Unknown error');
+  it('uses string value as message for string errors', () => {
+    expect(extractExecError('string error')).toBe('string error');
+  });
+
+  it('handles null input', () => {
+    expect(extractExecError(null)).toBe('Unknown error');
+  });
+
+  it('handles undefined input', () => {
+    expect(extractExecError(undefined)).toBe('Unknown error');
+  });
+
+  it('handles number input', () => {
+    expect(extractExecError(42)).toBe('Unknown error');
+  });
+
+  it('handles boolean input', () => {
+    expect(extractExecError(true)).toBe('Unknown error');
+  });
+
+  it('skips empty stdout and returns stderr', () => {
+    const error = { stdout: '', stderr: 'real error', message: 'msg' };
+    expect(extractExecError(error)).toBe('real error');
+  });
+
+  it('skips empty stdout and stderr and returns message', () => {
+    const error = { stdout: '', stderr: '', message: 'fallback message' };
+    expect(extractExecError(error)).toBe('fallback message');
   });
 });
 

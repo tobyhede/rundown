@@ -27,7 +27,7 @@ export interface ShellResult {
  * Type guard for execution errors from child_process
  * Represents error objects that can be thrown by exec/execSync
  */
-interface ExecError extends Error {
+export interface ExecError extends Error {
   killed?: boolean;
   signal?: string;
   code?: number;
@@ -41,7 +41,7 @@ interface ExecError extends Error {
  * @param error - The caught error value to normalize
  * @returns Normalized ExecError with safe property access
  */
-function asExecError(error: unknown): ExecError {
+export function asExecError(error: unknown): ExecError {
   // Check if error is an object with Error-like properties
   // (handles both instanceof Error and plain objects from ESM)
   if (error !== null && typeof error === 'object') {

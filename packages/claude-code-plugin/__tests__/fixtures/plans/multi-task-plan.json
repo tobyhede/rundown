@@ -72,9 +72,7 @@
     },
     {
       "name": "Add documentation",
-      "files": [
-        { "path": "docs/feature.md", "action": "create" }
-      ],
+      "files": [{ "path": "docs/feature.md", "action": "create" }],
       "subtasks": [
         {
           "name": "Write feature documentation",

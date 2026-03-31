@@ -5,18 +5,25 @@
  * consistent error output when runbook auto-start fails.
  */
 
+import { asExecError } from '../gate-loader.js';
+
 /**
  * Extract the most informative error string from a rundown CLI execution failure.
  *
- * Prioritizes stdout (which often contains structured rundown error output),
- * then stderr, then the Error message, falling back to 'Unknown error'.
+ * Normalizes the caught value via {@link asExecError} (handles null, undefined,
+ * non-objects, and validates property types), then prioritizes non-empty stdout
+ * (which often contains structured rundown error output), then stderr, then the
+ * Error message, falling back to 'Unknown error'.
  *
- * @param error - The caught error from execFileSync
+ * Uses `||` instead of `??` so empty-string stdout/stderr fall through to the
+ * next candidate rather than being returned as-is.
+ *
+ * @param error - The caught error from execFileSync (any value)
  * @returns The most informative error string available
  */
 export function extractExecError(error: unknown): string {
-  const execError = error as { message?: string; stdout?: string; stderr?: string };
-  return execError.stdout ?? execError.stderr ?? execError.message ?? 'Unknown error';
+  const exec = asExecError(error);
+  return exec.stdout || exec.stderr || exec.message || 'Unknown error';
 }
 
 /**

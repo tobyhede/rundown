@@ -17,7 +17,7 @@ import { extractExecError, formatRunbookError } from './format-helpers.js';
  *
  * @param input - The hook input containing event details and context
  * @returns Gate result with optional additional context from runbook execution
- * @remarks Does not throw — errors are caught internally and appropriate values returned (empty context on error)
+ * @remarks Does not throw — errors are caught internally and appropriate values returned (structured error context on failure)
  */
 export function execute(input: HookInput): Promise<GateResult> {
   // Only handle SlashCommandStart
@@ -82,4 +82,3 @@ ${output.trim()}
 ---
 `.trim();
 }
-
