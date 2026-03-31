@@ -41,12 +41,33 @@ export function execute(input: HookInput): Promise<GateResult> {
 
   // Start runbook via CLI
   try {
-    rundown(['run', runbook], input.cwd);
+    const output = rundown(['run', runbook], input.cwd);
     return Promise.resolve({
-      additionalContext: `Started runbook: ${runbook}`,
+      additionalContext: formatRunbookOutput(runbook, output),
     });
   } catch {
     // Graceful degradation - runbook start failed
     return Promise.resolve({});
   }
+}
+
+/**
+ * Format runbook start output with running-runbooks skill invocation.
+ *
+ * @param runbook - Path or name of the started runbook
+ * @param output - CLI output from the runbook start command
+ * @returns Formatted context with runbook state and skill invocation instruction
+ */
+function formatRunbookOutput(runbook: string, output: string): string {
+  return `
+---
+## RUNBOOK ACTIVE: ${runbook}
+
+Invoke the running-runbooks skill: \`Skill(skill: "rundown:running-runbooks")\`
+
+\`\`\`
+${output.trim()}
+\`\`\`
+---
+`.trim();
 }

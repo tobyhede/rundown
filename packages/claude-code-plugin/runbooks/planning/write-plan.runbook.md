@@ -8,21 +8,14 @@ tags:
 
 # Write Plan
 
-## 1. Invoke the Writing Plans skill
-- PASS CONTINUE
-- FAIL STOP
-
-Skill: `rundown:writing-plans`
-
-
-## 2. Review the schema
+## 1. Review the schema
 - PASS CONTINUE
 - FAIL STOP
 
 Schema: `${CLAUDE_PLUGIN_ROOT}schemas/plan.schema.json`
 
 
-## 3. Check the Scope
+## 2. Check the Scope
 - PASS CONTINUE
 - FAIL STOP
 
@@ -31,7 +24,7 @@ Assess and confirm the scope of the work.
 - Should the work be split into smaller deliverables?
 
 
-## 4. Gather Requirements
+## 3. Gather Requirements
 - PASS CONTINUE
 - FAIL STOP
 
@@ -42,7 +35,7 @@ Confirm the task or feature to be planned is clearly understood.
 - Are there any existing issues, design documents, specifications or other references?
 
 
-## 5. Research Codebase
+## 4. Research Codebase
 - PASS CONTINUE
 - FAIL STOP
 
@@ -54,7 +47,7 @@ Read the relevant source files, tests, and documentation to confirm:
 - File organization (where new files go)
 
 
-## 6. Map File Structure
+## 5. Map File Structure
 - PASS CONTINUE
 - FAIL STOP
 
@@ -63,7 +56,7 @@ The file structure mapping informs the task decomposition.
 Each task should produce self-contained changes that make sense independently.
 
 
-## 7. Output Path
+## 6. Output Path
 - PASS CONTINUE
 - FAIL STOP
 
@@ -72,7 +65,7 @@ rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file plan.json
 ```
 
 
-## 8. Write the plan
+## 7. Write the plan
 - PASS CONTINUE
 - FAIL STOP
 
@@ -80,19 +73,19 @@ Write the plan to the output path.
 If revising the plan, address the issues identified.
 
 
-## 9. Check Schema
+## 8. Check Schema
 - PASS CONTINUE
-- FAIL GOTO 8
+- FAIL GOTO 7
 
 ```bash
   rdx --check $(rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file plan.json)
 ```
 
 
-## 10. Verify Plan Structure
+## 9. Verify Plan Structure
 
 - PASS COMPLETE
-- FAIL GOTO 8
+- FAIL GOTO 7
 
 Verify the saved plan includes all required sections:
 

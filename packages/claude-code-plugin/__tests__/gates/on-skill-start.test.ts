@@ -111,7 +111,7 @@ runbook: verify.runbook.md
 # Content`;
 
       mockReadFileSync.mockReturnValue(skillContent);
-      mockRundown.mockReturnValue('Started runbook');
+      mockRundown.mockReturnValue('Step 1 of 3');
       process.env.CLAUDE_PLUGIN_ROOT = '/plugin';
 
       const input: HookInput = {
@@ -122,9 +122,9 @@ runbook: verify.runbook.md
 
       const result = await execute(input);
 
-      expect(result).toEqual({
-        additionalContext: 'Started runbook: verify.runbook.md',
-      });
+      expect(result.additionalContext).toContain('RUNBOOK ACTIVE: verify.runbook.md');
+      expect(result.additionalContext).toContain('Skill(skill: "rundown:running-runbooks")');
+      expect(result.additionalContext).toContain('Step 1 of 3');
       expect(mockRundown).toHaveBeenCalledWith(['run', 'verify.runbook.md'], '/test');
     });
   });
