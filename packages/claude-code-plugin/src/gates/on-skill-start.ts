@@ -7,6 +7,7 @@ import {
   findRunbookByFrontmatter,
 } from '../shared/index.js';
 import { rundown } from '../workflow/hooks/rundown.js';
+import { extractExecError, formatRunbookError } from './format-helpers.js';
 
 /**
  * Execute the skill start gate.
@@ -16,7 +17,7 @@ import { rundown } from '../workflow/hooks/rundown.js';
  *
  * @param input - The hook input containing event details and context
  * @returns Gate result with optional additional context from runbook execution
- * @remarks Does not throw — errors are caught internally and appropriate values returned (empty context on error)
+ * @remarks Does not throw — errors are caught internally and appropriate values returned (structured error context on failure)
  */
 export function execute(input: HookInput): Promise<GateResult> {
   // Only handle SkillStart
@@ -45,9 +46,11 @@ export function execute(input: HookInput): Promise<GateResult> {
     return Promise.resolve({
       additionalContext: formatRunbookOutput(runbook, output),
     });
-  } catch {
-    // Graceful degradation - runbook start failed
-    return Promise.resolve({});
+  } catch (error) {
+    const errorOutput = extractExecError(error);
+    return Promise.resolve({
+      additionalContext: formatRunbookError(runbook, errorOutput),
+    });
   }
 }
 
