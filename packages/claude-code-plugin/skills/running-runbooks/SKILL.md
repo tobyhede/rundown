@@ -9,7 +9,7 @@ Rundown executes markdown runbooks step-by-step. The CLI controls progress — y
 
 ## Quick Reference
 
-```
+```bash
 rd run <file>                    # Start a runbook
 rd run <file> --var k=v          # Start with variables
 rd run <file> --var-json k=json  # Start with JSON variable
@@ -43,7 +43,7 @@ The runbook may override these (e.g., FAIL retries, GOTO a recovery step). **Tru
 
 Some steps contain substeps (e.g., step 2 has substeps 2.1, 2.2). When responding to substeps:
 
-```
+```bash
 rd pass --step 2.1         # Pass a specific substep
 rd fail --step 2.2         # Fail a specific substep
 ```
@@ -52,7 +52,7 @@ rd fail --step 2.2         # Fail a specific substep
 
 Steps with FOR loops repeat across iterations. Target a specific iteration with `--index` (requires `--step`):
 
-```
+```bash
 rd pass --step 2.1 --index 3    # Pass substep 2.1 at iteration 3
 rd fail --step 2.1 --index 3    # Fail substep 2.1 at iteration 3
 ```
@@ -68,7 +68,7 @@ When another agent delegates work to you, the plugin injects claim instructions 
 
 Variables can be passed during claiming:
 
-```
+```bash
 rd claim <token> --var key=value
 rd claim <token> --var-json key=json
 rd claim <token> --var-file <path>
@@ -82,7 +82,7 @@ With `--prompted`, command steps do NOT auto-execute — you see the command and
 
 ## State Management
 
-```
+```bash
 rd ls                # List active runbooks
 rd stash             # Pause current runbook (stash)
 rd pop               # Resume stashed runbook
@@ -94,7 +94,7 @@ rd prune --all       # Remove all runbook state
 
 Use `--json` for machine-readable output when you need to parse state programmatically:
 
-```
+```bash
 rd status --json           # Current state as JSON
 rd run <file> --json       # Execution events as JSON
 ```

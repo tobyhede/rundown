@@ -10,7 +10,7 @@ Rundown runbooks are markdown files (`.runbook.md`) that define executable step-
 
 ## Quick Reference
 
-```markdown
+````markdown
 ---
 name: my-runbook
 description: What this runbook does
@@ -35,7 +35,7 @@ Instructions for the step.
 ```bash
 npm test
 ```
-```
+````
 
 All frontmatter fields are optional (open schema). Place project runbooks in `.claude/rundown/runbooks/` for discovery (`rd ls --all`).
 
@@ -56,7 +56,7 @@ Separators between ID and title are flexible: `.`, `:`, `-`, `)`, space, em dash
 
 ### Content Order (strict)
 
-```
+````
 ## ID. Title
 - FOR clause          (optional, must be first)
 - Transition rules    (optional, must precede body)
@@ -64,7 +64,7 @@ Prompt text           (instructions)
 ```bash              (OR substeps — not both)
 command
 ```
-```
+````
 
 ### Step Types
 
