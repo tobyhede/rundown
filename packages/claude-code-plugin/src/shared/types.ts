@@ -99,10 +99,10 @@ export interface SessionState {
   /** ISO 8601 timestamp when session started */
   started_at: string;
 
-  /** Currently active slash command (e.g., "/execute") */
+  /** Currently active slash command (e.g., "/write-plan") */
   active_command: string | null;
 
-  /** Currently active skill (e.g., "executing-plans") */
+  /** Currently active skill (e.g., "running-runbooks") */
   active_skill: string | null;
 
   /** Files edited during this session */

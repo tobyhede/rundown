@@ -9,16 +9,16 @@ This command uses a runbook-guided workflow. The runbook starts automatically.
 
 ## Workflow
 
-1. Invoke using-rundown skill (prerequisite)
+1. Invoke running-runbooks skill (prerequisite)
 2. Follow the runbook prompts to write the plan
 3. Use `rd pass` or `rd fail` to step through runbook
 
 <instructions>
-## MANDATORY: Prerequisite Skill
+## MANDATORY: Skill Activation
 
-Invoke and follow the using-rundown skill exactly as written.
+Use and follow the running-runbooks skill exactly as written.
 
-Tool: `Skill(skill: "rundown:using-rundown")`
+Tool: `Skill(skill: "rundown:running-runbooks")`
 
 ## Follow Runbook
 
