@@ -56,6 +56,7 @@ gopls
 Eventless
 exfiltration
 fdisk
+featurebranch
 frontmatter
 gitdir
 handlebars
@@ -83,6 +84,7 @@ monorepo
 msg
 mutants
 mutator
+mybranch
 myorg
 myrepo
 myrunbook
@@ -143,6 +145,7 @@ stryker
 Subcategorize
 subcommand
 subcommands
+subdirs
 subshell
 subshells
 substep
