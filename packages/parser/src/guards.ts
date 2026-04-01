@@ -221,7 +221,8 @@ export function isResolvedForClause(fc: ParsedForClause): fc is ForClause {
 export function isResolvedStep(
   step: Step,
 ): step is Exclude<ResolvedStep, ResolvedStepWithPromptedFor> {
-  if (step.kind === 'for') return isResolvedForClause(step.forClause);
+  if (step.kind === 'for')
+    return isResolvedForClause(step.forClause) && !step.substeps.some(hasUnresolvedRunbooks);
   if (step.kind === 'substeps') return !step.substeps.some(hasUnresolvedRunbooks);
   return true;
 }

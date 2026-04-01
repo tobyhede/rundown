@@ -454,6 +454,20 @@ function isForScoped(ref: string, forVariable: string | undefined): boolean {
 }
 
 /**
+ * Extract the template variable path from a preserved placeholder string.
+ *
+ * Returns the trimmed path from `{{ path }}` patterns, or the original
+ * string if it is not a placeholder.
+ *
+ * @param text - A runbook path string that may be a `{{ ref }}` placeholder
+ * @returns The extracted ref path, or the original string
+ */
+function extractRefFromPlaceholder(text: string): string {
+  const m = /^\{\{\s*(.+?)\s*\}\}$/.exec(text);
+  return m ? m[1] : text;
+}
+
+/**
  * Resolve RunbookRef entries in a parsed substep's runbooks array.
  *
  * Resolves each `RunbookRef` to a concrete path using the provided template
@@ -691,15 +705,27 @@ function substituteCommand(
  *
  * @param substep - Parsed substep node
  * @param variables - Variable map for substitution
+ * @param forVariable - FOR loop variable name — runbook paths scoped to it are skipped
  * @returns Substep with all string fields expanded
  */
-function substituteSubstep(substep: Substep, variables: Record<string, unknown>): Substep {
+function substituteSubstep(
+  substep: Substep,
+  variables: Record<string, unknown>,
+  forVariable?: string,
+): Substep {
   return {
     ...substep,
     description: substituteText(substep.description, variables),
     prompt: substep.prompt ? substituteText(substep.prompt, variables) : substep.prompt,
     command: substituteCommand(substep.command, variables),
-    runbooks: substep.runbooks?.map((runbookPath) => substituteText(runbookPath, variables)),
+    runbooks: substep.runbooks?.map((runbookPath) => {
+      // Skip substitution for FOR-scoped runbook placeholders — they must remain
+      // opaque until iteration time to prevent outer-scope variable capture
+      if (forVariable && isForScoped(extractRefFromPlaceholder(runbookPath), forVariable)) {
+        return runbookPath;
+      }
+      return substituteText(runbookPath, variables);
+    }),
   };
 }
 
@@ -736,12 +762,14 @@ function substituteStep(step: ResolvedStep, variables: Record<string, unknown>):
     case 'for':
       return {
         ...substituted,
-        substeps: step.substeps.map((ss) => substituteSubstep(ss, variables)),
+        substeps: step.substeps.map((ss) =>
+          substituteSubstep(ss, variables, step.forClause.variable),
+        ),
       } as ResolvedStep;
     case 'prompted-for':
       return {
         ...substituted,
-        substeps: step.substeps.map((ss) => substituteSubstep(ss, variables)),
+        substeps: step.substeps.map((ss) => substituteSubstep(ss, variables, step.variable)),
       } as ResolvedStep;
   }
 }
