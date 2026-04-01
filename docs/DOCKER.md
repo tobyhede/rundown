@@ -95,7 +95,7 @@ The binary is installed to `~/.local/bin/claude` and the `PATH` is extended in t
 
 ## E2E Test Harness
 
-Tests the full plugin workflow: `claude -p` triggers hook dispatch, slash command detection, and runbook execution against a realistic test application.
+Tests the full plugin workflow: `claude -p` triggers hook dispatch, the `/writing-plans` skill, and runbook execution against a realistic test application.
 
 **Prerequisites:** Docker, Claude Code credentials (mandatory — exits with error if missing).
 
@@ -113,10 +113,10 @@ Tests the full plugin workflow: `claude -p` triggers hook dispatch, slash comman
 
 | Phase | Description |
 |-------|-------------|
-| 1. Prepare workspace | Copies fixture, installs deps, runs fixture tests, git init |
+| 1. Prepare workspace | Copies fixture, git init, installs deps, runs fixture tests |
 | 2. Resolve plugin | Finds globally-installed plugin directory |
 | 3. Check credentials | Verifies Claude credentials exist (hard fail if missing) |
-| 4. Run claude -p | Executes `/write-plan` prompt with plugin (600s timeout) |
+| 4. Run claude -p | Executes `/writing-plans` prompt with plugin (600s timeout) |
 | 5. Verify artifacts | Checks plan file exists, schema validation (rdx), structural validation |
 | 6. Report | Pass/fail summary with log locations |
 
