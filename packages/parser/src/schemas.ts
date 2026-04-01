@@ -97,6 +97,18 @@ export const BoundRefSchema = z.object({
 });
 
 /**
+ * Zod schema for RunbookRef — an unresolved template variable reference used as a runbook path.
+ */
+export const RunbookRefSchema = z.object({
+  ref: z.string(),
+});
+
+/**
+ * Zod schema for RunbookEntry — either a literal path or a RunbookRef.
+ */
+export const RunbookEntrySchema = z.union([z.string(), RunbookRefSchema]);
+
+/**
  * Zod schema for Bound — either a resolved positive integer or a BoundRef.
  */
 export const BoundSchema = z.union([
@@ -319,7 +331,7 @@ export type Aggregation = Readonly<z.output<typeof AggregationSchema>>;
 export const SubstepSchema = z.object({
   id: z.string(),
   description: z.string(),
-  runbooks: z.array(z.string()).readonly().optional(),
+  runbooks: z.array(RunbookEntrySchema).readonly().optional(),
   command: CommandSchema.optional(),
   prompt: z.string().min(1).optional(), // .min(1) prevents empty strings
   transitions: TransitionsSchema,

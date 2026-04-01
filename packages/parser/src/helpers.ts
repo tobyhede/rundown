@@ -21,7 +21,7 @@ import {
   isReservedWord,
   NAMED_IDENTIFIER_PATTERN,
 } from './step-id.js';
-import type { ParsedForClause, Bound } from './ast.js';
+import type { ParsedForClause, Bound, RunbookEntry, RunbookRef } from './ast.js';
 import { isBoundRef } from './guards.js';
 
 /**
@@ -904,27 +904,55 @@ export function convertToTransitions(
   return { transitions };
 }
 
+/** Regex for template variable references in runbook list entries. */
+const RUNBOOK_REF_RE =
+  /^\s*-\s+\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)\s*\}\}\s*$/;
+
+/** Regex for literal runbook path list entries. */
+const RUNBOOK_PATH_RE = /^\s*-\s+(\S+\.runbook\.md)\s*$/;
+
+/**
+ * Check if a line is a runbook list entry (literal path or template variable).
+ *
+ * Used by the content filter to strip runbook list lines from prompt text.
+ *
+ * @param line - A single line of content
+ * @returns True if the line is a runbook list entry
+ */
+export function isRunbookListLine(line: string): boolean {
+  if (!line.trim().startsWith('-')) return false;
+  return RUNBOOK_PATH_RE.test(line) || RUNBOOK_REF_RE.test(line);
+}
+
 /**
  * Extract runbook references from step/substep content.
  *
  * Scans content for list items referencing runbook files (*.runbook.md)
- * and returns an array of the referenced filenames.
+ * or template variable references (`{{ VarName }}`), returning an array
+ * of resolved paths and/or unresolved {@link RunbookRef} objects.
  *
  * @param content - The raw content text to scan for runbook references
- * @returns Array of runbook filenames (e.g., ["setup.runbook.md", "cleanup.runbook.md"])
+ * @returns Array of runbook entries — literal paths or RunbookRef objects
  */
-export function extractRunbookList(content: string): string[] {
-  const runbooks: string[] = [];
+export function extractRunbookList(content: string): RunbookEntry[] {
+  const entries: RunbookEntry[] = [];
   const lines = content.split('\n');
 
   for (const line of lines) {
-    const match = /^\s*-\s+(\S+\.runbook\.md)\s*$/.exec(line);
-    if (match) {
-      runbooks.push(match[1]);
+    // Literal runbook path
+    const pathMatch = /^\s*-\s+(\S+\.runbook\.md)\s*$/.exec(line);
+    if (pathMatch) {
+      entries.push(pathMatch[1]);
+      continue;
+    }
+    // Template variable reference
+    const refMatch = RUNBOOK_REF_RE.exec(line);
+    if (refMatch) {
+      entries.push({ ref: refMatch[1] } satisfies RunbookRef);
     }
   }
 
-  return runbooks;
+  return entries;
 }
 
 const EXECUTABLE_TAGS = ['bash', 'sh', 'shell'];

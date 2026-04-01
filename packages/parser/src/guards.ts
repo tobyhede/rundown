@@ -1,6 +1,7 @@
 import type {
   Step,
   Substep,
+  ParsedSubstep,
   Command,
   ForClause,
   SourceWindow,
@@ -15,6 +16,8 @@ import type {
   StepWithFor,
   BoundRef,
   Bound,
+  RunbookRef,
+  RunbookEntry,
   ParsedForClause,
   UnresolvedForClause,
 } from './ast.js';
@@ -167,6 +170,26 @@ export function isBoundRef(bound: Bound): bound is BoundRef {
 }
 
 /**
+ * Type guard: checks if a runbook entry is an unresolved template reference.
+ *
+ * @param entry - The runbook entry to check
+ * @returns True if `entry` is a `RunbookRef` (`entry is RunbookRef`), guaranteeing `entry.ref` is a string
+ */
+export function isRunbookRef(entry: RunbookEntry): entry is RunbookRef {
+  return typeof entry === 'object' && 'ref' in entry;
+}
+
+/**
+ * Type guard: checks if a parsed substep has any unresolved runbook refs.
+ *
+ * @param substep - The parsed substep to check
+ * @returns True if any runbook entry is a RunbookRef
+ */
+export function hasUnresolvedRunbooks(substep: ParsedSubstep): boolean {
+  return substep.runbooks?.some(isRunbookRef) ?? false;
+}
+
+/**
  * Type guard: checks if a parsed FOR clause contains unresolved template references.
  *
  * @param fc - The parsed FOR clause to check
@@ -203,7 +226,7 @@ export function isResolvedStep(
 }
 
 /**
- * Type guard: checks if a resolved step has substeps (either StepWithSubsteps or ResolvedStepWithFor).
+ * Type guard: checks if a resolved step has substeps (ResolvedStepWithSubsteps, ResolvedStepWithFor, or prompted-for).
  *
  * @param step - The ResolvedStep to check
  * @returns True if `step` is a `ResolvedStepHavingSubsteps`, guaranteeing `step.substeps` exists

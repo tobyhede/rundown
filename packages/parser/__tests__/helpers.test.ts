@@ -127,6 +127,44 @@ Just a description, no runbooks.`;
     const result = extractRunbookList(content);
     expect(result).toEqual(['valid.runbook.md', 'another.runbook.md']);
   });
+
+  it('should capture template variable reference as RunbookRef', () => {
+    const content = `- {{ TargetRunbook }}`;
+    const result = extractRunbookList(content);
+    expect(result).toEqual([{ ref: 'TargetRunbook' }]);
+  });
+
+  it('should capture dotted template variable reference', () => {
+    const content = `- {{ config.runbook }}`;
+    const result = extractRunbookList(content);
+    expect(result).toEqual([{ ref: 'config.runbook' }]);
+  });
+
+  it('should return mixed array of literal paths and RunbookRef', () => {
+    const content = `- setup.runbook.md
+- {{ TargetRunbook }}
+- cleanup.runbook.md`;
+    const result = extractRunbookList(content);
+    expect(result).toEqual(['setup.runbook.md', { ref: 'TargetRunbook' }, 'cleanup.runbook.md']);
+  });
+
+  it('should handle template ref with leading whitespace', () => {
+    const content = `  - {{ Workflow }}`;
+    const result = extractRunbookList(content);
+    expect(result).toEqual([{ ref: 'Workflow' }]);
+  });
+
+  it('should not match template ref with trailing text', () => {
+    const content = `- {{ Var }} extra`;
+    const result = extractRunbookList(content);
+    expect(result).toEqual([]);
+  });
+
+  it('should not match template ref without list dash', () => {
+    const content = `{{ Var }}`;
+    const result = extractRunbookList(content);
+    expect(result).toEqual([]);
+  });
 });
 
 describe('isPromptCodeBlock', () => {

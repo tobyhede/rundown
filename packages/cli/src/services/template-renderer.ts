@@ -11,6 +11,7 @@
 import type {
   Runbook,
   Substep,
+  ParsedSubstep,
   Command,
   Bound,
   ForClause,
@@ -18,6 +19,7 @@ import type {
   NumericWindow,
   ResolvedRunbook,
   ResolvedStep,
+  ResolvedStepWithSubsteps,
   ResolvedStepWithFor,
   ResolvedStepWithPromptedFor,
   UnresolvedForClause,
@@ -28,6 +30,7 @@ import type {
 } from '@rundown-org/parser';
 import {
   isUnresolvedForClause,
+  isRunbookRef,
   isLoopControlAction,
   MAX_FOR_BOUND,
   stepIdToString,
@@ -410,23 +413,101 @@ function validatePromptedForSteps(steps: readonly ResolvedStep[]): void {
   }
 }
 
+// ─── RunbookRef resolution ──────────────────────────────────────────────────
+
 /**
- * Resolve unresolved FOR clause bounds in a parsed runbook.
+ * Resolve RunbookRef entries in a parsed substep's runbooks array.
+ *
+ * Resolves each `RunbookRef` to a concrete `.runbook.md` path using the
+ * provided template variables. Literal string entries pass through unchanged.
+ * Unresolvable or invalid refs produce warnings and are dropped.
+ *
+ * @param substep - Parsed substep that may contain RunbookRef entries
+ * @param variables - Template variable map for resolution
+ * @param stepName - Step identifier for warning messages
+ * @param warnings - Mutable array to collect resolution warnings
+ * @returns Resolved substep with only string runbook paths
+ */
+function resolveSubstepRunbooks(
+  substep: ParsedSubstep,
+  variables: Readonly<Record<string, unknown>>,
+  stepName: string,
+  warnings: string[],
+): Substep {
+  if (!substep.runbooks || !substep.runbooks.some(isRunbookRef)) {
+    // No RunbookRef entries — structurally compatible, safe to cast
+    return substep as Substep;
+  }
+
+  const resolvedRunbooks: string[] = [];
+  for (const entry of substep.runbooks) {
+    if (typeof entry === 'string') {
+      resolvedRunbooks.push(entry);
+      continue;
+    }
+    // Resolve RunbookRef
+    const value = resolveTemplatePath(entry.ref, variables);
+    if (value === undefined) {
+      warnings.push(
+        `Step "${stepName}" substep "${substep.id}": unresolved runbook reference "{{${entry.ref}}}"`,
+      );
+      continue;
+    }
+    if (!value.endsWith('.runbook.md')) {
+      warnings.push(
+        `Step "${stepName}" substep "${substep.id}": variable "{{${entry.ref}}}" resolved to "${value}" which is not a valid runbook path (must end in .runbook.md)`,
+      );
+      continue;
+    }
+    resolvedRunbooks.push(value);
+  }
+
+  return {
+    ...substep,
+    runbooks: resolvedRunbooks.length > 0 ? resolvedRunbooks : undefined,
+  } as Substep;
+}
+
+/**
+ * Resolve all RunbookRef entries in a step's substeps.
+ *
+ * @param substeps - Parsed substeps that may contain RunbookRef entries
+ * @param variables - Template variable map for resolution
+ * @param stepName - Step identifier for warning messages
+ * @param warnings - Mutable array to collect resolution warnings
+ * @returns Array of resolved substeps
+ */
+function resolveStepSubsteps(
+  substeps: readonly ParsedSubstep[],
+  variables: Readonly<Record<string, unknown>>,
+  stepName: string,
+  warnings: string[],
+): Substep[] {
+  return substeps.map((ss) => resolveSubstepRunbooks(ss, variables, stepName, warnings));
+}
+
+// ─── FOR clause bound + RunbookRef resolution ───────────────────────────────
+
+/**
+ * Resolve unresolved FOR clause bounds and RunbookRef entries in a parsed runbook.
  *
  * Walks all steps, resolving any `BoundRef` values in FOR clauses to concrete
- * numbers using the provided template variables. Steps without FOR clauses or
- * with already-resolved bounds are passed through unchanged.
+ * numbers and any `RunbookRef` entries in substep runbook lists to concrete paths,
+ * using the provided template variables.
  *
- * When a bound variable is undefined, the step is demoted to
+ * When a FOR bound variable is undefined, the step is demoted to
  * `kind: 'prompted-for'` — a substeps-only step with no `forClause`.
  * The original FOR text is preserved as `prompt` text for the agent to
  * drive iteration manually.
  *
+ * When a RunbookRef variable is undefined or resolves to an invalid path,
+ * a warning is emitted and the entry is dropped from the runbooks array.
+ *
  * After resolution, validates that loop-only controls (GOTO...AT, NEXT, BREAK)
  * don't reference steps whose FOR clauses were marked as prompted.
  *
- * @param runbook - Parsed runbook AST (may contain unresolved FOR bounds)
- * @param variables - Template variable map for bound resolution
+ * @param runbook - Parsed runbook AST (may contain unresolved FOR bounds and RunbookRef entries)
+ * @param variables - Template variable map for resolution
  * @returns Result with resolved runbook and any fallback warnings
  * @throws {Error} When a bound variable is defined but resolves to a non-integer or out-of-range value
  * @throws {RunbookSyntaxError} When loop-only controls reference prompted FOR steps
@@ -438,10 +519,22 @@ export function resolveForBounds(
   const warnings: string[] = [];
 
   const resolvedSteps = runbook.steps.map((step): ResolvedStep => {
-    if (step.kind !== 'for') return step;
+    // Steps without substeps pass through unchanged
+    if (step.kind === 'base' || step.kind === 'command') return step;
+
+    // Resolve RunbookRef entries in substeps for all substep-bearing step kinds
+    if (step.kind === 'substeps') {
+      const substeps = resolveStepSubsteps(step.substeps, variables, step.name, warnings);
+      const resolved: ResolvedStepWithSubsteps = { ...step, substeps };
+      return resolved;
+    }
+
+    // FOR step — resolve both FOR bounds and RunbookRef entries
+    const resolvedSubsteps = resolveStepSubsteps(step.substeps, variables, step.name, warnings);
+
     if (!isUnresolvedForClause(step.forClause)) {
       const { forClause, ...rest } = step;
-      return buildResolvedForStep(rest, forClause);
+      return buildResolvedForStep({ ...rest, substeps: resolvedSubsteps }, forClause);
     }
 
     const fc = step.forClause;
@@ -457,7 +550,7 @@ export function resolveForBounds(
       const promptedStep: ResolvedStepWithPromptedFor = {
         ...rest,
         kind: 'prompted-for',
-        substeps: step.substeps,
+        substeps: resolvedSubsteps,
         variable: fc.variable,
         prompt: forText + (step.prompt ? `\n${step.prompt}` : ''),
       };
@@ -468,9 +561,8 @@ export function resolveForBounds(
     const start = resolveBound(fc.start, variables, step.name, 'start');
     const end = resolveBound(fc.end, variables, step.name, 'end');
 
-    let resolved: ForClause;
+    let resolvedForClause: ForClause;
     if (fc.source !== undefined) {
-      // WindowedSourceWindow — both unresolved variants always have end: Bound
       const explicit: ExplicitWindowedSourceWindow = {
         variable: fc.variable,
         start,
@@ -479,7 +571,7 @@ export function resolveForBounds(
         transitions: fc.transitions,
         aggregation: fc.aggregation,
       };
-      resolved = explicit;
+      resolvedForClause = explicit;
     } else {
       const explicit: ExplicitNumericWindow = {
         variable: fc.variable,
@@ -488,11 +580,11 @@ export function resolveForBounds(
         transitions: fc.transitions,
         aggregation: fc.aggregation,
       };
-      resolved = explicit;
+      resolvedForClause = explicit;
     }
 
     const { forClause: _, ...rest } = step;
-    return buildResolvedForStep(rest, resolved);
+    return buildResolvedForStep({ ...rest, substeps: resolvedSubsteps }, resolvedForClause);
   });
 
   const resolvedRunbook: ResolvedRunbook = { ...runbook, steps: resolvedSteps };
