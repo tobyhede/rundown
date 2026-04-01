@@ -443,10 +443,14 @@ function toResolvedSubstep(substep: ParsedSubstep, runbooks: string[] | undefine
  * Returns true when the ref is the loop variable itself (`item`) or a
  * dotted path rooted on it (`item.runbook`). These refs are only resolvable
  * at iteration time, so the resolver should preserve them as placeholder text.
+ *
+ * @param ref - The RunbookRef variable path to check
+ * @param forVariable - The FOR loop variable name, or undefined if not in a FOR step
+ * @returns True if the ref is scoped to the FOR loop variable
  */
 function isForScoped(ref: string, forVariable: string | undefined): boolean {
   if (!forVariable) return false;
-  return ref === forVariable || ref.startsWith(forVariable + '.');
+  return ref === forVariable || ref.startsWith(`${forVariable}.`);
 }
 
 /**
@@ -472,7 +476,7 @@ function resolveSubstepRunbooks(
   warnings: string[],
   forVariable?: string,
 ): Substep {
-  if (!substep.runbooks || !substep.runbooks.some(isRunbookRef)) {
+  if (!substep.runbooks?.some(isRunbookRef)) {
     // No RunbookRef entries — filter to strings for type safety
     const runbooks = substep.runbooks?.filter((e): e is string => typeof e === 'string');
     return toResolvedSubstep(substep, runbooks);
