@@ -533,7 +533,7 @@ vars:
       expect(targetWarning).toBeUndefined();
     });
 
-    it('warns on undefined RunbookRef variable', async () => {
+    it('preserves undefined RunbookRef as literal text (no warning)', async () => {
       const runbookPath = path.join(workspace.cwd, 'meta.runbook.md');
       fs.writeFileSync(
         runbookPath,
@@ -546,14 +546,14 @@ vars:
       const output = JSON.parse(result.stdout);
 
       expect(output.valid).toBe(true);
-      // Should have a warning about the unresolved runbook reference
+      // Undefined refs are preserved as literal text, not warned/dropped
       const refWarning = output.warnings?.find((w: { message: string }) =>
         w.message.includes('unresolved runbook reference'),
       );
-      expect(refWarning).toBeDefined();
+      expect(refWarning).toBeUndefined();
     });
 
-    it('warns when RunbookRef resolves to non-.runbook.md path', async () => {
+    it('resolves RunbookRef to any value without suffix validation', async () => {
       const runbookPath = path.join(workspace.cwd, 'meta.runbook.md');
       fs.writeFileSync(
         runbookPath,
@@ -563,16 +563,17 @@ vars:
       );
 
       const result = await runCliInProcess(
-        `resolve ${runbookPath} --var Target=not-a-runbook.txt --json`,
+        `resolve ${runbookPath} --var Target=rundown:write-plan --json`,
         workspace,
       );
       const output = JSON.parse(result.stdout);
 
       expect(output.valid).toBe(true);
+      // No path suffix validation — delegation validates at execution time
       const pathWarning = output.warnings?.find((w: { message: string }) =>
         w.message.includes('not a valid runbook path'),
       );
-      expect(pathWarning).toBeDefined();
+      expect(pathWarning).toBeUndefined();
     });
   });
 });

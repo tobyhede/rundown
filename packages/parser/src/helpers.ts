@@ -23,6 +23,7 @@ import {
 } from './step-id.js';
 import type { ParsedForClause, Bound, RunbookEntry, RunbookRef } from './ast.js';
 import { isBoundRef } from './guards.js';
+import { TEMPLATE_VAR_PATH_PATTERN } from './schemas.js';
 
 /**
  * Check if an action accumulates results into parent aggregation (DEFER only).
@@ -905,15 +906,13 @@ export function convertToTransitions(
 }
 
 /**
- * The variable path segment pattern shared across template variable regexes.
+ * The variable path segment pattern derived from the canonical
+ * {@link TEMPLATE_VAR_PATH_PATTERN} in schemas.ts.
  *
- * Supports identifiers, dotted paths, and numeric array indices:
- * `name`, `item.name`, `context.ancestors.0.vars.child`
- *
- * This is the regex source string (not a compiled regex) so it can be
+ * This is the regex source string (anchors stripped) so it can be
  * embedded in other patterns without anchor conflicts.
  */
-const VAR_PATH_SEGMENT = '[a-zA-Z_][a-zA-Z0-9_]*(?:\\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*';
+const VAR_PATH_SEGMENT = TEMPLATE_VAR_PATH_PATTERN.source.slice(1, -1);
 
 /**
  * Regex matching a standalone template variable reference.

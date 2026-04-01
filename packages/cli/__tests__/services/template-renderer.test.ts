@@ -1405,7 +1405,7 @@ describe('resolveForBounds', () => {
       ]);
     });
 
-    it('warns on undefined RunbookRef variable', () => {
+    it('preserves undefined RunbookRef as literal text', () => {
       const step: Step = {
         kind: 'substeps',
         name: '1',
@@ -1413,24 +1413,28 @@ describe('resolveForBounds', () => {
         substeps: [{ id: '1', description: 'Sub', runbooks: [{ ref: 'Missing' }] }],
       };
       const runbook = makeRunbook([step]);
-      const { warnings } = resolveForBounds(runbook, {});
-      expect(warnings).toEqual([
-        expect.stringContaining('unresolved runbook reference "{{Missing}}"'),
-      ]);
+      const { runbook: result, warnings } = resolveForBounds(runbook, {});
+      expect(warnings).toEqual([]);
+      expect(
+        (result.steps[0] as { substeps: { runbooks?: string[] }[] }).substeps[0].runbooks,
+      ).toEqual(['{{ Missing }}']);
     });
 
-    it('warns when resolved value is not a .runbook.md path', () => {
+    it('resolves RunbookRef to any value (no suffix validation)', () => {
       const step: Step = {
         kind: 'substeps',
         name: '1',
         description: 'Execute',
-        substeps: [{ id: '1', description: 'Sub', runbooks: [{ ref: 'NotARunbook' }] }],
+        substeps: [{ id: '1', description: 'Sub', runbooks: [{ ref: 'Target' }] }],
       };
       const runbook = makeRunbook([step]);
-      const { warnings } = resolveForBounds(runbook, {
-        NotARunbook: 'just-a-string',
+      const { runbook: result, warnings } = resolveForBounds(runbook, {
+        Target: 'rundown:write-plan',
       });
-      expect(warnings).toEqual([expect.stringContaining('not a valid runbook path')]);
+      expect(warnings).toEqual([]);
+      expect(
+        (result.steps[0] as { substeps: { runbooks?: string[] }[] }).substeps[0].runbooks,
+      ).toEqual(['rundown:write-plan']);
     });
 
     it('passes through literal string runbook paths unchanged', () => {
@@ -1511,7 +1515,7 @@ describe('resolveForBounds', () => {
       ]);
     });
 
-    it('warns on non-FOR-scoped undefined ref even inside FOR step', () => {
+    it('preserves non-FOR-scoped undefined ref as literal text inside FOR step', () => {
       const step: StepWithFor = {
         kind: 'for',
         name: '1',
@@ -1520,10 +1524,31 @@ describe('resolveForBounds', () => {
         substeps: [{ id: '1', description: 'Sub', runbooks: [{ ref: 'Unknown' }] }],
       };
       const runbook = makeRunbook([step]);
-      const { warnings } = resolveForBounds(runbook, {});
-      expect(warnings).toEqual([
-        expect.stringContaining('unresolved runbook reference "{{Unknown}}"'),
-      ]);
+      const { runbook: result, warnings } = resolveForBounds(runbook, {});
+      expect(warnings).toEqual([]);
+      expect(
+        (result.steps[0] as { substeps: { runbooks?: string[] }[] }).substeps[0].runbooks,
+      ).toEqual(['{{ Unknown }}']);
+    });
+
+    it('preserves FOR-scoped ref even when outer-scope variable exists', () => {
+      const step: StepWithFor = {
+        kind: 'for',
+        name: '1',
+        description: 'Deploy',
+        forClause: { variable: 'server', source: 'servers', start: 1 },
+        substeps: [{ id: '1', description: 'Sub', runbooks: [{ ref: 'server.runbook' }] }],
+      };
+      const runbook = makeRunbook([step]);
+      // Outer-scope 'server' variable exists — must NOT shadow the loop variable
+      const { runbook: result, warnings } = resolveForBounds(runbook, {
+        server: { runbook: 'WRONG-outer.runbook.md' },
+      });
+      expect(warnings).toEqual([]);
+      // Preserved for runtime, not resolved to outer value
+      expect(
+        (result.steps[0] as { substeps: { runbooks?: string[] }[] }).substeps[0].runbooks,
+      ).toEqual(['{{ server.runbook }}']);
     });
 
     it('resolves RunbookRef with numeric path segments', () => {

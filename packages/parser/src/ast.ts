@@ -183,47 +183,39 @@ export type UnresolvedForClause = UnresolvedNumericWindow | UnresolvedSourceWind
  */
 export type ParsedForClause = ForClause | UnresolvedForClause;
 
+/** Shared fields common to parsed and resolved substep variants. */
+interface SubstepFields {
+  /** Substep identifier: "1", "2", or "Name" for named */
+  readonly id: string;
+  /** Human-readable description from the substep header */
+  readonly description: string;
+  /** Executable command from code block */
+  readonly command?: Command;
+  /** Single consolidated prompt text */
+  readonly prompt?: string;
+  /** Pass/fail transition handlers (always present — parser fills defaults) */
+  readonly transitions: Transitions;
+  /** Source line number for error reporting */
+  readonly line?: number;
+}
+
 /**
  * A substep as produced by the parser — may contain unresolved RunbookRef entries.
  *
  * Consumers that require resolved runbook paths should use {@link Substep} instead,
  * which is produced by the resolution phase.
  */
-export interface ParsedSubstep {
-  /** Substep identifier: "1", "2", or "Name" for named */
-  readonly id: string;
-  /** Human-readable description from the substep header */
-  readonly description: string;
-  /** Executable command from code block */
-  readonly command?: Command;
-  /** Single consolidated prompt text */
-  readonly prompt?: string;
-  /** Pass/fail transition handlers (always present — parser fills defaults) */
-  readonly transitions: Transitions;
+export interface ParsedSubstep extends SubstepFields {
   /** Referenced runbook files — may contain RunbookRef for template variables */
   readonly runbooks?: readonly RunbookEntry[];
-  /** Source line number for error reporting */
-  readonly line?: number;
 }
 
 /**
  * A resolved substep — all runbook references are concrete paths.
  */
-export interface Substep {
-  /** Substep identifier: "1", "2", or "Name" for named */
-  readonly id: string;
-  /** Human-readable description from the substep header */
-  readonly description: string;
-  /** Executable command from code block */
-  readonly command?: Command;
-  /** Single consolidated prompt text */
-  readonly prompt?: string;
-  /** Pass/fail transition handlers (always present — parser fills defaults) */
-  readonly transitions: Transitions;
+export interface Substep extends SubstepFields {
   /** Referenced runbook files (.runbook.md) */
   readonly runbooks?: readonly string[];
-  /** Source line number for error reporting */
-  readonly line?: number;
 }
 
 /**
