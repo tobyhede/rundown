@@ -17,7 +17,9 @@ const StepFeedback = z
   .object({
     step: z.number().int().min(1).describe('Step number in the runbook'),
     name: z.string().min(1).describe('Step name as it appears in the runbook'),
-    friction: z.enum(['none', 'low', 'medium', 'high']).describe('How much friction this step caused'),
+    friction: z
+      .enum(['none', 'low', 'medium', 'high'])
+      .describe('How much friction this step caused'),
     notes: z.string().describe('What caused friction or what worked well').optional(),
   })
   .strict();

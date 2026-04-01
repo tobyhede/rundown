@@ -75,9 +75,18 @@
       "type": "object",
       "required": ["clarity", "completeness", "accuracy"],
       "properties": {
-        "clarity": { "$ref": "#/$defs/Rating", "description": "Were instructions clear and unambiguous?" },
-        "completeness": { "$ref": "#/$defs/Rating", "description": "Were all necessary instructions provided?" },
-        "accuracy": { "$ref": "#/$defs/Rating", "description": "Did following instructions produce correct results?" }
+        "clarity": {
+          "$ref": "#/$defs/Rating",
+          "description": "Were instructions clear and unambiguous?"
+        },
+        "completeness": {
+          "$ref": "#/$defs/Rating",
+          "description": "Were all necessary instructions provided?"
+        },
+        "accuracy": {
+          "$ref": "#/$defs/Rating",
+          "description": "Did following instructions produce correct results?"
+        }
       },
       "additionalProperties": false
     },
