@@ -1,17 +1,14 @@
 ---
 name: writing-plans
 description: Use when planning and decomposing work before making any code changes.
-schema: ${CLAUDE_PLUGIN_ROOT}schemas/plan.schema.json
-runbook: ${CLAUDE_PLUGIN_ROOT}runbooks/planning/write-plan.runbook.md
 ---
 
 # Writing Plans
 
 <important>
 ## Runbook-Orchestrated Skill
-This skill has a supporting Rundown runbook that starts automatically.
-If the runbook is not active, start it manually: `rd run rundown:write-plan`
-Invoke the running-runbooks skill: `Skill(skill: "rundown:running-runbooks")`
+Start the runbook: `rd run rundown:write-plan`
+Then invoke the running-runbooks skill: `Skill(skill: "rundown:running-runbooks")`
 </important>
 
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # e2e-entrypoint.sh — Container entrypoint for E2E test harness
-# Validates the full plugin workflow: claude -p → /writing-plans skill → runbook execution
+# Validates the full plugin workflow: claude -p → /writing-plans skill → agent runs rd run → runbook execution
 set -euo pipefail
 
 LOG_DIR="$HOME/logs"
@@ -88,7 +88,7 @@ fi
 # ── 4. Run claude -p ─────────────────────────────────────────────────────────
 
 hr
-log "Phase 4: Running claude -p with /writing-plans skill..."
+log "Phase 4: Running claude -p with /writing-plans skill (agent follows skill body to start runbook)..."
 
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 WORKFLOW_LOG="$LOG_DIR/workflow-${TIMESTAMP}.jsonl"
