@@ -210,19 +210,20 @@ export function isResolvedForClause(fc: ParsedForClause): fc is ForClause {
 }
 
 /**
- * Type guard: checks if a step has fully resolved FOR bounds.
+ * Type guard: checks if a step has fully resolved FOR bounds and runbook refs.
  *
- * Returns true for non-FOR steps (which trivially have no unresolved bounds)
- * and for FOR steps whose forClause is a resolved {@link ForClause}.
+ * Returns true for steps without FOR clauses or substeps that contain no
+ * unresolved references, and for FOR steps whose forClause is resolved.
  *
  * @param step - The Step to check
- * @returns True if `step` is a `ResolvedStep`, meaning all FOR bounds are concrete numbers
+ * @returns True if `step` is a `ResolvedStep`, meaning all references are resolved
  */
 export function isResolvedStep(
   step: Step,
 ): step is Exclude<ResolvedStep, ResolvedStepWithPromptedFor> {
-  if (step.kind !== 'for') return true;
-  return isResolvedForClause(step.forClause);
+  if (step.kind === 'for') return isResolvedForClause(step.forClause);
+  if (step.kind === 'substeps') return !step.substeps.some(hasUnresolvedRunbooks);
+  return true;
 }
 
 /**

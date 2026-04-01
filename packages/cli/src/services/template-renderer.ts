@@ -533,8 +533,9 @@ function resolveStepSubsteps(
  * The original FOR text is preserved as `prompt` text for the agent to
  * drive iteration manually.
  *
- * When a RunbookRef variable is undefined or resolves to an invalid path,
- * a warning is emitted and the entry is dropped from the runbooks array.
+ * When a RunbookRef variable is undefined, it is preserved as literal
+ * `{{ ref }}` text — consistent with general template variable behavior.
+ * FOR-scoped refs are always preserved for runtime expansion.
  *
  * After resolution, validates that loop-only controls (GOTO...AT, NEXT, BREAK)
  * don't reference steps whose FOR clauses were marked as prompted.

@@ -958,7 +958,7 @@ export function extractRunbookList(content: string): RunbookEntry[] {
 
   for (const line of lines) {
     // Literal runbook path
-    const pathMatch = /^\s*-\s+(\S+\.runbook\.md)\s*$/.exec(line);
+    const pathMatch = RUNBOOK_PATH_RE.exec(line);
     if (pathMatch) {
       entries.push(pathMatch[1]);
       continue;

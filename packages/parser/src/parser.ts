@@ -506,7 +506,7 @@ function handleListItemTransition(
 
 function handleListItemContent(
   text: string,
-  isRunbookRef: boolean,
+  isRunbookListEntry: boolean,
   node: Node,
   ctx: ActiveStepContext,
 ): void {
@@ -514,7 +514,7 @@ function handleListItemContent(
   if (ctx.currentStep.pendingSubstep) {
     // Check ordering BEFORE adding content
     // In substeps: text cannot appear after transitions
-    if (ctx.currentStep.pendingSubstep.hasSeenTransitions && !isRunbookRef) {
+    if (ctx.currentStep.pendingSubstep.hasSeenTransitions && !isRunbookListEntry) {
       throw new RunbookSyntaxError(
         `Substep ${ctx.currentStep.name}.${ctx.currentStep.pendingSubstep.id}${lineNum}: Prompt text must appear before code blocks or runbooks.`,
       );
@@ -522,12 +522,12 @@ function handleListItemContent(
     // Only add content after validation passes
     ctx.currentStep.pendingSubstep.content += ` - ${text}\n`;
     // Mark content seen if runbook list
-    if (isRunbookRef) {
+    if (isRunbookListEntry) {
       ctx.currentStep.pendingSubstep.hasSeenContent = true;
     }
   } else {
     // Check ordering BEFORE adding content
-    if (ctx.currentStep.hasSeenContent && !isRunbookRef) {
+    if (ctx.currentStep.hasSeenContent && !isRunbookListEntry) {
       throw new RunbookSyntaxError(
         `Step ${ctx.currentStep.name}${lineNum}: Prompt text must appear before code blocks, substeps, or runbooks.`,
       );
@@ -535,7 +535,7 @@ function handleListItemContent(
     // Only add content after validation passes
     const itemText = ` - ${text}\n`;
     ctx.currentStep.content += itemText;
-    if (!isRunbookRef) {
+    if (!isRunbookListEntry) {
       ctx.implicitText += itemText;
     } else {
       // Mark content seen if runbook list
