@@ -307,6 +307,10 @@ npm run test:mutate:cli     # Mutation testing for cli only
 npm run test:mutate:plugin  # Mutation testing for plugin only
 npm run test:property # Property-based tests
 npm run test:perf     # Performance benchmarks
+npm run verify:claude    # Docker: verify CLI+plugin install (local build)
+npm run verify:claude:npm  # Docker: verify install from npm registry
+npm run test:e2e         # Docker: E2E plugin workflow test
+npm run test:e2e:shell   # Docker: interactive shell in E2E container
 ```
 
 ## Testing Conventions
@@ -400,7 +404,7 @@ Currently supported internally: `echo`, `prompt`. Unsupported commands fall back
 - [docs/SCRIPTING.md](docs/SCRIPTING.md) - Scripting and automation guide
 - [docs/AGENT-ORCHESTRATION.md](docs/AGENT-ORCHESTRATION.md) - Subagent delegation, context discovery, and delegation completion
 - [docs/PROJECT-INTEGRATION.md](docs/PROJECT-INTEGRATION.md) - Project integration guide
-- [docs/DOCKER.md](docs/DOCKER.md) - Docker verification pipeline
+- [docs/DOCKER.md](docs/DOCKER.md) - Docker testing (verification, E2E, plugin smoke tests)
 - [docs/SCENARIOS.md](docs/SCENARIOS.md) - Scenarios and test runbook standard
 - [docs/RDX.md](docs/RDX.md) - RDX JSON-to-Markdown CLI reference
 - [docs/RDPATH.md](docs/RDPATH.md) - rdpath path assembly CLI reference

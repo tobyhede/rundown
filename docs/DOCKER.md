@@ -1,31 +1,35 @@
-# Docker Verification
+# Docker Testing
 
-Docker-based verification tests CLI and plugin installation in a clean Linux container.
+Docker-based tests verify CLI installation, plugin integration, and end-to-end workflows in clean Linux containers.
 
-## Modes
+## Quick Start
+
+| Test | Command | Purpose |
+|------|---------|---------|
+| Verify (local) | `npm run verify:claude` | Build from source, install in container |
+| Verify (npm) | `npm run verify:claude:npm` | Install from npm registry |
+| E2E | `npm run test:e2e` | Full plugin workflow (claude -p → runbook) |
+| E2E shell | `npm run test:e2e:shell` | Interactive shell in E2E container |
+
+All scripts can be run from a worktree — they resolve paths relative to their own location.
+
+## Verification Pipeline
+
+### Modes
 
 | Mode | Purpose | When to use |
 |------|---------|-------------|
 | `local` | Build from source, pack tarballs, install in container | Pre-publish verification |
 | `npm` | Install from npm registry at runtime | Post-publish verification |
 
-## Quick Start
-
-```bash
-./scripts/verify-install.sh local   # Pre-publish: build, pack, verify
-./scripts/verify-install.sh npm     # Post-publish: install from registry
-```
-
-The script can be run from a worktree — it resolves paths relative to its own location.
-
-## What It Verifies
+### What It Verifies
 
 1. `rd` and `rundown` binaries are executable
 2. Plugin directory exists with expected files and directories
 3. A test runbook executes successfully
 4. Claude Code integration (if credentials are available)
 
-## Files
+### Files
 
 | File | Role |
 |------|------|
@@ -34,7 +38,7 @@ The script can be run from a worktree — it resolves paths relative to its own 
 | `scripts/docker-entrypoint.sh` | Container entrypoint running verification checks |
 | `docker-compose.verify.yml` | Compose services (`test-local`, `test-npm`) |
 
-## Direct Docker Usage
+### Direct Docker Usage
 
 ```bash
 # Build and run local verification
@@ -46,7 +50,7 @@ docker compose -f docker-compose.verify.yml build test-npm
 docker compose -f docker-compose.verify.yml run --rm test-npm
 ```
 
-## Interactive Shell
+### Interactive Shell
 
 Drop into the container for manual testing:
 
@@ -73,7 +77,7 @@ claude --plugin-dir "$PLUGIN_DIR"
 claude --plugin-dir "$PLUGIN_DIR" --debug-file /home/testuser/logs/claude-debug.log
 ```
 
-## Architecture
+### Architecture
 
 The Dockerfile uses a multi-stage build:
 
@@ -83,11 +87,66 @@ The Dockerfile uses a multi-stage build:
 
 The `verify-install.sh` orchestrator handles the host-side workflow: building packages, packing tarballs (local mode), preparing credentials, and launching the Docker container via Compose.
 
-### Claude Code Installation
+#### Claude Code Installation
 
 Claude Code is installed via the native installer (`curl -fsSL https://claude.ai/install.sh | bash`), not npm. The install runs as `testuser` after `WORKDIR /home/testuser` is set — this is required because the installer's `claude install` subcommand scans the current directory and will OOM if run from `/`.
 
 The binary is installed to `~/.local/bin/claude` and the `PATH` is extended in the Dockerfile.
+
+## E2E Test Harness
+
+Tests the full plugin workflow: `claude -p` triggers hook dispatch, slash command detection, and runbook execution against a realistic test application.
+
+**Prerequisites:** Docker, Claude Code credentials (mandatory — exits with error if missing).
+
+### Files
+
+| File | Role |
+|------|------|
+| `scripts/run-e2e.sh` | Host-side orchestrator (builds, packs, launches Docker) |
+| `scripts/Dockerfile.e2e` | Single-stage Dockerfile (node:24-slim, Claude Code via npm) |
+| `docker-compose.e2e.yml` | Compose service with volume mounts |
+| `scripts/e2e-entrypoint.sh` | Container entrypoint (6-phase test runner) |
+| `tests/e2e/fixtures/test-app/` | Test fixture (Hono + SQLite REST API) |
+
+### What It Verifies
+
+| Phase | Description |
+|-------|-------------|
+| 1. Prepare workspace | Copies fixture, installs deps, runs fixture tests, git init |
+| 2. Resolve plugin | Finds globally-installed plugin directory |
+| 3. Check credentials | Verifies Claude credentials exist (hard fail if missing) |
+| 4. Run claude -p | Executes `/write-plan` prompt with plugin (600s timeout) |
+| 5. Verify artifacts | Checks plan file exists, schema validation (rdx), structural validation |
+| 6. Report | Pass/fail summary with log locations |
+
+### Direct Docker Usage
+
+```bash
+docker compose -f docker-compose.e2e.yml build e2e
+docker compose -f docker-compose.e2e.yml run --rm e2e
+```
+
+### Interactive Shell
+
+```bash
+npm run test:e2e:shell
+# or: docker compose -f docker-compose.e2e.yml run --rm --entrypoint bash e2e
+```
+
+### Architecture
+
+The E2E Dockerfile uses a single-stage build with Claude Code installed via npm (`npm install -g @anthropic-ai/claude-code@2`) rather than the native installer. This simplifies the build at the cost of diverging from the production install path.
+
+## Plugin Smoke Tests
+
+Cross-platform tests for plugin functionality (CLI commands, hook dispatch, session management). These run without Docker by default.
+
+```bash
+cd packages/claude-code-plugin && npm run test:smoke
+```
+
+For containerized execution, see `packages/claude-code-plugin/Dockerfile.test` and the [plugin TESTING.md](../packages/claude-code-plugin/TESTING.md).
 
 ## Credential Persistence
 
@@ -117,6 +176,15 @@ If Claude prompts for login on every run:
 3. **Check `CLAUDE_CONFIG_DIR`**: Must be set in the container environment (the compose file sets this to `/home/testuser/.claude`)
 4. **Check token expiry**: The `expiresAt` field in `.credentials.json` — expired access tokens should auto-refresh via the refresh token, but if both are expired, re-login is needed
 5. **Reset credentials**: Delete `.claude-docker/.credentials.json` and run again to re-authenticate
+
+### Differences Between Systems
+
+| Aspect | Verification | E2E |
+|--------|-------------|-----|
+| Required | Optional (Claude tests skipped) | Mandatory (exit 1) |
+| Credential file | `.credentials.json` | `credentials.json` |
+| Cleanup | Persists across runs | Cleaned up on exit (`trap`) |
+| Onboarding marker | `hasCompletedOnboarding` | `onboardingComplete` |
 
 ## Logs
 
@@ -153,6 +221,16 @@ When using an interactive shell, pass `--debug-file` manually:
 
 ```bash
 claude --plugin-dir "$PLUGIN_DIR" --debug-file /home/testuser/logs/claude-debug.log
+```
+
+### E2E Logs
+
+The E2E entrypoint writes to `./logs/` on the host (via volume mount):
+
+```bash
+ls logs/e2e-*.log              # Entrypoint pass/fail output
+ls logs/workflow-*.jsonl       # claude -p JSON output
+ls logs/debug-*.log            # Claude Code debug logs
 ```
 
 ### Debugging Plugin Issues

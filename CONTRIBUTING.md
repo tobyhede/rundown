@@ -162,6 +162,15 @@ Before running Playwright tests for the first time, you may need to install the 
 pnpm exec playwright install
 ```
 
+### Docker Testing
+
+Docker-based tests verify installation and plugin integration in clean Linux containers. See [docs/DOCKER.md](docs/DOCKER.md) for full details.
+
+```bash
+npm run verify:claude    # Verify CLI+plugin install (local build)
+npm run test:e2e         # E2E plugin workflow test
+```
+
 ## Formatting and Linting
 
 We use Biome and ESLint to maintain code quality. Please ensure your code passes the linter before submitting a pull request.
