@@ -2,7 +2,7 @@ import { describe, it, expect } from '@jest/globals';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import * as path from 'node:path';
-import { PlanSchema, validate } from '../src/plan-schema.js';
+import { validate } from '../src/plan-schema.js';
 import { ZodError } from 'zod';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -75,13 +75,13 @@ describe('PlanSchema edge cases', () => {
 
   it('accepts plan with multiple tasks and subtasks', () => {
     const tasks = Array.from({ length: 5 }, (_, i) => ({
-      name: `Task ${i + 1}`,
-      files: [{ path: `src/file${i}.ts`, action: 'create' as const }],
+      name: `Task ${String(i + 1)}`,
+      files: [{ path: `src/file${String(i)}.ts`, action: 'create' as const }],
       subtasks: Array.from({ length: 3 }, (_, j) => ({
-        name: `Subtask ${j + 1}`,
-        description: `Do step ${j + 1}`,
+        name: `Subtask ${String(j + 1)}`,
+        description: `Do step ${String(j + 1)}`,
       })),
-      commit: { files: [`src/file${i}.ts`], message: `feat: task ${i + 1}` },
+      commit: { files: [`src/file${String(i)}.ts`], message: `feat: task ${String(i + 1)}` },
     }));
 
     const plan = validate({

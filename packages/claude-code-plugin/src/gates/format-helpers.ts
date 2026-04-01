@@ -23,6 +23,7 @@ import { asExecError } from '../gate-loader.js';
  */
 export function extractExecError(error: unknown): string {
   const exec = asExecError(error);
+  // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- intentional: empty-string stdout/stderr must fall through
   return exec.stdout || exec.stderr || exec.message || 'Unknown error';
 }
 

@@ -54,7 +54,7 @@ describe('validate-plan.js', () => {
   });
 
   it('exits 1 for invalid JSON', () => {
-    const tmpFile = path.join(os.tmpdir(), `bad-plan-${Date.now()}.json`);
+    const tmpFile = path.join(os.tmpdir(), `bad-plan-${String(Date.now())}.json`);
     fs.writeFileSync(tmpFile, '{ not valid json }');
     try {
       const result = runScript(tmpFile);
@@ -66,7 +66,7 @@ describe('validate-plan.js', () => {
   });
 
   it('exits 1 for schema-invalid plan', () => {
-    const tmpFile = path.join(os.tmpdir(), `incomplete-plan-${Date.now()}.json`);
+    const tmpFile = path.join(os.tmpdir(), `incomplete-plan-${String(Date.now())}.json`);
     fs.writeFileSync(tmpFile, JSON.stringify({ name: 'Incomplete' }));
     try {
       const result = runScript(tmpFile);

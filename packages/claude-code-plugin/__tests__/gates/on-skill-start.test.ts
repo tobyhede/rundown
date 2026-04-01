@@ -233,6 +233,7 @@ runbook: test-runbook
       it('returns Unknown error when error has no useful properties', async () => {
         mockReadForSkill('test-skill', skillContent);
         mockRundown.mockImplementation(() => {
+          // eslint-disable-next-line @typescript-eslint/only-throw-error -- testing non-Error throw handling
           throw { code: 'ERR' };
         });
 

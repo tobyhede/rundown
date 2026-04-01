@@ -75,7 +75,7 @@ export function checkTddCycle(plan: Plan): StructuralIssue[] {
       issues.push({
         rule: 'tdd-cycle',
         severity: 'warning',
-        path: `tasks/${t}`,
+        path: `tasks/${String(t)}`,
         message: `Task "${task.name}" has files but no subtasks suggesting a TDD cycle`,
       });
     }
@@ -100,7 +100,7 @@ export function checkCommitSteps(plan: Plan): StructuralIssue[] {
       issues.push({
         rule: 'commit-required',
         severity: 'warning',
-        path: `tasks/${t}`,
+        path: `tasks/${String(t)}`,
         message: `Task "${task.name}" has files but no commit step`,
       });
     }
@@ -129,7 +129,7 @@ export function checkCommitFileConsistency(plan: Plan): StructuralIssue[] {
         issues.push({
           rule: 'commit-file-consistency',
           severity: 'error',
-          path: `tasks/${t}/commit/files/${c}`,
+          path: `tasks/${String(t)}/commit/files/${String(c)}`,
           message: `Commit file "${commitPath}" not in plan-level files`,
         });
       }
@@ -173,8 +173,8 @@ export function checkNoLineNumbers(plan: Plan): StructuralIssue[] {
             issues.push({
               rule: 'no-line-numbers',
               severity: 'error',
-              path: `tasks/${t}/subtasks/${s}/${suffix}`,
-              message: `Line number reference found: "${text.match(pattern)?.[0]}"`,
+              path: `tasks/${String(t)}/subtasks/${String(s)}/${suffix}`,
+              message: `Line number reference found: "${text.match(pattern)?.[0] ?? ''}"`,
             });
             break; // One issue per text field is enough
           }
@@ -204,7 +204,7 @@ export function checkFileConsistency(plan: Plan): StructuralIssue[] {
         issues.push({
           rule: 'file-consistency',
           severity: 'error',
-          path: `tasks/${t}/files/${f}`,
+          path: `tasks/${String(t)}/files/${String(f)}`,
           message: `Task file "${file.path}" not in plan-level files`,
         });
       }

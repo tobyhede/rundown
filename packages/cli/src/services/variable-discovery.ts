@@ -68,7 +68,7 @@ function detectGitBranch(): string | null {
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
     });
-    const branch = (result as string).trim();
+    const branch = result.trim();
     if (!branch || branch === 'HEAD') return null;
     return branch;
   } catch {
