@@ -416,16 +416,53 @@ function validatePromptedForSteps(steps: readonly ResolvedStep[]): void {
 // ─── RunbookRef resolution ──────────────────────────────────────────────────
 
 /**
+ * Map a ParsedSubstep to a resolved Substep with the given runbook paths.
+ *
+ * Explicit field-by-field construction ensures TypeScript verifies every field
+ * assignment — no casts, no spread from ParsedSubstep.
+ *
+ * @param substep - Source parsed substep
+ * @param runbooks - Resolved runbook paths (or undefined if none)
+ * @returns Resolved substep
+ */
+function toResolvedSubstep(substep: ParsedSubstep, runbooks: string[] | undefined): Substep {
+  return {
+    id: substep.id,
+    description: substep.description,
+    command: substep.command,
+    prompt: substep.prompt,
+    transitions: substep.transitions,
+    runbooks: runbooks?.length ? runbooks : undefined,
+    line: substep.line,
+  };
+}
+
+/**
+ * Check whether a RunbookRef variable path is scoped to a FOR loop variable.
+ *
+ * Returns true when the ref is the loop variable itself (`item`) or a
+ * dotted path rooted on it (`item.runbook`). These refs are only resolvable
+ * at iteration time, so the resolver should preserve them as placeholder text.
+ */
+function isForScoped(ref: string, forVariable: string | undefined): boolean {
+  if (!forVariable) return false;
+  return ref === forVariable || ref.startsWith(forVariable + '.');
+}
+
+/**
  * Resolve RunbookRef entries in a parsed substep's runbooks array.
  *
  * Resolves each `RunbookRef` to a concrete `.runbook.md` path using the
  * provided template variables. Literal string entries pass through unchanged.
- * Unresolvable or invalid refs produce warnings and are dropped.
+ * Unresolvable or invalid refs produce warnings and are dropped — except
+ * refs scoped to a FOR loop variable, which are preserved as `{{ ref }}`
+ * placeholder strings for runtime expansion.
  *
  * @param substep - Parsed substep that may contain RunbookRef entries
  * @param variables - Template variable map for resolution
  * @param stepName - Step identifier for warning messages
  * @param warnings - Mutable array to collect resolution warnings
+ * @param forVariable - FOR loop variable name, if this substep is inside a FOR step
  * @returns Resolved substep with only string runbook paths
  */
 function resolveSubstepRunbooks(
@@ -433,10 +470,12 @@ function resolveSubstepRunbooks(
   variables: Readonly<Record<string, unknown>>,
   stepName: string,
   warnings: string[],
+  forVariable?: string,
 ): Substep {
   if (!substep.runbooks || !substep.runbooks.some(isRunbookRef)) {
-    // No RunbookRef entries — structurally compatible, safe to cast
-    return substep as Substep;
+    // No RunbookRef entries — filter to strings for type safety
+    const runbooks = substep.runbooks?.filter((e): e is string => typeof e === 'string');
+    return toResolvedSubstep(substep, runbooks);
   }
 
   const resolvedRunbooks: string[] = [];
@@ -448,6 +487,12 @@ function resolveSubstepRunbooks(
     // Resolve RunbookRef
     const value = resolveTemplatePath(entry.ref, variables);
     if (value === undefined) {
+      // Inside a FOR loop, refs scoped to the loop variable are runtime-only —
+      // preserve as placeholder text for expandLoopVariables() at iteration time
+      if (isForScoped(entry.ref, forVariable)) {
+        resolvedRunbooks.push(`{{ ${entry.ref} }}`);
+        continue;
+      }
       warnings.push(
         `Step "${stepName}" substep "${substep.id}": unresolved runbook reference "{{${entry.ref}}}"`,
       );
@@ -462,10 +507,7 @@ function resolveSubstepRunbooks(
     resolvedRunbooks.push(value);
   }
 
-  return {
-    ...substep,
-    runbooks: resolvedRunbooks.length > 0 ? resolvedRunbooks : undefined,
-  } as Substep;
+  return toResolvedSubstep(substep, resolvedRunbooks);
 }
 
 /**
@@ -475,6 +517,7 @@ function resolveSubstepRunbooks(
  * @param variables - Template variable map for resolution
  * @param stepName - Step identifier for warning messages
  * @param warnings - Mutable array to collect resolution warnings
+ * @param forVariable - FOR loop variable name, if substeps are inside a FOR step
  * @returns Array of resolved substeps
  */
 function resolveStepSubsteps(
@@ -482,8 +525,11 @@ function resolveStepSubsteps(
   variables: Readonly<Record<string, unknown>>,
   stepName: string,
   warnings: string[],
+  forVariable?: string,
 ): Substep[] {
-  return substeps.map((ss) => resolveSubstepRunbooks(ss, variables, stepName, warnings));
+  return substeps.map((ss) =>
+    resolveSubstepRunbooks(ss, variables, stepName, warnings, forVariable),
+  );
 }
 
 // ─── FOR clause bound + RunbookRef resolution ───────────────────────────────
@@ -530,7 +576,15 @@ export function resolveForBounds(
     }
 
     // FOR step — resolve both FOR bounds and RunbookRef entries
-    const resolvedSubsteps = resolveStepSubsteps(step.substeps, variables, step.name, warnings);
+    // Pass the FOR variable name so loop-scoped RunbookRefs are preserved for runtime expansion
+    const forVariable = step.forClause.variable;
+    const resolvedSubsteps = resolveStepSubsteps(
+      step.substeps,
+      variables,
+      step.name,
+      warnings,
+      forVariable,
+    );
 
     if (!isUnresolvedForClause(step.forClause)) {
       const { forClause, ...rest } = step;

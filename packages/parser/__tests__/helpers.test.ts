@@ -165,6 +165,12 @@ Just a description, no runbooks.`;
     const result = extractRunbookList(content);
     expect(result).toEqual([]);
   });
+
+  it('should capture template ref with numeric path segments', () => {
+    const content = `- {{ context.ancestors.0.vars.child }}`;
+    const result = extractRunbookList(content);
+    expect(result).toEqual([{ ref: 'context.ancestors.0.vars.child' }]);
+  });
 });
 
 describe('isPromptCodeBlock', () => {

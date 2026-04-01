@@ -502,4 +502,77 @@ Say {{ greeting }}.
     expect(result.stdout).toContain('Variables:');
     expect(result.stdout).toContain('greeting');
   });
+
+  describe('RunbookRef resolution', () => {
+    it('resolves RunbookRef with --var to concrete path', async () => {
+      const runbookPath = path.join(workspace.cwd, 'meta.runbook.md');
+      fs.writeFileSync(
+        runbookPath,
+        `---
+name: meta
+vars:
+  Target: ""
+---
+## 1. Execute
+- {{ Target }}
+`,
+      );
+
+      const result = await runCliInProcess(
+        `resolve ${runbookPath} --var Target=child.runbook.md --json`,
+        workspace,
+      );
+      const output = JSON.parse(result.stdout);
+
+      expect(output.valid).toBe(true);
+      expect(output.errors).toEqual([]);
+      // No unresolved warnings for Target — it was resolved by the RunbookRef resolver
+      const targetWarning = output.warnings?.find((w: { message: string }) =>
+        w.message.includes('Target'),
+      );
+      expect(targetWarning).toBeUndefined();
+    });
+
+    it('warns on undefined RunbookRef variable', async () => {
+      const runbookPath = path.join(workspace.cwd, 'meta.runbook.md');
+      fs.writeFileSync(
+        runbookPath,
+        `## 1. Execute
+- {{ MissingRunbook }}
+`,
+      );
+
+      const result = await runCliInProcess(`resolve ${runbookPath} --json`, workspace);
+      const output = JSON.parse(result.stdout);
+
+      expect(output.valid).toBe(true);
+      // Should have a warning about the unresolved runbook reference
+      const refWarning = output.warnings?.find((w: { message: string }) =>
+        w.message.includes('unresolved runbook reference'),
+      );
+      expect(refWarning).toBeDefined();
+    });
+
+    it('warns when RunbookRef resolves to non-.runbook.md path', async () => {
+      const runbookPath = path.join(workspace.cwd, 'meta.runbook.md');
+      fs.writeFileSync(
+        runbookPath,
+        `## 1. Execute
+- {{ Target }}
+`,
+      );
+
+      const result = await runCliInProcess(
+        `resolve ${runbookPath} --var Target=not-a-runbook.txt --json`,
+        workspace,
+      );
+      const output = JSON.parse(result.stdout);
+
+      expect(output.valid).toBe(true);
+      const pathWarning = output.warnings?.find((w: { message: string }) =>
+        w.message.includes('not a valid runbook path'),
+      );
+      expect(pathWarning).toBeDefined();
+    });
+  });
 });

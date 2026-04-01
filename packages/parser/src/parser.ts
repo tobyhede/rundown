@@ -12,6 +12,7 @@ import {
   convertToTransitions,
   extractRunbookList,
   isRunbookListLine,
+  TEMPLATE_VAR_REF_RE,
   isExecutableCodeBlock,
   isPromptCodeBlock,
   escapeForShellSingleQuote,
@@ -586,8 +587,7 @@ function handleListItem(node: ListItem, ctx: ActiveStepContext): typeof SKIP | u
   } else {
     const trimmed = text.trim();
     const isRunbookListEntry =
-      /^\S+\.runbook\.md$/.test(trimmed) ||
-      /^\{\{\s*[a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*\s*\}\}$/.test(trimmed);
+      /^\S+\.runbook\.md$/.test(trimmed) || TEMPLATE_VAR_REF_RE.test(trimmed);
     handleListItemContent(text, isRunbookListEntry, node, ctx);
   }
 }

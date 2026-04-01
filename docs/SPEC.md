@@ -111,6 +111,8 @@ These two forms are execution-equivalent:
 - review-structural-integrity.runbook.md
 ```
 
+Runbook list entries may use template variable references (`{{ VarName }}`) instead of literal paths. These are resolved to concrete `.runbook.md` paths during the variable resolution phase. Undefined or invalid references produce warnings and are dropped from the list.
+
 ### 3.4 Runtime Target Identity
 Runtime dispatch/completion identity is canonicalized as:
 

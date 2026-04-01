@@ -1490,5 +1490,59 @@ describe('resolveForBounds', () => {
         (result.steps[0] as { substeps: { runbooks?: string[] }[] }).substeps[0].runbooks,
       ).toEqual(['setup.runbook.md', 'deploy.runbook.md', 'cleanup.runbook.md']);
     });
+
+    it('preserves FOR-scoped RunbookRef as placeholder text', () => {
+      const step: StepWithFor = {
+        kind: 'for',
+        name: '1',
+        description: 'Deploy',
+        forClause: { variable: 'server', source: 'servers', start: 1 },
+        substeps: [{ id: '1', description: 'Sub', runbooks: [{ ref: 'server.runbook' }] }],
+      };
+      const runbook = makeRunbook([step]);
+      const { runbook: result, warnings } = resolveForBounds(runbook, {});
+      // No warning — the ref is FOR-scoped, not truly missing
+      expect(warnings).toEqual([]);
+      const resolved = result.steps[0];
+      expect(resolved.kind).toBe('for');
+      // Preserved as placeholder text for runtime expansion
+      expect((resolved as { substeps: { runbooks?: string[] }[] }).substeps[0].runbooks).toEqual([
+        '{{ server.runbook }}',
+      ]);
+    });
+
+    it('warns on non-FOR-scoped undefined ref even inside FOR step', () => {
+      const step: StepWithFor = {
+        kind: 'for',
+        name: '1',
+        description: 'Deploy',
+        forClause: { variable: 'server', source: 'servers', start: 1 },
+        substeps: [{ id: '1', description: 'Sub', runbooks: [{ ref: 'Unknown' }] }],
+      };
+      const runbook = makeRunbook([step]);
+      const { warnings } = resolveForBounds(runbook, {});
+      expect(warnings).toEqual([
+        expect.stringContaining('unresolved runbook reference "{{Unknown}}"'),
+      ]);
+    });
+
+    it('resolves RunbookRef with numeric path segments', () => {
+      const step: Step = {
+        kind: 'substeps',
+        name: '1',
+        description: 'Execute',
+        substeps: [
+          { id: '1', description: 'Sub', runbooks: [{ ref: 'context.ancestors.0.runbook' }] },
+        ],
+      };
+      const runbook = makeRunbook([step]);
+      const { runbook: result, warnings } = resolveForBounds(runbook, {
+        context: { ancestors: [{ runbook: 'parent.runbook.md' }] },
+      });
+      expect(warnings).toEqual([]);
+      expect(
+        (result.steps[0] as { substeps: { runbooks?: string[] }[] }).substeps[0].runbooks,
+      ).toEqual(['parent.runbook.md']);
+    });
   });
 });

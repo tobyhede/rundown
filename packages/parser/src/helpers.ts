@@ -904,9 +904,28 @@ export function convertToTransitions(
   return { transitions };
 }
 
+/**
+ * The variable path segment pattern shared across template variable regexes.
+ *
+ * Supports identifiers, dotted paths, and numeric array indices:
+ * `name`, `item.name`, `context.ancestors.0.vars.child`
+ *
+ * This is the regex source string (not a compiled regex) so it can be
+ * embedded in other patterns without anchor conflicts.
+ */
+const VAR_PATH_SEGMENT = '[a-zA-Z_][a-zA-Z0-9_]*(?:\\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*';
+
+/**
+ * Regex matching a standalone template variable reference.
+ *
+ * Matches: `{{ VarName }}`, `{{ config.runbook }}`, `{{ items.0.path }}`, `{{x}}`
+ * Captures the variable path in group 1.
+ * Exported for reuse in the parser's list-item handler.
+ */
+export const TEMPLATE_VAR_REF_RE = new RegExp(`^\\{\\{\\s*(${VAR_PATH_SEGMENT})\\s*\\}\\}$`);
+
 /** Regex for template variable references in runbook list entries. */
-const RUNBOOK_REF_RE =
-  /^\s*-\s+\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)\s*\}\}\s*$/;
+const RUNBOOK_REF_RE = new RegExp(`^\\s*-\\s+\\{\\{\\s*(${VAR_PATH_SEGMENT})\\s*\\}\\}\\s*$`);
 
 /** Regex for literal runbook path list entries. */
 const RUNBOOK_PATH_RE = /^\s*-\s+(\S+\.runbook\.md)\s*$/;
