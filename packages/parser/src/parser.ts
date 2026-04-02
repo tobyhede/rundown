@@ -2,7 +2,7 @@ import { fromMarkdown } from 'mdast-util-from-markdown';
 import { visit, SKIP } from 'unist-util-visit';
 import type { Node } from 'unist';
 import type { Code, Heading, List, ListItem, Paragraph, PhrasingContent } from 'mdast';
-import type { Step, Substep, Command, ParsedForClause, ParseResult } from './ast.js';
+import type { Step, ParsedSubstep, Command, ParsedForClause, ParseResult } from './ast.js';
 import type { Transitions } from './schemas.js';
 import { type ParsedConditional, RunbookSyntaxError } from './types.js';
 import {
@@ -11,6 +11,8 @@ import {
   parseConditional,
   convertToTransitions,
   extractRunbookList,
+  isRunbookListLine,
+  TEMPLATE_VAR_REF_RE,
   isExecutableCodeBlock,
   isPromptCodeBlock,
   escapeForShellSingleQuote,
@@ -121,7 +123,7 @@ interface StepBuilder {
   hasSeenContent: boolean;
   hasSeenTransitions: boolean;
   hasSeenPromptText: boolean;
-  substeps: Substep[];
+  substeps: ParsedSubstep[];
   pendingSubstep?: SubstepBuilder;
   content: string;
   line?: number;
@@ -189,7 +191,7 @@ function finalizePendingSubstep(ctx: VisitorContext): void {
     if (ps.content.trim()) {
       const contentWithoutRunbooks = ps.content
         .split('\n')
-        .filter((line) => !line.trim().startsWith('-') || !line.includes('.runbook.md'))
+        .filter((line) => !isRunbookListLine(line))
         .join('\n')
         .trim();
       if (contentWithoutRunbooks) {
@@ -199,7 +201,7 @@ function finalizePendingSubstep(ctx: VisitorContext): void {
 
     // Substep transitions: explicit if authored, placeholder DEFAULT_TRANSITIONS if not.
     // finalizeStep will override DEFAULT_TRANSITIONS with context-aware defaults.
-    const substep: Substep = {
+    const substep: ParsedSubstep = {
       id: ps.id,
       description: ps.description,
       command: ps.command,
@@ -504,7 +506,7 @@ function handleListItemTransition(
 
 function handleListItemContent(
   text: string,
-  isRunbookRef: boolean,
+  isRunbookListEntry: boolean,
   node: Node,
   ctx: ActiveStepContext,
 ): void {
@@ -512,7 +514,7 @@ function handleListItemContent(
   if (ctx.currentStep.pendingSubstep) {
     // Check ordering BEFORE adding content
     // In substeps: text cannot appear after transitions
-    if (ctx.currentStep.pendingSubstep.hasSeenTransitions && !isRunbookRef) {
+    if (ctx.currentStep.pendingSubstep.hasSeenTransitions && !isRunbookListEntry) {
       throw new RunbookSyntaxError(
         `Substep ${ctx.currentStep.name}.${ctx.currentStep.pendingSubstep.id}${lineNum}: Prompt text must appear before code blocks or runbooks.`,
       );
@@ -520,12 +522,12 @@ function handleListItemContent(
     // Only add content after validation passes
     ctx.currentStep.pendingSubstep.content += ` - ${text}\n`;
     // Mark content seen if runbook list
-    if (isRunbookRef) {
+    if (isRunbookListEntry) {
       ctx.currentStep.pendingSubstep.hasSeenContent = true;
     }
   } else {
     // Check ordering BEFORE adding content
-    if (ctx.currentStep.hasSeenContent && !isRunbookRef) {
+    if (ctx.currentStep.hasSeenContent && !isRunbookListEntry) {
       throw new RunbookSyntaxError(
         `Step ${ctx.currentStep.name}${lineNum}: Prompt text must appear before code blocks, substeps, or runbooks.`,
       );
@@ -533,7 +535,7 @@ function handleListItemContent(
     // Only add content after validation passes
     const itemText = ` - ${text}\n`;
     ctx.currentStep.content += itemText;
-    if (!isRunbookRef) {
+    if (!isRunbookListEntry) {
       ctx.implicitText += itemText;
     } else {
       // Mark content seen if runbook list
@@ -583,8 +585,10 @@ function handleListItem(node: ListItem, ctx: ActiveStepContext): typeof SKIP | u
     const conditionals = Array.isArray(conditionalResult) ? conditionalResult : [conditionalResult];
     handleListItemTransition(conditionals, node, ctx);
   } else {
-    const isRunbookRef = /^\S+\.runbook\.md$/.test(text.trim());
-    handleListItemContent(text, isRunbookRef, node, ctx);
+    const trimmed = text.trim();
+    const isRunbookListEntry =
+      /^\S+\.runbook\.md$/.test(trimmed) || TEMPLATE_VAR_REF_RE.test(trimmed);
+    handleListItemContent(text, isRunbookListEntry, node, ctx);
   }
 }
 
@@ -766,7 +770,7 @@ function finalizeStep(
   // Substeps with explicit transitions (from authored conditionals) keep them as-is.
   // Substeps with placeholder DEFAULT_TRANSITIONS (no authored conditionals) get
   // context-aware defaults: DEFER under aggregation or with runbooks, DEFAULT otherwise.
-  const resolveSubstepDefaults = (substeps: Substep[]): Substep[] =>
+  const resolveSubstepDefaults = (substeps: ParsedSubstep[]): ParsedSubstep[] =>
     substeps.map((sub) => {
       if (sub.transitions !== DEFAULT_TRANSITIONS) return sub; // explicit — keep as-is
       if (sub.runbooks?.length) return { ...sub, transitions: DEFER_TRANSITIONS }; // delegation
@@ -784,11 +788,11 @@ function finalizeStep(
     }
     // Canonicalize each step-level runbook bullet into its own synthetic substep.
     // Synthetic substeps always DEFER (they delegate to runbooks).
-    const syntheticSubsteps: Substep[] = runbooks.map((runbookPath, index) => ({
+    const syntheticSubsteps: ParsedSubstep[] = runbooks.map((entry, index) => ({
       id: String(index + 1),
       description: '',
       prompt: index === 0 ? prompt : undefined,
-      runbooks: [runbookPath],
+      runbooks: [entry],
       transitions: DEFER_TRANSITIONS,
       line: step.line,
     }));

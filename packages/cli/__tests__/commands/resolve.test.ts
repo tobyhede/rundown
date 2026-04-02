@@ -502,4 +502,78 @@ Say {{ greeting }}.
     expect(result.stdout).toContain('Variables:');
     expect(result.stdout).toContain('greeting');
   });
+
+  describe('RunbookRef resolution', () => {
+    it('resolves RunbookRef with --var to concrete path', async () => {
+      const runbookPath = path.join(workspace.cwd, 'meta.runbook.md');
+      fs.writeFileSync(
+        runbookPath,
+        `---
+name: meta
+vars:
+  Target: ""
+---
+## 1. Execute
+- {{ Target }}
+`,
+      );
+
+      const result = await runCliInProcess(
+        `resolve ${runbookPath} --var Target=child.runbook.md --json`,
+        workspace,
+      );
+      const output = JSON.parse(result.stdout);
+
+      expect(output.valid).toBe(true);
+      expect(output.errors).toEqual([]);
+      // No unresolved warnings for Target — it was resolved by the RunbookRef resolver
+      const targetWarning = output.warnings?.find((w: { message: string }) =>
+        w.message.includes('Target'),
+      );
+      expect(targetWarning).toBeUndefined();
+    });
+
+    it('preserves undefined RunbookRef as literal text (no warning)', async () => {
+      const runbookPath = path.join(workspace.cwd, 'meta.runbook.md');
+      fs.writeFileSync(
+        runbookPath,
+        `## 1. Execute
+- {{ MissingRunbook }}
+`,
+      );
+
+      const result = await runCliInProcess(`resolve ${runbookPath} --json`, workspace);
+      const output = JSON.parse(result.stdout);
+
+      expect(output.valid).toBe(true);
+      // Undefined refs are preserved as literal text, not warned/dropped
+      const refWarning = output.warnings?.find((w: { message: string }) =>
+        w.message.includes('unresolved runbook reference'),
+      );
+      expect(refWarning).toBeUndefined();
+    });
+
+    it('resolves RunbookRef to any value without suffix validation', async () => {
+      const runbookPath = path.join(workspace.cwd, 'meta.runbook.md');
+      fs.writeFileSync(
+        runbookPath,
+        `## 1. Execute
+- {{ Target }}
+`,
+      );
+
+      const result = await runCliInProcess(
+        `resolve ${runbookPath} --var Target=rundown:write-plan --json`,
+        workspace,
+      );
+      const output = JSON.parse(result.stdout);
+
+      expect(output.valid).toBe(true);
+      // No path suffix validation — delegation validates at execution time
+      const pathWarning = output.warnings?.find((w: { message: string }) =>
+        w.message.includes('not a valid runbook path'),
+      );
+      expect(pathWarning).toBeUndefined();
+    });
+  });
 });

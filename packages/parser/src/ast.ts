@@ -120,6 +120,22 @@ export interface BoundRef {
 export type Bound = number | BoundRef;
 
 /**
+ * A reference to an unresolved template variable used as a runbook path.
+ *
+ * Produced by `extractRunbookList` when a runbook list entry contains `{{VarName}}`
+ * instead of a literal `.runbook.md` path. Resolution to a concrete path happens
+ * in a later pipeline phase.
+ */
+export interface RunbookRef {
+  readonly ref: string;
+}
+
+/**
+ * A runbook list entry: either a resolved path or an unresolved template reference.
+ */
+export type RunbookEntry = string | RunbookRef;
+
+/**
  * Numeric-range FOR window with at least one unresolved bound.
  *
  * Structurally mirrors {@link NumericWindow} but allows `BoundRef` values
@@ -167,10 +183,8 @@ export type UnresolvedForClause = UnresolvedNumericWindow | UnresolvedSourceWind
  */
 export type ParsedForClause = ForClause | UnresolvedForClause;
 
-/**
- * A substep within a step (H3 header)
- */
-export interface Substep {
+/** Shared fields common to parsed and resolved substep variants. */
+interface SubstepFields {
   /** Substep identifier: "1", "2", or "Name" for named */
   readonly id: string;
   /** Human-readable description from the substep header */
@@ -181,10 +195,27 @@ export interface Substep {
   readonly prompt?: string;
   /** Pass/fail transition handlers (always present — parser fills defaults) */
   readonly transitions: Transitions;
-  /** Referenced runbook files (.runbook.md) */
-  readonly runbooks?: readonly string[];
   /** Source line number for error reporting */
   readonly line?: number;
+}
+
+/**
+ * A substep as produced by the parser — may contain unresolved RunbookRef entries.
+ *
+ * Consumers that require resolved runbook paths should use {@link Substep} instead,
+ * which is produced by the resolution phase.
+ */
+export interface ParsedSubstep extends SubstepFields {
+  /** Referenced runbook files — may contain RunbookRef for template variables */
+  readonly runbooks?: readonly RunbookEntry[];
+}
+
+/**
+ * A resolved substep — all runbook references are concrete paths.
+ */
+export interface Substep extends SubstepFields {
+  /** Referenced runbook files (.runbook.md) */
+  readonly runbooks?: readonly string[];
 }
 
 /**
@@ -220,24 +251,32 @@ export interface StepWithCommand extends StepFields {
   readonly command: Command;
 }
 
-/** Step with child substeps (no FOR clause). */
+/** Step with child substeps — parser output, may have unresolved runbook refs. */
 export interface StepWithSubsteps extends StepFields {
+  readonly kind: 'substeps';
+  readonly substeps: readonly ParsedSubstep[];
+  /** Parser canonicalization marker for step-level runbook-list shorthand. */
+  readonly substepsDerivedFromRunbookList?: true;
+}
+
+/** Step with child substeps — all runbook refs resolved. */
+export interface ResolvedStepWithSubsteps extends StepFields {
   readonly kind: 'substeps';
   readonly substeps: readonly Substep[];
   /** Parser canonicalization marker for step-level runbook-list shorthand. */
   readonly substepsDerivedFromRunbookList?: true;
 }
 
-/** FOR loop step — always has substeps + forClause. */
+/** FOR loop step — parser output, may have unresolved FOR bounds and runbook refs. */
 export interface StepWithFor extends StepFields {
   readonly kind: 'for';
   readonly forClause: ParsedForClause;
-  readonly substeps: readonly Substep[];
+  readonly substeps: readonly ParsedSubstep[];
   /** Parser canonicalization marker for step-level runbook-list shorthand. */
   readonly substepsDerivedFromRunbookList?: true;
 }
 
-/** FOR loop step with fully resolved bounds — all BoundRef values resolved to numbers. */
+/** FOR loop step with fully resolved bounds and runbook refs. */
 export interface ResolvedStepWithFor extends StepFields {
   readonly kind: 'for';
   readonly forClause: ForClause;
@@ -271,20 +310,20 @@ export interface ResolvedStepWithPromptedFor extends StepFields {
  */
 export type Step = BaseStep | StepWithCommand | StepWithSubsteps | StepWithFor;
 
-/** A step where all FOR bounds are resolved. */
+/** A step where all FOR bounds and runbook refs are resolved. */
 export type ResolvedStep =
   | BaseStep
   | StepWithCommand
-  | StepWithSubsteps
+  | ResolvedStepWithSubsteps
   | ResolvedStepWithFor
   | ResolvedStepWithPromptedFor;
 
-/** Utility type for functions that accept any step with substeps. */
+/** Utility type for parser-output steps with substeps. */
 export type StepHavingSubsteps = StepWithSubsteps | StepWithFor;
 
 /** Utility type for resolved steps with substeps. */
 export type ResolvedStepHavingSubsteps =
-  | StepWithSubsteps
+  | ResolvedStepWithSubsteps
   | ResolvedStepWithFor
   | ResolvedStepWithPromptedFor;
 
@@ -308,7 +347,7 @@ export interface Runbook {
   readonly steps: readonly Step[];
 }
 
-/** A runbook where all FOR clause bounds are resolved to concrete numbers. */
+/** A runbook where all FOR clause bounds and runbook refs are resolved. */
 export interface ResolvedRunbook extends Omit<Runbook, 'steps'> {
   readonly steps: readonly ResolvedStep[];
 }

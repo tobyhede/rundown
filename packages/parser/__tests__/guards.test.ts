@@ -16,10 +16,12 @@ import {
   resolvedStepHasSubsteps,
   isPromptedForStep,
   areAllStepsResolved,
+  isRunbookRef,
+  hasUnresolvedRunbooks,
 } from '../src/guards.js';
 import type {
   Step,
-  Substep,
+  ParsedSubstep,
   ForClause,
   ResolvedStep,
   FullSourceWindow,
@@ -40,7 +42,7 @@ const createStep = (overrides: Record<string, unknown> = {}): Step => {
   return { ...obj, kind } as Step;
 };
 
-const createSubstep = (overrides: Partial<Substep> = {}): Substep => ({
+const createSubstep = (overrides: Partial<ParsedSubstep> = {}): ParsedSubstep => ({
   id: '1',
   description: 'Test substep',
   ...overrides,
@@ -587,5 +589,39 @@ describe('stepHasSubsteps mutation killing', () => {
     const commandStep = createStep({ command: { code: 'echo hi' } });
     expect(commandStep.kind).toBe('command');
     expect(stepHasSubsteps(commandStep)).toBe(false);
+  });
+});
+
+describe('isRunbookRef', () => {
+  it('returns true for RunbookRef object', () => {
+    expect(isRunbookRef({ ref: 'TargetRunbook' })).toBe(true);
+  });
+
+  it('returns false for string', () => {
+    expect(isRunbookRef('deploy.runbook.md')).toBe(false);
+  });
+});
+
+describe('hasUnresolvedRunbooks', () => {
+  it('returns true when substep has RunbookRef entries', () => {
+    const substep = createSubstep({ runbooks: [{ ref: 'Target' }] });
+    expect(hasUnresolvedRunbooks(substep)).toBe(true);
+  });
+
+  it('returns true with mixed literal and RunbookRef entries', () => {
+    const substep = createSubstep({
+      runbooks: ['setup.runbook.md', { ref: 'Target' }],
+    });
+    expect(hasUnresolvedRunbooks(substep)).toBe(true);
+  });
+
+  it('returns false when substep has only string runbooks', () => {
+    const substep = createSubstep({ runbooks: ['deploy.runbook.md'] });
+    expect(hasUnresolvedRunbooks(substep)).toBe(false);
+  });
+
+  it('returns false when substep has no runbooks', () => {
+    const substep = createSubstep();
+    expect(hasUnresolvedRunbooks(substep)).toBe(false);
   });
 });

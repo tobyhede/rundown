@@ -97,6 +97,27 @@ export const BoundRefSchema = z.object({
 });
 
 /**
+ * Pattern for template variable paths: identifiers with optional dotted segments
+ * including numeric array indices (e.g., `config.runbook`, `context.ancestors.0.vars.child`).
+ *
+ * Matches the same path syntax as the CLI's TEMPLATE_PATH_REGEX capture group.
+ */
+export const TEMPLATE_VAR_PATH_PATTERN =
+  /^[a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*$/;
+
+/**
+ * Zod schema for RunbookRef — an unresolved template variable reference used as a runbook path.
+ */
+export const RunbookRefSchema = z.object({
+  ref: z.string().regex(TEMPLATE_VAR_PATH_PATTERN),
+});
+
+/**
+ * Zod schema for RunbookEntry — either a literal path or a RunbookRef.
+ */
+export const RunbookEntrySchema = z.union([z.string(), RunbookRefSchema]);
+
+/**
  * Zod schema for Bound — either a resolved positive integer or a BoundRef.
  */
 export const BoundSchema = z.union([
@@ -319,7 +340,7 @@ export type Aggregation = Readonly<z.output<typeof AggregationSchema>>;
 export const SubstepSchema = z.object({
   id: z.string(),
   description: z.string(),
-  runbooks: z.array(z.string()).readonly().optional(),
+  runbooks: z.array(RunbookEntrySchema).readonly().optional(),
   command: CommandSchema.optional(),
   prompt: z.string().min(1).optional(), // .min(1) prevents empty strings
   transitions: TransitionsSchema,

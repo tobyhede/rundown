@@ -39,6 +39,11 @@ export {
 } from './runbook/types.js';
 
 // Events module (domain types for execution events)
+// Re-export RunbookRef explicitly from events to resolve the naming collision
+// with the parser's RunbookRef (template variable reference in runbook lists).
+// The event RunbookRef is the primary public API; parser consumers should
+// import RunbookRef directly from @rundown-org/parser.
+export type { RunbookRef } from './events/types.js';
 export * from './events/index.js';
 
 // CLI output module

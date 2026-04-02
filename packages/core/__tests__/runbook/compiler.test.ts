@@ -51,7 +51,7 @@ describe('runbook compiler', () => {
     const { runbook } = parseRunbookDocument(markdown);
     const steps = [...runbook.steps];
     if (!areAllStepsResolved(steps)) {
-      throw new Error('Test runbook has unresolved FOR bounds');
+      throw new Error('Test runbook has unresolved FOR bounds or runbook references');
     }
     return [...steps];
   }

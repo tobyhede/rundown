@@ -4,11 +4,11 @@ import type {
   Aggregation,
   Transitions,
   TransitionObject,
-  Substep,
   Runbook,
 } from '../types.js';
-import type { ParsedForClause } from '@rundown-org/parser';
-import { isWindowed } from '@rundown-org/parser';
+import type { ParsedSubstep } from '@rundown-org/parser';
+import type { ParsedForClause, RunbookEntry } from '@rundown-org/parser';
+import { isWindowed, isRunbookRef } from '@rundown-org/parser';
 import { stepIdToString } from '../step-id.js';
 import { renderCodeFence, renderHeading } from './primitives.js';
 
@@ -110,16 +110,26 @@ export function renderTransitions(transitions: Transitions, aggregation?: Aggreg
  * @param parentStepName - The parent step name (e.g., "1", "ErrorHandler")
  * @returns Markdown H3 header string for the substep
  */
-export function renderSubstep(substep: Substep, parentStepName: string): string {
+export function renderSubstep(substep: ParsedSubstep, parentStepName: string): string {
   const lines: string[] = [];
   lines.push(renderHeading(3, `${parentStepName}.${substep.id}`, substep.description));
   if (substep.runbooks?.length) {
     lines.push('');
-    for (const runbookPath of substep.runbooks) {
-      lines.push(`- ${runbookPath}`);
+    for (const entry of substep.runbooks) {
+      lines.push(`- ${renderRunbookEntry(entry)}`);
     }
   }
   return lines.join('\n');
+}
+
+/**
+ * Render a runbook entry to its Markdown representation.
+ *
+ * @param entry - A literal path or RunbookRef
+ * @returns The rendered string (path or `{{ ref }}` syntax)
+ */
+function renderRunbookEntry(entry: RunbookEntry): string {
+  return isRunbookRef(entry) ? `{{ ${entry.ref} }}` : entry;
 }
 
 /**
@@ -176,7 +186,7 @@ function renderForClause(forClause: ParsedForClause): string[] {
   return lines;
 }
 
-function getShorthandRunbookSubsteps(step: Step): readonly Substep[] | undefined {
+function getShorthandRunbookSubsteps(step: Step): readonly ParsedSubstep[] | undefined {
   if (step.kind !== 'substeps' && step.kind !== 'for') return undefined;
   if (step.substepsDerivedFromRunbookList !== true) return undefined;
   return step.substeps;
@@ -219,9 +229,9 @@ export function renderStep(step: Step): string {
       lines.push('');
     }
     for (const shorthandSubstep of shorthandSubsteps) {
-      const runbookPath = shorthandSubstep.runbooks?.[0];
-      if (!runbookPath) continue;
-      lines.push(`- ${runbookPath}`);
+      const entry = shorthandSubstep.runbooks?.[0];
+      if (!entry) continue;
+      lines.push(`- ${renderRunbookEntry(entry)}`);
     }
     lines.push('');
     return lines.join('\n').trim();

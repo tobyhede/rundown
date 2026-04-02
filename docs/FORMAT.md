@@ -226,11 +226,13 @@ Template variables with dotted paths (`{{item.name}}`) are resolved at runtime. 
 ## Runbook Lists
 
 ```ebnf
-runbook_list ::= ( "- " runbook_path newline )+
-runbook_path ::= non_ws_char+ ".runbook.md"
+runbook_list  ::= ( "- " runbook_entry newline )+
+runbook_entry ::= runbook_path | runbook_ref
+runbook_path  ::= non_ws_char+ ".runbook.md"
+runbook_ref   ::= "{{" ws? variable_path ws? "}}"
 ```
 
-Step-level runbook lists are shorthand for implicit sequential substeps. See [Transitions](#transitions) for bullet disambiguation priority.
+Step-level runbook lists are shorthand for implicit sequential substeps. Entries may be literal paths or template variable references (`runbook_ref`), which are resolved to concrete paths during the variable resolution phase. See [Transitions](#transitions) for bullet disambiguation priority.
 
 ## Body
 

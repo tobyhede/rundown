@@ -182,4 +182,20 @@ Hello.
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain('PASS:');
   });
+
+  it('passes check for runbook with RunbookRef template variable', async () => {
+    const runbookPath = path.join(workspace.cwd, 'meta.runbook.md');
+    fs.writeFileSync(
+      runbookPath,
+      `## 1. Execute
+- {{ TargetRunbook }}
+`,
+    );
+
+    const result = await runCliInProcess(`check ${runbookPath}`, workspace);
+
+    // check only parses, doesn't resolve variables — should pass
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('PASS:');
+  });
 });

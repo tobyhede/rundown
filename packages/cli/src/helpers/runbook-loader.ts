@@ -26,7 +26,7 @@ import { substituteRunbookVariables, resolveForBounds } from '../services/templa
  * @param _cwd - Unused, kept for signature compatibility
  * @returns Parsed steps with all FOR bounds resolved
  * @throws {Error} if runbookSrc is missing (corrupted state)
- * @throws {Error} if backward-compat path encounters unresolved FOR bounds (stale state)
+ * @throws {Error} if backward-compat path encounters unresolved FOR bounds or runbook references (stale state)
  * @throws {RunbookSyntaxError} if runbookSrc fails to parse as a runbook document
  *         (thrown by parseRunbookDocument)
  *
@@ -79,7 +79,7 @@ export function getRunbookFromState(state: RunbookState, _cwd: string): readonly
 
   if (!areAllStepsResolved(runbook.steps)) {
     throw new Error(
-      `Runbook ${state.runbook} has unresolved FOR bounds in pre-expanded state. ` +
+      `Runbook ${state.runbook} has unresolved FOR bounds or runbook references in pre-expanded state. ` +
         `This indicates stale state. Delete and re-run the runbook.`,
     );
   }

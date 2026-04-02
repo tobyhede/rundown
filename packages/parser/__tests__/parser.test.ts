@@ -2578,3 +2578,68 @@ echo "go"
     expect(steps[0].prompt).toBe('Some prompt text');
   });
 });
+
+describe('RunbookRef in runbook lists', () => {
+  it('captures template variable in substep runbook list as RunbookRef', () => {
+    const md = `## 1. Execute
+
+### 1.1 Run target
+- PASS CONTINUE
+- FAIL STOP
+
+ - {{ TargetRunbook }}
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].substeps).toHaveLength(1);
+    expect(steps[0].substeps![0].runbooks).toEqual([{ ref: 'TargetRunbook' }]);
+  });
+
+  it('captures mixed literal and template entries in substep', () => {
+    const md = `## 1. Execute
+
+### 1.1 Run workflow
+
+ - setup.runbook.md
+ - {{ DynamicRunbook }}
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].substeps![0].runbooks).toEqual(['setup.runbook.md', { ref: 'DynamicRunbook' }]);
+  });
+
+  it('does not include template variable in prompt text', () => {
+    const md = `## 1. Execute
+
+### 1.1 Run target
+Some prompt text
+
+ - {{ TargetRunbook }}
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].substeps![0].prompt).toBe('Some prompt text');
+    expect(steps[0].substeps![0].runbooks).toEqual([{ ref: 'TargetRunbook' }]);
+  });
+
+  it('canonicalizes step-level template variable to synthetic substep', () => {
+    const md = `## 1. Execute
+- PASS CONTINUE
+- FAIL STOP
+
+- {{ TargetRunbook }}
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].kind).toBe('substeps');
+    expect(steps[0].substepsDerivedFromRunbookList).toBe(true);
+    expect(steps[0].substeps).toHaveLength(1);
+    expect(steps[0].substeps![0].runbooks).toEqual([{ ref: 'TargetRunbook' }]);
+  });
+
+  it('captures dotted path in RunbookRef', () => {
+    const md = `## 1. Execute
+
+### 1.1 Run
+ - {{ config.target }}
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].substeps![0].runbooks).toEqual([{ ref: 'config.target' }]);
+  });
+});
