@@ -10,7 +10,7 @@ vars:
 
 # End-to-End Test
 
-## 1. Execute workflow
+## 1. Run the target runbook
 
 - PASS ALL CONTINUE
 - FAIL ANY STOP
@@ -21,7 +21,10 @@ vars:
 - PASS COMPLETE
 - FAIL COMPLETE
 
-Rate each step for clarity and friction. Note any instructions that were ambiguous, missing, or required improvisation. Include an overall assessment of the skill and runbook quality. Write execution feedback to the output path.
+Review each step for clarity and friction.
+Note any instructions that were ambiguous, missing, or required improvisation.
+Include an overall assessment of the skill and runbook quality.
+Write your feedback to the output path using the Feedback JSON schema.
 
 Schema: `${CLAUDE_PLUGIN_ROOT}schemas/feedback.schema.json`
 
