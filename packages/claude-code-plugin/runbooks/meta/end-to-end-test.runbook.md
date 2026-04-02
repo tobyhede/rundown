@@ -10,7 +10,7 @@ required:
 
 # End-to-End Test
 
-## 1. Execute workflow
+## 1. Run the target runbook
 
 - PASS ALL CONTINUE
 - FAIL ANY STOP
