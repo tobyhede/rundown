@@ -181,6 +181,44 @@ describe('Inline linkage integration (rd run --step)', () => {
       expect(linkResult.exitCode).toBe(1);
     });
 
+    it('rejects --step targeting a step with no substeps', async () => {
+      // Parent step 2 ("Done") has no substeps — inline linkage should be rejected
+      const parentContent = createRunbook({
+        title: 'Parent',
+        steps: [
+          { title: 'Setup', pass: 'CONTINUE', command: 'rd echo --result pass' },
+          { title: 'Done', pass: 'COMPLETE', content: 'Final step.' },
+        ],
+      });
+      await writeFile(join(workspace.cwd, 'parent.runbook.md'), parentContent);
+      await writePassingChild();
+
+      // Start parent in prompted mode — sits at step 1
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+      expect(result.exitCode).toBe(0);
+
+      // Advance parent to step 1 pass, then it should be at step 1
+      // Try to link to step 1 (no substep qualifier, step has no substeps)
+      result = await runCliInProcess('run child.runbook.md --step 1', workspace);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain('RD-815');
+      expect(result.stderr).toContain('no substeps');
+    });
+
+    it('preserves RundownError codes for delegation errors', async () => {
+      await writePassingChild();
+      await writeParentRunbook();
+
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+      expect(result.exitCode).toBe(0);
+
+      // Target nonexistent step 9 — should get RD-801 (DELEGATION_STEP_NOT_FOUND)
+      result = await runCliInProcess('run child.runbook.md --step 9', workspace);
+      expect(result.exitCode).toBe(1);
+      const output = result.stdout + result.stderr;
+      expect(output).toContain('RD-801');
+    });
+
     it('rejects --step when substep is already resolved', async () => {
       await writeParentRunbook();
       await writePassingChild();

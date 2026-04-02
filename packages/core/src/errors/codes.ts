@@ -279,6 +279,14 @@ export const ErrorCodes = {
       'The specified substep does not have a runbook reference (e.g., "- child.runbook.md").',
     docSlug: 'delegation-substep-no-runbook',
   },
+  DELEGATION_STEP_NO_SUBSTEPS: {
+    code: 'RD-815',
+    category: ErrorCategory.DELEGATION,
+    title: 'Step has no substeps',
+    description:
+      'Inline linkage requires targeting a substep. The specified step has no substeps to target.',
+    docSlug: 'delegation-step-no-substeps',
+  },
 
   // Generic
   UNKNOWN_ERROR: {

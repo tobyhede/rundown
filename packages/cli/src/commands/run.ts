@@ -7,6 +7,7 @@ import {
   SessionService,
   ExecutionLifecycleService,
   RunbookSyntaxError,
+  RundownError,
   isNodeError,
   getErrorMessage,
   deriveActiveFrame,
@@ -242,6 +243,8 @@ export function registerRunCommand(program: Command): void {
             output.message("Try 'rd ls --all' to list available runbooks.", 'dim');
           } else if (error instanceof RunbookSyntaxError) {
             output.error(`Syntax error: ${error.message}`, 'INVALID_SYNTAX');
+          } else if (error instanceof RundownError) {
+            output.error(error.message, error.errorCode.code);
           } else {
             output.error(getErrorMessage(error), 'UNKNOWN_ERROR');
           }
@@ -299,6 +302,10 @@ async function buildInlineLinkage(
       parsed.step,
       step.substeps.map((ss) => ss.id),
     );
+  }
+
+  if (!resolvedStepHasSubsteps(step) && !parsed.substep) {
+    throw Errors.delegationStepNoSubsteps(parsed.step);
   }
 
   if (parsed.substep) {
