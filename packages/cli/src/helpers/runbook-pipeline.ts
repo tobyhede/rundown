@@ -21,6 +21,7 @@ import {
   type ExecutionEventEmitter,
   type ResolvedRunbook,
   type DelegationLinkage,
+  type InlineLinkage,
   STATE_DIR,
   DelegationScanService,
   DelegationLock,
@@ -106,7 +107,7 @@ export interface PreparedRunbook {
 
 /** Result of starting a runbook execution loop via {@link startRunbook}. */
 export type RunbookStartResult =
-  | { ok: true; loopResult: 'done' | 'stopped' | 'waiting' }
+  | { ok: true; loopResult: 'done' | 'stopped' | 'waiting'; stateId: string }
   | { ok: false; error: string; code: string; details?: Record<string, unknown> };
 
 /**
@@ -542,6 +543,7 @@ export async function prepareRunbook(
  * @param options.runbookName - Name identifier for the runbook being launched
  * @param options.prompted - Whether to run in prompted mode (no auto-execution)
  * @param options.delegationLinkage - Optional parent delegation linkage for child runs
+ * @param options.inlineLinkage - Optional inline parent linkage for `rd run --step` child runs
  * @param options.afterInit - Optional callback invoked after state initialization with the new state ID
  * @returns RunbookStartResult
  */
@@ -552,6 +554,7 @@ async function launchRunbook(
     runbookName: string;
     prompted: boolean;
     delegationLinkage?: DelegationLinkage;
+    inlineLinkage?: InlineLinkage;
     afterInit?: (stateId: string) => Promise<void>;
   },
 ): Promise<RunbookStartResult> {
@@ -563,6 +566,7 @@ async function launchRunbook(
     runbookPath,
     prompted: options.prompted,
     delegation: options.delegationLinkage,
+    inlineLinkage: options.inlineLinkage,
     runbookSrc: rawContent,
     templateVars: mergedVariables,
   });
@@ -606,7 +610,7 @@ async function launchRunbook(
     emitter,
   );
 
-  return { ok: true, loopResult };
+  return { ok: true, loopResult, stateId: state.id };
 }
 
 /**
@@ -617,17 +621,26 @@ async function launchRunbook(
  * @param options - Start options
  * @param options.file - Runbook file path or name
  * @param options.prompted - Whether to run in prompted mode
+ * @param options.inlineLinkage - Optional inline parent linkage for `rd run --step` child runs
+ * @param options.afterInit - Optional callback invoked after state initialization with the new state ID
  * @returns RunbookStartResult
  * @throws {Error} On state persistence or machine initialization failures
  */
 export async function startRunbook(
   ctx: RunPipelineContext,
   prepared: PreparedRunbook,
-  options: { file: string; prompted?: boolean },
+  options: {
+    file: string;
+    prompted?: boolean;
+    inlineLinkage?: InlineLinkage;
+    afterInit?: (stateId: string) => Promise<void>;
+  },
 ): Promise<RunbookStartResult> {
   return launchRunbook(ctx, prepared, {
     runbookName: options.file,
     prompted: !!options.prompted,
+    inlineLinkage: options.inlineLinkage,
+    afterInit: options.afterInit,
   });
 }
 
@@ -638,7 +651,7 @@ export async function startRunbook(
  * @param frameKey - Frame key to look up (`step|iteration` format)
  * @returns The inferred entry number, or undefined if no history exists
  */
-function inferEntryFromState(state: RunbookState, frameKey: FrameKey): number | undefined {
+export function inferEntryFromState(state: RunbookState, frameKey: FrameKey): number | undefined {
   const known = state.frameEntries?.[frameKey];
   if (state.activeFrameKey === frameKey && state.activeEntry) return state.activeEntry;
   if (known && known > 0) return known;

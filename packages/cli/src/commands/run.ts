@@ -9,17 +9,31 @@ import {
   RunbookSyntaxError,
   isNodeError,
   getErrorMessage,
+  deriveActiveFrame,
+  buildFrameKey,
+  findSubstepState,
+  Errors,
+  type InlineLinkage,
+  type RunbookState,
 } from '@rundown-org/core';
+import { parseStepIdFromString, resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { getCwd } from '../helpers/context.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { parseVarOption, parseVarJsonOption, collect } from '../helpers/option-utils.js';
 import {
   prepareRunbook,
   startRunbook,
+  inferEntryFromState,
   type RunPipelineContext,
 } from '../helpers/runbook-pipeline.js';
 import { buildGotoContext, validateGotoTarget, executeGoto } from '../helpers/goto-workflow.js';
-import { validateIndexRequiresStep } from '../helpers/index-option.js';
+import {
+  validateIndexRequiresStep,
+  resolveIndexOption,
+  IndexOptionError,
+} from '../helpers/index-option.js';
+import { handleParentCompletion } from '../helpers/delegation-completion.js';
+import { getRunbookFromState } from '../helpers/runbook-loader.js';
 
 /**
  * Registers the 'run' command for starting runbooks.
@@ -30,7 +44,7 @@ export function registerRunCommand(program: Command): void {
     .command('run [file]')
     .description('Start a runbook')
     .option('--prompted', 'Prompted mode: show commands without auto-executing')
-    .option('--step <stepId>', 'Jump to step after starting (requires --prompted)')
+    .option('--step <stepId>', 'Link child to parent substep (or jump to step with --prompted)')
     .option('--index <number>', 'FOR loop iteration to target (requires --step)')
     .option('--json', 'Output execution events as JSON')
     .addOption(
@@ -82,12 +96,7 @@ export function registerRunCommand(program: Command): void {
             cwd,
           };
 
-          // Validate --step / --index option dependencies
-          if (options.step && !options.prompted) {
-            output.error('--step requires --prompted', 'INVALID_SYNTAX');
-            output.flush();
-            process.exit(1);
-          }
+          // Validate --index requires --step
           const depError = validateIndexRequiresStep(options.index, options.step);
           if (depError) {
             output.error(depError, 'INVALID_SYNTAX');
@@ -98,6 +107,22 @@ export function registerRunCommand(program: Command): void {
           const varOpts = { varFile: options.varFile, var: options.var, varJson: options.varJson };
 
           if (file) {
+            // Build inline linkage when --step is provided without --prompted
+            let inlineLinkage: InlineLinkage | undefined;
+            let parentState: RunbookState | undefined;
+
+            if (options.step && !options.prompted) {
+              const linkageResult = await buildInlineLinkage(
+                sessionService,
+                cwd,
+                output,
+                options.step,
+                options.index,
+              );
+              inlineLinkage = linkageResult.linkage;
+              parentState = linkageResult.parentState;
+            }
+
             const prepResult = await prepareRunbook(file, varOpts, cwd);
             if (!prepResult.ok) {
               output.error(prepResult.error, prepResult.code, prepResult.details);
@@ -114,9 +139,27 @@ export function registerRunCommand(program: Command): void {
               output.warning(`Undefined variable "{{${name}}}" preserved as literal text`);
             }
 
+            // Build afterInit callback outside the startRunbook call for clean captures
+            let afterInit: ((stateId: string) => Promise<void>) | undefined;
+            if (inlineLinkage && parentState) {
+              const link = inlineLinkage;
+              afterInit = async () => {
+                // Mark parent substep as 'running' (informational for rd status)
+                const substeps = parentState.substepStates ?? [];
+                const updated = substeps.map((ss) =>
+                  ss.id === link.parentStepId && ss.frameKey === link.parentFrameKey
+                    ? { ...ss, status: 'running' as const }
+                    : ss,
+                );
+                await manager.update(link.parentRunId, { substepStates: updated });
+              };
+            }
+
             const result = await startRunbook(ctx, prepResult.prepared, {
               file,
               prompted: options.prompted,
+              inlineLinkage,
+              afterInit,
             });
 
             if (!result.ok) {
@@ -125,8 +168,32 @@ export function registerRunCommand(program: Command): void {
               process.exit(1);
             }
 
-            // If --step provided and runbook is waiting (prompted mode), jump to the step
-            if (options.step && result.loopResult === 'waiting') {
+            // Inline linkage propagation — auto-record parent substep on child completion
+            if (inlineLinkage) {
+              const childState = await manager.load(result.stateId);
+              if (childState) {
+                const isTerminal =
+                  childState.variables.completed === true || childState.variables.stopped === true;
+                if (isTerminal) {
+                  const propResult: 'pass' | 'fail' = childState.variables.completed
+                    ? 'pass'
+                    : 'fail';
+                  const propOutcome = await handleParentCompletion(
+                    childState,
+                    propResult,
+                    cwd,
+                    output,
+                  );
+                  if (propOutcome === 'stopped') {
+                    output.flush();
+                    process.exit(1);
+                  }
+                }
+              }
+            }
+
+            // If --step provided with --prompted and runbook is waiting, jump to the step
+            if (options.step && options.prompted && result.loopResult === 'waiting') {
               const gotoCtx = await buildGotoContext(output, cwd);
               if (!gotoCtx) {
                 output.error('Failed to build goto context after start', 'ENGINE_INIT_FAILED');
@@ -153,10 +220,6 @@ export function registerRunCommand(program: Command): void {
                 process.exit(1);
               }
               return;
-            } else if (options.step) {
-              output.warning(
-                `--step ${options.step} ignored: runbook did not enter prompted mode (result: ${result.loopResult})`,
-              );
             }
 
             output.flush();
@@ -187,4 +250,131 @@ export function registerRunCommand(program: Command): void {
         }
       },
     );
+}
+
+/**
+ * Build inline linkage for `rd run --step` substep targeting.
+ *
+ * Validates the active parent runbook has the target substep at the execution
+ * frontier, and constructs an {@link InlineLinkage} for the child run.
+ *
+ * @param sessionService - Session service for loading active runbook
+ * @param cwd - Current working directory
+ * @param output - Output emitter for error reporting
+ * @param stepId - Target step ID (e.g., "1.1" for step 1, substep 1)
+ * @param indexOption - Optional --index flag value
+ * @returns The constructed linkage and parent state
+ */
+async function buildInlineLinkage(
+  sessionService: SessionService,
+  cwd: string,
+  output: OutputEmitter,
+  stepId: string,
+  indexOption?: string,
+): Promise<{ linkage: InlineLinkage; parentState: RunbookState }> {
+  // 1. Load active parent
+  const parentState = await sessionService.getActive();
+  if (!parentState) {
+    output.error('--step requires an active parent runbook', 'NO_ACTIVE_RUNBOOK');
+    output.flush();
+    process.exit(1);
+  }
+
+  // 2. Parse step ID
+  const parsed = parseStepIdFromString(stepId);
+  if (!parsed) {
+    throw Errors.delegationStepNotFound(stepId);
+  }
+
+  // 3. Load parent steps and validate
+  const steps = getRunbookFromState(parentState, cwd);
+  const step = steps.find((s) => s.name === parsed.step);
+  if (!step) {
+    throw Errors.delegationStepNotFound(parsed.step);
+  }
+
+  // 4. Validate step has substeps when needed
+  if (resolvedStepHasSubsteps(step) && !parsed.substep) {
+    throw Errors.delegationSubstepRequired(
+      parsed.step,
+      step.substeps.map((ss) => ss.id),
+    );
+  }
+
+  if (parsed.substep) {
+    if (!resolvedStepHasSubsteps(step)) {
+      throw Errors.delegationSubstepNotFound(parsed.substep, parsed.step, []);
+    }
+    const validIds = step.substeps.map((ss) => ss.id);
+    if (!validIds.includes(parsed.substep)) {
+      throw Errors.delegationSubstepNotFound(parsed.substep, parsed.step, validIds);
+    }
+  }
+
+  // 5. Verify step is at frontier
+  if (parentState.step !== parsed.step) {
+    throw Errors.delegationStepNotCurrent(parsed.step, parentState.step);
+  }
+
+  const substepId = parsed.substep ?? parsed.step;
+
+  // 6. Resolve frame key (following delegate.ts pattern)
+  let explicitIteration: number | undefined;
+  try {
+    explicitIteration = resolveIndexOption(indexOption, parsed.at);
+  } catch (error) {
+    if (error instanceof IndexOptionError) {
+      output.error(error.message, error.code);
+      output.flush();
+      process.exit(1);
+    }
+    throw error;
+  }
+
+  if (explicitIteration !== undefined) {
+    if (step.kind !== 'for' && step.kind !== 'prompted-for') {
+      output.error(
+        `--index requires step "${parsed.step}" to be a FOR step, but it is "${step.kind}"`,
+        'INVALID_INDEX',
+      );
+      output.flush();
+      process.exit(1);
+    }
+  }
+
+  const frameKey =
+    explicitIteration !== undefined
+      ? buildFrameKey(parentState.step, explicitIteration)
+      : (parentState.activeFrameKey ?? deriveActiveFrame(parentState).frameKey);
+
+  // 7. Check substep not already done
+  const existingSubstep = findSubstepState(parentState.substepStates ?? [], substepId, frameKey);
+  if (existingSubstep?.status === 'done') {
+    output.error(`Substep ${substepId} is already resolved`, 'DELEGATION_ALREADY_RESOLVED');
+    output.flush();
+    process.exit(1);
+  }
+
+  // 8. Check no active delegation on substep
+  const existingDelegation = existingSubstep?.delegation;
+  if (existingDelegation?.cancelledAt === null && existingDelegation.childRunId === null) {
+    output.error(
+      `Substep ${substepId} already has an active delegation`,
+      'DELEGATION_ALREADY_EXISTS',
+    );
+    output.flush();
+    process.exit(1);
+  }
+
+  // 9. Build linkage
+  const linkage: InlineLinkage = {
+    kind: 'inline',
+    parentRunId: parentState.id,
+    parentStepId: substepId,
+    parentStep: parentState.step,
+    parentFrameKey: frameKey,
+    parentEntry: inferEntryFromState(parentState, frameKey),
+  };
+
+  return { linkage, parentState };
 }

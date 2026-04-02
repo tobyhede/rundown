@@ -318,6 +318,16 @@ export const RunbookStateSchema = z
         parentEntry: z.number().int().positive().optional(),
       })
       .optional(),
+    inlineLinkage: z
+      .object({
+        kind: z.literal('inline'),
+        parentRunId: z.string(),
+        parentStepId: z.string(),
+        parentStep: z.string().optional(),
+        parentFrameKey: FrameKeySchema.optional(),
+        parentEntry: z.number().int().positive().optional(),
+      })
+      .optional(),
     nested: z
       .object({
         runbook: z.string(),

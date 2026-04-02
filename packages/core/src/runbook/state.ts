@@ -10,6 +10,7 @@ import type {
   Runbook,
   ResolvedRunbook,
   DelegationLinkage,
+  InlineLinkage,
   TemplateVarValue,
 } from './types.js';
 import { RunbookStateSchema } from '../schemas.js';
@@ -43,6 +44,8 @@ interface CreateOptions {
   readonly prompted?: boolean;
   /** Delegation linkage when this run is created via `rd claim`. */
   readonly delegation?: DelegationLinkage;
+  /** Inline linkage when this run is created via `rd run --step`. */
+  readonly inlineLinkage?: InlineLinkage;
   readonly runbookSrc?: string;
   /** Optional record of template variable replacements to populate placeholders at run time. */
   readonly templateVars?: Record<string, TemplateVarValue>;
@@ -111,6 +114,7 @@ export class RunbookStateManager {
       resolvedCompletions: {},
       frameEntries: {},
       delegation: options.delegation,
+      inlineLinkage: options.inlineLinkage,
       startedAt: now,
       updatedAt: now,
       prompted: options.prompted,
