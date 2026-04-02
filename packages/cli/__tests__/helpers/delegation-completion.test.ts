@@ -105,6 +105,7 @@ function makeOutput(): any {
     flush: jest.fn(),
     status: jest.fn(),
     error: jest.fn(),
+    warning: jest.fn(),
   };
 }
 

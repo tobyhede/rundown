@@ -25,8 +25,9 @@ rundown run [file] --var key=value  # Set template variable (repeatable, omit =v
 rundown run [file] --var-json key=json  # Set variable with JSON value (repeatable)
 rundown run [file] --var-file path  # Load variables from YAML file (repeatable)
 rundown run [file] --prompted  # Show commands without auto-executing
-rundown run [file] --step <stepId>   # Jump to step after starting (requires --prompted)
-rundown run [file] --index <number>  # FOR loop iteration to target (requires --step)
+rundown run [file] --step <stepId>   # Link child to parent substep (inline nested execution)
+rundown run [file] --step <stepId> --prompted  # Jump to step after starting (goto)
+rundown run [file] --step <stepId> --index <number>  # FOR loop iteration to target
 rundown pass             # Mark current step as passed (aliases: yes, ok)
 rundown pass --step <stepId>         # Target specific substep
 rundown pass --index <number>        # FOR loop iteration (requires --step)

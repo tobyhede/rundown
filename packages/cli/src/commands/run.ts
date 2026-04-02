@@ -143,7 +143,7 @@ export function registerRunCommand(program: Command): void {
             let afterInit: ((stateId: string) => Promise<void>) | undefined;
             if (inlineLinkage && parentState) {
               const link = inlineLinkage;
-              afterInit = async () => {
+              afterInit = async (_stateId) => {
                 // Mark parent substep as 'running' (informational for rd status)
                 const substeps = parentState.substepStates ?? [];
                 const updated = substeps.map((ss) =>

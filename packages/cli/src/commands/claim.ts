@@ -11,7 +11,7 @@ import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { parseVarOption, parseVarJsonOption, collect } from '../helpers/option-utils.js';
 import { claimAndLaunch, type RunPipelineContext } from '../helpers/runbook-pipeline.js';
-import { handleParentCompletion } from '../helpers/delegation-completion.js';
+import { handleParentCompletion, extractParentLinkage } from '../helpers/delegation-completion.js';
 
 /**
  * Registers the 'claim' command for claiming delegation tokens.
@@ -87,7 +87,7 @@ export function registerClaimCommand(program: Command): void {
             let shouldExitWithError = result.loopResult === 'stopped';
             if (result.loopResult === 'done' || result.loopResult === 'stopped') {
               const childState = await manager.load(result.childRunId);
-              if (childState?.delegation) {
+              if (childState && extractParentLinkage(childState)) {
                 const propResult = childState.variables.completed ? 'pass' : 'fail';
                 const propagation = await handleParentCompletion(
                   childState,

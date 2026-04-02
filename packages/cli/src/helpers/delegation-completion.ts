@@ -85,9 +85,9 @@ export async function handleParentCompletion(
 
   // Guard: recursion limit — likely a cycle or bug
   if (depth >= MAX_PROPAGATION_DEPTH) {
-    console.warn(
-      `Warning: Delegation propagation depth limit reached (${String(MAX_PROPAGATION_DEPTH)}). ` +
-        `Possible cycle in delegation chain starting from run ${childState.id}.`,
+    output.warning(
+      `Propagation depth limit reached (${String(MAX_PROPAGATION_DEPTH)}). ` +
+        `Possible cycle in parent chain starting from run ${childState.id}.`,
     );
     return 'handled';
   }

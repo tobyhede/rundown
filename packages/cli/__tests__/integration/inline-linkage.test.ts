@@ -130,8 +130,9 @@ describe('Inline linkage integration (rd run --step)', () => {
       const parentState = await getActiveState(workspace);
       const parentRunId = parentState!.id as string;
 
-      // Run auto-executing child with inline linkage
-      result = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
+      // Run auto-executing child with inline linkage to substep 1.2
+      // Using 1.2 (not 1.1) so parentStepId='2' is unambiguously the substep ID
+      result = await runCliInProcess('run child.runbook.md --step 1.2', workspace);
       expect(result.exitCode).toBe(0);
 
       // Child completed and was popped — parent is active again.
@@ -154,7 +155,7 @@ describe('Inline linkage integration (rd run --step)', () => {
       const linkage = childState!.inlineLinkage as Record<string, unknown>;
       expect(linkage.kind).toBe('inline');
       expect(linkage.parentRunId).toBe(parentRunId);
-      expect(linkage.parentStepId).toBe('1');
+      expect(linkage.parentStepId).toBe('2');
     });
   });
 
