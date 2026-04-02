@@ -347,9 +347,16 @@ async function buildInlineLinkage(
       ? buildFrameKey(parentState.step, explicitIteration)
       : (parentState.activeFrameKey ?? deriveActiveFrame(parentState).frameKey);
 
-  // 7. Check substep not already done
+  // 7. Check substep not already resolved
   const existingSubstep = findSubstepState(parentState.substepStates ?? [], substepId, frameKey);
   if (existingSubstep?.status === 'done') {
+    output.error(`Substep ${substepId} is already resolved`, 'DELEGATION_ALREADY_RESOLVED');
+    output.flush();
+    process.exit(1);
+  }
+
+  // Also check if the parent cursor has advanced past this substep (completion was drained)
+  if (parentState.substep && Number(parentState.substep) > Number(substepId)) {
     output.error(`Substep ${substepId} is already resolved`, 'DELEGATION_ALREADY_RESOLVED');
     output.flush();
     process.exit(1);

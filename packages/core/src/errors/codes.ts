@@ -178,11 +178,11 @@ export const ErrorCodes = {
     docSlug: 'scenario-not-found',
   },
 
-  // Delegation Errors (8xx)
+  // Substep Targeting Errors (8xx) — shared by delegation and inline linkage
   DELEGATION_STEP_NOT_FOUND: {
     code: 'RD-801',
     category: ErrorCategory.DELEGATION,
-    title: 'Delegation step not found',
+    title: 'Step not found',
     description: 'The specified step does not exist in the active runbook.',
     docSlug: 'delegation-step-not-found',
   },
@@ -190,7 +190,7 @@ export const ErrorCodes = {
     code: 'RD-802',
     category: ErrorCategory.DELEGATION,
     title: 'Step not at execution frontier',
-    description: 'Delegation can only be created for the current step.',
+    description: 'The target step must be the current step.',
     docSlug: 'delegation-step-not-current',
   },
   DELEGATION_SUBSTEP_REQUIRED: {
@@ -204,7 +204,7 @@ export const ErrorCodes = {
     code: 'RD-804',
     category: ErrorCategory.DELEGATION,
     title: 'Active delegation exists',
-    description: 'This step already has an active (non-cancelled) delegation.',
+    description: 'This substep already has an active (non-cancelled) delegation.',
     docSlug: 'delegation-already-exists',
   },
   DELEGATION_RUNBOOK_NOT_FOUND: {

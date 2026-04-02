@@ -237,6 +237,3 @@ export async function handleParentCompletion(
   output.flush();
   return 'handled';
 }
-
-/** @deprecated Use {@link handleParentCompletion} instead. */
-export const handleDelegationCompletion = handleParentCompletion;

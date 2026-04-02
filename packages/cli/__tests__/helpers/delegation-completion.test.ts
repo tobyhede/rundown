@@ -69,7 +69,7 @@ const { createBridgedEmitter } = await import('../../src/helpers/execution-emitt
 const { createPassTransitionConfig, createFailTransitionConfig } = await import(
   '../../src/helpers/transitions'
 );
-const { handleDelegationCompletion } = await import('../../src/helpers/delegation-completion');
+const { handleParentCompletion } = await import('../../src/helpers/delegation-completion');
 
 function makeState(id: string, overrides: Partial<RunbookState> = {}): RunbookState {
   return {
@@ -195,12 +195,12 @@ beforeEach(() => {
   });
 });
 
-describe('handleDelegationCompletion', () => {
+describe('handleParentCompletion', () => {
   it('returns not-applicable when child has no delegation linkage', async () => {
     const childState = makeState('child-run-id');
     const output = makeOutput();
 
-    const result = await handleDelegationCompletion(childState, 'pass', '/test', output);
+    const result = await handleParentCompletion(childState, 'pass', '/test', output);
 
     expect(result).toBe('not-applicable');
   });
@@ -220,7 +220,7 @@ describe('handleDelegationCompletion', () => {
 
     wireMocks(manager, lifecycleService);
 
-    await handleDelegationCompletion(childState, 'pass', '/test', output);
+    await handleParentCompletion(childState, 'pass', '/test', output);
 
     expect(lock.acquire).toHaveBeenCalledWith('parent-run-id');
     expect(lock.release).toHaveBeenCalledWith('parent-run-id');
@@ -238,7 +238,7 @@ describe('handleDelegationCompletion', () => {
 
     wireMocks(manager, lifecycleService);
 
-    const result = await handleDelegationCompletion(childState, 'pass', '/test', output);
+    const result = await handleParentCompletion(childState, 'pass', '/test', output);
 
     expect(result).toBe('not-applicable');
     expect(lock.release).toHaveBeenCalled();
@@ -273,7 +273,7 @@ describe('handleDelegationCompletion', () => {
 
     wireMocks(manager, lifecycleService);
 
-    const result = await handleDelegationCompletion(childState, 'pass', '/test', output);
+    const result = await handleParentCompletion(childState, 'pass', '/test', output);
 
     expect(result).toBe('handled');
     expect(lifecycleService.upsertResolvedCompletion).not.toHaveBeenCalled();
@@ -303,7 +303,7 @@ describe('handleDelegationCompletion', () => {
       state: parentState,
     });
 
-    await handleDelegationCompletion(childState, 'pass', '/test', output);
+    await handleParentCompletion(childState, 'pass', '/test', output);
 
     expect(lifecycleService.upsertResolvedCompletion).toHaveBeenCalledWith(
       'parent-run-id',
@@ -337,7 +337,7 @@ describe('handleDelegationCompletion', () => {
       state: parentState,
     });
 
-    await handleDelegationCompletion(childState, 'pass', '/test', output);
+    await handleParentCompletion(childState, 'pass', '/test', output);
 
     expect(drainResolvedCompletions).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -368,7 +368,7 @@ describe('handleDelegationCompletion', () => {
       state: parentState,
     });
 
-    await handleDelegationCompletion(childState, 'pass', '/test', output);
+    await handleParentCompletion(childState, 'pass', '/test', output);
 
     expect(runExecutionLoop).toHaveBeenCalledWith(
       manager,
@@ -401,7 +401,7 @@ describe('handleDelegationCompletion', () => {
       state: parentState,
     });
 
-    const result = await handleDelegationCompletion(childState, 'fail', '/test', output);
+    const result = await handleParentCompletion(childState, 'fail', '/test', output);
 
     expect(result).toBe('stopped');
   });
@@ -438,7 +438,7 @@ describe('handleDelegationCompletion', () => {
       state: parentState,
     });
 
-    await handleDelegationCompletion(childState, 'pass', '/test', output);
+    await handleParentCompletion(childState, 'pass', '/test', output);
 
     // Should cascade - second acquire should be on grandparent
     expect(lock.acquire).toHaveBeenCalledWith('parent-run-id');
@@ -451,7 +451,7 @@ describe('handleDelegationCompletion', () => {
     const output = makeOutput();
 
     // Call with depth already at limit
-    const result = await handleDelegationCompletion(childState, 'pass', '/test', output, 32);
+    const result = await handleParentCompletion(childState, 'pass', '/test', output, 32);
 
     expect(result).toBe('handled');
     // Should not even acquire lock
@@ -480,7 +480,7 @@ describe('handleDelegationCompletion', () => {
       state: parentState,
     });
 
-    await handleDelegationCompletion(childState, 'pass', '/test', output);
+    await handleParentCompletion(childState, 'pass', '/test', output);
 
     expect(drainResolvedCompletions).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -513,7 +513,7 @@ describe('handleDelegationCompletion', () => {
       state: parentState,
     });
 
-    await handleDelegationCompletion(childState, 'pass', '/test', output);
+    await handleParentCompletion(childState, 'pass', '/test', output);
 
     const MockSession = core.SessionService as jest.MockedClass<typeof core.SessionService>;
     const sessionInstance = MockSession.mock.results[0]?.value;
@@ -541,7 +541,7 @@ describe('handleDelegationCompletion', () => {
       state: parentState,
     });
 
-    await handleDelegationCompletion(childState, 'fail', '/test', output);
+    await handleParentCompletion(childState, 'fail', '/test', output);
 
     const MockSession = core.SessionService as jest.MockedClass<typeof core.SessionService>;
     const sessionInstance = MockSession.mock.results[0]?.value;
@@ -569,7 +569,7 @@ describe('handleDelegationCompletion', () => {
       state: parentState,
     });
 
-    await handleDelegationCompletion(childState, 'fail', '/test', output);
+    await handleParentCompletion(childState, 'fail', '/test', output);
 
     expect(createFailTransitionConfig).toHaveBeenCalled();
     expect(createPassTransitionConfig).not.toHaveBeenCalled();
@@ -596,7 +596,7 @@ describe('handleDelegationCompletion', () => {
       state: parentState,
     });
 
-    await handleDelegationCompletion(childState, 'pass', '/test', output);
+    await handleParentCompletion(childState, 'pass', '/test', output);
 
     expect(output.flush).toHaveBeenCalled();
   });
@@ -622,7 +622,7 @@ describe('handleDelegationCompletion', () => {
       state: parentState,
     });
 
-    await handleDelegationCompletion(childState, 'pass', '/test', output);
+    await handleParentCompletion(childState, 'pass', '/test', output);
 
     expect(drainResolvedCompletions).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -652,7 +652,7 @@ describe('handleDelegationCompletion', () => {
       state: parentState,
     });
 
-    await handleDelegationCompletion(childState, 'pass', '/test', output);
+    await handleParentCompletion(childState, 'pass', '/test', output);
 
     const drainCall = (drainResolvedCompletions as jest.Mock).mock.calls[0][0];
     expect(drainCall.frameKeyOverride).toBeUndefined();
