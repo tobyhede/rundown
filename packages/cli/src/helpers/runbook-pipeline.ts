@@ -22,6 +22,7 @@ import {
   type ResolvedRunbook,
   type DelegationLinkage,
   type InlineLinkage,
+  type ParentLinkage,
   STATE_DIR,
   DelegationScanService,
   DelegationLock,
@@ -542,8 +543,7 @@ export async function prepareRunbook(
  * @param options - Launch options including optional parent context
  * @param options.runbookName - Name identifier for the runbook being launched
  * @param options.prompted - Whether to run in prompted mode (no auto-execution)
- * @param options.delegationLinkage - Optional parent delegation linkage for child runs
- * @param options.inlineLinkage - Optional inline parent linkage for `rd run --step` child runs
+ * @param options.parentLinkage - Optional parent linkage for child runs (delegation or inline)
  * @param options.afterInit - Optional callback invoked after state initialization with the new state ID
  * @returns RunbookStartResult
  */
@@ -553,8 +553,7 @@ async function launchRunbook(
   options: {
     runbookName: string;
     prompted: boolean;
-    delegationLinkage?: DelegationLinkage;
-    inlineLinkage?: InlineLinkage;
+    parentLinkage?: ParentLinkage;
     afterInit?: (stateId: string) => Promise<void>;
   },
 ): Promise<RunbookStartResult> {
@@ -565,8 +564,7 @@ async function launchRunbook(
   const state = await manager.create(options.runbookName, runbook, {
     runbookPath,
     prompted: options.prompted,
-    delegation: options.delegationLinkage,
-    inlineLinkage: options.inlineLinkage,
+    parentLinkage: options.parentLinkage,
     runbookSrc: rawContent,
     templateVars: mergedVariables,
   });
@@ -621,7 +619,7 @@ async function launchRunbook(
  * @param options - Start options
  * @param options.file - Runbook file path or name
  * @param options.prompted - Whether to run in prompted mode
- * @param options.inlineLinkage - Optional inline parent linkage for `rd run --step` child runs
+ * @param options.parentLinkage - Optional parent linkage for child runs (delegation or inline)
  * @param options.afterInit - Optional callback invoked after state initialization with the new state ID
  * @returns RunbookStartResult
  * @throws {Error} On state persistence or machine initialization failures
@@ -632,14 +630,14 @@ export async function startRunbook(
   options: {
     file: string;
     prompted?: boolean;
-    inlineLinkage?: InlineLinkage;
+    parentLinkage?: ParentLinkage;
     afterInit?: (stateId: string) => Promise<void>;
   },
 ): Promise<RunbookStartResult> {
   return launchRunbook(ctx, prepared, {
     runbookName: options.file,
     prompted: !!options.prompted,
-    inlineLinkage: options.inlineLinkage,
+    parentLinkage: options.parentLinkage,
     afterInit: options.afterInit,
   });
 }
@@ -883,6 +881,7 @@ export async function claimAndLaunch(
     // The parent may have advanced past the iteration where the delegation was created.
     const delegationFrameKey = freshSubstep.frameKey;
     const delegationLinkage: DelegationLinkage = {
+      kind: 'delegation' as const,
       parentRunId: freshParent.id,
       parentStepId: substepId ?? stepId,
       tokenHash,
@@ -899,7 +898,7 @@ export async function claimAndLaunch(
     const launchResult = await launchRunbook(ctx, prepResult.prepared, {
       runbookName: freshDelegation.childRunbookPath,
       prompted: parentPrompted,
-      delegationLinkage,
+      parentLinkage: delegationLinkage,
       afterInit: async (childStateId) => {
         // Set childRunId on parent delegation (tokenHash for precise matching)
         await updateStepDelegationChildRunId(

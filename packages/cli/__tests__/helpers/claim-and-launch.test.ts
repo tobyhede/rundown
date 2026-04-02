@@ -769,7 +769,8 @@ describe('claimAndLaunch', () => {
       'child.md',
       expect.anything(),
       expect.objectContaining({
-        delegation: expect.objectContaining({
+        parentLinkage: expect.objectContaining({
+          kind: 'delegation',
           parentFrameKey: '1|3',
         }),
       }),

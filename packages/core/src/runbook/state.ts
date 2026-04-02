@@ -9,8 +9,7 @@ import type {
   SubstepState,
   Runbook,
   ResolvedRunbook,
-  DelegationLinkage,
-  InlineLinkage,
+  ParentLinkage,
   TemplateVarValue,
 } from './types.js';
 import { RunbookStateSchema } from '../schemas.js';
@@ -42,10 +41,8 @@ export interface SessionData {
 interface CreateOptions {
   readonly runbookPath: string;
   readonly prompted?: boolean;
-  /** Delegation linkage when this run is created via `rd claim`. */
-  readonly delegation?: DelegationLinkage;
-  /** Inline linkage when this run is created via `rd run --step`. */
-  readonly inlineLinkage?: InlineLinkage;
+  /** Parent linkage when this run is a child (delegation or inline). */
+  readonly parentLinkage?: ParentLinkage;
   readonly runbookSrc?: string;
   /** Optional record of template variable replacements to populate placeholders at run time. */
   readonly templateVars?: Record<string, TemplateVarValue>;
@@ -113,8 +110,7 @@ export class RunbookStateManager {
       steps: [],
       resolvedCompletions: {},
       frameEntries: {},
-      delegation: options.delegation,
-      inlineLinkage: options.inlineLinkage,
+      parentLinkage: options.parentLinkage,
       startedAt: now,
       updatedAt: now,
       prompted: options.prompted,

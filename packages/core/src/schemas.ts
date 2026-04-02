@@ -308,25 +308,26 @@ export const RunbookStateSchema = z
     activeFrameKey: FrameKeySchema.optional(),
     activeEntry: z.number().int().positive().max(MAX_FOR_BOUND).optional(),
     substepStates: z.array(SubstepStateSchema).optional(),
-    delegation: z
-      .object({
-        parentRunId: z.string(),
-        parentStepId: z.string(),
-        tokenHash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
-        parentStep: z.string().optional(),
-        parentFrameKey: FrameKeySchema.optional(),
-        parentEntry: z.number().int().positive().optional(),
-      })
-      .optional(),
-    inlineLinkage: z
-      .object({
-        kind: z.literal('inline'),
-        parentRunId: z.string(),
-        parentStepId: z.string(),
-        parentStep: z.string().optional(),
-        parentFrameKey: FrameKeySchema.optional(),
-        parentEntry: z.number().int().positive().optional(),
-      })
+    parentLinkage: z
+      .discriminatedUnion('kind', [
+        z.object({
+          kind: z.literal('delegation'),
+          parentRunId: z.string(),
+          parentStepId: z.string(),
+          tokenHash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+          parentStep: z.string().optional(),
+          parentFrameKey: FrameKeySchema.optional(),
+          parentEntry: z.number().int().positive().optional(),
+        }),
+        z.object({
+          kind: z.literal('inline'),
+          parentRunId: z.string(),
+          parentStepId: z.string(),
+          parentStep: z.string().optional(),
+          parentFrameKey: FrameKeySchema.optional(),
+          parentEntry: z.number().int().positive().optional(),
+        }),
+      ])
       .optional(),
     nested: z
       .object({

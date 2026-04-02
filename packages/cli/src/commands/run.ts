@@ -6,6 +6,7 @@ import {
   RunbookActorService,
   SessionService,
   ExecutionLifecycleService,
+  DelegationLock,
   RunbookSyntaxError,
   RundownError,
   isNodeError,
@@ -15,6 +16,7 @@ import {
   findSubstepState,
   Errors,
   type InlineLinkage,
+  type ParentLinkage,
   type RunbookState,
 } from '@rundown-org/core';
 import { parseStepIdFromString, resolvedStepHasSubsteps } from '@rundown-org/parser';
@@ -109,7 +111,7 @@ export function registerRunCommand(program: Command): void {
 
           if (file) {
             // Build inline linkage when --step is provided without --prompted
-            let inlineLinkage: InlineLinkage | undefined;
+            let parentLinkage: ParentLinkage | undefined;
             let parentState: RunbookState | undefined;
 
             if (options.step && !options.prompted) {
@@ -120,7 +122,7 @@ export function registerRunCommand(program: Command): void {
                 options.step,
                 options.index,
               );
-              inlineLinkage = linkageResult.linkage;
+              parentLinkage = linkageResult.linkage;
               parentState = linkageResult.parentState;
             }
 
@@ -142,24 +144,35 @@ export function registerRunCommand(program: Command): void {
 
             // Build afterInit callback outside the startRunbook call for clean captures
             let afterInit: ((stateId: string) => Promise<void>) | undefined;
-            if (inlineLinkage && parentState) {
-              const link = inlineLinkage;
+            if (parentLinkage && parentState) {
+              const link = parentLinkage;
               afterInit = async (_stateId) => {
-                // Mark parent substep as 'running' (informational for rd status)
-                const substeps = parentState.substepStates ?? [];
-                const updated = substeps.map((ss) =>
-                  ss.id === link.parentStepId && ss.frameKey === link.parentFrameKey
-                    ? { ...ss, status: 'running' as const }
-                    : ss,
-                );
-                await manager.update(link.parentRunId, { substepStates: updated });
+                // Acquire lock and re-load fresh parent state to avoid TOCTOU:
+                // parentState was captured at buildInlineLinkage() time and may
+                // be stale by the time afterInit runs (another child may have
+                // modified substepStates in between).
+                const lock = new DelegationLock(cwd);
+                await lock.acquire(link.parentRunId);
+                try {
+                  const fresh = await manager.load(link.parentRunId);
+                  if (!fresh) return;
+                  const substeps = fresh.substepStates ?? [];
+                  const updated = substeps.map((ss) =>
+                    ss.id === link.parentStepId && ss.frameKey === link.parentFrameKey
+                      ? { ...ss, status: 'running' as const }
+                      : ss,
+                  );
+                  await manager.update(link.parentRunId, { substepStates: updated });
+                } finally {
+                  await lock.release(link.parentRunId);
+                }
               };
             }
 
             const result = await startRunbook(ctx, prepResult.prepared, {
               file,
               prompted: options.prompted,
-              inlineLinkage,
+              parentLinkage,
               afterInit,
             });
 
@@ -170,7 +183,7 @@ export function registerRunCommand(program: Command): void {
             }
 
             // Inline linkage propagation — auto-record parent substep on child completion
-            if (inlineLinkage) {
+            if (parentLinkage) {
               const childState = await manager.load(result.stateId);
               if (childState) {
                 const isTerminal =

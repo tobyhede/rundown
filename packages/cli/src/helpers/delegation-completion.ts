@@ -44,9 +44,7 @@ const MAX_PROPAGATION_DEPTH = 32;
  * @returns The parent linkage base fields, or undefined if no linkage exists
  */
 export function extractParentLinkage(state: RunbookState): ParentLinkageBase | undefined {
-  if (state.inlineLinkage) return state.inlineLinkage;
-  if (state.delegation) return state.delegation;
-  return undefined;
+  return state.parentLinkage;
 }
 
 /**
@@ -112,8 +110,8 @@ export async function handleParentCompletion(
     // 3. Check if delegation was cancelled (frame-scoped lookup)
     const frameKey = parentFrameKey ?? deriveActiveFrame(parentState).frameKey;
     const substepState = findSubstepState(parentState.substepStates ?? [], parentStepId, frameKey);
-    if (substepState?.delegation?.cancelledAt) {
-      // Abort wins — skip propagation
+    if (childState.parentLinkage?.kind === 'delegation' && substepState?.delegation?.cancelledAt) {
+      // Abort wins — skip propagation (only for delegation children)
       return 'handled';
     }
 
@@ -129,7 +127,7 @@ export async function handleParentCompletion(
     const lifecycleService = new ExecutionLifecycleService(manager);
     const existing = await lifecycleService.getResolvedCompletion(parentRunId, completionKey);
     if (!existing) {
-      const agentId = childState.inlineLinkage ? 'inline' : 'delegation';
+      const agentId = childState.parentLinkage?.kind === 'inline' ? 'inline' : 'delegation';
       const completion = buildResolvedCompletion({
         agentId,
         result,

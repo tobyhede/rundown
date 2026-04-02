@@ -155,13 +155,14 @@ describe('DelegationScanService', () => {
       const tokenHash = hashDelegationToken(token);
 
       const linkage: DelegationLinkage = {
+        kind: 'delegation' as const,
         parentRunId: 'parent-run',
         parentStepId: '1',
         tokenHash,
       };
 
       const childState = makeState('child-run', {
-        delegation: linkage,
+        parentLinkage: linkage,
       });
       await writeState(childState);
 
@@ -187,19 +188,21 @@ describe('DelegationScanService', () => {
       const tokenHash = hashDelegationToken(token);
 
       const linkage1: DelegationLinkage = {
+        kind: 'delegation' as const,
         parentRunId: 'parent-run',
         parentStepId: '1',
         tokenHash,
       };
 
       const linkage2: DelegationLinkage = {
+        kind: 'delegation' as const,
         parentRunId: 'parent-run',
         parentStepId: '2',
         tokenHash,
       };
 
-      const child1 = makeState('child-1', { delegation: linkage1 });
-      const child2 = makeState('child-2', { delegation: linkage2 });
+      const child1 = makeState('child-1', { parentLinkage: linkage1 });
+      const child2 = makeState('child-2', { parentLinkage: linkage2 });
 
       await writeState(child1);
       await writeState(child2);
