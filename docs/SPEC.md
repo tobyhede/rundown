@@ -28,8 +28,6 @@ Frontmatter fields beyond `name`, `description`, `version`, `author`, `tags`, an
 
 The frontmatter `description` field provides a summary for runbook discovery and listing (`rd ls --all`). The `Runbook.description` in the parsed AST is derived from preamble text between the H1 title and first H2 step. These are independent values.
 
-*Note: A follow-up task will rename `Runbook.description` → `Runbook.preamble` to eliminate this naming ambiguity.*
-
 ## 2. Steps
 
 Steps are the fundamental units of execution defined by H2 headers.
@@ -257,12 +255,13 @@ Variables use Handlebars syntax: `{{variable}}`.
 *   **Path resolution**: Dotted paths are supported consistently (for example `{{context.parent.index}}`).
 *   **Reserved keys**: Runtime keys `step`, `index`, and `context` are reserved (matching is case-insensitive — any case variant such as `STEP`, `Step`, `INDEX` is also reserved) and cannot be overridden by user variables. The CLI rejects these names in frontmatter `vars:`, `--var` flags, `--var-file` contents, and `.rundown/config.yaml` with an error diagnostic.
 *   **Precedence** (highest to lowest):
-    1. `--var` flags
-    2. `--var-file` contents
+    1. CLI flags (`--var-file`, `--var`, `--var-json`) — highest priority; within this layer: `--var-json` > `--var` > `--var-file`
+    2. `RD_VAR_*` environment variables (prefix stripped)
     3. `.rundown/config.yaml` (auto-discovered)
     4. Frontmatter `vars:` field
     5. Inherited delegation variables (parent context)
     6. Built-in defaults (`Date`, `RunId`, `WorkPath`, etc.)
+*   **Environment bridge**: `--var KEY` (without `=`) inherits the value of environment variable `KEY`.
 
 ## 7. Conformance
 
