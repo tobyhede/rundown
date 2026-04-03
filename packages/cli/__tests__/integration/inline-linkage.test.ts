@@ -384,7 +384,7 @@ describe('Inline linkage integration (rd run --step)', () => {
       expect(output).toContain('RD-801');
     });
 
-    it('rejects --step when substep is already resolved', async () => {
+    it('rejects --step when substep cursor has advanced (drain path)', async () => {
       await writeParentRunbook();
       await writePassingChild();
 
@@ -392,11 +392,43 @@ describe('Inline linkage integration (rd run --step)', () => {
       let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
 
-      // Manually resolve substep 1.1
+      // Manually resolve substep 1.1 — drain advances cursor past it
       result = await runCliInProcess('pass --step 1.1', workspace);
       expect(result.exitCode).toBe(0);
 
-      // Try to run with inline linkage to already-resolved substep
+      // Try to run with inline linkage to already-drained substep
+      result = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain('already resolved');
+    });
+
+    it('rejects --step when substep status is done (defensive path)', async () => {
+      await writeParentRunbook();
+      await writePassingChild();
+
+      // Start parent in prompted mode
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const parentState = await getActiveState(workspace);
+      expect(parentState).not.toBeNull();
+      const parentRunId = parentState!.id as string;
+
+      // Directly mark substep 1 as 'done' in persisted state — simulates a future
+      // code path where completeSubstep() is wired into the CLI (e.g., delegation
+      // completion marking substeps done). The cursor has NOT advanced, so only
+      // the status === 'done' guard catches this.
+      const { readFile } = await import('node:fs/promises');
+      const statePath = join(workspace.cwd, '.claude', 'rundown', 'runs', `${parentRunId}.json`);
+      const stateData = JSON.parse(await readFile(statePath, 'utf-8'));
+      const substeps = stateData.substepStates as Array<Record<string, unknown>>;
+      const target = substeps.find((ss) => ss.id === '1');
+      expect(target).toBeDefined();
+      target!.status = 'done';
+      target!.result = 'pass';
+      await writeFile(statePath, JSON.stringify(stateData, null, 2));
+
+      // Try to run with inline linkage to done substep
       result = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain('already resolved');
