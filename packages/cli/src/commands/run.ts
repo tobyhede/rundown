@@ -399,10 +399,15 @@ async function buildInlineLinkage(
   // Also check if the parent cursor has advanced past this substep (completion was drained).
   // Drain consumes the resolved completion and advances the cursor without marking
   // substepStates[].status as 'done', so the check above doesn't catch it.
-  if (parentState.substep && Number(parentState.substep) > Number(substepId)) {
-    output.error(`Substep ${substepId} is already resolved`, 'DELEGATION_ALREADY_RESOLVED');
-    output.flush();
-    process.exit(1);
+  if (parentState.substep && resolvedStepHasSubsteps(step)) {
+    const orderedIds = step.substeps.map((ss) => ss.id);
+    const cursorIndex = orderedIds.indexOf(parentState.substep);
+    const targetIndex = orderedIds.indexOf(substepId);
+    if (cursorIndex !== -1 && targetIndex !== -1 && cursorIndex > targetIndex) {
+      output.error(`Substep ${substepId} is already resolved`, 'DELEGATION_ALREADY_RESOLVED');
+      output.flush();
+      process.exit(1);
+    }
   }
 
   // 8. Check no active delegation on substep

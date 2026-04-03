@@ -7,7 +7,7 @@ import {
   readRunbookState,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
-import { writeFile } from 'node:fs/promises';
+import { writeFile, readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 describe('Inline linkage integration (rd run --step)', () => {
@@ -244,14 +244,17 @@ describe('Inline linkage integration (rd run --step)', () => {
 
       // Child completed and was popped — parent is active again.
       // Load the child state by scanning runs directory for the non-parent state.
-      const { readdir, readFile: rf } = await import('node:fs/promises');
+
       const runsDir = join(workspace.cwd, '.claude', 'rundown', 'runs');
       const files = await readdir(runsDir);
       const stateFiles = files.filter((f) => f.endsWith('.json') && f !== 'session.json');
 
       let childState: Record<string, unknown> | null = null;
       for (const f of stateFiles) {
-        const content = JSON.parse(await rf(join(runsDir, f), 'utf-8')) as Record<string, unknown>;
+        const content = JSON.parse(await readFile(join(runsDir, f), 'utf-8')) as Record<
+          string,
+          unknown
+        >;
         if (content.id !== parentRunId && content.parentLinkage) {
           childState = content;
           break;
@@ -302,14 +305,17 @@ describe('Inline linkage integration (rd run --step)', () => {
       expect(result.exitCode).toBe(0);
 
       // Scan runs directory for the child state
-      const { readdir, readFile: rf } = await import('node:fs/promises');
+
       const runsDir = join(workspace.cwd, '.claude', 'rundown', 'runs');
       const files = await readdir(runsDir);
       const stateFiles = files.filter((f) => f.endsWith('.json') && f !== 'session.json');
 
       let childState: Record<string, unknown> | null = null;
       for (const f of stateFiles) {
-        const content = JSON.parse(await rf(join(runsDir, f), 'utf-8')) as Record<string, unknown>;
+        const content = JSON.parse(await readFile(join(runsDir, f), 'utf-8')) as Record<
+          string,
+          unknown
+        >;
         if (content.id !== parentRunId && content.parentLinkage) {
           childState = content;
           break;
@@ -418,7 +424,7 @@ describe('Inline linkage integration (rd run --step)', () => {
       // code path where completeSubstep() is wired into the CLI (e.g., delegation
       // completion marking substeps done). The cursor has NOT advanced, so only
       // the status === 'done' guard catches this.
-      const { readFile } = await import('node:fs/promises');
+
       const statePath = join(workspace.cwd, '.claude', 'rundown', 'runs', `${parentRunId}.json`);
       const stateData = JSON.parse(await readFile(statePath, 'utf-8'));
       const substeps = stateData.substepStates as Array<Record<string, unknown>>;
