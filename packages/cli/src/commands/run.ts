@@ -14,6 +14,7 @@ import {
   deriveActiveFrame,
   buildFrameKey,
   findSubstepState,
+  upsertSubstepState,
   buildContextSnapshot,
   reconstituteContextVars,
   extractInheritedUserVars,
@@ -118,6 +119,8 @@ export function registerRunCommand(program: Command): void {
             let parentLinkage: ParentLinkage | undefined;
             let parentState: RunbookState | undefined;
 
+            let linkageIteration: number | undefined;
+
             if (options.step && !options.prompted) {
               const linkageResult = await buildInlineLinkage(
                 sessionService,
@@ -128,6 +131,7 @@ export function registerRunCommand(program: Command): void {
               );
               parentLinkage = linkageResult.linkage;
               parentState = linkageResult.parentState;
+              linkageIteration = linkageResult.explicitIteration;
             }
 
             // Build inherited vars from parent state (mirrors claimAndLaunch)
@@ -140,7 +144,9 @@ export function registerRunCommand(program: Command): void {
 
             if (parentState) {
               const parsed = parseStepIdFromString(options.step!);
-              const snapshot = buildContextSnapshot(parentState, parsed?.substep);
+              const snapshot = buildContextSnapshot(parentState, parsed?.substep, undefined, {
+                iterationOverride: linkageIteration,
+              });
               inheritedOptions = {
                 inheritedContextVars: reconstituteContextVars(snapshot),
                 inheritedUserVars: extractInheritedUserVars(snapshot),
@@ -178,10 +184,11 @@ export function registerRunCommand(program: Command): void {
                   const fresh = await manager.load(link.parentRunId);
                   if (!fresh) return;
                   const substeps = fresh.substepStates ?? [];
-                  const updated = substeps.map((ss) =>
-                    ss.id === link.parentStepId && ss.frameKey === link.parentFrameKey
-                      ? { ...ss, status: 'running' as const }
-                      : ss,
+                  const updated = upsertSubstepState(
+                    substeps,
+                    link.parentStepId,
+                    link.parentFrameKey!,
+                    { status: 'running' as const },
                   );
                   await manager.update(link.parentRunId, { substepStates: updated });
                 } finally {
@@ -308,7 +315,7 @@ async function buildInlineLinkage(
   output: OutputEmitter,
   stepId: string,
   indexOption?: string,
-): Promise<{ linkage: InlineLinkage; parentState: RunbookState }> {
+): Promise<{ linkage: InlineLinkage; parentState: RunbookState; explicitIteration?: number }> {
   // 1. Load active parent
   const parentState = await sessionService.getActive();
   if (!parentState) {
@@ -399,7 +406,13 @@ async function buildInlineLinkage(
   // Also check if the parent cursor has advanced past this substep (completion was drained).
   // Drain consumes the resolved completion and advances the cursor without marking
   // substepStates[].status as 'done', so the check above doesn't catch it.
-  if (parentState.substep && resolvedStepHasSubsteps(step)) {
+  // Only applies to the active frame — parentState.substep reflects the current iteration's
+  // cursor, not the target iteration, so this check is invalid for non-active frames.
+  if (
+    frameKey === parentState.activeFrameKey &&
+    parentState.substep &&
+    resolvedStepHasSubsteps(step)
+  ) {
     const orderedIds = step.substeps.map((ss) => ss.id);
     const cursorIndex = orderedIds.indexOf(parentState.substep);
     const targetIndex = orderedIds.indexOf(substepId);
@@ -432,5 +445,5 @@ async function buildInlineLinkage(
     parentEntry: inferEntryFromState(parentState, frameKey),
   };
 
-  return { linkage, parentState };
+  return { linkage, parentState, explicitIteration };
 }

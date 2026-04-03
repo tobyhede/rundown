@@ -242,3 +242,28 @@ export function findSubstepState(
 ): SubstepState | undefined {
   return substepStates.find((ss) => ss.id === substepId && ss.frameKey === frameKey);
 }
+
+/**
+ * Update an existing SubstepState by `(id, frameKey)` or append a new entry.
+ *
+ * If a matching entry exists, applies `patch` to it. If no match is found,
+ * appends a new entry with `id`, `frameKey`, `status: 'pending'`, and the patch.
+ *
+ * @param substepStates - Existing substep states array
+ * @param substepId - Substep ID to match or create
+ * @param frameKey - Frame key to match or create
+ * @param patch - Fields to apply on the matched or new entry
+ * @returns New array with the updated or appended entry
+ */
+export function upsertSubstepState(
+  substepStates: readonly SubstepState[],
+  substepId: string,
+  frameKey: FrameKey,
+  patch: Partial<Pick<SubstepState, 'status' | 'result' | 'delegation'>>,
+): readonly SubstepState[] {
+  const existing = findSubstepState(substepStates, substepId, frameKey);
+  if (existing) {
+    return substepStates.map((ss) => (ss === existing ? { ...ss, ...patch } : ss));
+  }
+  return [...substepStates, { id: substepId, frameKey, status: 'pending' as const, ...patch }];
+}

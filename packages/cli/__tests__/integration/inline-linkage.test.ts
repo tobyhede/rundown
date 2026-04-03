@@ -330,6 +330,115 @@ describe('Inline linkage integration (rd run --step)', () => {
     });
   });
 
+  describe('FOR-loop frame-scoped fixes', () => {
+    /** Helper: write a FOR parent with substeps for frame-scoped tests. */
+    async function writeForParent(): Promise<void> {
+      const content = createRunbook({
+        title: 'Parent',
+        steps: [
+          {
+            title: 'Process',
+            for: { variable: 'i', start: 1, end: 3 },
+            pass: 'CONTINUE',
+            substeps: [
+              { title: 'Handle item', content: 'Handle item {{i}}.' },
+              { title: 'Verify item', content: 'Verify item {{i}}.' },
+              { title: 'Finish item', content: 'Finish item {{i}}.' },
+            ],
+          },
+          { title: 'Done', pass: 'COMPLETE', content: 'Final step.' },
+        ],
+      });
+      await writeFile(join(workspace.cwd, 'parent.runbook.md'), content);
+    }
+
+    it('inline child targeting non-active FOR iteration creates SubstepState entry', async () => {
+      await writeForParent();
+      await writePassingChild();
+
+      // Start parent in prompted mode — sits at step 1, iteration 1
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const parentState = await getActiveState(workspace);
+      const parentRunId = parentState!.id as string;
+
+      // Run child targeting iteration 2, substep 1.1 (non-active frame)
+      result = await runCliInProcess('run child.runbook.md --step 1.1 --index 2', workspace);
+      expect(result.exitCode).toBe(0);
+
+      // Parent state should have a SubstepState for frameKey "1|2"
+      const updated = await readRunbookState(workspace, parentRunId);
+      const substepStates = (updated!.substepStates ?? []) as Array<{
+        id: string;
+        frameKey: string;
+        status: string;
+      }>;
+      const targetEntry = substepStates.find((ss) => ss.id === '1' && ss.frameKey === '1|2');
+      expect(targetEntry).toBeDefined();
+      expect(targetEntry!.status).toBe('running');
+    });
+
+    it('inline child allowed when active cursor advanced but targeting different iteration', async () => {
+      await writeForParent();
+      await writePassingChild();
+
+      // Start parent in prompted mode — sits at step 1, iteration 1, substep 1
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+      expect(result.exitCode).toBe(0);
+
+      // Advance the cursor in the active iteration past substep 1
+      // by passing substep 1.1 and 1.2 in the active frame
+      result = await runCliInProcess('pass --step 1.1', workspace);
+      expect(result.exitCode).toBe(0);
+      result = await runCliInProcess('pass --step 1.2', workspace);
+      expect(result.exitCode).toBe(0);
+
+      // Now cursor is at substep 3 in iteration 1.
+      // Targeting substep 1.1 in iteration 2 should succeed (different frame).
+      result = await runCliInProcess('run child.runbook.md --step 1.1 --index 2', workspace);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('child inherits correct context.parent.index for non-active iteration', async () => {
+      await writePassingChild();
+      await writeForParent();
+
+      // Start parent — sits at step 1, iteration 1
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const parentState = await getActiveState(workspace);
+      const parentRunId = parentState!.id as string;
+
+      // Run child targeting iteration 3 (parent is at iteration 1)
+      result = await runCliInProcess('run child.runbook.md --step 1.1 --index 3', workspace);
+      expect(result.exitCode).toBe(0);
+
+      // Find the child state and verify its templateVars
+      const runsDir = join(workspace.cwd, '.claude', 'rundown', 'runs');
+      const files = await readdir(runsDir);
+      const stateFiles = files.filter((f) => f.endsWith('.json') && f !== 'session.json');
+
+      let childState: Record<string, unknown> | null = null;
+      for (const f of stateFiles) {
+        const content = JSON.parse(await readFile(join(runsDir, f), 'utf-8')) as Record<
+          string,
+          unknown
+        >;
+        if (content.id !== parentRunId && content.parentLinkage) {
+          childState = content;
+          break;
+        }
+      }
+
+      expect(childState).not.toBeNull();
+      const templateVars = childState!.templateVars as Record<string, unknown>;
+      // context.parent.index should be "3" (the target iteration), not "1" (the active)
+      expect(templateVars['context.parent.index']).toBe('3');
+    });
+  });
+
   describe('error cases', () => {
     it('rejects --step without active parent runbook', async () => {
       await writePassingChild();

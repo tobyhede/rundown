@@ -9,10 +9,12 @@ import {
   deriveActiveFrame,
   deriveExecutionAt,
   derivePositionAt,
+  findSubstepState,
   getActiveForContext,
   parseCompletionKey,
+  upsertSubstepState,
 } from '../../src/runbook/targeting.js';
-import type { ForContext, RunbookState } from '../../src/runbook/types.js';
+import type { ForContext, RunbookState, SubstepState } from '../../src/runbook/types.js';
 
 describe('targeting helpers', () => {
   describe('deriveExecutionAt', () => {
@@ -381,6 +383,66 @@ describe('targeting helpers', () => {
         },
       });
       expect(position.for?.end).toBeUndefined();
+    });
+  });
+
+  describe('upsertSubstepState', () => {
+    const fk1 = buildFrameKey('1');
+    const fk1_2 = buildFrameKey('1', 2);
+    const fk1_3 = buildFrameKey('1', 3);
+
+    const pending = (id: string, frameKey: ReturnType<typeof buildFrameKey>): SubstepState => ({
+      id,
+      frameKey,
+      status: 'pending' as const,
+    });
+
+    it('appends new entry when no match exists', () => {
+      const result = upsertSubstepState([], '1', fk1, { status: 'running' });
+      expect(result).toHaveLength(1);
+      expect(result[0]).toEqual({ id: '1', frameKey: fk1, status: 'running' });
+    });
+
+    it('appends new entry for non-initialized frame (FOR loop)', () => {
+      const existing = [pending('1', fk1_2)];
+      const result = upsertSubstepState(existing, '1', fk1_3, { status: 'running' });
+      expect(result).toHaveLength(2);
+      expect(findSubstepState(result, '1', fk1_2)?.status).toBe('pending');
+      expect(findSubstepState(result, '1', fk1_3)?.status).toBe('running');
+    });
+
+    it('updates existing entry when match is found', () => {
+      const existing = [pending('1', fk1), pending('2', fk1)];
+      const result = upsertSubstepState(existing, '1', fk1, { status: 'running' });
+      expect(result).toHaveLength(2);
+      expect(findSubstepState(result, '1', fk1)?.status).toBe('running');
+      expect(findSubstepState(result, '2', fk1)?.status).toBe('pending');
+    });
+
+    it('does not match same id with different frameKey', () => {
+      const existing = [pending('1', fk1_2)];
+      const result = upsertSubstepState(existing, '1', fk1_3, { status: 'running' });
+      expect(result).toHaveLength(2);
+      expect(findSubstepState(result, '1', fk1_2)?.status).toBe('pending');
+      expect(findSubstepState(result, '1', fk1_3)?.status).toBe('running');
+    });
+
+    it('preserves other fields when updating', () => {
+      const existing: readonly SubstepState[] = [
+        { id: '1', frameKey: fk1, status: 'pending', delegation: undefined },
+      ];
+      const result = upsertSubstepState(existing, '1', fk1, { status: 'running' });
+      expect(result[0]).toEqual({
+        id: '1',
+        frameKey: fk1,
+        status: 'running',
+        delegation: undefined,
+      });
+    });
+
+    it('defaults to pending status for new entries', () => {
+      const result = upsertSubstepState([], '1', fk1, { result: 'pass' });
+      expect(result[0]).toEqual({ id: '1', frameKey: fk1, status: 'pending', result: 'pass' });
     });
   });
 });
