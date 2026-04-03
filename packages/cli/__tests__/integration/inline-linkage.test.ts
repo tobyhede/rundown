@@ -567,4 +567,153 @@ describe('Inline linkage integration (rd run --step)', () => {
       expect(result.stderr).toContain('already resolved');
     });
   });
+
+  describe('variable and context inheritance', () => {
+    /** Helper: find child state in runs directory. */
+    async function findChildState(parentRunId: string): Promise<Record<string, unknown> | null> {
+      const runsDir = join(workspace.cwd, '.claude', 'rundown', 'runs');
+      const files = await readdir(runsDir);
+      const stateFiles = files.filter((f) => f.endsWith('.json') && f !== 'session.json');
+
+      for (const f of stateFiles) {
+        const content = JSON.parse(await readFile(join(runsDir, f), 'utf-8')) as Record<
+          string,
+          unknown
+        >;
+        if (content.id !== parentRunId && content.parentLinkage) {
+          return content;
+        }
+      }
+      return null;
+    }
+
+    it('inline child inherits parent template vars', async () => {
+      const parentContent = createRunbook({
+        title: 'Parent',
+        vars: { Region: 'us-west' },
+        steps: [
+          {
+            title: 'Review',
+            pass: 'CONTINUE',
+            substeps: [
+              { title: 'First', content: 'First task.' },
+              { title: 'Second', content: 'Second task.' },
+            ],
+          },
+          { title: 'Done', pass: 'COMPLETE', content: 'Final.' },
+        ],
+      });
+      await writeFile(join(workspace.cwd, 'parent.runbook.md'), parentContent);
+      await writePassingChild();
+
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const parentState = await getActiveState(workspace);
+      const parentRunId = parentState!.id as string;
+
+      result = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const childState = await findChildState(parentRunId);
+      expect(childState).not.toBeNull();
+      const templateVars = childState!.templateVars as Record<string, unknown>;
+      expect(templateVars.Region).toBe('us-west');
+    });
+
+    it('inline child auto-executes when parent is prompted', async () => {
+      // Regression: inline children must NOT inherit parent's prompted mode.
+      // The child should auto-execute its commands, not wait for user input.
+      await writeParentRunbook();
+      await writePassingChild();
+
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const parentState = await getActiveState(workspace);
+      const parentRunId = parentState!.id as string;
+
+      // Child has auto-executing command — should complete, not wait
+      result = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const childState = await findChildState(parentRunId);
+      expect(childState).not.toBeNull();
+      const variables = (childState!.variables ?? {}) as Record<string, unknown>;
+      expect(variables.completed).toBe(true);
+    });
+
+    it('inline child state has context.parent vars', async () => {
+      const parentContent = createRunbook({
+        title: 'Parent',
+        vars: { AppName: 'rundown' },
+        steps: [
+          {
+            title: 'Review',
+            pass: 'CONTINUE',
+            substeps: [
+              { title: 'First', content: 'First task.' },
+              { title: 'Second', content: 'Second task.' },
+            ],
+          },
+          { title: 'Done', pass: 'COMPLETE', content: 'Final.' },
+        ],
+      });
+      await writeFile(join(workspace.cwd, 'parent.runbook.md'), parentContent);
+      await writePassingChild();
+
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const parentState = await getActiveState(workspace);
+      const parentRunId = parentState!.id as string;
+
+      result = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const childState = await findChildState(parentRunId);
+      expect(childState).not.toBeNull();
+      const templateVars = childState!.templateVars as Record<string, unknown>;
+      expect(templateVars['context.parent.vars.AppName']).toBe('rundown');
+      expect(templateVars['context.parent.step']).toBeDefined();
+    });
+
+    it('CLI --var on inline child overrides inherited parent vars', async () => {
+      const parentContent = createRunbook({
+        title: 'Parent',
+        vars: { Region: 'us-west' },
+        steps: [
+          {
+            title: 'Review',
+            pass: 'CONTINUE',
+            substeps: [
+              { title: 'First', content: 'First task.' },
+              { title: 'Second', content: 'Second task.' },
+            ],
+          },
+          { title: 'Done', pass: 'COMPLETE', content: 'Final.' },
+        ],
+      });
+      await writeFile(join(workspace.cwd, 'parent.runbook.md'), parentContent);
+      await writePassingChild();
+
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const parentState = await getActiveState(workspace);
+      const parentRunId = parentState!.id as string;
+
+      // Pass --var to override the inherited Region
+      result = await runCliInProcess(
+        ['run', 'child.runbook.md', '--step', '1.1', '--var', 'Region=eu-central'],
+        workspace,
+      );
+      expect(result.exitCode).toBe(0);
+
+      const childState = await findChildState(parentRunId);
+      expect(childState).not.toBeNull();
+      const templateVars = childState!.templateVars as Record<string, unknown>;
+      expect(templateVars.Region).toBe('eu-central');
+    });
+  });
 });
