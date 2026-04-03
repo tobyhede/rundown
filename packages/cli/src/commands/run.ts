@@ -14,10 +14,14 @@ import {
   deriveActiveFrame,
   buildFrameKey,
   findSubstepState,
+  buildContextSnapshot,
+  reconstituteContextVars,
+  extractInheritedUserVars,
   Errors,
   type InlineLinkage,
   type ParentLinkage,
   type RunbookState,
+  type TemplateVarValue,
 } from '@rundown-org/core';
 import { parseStepIdFromString, resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { getCwd } from '../helpers/context.js';
@@ -126,7 +130,24 @@ export function registerRunCommand(program: Command): void {
               parentState = linkageResult.parentState;
             }
 
-            const prepResult = await prepareRunbook(file, varOpts, cwd);
+            // Build inherited vars from parent state (mirrors claimAndLaunch)
+            let inheritedOptions:
+              | {
+                  inheritedContextVars?: Readonly<Record<string, TemplateVarValue>>;
+                  inheritedUserVars?: Readonly<Record<string, TemplateVarValue>>;
+                }
+              | undefined;
+
+            if (parentState) {
+              const parsed = parseStepIdFromString(options.step!);
+              const snapshot = buildContextSnapshot(parentState, parsed?.substep);
+              inheritedOptions = {
+                inheritedContextVars: reconstituteContextVars(snapshot),
+                inheritedUserVars: extractInheritedUserVars(snapshot),
+              };
+            }
+
+            const prepResult = await prepareRunbook(file, varOpts, cwd, inheritedOptions);
             if (!prepResult.ok) {
               output.error(prepResult.error, prepResult.code, prepResult.details);
               output.flush();
@@ -171,7 +192,7 @@ export function registerRunCommand(program: Command): void {
 
             const result = await startRunbook(ctx, prepResult.prepared, {
               file,
-              prompted: options.prompted,
+              prompted: options.prompted ?? false,
               parentLinkage,
               afterInit,
             });

@@ -1,4 +1,5 @@
-import type { ContextSnapshot, TemplateVarValue } from './types.js';
+import type { AncestorSnapshot, ContextSnapshot, RunbookState, TemplateVarValue } from './types.js';
+import { getActiveForContext, deriveExecutionAt } from './targeting.js';
 
 /** Maximum depth for parent context chain addressing. */
 export const MAX_ANCESTOR_DEPTH = 32;
@@ -109,5 +110,65 @@ export function reconstituteContextVars(
     chainPrefix += '.parent';
   }
 
+  return result;
+}
+
+/**
+ * Build a context snapshot from live runbook state.
+ *
+ * Captures the current execution position and template variables,
+ * suitable for passing to {@link reconstituteContextVars}.
+ *
+ * @param state - Current runbook state
+ * @param substep - Target substep identifier (e.g., "1")
+ * @param ancestors - Ancestor chain (defaults to empty)
+ * @param options - Optional overrides for extra variables and explicit iteration
+ * @param options.extraVars - Additional variables to merge into the snapshot
+ * @param options.iterationOverride - Explicit iteration number (overrides derived value)
+ * @returns Frozen context snapshot
+ */
+export function buildContextSnapshot(
+  state: RunbookState,
+  substep?: string,
+  ancestors?: readonly AncestorSnapshot[],
+  options?: {
+    extraVars?: Readonly<Record<string, TemplateVarValue>>;
+    iterationOverride?: number;
+  },
+): ContextSnapshot {
+  const baseVars = { ...(state.templateVars ?? {}) };
+  const vars = options?.extraVars ? { ...baseVars, ...options.extraVars } : baseVars;
+  const activeFor = getActiveForContext(state.forStack, state.step);
+  const iteration = options?.iterationOverride ?? activeFor?.iteration;
+  const at = deriveExecutionAt(state.step, substep, iteration);
+
+  return {
+    vars,
+    ancestors: ancestors ?? [],
+    step: state.step,
+    substep,
+    at,
+    ...(iteration !== undefined ? { index: iteration } : {}),
+  };
+}
+
+/**
+ * Extract parent user-level variables from a context snapshot.
+ *
+ * Filters out `context.*` namespace keys and `RunId` (which is per-execution),
+ * returning only user-defined variables suitable for child inheritance.
+ *
+ * @param snapshot - The context snapshot to extract user variables from
+ * @returns User-defined variables (excludes context.* and RunId)
+ */
+export function extractInheritedUserVars(
+  snapshot: ContextSnapshot,
+): Record<string, TemplateVarValue> {
+  const result: Record<string, TemplateVarValue> = {};
+  for (const [key, value] of Object.entries(snapshot.vars)) {
+    if (!key.startsWith('context.') && key !== 'RunId') {
+      result[key] = value;
+    }
+  }
   return result;
 }
