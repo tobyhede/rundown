@@ -21,7 +21,6 @@ import {
   type ExecutionEventEmitter,
   type ResolvedRunbook,
   type DelegationLinkage,
-  type InlineLinkage,
   type ParentLinkage,
   STATE_DIR,
   DelegationScanService,
