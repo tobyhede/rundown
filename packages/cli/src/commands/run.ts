@@ -375,7 +375,9 @@ async function buildInlineLinkage(
     process.exit(1);
   }
 
-  // Also check if the parent cursor has advanced past this substep (completion was drained)
+  // Also check if the parent cursor has advanced past this substep (completion was drained).
+  // Drain consumes the resolved completion and advances the cursor without marking
+  // substepStates[].status as 'done', so the check above doesn't catch it.
   if (parentState.substep && Number(parentState.substep) > Number(substepId)) {
     output.error(`Substep ${substepId} is already resolved`, 'DELEGATION_ALREADY_RESOLVED');
     output.flush();
