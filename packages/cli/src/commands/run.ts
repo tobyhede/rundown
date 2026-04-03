@@ -147,7 +147,7 @@ export function registerRunCommand(program: Command): void {
             if (parentLinkage && parentState) {
               const link = parentLinkage;
               afterInit = async (_stateId) => {
-                // Acquire lock and re-load fresh parent state to avoid TOCTOU:
+                // Acquire lock and re-load fresh parent state to avoid stale-read race:
                 // parentState was captured at buildInlineLinkage() time and may
                 // be stale by the time afterInit runs (another child may have
                 // modified substepStates in between).

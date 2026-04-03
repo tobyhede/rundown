@@ -65,13 +65,13 @@ describe('Inline linkage integration (rd run --step)', () => {
     return (state.variables ?? {}) as Record<string, unknown>;
   }
 
-  describe('afterInit fresh state reload (TOCTOU fix)', () => {
+  describe('afterInit fresh state reload (race condition fix)', () => {
     it('afterInit marks targeted substep as running in parent substepStates', async () => {
       // Behavioral test for the afterInit callback in `rd run --step`.
       //
       // The underlying fix (acquiring DelegationLock + fresh manager.load()
       // instead of closing over a stale parentState snapshot) prevents
-      // TOCTOU races when concurrent processes modify parent substepStates.
+      // race condition races when concurrent processes modify parent substepStates.
       // That race cannot be reproduced in single-process tests. This test
       // validates the observable contract: afterInit correctly marks the
       // targeted substep as 'running'.
