@@ -103,10 +103,10 @@ describe('start command', () => {
   });
 
   describe('option validation', () => {
-    it('rejects --step without --prompted', async () => {
+    it('rejects --step without active parent runbook', async () => {
       const result = await runCliInProcess('run runbooks/simple.runbook.md --step 1', workspace);
       expect(result.exitCode).toBe(1);
-      expect(result.stderr).toContain('--step requires --prompted');
+      expect(result.stderr).toContain('--step requires an active parent runbook');
     });
 
     it('rejects --index without --step', async () => {

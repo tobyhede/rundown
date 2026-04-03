@@ -207,7 +207,7 @@ describe('delegate command', () => {
       );
 
       expect(result.exitCode).not.toBe(0);
-      expect(result.stdout + result.stderr).toContain('step not found');
+      expect(result.stdout + result.stderr).toContain('Step not found');
     });
 
     it('fails for duplicate delegation on same substep', async () => {

@@ -23,7 +23,7 @@ import { getRunbookFromState } from '../helpers/runbook-loader.js';
 import { drainResolvedCompletions, runExecutionLoop } from '../services/execution.js';
 import { createBridgedEmitter } from '../helpers/execution-emitter.js';
 import { createFailTransitionConfig } from '../helpers/transitions.js';
-import { handleDelegationCompletion } from '../helpers/delegation-completion.js';
+import { handleParentCompletion, extractParentLinkage } from '../helpers/delegation-completion.js';
 import type { TransitionOrchestrationPolicy } from '../helpers/transition-orchestrator.js';
 
 /**
@@ -81,9 +81,9 @@ async function propagateForceAbort(
   if (drained.status === 'done' || drained.status === 'stopped') {
     await sessionService.popRunbook();
     const cascadeParent = await manager.load(parentRunId);
-    if (cascadeParent?.delegation) {
+    if (cascadeParent && extractParentLinkage(cascadeParent)) {
       const cascadeResult: 'pass' | 'fail' = drained.status === 'done' ? 'pass' : 'fail';
-      await handleDelegationCompletion(cascadeParent, cascadeResult, cwd, output);
+      await handleParentCompletion(cascadeParent, cascadeResult, cwd, output);
     }
   } else if (drained.applied > 0) {
     // Run execution loop to advance past resolved step
@@ -98,9 +98,9 @@ async function propagateForceAbort(
 
     if (loopResult === 'stopped' || loopResult === 'done') {
       const cascadeParent = await manager.load(parentRunId);
-      if (cascadeParent?.delegation) {
+      if (cascadeParent && extractParentLinkage(cascadeParent)) {
         const cascadeResult: 'pass' | 'fail' = loopResult === 'done' ? 'pass' : 'fail';
-        await handleDelegationCompletion(cascadeParent, cascadeResult, cwd, output);
+        await handleParentCompletion(cascadeParent, cascadeResult, cwd, output);
       }
     }
   }

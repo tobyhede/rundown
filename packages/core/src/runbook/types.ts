@@ -412,18 +412,48 @@ export interface AncestorSnapshot {
   readonly index?: number;
 }
 
-/** Linkage data a child run carries to identify its parent delegation. */
-export interface DelegationLinkage {
+/**
+ * Fields shared by all parent-linkage variants (delegation and inline).
+ *
+ * Both {@link DelegationLinkage} and {@link InlineLinkage} carry the same
+ * parent identification fields needed by {@link handleParentCompletion} to
+ * propagate a child's terminal result back to the parent substep.
+ */
+export interface ParentLinkageBase {
   readonly parentRunId: string;
   readonly parentStepId: string;
-  readonly tokenHash: string;
-  /** Parent's step name at claim time (e.g., "1"). */
+  /** Parent's step name at link time (e.g., "1"). */
   readonly parentStep?: string;
-  /** Parent's frame key at claim time for completion key construction. */
+  /** Parent's frame key at link time for completion key construction. */
   readonly parentFrameKey?: FrameKey;
-  /** Parent's entry counter at claim time for completion key construction. */
+  /** Parent's entry counter at link time for completion key construction. */
   readonly parentEntry?: number;
 }
+
+/** Linkage data a child run carries to identify its parent delegation. */
+export interface DelegationLinkage extends ParentLinkageBase {
+  readonly kind: 'delegation';
+  readonly tokenHash: string;
+}
+
+/**
+ * Linkage data for a child run created via `rd run --step` (inline execution).
+ *
+ * Unlike {@link DelegationLinkage}, no token is involved — the child executes
+ * inline in the same agent process and the result auto-propagates on completion.
+ */
+export interface InlineLinkage extends ParentLinkageBase {
+  readonly kind: 'inline';
+}
+
+/**
+ * Discriminated union of all parent linkage variants.
+ *
+ * A child run carries exactly one of these to identify how it was linked
+ * to its parent: either via delegation token (`rd delegate`/`rd claim`)
+ * or inline execution (`rd run --step`).
+ */
+export type ParentLinkage = DelegationLinkage | InlineLinkage;
 
 /**
  * Step state within a runbook
@@ -613,8 +643,8 @@ export interface RunbookState {
   // Substep tracking
   readonly substepStates?: readonly SubstepState[];
 
-  /** Delegation linkage data when this run was created via `rd claim`. */
-  readonly delegation?: DelegationLinkage;
+  /** Parent linkage identifying how this child was linked to its parent. */
+  readonly parentLinkage?: ParentLinkage;
 
   readonly nested?: {
     readonly runbook: string;

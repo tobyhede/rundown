@@ -83,7 +83,10 @@ export class DelegationScanService {
     const states = await this.manager.list();
 
     for (const state of states) {
-      if (state.delegation?.tokenHash === tokenHash) {
+      if (
+        state.parentLinkage?.kind === 'delegation' &&
+        state.parentLinkage.tokenHash === tokenHash
+      ) {
         return state; // Early exit on first match — at most one orphan per token
       }
     }

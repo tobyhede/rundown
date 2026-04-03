@@ -22,6 +22,17 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   findSubstepState: jest.fn((substepStates: any[], substepId: string, frameKey: string) =>
     substepStates.find((ss: any) => ss.id === substepId && ss.frameKey === frameKey),
   ),
+  upsertSubstepState: jest.fn(
+    (substepStates: any[], substepId: string, frameKey: string, patch: any) => {
+      const existing = substepStates.find(
+        (ss: any) => ss.id === substepId && ss.frameKey === frameKey,
+      );
+      if (existing) {
+        return substepStates.map((ss: any) => (ss === existing ? { ...ss, ...patch } : ss));
+      }
+      return [...substepStates, { id: substepId, frameKey, status: 'pending', ...patch }];
+    },
+  ),
   ...mockErrorHelpers,
 }));
 
@@ -69,7 +80,9 @@ const { createBridgedEmitter } = await import('../../src/helpers/execution-emitt
 const { createPassTransitionConfig, createFailTransitionConfig } = await import(
   '../../src/helpers/transitions'
 );
-const { handleDelegationCompletion } = await import('../../src/helpers/delegation-completion');
+const { handleParentCompletion, extractParentLinkage } = await import(
+  '../../src/helpers/delegation-completion'
+);
 
 function makeState(id: string, overrides: Partial<RunbookState> = {}): RunbookState {
   return {
@@ -90,6 +103,7 @@ function makeState(id: string, overrides: Partial<RunbookState> = {}): RunbookSt
 
 function makeDelegationLinkage(overrides: Partial<DelegationLinkage> = {}): DelegationLinkage {
   return {
+    kind: 'delegation' as const,
     parentRunId: 'parent-run-id',
     parentStepId: '1',
     tokenHash: 'sha256:abc123',
@@ -105,12 +119,14 @@ function makeOutput(): any {
     flush: jest.fn(),
     status: jest.fn(),
     error: jest.fn(),
+    warning: jest.fn(),
   };
 }
 
 function makeManager(states: Map<string, RunbookState | null>): any {
   return {
     load: jest.fn<any>().mockImplementation(async (id: string) => states.get(id) ?? null),
+    update: jest.fn<any>().mockResolvedValue(undefined),
   };
 }
 
@@ -195,19 +211,19 @@ beforeEach(() => {
   });
 });
 
-describe('handleDelegationCompletion', () => {
+describe('handleParentCompletion', () => {
   it('returns not-applicable when child has no delegation linkage', async () => {
     const childState = makeState('child-run-id');
     const output = makeOutput();
 
-    const result = await handleDelegationCompletion(childState, 'pass', '/test', output);
+    const result = await handleParentCompletion(childState, 'pass', '/test', output);
 
     expect(result).toBe('not-applicable');
   });
 
   it('acquires delegation lock on parent run ID', async () => {
     const delegation = makeDelegationLinkage();
-    const childState = makeState('child-run-id', { delegation });
+    const childState = makeState('child-run-id', { parentLinkage: delegation });
     const parentState = makeState('parent-run-id', {
       substepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: null }],
     });
@@ -220,7 +236,7 @@ describe('handleDelegationCompletion', () => {
 
     wireMocks(manager, lifecycleService);
 
-    await handleDelegationCompletion(childState, 'pass', '/test', output);
+    await handleParentCompletion(childState, 'pass', '/test', output);
 
     expect(lock.acquire).toHaveBeenCalledWith('parent-run-id');
     expect(lock.release).toHaveBeenCalledWith('parent-run-id');
@@ -228,7 +244,7 @@ describe('handleDelegationCompletion', () => {
 
   it('returns not-applicable when parent no longer exists', async () => {
     const delegation = makeDelegationLinkage();
-    const childState = makeState('child-run-id', { delegation });
+    const childState = makeState('child-run-id', { parentLinkage: delegation });
 
     const states = new Map([['parent-run-id', null]]);
     const manager = makeManager(states);
@@ -238,15 +254,76 @@ describe('handleDelegationCompletion', () => {
 
     wireMocks(manager, lifecycleService);
 
-    const result = await handleDelegationCompletion(childState, 'pass', '/test', output);
+    const result = await handleParentCompletion(childState, 'pass', '/test', output);
 
     expect(result).toBe('not-applicable');
     expect(lock.release).toHaveBeenCalled();
   });
 
+  it('does not block inline child when substep has cancelled delegation', async () => {
+    const childState = makeState('child-run-id', {
+      parentLinkage: {
+        kind: 'inline' as const,
+        parentRunId: 'parent-run-id',
+        parentStepId: '1',
+        parentStep: '1',
+        parentFrameKey: '1|' as any,
+        parentEntry: 1,
+      },
+    });
+    const parentState = makeState('parent-run-id', {
+      step: '1',
+      activeEntry: 1,
+      activeFrameKey: '1|',
+      substepStates: [
+        {
+          id: '1',
+          frameKey: '1|',
+          status: 'pending',
+          delegation: {
+            tokenHash: 'sha256:old-token',
+            childRunbookPath: 'old-child.md',
+            contextSnapshot: { vars: {}, ancestors: [] },
+            childRunId: 'old-child-run-id',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            cancelledAt: '2026-01-01T00:00:00.000Z',
+          },
+        },
+      ],
+    });
+
+    const states = new Map([[parentState.id, parentState]]);
+    const manager = makeManager(states);
+    const _lock = makeLock();
+    const lifecycleService = makeLifecycleService();
+    const output = makeOutput();
+
+    wireMocks(manager, lifecycleService);
+
+    (drainResolvedCompletions as jest.Mock).mockResolvedValue({
+      status: 'continue',
+      applied: 0,
+      state: parentState,
+    });
+
+    const result = await handleParentCompletion(childState, 'pass', '/test', output);
+
+    // Inline child should NOT be blocked by the cancelled delegation
+    expect(result).not.toBe('not-applicable');
+    expect(lifecycleService.upsertResolvedCompletion).toHaveBeenCalledWith(
+      'parent-run-id',
+      expect.any(String),
+      expect.objectContaining({
+        agentId: 'inline',
+        result: 'pass',
+        targetSubstep: '1',
+      }),
+    );
+  });
+
   it('skips propagation when delegation was cancelled', async () => {
     const delegation = makeDelegationLinkage();
-    const childState = makeState('child-run-id', { delegation });
+    const childState = makeState('child-run-id', { parentLinkage: delegation });
     const parentState = makeState('parent-run-id', {
       substepStates: [
         {
@@ -273,7 +350,7 @@ describe('handleDelegationCompletion', () => {
 
     wireMocks(manager, lifecycleService);
 
-    const result = await handleDelegationCompletion(childState, 'pass', '/test', output);
+    const result = await handleParentCompletion(childState, 'pass', '/test', output);
 
     expect(result).toBe('handled');
     expect(lifecycleService.upsertResolvedCompletion).not.toHaveBeenCalled();
@@ -281,7 +358,7 @@ describe('handleDelegationCompletion', () => {
 
   it('records resolved completion on parent', async () => {
     const delegation = makeDelegationLinkage();
-    const childState = makeState('child-run-id', { delegation });
+    const childState = makeState('child-run-id', { parentLinkage: delegation });
     const parentState = makeState('parent-run-id', {
       step: '1',
       activeEntry: 1,
@@ -303,7 +380,7 @@ describe('handleDelegationCompletion', () => {
       state: parentState,
     });
 
-    await handleDelegationCompletion(childState, 'pass', '/test', output);
+    await handleParentCompletion(childState, 'pass', '/test', output);
 
     expect(lifecycleService.upsertResolvedCompletion).toHaveBeenCalledWith(
       'parent-run-id',
@@ -318,7 +395,7 @@ describe('handleDelegationCompletion', () => {
 
   it('drains resolved completions on parent after recording', async () => {
     const delegation = makeDelegationLinkage();
-    const childState = makeState('child-run-id', { delegation });
+    const childState = makeState('child-run-id', { parentLinkage: delegation });
     const parentState = makeState('parent-run-id', {
       substepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: null }],
     });
@@ -337,7 +414,7 @@ describe('handleDelegationCompletion', () => {
       state: parentState,
     });
 
-    await handleDelegationCompletion(childState, 'pass', '/test', output);
+    await handleParentCompletion(childState, 'pass', '/test', output);
 
     expect(drainResolvedCompletions).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -349,7 +426,7 @@ describe('handleDelegationCompletion', () => {
 
   it('runs execution loop when completions were applied', async () => {
     const delegation = makeDelegationLinkage();
-    const childState = makeState('child-run-id', { delegation });
+    const childState = makeState('child-run-id', { parentLinkage: delegation });
     const parentState = makeState('parent-run-id', {
       substepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: null }],
     });
@@ -368,7 +445,7 @@ describe('handleDelegationCompletion', () => {
       state: parentState,
     });
 
-    await handleDelegationCompletion(childState, 'pass', '/test', output);
+    await handleParentCompletion(childState, 'pass', '/test', output);
 
     expect(runExecutionLoop).toHaveBeenCalledWith(
       manager,
@@ -382,7 +459,7 @@ describe('handleDelegationCompletion', () => {
 
   it('returns stopped when drain results in stopped status', async () => {
     const delegation = makeDelegationLinkage();
-    const childState = makeState('child-run-id', { delegation });
+    const childState = makeState('child-run-id', { parentLinkage: delegation });
     const parentState = makeState('parent-run-id', {
       substepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: null }],
     });
@@ -401,21 +478,21 @@ describe('handleDelegationCompletion', () => {
       state: parentState,
     });
 
-    const result = await handleDelegationCompletion(childState, 'fail', '/test', output);
+    const result = await handleParentCompletion(childState, 'fail', '/test', output);
 
     expect(result).toBe('stopped');
   });
 
   it('cascades to grandparent when parent completes', async () => {
     const delegation = makeDelegationLinkage();
-    const childState = makeState('child-run-id', { delegation });
+    const childState = makeState('child-run-id', { parentLinkage: delegation });
     const grandparentDelegation = makeDelegationLinkage({
       parentRunId: 'grandparent-run-id',
       parentStepId: '2',
     });
     const parentState = makeState('parent-run-id', {
       substepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: null }],
-      delegation: grandparentDelegation,
+      parentLinkage: grandparentDelegation,
     });
     const grandparentState = makeState('grandparent-run-id', {
       substepStates: [{ id: '2', frameKey: '1|', status: 'pending', delegation: null }],
@@ -438,7 +515,7 @@ describe('handleDelegationCompletion', () => {
       state: parentState,
     });
 
-    await handleDelegationCompletion(childState, 'pass', '/test', output);
+    await handleParentCompletion(childState, 'pass', '/test', output);
 
     // Should cascade - second acquire should be on grandparent
     expect(lock.acquire).toHaveBeenCalledWith('parent-run-id');
@@ -447,11 +524,11 @@ describe('handleDelegationCompletion', () => {
 
   it('respects maximum recursion depth', async () => {
     const delegation = makeDelegationLinkage();
-    const childState = makeState('child-run-id', { delegation });
+    const childState = makeState('child-run-id', { parentLinkage: delegation });
     const output = makeOutput();
 
     // Call with depth already at limit
-    const result = await handleDelegationCompletion(childState, 'pass', '/test', output, 32);
+    const result = await handleParentCompletion(childState, 'pass', '/test', output, 32);
 
     expect(result).toBe('handled');
     // Should not even acquire lock
@@ -461,7 +538,7 @@ describe('handleDelegationCompletion', () => {
 
   it('passes delegation-specific popRunbook:false policy to drain', async () => {
     const delegation = makeDelegationLinkage();
-    const childState = makeState('child-run-id', { delegation });
+    const childState = makeState('child-run-id', { parentLinkage: delegation });
     const parentState = makeState('parent-run-id', {
       substepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: null }],
     });
@@ -480,7 +557,7 @@ describe('handleDelegationCompletion', () => {
       state: parentState,
     });
 
-    await handleDelegationCompletion(childState, 'pass', '/test', output);
+    await handleParentCompletion(childState, 'pass', '/test', output);
 
     expect(drainResolvedCompletions).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -494,7 +571,7 @@ describe('handleDelegationCompletion', () => {
 
   it('explicitly pops session when drain returns done', async () => {
     const delegation = makeDelegationLinkage();
-    const childState = makeState('child-run-id', { delegation });
+    const childState = makeState('child-run-id', { parentLinkage: delegation });
     const parentState = makeState('parent-run-id', {
       substepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: null }],
     });
@@ -513,7 +590,7 @@ describe('handleDelegationCompletion', () => {
       state: parentState,
     });
 
-    await handleDelegationCompletion(childState, 'pass', '/test', output);
+    await handleParentCompletion(childState, 'pass', '/test', output);
 
     const MockSession = core.SessionService as jest.MockedClass<typeof core.SessionService>;
     const sessionInstance = MockSession.mock.results[0]?.value;
@@ -522,7 +599,7 @@ describe('handleDelegationCompletion', () => {
 
   it('explicitly pops session when drain returns stopped', async () => {
     const delegation = makeDelegationLinkage();
-    const childState = makeState('child-run-id', { delegation });
+    const childState = makeState('child-run-id', { parentLinkage: delegation });
     const parentState = makeState('parent-run-id', {
       substepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: null }],
     });
@@ -541,7 +618,7 @@ describe('handleDelegationCompletion', () => {
       state: parentState,
     });
 
-    await handleDelegationCompletion(childState, 'fail', '/test', output);
+    await handleParentCompletion(childState, 'fail', '/test', output);
 
     const MockSession = core.SessionService as jest.MockedClass<typeof core.SessionService>;
     const sessionInstance = MockSession.mock.results[0]?.value;
@@ -550,7 +627,7 @@ describe('handleDelegationCompletion', () => {
 
   it('uses fail transition config when result is fail', async () => {
     const delegation = makeDelegationLinkage();
-    const childState = makeState('child-run-id', { delegation });
+    const childState = makeState('child-run-id', { parentLinkage: delegation });
     const parentState = makeState('parent-run-id', {
       substepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: null }],
     });
@@ -569,7 +646,7 @@ describe('handleDelegationCompletion', () => {
       state: parentState,
     });
 
-    await handleDelegationCompletion(childState, 'fail', '/test', output);
+    await handleParentCompletion(childState, 'fail', '/test', output);
 
     expect(createFailTransitionConfig).toHaveBeenCalled();
     expect(createPassTransitionConfig).not.toHaveBeenCalled();
@@ -577,7 +654,7 @@ describe('handleDelegationCompletion', () => {
 
   it('flushes output after handling', async () => {
     const delegation = makeDelegationLinkage();
-    const childState = makeState('child-run-id', { delegation });
+    const childState = makeState('child-run-id', { parentLinkage: delegation });
     const parentState = makeState('parent-run-id', {
       substepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: null }],
     });
@@ -596,14 +673,14 @@ describe('handleDelegationCompletion', () => {
       state: parentState,
     });
 
-    await handleDelegationCompletion(childState, 'pass', '/test', output);
+    await handleParentCompletion(childState, 'pass', '/test', output);
 
     expect(output.flush).toHaveBeenCalled();
   });
 
   it('passes parentFrameKey as frameKeyOverride to drain', async () => {
     const delegation = makeDelegationLinkage({ parentFrameKey: '1|3' as any });
-    const childState = makeState('child-run-id', { delegation });
+    const childState = makeState('child-run-id', { parentLinkage: delegation });
     const parentState = makeState('parent-run-id', {
       substepStates: [{ id: '1', frameKey: '1|3', status: 'pending', delegation: null }],
     });
@@ -622,7 +699,7 @@ describe('handleDelegationCompletion', () => {
       state: parentState,
     });
 
-    await handleDelegationCompletion(childState, 'pass', '/test', output);
+    await handleParentCompletion(childState, 'pass', '/test', output);
 
     expect(drainResolvedCompletions).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -633,7 +710,7 @@ describe('handleDelegationCompletion', () => {
 
   it('does not pass frameKeyOverride when parentFrameKey is undefined', async () => {
     const delegation = makeDelegationLinkage({ parentFrameKey: undefined });
-    const childState = makeState('child-run-id', { delegation });
+    const childState = makeState('child-run-id', { parentLinkage: delegation });
     const parentState = makeState('parent-run-id', {
       substepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: null }],
     });
@@ -652,9 +729,72 @@ describe('handleDelegationCompletion', () => {
       state: parentState,
     });
 
-    await handleDelegationCompletion(childState, 'pass', '/test', output);
+    await handleParentCompletion(childState, 'pass', '/test', output);
 
     const drainCall = (drainResolvedCompletions as jest.Mock).mock.calls[0][0];
     expect(drainCall.frameKeyOverride).toBeUndefined();
+  });
+});
+
+describe('inline linkage path', () => {
+  it('extractParentLinkage returns inline linkage from state', () => {
+    const state = makeState('child-run', {
+      parentLinkage: {
+        kind: 'inline' as const,
+        parentRunId: 'parent-run',
+        parentStepId: '1',
+        parentStep: '1',
+        parentFrameKey: '1|' as any,
+        parentEntry: 1,
+      },
+    });
+    const linkage = extractParentLinkage(state);
+    expect(linkage).toBeDefined();
+    expect(linkage!.parentRunId).toBe('parent-run');
+  });
+
+  it('agentId is inline for inline children', async () => {
+    const childState = makeState('child-run-id', {
+      parentLinkage: {
+        kind: 'inline' as const,
+        parentRunId: 'parent-run-id',
+        parentStepId: '1',
+        parentStep: '1',
+        parentFrameKey: '1|' as any,
+        parentEntry: 1,
+      },
+    });
+    const parentState = makeState('parent-run-id', {
+      step: '1',
+      activeEntry: 1,
+      activeFrameKey: '1|',
+      substepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: null }],
+    });
+
+    const states = new Map([[parentState.id, parentState]]);
+    const manager = makeManager(states);
+    const _lock = makeLock();
+    const lifecycleService = makeLifecycleService();
+    const output = makeOutput();
+
+    wireMocks(manager, lifecycleService);
+
+    (drainResolvedCompletions as jest.Mock).mockResolvedValue({
+      status: 'continue',
+      applied: 0,
+      state: parentState,
+    });
+
+    await handleParentCompletion(childState, 'pass', '/test', output);
+
+    expect(lifecycleService.upsertResolvedCompletion).toHaveBeenCalledWith(
+      'parent-run-id',
+      expect.any(String),
+      expect.objectContaining({
+        agentId: 'inline',
+        result: 'pass',
+        targetSubstep: '1',
+      }),
+    );
   });
 });

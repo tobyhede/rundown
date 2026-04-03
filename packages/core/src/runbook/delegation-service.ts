@@ -1,15 +1,10 @@
 import { parseStepIdFromString, resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { Errors } from '../errors/factory.js';
+import { buildContextSnapshot } from './delegation-context.js';
 import { generateDelegationToken, hashDelegationToken } from './delegation-token.js';
-import {
-  deriveExecutionAt,
-  findSubstepState,
-  getActiveForContext,
-  type FrameKey,
-} from './targeting.js';
+import { findSubstepState, type FrameKey } from './targeting.js';
 import type {
   AncestorSnapshot,
-  ContextSnapshot,
   RunbookState,
   ResolvedStep,
   StepDelegation,
@@ -169,22 +164,11 @@ export function createDelegation(
   const tokenHash = hashDelegationToken(token);
 
   // 8. Build context snapshot
-  const baseVars = { ...(state.templateVars ?? {}) };
-  const mergedVars = extraVars ? { ...baseVars, ...extraVars } : baseVars;
-
-  // Capture structural fields from the delegation target, not the cursor
-  const activeFor = getActiveForContext(state.forStack, state.step);
-  const iteration = (typeof parsed.at === 'number' ? parsed.at : undefined) ?? activeFor?.iteration;
-  const at = deriveExecutionAt(state.step, parsed.substep, iteration);
-
-  const contextSnapshot: ContextSnapshot = {
-    vars: mergedVars,
-    ancestors: ancestors ?? [],
-    step: state.step,
-    substep: parsed.substep,
-    at,
-    ...(iteration !== undefined ? { index: iteration } : {}),
-  };
+  const explicitIteration = typeof parsed.at === 'number' ? parsed.at : undefined;
+  const contextSnapshot = buildContextSnapshot(state, parsed.substep, ancestors, {
+    extraVars,
+    iterationOverride: explicitIteration,
+  });
 
   // 9. Create delegation object
   const delegation: StepDelegation = {

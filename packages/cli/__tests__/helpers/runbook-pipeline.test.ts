@@ -40,6 +40,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   DelegationScanService: jest.fn(),
   DelegationLock: jest.fn(),
   reconstituteContextVars: jest.fn().mockReturnValue({}),
+  extractInheritedUserVars: jest.fn(),
   hashDelegationToken: jest.fn().mockReturnValue('sha256:mock'),
   truncateDelegationToken: jest.fn((token: string) => {
     const prefix = 'rdtk_';
@@ -250,6 +251,7 @@ beforeEach(() => {
   ).mockReturnValue(mockParseResult());
   (core.hashDelegationToken as jest.Mock).mockReturnValue('sha256:mock');
   (core.reconstituteContextVars as jest.Mock).mockReturnValue({});
+  (core.extractInheritedUserVars as jest.Mock).mockReturnValue({});
   (core.deriveActiveFrame as jest.Mock).mockReturnValue({
     step: '1',
     substep: undefined,
@@ -927,7 +929,8 @@ describe('claimAndLaunch', () => {
       'child.md',
       expect.anything(),
       expect.objectContaining({
-        delegation: expect.objectContaining({
+        parentLinkage: expect.objectContaining({
+          kind: 'delegation',
           parentRunId: 'parent-id',
           tokenHash,
         }),
@@ -1008,6 +1011,11 @@ describe('claimAndLaunch', () => {
       lifecycleService: makeLifecycle(),
       cwd: '/test',
     };
+
+    (core.extractInheritedUserVars as jest.Mock).mockReturnValue({
+      ContextId: 'ctx-parent',
+      Region: 'us-west',
+    });
 
     const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline');
     // cspell:disable-next-line

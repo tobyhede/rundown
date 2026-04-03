@@ -1,13 +1,12 @@
 /**
- * Delegation completion propagation.
+ * Parent completion propagation.
  *
- * When a child run created via `rd delegate` / `rd claim` reaches a terminal
- * state (complete or stopped), its result must propagate back to the parent
- * substep. This module implements the propagation protocol described in
- * §6.3 of the delegation design.
+ * When a child run reaches a terminal state (complete or stopped), its result
+ * must propagate back to the parent substep. This applies to both delegation
+ * children (`rd delegate` / `rd claim`) and inline children (`rd run --step`).
  *
- * Uses {@link DelegationLinkage} to track and propagate completion results
- * through the delegation chain.
+ * Uses {@link ParentLinkageBase} to track and propagate completion results
+ * through the parent chain.
  *
  * @module helpers/delegation-completion
  */
@@ -22,7 +21,9 @@ import {
   buildResolvedCompletion,
   deriveActiveFrame,
   findSubstepState,
+  upsertSubstepState,
   type RunbookState,
+  type ParentLinkageBase,
 } from '@rundown-org/core';
 import { getRunbookFromState } from './runbook-loader.js';
 import { drainResolvedCompletions, runExecutionLoop } from '../services/execution.js';
@@ -35,48 +36,62 @@ import type { TransitionOrchestrationPolicy } from './transition-orchestrator.js
 const MAX_PROPAGATION_DEPTH = 32;
 
 /**
- * Propagate a child run's terminal result to its parent delegation substep.
+ * Extract parent linkage from a child state.
  *
- * Follows the completion propagation protocol:
- * 1. Read delegation linkage from the child state
+ * Checks both inline linkage (`rd run --step`) and delegation linkage
+ * (`rd delegate`/`rd claim`), preferring inline when both are present.
+ *
+ * @param state - The child run's state
+ * @returns The parent linkage base fields, or undefined if no linkage exists
+ */
+export function extractParentLinkage(state: RunbookState): ParentLinkageBase | undefined {
+  return state.parentLinkage;
+}
+
+/**
+ * Propagate a child run's terminal result to its parent substep.
+ *
+ * Works for both delegation children (`rd delegate`/`rd claim`) and inline
+ * children (`rd run --step`). Follows the completion propagation protocol:
+ * 1. Read parent linkage from the child state
  * 2. Acquire delegation lock on the parent
  * 3. Record a resolved completion on the parent substep
  * 4. Drain resolved completions on the parent
- * 5. If the parent itself reaches terminal state and has delegation linkage, recurse
+ * 5. If the parent itself reaches terminal state and has parent linkage, recurse
  *
- * @param childState - The child run's state (must have `delegation` linkage)
+ * @param childState - The child run's state (must have delegation or inline linkage)
  * @param result - Terminal result of the child ('pass' or 'fail')
  * @param cwd - Current working directory
  * @param output - Output emitter for CLI output
  * @param depth - Current recursion depth (default 0)
  * @returns 'handled' if propagation succeeded, 'stopped' if parent stopped,
- *          'not-applicable' if no delegation linkage exists
+ *          'not-applicable' if no parent linkage exists
  * @throws {Error} If delegation lock acquisition fails, parent state I/O errors,
  *         drain execution fails, or recursive propagation throws
  */
-export async function handleDelegationCompletion(
+export async function handleParentCompletion(
   childState: RunbookState,
   result: 'pass' | 'fail',
   cwd: string,
   output: OutputEmitter,
   depth = 0,
 ): Promise<'handled' | 'stopped' | 'not-applicable'> {
-  // Guard: no delegation linkage
-  if (!childState.delegation) {
+  // Guard: no parent linkage
+  const linkage = extractParentLinkage(childState);
+  if (!linkage) {
     return 'not-applicable';
   }
 
   // Guard: recursion limit — likely a cycle or bug
   if (depth >= MAX_PROPAGATION_DEPTH) {
-    console.warn(
-      `Warning: Delegation propagation depth limit reached (${String(MAX_PROPAGATION_DEPTH)}). ` +
-        `Possible cycle in delegation chain starting from run ${childState.id}.`,
+    output.warning(
+      `Propagation depth limit reached (${String(MAX_PROPAGATION_DEPTH)}). ` +
+        `Possible cycle in parent chain starting from run ${childState.id}.`,
     );
     return 'handled';
   }
 
-  const { parentRunId, parentStepId, parentStep, parentFrameKey, parentEntry } =
-    childState.delegation;
+  const { parentRunId, parentStepId, parentStep, parentFrameKey, parentEntry } = linkage;
 
   const manager = new RunbookStateManager(cwd);
   const lock = new DelegationLock(cwd);
@@ -96,8 +111,8 @@ export async function handleDelegationCompletion(
     // 3. Check if delegation was cancelled (frame-scoped lookup)
     const frameKey = parentFrameKey ?? deriveActiveFrame(parentState).frameKey;
     const substepState = findSubstepState(parentState.substepStates ?? [], parentStepId, frameKey);
-    if (substepState?.delegation?.cancelledAt) {
-      // Abort wins — skip propagation
+    if (childState.parentLinkage?.kind === 'delegation' && substepState?.delegation?.cancelledAt) {
+      // Abort wins — skip propagation (only for delegation children)
       return 'handled';
     }
 
@@ -113,8 +128,9 @@ export async function handleDelegationCompletion(
     const lifecycleService = new ExecutionLifecycleService(manager);
     const existing = await lifecycleService.getResolvedCompletion(parentRunId, completionKey);
     if (!existing) {
+      const agentId = childState.parentLinkage?.kind === 'inline' ? 'inline' : 'delegation';
       const completion = buildResolvedCompletion({
-        agentId: 'delegation',
+        agentId,
         result,
         targetStep: parentStep ?? parentState.step,
         targetSubstep: parentStepId,
@@ -122,6 +138,21 @@ export async function handleDelegationCompletion(
         targetEntry: entry,
       });
       await lifecycleService.upsertResolvedCompletion(parentRunId, completionKey, completion);
+    }
+
+    // 5b. Mark the SubstepState as done (frame-scoped).
+    // Drain consumes the resolved completion but does not update substepStates,
+    // so without this the status === 'done' guard in buildInlineLinkage would
+    // miss already-resolved non-active frame substeps and allow re-execution.
+    const freshParentForSubstep = await manager.load(parentRunId);
+    if (freshParentForSubstep) {
+      const updatedSubsteps = upsertSubstepState(
+        freshParentForSubstep.substepStates ?? [],
+        parentStepId,
+        frameKey,
+        { status: 'done' as const, result },
+      );
+      await manager.update(parentRunId, { substepStates: updatedSubsteps });
     }
   } finally {
     // 6. Release lock
@@ -132,7 +163,7 @@ export async function handleDelegationCompletion(
   const transitionConfig =
     result === 'pass' ? createPassTransitionConfig() : createFailTransitionConfig();
 
-  // Delegation-specific: never pop during drain.
+  // Parent completion: never pop during drain.
   // Session is managed explicitly below and by runExecutionLoop.
   const delegationPolicy: TransitionOrchestrationPolicy = {
     onComplete: { popRunbook: false },
@@ -167,12 +198,12 @@ export async function handleDelegationCompletion(
     ...(parentFrameKey ? { frameKeyOverride: parentFrameKey } : {}),
   });
 
-  // 8. Check if parent reached terminal state — cascade if it also has delegation linkage
+  // 8. Check if parent reached terminal state — cascade if it also has parent linkage
   if (drained.status === 'stopped') {
     await sessionService.popRunbook();
     const freshParent = await manager.load(parentRunId);
-    if (freshParent?.delegation) {
-      await handleDelegationCompletion(freshParent, 'fail', cwd, output, depth + 1);
+    if (freshParent && extractParentLinkage(freshParent)) {
+      await handleParentCompletion(freshParent, 'fail', cwd, output, depth + 1);
     }
     output.flush();
     return 'stopped';
@@ -181,8 +212,8 @@ export async function handleDelegationCompletion(
   if (drained.status === 'done') {
     await sessionService.popRunbook();
     const freshParent = await manager.load(parentRunId);
-    if (freshParent?.delegation) {
-      return handleDelegationCompletion(freshParent, 'pass', cwd, output, depth + 1);
+    if (freshParent && extractParentLinkage(freshParent)) {
+      return handleParentCompletion(freshParent, 'pass', cwd, output, depth + 1);
     }
     output.flush();
     return 'handled';
@@ -202,15 +233,15 @@ export async function handleDelegationCompletion(
 
     if (loopResult === 'stopped') {
       const freshParent = await manager.load(parentRunId);
-      if (freshParent?.delegation) {
-        await handleDelegationCompletion(freshParent, 'fail', cwd, output, depth + 1);
+      if (freshParent && extractParentLinkage(freshParent)) {
+        await handleParentCompletion(freshParent, 'fail', cwd, output, depth + 1);
       }
       return 'stopped';
     }
     if (loopResult === 'done') {
       const freshParent = await manager.load(parentRunId);
-      if (freshParent?.delegation) {
-        return handleDelegationCompletion(freshParent, 'pass', cwd, output, depth + 1);
+      if (freshParent && extractParentLinkage(freshParent)) {
+        return handleParentCompletion(freshParent, 'pass', cwd, output, depth + 1);
       }
     }
     return 'handled';

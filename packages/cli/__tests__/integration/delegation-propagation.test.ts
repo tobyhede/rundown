@@ -100,11 +100,11 @@ describe('Delegation propagation integration', () => {
       result = await runCliInProcess(`claim ${token}`, workspace);
       expect(result.exitCode).toBe(0);
 
-      // Verify child state has delegation linkage
+      // Verify child state has delegation linkage via parentLinkage
       const childState = await getActiveState(workspace);
       expect(childState).not.toBeNull();
-      expect(childState!.delegation).toBeDefined();
-      expect((childState!.delegation as Record<string, unknown>).parentRunId).toBe(parentRunId);
+      expect(childState!.parentLinkage).toBeDefined();
+      expect((childState!.parentLinkage as Record<string, unknown>).parentRunId).toBe(parentRunId);
 
       // Pass the child step — propagates pass to parent substep 1.1
       // DEFER model: parent advances to 1.2
@@ -255,7 +255,7 @@ describe('Delegation propagation integration', () => {
 
       const parentState = await getActiveState(workspace);
       expect(parentState).not.toBeNull();
-      expect(parentState!.delegation).toBeDefined();
+      expect(parentState!.parentLinkage).toBeDefined();
       const parentRunId = parentState!.id as string;
 
       // Delegate parent substep 1.1 to child runbook

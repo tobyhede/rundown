@@ -6,7 +6,7 @@ import { getCwd } from '../helpers/context.js';
 import { buildMetadata } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
-import { handleDelegationCompletion } from '../helpers/delegation-completion.js';
+import { handleParentCompletion, extractParentLinkage } from '../helpers/delegation-completion.js';
 
 /**
  * Registers the 'stop' command for aborting runbooks.
@@ -73,11 +73,11 @@ export function registerStopCommand(program: Command): void {
           output.metadata(buildMetadata(state));
           output.stopped(message ?? 'Runbook stopped');
 
-          // Propagate FAIL to parent if delegation exists.
+          // Propagate FAIL to parent if parent linkage exists.
           // The return value is intentionally ignored: a user-initiated stop
           // always succeeds (exit 0) even if the parent propagation itself stops.
-          if (updatedState.delegation) {
-            await handleDelegationCompletion(updatedState, 'fail', cwd, output);
+          if (extractParentLinkage(updatedState)) {
+            await handleParentCompletion(updatedState, 'fail', cwd, output);
           }
 
           output.flush();

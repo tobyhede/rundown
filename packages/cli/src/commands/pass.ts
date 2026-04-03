@@ -10,7 +10,7 @@ import {
   executeTransition,
   type ExplicitTarget,
 } from '../helpers/transitions.js';
-import { handleDelegationCompletion } from '../helpers/delegation-completion.js';
+import { handleParentCompletion, extractParentLinkage } from '../helpers/delegation-completion.js';
 import { validateIndexRequiresStep } from '../helpers/index-option.js';
 
 /**
@@ -56,20 +56,20 @@ export function registerPassCommand(program: Command): void {
             const result = await executeTransition(ctx, passConfig, explicitTarget);
             if (result === 'stopped') shouldExitWithError = true;
 
-            // Delegation propagation — fires when child run reaches terminal state
+            // Parent propagation — fires when child run reaches terminal state
             const freshState = await ctx.manager.load(ctx.state.id);
-            if (freshState?.delegation) {
+            if (freshState && extractParentLinkage(freshState)) {
               const isTerminal =
                 freshState.variables.completed === true || freshState.variables.stopped === true;
               if (isTerminal) {
                 const propResult = freshState.variables.completed ? 'pass' : 'fail';
-                const delegationResult = await handleDelegationCompletion(
+                const propagationResult = await handleParentCompletion(
                   freshState,
                   propResult,
                   cwd,
                   output,
                 );
-                if (delegationResult === 'stopped') shouldExitWithError = true;
+                if (propagationResult === 'stopped') shouldExitWithError = true;
               }
             }
           } finally {

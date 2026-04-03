@@ -41,6 +41,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   })),
   DelegationLock: jest.fn(),
   reconstituteContextVars: jest.fn().mockReturnValue({}),
+  extractInheritedUserVars: jest.fn().mockReturnValue({}),
   hashDelegationToken: jest.fn().mockReturnValue('sha256:mock'),
   truncateDelegationToken: jest.fn((token: string) => {
     const prefix = 'rdtk_';
@@ -769,7 +770,8 @@ describe('claimAndLaunch', () => {
       'child.md',
       expect.anything(),
       expect.objectContaining({
-        delegation: expect.objectContaining({
+        parentLinkage: expect.objectContaining({
+          kind: 'delegation',
           parentFrameKey: '1|3',
         }),
       }),
