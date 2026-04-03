@@ -177,12 +177,12 @@ Example child runbook:
 ````markdown
 ## 1. Run checks
 
+- PASS COMPLETE "Checks passed"
+- FAIL STOP "Checks failed"
+
 ```bash
 npm test
 ```
-
-- PASS COMPLETE "Checks passed"
-- FAIL STOP "Checks failed"
 ````
 
 The parent's aggregation rules (`ALL`/`ANY`) determine the overall step outcome from substep results.
