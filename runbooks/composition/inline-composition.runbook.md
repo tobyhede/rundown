@@ -16,7 +16,7 @@ scenarios:
     result: COMPLETE
 
   inline-fail:
-    description: Inline child auto-fails, parent stops via FAIL ANY
+    description: Child auto-fails at 1.1 triggering FAIL ANY STOP; rd pass on 1.2 drives aggregation surfacing the failure
     commands:
       - rd run --prompted inline-composition.runbook.md
       - rd run inline-child-fail.runbook.md --step 1.1
