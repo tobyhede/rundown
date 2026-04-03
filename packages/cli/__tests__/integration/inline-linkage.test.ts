@@ -21,10 +21,13 @@ describe('Inline linkage integration (rd run --step)', () => {
     await workspace.cleanup();
   });
 
-  /** Helper: write a parent runbook with two substeps. */
-  async function writeParentRunbook(): Promise<void> {
+  /** Helper: write a parent runbook with two substeps and optional vars. */
+  async function writeParentRunbook(
+    vars?: Record<string, string | number | boolean>,
+  ): Promise<void> {
     const content = createRunbook({
       title: 'Parent',
+      ...(vars && { vars }),
       steps: [
         {
           title: 'Review',
@@ -63,6 +66,24 @@ describe('Inline linkage integration (rd run --step)', () => {
   /** Helper: extract variables from parsed state. */
   function getVariables(state: Record<string, unknown>): Record<string, unknown> {
     return (state.variables ?? {}) as Record<string, unknown>;
+  }
+
+  /** Helper: find child state in runs directory by scanning for parentLinkage. */
+  async function findChildState(parentRunId: string): Promise<Record<string, unknown> | null> {
+    const runsDir = join(workspace.cwd, '.claude', 'rundown', 'runs');
+    const files = await readdir(runsDir);
+    const stateFiles = files.filter((f) => f.endsWith('.json') && f !== 'session.json');
+
+    for (const f of stateFiles) {
+      const content = JSON.parse(await readFile(join(runsDir, f), 'utf-8')) as Record<
+        string,
+        unknown
+      >;
+      if (content.id !== parentRunId && content.parentLinkage) {
+        return content;
+      }
+    }
+    return null;
   }
 
   describe('afterInit fresh state reload (race condition fix)', () => {
@@ -241,24 +262,7 @@ describe('Inline linkage integration (rd run --step)', () => {
       expect(result.exitCode).toBe(0);
 
       // Child completed and was popped — parent is active again.
-      // Load the child state by scanning runs directory for the non-parent state.
-
-      const runsDir = join(workspace.cwd, '.claude', 'rundown', 'runs');
-      const files = await readdir(runsDir);
-      const stateFiles = files.filter((f) => f.endsWith('.json') && f !== 'session.json');
-
-      let childState: Record<string, unknown> | null = null;
-      for (const f of stateFiles) {
-        const content = JSON.parse(await readFile(join(runsDir, f), 'utf-8')) as Record<
-          string,
-          unknown
-        >;
-        if (content.id !== parentRunId && content.parentLinkage) {
-          childState = content;
-          break;
-        }
-      }
-
+      const childState = await findChildState(parentRunId);
       expect(childState).not.toBeNull();
       const linkage = childState!.parentLinkage as Record<string, unknown>;
       expect(linkage.kind).toBe('inline');
@@ -303,23 +307,7 @@ describe('Inline linkage integration (rd run --step)', () => {
       expect(result.exitCode).toBe(0);
 
       // Scan runs directory for the child state
-
-      const runsDir = join(workspace.cwd, '.claude', 'rundown', 'runs');
-      const files = await readdir(runsDir);
-      const stateFiles = files.filter((f) => f.endsWith('.json') && f !== 'session.json');
-
-      let childState: Record<string, unknown> | null = null;
-      for (const f of stateFiles) {
-        const content = JSON.parse(await readFile(join(runsDir, f), 'utf-8')) as Record<
-          string,
-          unknown
-        >;
-        if (content.id !== parentRunId && content.parentLinkage) {
-          childState = content;
-          break;
-        }
-      }
-
+      const childState = await findChildState(parentRunId);
       expect(childState).not.toBeNull();
       const linkage = childState!.parentLinkage as Record<string, unknown>;
       expect(linkage.kind).toBe('inline');
@@ -434,22 +422,7 @@ describe('Inline linkage integration (rd run --step)', () => {
       expect(result.exitCode).toBe(0);
 
       // Find the child state and verify its templateVars
-      const runsDir = join(workspace.cwd, '.claude', 'rundown', 'runs');
-      const files = await readdir(runsDir);
-      const stateFiles = files.filter((f) => f.endsWith('.json') && f !== 'session.json');
-
-      let childState: Record<string, unknown> | null = null;
-      for (const f of stateFiles) {
-        const content = JSON.parse(await readFile(join(runsDir, f), 'utf-8')) as Record<
-          string,
-          unknown
-        >;
-        if (content.id !== parentRunId && content.parentLinkage) {
-          childState = content;
-          break;
-        }
-      }
-
+      const childState = await findChildState(parentRunId);
       expect(childState).not.toBeNull();
       const templateVars = childState!.templateVars as Record<string, unknown>;
       // context.parent.index should be "3" (the target iteration), not "1" (the active)
@@ -565,6 +538,92 @@ describe('Inline linkage integration (rd run --step)', () => {
       result = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain('already resolved');
+    });
+  });
+
+  describe('variable and context inheritance', () => {
+    it('inline child inherits parent template vars', async () => {
+      await writeParentRunbook({ Region: 'us-west' });
+      await writePassingChild();
+
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const parentState = await getActiveState(workspace);
+      const parentRunId = parentState!.id as string;
+
+      result = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const childState = await findChildState(parentRunId);
+      expect(childState).not.toBeNull();
+      const templateVars = childState!.templateVars as Record<string, unknown>;
+      expect(templateVars.Region).toBe('us-west');
+    });
+
+    it('inline child auto-executes when parent is prompted', async () => {
+      // Regression: inline children must NOT inherit parent's prompted mode.
+      // The child should auto-execute its commands, not wait for user input.
+      await writeParentRunbook();
+      await writePassingChild();
+
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const parentState = await getActiveState(workspace);
+      const parentRunId = parentState!.id as string;
+
+      // Child has auto-executing command — should complete, not wait
+      result = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const childState = await findChildState(parentRunId);
+      expect(childState).not.toBeNull();
+      const variables = (childState!.variables ?? {}) as Record<string, unknown>;
+      expect(variables.completed).toBe(true);
+    });
+
+    it('inline child state has context.parent vars', async () => {
+      await writeParentRunbook({ AppName: 'rundown' });
+      await writePassingChild();
+
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const parentState = await getActiveState(workspace);
+      const parentRunId = parentState!.id as string;
+
+      result = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const childState = await findChildState(parentRunId);
+      expect(childState).not.toBeNull();
+      const templateVars = childState!.templateVars as Record<string, unknown>;
+      expect(templateVars['context.parent.vars.AppName']).toBe('rundown');
+      expect(templateVars['context.parent.step']).toBeDefined();
+    });
+
+    it('CLI --var on inline child overrides inherited parent vars', async () => {
+      await writeParentRunbook({ Region: 'us-west' });
+      await writePassingChild();
+
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const parentState = await getActiveState(workspace);
+      const parentRunId = parentState!.id as string;
+
+      // Pass --var to override the inherited Region
+      result = await runCliInProcess(
+        ['run', 'child.runbook.md', '--step', '1.1', '--var', 'Region=eu-central'],
+        workspace,
+      );
+      expect(result.exitCode).toBe(0);
+
+      const childState = await findChildState(parentRunId);
+      expect(childState).not.toBeNull();
+      const templateVars = childState!.templateVars as Record<string, unknown>;
+      expect(templateVars.Region).toBe('eu-central');
     });
   });
 });

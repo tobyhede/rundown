@@ -5,7 +5,7 @@ tags:
   - delegation
 
 scenarios:
-  auto_pass:
+  auto-pass:
     description: Child auto-executes and completes
     commands:
       - rd run delegation-child-pass.runbook.md
