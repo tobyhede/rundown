@@ -405,7 +405,7 @@ Three distinct concepts govern step execution. Never conflate them:
 |---------|--------|----------|
 | **RESULT** | Outcome of execution | `pass`, `fail` |
 | **HANDLER** | Configured mapping from result to action | `PASS CONTINUE`, `FAIL DEFER` |
-| **ACTION** | What to do next | `CONTINUE`, `NEXT`, `BREAK`, `DEFER`, `STOP`, `COMPLETE`, `GOTO`, `RETRY` |
+| **ACTION** | What to do next | `CONTINUE`, `NEXT`, `BREAK`, `DEFER`, `STOP`, `COMPLETE`, `GOTO` |
 
 A step produces a **result** (pass/fail). The runbook's **handler** for that result determines the **action** to take. These are separate layers — a result is not an action, and a handler is not a result.
 
