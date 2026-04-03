@@ -21,6 +21,7 @@ import {
   buildResolvedCompletion,
   deriveActiveFrame,
   findSubstepState,
+  upsertSubstepState,
   type RunbookState,
   type ParentLinkageBase,
 } from '@rundown-org/core';
@@ -137,6 +138,21 @@ export async function handleParentCompletion(
         targetEntry: entry,
       });
       await lifecycleService.upsertResolvedCompletion(parentRunId, completionKey, completion);
+    }
+
+    // 5b. Mark the SubstepState as done (frame-scoped).
+    // Drain consumes the resolved completion but does not update substepStates,
+    // so without this the status === 'done' guard in buildInlineLinkage would
+    // miss already-resolved non-active frame substeps and allow re-execution.
+    const freshParentForSubstep = await manager.load(parentRunId);
+    if (freshParentForSubstep) {
+      const updatedSubsteps = upsertSubstepState(
+        freshParentForSubstep.substepStates ?? [],
+        parentStepId,
+        frameKey,
+        { status: 'done' as const, result },
+      );
+      await manager.update(parentRunId, { substepStates: updatedSubsteps });
     }
   } finally {
     // 6. Release lock

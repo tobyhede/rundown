@@ -66,15 +66,12 @@ describe('Inline linkage integration (rd run --step)', () => {
   }
 
   describe('afterInit fresh state reload (race condition fix)', () => {
-    it('afterInit marks targeted substep as running in parent substepStates', async () => {
-      // Behavioral test for the afterInit callback in `rd run --step`.
+    it('auto-completing child marks substep as done in parent substepStates', async () => {
+      // Behavioral test for the afterInit + completion propagation lifecycle.
       //
-      // The underlying fix (acquiring DelegationLock + fresh manager.load()
-      // instead of closing over a stale parentState snapshot) prevents
-      // race condition races when concurrent processes modify parent substepStates.
-      // That race cannot be reproduced in single-process tests. This test
-      // validates the observable contract: afterInit correctly marks the
-      // targeted substep as 'running'.
+      // afterInit marks the substep as 'running', then the child completes
+      // and handleParentCompletion marks it as 'done'. Since the child
+      // auto-completes synchronously, the final observable state is 'done'.
       await writeParentRunbook();
       await writePassingChild();
 
@@ -95,28 +92,29 @@ describe('Inline linkage integration (rd run --step)', () => {
       expect(initialSubsteps.every((ss) => ss.status === 'pending')).toBe(true);
 
       // Run child targeting substep 1.1 -- afterInit marks it 'running',
-      // then child completes and propagates pass
+      // then child completes and propagation marks it 'done'
       result = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
       expect(result.exitCode).toBe(0);
 
-      // Load parent state and verify substep 1 was marked 'running'
+      // Load parent state and verify substep 1 reached 'done'
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
 
       const substepStates = (updatedParent!.substepStates ?? []) as Array<{
         id: string;
         status: string;
+        result?: string;
       }>;
 
       const ss1 = substepStates.find((ss) => ss.id === '1');
       expect(ss1).toBeDefined();
-      expect(ss1!.status).toBe('running');
+      expect(ss1!.status).toBe('done');
+      expect(ss1!.result).toBe('pass');
     });
 
-    it('sequential children both mark their respective substeps', async () => {
+    it('sequential children both mark their respective substeps as done', async () => {
       // Verify that two sequential inline children targeting different
-      // substeps both get their substep marked as 'running'. This exercises
-      // the afterInit code path with fresh state reload.
+      // substeps both get their substep marked as 'done' after completion.
       const parentContent = createRunbook({
         title: 'Parent',
         steps: [
@@ -166,8 +164,8 @@ describe('Inline linkage integration (rd run --step)', () => {
       expect(ss1).toBeDefined();
       expect(ss2).toBeDefined();
       expect(ss3).toBeDefined();
-      expect(ss1!.status).toBe('running');
-      expect(ss2!.status).toBe('running');
+      expect(ss1!.status).toBe('done');
+      expect(ss2!.status).toBe('done');
       expect(ss3!.status).toBe('pending');
     });
   });
@@ -367,16 +365,18 @@ describe('Inline linkage integration (rd run --step)', () => {
       result = await runCliInProcess('run child.runbook.md --step 1.1 --index 2', workspace);
       expect(result.exitCode).toBe(0);
 
-      // Parent state should have a SubstepState for frameKey "1|2"
+      // Parent state should have a SubstepState for frameKey "1|2" marked done
       const updated = await readRunbookState(workspace, parentRunId);
       const substepStates = (updated!.substepStates ?? []) as Array<{
         id: string;
         frameKey: string;
         status: string;
+        result?: string;
       }>;
       const targetEntry = substepStates.find((ss) => ss.id === '1' && ss.frameKey === '1|2');
       expect(targetEntry).toBeDefined();
-      expect(targetEntry!.status).toBe('running');
+      expect(targetEntry!.status).toBe('done');
+      expect(targetEntry!.result).toBe('pass');
     });
 
     it('inline child allowed when active cursor advanced but targeting different iteration', async () => {
@@ -398,6 +398,24 @@ describe('Inline linkage integration (rd run --step)', () => {
       // Targeting substep 1.1 in iteration 2 should succeed (different frame).
       result = await runCliInProcess('run child.runbook.md --step 1.1 --index 2', workspace);
       expect(result.exitCode).toBe(0);
+    });
+
+    it('rejects re-execution of completed non-active FOR substep', async () => {
+      await writeForParent();
+      await writePassingChild();
+
+      // Start parent in prompted mode — sits at step 1, iteration 1
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+      expect(result.exitCode).toBe(0);
+
+      // First child targeting iteration 2, substep 1.1 — should succeed
+      result = await runCliInProcess('run child.runbook.md --step 1.1 --index 2', workspace);
+      expect(result.exitCode).toBe(0);
+
+      // Second child targeting the same iteration 2, substep 1.1 — should be rejected
+      result = await runCliInProcess('run child.runbook.md --step 1.1 --index 2', workspace);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain('already resolved');
     });
 
     it('child inherits correct context.parent.index for non-active iteration', async () => {

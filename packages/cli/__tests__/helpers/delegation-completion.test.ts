@@ -22,6 +22,17 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   findSubstepState: jest.fn((substepStates: any[], substepId: string, frameKey: string) =>
     substepStates.find((ss: any) => ss.id === substepId && ss.frameKey === frameKey),
   ),
+  upsertSubstepState: jest.fn(
+    (substepStates: any[], substepId: string, frameKey: string, patch: any) => {
+      const existing = substepStates.find(
+        (ss: any) => ss.id === substepId && ss.frameKey === frameKey,
+      );
+      if (existing) {
+        return substepStates.map((ss: any) => (ss === existing ? { ...ss, ...patch } : ss));
+      }
+      return [...substepStates, { id: substepId, frameKey, status: 'pending', ...patch }];
+    },
+  ),
   ...mockErrorHelpers,
 }));
 
@@ -115,6 +126,7 @@ function makeOutput(): any {
 function makeManager(states: Map<string, RunbookState | null>): any {
   return {
     load: jest.fn<any>().mockImplementation(async (id: string) => states.get(id) ?? null),
+    update: jest.fn<any>().mockResolvedValue(undefined),
   };
 }
 
