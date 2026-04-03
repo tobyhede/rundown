@@ -26,6 +26,7 @@ import {
   DelegationScanService,
   DelegationLock,
   reconstituteContextVars,
+  extractInheritedUserVars,
   hashDelegationToken,
   truncateDelegationToken,
   DELEGATION_TOKEN_PREFIX,
@@ -843,14 +844,7 @@ export async function claimAndLaunch(
 
     // 4e. Reconstitute context vars from frozen snapshot
     const inheritedContextVars = reconstituteContextVars(freshDelegation.contextSnapshot);
-
-    // Extract parent user-level vars for top-level inheritance in child
-    const inheritedUserVars: Record<string, TemplateVarValue> = {};
-    for (const [key, value] of Object.entries(freshDelegation.contextSnapshot.vars)) {
-      if (!key.startsWith('context.') && key !== 'RunId') {
-        inheritedUserVars[key] = value;
-      }
-    }
+    const inheritedUserVars = extractInheritedUserVars(freshDelegation.contextSnapshot);
 
     // 4f. Prepare child runbook
     const prepResult = await prepareRunbook(freshDelegation.childRunbookPath, varOpts, cwd, {
