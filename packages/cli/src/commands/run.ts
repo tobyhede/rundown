@@ -403,6 +403,7 @@ async function buildInlineLinkage(
     const orderedIds = step.substeps.map((ss) => ss.id);
     const cursorIndex = orderedIds.indexOf(parentState.substep);
     const targetIndex = orderedIds.indexOf(substepId);
+    // If either ID is not found (-1), skip — state may be corrupt or mid-transition.
     if (cursorIndex !== -1 && targetIndex !== -1 && cursorIndex > targetIndex) {
       output.error(`Substep ${substepId} is already resolved`, 'DELEGATION_ALREADY_RESOLVED');
       output.flush();
