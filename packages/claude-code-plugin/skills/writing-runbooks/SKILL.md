@@ -165,6 +165,28 @@ Key authoring notes:
 - Frontmatter `vars:` supports string, number, boolean (not arrays/files)
 - Data sources for FOR loops: use `.rundown/config.yaml` or `--var-file`
 
+## Composable Runbooks
+
+Runbooks designed to run as inline children (via `rd run <child> --step <id>`) should use terminal actions to signal their result to the parent:
+
+- **`COMPLETE`** on the final step signals **pass** to the parent substep
+- **`STOP`** signals **fail** to the parent substep
+
+Example child runbook:
+
+````markdown
+## 1. Run checks
+
+- PASS COMPLETE "Checks passed"
+- FAIL STOP "Checks failed"
+
+```bash
+npm test
+```
+````
+
+The parent's aggregation rules (`ALL`/`ANY`) determine the overall step outcome from substep results.
+
 ## Common Mistakes
 
 | Mistake | Fix |

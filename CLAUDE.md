@@ -88,6 +88,8 @@ rdpath --dir <path> find <pattern>            # Find files matching glob pattern
 rdpath --dir <path> --ctx <id> find <pattern> # Find within context scope
 ```
 
+> **Note:** `rdpath` and `rdx` are binaries provided by `@rundown-org/claude-code-plugin`, not `@rundown-org/cli`.
+
 ## Template Variables
 
 Template variables use Handlebars syntax `{{variableName}}` and are expanded at run time.
@@ -149,6 +151,7 @@ Server running on port {{ port }} in {{ environment }} mode.
 - Undefined variables are preserved as literal `{{variable}}` text
 - Frontmatter vars support string, number, and boolean values (converted to strings). For arrays, use `--var-json` inline or `.rundown/config.yaml` / `--var-file`. For `file:` data sources, use `.rundown/config.yaml` or `--var-file`
 - `--var KEY` (without `=`) inherits the value of environment variable `KEY`
+- Delegation context variables (`context.vars.*`, `context.parent.*`, `context.ancestors.N.*`) are documented in [docs/SPEC.md](docs/SPEC.md) Section 6
 
 ### Data Sources
 
@@ -243,8 +246,8 @@ rundown run [file] --allow-all            # Bypass policy (trust mode)
 rundown run [file] --deny-all             # Block all commands
 rundown run [file] -y, --yes              # Skip confirmation prompts
 rundown run [file] --non-interactive      # CI mode (auto-deny)
-rundown run [file] --no-color             # Disable colored output
-rundown run [file] --policy ./policy.yaml # Custom policy file
+rundown check <file> --no-color            # Disable colored output
+rundown status --policy ./policy.yaml     # Custom policy file
 rundown run [file] --sandbox              # Enable OS-level sandbox (default)
 rundown run [file] --no-sandbox           # Disable sandbox (trust mode)
 rundown run [file] --sandbox-strict       # Fail if sandbox unavailable
@@ -358,7 +361,7 @@ output.action({ action, from, result, at });
 output.flush();
 ```
 
-For direct table formatting (no `--json` flag support), use `formatTable` from `../helpers/table-formatter.js` (also relative to commands/).
+For direct table formatting (no `--json` flag support), use `formatTable` from `../helpers/table-formatter.js`.
 
 Key conventions:
 - UPPERCASE headers, 2-space column separators
@@ -402,7 +405,7 @@ Three distinct concepts govern step execution. Never conflate them:
 |---------|--------|----------|
 | **RESULT** | Outcome of execution | `pass`, `fail` |
 | **HANDLER** | Configured mapping from result to action | `PASS CONTINUE`, `FAIL DEFER` |
-| **ACTION** | What to do next | `CONTINUE`, `NEXT`, `BREAK`, `DEFER`, `STOP`, `COMPLETE` |
+| **ACTION** | What to do next | `CONTINUE`, `NEXT`, `BREAK`, `DEFER`, `STOP`, `COMPLETE`, `GOTO` |
 
 A step produces a **result** (pass/fail). The runbook's **handler** for that result determines the **action** to take. These are separate layers — a result is not an action, and a handler is not a result.
 

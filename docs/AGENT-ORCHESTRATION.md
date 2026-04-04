@@ -110,6 +110,30 @@ See [Section 4: Control Flow](SPEC.md#4-control-flow) for transition semantics.
 
 ---
 
+## Inline Child Execution
+
+An alternative to delegation for same-agent scenarios. Instead of tokens, the child links directly to a parent substep:
+
+```bash
+rd run <child-runbook> --step 1.1           # Link to parent substep
+rd run <child-runbook> --step 1.1 --index 3 # Target FOR loop iteration
+```
+
+**Key differences from delegation:**
+
+| Aspect | Delegation | Inline |
+|--------|-----------|--------|
+| Mechanism | Token-based (`rdtk_...`) | Direct linkage (`--step`) |
+| Agents | Separate parent + child agents | Same agent |
+| Propagation | Manual `rd pass`/`rd fail` | Automatic on child completion |
+| Cancellation | `rd abort <token>` | Not applicable |
+
+The child inherits parent template variables and context. On completion (or stop), the result auto-propagates to the parent substep — no manual `rd pass` needed.
+
+Both mechanisms share the completion infrastructure (`handleParentCompletion` in `delegation-completion.ts`), using the `ParentLinkage` discriminated union (`DelegationLinkage | InlineLinkage`).
+
+---
+
 ## Aggregate Transitions
 
 When substeps involve agents, transition rules use aggregate conditions:

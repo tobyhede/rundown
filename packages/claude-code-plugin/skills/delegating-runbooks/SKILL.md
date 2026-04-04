@@ -142,6 +142,17 @@ rd delegate --step 2.3
 
 **Nested:** A child can itself delegate, creating a delegation tree. ContextId flows through the tree for correlation.
 
+## Delegation vs. Inline Execution
+
+| Aspect | Delegation (`rd delegate` / `rd claim`) | Inline (`rd run --step`) |
+|--------|----------------------------------------|-------------------------|
+| Agents | Multi-agent (parent + child) | Same agent |
+| Token | Required (`rdtk_...`) | None |
+| Result | Manual (`rd pass`/`rd fail`) | Auto-propagates on completion |
+| Use when | Work requires a separate agent | Running a child runbook yourself |
+
+For inline execution details, see [running-runbooks](../running-runbooks/SKILL.md#nested-runbooks-inline-linkage).
+
 ## Common Mistakes
 
 | Mistake | Fix |
