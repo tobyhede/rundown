@@ -203,12 +203,14 @@ describe('Plugin Path Resolution', () => {
 describe('Hook manifest layout', () => {
   const pluginRoot = path.resolve(__dirname, '..');
 
-  test('plugin manifest points to hooks/hooks.json', async () => {
+  test('plugin manifest does not declare hooks (auto-loaded by Claude Code)', async () => {
     const manifestPath = path.join(pluginRoot, '.claude-plugin', 'plugin.json');
     const manifestContent = await fs.readFile(manifestPath, 'utf-8');
     const manifest = JSON.parse(manifestContent) as { hooks?: string };
 
-    expect(manifest.hooks).toBe('./hooks/hooks.json');
+    // Claude Code v2 auto-loads hooks/hooks.json from the standard path.
+    // Declaring it in the manifest causes a "Duplicate hooks file" error.
+    expect(manifest.hooks).toBeUndefined();
   });
 
   test('package files include hooks directory and exclude root hooks.json', async () => {

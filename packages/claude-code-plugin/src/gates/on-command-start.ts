@@ -7,6 +7,7 @@ import {
   findRunbookByFrontmatter,
 } from '../shared/index.js';
 import { rundown } from '../workflow/hooks/rundown.js';
+import { extractExecError, formatRunbookError } from './format-helpers.js';
 
 /**
  * Execute the command start gate.
@@ -16,7 +17,7 @@ import { rundown } from '../workflow/hooks/rundown.js';
  *
  * @param input - The hook input containing event details and context
  * @returns Gate result with optional additional context from runbook execution
- * @remarks Does not throw — errors are caught internally and appropriate values returned (empty context on error)
+ * @remarks Does not throw — errors are caught internally and appropriate values returned (structured error context on failure)
  */
 export function execute(input: HookInput): Promise<GateResult> {
   // Only handle SlashCommandStart
@@ -46,9 +47,7 @@ export function execute(input: HookInput): Promise<GateResult> {
       additionalContext: formatRunbookOutput(runbook, output),
     });
   } catch (error) {
-    const execError = error as { message?: string; stdout?: string; stderr?: string };
-    const errorOutput =
-      execError.stdout ?? execError.stderr ?? execError.message ?? 'Unknown error';
+    const errorOutput = extractExecError(error);
     return Promise.resolve({
       additionalContext: formatRunbookError(runbook, errorOutput),
     });
@@ -80,28 +79,6 @@ ${output.trim()}
 \`\`\`
 
 **IMPORTANT**: Follow runbook prompts. Do NOT skip steps.
----
-`.trim();
-}
-
-/**
- * Format runbook error with recovery instructions
- * @param runbook - Path or name of the failed runbook
- * @param error - Error output from the failed runbook start
- * @returns Formatted markdown string with error details and recovery command
- */
-function formatRunbookError(runbook: string, error: string): string {
-  return `
----
-## RUNBOOK ERROR: ${runbook}
-
-### Error
-\`\`\`
-${error.trim()}
-\`\`\`
-
-### Manual Recovery
-\`rd run ${runbook}\`
 ---
 `.trim();
 }
