@@ -423,9 +423,10 @@ export async function prepareRunbook(
   // Derive CLAUDE_PLUGIN_ROOT from resolved path when source is plugin
   let pluginRoot: string | undefined;
   if (source === 'plugin') {
-    const runbooksIdx = filePath.indexOf('/runbooks/');
+    const runbooksSep = `${path.sep}runbooks${path.sep}`;
+    const runbooksIdx = filePath.indexOf(runbooksSep);
     if (runbooksIdx !== -1) {
-      pluginRoot = filePath.slice(0, runbooksIdx + 1); // include trailing slash
+      pluginRoot = filePath.slice(0, runbooksIdx + 1); // include trailing separator
     }
   }
 
