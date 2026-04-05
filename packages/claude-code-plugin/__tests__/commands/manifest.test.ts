@@ -26,6 +26,8 @@ describe('Command-Skill Wiring', () => {
     return;
   }
 
+  if (commandFiles.length === 0) return;
+
   describe.each(commandFiles)('%s', (filename) => {
     const content = readFileSync(path.join(commandsDir, filename), 'utf-8');
     const refs = [...content.matchAll(SKILL_REF_PATTERN)].map((m) => m[1]);
