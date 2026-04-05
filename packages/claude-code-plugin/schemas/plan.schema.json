@@ -12,7 +12,28 @@
         "path": {
           "type": "string",
           "minLength": 1,
+          "pattern": "^(?!\\/)(?![A-Za-z]:[\\/\\\\])(?!.*(?:^|\\/)\\.\\.(?:\\/|$))(?!.*\\\\)",
           "description": "Relative file path from project root (e.g. src/foo.ts)"
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Start line number (1-based)"
+        },
+        "end_line": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "End line number for ranges (1-based)"
+        },
+        "symbol": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Logical location name (function, class, type)"
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Construct type: function, type, class, module, method, member, variable, namespace"
         },
         "action": {
           "type": "string",
@@ -115,7 +136,7 @@
                   "type": "object",
                   "required": ["language", "content"],
                   "properties": {
-                    "language": { "type": "string" },
+                    "language": { "type": "string", "minLength": 1 },
                     "content": { "type": "string" }
                   },
                   "additionalProperties": false

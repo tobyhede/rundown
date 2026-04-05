@@ -1,0 +1,107 @@
+{
+  "$schema": "https://rundown.org/schemas/plan.schema.json",
+  "name": "Add Health Check Endpoint",
+  "meta": { "version": "1.0.0" },
+  "goal": "Add a GET /health endpoint that returns JSON with status and database connectivity",
+  "architecture_and_approach": "Add a new route in src/app.ts following existing Hono route patterns. The endpoint queries the database to verify connectivity and returns { status: 'ok', db: 'connected' } on success.",
+  "constraints_and_assumptions": "Must follow existing Hono patterns. No new dependencies. Database check uses a lightweight query (SELECT 1).",
+  "dependencies": "Hono framework (already installed)",
+  "context": "The app uses Hono with node:sqlite DatabaseSync. See src/app.ts for existing route patterns and src/db.ts for database operations.",
+  "files": [
+    { "path": "src/app.ts", "action": "edit", "notes": "Add GET /health route" },
+    { "path": "src/db.ts", "action": "edit", "notes": "Add checkDatabase function" },
+    { "path": "test/app.test.ts", "action": "edit", "notes": "Add health endpoint tests" }
+  ],
+  "tasks": [
+    {
+      "name": "Add database health check function",
+      "files": [
+        { "path": "src/db.ts", "action": "edit" },
+        { "path": "test/app.test.ts", "action": "edit" }
+      ],
+      "subtasks": [
+        {
+          "name": "Write failing test for checkDatabase",
+          "description": "Add a test that calls checkDatabase and expects it to return true for an in-memory database.",
+          "code": {
+            "language": "typescript",
+            "content": "describe('checkDatabase', () => {\n  it('returns true for a healthy database', () => {\n    const db = createDatabase();\n    expect(checkDatabase(db)).toBe(true);\n  });\n});"
+          }
+        },
+        {
+          "name": "Run to confirm failure",
+          "description": "Expected: test fails because checkDatabase is not yet exported from db.ts.",
+          "code": {
+            "language": "bash",
+            "content": "npm test"
+          }
+        },
+        {
+          "name": "Implement checkDatabase",
+          "description": "Add checkDatabase function to src/db.ts that executes SELECT 1 and returns true on success, false on error.",
+          "code": {
+            "language": "typescript",
+            "content": "export function checkDatabase(db: DatabaseSync): boolean {\n  try {\n    db.exec('SELECT 1');\n    return true;\n  } catch {\n    return false;\n  }\n}"
+          }
+        },
+        {
+          "name": "Run tests to verify pass",
+          "description": "Expected: all tests pass including the new checkDatabase test.",
+          "code": {
+            "language": "bash",
+            "content": "npm test"
+          }
+        }
+      ],
+      "commit": {
+        "files": ["src/db.ts", "test/app.test.ts"],
+        "message": "feat: add checkDatabase health check function"
+      }
+    },
+    {
+      "name": "Add GET /health endpoint",
+      "files": [
+        { "path": "src/app.ts", "action": "edit" },
+        { "path": "test/app.test.ts", "action": "edit" }
+      ],
+      "subtasks": [
+        {
+          "name": "Write failing test for GET /health",
+          "description": "Add tests for the /health endpoint: returns 200 with status and db fields.",
+          "code": {
+            "language": "typescript",
+            "content": "describe('GET /health', () => {\n  it('returns health status with database connectivity', async () => {\n    const res = await app.request('/health');\n    expect(res.status).toBe(200);\n    const body = await res.json();\n    expect(body).toHaveProperty('status', 'ok');\n    expect(body).toHaveProperty('db', 'connected');\n  });\n});"
+          }
+        },
+        {
+          "name": "Run to confirm failure",
+          "description": "Expected: test fails because /health route does not exist yet.",
+          "code": {
+            "language": "bash",
+            "content": "npm test"
+          }
+        },
+        {
+          "name": "Implement GET /health route",
+          "description": "Add the /health route to createApp in src/app.ts. Use checkDatabase to verify database connectivity.",
+          "code": {
+            "language": "typescript",
+            "content": "app.get('/health', (c) => {\n  const dbOk = checkDatabase(db);\n  return c.json({\n    status: 'ok',\n    db: dbOk ? 'connected' : 'disconnected',\n  });\n});"
+          }
+        },
+        {
+          "name": "Run tests to verify pass",
+          "description": "Expected: all tests pass including the new /health endpoint tests.",
+          "code": {
+            "language": "bash",
+            "content": "npm test"
+          }
+        }
+      ],
+      "commit": {
+        "files": ["src/app.ts", "test/app.test.ts"],
+        "message": "feat: add GET /health endpoint with database connectivity check"
+      }
+    }
+  ]
+}

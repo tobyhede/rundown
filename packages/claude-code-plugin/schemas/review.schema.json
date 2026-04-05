@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rundown.org/schemas/review.schema.json",
+  "title": "Review",
+  "description": "Structured review findings for plan and code reviews.",
+  "type": "object",
+  "required": ["meta", "status", "blocking_count", "findings"],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "format": "uri",
+      "const": "https://rundown.org/schemas/review.schema.json",
+      "description": "Schema URI for editor autocomplete and rdx validation dispatch."
+    },
+    "meta": {
+      "type": "object",
+      "required": ["version"],
+      "properties": {
+        "version": {
+          "const": "1.0.0"
+        }
+      },
+      "additionalProperties": false
+    },
+    "status": {
+      "type": "string",
+      "enum": ["ok", "blocked"],
+      "description": "Review gate: ok = proceed, blocked = must fix blocking findings first"
+    },
+    "blocking_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of blocking findings"
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["title", "severity", "description", "evidence", "recommendation"],
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Short label for the finding"
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["blocking", "non_blocking"],
+            "description": "blocking = must fix before proceeding, non_blocking = should fix"
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "description": "What is wrong and why"
+          },
+          "location": {
+            "$ref": "#/$defs/Location"
+          },
+          "evidence": {
+            "type": "string",
+            "minLength": 1,
+            "description": "What was observed"
+          },
+          "recommendation": {
+            "type": "string",
+            "minLength": 1,
+            "description": "How to fix it"
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "Location": {
+      "type": "object",
+      "required": ["path"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!\\/)(?![A-Za-z]:[\\/\\\\])(?!.*(?:^|\\/)\\.\\.(?:\\/|$))(?!.*\\\\)",
+          "description": "Relative file path from project root"
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Start line number (1-based)"
+        },
+        "end_line": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "End line number for ranges (1-based)"
+        },
+        "symbol": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Logical location name (function, class, type)"
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Construct type: function, type, class, module, method, member, variable, namespace"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

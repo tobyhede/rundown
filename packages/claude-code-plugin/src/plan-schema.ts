@@ -8,13 +8,18 @@
  */
 
 import { z } from 'zod';
+import { locationSchema } from './location-schema.js';
 
 /**
  * A file entry describing a file affected by the plan.
+ *
+ * Extends the shared {@link locationSchema} with plan-specific fields.
+ * The `symbol`, `kind`, `line`, and `end_line` fields from the location
+ * schema are optional and available for future use. Plan validators
+ * reject `line` and `end_line` in plan context.
  */
-const FileEntry = z
-  .object({
-    path: z.string().min(1).describe('Relative file path from project root (e.g. src/foo.ts)'),
+const FileEntry = locationSchema
+  .extend({
     action: z.enum(['create', 'edit', 'delete']),
     notes: z.string().optional(),
   })
@@ -25,7 +30,7 @@ const FileEntry = z
  */
 const CodeBlock = z
   .object({
-    language: z.string(),
+    language: z.string().min(1),
     content: z.string(),
   })
   .strict();
