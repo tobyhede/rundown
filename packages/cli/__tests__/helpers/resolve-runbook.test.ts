@@ -27,7 +27,8 @@ describe('resolveRunbookFile', () => {
 
     const result = await resolveRunbookFile(testDir, 'test.runbook.md');
 
-    expect(result).toBe(path.join(claudeDir, 'test.runbook.md'));
+    expect(result).not.toBeNull();
+    expect(result!.path).toBe(path.join(claudeDir, 'test.runbook.md'));
   });
 
   it('should find runbook in plugin runbooks directory', async () => {
@@ -39,7 +40,8 @@ describe('resolveRunbookFile', () => {
     process.env.CLAUDE_PLUGIN_ROOT = path.join(testDir, 'plugin');
 
     const result = await resolveRunbookFile(testDir, 'plugin.runbook.md');
-    expect(result).toBe(path.join(pluginDir, 'plugin.runbook.md'));
+    expect(result).not.toBeNull();
+    expect(result!.path).toBe(path.join(pluginDir, 'plugin.runbook.md'));
     // afterEach restores originalPluginRoot
   });
 
@@ -48,7 +50,8 @@ describe('resolveRunbookFile', () => {
 
     const result = await resolveRunbookFile(testDir, 'relative.runbook.md');
 
-    expect(result).toBe(path.join(testDir, 'relative.runbook.md'));
+    expect(result).not.toBeNull();
+    expect(result!.path).toBe(path.join(testDir, 'relative.runbook.md'));
   });
 
   it('should return null if runbook not found', async () => {
@@ -66,7 +69,8 @@ describe('resolveRunbookFile', () => {
 
     const result = await resolveRunbookFile(testDir, 'test.runbook.md');
 
-    expect(result).toBe(path.join(claudeDir, 'test.runbook.md'));
+    expect(result).not.toBeNull();
+    expect(result!.path).toBe(path.join(claudeDir, 'test.runbook.md'));
   });
 
   describe('resolution precedence', () => {
@@ -81,7 +85,8 @@ describe('resolveRunbookFile', () => {
 
       const result = await resolveRunbookFile(testDir, 'retry-success.runbook.md');
 
-      expect(result).toBe(path.join(claudeDir, 'retry-success.runbook.md'));
+      expect(result).not.toBeNull();
+      expect(result!.path).toBe(path.join(claudeDir, 'retry-success.runbook.md'));
     });
   });
 
@@ -94,8 +99,8 @@ describe('resolveRunbookFile', () => {
       const result = await resolveRunbookFile(testDir, 'retry-success.runbook.md');
 
       expect(result).not.toBeNull();
-      expect(result).toContain('runbooks');
-      expect(result).toContain('retry-success.runbook.md');
+      expect(result!.path).toContain('runbooks');
+      expect(result!.path).toContain('retry-success.runbook.md');
     });
   });
 
@@ -117,11 +122,13 @@ describe('resolveRunbookFile', () => {
 
       // Without namespace - should resolve to project (higher priority)
       const withoutNamespace = await resolveRunbookFile(testDir, 'write-plan');
-      expect(withoutNamespace).toBe(path.join(claudeDir, 'write-plan.runbook.md'));
+      expect(withoutNamespace).not.toBeNull();
+      expect(withoutNamespace!.path).toBe(path.join(claudeDir, 'write-plan.runbook.md'));
 
       // With rundown: namespace - should resolve to plugin only
       const withNamespace = await resolveRunbookFile(testDir, 'rundown:write-plan');
-      expect(withNamespace).toBe(path.join(pluginDir, 'write-plan.runbook.md'));
+      expect(withNamespace).not.toBeNull();
+      expect(withNamespace!.path).toBe(path.join(pluginDir, 'write-plan.runbook.md'));
     });
 
     it('returns null for unknown namespace', async () => {
@@ -147,7 +154,8 @@ describe('resolveRunbookFile', () => {
       process.env.CLAUDE_PLUGIN_ROOT = path.join(testDir, 'plugin');
 
       const result = await resolveRunbookFile(testDir, 'rundown:review-plan');
-      expect(result).toBe(path.join(planningDir, 'review-plan.runbook.md'));
+      expect(result).not.toBeNull();
+      expect(result!.path).toBe(path.join(planningDir, 'review-plan.runbook.md'));
     });
 
     it('returns null when namespaced runbook not found in target source', async () => {
@@ -167,6 +175,86 @@ describe('resolveRunbookFile', () => {
       // Should not find it with rundown: namespace (which looks in plugin only)
       const result = await resolveRunbookFile(testDir, 'rundown:project-only');
       expect(result).toBeNull();
+    });
+  });
+
+  describe('source metadata', () => {
+    it('returns source "project" for runbook in .claude/rundown/runbooks/', async () => {
+      const claudeDir = path.join(testDir, '.claude/rundown/runbooks');
+      await fs.mkdir(claudeDir, { recursive: true });
+      await fs.writeFile(path.join(claudeDir, 'test.runbook.md'), '# Test');
+
+      const result = await resolveRunbookFile(testDir, 'test.runbook.md');
+
+      expect(result).not.toBeNull();
+      expect(result!.path).toBe(path.join(claudeDir, 'test.runbook.md'));
+      expect(result!.source).toBe('project');
+    });
+
+    it('returns source "plugin" for runbook in plugin directory', async () => {
+      const pluginDir = path.join(testDir, 'plugin/runbooks');
+      await fs.mkdir(pluginDir, { recursive: true });
+      await fs.writeFile(path.join(pluginDir, 'plugin.runbook.md'), '# Plugin');
+
+      process.env.CLAUDE_PLUGIN_ROOT = path.join(testDir, 'plugin');
+
+      const result = await resolveRunbookFile(testDir, 'plugin.runbook.md');
+
+      expect(result).not.toBeNull();
+      expect(result!.path).toBe(path.join(pluginDir, 'plugin.runbook.md'));
+      expect(result!.source).toBe('plugin');
+    });
+
+    it('returns source "project" for runbook relative to cwd', async () => {
+      await fs.writeFile(path.join(testDir, 'relative.runbook.md'), '# Relative');
+
+      const result = await resolveRunbookFile(testDir, 'relative.runbook.md');
+
+      expect(result).not.toBeNull();
+      expect(result!.path).toBe(path.join(testDir, 'relative.runbook.md'));
+      expect(result!.source).toBe('project');
+    });
+
+    it('returns source "bundled" for bundled runbook', async () => {
+      delete process.env.CLAUDE_PLUGIN_ROOT;
+
+      const result = await resolveRunbookFile(testDir, 'retry-success.runbook.md');
+
+      expect(result).not.toBeNull();
+      expect(result!.source).toBe('bundled');
+    });
+
+    it('returns source "plugin" for namespaced resolution', async () => {
+      const pluginDir = path.join(testDir, 'plugin/runbooks');
+      await fs.mkdir(pluginDir, { recursive: true });
+      await fs.writeFile(
+        path.join(pluginDir, 'write-plan.runbook.md'),
+        '---\nname: write-plan\n---\n# Plugin Version',
+      );
+
+      process.env.CLAUDE_PLUGIN_ROOT = path.join(testDir, 'plugin');
+
+      const result = await resolveRunbookFile(testDir, 'rundown:write-plan');
+
+      expect(result).not.toBeNull();
+      expect(result!.path).toBe(path.join(pluginDir, 'write-plan.runbook.md'));
+      expect(result!.source).toBe('plugin');
+    });
+
+    it('returns source from discovery service for name-based lookup', async () => {
+      const pluginDir = path.join(testDir, 'plugin/runbooks');
+      await fs.mkdir(pluginDir, { recursive: true });
+      await fs.writeFile(
+        path.join(pluginDir, 'my-runbook.runbook.md'),
+        '---\nname: my-runbook\n---\n# Test',
+      );
+
+      process.env.CLAUDE_PLUGIN_ROOT = path.join(testDir, 'plugin');
+
+      const result = await resolveRunbookFile(testDir, 'my-runbook');
+
+      expect(result).not.toBeNull();
+      expect(result!.source).toBe('plugin');
     });
   });
 });

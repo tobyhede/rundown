@@ -276,7 +276,7 @@ describe('prepareRunbook', () => {
   });
 
   it('returns error when runbook has no steps', async () => {
-    resolveRunbookFile.mockResolvedValue('/test/empty.md');
+    resolveRunbookFile.mockResolvedValue({ path: '/test/empty.md', source: 'project' });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue(mockParseResult({ runbook: { steps: [] } }));
@@ -291,7 +291,7 @@ describe('prepareRunbook', () => {
   });
 
   it('returns prepared runbook on success', async () => {
-    resolveRunbookFile.mockResolvedValue('/test/good.md');
+    resolveRunbookFile.mockResolvedValue({ path: '/test/good.md', source: 'project' });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue(mockParseResult());
@@ -306,7 +306,7 @@ describe('prepareRunbook', () => {
   });
 
   it('adds context.vars aliases to merged template variables', async () => {
-    resolveRunbookFile.mockResolvedValue('/test/good.md');
+    resolveRunbookFile.mockResolvedValue({ path: '/test/good.md', source: 'project' });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue(mockParseResult());
@@ -329,7 +329,7 @@ describe('prepareRunbook', () => {
   });
 
   it('adds context.vars.* aliases for inherited user vars', async () => {
-    resolveRunbookFile.mockResolvedValue('/test/child.md');
+    resolveRunbookFile.mockResolvedValue({ path: '/test/child.md', source: 'project' });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue(mockParseResult());
@@ -354,7 +354,7 @@ describe('prepareRunbook', () => {
   });
 
   it('child vars override inherited in context.vars.* aliases', async () => {
-    resolveRunbookFile.mockResolvedValue('/test/child.md');
+    resolveRunbookFile.mockResolvedValue({ path: '/test/child.md', source: 'project' });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue(mockParseResult());
@@ -379,7 +379,7 @@ describe('prepareRunbook', () => {
   });
 
   it('passes parser frontmatter vars into variable resolution', async () => {
-    resolveRunbookFile.mockResolvedValue('/test/good.md');
+    resolveRunbookFile.mockResolvedValue({ path: '/test/good.md', source: 'project' });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue(
@@ -400,7 +400,7 @@ describe('prepareRunbook', () => {
   });
 
   it('returns VALIDATION_ERROR when frontmatter vars use reserved names', async () => {
-    resolveRunbookFile.mockResolvedValue('/test/reserved.md');
+    resolveRunbookFile.mockResolvedValue({ path: '/test/reserved.md', source: 'project' });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue(
@@ -427,7 +427,7 @@ describe('prepareRunbook', () => {
   });
 
   it('returns error when validateSources throws', async () => {
-    resolveRunbookFile.mockResolvedValue('/test/sourced.md');
+    resolveRunbookFile.mockResolvedValue({ path: '/test/sourced.md', source: 'project' });
     (parser.isSourced as jest.MockedFunction<typeof parser.isSourced>).mockReturnValue(true);
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
@@ -449,7 +449,7 @@ describe('prepareRunbook', () => {
   });
 
   it('returns VALIDATION_ERROR when parser diagnostics contain errors', async () => {
-    resolveRunbookFile.mockResolvedValue('/test/bad-for.md');
+    resolveRunbookFile.mockResolvedValue({ path: '/test/bad-for.md', source: 'project' });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue(
@@ -470,7 +470,7 @@ describe('prepareRunbook', () => {
   });
 
   it('returns PrepareFailure when resolveForBounds throws for invalid value', async () => {
-    resolveRunbookFile.mockResolvedValue('/test/for-bounds.md');
+    resolveRunbookFile.mockResolvedValue({ path: '/test/for-bounds.md', source: 'project' });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue(
@@ -500,7 +500,7 @@ describe('prepareRunbook', () => {
   });
 
   it('returns POLICY_DENIED when file-backed variable resolution is blocked by policy', async () => {
-    resolveRunbookFile.mockResolvedValue('/test/good.md');
+    resolveRunbookFile.mockResolvedValue({ path: '/test/good.md', source: 'project' });
     (resolveVariables as jest.Mock).mockRejectedValue(
       new FileSourcePolicyError('items', '/test/.env', 'Path blocked by policy'),
     );
@@ -518,6 +518,73 @@ describe('prepareRunbook', () => {
         reason: 'Path blocked by policy',
       });
     }
+  });
+
+  it('injects CLAUDE_PLUGIN_ROOT when runbook resolves from plugin source', async () => {
+    resolveRunbookFile.mockResolvedValue({
+      path: '/home/user/.claude/extensions/rundown-plugin/runbooks/write-plan.runbook.md',
+      source: 'plugin' as const,
+    });
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue(mockParseResult());
+
+    const result = await prepareRunbook('rundown:write-plan', {}, '/test');
+
+    expect(result.ok).toBe(true);
+    // CLAUDE_PLUGIN_ROOT should be derived from the resolved path (everything before /runbooks/)
+    expect(substituteRunbookVariables).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        CLAUDE_PLUGIN_ROOT: '/home/user/.claude/extensions/rundown-plugin/',
+      }),
+    );
+  });
+
+  it('does not inject CLAUDE_PLUGIN_ROOT when runbook resolves from project source', async () => {
+    resolveRunbookFile.mockResolvedValue({
+      path: '/test/.claude/rundown/runbooks/my-runbook.runbook.md',
+      source: 'project' as const,
+    });
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue(mockParseResult());
+
+    const result = await prepareRunbook('my-runbook', {}, '/test');
+
+    expect(result.ok).toBe(true);
+    expect(substituteRunbookVariables).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.not.objectContaining({
+        CLAUDE_PLUGIN_ROOT: expect.anything(),
+      }),
+    );
+  });
+
+  it('allows --var to override CLAUDE_PLUGIN_ROOT', async () => {
+    resolveRunbookFile.mockResolvedValue({
+      path: '/home/user/.claude/extensions/rundown-plugin/runbooks/write-plan.runbook.md',
+      source: 'plugin' as const,
+    });
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue(mockParseResult());
+    (resolveVariables as jest.Mock).mockResolvedValue({
+      vars: { CLAUDE_PLUGIN_ROOT: '/custom/override' },
+      sources: {},
+      warnings: [],
+    });
+
+    const result = await prepareRunbook('rundown:write-plan', {}, '/test');
+
+    expect(result.ok).toBe(true);
+    // The user's --var override should win over auto-injected value
+    expect(substituteRunbookVariables).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        CLAUDE_PLUGIN_ROOT: '/custom/override',
+      }),
+    );
   });
 });
 
@@ -879,7 +946,7 @@ describe('claimAndLaunch', () => {
     };
     (core.DelegationScanService as jest.Mock).mockImplementation(() => mockScanner);
 
-    resolveRunbookFile.mockResolvedValue('/test/child.md');
+    resolveRunbookFile.mockResolvedValue({ path: '/test/child.md', source: 'project' });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue(mockParseResult());
@@ -975,7 +1042,7 @@ describe('claimAndLaunch', () => {
     };
     (core.DelegationScanService as jest.Mock).mockImplementation(() => mockScanner);
 
-    resolveRunbookFile.mockResolvedValue('/test/child.md');
+    resolveRunbookFile.mockResolvedValue({ path: '/test/child.md', source: 'project' });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue(mockParseResult());
@@ -1127,7 +1194,7 @@ describe('claimAndLaunch', () => {
     };
     (core.DelegationScanService as jest.Mock).mockImplementation(() => mockScanner);
 
-    resolveRunbookFile.mockResolvedValue('/test/child.md');
+    resolveRunbookFile.mockResolvedValue({ path: '/test/child.md', source: 'project' });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue(mockParseResult());

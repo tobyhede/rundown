@@ -84,7 +84,7 @@ describe('loadScenarios', () => {
   });
 
   it('returns error when no frontmatter', async () => {
-    resolveRunbookFile.mockResolvedValue('/test/runbook.md');
+    resolveRunbookFile.mockResolvedValue({ path: '/test/runbook.md', source: 'project' });
     (readFile as jest.MockedFunction<typeof readFile>).mockResolvedValue('# No frontmatter' as any);
     extractFrontmatter.mockReturnValue({ frontmatter: null, content: '# No frontmatter' });
 
@@ -98,7 +98,7 @@ describe('loadScenarios', () => {
   });
 
   it('returns error with validation details', async () => {
-    resolveRunbookFile.mockResolvedValue('/test/runbook.md');
+    resolveRunbookFile.mockResolvedValue({ path: '/test/runbook.md', source: 'project' });
     (readFile as jest.MockedFunction<typeof readFile>).mockResolvedValue(
       '---\nscenarios: bad\n---' as any,
     );
@@ -114,7 +114,7 @@ describe('loadScenarios', () => {
   });
 
   it('returns error when no scenarios defined', async () => {
-    resolveRunbookFile.mockResolvedValue('/test/runbook.md');
+    resolveRunbookFile.mockResolvedValue({ path: '/test/runbook.md', source: 'project' });
     (readFile as jest.MockedFunction<typeof readFile>).mockResolvedValue(
       '---\nname: test\n---' as any,
     );
@@ -138,7 +138,7 @@ describe('loadScenarios', () => {
       },
     };
 
-    resolveRunbookFile.mockResolvedValue('/test/runbook.md');
+    resolveRunbookFile.mockResolvedValue({ path: '/test/runbook.md', source: 'project' });
     (readFile as jest.MockedFunction<typeof readFile>).mockResolvedValue(
       '---\nname: my-runbook\n---' as any,
     );
@@ -163,7 +163,7 @@ describe('loadScenarios', () => {
       test: { result: 'COMPLETE', commands: ['rd run x.md'] },
     };
 
-    resolveRunbookFile.mockResolvedValue('/test/runbook.md');
+    resolveRunbookFile.mockResolvedValue({ path: '/test/runbook.md', source: 'project' });
     (readFile as jest.MockedFunction<typeof readFile>).mockResolvedValue(
       '---\nscenarios:\n---' as any,
     );

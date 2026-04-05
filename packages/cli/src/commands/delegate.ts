@@ -122,10 +122,11 @@ export function registerDelegateCommand(program: Command): void {
             }
 
             // Resolve child runbook path
-            const childPath = await resolveRunbookFile(cwd, resolvedRunbook);
-            if (!childPath) {
+            const childResolved = await resolveRunbookFile(cwd, resolvedRunbook);
+            if (!childResolved) {
               throw Errors.delegationRunbookNotFound(resolvedRunbook);
             }
+            const childPath = childResolved.path;
 
             // Parse extra vars through the standard normalization pipeline
             const rawVars = await collectCliFlags(

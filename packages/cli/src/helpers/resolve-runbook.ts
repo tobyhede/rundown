@@ -4,6 +4,20 @@ import { findRunbookByName, findRunbookByNameInSource } from '../services/discov
 import { getBundledRunbooksPath } from './bundled-runbooks.js';
 
 /**
+ * Result of resolving a runbook file, including its source.
+ *
+ * Provides the absolute filesystem path alongside the source that
+ * the runbook was discovered from, enabling downstream consumers
+ * to derive source-specific context (e.g., plugin root directory).
+ */
+export interface ResolvedRunbook {
+  /** Absolute path to the resolved runbook file */
+  path: string;
+  /** Source directory where the runbook was found */
+  source: 'project' | 'plugin' | 'bundled';
+}
+
+/**
  * Parsed runbook identifier with optional namespace.
  */
 export interface ParsedIdentifier {
@@ -55,14 +69,14 @@ function namespaceToSource(namespace: string): 'project' | 'plugin' | 'bundled' 
  *
  * @param cwd - Current working directory
  * @param filename - Runbook filename to find
- * @returns Absolute path to runbook file, or null if not found
+ * @returns Resolved runbook with path and source, or null if not found
  */
-async function resolveByPath(cwd: string, filename: string): Promise<string | null> {
+async function resolveByPath(cwd: string, filename: string): Promise<ResolvedRunbook | null> {
   // 1. Check project-local .claude/rundown/runbooks/
   const localPath = path.join(cwd, '.claude/rundown/runbooks', filename);
   try {
     await fs.access(localPath);
-    return localPath;
+    return { path: localPath, source: 'project' };
   } catch {
     /* not found */
   }
@@ -73,7 +87,7 @@ async function resolveByPath(cwd: string, filename: string): Promise<string | nu
     const pluginPath = path.join(pluginRoot, 'runbooks', filename);
     try {
       await fs.access(pluginPath);
-      return pluginPath;
+      return { path: pluginPath, source: 'plugin' };
     } catch {
       /* not found */
     }
@@ -83,7 +97,7 @@ async function resolveByPath(cwd: string, filename: string): Promise<string | nu
   const relativePath = path.resolve(cwd, filename);
   try {
     await fs.access(relativePath);
-    return relativePath;
+    return { path: relativePath, source: 'project' };
   } catch {
     /* not found */
   }
@@ -92,7 +106,7 @@ async function resolveByPath(cwd: string, filename: string): Promise<string | nu
   const bundledPath = path.join(getBundledRunbooksPath(), filename);
   try {
     await fs.access(bundledPath);
-    return bundledPath;
+    return { path: bundledPath, source: 'bundled' };
   } catch {
     /* not found */
   }
@@ -135,10 +149,13 @@ function isPathIdentifier(identifier: string): boolean {
  *
  * @param cwd - Current working directory
  * @param identifier - Runbook filename, name, or namespaced name to find
- * @returns Absolute path to runbook file, or null if not found
+ * @returns Resolved runbook with path and source, or null if not found
  * @throws {Error} May throw filesystem errors if directory access fails unexpectedly
  */
-export async function resolveRunbookFile(cwd: string, identifier: string): Promise<string | null> {
+export async function resolveRunbookFile(
+  cwd: string,
+  identifier: string,
+): Promise<ResolvedRunbook | null> {
   // Parse namespace from identifier
   const { namespace, name } = parseIdentifier(identifier);
 
@@ -150,7 +167,7 @@ export async function resolveRunbookFile(cwd: string, identifier: string): Promi
       return null;
     }
     const discovered = await findRunbookByNameInSource(cwd, name, source);
-    return discovered ? discovered.path : null;
+    return discovered ? { path: discovered.path, source: discovered.source } : null;
   }
 
   // Detect if identifier is path-based or name-based
@@ -164,12 +181,12 @@ export async function resolveRunbookFile(cwd: string, identifier: string): Promi
     if (!name.includes('/') && name.endsWith('.runbook.md')) {
       const stem = name.replace(/\.runbook\.md$/, '');
       const discovered = await findRunbookByName(cwd, stem);
-      return discovered ? discovered.path : null;
+      return discovered ? { path: discovered.path, source: discovered.source } : null;
     }
     return null;
   } else {
     // Name-based resolution: use discovery service
     const discovered = await findRunbookByName(cwd, name);
-    return discovered ? discovered.path : null;
+    return discovered ? { path: discovered.path, source: discovered.source } : null;
   }
 }
