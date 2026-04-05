@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # e2e-entrypoint.sh — Container entrypoint for E2E test harness
-# Validates the full plugin workflow: claude -p → /write-plan → runbook execution
+# Validates the full plugin workflow: claude -p → /writing-plans skill → agent runs rd run → runbook execution
 set -euo pipefail
 
 LOG_DIR="$HOME/logs"
@@ -15,6 +15,13 @@ fail() { log "FAIL: $*"; FAILURES=$((FAILURES + 1)); }
 hr()   { log "────────────────────────────────────────────────────────────"; }
 
 FAILURES=0
+
+# ── 0. Fix Claude Code config path ──────────────────────────────────────────
+# Claude Code expects .claude.json at $HOME/.claude.json but the volume mount
+# places it at $HOME/.claude/.claude.json. Copy if needed.
+if [ -f "$HOME/.claude/.claude.json" ] && [ ! -f "$HOME/.claude.json" ]; then
+  cp "$HOME/.claude/.claude.json" "$HOME/.claude.json"
+fi
 
 # ── 1. Prepare workspace ─────────────────────────────────────────────────────
 
@@ -75,7 +82,7 @@ hr
 log "Phase 3: Checking Claude credentials..."
 
 CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
-CRED_FILE="$CLAUDE_DIR/credentials.json"
+CRED_FILE="$CLAUDE_DIR/.credentials.json"
 
 if [ -f "$CRED_FILE" ]; then
   pass "Credentials file exists: $CRED_FILE"
@@ -88,17 +95,17 @@ fi
 # ── 4. Run claude -p ─────────────────────────────────────────────────────────
 
 hr
-log "Phase 4: Running claude -p with /write-plan..."
+log "Phase 4: Running claude -p with /writing-plans skill (agent follows skill body to start runbook)..."
 
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 WORKFLOW_LOG="$LOG_DIR/workflow-${TIMESTAMP}.jsonl"
 DEBUG_LOG="$LOG_DIR/debug-${TIMESTAMP}.log"
 
-PROMPT="/write-plan Add a health check endpoint at GET /health that returns JSON with status and database connectivity"
+PROMPT="Invoke the end-to-end-testing skill: Skill(skill: \"rundown:end-to-end-testing\"). Target workflow: planning/write-plan.runbook.md. Task: Add a health check endpoint at GET /health that returns JSON with status and database connectivity"
 
 set +e
 timeout 600 claude -p "$PROMPT" \
-  --json \
+  --dangerously-skip-permissions \
   --plugin-dir "$PLUGIN_DIR" \
   --debug-file "$DEBUG_LOG" \
   > "$WORKFLOW_LOG" 2>&1
@@ -124,10 +131,48 @@ log "Phase 5: Verifying runbook execution artifacts..."
 
 RUNBOOK_CONFIRMED=false
 
-# Check for plan file (write-plan runbook creates this via rdpath)
-if find .work/main -maxdepth 1 -name '*plan*.md' 2>/dev/null | grep -q .; then
-  pass "Plan file found in .work/main/"
-  RUNBOOK_CONFIRMED=true
+# Check for plan JSON (write-plan runbook creates this via rdpath, date-prefixed).
+# Search .work/ recursively — rdpath uses context-scoped subdirs (.rd-<ctx>/).
+PLAN_FILE=""
+if [ -d ".work" ]; then
+  PLAN_FILE="$(find .work -name '*plan*.json' -type f 2>/dev/null | head -1 || true)"
+fi
+
+if [ -z "$PLAN_FILE" ]; then
+  log "No plan file found in .work/"
+fi
+
+if [ -n "$PLAN_FILE" ]; then
+  pass "Plan file found: $PLAN_FILE"
+  PLAN_VALID=true
+
+  # Schema validation
+  set +e
+  rdx --check "$PLAN_FILE" 2>&1 | tee -a "$LOG_FILE"
+  RDX_EXIT=${PIPESTATUS[0]}
+  set -e
+  if [ "$RDX_EXIT" -eq 0 ]; then
+    pass "Plan passes schema validation"
+  else
+    fail "Plan fails schema validation"
+    PLAN_VALID=false
+  fi
+
+  # Structural validation
+  set +e
+  node "$PLUGIN_DIR/scripts/validate-plan.js" "$PLAN_FILE" 2>&1 | tee -a "$LOG_FILE"
+  VALIDATE_EXIT=${PIPESTATUS[0]}
+  set -e
+  if [ "$VALIDATE_EXIT" -eq 0 ]; then
+    pass "Plan passes structural validation"
+  else
+    fail "Plan fails structural validation"
+    PLAN_VALID=false
+  fi
+
+  if [ "$PLAN_VALID" = true ]; then
+    RUNBOOK_CONFIRMED=true
+  fi
 fi
 
 # Check for rundown execution state

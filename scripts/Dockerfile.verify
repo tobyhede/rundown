@@ -23,6 +23,7 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
       sudo \
       git \
+      curl \
       ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
@@ -30,14 +31,15 @@ RUN apt-get update && \
 RUN useradd -m -s /bin/bash testuser && \
     echo "testuser ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 
-# Install Claude Code globally
-RUN npm install -g @anthropic-ai/claude-code@2
-
 # Copy entrypoint
 COPY --chmod=755 scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 USER testuser
 WORKDIR /home/testuser
+
+# Install Claude Code via native installer (WORKDIR must be set to avoid OOM from / traversal)
+RUN curl -fsSL https://claude.ai/install.sh | bash
+ENV PATH="/home/testuser/.local/bin:${PATH}"
 
 # ── Local stage (pre-publish) ────────────────────────────────────────────────
 

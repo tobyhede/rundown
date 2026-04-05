@@ -85,7 +85,7 @@ log "Verifying plugin structure..."
 if [ -n "$PLUGIN_DIR" ]; then
   EXPECTED_FILES=(
     ".claude-plugin/plugin.json"
-    "hooks.json"
+    "hooks/hooks.json"
     "dist/cli.js"
   )
 
@@ -169,9 +169,12 @@ log "ALL CHECKS PASSED"
 
 # ── 7. Claude Code integration (optional) ──────────────────────────────────
 
-if [ -f "$HOME/.claude/credentials.json" ]; then
+CLAUDE_CRED="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.credentials.json"
+if [ -f "$CLAUDE_CRED" ]; then
   hr
   log "Claude credentials detected — launching Claude Code with plugin..."
   log "Plugin dir: $PLUGIN_DIR"
-  claude --plugin-dir "$PLUGIN_DIR" || true
+  CLAUDE_DEBUG_LOG="$LOG_DIR/claude-debug-$(date +%Y%m%d-%H%M%S).log"
+  log "Debug log: $CLAUDE_DEBUG_LOG"
+  claude --plugin-dir "$PLUGIN_DIR" --debug-file "$CLAUDE_DEBUG_LOG" || true
 fi
