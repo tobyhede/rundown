@@ -10,7 +10,7 @@
  * @module
  */
 
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { execFileSync as nodeExecFileSync } from 'node:child_process';
@@ -40,18 +40,31 @@ export function setExecFileSyncImpl(fn: typeof nodeExecFileSync): void {
 /**
  * Sanitize a git branch name for use in filesystem paths.
  *
- * Replaces `/` with `-`, strips characters not in `[a-zA-Z0-9_-]`,
+ * Replaces `/` with `-`, strips characters not in `[a-zA-Z0-9._-]`,
  * collapses consecutive hyphens, and trims leading/trailing hyphens.
+ *
+ * When sanitization is lossy (characters were stripped), an 8-character SHA-256
+ * hash of the original branch name is appended to prevent collisions (e.g.
+ * `release/1.2` vs `release/12` producing distinct paths). If all characters
+ * are stripped (e.g. non-ASCII-only names), the hash alone is returned.
  *
  * @param branch - Raw git branch name
  * @returns Sanitized branch name safe for filesystem paths
  */
 export function sanitizeBranchName(branch: string): string {
-  return branch
-    .replace(/\//g, '-')
-    .replace(/[^a-zA-Z0-9_-]/g, '')
-    .replace(/-{2,}/g, '-')
-    .replace(/^-+|-+$/g, '');
+  const slashNormalized = branch.replace(/\//g, '-');
+  const charStripped = slashNormalized.replace(/[^a-zA-Z0-9._-]/g, '');
+  const isLossy = charStripped !== slashNormalized;
+  const sanitized = charStripped.replace(/-{2,}/g, '-').replace(/^-+|-+$/g, '');
+
+  if (!sanitized) {
+    return isLossy ? createHash('sha256').update(branch).digest('hex').slice(0, 8) : '';
+  }
+  if (isLossy) {
+    const hash = createHash('sha256').update(branch).digest('hex').slice(0, 8);
+    return `${sanitized}-${hash}`;
+  }
+  return sanitized;
 }
 
 /**

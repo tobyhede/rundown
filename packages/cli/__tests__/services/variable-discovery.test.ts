@@ -62,6 +62,10 @@ describe('parseVarFlag', () => {
 });
 
 describe('getBuiltinVariables', () => {
+  afterEach(() => {
+    setExecFileSyncImpl(nodeExecFileSync);
+  });
+
   it('should return all expected built-in variables', () => {
     const builtins = getBuiltinVariables();
 
@@ -122,13 +126,9 @@ describe('getBuiltinVariables', () => {
   it('should include sanitized branch in WorkPath when in git repo', () => {
     setExecFileSyncImpl((() => 'feature/my-branch\n') as typeof nodeExecFileSync);
 
-    try {
-      const builtins = getBuiltinVariables();
-      expect(builtins.WorkPath).toBe('.work/feature-my-branch');
-      expect(builtins.Branch).toBe('feature/my-branch');
-    } finally {
-      setExecFileSyncImpl(nodeExecFileSync);
-    }
+    const builtins = getBuiltinVariables();
+    expect(builtins.WorkPath).toBe('.work/feature-my-branch');
+    expect(builtins.Branch).toBe('feature/my-branch');
   });
 
   it('should fall back to .work when not in git', () => {
@@ -136,25 +136,17 @@ describe('getBuiltinVariables', () => {
       throw new Error('not a git repo');
     }) as typeof nodeExecFileSync);
 
-    try {
-      const builtins = getBuiltinVariables();
-      expect(builtins.WorkPath).toBe('.work');
-      expect(builtins.Branch).toBe('');
-    } finally {
-      setExecFileSyncImpl(nodeExecFileSync);
-    }
+    const builtins = getBuiltinVariables();
+    expect(builtins.WorkPath).toBe('.work');
+    expect(builtins.Branch).toBe('');
   });
 
   it('should fall back to .work on detached HEAD', () => {
     setExecFileSyncImpl((() => 'HEAD\n') as typeof nodeExecFileSync);
 
-    try {
-      const builtins = getBuiltinVariables();
-      expect(builtins.WorkPath).toBe('.work');
-      expect(builtins.Branch).toBe('');
-    } finally {
-      setExecFileSyncImpl(nodeExecFileSync);
-    }
+    const builtins = getBuiltinVariables();
+    expect(builtins.WorkPath).toBe('.work');
+    expect(builtins.Branch).toBe('');
   });
 
   it('should return RunId as alphanumeric string', () => {
@@ -1224,9 +1216,14 @@ describe('sanitizeBranchName', () => {
     expect(sanitizeBranchName('fix/bug/nested')).toBe('fix-bug-nested');
   });
 
-  it('should strip invalid characters', () => {
-    expect(sanitizeBranchName('feature@branch!')).toBe('featurebranch');
-    expect(sanitizeBranchName('my..branch')).toBe('mybranch');
+  it('should strip invalid characters and append hash when lossy', () => {
+    const result = sanitizeBranchName('feature@branch!');
+    expect(result).toMatch(/^featurebranch-[a-f0-9]{8}$/);
+  });
+
+  it('should preserve dots in branch names', () => {
+    expect(sanitizeBranchName('my..branch')).toBe('my..branch');
+    expect(sanitizeBranchName('release/1.2.3')).toBe('release-1.2.3');
   });
 
   it('should collapse consecutive hyphens', () => {
@@ -1238,5 +1235,26 @@ describe('sanitizeBranchName', () => {
     expect(sanitizeBranchName('-leading')).toBe('leading');
     expect(sanitizeBranchName('trailing-')).toBe('trailing');
     expect(sanitizeBranchName('/scoped/')).toBe('scoped');
+  });
+
+  it('should produce distinct results for branches that previously collided', () => {
+    const a = sanitizeBranchName('release/1.2');
+    const b = sanitizeBranchName('release/12');
+    expect(a).not.toBe(b);
+    expect(a).toBe('release-1.2');
+    expect(b).toBe('release-12');
+  });
+
+  it('should return hash-only for non-ASCII-only branches', () => {
+    const a = sanitizeBranchName('功能');
+    const b = sanitizeBranchName('特性');
+    expect(a).toMatch(/^[a-f0-9]{8}$/);
+    expect(b).toMatch(/^[a-f0-9]{8}$/);
+    expect(a).not.toBe(b);
+  });
+
+  it('should produce deterministic output', () => {
+    expect(sanitizeBranchName('feature@branch')).toBe(sanitizeBranchName('feature@branch'));
+    expect(sanitizeBranchName('功能')).toBe(sanitizeBranchName('功能'));
   });
 });
