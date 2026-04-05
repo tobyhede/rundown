@@ -123,7 +123,6 @@ Template variables use Handlebars syntax `{{variableName}}` and are expanded at 
 
 **Plugin Variables:**
 
-
 | Variable | Description |
 |----------|-------------|
 | `CLAUDE_PLUGIN_ROOT` | Plugin installation directory — auto-injected when running plugin-sourced runbooks |

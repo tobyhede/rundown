@@ -21,12 +21,10 @@ describe('Command-Skill Wiring', () => {
     ? readdirSync(commandsDir).filter((f) => f.endsWith('.md'))
     : [];
 
-  it('validates command files if any exist', () => {
-    // Commands directory may be empty — skills replaced commands
-    expect(commandFiles).toBeDefined();
-  });
-
-  if (commandFiles.length === 0) return;
+  if (commandFiles.length === 0) {
+    it.skip('validates command files if any exist', () => {});
+    return;
+  }
 
   describe.each(commandFiles)('%s', (filename) => {
     const content = readFileSync(path.join(commandsDir, filename), 'utf-8');

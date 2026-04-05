@@ -9,5 +9,5 @@
  * @returns True if the path contains only safe characters and no traversal
  */
 export function isValidRunbookPath(path: string): boolean {
-  return /^[\w./-]+$/.test(path) && !path.includes('..');
+  return /^[\w.:/-]+$/.test(path) && !path.includes('..');
 }

@@ -28,10 +28,15 @@ export interface ShellResult {
  * Represents error objects that can be thrown by exec/execSync
  */
 export interface ExecError extends Error {
+  /** Whether the child process was killed (e.g. by timeout). */
   killed?: boolean;
+  /** Signal name that terminated the process (e.g. 'SIGTERM'). */
   signal?: string;
+  /** Process exit code (null when killed by signal). */
   code?: number;
+  /** Captured standard output from the process. */
   stdout?: string;
+  /** Captured standard error from the process. */
   stderr?: string;
 }
 

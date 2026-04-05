@@ -2,7 +2,7 @@
 name: writing-plans
 description: Write clean, clear, complete & comprehensive implementation plans that provide the complete context for an engineer with zero domain knowledge and no experience with the codebase.
 use_when: Writing detailed implementation plans.
-runbook: ${CLAUDE_PLUGIN_ROOT}runbooks/planning/write-plan.runbook.md
+runbook: rundown:write-plan
 template: ${CLAUDE_PLUGIN_ROOT}templates/planning/plan.template.md
 ---
 
