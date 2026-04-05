@@ -4,45 +4,49 @@ description: Review and validate an implementation plan
 tags:
   - planning
   - review
+vars:
+  PlanPath: ""
 ---
 
 # Review Implementation Plan
 
-Systematically review an implementation plan for quality and completeness.
+Review the plan at `{{ PlanPath }}`.
 
-**OBJECTIVE:** Validate the plan before implementation begins.
+`PlanPath` must be supplied by the caller. Resolve with `rdpath --dir {{ WorkPath }} --file plan.md`.
 
-**DONE WHEN:** Plan is approved or feedback provided.
-
-## 1 Check Completeness
+## 1. Context and scope
 
 - PASS CONTINUE
-- FAIL STOP "Plan is incomplete."
+- FAIL STOP "Plan lacks clear goal or scope."
 
-Verify the plan includes all required sections:
+Verify the plan includes:
+- A specific, testable goal (one sentence)
+- Explicit success criteria
+- Defined scope boundaries (in-scope and out-of-scope)
+- Accurate assumptions about current state
 
-- Overview
-- File changes
-- Testing approach
-- Verification steps
+Read the plan at `{{ PlanPath }}` and validate these elements exist and are coherent.
 
-## 2 Verify Feasibility
+## 2. Review the plan
 
-- PASS CONTINUE
-- FAIL STOP "Plan has feasibility issues."
+- FOR pass IN 1 TO 2
+- PASS ALL CONTINUE
+- FAIL ANY GOTO Synthesize
 
-Check that the proposed changes are technically feasible.
+- review-technical-accuracy.runbook.md
+- review-structural-integrity.runbook.md
+- review-build-runtime.runbook.md
+- review-risk-safety.runbook.md
 
-## 3 Review Dependencies
+## 3. Approved
 
-- PASS CONTINUE
-- FAIL STOP "Dependency issues found."
+- PASS COMPLETE "Plan approved — no issues found."
 
-Verify dependencies are correctly identified and ordered.
+Plan approved — no issues found across both review passes.
 
-## 4 Final Decision
+## Synthesize Collate findings and produce verdict
 
-- YES COMPLETE "Plan approved for implementation."
-- NO STOP "Plan requires revisions."
+- PASS ALL COMPLETE "Review complete."
+- FAIL ANY STOP "Review synthesis failed."
 
-Is the plan ready for implementation?
+- review-synthesize.runbook.md

@@ -14,8 +14,6 @@ rd run <file>                    # Start a runbook
 rd run <file> --var k=v          # Start with variables
 rd run <file> --var-json k=json  # Start with JSON variable
 rd run <file> --var-file <path>  # Load variables from YAML
-rd run <file> --step <id>        # Link child to parent substep (inline)
-rd run <file> --step <id> --index N  # Target FOR loop iteration
 
 rd pass                    # Mark step passed (aliases: yes, ok)
 rd fail                    # Mark step failed (alias: no)
@@ -79,16 +77,6 @@ For FOR loop iterations, add `--index`:
 rd run <child-runbook> --step 1.1 --index 3
 ```
 
-**Variable inheritance:** Children inherit the parent's template variables (including `context.parent.*`). Override with `--var`:
-
-```bash
-rd run <child-runbook> --step 1.1 --var key=value
-```
-
-**Note:** Inline children do NOT inherit the parent's `--prompted` mode. A child started with `rd run <file> --step <id>` always auto-executes its command steps, even when the parent is in prompted mode.
-
-**Inline vs. delegation:** Inline execution (`--step`) runs in the same agent — no token, auto-propagation. For multi-agent orchestration, use [delegation](../delegating-runbooks/SKILL.md) instead.
-
 ## Claiming Delegated Work
 
 When another agent delegates work to you, the plugin injects claim instructions automatically. The flow:
@@ -110,11 +98,7 @@ For orchestrating delegation from the parent side, see [delegating-runbooks](../
 
 ## Prompted Mode
 
-With `--prompted`, command steps do NOT auto-execute — you see the command and manually advance.
-
-`--step` has two distinct behaviors on `rd run`:
-- **Without `--prompted`**: Inline linkage — links child to parent substep (see above)
-- **With `--prompted`**: Goto — jumps to a step after starting (e.g., `rd run file.md --step 3 --prompted`)
+With `--prompted`, command steps do NOT auto-execute — you see the command and manually advance. Use `--step 3` to jump (requires `--prompted`).
 
 ## State Management
 
@@ -150,9 +134,6 @@ rd run <file> --json       # Execution events as JSON
 | Skipping steps | Follow every step — runbook controls flow |
 | Bare `rd pass` with substeps active | Use `rd pass --step 2.1` |
 | Abandoning without `rd stop` | Complete all steps or explicitly stop |
-| `rd run --step` without active parent | Start the parent runbook first |
-| `rd run --step N` on step without substeps | Use qualified ID targeting a substep (e.g., `--step 1.1`) |
-| `rd run --step N.M` on resolved substep | Each substep can only be resolved once |
 
 ## Reference
 

@@ -4,7 +4,7 @@ description: Grandchild runbook that auto-completes as delegation leaf
 tags:
   - delegation
 scenarios:
-  auto-pass:
+  auto_pass:
     description: Grandchild auto-executes and completes
     commands:
       - rd run delegate-nested-grandchild.runbook.md
