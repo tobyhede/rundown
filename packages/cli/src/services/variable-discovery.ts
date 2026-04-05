@@ -13,6 +13,7 @@
 import { randomBytes } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import { execFileSync as nodeExecFileSync } from 'node:child_process';
 import * as yaml from 'js-yaml';
 import {
   isJsonValue,
@@ -23,6 +24,57 @@ import {
   type PolicyPrompter,
   type TemplateVarValue,
 } from '@rundown-org/core';
+
+// Allow injection for testing
+let execFileSyncImpl: typeof nodeExecFileSync = nodeExecFileSync;
+
+/**
+ * Replace the execFileSync implementation (for testing).
+ *
+ * @param fn - Replacement function matching the execFileSync signature
+ */
+export function setExecFileSyncImpl(fn: typeof nodeExecFileSync): void {
+  execFileSyncImpl = fn;
+}
+
+/**
+ * Sanitize a git branch name for use in filesystem paths.
+ *
+ * Replaces `/` with `-`, strips characters not in `[a-zA-Z0-9_-]`,
+ * collapses consecutive hyphens, and trims leading/trailing hyphens.
+ *
+ * @param branch - Raw git branch name
+ * @returns Sanitized branch name safe for filesystem paths
+ */
+export function sanitizeBranchName(branch: string): string {
+  return branch
+    .replace(/\//g, '-')
+    .replace(/[^a-zA-Z0-9_-]/g, '')
+    .replace(/-{2,}/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+/**
+ * Detect the current git branch name.
+ *
+ * Runs `git rev-parse --abbrev-ref HEAD` and returns the branch name,
+ * or `null` if not in a git repo, on a detached HEAD, or git is unavailable.
+ *
+ * @returns Branch name or null
+ */
+function detectGitBranch(): string | null {
+  try {
+    const result = execFileSyncImpl('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    const branch = result.trim();
+    if (!branch || branch === 'HEAD') return null;
+    return branch;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Valid identifier pattern for variable names.
@@ -175,13 +227,16 @@ function normalizeToStringVariables(
  */
 export function getBuiltinVariables(): Record<string, string> {
   const now = new Date();
+  const branch = detectGitBranch();
+  const sanitized = branch ? sanitizeBranchName(branch) : null;
   return {
     Date: now.toISOString().slice(0, 10), // YYYY-MM-DD (UTC)
     DateTime: now.toISOString(), // Full ISO timestamp (UTC)
     Year: String(now.getUTCFullYear()), // YYYY (UTC)
     Month: String(now.getUTCMonth() + 1).padStart(2, '0'), // MM (01-12, UTC)
     Day: String(now.getUTCDate()).padStart(2, '0'), // DD (01-31, UTC)
-    WorkPath: '.work', // Default artifact directory
+    Branch: branch ?? '', // Raw git branch name (empty when not in git)
+    WorkPath: sanitized ? `.work/${sanitized}` : '.work', // Branch-isolated artifact directory
     RunId: randomBytes(4).toString('hex'), // 8-char hex
     ContextId: randomBytes(4).toString('hex'), // 8-char hex
   };
@@ -564,7 +619,7 @@ function collectEnvBridgeVars(warnings?: string[]): Record<string, unknown> {
  * earlier ones for the same key during processing in `resolveVariables`.
  *
  * ```
- * Layer 0: builtins        ← Date, WorkPath, RunId, ContextId (fresh)
+ * Layer 0: builtins        ← Date, Branch, WorkPath, RunId, ContextId (fresh)
  * Layer 1: inheritedVars   ← parent delegation vars (overrides builtins)
  * Layer 2: frontmatter     ← runbook YAML frontmatter vars:
  * Layer 3: discovered      ← .rundown/config.yaml (auto-discovered)
@@ -669,7 +724,7 @@ async function enforceFileSourcePolicy(
  * Resolve variables into the unified template variable map.
  *
  * Processes variable layers in precedence order (lowest to highest):
- * 1. Built-in defaults (Date, DateTime, Year, Month, Day, WorkPath, RunId, ContextId)
+ * 1. Built-in defaults (Date, DateTime, Year, Month, Day, Branch, WorkPath, RunId, ContextId)
  * 1b. Inherited vars from parent delegation (overrides builtins)
  * 2. Frontmatter vars
  * 3. Auto-discovered .rundown/config.yaml
