@@ -121,6 +121,13 @@ Template variables use Handlebars syntax `{{variableName}}` and are expanded at 
 | `context.current.index` | `3` | Current loop iteration (inside FOR) |
 | `context.current.at` | `3.1[3]` | Full execution position |
 
+**Plugin Variables:**
+| Variable | Description |
+|----------|-------------|
+| `CLAUDE_PLUGIN_ROOT` | Plugin installation directory — auto-injected when running plugin-sourced runbooks |
+
+Plugin variables are automatically available when a runbook is resolved from a plugin source (e.g., `rundown:write-plan`). They use UPPER_SNAKE_CASE (not PascalCase) since they mirror host environment conventions. Plugin variables sit below CLI flags in precedence and can be overridden via `--var`.
+
 Built-in variables use PascalCase. Lowercase aliases `step` and `index` are also available. The date/time variables (`Date`, `DateTime`, `Year`, `Month`, `Day`), `Branch`, `WorkPath`, `RunId`, and `ContextId` are static run-time variables set once per execution and can be overridden via `--var`. `RunId` is a fresh 8-character hexadecimal identifier generated per execution; each child in a delegation tree gets its own RunId. `ContextId` is a fresh 8-character hexadecimal identifier generated per execution; children in a delegation tree inherit the parent's ContextId via `--var`, providing a shared identity across the tree. It can be overridden via `--var` to use a meaningful name (e.g., `--var ContextId=sprint-42`). The `Step` variable (and `Index` during FOR loops), `context.current.*` variables, and their lowercase aliases are dynamic per-step variables that reflect the current execution position and cannot be overridden via `--var`. The variable name `context` is reserved and cannot be used as a user variable name.
 
 **CLI Example:**

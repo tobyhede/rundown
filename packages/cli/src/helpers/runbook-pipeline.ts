@@ -297,6 +297,8 @@ export interface LoadAndParseSuccess {
   ok: true;
   /** Absolute path to the resolved runbook file */
   filePath: string;
+  /** Source where the runbook was discovered from */
+  source: 'project' | 'plugin' | 'bundled';
   /** Raw markdown content */
   rawContent: string;
   /** Parsed runbook AST (before variable substitution) */
@@ -339,9 +341,9 @@ export type LoadAndParseResult = LoadAndParseSuccess | LoadAndParseFailure;
  * @returns Discriminated union: ok with loaded data, or error with message
  */
 export async function loadAndParseRunbook(file: string, cwd: string): Promise<LoadAndParseResult> {
-  const filePath = await resolveRunbookFile(cwd, file);
+  const resolved = await resolveRunbookFile(cwd, file);
 
-  if (!filePath) {
+  if (!resolved) {
     return {
       ok: false,
       error: `Runbook not found: ${file}. Try 'rd ls --all' to list available runbooks.`,
@@ -349,6 +351,8 @@ export async function loadAndParseRunbook(file: string, cwd: string): Promise<Lo
       details: { runbook: file },
     };
   }
+
+  const { path: filePath, source } = resolved;
 
   try {
     const rawContent = await fs.readFile(filePath, 'utf8');
@@ -366,7 +370,7 @@ export async function loadAndParseRunbook(file: string, cwd: string): Promise<Lo
       substeps: countSubsteps(runbook.steps),
     };
 
-    return { ok: true, filePath, rawContent, runbook, frontmatter, diagnostics, stats };
+    return { ok: true, filePath, source, rawContent, runbook, frontmatter, diagnostics, stats };
   } catch (error: unknown) {
     return {
       ok: false,
@@ -406,7 +410,24 @@ export async function prepareRunbook(
   // Phase 1-2: Parse + Validate
   const parsed = await loadAndParseRunbook(file, cwd);
   if (!parsed.ok) return parsed;
-  const { filePath, rawContent, runbook: rawRunbook, frontmatter, diagnostics, stats } = parsed;
+  const {
+    filePath,
+    source,
+    rawContent,
+    runbook: rawRunbook,
+    frontmatter,
+    diagnostics,
+    stats,
+  } = parsed;
+
+  // Derive CLAUDE_PLUGIN_ROOT from resolved path when source is plugin
+  let pluginRoot: string | undefined;
+  if (source === 'plugin') {
+    const runbooksIdx = filePath.indexOf('/runbooks/');
+    if (runbooksIdx !== -1) {
+      pluginRoot = filePath.slice(0, runbooksIdx + 1); // include trailing slash
+    }
+  }
 
   // Variable resolution
   let mergedVariables: Record<string, TemplateVarValue>;
@@ -427,6 +448,10 @@ export async function prepareRunbook(
       },
     );
     mergedVariables = { ...resolvedVariables.vars };
+    // Inject CLAUDE_PLUGIN_ROOT for plugin-sourced runbooks (below CLI flags in precedence)
+    if (pluginRoot && !('CLAUDE_PLUGIN_ROOT' in mergedVariables)) {
+      mergedVariables.CLAUDE_PLUGIN_ROOT = pluginRoot;
+    }
     allWarnings.push(...resolvedVariables.warnings);
   } catch (error) {
     if (error instanceof FileSourcePolicyError) {

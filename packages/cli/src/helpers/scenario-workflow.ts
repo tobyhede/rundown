@@ -76,12 +76,13 @@ export interface ScenarioRunResult {
  * @returns ScenarioLoadResult with loaded data or error details
  */
 export async function loadScenarios(file: string, cwd: string): Promise<ScenarioLoadResult> {
-  const filePath = await resolveRunbookFile(cwd, file);
+  const resolved = await resolveRunbookFile(cwd, file);
 
-  if (!filePath) {
+  if (!resolved) {
     return { ok: false, error: `Runbook file not found: ${file}`, code: 'RUNBOOK_NOT_FOUND' };
   }
 
+  const filePath = resolved.path;
   const content = await readFile(filePath, 'utf-8');
   const { frontmatter } = extractFrontmatter(content);
 

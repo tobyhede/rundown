@@ -716,7 +716,10 @@ describe('claimAndLaunch', () => {
     });
 
     // Set up prepareRunbook mocks (resetAllMocks clears these)
-    (resolveRunbookFile as jest.Mock).mockResolvedValue('/test/child.md');
+    (resolveRunbookFile as jest.Mock).mockResolvedValue({
+      path: '/test/child.md',
+      source: 'project',
+    });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue({

@@ -23,9 +23,9 @@ export function getCwd(): string {
  */
 export async function getStepTotal(cwd: string, runbookPath: string): Promise<number> {
   try {
-    const fullPath = await resolveRunbookFile(cwd, runbookPath);
-    if (!fullPath) return 0;
-    const content = await fs.readFile(fullPath, 'utf8');
+    const resolved = await resolveRunbookFile(cwd, runbookPath);
+    if (!resolved) return 0;
+    const content = await fs.readFile(resolved.path, 'utf8');
     const steps = parseRunbook(content);
     return countNumberedSteps(steps);
   } catch {
