@@ -155,6 +155,13 @@ export interface ResolvedVariables {
    * the resolution pipeline.
    */
   readonly warnings: readonly string[];
+  /**
+   * Variable names provided by external layers (inherited, config, env, CLI).
+   *
+   * Excludes builtins (layer 0) and frontmatter (layer 2). Used to validate
+   * that frontmatter `required` variables were actually provided by the caller.
+   */
+  readonly providedKeys: ReadonlySet<string>;
 }
 
 /**
@@ -784,6 +791,17 @@ export async function resolveVariables(
   // Collect raw inputs at each precedence level
   const layers = await collectRawLayers(options, cwd, warnings);
 
+  // Collect keys from external provider layers (inherited=1, config=3, env=4, CLI=5).
+  // Excludes builtins (0) and frontmatter (2) — used for `required` var validation.
+  const providedKeys = new Set<string>();
+  for (const idx of [1, 3, 4, 5]) {
+    for (const key of Object.keys(layers[idx])) {
+      if (isValidVariableName(key)) {
+        providedKeys.add(key);
+      }
+    }
+  }
+
   // Process each layer in precedence order (lowest to highest)
   for (const [layerIndex, layer] of layers.entries()) {
     const entries = Object.entries(layer);
@@ -815,7 +833,7 @@ export async function resolveVariables(
     }
   }
 
-  return { vars, warnings };
+  return { vars, warnings, providedKeys };
 }
 
 /**

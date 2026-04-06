@@ -24,7 +24,9 @@ A Rundown document (`.runbook.md`) is a Markdown file with an optional YAML fron
 
 ### 1.2 Frontmatter
 
-Frontmatter fields beyond `name`, `description`, `version`, `author`, `tags`, and `vars` are preserved (open schema). This allows forward-compatible extensions and user-defined metadata.
+Frontmatter fields beyond `name`, `description`, `version`, `author`, `tags`, `vars`, and `required` are preserved (open schema). This allows forward-compatible extensions and user-defined metadata.
+
+The `required` field declares variable names that must be provided by the caller (via CLI flags, config, environment, or delegation). Required variables must not appear in `vars` — they have no default. Missing required variables produce a hard error during resolution.
 
 The frontmatter `description` field provides a summary for runbook discovery and listing (`rd ls --all`). The `Runbook.description` in the parsed AST is derived from preamble text between the H1 title and first H2 step. These are independent values.
 
@@ -254,7 +256,8 @@ Variables use Handlebars syntax: `{{variable}}`.
 *   **Parent variables**: `{{context.parent.vars.NAME}}` exposes the parent's resolved template variables. Only non-context keys propagate. Available via both chain (`context.parent.parent.vars.*`) and array (`context.ancestors.N.vars.*`) addressing.
 *   **Depth limit**: Parent context chain addressing is capped at 32 levels (enforced on the delegation ancestor chain depth). Exceeding this limit produces an error.
 *   **Path resolution**: Dotted paths are supported consistently (for example `{{context.parent.index}}`).
-*   **Reserved keys**: Runtime keys `step`, `index`, and `context` are reserved (matching is case-insensitive — any case variant such as `STEP`, `Step`, `INDEX` is also reserved) and cannot be overridden by user variables. The CLI rejects these names in frontmatter `vars:`, `--var` flags, `--var-file` contents, and `.rundown/config.yaml` with an error diagnostic. Reserved names in `RD_VAR_*` environment variables are silently skipped with a warning.
+*   **Required variables**: The frontmatter `required` field declares variables that must be provided by the caller via CLI flags, config, environment bridge, or delegation inheritance. Required variables must not appear in `vars:`. Missing required variables produce a hard error (`MISSING_REQUIRED_VARS`) during resolution. Reserved runtime names are also rejected in `required`.
+*   **Reserved keys**: Runtime keys `step`, `index`, and `context` are reserved (matching is case-insensitive — any case variant such as `STEP`, `Step`, `INDEX` is also reserved) and cannot be overridden by user variables. The CLI rejects these names in frontmatter `vars:`, `required`, `--var` flags, `--var-file` contents, and `.rundown/config.yaml` with an error diagnostic. Reserved names in `RD_VAR_*` environment variables are silently skipped with a warning.
 *   **Precedence** (highest to lowest):
     1. CLI flags (`--var-file`, `--var`, `--var-json`) — highest priority
     2. `RD_VAR_*` environment variables (prefix stripped)

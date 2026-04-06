@@ -39,18 +39,20 @@ frontmatter ::= "---" newline yaml_block "---" newline
 Known fields:
 
 ```ebnf
-name_field    ::= "name:" ws name_string
-desc_field    ::= "description:" ws text
-version_field ::= "version:" ws text
-author_field  ::= "author:" ws text
-tags_field    ::= "tags:" newline tag_list
-vars_field    ::= "vars:" newline vars_map
+name_field     ::= "name:" ws name_string
+desc_field     ::= "description:" ws text
+version_field  ::= "version:" ws text
+author_field   ::= "author:" ws text
+tags_field     ::= "tags:" newline tag_list
+vars_field     ::= "vars:" newline vars_map
+required_field ::= "required:" newline required_list
 
-name_string   ::= [a-zA-Z0-9_-] ( [a-zA-Z0-9_ -]* [a-zA-Z0-9_-] )?
-tag_list      ::= ( ws "- " tag newline )+
-tag           ::= text
-vars_map      ::= ( ws variable_name ":" ws value newline )+
-value         ::= text
+name_string    ::= [a-zA-Z0-9_-] ( [a-zA-Z0-9_ -]* [a-zA-Z0-9_-] )?
+tag_list       ::= ( ws "- " tag newline )+
+tag            ::= text
+vars_map       ::= ( ws variable_name ":" ws value newline )+
+value          ::= text
+required_list  ::= ( ws "- " variable_name newline )+
 ```
 
 Additional fields beyond those listed are preserved (open schema). All fields are optional.

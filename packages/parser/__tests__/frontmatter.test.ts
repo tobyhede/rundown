@@ -504,3 +504,48 @@ describe('nameFromFilename() mutation killing', () => {
     expect(nameFromFilename('my.runbook.md.runbook.md')).toBe('my.runbook.md');
   });
 });
+
+describe('required field', () => {
+  it('parses required array', () => {
+    const md = `---\nname: test\nrequired:\n  - VarA\n  - VarB\n---\n# Content`;
+    const { frontmatter } = extractFrontmatter(md);
+    expect(frontmatter?.required).toEqual(['VarA', 'VarB']);
+  });
+
+  it('returns undefined when required is absent', () => {
+    const md = `---\nname: test\n---\n# Content`;
+    const { frontmatter } = extractFrontmatter(md);
+    expect(frontmatter?.required).toBeUndefined();
+  });
+
+  it('returns empty array for required: []', () => {
+    const md = `---\nname: test\nrequired: []\n---\n# Content`;
+    const { frontmatter } = extractFrontmatter(md);
+    expect(frontmatter?.required).toEqual([]);
+  });
+
+  it('drops to undefined for non-array required', () => {
+    const md = `---\nname: test\nrequired: "not-array"\n---\n# Content`;
+    const { frontmatter } = extractFrontmatter(md);
+    expect(frontmatter?.required).toBeUndefined();
+  });
+
+  it('drops to undefined when required contains non-strings', () => {
+    const md = `---\nname: test\nrequired:\n  - 123\n  - true\n---\n# Content`;
+    const { frontmatter } = extractFrontmatter(md);
+    expect(frontmatter?.required).toBeUndefined();
+  });
+
+  it('drops to undefined when required contains empty strings', () => {
+    const md = `---\nname: test\nrequired:\n  - ""\n  - VarA\n---\n# Content`;
+    const { frontmatter } = extractFrontmatter(md);
+    expect(frontmatter?.required).toBeUndefined();
+  });
+
+  it('coexists with vars', () => {
+    const md = `---\nname: test\nvars:\n  port: 3000\nrequired:\n  - PlanPath\n---\n# Content`;
+    const { frontmatter } = extractFrontmatter(md);
+    expect(frontmatter?.vars).toEqual({ port: 3000 });
+    expect(frontmatter?.required).toEqual(['PlanPath']);
+  });
+});

@@ -6,7 +6,8 @@ tags:
   - github
 vars:
   repo: tobyhede/rundown
-  pr_number: "REQUIRED"
+required:
+  - pr_number
 ---
 
 # PR Feedback

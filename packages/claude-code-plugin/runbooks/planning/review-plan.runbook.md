@@ -4,8 +4,8 @@ description: Review and validate an implementation plan
 tags:
   - planning
   - review
-vars:
-  PlanPath: ""
+required:
+  - PlanPath
 ---
 
 # Review Implementation Plan

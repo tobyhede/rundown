@@ -1,6 +1,7 @@
 import type { ValidationDiagnostic } from '@rundown-org/parser';
 import {
   isRuntimeReservedVariable,
+  isValidVariableName,
   RUNTIME_RESERVED_VARIABLES,
 } from '../services/variable-discovery.js';
 
@@ -23,6 +24,50 @@ export function validateFrontmatterVars(
       diagnostics.push({
         severity: 'error',
         message: `Frontmatter var "${key}" uses reserved runtime variable name. Reserved names (case-insensitive): ${[...RUNTIME_RESERVED_VARIABLES].join(', ')}`,
+      });
+    }
+  }
+  return diagnostics;
+}
+
+/**
+ * Validate frontmatter `required` field against vars and reserved names.
+ *
+ * Returns error diagnostics for:
+ * - Names appearing in both `required` and `vars` (required vars must not have defaults)
+ * - Reserved runtime names (step, index, context — case-insensitive)
+ * - Invalid variable identifiers
+ *
+ * @param required - The frontmatter `required` array, or undefined if absent
+ * @param vars - The frontmatter `vars` object, or undefined if absent
+ * @returns Array of validation diagnostics (errors only)
+ */
+export function validateRequiredVars(
+  required: string[] | undefined,
+  vars: Record<string, string | number | boolean> | undefined,
+): ValidationDiagnostic[] {
+  if (!required || required.length === 0) return [];
+  const diagnostics: ValidationDiagnostic[] = [];
+  const varsKeys = new Set(Object.keys(vars ?? {}));
+
+  for (const name of required) {
+    if (!isValidVariableName(name)) {
+      diagnostics.push({
+        severity: 'error',
+        message: `Required variable "${name}" is not a valid identifier`,
+      });
+      continue;
+    }
+    if (isRuntimeReservedVariable(name)) {
+      diagnostics.push({
+        severity: 'error',
+        message: `Required variable "${name}" uses reserved runtime variable name. Reserved names (case-insensitive): ${[...RUNTIME_RESERVED_VARIABLES].join(', ')}`,
+      });
+    }
+    if (varsKeys.has(name)) {
+      diagnostics.push({
+        severity: 'error',
+        message: `Variable "${name}" cannot be both in "required" and "vars" — required variables must not have defaults`,
       });
     }
   }

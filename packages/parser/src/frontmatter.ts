@@ -11,6 +11,7 @@ export interface RunbookFrontmatter {
   author?: string; // Optional
   tags?: string[]; // Optional: categorization
   vars?: Record<string, string | number | boolean>; // Optional: default template variables
+  required?: string[]; // Optional: variables that must be provided by caller
   [key: string]: unknown; // Allow unknown fields
 }
 
@@ -37,6 +38,7 @@ export const RunbookFrontmatterSchema = z
       .record(z.union([z.string(), z.number(), z.boolean()]))
       .optional()
       .catch(undefined),
+    required: z.array(z.string().min(1)).optional().catch(undefined),
   })
   .passthrough();
 

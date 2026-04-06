@@ -158,12 +158,17 @@ vars:
   environment: development
   port: 3000
   debug: true
+required:
+  - PlanPath
 ---
 # My Runbook
 
 ## 1. Start server
 Server running on port {{ port }} in {{ environment }} mode.
+Deploy plan at {{ PlanPath }}.
 ```
+
+The `required` field declares variables the caller must provide. Required variables must not appear in `vars:` (they have no default). Missing required variables produce a hard error at resolution time. Provide them via `--var`, `--var-file`, config, `RD_VAR_*` env vars, or delegation inheritance.
 
 **Notes:**
 - Variable names must match pattern `/^[a-zA-Z_][a-zA-Z0-9_]*$/`
