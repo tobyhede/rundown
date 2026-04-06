@@ -15,6 +15,8 @@ type ValidatorModule<T = unknown> = { validate(data: unknown): T };
 
 const schemaLoaders = {
   plan: () => import('./plan-schema.js') as Promise<ValidatorModule>,
+  feedback: () => import('./feedback-schema.js') as Promise<ValidatorModule>,
+  review: () => import('./review-schema.js') as Promise<ValidatorModule>,
 } as const;
 
 /** Known schema names from the registry. */
@@ -27,7 +29,7 @@ type SchemaName = keyof typeof schemaLoaders;
  * @returns True if name is a registered schema
  */
 function isSchemaName(name: string): name is SchemaName {
-  return name in schemaLoaders;
+  return Object.hasOwn(schemaLoaders, name);
 }
 
 /** URI prefix for Rundown schema identifiers. */

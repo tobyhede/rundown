@@ -29,3 +29,7 @@ export { Session } from './session.js';
 export { detectSyntheticEvents } from './synthetic-events/detector.js';
 export { isSyntheticEvent } from './synthetic-events/types.js';
 export type { SyntheticEvent, SyntheticEventName } from './synthetic-events/types.js';
+
+// Plan validation
+export { validatePlanStructure } from './plan-validators.js';
+export type { StructuralIssue, StructuralValidationResult } from './plan-validators.js';

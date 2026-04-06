@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rundown.org/schemas/review.schema.json",
+  "title": "Review",
+  "description": "Structured review findings for plan and code reviews.",
+  "oneOf": [
+    {
+      "type": "object",
+      "description": "Ok review gate: no blocking findings, proceed.",
+      "required": ["meta", "status", "blocking_count", "findings"],
+      "properties": {
+        "$schema": { "$ref": "#/$defs/SchemaUri" },
+        "meta": { "$ref": "#/$defs/Meta" },
+        "status": { "const": "ok", "description": "Review gate: ok = proceed" },
+        "blocking_count": { "const": 0, "description": "Must be 0 for ok reviews" },
+        "findings": { "$ref": "#/$defs/Findings" }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "description": "Blocked review gate: has blocking findings, must fix first.",
+      "required": ["meta", "status", "blocking_count", "findings"],
+      "properties": {
+        "$schema": { "$ref": "#/$defs/SchemaUri" },
+        "meta": { "$ref": "#/$defs/Meta" },
+        "status": {
+          "const": "blocked",
+          "description": "Review gate: blocked = must fix blocking findings first"
+        },
+        "blocking_count": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of blocking findings (>= 1)"
+        },
+        "findings": { "$ref": "#/$defs/Findings" }
+      },
+      "additionalProperties": false
+    }
+  ],
+  "$defs": {
+    "SchemaUri": {
+      "type": "string",
+      "format": "uri",
+      "const": "https://rundown.org/schemas/review.schema.json",
+      "description": "Schema URI for editor autocomplete and rdx validation dispatch."
+    },
+    "Meta": {
+      "type": "object",
+      "required": ["version"],
+      "properties": {
+        "version": {
+          "const": "1.0.0"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Finding": {
+      "type": "object",
+      "required": ["title", "severity", "description", "evidence", "recommendation"],
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Short label for the finding"
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["blocking", "non_blocking"],
+          "description": "blocking = must fix before proceeding, non_blocking = should fix"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "What is wrong and why"
+        },
+        "location": {
+          "$ref": "#/$defs/Location"
+        },
+        "evidence": {
+          "type": "string",
+          "minLength": 1,
+          "description": "What was observed"
+        },
+        "recommendation": {
+          "type": "string",
+          "minLength": 1,
+          "description": "How to fix it"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Findings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/Finding" }
+    },
+    "Location": {
+      "type": "object",
+      "description": "A code location. Note: JSON Schema cannot enforce end_line >= line; the Zod schema's superRefine is the authoritative enforcement layer.",
+      "required": ["path"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!\\/)(?![A-Za-z]:[\\/\\\\])(?!.*(?:^|\\/)\\.\\.(?:\\/|$))(?!.*\\\\)",
+          "description": "Relative file path from project root"
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Start line number (1-based)"
+        },
+        "end_line": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "End line number for ranges (1-based)"
+        },
+        "symbol": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Logical location name (function, class, type)"
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Construct type: function, type, class, module, method, member, variable, namespace"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
