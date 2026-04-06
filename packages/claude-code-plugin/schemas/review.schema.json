@@ -38,7 +38,6 @@
       "additionalProperties": false
     }
   ],
-  "discriminator": { "propertyName": "status" },
   "$defs": {
     "SchemaUri": {
       "type": "string",
