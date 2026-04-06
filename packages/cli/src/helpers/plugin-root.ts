@@ -44,6 +44,14 @@ export function getPluginRoot(): string | null {
  *
  * @returns Absolute path to the plugin root, or null if not found
  */
+/**
+ * Reset the cached sibling discovery result.
+ * @internal Test-only — not part of the public API.
+ */
+export function _resetPluginRootCache(): void {
+  cached = undefined;
+}
+
 function discoverSiblingPlugin(): string | null {
   // dist/helpers/ → dist/ → cli/ → @rundown-org/
   const scopeDir = join(__dirname, '..', '..', '..');

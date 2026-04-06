@@ -1,14 +1,26 @@
-import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
+
+// Mock plugin-root — passthrough for env var, controlled sibling discovery
+const mockGetPluginRoot = jest.fn<() => string | null>().mockImplementation(() => {
+  const envRoot = process.env.CLAUDE_PLUGIN_ROOT;
+  if (envRoot) return envRoot;
+  return null;
+});
+jest.unstable_mockModule('../../src/helpers/plugin-root.js', () => ({
+  getPluginRoot: mockGetPluginRoot,
+  _resetPluginRootCache: jest.fn(),
+}));
+
+const {
   discoverRunbooks,
   findRunbookByName,
   findRunbookByNameInSource,
   scanDirectory,
   getSearchPaths,
-} from '../../src/services/discovery.js';
+} = await import('../../src/services/discovery.js');
 
 describe('discovery service', () => {
   let tempDir: string;
@@ -66,24 +78,34 @@ describe('discovery service', () => {
       }
     });
 
-    it('discovers plugin via sibling package when CLAUDE_PLUGIN_ROOT is not set', async () => {
+    it('includes plugin path when sibling discovery finds plugin', async () => {
+      const originalEnv = process.env.CLAUDE_PLUGIN_ROOT;
+      delete process.env.CLAUDE_PLUGIN_ROOT;
+      mockGetPluginRoot.mockReturnValueOnce(pluginRunbooksDir);
+
+      try {
+        const paths = getSearchPaths(tempDir);
+
+        expect(paths.length).toBe(3);
+        expect(paths[0].source).toBe('project');
+        expect(paths[1].source).toBe('plugin');
+        expect(paths[1].path).toBe(join(pluginRunbooksDir, 'runbooks'));
+        expect(paths[2].source).toBe('bundled');
+      } finally {
+        process.env.CLAUDE_PLUGIN_ROOT = originalEnv;
+      }
+    });
+
+    it('excludes plugin when sibling discovery returns null', async () => {
       const originalEnv = process.env.CLAUDE_PLUGIN_ROOT;
       delete process.env.CLAUDE_PLUGIN_ROOT;
 
       try {
         const paths = getSearchPaths(tempDir);
 
+        expect(paths.length).toBe(2);
         expect(paths[0].source).toBe('project');
-        // Plugin may be found via sibling discovery (when installed alongside CLI)
-        const pluginPath = paths.find((p) => p.source === 'plugin');
-        if (pluginPath) {
-          expect(paths.length).toBe(3);
-          expect(pluginPath.path).toContain('claude-code-plugin');
-        } else {
-          // No sibling plugin installed — only project + bundled
-          expect(paths.length).toBe(2);
-        }
-        expect(paths[paths.length - 1].source).toBe('bundled');
+        expect(paths[1].source).toBe('bundled');
       } finally {
         process.env.CLAUDE_PLUGIN_ROOT = originalEnv;
       }
