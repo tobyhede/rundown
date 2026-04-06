@@ -97,6 +97,7 @@
     },
     "Location": {
       "type": "object",
+      "description": "A code location. Note: JSON Schema cannot enforce end_line >= line; the Zod schema's superRefine is the authoritative enforcement layer.",
       "required": ["path"],
       "properties": {
         "path": {

@@ -66,7 +66,8 @@ const SharedFields = {
 /**
  * Ok review gate: no blocking findings, proceed.
  *
- * @internal Used as a variant in the ReviewSchema discriminated union.
+ * Used as a variant in the ReviewSchema discriminated union.
+ * @internal
  */
 const OkReview = z
   .object({
@@ -79,7 +80,8 @@ const OkReview = z
 /**
  * Blocked review gate: has blocking findings, must fix first.
  *
- * @internal Used as a variant in the ReviewSchema discriminated union.
+ * Used as a variant in the ReviewSchema discriminated union.
+ * @internal
  */
 const BlockedReview = z
   .object({
