@@ -3,11 +3,11 @@
 #
 # Usage:
 #   ./scripts/e2e-shell.sh                        # Default: built-in test-app fixture
-#   ./scripts/e2e-shell.sh ~/psrc/rundown          # Mount custom project
+#   ./scripts/e2e-shell.sh ~/path/to/project        # Mount custom project
 #   ./scripts/e2e-shell.sh --bash                  # Drop to bash (debugging)
-#   ./scripts/e2e-shell.sh ~/psrc/rundown --bash   # Mount project + bash
+#   ./scripts/e2e-shell.sh ~/path/to/project --bash  # Mount project + bash
 #   ./scripts/e2e-shell.sh --no-build              # Skip rebuild (use cached image)
-#   ./scripts/e2e-shell.sh --no-build ~/psrc/rundown
+#   ./scripts/e2e-shell.sh --no-build ~/path/to/project
 #
 # The container has Claude Code and the Rundown plugin pre-installed.
 # Credentials are mounted from .claude-docker/ (prepared by build-e2e.sh).
@@ -28,7 +28,12 @@ for arg in "$@"; do
   case "$arg" in
     --bash)     SHELL_MODE=true ;;
     --no-build) SKIP_BUILD=true ;;
-    *)          PROJECT_PATH="$arg" ;;
+    *)
+      if [ -n "$PROJECT_PATH" ]; then
+        echo "Warning: multiple project paths given, using '$arg' (ignoring '$PROJECT_PATH')"
+      fi
+      PROJECT_PATH="$arg"
+      ;;
   esac
 done
 

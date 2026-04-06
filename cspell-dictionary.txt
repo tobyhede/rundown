@@ -64,8 +64,10 @@ hono
 Hede
 idempotently
 iife
+dogfooding
 initialisation
 initialise
+initialised
 initialises
 jsdoc
 jsonl

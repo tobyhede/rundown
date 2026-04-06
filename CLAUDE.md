@@ -326,7 +326,7 @@ npm run verify:claude    # Docker: verify CLI+plugin install (local build)
 npm run verify:claude:npm  # Docker: verify install from npm registry
 npm run test:e2e                              # Docker: E2E plugin workflow test
 npm run test:e2e:shell                        # Docker: interactive Claude Code session (test-app fixture)
-npm run test:e2e:shell -- ~/psrc/rundown      # Docker: interactive session with mounted project
+npm run test:e2e:shell -- ~/path/to/project    # Docker: interactive session with mounted project
 npm run test:e2e:shell -- --bash              # Docker: bash shell for debugging
 npm run test:e2e:shell -- --no-build          # Docker: skip rebuild (cached image)
 npm run test:e2e:build                        # Docker: build E2E test image

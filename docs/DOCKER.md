@@ -135,27 +135,27 @@ docker compose -f docker-compose.e2e.yml run --rm e2e
 
 ### Interactive Shell
 
-`test:e2e:shell` builds the image and launches an interactive Claude Code session with the plugin pre-loaded:
+`test:e2e:shell` builds the image and launches an interactive Claude Code session with the plugin pre-loaded by default. `--no-build` skips the rebuild, and `--bash` bypasses the launcher and drops into a plain shell:
 
 ```bash
-npm run test:e2e:shell                              # Default: test-app fixture
-npm run test:e2e:shell -- ~/psrc/rundown             # Mount a custom project
-npm run test:e2e:shell -- --bash                     # Drop to bash (debugging)
-npm run test:e2e:shell -- ~/psrc/rundown --bash      # Mount project + bash
-npm run test:e2e:shell -- --no-build                 # Skip rebuild (cached image)
-npm run test:e2e:shell -- --no-build ~/psrc/rundown  # Skip rebuild + mount project
+npm run test:e2e:shell                                  # Build + launch Claude with test-app fixture
+npm run test:e2e:shell -- ~/path/to/project             # Build + launch Claude with mounted project
+npm run test:e2e:shell -- --bash                        # Build + drop to bash (no Claude, no fixture setup)
+npm run test:e2e:shell -- ~/path/to/project --bash      # Build + bash in mounted project
+npm run test:e2e:shell -- --no-build                    # Cached image + launch Claude with test-app fixture
+npm run test:e2e:shell -- --no-build ~/path/to/project  # Cached image + launch Claude with mounted project
 ```
 
 When a custom project is mounted, changes persist back to the host filesystem. This enables dogfooding — using the plugin to build itself:
 
 ```bash
-# Launch Claude Code against the rundown repo itself
-npm run test:e2e:shell -- ~/psrc/rundown
+# Launch Claude Code against your own project
+npm run test:e2e:shell -- ~/path/to/project
 ```
 
-Without a project path, the container copies the built-in test-app fixture (Hono + SQLite REST API) to a temporary workspace with git initialised.
+Without a project path, the default launcher copies the built-in test-app fixture (Hono + SQLite REST API) to a temporary workspace with git initialised. The `--bash` variants skip that setup.
 
-### Architecture
+### E2E Architecture
 
 The E2E stage extends the `local` stage from `Dockerfile.verify`, adding the test fixture and entrypoints. This eliminates duplication — Claude Code installation, system packages, and tarball setup are defined once in the `base`/`local` stages.
 

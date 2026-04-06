@@ -18,9 +18,9 @@ FAILURES=0
 
 # ── 0. Fix Claude Code config path ──────────────────────────────────────────
 # Claude Code expects .claude.json at $HOME/.claude.json but the volume mount
-# places it at $HOME/.claude/.claude.json. Copy if needed.
-if [ -f "$HOME/.claude/.claude.json" ] && [ ! -f "$HOME/.claude.json" ]; then
-  cp "$HOME/.claude/.claude.json" "$HOME/.claude.json"
+# places it at $HOME/.claude/.claude.json. Symlink to keep changes synchronized.
+if [ -f "$HOME/.claude/.claude.json" ] && [ ! -e "$HOME/.claude.json" ]; then
+  ln -s "$HOME/.claude/.claude.json" "$HOME/.claude.json"
 fi
 
 # ── 1. Prepare workspace ─────────────────────────────────────────────────────

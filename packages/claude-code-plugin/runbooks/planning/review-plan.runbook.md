@@ -14,7 +14,13 @@ Review the plan at `{{ PlanPath }}`.
 
 `PlanPath` must be supplied by the caller. Resolve with `rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file plan.json`.
 
-## 1. Context and scope
+## 1. Review the plan schema
+- PASS CONTINUE
+- FAIL STOP
+
+Schema: `{{ CLAUDE_PLUGIN_ROOT }}/schemas/plan.schema.json`
+
+## 2. Context and scope
 - PASS CONTINUE
 - FAIL STOP
 
@@ -26,26 +32,20 @@ Verify the plan includes:
 
 Read the plan at `{{ PlanPath }}` and validate these elements exist and are coherent.
 
-## 2. Review the plan
-
-- FOR pass IN 1 TO 2
+## 3. Delegate subagents to review the plan
 - PASS ALL CONTINUE
-- FAIL ANY GOTO Synthesize
+- FAIL ANY CONTINUE
+
+Delegate subagents to review
 
 - review-technical-accuracy.runbook.md
 - review-structural-integrity.runbook.md
 - review-build-runtime.runbook.md
 - review-risk-safety.runbook.md
 
-## 3. Approved
-
-- PASS COMPLETE "Plan approved — no issues found."
-
-Plan approved — no issues found across both review passes.
-
-## Synthesize Collate findings and produce verdict
-
-- PASS ALL COMPLETE "Review complete."
-- FAIL ANY STOP "Review synthesis failed."
+## 4. Collate review documents
+- PASS ALL COMPLETE
+- FAIL ANY STOP
 
 - review-synthesize.runbook.md
+

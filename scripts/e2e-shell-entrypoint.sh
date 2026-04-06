@@ -9,13 +9,13 @@
 set -euo pipefail
 
 log() { echo "[rundown-shell] $*"; }
-hr()  { echo "════════════════════════════════════════════════════════════════"; }
+hr()  { echo "────────────────────────────────────────────────────────────────"; }
 
 # ── 0. Fix Claude Code config path ──────────────────────────────────────────
 # Claude Code expects .claude.json at $HOME/.claude.json but the volume mount
-# places it at $HOME/.claude/.claude.json. Copy if needed.
-if [ -f "$HOME/.claude/.claude.json" ] && [ ! -f "$HOME/.claude.json" ]; then
-  cp "$HOME/.claude/.claude.json" "$HOME/.claude.json"
+# places it at $HOME/.claude/.claude.json. Symlink to keep changes synchronized.
+if [ -f "$HOME/.claude/.claude.json" ] && [ ! -e "$HOME/.claude.json" ]; then
+  ln -s "$HOME/.claude/.claude.json" "$HOME/.claude.json"
 fi
 
 # ── 1. Determine workspace ──────────────────────────────────────────────────
@@ -39,7 +39,7 @@ else
   export NODE_OPTIONS="--experimental-sqlite"
 
   log "Installing fixture dependencies..."
-  npm install --ignore-scripts 2>&1
+  npm install --ignore-scripts
 
   git add -A
   git commit --quiet -m "Initial commit"
@@ -81,4 +81,6 @@ hr
 log "Starting interactive Claude Code session..."
 echo ""
 
-exec claude --plugin-dir "$PLUGIN_DIR"
+CLAUDE_DEBUG_LOG="/tmp/claude-debug.log"
+log "Debug log: $CLAUDE_DEBUG_LOG"
+exec claude --plugin-dir "$PLUGIN_DIR" --debug-file "$CLAUDE_DEBUG_LOG"

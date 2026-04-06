@@ -17,8 +17,6 @@ Verify that all technical references in the plan are accurate.
 
 ### 1.1 File paths exist
 
-- DEFER
-
 Read the plan at `{{ PlanPath }}` and verify every file path referenced in the plan exists in the codebase. Check both source and test files.
 
 ### 1.2 Symbols exist
