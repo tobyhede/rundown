@@ -27,7 +27,11 @@ export interface ShellResult {
  * Type guard for execution errors from child_process
  * Represents error objects that can be thrown by exec/execSync
  */
-export interface ExecError extends Error {
+export interface ExecError {
+  /** Error name (e.g. 'Error'). */
+  name: string;
+  /** Error message describing what went wrong. */
+  message: string;
   /** Whether the child process was killed (e.g. by timeout). */
   killed?: boolean;
   /** Signal name that terminated the process (e.g. 'SIGTERM'). */

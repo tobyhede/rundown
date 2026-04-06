@@ -40,12 +40,13 @@ jest.unstable_mockModule('shell-quote', () => ({
   parse: jest.fn().mockImplementation((str: string) => str.split(/\s+/)),
 }));
 
-// Mock command-sequence (pass through extractRunbookReferences so extractReferencedRunbooks works)
+// Mock command-sequence (pass through extract helpers so extractReferencedRunbooks/var-file copying works)
 const actualCommandSequence = await import('../../src/helpers/command-sequence');
 jest.unstable_mockModule('../../src/helpers/command-sequence', () => ({
   executeCommandSequence: jest.fn(),
   matchStepAssertions: jest.fn(),
   extractRunbookReferences: actualCommandSequence.extractRunbookReferences,
+  extractVarFileReferences: actualCommandSequence.extractVarFileReferences,
 }));
 
 // Import after mocking

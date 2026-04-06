@@ -1,0 +1,75 @@
+[tools]
+node = "24"
+
+[tasks."test:scenarios"]
+description = "Run frontmatter scenarios from all runbooks"
+depends = ["build"]
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+
+FAILURES=0
+PASSED=0
+RUNBOOKS=$(grep -rl '^scenarios:' runbooks/ --include='*.runbook.md' 2>/dev/null || true)
+
+if [ -z "$RUNBOOKS" ]; then
+  echo "No runbooks with scenarios found"
+  exit 0
+fi
+
+for runbook in $RUNBOOKS; do
+  # List scenario names (skip header line)
+  NAMES=$(node packages/cli/dist/cli.js scenario ls "$runbook" | tail -n +2 | awk '{print $1}')
+  for name in $NAMES; do
+    if node packages/cli/dist/cli.js scenario run "$runbook" "$name" --quiet; then
+      PASSED=$((PASSED + 1))
+    else
+      echo "FAIL: $runbook :: $name"
+      FAILURES=$((FAILURES + 1))
+    fi
+  done
+done
+
+echo ""
+echo "$PASSED passed, $FAILURES failed"
+[ "$FAILURES" -eq 0 ]
+"""
+
+[tasks."test:scenario-suites"]
+description = "Run all scenario suite files"
+depends = ["build"]
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+
+FAILURES=0
+PASSED=0
+SUITES=$(find . -name '*.scenario-suite.yaml' -not -path './node_modules/*' 2>/dev/null || true)
+
+if [ -z "$SUITES" ]; then
+  echo "No scenario suite files found"
+  exit 0
+fi
+
+for suite in $SUITES; do
+  echo "=== $suite ==="
+  if node packages/cli/dist/cli.js scenario-suite run "$suite" --all --quiet 2>&1; then
+    PASSED=$((PASSED + 1))
+  else
+    echo "FAIL: $suite"
+    FAILURES=$((FAILURES + 1))
+  fi
+  echo ""
+done
+
+echo "$PASSED suites passed, $FAILURES failed"
+[ "$FAILURES" -eq 0 ]
+"""
+
+[tasks."test:scenarios:all"]
+description = "Run all scenarios (frontmatter + suites)"
+depends = ["test:scenarios", "test:scenario-suites"]
+
+[tasks.build]
+description = "Build all packages"
+run = "npm run build"

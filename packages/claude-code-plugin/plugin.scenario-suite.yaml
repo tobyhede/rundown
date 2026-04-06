@@ -1,0 +1,57 @@
+version: 1
+name: plugin-runbooks
+description: Structural coverage for plugin runbooks
+
+cases:
+  # --- write-plan: happy path (skill already invoked) ---
+
+  write-plan-all-pass:
+    description: Skill already invoked, write succeeds — completes in 2 steps
+    file: runbooks/planning/write-plan.runbook.md
+    commands:
+      - rd run --prompted write-plan.runbook.md
+      - rd pass   # 1. Check if Writing Plans Skill has been invoked → CONTINUE
+      - rd pass   # 2. Write & save the plan → COMPLETE
+    result: COMPLETE
+
+  # --- write-plan: happy path via InvokeSkill ---
+
+  write-plan-via-invoke:
+    description: Skill not invoked, invoke it, then write succeeds
+    file: runbooks/planning/write-plan.runbook.md
+    commands:
+      - rd run --prompted write-plan.runbook.md
+      - rd fail   # 1. Check if Writing Plans Skill has been invoked → GOTO InvokeSkill
+      - rd pass   # InvokeSkill. Invoke the Writing Plans Skill → GOTO 2
+      - rd pass   # 2. Write & save the plan → COMPLETE
+    result: COMPLETE
+
+  # --- write-plan: early termination ---
+
+  write-plan-fail-at-skill-check:
+    description: Skill not invoked, skill invocation fails — stops
+    file: runbooks/planning/write-plan.runbook.md
+    commands:
+      - rd run --prompted write-plan.runbook.md
+      - rd fail   # 1. Check if Writing Plans Skill has been invoked → GOTO InvokeSkill
+      - rd fail   # InvokeSkill. Invoke the Writing Plans Skill → STOP
+    result: STOP
+
+  write-plan-fail-at-write:
+    description: Skill invoked but plan writing fails — stops
+    file: runbooks/planning/write-plan.runbook.md
+    commands:
+      - rd run --prompted write-plan.runbook.md
+      - rd pass   # 1. Check if Writing Plans Skill has been invoked → CONTINUE
+      - rd fail   # 2. Write & save the plan → STOP
+    result: STOP
+
+  write-plan-fail-at-write-via-invoke:
+    description: Skill invoked via InvokeSkill but plan writing fails — stops
+    file: runbooks/planning/write-plan.runbook.md
+    commands:
+      - rd run --prompted write-plan.runbook.md
+      - rd fail   # 1. Check if Writing Plans Skill has been invoked → GOTO InvokeSkill
+      - rd pass   # InvokeSkill. Invoke the Writing Plans Skill → GOTO 2
+      - rd fail   # 2. Write & save the plan → STOP
+    result: STOP

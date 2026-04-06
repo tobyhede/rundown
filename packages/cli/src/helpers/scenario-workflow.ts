@@ -7,8 +7,8 @@
  * @module helpers/scenario-workflow
  */
 
-import { readFile, rm } from 'node:fs/promises';
-import { copyFileSync, mkdirSync, mkdtempSync } from 'node:fs';
+import { readFile, rm, cp } from 'node:fs/promises';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { isNodeError } from '@rundown-org/core';
@@ -25,6 +25,7 @@ import type { OutputEmitter } from '../services/output-emitter.js';
 import {
   executeCommandSequence,
   extractRunbookReferences,
+  extractVarFileReferences,
   matchStepAssertions,
   type StepAssertionResult,
 } from './command-sequence.js';
@@ -223,6 +224,25 @@ export async function executeScenario(
           }
           throw err;
         }
+      }
+    }
+
+    // Copy --var-file data files and their sibling directory contents.
+    // Var files may contain file: references to sibling data files (e.g. JSONL),
+    // so copy the entire containing directory to preserve those references.
+    const varFiles = extractVarFileReferences(scenario.commands);
+    const copiedDirs = new Set<string>();
+    for (const varFile of varFiles) {
+      const varDir = dirname(varFile);
+      if (copiedDirs.has(varDir)) continue;
+      copiedDirs.add(varDir);
+
+      const srcDir = join(sourceDir, varDir);
+      const destDir = join(tmpDir, varDir);
+      if (existsSync(srcDir)) {
+        await cp(srcDir, destDir, { recursive: true });
+      } else {
+        throw new Error(`Var file directory not found: ${varDir} (searched in: ${sourceDir})`);
       }
     }
 

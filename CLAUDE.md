@@ -88,7 +88,16 @@ rdpath --dir <path> find <pattern>            # Find files matching glob pattern
 rdpath --dir <path> --ctx <id> find <pattern> # Find within context scope
 ```
 
-> **Note:** `rdpath` and `rdx` are binaries provided by `@rundown-org/claude-code-plugin`, not `@rundown-org/cli`.
+### rdx (JSON-to-Markdown CLI)
+
+```bash
+rdx <file>                        # Render JSON to Markdown (stdout)
+rdx <file> -o, --output <path>    # Write Markdown to file
+rdx <file> --check                # Validate only, no rendering
+rdx <file> --schema <name>        # Explicit schema for validation
+```
+
+Schema validation is automatic when the JSON includes `"$schema": "https://rundown.org/schemas/<name>.schema.json"`. See [docs/RDX.md](docs/RDX.md) for full reference.
 
 ## Template Variables
 
@@ -161,7 +170,6 @@ Server running on port {{ port }} in {{ environment }} mode.
 - Undefined variables are preserved as literal `{{variable}}` text
 - Frontmatter vars support string, number, and boolean values (converted to strings). For arrays, use `--var-json` inline or `.rundown/config.yaml` / `--var-file`. For `file:` data sources, use `.rundown/config.yaml` or `--var-file`
 - `--var KEY` (without `=`) inherits the value of environment variable `KEY`
-- Delegation context variables (`context.vars.*`, `context.parent.*`, `context.ancestors.N.*`) are documented in [docs/SPEC.md](docs/SPEC.md) Section 6
 
 ### Data Sources
 
@@ -256,8 +264,8 @@ rundown run [file] --allow-all            # Bypass policy (trust mode)
 rundown run [file] --deny-all             # Block all commands
 rundown run [file] -y, --yes              # Skip confirmation prompts
 rundown run [file] --non-interactive      # CI mode (auto-deny)
-rundown check <file> --no-color            # Disable colored output
-rundown status --policy ./policy.yaml     # Custom policy file
+rundown run [file] --no-color             # Disable colored output
+rundown run [file] --policy ./policy.yaml # Custom policy file
 rundown run [file] --sandbox              # Enable OS-level sandbox (default)
 rundown run [file] --no-sandbox           # Disable sandbox (trust mode)
 rundown run [file] --sandbox-strict       # Fail if sandbox unavailable
@@ -309,6 +317,10 @@ npm run test:mutate:cli     # Mutation testing for cli only
 npm run test:mutate:plugin  # Mutation testing for plugin only
 npm run test:property # Property-based tests
 npm run test:perf     # Performance benchmarks
+npm run verify:claude    # Docker: verify CLI+plugin install (local build)
+npm run verify:claude:npm  # Docker: verify install from npm registry
+npm run test:e2e         # Docker: E2E plugin workflow test
+npm run test:e2e:shell   # Docker: interactive shell in E2E container
 ```
 
 ## Testing Conventions
@@ -371,7 +383,7 @@ output.action({ action, from, result, at });
 output.flush();
 ```
 
-For direct table formatting (no `--json` flag support), use `formatTable` from `../helpers/table-formatter.js`.
+For direct table formatting (no `--json` flag support), use `formatTable` from `../helpers/table-formatter.js` (also relative to commands/).
 
 Key conventions:
 - UPPERCASE headers, 2-space column separators
@@ -402,7 +414,7 @@ Currently supported internally: `echo`, `prompt`. Unsupported commands fall back
 - [docs/SCRIPTING.md](docs/SCRIPTING.md) - Scripting and automation guide
 - [docs/AGENT-ORCHESTRATION.md](docs/AGENT-ORCHESTRATION.md) - Subagent delegation, context discovery, and delegation completion
 - [docs/PROJECT-INTEGRATION.md](docs/PROJECT-INTEGRATION.md) - Project integration guide
-- [docs/DOCKER.md](docs/DOCKER.md) - Docker verification pipeline
+- [docs/DOCKER.md](docs/DOCKER.md) - Docker testing (verification, E2E, plugin smoke tests)
 - [docs/SCENARIOS.md](docs/SCENARIOS.md) - Scenarios and test runbook standard
 - [docs/RDX.md](docs/RDX.md) - RDX JSON-to-Markdown CLI reference
 - [docs/RDPATH.md](docs/RDPATH.md) - rdpath path assembly CLI reference
@@ -415,7 +427,7 @@ Three distinct concepts govern step execution. Never conflate them:
 |---------|--------|----------|
 | **RESULT** | Outcome of execution | `pass`, `fail` |
 | **HANDLER** | Configured mapping from result to action | `PASS CONTINUE`, `FAIL DEFER` |
-| **ACTION** | What to do next | `CONTINUE`, `NEXT`, `BREAK`, `DEFER`, `STOP`, `COMPLETE`, `GOTO` |
+| **ACTION** | What to do next | `CONTINUE`, `NEXT`, `BREAK`, `DEFER`, `STOP`, `COMPLETE` |
 
 A step produces a **result** (pass/fail). The runbook's **handler** for that result determines the **action** to take. These are separate layers — a result is not an action, and a handler is not a result.
 

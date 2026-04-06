@@ -55,19 +55,16 @@ mkdir -p logs
 
 # Create onboarding marker to skip first-run prompts
 if [ ! -f .claude-docker/.claude.json ]; then
-  echo '{"onboardingComplete":true}' > .claude-docker/.claude.json
+  echo '{"hasCompletedOnboarding":true,"installMethod":"native"}' > .claude-docker/.claude.json
 fi
-
-# Clean up credentials on exit
-trap 'rm -f .claude-docker/credentials.json 2>/dev/null' EXIT
 
 # macOS: attempt to extract Claude Code credentials from Keychain
 if [[ "$OSTYPE" == darwin* ]]; then
   log "Attempting to extract Claude credentials from macOS Keychain..."
   CRED_JSON=$(security find-generic-password -s "Claude Code-credentials" -w 2>/dev/null || true)
   if [ -n "$CRED_JSON" ]; then
-    printf '%s' "$CRED_JSON" > .claude-docker/credentials.json
-    chmod 600 .claude-docker/credentials.json
+    printf '%s' "$CRED_JSON" > .claude-docker/.credentials.json
+    chmod 600 .claude-docker/.credentials.json
     log "  Credentials extracted successfully."
   else
     log "  No credentials found in Keychain (Claude integration test will be skipped)."
