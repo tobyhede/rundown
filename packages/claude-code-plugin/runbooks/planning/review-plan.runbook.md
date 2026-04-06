@@ -15,9 +15,8 @@ Review the plan at `{{ PlanPath }}`.
 `PlanPath` must be supplied by the caller. Resolve with `rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file plan.json`.
 
 ## 1. Context and scope
-
 - PASS CONTINUE
-- FAIL STOP "Plan lacks clear goal or scope."
+- FAIL STOP
 
 Verify the plan includes:
 - A specific, testable goal (one sentence)

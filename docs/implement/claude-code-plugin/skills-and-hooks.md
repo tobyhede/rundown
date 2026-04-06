@@ -33,8 +33,8 @@ Skills use `${CLAUDE_PLUGIN_ROOT}` in YAML frontmatter to declare associated fil
 ---
 name: writing-plans
 description: Write implementation plans
-runbook: ${CLAUDE_PLUGIN_ROOT}runbooks/planning/write-plan.runbook.md
-template: ${CLAUDE_PLUGIN_ROOT}templates/planning/plan.template.md
+runbook: ${CLAUDE_PLUGIN_ROOT}/runbooks/planning/write-plan.runbook.md
+template: ${CLAUDE_PLUGIN_ROOT}/templates/planning/plan.template.md
 ---
 ```
 
@@ -51,8 +51,8 @@ Reference files anywhere in the skill body text:
 ```markdown
 ## Templates
 
-Review template: `${CLAUDE_PLUGIN_ROOT}templates/verify-review.md`
-Collation template: `${CLAUDE_PLUGIN_ROOT}templates/verify-collation.md`
+Review template: `${CLAUDE_PLUGIN_ROOT}/templates/verify-review.md`
+Collation template: `${CLAUDE_PLUGIN_ROOT}/templates/verify-collation.md`
 ```
 
 Claude Code substitutes the variable before the content reaches the model.
@@ -72,7 +72,7 @@ skills/
       process.sh        # Supporting scripts
 ```
 
-Reference them via `${CLAUDE_PLUGIN_ROOT}skills/pdf-processor/reference.md`.
+Reference them via `${CLAUDE_PLUGIN_ROOT}/skills/pdf-processor/reference.md`.
 
 ---
 
@@ -251,7 +251,7 @@ Project-level context files (in `.claude/context/`) override plugin-level contex
 The rundown plugin's skill gate parses `runbook:` from SKILL.md frontmatter:
 
 ```yaml
-runbook: ${CLAUDE_PLUGIN_ROOT}runbooks/planning/write-plan.runbook.md
+runbook: ${CLAUDE_PLUGIN_ROOT}/runbooks/planning/write-plan.runbook.md
 ```
 
 Processing flow:

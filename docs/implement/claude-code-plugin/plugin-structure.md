@@ -172,7 +172,7 @@ packages/claude-code-plugin/
     plugin.json                    # name: "rundown"
   dist/                            # Compiled TypeScript
   skills/
-    writing-plans/SKILL.md         # runbook: ${CLAUDE_PLUGIN_ROOT}runbooks/planning/write-plan.runbook.md
+    writing-plans/SKILL.md         # runbook: ${CLAUDE_PLUGIN_ROOT}/runbooks/planning/write-plan.runbook.md
     verifying-by-consensus/SKILL.md
     running-runbooks/SKILL.md
     delegating-runbooks/SKILL.md
@@ -182,7 +182,7 @@ packages/claude-code-plugin/
     code-review/...
     create-worktree.runbook.md
   templates/
-    planning/plan.template.md      # Referenced via ${CLAUDE_PLUGIN_ROOT}templates/...
+    planning/plan.template.md      # Referenced via ${CLAUDE_PLUGIN_ROOT}/templates/...
     verify-review.md
     verify-collation.md
   hooks/

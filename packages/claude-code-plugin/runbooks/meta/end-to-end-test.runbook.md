@@ -26,7 +26,7 @@ Note any instructions that were ambiguous, missing, or required improvisation.
 Include an overall assessment of the skill and runbook quality.
 Write your feedback to the output path using the Feedback JSON schema.
 
-Schema: `{{ CLAUDE_PLUGIN_ROOT }}schemas/feedback.schema.json`
+Schema: `{{ CLAUDE_PLUGIN_ROOT }}/schemas/feedback.schema.json`
 
 ```bash
 rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file feedback.json

@@ -157,6 +157,8 @@ export const DEFAULT_POLICY: PolicyConfig = {
         // Rundown itself
         'rd',
         'rundown',
+        'rdpath',
+        'rdx',
       ],
       deny: [
         // System administration

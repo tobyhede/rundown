@@ -87,14 +87,14 @@ Some file types are auto-discovered by convention. Others require explicit `${CL
 | Commands | Yes (`commands/`) | By directory convention (legacy; use `skills/`) |
 | Agents | Yes (`agents/`) | By directory convention |
 | Hooks config | Yes (`hooks/`) | Also via path in `plugin.json` |
-| Templates | No | `${CLAUDE_PLUGIN_ROOT}templates/...` |
-| Scripts | No | `${CLAUDE_PLUGIN_ROOT}scripts/...` |
+| Templates | No | `${CLAUDE_PLUGIN_ROOT}/templates/...` |
+| Scripts | No | `${CLAUDE_PLUGIN_ROOT}/scripts/...` |
 
 > **Rundown Plugin:**
 
 | Type | Auto-discovered? | Reference Pattern |
 |------|-------------------|-------------------|
-| Runbooks | Yes (`runbooks/`) | Also via `${CLAUDE_PLUGIN_ROOT}runbooks/...` |
+| Runbooks | Yes (`runbooks/`) | Also via `${CLAUDE_PLUGIN_ROOT}/runbooks/...` |
 | Context files | Yes (`context/`) | By naming convention only |
 | Config | No | `rundown-plugin.json` in plugin root or project |
 

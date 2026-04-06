@@ -12,6 +12,7 @@ describe('Schema Property Tests', () => {
       'UserPromptSubmit',
       'Stop',
       'Shutdown',
+      'SessionEnd',
     );
 
     // Generator for valid tool names

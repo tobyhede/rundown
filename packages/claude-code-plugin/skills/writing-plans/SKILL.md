@@ -3,7 +3,7 @@ name: writing-plans
 description: Write clean, clear, complete & comprehensive implementation plans that provide the complete context for an engineer with zero domain knowledge and no experience with the codebase.
 use_when: Writing detailed implementation plans.
 runbook: rundown:write-plan
-template: ${CLAUDE_PLUGIN_ROOT}templates/planning/plan.template.md
+template: ${CLAUDE_PLUGIN_ROOT}/templates/planning/plan.template.md
 ---
 
 # Writing Plans
@@ -142,7 +142,7 @@ Decompose the work into small, self-contained, and granular tasks & subtasks.
 ## JSON Output Format
 
 The canonical plan format is **JSON** conforming to the Plan JSON Schema.
-- `${CLAUDE_PLUGIN_ROOT}schemas/plan.schema.json`
+- `${CLAUDE_PLUGIN_ROOT}/schemas/plan.schema.json`
 
 
 ### Example Task Definition
