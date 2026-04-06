@@ -127,7 +127,7 @@ Decompose the work into small, self-contained, and granular tasks & subtasks.
   3. Implement the minimal code to make it pass
   4. Run tests to verify the pass
   5. Commit the passing test and implementation
-- The commit should include the exact `git add` and `git commit` commands.
+- The task should include a `commit` step specifying files to stage and the commit message.
 
 
 ### Exclusions
