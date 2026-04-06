@@ -98,6 +98,20 @@ describe('HookInputSchema', () => {
     }
   });
 
+  it('parses SessionEnd with reason field', () => {
+    const input = {
+      hook_event_name: 'SessionEnd',
+      cwd: '/Users/test/project',
+      session_id: 'session-456',
+      reason: 'user_quit',
+    };
+    const result = HookInputSchema.safeParse(input);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.reason).toBe('user_quit');
+    }
+  });
+
   it('accepts unknown tool_input fields via passthrough', () => {
     const input = {
       hook_event_name: 'PostToolUse',

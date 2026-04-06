@@ -48,6 +48,9 @@ export const HookInputSchema = z
     // SlashCommand/Skill
     command: z.string().optional(),
     skill: z.string().optional(),
+
+    // SessionEnd / Stop
+    reason: z.string().optional(),
   })
   .strict();
 
