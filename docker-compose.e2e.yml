@@ -7,12 +7,14 @@ services:
   e2e:
     build:
       context: .
-      dockerfile: scripts/Dockerfile.e2e
+      dockerfile: scripts/Dockerfile.verify
+      target: e2e
     image: rundown-e2e:latest
     volumes:
       - ./.claude-docker:/home/testuser/.claude
       - ./logs:/home/testuser/logs
     environment:
+      - CLAUDE_CONFIG_DIR=/home/testuser/.claude
       - RUNDOWN_LOG=1
       - RUNDOWN_LOG_LEVEL=debug
     stdin_open: true

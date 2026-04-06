@@ -5,10 +5,12 @@
 #   base  — shared foundation (node, git, sudo, testuser, claude-code)
 #   local — install from packed tarballs (pre-publish verification)
 #   npm   — install from npm registry at runtime (post-publish verification)
+#   e2e   — extends local with test fixture and E2E entrypoints
 #
 # Build:
 #   docker build -f scripts/Dockerfile.verify --target local -t rundown-verify:local .
 #   docker build -f scripts/Dockerfile.verify --target npm   -t rundown-verify:npm .
+#   docker build -f scripts/Dockerfile.verify --target e2e   -t rundown-e2e:latest .
 #
 # Prerequisites:
 #   Run scripts/verify-install.sh (which cleans dist/*.tgz before packing)
@@ -38,7 +40,9 @@ USER testuser
 WORKDIR /home/testuser
 
 # Install Claude Code via native installer (WORKDIR must be set to avoid OOM from / traversal)
-RUN set -o pipefail && curl -fsSL https://claude.ai/install.sh | bash
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+RUN curl -fsSL https://claude.ai/install.sh | bash
+SHELL ["/bin/sh", "-c"]
 ENV PATH="/home/testuser/.local/bin:${PATH}"
 
 # ── Local stage (pre-publish) ────────────────────────────────────────────────
@@ -73,3 +77,18 @@ FROM base AS npm
 # npm packages are installed at runtime via entrypoint
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["npm"]
+
+# ── E2E stage (plugin workflow) ─────────────────────────────────────────────
+
+FROM local AS e2e
+
+USER root
+COPY --chmod=755 scripts/e2e-entrypoint.sh /usr/local/bin/e2e-entrypoint.sh
+COPY --chmod=755 scripts/e2e-shell-entrypoint.sh /usr/local/bin/e2e-shell-entrypoint.sh
+
+# Copy test app fixture
+COPY --chown=testuser:testuser tests/e2e/fixtures/test-app /home/testuser/fixture
+
+USER testuser
+
+ENTRYPOINT ["/usr/local/bin/e2e-entrypoint.sh"]
