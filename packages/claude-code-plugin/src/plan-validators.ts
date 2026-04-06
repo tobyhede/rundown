@@ -71,12 +71,12 @@ export function checkTddCycle(plan: Plan): StructuralIssue[] {
     const hasImplement = names.some((n) => implementPattern.test(n));
     const hasVerify = names.some((n) => verifyPattern.test(n));
 
-    if (!hasWriteTest && !hasRunFail && !hasImplement && !hasVerify) {
+    if (!hasWriteTest || !hasRunFail || !hasImplement || !hasVerify) {
       issues.push({
         rule: 'tdd-cycle',
         severity: 'warning',
         path: `tasks/${String(t)}`,
-        message: `Task "${task.name}" has files but no subtasks suggesting a TDD cycle`,
+        message: `Task "${task.name}" has files but missing TDD cycle step(s)`,
       });
     }
   }

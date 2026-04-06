@@ -40,7 +40,17 @@ const Finding = z
       .enum(['blocking', 'non_blocking'])
       .describe('blocking = must fix before proceeding, non_blocking = should fix'),
     description: z.string().min(1).describe('What is wrong and why'),
-    location: locationSchema.optional(),
+    location: locationSchema
+      .superRefine((data, ctx) => {
+        if (data.line !== undefined && data.end_line !== undefined && data.end_line < data.line) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'end_line must be >= line',
+            path: ['end_line'],
+          });
+        }
+      })
+      .optional(),
     evidence: z.string().min(1).describe('What was observed'),
     recommendation: z.string().min(1).describe('How to fix it'),
   })

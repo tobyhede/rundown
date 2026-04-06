@@ -29,7 +29,7 @@ type SchemaName = keyof typeof schemaLoaders;
  * @returns True if name is a registered schema
  */
 function isSchemaName(name: string): name is SchemaName {
-  return name in schemaLoaders;
+  return Object.hasOwn(schemaLoaders, name);
 }
 
 /** URI prefix for Rundown schema identifiers. */
