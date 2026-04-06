@@ -1,5 +1,6 @@
 // packages/claude-code-plugin/__tests__/gates/on-skill-start.test.ts
 import { jest, expect, describe, it, beforeEach, afterEach } from '@jest/globals';
+import * as path from 'node:path';
 import type { HookInput } from '../../src/shared/index.js';
 
 const mockRundown = jest.fn();
@@ -23,8 +24,9 @@ const { parseRunbookFromFrontmatter } = await import('../../src/shared/frontmatt
  * contains the expected skill name, throwing ENOENT for all other paths.
  */
 function mockReadForSkill(skillName: string, content: string): void {
+  const target = path.join('skills', skillName, 'SKILL.md');
   mockReadFileSync.mockImplementation((filePath: string) => {
-    if (filePath.includes(`/skills/${skillName}/SKILL.md`)) {
+    if (filePath.includes(target)) {
       return content;
     }
     const err = new Error(
