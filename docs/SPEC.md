@@ -57,7 +57,7 @@ Step content must appear in this strict order:
 
 A step must contain exactly one type of body content.
 
-Steps are represented as a discriminated union on `kind`: `'base'` (prompt-only), `'command'` (executable code block), `'substeps'` (nested H3 steps), `'for'` (loop with substeps), `'prompted-for'` (resolved only; unresolved FOR demoted to prompt-only).
+Steps are represented as a discriminated union on `kind`: `'base'` (prompt-only), `'command'` (executable code block), `'substeps'` (nested H3 steps), `'for'` (loop with substeps), `'prompted-for'` (unresolved FOR demoted to prompt-only).
 
 ### 3.1 Code Blocks
 Executes a command or displays a prompt. Max one code block per step.
