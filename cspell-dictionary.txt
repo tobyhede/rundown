@@ -41,6 +41,7 @@ delegatable
 deps
 deserialized
 dotdot
+dogfooding
 EACCES
 EBNF
 ELOOP
@@ -64,7 +65,6 @@ hono
 Hede
 idempotently
 iife
-dogfooding
 initialisation
 initialise
 initialised

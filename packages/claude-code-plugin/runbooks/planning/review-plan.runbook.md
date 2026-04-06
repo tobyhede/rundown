@@ -18,7 +18,7 @@ Review the plan at `{{ PlanPath }}`.
 - PASS CONTINUE
 - FAIL STOP
 
-Schema: `{{ CLAUDE_PLUGIN_ROOT }}/schemas/plan.schema.json`
+Validate the plan at `{{ PlanPath }}` against the schema at `{{ CLAUDE_PLUGIN_ROOT }}/schemas/plan.schema.json`. Read both files and verify all required fields are present and correctly typed.
 
 ## 2. Context and scope
 - PASS CONTINUE
