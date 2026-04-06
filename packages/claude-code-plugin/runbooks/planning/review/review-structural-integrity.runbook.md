@@ -4,8 +4,6 @@ description: Validate step ordering, dependencies, scope, and completeness of a 
 tags:
   - planning
   - review
-vars:
-  PlanPath: ""
 ---
 
 # Review Structural Integrity

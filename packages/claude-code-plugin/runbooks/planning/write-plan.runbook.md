@@ -87,7 +87,7 @@ If revising the plan, address the issues identified.
 - FAIL GOTO 8
 
 ```bash
-  rdx --check $(rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file plan.json)
+rdx --check $(rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file plan.json)
 ```
 
 

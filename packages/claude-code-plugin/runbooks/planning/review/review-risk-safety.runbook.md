@@ -4,8 +4,6 @@ description: Assess security, performance, breaking changes, and safety concerns
 tags:
   - planning
   - review
-vars:
-  PlanPath: ""
 ---
 
 # Review Risk and Safety

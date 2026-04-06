@@ -4,8 +4,6 @@ description: Collate review findings from both passes and produce a verdict
 tags:
   - planning
   - review
-vars:
-  PlanPath: ""
 ---
 
 # Synthesize Review Findings

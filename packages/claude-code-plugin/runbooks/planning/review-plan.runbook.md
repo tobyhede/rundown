@@ -12,7 +12,7 @@ vars:
 
 Review the plan at `{{ PlanPath }}`.
 
-`PlanPath` must be supplied by the caller. Resolve with `rdpath --dir {{ WorkPath }} --file plan.md`.
+`PlanPath` must be supplied by the caller. Resolve with `rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file plan.json`.
 
 ## 1. Context and scope
 

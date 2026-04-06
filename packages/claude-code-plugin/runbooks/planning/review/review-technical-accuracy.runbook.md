@@ -4,8 +4,6 @@ description: Verify file paths, symbols, imports, commands, and conventions in a
 tags:
   - planning
   - review
-vars:
-  PlanPath: ""
 ---
 
 # Review Technical Accuracy

@@ -4,8 +4,6 @@ description: Verify build commands, test commands, dependencies, and environment
 tags:
   - planning
   - review
-vars:
-  PlanPath: ""
 ---
 
 # Review Build and Runtime
