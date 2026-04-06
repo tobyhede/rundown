@@ -27,11 +27,16 @@ export interface ShellResult {
  * Type guard for execution errors from child_process
  * Represents error objects that can be thrown by exec/execSync
  */
-interface ExecError extends Error {
+export interface ExecError extends Error {
+  /** Whether the child process was killed (e.g. by timeout). */
   killed?: boolean;
+  /** Signal name that terminated the process (e.g. 'SIGTERM'). */
   signal?: string;
+  /** Process exit code (null when killed by signal). */
   code?: number;
+  /** Captured standard output from the process. */
   stdout?: string;
+  /** Captured standard error from the process. */
   stderr?: string;
 }
 
@@ -41,7 +46,7 @@ interface ExecError extends Error {
  * @param error - The caught error value to normalize
  * @returns Normalized ExecError with safe property access
  */
-function asExecError(error: unknown): ExecError {
+export function asExecError(error: unknown): ExecError {
   // Check if error is an object with Error-like properties
   // (handles both instanceof Error and plain objects from ESM)
   if (error !== null && typeof error === 'object') {

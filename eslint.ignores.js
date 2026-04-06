@@ -14,4 +14,5 @@ export const ignores = [
   '.worktrees/**',
   '**/.stryker-tmp/**',
   'tests/e2e/fixtures/**',
+  '.claude-docker/**',
 ];

@@ -7,6 +7,7 @@ import {
   findRunbookByFrontmatter,
 } from '../shared/index.js';
 import { rundown } from '../workflow/hooks/rundown.js';
+import { extractExecError, formatRunbookError } from './format-helpers.js';
 
 /**
  * Execute the skill start gate.
@@ -16,7 +17,7 @@ import { rundown } from '../workflow/hooks/rundown.js';
  *
  * @param input - The hook input containing event details and context
  * @returns Gate result with optional additional context from runbook execution
- * @remarks Does not throw — errors are caught internally and appropriate values returned (empty context on error)
+ * @remarks Does not throw — errors are caught internally and appropriate values returned (structured error context on failure)
  */
 export function execute(input: HookInput): Promise<GateResult> {
   // Only handle SkillStart
@@ -41,12 +42,35 @@ export function execute(input: HookInput): Promise<GateResult> {
 
   // Start runbook via CLI
   try {
-    rundown(['run', runbook], input.cwd);
+    const output = rundown(['run', runbook], input.cwd);
     return Promise.resolve({
-      additionalContext: `Started runbook: ${runbook}`,
+      additionalContext: formatRunbookOutput(runbook, output),
     });
-  } catch {
-    // Graceful degradation - runbook start failed
-    return Promise.resolve({});
+  } catch (error) {
+    const errorOutput = extractExecError(error);
+    return Promise.resolve({
+      additionalContext: formatRunbookError(runbook, errorOutput),
+    });
   }
+}
+
+/**
+ * Format runbook start output with running-runbooks skill invocation.
+ *
+ * @param runbook - Path or name of the started runbook
+ * @param output - CLI output from the runbook start command
+ * @returns Formatted context with runbook state and skill invocation instruction
+ */
+function formatRunbookOutput(runbook: string, output: string): string {
+  return `
+---
+## RUNBOOK ACTIVE: ${runbook}
+
+Invoke the running-runbooks skill: \`Skill(skill: "rundown:running-runbooks")\`
+
+\`\`\`
+${output.trim()}
+\`\`\`
+---
+`.trim();
 }

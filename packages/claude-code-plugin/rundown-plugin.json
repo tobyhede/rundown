@@ -1,10 +1,5 @@
 {
   "gates": {
-    "check": {
-      "command": "npm run lint",
-      "on_pass": "CONTINUE",
-      "on_fail": "BLOCK"
-    },
     "on-command-start": {},
     "on-skill-start": {},
     "on-delegation-dispatch": {},
@@ -17,10 +12,6 @@
     },
     "SubagentStop": {
       "gates": ["on-subagent-stop"]
-    },
-    "PostToolUse": {
-      "enabled_tools": ["Agent", "Edit", "Write", "Step", "Task"],
-      "gates": ["check"]
     },
     "SlashCommandStart": {
       "gates": ["on-command-start"]
