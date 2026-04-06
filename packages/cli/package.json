@@ -43,7 +43,7 @@
     "commander": "^14.0.2",
     "handlebars": "^4.7.9",
     "js-yaml": "^4.1.1",
-    "minimatch": "^10.2.4",
+    "minimatch": "^10.2.5",
     "shell-quote": "^1.8.3",
     "zod": "^3.25.76",
     "zod-to-json-schema": "^3.25.2"
@@ -51,10 +51,10 @@
   "devDependencies": {
     "@types/jest": "^30.0.0",
     "@types/js-yaml": "^4.0.9",
-    "@types/node": "^25.5.0",
+    "@types/node": "^25.5.2",
     "@types/shell-quote": "^1.7.5",
     "jest": "^30.3.0",
-    "ts-jest": "^29.2.0",
+    "ts-jest": "^29.4.9",
     "typescript": "^6.0.2"
   }
 }
