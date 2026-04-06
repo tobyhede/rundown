@@ -19,7 +19,7 @@ fi
 
 for runbook in $RUNBOOKS; do
   # List scenario names (skip header line)
-  NAMES=$(npx rundown scenario ls "$runbook" 2>/dev/null | tail -n +2 | awk '{print $1}')
+  NAMES=$(npx rundown scenario ls "$runbook" | tail -n +2 | awk '{print $1}')
   for name in $NAMES; do
     if npx rundown scenario run "$runbook" "$name" --quiet; then
       PASSED=$((PASSED + 1))
