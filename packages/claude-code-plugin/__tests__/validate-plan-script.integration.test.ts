@@ -54,26 +54,28 @@ describe('validate-plan.js', () => {
   });
 
   it('exits 1 for invalid JSON', () => {
-    const tmpFile = path.join(os.tmpdir(), `bad-plan-${String(Date.now())}.json`);
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rd-test-'));
+    const tmpFile = path.join(tmpDir, 'bad-plan.json');
     fs.writeFileSync(tmpFile, '{ not valid json }');
     try {
       const result = runScript(tmpFile);
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain('invalid JSON');
     } finally {
-      fs.unlinkSync(tmpFile);
+      fs.rmSync(tmpDir, { recursive: true });
     }
   });
 
   it('exits 1 for schema-invalid plan', () => {
-    const tmpFile = path.join(os.tmpdir(), `incomplete-plan-${String(Date.now())}.json`);
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rd-test-'));
+    const tmpFile = path.join(tmpDir, 'incomplete-plan.json');
     fs.writeFileSync(tmpFile, JSON.stringify({ name: 'Incomplete' }));
     try {
       const result = runScript(tmpFile);
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain('schema validation failed');
     } finally {
-      fs.unlinkSync(tmpFile);
+      fs.rmSync(tmpDir, { recursive: true });
     }
   });
 
