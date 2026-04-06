@@ -49,8 +49,17 @@ export function validateRequiredVars(
   if (!required || required.length === 0) return [];
   const diagnostics: ValidationDiagnostic[] = [];
   const varsKeys = new Set(Object.keys(vars ?? {}));
+  const seen = new Set<string>();
 
   for (const name of required) {
+    if (seen.has(name)) {
+      diagnostics.push({
+        severity: 'error',
+        message: `Duplicate entry "${name}" in "required" — each variable should be listed once`,
+      });
+      continue;
+    }
+    seen.add(name);
     if (!isValidVariableName(name)) {
       diagnostics.push({
         severity: 'error',

@@ -108,7 +108,7 @@ jest.unstable_mockModule('../../src/services/variable-discovery', () => ({
   },
   resolveVariables: jest
     .fn()
-    .mockResolvedValue({ vars: {}, sources: {}, warnings: [], providedKeys: new Set() }),
+    .mockResolvedValue({ vars: {}, warnings: [], providedKeys: new Set() }),
   RUNTIME_RESERVED_VARIABLES: new Set(['step', 'index', 'context']),
   isRuntimeReservedVariable: jest.fn().mockReturnValue(false),
 }));

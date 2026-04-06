@@ -791,10 +791,12 @@ export async function resolveVariables(
   // Collect raw inputs at each precedence level
   const layers = await collectRawLayers(options, cwd, warnings);
 
-  // Collect keys from external provider layers (inherited=1, config=3, env=4, CLI=5).
+  // Collect keys from external provider layers.
   // Excludes builtins (0) and frontmatter (2) — used for `required` var validation.
+  // Indices must match collectRawLayers ordering: 1=inherited, 3=config, 4=env, 5=CLI.
+  const EXTERNAL_PROVIDER_LAYERS = [1, 3, 4, 5] as const;
   const providedKeys = new Set<string>();
-  for (const idx of [1, 3, 4, 5]) {
+  for (const idx of EXTERNAL_PROVIDER_LAYERS) {
     for (const key of Object.keys(layers[idx])) {
       if (isValidVariableName(key)) {
         providedKeys.add(key);

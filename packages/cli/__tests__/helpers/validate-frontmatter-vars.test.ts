@@ -134,4 +134,21 @@ describe('validateRequiredVars', () => {
     expect(result).toHaveLength(1);
     expect(result[0].message).toContain('not a valid identifier');
   });
+
+  it('returns error for duplicate entries', () => {
+    const result = validateRequiredVars(['PlanPath', 'PlanPath'], undefined);
+    expect(result).toHaveLength(1);
+    expect(result[0].severity).toBe('error');
+    expect(result[0].message).toContain('Duplicate');
+    expect(result[0].message).toContain('"PlanPath"');
+  });
+
+  it('skips further validation for duplicate entries', () => {
+    // Second occurrence only gets the duplicate error, not also overlap/reserved
+    const result = validateRequiredVars(['PlanPath', 'PlanPath'], { PlanPath: '' });
+    // First: overlap error. Second: duplicate error.
+    expect(result).toHaveLength(2);
+    expect(result[0].message).toContain('cannot be both');
+    expect(result[1].message).toContain('Duplicate');
+  });
 });

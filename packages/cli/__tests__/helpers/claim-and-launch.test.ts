@@ -736,7 +736,7 @@ describe('claimAndLaunch', () => {
     (validateRequiredVars as jest.Mock).mockReturnValue([]);
     (resolveVariables as jest.Mock).mockResolvedValue({
       vars: {},
-      sources: {},
+
       warnings: [],
       providedKeys: new Set(),
     });
