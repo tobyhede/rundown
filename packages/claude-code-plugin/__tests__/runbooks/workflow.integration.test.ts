@@ -30,8 +30,14 @@ describe('Built-in Runbook Workflow Integration', () => {
     const runbookFiles = [
       'create-worktree.runbook.md',
       'pr-feedback.runbook.md',
+      'meta/end-to-end-test.runbook.md',
       'planning/write-plan.runbook.md',
       'planning/review-plan.runbook.md',
+      'planning/review/review-technical-accuracy.runbook.md',
+      'planning/review/review-structural-integrity.runbook.md',
+      'planning/review/review-build-runtime.runbook.md',
+      'planning/review/review-risk-safety.runbook.md',
+      'planning/review/review-synthesize.runbook.md',
     ];
 
     for (const file of runbookFiles) {

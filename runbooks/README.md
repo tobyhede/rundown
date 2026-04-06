@@ -48,6 +48,46 @@ To ensure clarity and consistency across all pattern examples, we follow a holis
 3. Add scenarios following the naming taxonomy above
 4. Include `result: COMPLETE` or `result: STOP` in scenario metadata (or use `expect:` block for step-level assertions)
 
+## Path Assembly with `rdpath`
+
+Runbooks must never hardcode artifact paths. Use the `rdpath` CLI tool to assemble paths with consistent date-prefixed filenames and optional context scoping.
+
+### Artifact vs Work Product
+
+| Category | Description | rdpath flags | Example output |
+|----------|-------------|--------------|----------------|
+| **Artifact** (durable) | Final deliverables kept long-term | `--dir <base> --file <name>` | `.work/feature/2026-03-16-plan.md` |
+| **Work product** (transient) | Intermediate files scoped to an execution | `--dir <base> --ctx <id> --file <name>` | `.work/feature/.rd-a3b8c1d2/2026-03-16-findings.md` |
+
+### Runbook Patterns
+
+**Write a durable artifact:**
+```markdown
+Resolve the output path with: `rdpath --dir {{ WorkPath }} --file plan.md`
+```
+
+**Write transient work product (scoped to execution context):**
+```markdown
+Ensure the output directory exists:
+
+\`\`\`bash
+mkdir -p "$(rdpath --dir {{ WorkPath }} --ctx {{ ContextId }})"
+\`\`\`
+
+Write findings to the path resolved by `rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file findings.md`.
+```
+
+**Read from context directory (glob):**
+```markdown
+\`\`\`bash
+ls "$(rdpath --dir {{ WorkPath }} --ctx {{ ContextId }})"/*-pass*.md
+\`\`\`
+```
+
+### How ContextId Flows
+
+`ContextId` is a built-in variable generated once per execution. Children in a delegation tree inherit the parent's `ContextId` automatically via `--var`, so all runbooks in the same delegation tree share the same context directory. This allows the synthesis step to find all review findings without knowing which children produced them.
+
 ## See Also
 
 - [SPEC.md](../docs/SPEC.md) - Full specification

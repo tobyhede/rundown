@@ -29,8 +29,19 @@ version: 1.0.0
 <!-- Any additional useful context. -->
 <!-- {{ Context }} -->
 
+## Scope Assessment
+<!-- Brief note on whether the work was scoped to a single plan or split. -->
+
 
 ---
+
+
+## File Structure
+<!-- All files to be created, modified, or deleted. -->
+
+| File | Disposition | Notes |
+|------|-------------|-------|
+| `path/to/file` | Create / Modify / Delete | Affected symbols or purpose |
 
 
 ## {{ TaskNumber }}. {{ TaskName }}
@@ -39,12 +50,12 @@ IMPORTANT:
   - Always include exact file paths.
   - Always include exact commands.
   - Always use symbols (function/class names) instead of line numbers.
-  - Always use Test-Driven Development (test/implement/verify)
+  - Always use Test-Driven Development (test/fail/implement/verify/commit)
 -->
 
 ### Files
-<!-- List of created, modified, deleted files -->
-- {{ Path }}
+<!-- List of created, modified, deleted files with disposition -->
+- `{{ Path }}` (create/modify/delete)
 
 ### {{ TaskNumber }}.{{ SubtaskNumber }} {{ SubtaskName }}
 
@@ -52,4 +63,11 @@ IMPORTANT:
 
 ```{{ Language }}
 {{ Code }}
+```
+
+### {{ TaskNumber }}.N Commit
+
+```bash
+git add {{ files }}
+git commit -m "{{ message }}"
 ```
