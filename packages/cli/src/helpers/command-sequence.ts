@@ -366,6 +366,37 @@ export function extractRunbookReferences(commands: string[]): string[] {
 }
 
 /**
+ * Extract relative file paths from `--var-file` arguments in command strings.
+ *
+ * Scans each command for `--var-file <path>` patterns and returns
+ * deduplicated results preserving insertion order.
+ *
+ * @param commands - Array of command strings to scan
+ * @returns Array of unique relative file paths found in --var-file arguments
+ */
+export function extractVarFileReferences(commands: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  for (const cmd of commands) {
+    const rdMatch = /^rd\s+(.*)$/.exec(cmd);
+    if (!rdMatch) continue;
+    const args = shellParse(rdMatch[1]).filter((a): a is string => typeof a === 'string');
+    for (let i = 0; i < args.length; i++) {
+      if (args[i] === '--var-file' && i + 1 < args.length) {
+        const filePath = args[i + 1];
+        if (!seen.has(filePath)) {
+          seen.add(filePath);
+          result.push(filePath);
+        }
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
  * Execute a sequence of commands in order, accumulating transitions and tokens.
  *
  * Handles `rd` commands (routed through the CLI with `--json`) and generic
