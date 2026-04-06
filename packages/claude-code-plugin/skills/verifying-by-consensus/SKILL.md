@@ -113,5 +113,5 @@ All files saved to `.work/`:
 
 ## Templates
 
-Review template: `${CLAUDE_PLUGIN_ROOT}templates/verify-review.md`
-Collation template: `${CLAUDE_PLUGIN_ROOT}templates/verify-collation.md`
+Review template: `${CLAUDE_PLUGIN_ROOT}/templates/verify-review.md`
+Collation template: `${CLAUDE_PLUGIN_ROOT}/templates/verify-collation.md`

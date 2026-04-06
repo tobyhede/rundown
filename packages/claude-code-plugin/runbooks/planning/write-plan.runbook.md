@@ -21,7 +21,7 @@ Skill: `rundown:writing-plans`
 - PASS CONTINUE
 - FAIL STOP
 
-Schema: `{{ CLAUDE_PLUGIN_ROOT }}schemas/plan.schema.json`
+Schema: `{{ CLAUDE_PLUGIN_ROOT }}/schemas/plan.schema.json`
 
 
 ## 3. Check the Scope
