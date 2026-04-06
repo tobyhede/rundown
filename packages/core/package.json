@@ -52,12 +52,12 @@
   "devDependencies": {
     "@types/jest": "^30.0.0",
     "@types/js-yaml": "^4.0.9",
-    "@types/node": "^25.5.0",
-    "@types/picomatch": "^4.0.2",
+    "@types/node": "^25.5.2",
+    "@types/picomatch": "^4.0.3",
     "@types/shell-quote": "^1.7.5",
     "fast-check": "^4.6.0",
     "jest": "^30.3.0",
-    "ts-jest": "^29.4.6",
+    "ts-jest": "^29.4.9",
     "typescript": "^6.0.2"
   }
 }
