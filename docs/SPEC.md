@@ -28,8 +28,6 @@ Frontmatter fields beyond `name`, `description`, `version`, `author`, `tags`, an
 
 The frontmatter `description` field provides a summary for runbook discovery and listing (`rd ls --all`). The `Runbook.description` in the parsed AST is derived from preamble text between the H1 title and first H2 step. These are independent values.
 
-*Note: A follow-up task will rename `Runbook.description` → `Runbook.preamble` to eliminate this naming ambiguity.*
-
 ## 2. Steps
 
 Steps are the fundamental units of execution defined by H2 headers.
@@ -59,7 +57,7 @@ Step content must appear in this strict order:
 
 A step must contain exactly one type of body content.
 
-Steps are represented as a discriminated union on `kind`: `'base'` (prompt-only), `'command'` (executable code block), `'substeps'` (nested H3 steps), `'for'` (loop with substeps), `'prompted-for'` (unresolved FOR, prompt-only).
+Steps are represented as a discriminated union on `kind`: `'base'` (prompt-only), `'command'` (executable code block), `'substeps'` (nested H3 steps), `'for'` (loop with substeps), `'prompted-for'` (unresolved FOR demoted to prompt-only).
 
 ### 3.1 Code Blocks
 Executes a command or displays a prompt. Max one code block per step.
@@ -142,8 +140,9 @@ Transition keywords (`PASS`, `YES`, `FAIL`, `NO`) are matched as whole words in 
 *   If only `PASS` defined: `FAIL` -> `STOP`.
 *   If only `FAIL` defined: `PASS` -> `CONTINUE`.
 *   If neither is defined: `PASS CONTINUE`, `FAIL STOP`.
+*   Substeps under aggregation or with runbook delegation default to `PASS DEFER`, `FAIL DEFER`.
 
-When only one transition side specifies an aggregation modifier, the defaulted side receives its complement (`PASS ALL` defaults `FAIL ANY`, and vice versa).
+One-sided aggregation modifiers are rejected — both sides must be explicitly authored (e.g., `PASS ALL ... FAIL ANY ...`).
 
 ### 4.2 Actions
 
@@ -171,7 +170,7 @@ GOTO targeting the containing step (self-reference) without an AT qualifier may 
 *   `GOTO 3 AT 1`: Jump to Step 3, iteration 1 (if FOR step).
 *   `GOTO 3 AT {{Index}}`: Re-enter Step 3 at current iteration.
 
-> **Internal:** The compiler uses a `GOTO NEXT` representation internally to advance to the next step. This cannot be written in markdown syntax — `NEXT` is rejected as a GOTO target by the parser.
+> **Internal:** The compiler resolves step-to-step advancement using `CONTINUE` actions mapped to concrete next-step state IDs at compile time. `NEXT` is rejected as a GOTO target by the parser.
 
 ## 5. Iteration (FOR)
 
@@ -255,7 +254,7 @@ Variables use Handlebars syntax: `{{variable}}`.
 *   **Parent variables**: `{{context.parent.vars.NAME}}` exposes the parent's resolved template variables. Only non-context keys propagate. Available via both chain (`context.parent.parent.vars.*`) and array (`context.ancestors.N.vars.*`) addressing.
 *   **Depth limit**: Parent context chain addressing is capped at 32 levels (enforced on the delegation ancestor chain depth). Exceeding this limit produces an error.
 *   **Path resolution**: Dotted paths are supported consistently (for example `{{context.parent.index}}`).
-*   **Reserved keys**: Runtime keys `step`, `index`, and `context` are reserved (matching is case-insensitive — any case variant such as `STEP`, `Step`, `INDEX` is also reserved) and cannot be overridden by user variables. The CLI rejects these names in frontmatter `vars:`, `--var` flags, `--var-file` contents, and `.rundown/config.yaml` with an error diagnostic.
+*   **Reserved keys**: Runtime keys `step`, `index`, and `context` are reserved (matching is case-insensitive — any case variant such as `STEP`, `Step`, `INDEX` is also reserved) and cannot be overridden by user variables. The CLI rejects these names in frontmatter `vars:`, `--var` flags, `--var-file` contents, and `.rundown/config.yaml` with an error diagnostic. Reserved names in `RD_VAR_*` environment variables are silently skipped with a warning.
 *   **Precedence** (highest to lowest):
     1. CLI flags (`--var-file`, `--var`, `--var-json`) — highest priority
     2. `RD_VAR_*` environment variables (prefix stripped)

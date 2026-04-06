@@ -104,7 +104,7 @@ Schema validation is automatic when the JSON includes `"$schema": "https://rundo
 Template variables use Handlebars syntax `{{variableName}}` and are expanded at run time.
 
 **Variable Sources (Precedence: High to Low):**
-1. CLI flags (`--var-file`, `--var`, `--var-json`) — highest priority; within this layer: `--var-json` > `--var` > `--var-file` (repeatable)
+1. CLI flags (`--var-file`, `--var`, `--var-json`) — highest priority; within this layer: `--var-json` > `--var` > `--var-file` (all repeatable)
 2. `RD_VAR_*` environment variables (prefix stripped)
 3. `.rundown/config.yaml` (auto-discovered from cwd upward, stops at git root)
 4. Frontmatter `vars:` field
@@ -125,7 +125,7 @@ Template variables use Handlebars syntax `{{variableName}}` and are expanded at 
 | `ContextId` | `a3b8c1d2` | Shared identity across delegation tree |
 | `Step` | `3.1` | Current qualified step identifier |
 | `Index` | `3` | Current loop iteration number (inside FOR) |
-| `context.current.step` | `3` | Current step number |
+| `context.current.step` | `3.1` | Current qualified step identifier |
 | `context.current.substep` | `1` | Current substep number (when in substep) |
 | `context.current.index` | `3` | Current loop iteration (inside FOR) |
 | `context.current.at` | `3.1[3]` | Full execution position |
@@ -299,7 +299,7 @@ npm run test:unit     # Same as npm test
 npm run test:integration  # Integration tests in parallel
 npm run test:all      # Full suite: unit → integration → property → perf
 npm run test:coverage # Test coverage across all packages
-npm run verify        # Pre-PR: format, spell, lint, test (MUST run before push)
+npm run verify        # Pre-PR: check format, spell, lint, test (MUST run before push)
 npm run lint          # Lint all packages (biome + eslint)
 npm run check:lint:fast   # Fast lint (biome only)
 npm run check:lint:typed  # Typed lint (eslint only)
@@ -321,6 +321,7 @@ npm run verify:claude    # Docker: verify CLI+plugin install (local build)
 npm run verify:claude:npm  # Docker: verify install from npm registry
 npm run test:e2e         # Docker: E2E plugin workflow test
 npm run test:e2e:shell   # Docker: interactive shell in E2E container
+npm run test:e2e:build   # Docker: build E2E test image
 ```
 
 ## Testing Conventions
@@ -427,7 +428,7 @@ Three distinct concepts govern step execution. Never conflate them:
 |---------|--------|----------|
 | **RESULT** | Outcome of execution | `pass`, `fail` |
 | **HANDLER** | Configured mapping from result to action | `PASS CONTINUE`, `FAIL DEFER` |
-| **ACTION** | What to do next | `CONTINUE`, `NEXT`, `BREAK`, `DEFER`, `STOP`, `COMPLETE` |
+| **ACTION** | What to do next | `CONTINUE`, `NEXT`, `BREAK`, `DEFER`, `STOP`, `COMPLETE`, `GOTO` |
 
 A step produces a **result** (pass/fail). The runbook's **handler** for that result determines the **action** to take. These are separate layers — a result is not an action, and a handler is not a result.
 

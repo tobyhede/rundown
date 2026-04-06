@@ -210,7 +210,7 @@ executable_lang ::= "bash" | "sh" | "shell"
 display_lang    ::= language_tag
 ```
 
-Opening fence is 3 or more backticks. Closing fence must use at least as many backticks as the opening fence (CommonMark §4.5). Language tag is required — bare code fences are invalid. Tags are matched case-insensitively. Non-executable tags (e.g., `json`, `yaml`) are display-only. The `prompt` suffix on non-executable tags is accepted but redundant — all non-executable code blocks are prompt blocks.
+Opening fence is 3 or more backticks. Closing fence must use at least as many backticks as the opening fence (CommonMark §4.5). Language tag is required — bare code fences are invalid. Tags are matched case-insensitively. Non-executable tags (e.g., `json`, `yaml`) are display-only. When `prompt` follows an executable language tag (e.g., `bash prompt`), the block is demoted to display-only — it is not executed. The `prompt` suffix on non-executable tags is accepted but redundant — all non-executable code blocks are prompt blocks.
 
 ## Template Variables
 
