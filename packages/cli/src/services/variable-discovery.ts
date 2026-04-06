@@ -155,6 +155,13 @@ export interface ResolvedVariables {
    * the resolution pipeline.
    */
   readonly warnings: readonly string[];
+  /**
+   * Variable names provided by external layers (inherited, config, env, CLI).
+   *
+   * Excludes builtins (layer 0) and frontmatter (layer 2). Used to validate
+   * that frontmatter `required` variables were actually provided by the caller.
+   */
+  readonly providedKeys: ReadonlySet<string>;
 }
 
 /**
@@ -784,6 +791,12 @@ export async function resolveVariables(
   // Collect raw inputs at each precedence level
   const layers = await collectRawLayers(options, cwd, warnings);
 
+  // External provider layer indices — excludes builtins (0) and frontmatter (2).
+  // Used to track which keys were actually accepted via routing for `required` var validation.
+  // Indices must match collectRawLayers ordering: 1=inherited, 3=config, 4=env, 5=CLI.
+  const EXTERNAL_PROVIDER_INDICES = new Set([1, 3, 4, 5]);
+  const providedKeys = new Set<string>();
+
   // Process each layer in precedence order (lowest to highest)
   for (const [layerIndex, layer] of layers.entries()) {
     const entries = Object.entries(layer);
@@ -812,10 +825,16 @@ export async function resolveVariables(
         continue;
       }
       await routeVariable(key, value, vars, cwd, projectRoot, security, warnings);
+      // Track keys from external provider layers that were actually accepted by routing.
+      // routeVariable() may silently reject values (e.g., path traversal in file: sources)
+      // without writing to vars — only count keys that made it through.
+      if (EXTERNAL_PROVIDER_INDICES.has(layerIndex) && key in vars) {
+        providedKeys.add(key);
+      }
     }
   }
 
-  return { vars, warnings };
+  return { vars, warnings, providedKeys };
 }
 
 /**

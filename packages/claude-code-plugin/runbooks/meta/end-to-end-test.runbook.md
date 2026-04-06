@@ -4,8 +4,8 @@ description: Run a target runbook then collect execution feedback
 tags:
   - meta
   - feedback
-vars:
-  TargetRunbook: ""
+required:
+  - TargetRunbook
 ---
 
 # End-to-End Test

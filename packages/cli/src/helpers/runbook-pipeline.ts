@@ -58,7 +58,7 @@ import {
   collectUnresolvedRunbookVariables,
 } from '../services/template-renderer.js';
 import { getPolicyEvaluator, getPolicyPrompter } from '../services/policy-context.js';
-import { validateFrontmatterVars } from './validate-frontmatter-vars.js';
+import { validateFrontmatterVars, validateRequiredVars } from './validate-frontmatter-vars.js';
 
 /**
  * Variable options from CLI flags.
@@ -363,7 +363,12 @@ export async function loadAndParseRunbook(file: string, cwd: string): Promise<Lo
     } = parseRunbookDocument(rawContent, path.basename(filePath));
 
     const varDiagnostics = validateFrontmatterVars(frontmatter?.vars);
-    const diagnostics: readonly ValidationDiagnostic[] = [...parseDiagnostics, ...varDiagnostics];
+    const requiredDiagnostics = validateRequiredVars(frontmatter?.required, frontmatter?.vars);
+    const diagnostics: readonly ValidationDiagnostic[] = [
+      ...parseDiagnostics,
+      ...varDiagnostics,
+      ...requiredDiagnostics,
+    ];
 
     const stats = {
       steps: runbook.steps.length,
@@ -432,6 +437,7 @@ export async function prepareRunbook(
 
   // Variable resolution
   let mergedVariables: Record<string, TemplateVarValue>;
+  let providedKeys: ReadonlySet<string>;
   const allWarnings: string[] = [];
   try {
     const resolvedVariables = await resolveVariables(
@@ -449,6 +455,7 @@ export async function prepareRunbook(
       },
     );
     mergedVariables = { ...resolvedVariables.vars };
+    providedKeys = resolvedVariables.providedKeys;
     // Inject CLAUDE_PLUGIN_ROOT for plugin-sourced runbooks (below CLI flags in precedence)
     if (pluginRoot && !('CLAUDE_PLUGIN_ROOT' in mergedVariables)) {
       mergedVariables.CLAUDE_PLUGIN_ROOT = pluginRoot;
@@ -483,6 +490,9 @@ export async function prepareRunbook(
   const templateVars = buildTemplateVars(mergedVariables, options);
 
   // Bail early if there are structural errors — don't pass a broken AST to transform passes
+  // This must run before the missing-required check so that malformed `required` entries
+  // (invalid identifiers, reserved names, duplicates) surface as VALIDATION_ERROR
+  // rather than being misreported as MISSING_REQUIRED_VARS.
   const earlyErrors = diagnostics.filter((d) => d.severity === 'error');
   if (earlyErrors.length > 0) {
     return {
@@ -495,6 +505,24 @@ export async function prepareRunbook(
       diagnostics,
       warnings: allWarnings.length > 0 ? allWarnings : undefined,
     };
+  }
+
+  // Validate required variables are provided by an external layer
+  if (frontmatter?.required && frontmatter.required.length > 0) {
+    const missing = frontmatter.required.filter((name) => !providedKeys.has(name));
+    if (missing.length > 0) {
+      const names = missing.map((n) => `"${n}"`).join(', ');
+      return {
+        ok: false,
+        error: `Missing required variable${missing.length > 1 ? 's' : ''}: ${names}. Provide via --var, --var-file, config.yaml, or RD_VAR_* environment variable.`,
+        code: 'MISSING_REQUIRED_VARS',
+        details: { runbook: file, missing },
+        variables: templateVars,
+        stats,
+        diagnostics,
+        warnings: allWarnings.length > 0 ? allWarnings : undefined,
+      };
+    }
   }
 
   // Resolve FOR clause bounds ({{Max}} → 10)

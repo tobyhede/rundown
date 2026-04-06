@@ -106,7 +106,9 @@ jest.unstable_mockModule('../../src/services/variable-discovery', () => ({
       this.reason = reason;
     }
   },
-  resolveVariables: jest.fn().mockResolvedValue({ vars: {}, sources: {}, warnings: [] }),
+  resolveVariables: jest
+    .fn()
+    .mockResolvedValue({ vars: {}, sources: {}, warnings: [], providedKeys: new Set() }),
   RUNTIME_RESERVED_VARIABLES: new Set(['Date', 'DateTime', 'Year', 'Month', 'Day', 'WorkPath']),
 }));
 
@@ -122,6 +124,7 @@ jest.unstable_mockModule('../../src/services/template-renderer', () => ({
 // Mock validate-frontmatter-vars
 jest.unstable_mockModule('../../src/helpers/validate-frontmatter-vars', () => ({
   validateFrontmatterVars: jest.fn().mockReturnValue([]),
+  validateRequiredVars: jest.fn().mockReturnValue([]),
 }));
 
 // Mock node:fs/promises
@@ -139,7 +142,9 @@ const { resolveRunbookFile } = await import('../../src/helpers/resolve-runbook')
 const { resolveVariables } = await import('../../src/services/variable-discovery');
 const { substituteRunbookVariables, resolveForBounds, collectUnresolvedRunbookVariables } =
   await import('../../src/services/template-renderer');
-const { validateFrontmatterVars } = await import('../../src/helpers/validate-frontmatter-vars');
+const { validateFrontmatterVars, validateRequiredVars } = await import(
+  '../../src/helpers/validate-frontmatter-vars'
+);
 const { createBridgedEmitter } = await import('../../src/helpers/execution-emitter');
 const { runExecutionLoop } = await import('../../src/services/execution');
 const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline');
@@ -728,7 +733,13 @@ describe('claimAndLaunch', () => {
       diagnostics: [],
     } as any);
     (validateFrontmatterVars as jest.Mock).mockReturnValue([]);
-    (resolveVariables as jest.Mock).mockResolvedValue({ vars: {}, sources: {}, warnings: [] });
+    (validateRequiredVars as jest.Mock).mockReturnValue([]);
+    (resolveVariables as jest.Mock).mockResolvedValue({
+      vars: {},
+
+      warnings: [],
+      providedKeys: new Set(),
+    });
     (resolveForBounds as jest.Mock).mockImplementation((runbook: unknown) => ({
       runbook,
       warnings: [],

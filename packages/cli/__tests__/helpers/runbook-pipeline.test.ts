@@ -106,7 +106,9 @@ jest.unstable_mockModule('../../src/services/variable-discovery', () => ({
       this.reason = reason;
     }
   },
-  resolveVariables: jest.fn().mockResolvedValue({ vars: {}, sources: {}, warnings: [] }),
+  resolveVariables: jest
+    .fn()
+    .mockResolvedValue({ vars: {}, warnings: [], providedKeys: new Set() }),
   RUNTIME_RESERVED_VARIABLES: new Set(['step', 'index', 'context']),
   isRuntimeReservedVariable: jest.fn().mockReturnValue(false),
 }));
@@ -123,6 +125,7 @@ jest.unstable_mockModule('../../src/services/template-renderer', () => ({
 // Mock validate-frontmatter-vars
 jest.unstable_mockModule('../../src/helpers/validate-frontmatter-vars', () => ({
   validateFrontmatterVars: jest.fn().mockReturnValue([]),
+  validateRequiredVars: jest.fn().mockReturnValue([]),
 }));
 
 // Mock node:fs/promises
@@ -148,7 +151,9 @@ const {
   warnUnresolvedRunbookVariables,
   collectUnresolvedRunbookVariables,
 } = await import('../../src/services/template-renderer');
-const { validateFrontmatterVars } = await import('../../src/helpers/validate-frontmatter-vars');
+const { validateFrontmatterVars, validateRequiredVars } = await import(
+  '../../src/helpers/validate-frontmatter-vars'
+);
 const fsPromises = await import('node:fs/promises');
 const { prepareRunbook, startRunbook, buildContextVars, buildTemplateVars } = await import(
   '../../src/helpers/runbook-pipeline'
@@ -234,7 +239,12 @@ beforeEach(() => {
   );
   (core.getActiveForContext as jest.Mock).mockReturnValue(null);
   (createBridgedEmitter as jest.Mock).mockReturnValue({ emit: jest.fn() });
-  (resolveVariables as jest.Mock).mockResolvedValue({ vars: {}, sources: {}, warnings: [] });
+  (resolveVariables as jest.Mock).mockResolvedValue({
+    vars: {},
+    sources: {},
+    warnings: [],
+    providedKeys: new Set(),
+  });
   (buildStepVariables as jest.Mock).mockReturnValue({ Step: '1.1' });
   (substituteRunbookVariables as jest.Mock).mockImplementation((runbook: unknown) => runbook);
   (resolveForBounds as jest.Mock).mockImplementation((runbook: unknown) => ({
@@ -245,6 +255,7 @@ beforeEach(() => {
   (warnUnresolvedRunbookVariables as jest.Mock).mockReturnValue([]);
   (collectUnresolvedRunbookVariables as jest.Mock).mockReturnValue(new Set());
   (validateFrontmatterVars as jest.Mock).mockReturnValue([]);
+  (validateRequiredVars as jest.Mock).mockReturnValue([]);
   (fsPromises.readFile as jest.Mock).mockResolvedValue('# Test\n\n## 1. Step\n- PASS CONTINUE');
   (
     parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
@@ -314,6 +325,7 @@ describe('prepareRunbook', () => {
       vars: { region: 'us-west' },
       sources: {},
       warnings: [],
+      providedKeys: new Set(['region']),
     });
 
     const result = await prepareRunbook('good.md', {}, '/test');
@@ -337,6 +349,7 @@ describe('prepareRunbook', () => {
       vars: {},
       sources: {},
       warnings: [],
+      providedKeys: new Set(),
     });
 
     const result = await prepareRunbook('child.md', {}, '/test', {
@@ -362,6 +375,7 @@ describe('prepareRunbook', () => {
       vars: { Region: 'eu-central' },
       sources: {},
       warnings: [],
+      providedKeys: new Set(['Region']),
     });
 
     const result = await prepareRunbook('child.md', {}, '/test', {
@@ -423,6 +437,123 @@ describe('prepareRunbook', () => {
     if (!result.ok) {
       expect(result.code).toBe('VALIDATION_ERROR');
       expect(result.error).toContain('reserved runtime variable name');
+    }
+  });
+
+  it('returns MISSING_REQUIRED_VARS when required var is not provided', async () => {
+    resolveRunbookFile.mockResolvedValue({ path: '/test/needs-var.md', source: 'project' });
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue(
+      mockParseResult({
+        frontmatter: { required: ['PlanPath'] },
+      }),
+    );
+
+    const result = await prepareRunbook('needs-var.md', {}, '/test');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('MISSING_REQUIRED_VARS');
+      expect(result.error).toContain('"PlanPath"');
+      expect(result.details).toEqual(expect.objectContaining({ missing: ['PlanPath'] }));
+    }
+  });
+
+  it('succeeds when required var is provided via CLI', async () => {
+    resolveRunbookFile.mockResolvedValue({ path: '/test/needs-var.md', source: 'project' });
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue(
+      mockParseResult({
+        frontmatter: { required: ['PlanPath'] },
+      }),
+    );
+    (resolveVariables as jest.Mock).mockResolvedValue({
+      vars: { PlanPath: '/some/path' },
+      sources: {},
+      warnings: [],
+      providedKeys: new Set(['PlanPath']),
+    });
+
+    const result = await prepareRunbook('needs-var.md', {}, '/test');
+
+    expect(result.ok).toBe(true);
+  });
+
+  it('fails when required var exists only as builtin', async () => {
+    resolveRunbookFile.mockResolvedValue({ path: '/test/needs-date.md', source: 'project' });
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue(
+      mockParseResult({
+        frontmatter: { required: ['Date'] },
+      }),
+    );
+    // Date is in vars (builtin) but NOT in providedKeys (external layers)
+    (resolveVariables as jest.Mock).mockResolvedValue({
+      vars: { Date: '2026-01-01' },
+      sources: {},
+      warnings: [],
+      providedKeys: new Set(),
+    });
+
+    const result = await prepareRunbook('needs-date.md', {}, '/test');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('MISSING_REQUIRED_VARS');
+      expect(result.details).toEqual(expect.objectContaining({ missing: ['Date'] }));
+    }
+  });
+
+  it('returns VALIDATION_ERROR (not MISSING_REQUIRED_VARS) for invalid identifier in required', async () => {
+    resolveRunbookFile.mockResolvedValue({ path: '/test/bad-req.md', source: 'project' });
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue(
+      mockParseResult({
+        frontmatter: { required: ['123bad'] },
+      }),
+    );
+    // validateRequiredVars returns an error diagnostic for the invalid identifier
+    (validateRequiredVars as jest.Mock).mockReturnValue([
+      { severity: 'error', message: 'Required variable "123bad" is not a valid identifier' },
+    ]);
+
+    const result = await prepareRunbook('bad-req.md', {}, '/test');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('VALIDATION_ERROR');
+      expect(result.error).toContain('123bad');
+    }
+  });
+
+  it('returns VALIDATION_ERROR (not MISSING_REQUIRED_VARS) for reserved name in required', async () => {
+    resolveRunbookFile.mockResolvedValue({ path: '/test/reserved-req.md', source: 'project' });
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue(
+      mockParseResult({
+        frontmatter: { required: ['Step'] },
+      }),
+    );
+    // validateRequiredVars returns an error diagnostic for the reserved name
+    (validateRequiredVars as jest.Mock).mockReturnValue([
+      {
+        severity: 'error',
+        message:
+          'Required variable "Step" uses reserved runtime variable name. Reserved names (case-insensitive): step, index, context',
+      },
+    ]);
+
+    const result = await prepareRunbook('reserved-req.md', {}, '/test');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('VALIDATION_ERROR');
+      expect(result.error).toContain('Step');
     }
   });
 
@@ -573,6 +704,7 @@ describe('prepareRunbook', () => {
       vars: { CLAUDE_PLUGIN_ROOT: '/custom/override' },
       sources: {},
       warnings: [],
+      providedKeys: new Set(['CLAUDE_PLUGIN_ROOT']),
     });
 
     const result = await prepareRunbook('rundown:write-plan', {}, '/test');
@@ -1050,6 +1182,7 @@ describe('claimAndLaunch', () => {
       vars: { RunId: 'child-run', ContextId: 'ctx-parent', Region: 'us-west' },
       sources: {},
       warnings: [],
+      providedKeys: new Set(['RunId', 'ContextId', 'Region']),
     });
 
     const mockManager = {

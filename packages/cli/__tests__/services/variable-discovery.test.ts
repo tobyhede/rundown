@@ -801,6 +801,24 @@ describe('resolveVariables', () => {
       );
     });
 
+    it('does not include rejected path-traversal file source in providedKeys', async () => {
+      const nested = path.join(tmpDir, 'project');
+      await fs.mkdir(nested, { recursive: true });
+
+      const result = await resolveVariables({ var: ['data=file:../escape.txt'] }, nested);
+      expect(result.vars).not.toHaveProperty('data');
+      expect(result.providedKeys.has('data')).toBe(false);
+    });
+
+    it('includes accepted file source in providedKeys', async () => {
+      const file = path.join(tmpDir, 'data.json');
+      await fs.writeFile(file, '["ok"]');
+
+      const result = await resolveVariables({ var: [`data=file:${file}`] }, tmpDir);
+      expect(result.vars.data).toEqual(['ok']);
+      expect(result.providedKeys.has('data')).toBe(true);
+    });
+
     it('accepts directory whose name starts with double-dot', async () => {
       const dotDir = path.join(tmpDir, '..cache');
       await fs.mkdir(dotDir, { recursive: true });

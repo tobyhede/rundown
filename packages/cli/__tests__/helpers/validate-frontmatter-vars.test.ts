@@ -1,4 +1,7 @@
-import { validateFrontmatterVars } from '../../src/helpers/validate-frontmatter-vars.js';
+import {
+  validateFrontmatterVars,
+  validateRequiredVars,
+} from '../../src/helpers/validate-frontmatter-vars.js';
 
 describe('validateFrontmatterVars', () => {
   it('returns empty array for undefined vars', () => {
@@ -70,5 +73,82 @@ describe('validateFrontmatterVars', () => {
   it('diagnostics have no line field', () => {
     const result = validateFrontmatterVars({ Step: 'custom' });
     expect(result[0]).not.toHaveProperty('line');
+  });
+});
+
+describe('validateRequiredVars', () => {
+  it('returns empty for undefined required', () => {
+    expect(validateRequiredVars(undefined, undefined)).toEqual([]);
+  });
+
+  it('returns empty for empty required array', () => {
+    expect(validateRequiredVars([], undefined)).toEqual([]);
+  });
+
+  it('returns empty for valid required with no overlap', () => {
+    expect(validateRequiredVars(['PlanPath'], { port: 3000 })).toEqual([]);
+  });
+
+  it('returns empty for valid required with no vars', () => {
+    expect(validateRequiredVars(['PlanPath', 'Target'], undefined)).toEqual([]);
+  });
+
+  it('returns error when name appears in both required and vars', () => {
+    const result = validateRequiredVars(['PlanPath'], { PlanPath: '' });
+    expect(result).toHaveLength(1);
+    expect(result[0].severity).toBe('error');
+    expect(result[0].message).toContain('"PlanPath"');
+    expect(result[0].message).toContain('required');
+    expect(result[0].message).toContain('vars');
+  });
+
+  it('returns error for reserved runtime names', () => {
+    const result = validateRequiredVars(['Step'], undefined);
+    expect(result).toHaveLength(1);
+    expect(result[0].severity).toBe('error');
+    expect(result[0].message).toContain('"Step"');
+    expect(result[0].message).toContain('reserved');
+  });
+
+  it('returns error for reserved names case-insensitively', () => {
+    const result = validateRequiredVars(['INDEX'], undefined);
+    expect(result).toHaveLength(1);
+    expect(result[0].message).toContain('"INDEX"');
+  });
+
+  it('returns error for invalid identifiers', () => {
+    const result = validateRequiredVars(['123invalid'], undefined);
+    expect(result).toHaveLength(1);
+    expect(result[0].severity).toBe('error');
+    expect(result[0].message).toContain('not a valid identifier');
+  });
+
+  it('returns multiple errors for multiple violations', () => {
+    const result = validateRequiredVars(['Step', 'PlanPath', '123bad'], { PlanPath: '' });
+    expect(result).toHaveLength(3); // reserved + overlap + invalid
+  });
+
+  it('skips overlap check for invalid identifiers', () => {
+    // Invalid identifier gets only the invalid-id error, not also an overlap error
+    const result = validateRequiredVars(['123bad'], { '123bad': 'val' });
+    expect(result).toHaveLength(1);
+    expect(result[0].message).toContain('not a valid identifier');
+  });
+
+  it('returns error for duplicate entries', () => {
+    const result = validateRequiredVars(['PlanPath', 'PlanPath'], undefined);
+    expect(result).toHaveLength(1);
+    expect(result[0].severity).toBe('error');
+    expect(result[0].message).toContain('Duplicate');
+    expect(result[0].message).toContain('"PlanPath"');
+  });
+
+  it('skips further validation for duplicate entries', () => {
+    // Second occurrence only gets the duplicate error, not also overlap/reserved
+    const result = validateRequiredVars(['PlanPath', 'PlanPath'], { PlanPath: '' });
+    // First: overlap error. Second: duplicate error.
+    expect(result).toHaveLength(2);
+    expect(result[0].message).toContain('cannot be both');
+    expect(result[1].message).toContain('Duplicate');
   });
 });
