@@ -2,6 +2,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { findRunbookByName, findRunbookByNameInSource } from '../services/discovery.js';
 import { getBundledRunbooksPath } from './bundled-runbooks.js';
+import { getPluginRoot } from './plugin-root.js';
 
 /**
  * Result of resolving a runbook file, including its source.
@@ -81,8 +82,8 @@ async function resolveByPath(cwd: string, filename: string): Promise<ResolvedRun
     /* not found */
   }
 
-  // 2. Check plugin runbooks directory
-  const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
+  // 2. Check plugin runbooks directory (env var or sibling package discovery)
+  const pluginRoot = getPluginRoot();
   if (pluginRoot) {
     const pluginPath = path.join(pluginRoot, 'runbooks', filename);
     try {

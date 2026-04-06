@@ -4,6 +4,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { extractFrontmatter, nameFromFilename } from '@rundown-org/parser';
 import { getBundledRunbooksPath } from '../helpers/bundled-runbooks.js';
+import { getPluginRoot } from '../helpers/plugin-root.js';
 
 /**
  * Normalize a name to a slug for lookup comparison.
@@ -59,8 +60,8 @@ export function getSearchPaths(cwd: string): SearchPath[] {
     source: 'project',
   });
 
-  // Plugin runbooks directory (from CLAUDE_PLUGIN_ROOT environment variable)
-  const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
+  // Plugin runbooks directory (env var or sibling package discovery)
+  const pluginRoot = getPluginRoot();
   if (pluginRoot) {
     const pluginRunbooksDir = path.join(pluginRoot, 'runbooks');
     paths.push({

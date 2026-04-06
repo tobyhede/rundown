@@ -66,16 +66,24 @@ describe('discovery service', () => {
       }
     });
 
-    it('skips plugin directory when CLAUDE_PLUGIN_ROOT is not set', async () => {
+    it('discovers plugin via sibling package when CLAUDE_PLUGIN_ROOT is not set', async () => {
       const originalEnv = process.env.CLAUDE_PLUGIN_ROOT;
       delete process.env.CLAUDE_PLUGIN_ROOT;
 
       try {
         const paths = getSearchPaths(tempDir);
 
-        expect(paths.length).toBe(2);
         expect(paths[0].source).toBe('project');
-        expect(paths[1].source).toBe('bundled');
+        // Plugin may be found via sibling discovery (when installed alongside CLI)
+        const pluginPath = paths.find((p) => p.source === 'plugin');
+        if (pluginPath) {
+          expect(paths.length).toBe(3);
+          expect(pluginPath.path).toContain('claude-code-plugin');
+        } else {
+          // No sibling plugin installed — only project + bundled
+          expect(paths.length).toBe(2);
+        }
+        expect(paths[paths.length - 1].source).toBe('bundled');
       } finally {
         process.env.CLAUDE_PLUGIN_ROOT = originalEnv;
       }
