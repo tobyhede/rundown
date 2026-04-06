@@ -93,7 +93,7 @@
     "@stryker-mutator/core": "^9.6.0",
     "@stryker-mutator/jest-runner": "^9.6.0",
     "@stryker-mutator/typescript-checker": "^9.6.0",
-    "cspell": "^9.7.0",
+    "cspell": "^10.0.0",
     "eslint": "^10.1.0",
     "eslint-plugin-jsdoc": "^62.8.1",
     "globals": "^17.4.0",
