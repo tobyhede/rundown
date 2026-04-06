@@ -24,7 +24,7 @@
 | Component | Pattern | Example |
 |-----------|---------|---------|
 | Skill frontmatter (Rundown Plugin) | `runbook: ${CLAUDE_PLUGIN_ROOT}/path` | `runbook: ${CLAUDE_PLUGIN_ROOT}/runbooks/plan.runbook.md` |
-| Skill body | Inline in markdown | `` Template: `${CLAUDE_PLUGIN_ROOT}/templates/review.md` `` |
+| Skill body | Inline in Markdown | `` Template: `${CLAUDE_PLUGIN_ROOT}/templates/review.md` `` |
 | Hook command | In `command` string | `"${CLAUDE_PLUGIN_ROOT}/scripts/lint.sh"` |
 | MCP server | In `command`, `args`, `env`, `cwd` | `"command": "${CLAUDE_PLUGIN_ROOT}/servers/db"` |
 | LSP server | In `command`, `args`, `env` | `"env": { "PATH": "${CLAUDE_PLUGIN_DATA}/bin" }` |
