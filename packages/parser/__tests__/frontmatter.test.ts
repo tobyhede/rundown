@@ -548,4 +548,22 @@ describe('required field', () => {
     expect(frontmatter?.vars).toEqual({ port: 3000 });
     expect(frontmatter?.required).toEqual(['PlanPath']);
   });
+
+  it('drops to undefined when required contains invalid identifiers', () => {
+    const md = `---\nname: test\nrequired:\n  - "123bad"\n---\n# Content`;
+    const { frontmatter } = extractFrontmatter(md);
+    expect(frontmatter?.required).toBeUndefined();
+  });
+
+  it('accepts valid underscore-prefixed identifiers', () => {
+    const md = `---\nname: test\nrequired:\n  - _private\n  - MY_VAR\n---\n# Content`;
+    const { frontmatter } = extractFrontmatter(md);
+    expect(frontmatter?.required).toEqual(['_private', 'MY_VAR']);
+  });
+
+  it('drops to undefined when any entry has invalid identifier', () => {
+    const md = `---\nname: test\nrequired:\n  - GoodName\n  - "bad-name"\n---\n# Content`;
+    const { frontmatter } = extractFrontmatter(md);
+    expect(frontmatter?.required).toBeUndefined();
+  });
 });

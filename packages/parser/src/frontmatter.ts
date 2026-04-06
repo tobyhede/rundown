@@ -38,7 +38,10 @@ export const RunbookFrontmatterSchema = z
       .record(z.union([z.string(), z.number(), z.boolean()]))
       .optional()
       .catch(undefined),
-    required: z.array(z.string().min(1)).optional().catch(undefined),
+    required: z
+      .array(z.string().regex(/^[a-zA-Z_][a-zA-Z0-9_]*$/))
+      .optional()
+      .catch(undefined),
   })
   .passthrough();
 

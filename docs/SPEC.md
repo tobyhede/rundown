@@ -26,7 +26,7 @@ A Rundown document (`.runbook.md`) is a Markdown file with an optional YAML fron
 
 Frontmatter fields beyond `name`, `description`, `version`, `author`, `tags`, `vars`, and `required` are preserved (open schema). This allows forward-compatible extensions and user-defined metadata.
 
-The `required` field declares variable names that must be provided by the caller (via CLI flags, config, environment, or delegation). Required variables must not appear in `vars` — they have no default. Missing required variables produce a hard error during resolution.
+The `required` field declares variable names that must be provided by the caller (via CLI flags, config, environment, or delegation). Each entry must be a valid template variable identifier matching `/^[a-zA-Z_][a-zA-Z0-9_]*$/`. Required variables must not appear in `vars` — they have no default. Missing required variables produce a hard error during resolution.
 
 The frontmatter `description` field provides a summary for runbook discovery and listing (`rd ls --all`). The `Runbook.description` in the parsed AST is derived from preamble text between the H1 title and first H2 step. These are independent values.
 

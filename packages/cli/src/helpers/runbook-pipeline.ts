@@ -489,6 +489,24 @@ export async function prepareRunbook(
   }
   const templateVars = buildTemplateVars(mergedVariables, options);
 
+  // Bail early if there are structural errors — don't pass a broken AST to transform passes
+  // This must run before the missing-required check so that malformed `required` entries
+  // (invalid identifiers, reserved names, duplicates) surface as VALIDATION_ERROR
+  // rather than being misreported as MISSING_REQUIRED_VARS.
+  const earlyErrors = diagnostics.filter((d) => d.severity === 'error');
+  if (earlyErrors.length > 0) {
+    return {
+      ok: false,
+      error: earlyErrors[0].message,
+      code: 'VALIDATION_ERROR',
+      details: { runbook: file },
+      variables: templateVars,
+      stats,
+      diagnostics,
+      warnings: allWarnings.length > 0 ? allWarnings : undefined,
+    };
+  }
+
   // Validate required variables are provided by an external layer
   if (frontmatter?.required && frontmatter.required.length > 0) {
     const missing = frontmatter.required.filter((name) => !providedKeys.has(name));
@@ -505,21 +523,6 @@ export async function prepareRunbook(
         warnings: allWarnings.length > 0 ? allWarnings : undefined,
       };
     }
-  }
-
-  // Bail early if there are structural errors — don't pass a broken AST to transform passes
-  const earlyErrors = diagnostics.filter((d) => d.severity === 'error');
-  if (earlyErrors.length > 0) {
-    return {
-      ok: false,
-      error: earlyErrors[0].message,
-      code: 'VALIDATION_ERROR',
-      details: { runbook: file },
-      variables: templateVars,
-      stats,
-      diagnostics,
-      warnings: allWarnings.length > 0 ? allWarnings : undefined,
-    };
   }
 
   // Resolve FOR clause bounds ({{Max}} → 10)

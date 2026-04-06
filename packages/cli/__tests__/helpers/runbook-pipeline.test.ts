@@ -507,6 +507,56 @@ describe('prepareRunbook', () => {
     }
   });
 
+  it('returns VALIDATION_ERROR (not MISSING_REQUIRED_VARS) for invalid identifier in required', async () => {
+    resolveRunbookFile.mockResolvedValue({ path: '/test/bad-req.md', source: 'project' });
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue(
+      mockParseResult({
+        frontmatter: { required: ['123bad'] },
+      }),
+    );
+    // validateRequiredVars returns an error diagnostic for the invalid identifier
+    (validateRequiredVars as jest.Mock).mockReturnValue([
+      { severity: 'error', message: 'Required variable "123bad" is not a valid identifier' },
+    ]);
+
+    const result = await prepareRunbook('bad-req.md', {}, '/test');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('VALIDATION_ERROR');
+      expect(result.error).toContain('123bad');
+    }
+  });
+
+  it('returns VALIDATION_ERROR (not MISSING_REQUIRED_VARS) for reserved name in required', async () => {
+    resolveRunbookFile.mockResolvedValue({ path: '/test/reserved-req.md', source: 'project' });
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue(
+      mockParseResult({
+        frontmatter: { required: ['Step'] },
+      }),
+    );
+    // validateRequiredVars returns an error diagnostic for the reserved name
+    (validateRequiredVars as jest.Mock).mockReturnValue([
+      {
+        severity: 'error',
+        message:
+          'Required variable "Step" uses reserved runtime variable name. Reserved names (case-insensitive): step, index, context',
+      },
+    ]);
+
+    const result = await prepareRunbook('reserved-req.md', {}, '/test');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('VALIDATION_ERROR');
+      expect(result.error).toContain('Step');
+    }
+  });
+
   it('returns error when validateSources throws', async () => {
     resolveRunbookFile.mockResolvedValue({ path: '/test/sourced.md', source: 'project' });
     (parser.isSourced as jest.MockedFunction<typeof parser.isSourced>).mockReturnValue(true);
