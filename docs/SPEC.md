@@ -257,9 +257,9 @@ Variables use Handlebars syntax: `{{variable}}`.
 *   **Path resolution**: Dotted paths are supported consistently (for example `{{context.parent.index}}`).
 *   **Reserved keys**: Runtime keys `step`, `index`, and `context` are reserved (matching is case-insensitive — any case variant such as `STEP`, `Step`, `INDEX` is also reserved) and cannot be overridden by user variables. The CLI rejects these names in frontmatter `vars:`, `--var` flags, `--var-file` contents, and `.rundown/config.yaml` with an error diagnostic.
 *   **Precedence** (highest to lowest):
-    1. `--var` flags
-    2. `--var-file` contents
-    3. `.rundown/config.yaml` (auto-discovered)
+    1. CLI flags (`--var-file`, `--var`, `--var-json`) — highest priority
+    2. `RD_VAR_*` environment variables (prefix stripped)
+    3. `.rundown/config.yaml` (auto-discovered from cwd upward)
     4. Frontmatter `vars:` field
     5. Inherited delegation variables (parent context)
     6. Built-in defaults (`Date`, `RunId`, `WorkPath`, etc.)

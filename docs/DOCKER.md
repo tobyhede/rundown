@@ -104,7 +104,7 @@ Tests the full plugin workflow: `claude -p` triggers hook dispatch, the `/writin
 
 | File | Role |
 |------|------|
-| `scripts/build-e2e.sh` | Build packages, pack tarballs, prepare creds, build Docker image |
+| `scripts/build-e2e.sh` | Build packages, pack tarballs, prepare credentials, build Docker image |
 | `scripts/run-e2e.sh` | Host-side orchestrator (calls build, launches test) |
 | `scripts/Dockerfile.e2e` | Single-stage Dockerfile (node:24-slim, Claude Code via npm) |
 | `docker-compose.e2e.yml` | Compose service with volume mounts |

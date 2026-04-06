@@ -3,156 +3,55 @@ name: plugin-runbooks
 description: Structural coverage for plugin runbooks
 
 cases:
-  # --- write-plan: happy path ---
+  # --- write-plan: happy path (skill already invoked) ---
 
   write-plan-all-pass:
-    description: All steps pass through to completion
+    description: Skill already invoked, write succeeds — completes in 2 steps
     file: runbooks/planning/write-plan.runbook.md
     commands:
       - rd run --prompted write-plan.runbook.md
-      - rd pass   # 1. Invoke writing-plans skill
-      - rd pass   # 2. Review schema
-      - rd pass   # 3. Check scope
-      - rd pass   # 4. Gather requirements
-      - rd pass   # 5. Research codebase
-      - rd pass   # 6. Map file structure
-      - rd pass   # 7. Output path
-      - rd pass   # 8. Write the plan
-      - rd pass   # 9. Check schema
-      - rd pass   # 10. Verify plan structure → COMPLETE
+      - rd pass   # 1. Check if Writing Plans Skill has been invoked → CONTINUE
+      - rd pass   # 2. Write & save the plan → COMPLETE
+    result: COMPLETE
+
+  # --- write-plan: happy path via InvokeSkill ---
+
+  write-plan-via-invoke:
+    description: Skill not invoked, invoke it, then write succeeds
+    file: runbooks/planning/write-plan.runbook.md
+    commands:
+      - rd run --prompted write-plan.runbook.md
+      - rd fail   # 1. Check if Writing Plans Skill has been invoked → GOTO InvokeSkill
+      - rd pass   # InvokeSkill. Invoke the Writing Plans Skill → GOTO 2
+      - rd pass   # 2. Write & save the plan → COMPLETE
     result: COMPLETE
 
   # --- write-plan: early termination ---
 
-  write-plan-fail-at-skill:
-    description: FAIL at skill invocation stops the runbook
+  write-plan-fail-at-skill-check:
+    description: Skill not invoked, skill invocation fails — stops
     file: runbooks/planning/write-plan.runbook.md
     commands:
       - rd run --prompted write-plan.runbook.md
-      - rd fail   # 1. Invoke writing-plans skill → STOP
-    result: STOP
-
-  write-plan-fail-at-schema:
-    description: FAIL at schema review stops the runbook
-    file: runbooks/planning/write-plan.runbook.md
-    commands:
-      - rd run --prompted write-plan.runbook.md
-      - rd pass   # 1. Invoke writing-plans skill
-      - rd fail   # 2. Review schema → STOP
-    result: STOP
-
-  write-plan-fail-at-scope:
-    description: FAIL at scope check stops the runbook
-    file: runbooks/planning/write-plan.runbook.md
-    commands:
-      - rd run --prompted write-plan.runbook.md
-      - rd pass   # 1. Invoke writing-plans skill
-      - rd pass   # 2. Review schema
-      - rd fail   # 3. Check scope → STOP
-    result: STOP
-
-  write-plan-fail-at-requirements:
-    description: FAIL at requirements stops the runbook
-    file: runbooks/planning/write-plan.runbook.md
-    commands:
-      - rd run --prompted write-plan.runbook.md
-      - rd pass   # 1. Invoke writing-plans skill
-      - rd pass   # 2. Review schema
-      - rd pass   # 3. Check scope
-      - rd fail   # 4. Gather requirements → STOP
-    result: STOP
-
-  write-plan-fail-at-research:
-    description: FAIL at research stops the runbook
-    file: runbooks/planning/write-plan.runbook.md
-    commands:
-      - rd run --prompted write-plan.runbook.md
-      - rd pass   # 1. Invoke writing-plans skill
-      - rd pass   # 2. Review schema
-      - rd pass   # 3. Check scope
-      - rd pass   # 4. Gather requirements
-      - rd fail   # 5. Research codebase → STOP
-    result: STOP
-
-  write-plan-fail-at-file-structure:
-    description: FAIL at file structure mapping stops the runbook
-    file: runbooks/planning/write-plan.runbook.md
-    commands:
-      - rd run --prompted write-plan.runbook.md
-      - rd pass   # 1. Invoke writing-plans skill
-      - rd pass   # 2. Review schema
-      - rd pass   # 3. Check scope
-      - rd pass   # 4. Gather requirements
-      - rd pass   # 5. Research codebase
-      - rd fail   # 6. Map file structure → STOP
-    result: STOP
-
-  write-plan-fail-at-output-path:
-    description: FAIL at output path resolution stops the runbook
-    file: runbooks/planning/write-plan.runbook.md
-    commands:
-      - rd run --prompted write-plan.runbook.md
-      - rd pass   # 1. Invoke writing-plans skill
-      - rd pass   # 2. Review schema
-      - rd pass   # 3. Check scope
-      - rd pass   # 4. Gather requirements
-      - rd pass   # 5. Research codebase
-      - rd pass   # 6. Map file structure
-      - rd fail   # 7. Output path → STOP
+      - rd fail   # 1. Check if Writing Plans Skill has been invoked → GOTO InvokeSkill
+      - rd fail   # InvokeSkill. Invoke the Writing Plans Skill → STOP
     result: STOP
 
   write-plan-fail-at-write:
-    description: FAIL at plan writing stops the runbook
+    description: Skill invoked but plan writing fails — stops
     file: runbooks/planning/write-plan.runbook.md
     commands:
       - rd run --prompted write-plan.runbook.md
-      - rd pass   # 1. Invoke writing-plans skill
-      - rd pass   # 2. Review schema
-      - rd pass   # 3. Check scope
-      - rd pass   # 4. Gather requirements
-      - rd pass   # 5. Research codebase
-      - rd pass   # 6. Map file structure
-      - rd pass   # 7. Output path
-      - rd fail   # 8. Write the plan → STOP
+      - rd pass   # 1. Check if Writing Plans Skill has been invoked → CONTINUE
+      - rd fail   # 2. Write & save the plan → STOP
     result: STOP
 
-  # --- write-plan: validation retry loop ---
-
-  write-plan-schema-retry:
-    description: Failed schema check loops back to write, then succeeds
+  write-plan-fail-at-write-via-invoke:
+    description: Skill invoked via InvokeSkill but plan writing fails — stops
     file: runbooks/planning/write-plan.runbook.md
     commands:
       - rd run --prompted write-plan.runbook.md
-      - rd pass   # 1. Invoke writing-plans skill
-      - rd pass   # 2. Review schema
-      - rd pass   # 3. Check scope
-      - rd pass   # 4. Gather requirements
-      - rd pass   # 5. Research codebase
-      - rd pass   # 6. Map file structure
-      - rd pass   # 7. Output path
-      - rd pass   # 8. Write the plan
-      - rd fail   # 9. Check schema → GOTO 8
-      - rd pass   # 8. Write the plan (retry)
-      - rd pass   # 9. Check schema
-      - rd pass   # 10. Verify plan structure → COMPLETE
-    result: COMPLETE
-
-  write-plan-verify-retry:
-    description: Failed verification loops back to write, then succeeds
-    file: runbooks/planning/write-plan.runbook.md
-    commands:
-      - rd run --prompted write-plan.runbook.md
-      - rd pass   # 1. Invoke writing-plans skill
-      - rd pass   # 2. Review schema
-      - rd pass   # 3. Check scope
-      - rd pass   # 4. Gather requirements
-      - rd pass   # 5. Research codebase
-      - rd pass   # 6. Map file structure
-      - rd pass   # 7. Output path
-      - rd pass   # 8. Write the plan
-      - rd pass   # 9. Check schema
-      - rd fail   # 10. Verify plan structure → GOTO 8
-      - rd pass   # 8. Write the plan (retry)
-      - rd pass   # 9. Check schema (retry)
-      - rd pass   # 10. Verify plan structure → COMPLETE
-    result: COMPLETE
+      - rd fail   # 1. Check if Writing Plans Skill has been invoked → GOTO InvokeSkill
+      - rd pass   # InvokeSkill. Invoke the Writing Plans Skill → GOTO 2
+      - rd fail   # 2. Write & save the plan → STOP
+    result: STOP

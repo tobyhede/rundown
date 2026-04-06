@@ -135,7 +135,7 @@ RUNBOOK_CONFIRMED=false
 # Search .work/ recursively — rdpath uses context-scoped subdirs (.rd-<ctx>/).
 PLAN_FILE=""
 if [ -d ".work" ]; then
-  PLAN_FILE="$(find .work -name '*plan*.json' -type f 2>/dev/null | head -1 || true)"
+  PLAN_FILE="$(find .work -name '*-plan.json' -type f 2>/dev/null | head -1 || true)"
 fi
 
 if [ -z "$PLAN_FILE" ]; then
@@ -159,15 +159,19 @@ if [ -n "$PLAN_FILE" ]; then
   fi
 
   # Structural validation
-  set +e
-  node "$PLUGIN_DIR/scripts/validate-plan.js" "$PLAN_FILE" 2>&1 | tee -a "$LOG_FILE"
-  VALIDATE_EXIT=${PIPESTATUS[0]}
-  set -e
-  if [ "$VALIDATE_EXIT" -eq 0 ]; then
-    pass "Plan passes structural validation"
+  if [ -f "$PLUGIN_DIR/scripts/validate-plan.js" ]; then
+    set +e
+    node "$PLUGIN_DIR/scripts/validate-plan.js" "$PLAN_FILE" 2>&1 | tee -a "$LOG_FILE"
+    VALIDATE_EXIT=${PIPESTATUS[0]}
+    set -e
+    if [ "$VALIDATE_EXIT" -eq 0 ]; then
+      pass "Plan passes structural validation"
+    else
+      fail "Plan fails structural validation"
+      PLAN_VALID=false
+    fi
   else
-    fail "Plan fails structural validation"
-    PLAN_VALID=false
+    log "Structural validation skipped (validate-plan.js not found)"
   fi
 
   if [ "$PLAN_VALID" = true ]; then

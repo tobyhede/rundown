@@ -43,7 +43,7 @@ mkdir -p logs
 
 # Create onboarding marker to skip first-run prompts
 if [ ! -f .claude-docker/.claude.json ]; then
-  echo '{"onboardingComplete":true}' > .claude-docker/.claude.json
+  echo '{"hasCompletedOnboarding":true,"installMethod":"native"}' > .claude-docker/.claude.json
 fi
 
 # macOS: extract Claude Code credentials from Keychain

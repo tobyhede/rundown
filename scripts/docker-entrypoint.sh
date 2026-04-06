@@ -90,7 +90,6 @@ if [ -n "$PLUGIN_DIR" ]; then
   )
 
   EXPECTED_DIRS=(
-    "commands"
     "runbooks"
     "skills"
   )
