@@ -8,7 +8,7 @@
  */
 
 import { z } from 'zod';
-import { locationSchema } from './location-schema.js';
+import { locationObjectSchema } from './location-schema.js';
 
 /**
  * A file entry describing a file affected by the plan.
@@ -18,7 +18,7 @@ import { locationSchema } from './location-schema.js';
  * schema are optional and available for future use. Plan validators
  * reject `line` and `end_line` in plan context.
  */
-const FileEntry = locationSchema
+const FileEntry = locationObjectSchema
   .extend({
     action: z.enum(['create', 'edit', 'delete']),
     notes: z.string().optional(),

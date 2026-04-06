@@ -39,7 +39,13 @@ const PATH_PATTERN = /^(?!\/)(?![A-Za-z]:[/\\])(?!.*(?:^|\/)\.\.(?:\/|$))(?!.*\\
  * }
  * ```
  */
-export const locationSchema = z
+/**
+ * Base location object schema (extensible via `.extend()`).
+ *
+ * Use this when composing location fields into a larger schema (e.g., plan FileEntry).
+ * For standalone validation, use {@link locationSchema} which adds cross-field refinements.
+ */
+export const locationObjectSchema = z
   .object({
     path: z
       .string()
@@ -58,6 +64,22 @@ export const locationSchema = z
       .optional(),
   })
   .strict();
+
+/**
+ * Location schema with cross-field validation.
+ *
+ * Wraps {@link locationObjectSchema} with a refinement that rejects
+ * reversed line ranges (`end_line < line`).
+ */
+export const locationSchema = locationObjectSchema.superRefine((value, ctx) => {
+  if (value.line !== undefined && value.end_line !== undefined && value.end_line < value.line) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['end_line'],
+      message: 'end_line must be >= line',
+    });
+  }
+});
 
 /** Validated location type inferred from locationSchema. */
 export type Location = z.infer<typeof locationSchema>;

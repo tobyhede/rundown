@@ -40,17 +40,7 @@ const Finding = z
       .enum(['blocking', 'non_blocking'])
       .describe('blocking = must fix before proceeding, non_blocking = should fix'),
     description: z.string().min(1).describe('What is wrong and why'),
-    location: locationSchema
-      .superRefine((data, ctx) => {
-        if (data.line !== undefined && data.end_line !== undefined && data.end_line < data.line) {
-          ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            message: 'end_line must be >= line',
-            path: ['end_line'],
-          });
-        }
-      })
-      .optional(),
+    location: locationSchema.optional(),
     evidence: z.string().min(1).describe('What was observed'),
     recommendation: z.string().min(1).describe('How to fix it'),
   })
@@ -63,12 +53,55 @@ const Meta = z
   })
   .strict();
 
+/** Shared fields present in both ok and blocked review variants. */
+const SharedFields = {
+  $schema: z
+    .literal('https://rundown.org/schemas/review.schema.json')
+    .optional()
+    .describe('Schema URI for editor autocomplete and rdx validation dispatch'),
+  meta: Meta,
+  findings: z.array(Finding),
+};
+
+/**
+ * Ok review gate: no blocking findings, proceed.
+ *
+ * @internal Used as a variant in the ReviewSchema discriminated union.
+ */
+const OkReview = z
+  .object({
+    ...SharedFields,
+    status: z.literal('ok').describe('Review gate: ok = proceed'),
+    blocking_count: z.literal(0).describe('Must be 0 for ok reviews'),
+  })
+  .strict();
+
+/**
+ * Blocked review gate: has blocking findings, must fix first.
+ *
+ * @internal Used as a variant in the ReviewSchema discriminated union.
+ */
+const BlockedReview = z
+  .object({
+    ...SharedFields,
+    status: z
+      .literal('blocked')
+      .describe('Review gate: blocked = must fix blocking findings first'),
+    blocking_count: z.number().int().min(1).describe('Number of blocking findings (>= 1)'),
+  })
+  .strict();
+
 /**
  * Schema for a complete review.
  *
  * Validates the JSON structure used by plan and code review workflows.
- * Status is an automation gate: `ok` means proceed, `blocked` means
- * fix blocking findings first.
+ * Encoded as a discriminated union on `status` so that invalid combinations
+ * (e.g., status "ok" with blocking findings) are unrepresentable.
+ *
+ * The superRefine layer enforces cross-field invariants:
+ * - ok reviews cannot contain blocking findings
+ * - blocked reviews must contain at least one blocking finding
+ * - blocking_count must match the actual count of blocking findings
  *
  * @example
  * ```json
@@ -82,16 +115,34 @@ const Meta = z
  * ```
  */
 export const ReviewSchema = z
-  .object({
-    $schema: z.literal('https://rundown.org/schemas/review.schema.json').optional(),
-    meta: Meta,
-    status: z
-      .enum(['ok', 'blocked'])
-      .describe('Review gate: ok = proceed, blocked = must fix blocking findings first'),
-    blocking_count: z.number().int().min(0).describe('Number of blocking findings'),
-    findings: z.array(Finding),
-  })
-  .strict();
+  .discriminatedUnion('status', [OkReview, BlockedReview])
+  .superRefine((value, ctx) => {
+    const blockingCount = value.findings.filter((f) => f.severity === 'blocking').length;
+
+    if (value.status === 'ok' && blockingCount > 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['findings'],
+        message: `ok reviews cannot contain blocking findings (found ${String(blockingCount)})`,
+      });
+    }
+
+    if (value.status === 'blocked' && blockingCount === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['findings'],
+        message: 'blocked reviews require at least one blocking finding',
+      });
+    }
+
+    if (value.blocking_count !== blockingCount) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['blocking_count'],
+        message: `blocking_count is ${String(value.blocking_count)} but ${String(blockingCount)} blocking finding(s) exist`,
+      });
+    }
+  });
 
 /** Validated review type inferred from ReviewSchema. */
 export type Review = z.infer<typeof ReviewSchema>;

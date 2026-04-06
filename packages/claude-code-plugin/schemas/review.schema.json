@@ -3,16 +3,50 @@
   "$id": "https://rundown.org/schemas/review.schema.json",
   "title": "Review",
   "description": "Structured review findings for plan and code reviews.",
-  "type": "object",
-  "required": ["meta", "status", "blocking_count", "findings"],
-  "properties": {
-    "$schema": {
+  "oneOf": [
+    {
+      "type": "object",
+      "description": "Ok review gate: no blocking findings, proceed.",
+      "required": ["meta", "status", "blocking_count", "findings"],
+      "properties": {
+        "$schema": { "$ref": "#/$defs/SchemaUri" },
+        "meta": { "$ref": "#/$defs/Meta" },
+        "status": { "const": "ok", "description": "Review gate: ok = proceed" },
+        "blocking_count": { "const": 0, "description": "Must be 0 for ok reviews" },
+        "findings": { "$ref": "#/$defs/Findings" }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "description": "Blocked review gate: has blocking findings, must fix first.",
+      "required": ["meta", "status", "blocking_count", "findings"],
+      "properties": {
+        "$schema": { "$ref": "#/$defs/SchemaUri" },
+        "meta": { "$ref": "#/$defs/Meta" },
+        "status": {
+          "const": "blocked",
+          "description": "Review gate: blocked = must fix blocking findings first"
+        },
+        "blocking_count": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of blocking findings (>= 1)"
+        },
+        "findings": { "$ref": "#/$defs/Findings" }
+      },
+      "additionalProperties": false
+    }
+  ],
+  "discriminator": { "propertyName": "status" },
+  "$defs": {
+    "SchemaUri": {
       "type": "string",
       "format": "uri",
       "const": "https://rundown.org/schemas/review.schema.json",
       "description": "Schema URI for editor autocomplete and rdx validation dispatch."
     },
-    "meta": {
+    "Meta": {
       "type": "object",
       "required": ["version"],
       "properties": {
@@ -22,57 +56,45 @@
       },
       "additionalProperties": false
     },
-    "status": {
-      "type": "string",
-      "enum": ["ok", "blocked"],
-      "description": "Review gate: ok = proceed, blocked = must fix blocking findings first"
-    },
-    "blocking_count": {
-      "type": "integer",
-      "minimum": 0,
-      "description": "Number of blocking findings"
-    },
-    "findings": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": ["title", "severity", "description", "evidence", "recommendation"],
-        "properties": {
-          "title": {
-            "type": "string",
-            "minLength": 1,
-            "description": "Short label for the finding"
-          },
-          "severity": {
-            "type": "string",
-            "enum": ["blocking", "non_blocking"],
-            "description": "blocking = must fix before proceeding, non_blocking = should fix"
-          },
-          "description": {
-            "type": "string",
-            "minLength": 1,
-            "description": "What is wrong and why"
-          },
-          "location": {
-            "$ref": "#/$defs/Location"
-          },
-          "evidence": {
-            "type": "string",
-            "minLength": 1,
-            "description": "What was observed"
-          },
-          "recommendation": {
-            "type": "string",
-            "minLength": 1,
-            "description": "How to fix it"
-          }
+    "Finding": {
+      "type": "object",
+      "required": ["title", "severity", "description", "evidence", "recommendation"],
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Short label for the finding"
         },
-        "additionalProperties": false
-      }
-    }
-  },
-  "additionalProperties": false,
-  "$defs": {
+        "severity": {
+          "type": "string",
+          "enum": ["blocking", "non_blocking"],
+          "description": "blocking = must fix before proceeding, non_blocking = should fix"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "What is wrong and why"
+        },
+        "location": {
+          "$ref": "#/$defs/Location"
+        },
+        "evidence": {
+          "type": "string",
+          "minLength": 1,
+          "description": "What was observed"
+        },
+        "recommendation": {
+          "type": "string",
+          "minLength": 1,
+          "description": "How to fix it"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Findings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/Finding" }
+    },
     "Location": {
       "type": "object",
       "required": ["path"],
