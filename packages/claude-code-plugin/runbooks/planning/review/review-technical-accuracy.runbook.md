@@ -47,5 +47,3 @@ Follow the review output schema.
 ```bash
 rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file plan-review-{{ RunId }}.json
 ```
-
-
