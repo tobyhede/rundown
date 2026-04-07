@@ -36,7 +36,6 @@ rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} find "*plan.json"
 - Shell commands are syntactically valid and required tools are available
 - Proposed changes follow the project's established patterns and conventions
 
-
 ## 4. Write the review
 - PASS COMPLETE
 - FAIL STOP
