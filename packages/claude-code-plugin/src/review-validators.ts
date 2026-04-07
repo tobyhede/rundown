@@ -20,7 +20,7 @@ import type { Review } from './review-schema.js';
  * Reuses the same shape as plan-validators for consistency.
  */
 export interface StructuralIssue {
-  /** Rule identifier, e.g. 'status-consistency', 'blocking-count'. */
+  /** Rule identifier, e.g. 'status-consistency'. */
   rule: string;
   /** Error = must fix, warning = should fix. */
   severity: 'error' | 'warning';
@@ -79,29 +79,6 @@ export function checkStatusConsistency(review: Review): StructuralIssue[] {
   return [];
 }
 
-/**
- * Check that blocking_count matches the actual number of blocking findings.
- *
- * @param review - Validated review to check
- * @returns Errors for count mismatches
- */
-export function checkBlockingCount(review: Review): StructuralIssue[] {
-  const actual = review.findings.filter((f) => f.severity === 'blocking').length;
-
-  if (review.blocking_count !== actual) {
-    return [
-      {
-        rule: 'blocking-count',
-        severity: 'error',
-        path: 'blocking_count',
-        message: `blocking_count is ${String(review.blocking_count)} but ${String(actual)} blocking finding(s) exist`,
-      },
-    ];
-  }
-
-  return [];
-}
-
 // ── Aggregator ───────────────────────────────────────────────────────────────
 
 /**
@@ -113,7 +90,7 @@ export function checkBlockingCount(review: Review): StructuralIssue[] {
  * @returns Aggregated validation result with all issues
  */
 export function validateReviewStructure(review: Review): StructuralValidationResult {
-  const checks = [checkStatusConsistency, checkBlockingCount];
+  const checks = [checkStatusConsistency];
 
   const issues = checks.flatMap((fn) => fn(review));
 
