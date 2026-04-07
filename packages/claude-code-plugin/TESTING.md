@@ -246,21 +246,6 @@ for (const path of MALICIOUS_PATHS) {
 }
 ```
 
-## Docker Testing
-
-Build and run tests in a container:
-
-```bash
-# Build test container
-docker build -f Dockerfile.test -t claude-code-plugin-test .
-
-# Run smoke tests
-docker run --rm claude-code-plugin-test
-
-# Run all tests
-docker run --rm claude-code-plugin-test npm test
-```
-
 ## Debugging Tests
 
 ### View logs during tests

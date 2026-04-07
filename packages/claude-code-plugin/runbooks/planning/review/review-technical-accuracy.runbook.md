@@ -17,8 +17,6 @@ Verify that all technical references in the plan are accurate.
 
 ### 1.1 File paths exist
 
-- DEFER
-
 Read the plan at `{{ PlanPath }}` and verify every file path referenced in the plan exists in the codebase. Check both source and test files.
 
 ### 1.2 Symbols exist
@@ -47,7 +45,7 @@ Check that proposed code changes follow the project's established patterns and c
 
 ## 2. Write findings
 
-Write the results of each check above to the path resolved by `rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file technical-accuracy-pass{{ context.parent.index }}.md`. List each check with PASS/FAIL, provide evidence for each FAIL, and include an overall assessment. First ensure the output directory exists:
+Write the results of each check above to the path resolved by `rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file technical-accuracy.md`. List each check with PASS/FAIL, provide evidence for each FAIL, and include an overall assessment. First ensure the output directory exists:
 
 ```bash
 mkdir -p "$(rdpath --dir {{ WorkPath }} --ctx {{ ContextId }})"

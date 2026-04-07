@@ -10,7 +10,8 @@ Docker-based tests verify CLI installation, plugin integration, and end-to-end w
 | Verify (npm) | `npm run verify:claude:npm` | Install from npm registry |
 | E2E | `npm run test:e2e` | Full plugin workflow (claude -p → runbook) |
 | E2E build | `npm run test:e2e:build` | Build E2E image only (no test run) |
-| E2E shell | `npm run test:e2e:shell` | Build + interactive shell in E2E container |
+| E2E shell | `npm run test:e2e:shell` | Build + interactive Claude Code session |
+| E2E shell (project) | `npm run test:e2e:shell -- ~/path` | Interactive session with mounted project |
 
 All scripts can be run from a worktree — they resolve paths relative to their own location.
 
@@ -35,7 +36,7 @@ All scripts can be run from a worktree — they resolve paths relative to their 
 | File | Role |
 |------|------|
 | `scripts/verify-install.sh` | Host-side orchestrator (builds, packs, launches Docker) |
-| `scripts/Dockerfile.verify` | Multi-stage Dockerfile (`base`, `local`, `npm` stages) |
+| `scripts/Dockerfile.verify` | Multi-stage Dockerfile (`base`, `local`, `npm`, `e2e` stages) |
 | `scripts/docker-entrypoint.sh` | Container entrypoint running verification checks |
 | `docker-compose.verify.yml` | Compose services (`test-local`, `test-npm`) |
 
@@ -85,6 +86,7 @@ The Dockerfile uses a multi-stage build:
 - **`base`** — Shared foundation: `node:24-slim`, git, curl, sudo, non-root `testuser`, Claude Code (native installer)
 - **`local`** — Copies pre-packed tarballs from `dist/` and installs them globally
 - **`npm`** — Defers installation to the entrypoint, which runs `npm install -g` at container start
+- **`e2e`** — Extends `local` with test fixture and E2E/shell entrypoints
 
 The `verify-install.sh` orchestrator handles the host-side workflow: building packages, packing tarballs (local mode), preparing credentials, and launching the Docker container via Compose.
 
@@ -106,9 +108,11 @@ Tests the full plugin workflow: `claude -p` triggers hook dispatch, the `/writin
 |------|------|
 | `scripts/build-e2e.sh` | Build packages, pack tarballs, prepare credentials, build Docker image |
 | `scripts/run-e2e.sh` | Host-side orchestrator (calls build, launches test) |
-| `scripts/Dockerfile.e2e` | Single-stage Dockerfile (node:24-slim, Claude Code via npm) |
+| `scripts/e2e-shell.sh` | Host-side launcher for interactive Claude Code session |
+| `scripts/Dockerfile.verify` | Shared Dockerfile (`e2e` stage extends `local`) |
 | `docker-compose.e2e.yml` | Compose service with volume mounts |
 | `scripts/e2e-entrypoint.sh` | Container entrypoint (6-phase test runner) |
+| `scripts/e2e-shell-entrypoint.sh` | Container entrypoint (workspace setup + interactive claude) |
 | `tests/e2e/fixtures/test-app/` | Test fixture (Hono + SQLite REST API) |
 
 ### What It Verifies
@@ -131,21 +135,29 @@ docker compose -f docker-compose.e2e.yml run --rm e2e
 
 ### Interactive Shell
 
-`test:e2e:shell` builds the image automatically before dropping into bash:
+`test:e2e:shell` builds the image and launches an interactive Claude Code session with the plugin pre-loaded by default. `--no-build` skips the rebuild, and `--bash` bypasses the launcher and drops into a plain shell:
 
 ```bash
-npm run test:e2e:shell
+npm run test:e2e:shell                                  # Build + launch Claude with test-app fixture
+npm run test:e2e:shell -- ~/path/to/project             # Build + launch Claude with mounted project
+npm run test:e2e:shell -- --bash                        # Build + drop to bash (no Claude, no fixture setup)
+npm run test:e2e:shell -- ~/path/to/project --bash      # Build + bash in mounted project
+npm run test:e2e:shell -- --no-build                    # Cached image + launch Claude with test-app fixture
+npm run test:e2e:shell -- --no-build ~/path/to/project  # Cached image + launch Claude with mounted project
 ```
 
-To skip the build (if the image is already up to date):
+When a custom project is mounted, changes persist back to the host filesystem. This enables dogfooding — using the plugin to build itself:
 
 ```bash
-docker compose -f docker-compose.e2e.yml run --rm --entrypoint bash e2e
+# Launch Claude Code against your own project
+npm run test:e2e:shell -- ~/path/to/project
 ```
 
-### Architecture
+Without a project path, the default launcher copies the built-in test-app fixture (Hono + SQLite REST API) to a temporary workspace with git initialised. The `--bash` variants skip that setup.
 
-The E2E Dockerfile uses a single-stage build with Claude Code installed via npm (`npm install -g @anthropic-ai/claude-code@2`) rather than the native installer. This simplifies the build at the cost of diverging from the production install path.
+### E2E Architecture
+
+The E2E stage extends the `local` stage from `Dockerfile.verify`, adding the test fixture and entrypoints. This eliminates duplication — Claude Code installation, system packages, and tarball setup are defined once in the `base`/`local` stages.
 
 ## Plugin Smoke Tests
 
@@ -154,8 +166,6 @@ Cross-platform tests for plugin functionality (CLI commands, hook dispatch, sess
 ```bash
 cd packages/claude-code-plugin && npm run test:smoke
 ```
-
-For containerized execution, see `packages/claude-code-plugin/Dockerfile.test` and the [plugin TESTING.md](../packages/claude-code-plugin/TESTING.md).
 
 ## Credential Persistence
 

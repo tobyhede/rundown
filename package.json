@@ -56,7 +56,7 @@
     "verify:claude:npm": "./scripts/verify-install.sh npm",
     "test:e2e": "./scripts/run-e2e.sh",
     "test:e2e:build": "./scripts/build-e2e.sh",
-    "test:e2e:shell": "./scripts/build-e2e.sh && docker compose -f docker-compose.e2e.yml run --rm --entrypoint bash e2e"
+    "test:e2e:shell": "./scripts/e2e-shell.sh"
   },
   "lint-staged": {
     "*.{ts,tsx,js,jsx,json,css}": [
