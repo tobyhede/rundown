@@ -271,6 +271,28 @@ describe('ReviewSchema', () => {
         ),
       ).toThrow(ZodError);
     });
+
+    it('rejects Windows drive path', () => {
+      expect(() =>
+        ReviewSchema.parse(
+          validReview({
+            status: 'blocked',
+            findings: [blockingFinding({ location: { path: 'C:\\Users\\dev\\file.ts' } })],
+          }),
+        ),
+      ).toThrow(ZodError);
+    });
+
+    it('rejects backslash path', () => {
+      expect(() =>
+        ReviewSchema.parse(
+          validReview({
+            status: 'blocked',
+            findings: [blockingFinding({ location: { path: 'src\\file.ts' } })],
+          }),
+        ),
+      ).toThrow(ZodError);
+    });
   });
 
   describe('validate() export', () => {

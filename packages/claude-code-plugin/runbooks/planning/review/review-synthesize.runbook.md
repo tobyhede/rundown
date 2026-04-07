@@ -15,7 +15,7 @@ Collate findings from all review dimensions into a single canonical review docum
 - FAIL STOP
 
 ```bash
-rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} find "*plan-review-*.json"
+rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} find "plan-review-[!c]*.json"
 ```
 
 ## 2. Read the output schema
