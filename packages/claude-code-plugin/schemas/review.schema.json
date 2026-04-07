@@ -3,41 +3,32 @@
   "$id": "https://rundown.org/schemas/review.schema.json",
   "title": "Review",
   "description": "Structured review findings for plan and code reviews.",
-  "oneOf": [
-    {
-      "type": "object",
-      "description": "Ok review gate: no blocking findings, proceed.",
-      "required": ["meta", "status", "blocking_count", "findings"],
-      "properties": {
-        "$schema": { "$ref": "#/$defs/SchemaUri" },
-        "meta": { "$ref": "#/$defs/Meta" },
-        "status": { "const": "ok", "description": "Review gate: ok = proceed" },
-        "blocking_count": { "const": 0, "description": "Must be 0 for ok reviews" },
-        "findings": { "$ref": "#/$defs/Findings" }
-      },
-      "additionalProperties": false
-    },
-    {
-      "type": "object",
-      "description": "Blocked review gate: has blocking findings, must fix first.",
-      "required": ["meta", "status", "blocking_count", "findings"],
-      "properties": {
-        "$schema": { "$ref": "#/$defs/SchemaUri" },
-        "meta": { "$ref": "#/$defs/Meta" },
-        "status": {
-          "const": "blocked",
-          "description": "Review gate: blocked = must fix blocking findings first"
-        },
-        "blocking_count": {
-          "type": "integer",
-          "minimum": 1,
-          "description": "Number of blocking findings (>= 1)"
-        },
-        "findings": { "$ref": "#/$defs/Findings" }
-      },
-      "additionalProperties": false
-    }
+  "type": "object",
+  "required": [
+    "meta",
+    "status",
+    "findings"
   ],
+  "properties": {
+    "$schema": {
+      "$ref": "#/$defs/SchemaUri"
+    },
+    "meta": {
+      "$ref": "#/$defs/Meta"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "ok",
+        "blocked"
+      ],
+      "description": "Review gate: ok = proceed, blocked = must fix blocking findings first"
+    },
+    "findings": {
+      "$ref": "#/$defs/Findings"
+    }
+  },
+  "additionalProperties": false,
   "$defs": {
     "SchemaUri": {
       "type": "string",
@@ -47,7 +38,9 @@
     },
     "Meta": {
       "type": "object",
-      "required": ["version"],
+      "required": [
+        "version"
+      ],
       "properties": {
         "version": {
           "const": "1.0.0"
@@ -57,7 +50,13 @@
     },
     "Finding": {
       "type": "object",
-      "required": ["title", "severity", "description", "evidence", "recommendation"],
+      "required": [
+        "title",
+        "severity",
+        "description",
+        "evidence",
+        "recommendation"
+      ],
       "properties": {
         "title": {
           "type": "string",
@@ -66,7 +65,10 @@
         },
         "severity": {
           "type": "string",
-          "enum": ["blocking", "non_blocking"],
+          "enum": [
+            "blocking",
+            "non_blocking"
+          ],
           "description": "blocking = must fix before proceeding, non_blocking = should fix"
         },
         "description": {
@@ -92,12 +94,16 @@
     },
     "Findings": {
       "type": "array",
-      "items": { "$ref": "#/$defs/Finding" }
+      "items": {
+        "$ref": "#/$defs/Finding"
+      }
     },
     "Location": {
       "type": "object",
       "description": "A code location. Note: JSON Schema cannot enforce end_line >= line; the Zod schema's superRefine is the authoritative enforcement layer.",
-      "required": ["path"],
+      "required": [
+        "path"
+      ],
       "properties": {
         "path": {
           "type": "string",

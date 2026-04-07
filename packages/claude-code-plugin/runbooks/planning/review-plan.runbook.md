@@ -10,7 +10,7 @@ tags:
 
 Review the plan in the current context.
 
-## 1. Resolve plan path
+## 1. Find plan
 - PASS CONTINUE
 - FAIL STOP
 
@@ -18,38 +18,31 @@ Review the plan in the current context.
 rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} find "*plan.json"
 ```
 
-## 2. Review the plan schema
+## 2. Context and scope
 - PASS CONTINUE
 - FAIL STOP
 
-Validate the plan found in step 1 against the schema.
-
-Schema: `{{ CLAUDE_PLUGIN_ROOT }}/schemas/plan.schema.json`
-
-## 3. Context and scope
-- PASS CONTINUE
-- FAIL STOP
+Read the plan and validate these elements exist and are coherent.
 
 Verify the plan includes:
-- A specific, testable goal (one sentence)
+- A clear, concise description of the desired outcome.
 - Explicit success criteria
-- Defined scope boundaries (in-scope and out-of-scope)
+- Clearly defined scope
 - Accurate assumptions about current state
 
-Read the plan found in step 1 and validate these elements exist and are coherent.
-
-## 4. Delegate subagents to review the plan
+## 3. Delegate subagents to review the plan
 - PASS ALL CONTINUE
 - FAIL ANY CONTINUE
 
-Delegate subagents to review
+Delegate subagents to review the plan.
 
 - review-technical-accuracy.runbook.md
 - review-structural-integrity.runbook.md
 - review-build-runtime.runbook.md
 - review-risk-safety.runbook.md
 
-## 5. Collate review documents
+
+## 4. Collate review documents
 - PASS ALL COMPLETE
 - FAIL ANY STOP
 

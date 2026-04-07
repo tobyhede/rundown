@@ -10,7 +10,7 @@ tags:
 
 Collate findings from all review dimensions into a single canonical review document.
 
-## 1. Resolve review paths
+## 1. Find reviews
 - PASS CONTINUE
 - FAIL STOP
 
@@ -18,29 +18,27 @@ Collate findings from all review dimensions into a single canonical review docum
 rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} find "*plan-review-*.json"
 ```
 
-## 2. Review output schema
+## 2. Read the output schema
 - PASS CONTINUE
 - FAIL STOP
 
-Schema: `{{ CLAUDE_PLUGIN_ROOT }}/schemas/review.schema.json`
-
-## 3. Output path
-- PASS CONTINUE
-- FAIL STOP
-
-```bash
-mkdir -p "$(rdpath --dir {{ WorkPath }} --ctx {{ ContextId }})"
-rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file plan-review-collated-{{ RunId }}.json
+```prompt
+{{ CLAUDE_PLUGIN_ROOT }}/schemas/review.schema.json
 ```
 
-## 4. Collate findings
+## 3. Collate findings
 - PASS CONTINUE
 - FAIL STOP
 
 Read all review JSON files found in step 1. Merge findings from all reviews into a single canonical review document. Deduplicate identical findings. Set status based on whether any blocking findings exist across all reviews.
 
-## 5. Write collated review
+## 4. Write the review
 - PASS COMPLETE
 - FAIL STOP
 
-Write the collated review to the output path (step 3), conforming to the review schema (step 2).
+Write the review to the output path as JSON.
+Follow the review output schema.
+
+```bash
+rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file plan-review-collated-{{ RunId }}.json
+```
