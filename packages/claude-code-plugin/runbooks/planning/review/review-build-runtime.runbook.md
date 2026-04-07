@@ -10,45 +10,66 @@ tags:
 
 Verify that build, test, and runtime concerns are addressed.
 
-## 1. Build and runtime checks
+## 1. Resolve plan path
+- PASS CONTINUE
+- FAIL STOP
+
+```bash
+rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} find "*plan.json"
+```
+
+## 2. Review output schema
+- PASS CONTINUE
+- FAIL STOP
+
+Schema: `{{ CLAUDE_PLUGIN_ROOT }}/schemas/review.schema.json`
+
+## 3. Output path
+- PASS CONTINUE
+- FAIL STOP
+
+```bash
+mkdir -p "$(rdpath --dir {{ WorkPath }} --ctx {{ ContextId }})"
+rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file plan-review-{{ RunId }}.json
+```
+
+## 4. Build and runtime checks
 
 - PASS ALL CONTINUE
 - FAIL ANY CONTINUE
 
-### 1.1 Build commands correct
+### 4.1 Build commands correct
 
 - DEFER
 
-Read the plan at `{{ PlanPath }}` and verify that build commands are correct for the project's build system and would produce the expected outputs.
+Read the plan found in step 1 and verify that build commands are correct for the project's build system and would produce the expected outputs.
 
-### 1.2 Test commands correct
+### 4.2 Test commands correct
 
 - DEFER
 
 Check that test commands reference the correct test framework, use proper flags, and target the right test files or suites.
 
-### 1.3 Dependencies available
+### 4.3 Dependencies available
 
 - DEFER
 
 Verify that all dependencies (packages, tools, services) referenced in the plan are available and version-compatible.
 
-### 1.4 Environment requirements documented
+### 4.4 Environment requirements documented
 
 - DEFER
 
 Check that environment requirements (Node version, env vars, config files, credentials) are documented where needed.
 
-### 1.5 CI/CD integration considered
+### 4.5 CI/CD integration considered
 
 - DEFER
 
 Verify that changes won't break CI/CD pipelines and that any pipeline modifications are included in the plan.
 
-## 2. Write findings
+## 5. Write findings
+- PASS COMPLETE
+- FAIL STOP
 
-Write the results of each check above to the path resolved by `rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file build-runtime.md`. List each check with PASS/FAIL, provide evidence for each FAIL, and include an overall assessment. First ensure the output directory exists:
-
-```bash
-mkdir -p "$(rdpath --dir {{ WorkPath }} --ctx {{ ContextId }})"
-```
+Write findings as JSON to the output path (step 3), conforming to the review schema (step 2). Set `status` to `"ok"` if no blocking issues, `"blocked"` otherwise. Each finding needs: title, severity, description, evidence, recommendation.
