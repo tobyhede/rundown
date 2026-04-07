@@ -40,6 +40,8 @@ rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file plan-review-{{ RunId }}
 
 ### 4.1 File paths exist
 
+- DEFER
+
 Read the plan found in step 1 and verify every file path referenced in the plan exists in the codebase. Check both source and test files.
 
 ### 4.2 Symbols exist
