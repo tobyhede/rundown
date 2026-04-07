@@ -35,18 +35,9 @@ export function getPluginRoot(): string | null {
 }
 
 /**
- * Discover the plugin as a sibling package in the same node_modules scope.
- *
- * Path from this file:
- *   node_modules/@rundown-org/cli/dist/helpers/plugin-root.js
- *   → up 4 levels → node_modules/@rundown-org/
- *   → claude-code-plugin/
- *
- * @returns Absolute path to the plugin root, or null if not found
- */
-/**
  * Reset the cached sibling discovery result.
- * @internal Test-only — not part of the public API.
+ *
+ * @internal
  */
 export function _resetPluginRootCache(): void {
   cached = undefined;

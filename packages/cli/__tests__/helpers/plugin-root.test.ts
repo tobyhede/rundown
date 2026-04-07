@@ -7,9 +7,7 @@ jest.unstable_mockModule('node:fs', () => ({
 }));
 
 // Import after mocking
-const { getPluginRoot, _resetPluginRootCache } = await import(
-  '../../src/helpers/plugin-root.js'
-);
+const { getPluginRoot, _resetPluginRootCache } = await import('../../src/helpers/plugin-root.js');
 
 describe('getPluginRoot()', () => {
   let originalEnv: string | undefined;

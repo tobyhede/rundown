@@ -363,7 +363,9 @@ export async function loadAndParseRunbook(file: string, cwd: string): Promise<Lo
     } = parseRunbookDocument(rawContent, path.basename(filePath));
 
     const varDiagnostics = validateFrontmatterVars(frontmatter?.vars);
-    const requiredDiagnostics = validateRequiredVars(frontmatter?.required, frontmatter?.vars);
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- tsc resolves index signature as unknown via .d.ts
+    const fmRequired = frontmatter?.required as string[] | undefined;
+    const requiredDiagnostics = validateRequiredVars(fmRequired, frontmatter?.vars);
     const diagnostics: readonly ValidationDiagnostic[] = [
       ...parseDiagnostics,
       ...varDiagnostics,
@@ -508,10 +510,12 @@ export async function prepareRunbook(
   }
 
   // Validate required variables are provided by an external layer
-  if (frontmatter?.required && frontmatter.required.length > 0) {
-    const missing = frontmatter.required.filter((name) => !providedKeys.has(name));
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- tsc resolves index signature as unknown via .d.ts
+  const requiredVars = frontmatter?.required as string[] | undefined;
+  if (requiredVars && requiredVars.length > 0) {
+    const missing = requiredVars.filter((name: string) => !providedKeys.has(name));
     if (missing.length > 0) {
-      const names = missing.map((n) => `"${n}"`).join(', ');
+      const names = missing.map((n: string) => `"${n}"`).join(', ');
       return {
         ok: false,
         error: `Missing required variable${missing.length > 1 ? 's' : ''}: ${names}. Provide via --var, --var-file, config.yaml, or RD_VAR_* environment variable.`,
