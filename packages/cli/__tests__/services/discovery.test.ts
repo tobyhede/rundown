@@ -44,6 +44,13 @@ describe('discovery service', () => {
 
   afterEach(async () => {
     await rm(tempDir, { recursive: true, force: true });
+    mockGetPluginRoot.mockReset();
+    // Restore default implementation: pass through env var, otherwise null
+    mockGetPluginRoot.mockImplementation(() => {
+      const envRoot = process.env.CLAUDE_PLUGIN_ROOT;
+      if (envRoot) return envRoot;
+      return null;
+    });
     // Restore original bundled runbooks path
     if (originalBundledRunbooksPath) {
       process.env.BUNDLED_RUNBOOKS_PATH = originalBundledRunbooksPath;

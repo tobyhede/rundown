@@ -52,6 +52,10 @@ describe('getPluginRoot()', () => {
     expect(result).not.toBeNull();
     expect(result).toContain('claude-code-plugin');
     expect(mockExistsSync).toHaveBeenCalledTimes(1);
+
+    // Verify the returned root matches the probed path with /runbooks stripped
+    const checkedPath = mockExistsSync.mock.calls[0][0];
+    expect(checkedPath.replace(/[\\/]runbooks$/, '')).toBe(result);
   });
 
   it('returns null when existsSync returns false and env var unset', () => {

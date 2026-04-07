@@ -64,7 +64,7 @@ function namespaceToSource(namespace: string): 'project' | 'plugin' | 'bundled' 
  * Resolve runbook file by path (existing logic).
  * Search order:
  * 1. .claude/rundown/runbooks/ (project-local)
- * 2. $CLAUDE_PLUGIN_ROOT/runbooks/ (plugin directory)
+ * 2. Plugin runbooks (via CLAUDE_PLUGIN_ROOT env var or sibling package discovery)
  * 3. Relative to cwd
  * 4. Bundled runbooks (lowest priority)
  *
