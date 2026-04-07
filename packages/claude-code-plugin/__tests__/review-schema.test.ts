@@ -99,16 +99,14 @@ describe('ReviewSchema', () => {
     });
 
     it('rejects blocked review with zero blocking findings', () => {
-      expect(() =>
-        ReviewSchema.parse(validReview({ status: 'blocked', findings: [] })),
-      ).toThrow(ZodError);
+      expect(() => ReviewSchema.parse(validReview({ status: 'blocked', findings: [] }))).toThrow(
+        ZodError,
+      );
     });
 
     it('rejects blocked review with only non_blocking findings', () => {
       expect(() =>
-        ReviewSchema.parse(
-          validReview({ status: 'blocked', findings: [nonBlockingFinding()] }),
-        ),
+        ReviewSchema.parse(validReview({ status: 'blocked', findings: [nonBlockingFinding()] })),
       ).toThrow(ZodError);
     });
 

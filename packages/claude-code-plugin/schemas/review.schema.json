@@ -4,11 +4,7 @@
   "title": "Review",
   "description": "Structured review findings for plan and code reviews.",
   "type": "object",
-  "required": [
-    "meta",
-    "status",
-    "findings"
-  ],
+  "required": ["meta", "status", "findings"],
   "properties": {
     "$schema": {
       "$ref": "#/$defs/SchemaUri"
@@ -18,10 +14,7 @@
     },
     "status": {
       "type": "string",
-      "enum": [
-        "ok",
-        "blocked"
-      ],
+      "enum": ["ok", "blocked"],
       "description": "Review gate: ok = proceed, blocked = must fix blocking findings first"
     },
     "findings": {
@@ -38,9 +31,7 @@
     },
     "Meta": {
       "type": "object",
-      "required": [
-        "version"
-      ],
+      "required": ["version"],
       "properties": {
         "version": {
           "const": "1.0.0"
@@ -50,13 +41,7 @@
     },
     "Finding": {
       "type": "object",
-      "required": [
-        "title",
-        "severity",
-        "description",
-        "evidence",
-        "recommendation"
-      ],
+      "required": ["title", "severity", "description", "evidence", "recommendation"],
       "properties": {
         "title": {
           "type": "string",
@@ -65,10 +50,7 @@
         },
         "severity": {
           "type": "string",
-          "enum": [
-            "blocking",
-            "non_blocking"
-          ],
+          "enum": ["blocking", "non_blocking"],
           "description": "blocking = must fix before proceeding, non_blocking = should fix"
         },
         "description": {
@@ -101,9 +83,7 @@
     "Location": {
       "type": "object",
       "description": "A code location. Note: JSON Schema cannot enforce end_line >= line; the Zod schema's superRefine is the authoritative enforcement layer.",
-      "required": [
-        "path"
-      ],
+      "required": ["path"],
       "properties": {
         "path": {
           "type": "string",
