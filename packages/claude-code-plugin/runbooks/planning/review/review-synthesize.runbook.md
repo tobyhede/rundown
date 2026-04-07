@@ -1,6 +1,6 @@
 ---
 name: review-synthesize
-description: Collate review findings and produce a verdict
+description: Collate review findings and produce a canonical review document
 tags:
   - planning
   - review
@@ -8,22 +8,34 @@ tags:
 
 # Synthesize Review Findings
 
-Collate findings from the four review dimensions and produce a final verdict.
+Collate findings from all review dimensions into a single canonical review document.
 
-## 1. Read all findings
+## 1. Review output schema
+- PASS CONTINUE
+- FAIL STOP
 
-Collect every PASS/FAIL result and its evidence. Read all review findings from the context directory. List the files in the context directory resolved by `rdpath --dir {{ WorkPath }} --ctx {{ ContextId }}`. Expected files: `technical-accuracy.md`, `structural-integrity.md`, `build-runtime.md`, `risk-safety.md`.
+Schema: `{{ CLAUDE_PLUGIN_ROOT }}/schemas/review.schema.json`
 
-## 2. Collate issues
+## 2. Resolve review paths
+- PASS CONTINUE
+- FAIL STOP
 
-List every issue found across all four review dimensions. For each issue, note which review found it and the supporting evidence.
+```bash
+rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} find "*plan-review-*.json"
+```
 
-## 3. Categorize by severity
+## 3. Output path
+- PASS CONTINUE
+- FAIL STOP
 
-Categorize all findings into two severity levels. "Blocking" issues must be resolved before implementation (incorrect paths, missing steps, security risks, broken dependencies). "Non-blocking" issues should be addressed but won't prevent implementation (style suggestions, minor gaps, optional improvements).
+```bash
+rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file plan-review-collated-{{ RunId }}.json
+```
 
-## 4. Write verdict
+## 4. Collate findings
 
-Write the final verdict to the path resolved by `rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file plan-review-verdict.md`. Include the verdict label, a one-paragraph summary, and numbered lists of blocking and non-blocking issues with evidence.
+Read all review JSON files found in step 2. Merge findings from all reviews into a single canonical review document. Deduplicate identical findings. Set status based on whether any blocking findings exist across all reviews.
 
-Verdict labels: "Approved" means zero blocking issues. "Approved with changes" means non-blocking issues only. "Blocked" means blocking issues must be resolved first.
+## 5. Write collated review
+
+Write the collated review to the output path (step 3), conforming to the review schema (step 1).
