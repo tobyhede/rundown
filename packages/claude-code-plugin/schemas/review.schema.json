@@ -4,18 +4,13 @@
   "title": "Review",
   "description": "Structured review findings for plan and code reviews.",
   "type": "object",
-  "required": ["meta", "status", "findings"],
+  "required": ["meta", "findings"],
   "properties": {
     "$schema": {
       "$ref": "#/$defs/SchemaUri"
     },
     "meta": {
       "$ref": "#/$defs/Meta"
-    },
-    "status": {
-      "type": "string",
-      "enum": ["ok", "blocked"],
-      "description": "Review gate: ok = proceed, blocked = must fix blocking findings first"
     },
     "findings": {
       "$ref": "#/$defs/Findings"

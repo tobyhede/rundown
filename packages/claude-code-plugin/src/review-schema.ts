@@ -57,19 +57,14 @@ const Meta = z
  * Schema for a complete review.
  *
  * Validates the JSON structure used by plan and code review workflows.
- * Status is a gate signal: "ok" = proceed, "blocked" = must fix first.
- * Blocking count is derived from findings — not stored as a field.
- *
- * The superRefine layer enforces cross-field invariants:
- * - ok reviews cannot contain blocking findings
- * - blocked reviews must contain at least one blocking finding
+ * Whether a review is blocking is derived from findings:
+ * `findings.some(f => f.severity === 'blocking')`.
  *
  * @example
  * ```json
  * {
  *   "$schema": "https://rundown.org/schemas/review.schema.json",
  *   "meta": { "version": "1.0.0" },
- *   "status": "blocked",
  *   "findings": [...]
  * }
  * ```
@@ -81,31 +76,9 @@ export const ReviewSchema = z
       .optional()
       .describe('Schema URI for editor autocomplete and rdx validation dispatch'),
     meta: Meta,
-    status: z
-      .enum(['ok', 'blocked'])
-      .describe('Review gate: ok = proceed, blocked = must fix blocking findings first'),
     findings: z.array(Finding),
   })
-  .strict()
-  .superRefine((value, ctx) => {
-    const blockingCount = value.findings.filter((f) => f.severity === 'blocking').length;
-
-    if (value.status === 'ok' && blockingCount > 0) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['findings'],
-        message: `ok reviews cannot contain blocking findings (found ${String(blockingCount)})`,
-      });
-    }
-
-    if (value.status === 'blocked' && blockingCount === 0) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['findings'],
-        message: 'blocked reviews require at least one blocking finding',
-      });
-    }
-  });
+  .strict();
 
 /** Validated review type inferred from ReviewSchema. */
 export type Review = z.infer<typeof ReviewSchema>;

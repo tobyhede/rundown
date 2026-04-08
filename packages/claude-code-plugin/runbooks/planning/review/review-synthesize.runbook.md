@@ -30,7 +30,7 @@ rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} find "plan-review-[!c]*.json"
 - PASS CONTINUE
 - FAIL STOP
 
-Read all review JSON files found in step 1. Merge findings from all reviews into a single canonical review document. Deduplicate identical findings. Set status based on whether any blocking findings exist across all reviews.
+Read all review JSON files found in step 1. Merge findings from all reviews into a single canonical review document. Deduplicate identical findings.
 
 ## 4. Write the review
 - PASS COMPLETE
