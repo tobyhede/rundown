@@ -17,7 +17,7 @@ Invoke and read the writing-plans skill. Internalize the guidance — it defines
 Skill: `rundown:writing-plans`
 
 
-## 2. Review the schema
+## 2. Review the plan schema
 - PASS CONTINUE
 - FAIL STOP
 
@@ -78,7 +78,8 @@ rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file plan.json
 - PASS CONTINUE
 - FAIL STOP
 
-Write the plan to the output path. Follow the structure and conventions from the writing-plans skill (step 1).
+Write the plan to the output path.
+Follow the structure and conventions from the writing-plans skill.
 If revising the plan, address the issues identified.
 
 

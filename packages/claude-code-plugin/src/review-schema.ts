@@ -53,98 +53,32 @@ const Meta = z
   })
   .strict();
 
-/** Shared fields present in both ok and blocked review variants. */
-const SharedFields = {
-  $schema: z
-    .literal('https://rundown.org/schemas/review.schema.json')
-    .optional()
-    .describe('Schema URI for editor autocomplete and rdx validation dispatch'),
-  meta: Meta,
-  findings: z.array(Finding),
-};
-
-/**
- * Ok review gate: no blocking findings, proceed.
- *
- * Used as a variant in the ReviewSchema discriminated union.
- * @internal
- */
-const OkReview = z
-  .object({
-    ...SharedFields,
-    status: z.literal('ok').describe('Review gate: ok = proceed'),
-    blocking_count: z.literal(0).describe('Must be 0 for ok reviews'),
-  })
-  .strict();
-
-/**
- * Blocked review gate: has blocking findings, must fix first.
- *
- * Used as a variant in the ReviewSchema discriminated union.
- * @internal
- */
-const BlockedReview = z
-  .object({
-    ...SharedFields,
-    status: z
-      .literal('blocked')
-      .describe('Review gate: blocked = must fix blocking findings first'),
-    blocking_count: z.number().int().min(1).describe('Number of blocking findings (>= 1)'),
-  })
-  .strict();
-
 /**
  * Schema for a complete review.
  *
  * Validates the JSON structure used by plan and code review workflows.
- * Encoded as a discriminated union on `status` so that invalid combinations
- * (e.g., status "ok" with blocking findings) are unrepresentable.
- *
- * The superRefine layer enforces cross-field invariants:
- * - ok reviews cannot contain blocking findings
- * - blocked reviews must contain at least one blocking finding
- * - blocking_count must match the actual count of blocking findings
+ * Whether a review is blocking is derived from findings:
+ * `findings.some(f => f.severity === 'blocking')`.
  *
  * @example
  * ```json
  * {
  *   "$schema": "https://rundown.org/schemas/review.schema.json",
  *   "meta": { "version": "1.0.0" },
- *   "status": "blocked",
- *   "blocking_count": 1,
  *   "findings": [...]
  * }
  * ```
  */
 export const ReviewSchema = z
-  .discriminatedUnion('status', [OkReview, BlockedReview])
-  .superRefine((value, ctx) => {
-    const blockingCount = value.findings.filter((f) => f.severity === 'blocking').length;
-
-    if (value.status === 'ok' && blockingCount > 0) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['findings'],
-        message: `ok reviews cannot contain blocking findings (found ${String(blockingCount)})`,
-      });
-    }
-
-    if (value.status === 'blocked' && blockingCount === 0) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['findings'],
-        message: 'blocked reviews require at least one blocking finding',
-      });
-    }
-
-    if (value.blocking_count !== blockingCount) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['blocking_count'],
-        message: `blocking_count is ${String(value.blocking_count)} but ${String(blockingCount)} blocking finding(s) exist`,
-      });
-    }
-  });
+  .object({
+    $schema: z
+      .literal('https://rundown.org/schemas/review.schema.json')
+      .optional()
+      .describe('Schema URI for editor autocomplete and rdx validation dispatch'),
+    meta: Meta,
+    findings: z.array(Finding),
+  })
+  .strict();
 
 /** Validated review type inferred from ReviewSchema. */
 export type Review = z.infer<typeof ReviewSchema>;

@@ -4,39 +4,37 @@ description: Review and validate an implementation plan
 tags:
   - planning
   - review
-required:
-  - PlanPath
 ---
 
 # Review Implementation Plan
 
-Review the plan at `{{ PlanPath }}`.
+Review the plan in the current context.
 
-`PlanPath` must be supplied by the caller. Resolve with `rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file plan.json`.
-
-## 1. Review the plan schema
+## 1. Find plan
 - PASS CONTINUE
 - FAIL STOP
 
-Validate the plan at `{{ PlanPath }}` against the schema at `{{ CLAUDE_PLUGIN_ROOT }}/schemas/plan.schema.json`. Read both files and verify all required fields are present and correctly typed.
+```bash
+rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} find "*plan.json"
+```
 
 ## 2. Context and scope
 - PASS CONTINUE
 - FAIL STOP
 
-Verify the plan includes:
-- A specific, testable goal (one sentence)
-- Explicit success criteria
-- Defined scope boundaries (in-scope and out-of-scope)
-- Accurate assumptions about current state
+Read the plan and validate these elements exist and are coherent.
 
-Read the plan at `{{ PlanPath }}` and validate these elements exist and are coherent.
+Verify the plan includes:
+- A clear, concise description of the desired outcome.
+- Explicit success criteria
+- Clearly defined scope
+- Accurate assumptions about current state
 
 ## 3. Delegate subagents to review the plan
 - PASS ALL CONTINUE
 - FAIL ANY CONTINUE
 
-Delegate subagents to review
+Delegate subagents to review the plan.
 
 - review-technical-accuracy.runbook.md
 - review-structural-integrity.runbook.md
@@ -48,4 +46,3 @@ Delegate subagents to review
 - FAIL ANY STOP
 
 - review-synthesize.runbook.md
-

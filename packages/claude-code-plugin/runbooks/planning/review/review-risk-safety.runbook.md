@@ -10,63 +10,42 @@ tags:
 
 Assess risk, security, and safety concerns in the plan.
 
-## 1. Risk and safety checks
-
-- PASS ALL CONTINUE
-- FAIL ANY CONTINUE
-
-### 1.1 Security implications assessed
-
-- DEFER
-
-Read the plan at `{{ PlanPath }}` and check for security concerns: input validation, authentication, authorization, data exposure, and injection risks.
-
-### 1.2 Performance impact considered
-
-- DEFER
-
-Verify that performance-sensitive changes include benchmarks or impact analysis. Check for potential regressions in hot paths.
-
-### 1.3 Breaking changes identified
-
-- DEFER
-
-Check that all breaking changes to public APIs, data formats, or behavior are explicitly identified.
-
-### 1.4 Migration path for breaking changes
-
-- DEFER
-
-Verify that identified breaking changes include a migration path or deprecation strategy.
-
-### 1.5 Data integrity protected
-
-- DEFER
-
-Check that operations involving persistent data (files, databases, state) protect against corruption and data loss.
-
-### 1.6 Concurrent operation safety
-
-- DEFER
-
-Verify that concurrent or parallel operations are safe from race conditions and resource conflicts.
-
-### 1.7 Error recovery procedures
-
-- DEFER
-
-Check that failure scenarios have documented recovery procedures beyond "retry."
-
-### 1.8 Monitoring and observability
-
-- DEFER
-
-Verify that changes include appropriate logging, metrics, or monitoring where the plan touches observable behavior.
-
-## 2. Write findings
-
-Write the results of each check above to the path resolved by `rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file risk-safety.md`. List each check with PASS/FAIL, provide evidence for each FAIL, and include an overall assessment. First ensure the output directory exists:
+## 1. Find plan
+- PASS CONTINUE
+- FAIL STOP
 
 ```bash
-mkdir -p "$(rdpath --dir {{ WorkPath }} --ctx {{ ContextId }})"
+rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} find "*plan.json"
+```
+
+## 2. Read the output schema
+- PASS CONTINUE
+- FAIL STOP
+
+```prompt
+{{ CLAUDE_PLUGIN_ROOT }}/schemas/review.schema.json
+```
+
+## 3. Review the plan for risk and safety
+- PASS COMPLETE
+- FAIL CONTINUE
+
+- Security concerns are assessed: input validation, authentication, authorization, data exposure, injection risks
+- Performance-sensitive changes include benchmarks or impact analysis
+- All breaking changes to public APIs, data formats, or behavior are explicitly identified
+- Breaking changes include a migration path or deprecation strategy
+- Operations involving persistent data protect against corruption and data loss
+- Concurrent or parallel operations are safe from race conditions and resource conflicts
+- Failure scenarios have documented recovery procedures beyond "retry"
+- Changes include appropriate logging, metrics, or monitoring where observable behavior is touched
+
+## 4. Write the review
+- PASS COMPLETE
+- FAIL STOP
+
+Write the review to the output path as JSON.
+Follow the review output schema.
+
+```bash
+rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file plan-review-{{ RunId }}.json
 ```

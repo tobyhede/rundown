@@ -3,41 +3,20 @@
   "$id": "https://rundown.org/schemas/review.schema.json",
   "title": "Review",
   "description": "Structured review findings for plan and code reviews.",
-  "oneOf": [
-    {
-      "type": "object",
-      "description": "Ok review gate: no blocking findings, proceed.",
-      "required": ["meta", "status", "blocking_count", "findings"],
-      "properties": {
-        "$schema": { "$ref": "#/$defs/SchemaUri" },
-        "meta": { "$ref": "#/$defs/Meta" },
-        "status": { "const": "ok", "description": "Review gate: ok = proceed" },
-        "blocking_count": { "const": 0, "description": "Must be 0 for ok reviews" },
-        "findings": { "$ref": "#/$defs/Findings" }
-      },
-      "additionalProperties": false
+  "type": "object",
+  "required": ["meta", "findings"],
+  "properties": {
+    "$schema": {
+      "$ref": "#/$defs/SchemaUri"
     },
-    {
-      "type": "object",
-      "description": "Blocked review gate: has blocking findings, must fix first.",
-      "required": ["meta", "status", "blocking_count", "findings"],
-      "properties": {
-        "$schema": { "$ref": "#/$defs/SchemaUri" },
-        "meta": { "$ref": "#/$defs/Meta" },
-        "status": {
-          "const": "blocked",
-          "description": "Review gate: blocked = must fix blocking findings first"
-        },
-        "blocking_count": {
-          "type": "integer",
-          "minimum": 1,
-          "description": "Number of blocking findings (>= 1)"
-        },
-        "findings": { "$ref": "#/$defs/Findings" }
-      },
-      "additionalProperties": false
+    "meta": {
+      "$ref": "#/$defs/Meta"
+    },
+    "findings": {
+      "$ref": "#/$defs/Findings"
     }
-  ],
+  },
+  "additionalProperties": false,
   "$defs": {
     "SchemaUri": {
       "type": "string",
@@ -92,7 +71,9 @@
     },
     "Findings": {
       "type": "array",
-      "items": { "$ref": "#/$defs/Finding" }
+      "items": {
+        "$ref": "#/$defs/Finding"
+      }
     },
     "Location": {
       "type": "object",
