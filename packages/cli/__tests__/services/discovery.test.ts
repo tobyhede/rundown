@@ -1,14 +1,26 @@
-import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
+
+// Mock plugin-root — passthrough for env var, controlled sibling discovery
+const mockGetPluginRoot = jest.fn<() => string | null>().mockImplementation(() => {
+  const envRoot = process.env.CLAUDE_PLUGIN_ROOT;
+  if (envRoot) return envRoot;
+  return null;
+});
+jest.unstable_mockModule('../../src/helpers/plugin-root.js', () => ({
+  getPluginRoot: mockGetPluginRoot,
+  _resetPluginRootCache: jest.fn(),
+}));
+
+const {
   discoverRunbooks,
   findRunbookByName,
   findRunbookByNameInSource,
   scanDirectory,
   getSearchPaths,
-} from '../../src/services/discovery.js';
+} = await import('../../src/services/discovery.js');
 
 describe('discovery service', () => {
   let tempDir: string;
@@ -32,6 +44,13 @@ describe('discovery service', () => {
 
   afterEach(async () => {
     await rm(tempDir, { recursive: true, force: true });
+    mockGetPluginRoot.mockReset();
+    // Restore default implementation: pass through env var, otherwise null
+    mockGetPluginRoot.mockImplementation(() => {
+      const envRoot = process.env.CLAUDE_PLUGIN_ROOT;
+      if (envRoot) return envRoot;
+      return null;
+    });
     // Restore original bundled runbooks path
     if (originalBundledRunbooksPath) {
       process.env.BUNDLED_RUNBOOKS_PATH = originalBundledRunbooksPath;
@@ -66,7 +85,25 @@ describe('discovery service', () => {
       }
     });
 
-    it('skips plugin directory when CLAUDE_PLUGIN_ROOT is not set', async () => {
+    it('includes plugin path when sibling discovery finds plugin', async () => {
+      const originalEnv = process.env.CLAUDE_PLUGIN_ROOT;
+      delete process.env.CLAUDE_PLUGIN_ROOT;
+      mockGetPluginRoot.mockReturnValueOnce(pluginRunbooksDir);
+
+      try {
+        const paths = getSearchPaths(tempDir);
+
+        expect(paths.length).toBe(3);
+        expect(paths[0].source).toBe('project');
+        expect(paths[1].source).toBe('plugin');
+        expect(paths[1].path).toBe(join(pluginRunbooksDir, 'runbooks'));
+        expect(paths[2].source).toBe('bundled');
+      } finally {
+        process.env.CLAUDE_PLUGIN_ROOT = originalEnv;
+      }
+    });
+
+    it('excludes plugin when sibling discovery returns null', async () => {
       const originalEnv = process.env.CLAUDE_PLUGIN_ROOT;
       delete process.env.CLAUDE_PLUGIN_ROOT;
 
