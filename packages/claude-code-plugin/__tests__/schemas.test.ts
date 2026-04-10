@@ -63,8 +63,10 @@ describe('HookInputSchema', () => {
     expect(result.success).toBe(false);
   });
 
-  it('rejects legacy top-level fields under strict mode', () => {
-    const legacyInputs = [
+  it('accepts legacy / unknown top-level fields via passthrough (forward-compat)', () => {
+    // HookInputSchema uses .passthrough() so upstream contract drift does not
+    // break the plugin. Unknown fields are preserved on the parsed output.
+    const passthroughInputs = [
       {
         hook_event_name: 'UserPromptSubmit',
         cwd: '/Users/test/project',
@@ -92,9 +94,9 @@ describe('HookInputSchema', () => {
       },
     ];
 
-    for (const input of legacyInputs) {
+    for (const input of passthroughInputs) {
       const result = HookInputSchema.safeParse(input);
-      expect(result.success).toBe(false);
+      expect(result.success).toBe(true);
     }
   });
 

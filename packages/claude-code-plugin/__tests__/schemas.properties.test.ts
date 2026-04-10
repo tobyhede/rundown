@@ -103,41 +103,19 @@ describe('Schema Property Tests', () => {
       );
     });
 
-    it('rejects legacy top-level compatibility fields', () => {
-      const legacyInputArb = fc.oneof(
-        fc.record({
-          hook_event_name: fc.constant('UserPromptSubmit'),
-          cwd: fc.string({ minLength: 1, maxLength: 100 }),
-          user_message: fc.string({ minLength: 1, maxLength: 100 }),
-        }),
-        fc.record({
-          hook_event_name: fc.constant('SubagentStop'),
-          cwd: fc.string({ minLength: 1, maxLength: 100 }),
-          agent_name: fc.string({ minLength: 1, maxLength: 100 }),
-        }),
-        fc.record({
-          hook_event_name: fc.constant('SubagentStop'),
-          cwd: fc.string({ minLength: 1, maxLength: 100 }),
-          subagent_name: fc.string({ minLength: 1, maxLength: 100 }),
-        }),
-        fc.record({
-          hook_event_name: fc.constant('SubagentStop'),
-          cwd: fc.string({ minLength: 1, maxLength: 100 }),
-          output: fc.string({ minLength: 1, maxLength: 100 }),
-        }),
-        fc.record({
-          hook_event_name: fc.constant('PostToolUse'),
-          cwd: fc.string({ minLength: 1, maxLength: 100 }),
-          file_path: fc.string({ minLength: 1, maxLength: 100 }),
-        }),
-      );
+    it('accepts inputs with unknown fields (forward-compatible passthrough)', () => {
+      const inputWithExtraFieldsArb = fc.record({
+        hook_event_name: fc.constant('UserPromptSubmit'),
+        cwd: fc.string({ minLength: 1, maxLength: 100 }).filter((s) => !s.includes('\0')),
+        unknown_future_field: fc.string({ minLength: 1, maxLength: 100 }),
+      });
 
       fc.assert(
-        fc.property(legacyInputArb, (input) => {
+        fc.property(inputWithExtraFieldsArb, (input) => {
           const result = HookInputSchema.safeParse(input);
-          expect(result.success).toBe(false);
+          expect(result.success).toBe(true);
         }),
-        { numRuns: 100 },
+        { numRuns: 50 },
       );
     });
   });

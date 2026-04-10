@@ -52,7 +52,7 @@ export const HookInputSchema = z
     // SessionEnd / Stop
     reason: z.string().optional(),
   })
-  .strict();
+  .passthrough();
 
 /** Validated hook input type inferred from HookInputSchema. */
 export type HookInput = z.infer<typeof HookInputSchema>;
