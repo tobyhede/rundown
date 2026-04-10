@@ -35,7 +35,12 @@ const Reference = z
   .object({
     uri: z.string().min(1).describe('Relative file path or absolute URI'),
     line: z.number().int().min(1).describe('Start line number (1-based)').optional(),
-    end_line: z.number().int().min(1).describe('End line number for ranges (1-based)').optional(),
+    end_line: z
+      .number()
+      .int()
+      .min(1)
+      .describe('End line number for ranges (1-based, must be >= line)')
+      .optional(),
     symbol: z.string().min(1).describe('Logical location name (function, class, type)').optional(),
     kind: z
       .string()

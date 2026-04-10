@@ -91,7 +91,7 @@
         "end_line": {
           "type": "integer",
           "minimum": 1,
-          "description": "End line number for ranges (1-based)"
+          "description": "End line number for ranges (1-based, must be >= line)"
         },
         "symbol": {
           "type": "string",
