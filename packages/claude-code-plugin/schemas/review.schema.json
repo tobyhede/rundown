@@ -40,18 +40,15 @@
       "properties": {
         "title": {
           "type": "string",
-          "minLength": 1,
-          "description": "Short label for the item"
+          "minLength": 1
         },
         "level": {
           "type": "string",
-          "enum": ["error", "warning", "note"],
-          "description": "error = must fix before proceeding, warning = should fix, note = informational"
+          "enum": ["error", "warning", "note"]
         },
         "description": {
           "type": "string",
-          "minLength": 1,
-          "description": "What is wrong and why"
+          "minLength": 1
         },
         "references": {
           "type": "array",
@@ -61,8 +58,7 @@
         },
         "recommendation": {
           "type": "string",
-          "minLength": 1,
-          "description": "How to fix it"
+          "minLength": 1
         }
       },
       "additionalProperties": false
