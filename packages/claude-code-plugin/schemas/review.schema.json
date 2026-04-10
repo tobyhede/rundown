@@ -2,9 +2,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://rundown.org/schemas/review.schema.json",
   "title": "Review",
-  "description": "Structured review findings for plan and code reviews.",
+  "description": "Structured review items for plan and code reviews.",
   "type": "object",
-  "required": ["meta", "findings"],
+  "required": ["meta", "items"],
   "properties": {
     "$schema": {
       "$ref": "#/$defs/SchemaUri"
@@ -12,8 +12,8 @@
     "meta": {
       "$ref": "#/$defs/Meta"
     },
-    "findings": {
-      "$ref": "#/$defs/Findings"
+    "items": {
+      "$ref": "#/$defs/Items"
     }
   },
   "additionalProperties": false,
@@ -29,24 +29,24 @@
       "required": ["version"],
       "properties": {
         "version": {
-          "const": "1.0.0"
+          "const": "2.0.0"
         }
       },
       "additionalProperties": false
     },
-    "Finding": {
+    "Item": {
       "type": "object",
-      "required": ["title", "severity", "description", "evidence", "recommendation"],
+      "required": ["title", "level", "description"],
       "properties": {
         "title": {
           "type": "string",
           "minLength": 1,
-          "description": "Short label for the finding"
+          "description": "Short label for the item"
         },
-        "severity": {
+        "level": {
           "type": "string",
-          "enum": ["blocking", "non_blocking"],
-          "description": "blocking = must fix before proceeding, non_blocking = should fix"
+          "enum": ["error", "warning", "note"],
+          "description": "error = must fix before proceeding, warning = should fix, note = informational"
         },
         "description": {
           "type": "string",
@@ -56,11 +56,6 @@
         "location": {
           "$ref": "#/$defs/Location"
         },
-        "evidence": {
-          "type": "string",
-          "minLength": 1,
-          "description": "What was observed"
-        },
         "recommendation": {
           "type": "string",
           "minLength": 1,
@@ -69,10 +64,10 @@
       },
       "additionalProperties": false
     },
-    "Findings": {
+    "Items": {
       "type": "array",
       "items": {
-        "$ref": "#/$defs/Finding"
+        "$ref": "#/$defs/Item"
       }
     },
     "Location": {

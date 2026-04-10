@@ -1,9 +1,9 @@
 /**
  * Zod schema and validation for the JSON review format.
  *
- * Defines the canonical structure for review findings. The same schema
+ * Defines the canonical structure for review items. The same schema
  * serves both plan reviews and code reviews — the shape is identical
- * regardless of what was reviewed or whether findings were collated
+ * regardless of what was reviewed or whether items were collated
  * from multiple reviewers.
  *
  * Reviews are authored as JSON and rendered to Markdown by `rdx`.
@@ -15,41 +15,39 @@ import { z } from 'zod';
 import { locationSchema } from './location-schema.js';
 
 /**
- * A single review finding with structured evidence and location.
+ * A single review item with structured location and optional recommendation.
  *
  * @example
  * ```json
  * {
  *   "title": "Import path does not resolve",
- *   "severity": "blocking",
- *   "description": "Task 2 references '../services/auth.js' which does not exist.",
+ *   "level": "error",
+ *   "description": "Task 2 references '../services/auth.js' which does not exist. No file at src/services/auth.js; nearest match is src/auth/service.ts.",
  *   "location": {
  *     "path": "src/handlers/login.ts",
  *     "symbol": "authenticateUser",
  *     "kind": "function"
  *   },
- *   "evidence": "No file at src/services/auth.js; nearest match is src/auth/service.ts",
  *   "recommendation": "Update import to '../auth/service.js'"
  * }
  * ```
  */
-const Finding = z
+const Item = z
   .object({
-    title: z.string().min(1).describe('Short label for the finding'),
-    severity: z
-      .enum(['blocking', 'non_blocking'])
-      .describe('blocking = must fix before proceeding, non_blocking = should fix'),
+    title: z.string().min(1).describe('Short label for the item'),
+    level: z
+      .enum(['error', 'warning', 'note'])
+      .describe('error = must fix before proceeding, warning = should fix, note = informational'),
     description: z.string().min(1).describe('What is wrong and why'),
     location: locationSchema.optional(),
-    evidence: z.string().min(1).describe('What was observed'),
-    recommendation: z.string().min(1).describe('How to fix it'),
+    recommendation: z.string().min(1).describe('How to fix it').optional(),
   })
   .strict();
 
 /** Document metadata rendered as YAML frontmatter by the generic renderer. */
 const Meta = z
   .object({
-    version: z.literal('1.0.0'),
+    version: z.literal('2.0.0'),
   })
   .strict();
 
@@ -57,15 +55,15 @@ const Meta = z
  * Schema for a complete review.
  *
  * Validates the JSON structure used by plan and code review workflows.
- * Whether a review is blocking is derived from findings:
- * `findings.some(f => f.severity === 'blocking')`.
+ * Whether a review is blocking is derived from items:
+ * `items.some(i => i.level === 'error')`.
  *
  * @example
  * ```json
  * {
  *   "$schema": "https://rundown.org/schemas/review.schema.json",
- *   "meta": { "version": "1.0.0" },
- *   "findings": [...]
+ *   "meta": { "version": "2.0.0" },
+ *   "items": [...]
  * }
  * ```
  */
@@ -76,15 +74,15 @@ export const ReviewSchema = z
       .optional()
       .describe('Schema URI for editor autocomplete and rdx validation dispatch'),
     meta: Meta,
-    findings: z.array(Finding),
+    items: z.array(Item),
   })
   .strict();
 
 /** Validated review type inferred from ReviewSchema. */
 export type Review = z.infer<typeof ReviewSchema>;
 
-/** Validated finding type inferred from Finding schema. */
-export type ReviewFinding = z.infer<typeof Finding>;
+/** Validated item type inferred from Item schema. */
+export type ReviewItem = z.infer<typeof Item>;
 
 /** Document metadata type inferred from Meta schema. */
 export type ReviewMeta = z.infer<typeof Meta>;

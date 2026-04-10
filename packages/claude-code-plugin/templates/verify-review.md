@@ -8,24 +8,23 @@
 
 [What this review is verifying against - implementation, docs, plan, etc.]
 
-## Findings
+## Items
 
-### BLOCKING Issues
+### Errors
 
 Issues that must be addressed before proceeding.
 
-#### Issue 1: [Title]
+#### Error 1: [Title]
 
 **Location:** [file:line or section]
 **Description:** [What's wrong]
-**Evidence:** [Quote or reference]
 **Recommendation:** [How to fix]
 
-### SUGGESTIONS
+### Warnings
 
 Issues that should be considered but don't block.
 
-#### Suggestion 1: [Title]
+#### Warning 1: [Title]
 
 **Location:** [file:line or section]
 **Description:** [What could be improved]
@@ -33,7 +32,7 @@ Issues that should be considered but don't block.
 
 ## Summary
 
-**BLOCKING count:** X
-**SUGGESTION count:** X
+**Error count:** X
+**Warning count:** X
 
 **Result:** [PASS | FAIL]

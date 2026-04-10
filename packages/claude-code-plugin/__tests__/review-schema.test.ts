@@ -5,55 +5,50 @@ import { isZodError } from '../src/shared/errors.js';
 /** Minimal valid review. Override fields as needed. */
 function validReview(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    meta: { version: '1.0.0' },
-    findings: [],
+    meta: { version: '2.0.0' },
+    items: [],
     ...overrides,
   };
 }
 
-/** Minimal blocking finding. */
-function blockingFinding(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+/** Minimal error-level item. */
+function errorItem(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     title: 'Issue',
-    severity: 'blocking',
+    level: 'error',
     description: 'What is wrong',
-    evidence: 'What was observed',
     recommendation: 'How to fix',
     ...overrides,
   };
 }
 
-/** Minimal non-blocking finding. */
-function nonBlockingFinding(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+/** Minimal warning-level item. */
+function warningItem(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    ...blockingFinding({ severity: 'non_blocking' }),
+    ...errorItem({ level: 'warning' }),
     ...overrides,
   };
 }
 
 describe('ReviewSchema', () => {
   describe('valid reviews', () => {
-    it('accepts review with no findings', () => {
+    it('accepts review with no items', () => {
       expect(() => ReviewSchema.parse(validReview())).not.toThrow();
     });
 
-    it('accepts review with non_blocking findings only', () => {
-      expect(() =>
-        ReviewSchema.parse(validReview({ findings: [nonBlockingFinding()] })),
-      ).not.toThrow();
+    it('accepts review with warning items only', () => {
+      expect(() => ReviewSchema.parse(validReview({ items: [warningItem()] }))).not.toThrow();
     });
 
-    it('accepts review with blocking finding', () => {
-      expect(() =>
-        ReviewSchema.parse(validReview({ findings: [blockingFinding()] })),
-      ).not.toThrow();
+    it('accepts review with error item', () => {
+      expect(() => ReviewSchema.parse(validReview({ items: [errorItem()] }))).not.toThrow();
     });
 
-    it('accepts review with mixed findings', () => {
+    it('accepts review with mixed items', () => {
       expect(() =>
         ReviewSchema.parse(
           validReview({
-            findings: [blockingFinding(), nonBlockingFinding()],
+            items: [errorItem(), warningItem()],
           }),
         ),
       ).not.toThrow();
@@ -73,15 +68,30 @@ describe('ReviewSchema', () => {
       expect(() => ReviewSchema.parse(review)).not.toThrow();
     });
 
-    it('accepts finding with optional location', () => {
+    it('accepts item with optional location', () => {
       expect(() =>
         ReviewSchema.parse(
           validReview({
-            findings: [
-              blockingFinding({
+            items: [
+              errorItem({
                 location: { path: 'src/foo.ts', line: 10, symbol: 'doThing', kind: 'function' },
               }),
             ],
+          }),
+        ),
+      ).not.toThrow();
+    });
+
+    it('accepts item without recommendation', () => {
+      const { recommendation: _, ...itemWithoutRec } = errorItem();
+      expect(() => ReviewSchema.parse(validReview({ items: [itemWithoutRec] }))).not.toThrow();
+    });
+
+    it('accepts item with level note', () => {
+      expect(() =>
+        ReviewSchema.parse(
+          validReview({
+            items: [errorItem({ level: 'note' })],
           }),
         ),
       ).not.toThrow();
@@ -94,46 +104,46 @@ describe('ReviewSchema', () => {
       expect(() => ReviewSchema.parse(noMeta)).toThrow();
     });
 
-    it('rejects missing findings', () => {
-      const { findings: _, ...noFindings } = validReview();
-      expect(() => ReviewSchema.parse(noFindings)).toThrow();
+    it('rejects missing items', () => {
+      const { items: _, ...noItems } = validReview();
+      expect(() => ReviewSchema.parse(noItems)).toThrow();
     });
 
-    it('rejects empty finding title', () => {
+    it('rejects empty item title', () => {
       expect(() =>
         ReviewSchema.parse(
           validReview({
-            findings: [blockingFinding({ title: '' })],
+            items: [errorItem({ title: '' })],
           }),
         ),
       ).toThrow();
     });
 
-    it('rejects empty finding description', () => {
+    it('rejects empty item description', () => {
       expect(() =>
         ReviewSchema.parse(
           validReview({
-            findings: [blockingFinding({ description: '' })],
+            items: [errorItem({ description: '' })],
           }),
         ),
       ).toThrow();
     });
 
-    it('rejects empty finding evidence', () => {
+    it('rejects empty item recommendation', () => {
       expect(() =>
         ReviewSchema.parse(
           validReview({
-            findings: [blockingFinding({ evidence: '' })],
+            items: [errorItem({ recommendation: '' })],
           }),
         ),
       ).toThrow();
     });
 
-    it('rejects empty finding recommendation', () => {
+    it('rejects item with evidence field (strict mode)', () => {
       expect(() =>
         ReviewSchema.parse(
           validReview({
-            findings: [blockingFinding({ recommendation: '' })],
+            items: [errorItem({ evidence: 'What was observed' })],
           }),
         ),
       ).toThrow();
@@ -149,7 +159,7 @@ describe('ReviewSchema', () => {
       expect(() =>
         ReviewSchema.parse(
           validReview({
-            findings: [blockingFinding({ location: { path: 'src/foo.ts' } })],
+            items: [errorItem({ location: { path: 'src/foo.ts' } })],
           }),
         ),
       ).not.toThrow();
@@ -159,8 +169,8 @@ describe('ReviewSchema', () => {
       expect(() =>
         ReviewSchema.parse(
           validReview({
-            findings: [
-              blockingFinding({
+            items: [
+              errorItem({
                 location: {
                   path: 'src/foo.ts',
                   line: 10,
@@ -179,7 +189,7 @@ describe('ReviewSchema', () => {
       expect(() =>
         ReviewSchema.parse(
           validReview({
-            findings: [blockingFinding({ location: { path: '/etc/passwd' } })],
+            items: [errorItem({ location: { path: '/etc/passwd' } })],
           }),
         ),
       ).toThrow();
@@ -189,7 +199,7 @@ describe('ReviewSchema', () => {
       expect(() =>
         ReviewSchema.parse(
           validReview({
-            findings: [blockingFinding({ location: { path: '../secrets/key.pem' } })],
+            items: [errorItem({ location: { path: '../secrets/key.pem' } })],
           }),
         ),
       ).toThrow();
@@ -199,7 +209,7 @@ describe('ReviewSchema', () => {
       expect(() =>
         ReviewSchema.parse(
           validReview({
-            findings: [blockingFinding({ location: { path: 'C:\\Users\\dev\\file.ts' } })],
+            items: [errorItem({ location: { path: 'C:\\Users\\dev\\file.ts' } })],
           }),
         ),
       ).toThrow();
@@ -209,7 +219,7 @@ describe('ReviewSchema', () => {
       expect(() =>
         ReviewSchema.parse(
           validReview({
-            findings: [blockingFinding({ location: { path: 'src\\file.ts' } })],
+            items: [errorItem({ location: { path: 'src\\file.ts' } })],
           }),
         ),
       ).toThrow();
@@ -219,7 +229,7 @@ describe('ReviewSchema', () => {
   describe('validate() export', () => {
     it('returns typed review for valid data', () => {
       const result = validate(validReview());
-      expect(result.findings).toEqual([]);
+      expect(result.items).toEqual([]);
     });
 
     it('throws for invalid data', () => {
