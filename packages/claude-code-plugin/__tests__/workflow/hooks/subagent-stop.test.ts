@@ -108,7 +108,7 @@ describe('handleSubagentStop', () => {
       expect(result).toEqual({});
     });
 
-    it('returns empty when parent is active with our delegation claimed', async () => {
+    it('surfaces parent state when our delegation claimed and no siblings remain', async () => {
       mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
       setExecSync(
         createStatusMock({
@@ -130,10 +130,11 @@ describe('handleSubagentStop', () => {
       const input = createMockHookInput('SubagentStop');
       const result = await handleSubagentStop(input);
 
-      expect(result).toEqual({});
+      expect(result.context).toContain('Delegation Step Complete');
+      expect(result.context).toContain('parent.runbook.md');
     });
 
-    it('returns empty when no delegations remain (parent resumed)', async () => {
+    it('surfaces parent state when no delegations remain (parent resumed)', async () => {
       mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
       setExecSync(
         createStatusMock({
@@ -146,8 +147,8 @@ describe('handleSubagentStop', () => {
       const input = createMockHookInput('SubagentStop');
       const result = await handleSubagentStop(input);
 
-      // No delegations and our token not found — parent resumed after completion
-      expect(result).toEqual({});
+      expect(result.context).toContain('Delegation Step Complete');
+      expect(result.context).toContain('parent.runbook.md');
     });
 
     it('treats unrecognized delegations as child with nested delegations', async () => {
@@ -174,6 +175,190 @@ describe('handleSubagentStop', () => {
       // Delegations present but none match our token — child with nested delegations
       expect(result.context).toContain('Delegation Incomplete');
       expect(result.context).toContain('child.runbook.md');
+    });
+  });
+
+  describe('parent state surfacing on completion', () => {
+    it('surfaces full step info when parent advanced to new step', async () => {
+      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setExecSync(
+        createStatusMock({
+          active: true,
+          stashed: false,
+          file: 'parent.runbook.md',
+          position: { current: '4', total: 10 },
+          step: {
+            name: '4. Collate review findings',
+            description: 'Aggregate results from all reviews',
+          },
+        }) as never,
+      );
+
+      const input = createMockHookInput('SubagentStop');
+      const result = await handleSubagentStop(input);
+
+      expect(result.context).toContain('Delegation Step Complete');
+      expect(result.context).toContain('parent.runbook.md');
+      expect(result.context).toContain(
+        '4. Collate review findings — Aggregate results from all reviews',
+      );
+      expect(result.context).toContain('step 4 of 10');
+    });
+
+    it('includes delegation guidance when parent step has unresolved substeps', async () => {
+      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setExecSync(
+        createStatusMock({
+          active: true,
+          stashed: false,
+          file: 'parent.runbook.md',
+          position: { current: '4', total: 4, unresolved: 1 },
+          step: {
+            name: '4. Collate review findings',
+            description: 'Delegate a subagent to collate the review findings',
+          },
+        }) as never,
+      );
+
+      const input = createMockHookInput('SubagentStop');
+      const result = await handleSubagentStop(input);
+
+      expect(result.context).toContain('Delegation Step Complete');
+      expect(result.context).toContain('1 unresolved substep requiring delegation');
+      expect(result.context).toContain(
+        'Run `rd delegate` to create a delegation token, then dispatch a subagent to claim it.',
+      );
+      expect(result.context).not.toContain('Proceed with the current step');
+    });
+
+    it('pluralizes substeps when multiple are unresolved', async () => {
+      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setExecSync(
+        createStatusMock({
+          active: true,
+          stashed: false,
+          file: 'parent.runbook.md',
+          position: { current: '3', total: 5, unresolved: 3 },
+          step: { name: '3. Deploy services' },
+        }) as never,
+      );
+
+      const input = createMockHookInput('SubagentStop');
+      const result = await handleSubagentStop(input);
+
+      expect(result.context).toContain('3 unresolved substeps requiring delegation');
+      expect(result.context).not.toContain('substep requiring');
+    });
+
+    it('shows generic proceed message when parent step has no unresolved substeps', async () => {
+      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setExecSync(
+        createStatusMock({
+          active: true,
+          stashed: false,
+          file: 'parent.runbook.md',
+          position: { current: '4', total: 10 },
+          step: { name: '4. Final step' },
+        }) as never,
+      );
+
+      const input = createMockHookInput('SubagentStop');
+      const result = await handleSubagentStop(input);
+
+      expect(result.context).toContain('Delegation Step Complete');
+      expect(result.context).toContain('Proceed with the current step');
+      expect(result.context).not.toContain('unresolved');
+    });
+
+    it('surfaces remaining delegations when siblings still pending', async () => {
+      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setExecSync(
+        createStatusMock({
+          active: true,
+          stashed: false,
+          file: 'parent.runbook.md',
+          position: { current: '3', total: 10 },
+          step: { name: '3. Delegate subagents' },
+          delegations: [
+            {
+              substep: '3.1',
+              runbook: 'review-code.runbook.md',
+              state: 'claimed',
+              childRunId: 'run-1',
+              tokenHash: VALID_TOKEN_HASH,
+            },
+            {
+              substep: '3.2',
+              runbook: 'review-structural.runbook.md',
+              state: 'claimed',
+              childRunId: 'run-2',
+              tokenHash: OTHER_TOKEN_HASH,
+            },
+            {
+              substep: '3.3',
+              runbook: 'review-build.runbook.md',
+              state: 'pending',
+              tokenHash: `sha256:${createHash('sha256').update('rdtk_THIRD000000000000000000000000').digest('hex')}`,
+            },
+          ],
+        }) as never,
+      );
+
+      const input = createMockHookInput('SubagentStop');
+      const result = await handleSubagentStop(input);
+
+      expect(result.context).toContain('Delegation Completed');
+      expect(result.context).not.toContain('Delegation Step Complete');
+      expect(result.context).toContain('2 delegations still pending');
+      expect(result.context).toContain('review-structural.runbook.md');
+      expect(result.context).toContain('review-build.runbook.md');
+      expect(result.context).not.toContain('review-code.runbook.md');
+      expect(result.context).toContain('3. Delegate subagents');
+    });
+
+    it('treats cancelled sibling delegations as resolved', async () => {
+      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setExecSync(
+        createStatusMock({
+          active: true,
+          stashed: false,
+          file: 'parent.runbook.md',
+          position: { current: '4', total: 10 },
+          step: { name: '4. Next step' },
+          delegations: [
+            {
+              substep: '3.1',
+              runbook: 'child-a.runbook.md',
+              state: 'claimed',
+              childRunId: 'run-1',
+              tokenHash: VALID_TOKEN_HASH,
+            },
+            {
+              substep: '3.2',
+              runbook: 'child-b.runbook.md',
+              state: 'cancelled',
+              tokenHash: OTHER_TOKEN_HASH,
+            },
+          ],
+        }) as never,
+      );
+
+      const input = createMockHookInput('SubagentStop');
+      const result = await handleSubagentStop(input);
+
+      // Our delegation filtered out, sibling is cancelled — no pending siblings
+      expect(result.context).toContain('Delegation Step Complete');
+      expect(result.context).not.toContain('Remaining delegations');
+    });
+
+    it('returns empty when parent is inactive (entire runbook finished)', async () => {
+      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setExecSync(createStatusMock({ active: false, stashed: false }) as never);
+
+      const input = createMockHookInput('SubagentStop');
+      const result = await handleSubagentStop(input);
+
+      expect(result).toEqual({});
     });
   });
 
@@ -322,13 +507,14 @@ describe('handleSubagentStop', () => {
       expect(result.context).toContain('child.runbook.md');
     });
 
-    it('does not report sibling pending delegation as unclaimed', async () => {
+    it('surfaces remaining sibling delegations when our delegation completes', async () => {
       mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
       setExecSync(
         createStatusMock({
           active: true,
           stashed: false,
           file: 'parent.runbook.md',
+          step: { name: '3. Delegate subagents' },
           delegations: [
             {
               substep: '3.1',
@@ -350,8 +536,12 @@ describe('handleSubagentStop', () => {
       const input = createMockHookInput('SubagentStop');
       const result = await handleSubagentStop(input);
 
-      // Our delegation (3.1) is claimed — completed. Don't report 3.2 as unclaimed.
-      expect(result).toEqual({});
+      // Our delegation (3.1) completed. Sibling 3.2 still pending.
+      expect(result.context).toContain('Delegation Completed');
+      expect(result.context).not.toContain('Delegation Step Complete');
+      expect(result.context).toContain('1 delegation still pending');
+      expect(result.context).toContain('child-b.runbook.md');
+      expect(result.context).not.toContain('child-a.runbook.md');
     });
   });
 

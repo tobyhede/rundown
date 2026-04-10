@@ -24,7 +24,7 @@ export interface SubagentStopResult {
 /** Shared fields for runbook states that carry position information. */
 interface RunbookPosition {
   file: string;
-  position?: { current: string; total: number; substep?: string };
+  position?: { current: string; total: number; substep?: string; unresolved?: number };
   step?: { name: string; description?: string };
 }
 
@@ -60,12 +60,25 @@ type RunbookStatus =
       readonly delegations: readonly DelegationStatus[];
     } & RunbookPosition);
 
+/** Parent state carried on a completed outcome when the parent runbook is still active. */
+interface CompletedParentState extends RunbookPosition {
+  readonly delegations: readonly DelegationStatus[];
+}
+
+/** Project an active RunbookStatus into a CompletedParentState with the given delegations. */
+function toParentState(
+  status: RunbookPosition,
+  delegations: readonly DelegationStatus[],
+): CompletedParentState {
+  return { file: status.file, position: status.position, step: status.step, delegations };
+}
+
 /**
  * Delegation outcome — the hook's decision as a discriminated union.
  * Each variant carries exactly the data needed for its context message.
  */
 type DelegationOutcome =
-  | { readonly kind: 'completed' }
+  | { readonly kind: 'completed'; readonly parent?: CompletedParentState }
   | { readonly kind: 'child_active'; readonly status: RunbookPosition }
   | { readonly kind: 'child_stashed'; readonly status: RunbookPosition }
   | { readonly kind: 'unclaimed'; readonly delegation: DelegationStatus & { state: 'pending' } }
@@ -242,20 +255,24 @@ function classifyOutcome(status: RunbookStatus, tokenHash: string): DelegationOu
           return { kind: 'child_active', status };
         }
         // No delegations — delegation was resolved and parent resumed
-        return { kind: 'completed' };
+        return { kind: 'completed', parent: status };
       }
 
-      // Found our delegation — classify by its state
+      // Found our delegation — classify by its state.
+      // Filter out our own delegation so the parent state only shows siblings.
+      const siblings = status.delegations.filter((d) => d.tokenHash !== tokenHash);
+      const parentWithSiblings = toParentState(status, siblings);
+
       switch (ours.state) {
         case 'pending':
           // Never claimed — subagent stopped before calling rd claim
           return { kind: 'unclaimed', delegation: ours };
         case 'claimed':
           // Claimed and parent is active — child completed and was popped
-          return { kind: 'completed' };
+          return { kind: 'completed', parent: parentWithSiblings };
         case 'cancelled':
           // Already cancelled — treat as completed (nothing more to do)
-          return { kind: 'completed' };
+          return { kind: 'completed', parent: parentWithSiblings };
       }
     }
   }
@@ -297,8 +314,53 @@ function formatPositionLines(pos: RunbookPosition): string[] {
  */
 function buildContextMessage(outcome: DelegationOutcome): string | undefined {
   switch (outcome.kind) {
-    case 'completed':
-      return undefined;
+    case 'completed': {
+      if (!outcome.parent) {
+        return undefined;
+      }
+
+      const { parent } = outcome;
+      const pendingDelegations = parent.delegations.filter(
+        (d) => d.state === 'pending' || d.state === 'claimed',
+      );
+
+      if (pendingDelegations.length > 0) {
+        const lines: string[] = [
+          '## Delegation Completed',
+          '',
+          `Delegation completed. ${String(pendingDelegations.length)} ${pendingDelegations.length === 1 ? 'delegation' : 'delegations'} still pending.`,
+          '',
+          ...formatPositionLines(parent),
+          '',
+          '**Remaining delegations:**',
+          ...pendingDelegations.map((d) => `- Substep ${d.substep}: \`${d.runbook}\` (${d.state})`),
+          '',
+          'Wait for remaining delegations to complete, then run `rd status` to check the current step.',
+        ];
+        return lines.join('\n');
+      }
+
+      const unresolved = parent.position?.unresolved;
+      const lines: string[] = [
+        '## Delegation Step Complete',
+        '',
+        'All delegations for the previous step have resolved. The parent runbook has advanced.',
+        '',
+        ...formatPositionLines(parent),
+        '',
+      ];
+
+      if (typeof unresolved === 'number' && unresolved > 0) {
+        lines.push(
+          `This step has ${String(unresolved)} unresolved ${unresolved === 1 ? 'substep' : 'substeps'} requiring delegation.`,
+          'Run `rd delegate` to create a delegation token, then dispatch a subagent to claim it.',
+        );
+      } else {
+        lines.push('Proceed with the current step.');
+      }
+
+      return lines.join('\n');
+    }
 
     case 'unknown':
       return 'Subagent stopped with an active delegation. Unable to verify child runbook state — check with `rd status`.';
