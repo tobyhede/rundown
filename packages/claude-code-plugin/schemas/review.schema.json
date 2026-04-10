@@ -53,8 +53,11 @@
           "minLength": 1,
           "description": "What is wrong and why"
         },
-        "location": {
-          "$ref": "#/$defs/Location"
+        "references": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Reference"
+          }
         },
         "recommendation": {
           "type": "string",
@@ -70,16 +73,15 @@
         "$ref": "#/$defs/Item"
       }
     },
-    "Location": {
+    "Reference": {
       "type": "object",
-      "description": "A code location. Note: JSON Schema cannot enforce end_line >= line; the Zod schema's superRefine is the authoritative enforcement layer.",
-      "required": ["path"],
+      "description": "A reference to a code location, document, or external resource. Uses uri as the universal identifier — relative paths and absolute URIs are both valid.",
+      "required": ["uri"],
       "properties": {
-        "path": {
+        "uri": {
           "type": "string",
           "minLength": 1,
-          "pattern": "^(?!\\/)(?![A-Za-z]:[\\/\\\\])(?!.*(?:^|\\/)\\.\\.(?:\\/|$))(?!.*\\\\)",
-          "description": "Relative file path from project root"
+          "description": "Relative file path or absolute URI"
         },
         "line": {
           "type": "integer",

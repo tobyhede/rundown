@@ -12,10 +12,52 @@
  */
 
 import { z } from 'zod';
-import { locationSchema } from './location-schema.js';
 
 /**
- * A single review item with structured location and optional recommendation.
+ * A reference to a code location, document, or external resource.
+ *
+ * Uses `uri` as the universal identifier — relative file paths and
+ * absolute URIs are both valid. Inspired by SARIF's `artifactLocation.uri`.
+ * Optional detail fields (`line`, `symbol`, `kind`) are present when they
+ * make sense and absent when they don't.
+ *
+ * @example
+ * ```json
+ * { "uri": "src/handler.ts", "line": 42, "symbol": "processRequest" }
+ * ```
+ *
+ * @example
+ * ```json
+ * { "uri": "https://docs.example.com/error-policy" }
+ * ```
+ */
+const Reference = z
+  .object({
+    uri: z.string().min(1).describe('Relative file path or absolute URI'),
+    line: z.number().int().min(1).describe('Start line number (1-based)').optional(),
+    end_line: z.number().int().min(1).describe('End line number for ranges (1-based)').optional(),
+    symbol: z.string().min(1).describe('Logical location name (function, class, type)').optional(),
+    kind: z
+      .string()
+      .min(1)
+      .describe(
+        'Construct type: function, type, class, module, method, member, variable, namespace',
+      )
+      .optional(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.line !== undefined && value.end_line !== undefined && value.end_line < value.line) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['end_line'],
+        message: 'end_line must be >= line',
+      });
+    }
+  });
+
+/**
+ * A single review item with optional references and recommendation.
  *
  * @example
  * ```json
@@ -23,11 +65,9 @@ import { locationSchema } from './location-schema.js';
  *   "title": "Import path does not resolve",
  *   "level": "error",
  *   "description": "Task 2 references '../services/auth.js' which does not exist. No file at src/services/auth.js; nearest match is src/auth/service.ts.",
- *   "location": {
- *     "path": "src/handlers/login.ts",
- *     "symbol": "authenticateUser",
- *     "kind": "function"
- *   },
+ *   "references": [
+ *     { "uri": "src/handlers/login.ts", "symbol": "authenticateUser", "kind": "function" }
+ *   ],
  *   "recommendation": "Update import to '../auth/service.js'"
  * }
  * ```
@@ -39,7 +79,7 @@ const Item = z
       .enum(['error', 'warning', 'note'])
       .describe('error = must fix before proceeding, warning = should fix, note = informational'),
     description: z.string().min(1).describe('What is wrong and why'),
-    location: locationSchema.optional(),
+    references: z.array(Reference).optional(),
     recommendation: z.string().min(1).describe('How to fix it').optional(),
   })
   .strict();
@@ -83,6 +123,9 @@ export type Review = z.infer<typeof ReviewSchema>;
 
 /** Validated item type inferred from Item schema. */
 export type ReviewItem = z.infer<typeof Item>;
+
+/** Validated reference type inferred from Reference schema. */
+export type ReviewReference = z.infer<typeof Reference>;
 
 /** Document metadata type inferred from Meta schema. */
 export type ReviewMeta = z.infer<typeof Meta>;

@@ -68,20 +68,6 @@ describe('ReviewSchema', () => {
       expect(() => ReviewSchema.parse(review)).not.toThrow();
     });
 
-    it('accepts item with optional location', () => {
-      expect(() =>
-        ReviewSchema.parse(
-          validReview({
-            items: [
-              errorItem({
-                location: { path: 'src/foo.ts', line: 10, symbol: 'doThing', kind: 'function' },
-              }),
-            ],
-          }),
-        ),
-      ).not.toThrow();
-    });
-
     it('accepts item without recommendation', () => {
       const { recommendation: _, ...itemWithoutRec } = errorItem();
       expect(() => ReviewSchema.parse(validReview({ items: [itemWithoutRec] }))).not.toThrow();
@@ -154,30 +140,14 @@ describe('ReviewSchema', () => {
     });
   });
 
-  describe('location validation', () => {
-    it('accepts location with path only', () => {
-      expect(() =>
-        ReviewSchema.parse(
-          validReview({
-            items: [errorItem({ location: { path: 'src/foo.ts' } })],
-          }),
-        ),
-      ).not.toThrow();
-    });
-
-    it('accepts location with all fields', () => {
+  describe('references', () => {
+    it('accepts item with file reference', () => {
       expect(() =>
         ReviewSchema.parse(
           validReview({
             items: [
               errorItem({
-                location: {
-                  path: 'src/foo.ts',
-                  line: 10,
-                  end_line: 20,
-                  symbol: 'doThing',
-                  kind: 'function',
-                },
+                references: [{ uri: 'src/foo.ts', line: 10, symbol: 'doThing', kind: 'function' }],
               }),
             ],
           }),
@@ -185,41 +155,122 @@ describe('ReviewSchema', () => {
       ).not.toThrow();
     });
 
-    it('rejects absolute paths', () => {
+    it('accepts item with URL reference', () => {
       expect(() =>
         ReviewSchema.parse(
           validReview({
-            items: [errorItem({ location: { path: '/etc/passwd' } })],
+            items: [
+              errorItem({
+                references: [{ uri: 'https://docs.example.com/error-policy' }],
+              }),
+            ],
+          }),
+        ),
+      ).not.toThrow();
+    });
+
+    it('accepts item with mixed references', () => {
+      expect(() =>
+        ReviewSchema.parse(
+          validReview({
+            items: [
+              errorItem({
+                references: [
+                  { uri: 'src/handler.ts', line: 42, symbol: 'processRequest' },
+                  { uri: 'https://docs.example.com/error-policy' },
+                ],
+              }),
+            ],
+          }),
+        ),
+      ).not.toThrow();
+    });
+
+    it('accepts item without references', () => {
+      expect(() => ReviewSchema.parse(validReview({ items: [errorItem()] }))).not.toThrow();
+    });
+
+    it('accepts item with empty references array', () => {
+      expect(() =>
+        ReviewSchema.parse(
+          validReview({
+            items: [errorItem({ references: [] })],
+          }),
+        ),
+      ).not.toThrow();
+    });
+
+    it('accepts reference with uri only', () => {
+      expect(() =>
+        ReviewSchema.parse(
+          validReview({
+            items: [errorItem({ references: [{ uri: 'src/foo.ts' }] })],
+          }),
+        ),
+      ).not.toThrow();
+    });
+
+    it('accepts reference with all fields', () => {
+      expect(() =>
+        ReviewSchema.parse(
+          validReview({
+            items: [
+              errorItem({
+                references: [
+                  {
+                    uri: 'src/foo.ts',
+                    line: 10,
+                    end_line: 20,
+                    symbol: 'doThing',
+                    kind: 'function',
+                  },
+                ],
+              }),
+            ],
+          }),
+        ),
+      ).not.toThrow();
+    });
+
+    it('accepts absolute paths in uri', () => {
+      expect(() =>
+        ReviewSchema.parse(
+          validReview({
+            items: [errorItem({ references: [{ uri: '/etc/config' }] })],
+          }),
+        ),
+      ).not.toThrow();
+    });
+
+    it('rejects empty uri', () => {
+      expect(() =>
+        ReviewSchema.parse(
+          validReview({
+            items: [errorItem({ references: [{ uri: '' }] })],
           }),
         ),
       ).toThrow();
     });
 
-    it('rejects path traversal', () => {
+    it('rejects reference with unknown properties (strict mode)', () => {
       expect(() =>
         ReviewSchema.parse(
           validReview({
-            items: [errorItem({ location: { path: '../secrets/key.pem' } })],
+            items: [errorItem({ references: [{ uri: 'src/foo.ts', extra: true }] })],
           }),
         ),
       ).toThrow();
     });
 
-    it('rejects Windows drive path', () => {
+    it('rejects end_line < line', () => {
       expect(() =>
         ReviewSchema.parse(
           validReview({
-            items: [errorItem({ location: { path: 'C:\\Users\\dev\\file.ts' } })],
-          }),
-        ),
-      ).toThrow();
-    });
-
-    it('rejects backslash path', () => {
-      expect(() =>
-        ReviewSchema.parse(
-          validReview({
-            items: [errorItem({ location: { path: 'src\\file.ts' } })],
+            items: [
+              errorItem({
+                references: [{ uri: 'src/foo.ts', line: 20, end_line: 10 }],
+              }),
+            ],
           }),
         ),
       ).toThrow();
