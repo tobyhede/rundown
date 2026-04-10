@@ -100,7 +100,10 @@
           "description": "Construct type: function, type, class, module, method, member, variable, namespace"
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "dependentRequired": {
+        "end_line": ["line"]
+      }
     }
   }
 }
