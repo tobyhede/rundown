@@ -7,6 +7,7 @@ coverage/
 .work/
 .worktree/
 .claude/settings.local.json
+.claude/session/
 .claude/rundown/runs/
 .claude/rundown/session.json
 .claude-docker/

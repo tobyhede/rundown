@@ -71,13 +71,13 @@
     },
     "Reference": {
       "type": "object",
-      "description": "A reference to a code location, document, or external resource. Uses uri as the universal identifier — relative paths and absolute URIs are both valid.",
+      "description": "A reference to a code location, document, or external resource. Uses uri as the universal identifier — file paths (relative or absolute) and absolute URIs are all valid.",
       "required": ["uri"],
       "properties": {
         "uri": {
           "type": "string",
           "minLength": 1,
-          "description": "Relative file path or absolute URI"
+          "description": "File path (relative or absolute) or absolute URI"
         },
         "line": {
           "type": "integer",

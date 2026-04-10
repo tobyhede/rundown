@@ -87,56 +87,67 @@ describe('ReviewSchema', () => {
   describe('field validation', () => {
     it('rejects missing meta', () => {
       const { meta: _, ...noMeta } = validReview();
-      expect(() => ReviewSchema.parse(noMeta)).toThrow();
+      try {
+        ReviewSchema.parse(noMeta);
+        expect.unreachable('should have thrown');
+      } catch (err) {
+        expect(isZodError(err)).toBe(true);
+      }
     });
 
     it('rejects missing items', () => {
       const { items: _, ...noItems } = validReview();
-      expect(() => ReviewSchema.parse(noItems)).toThrow();
+      try {
+        ReviewSchema.parse(noItems);
+        expect.unreachable('should have thrown');
+      } catch (err) {
+        expect(isZodError(err)).toBe(true);
+      }
     });
 
     it('rejects empty item title', () => {
-      expect(() =>
-        ReviewSchema.parse(
-          validReview({
-            items: [errorItem({ title: '' })],
-          }),
-        ),
-      ).toThrow();
+      try {
+        ReviewSchema.parse(validReview({ items: [errorItem({ title: '' })] }));
+        expect.unreachable('should have thrown');
+      } catch (err) {
+        expect(isZodError(err)).toBe(true);
+      }
     });
 
     it('rejects empty item description', () => {
-      expect(() =>
-        ReviewSchema.parse(
-          validReview({
-            items: [errorItem({ description: '' })],
-          }),
-        ),
-      ).toThrow();
+      try {
+        ReviewSchema.parse(validReview({ items: [errorItem({ description: '' })] }));
+        expect.unreachable('should have thrown');
+      } catch (err) {
+        expect(isZodError(err)).toBe(true);
+      }
     });
 
     it('rejects empty item recommendation', () => {
-      expect(() =>
-        ReviewSchema.parse(
-          validReview({
-            items: [errorItem({ recommendation: '' })],
-          }),
-        ),
-      ).toThrow();
+      try {
+        ReviewSchema.parse(validReview({ items: [errorItem({ recommendation: '' })] }));
+        expect.unreachable('should have thrown');
+      } catch (err) {
+        expect(isZodError(err)).toBe(true);
+      }
     });
 
     it('rejects item with evidence field (strict mode)', () => {
-      expect(() =>
-        ReviewSchema.parse(
-          validReview({
-            items: [errorItem({ evidence: 'What was observed' })],
-          }),
-        ),
-      ).toThrow();
+      try {
+        ReviewSchema.parse(validReview({ items: [errorItem({ evidence: 'What was observed' })] }));
+        expect.unreachable('should have thrown');
+      } catch (err) {
+        expect(isZodError(err)).toBe(true);
+      }
     });
 
     it('rejects unknown properties (strict mode)', () => {
-      expect(() => ReviewSchema.parse(validReview({ unexpected: true }))).toThrow();
+      try {
+        ReviewSchema.parse(validReview({ unexpected: true }));
+        expect.unreachable('should have thrown');
+      } catch (err) {
+        expect(isZodError(err)).toBe(true);
+      }
     });
   });
 
@@ -243,37 +254,51 @@ describe('ReviewSchema', () => {
     });
 
     it('rejects empty uri', () => {
-      expect(() =>
-        ReviewSchema.parse(
-          validReview({
-            items: [errorItem({ references: [{ uri: '' }] })],
-          }),
-        ),
-      ).toThrow();
+      try {
+        ReviewSchema.parse(validReview({ items: [errorItem({ references: [{ uri: '' }] })] }));
+        expect.unreachable('should have thrown');
+      } catch (err) {
+        expect(isZodError(err)).toBe(true);
+      }
     });
 
     it('rejects reference with unknown properties (strict mode)', () => {
-      expect(() =>
+      try {
         ReviewSchema.parse(
           validReview({
             items: [errorItem({ references: [{ uri: 'src/foo.ts', extra: true }] })],
           }),
-        ),
-      ).toThrow();
+        );
+        expect.unreachable('should have thrown');
+      } catch (err) {
+        expect(isZodError(err)).toBe(true);
+      }
     });
 
     it('rejects end_line < line', () => {
-      expect(() =>
+      try {
         ReviewSchema.parse(
           validReview({
-            items: [
-              errorItem({
-                references: [{ uri: 'src/foo.ts', line: 20, end_line: 10 }],
-              }),
-            ],
+            items: [errorItem({ references: [{ uri: 'src/foo.ts', line: 20, end_line: 10 }] })],
           }),
-        ),
-      ).toThrow();
+        );
+        expect.unreachable('should have thrown');
+      } catch (err) {
+        expect(isZodError(err)).toBe(true);
+      }
+    });
+
+    it('rejects end_line without line', () => {
+      try {
+        ReviewSchema.parse(
+          validReview({
+            items: [errorItem({ references: [{ uri: 'src/foo.ts', end_line: 20 }] })],
+          }),
+        );
+        expect.unreachable('should have thrown');
+      } catch (err) {
+        expect(isZodError(err)).toBe(true);
+      }
     });
   });
 

@@ -16,8 +16,9 @@ import { z } from 'zod';
 /**
  * A reference to a code location, document, or external resource.
  *
- * Uses `uri` as the universal identifier — relative file paths and
- * absolute URIs are both valid. Inspired by SARIF's `artifactLocation.uri`.
+ * Uses `uri` as the universal identifier — relative file paths, absolute
+ * file paths, and absolute URIs are all valid. Inspired by SARIF's
+ * `artifactLocation.uri`.
  * Optional detail fields (`line`, `symbol`, `kind`) are present when they
  * make sense and absent when they don't.
  *
@@ -33,7 +34,7 @@ import { z } from 'zod';
  */
 const Reference = z
   .object({
-    uri: z.string().min(1).describe('Relative file path or absolute URI'),
+    uri: z.string().min(1).describe('File path (relative or absolute) or absolute URI'),
     line: z.number().int().min(1).describe('Start line number (1-based)').optional(),
     end_line: z
       .number()
@@ -52,6 +53,13 @@ const Reference = z
   })
   .strict()
   .superRefine((value, ctx) => {
+    if (value.end_line !== undefined && value.line === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['line'],
+        message: 'line is required when end_line is provided',
+      });
+    }
     if (value.line !== undefined && value.end_line !== undefined && value.end_line < value.line) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
