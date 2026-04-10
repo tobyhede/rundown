@@ -33,11 +33,11 @@ describe('Built-in Runbook Workflow Integration', () => {
       'meta/end-to-end-test.runbook.md',
       'planning/write-plan.runbook.md',
       'planning/review-plan.runbook.md',
-      'planning/review/review-technical-accuracy.runbook.md',
-      'planning/review/review-structural-integrity.runbook.md',
-      'planning/review/review-build-runtime.runbook.md',
-      'planning/review/review-risk-safety.runbook.md',
-      'planning/review/review-synthesize.runbook.md',
+      'planning/review/review-plan-technical-accuracy.runbook.md',
+      'planning/review/review-plan-structural-integrity.runbook.md',
+      'planning/review/review-plan-build-runtime.runbook.md',
+      'planning/review/review-plan-risk-safety.runbook.md',
+      'planning/review/review-plan-collate.runbook.md',
     ];
 
     for (const file of runbookFiles) {

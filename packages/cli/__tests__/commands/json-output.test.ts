@@ -164,7 +164,7 @@ echo hello
 - PASS ALL CONTINUE
 - FAIL ANY STOP
 
-- review-technical-accuracy.runbook.md
+- review-plan-technical-accuracy.runbook.md
 `,
       );
 
