@@ -17,29 +17,29 @@ rdpath --dir <path> --ctx <id> find <pattern> # Find within context scope
 
 ```bash
 # Base directory only
-rdpath --dir .work
-# → .work
+rdpath --dir .rundown/work
+# → .rundown/work
 
 # Context-scoped directory
-rdpath --dir .work --ctx sprint-42
-# → .work/.rd-sprint-42
+rdpath --dir .rundown/work --ctx sprint-42
+# → .rundown/work/.rd-sprint-42
 
 # Date-prefixed filename
-rdpath --dir .work --file plan.md
-# → .work/2026-03-27-plan.md
+rdpath --dir .rundown/work --file plan.md
+# → .rundown/work/2026-03-27-plan.md
 
 # Combined: context + date-prefixed file
-rdpath --dir .work --ctx sprint-42 --file review.md
-# → .work/.rd-sprint-42/2026-03-27-review.md
+rdpath --dir .rundown/work --ctx sprint-42 --file review.md
+# → .rundown/work/.rd-sprint-42/2026-03-27-review.md
 
 # Find files matching a glob
-rdpath --dir .work find '*.md'
+rdpath --dir .rundown/work find '*.md'
 
 # Find within a context scope
-rdpath --dir .work --ctx sprint-42 find '*-plan*.md'
+rdpath --dir .rundown/work --ctx sprint-42 find '*-plan*.md'
 
 # Recursive search
-rdpath --dir .work find '**/*.json'
+rdpath --dir .rundown/work find '**/*.json'
 ```
 
 ### Exit Codes
@@ -91,10 +91,10 @@ The `path` subcommand builds paths by composing three layers:
 
 | Input | Output |
 |-------|--------|
-| `--dir .work` | `.work` |
-| `--dir .work --ctx abc` | `.work/.rd-abc` |
-| `--dir .work --file plan.md` | `.work/2026-03-27-plan.md` |
-| `--dir .work --ctx abc --file plan.md` | `.work/.rd-abc/2026-03-27-plan.md` |
+| `--dir .rundown/work` | `.rundown/work` |
+| `--dir .rundown/work --ctx abc` | `.rundown/work/.rd-abc` |
+| `--dir .rundown/work --file plan.md` | `.rundown/work/2026-03-27-plan.md` |
+| `--dir .rundown/work --ctx abc --file plan.md` | `.rundown/work/.rd-abc/2026-03-27-plan.md` |
 
 The date prefix uses the current date in `YYYY-MM-DD` format (ISO 8601).
 
@@ -158,17 +158,17 @@ Resolve --dir
 
 ```bash
 # 1. Assemble a path for a new artifact
-ARTIFACT_DIR=$(rdpath --dir .work --ctx sprint-42)
+ARTIFACT_DIR=$(rdpath --dir .rundown/work --ctx sprint-42)
 mkdir -p "$ARTIFACT_DIR"
 
 # 2. Create a date-prefixed file
-PLAN_PATH=$(rdpath --dir .work --ctx sprint-42 --file plan.json)
+PLAN_PATH=$(rdpath --dir .rundown/work --ctx sprint-42 --file plan.json)
 echo '{"name": "my plan"}' > "$PLAN_PATH"
 
 # 3. Find artifacts later
-rdpath --dir .work --ctx sprint-42 find '*-plan*.json'
+rdpath --dir .rundown/work --ctx sprint-42 find '*-plan*.json'
 
 # 4. Combine with rdx for rendering
-PLAN=$(rdpath --dir .work --ctx sprint-42 find '*-plan.json')
-rdx "$PLAN" --output "$(rdpath --dir .work --ctx sprint-42 --file plan.md)"
+PLAN=$(rdpath --dir .rundown/work --ctx sprint-42 find '*-plan.json')
+rdx "$PLAN" --output "$(rdpath --dir .rundown/work --ctx sprint-42 --file plan.md)"
 ```

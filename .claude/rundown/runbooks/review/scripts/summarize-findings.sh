@@ -9,10 +9,16 @@ usage() {
 Usage: $SCRIPT_NAME [options]
 
   Parse raw PR comments into structured findings with severity extraction.
-  Reads from .work/pr-feedback/raw-comments.jsonl (run fetch-pr-comments.sh first).
+  Reads from \$OUTDIR/raw-comments.jsonl (run fetch-pr-comments.sh first).
+  Output directory defaults to \$OUTDIR or \$WORK_PATH/pr-feedback, falling back
+  to .rundown/work/pr-feedback.
 
 Options:
   -h, --help  Show this help
+
+Environment:
+  OUTDIR       Explicit output directory (overrides WORK_PATH).
+  WORK_PATH    Base work directory; pr-feedback is read from it.
 EOF
 }
 
@@ -26,7 +32,7 @@ done
 
 command -v jq >/dev/null || { echo "Error: jq required" >&2; exit 2; }
 
-OUTDIR=".work/pr-feedback"
+OUTDIR="${OUTDIR:-${WORK_PATH:-.rundown/work}/pr-feedback}"
 RAW="$OUTDIR/raw-comments.jsonl"
 
 [ -f "$RAW" ] || { echo "Error: $RAW not found. Run fetch-pr-comments.sh first." >&2; exit 1; }

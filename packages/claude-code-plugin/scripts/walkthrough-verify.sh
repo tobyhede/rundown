@@ -2,7 +2,8 @@
 # Verify walkthrough execution
 set -e
 
-LOG=".work/walkthrough.log"
+# Log path: override via $LOG or $WORK_PATH; falls back to .rundown/work/walkthrough.log
+LOG="${LOG:-${WORK_PATH:-.rundown/work}/walkthrough.log}"
 
 # Expected log entries (in order they should appear)
 EXPECTED=(

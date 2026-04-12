@@ -132,14 +132,15 @@ log "Phase 5: Verifying runbook execution artifacts..."
 RUNBOOK_CONFIRMED=false
 
 # Check for plan JSON (write-plan runbook creates this via rdpath, date-prefixed).
-# Search .work/ recursively — rdpath uses context-scoped subdirs (.rd-<ctx>/).
+# Search the work directory recursively — rdpath uses context-scoped subdirs (.rd-<ctx>/).
+WORK_SEARCH_DIR="${WORK_PATH:-.rundown/work}"
 PLAN_FILE=""
-if [ -d ".work" ]; then
-  PLAN_FILE="$(find .work -name '*-plan.json' -type f 2>/dev/null | head -1 || true)"
+if [ -d "$WORK_SEARCH_DIR" ]; then
+  PLAN_FILE="$(find "$WORK_SEARCH_DIR" -name '*-plan.json' -type f 2>/dev/null | head -1 || true)"
 fi
 
 if [ -z "$PLAN_FILE" ]; then
-  log "No plan file found in .work/"
+  log "No plan file found in $WORK_SEARCH_DIR/"
 fi
 
 if [ -n "$PLAN_FILE" ]; then

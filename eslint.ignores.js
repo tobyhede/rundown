@@ -9,6 +9,7 @@ export const ignores = [
   '**/stryker.config.mjs',
   '**/*.d.ts',
   'site/**',
+  '.rundown/work/**',
   '.work/**',
   '.worktree/**',
   '.worktrees/**',

@@ -455,7 +455,7 @@ rd echo --result fail
     it('child inherits parent context variables', async () => {
       // Parent with variables
       const parentWithVars = `---
-PlanPath: .work/plan.md
+PlanPath: .rundown/work/plan.md
 Region: us-west
 ---
 

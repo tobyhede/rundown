@@ -238,6 +238,26 @@ function normalizeToStringVariables(
 }
 
 /**
+ * Default base directory for the `WorkPath` built-in variable.
+ *
+ * Sits alongside `.rundown/config.yaml` so all rundown-owned state lives
+ * under a single top-level directory. Branch-scoped subdirectories are
+ * appended by `computeWorkPath()`.
+ */
+export const DEFAULT_WORK_PATH = '.rundown/work';
+
+/**
+ * Compute the branch-scoped `WorkPath` value.
+ *
+ * @param branch - Raw git branch name, or `null` when not in a git repo
+ * @returns `.rundown/work/<sanitized-branch>` inside git, otherwise `.rundown/work`
+ */
+export function computeWorkPath(branch: string | null): string {
+  const sanitized = branch ? sanitizeBranchName(branch) : null;
+  return sanitized ? `${DEFAULT_WORK_PATH}/${sanitized}` : DEFAULT_WORK_PATH;
+}
+
+/**
  * Returns built-in default template variables.
  *
  * These have the lowest precedence and can be overridden by any other source
@@ -248,7 +268,6 @@ function normalizeToStringVariables(
 export function getBuiltinVariables(): Record<string, string> {
   const now = new Date();
   const branch = detectGitBranch();
-  const sanitized = branch ? sanitizeBranchName(branch) : null;
   return {
     Date: now.toISOString().slice(0, 10), // YYYY-MM-DD (UTC)
     DateTime: now.toISOString(), // Full ISO timestamp (UTC)
@@ -256,7 +275,7 @@ export function getBuiltinVariables(): Record<string, string> {
     Month: String(now.getUTCMonth() + 1).padStart(2, '0'), // MM (01-12, UTC)
     Day: String(now.getUTCDate()).padStart(2, '0'), // DD (01-31, UTC)
     Branch: branch ?? '', // Raw git branch name (empty when not in git)
-    WorkPath: sanitized ? `.work/${sanitized}` : '.work', // Branch-isolated artifact directory
+    WorkPath: computeWorkPath(branch), // Branch-isolated artifact directory
     RunId: randomBytes(4).toString('hex'), // 8-char hex
     ContextId: randomBytes(4).toString('hex'), // 8-char hex
   };

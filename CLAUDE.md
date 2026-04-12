@@ -120,7 +120,7 @@ Template variables use Handlebars syntax `{{variableName}}` and are expanded at 
 | `Month` | `02` | Current month (01-12) |
 | `Day` | `04` | Current day (01-31) |
 | `Branch` | `feature/my-work` | Current git branch name (empty when not in git) |
-| `WorkPath` | `.work/feature-my-work` | Branch-isolated artifact directory (falls back to `.work` outside git) |
+| `WorkPath` | `.rundown/work/feature-my-work` | Branch-isolated artifact directory (falls back to `.rundown/work` outside git) |
 | `RunId` | `4a7f0c3e` | Unique-per-execution identifier |
 | `ContextId` | `a3b8c1d2` | Shared identity across delegation tree |
 | `Step` | `3.1` | Current qualified step identifier |

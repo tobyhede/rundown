@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import {
+  DEFAULT_WORK_PATH,
   discoverVariables,
   FileSourcePolicyError,
   findConfigFile,
@@ -111,10 +112,10 @@ describe('getBuiltinVariables', () => {
     expect(builtins.Day).toMatch(/^(0[1-9]|[12]\d|3[01])$/);
   });
 
-  it('should return WorkPath starting with .work', () => {
+  it('should return WorkPath starting with DEFAULT_WORK_PATH', () => {
     const builtins = getBuiltinVariables();
 
-    expect(builtins.WorkPath).toMatch(/^\.work/);
+    expect(builtins.WorkPath.startsWith(DEFAULT_WORK_PATH)).toBe(true);
   });
 
   it('should return Branch property', () => {
@@ -127,25 +128,25 @@ describe('getBuiltinVariables', () => {
     setExecFileSyncImpl((() => 'feature/my-branch\n') as typeof nodeExecFileSync);
 
     const builtins = getBuiltinVariables();
-    expect(builtins.WorkPath).toBe('.work/feature-my-branch');
+    expect(builtins.WorkPath).toBe(`${DEFAULT_WORK_PATH}/feature-my-branch`);
     expect(builtins.Branch).toBe('feature/my-branch');
   });
 
-  it('should fall back to .work when not in git', () => {
+  it('should fall back to DEFAULT_WORK_PATH when not in git', () => {
     setExecFileSyncImpl((() => {
       throw new Error('not a git repo');
     }) as typeof nodeExecFileSync);
 
     const builtins = getBuiltinVariables();
-    expect(builtins.WorkPath).toBe('.work');
+    expect(builtins.WorkPath).toBe(DEFAULT_WORK_PATH);
     expect(builtins.Branch).toBe('');
   });
 
-  it('should fall back to .work on detached HEAD', () => {
+  it('should fall back to DEFAULT_WORK_PATH on detached HEAD', () => {
     setExecFileSyncImpl((() => 'HEAD\n') as typeof nodeExecFileSync);
 
     const builtins = getBuiltinVariables();
-    expect(builtins.WorkPath).toBe('.work');
+    expect(builtins.WorkPath).toBe(DEFAULT_WORK_PATH);
     expect(builtins.Branch).toBe('');
   });
 
