@@ -191,7 +191,7 @@ describe('subagent-stop contract tests', () => {
       // After claim, child is active and its parentLinkage.tokenHash matches
       // our consumed token → child_claimed_idle outcome. The banner must point
       // at the child and must NOT claim the parent has advanced.
-      expect(result.context).toContain('Delegation Claimed — No Progress');
+      expect(result.context).toContain('Delegation Not Resolved');
       expect(result.context).toContain('child.runbook.md');
       expect(result.context).not.toContain('Delegation Step Complete');
     });
@@ -223,7 +223,7 @@ describe('subagent-stop contract tests', () => {
 
       // After claim only: child_claimed_idle via parentLinkage correlation.
       let result = await captureStatusAndHandle(token);
-      expect(result.context).toContain('Delegation Claimed — No Progress');
+      expect(result.context).toContain('Delegation Not Resolved');
       expect(result.context).toContain('child.runbook.md');
 
       // Complete child

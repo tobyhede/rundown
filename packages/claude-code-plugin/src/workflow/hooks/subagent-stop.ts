@@ -326,7 +326,15 @@ function classifyOutcome(status: RunbookStatus, tokenHash: string): DelegationOu
         return { kind: 'child_claimed_idle', child: status };
       }
 
-      // No parent-linkage match → the active runbook is the parent (resumed
+      // If a parentLinkage is present but did not match (wrong token, or
+      // inline linkage), the active runbook is some other child — not our
+      // parent. We cannot confidently classify the outcome; fall back to
+      // unknown rather than mis-claim the parent resumed.
+      if (status.parentLinkage !== undefined) {
+        return { kind: 'unknown' };
+      }
+
+      // No parent-linkage at all → the active runbook is the parent (resumed
       // after the child completed or cancelled). Confirm by correlating our
       // token hash against the parent's outgoing delegations.
       const ours = status.delegations.find((d) => d.tokenHash === tokenHash);
@@ -408,20 +416,22 @@ function buildContextMessage(outcome: DelegationOutcome): string | undefined {
       }
 
       const { parent } = outcome;
-      const pendingDelegations = parent.delegations.filter(
+      const unresolvedDelegations = parent.delegations.filter(
         (d) => d.state === 'pending' || d.state === 'claimed',
       );
 
-      if (pendingDelegations.length > 0) {
+      if (unresolvedDelegations.length > 0) {
         const lines: string[] = [
           '## Delegation Completed',
           '',
-          `Delegation completed. ${String(pendingDelegations.length)} ${pendingDelegations.length === 1 ? 'delegation' : 'delegations'} still pending.`,
+          `Delegation completed. ${String(unresolvedDelegations.length)} ${unresolvedDelegations.length === 1 ? 'delegation' : 'delegations'} still unresolved.`,
           '',
           ...formatPositionLines(parent),
           '',
           '**Remaining delegations:**',
-          ...pendingDelegations.map((d) => `- Substep ${d.substep}: \`${d.runbook}\` (${d.state})`),
+          ...unresolvedDelegations.map(
+            (d) => `- Substep ${d.substep}: \`${d.runbook}\` (${d.state})`,
+          ),
           '',
           'Wait for remaining delegations to complete, then run `rd status` to check the current step.',
         ];
@@ -455,10 +465,10 @@ function buildContextMessage(outcome: DelegationOutcome): string | undefined {
 
     case 'child_claimed_idle': {
       const lines: string[] = [
-        '## Delegation Claimed — No Progress',
+        '## Delegation Not Resolved',
         '',
         'The subagent claimed the delegation token but stopped without calling `rd pass` or `rd fail`.',
-        'The child runbook is still active at its starting position.',
+        'The child runbook is still active — its current position is shown below.',
         '',
         ...formatPositionLines(outcome.child),
         '',

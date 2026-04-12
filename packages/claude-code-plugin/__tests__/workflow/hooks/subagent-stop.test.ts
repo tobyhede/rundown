@@ -203,7 +203,7 @@ describe('handleSubagentStop', () => {
       const input = createMockHookInput('SubagentStop');
       const result = await handleSubagentStop(input);
 
-      expect(result.context).toContain('Delegation Claimed — No Progress');
+      expect(result.context).toContain('Delegation Not Resolved');
       expect(result.context).toContain('child.runbook.md');
       expect(result.context).toContain('1. Starting step');
       expect(result.context).not.toContain('Delegation Step Complete');
@@ -240,17 +240,20 @@ describe('handleSubagentStop', () => {
       const result = await handleSubagentStop(input);
 
       expect(result.context).toContain('Unable to verify');
-      expect(result.context).not.toContain('Delegation Claimed — No Progress');
+      expect(result.context).not.toContain('Delegation Not Resolved');
       expect(result.context).not.toContain('Delegation Step Complete');
     });
 
-    it('ignores inline parentLinkage — only delegation linkage drives correlation', async () => {
+    it('returns unknown when active runbook carries non-matching parentLinkage', async () => {
       mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
       setExecSync(
         createStatusMock({
           active: true,
           stashed: false,
           file: 'child.runbook.md',
+          // Inline linkage — parentLinkage is present but has no tokenHash,
+          // so correlation misses. The active runbook is not our parent, so
+          // we cannot confidently classify as "completed".
           parentLinkage: {
             kind: 'inline',
             parentRunId: 'parent-run-1',
@@ -262,9 +265,33 @@ describe('handleSubagentStop', () => {
       const input = createMockHookInput('SubagentStop');
       const result = await handleSubagentStop(input);
 
-      // Inline linkage has no tokenHash — falls through to parent-resumed path.
-      expect(result.context).toContain('Delegation Step Complete');
-      expect(result.context).not.toContain('Delegation Claimed — No Progress');
+      expect(result.context).toContain('Unable to verify');
+      expect(result.context).not.toContain('Delegation Step Complete');
+      expect(result.context).not.toContain('Delegation Not Resolved');
+    });
+
+    it('returns unknown when parentLinkage is present but tokenHash does not match', async () => {
+      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setExecSync(
+        createStatusMock({
+          active: true,
+          stashed: false,
+          file: 'other-child.runbook.md',
+          // Delegation linkage but with a different token — not our child.
+          parentLinkage: {
+            kind: 'delegation',
+            tokenHash: OTHER_TOKEN_HASH,
+            parentRunId: 'parent-run-1',
+            parentStepId: '1.1',
+          },
+        }) as never,
+      );
+
+      const input = createMockHookInput('SubagentStop');
+      const result = await handleSubagentStop(input);
+
+      expect(result.context).toContain('Unable to verify');
+      expect(result.context).not.toContain('Delegation Step Complete');
     });
   });
 
@@ -360,7 +387,7 @@ describe('handleSubagentStop', () => {
       expect(result.context).not.toContain('unresolved');
     });
 
-    it('surfaces remaining delegations when siblings still pending', async () => {
+    it('surfaces remaining delegations when siblings still unresolved', async () => {
       mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
       setExecSync(
         createStatusMock({
@@ -399,7 +426,7 @@ describe('handleSubagentStop', () => {
 
       expect(result.context).toContain('Delegation Completed');
       expect(result.context).not.toContain('Delegation Step Complete');
-      expect(result.context).toContain('2 delegations still pending');
+      expect(result.context).toContain('2 delegations still unresolved');
       expect(result.context).toContain('review-structural.runbook.md');
       expect(result.context).toContain('review-build.runbook.md');
       expect(result.context).not.toContain('review-code.runbook.md');
@@ -498,7 +525,7 @@ describe('handleSubagentStop', () => {
 
       // active+stashed routes through the active branch; parentLinkage matches
       // our token → claimed-idle.
-      expect(result.context).toContain('Delegation Claimed — No Progress');
+      expect(result.context).toContain('Delegation Not Resolved');
       expect(result.context).toContain('child.runbook.md');
     });
   });
@@ -560,10 +587,10 @@ describe('handleSubagentStop', () => {
       const input = createMockHookInput('SubagentStop');
       const result = await handleSubagentStop(input);
 
-      // Our delegation (3.1) completed. Sibling 3.2 still pending.
+      // Our delegation (3.1) completed. Sibling 3.2 still unresolved.
       expect(result.context).toContain('Delegation Completed');
       expect(result.context).not.toContain('Delegation Step Complete');
-      expect(result.context).toContain('1 delegation still pending');
+      expect(result.context).toContain('1 delegation still unresolved');
       expect(result.context).toContain('child-b.runbook.md');
       expect(result.context).not.toContain('child-a.runbook.md');
     });
@@ -676,7 +703,7 @@ describe('handleSubagentStop', () => {
 
       // Invalid linkage → undefined; falls through to parent-resumed path.
       expect(result.context).toContain('Delegation Step Complete');
-      expect(result.context).not.toContain('Delegation Claimed — No Progress');
+      expect(result.context).not.toContain('Delegation Not Resolved');
     });
 
     it('does not throw when status is null', async () => {
