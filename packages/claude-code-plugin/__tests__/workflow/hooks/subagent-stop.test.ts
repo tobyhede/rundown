@@ -682,14 +682,18 @@ describe('handleSubagentStop', () => {
       expect(result.context).toContain('step 2 of 5');
     });
 
-    it('ignores parentLinkage when fields are missing', async () => {
+    it('returns unknown when parentLinkage is present but malformed', async () => {
       mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
       setExecSync(
         createStatusMock({
           active: true,
           stashed: false,
           file: 'child.runbook.md',
-          // kind is 'delegation' but tokenHash is absent — schema refine rejects.
+          // kind is 'delegation' but tokenHash is absent — schema rejects.
+          // Field is present-but-invalid; parser must preserve this as a
+          // malformed variant so the classifier can route to `unknown`
+          // rather than falling through to the parent-resumed path and
+          // misreporting the child as our resumed parent.
           parentLinkage: {
             kind: 'delegation',
             parentRunId: 'parent-run-1',
@@ -701,8 +705,8 @@ describe('handleSubagentStop', () => {
       const input = createMockHookInput('SubagentStop');
       const result = await handleSubagentStop(input);
 
-      // Invalid linkage → undefined; falls through to parent-resumed path.
-      expect(result.context).toContain('Delegation Step Complete');
+      expect(result.context).toContain('Unable to verify');
+      expect(result.context).not.toContain('Delegation Step Complete');
       expect(result.context).not.toContain('Delegation Not Resolved');
     });
 

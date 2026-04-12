@@ -44,6 +44,16 @@ type ParentLinkage =
       readonly parentRunId: string;
       readonly parentStepId: string;
       readonly parentStep?: string;
+    }
+  | {
+      /**
+       * Status emitted a `parentLinkage` field but its contents failed schema
+       * validation. Preserved as a distinct variant so classifiers can
+       * distinguish "field absent" (undefined) from "field present but
+       * unverifiable" (this variant) — the latter must not fall through to
+       * the parent-resumed code path.
+       */
+      readonly kind: 'malformed';
     };
 
 /** Shared fields for runbook states that carry position information. */
@@ -168,16 +178,23 @@ function parseStep(raw: unknown): RunbookPosition['step'] {
 /**
  * Parse a validated parent linkage field from raw JSON using {@link ParentLinkageSchema}.
  *
- * Graceful degradation: returns undefined for any malformed input. This is the
- * primary correlation signal for claimed-but-idle children, so a validation
- * failure collapses the outcome to `unknown` rather than producing a wrong banner.
+ * Distinguishes two failure modes:
+ * - **Absent** (`raw` is `undefined`/`null`): returns `undefined`. The runbook
+ *   genuinely has no parent linkage — caller proceeds with normal
+ *   classification.
+ * - **Malformed** (field present but schema validation fails): returns a
+ *   `{ kind: 'malformed' }` sentinel. Caller sees `status.parentLinkage !==
+ *   undefined` and routes to the `unknown` outcome, preventing a malformed
+ *   child from being misreported as a resumed parent.
  *
  * @param raw - Raw value from parsed JSON
- * @returns Validated parent linkage, or undefined on validation failure
+ * @returns Validated parent linkage, `{ kind: 'malformed' }` if present but
+ *   invalid, or `undefined` when the field is absent
  */
 function parseParentLinkage(raw: unknown): ParentLinkage | undefined {
+  if (raw === undefined || raw === null) return undefined;
   const result = ParentLinkageSchema.safeParse(raw);
-  if (!result.success) return undefined;
+  if (!result.success) return { kind: 'malformed' };
   const data = result.data;
   // Discriminant narrows `data` to its variant — delegation carries a typed
   // `tokenHash: string`, inline does not declare one. No assertion needed.
@@ -326,10 +343,10 @@ function classifyOutcome(status: RunbookStatus, tokenHash: string): DelegationOu
         return { kind: 'child_claimed_idle', child: status };
       }
 
-      // If a parentLinkage is present but did not match (wrong token, or
-      // inline linkage), the active runbook is some other child — not our
-      // parent. We cannot confidently classify the outcome; fall back to
-      // unknown rather than mis-claim the parent resumed.
+      // If a parentLinkage is present but did not match (wrong token, inline
+      // linkage, or malformed payload), the active runbook is not our parent
+      // and we cannot verify it is our child either. Fall back to unknown
+      // rather than mis-claim the parent resumed.
       if (status.parentLinkage !== undefined) {
         return { kind: 'unknown' };
       }
