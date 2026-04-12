@@ -268,7 +268,7 @@ describe('parentLinkage projection', () => {
     const state = makeState({
       parentLinkage: {
         kind: 'delegation',
-        tokenHash: 'sha256:abc123',
+        tokenHash: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
         parentRunId: 'parent-run-1',
         parentStepId: '1.1',
         parentStep: '1',
@@ -279,7 +279,7 @@ describe('parentLinkage projection', () => {
 
     expect(result.parentLinkage).toEqual({
       kind: 'delegation',
-      tokenHash: 'sha256:abc123',
+      tokenHash: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
       parentRunId: 'parent-run-1',
       parentStepId: '1.1',
       parentStep: '1',
@@ -317,7 +317,7 @@ describe('parentLinkage projection', () => {
     const state = makeState({
       parentLinkage: {
         kind: 'delegation',
-        tokenHash: 'sha256:xyz789',
+        tokenHash: 'sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210',
         parentRunId: 'parent-run-2',
         parentStepId: '2.1',
       },
@@ -327,7 +327,7 @@ describe('parentLinkage projection', () => {
 
     expect(result.parentLinkage).toEqual({
       kind: 'delegation',
-      tokenHash: 'sha256:xyz789',
+      tokenHash: 'sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210',
       parentRunId: 'parent-run-2',
       parentStepId: '2.1',
     });

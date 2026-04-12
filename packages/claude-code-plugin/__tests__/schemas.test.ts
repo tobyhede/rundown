@@ -97,6 +97,15 @@ describe('HookInputSchema', () => {
     for (const input of passthroughInputs) {
       const result = HookInputSchema.safeParse(input);
       expect(result.success).toBe(true);
+      // Passthrough must actually forward the unknown field — parse success
+      // alone doesn't prove it wasn't silently stripped.
+      if (result.success) {
+        const parsed = result.data as Record<string, unknown>;
+        for (const [key, value] of Object.entries(input)) {
+          if (key === 'hook_event_name' || key === 'cwd') continue;
+          expect(parsed[key]).toEqual(value);
+        }
+      }
     }
   });
 

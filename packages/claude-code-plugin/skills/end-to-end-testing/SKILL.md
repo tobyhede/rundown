@@ -14,6 +14,11 @@ Invoke the rundown skills:
 
 Start the runbook with the target workflow:
 `rd run rundown:end-to-end-test --var TargetRunbook=<runbook> --prompted`
+
+Workflows that accept additional required inputs take them as further `--var`
+flags, e.g. `planning/review-plan.runbook.md` requires `PlanPath`:
+
+`rd run rundown:end-to-end-test --var TargetRunbook=planning/review-plan.runbook.md --var PlanPath=<plan-path> --prompted`
 </important>
 
 ## Workflow
@@ -26,10 +31,10 @@ When the child workflow completes, the parent advances to the feedback step.
 
 ## Available Runbooks
 
-| Workflow        | TargetRunbook |
-|-----------------|---------------|
-| Writing Plans   | `planning/write-plan.runbook.md` |
-| Reviewing Plans | `planning/review-plan.runbook.md` |
+| Workflow        | TargetRunbook                     | Extra vars |
+|-----------------|-----------------------------------|------------|
+| Writing Plans   | `planning/write-plan.runbook.md`  | —          |
+| Reviewing Plans | `planning/review-plan.runbook.md` | `PlanPath` |
 
 
 ## Feedback
