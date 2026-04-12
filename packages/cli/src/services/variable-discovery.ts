@@ -252,7 +252,7 @@ export const DEFAULT_WORK_PATH = '.rundown/work';
  * @param branch - Raw git branch name, or `null` when not in a git repo
  * @returns `.rundown/work/<sanitized-branch>` inside git, otherwise `.rundown/work`
  */
-export function computeWorkPath(branch: string | null): string {
+function computeWorkPath(branch: string | null): string {
   const sanitized = branch ? sanitizeBranchName(branch) : null;
   return sanitized ? `${DEFAULT_WORK_PATH}/${sanitized}` : DEFAULT_WORK_PATH;
 }
