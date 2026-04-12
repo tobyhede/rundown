@@ -26,6 +26,7 @@ reviews:
     - "**"
     - "!.worktrees/**"
     - "!.work/**"
+    - "!.rundown/work/**"
     - "!site/node_modules/**"
     - "!site/.next/**"
     - "!**/*.snap"

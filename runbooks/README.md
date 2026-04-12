@@ -56,8 +56,8 @@ Runbooks must never hardcode artifact paths. Use the `rdpath` CLI tool to assemb
 
 | Category | Description | rdpath flags | Example output |
 |----------|-------------|--------------|----------------|
-| **Artifact** (durable) | Final deliverables kept long-term | `--dir <base> --file <name>` | `.work/feature/2026-03-16-plan.md` |
-| **Work product** (transient) | Intermediate files scoped to an execution | `--dir <base> --ctx <id> --file <name>` | `.work/feature/.rd-a3b8c1d2/2026-03-16-findings.md` |
+| **Artifact** (durable) | Final deliverables kept long-term | `--dir <base> --file <name>` | `.rundown/work/feature/2026-03-16-plan.md` |
+| **Work product** (transient) | Intermediate files scoped to an execution | `--dir <base> --ctx <id> --file <name>` | `.rundown/work/feature/.rd-a3b8c1d2/2026-03-16-findings.md` |
 
 ### Runbook Patterns
 

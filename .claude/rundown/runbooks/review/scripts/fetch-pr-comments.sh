@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fetch PR review comments and write structured JSON to .work/pr-feedback/
+# Fetch PR review comments and write structured JSON to the pr-feedback directory
 set -euo pipefail
 
 SCRIPT_NAME="$(basename "$0")"
@@ -8,13 +8,20 @@ usage() {
   cat <<EOF
 Usage: $SCRIPT_NAME [options] <owner/repo> <pr_number>
 
-  Fetch PR review comments and write structured JSON to .work/pr-feedback/
+  Fetch PR review comments and write structured JSON to the pr-feedback directory.
+  Output directory defaults to \$OUTDIR or \$WORK_PATH/pr-feedback, falling back
+  to .rundown/work/pr-feedback.
 
 Options:
   -h, --help  Show this help
 
+Environment:
+  OUTDIR       Explicit output directory (overrides WORK_PATH).
+  WORK_PATH    Base work directory; pr-feedback is written under it.
+
 Examples:
   $SCRIPT_NAME tobyhede/rundown 11
+  WORK_PATH="\$(rd vars get WorkPath 2>/dev/null)" $SCRIPT_NAME tobyhede/rundown 11
 EOF
 }
 
@@ -36,7 +43,7 @@ fi
 
 REPO="$1"
 PR="$2"
-OUTDIR=".work/pr-feedback"
+OUTDIR="${OUTDIR:-${WORK_PATH:-.rundown/work}/pr-feedback}"
 mkdir -p "$OUTDIR"
 
 # Fetch all inline review comments

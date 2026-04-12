@@ -23,7 +23,7 @@ Fetch and triage review feedback from a pull request.
 - FAIL STOP
 
 ```bash
-.claude/rundown/runbooks/review/scripts/fetch-pr-comments.sh {{repo}} {{pr_number}}
+WORK_PATH="{{WorkPath}}" .claude/rundown/runbooks/review/scripts/fetch-pr-comments.sh {{repo}} {{pr_number}}
 ```
 
 ## 2 Review Summary
@@ -32,7 +32,7 @@ Fetch and triage review feedback from a pull request.
 - FAIL STOP
 
 ```bash
-.claude/rundown/runbooks/review/scripts/summarize-findings.sh
+WORK_PATH="{{WorkPath}}" .claude/rundown/runbooks/review/scripts/summarize-findings.sh
 ```
 
 ## 3 Address Findings
@@ -40,7 +40,7 @@ Fetch and triage review feedback from a pull request.
 - PASS CONTINUE
 - FAIL CONTINUE
 
-Work through each actionable finding from `.work/pr-feedback/findings.jsonl`.
+Work through each actionable finding from `{{WorkPath}}/pr-feedback/findings.jsonl`.
 For each finding, review the code at the specified path and line, then either
 address the feedback or note why it was skipped.
 

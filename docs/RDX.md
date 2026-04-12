@@ -382,5 +382,5 @@ cat plan.md
 
 The plan-writing skill and runbook use path conventions:
 ```bash
-rdx .work/feature-name/2026-03-26-plan.json --output .work/feature-name/2026-03-26-plan.md
+rdx .rundown/work/feature-name/2026-03-26-plan.json --output .rundown/work/feature-name/2026-03-26-plan.md
 ```

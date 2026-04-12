@@ -9,6 +9,7 @@ node_modules/
 Thumbs.db
 .claude/
 .serena/
+.rundown/work/
 .work/
 .worktree/
 .worktrees/

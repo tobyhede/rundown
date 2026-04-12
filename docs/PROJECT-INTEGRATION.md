@@ -220,6 +220,6 @@ review/
 Guidelines:
 - Use `#!/usr/bin/env bash` and `set -euo pipefail`
 - Accept parameters positionally with usage messages
-- Write output to `.work/<runbook-name>/` for intermediate artifacts
+- By default write output to `.rundown/work/<runbook-name>/` for intermediate artifacts; override via the `WorkPath` template variable (set with `--var WorkPath=...` or config) or the `WORK_PATH` environment variable read by scripts
 - Exit 0 for success (PASS), non-zero for failure (FAIL)
 - Keep scripts focused — one responsibility per script
