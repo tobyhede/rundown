@@ -1,6 +1,13 @@
 // packages/claude-code-plugin/__tests__/schemas.properties.test.ts
 import fc from 'fast-check';
-import { HookInputSchema, SessionStateSchema, parseHookInput } from '../src/shared/index.js';
+import {
+  HookInputSchema,
+  ParentLinkageSchema,
+  RunbookPositionBodySchema,
+  RunbookStepBodySchema,
+  SessionStateSchema,
+  parseHookInput,
+} from '../src/shared/index.js';
 
 describe('Schema Property Tests', () => {
   describe('HookInputSchema', () => {
@@ -163,6 +170,148 @@ describe('Schema Property Tests', () => {
           if (!result.success) {
             expect(result.error).toContain('Invalid JSON');
           }
+        }),
+        { numRuns: 50 },
+      );
+    });
+  });
+
+  describe('RunbookPositionBodySchema', () => {
+    const validPositionArb = fc.record({
+      current: fc.string({ minLength: 1, maxLength: 10 }),
+      total: fc.integer({ min: 0, max: 100 }),
+      substep: fc.option(fc.string({ minLength: 1, maxLength: 10 }), { nil: undefined }),
+      unresolved: fc.option(fc.integer({ min: 0, max: 50 }), { nil: undefined }),
+    });
+
+    it('accepts well-formed positions', () => {
+      fc.assert(
+        fc.property(validPositionArb, (input) => {
+          expect(RunbookPositionBodySchema.safeParse(input).success).toBe(true);
+        }),
+        { numRuns: 100 },
+      );
+    });
+
+    it('rejects when required fields are missing or mistyped', () => {
+      const invalidArb = fc.oneof(
+        // missing current
+        fc.record({ total: fc.integer({ min: 0, max: 100 }) }),
+        // missing total
+        fc.record({ current: fc.string({ minLength: 1, maxLength: 10 }) }),
+        // wrong types
+        fc.record({
+          current: fc.integer(),
+          total: fc.string(),
+        }),
+        // null / non-object
+        fc.constant(null),
+        fc.integer(),
+        fc.string(),
+      );
+
+      fc.assert(
+        fc.property(invalidArb, (input) => {
+          expect(RunbookPositionBodySchema.safeParse(input).success).toBe(false);
+        }),
+        { numRuns: 100 },
+      );
+    });
+  });
+
+  describe('RunbookStepBodySchema', () => {
+    const validStepArb = fc.record({
+      name: fc.string({ minLength: 1, maxLength: 100 }),
+      description: fc.option(fc.string({ maxLength: 500 }), { nil: undefined }),
+    });
+
+    it('accepts well-formed steps', () => {
+      fc.assert(
+        fc.property(validStepArb, (input) => {
+          expect(RunbookStepBodySchema.safeParse(input).success).toBe(true);
+        }),
+        { numRuns: 100 },
+      );
+    });
+
+    it('rejects missing or mistyped name', () => {
+      const invalidArb = fc.oneof(
+        fc.record({ description: fc.string() }),
+        fc.record({ name: fc.integer(), description: fc.string() }),
+        fc.constant(null),
+        fc.string(),
+      );
+
+      fc.assert(
+        fc.property(invalidArb, (input) => {
+          expect(RunbookStepBodySchema.safeParse(input).success).toBe(false);
+        }),
+        { numRuns: 100 },
+      );
+    });
+  });
+
+  describe('ParentLinkageSchema', () => {
+    const delegationLinkageArb = fc.record({
+      kind: fc.constant('delegation' as const),
+      tokenHash: fc.string({ minLength: 1, maxLength: 80 }),
+      parentRunId: fc.string({ minLength: 1, maxLength: 16 }),
+      parentStepId: fc.string({ minLength: 1, maxLength: 10 }),
+      parentStep: fc.option(fc.string({ minLength: 1, maxLength: 10 }), { nil: undefined }),
+    });
+
+    const inlineLinkageArb = fc.record({
+      kind: fc.constant('inline' as const),
+      parentRunId: fc.string({ minLength: 1, maxLength: 16 }),
+      parentStepId: fc.string({ minLength: 1, maxLength: 10 }),
+      parentStep: fc.option(fc.string({ minLength: 1, maxLength: 10 }), { nil: undefined }),
+    });
+
+    it('accepts valid delegation linkage with tokenHash', () => {
+      fc.assert(
+        fc.property(delegationLinkageArb, (input) => {
+          expect(ParentLinkageSchema.safeParse(input).success).toBe(true);
+        }),
+        { numRuns: 100 },
+      );
+    });
+
+    it('accepts valid inline linkage without tokenHash', () => {
+      fc.assert(
+        fc.property(inlineLinkageArb, (input) => {
+          expect(ParentLinkageSchema.safeParse(input).success).toBe(true);
+        }),
+        { numRuns: 100 },
+      );
+    });
+
+    it('rejects delegation linkage missing tokenHash', () => {
+      const invalidArb = fc.record({
+        kind: fc.constant('delegation' as const),
+        parentRunId: fc.string({ minLength: 1, maxLength: 16 }),
+        parentStepId: fc.string({ minLength: 1, maxLength: 10 }),
+      });
+
+      fc.assert(
+        fc.property(invalidArb, (input) => {
+          expect(ParentLinkageSchema.safeParse(input).success).toBe(false);
+        }),
+        { numRuns: 50 },
+      );
+    });
+
+    it('rejects unknown kinds', () => {
+      const invalidArb = fc.record({
+        kind: fc
+          .string({ minLength: 1, maxLength: 20 })
+          .filter((k) => k !== 'delegation' && k !== 'inline'),
+        parentRunId: fc.string({ minLength: 1, maxLength: 16 }),
+        parentStepId: fc.string({ minLength: 1, maxLength: 10 }),
+      });
+
+      fc.assert(
+        fc.property(invalidArb, (input) => {
+          expect(ParentLinkageSchema.safeParse(input).success).toBe(false);
         }),
         { numRuns: 50 },
       );

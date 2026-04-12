@@ -92,6 +92,70 @@ export function parseHookInput(json: string): ParseResult<HookInput> {
 }
 
 /**
+ * Runbook position body schema — validates the `position` field of `rd status --json`.
+ *
+ * Fields match {@link StatusOutputData.position} in the CLI's status builder.
+ * Required fields (`current`, `total`) are enforced; optional fields are passed
+ * through. Unknown fields are allowed (forward-compat with the CLI).
+ */
+export const RunbookPositionBodySchema = z
+  .object({
+    current: z.string(),
+    total: z.number(),
+    substep: z.string().optional(),
+    unresolved: z.number().optional(),
+  })
+  .passthrough();
+
+/** Runbook step detail schema — validates the `step` field of `rd status --json`. */
+export const RunbookStepBodySchema = z
+  .object({
+    name: z.string(),
+    description: z.string().optional(),
+  })
+  .passthrough();
+
+/**
+ * Parent linkage schema — validates the `parentLinkage` field of `rd status --json`.
+ *
+ * Mirrors the projection produced by `buildParentLinkage` in
+ * `packages/cli/src/helpers/status-builder.ts`.
+ *
+ * Uses a discriminated union on `kind` so narrowing via the discriminant gives
+ * callers the strongest possible type: the delegation variant carries a
+ * required `tokenHash`; the inline variant omits it entirely. No type
+ * assertions needed at the consumer.
+ */
+export const ParentLinkageSchema = z.discriminatedUnion('kind', [
+  z
+    .object({
+      kind: z.literal('delegation'),
+      tokenHash: z.string(),
+      parentRunId: z.string(),
+      parentStepId: z.string(),
+      parentStep: z.string().optional(),
+    })
+    .passthrough(),
+  z
+    .object({
+      kind: z.literal('inline'),
+      parentRunId: z.string(),
+      parentStepId: z.string(),
+      parentStep: z.string().optional(),
+    })
+    .passthrough(),
+]);
+
+/** Validated runbook position body. */
+export type RunbookPositionBody = z.infer<typeof RunbookPositionBodySchema>;
+
+/** Validated runbook step body. */
+export type RunbookStepBody = z.infer<typeof RunbookStepBodySchema>;
+
+/** Validated parent linkage. */
+export type ParentLinkageBody = z.infer<typeof ParentLinkageSchema>;
+
+/**
  * Session State Schema - Runtime Validation for Persisted State
  */
 export const SessionStateSchema = z.object({

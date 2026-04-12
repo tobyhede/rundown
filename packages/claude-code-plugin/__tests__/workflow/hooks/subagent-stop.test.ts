@@ -151,17 +151,17 @@ describe('handleSubagentStop', () => {
       expect(result.context).toContain('parent.runbook.md');
     });
 
-    it('treats unrecognized delegations as child with nested delegations', async () => {
+    it('surfaces parent state when our token does not match any delegation (sibling-only)', async () => {
       mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
       setExecSync(
         createStatusMock({
           active: true,
           stashed: false,
-          file: 'child.runbook.md',
+          file: 'parent.runbook.md',
           delegations: [
             {
-              substep: '1.1',
-              runbook: 'grandchild.runbook.md',
+              substep: '1.2',
+              runbook: 'sibling.runbook.md',
               state: 'pending',
               tokenHash: OTHER_TOKEN_HASH,
             },
@@ -172,9 +172,99 @@ describe('handleSubagentStop', () => {
       const input = createMockHookInput('SubagentStop');
       const result = await handleSubagentStop(input);
 
-      // Delegations present but none match our token — child with nested delegations
-      expect(result.context).toContain('Delegation Incomplete');
+      // No parentLinkage + unmatched tokenHash + other delegations present carry
+      // hashes → parent resumed, remaining delegations are siblings (no-nesting
+      // invariant precludes grandchildren).
+      expect(result.context).toContain('Delegation Completed');
+      expect(result.context).toContain('sibling.runbook.md');
+    });
+  });
+
+  describe('child runbook claimed but idle (parentLinkage correlation)', () => {
+    it('classifies claimed-idle via parentLinkage.tokenHash match', async () => {
+      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setExecSync(
+        createStatusMock({
+          active: true,
+          stashed: false,
+          file: 'child.runbook.md',
+          position: { current: '1', total: 3 },
+          step: { name: '1. Starting step' },
+          parentLinkage: {
+            kind: 'delegation',
+            tokenHash: VALID_TOKEN_HASH,
+            parentRunId: 'parent-run-1',
+            parentStepId: '1.1',
+            parentStep: '1',
+          },
+        }) as never,
+      );
+
+      const input = createMockHookInput('SubagentStop');
+      const result = await handleSubagentStop(input);
+
+      expect(result.context).toContain('Delegation Claimed — No Progress');
       expect(result.context).toContain('child.runbook.md');
+      expect(result.context).toContain('1. Starting step');
+      expect(result.context).not.toContain('Delegation Step Complete');
+    });
+
+    it('falls back to unknown when claimed-idle invariant is violated (no-nesting guard)', async () => {
+      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setExecSync(
+        createStatusMock({
+          active: true,
+          stashed: false,
+          file: 'child.runbook.md',
+          parentLinkage: {
+            kind: 'delegation',
+            tokenHash: VALID_TOKEN_HASH,
+            parentRunId: 'parent-run-1',
+            parentStepId: '1.1',
+          },
+          // Corrupt state: child carrying its own outgoing delegations
+          // violates the no-nesting invariant. The hook must refuse to emit a
+          // confident banner.
+          delegations: [
+            {
+              substep: '2.1',
+              runbook: 'should-not-exist.runbook.md',
+              state: 'pending',
+              tokenHash: OTHER_TOKEN_HASH,
+            },
+          ],
+        }) as never,
+      );
+
+      const input = createMockHookInput('SubagentStop');
+      const result = await handleSubagentStop(input);
+
+      expect(result.context).toContain('Unable to verify');
+      expect(result.context).not.toContain('Delegation Claimed — No Progress');
+      expect(result.context).not.toContain('Delegation Step Complete');
+    });
+
+    it('ignores inline parentLinkage — only delegation linkage drives correlation', async () => {
+      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setExecSync(
+        createStatusMock({
+          active: true,
+          stashed: false,
+          file: 'child.runbook.md',
+          parentLinkage: {
+            kind: 'inline',
+            parentRunId: 'parent-run-1',
+            parentStepId: '1.1',
+          },
+        }) as never,
+      );
+
+      const input = createMockHookInput('SubagentStop');
+      const result = await handleSubagentStop(input);
+
+      // Inline linkage has no tokenHash — falls through to parent-resumed path.
+      expect(result.context).toContain('Delegation Step Complete');
+      expect(result.context).not.toContain('Delegation Claimed — No Progress');
     });
   });
 
@@ -392,90 +482,24 @@ describe('handleSubagentStop', () => {
           active: true,
           stashed: true,
           file: 'child.runbook.md',
-          step: { name: '3. Deploy' },
-          position: { current: '3', total: 5 },
-          delegations: [
-            {
-              substep: '3.1',
-              runbook: 'grandchild.runbook.md',
-              state: 'claimed',
-              childRunId: 'run-gc-1',
-              tokenHash: OTHER_TOKEN_HASH,
-            },
-          ],
-        }) as never,
-      );
-
-      const input = createMockHookInput('SubagentStop');
-      const result = await handleSubagentStop(input);
-
-      // Should be classified as active (preserving delegations), not stashed
-      expect(result.context).toContain('Delegation Incomplete');
-      expect(result.context).toContain('child.runbook.md');
-    });
-  });
-
-  describe('child runbook still active (nested delegations)', () => {
-    /** Status mock for a child runbook that has its own nested delegations. */
-    function childWithNestedDelegations(overrides: Record<string, unknown> = {}) {
-      return createStatusMock({
-        active: true,
-        stashed: false,
-        file: 'child.runbook.md',
-        delegations: [
-          {
-            substep: '1.1',
-            runbook: 'grandchild.runbook.md',
-            state: 'pending',
-            tokenHash: OTHER_TOKEN_HASH,
+          step: { name: '1. Start' },
+          position: { current: '1', total: 3 },
+          parentLinkage: {
+            kind: 'delegation',
+            tokenHash: VALID_TOKEN_HASH,
+            parentRunId: 'parent-run-1',
+            parentStepId: '1.1',
           },
-        ],
-        ...overrides,
-      });
-    }
-
-    it('returns context when child has nested delegations', async () => {
-      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
-      setExecSync(
-        childWithNestedDelegations({
-          step: { name: '2. Review changes' },
-          position: { current: '2', total: 5 },
         }) as never,
       );
 
       const input = createMockHookInput('SubagentStop');
       const result = await handleSubagentStop(input);
 
-      expect(result.context).toContain('Delegation Incomplete');
+      // active+stashed routes through the active branch; parentLinkage matches
+      // our token → claimed-idle.
+      expect(result.context).toContain('Delegation Claimed — No Progress');
       expect(result.context).toContain('child.runbook.md');
-      expect(result.context).toContain('2. Review changes');
-      expect(result.context).toContain('step 2 of 5');
-    });
-
-    it('includes actionable instructions in context', async () => {
-      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
-      setExecSync(childWithNestedDelegations() as never);
-
-      const input = createMockHookInput('SubagentStop');
-      const result = await handleSubagentStop(input);
-
-      expect(result.context).toContain('rd status');
-      expect(result.context).toContain('retry');
-      expect(result.context).toContain('verify before proceeding');
-    });
-
-    it('includes step description when available', async () => {
-      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
-      setExecSync(
-        childWithNestedDelegations({
-          step: { name: '3. Deploy', description: 'Deploy to staging' },
-        }) as never,
-      );
-
-      const input = createMockHookInput('SubagentStop');
-      const result = await handleSubagentStop(input);
-
-      expect(result.context).toContain('3. Deploy — Deploy to staging');
     });
   });
 
@@ -585,6 +609,85 @@ describe('handleSubagentStop', () => {
 
       expect(result.context).toContain('Unable to verify child runbook state');
       expect(result.context).toContain('rd status');
+    });
+  });
+
+  describe('parser robustness (malformed status fields)', () => {
+    it('degrades gracefully when position is missing required fields', async () => {
+      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setExecSync(
+        createStatusMock({
+          active: true,
+          stashed: false,
+          file: 'parent.runbook.md',
+          // Missing `current` and `total` — RunbookPositionBodySchema rejects,
+          // parsePosition returns undefined, banner simply omits position line.
+          position: { substep: '1.1' },
+          step: { name: '4. Collate review findings' },
+        }) as never,
+      );
+
+      const input = createMockHookInput('SubagentStop');
+      const result = await handleSubagentStop(input);
+
+      expect(result.context).toContain('Delegation Step Complete');
+      expect(result.context).toContain('4. Collate review findings');
+      expect(result.context).not.toContain('step undefined');
+    });
+
+    it('degrades gracefully when step has wrong types', async () => {
+      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setExecSync(
+        createStatusMock({
+          active: true,
+          stashed: false,
+          file: 'parent.runbook.md',
+          position: { current: '2', total: 5 },
+          step: { name: 42, description: true },
+        }) as never,
+      );
+
+      const input = createMockHookInput('SubagentStop');
+      const result = await handleSubagentStop(input);
+
+      // Invalid step → undefined; position still renders.
+      expect(result.context).toContain('Delegation Step Complete');
+      expect(result.context).toContain('step 2 of 5');
+    });
+
+    it('ignores parentLinkage when fields are missing', async () => {
+      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setExecSync(
+        createStatusMock({
+          active: true,
+          stashed: false,
+          file: 'child.runbook.md',
+          // kind is 'delegation' but tokenHash is absent — schema refine rejects.
+          parentLinkage: {
+            kind: 'delegation',
+            parentRunId: 'parent-run-1',
+            parentStepId: '1.1',
+          },
+        }) as never,
+      );
+
+      const input = createMockHookInput('SubagentStop');
+      const result = await handleSubagentStop(input);
+
+      // Invalid linkage → undefined; falls through to parent-resumed path.
+      expect(result.context).toContain('Delegation Step Complete');
+      expect(result.context).not.toContain('Delegation Claimed — No Progress');
+    });
+
+    it('does not throw when status is null', async () => {
+      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setExecSync(createMockExecSync('null') as never);
+
+      const input = createMockHookInput('SubagentStop');
+      // Should return a result object (unknown fallback), not throw.
+      await expect(handleSubagentStop(input)).resolves.toEqual(
+        expect.objectContaining({ context: expect.stringContaining('Unable to verify') }),
+      );
     });
   });
 
