@@ -35,14 +35,25 @@ const pathCmd = new Command('path')
   });
 
 const findCmd = new Command('find')
-  .description('Find files matching a glob pattern in an artifact directory')
+  .description(
+    'Find files matching a glob pattern in an artifact directory. ' +
+      'Exits 1 when zero files match (for runbook flow control); ' +
+      'pass --allow-empty to treat an empty result as success.',
+  )
   .argument('<pattern>', 'Glob pattern to match files against')
-  .action(async (pattern: string) => {
+  .option('--allow-empty', 'Exit 0 when zero files match (default: exit 1 on empty)')
+  .action(async (pattern: string, options: { allowEmpty?: boolean }) => {
     const { dir, ctx } = program.opts<{ dir: string; ctx?: string }>();
     try {
       const results = await findFiles({ dir, ctx }, pattern);
       for (const result of results) {
         process.stdout.write(`${result}\n`);
+      }
+      // Empty-match is a signal, not an error: exit 1 with no stderr output
+      // so callers can distinguish "no matches" (stderr empty) from a real
+      // error like a bad pattern (stderr starts with "error:").
+      if (results.length === 0 && !options.allowEmpty) {
+        process.exitCode = 1;
       }
     } catch (error) {
       const message = getErrorMessage(error);
