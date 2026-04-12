@@ -314,6 +314,24 @@ export const StatusResponseSchema = z
       .array(DelegationStatusEntrySchema)
       .optional()
       .describe('Active delegations on the current step'),
+    /** Parent linkage when the runbook was launched as a child. */
+    parentLinkage: z
+      .object({
+        kind: z
+          .enum(['delegation', 'inline'])
+          .describe('Parent linkage kind: delegation (token-based) or inline (rd run --step)'),
+        tokenHash: z
+          .string()
+          .optional()
+          .describe(
+            'SHA-256 hash of the delegation token. Present only when kind is "delegation".',
+          ),
+        parentRunId: z.string().describe('RunId of the parent runbook execution'),
+        parentStepId: z.string().describe('Parent substep ID at link time'),
+        parentStep: z.string().optional().describe('Parent step name at link time'),
+      })
+      .optional()
+      .describe('Parent linkage projection when this runbook is a child'),
     // Flat structure fields
     file: z.string().optional().describe('Path to the active runbook file'),
     state: z.string().optional().describe('Current runbook execution state'),

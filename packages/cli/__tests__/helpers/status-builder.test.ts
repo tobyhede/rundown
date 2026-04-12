@@ -250,3 +250,86 @@ describe('buildActiveStatus', () => {
     expect(result.step).toBeUndefined();
   });
 });
+
+describe('parentLinkage projection', () => {
+  beforeEach(() => {
+    const steps = [makeStep({ name: '1', description: 'First Step' })];
+    getRunbookFromState.mockReturnValue(steps);
+    buildMetadata.mockReturnValue({
+      file: 'test.runbook.md',
+      state: '.claude/rundown/runs/test-id.json',
+    });
+    (
+      core.countNumberedSteps as jest.MockedFunction<typeof core.countNumberedSteps>
+    ).mockReturnValue(1);
+  });
+
+  it('surfaces delegation linkage with tokenHash in active status', () => {
+    const state = makeState({
+      parentLinkage: {
+        kind: 'delegation',
+        tokenHash: 'sha256:abc123',
+        parentRunId: 'parent-run-1',
+        parentStepId: '1.1',
+        parentStep: '1',
+      },
+    });
+
+    const result = buildActiveStatus(state, '/test');
+
+    expect(result.parentLinkage).toEqual({
+      kind: 'delegation',
+      tokenHash: 'sha256:abc123',
+      parentRunId: 'parent-run-1',
+      parentStepId: '1.1',
+      parentStep: '1',
+    });
+  });
+
+  it('surfaces inline linkage without tokenHash in active status', () => {
+    const state = makeState({
+      parentLinkage: {
+        kind: 'inline',
+        parentRunId: 'parent-run-1',
+        parentStepId: '1.1',
+      },
+    });
+
+    const result = buildActiveStatus(state, '/test');
+
+    expect(result.parentLinkage).toEqual({
+      kind: 'inline',
+      parentRunId: 'parent-run-1',
+      parentStepId: '1.1',
+    });
+    expect(result.parentLinkage).not.toHaveProperty('tokenHash');
+  });
+
+  it('omits parentLinkage when state has none', () => {
+    const state = makeState();
+
+    const result = buildActiveStatus(state, '/test');
+
+    expect(result.parentLinkage).toBeUndefined();
+  });
+
+  it('surfaces parentLinkage in stashed status', () => {
+    const state = makeState({
+      parentLinkage: {
+        kind: 'delegation',
+        tokenHash: 'sha256:xyz789',
+        parentRunId: 'parent-run-2',
+        parentStepId: '2.1',
+      },
+    });
+
+    const result = buildStashedStatus(state, '/test');
+
+    expect(result.parentLinkage).toEqual({
+      kind: 'delegation',
+      tokenHash: 'sha256:xyz789',
+      parentRunId: 'parent-run-2',
+      parentStepId: '2.1',
+    });
+  });
+});

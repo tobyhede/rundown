@@ -73,6 +73,43 @@ export interface StatusOutputData {
     /** SHA-256 hash of the delegation token for cross-system correlation. */
     tokenHash?: string;
   }>;
+  /**
+   * Parent linkage projection when this runbook was launched as a child.
+   *
+   * Present on both active and stashed states when the runbook carries a
+   * {@link RunbookState.parentLinkage}. Surfaces the identifying fields a
+   * SubagentStop hook (or other consumer) needs to correlate a consumed
+   * delegation token with the child it produced.
+   */
+  parentLinkage?: {
+    kind: 'delegation' | 'inline';
+    /** Present only for `kind: 'delegation'`. SHA-256 hash of the delegation token. */
+    tokenHash?: string;
+    parentRunId: string;
+    parentStepId: string;
+    /** Parent's step name at link time (e.g., "1"). */
+    parentStep?: string;
+  };
+}
+
+/**
+ * Project a RunbookState's parentLinkage into the status output shape.
+ *
+ * Returns undefined when the state carries no parent linkage.
+ *
+ * @param state - Runbook state to inspect
+ * @returns Minimal projection suitable for status output, or undefined
+ */
+function buildParentLinkage(state: RunbookState): StatusOutputData['parentLinkage'] {
+  const linkage = state.parentLinkage;
+  if (!linkage) return undefined;
+  return {
+    kind: linkage.kind,
+    ...(linkage.kind === 'delegation' ? { tokenHash: linkage.tokenHash } : {}),
+    parentRunId: linkage.parentRunId,
+    parentStepId: linkage.parentStepId,
+    ...(linkage.parentStep !== undefined ? { parentStep: linkage.parentStep } : {}),
+  };
 }
 
 /**
@@ -123,6 +160,8 @@ export function buildStashedStatus(stashedState: RunbookState, cwd: string): Sta
   const totalSteps = countNumberedSteps(steps);
   const metadata = buildMetadata(stashedState);
 
+  const parentLinkage = buildParentLinkage(stashedState);
+
   return {
     active: false,
     stashed: true,
@@ -135,6 +174,7 @@ export function buildStashedStatus(stashedState: RunbookState, cwd: string): Sta
       stashedState.substep,
       stashedState.forStack,
     ),
+    ...(parentLinkage ? { parentLinkage } : {}),
   };
 }
 
@@ -203,6 +243,8 @@ export function buildActiveStatus(
         )
       : undefined;
 
+  const parentLinkage = buildParentLinkage(activeState);
+
   const delegations = (activeState.substepStates ?? [])
     .filter((ss) => ss.delegation != null)
     // Show delegations from the current frame only; include unscoped entries (simple steps)
@@ -240,5 +282,6 @@ export function buildActiveStatus(
     }),
     lastAction: actionBlockData,
     ...(delegations.length > 0 ? { delegations } : {}),
+    ...(parentLinkage ? { parentLinkage } : {}),
   };
 }
