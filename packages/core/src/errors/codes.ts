@@ -51,7 +51,7 @@ export const ErrorCodes = {
     code: 'RD-103',
     category: ErrorCategory.FILE_IO,
     title: 'State directory not accessible',
-    description: 'The .claude/rundown directory cannot be accessed or created.',
+    description: 'The .rundown directory cannot be accessed or created.',
     docSlug: 'state-dir-not-accessible',
   },
 

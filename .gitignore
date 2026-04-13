@@ -5,12 +5,13 @@ coverage/
 .DS_Store
 *.log
 .rundown/work/
+.rundown/runs/
+.rundown/session.json
+.rundown/locks/
 .work/
 .worktree/
 .claude/settings.local.json
 .claude/session/
-.claude/rundown/runs/
-.claude/rundown/session.json
 .claude-docker/
 logs/
 docs/plans/

@@ -64,8 +64,8 @@ export async function mountRunbook(
   content: string
 ): Promise<void> {
   // Use container.fs.mkdir to avoid race condition (recursive: true creates parents)
-  await container.fs.mkdir('.claude/rundown/runbooks', { recursive: true });
-  await container.fs.writeFile(`.claude/rundown/runbooks/${path}`, content);
+  await container.fs.mkdir('.rundown/runbooks', { recursive: true });
+  await container.fs.writeFile(`.rundown/runbooks/${path}`, content);
 }
 
 /**
@@ -76,8 +76,8 @@ export async function mountRunbook(
 export async function cleanRundownState(container: WebContainer): Promise<void> {
   try {
     // Remove state files to ensure clean slate
-    await container.fs.rm('.claude/rundown/runs', { recursive: true });
-    await container.fs.rm('.claude/rundown/session.json');
+    await container.fs.rm('.rundown/runs', { recursive: true });
+    await container.fs.rm('.rundown/session.json');
   } catch {
     // Ignore errors if files don't exist
   }

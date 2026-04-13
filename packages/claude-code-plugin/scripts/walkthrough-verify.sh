@@ -50,7 +50,7 @@ fi
 echo "All expected log entries found"
 
 # Check workflow state directory exists
-STATE_DIR=".claude/rundown/runs"
+STATE_DIR=".rundown/runs"
 if [[ ! -d "$STATE_DIR" ]]; then
   echo "FAIL: Workflow state directory not found"
   exit 1

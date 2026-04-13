@@ -1,5 +1,6 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import { runbooksDir } from '@rundown-org/core';
 import { findRunbookByName, findRunbookByNameInSource } from '../services/discovery.js';
 import { getBundledRunbooksPath } from './bundled-runbooks.js';
 import { getPluginRoot } from './plugin-root.js';
@@ -63,7 +64,7 @@ function namespaceToSource(namespace: string): 'project' | 'plugin' | 'bundled' 
 /**
  * Resolve runbook file by path (existing logic).
  * Search order:
- * 1. .claude/rundown/runbooks/ (project-local)
+ * 1. .rundown/runbooks/ (project-local)
  * 2. Plugin runbooks (via CLAUDE_PLUGIN_ROOT env var or sibling package discovery)
  * 3. Relative to cwd
  * 4. Bundled runbooks (lowest priority)
@@ -73,8 +74,8 @@ function namespaceToSource(namespace: string): 'project' | 'plugin' | 'bundled' 
  * @returns Resolved runbook with path and source, or null if not found
  */
 async function resolveByPath(cwd: string, filename: string): Promise<ResolvedRunbook | null> {
-  // 1. Check project-local .claude/rundown/runbooks/
-  const localPath = path.join(cwd, '.claude/rundown/runbooks', filename);
+  // 1. Check project-local .rundown/runbooks/
+  const localPath = path.join(runbooksDir(cwd), filename);
   try {
     await fs.access(localPath);
     return { path: localPath, source: 'project' };
@@ -130,12 +131,12 @@ function isPathIdentifier(identifier: string): boolean {
 /**
  * Resolve runbook file from multiple sources.
  * Supports both path-based and name-based resolution:
- * - Path mode: .claude/rundown/runbooks/file.md, ./path/to/file.md, etc.
+ * - Path mode: .rundown/runbooks/file.md, ./path/to/file.md, etc.
  * - Name mode: "verify", "my-runbook", etc.
  * - Namespace mode: "rundown:write-plan" (explicit source targeting)
  *
  * Search order for path mode:
- * 1. .claude/rundown/runbooks/ (project-local)
+ * 1. .rundown/runbooks/ (project-local)
  * 2. $CLAUDE_PLUGIN_ROOT/runbooks/ (plugin directory)
  * 3. Relative to cwd
  * 4. Bundled runbooks

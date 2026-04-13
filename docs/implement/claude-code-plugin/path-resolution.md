@@ -111,7 +111,7 @@ Runbooks are auto-discovered from multiple sources with priority:
 
 | Priority | Source | Location |
 |----------|--------|----------|
-| 1 (highest) | Project | `.claude/rundown/runbooks/` |
+| 1 (highest) | Project | `.rundown/runbooks/` |
 | 2 | Plugin | `${CLAUDE_PLUGIN_ROOT}/runbooks/` |
 | 3 (lowest) | Bundled | CLI package `dist/runbooks/` |
 

@@ -20,7 +20,7 @@ export type EventSubscriber = (event: RunbookEventV1) => void;
  * emitter.emit('RUNBOOK_STARTED', {
  *   title: 'My Runbook',
  *   prompted: false,
- *   statePath: '.claude/rundown/runs/wf-123.json'
+ *   statePath: '.rundown/runs/wf-123.json'
  * });
  *
  * unsub(); // Stop listening

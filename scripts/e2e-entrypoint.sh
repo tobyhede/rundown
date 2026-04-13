@@ -181,8 +181,8 @@ if [ -n "$PLAN_FILE" ]; then
 fi
 
 # Check for rundown execution state
-if [ -d ".claude/rundown/runs" ] && [ "$(ls -A .claude/rundown/runs 2>/dev/null)" ]; then
-  pass "Rundown execution state found in .claude/rundown/runs/"
+if [ -d ".rundown/runs" ] && [ "$(ls -A .rundown/runs 2>/dev/null)" ]; then
+  pass "Rundown execution state found in .rundown/runs/"
   RUNBOOK_CONFIRMED=true
 fi
 

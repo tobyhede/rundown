@@ -51,7 +51,7 @@
 
 | Directory | Auto-discovered? | Override Location |
 |-----------|-------------------|-------------------|
-| `runbooks/` | Yes | `.claude/rundown/runbooks/` (project overrides plugin) |
+| `runbooks/` | Yes | `.rundown/runbooks/` (project overrides plugin) |
 | `context/` | Yes | `.claude/context/` (project overrides plugin) |
 
 ---
@@ -64,7 +64,7 @@
 | Path works locally, breaks installed | `--plugin-dir` doesn't cache | Ensure file is in `package.json` `files` array |
 | `${CLAUDE_PLUGIN_ROOT}` not substituted | Wrong context or wrong syntax | Use `${...}` braces; check it's in a supported context |
 | Written files disappear on update | Wrote to `${CLAUDE_PLUGIN_ROOT}` | Use `${CLAUDE_PLUGIN_DATA}` instead |
-| Plugin override not working | Project file missing or wrong name | Check `.claude/context/` or `.claude/rundown/runbooks/` (Rundown Plugin) |
+| Plugin override not working | Project file missing or wrong name | Check `.claude/context/` or `.rundown/runbooks/` (Rundown Plugin) |
 | MCP server fails to start | Missing `${CLAUDE_PLUGIN_ROOT}` | Use variable for all plugin paths |
 | Hook script not executing | Script not executable | `chmod +x scripts/your-script.sh` |
 | `CLAUDE_PLUGIN_ROOT` not set | Running outside Claude Code | Use `import.meta.url` fallback (see [path-resolution.md](path-resolution.md)) |

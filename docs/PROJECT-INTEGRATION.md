@@ -4,10 +4,10 @@ How to add rundown runbooks to your project.
 
 ## Directory Convention
 
-Place runbooks in `.claude/rundown/runbooks/` at your project root:
+Place runbooks in `.rundown/runbooks/` at your project root:
 
 ```text
-.claude/rundown/runbooks/
+.rundown/runbooks/
   README.md                              # Convention explainer
   review/
     pr-feedback.runbook.md               # Workflow orchestration
@@ -24,18 +24,18 @@ Subdirectory structure is supported — runbooks are discovered recursively.
 
 ### Version Control
 
-Runbooks and scripts in `.claude/rundown/runbooks/` can be committed to share workflows with your team. Runtime state should stay ignored:
+Runbooks and scripts in `.rundown/runbooks/` can be committed to share workflows with your team. Runtime state should stay ignored:
 
 ```gitignore
 # Ignore runtime state, commit runbooks
-.claude/rundown/runs/
-.claude/rundown/session.json
+.rundown/runs/
+.rundown/session.json
 ```
 
 To keep runbooks as local-only project files instead, ignore the entire directory:
 
 ```gitignore
-.claude/rundown/
+.rundown/
 ```
 
 ## Discovery
@@ -58,7 +58,7 @@ rd run pr-feedback --var pr_number=42
 
 When multiple sources provide a runbook with the same name, discovery uses this priority:
 
-1. **Project** (`.claude/rundown/runbooks/`) — highest priority
+1. **Project** (`.rundown/runbooks/`) — highest priority
 2. **Plugin** (`$CLAUDE_PLUGIN_ROOT/runbooks/`)
 3. **Bundled** (CLI package `dist/runbooks/`)
 
@@ -79,7 +79,7 @@ rd run rundown:write-plan      # Explicit: from plugin only
 - FAIL STOP
 
 ```bash
-.claude/rundown/runbooks/review/scripts/fetch-data.sh {{repo}}
+.rundown/runbooks/review/scripts/fetch-data.sh {{repo}}
 ```
 ```
 
@@ -177,7 +177,7 @@ See [FORMAT.md Messages](./FORMAT.md#messages) for the full rationale.
 
 ## Worked Example: `pr-feedback`
 
-The `pr-feedback` runbook in `.claude/rundown/runbooks/review/` demonstrates all these conventions:
+The `pr-feedback` runbook in `.rundown/runbooks/review/` demonstrates all these conventions:
 
 **Runbook** (`pr-feedback.runbook.md`):
 - Frontmatter with name, description, tags, and default variables
@@ -196,13 +196,13 @@ The `pr-feedback` runbook in `.claude/rundown/runbooks/review/` demonstrates all
 rd ls --all
 
 # Check syntax
-rd check .claude/rundown/runbooks/review/pr-feedback.runbook.md
+rd check .rundown/runbooks/review/pr-feedback.runbook.md
 
 # Run against a specific PR
 rd run pr-feedback --var pr_number=11
 
 # Run scripts independently for testing
-bash .claude/rundown/runbooks/review/scripts/fetch-pr-comments.sh tobyhede/rundown 11
+bash .rundown/runbooks/review/scripts/fetch-pr-comments.sh tobyhede/rundown 11
 ```
 
 ## Colocated Scripts

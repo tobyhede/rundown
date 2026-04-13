@@ -23,7 +23,7 @@ Fetch and triage review feedback from a pull request.
 - FAIL STOP
 
 ```bash
-WORK_PATH="{{WorkPath}}" .claude/rundown/runbooks/review/scripts/fetch-pr-comments.sh {{repo}} {{pr_number}}
+WORK_PATH="{{WorkPath}}" .rundown/runbooks/review/scripts/fetch-pr-comments.sh {{repo}} {{pr_number}}
 ```
 
 ## 2 Review Summary
@@ -32,7 +32,7 @@ WORK_PATH="{{WorkPath}}" .claude/rundown/runbooks/review/scripts/fetch-pr-commen
 - FAIL STOP
 
 ```bash
-WORK_PATH="{{WorkPath}}" .claude/rundown/runbooks/review/scripts/summarize-findings.sh
+WORK_PATH="{{WorkPath}}" .rundown/runbooks/review/scripts/summarize-findings.sh
 ```
 
 ## 3 Address Findings

@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { rm } from 'node:fs/promises';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { getErrorMessage, isNodeError } from '@rundown-org/core';
+import { getErrorMessage, isNodeError, runbooksDir } from '@rundown-org/core';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { loadScenarioSuite, type ScenarioSuiteCase } from '../schemas/scenario-suite.js';
 import {
@@ -79,13 +79,13 @@ async function executeSuiteCase(
   const tmpDir = mkdtempSync(join(tmpdir(), 'rd-suite-'));
 
   try {
-    const runbooksDir = join(tmpDir, '.claude', 'rundown', 'runbooks');
-    mkdirSync(runbooksDir, { recursive: true });
+    const runbooksDirPath = runbooksDir(tmpDir);
+    mkdirSync(runbooksDirPath, { recursive: true });
 
     // Path-preserving copy: preserve subdirectory structure for suite cases
     const relPath = suiteCase.file; // e.g., "transitions/default-implicit.runbook.md"
     validateRelativePath(relPath);
-    const destPath = join(runbooksDir, relPath);
+    const destPath = join(runbooksDirPath, relPath);
     mkdirSync(dirname(destPath), { recursive: true });
 
     try {
@@ -104,7 +104,7 @@ async function executeSuiteCase(
     }
 
     // Also copy flat to runbooks root so bare-filename commands resolve
-    const flatDest = join(runbooksDir, basename(suiteCase.file));
+    const flatDest = join(runbooksDirPath, basename(suiteCase.file));
     if (flatDest !== destPath) {
       try {
         copyFileSync(runbookPath, flatDest);
@@ -123,7 +123,7 @@ async function executeSuiteCase(
     const mainRunbookSourceDir = dirname(resolve(suiteDir, suiteCase.file));
     for (const ref of referenced) {
       validateRelativePath(ref);
-      const dest = join(runbooksDir, ref);
+      const dest = join(runbooksDirPath, ref);
       mkdirSync(dirname(dest), { recursive: true });
       // Try main runbook's directory first (bare filenames), then suite directory (nested paths)
       let copied = false;

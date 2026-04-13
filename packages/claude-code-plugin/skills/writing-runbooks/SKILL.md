@@ -37,7 +37,7 @@ npm test
 ```
 ````
 
-All frontmatter fields are optional (open schema). Place project runbooks in `.claude/rundown/runbooks/` for discovery (`rd ls --all`).
+All frontmatter fields are optional (open schema). Place project runbooks in `.rundown/runbooks/` for discovery (`rd ls --all`).
 
 Validate with: `rd check <file>` and `rd resolve <file>`
 

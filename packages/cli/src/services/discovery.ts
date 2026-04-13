@@ -3,6 +3,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { extractFrontmatter, nameFromFilename } from '@rundown-org/parser';
+import { runbooksDir } from '@rundown-org/core';
 import { getBundledRunbooksPath } from '../helpers/bundled-runbooks.js';
 import { getPluginRoot } from '../helpers/plugin-root.js';
 
@@ -54,7 +55,7 @@ export function getSearchPaths(cwd: string): SearchPath[] {
   const paths: SearchPath[] = [];
 
   // Project runbooks directory (highest priority)
-  const projectRunbooksDir = path.join(cwd, '.claude', 'rundown', 'runbooks');
+  const projectRunbooksDir = runbooksDir(cwd);
   paths.push({
     path: projectRunbooksDir,
     source: 'project',

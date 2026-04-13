@@ -14,10 +14,11 @@ import type {
 } from './types.js';
 import { RunbookStateSchema } from '../schemas.js';
 import { isNodeError } from '../errors.js';
-
-/** Directory path (relative to project root) where runbook execution state files are stored. */
-export const STATE_DIR = '.claude/rundown/runs';
-const SESSION_FILE = '.claude/rundown/session.json';
+import {
+  runsDir as _runsDir,
+  sessionPath as _sessionPath,
+  statePath as _statePath,
+} from '../paths.js';
 
 function generateId(): string {
   const now = new Date();
@@ -52,7 +53,7 @@ interface CreateOptions {
  * Manager for runbook state persistence and lifecycle.
  *
  * Handles creating, loading, saving, and updating runbook state.
- * State is persisted to `.claude/rundown/runs/` as JSON files.
+ * State is persisted to `.rundown/runs/` as JSON files.
  * Supports runbook stacks for nested runbooks.
  */
 export class RunbookStateManager {
@@ -68,15 +69,15 @@ export class RunbookStateManager {
   }
 
   private get stateDir(): string {
-    return path.join(this.cwd, STATE_DIR);
+    return _runsDir(this.cwd);
   }
 
   private get sessionPath(): string {
-    return path.join(this.cwd, SESSION_FILE);
+    return _sessionPath(this.cwd);
   }
 
   private statePath(id: string): string {
-    return path.join(this.stateDir, `${id}.json`);
+    return _statePath(this.cwd, id);
   }
 
   /**
