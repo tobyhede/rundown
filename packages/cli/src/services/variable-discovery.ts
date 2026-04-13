@@ -23,6 +23,8 @@ import {
   type PolicyEvaluator,
   type PolicyPrompter,
   type TemplateVarValue,
+  CONFIG_FILE,
+  WORK_DIR,
 } from '@rundown-org/core';
 
 // Allow injection for testing
@@ -240,11 +242,12 @@ function normalizeToStringVariables(
 /**
  * Default base directory for the `WorkPath` built-in variable.
  *
- * Sits alongside `.rundown/config.yaml` so all rundown-owned state lives
- * under a single top-level directory. Branch-scoped subdirectories are
- * appended by `computeWorkPath()`.
+ * Re-exports {@link WORK_DIR} from `@rundown-org/core` to keep a single
+ * source of truth and prevent drift between packages.
+ *
+ * @deprecated Import {@link WORK_DIR} from `@rundown-org/core` directly.
  */
-export const DEFAULT_WORK_PATH = '.rundown/work';
+export const DEFAULT_WORK_PATH = WORK_DIR;
 
 /**
  * Compute the branch-scoped `WorkPath` value.
@@ -254,7 +257,7 @@ export const DEFAULT_WORK_PATH = '.rundown/work';
  */
 function computeWorkPath(branch: string | null): string {
   const sanitized = branch ? sanitizeBranchName(branch) : null;
-  return sanitized ? `${DEFAULT_WORK_PATH}/${sanitized}` : DEFAULT_WORK_PATH;
+  return sanitized ? `${WORK_DIR}/${sanitized}` : WORK_DIR;
 }
 
 /**
@@ -423,7 +426,7 @@ export async function findConfigFile(cwd: string): Promise<string | null> {
 
   // Continue while we haven't reached filesystem root
   while (parent !== dir) {
-    const configPath = path.join(dir, '.rundown', 'config.yaml');
+    const configPath = path.join(dir, CONFIG_FILE);
 
     try {
       await fs.access(configPath);
@@ -447,7 +450,7 @@ export async function findConfigFile(cwd: string): Promise<string | null> {
   }
 
   // Check the filesystem root as well
-  const configPath = path.join(dir, '.rundown', 'config.yaml');
+  const configPath = path.join(dir, CONFIG_FILE);
   try {
     await fs.access(configPath);
     return configPath;

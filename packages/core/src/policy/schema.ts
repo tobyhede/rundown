@@ -8,7 +8,7 @@
  */
 
 import { z } from 'zod';
-import { RUNDOWN_DIR } from '../paths.js';
+import { CONFIG_FILE, LOCKS_DIR, RUNS_DIR, SESSION_FILE, WORK_DIR } from '../paths.js';
 
 /**
  * Policy mode determines how permissions are handled.
@@ -217,14 +217,25 @@ export const DEFAULT_POLICY: PolicyConfig = {
     write: {
       allow: [
         '{repo}/.claude/**',
-        `{repo}/${RUNDOWN_DIR}/**`,
+        `{repo}/${RUNS_DIR}/**`,
+        `{repo}/${LOCKS_DIR}/**`,
+        // Single-file entries: update this list when new top-level .rundown/*.json artifacts are introduced
+        `{repo}/${SESSION_FILE}`,
+        `{repo}/${WORK_DIR}/**`,
         '{repo}/node_modules/**',
         '{repo}/dist/**',
         '{repo}/build/**',
         '{repo}/.next/**',
         '{tmp}/**',
       ],
-      deny: ['**/.env', '**/.env.*', '**/credentials.json', '**/*secret*', '**/*password*'],
+      deny: [
+        '**/.env',
+        '**/.env.*',
+        '**/credentials.json',
+        '**/*secret*',
+        '**/*password*',
+        `{repo}/${CONFIG_FILE}`, // user-managed; auto-loaded by findConfigFile()
+      ],
     },
     env: {
       allow: [
