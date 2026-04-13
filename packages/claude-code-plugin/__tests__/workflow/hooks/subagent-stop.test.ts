@@ -21,6 +21,21 @@ const VALID_TOKEN = 'rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 const VALID_TOKEN_HASH = `sha256:${createHash('sha256').update(VALID_TOKEN).digest('hex')}`;
 const OTHER_TOKEN_HASH = `sha256:${createHash('sha256').update('rdtk_OTHER00000000000000000000000').digest('hex')}`;
 
+/**
+ * Outcome-distinguishing markers from {@link buildContextMessage}.
+ *
+ * These substrings are the test seam — `handleSubagentStop` returns only
+ * `{ context: string | undefined }`, so outcome discrimination at the
+ * public boundary must go through user-visible banner text. Centralized
+ * here so banner wording changes only need updating in one place.
+ *
+ * - {@link BANNER_COMPLETED_NO_SIBLINGS}: `completed` outcome with no
+ *   unresolved sibling delegations (H2 heading).
+ * - {@link BANNER_UNKNOWN}: `unknown` outcome fallback message.
+ */
+const BANNER_COMPLETED_NO_SIBLINGS = 'Delegation Step Complete';
+const BANNER_UNKNOWN = 'Unable to verify';
+
 /** Helper to create a mock that returns `rd status --json` output. */
 function createStatusMock(status: Record<string, unknown>) {
   return createMockExecSync(JSON.stringify(status));
@@ -596,8 +611,15 @@ describe('handleSubagentStop', () => {
     });
   });
 
-  describe('unverifiable delegations (missing tokenHash)', () => {
-    it('returns unknown when no delegations have tokenHash', async () => {
+  describe('stale delegations filtered by type guard', () => {
+    // `isDelegationStatus` rejects entries without a string `tokenHash`.
+    // Such entries come only from pre-tokenHash session state (unsupported
+    // per the no-migration principle in CLAUDE.md). The hook must route
+    // these to `unknown` rather than drop them silently and misreport the
+    // parent as cleanly resumed — the `hadInvalidDelegations` flag carries
+    // that signal from parsing into classification.
+
+    it('returns unknown when all delegations lack tokenHash', async () => {
       mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
       setExecSync(
         createStatusMock({
@@ -619,6 +641,119 @@ describe('handleSubagentStop', () => {
       const result = await handleSubagentStop(input);
 
       expect(result.context).toContain('Unable to verify');
+      expect(result.context).toContain('rd status');
+    });
+
+    it('returns unknown when a mixed array contains any invalid entry', async () => {
+      // Valid sibling plus a stale entry missing tokenHash. The valid entry
+      // survives the filter; the stale one flips `hadInvalidDelegations`,
+      // forcing the classifier to `unknown` instead of `completed`.
+      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setExecSync(
+        createStatusMock({
+          active: true,
+          stashed: false,
+          file: 'parent.runbook.md',
+          delegations: [
+            {
+              substep: '3.1',
+              runbook: 'child-a.runbook.md',
+              state: 'pending',
+              tokenHash: OTHER_TOKEN_HASH,
+            },
+            {
+              substep: '3.2',
+              runbook: 'child-stale.runbook.md',
+              state: 'claimed',
+              childRunId: 'run-stale',
+            },
+          ],
+        }) as never,
+      );
+
+      const input = createMockHookInput('SubagentStop');
+      const result = await handleSubagentStop(input);
+
+      expect(result.context).toContain(BANNER_UNKNOWN);
+      expect(result.context).toContain('rd status');
+    });
+
+    it('routes to completed when our token matches despite invalid siblings', async () => {
+      // Narrow regression guard: catches reorderings that hoist the
+      // `hadInvalidDelegations` check above the `ours = find(...)` step in
+      // classifyOutcome. Does NOT cover every conceivable reordering — a
+      // direct exported-function test would be needed for that. Today this
+      // is the strongest assertion available at the `handleSubagentStop`
+      // public boundary.
+      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setExecSync(
+        createStatusMock({
+          active: true,
+          stashed: false,
+          file: 'parent.runbook.md',
+          delegations: [
+            {
+              substep: '3.1',
+              runbook: 'child-ours.runbook.md',
+              state: 'claimed',
+              childRunId: 'run-ours',
+              tokenHash: VALID_TOKEN_HASH,
+            },
+            {
+              substep: '3.2',
+              runbook: 'child-stale.runbook.md',
+              state: 'claimed',
+              childRunId: 'run-stale',
+              // Missing tokenHash — flips hadInvalidDelegations=true.
+            },
+          ],
+        }) as never,
+      );
+
+      const input = createMockHookInput('SubagentStop');
+      const result = await handleSubagentStop(input);
+
+      expect(result.context).not.toContain(BANNER_UNKNOWN);
+      expect(result.context).toContain(BANNER_COMPLETED_NO_SIBLINGS);
+    });
+
+    it('treats non-array delegations as absent, not invalid', async () => {
+      // Raw `delegations` is not an array → parseDelegations returns
+      // hadInvalid=false. No match → fall through to completed.
+      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setExecSync(
+        createStatusMock({
+          active: true,
+          stashed: false,
+          file: 'parent.runbook.md',
+          delegations: 'not-an-array',
+        }) as never,
+      );
+
+      const input = createMockHookInput('SubagentStop');
+      const result = await handleSubagentStop(input);
+
+      expect(result.context).not.toContain(BANNER_UNKNOWN);
+      expect(result.context).toContain(BANNER_COMPLETED_NO_SIBLINGS);
+    });
+
+    it('rejects non-object delegation entries and routes to unknown', async () => {
+      // Primitive entries (null, number, string) fail isDelegationStatus →
+      // hadInvalidDelegations=true → unknown.
+      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setExecSync(
+        createStatusMock({
+          active: true,
+          stashed: false,
+          file: 'parent.runbook.md',
+          delegations: [null, 42, 'bogus'],
+        }) as never,
+      );
+
+      const input = createMockHookInput('SubagentStop');
+      const result = await handleSubagentStop(input);
+
+      expect(result.context).toContain(BANNER_UNKNOWN);
       expect(result.context).toContain('rd status');
     });
   });
