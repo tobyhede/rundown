@@ -3,6 +3,12 @@ import { createHash } from 'node:crypto';
 import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { setExecSync } from '../../../src/workflow/hooks/rundown.js';
 import { createMockHookInput, createMockExecSync } from '../../helpers/test-utils.js';
+import type {
+  DelegationStatus,
+  ParentLinkage,
+  RunbookPosition,
+  RunbookStatus,
+} from '../../../src/workflow/hooks/subagent-stop.js';
 
 // Mock Session module
 const mockGet = jest.fn();
@@ -15,26 +21,13 @@ jest.unstable_mockModule('../../../src/session.js', () => ({
   })),
 }));
 
-const { handleSubagentStop } = await import('../../../src/workflow/hooks/subagent-stop.js');
+const { handleSubagentStop, classifyOutcome, parseDelegations } = await import(
+  '../../../src/workflow/hooks/subagent-stop.js'
+);
 
 const VALID_TOKEN = 'rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 const VALID_TOKEN_HASH = `sha256:${createHash('sha256').update(VALID_TOKEN).digest('hex')}`;
 const OTHER_TOKEN_HASH = `sha256:${createHash('sha256').update('rdtk_OTHER00000000000000000000000').digest('hex')}`;
-
-/**
- * Outcome-distinguishing markers from {@link buildContextMessage}.
- *
- * These substrings are the test seam — `handleSubagentStop` returns only
- * `{ context: string | undefined }`, so outcome discrimination at the
- * public boundary must go through user-visible banner text. Centralized
- * here so banner wording changes only need updating in one place.
- *
- * - {@link BANNER_COMPLETED_NO_SIBLINGS}: `completed` outcome with no
- *   unresolved sibling delegations (H2 heading).
- * - {@link BANNER_UNKNOWN}: `unknown` outcome fallback message.
- */
-const BANNER_COMPLETED_NO_SIBLINGS = 'Delegation Step Complete';
-const BANNER_UNKNOWN = 'Unable to verify';
 
 /** Helper to create a mock that returns `rd status --json` output. */
 function createStatusMock(status: Record<string, unknown>) {
@@ -112,89 +105,6 @@ describe('handleSubagentStop', () => {
     });
   });
 
-  describe('child runbook completed', () => {
-    it('returns empty when session is inactive (child popped)', async () => {
-      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
-      setExecSync(createStatusMock({ active: false, stashed: false }) as never);
-
-      const input = createMockHookInput('SubagentStop');
-      const result = await handleSubagentStop(input);
-
-      expect(result).toEqual({});
-    });
-
-    it('surfaces parent state when our delegation claimed and no siblings remain', async () => {
-      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
-      setExecSync(
-        createStatusMock({
-          active: true,
-          stashed: false,
-          file: 'parent.runbook.md',
-          delegations: [
-            {
-              substep: '3.1',
-              runbook: 'child.runbook.md',
-              state: 'claimed',
-              childRunId: 'run-1',
-              tokenHash: VALID_TOKEN_HASH,
-            },
-          ],
-        }) as never,
-      );
-
-      const input = createMockHookInput('SubagentStop');
-      const result = await handleSubagentStop(input);
-
-      expect(result.context).toContain('Delegation Step Complete');
-      expect(result.context).toContain('parent.runbook.md');
-    });
-
-    it('surfaces parent state when no delegations remain (parent resumed)', async () => {
-      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
-      setExecSync(
-        createStatusMock({
-          active: true,
-          stashed: false,
-          file: 'parent.runbook.md',
-        }) as never,
-      );
-
-      const input = createMockHookInput('SubagentStop');
-      const result = await handleSubagentStop(input);
-
-      expect(result.context).toContain('Delegation Step Complete');
-      expect(result.context).toContain('parent.runbook.md');
-    });
-
-    it('surfaces parent state when our token does not match any delegation (sibling-only)', async () => {
-      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
-      setExecSync(
-        createStatusMock({
-          active: true,
-          stashed: false,
-          file: 'parent.runbook.md',
-          delegations: [
-            {
-              substep: '1.2',
-              runbook: 'sibling.runbook.md',
-              state: 'pending',
-              tokenHash: OTHER_TOKEN_HASH,
-            },
-          ],
-        }) as never,
-      );
-
-      const input = createMockHookInput('SubagentStop');
-      const result = await handleSubagentStop(input);
-
-      // No parentLinkage + unmatched tokenHash + other delegations present carry
-      // hashes → parent resumed, remaining delegations are siblings (no-nesting
-      // invariant precludes grandchildren).
-      expect(result.context).toContain('Delegation Completed');
-      expect(result.context).toContain('sibling.runbook.md');
-    });
-  });
-
   describe('child runbook claimed but idle (parentLinkage correlation)', () => {
     it('classifies claimed-idle via parentLinkage.tokenHash match', async () => {
       mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
@@ -221,91 +131,6 @@ describe('handleSubagentStop', () => {
       expect(result.context).toContain('Delegation Not Resolved');
       expect(result.context).toContain('child.runbook.md');
       expect(result.context).toContain('1. Starting step');
-      expect(result.context).not.toContain('Delegation Step Complete');
-    });
-
-    it('falls back to unknown when claimed-idle invariant is violated (no-nesting guard)', async () => {
-      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
-      setExecSync(
-        createStatusMock({
-          active: true,
-          stashed: false,
-          file: 'child.runbook.md',
-          parentLinkage: {
-            kind: 'delegation',
-            tokenHash: VALID_TOKEN_HASH,
-            parentRunId: 'parent-run-1',
-            parentStepId: '1.1',
-          },
-          // Corrupt state: child carrying its own outgoing delegations
-          // violates the no-nesting invariant. The hook must refuse to emit a
-          // confident banner.
-          delegations: [
-            {
-              substep: '2.1',
-              runbook: 'should-not-exist.runbook.md',
-              state: 'pending',
-              tokenHash: OTHER_TOKEN_HASH,
-            },
-          ],
-        }) as never,
-      );
-
-      const input = createMockHookInput('SubagentStop');
-      const result = await handleSubagentStop(input);
-
-      expect(result.context).toContain('Unable to verify');
-      expect(result.context).not.toContain('Delegation Not Resolved');
-      expect(result.context).not.toContain('Delegation Step Complete');
-    });
-
-    it('returns unknown when active runbook carries non-matching parentLinkage', async () => {
-      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
-      setExecSync(
-        createStatusMock({
-          active: true,
-          stashed: false,
-          file: 'child.runbook.md',
-          // Inline linkage — parentLinkage is present but has no tokenHash,
-          // so correlation misses. The active runbook is not our parent, so
-          // we cannot confidently classify as "completed".
-          parentLinkage: {
-            kind: 'inline',
-            parentRunId: 'parent-run-1',
-            parentStepId: '1.1',
-          },
-        }) as never,
-      );
-
-      const input = createMockHookInput('SubagentStop');
-      const result = await handleSubagentStop(input);
-
-      expect(result.context).toContain('Unable to verify');
-      expect(result.context).not.toContain('Delegation Step Complete');
-      expect(result.context).not.toContain('Delegation Not Resolved');
-    });
-
-    it('returns unknown when parentLinkage is present but tokenHash does not match', async () => {
-      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
-      setExecSync(
-        createStatusMock({
-          active: true,
-          stashed: false,
-          file: 'other-child.runbook.md',
-          // Delegation linkage but with a different token — not our child.
-          parentLinkage: {
-            kind: 'delegation',
-            tokenHash: OTHER_TOKEN_HASH,
-            parentRunId: 'parent-run-1',
-            parentStepId: '1.1',
-          },
-        }) as never,
-      );
-
-      const input = createMockHookInput('SubagentStop');
-      const result = await handleSubagentStop(input);
-
-      expect(result.context).toContain('Unable to verify');
       expect(result.context).not.toContain('Delegation Step Complete');
     });
   });
@@ -516,33 +341,6 @@ describe('handleSubagentStop', () => {
       expect(result.context).toContain('2. Review');
       expect(result.context).toContain('rd pop');
     });
-
-    it('preserves delegations when active+stashed (active child + stashed parent)', async () => {
-      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
-      setExecSync(
-        createStatusMock({
-          active: true,
-          stashed: true,
-          file: 'child.runbook.md',
-          step: { name: '1. Start' },
-          position: { current: '1', total: 3 },
-          parentLinkage: {
-            kind: 'delegation',
-            tokenHash: VALID_TOKEN_HASH,
-            parentRunId: 'parent-run-1',
-            parentStepId: '1.1',
-          },
-        }) as never,
-      );
-
-      const input = createMockHookInput('SubagentStop');
-      const result = await handleSubagentStop(input);
-
-      // active+stashed routes through the active branch; parentLinkage matches
-      // our token → claimed-idle.
-      expect(result.context).toContain('Delegation Not Resolved');
-      expect(result.context).toContain('child.runbook.md');
-    });
   });
 
   describe('delegation never claimed', () => {
@@ -571,190 +369,6 @@ describe('handleSubagentStop', () => {
       expect(result.context).toContain('Delegation Never Claimed');
       expect(result.context).toContain('substep 3.1');
       expect(result.context).toContain('child.runbook.md');
-    });
-
-    it('surfaces remaining sibling delegations when our delegation completes', async () => {
-      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
-      setExecSync(
-        createStatusMock({
-          active: true,
-          stashed: false,
-          file: 'parent.runbook.md',
-          step: { name: '3. Delegate subagents' },
-          delegations: [
-            {
-              substep: '3.1',
-              runbook: 'child-a.runbook.md',
-              state: 'claimed',
-              childRunId: 'run-1',
-              tokenHash: VALID_TOKEN_HASH,
-            },
-            {
-              substep: '3.2',
-              runbook: 'child-b.runbook.md',
-              state: 'pending',
-              tokenHash: OTHER_TOKEN_HASH,
-            },
-          ],
-        }) as never,
-      );
-
-      const input = createMockHookInput('SubagentStop');
-      const result = await handleSubagentStop(input);
-
-      // Our delegation (3.1) completed. Sibling 3.2 still unresolved.
-      expect(result.context).toContain('Delegation Completed');
-      expect(result.context).not.toContain('Delegation Step Complete');
-      expect(result.context).toContain('1 delegation still unresolved');
-      expect(result.context).toContain('child-b.runbook.md');
-      expect(result.context).not.toContain('child-a.runbook.md');
-    });
-  });
-
-  describe('stale delegations filtered by type guard', () => {
-    // `isDelegationStatus` rejects entries without a string `tokenHash`.
-    // Such entries come only from pre-tokenHash session state (unsupported
-    // per the no-migration principle in CLAUDE.md). The hook must route
-    // these to `unknown` rather than drop them silently and misreport the
-    // parent as cleanly resumed — the `hadInvalidDelegations` flag carries
-    // that signal from parsing into classification.
-
-    it('returns unknown when all delegations lack tokenHash', async () => {
-      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
-      setExecSync(
-        createStatusMock({
-          active: true,
-          stashed: false,
-          file: 'parent.runbook.md',
-          delegations: [
-            {
-              substep: '2.1',
-              runbook: 'child.runbook.md',
-              state: 'claimed',
-              childRunId: 'run-old',
-            },
-          ],
-        }) as never,
-      );
-
-      const input = createMockHookInput('SubagentStop');
-      const result = await handleSubagentStop(input);
-
-      expect(result.context).toContain('Unable to verify');
-      expect(result.context).toContain('rd status');
-    });
-
-    it('returns unknown when a mixed array contains any invalid entry', async () => {
-      // Valid sibling plus a stale entry missing tokenHash. The valid entry
-      // survives the filter; the stale one flips `hadInvalidDelegations`,
-      // forcing the classifier to `unknown` instead of `completed`.
-      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
-      setExecSync(
-        createStatusMock({
-          active: true,
-          stashed: false,
-          file: 'parent.runbook.md',
-          delegations: [
-            {
-              substep: '3.1',
-              runbook: 'child-a.runbook.md',
-              state: 'pending',
-              tokenHash: OTHER_TOKEN_HASH,
-            },
-            {
-              substep: '3.2',
-              runbook: 'child-stale.runbook.md',
-              state: 'claimed',
-              childRunId: 'run-stale',
-            },
-          ],
-        }) as never,
-      );
-
-      const input = createMockHookInput('SubagentStop');
-      const result = await handleSubagentStop(input);
-
-      expect(result.context).toContain(BANNER_UNKNOWN);
-      expect(result.context).toContain('rd status');
-    });
-
-    it('routes to completed when our token matches despite invalid siblings', async () => {
-      // Narrow regression guard: catches reorderings that hoist the
-      // `hadInvalidDelegations` check above the `ours = find(...)` step in
-      // classifyOutcome. Does NOT cover every conceivable reordering — a
-      // direct exported-function test would be needed for that. Today this
-      // is the strongest assertion available at the `handleSubagentStop`
-      // public boundary.
-      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
-      setExecSync(
-        createStatusMock({
-          active: true,
-          stashed: false,
-          file: 'parent.runbook.md',
-          delegations: [
-            {
-              substep: '3.1',
-              runbook: 'child-ours.runbook.md',
-              state: 'claimed',
-              childRunId: 'run-ours',
-              tokenHash: VALID_TOKEN_HASH,
-            },
-            {
-              substep: '3.2',
-              runbook: 'child-stale.runbook.md',
-              state: 'claimed',
-              childRunId: 'run-stale',
-              // Missing tokenHash — flips hadInvalidDelegations=true.
-            },
-          ],
-        }) as never,
-      );
-
-      const input = createMockHookInput('SubagentStop');
-      const result = await handleSubagentStop(input);
-
-      expect(result.context).not.toContain(BANNER_UNKNOWN);
-      expect(result.context).toContain(BANNER_COMPLETED_NO_SIBLINGS);
-    });
-
-    it('treats non-array delegations as absent, not invalid', async () => {
-      // Raw `delegations` is not an array → parseDelegations returns
-      // hadInvalid=false. No match → fall through to completed.
-      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
-      setExecSync(
-        createStatusMock({
-          active: true,
-          stashed: false,
-          file: 'parent.runbook.md',
-          delegations: 'not-an-array',
-        }) as never,
-      );
-
-      const input = createMockHookInput('SubagentStop');
-      const result = await handleSubagentStop(input);
-
-      expect(result.context).not.toContain(BANNER_UNKNOWN);
-      expect(result.context).toContain(BANNER_COMPLETED_NO_SIBLINGS);
-    });
-
-    it('rejects non-object delegation entries and routes to unknown', async () => {
-      // Primitive entries (null, number, string) fail isDelegationStatus →
-      // hadInvalidDelegations=true → unknown.
-      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
-      setExecSync(
-        createStatusMock({
-          active: true,
-          stashed: false,
-          file: 'parent.runbook.md',
-          delegations: [null, 42, 'bogus'],
-        }) as never,
-      );
-
-      const input = createMockHookInput('SubagentStop');
-      const result = await handleSubagentStop(input);
-
-      expect(result.context).toContain(BANNER_UNKNOWN);
-      expect(result.context).toContain('rd status');
     });
   });
 
@@ -817,57 +431,6 @@ describe('handleSubagentStop', () => {
       expect(result.context).toContain('step 2 of 5');
     });
 
-    it('returns unknown when parentLinkage is present but malformed', async () => {
-      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
-      setExecSync(
-        createStatusMock({
-          active: true,
-          stashed: false,
-          file: 'child.runbook.md',
-          // kind is 'delegation' but tokenHash is absent — schema rejects.
-          // Field is present-but-invalid; parser must preserve this as a
-          // malformed variant so the classifier can route to `unknown`
-          // rather than falling through to the parent-resumed path and
-          // misreporting the child as our resumed parent.
-          parentLinkage: {
-            kind: 'delegation',
-            parentRunId: 'parent-run-1',
-            parentStepId: '1.1',
-          },
-        }) as never,
-      );
-
-      const input = createMockHookInput('SubagentStop');
-      const result = await handleSubagentStop(input);
-
-      expect(result.context).toContain('Unable to verify');
-      expect(result.context).not.toContain('Delegation Step Complete');
-      expect(result.context).not.toContain('Delegation Not Resolved');
-    });
-
-    it('treats parentLinkage: null as malformed (not absent)', async () => {
-      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
-      setExecSync(
-        createStatusMock({
-          active: true,
-          stashed: false,
-          file: 'child.runbook.md',
-          // `rd status` never emits null for this field — it either omits
-          // the key entirely or emits a valid linkage object. Receiving
-          // null indicates upstream drift; parser must surface that as
-          // malformed rather than silently coercing it to "absent".
-          parentLinkage: null,
-        }) as never,
-      );
-
-      const input = createMockHookInput('SubagentStop');
-      const result = await handleSubagentStop(input);
-
-      expect(result.context).toContain('Unable to verify');
-      expect(result.context).not.toContain('Delegation Step Complete');
-      expect(result.context).not.toContain('Delegation Not Resolved');
-    });
-
     it('does not throw when status is null', async () => {
       mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
       setExecSync(createMockExecSync('null') as never);
@@ -892,6 +455,279 @@ describe('handleSubagentStop', () => {
       const result = await handleSubagentStop(input);
 
       expect(result).toEqual({});
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Unit tests — branch logic, no Session/rundown mocks, plain fixtures.
+// ---------------------------------------------------------------------------
+
+/** Build a minimal active RunbookStatus for classifyOutcome tests. */
+function activeStatus(
+  overrides: {
+    delegations?: readonly DelegationStatus[];
+    hadInvalidDelegations?: boolean;
+    parentLinkage?: ParentLinkage;
+    position?: RunbookPosition;
+  } = {},
+): RunbookStatus {
+  const { delegations = [], hadInvalidDelegations = false, parentLinkage, position } = overrides;
+  return {
+    kind: 'active',
+    file: position?.file ?? 'parent.runbook.md',
+    position: position?.position,
+    step: position?.step,
+    delegations,
+    hadInvalidDelegations,
+    ...(parentLinkage ? { parentLinkage } : {}),
+  };
+}
+
+describe('classifyOutcome (unit)', () => {
+  describe('inactive', () => {
+    it('returns completed with parent undefined', () => {
+      const outcome = classifyOutcome({ kind: 'inactive' }, VALID_TOKEN_HASH);
+      expect(outcome.kind).toBe('completed');
+      if (outcome.kind === 'completed') {
+        expect(outcome.parent).toBeUndefined();
+      }
+    });
+  });
+
+  describe('stashed', () => {
+    it('returns child_stashed carrying the stashed status', () => {
+      const status: RunbookStatus = {
+        kind: 'stashed',
+        file: 'child.runbook.md',
+        step: { name: '2. Review' },
+        position: { current: '2', total: 4 },
+      };
+      const outcome = classifyOutcome(status, VALID_TOKEN_HASH);
+      expect(outcome.kind).toBe('child_stashed');
+      if (outcome.kind === 'child_stashed') {
+        expect(outcome.status.file).toBe('child.runbook.md');
+      }
+    });
+  });
+
+  describe('active: parentLinkage correlation', () => {
+    it('returns child_claimed_idle when parentLinkage.tokenHash matches', () => {
+      const status = activeStatus({
+        parentLinkage: {
+          kind: 'delegation',
+          tokenHash: VALID_TOKEN_HASH,
+          parentRunId: 'parent-run-1',
+          parentStepId: '1.1',
+        },
+      });
+      const outcome = classifyOutcome(status, VALID_TOKEN_HASH);
+      expect(outcome.kind).toBe('child_claimed_idle');
+    });
+
+    it('returns unknown when claimed-idle invariant is violated (child has outgoing delegations)', () => {
+      const status = activeStatus({
+        parentLinkage: {
+          kind: 'delegation',
+          tokenHash: VALID_TOKEN_HASH,
+          parentRunId: 'parent-run-1',
+          parentStepId: '1.1',
+        },
+        delegations: [
+          {
+            state: 'pending',
+            substep: '2.1',
+            runbook: 'grandchild.runbook.md',
+            tokenHash: OTHER_TOKEN_HASH,
+          },
+        ],
+      });
+      const outcome = classifyOutcome(status, VALID_TOKEN_HASH);
+      expect(outcome.kind).toBe('unknown');
+    });
+
+    it('returns unknown when parentLinkage is inline (no tokenHash to match)', () => {
+      const status = activeStatus({
+        parentLinkage: {
+          kind: 'inline',
+          parentRunId: 'parent-run-1',
+          parentStepId: '1.1',
+        },
+      });
+      const outcome = classifyOutcome(status, VALID_TOKEN_HASH);
+      expect(outcome.kind).toBe('unknown');
+    });
+
+    it('returns unknown when parentLinkage.tokenHash does not match ours', () => {
+      const status = activeStatus({
+        parentLinkage: {
+          kind: 'delegation',
+          tokenHash: OTHER_TOKEN_HASH,
+          parentRunId: 'parent-run-1',
+          parentStepId: '1.1',
+        },
+      });
+      const outcome = classifyOutcome(status, VALID_TOKEN_HASH);
+      expect(outcome.kind).toBe('unknown');
+    });
+
+    it('returns unknown when parentLinkage is malformed', () => {
+      const status = activeStatus({ parentLinkage: { kind: 'malformed' } });
+      const outcome = classifyOutcome(status, VALID_TOKEN_HASH);
+      expect(outcome.kind).toBe('unknown');
+    });
+  });
+
+  describe('active: no parentLinkage (parent resumed path)', () => {
+    it('returns completed with parent when no matching delegation and no invalid entries', () => {
+      const status = activeStatus();
+      const outcome = classifyOutcome(status, VALID_TOKEN_HASH);
+      expect(outcome.kind).toBe('completed');
+      if (outcome.kind === 'completed') {
+        expect(outcome.parent).toBeDefined();
+        expect(outcome.parent?.delegations).toEqual([]);
+      }
+    });
+
+    it('returns unknown when no match and hadInvalidDelegations is true', () => {
+      const status = activeStatus({ hadInvalidDelegations: true });
+      const outcome = classifyOutcome(status, VALID_TOKEN_HASH);
+      expect(outcome.kind).toBe('unknown');
+    });
+
+    it('returns unclaimed when our token matches a pending delegation', () => {
+      const pending: DelegationStatus = {
+        state: 'pending',
+        substep: '3.1',
+        runbook: 'child.runbook.md',
+        tokenHash: VALID_TOKEN_HASH,
+      };
+      const status = activeStatus({ delegations: [pending] });
+      const outcome = classifyOutcome(status, VALID_TOKEN_HASH);
+      expect(outcome.kind).toBe('unclaimed');
+      if (outcome.kind === 'unclaimed') {
+        expect(outcome.delegation.substep).toBe('3.1');
+      }
+    });
+
+    it('returns completed with filtered siblings when our token matches a claimed delegation', () => {
+      const ours: DelegationStatus = {
+        state: 'claimed',
+        substep: '3.1',
+        runbook: 'child-a.runbook.md',
+        childRunId: 'run-1',
+        tokenHash: VALID_TOKEN_HASH,
+      };
+      const sibling: DelegationStatus = {
+        state: 'pending',
+        substep: '3.2',
+        runbook: 'child-b.runbook.md',
+        tokenHash: OTHER_TOKEN_HASH,
+      };
+      const status = activeStatus({ delegations: [ours, sibling] });
+      const outcome = classifyOutcome(status, VALID_TOKEN_HASH);
+      expect(outcome.kind).toBe('completed');
+      if (outcome.kind === 'completed') {
+        expect(outcome.parent?.delegations).toEqual([sibling]);
+      }
+    });
+
+    it('returns completed (not unclaimed) when our token matches a cancelled delegation', () => {
+      const ours: DelegationStatus = {
+        state: 'cancelled',
+        substep: '3.1',
+        runbook: 'child.runbook.md',
+        tokenHash: VALID_TOKEN_HASH,
+      };
+      const outcome = classifyOutcome(activeStatus({ delegations: [ours] }), VALID_TOKEN_HASH);
+      expect(outcome.kind).toBe('completed');
+    });
+
+    it('pins ordering: ours-lookup precedes hadInvalidDelegations guard, siblings filtered', () => {
+      // Regression guard: if hadInvalidDelegations were checked above the ours
+      // lookup, this fixture would return unknown. Today it returns completed
+      // with the sibling preserved and ours filtered out via toParentState.
+      const ours: DelegationStatus = {
+        state: 'claimed',
+        substep: '3.1',
+        runbook: 'child-ours.runbook.md',
+        childRunId: 'run-ours',
+        tokenHash: VALID_TOKEN_HASH,
+      };
+      const sibling: DelegationStatus = {
+        state: 'pending',
+        substep: '3.2',
+        runbook: 'sibling.runbook.md',
+        tokenHash: OTHER_TOKEN_HASH,
+      };
+      const status = activeStatus({
+        delegations: [ours, sibling],
+        hadInvalidDelegations: true,
+      });
+      const outcome = classifyOutcome(status, VALID_TOKEN_HASH);
+      expect(outcome.kind).toBe('completed');
+      if (outcome.kind === 'completed') {
+        expect(outcome.parent?.delegations).toEqual([sibling]);
+        expect(outcome.parent?.delegations).not.toContainEqual(ours);
+      }
+    });
+  });
+});
+
+describe('parseDelegations (unit)', () => {
+  const VALID_ENTRY: DelegationStatus = {
+    state: 'pending',
+    substep: '1.1',
+    runbook: 'child.runbook.md',
+    tokenHash: VALID_TOKEN_HASH,
+  };
+
+  describe('non-array inputs', () => {
+    it.each([
+      ['null', null],
+      ['undefined', undefined],
+      ['string', 'not-an-array'],
+      ['number', 42],
+      ['object', { nope: true }],
+    ])('treats %s as absent, not invalid', (_label, input) => {
+      expect(parseDelegations(input)).toEqual({ entries: [], hadInvalid: false });
+    });
+  });
+
+  describe('empty array', () => {
+    it('returns no entries and hadInvalid false', () => {
+      expect(parseDelegations([])).toEqual({ entries: [], hadInvalid: false });
+    });
+  });
+
+  describe('all-valid array', () => {
+    it('preserves entries and reports hadInvalid false', () => {
+      const result = parseDelegations([VALID_ENTRY]);
+      expect(result.hadInvalid).toBe(false);
+      expect(result.entries).toEqual([VALID_ENTRY]);
+    });
+  });
+
+  describe('mixed valid and invalid', () => {
+    it('drops entries missing tokenHash and sets hadInvalid true', () => {
+      const stale = {
+        state: 'claimed',
+        substep: '1.2',
+        runbook: 'stale.runbook.md',
+        childRunId: 'run-stale',
+        // Missing tokenHash — pre-migration session state.
+      };
+      const result = parseDelegations([VALID_ENTRY, stale]);
+      expect(result.hadInvalid).toBe(true);
+      expect(result.entries).toEqual([VALID_ENTRY]);
+    });
+  });
+
+  describe('primitive entries', () => {
+    it('rejects primitives and sets hadInvalid true', () => {
+      const result = parseDelegations([null, 42, 'bogus']);
+      expect(result.hadInvalid).toBe(true);
+      expect(result.entries).toEqual([]);
     });
   });
 });

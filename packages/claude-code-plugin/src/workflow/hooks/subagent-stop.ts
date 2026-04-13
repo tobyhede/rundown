@@ -30,19 +30,32 @@ export interface SubagentStopResult {
  * Parent linkage surfaced by `rd status --json` when the runbook was launched
  * as a child. Used by the hook to correlate a consumed delegation token with
  * the child it produced.
+ *
+ * Exported for testing. Not part of the plugin's public API.
+ *
+ * @internal
  */
-type ParentLinkage =
+export type ParentLinkage =
   | {
+      /** Child was launched via `rd delegate` + `rd claim` from a parent's outgoing delegation. */
       readonly kind: 'delegation';
+      /** SHA-256 hash (`sha256:<hex>`) of the delegation token consumed at claim time. Used for parent ↔ child correlation. */
       readonly tokenHash: string;
+      /** RunId of the parent runbook that issued the delegation. */
       readonly parentRunId: string;
+      /** Qualified step id on the parent (e.g. `3.1`) where the delegation was issued. */
       readonly parentStepId: string;
+      /** Parent step's display name when available; absent if the parent did not surface one. */
       readonly parentStep?: string;
     }
   | {
+      /** Child was launched inline (e.g. `rundown run --step`) from a parent rather than via a delegation token. */
       readonly kind: 'inline';
+      /** RunId of the parent runbook that started the inline child. */
       readonly parentRunId: string;
+      /** Qualified step id on the parent (e.g. `3.1`) where the inline child was launched. */
       readonly parentStepId: string;
+      /** Parent step's display name when available; absent if the parent did not surface one. */
       readonly parentStep?: string;
     }
   | {
@@ -56,39 +69,86 @@ type ParentLinkage =
       readonly kind: 'malformed';
     };
 
-/** Shared fields for runbook states that carry position information. */
-interface RunbookPosition {
+/**
+ * Shared fields for runbook states that carry position information.
+ *
+ * Exported for testing. Not part of the plugin's public API.
+ *
+ * @internal
+ */
+export interface RunbookPosition {
+  /** Source file path of the runbook (e.g. `parent.runbook.md`). */
   file: string;
+  /**
+   * Execution cursor when known.
+   *
+   * - `current`: qualified step id at the cursor (e.g. `3` or `3.1`).
+   * - `total`: total top-level steps in the runbook.
+   * - `substep`: substep id within the current step, when inside one.
+   * - `unresolved`: count of unresolved substeps at the current step (drives the
+   *   "delegate further" guidance in the completed banner).
+   */
   position?: { current: string; total: number; substep?: string; unresolved?: number };
+  /** Display info for the current step: its name and optional description. */
   step?: { name: string; description?: string };
+  /**
+   * Linkage to the parent runbook when this status describes a child. Absent
+   * for a top-level (non-child) runbook.
+   */
   parentLinkage?: ParentLinkage;
 }
 
-/** Delegation status as a discriminated union — each state carries only its valid fields. */
-type DelegationStatus =
+/**
+ * Delegation status as a discriminated union — each state carries only its valid fields.
+ *
+ * Exported for testing. Not part of the plugin's public API.
+ *
+ * @internal
+ */
+export type DelegationStatus =
   | {
+      /** Token issued by `rd delegate` but not yet consumed by `rd claim`. */
       readonly state: 'pending';
+      /** Qualified substep id on the parent (e.g. `3.1`) where the delegation lives. */
       readonly substep: string;
+      /** Child runbook source path or namespace target. */
       readonly runbook: string;
+      /** SHA-256 hash (`sha256:<hex>`) of the delegation token. Used for parent ↔ child correlation. */
       readonly tokenHash: string;
     }
   | {
+      /** Token claimed by a subagent; the child runbook has been launched. */
       readonly state: 'claimed';
+      /** Qualified substep id on the parent (e.g. `3.1`) where the delegation lives. */
       readonly substep: string;
+      /** Child runbook source path or namespace target. */
       readonly runbook: string;
+      /** RunId of the child runbook started by the claim. Always present in this state. */
       readonly childRunId: string;
+      /** SHA-256 hash (`sha256:<hex>`) of the delegation token. Used for parent ↔ child correlation. */
       readonly tokenHash: string;
     }
   | {
+      /** Delegation aborted via `rd abort` (token cancelled before or after claim). */
       readonly state: 'cancelled';
+      /** Qualified substep id on the parent (e.g. `3.1`) where the delegation lived. */
       readonly substep: string;
+      /** Child runbook source path or namespace target. */
       readonly runbook: string;
+      /** RunId of the child runbook if the delegation was claimed before being cancelled. Absent if cancelled while pending. */
       readonly childRunId?: string;
+      /** SHA-256 hash (`sha256:<hex>`) of the delegation token. Used for parent ↔ child correlation. */
       readonly tokenHash: string;
     };
 
-/** Runbook status as a discriminated union — impossible combinations are unrepresentable. */
-type RunbookStatus =
+/**
+ * Runbook status as a discriminated union — impossible combinations are unrepresentable.
+ *
+ * Exported for testing. Not part of the plugin's public API.
+ *
+ * @internal
+ */
+export type RunbookStatus =
   | { readonly kind: 'inactive' }
   | ({ readonly kind: 'stashed' } & RunbookPosition)
   | ({
@@ -104,8 +164,21 @@ type RunbookStatus =
       readonly hadInvalidDelegations: boolean;
     } & RunbookPosition);
 
-/** Parent state carried on a completed outcome when the parent runbook is still active. */
-interface CompletedParentState extends RunbookPosition {
+/**
+ * Parent state carried on a completed outcome when the parent runbook is still active.
+ *
+ * Exported for testing. Not part of the plugin's public API.
+ *
+ * @internal
+ */
+export interface CompletedParentState extends RunbookPosition {
+  /**
+   * Sibling delegations carried on the parent at the moment the child completed.
+   * The hook filters out the delegation that produced this child via
+   * {@link toParentState}, so only siblings (other delegations at the same step)
+   * appear here. Drives the "remaining delegations" section of the completed
+   * banner.
+   */
   readonly delegations: readonly DelegationStatus[];
 }
 
@@ -126,8 +199,12 @@ function toParentState(
 /**
  * Delegation outcome — the hook's decision as a discriminated union.
  * Each variant carries exactly the data needed for its context message.
+ *
+ * Exported for testing. Not part of the plugin's public API.
+ *
+ * @internal
  */
-type DelegationOutcome =
+export type DelegationOutcome =
   | { readonly kind: 'completed'; readonly parent?: CompletedParentState }
   | { readonly kind: 'child_claimed_idle'; readonly child: RunbookPosition }
   | { readonly kind: 'child_stashed'; readonly status: RunbookPosition }
@@ -263,8 +340,12 @@ function isDelegationStatus(d: unknown): d is DelegationStatus {
  * @param raw - Raw value from parsed JSON
  * @returns Struct with validated entries and a flag indicating whether any
  *   raw entries failed validation
+ *
+ * Exported for testing. Not part of the plugin's public API.
+ *
+ * @internal
  */
-function parseDelegations(raw: unknown): {
+export function parseDelegations(raw: unknown): {
   readonly entries: readonly DelegationStatus[];
   readonly hadInvalid: boolean;
 } {
@@ -280,8 +361,12 @@ function parseDelegations(raw: unknown): {
  *
  * @param cwd - Working directory for the CLI call
  * @returns Parsed runbook status, or undefined on failure
+ *
+ * Exported for testing. Not part of the plugin's public API.
+ *
+ * @internal
  */
-function queryRunbookStatus(cwd: string): RunbookStatus | undefined {
+export function queryRunbookStatus(cwd: string): RunbookStatus | undefined {
   try {
     const output = rundown(['status', '--json'], cwd);
     const parsed = JSON.parse(output) as Record<string, unknown>;
@@ -339,8 +424,12 @@ function queryRunbookStatus(cwd: string): RunbookStatus | undefined {
  * @param status - Parsed runbook status from `rd status --json`
  * @param tokenHash - SHA-256 hash of the consumed delegation token
  * @returns The delegation outcome determining which context message to produce
+ *
+ * Exported for testing. Not part of the plugin's public API.
+ *
+ * @internal
  */
-function classifyOutcome(status: RunbookStatus, tokenHash: string): DelegationOutcome {
+export function classifyOutcome(status: RunbookStatus, tokenHash: string): DelegationOutcome {
   switch (status.kind) {
     case 'inactive':
       // Child completed and was popped from session stack
@@ -593,7 +682,7 @@ function buildContextMessage(outcome: DelegationOutcome): string | undefined {
  *   the classification produces a message for the orchestrator, or `{}`
  *   when no action is needed (non-SubagentStop event, no active delegation
  *   token, or child completed cleanly with nothing further to report).
- * @throws Rejects if session metadata I/O fails (e.g. the session file is
+ * @throws {Error} Rejects if session metadata I/O fails (e.g. the session file is
  *   unreadable, not writable, or corrupt). Status-query failures, in
  *   contrast, are absorbed and collapsed to the `unknown` outcome.
  */
