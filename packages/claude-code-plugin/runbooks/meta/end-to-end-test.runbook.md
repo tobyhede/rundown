@@ -1,23 +1,33 @@
 ---
 name: End-to-End Test
-description: Run a target runbook then collect execution feedback
+description: Run write-plan, review-plan, then collect execution feedback
 tags:
   - meta
   - feedback
-required:
-  - TargetRunbook
 ---
 
 # End-to-End Test
 
-## 1. Run the target runbook
+## 1. Run write-plan
 
-- PASS ALL CONTINUE
-- FAIL ANY STOP
+- PASS CONTINUE
+- FAIL STOP
 
-- {{ TargetRunbook }}
+planning/write-plan.runbook.md
 
-## 2. Collect feedback
+## 2. Run review-plan
+
+- PASS CONTINUE
+- FAIL STOP
+
+Run `planning/review-plan.runbook.md` with `PlanPath` set to the plan output from the previous step.
+
+PlanPath:
+```bash
+rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file plan.json
+```
+
+## 3. Collect feedback
 - PASS COMPLETE
 - FAIL COMPLETE
 
