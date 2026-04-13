@@ -30,8 +30,10 @@ export interface SubagentStopResult {
  * Parent linkage surfaced by `rd status --json` when the runbook was launched
  * as a child. Used by the hook to correlate a consumed delegation token with
  * the child it produced.
+ *
+ * @internal Exported for testing. Not part of the plugin's public API.
  */
-type ParentLinkage =
+export type ParentLinkage =
   | {
       readonly kind: 'delegation';
       readonly tokenHash: string;
@@ -56,16 +58,24 @@ type ParentLinkage =
       readonly kind: 'malformed';
     };
 
-/** Shared fields for runbook states that carry position information. */
-interface RunbookPosition {
+/**
+ * Shared fields for runbook states that carry position information.
+ *
+ * @internal Exported for testing. Not part of the plugin's public API.
+ */
+export interface RunbookPosition {
   file: string;
   position?: { current: string; total: number; substep?: string; unresolved?: number };
   step?: { name: string; description?: string };
   parentLinkage?: ParentLinkage;
 }
 
-/** Delegation status as a discriminated union — each state carries only its valid fields. */
-type DelegationStatus =
+/**
+ * Delegation status as a discriminated union — each state carries only its valid fields.
+ *
+ * @internal Exported for testing. Not part of the plugin's public API.
+ */
+export type DelegationStatus =
   | {
       readonly state: 'pending';
       readonly substep: string;
@@ -87,8 +97,12 @@ type DelegationStatus =
       readonly tokenHash: string;
     };
 
-/** Runbook status as a discriminated union — impossible combinations are unrepresentable. */
-type RunbookStatus =
+/**
+ * Runbook status as a discriminated union — impossible combinations are unrepresentable.
+ *
+ * @internal Exported for testing. Not part of the plugin's public API.
+ */
+export type RunbookStatus =
   | { readonly kind: 'inactive' }
   | ({ readonly kind: 'stashed' } & RunbookPosition)
   | ({
@@ -104,8 +118,12 @@ type RunbookStatus =
       readonly hadInvalidDelegations: boolean;
     } & RunbookPosition);
 
-/** Parent state carried on a completed outcome when the parent runbook is still active. */
-interface CompletedParentState extends RunbookPosition {
+/**
+ * Parent state carried on a completed outcome when the parent runbook is still active.
+ *
+ * @internal Exported for testing. Not part of the plugin's public API.
+ */
+export interface CompletedParentState extends RunbookPosition {
   readonly delegations: readonly DelegationStatus[];
 }
 
@@ -126,8 +144,10 @@ function toParentState(
 /**
  * Delegation outcome — the hook's decision as a discriminated union.
  * Each variant carries exactly the data needed for its context message.
+ *
+ * @internal Exported for testing. Not part of the plugin's public API.
  */
-type DelegationOutcome =
+export type DelegationOutcome =
   | { readonly kind: 'completed'; readonly parent?: CompletedParentState }
   | { readonly kind: 'child_claimed_idle'; readonly child: RunbookPosition }
   | { readonly kind: 'child_stashed'; readonly status: RunbookPosition }
@@ -263,8 +283,10 @@ function isDelegationStatus(d: unknown): d is DelegationStatus {
  * @param raw - Raw value from parsed JSON
  * @returns Struct with validated entries and a flag indicating whether any
  *   raw entries failed validation
+ *
+ * @internal Exported for testing. Not part of the plugin's public API.
  */
-function parseDelegations(raw: unknown): {
+export function parseDelegations(raw: unknown): {
   readonly entries: readonly DelegationStatus[];
   readonly hadInvalid: boolean;
 } {
@@ -280,8 +302,10 @@ function parseDelegations(raw: unknown): {
  *
  * @param cwd - Working directory for the CLI call
  * @returns Parsed runbook status, or undefined on failure
+ *
+ * @internal Exported for testing. Not part of the plugin's public API.
  */
-function queryRunbookStatus(cwd: string): RunbookStatus | undefined {
+export function queryRunbookStatus(cwd: string): RunbookStatus | undefined {
   try {
     const output = rundown(['status', '--json'], cwd);
     const parsed = JSON.parse(output) as Record<string, unknown>;
@@ -339,8 +363,10 @@ function queryRunbookStatus(cwd: string): RunbookStatus | undefined {
  * @param status - Parsed runbook status from `rd status --json`
  * @param tokenHash - SHA-256 hash of the consumed delegation token
  * @returns The delegation outcome determining which context message to produce
+ *
+ * @internal Exported for testing. Not part of the plugin's public API.
  */
-function classifyOutcome(status: RunbookStatus, tokenHash: string): DelegationOutcome {
+export function classifyOutcome(status: RunbookStatus, tokenHash: string): DelegationOutcome {
   switch (status.kind) {
     case 'inactive':
       // Child completed and was popped from session stack
