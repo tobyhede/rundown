@@ -21,6 +21,21 @@ const VALID_TOKEN = 'rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 const VALID_TOKEN_HASH = `sha256:${createHash('sha256').update(VALID_TOKEN).digest('hex')}`;
 const OTHER_TOKEN_HASH = `sha256:${createHash('sha256').update('rdtk_OTHER00000000000000000000000').digest('hex')}`;
 
+/**
+ * Outcome-distinguishing markers from {@link buildContextMessage}.
+ *
+ * These substrings are the test seam — `handleSubagentStop` returns only
+ * `{ context: string | undefined }`, so outcome discrimination at the
+ * public boundary must go through user-visible banner text. Centralized
+ * here so banner wording changes only need updating in one place.
+ *
+ * - {@link BANNER_COMPLETED_NO_SIBLINGS}: `completed` outcome with no
+ *   unresolved sibling delegations (H2 heading).
+ * - {@link BANNER_UNKNOWN}: `unknown` outcome fallback message.
+ */
+const BANNER_COMPLETED_NO_SIBLINGS = 'Delegation Step Complete';
+const BANNER_UNKNOWN = 'Unable to verify';
+
 /** Helper to create a mock that returns `rd status --json` output. */
 function createStatusMock(status: Record<string, unknown>) {
   return createMockExecSync(JSON.stringify(status));
@@ -659,14 +674,17 @@ describe('handleSubagentStop', () => {
       const input = createMockHookInput('SubagentStop');
       const result = await handleSubagentStop(input);
 
-      expect(result.context).toContain('Unable to verify');
+      expect(result.context).toContain(BANNER_UNKNOWN);
       expect(result.context).toContain('rd status');
     });
 
     it('routes to completed when our token matches despite invalid siblings', async () => {
-      // Pins branch ordering in classifyOutcome: a successful `ours` match
-      // must win over hadInvalidDelegations. Regression guard — would fail
-      // if the flag check were reordered to shadow a matched token.
+      // Narrow regression guard: catches reorderings that hoist the
+      // `hadInvalidDelegations` check above the `ours = find(...)` step in
+      // classifyOutcome. Does NOT cover every conceivable reordering — a
+      // direct exported-function test would be needed for that. Today this
+      // is the strongest assertion available at the `handleSubagentStop`
+      // public boundary.
       mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
       setExecSync(
         createStatusMock({
@@ -695,8 +713,8 @@ describe('handleSubagentStop', () => {
       const input = createMockHookInput('SubagentStop');
       const result = await handleSubagentStop(input);
 
-      expect(result.context).not.toContain('Unable to verify');
-      expect(result.context).toContain('Delegation Step Complete');
+      expect(result.context).not.toContain(BANNER_UNKNOWN);
+      expect(result.context).toContain(BANNER_COMPLETED_NO_SIBLINGS);
     });
 
     it('treats non-array delegations as absent, not invalid', async () => {
@@ -715,8 +733,8 @@ describe('handleSubagentStop', () => {
       const input = createMockHookInput('SubagentStop');
       const result = await handleSubagentStop(input);
 
-      expect(result.context).not.toContain('Unable to verify');
-      expect(result.context).toContain('Delegation Step Complete');
+      expect(result.context).not.toContain(BANNER_UNKNOWN);
+      expect(result.context).toContain(BANNER_COMPLETED_NO_SIBLINGS);
     });
 
     it('rejects non-object delegation entries and routes to unknown', async () => {
@@ -735,7 +753,7 @@ describe('handleSubagentStop', () => {
       const input = createMockHookInput('SubagentStop');
       const result = await handleSubagentStop(input);
 
-      expect(result.context).toContain('Unable to verify');
+      expect(result.context).toContain(BANNER_UNKNOWN);
       expect(result.context).toContain('rd status');
     });
   });
