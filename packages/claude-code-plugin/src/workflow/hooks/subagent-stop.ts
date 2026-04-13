@@ -637,7 +637,7 @@ function buildContextMessage(outcome: DelegationOutcome): string | undefined {
  *   the classification produces a message for the orchestrator, or `{}`
  *   when no action is needed (non-SubagentStop event, no active delegation
  *   token, or child completed cleanly with nothing further to report).
- * @throws Rejects if session metadata I/O fails (e.g. the session file is
+ * @throws {Error} Rejects if session metadata I/O fails (e.g. the session file is
  *   unreadable, not writable, or corrupt). Status-query failures, in
  *   contrast, are absorbed and collapsed to the `unknown` outcome.
  */
