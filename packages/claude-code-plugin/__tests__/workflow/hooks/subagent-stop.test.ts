@@ -662,6 +662,82 @@ describe('handleSubagentStop', () => {
       expect(result.context).toContain('Unable to verify');
       expect(result.context).toContain('rd status');
     });
+
+    it('routes to completed when our token matches despite invalid siblings', async () => {
+      // Pins branch ordering in classifyOutcome: a successful `ours` match
+      // must win over hadInvalidDelegations. Regression guard — would fail
+      // if the flag check were reordered to shadow a matched token.
+      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setExecSync(
+        createStatusMock({
+          active: true,
+          stashed: false,
+          file: 'parent.runbook.md',
+          delegations: [
+            {
+              substep: '3.1',
+              runbook: 'child-ours.runbook.md',
+              state: 'claimed',
+              childRunId: 'run-ours',
+              tokenHash: VALID_TOKEN_HASH,
+            },
+            {
+              substep: '3.2',
+              runbook: 'child-stale.runbook.md',
+              state: 'claimed',
+              childRunId: 'run-stale',
+              // Missing tokenHash — flips hadInvalidDelegations=true.
+            },
+          ],
+        }) as never,
+      );
+
+      const input = createMockHookInput('SubagentStop');
+      const result = await handleSubagentStop(input);
+
+      expect(result.context).not.toContain('Unable to verify');
+      expect(result.context).toContain('Delegation Step Complete');
+    });
+
+    it('treats non-array delegations as absent, not invalid', async () => {
+      // Raw `delegations` is not an array → parseDelegations returns
+      // hadInvalid=false. No match → fall through to completed.
+      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setExecSync(
+        createStatusMock({
+          active: true,
+          stashed: false,
+          file: 'parent.runbook.md',
+          delegations: 'not-an-array',
+        }) as never,
+      );
+
+      const input = createMockHookInput('SubagentStop');
+      const result = await handleSubagentStop(input);
+
+      expect(result.context).not.toContain('Unable to verify');
+      expect(result.context).toContain('Delegation Step Complete');
+    });
+
+    it('rejects non-object delegation entries and routes to unknown', async () => {
+      // Primitive entries (null, number, string) fail isDelegationStatus →
+      // hadInvalidDelegations=true → unknown.
+      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setExecSync(
+        createStatusMock({
+          active: true,
+          stashed: false,
+          file: 'parent.runbook.md',
+          delegations: [null, 42, 'bogus'],
+        }) as never,
+      );
+
+      const input = createMockHookInput('SubagentStop');
+      const result = await handleSubagentStop(input);
+
+      expect(result.context).toContain('Unable to verify');
+      expect(result.context).toContain('rd status');
+    });
   });
 
   describe('status check failure', () => {
