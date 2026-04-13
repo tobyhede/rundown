@@ -8,6 +8,29 @@ import * as path from 'node:path';
  */
 export const RUNDOWN_DIR = '.rundown';
 
+/**
+ * Pattern for safe filename segments used in `.rundown/` path interpolation.
+ *
+ * Allows alphanumerics, dot, underscore, and hyphen only. This prevents
+ * inputs like `../outside` or absolute paths from escaping `.rundown/`
+ * when joined via `path.join`.
+ */
+const SAFE_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
+
+/**
+ * Validate that a user-supplied id is safe to interpolate into a filename.
+ *
+ * @param value - The id to validate
+ * @param field - Field name used in the error message (for debuggability)
+ * @throws {Error} If the id is empty, contains path separators, `..`, or any
+ *         character outside the safe set
+ */
+function assertSafeId(value: string, field: 'id' | 'runId'): void {
+  if (!value || !SAFE_ID_PATTERN.test(value)) {
+    throw new Error(`Invalid ${field}: ${JSON.stringify(value)}`);
+  }
+}
+
 /** Directory path (relative to project root) where runbook execution state files are stored. */
 export const RUNS_DIR = `${RUNDOWN_DIR}/runs`;
 
@@ -56,11 +79,14 @@ export const runbooksDir = (cwd: string): string => path.join(cwd, RUNBOOKS_DIR)
  * Absolute path to a specific runbook state file.
  *
  * @param cwd - Project root directory
- * @param id - Runbook execution ID
+ * @param id - Runbook execution ID (must match `[A-Za-z0-9._-]+`)
  * @returns Path to `.rundown/runs/<id>.json`
+ * @throws {Error} If `id` contains path separators, `..`, or is otherwise unsafe
  */
-export const statePath = (cwd: string, id: string): string =>
-  path.join(cwd, RUNS_DIR, `${id}.json`);
+export const statePath = (cwd: string, id: string): string => {
+  assertSafeId(id, 'id');
+  return path.join(cwd, RUNS_DIR, `${id}.json`);
+};
 
 /**
  * Session file path used by versions prior to the `.rundown/` migration.
@@ -75,8 +101,11 @@ export const LEGACY_SESSION_FILE = '.claude/rundown/session.json';
  * Lock path: `.rundown/locks/run-<parentRunId>.delegation.lock`
  *
  * @param cwd - Project root directory
- * @param runId - Parent run ID to lock
+ * @param runId - Parent run ID to lock (must match `[A-Za-z0-9._-]+`)
  * @returns Path to the lock file
+ * @throws {Error} If `runId` contains path separators, `..`, or is otherwise unsafe
  */
-export const delegationLockPath = (cwd: string, runId: string): string =>
-  path.join(cwd, LOCKS_DIR, `run-${runId}.delegation.lock`);
+export const delegationLockPath = (cwd: string, runId: string): string => {
+  assertSafeId(runId, 'runId');
+  return path.join(cwd, LOCKS_DIR, `run-${runId}.delegation.lock`);
+};

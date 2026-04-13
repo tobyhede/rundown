@@ -84,10 +84,13 @@ export async function mountRunbook(
  * @param container - The WebContainer instance to clean up
  */
 export async function cleanRundownState(container: WebContainer): Promise<void> {
-  // Remove state files best-effort per path so one missing entry doesn't skip the other
+  // Remove state files best-effort per path so one missing entry doesn't skip the others.
+  // Mirrors the three state locations in packages/core/src/paths.ts
+  // (RUNS_DIR, SESSION_FILE, LOCKS_DIR).
   await Promise.allSettled([
     container.fs.rm('.rundown/runs', { recursive: true }),
     container.fs.rm('.rundown/session.json'),
+    container.fs.rm('.rundown/locks', { recursive: true }),
   ]);
 }
 

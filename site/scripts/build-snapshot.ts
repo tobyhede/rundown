@@ -74,16 +74,31 @@ async function buildSnapshot() {
     if (useLocalPackages) {
       console.log('Using local packages (set USE_NPM_PACKAGES=1 to use npm)...');
 
-      // Install dependencies for all workspaces (needed when building from site directory)
-      console.log('Installing monorepo dependencies...');
-      execSync('npm install', { cwd: projectRoot, stdio: 'inherit' });
+      // Skip install+build only when all required local build outputs are present
+      // (e.g. CI with downloaded build artifacts). Checking only the CLI entry point
+      // would let a partial/stale build slip through, since `npm pack` below packs
+      // parser, core, and cli — all three need current dist/ outputs.
+      const cliEntryPoint = join(projectRoot, 'packages/cli/dist/cli.js');
+      const parserDistDir = join(projectRoot, 'packages/parser/dist');
+      const coreDistDir = join(projectRoot, 'packages/core/dist');
+      const hasAllDistOutputs =
+        existsSync(cliEntryPoint) &&
+        existsSync(parserDistDir) &&
+        existsSync(coreDistDir);
 
-      // Build packages first to ensure dist folders exist
-      console.log('Building packages...');
-      execSync('npm run build', { cwd: projectRoot, stdio: 'inherit' });
+      if (!hasAllDistOutputs) {
+        // Install dependencies for all workspaces (needed when building from site directory)
+        console.log('Installing monorepo dependencies...');
+        execSync('npm install', { cwd: projectRoot, stdio: 'inherit' });
+
+        // Build packages first to ensure dist folders exist
+        console.log('Building packages...');
+        execSync('npm run build', { cwd: projectRoot, stdio: 'inherit' });
+      } else {
+        console.log('Skipping monorepo install/build — parser/core/cli dist outputs already present.');
+      }
 
       // Verify critical files exist
-      const cliEntryPoint = join(projectRoot, 'packages/cli/dist/cli.js');
       if (!existsSync(cliEntryPoint)) {
         throw new Error(`CLI entry point not found at ${cliEntryPoint}. Build may have failed.`);
       }
