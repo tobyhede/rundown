@@ -19,7 +19,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
       `${step}|${iteration !== undefined ? String(iteration) : ''}`,
   ),
   parseStepIdFromString: jest.fn(),
-  STATE_DIR: '.rundown/runs',
+  RUNS_DIR: '.rundown/runs',
   DELEGATION_TOKEN_PREFIX: 'rdtk_',
   DEFAULT_POLICY: {
     version: 1,

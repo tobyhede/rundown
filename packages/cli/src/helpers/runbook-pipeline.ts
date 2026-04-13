@@ -22,7 +22,7 @@ import {
   type ResolvedRunbook,
   type DelegationLinkage,
   type ParentLinkage,
-  STATE_DIR,
+  RUNS_DIR,
   DelegationScanService,
   DelegationLock,
   reconstituteContextVars,
@@ -197,7 +197,7 @@ function emitRunbookStarted(
     title: runbookState.title,
     description: runbookState.description,
     prompted,
-    statePath: `${STATE_DIR}/${runbookState.id}.json`,
+    statePath: `${RUNS_DIR}/${runbookState.id}.json`,
   });
 }
 

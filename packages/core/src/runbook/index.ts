@@ -12,12 +12,6 @@ export * from './step-utils.js';
 export * from './targeting.js';
 export * from './transition-kernel.js';
 export { RunbookStateManager, type SessionData } from './state.js';
-/**
- * Backward-compatible alias for the run-state directory constant.
- *
- * @deprecated Use `RUNS_DIR` directly.
- */
-export { RUNS_DIR as STATE_DIR } from '../paths.js';
 export { SessionService } from './session-service.js';
 export { ExecutionLifecycleService } from './execution-lifecycle-service.js';
 export { compileRunbookToMachine, runbookSetup, MAX_FILE_ITERATIONS } from './compiler.js';
