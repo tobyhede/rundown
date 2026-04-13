@@ -10,6 +10,14 @@ npm run build    # Build to dist/
 npm run preview  # Preview production build
 ```
 
+**Before running Playwright tests** (`npm test`), build the WebContainer snapshot first:
+```bash
+npm run build:snapshot -w site  # fast if packages already built
+# or
+npm run build -w site           # full build including snapshot
+```
+`public/rundown-snapshot.bin` is not committed — it must exist on disk before `npm run dev` or `npm test` will work. CI builds it automatically.
+
 ## Homepage Architecture
 
 The homepage IS the demo - an interactive runbook runner that lets visitors experience Rundown firsthand.
@@ -58,7 +66,8 @@ The site runs Rundown in the browser using WebContainer API. Key architecture de
 **Snapshot-based mounting:**
 - `public/rundown-snapshot.bin` contains pre-built CLI for fast boot
 - Avoids npm install in browser - mounts snapshot directly
-- Built via `npm run build:snapshot` in the monorepo root
+- Built via `npm run build:snapshot -w site` (or `npm run build -w site`)
+- **Not committed to git** — must be built locally before running dev server or tests
 
 **Spawn limitation workaround:**
 - WebContainer's nested `child_process.spawn()` doesn't propagate stdio properly

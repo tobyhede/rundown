@@ -74,16 +74,21 @@ async function buildSnapshot() {
     if (useLocalPackages) {
       console.log('Using local packages (set USE_NPM_PACKAGES=1 to use npm)...');
 
-      // Install dependencies for all workspaces (needed when building from site directory)
-      console.log('Installing monorepo dependencies...');
-      execSync('npm install', { cwd: projectRoot, stdio: 'inherit' });
+      // Skip install+build if dist files already exist (e.g. CI with downloaded build artifacts)
+      const cliEntryPoint = join(projectRoot, 'packages/cli/dist/cli.js');
+      if (!existsSync(cliEntryPoint)) {
+        // Install dependencies for all workspaces (needed when building from site directory)
+        console.log('Installing monorepo dependencies...');
+        execSync('npm install', { cwd: projectRoot, stdio: 'inherit' });
 
-      // Build packages first to ensure dist folders exist
-      console.log('Building packages...');
-      execSync('npm run build', { cwd: projectRoot, stdio: 'inherit' });
+        // Build packages first to ensure dist folders exist
+        console.log('Building packages...');
+        execSync('npm run build', { cwd: projectRoot, stdio: 'inherit' });
+      } else {
+        console.log('Skipping monorepo install/build — dist files already present.');
+      }
 
       // Verify critical files exist
-      const cliEntryPoint = join(projectRoot, 'packages/cli/dist/cli.js');
       if (!existsSync(cliEntryPoint)) {
         throw new Error(`CLI entry point not found at ${cliEntryPoint}. Build may have failed.`);
       }

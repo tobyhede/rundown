@@ -17,6 +17,9 @@ coverage/
 logs/
 docs/plans/
 
+# WebContainer snapshot (build artifact — rebuilt by CI and locally via npm run build:snapshot -w site)
+site/public/rundown-snapshot.bin
+
 # Stryker mutation testing
 packages/*/reports/
 packages/*/.stryker-tmp/
