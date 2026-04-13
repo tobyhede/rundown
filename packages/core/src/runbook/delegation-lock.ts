@@ -1,5 +1,7 @@
 import * as fs from 'node:fs/promises';
 import { isNodeError } from '../errors.js';
+// Lock-file naming convention and directory layout are defined in ../paths.ts
+// (`delegationLockPath`, `locksDir`).
 import { locksDir, delegationLockPath as _delegationLockPath } from '../paths.js';
 
 const LOCK_DEADLINE_MS = 5_000;

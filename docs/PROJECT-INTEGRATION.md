@@ -28,8 +28,10 @@ Runbooks and scripts in `.rundown/runbooks/` can be committed to share workflows
 
 ```gitignore
 # Ignore runtime state, commit runbooks
+.rundown/work/
 .rundown/runs/
 .rundown/session.json
+.rundown/locks/
 ```
 
 To keep runbooks as local-only project files instead, ignore the entire directory:

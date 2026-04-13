@@ -18,6 +18,7 @@ import {
   runsDir as _runsDir,
   sessionPath as _sessionPath,
   statePath as _statePath,
+  LEGACY_SESSION_FILE,
 } from '../paths.js';
 
 function generateId(): string {
@@ -78,6 +79,20 @@ export class RunbookStateManager {
 
   private statePath(id: string): string {
     return _statePath(this.cwd, id);
+  }
+
+  /** Emit a one-time console warning when legacy `.claude/rundown/` state is detected. */
+  private async warnIfLegacyStateExists(): Promise<void> {
+    try {
+      await fs.access(path.join(this.cwd, LEGACY_SESSION_FILE));
+      process.stderr.write(
+        '[rundown] Warning: State from a previous installation was found at .claude/rundown/.\n' +
+          '  State is now stored in .rundown/. Complete or abort any in-flight runbooks\n' +
+          '  from the old location, then remove the .claude/rundown/ directory.\n',
+      );
+    } catch {
+      // No legacy state — normal startup.
+    }
   }
 
   /**
@@ -282,6 +297,7 @@ export class RunbookStateManager {
       content = await fs.readFile(this.sessionPath, 'utf8');
     } catch (err: unknown) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+        await this.warnIfLegacyStateExists();
         return { defaultStack: [] };
       }
       throw err;

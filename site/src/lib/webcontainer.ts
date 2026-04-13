@@ -63,9 +63,17 @@ export async function mountRunbook(
   path: string,
   content: string
 ): Promise<void> {
-  // Use container.fs.mkdir to avoid race condition (recursive: true creates parents)
-  await container.fs.mkdir('.rundown/runbooks', { recursive: true });
-  await container.fs.writeFile(`.rundown/runbooks/${path}`, content);
+  // Normalize separators, strip leading slashes, and guard against path traversal.
+  // Path layout mirrors packages/core/src/paths.ts (RUNBOOKS_DIR / RUNS_DIR / SESSION_FILE).
+  const normalized = path.replace(/\\/g, '/').replace(/^\/+/, '');
+  if (normalized.split('/').some((seg) => seg === '..')) {
+    throw new Error(`Invalid runbook path: ${path}`);
+  }
+  const fullPath = `.rundown/runbooks/${normalized}`;
+  // Create parent directories (handles nested paths like planning/write-plan.runbook.md)
+  const dir = fullPath.substring(0, fullPath.lastIndexOf('/'));
+  await container.fs.mkdir(dir, { recursive: true });
+  await container.fs.writeFile(fullPath, content);
 }
 
 /**

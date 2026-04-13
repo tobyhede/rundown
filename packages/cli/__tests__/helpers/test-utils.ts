@@ -436,17 +436,6 @@ export async function getAllStates(workspace: TestWorkspace): Promise<Record<str
 }
 
 /**
- * Write a rundown config file.
- */
-export async function writeConfig(
-  workspace: TestWorkspace,
-  config: Record<string, unknown>,
-): Promise<void> {
-  const configPath = join(workspace.cwd, '.claude', 'rundown.json');
-  await writeFile(configPath, JSON.stringify(config, null, 2));
-}
-
-/**
  * Parse JSON events from CLI `--json` output.
  *
  * Splits stdout by newline, keeps only lines starting with `{`, and
