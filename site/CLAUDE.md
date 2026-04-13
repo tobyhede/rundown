@@ -11,11 +11,13 @@ npm run preview  # Preview production build
 ```
 
 **Before running Playwright tests** (`npm test`), build the WebContainer snapshot first:
+
 ```bash
 npm run build:snapshot -w site  # fast if packages already built
 # or
 npm run build -w site           # full build including snapshot
 ```
+
 `public/rundown-snapshot.bin` is not committed — it must exist on disk before `npm run dev` or `npm test` will work. CI builds it automatically.
 
 ## Homepage Architecture
