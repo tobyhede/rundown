@@ -3,6 +3,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { DelegationLock } from '../../src/runbook/delegation-lock.js';
+import { locksDir, delegationLockPath } from '../../src/paths.js';
 
 /** Find a PID that is guaranteed not to be running. */
 function findDeadPid(): number {
@@ -33,7 +34,7 @@ describe('DelegationLock', () => {
     await lock.acquire('run-1');
 
     // Lock file should exist with pid and timestamp
-    const lockPath = path.join(tmpDir, '.claude/rundown/locks/run-run-1.delegation.lock');
+    const lockPath = delegationLockPath(tmpDir, 'run-1');
     const content = JSON.parse(await fs.readFile(lockPath, 'utf8'));
     expect(content.pid).toBe(process.pid);
     expect(content.created_at).toBeDefined();
@@ -47,7 +48,7 @@ describe('DelegationLock', () => {
   it('creates lock file with owner-only permissions (0o600)', async () => {
     await lock.acquire('run-perms');
 
-    const lockPath = path.join(tmpDir, '.claude/rundown/locks/run-run-perms.delegation.lock');
+    const lockPath = delegationLockPath(tmpDir, 'run-perms');
     const stat = await fs.stat(lockPath);
     const fileMode = stat.mode & 0o777;
     expect(fileMode).toBe(0o600);
@@ -58,7 +59,7 @@ describe('DelegationLock', () => {
   it('creates lock directory with owner-only permissions (0o700)', async () => {
     await lock.acquire('run-dir-perms');
 
-    const lockDir = path.join(tmpDir, '.claude/rundown/locks');
+    const lockDir = locksDir(tmpDir);
     const stat = await fs.stat(lockDir);
     const dirMode = stat.mode & 0o777;
     expect(dirMode).toBe(0o700);
@@ -88,10 +89,10 @@ describe('DelegationLock', () => {
 
   it('reclaims stale lock from dead PID', async () => {
     // Manually write a lock file with a dead PID
-    const lockDir = path.join(tmpDir, '.claude/rundown/locks');
+    const lockDir = locksDir(tmpDir);
     await fs.mkdir(lockDir, { recursive: true });
 
-    const lockPath = path.join(lockDir, 'run-run-stale.delegation.lock');
+    const lockPath = delegationLockPath(tmpDir, 'run-stale');
     const staleLock = {
       pid: findDeadPid(),
       created_at: new Date(Date.now() - 120_000).toISOString(), // 2 minutes ago
@@ -109,10 +110,10 @@ describe('DelegationLock', () => {
   });
 
   it('reclaims corrupted lock file (non-JSON content)', async () => {
-    const lockDir = path.join(tmpDir, '.claude/rundown/locks');
+    const lockDir = locksDir(tmpDir);
     await fs.mkdir(lockDir, { recursive: true });
 
-    const lockPath = path.join(lockDir, 'run-run-corrupt.delegation.lock');
+    const lockPath = delegationLockPath(tmpDir, 'run-corrupt');
     await fs.writeFile(lockPath, 'NOT VALID JSON {{{');
 
     // Should reclaim the corrupted lock and acquire
@@ -150,7 +151,7 @@ describe('DelegationLock', () => {
     await lock2.acquire('run-concurrent');
 
     // Verify lock2 now owns the lock
-    const lockPath = path.join(tmpDir, '.claude/rundown/locks/run-run-concurrent.delegation.lock');
+    const lockPath = delegationLockPath(tmpDir, 'run-concurrent');
     const content = JSON.parse(await fs.readFile(lockPath, 'utf8'));
     expect(content.pid).toBe(process.pid);
 
@@ -158,10 +159,10 @@ describe('DelegationLock', () => {
   });
 
   it('reclaims lock when file age exceeds stale threshold (60s)', async () => {
-    const lockDir = path.join(tmpDir, '.claude/rundown/locks');
+    const lockDir = locksDir(tmpDir);
     await fs.mkdir(lockDir, { recursive: true });
 
-    const lockPath = path.join(lockDir, 'run-run-old.delegation.lock');
+    const lockPath = delegationLockPath(tmpDir, 'run-old');
     // Write a lock that's 61 seconds old (exceeds 60s threshold)
     const oldLock = {
       pid: process.pid, // Even if PID is alive
@@ -184,10 +185,10 @@ describe('DelegationLock', () => {
   it('handles lock file disappearing between check and read (race condition)', async () => {
     // This simulates a race where another process removes the lock between
     // our EEXIST check and the readFile call in tryReclaimStale
-    const lockDir = path.join(tmpDir, '.claude/rundown/locks');
+    const lockDir = locksDir(tmpDir);
     await fs.mkdir(lockDir, { recursive: true });
 
-    const lockPath = path.join(lockDir, 'run-run-vanish.delegation.lock');
+    const lockPath = delegationLockPath(tmpDir, 'run-vanish');
     await fs.writeFile(
       lockPath,
       JSON.stringify({ pid: findDeadPid(), created_at: new Date().toISOString() }),
@@ -211,10 +212,10 @@ describe('DelegationLock', () => {
   });
 
   it('handles empty lock file (0 bytes)', async () => {
-    const lockDir = path.join(tmpDir, '.claude/rundown/locks');
+    const lockDir = locksDir(tmpDir);
     await fs.mkdir(lockDir, { recursive: true });
 
-    const lockPath = path.join(lockDir, 'run-run-empty.delegation.lock');
+    const lockPath = delegationLockPath(tmpDir, 'run-empty');
     await fs.writeFile(lockPath, '');
 
     // Should reclaim the empty (corrupted) lock
@@ -238,7 +239,7 @@ describe('DelegationLock', () => {
     await lock.release('run-cycle');
 
     // Verify lock file is gone
-    const lockPath = path.join(tmpDir, '.claude/rundown/locks/run-run-cycle.delegation.lock');
+    const lockPath = delegationLockPath(tmpDir, 'run-cycle');
     await expect(fs.access(lockPath)).rejects.toThrow();
   });
 
@@ -249,10 +250,9 @@ describe('DelegationLock', () => {
     await lock.acquire('run-c');
 
     // All should coexist
-    const lockDir = path.join(tmpDir, '.claude/rundown/locks');
-    const lockA = path.join(lockDir, 'run-run-a.delegation.lock');
-    const lockB = path.join(lockDir, 'run-run-b.delegation.lock');
-    const lockC = path.join(lockDir, 'run-run-c.delegation.lock');
+    const lockA = delegationLockPath(tmpDir, 'run-a');
+    const lockB = delegationLockPath(tmpDir, 'run-b');
+    const lockC = delegationLockPath(tmpDir, 'run-c');
 
     await expect(fs.access(lockA)).resolves.toBeUndefined();
     await expect(fs.access(lockB)).resolves.toBeUndefined();

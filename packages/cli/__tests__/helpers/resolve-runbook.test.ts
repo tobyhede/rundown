@@ -3,6 +3,7 @@ import { resolveRunbookFile, parseIdentifier } from '../../src/helpers/resolve-r
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { runbooksDir } from '@rundown-org/core';
 
 describe('resolveRunbookFile', () => {
   let testDir: string;
@@ -20,8 +21,8 @@ describe('resolveRunbookFile', () => {
     await fs.rm(testDir, { recursive: true, force: true });
   });
 
-  it('should find runbook in .claude/rundown/runbooks/', async () => {
-    const claudeDir = path.join(testDir, '.claude/rundown/runbooks');
+  it('should find runbook in .rundown/runbooks/', async () => {
+    const claudeDir = runbooksDir(testDir);
     await fs.mkdir(claudeDir, { recursive: true });
     await fs.writeFile(path.join(claudeDir, 'test.runbook.md'), '# Test');
 
@@ -60,9 +61,9 @@ describe('resolveRunbookFile', () => {
     expect(result).toBeNull();
   });
 
-  it('should prefer .claude/rundown/runbooks over relative path', async () => {
+  it('should prefer .rundown/runbooks over relative path', async () => {
     // Create in both locations
-    const claudeDir = path.join(testDir, '.claude/rundown/runbooks');
+    const claudeDir = runbooksDir(testDir);
     await fs.mkdir(claudeDir, { recursive: true });
     await fs.writeFile(path.join(claudeDir, 'test.runbook.md'), '# Claude');
     await fs.writeFile(path.join(testDir, 'test.runbook.md'), '# Relative');
@@ -76,7 +77,7 @@ describe('resolveRunbookFile', () => {
   describe('resolution precedence', () => {
     it('prefers project runbook over bundled', async () => {
       // Create a project-local override of a bundled runbook
-      const claudeDir = path.join(testDir, '.claude', 'rundown', 'runbooks');
+      const claudeDir = runbooksDir(testDir);
       await fs.mkdir(claudeDir, { recursive: true });
       await fs.writeFile(
         path.join(claudeDir, 'retry-success.runbook.md'),
@@ -106,7 +107,7 @@ describe('resolveRunbookFile', () => {
 
   describe('namespace resolution', () => {
     it('resolves rundown:name to plugin source only', async () => {
-      const claudeDir = path.join(testDir, '.claude/rundown/runbooks');
+      const claudeDir = runbooksDir(testDir);
       const pluginDir = path.join(testDir, 'plugin/runbooks');
       await fs.mkdir(claudeDir, { recursive: true });
       await fs.mkdir(pluginDir, { recursive: true });
@@ -132,7 +133,7 @@ describe('resolveRunbookFile', () => {
     });
 
     it('returns null for unknown namespace', async () => {
-      const claudeDir = path.join(testDir, '.claude/rundown/runbooks');
+      const claudeDir = runbooksDir(testDir);
       await fs.mkdir(claudeDir, { recursive: true });
       await fs.writeFile(
         path.join(claudeDir, 'my-runbook.runbook.md'),
@@ -159,7 +160,7 @@ describe('resolveRunbookFile', () => {
     });
 
     it('returns null when namespaced runbook not found in target source', async () => {
-      const claudeDir = path.join(testDir, '.claude/rundown/runbooks');
+      const claudeDir = runbooksDir(testDir);
       const pluginDir = path.join(testDir, 'plugin/runbooks');
       await fs.mkdir(claudeDir, { recursive: true });
       await fs.mkdir(pluginDir, { recursive: true });
@@ -179,8 +180,8 @@ describe('resolveRunbookFile', () => {
   });
 
   describe('source metadata', () => {
-    it('returns source "project" for runbook in .claude/rundown/runbooks/', async () => {
-      const claudeDir = path.join(testDir, '.claude/rundown/runbooks');
+    it('returns source "project" for runbook in .rundown/runbooks/', async () => {
+      const claudeDir = runbooksDir(testDir);
       await fs.mkdir(claudeDir, { recursive: true });
       await fs.writeFile(path.join(claudeDir, 'test.runbook.md'), '# Test');
 

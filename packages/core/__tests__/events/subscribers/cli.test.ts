@@ -33,7 +33,7 @@ describe('CLISubscriber', () => {
       makeEvent('RUNBOOK_STARTED', {
         title: 'Test',
         prompted: false,
-        statePath: '.claude/rundown/runs/wf-test.json',
+        statePath: '.rundown/runs/wf-test.json',
       }),
     );
     const output = writer.getOutput();

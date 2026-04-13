@@ -11,7 +11,7 @@ describe('event output integration', () => {
     // Simulate execution sequence
     emitter.emit('RUNBOOK_STARTED', {
       prompted: false,
-      statePath: '.claude/rundown/runs/wf-test.json',
+      statePath: '.rundown/runs/wf-test.json',
     });
     emitter.emit('STEP_ENTERED', {
       position: { current: '1', total: 1 },
@@ -66,7 +66,7 @@ describe('event output integration', () => {
 
     emitter.emit('RUNBOOK_STARTED', {
       prompted: false,
-      statePath: '.claude/rundown/runs/wf-test.json',
+      statePath: '.rundown/runs/wf-test.json',
     });
     emitter.emit('COMMAND_COMPLETED', {
       command: 'exit 1',
@@ -92,7 +92,7 @@ describe('event output integration', () => {
 
     emitter.emit('RUNBOOK_STARTED', {
       prompted: false,
-      statePath: '.claude/rundown/runs/wf-test.json',
+      statePath: '.rundown/runs/wf-test.json',
     });
     emitter.emit('COMMAND_COMPLETED', {
       command: 'rm -rf /',
@@ -123,7 +123,7 @@ describe('event output integration', () => {
 
     emitter.emit('RUNBOOK_STARTED', {
       prompted: false,
-      statePath: '.claude/rundown/runs/wf-test.json',
+      statePath: '.rundown/runs/wf-test.json',
     });
     emitter.emit('STEP_ENTERED', {
       position: { current: '1', total: 1 },
@@ -146,7 +146,7 @@ describe('event output integration', () => {
 
     emitter.emit('RUNBOOK_STARTED', {
       prompted: false,
-      statePath: '.claude/rundown/runs/wf-test.json',
+      statePath: '.rundown/runs/wf-test.json',
     });
 
     const event = subscriber.getEvents()[0];

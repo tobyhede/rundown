@@ -6,7 +6,16 @@ import { fileURLToPath } from 'node:url';
 import { CommanderError } from 'commander';
 import { createProgram } from '../../src/cli.js';
 import { resetPolicyContext } from '../../src/services/policy-context.js';
-import { resetColorCache, setWriter, ConsoleWriter, getErrorMessage } from '@rundown-org/core';
+import {
+  resetColorCache,
+  setWriter,
+  ConsoleWriter,
+  getErrorMessage,
+  runsDir,
+  sessionPath as _sessionPath,
+  runbooksDir,
+  locksDir,
+} from '@rundown-org/core';
 import { NAMED_IDENTIFIER_PATTERN, isReservedWord } from '@rundown-org/parser';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -25,6 +34,8 @@ export interface TestWorkspace {
   runbookPath: (name: string) => string;
   statePath: () => string;
   sessionPath: () => string;
+  runbooksDir: () => string;
+  locksDir: () => string;
   binPath: () => string;
 }
 
@@ -35,12 +46,12 @@ export interface CliResult {
 }
 
 /**
- * Creates isolated temp directory with fixtures and .claude structure.
+ * Creates isolated temp directory with fixtures and .rundown structure.
  * Also creates a symlink to the CLI in node_modules/.bin for rd commands.
  */
 export async function createTestWorkspace(): Promise<TestWorkspace> {
   const tempDir = await mkdtemp(join(tmpdir(), 'rd-test-'));
-  const projectRunbooksDir = join(tempDir, '.claude', 'rundown', 'runbooks');
+  const projectRunbooksDir = runbooksDir(tempDir);
   const pluginDir = join(tempDir, 'plugin');
   const pluginRunbooksDir = join(pluginDir, 'runbooks');
   const rootRunbooksDir = join(tempDir, 'runbooks');
@@ -49,8 +60,8 @@ export async function createTestWorkspace(): Promise<TestWorkspace> {
   // Create .git marker to prevent config discovery from walking above workspace
   await writeFile(join(tempDir, '.git'), 'gitdir: /dev/null\n');
 
-  // Create .claude/rundown structure
-  await mkdir(join(tempDir, '.claude', 'rundown', 'runs'), { recursive: true });
+  // Create .rundown structure
+  await mkdir(runsDir(tempDir), { recursive: true });
   await mkdir(projectRunbooksDir, { recursive: true });
   await mkdir(pluginRunbooksDir, { recursive: true });
   await mkdir(rootRunbooksDir, { recursive: true });
@@ -72,8 +83,10 @@ export async function createTestWorkspace(): Promise<TestWorkspace> {
     cwd: tempDir,
     cleanup: () => rm(tempDir, { recursive: true, force: true }),
     runbookPath: (name: string) => join(rootRunbooksDir, name),
-    statePath: () => join(tempDir, '.claude', 'rundown', 'runs'),
-    sessionPath: () => join(tempDir, '.claude', 'rundown', 'session.json'),
+    statePath: () => runsDir(tempDir),
+    sessionPath: () => _sessionPath(tempDir),
+    runbooksDir: () => runbooksDir(tempDir),
+    locksDir: () => locksDir(tempDir),
     binPath: () => binDir,
   };
 }

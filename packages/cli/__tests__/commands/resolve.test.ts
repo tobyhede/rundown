@@ -17,6 +17,7 @@ import {
 } from '../helpers/test-utils.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { RUNDOWN_DIR } from '@rundown-org/core';
 
 describe('rd resolve', () => {
   let workspace: TestWorkspace;
@@ -227,7 +228,7 @@ echo hello
   it('discovers .rundown/config.yaml in workspace with .git boundary', async () => {
     // Regression: config discovery failed in CI when workspace had no .git marker,
     // causing findConfigFile to walk above the temp dir
-    const configDir = path.join(workspace.cwd, '.rundown');
+    const configDir = path.join(workspace.cwd, RUNDOWN_DIR);
     fs.mkdirSync(configDir, { recursive: true });
     fs.writeFileSync(
       path.join(configDir, 'config.yaml'),

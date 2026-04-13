@@ -45,7 +45,7 @@ describe('createBridgedEmitter', () => {
     emitter.emit('RUNBOOK_STARTED', {
       title: 'Test',
       prompted: false,
-      statePath: '.claude/rundown/runs/wf-test.json',
+      statePath: '.rundown/runs/wf-test.json',
     });
 
     expect(executionEventFn).toHaveBeenCalledTimes(1);
@@ -62,7 +62,7 @@ describe('createBridgedEmitter', () => {
     emitter.emit('RUNBOOK_STARTED', {
       title: 'Test',
       prompted: false,
-      statePath: '.claude/rundown/runs/wf-test.json',
+      statePath: '.rundown/runs/wf-test.json',
     });
 
     const event = executionEventFn.mock.calls[0]?.[0];

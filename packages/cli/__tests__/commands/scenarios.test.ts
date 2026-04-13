@@ -39,9 +39,9 @@ scenarios:
 - FAIL STOP
 `;
 
-    const runbooksDir = join(workspace.cwd, '.claude', 'rundown', 'runbooks');
-    await mkdir(runbooksDir, { recursive: true });
-    await writeFile(join(runbooksDir, 'test-runbook.runbook.md'), runbook);
+    const runbooksDirPath = workspace.runbooksDir();
+    await mkdir(runbooksDirPath, { recursive: true });
+    await writeFile(join(runbooksDirPath, 'test-runbook.runbook.md'), runbook);
   });
 
   afterEach(async () => {
@@ -73,10 +73,7 @@ name: no-scenarios
 
 - PASS COMPLETE
 `;
-      await writeFile(
-        join(workspace.cwd, '.claude', 'rundown', 'runbooks', 'no-scenarios.runbook.md'),
-        noScenarios,
-      );
+      await writeFile(join(workspace.runbooksDir(), 'no-scenarios.runbook.md'), noScenarios);
 
       const result = await runCliInProcess('scenario ls no-scenarios.runbook.md', workspace);
 

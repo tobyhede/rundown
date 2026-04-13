@@ -665,7 +665,7 @@ describe('TextRenderer', () => {
         type: 'RUNBOOK_STARTED',
         payload: {
           prompted: false,
-          statePath: '.claude/rundown/runs/test.json',
+          statePath: '.rundown/runs/test.json',
         },
       };
 

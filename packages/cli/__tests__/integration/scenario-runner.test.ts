@@ -108,7 +108,7 @@ function findFileByName(dir: string, filename: string): string | null {
  */
 function copyPatternToWorkspace(relativePath: string, workspace: TestWorkspace): void {
   const sourcePath = join(RUNBOOKS_DIR, relativePath);
-  const targetDir = join(workspace.cwd, '.claude', 'rundown', 'runbooks');
+  const targetDir = workspace.runbooksDir();
   const filename = relativePath.split('/').pop()!;
 
   mkdirSync(targetDir, { recursive: true });
@@ -186,7 +186,7 @@ function copyPatternWithDependencies(
   const patternSubdir = dirname(filename);
   for (const ref of referenced) {
     // Resolves SOURCE file location within fixtures tree (not runtime resolution).
-    // copyPatternToWorkspace flattens to .claude/rundown/runbooks/ via basename,
+    // copyPatternToWorkspace flattens to .rundown/runbooks/ via basename,
     // so this only affects which fixture to copy. Works for name-based references
     // but would diverge for relative-path references since production
     // resolveRunbookFile() resolves from cwd, not the referencing runbook's dir.

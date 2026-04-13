@@ -20,7 +20,7 @@ describe('integration: GOTO patterns', () => {
 
     // Copy pattern runbooks to test workspace
     const patternsDir = join(__dirname, '..', '..', '..', '..', 'runbooks');
-    const targetDir = join(workspace.cwd, '.claude', 'rundown', 'runbooks');
+    const targetDir = workspace.runbooksDir();
 
     // Ensure target directory exists
     mkdirSync(targetDir, { recursive: true });

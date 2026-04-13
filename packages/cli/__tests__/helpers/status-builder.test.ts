@@ -91,7 +91,7 @@ describe('buildStashedStatus', () => {
     getRunbookFromState.mockReturnValue(steps);
     buildMetadata.mockReturnValue({
       file: 'test.runbook.md',
-      state: '.claude/rundown/runs/test-id.json',
+      state: '.rundown/runs/test-id.json',
     });
     (
       core.countNumberedSteps as jest.MockedFunction<typeof core.countNumberedSteps>
@@ -112,7 +112,7 @@ describe('buildStashedStatus', () => {
     getRunbookFromState.mockReturnValue(steps);
     buildMetadata.mockReturnValue({
       file: 'test.runbook.md',
-      state: '.claude/rundown/runs/test-id.json',
+      state: '.rundown/runs/test-id.json',
     });
     (
       core.countNumberedSteps as jest.MockedFunction<typeof core.countNumberedSteps>
@@ -130,7 +130,7 @@ describe('buildStashedStatus', () => {
     getRunbookFromState.mockReturnValue(steps);
     buildMetadata.mockReturnValue({
       file: 'test.runbook.md',
-      state: '.claude/rundown/runs/test-id.json',
+      state: '.rundown/runs/test-id.json',
       prompted: true,
     });
     (
@@ -151,7 +151,7 @@ describe('buildActiveStatus', () => {
     getRunbookFromState.mockReturnValue(steps);
     buildMetadata.mockReturnValue({
       file: 'test.runbook.md',
-      state: '.claude/rundown/runs/test-id.json',
+      state: '.rundown/runs/test-id.json',
     });
     (
       core.countNumberedSteps as jest.MockedFunction<typeof core.countNumberedSteps>
@@ -172,7 +172,7 @@ describe('buildActiveStatus', () => {
     getRunbookFromState.mockReturnValue(steps);
     buildMetadata.mockReturnValue({
       file: 'test.runbook.md',
-      state: '.claude/rundown/runs/test-id.json',
+      state: '.rundown/runs/test-id.json',
     });
     (
       core.countNumberedSteps as jest.MockedFunction<typeof core.countNumberedSteps>
@@ -194,7 +194,7 @@ describe('buildActiveStatus', () => {
     getRunbookFromState.mockReturnValue(steps);
     buildMetadata.mockReturnValue({
       file: 'test.runbook.md',
-      state: '.claude/rundown/runs/test-id.json',
+      state: '.rundown/runs/test-id.json',
     });
     (
       core.countNumberedSteps as jest.MockedFunction<typeof core.countNumberedSteps>
@@ -219,7 +219,7 @@ describe('buildActiveStatus', () => {
     getRunbookFromState.mockReturnValue(steps);
     buildMetadata.mockReturnValue({
       file: 'test.runbook.md',
-      state: '.claude/rundown/runs/test-id.json',
+      state: '.rundown/runs/test-id.json',
     });
     (
       core.countNumberedSteps as jest.MockedFunction<typeof core.countNumberedSteps>
@@ -239,7 +239,7 @@ describe('buildActiveStatus', () => {
     getRunbookFromState.mockReturnValue(steps);
     buildMetadata.mockReturnValue({
       file: 'test.runbook.md',
-      state: '.claude/rundown/runs/test-id.json',
+      state: '.rundown/runs/test-id.json',
     });
     (
       core.countNumberedSteps as jest.MockedFunction<typeof core.countNumberedSteps>
@@ -257,7 +257,7 @@ describe('parentLinkage projection', () => {
     getRunbookFromState.mockReturnValue(steps);
     buildMetadata.mockReturnValue({
       file: 'test.runbook.md',
-      state: '.claude/rundown/runs/test-id.json',
+      state: '.rundown/runs/test-id.json',
     });
     (
       core.countNumberedSteps as jest.MockedFunction<typeof core.countNumberedSteps>

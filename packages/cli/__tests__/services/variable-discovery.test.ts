@@ -17,6 +17,7 @@ import { execFileSync as nodeExecFileSync } from 'node:child_process';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { RUNDOWN_DIR } from '@rundown-org/core';
 
 describe('parseVarFlag', () => {
   it('should parse key=value format', () => {
@@ -306,7 +307,7 @@ describe('findConfigFile', () => {
   });
 
   it('should return config path when .rundown/config.yaml exists', async () => {
-    const rundownDir = path.join(tmpDir, '.rundown');
+    const rundownDir = path.join(tmpDir, RUNDOWN_DIR);
     await fs.mkdir(rundownDir, { recursive: true });
     const configPath = path.join(rundownDir, 'config.yaml');
     await fs.writeFile(configPath, 'key: value');
@@ -322,7 +323,7 @@ describe('findConfigFile', () => {
   });
 
   it('should find config in parent directory', async () => {
-    const rundownDir = path.join(tmpDir, '.rundown');
+    const rundownDir = path.join(tmpDir, RUNDOWN_DIR);
     await fs.mkdir(rundownDir, { recursive: true });
     const configPath = path.join(rundownDir, 'config.yaml');
     await fs.writeFile(configPath, 'key: value');
@@ -347,7 +348,7 @@ describe('findConfigFile', () => {
 
   it('should not find config above git root', async () => {
     // Parent has config
-    const parentRundownDir = path.join(tmpDir, '.rundown');
+    const parentRundownDir = path.join(tmpDir, RUNDOWN_DIR);
     await fs.mkdir(parentRundownDir, { recursive: true });
     await fs.writeFile(path.join(parentRundownDir, 'config.yaml'), 'should_not_find: true');
 
@@ -365,7 +366,7 @@ describe('findConfigFile', () => {
   it('should find config at git root level', async () => {
     // Git root with config
     await fs.mkdir(path.join(tmpDir, '.git'));
-    const rundownDir = path.join(tmpDir, '.rundown');
+    const rundownDir = path.join(tmpDir, RUNDOWN_DIR);
     await fs.mkdir(rundownDir, { recursive: true });
     const configPath = path.join(rundownDir, 'config.yaml');
     await fs.writeFile(configPath, 'key: value');
@@ -391,7 +392,7 @@ describe('discoverVariables', () => {
   });
 
   it('should discover .rundown/config.yaml', async () => {
-    const rundownDir = path.join(tmpDir, '.rundown');
+    const rundownDir = path.join(tmpDir, RUNDOWN_DIR);
     await fs.mkdir(rundownDir, { recursive: true });
     await fs.writeFile(
       path.join(rundownDir, 'config.yaml'),
@@ -432,7 +433,7 @@ describe('discoverVariables', () => {
 
     // Create parent dir with .rundown/config.yaml
     const parentDir = tmpDir;
-    const parentRundownDir = path.join(parentDir, '.rundown');
+    const parentRundownDir = path.join(parentDir, RUNDOWN_DIR);
     await fs.mkdir(parentRundownDir, { recursive: true });
     await fs.writeFile(path.join(parentRundownDir, 'config.yaml'), 'should_not_find: this value');
 
@@ -746,7 +747,7 @@ describe('resolveVariables', () => {
       const varFile = path.join(tmpDir, 'vars.yaml');
       await fs.writeFile(varFile, 'items: override\n');
 
-      const configDir = path.join(tmpDir, '.rundown');
+      const configDir = path.join(tmpDir, RUNDOWN_DIR);
       await fs.mkdir(configDir, { recursive: true });
       await fs.writeFile(path.join(configDir, 'config.yaml'), 'items:\n  - x\n  - "y"\n');
 
@@ -956,7 +957,7 @@ describe('resolveVariables', () => {
 
     it('RD_VAR_* overrides config discovery for same key', async () => {
       process.env.RD_VAR_greeting = 'from-env';
-      const configDir = path.join(tmpDir, '.rundown');
+      const configDir = path.join(tmpDir, RUNDOWN_DIR);
       await fs.mkdir(configDir, { recursive: true });
       await fs.writeFile(path.join(configDir, 'config.yaml'), 'greeting: from-config\n');
 
@@ -1082,7 +1083,7 @@ describe('resolveVariables', () => {
 
     it('non-finite numbers are stringified with warning', async () => {
       // YAML .inf/-.inf/.nan produce non-finite JS numbers that break JSON.stringify
-      const configPath = path.join(tmpDir, '.rundown', 'config.yaml');
+      const configPath = path.join(tmpDir, RUNDOWN_DIR, 'config.yaml');
       await fs.mkdir(path.dirname(configPath), { recursive: true });
       await fs.writeFile(configPath, 'timeout: .inf\nretries: .nan\n');
 

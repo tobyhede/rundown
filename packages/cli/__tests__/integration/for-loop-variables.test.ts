@@ -7,6 +7,7 @@ import {
 } from '../helpers/test-utils.js';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import { RUNDOWN_DIR } from '@rundown-org/core';
 
 describe('Per-step variable expansion ({{Step}}, {{Index}}, FOR loop variables)', () => {
   let workspace: TestWorkspace;
@@ -656,9 +657,9 @@ describe('Per-step variable expansion ({{Step}}, {{Index}}, FOR loop variables)'
   });
 
   it('windowed source fallback does not treat source as template variable', async () => {
-    await mkdir(join(workspace.cwd, '.rundown'), { recursive: true });
+    await mkdir(join(workspace.cwd, RUNDOWN_DIR), { recursive: true });
     await writeFile(
-      join(workspace.cwd, '.rundown', 'config.yaml'),
+      join(workspace.cwd, RUNDOWN_DIR, 'config.yaml'),
       `items:\n  - alpha\n  - beta\n  - gamma\n`,
     );
 
@@ -700,9 +701,9 @@ rd echo item={{item}}
   });
 
   it('windowed source fallback with transitions resolves without error', async () => {
-    await mkdir(join(workspace.cwd, '.rundown'), { recursive: true });
+    await mkdir(join(workspace.cwd, RUNDOWN_DIR), { recursive: true });
     await writeFile(
-      join(workspace.cwd, '.rundown', 'config.yaml'),
+      join(workspace.cwd, RUNDOWN_DIR, 'config.yaml'),
       `items:\n  - alpha\n  - beta\n`,
     );
 

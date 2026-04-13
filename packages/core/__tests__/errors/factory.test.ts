@@ -17,11 +17,11 @@ describe('Errors factory - extended coverage', () => {
     });
 
     it('stateDirNotAccessible creates correct error', () => {
-      const error = Errors.stateDirNotAccessible('/path/to/.claude/rundown');
+      const error = Errors.stateDirNotAccessible('/path/to/.rundown');
 
       expect(error).toBeInstanceOf(RundownError);
       expect(error.code).toBe('RD-103');
-      expect(error.context.file).toBe('/path/to/.claude/rundown');
+      expect(error.context.file).toBe('/path/to/.rundown');
     });
   });
 

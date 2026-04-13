@@ -208,17 +208,11 @@ Task uses {{ myVar }}.
       '',
       'Finished.',
     ].join('\n');
-    await writeFile(
-      join(workspace.cwd, '.claude', 'rundown', 'runbooks', 'bad-token.runbook.md'),
-      content,
-    );
+    await writeFile(join(workspace.runbooksDir(), 'bad-token.runbook.md'), content);
 
     // Child runbook for the delegation
     const childContent = '## 1. Execute\n- PASS COMPLETE\n\nRun task.\n';
-    await writeFile(
-      join(workspace.cwd, '.claude', 'rundown', 'runbooks', 'child.runbook.md'),
-      childContent,
-    );
+    await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childContent);
 
     const result = runCli('scenario run bad-token.runbook.md bad-token -q', workspace);
     expect(result.exitCode).not.toBe(0);

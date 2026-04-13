@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RunbookStateManager } from '../../src/runbook/state.js';
+import { statePath as _statePath } from '../../src/paths.js';
 import { SessionService } from '../../src/runbook/session-service.js';
 import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
@@ -309,7 +310,7 @@ describe('RunbookStateManager', () => {
         },
       });
 
-      const stateFilePath = join(testDir, '.claude/rundown/runs', `${state.id}.json`);
+      const stateFilePath = _statePath(testDir, state.id);
       const raw = JSON.parse(await readFile(stateFilePath, 'utf8')) as Record<string, unknown>;
 
       const resolved = (raw.resolvedCompletions as Record<string, Record<string, unknown>>)[
@@ -391,7 +392,7 @@ describe('RunbookStateManager', () => {
         runbookPath: 'test.runbook.md',
       });
 
-      const statePath = join(testDir, '.claude/rundown/runs', `${state.id}.json`);
+      const statePath = _statePath(testDir, state.id);
       const stats = await stat(statePath);
 
       // Check mode is 0o600 (owner read/write only)
@@ -457,8 +458,7 @@ describe('RunbookStateManager', () => {
 
       // Manually save legacy state with GOTO_NEXT
       const fs = await import('node:fs/promises');
-      const path = await import('node:path');
-      const stateFilePath = path.join(testDir, '.claude/rundown/runs', `${state.id}.json`);
+      const stateFilePath = _statePath(testDir, state.id);
       const legacyState = {
         ...state,
         lastAction: { type: 'GOTO_NEXT' },
@@ -474,8 +474,7 @@ describe('RunbookStateManager', () => {
 
       // Manually save legacy state with instance field
       const fs = await import('node:fs/promises');
-      const path = await import('node:path');
-      const stateFilePath = path.join(testDir, '.claude/rundown/runs', `${state.id}.json`);
+      const stateFilePath = _statePath(testDir, state.id);
       const legacyState = {
         ...state,
         instance: 2,
@@ -491,8 +490,7 @@ describe('RunbookStateManager', () => {
 
       // Manually save legacy state with GOTO_NEXT
       const fs = await import('node:fs/promises');
-      const path = await import('node:path');
-      const stateFilePath = path.join(testDir, '.claude/rundown/runs', `${state.id}.json`);
+      const stateFilePath = _statePath(testDir, state.id);
       const legacyState = {
         ...state,
         lastAction: { type: 'GOTO_NEXT' },

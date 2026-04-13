@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { writeFile, mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
+import { RUNDOWN_DIR } from '@rundown-org/core';
 import {
   createTestWorkspace,
   runCli,
@@ -78,8 +79,8 @@ describe('Template Variables Integration', () => {
 
     it('--var-file overrides auto-discovered config', async () => {
       // Create auto-discovered config
-      await mkdir(join(workspace.cwd, '.rundown'), { recursive: true });
-      await writeFile(join(workspace.cwd, '.rundown', 'config.yaml'), 'message: auto-discovered');
+      await mkdir(join(workspace.cwd, RUNDOWN_DIR), { recursive: true });
+      await writeFile(join(workspace.cwd, RUNDOWN_DIR, 'config.yaml'), 'message: auto-discovered');
 
       // Create explicit var file
       await writeFile(join(workspace.cwd, 'custom.yaml'), 'message: explicit');
@@ -98,8 +99,8 @@ describe('Template Variables Integration', () => {
     });
 
     it('uses auto-discovered config when no flags provided', async () => {
-      await mkdir(join(workspace.cwd, '.rundown'), { recursive: true });
-      await writeFile(join(workspace.cwd, '.rundown', 'config.yaml'), 'message: auto-discovered');
+      await mkdir(join(workspace.cwd, RUNDOWN_DIR), { recursive: true });
+      await writeFile(join(workspace.cwd, RUNDOWN_DIR, 'config.yaml'), 'message: auto-discovered');
 
       const result = runCli('run test.runbook.md --json', workspace);
 
@@ -182,8 +183,8 @@ describe('Template Variables Integration', () => {
       await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
 
       // Create auto-discovered config
-      await mkdir(join(workspace.cwd, '.rundown'), { recursive: true });
-      await writeFile(join(workspace.cwd, '.rundown', 'config.yaml'), 'message: from-config');
+      await mkdir(join(workspace.cwd, RUNDOWN_DIR), { recursive: true });
+      await writeFile(join(workspace.cwd, RUNDOWN_DIR, 'config.yaml'), 'message: from-config');
 
       const result = runCli('run test.runbook.md --json', workspace);
 
