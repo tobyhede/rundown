@@ -596,8 +596,15 @@ describe('handleSubagentStop', () => {
     });
   });
 
-  describe('unverifiable delegations (missing tokenHash)', () => {
-    it('returns unknown when no delegations have tokenHash', async () => {
+  describe('stale delegations filtered by type guard', () => {
+    // `isDelegationStatus` rejects entries without a string `tokenHash`.
+    // Such entries come only from pre-tokenHash session state (unsupported
+    // per the no-migration principle in CLAUDE.md). The hook must route
+    // these to `unknown` rather than drop them silently and misreport the
+    // parent as cleanly resumed — the `hadInvalidDelegations` flag carries
+    // that signal from parsing into classification.
+
+    it('returns unknown when all delegations lack tokenHash', async () => {
       mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
       setExecSync(
         createStatusMock({
@@ -610,6 +617,40 @@ describe('handleSubagentStop', () => {
               runbook: 'child.runbook.md',
               state: 'claimed',
               childRunId: 'run-old',
+            },
+          ],
+        }) as never,
+      );
+
+      const input = createMockHookInput('SubagentStop');
+      const result = await handleSubagentStop(input);
+
+      expect(result.context).toContain('Unable to verify');
+      expect(result.context).toContain('rd status');
+    });
+
+    it('returns unknown when a mixed array contains any invalid entry', async () => {
+      // Valid sibling plus a stale entry missing tokenHash. The valid entry
+      // survives the filter; the stale one flips `hadInvalidDelegations`,
+      // forcing the classifier to `unknown` instead of `completed`.
+      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setExecSync(
+        createStatusMock({
+          active: true,
+          stashed: false,
+          file: 'parent.runbook.md',
+          delegations: [
+            {
+              substep: '3.1',
+              runbook: 'child-a.runbook.md',
+              state: 'pending',
+              tokenHash: OTHER_TOKEN_HASH,
+            },
+            {
+              substep: '3.2',
+              runbook: 'child-stale.runbook.md',
+              state: 'claimed',
+              childRunId: 'run-stale',
             },
           ],
         }) as never,

@@ -70,21 +70,21 @@ type DelegationStatus =
       readonly state: 'pending';
       readonly substep: string;
       readonly runbook: string;
-      readonly tokenHash?: string;
+      readonly tokenHash: string;
     }
   | {
       readonly state: 'claimed';
       readonly substep: string;
       readonly runbook: string;
       readonly childRunId: string;
-      readonly tokenHash?: string;
+      readonly tokenHash: string;
     }
   | {
       readonly state: 'cancelled';
       readonly substep: string;
       readonly runbook: string;
       readonly childRunId?: string;
-      readonly tokenHash?: string;
+      readonly tokenHash: string;
     };
 
 /** Runbook status as a discriminated union — impossible combinations are unrepresentable. */
@@ -94,6 +94,14 @@ type RunbookStatus =
   | ({
       readonly kind: 'active';
       readonly delegations: readonly DelegationStatus[];
+      /**
+       * True when the raw delegations array contained entries that failed
+       * {@link isDelegationStatus} validation (e.g. stale pre-tokenHash state).
+       * Such entries are filtered out of `delegations`, but the flag preserves
+       * the signal so classification can route to `unknown` rather than
+       * fall through to a confidently-wrong `completed` banner.
+       */
+      readonly hadInvalidDelegations: boolean;
     } & RunbookPosition);
 
 /** Parent state carried on a completed outcome when the parent runbook is still active. */
@@ -230,7 +238,7 @@ function isDelegationStatus(d: unknown): d is DelegationStatus {
   const shared =
     typeof obj.substep === 'string' &&
     typeof obj.runbook === 'string' &&
-    (obj.tokenHash === undefined || typeof obj.tokenHash === 'string');
+    typeof obj.tokenHash === 'string';
   if (!shared) return false;
   switch (obj.state) {
     case 'pending':
@@ -247,12 +255,22 @@ function isDelegationStatus(d: unknown): d is DelegationStatus {
 /**
  * Parse delegation entries from raw JSON array.
  *
+ * Separates valid entries from invalid ones so the caller can distinguish
+ * "no delegations" from "delegations present but unverifiable" (e.g. stale
+ * session state lacking tokenHash). Invalid entries are dropped from
+ * `entries` but counted in `hadInvalid`.
+ *
  * @param raw - Raw value from parsed JSON
- * @returns Array of validated delegation status entries
+ * @returns Struct with validated entries and a flag indicating whether any
+ *   raw entries failed validation
  */
-function parseDelegations(raw: unknown): readonly DelegationStatus[] {
-  if (!Array.isArray(raw)) return [];
-  return raw.filter(isDelegationStatus);
+function parseDelegations(raw: unknown): {
+  readonly entries: readonly DelegationStatus[];
+  readonly hadInvalid: boolean;
+} {
+  if (!Array.isArray(raw)) return { entries: [], hadInvalid: false };
+  const entries = raw.filter(isDelegationStatus);
+  return { entries, hadInvalid: entries.length !== raw.length };
 }
 
 /**
@@ -293,12 +311,16 @@ function queryRunbookStatus(cwd: string): RunbookStatus | undefined {
     }
 
     // Active: runbook is running (could be parent or child)
+    const { entries: delegations, hadInvalid: hadInvalidDelegations } = parseDelegations(
+      parsed.delegations,
+    );
     return {
       kind: 'active',
       file: file ?? '(unknown)',
       position: parsePosition(parsed.position),
       step: parseStep(parsed.step),
-      delegations: parseDelegations(parsed.delegations),
+      delegations,
+      hadInvalidDelegations,
       ...(parentLinkage ? { parentLinkage } : {}),
     };
   } catch {
@@ -360,12 +382,11 @@ function classifyOutcome(status: RunbookStatus, tokenHash: string): DelegationOu
       const ours = status.delegations.find((d) => d.tokenHash === tokenHash);
 
       if (!ours) {
-        // No match on either signal. If delegations exist but none carry a
-        // tokenHash, correlation is impossible (stale session state).
-        if (
-          status.delegations.length > 0 &&
-          !status.delegations.some((d) => d.tokenHash !== undefined)
-        ) {
+        // If the raw status payload carried delegation entries that failed
+        // validation (e.g. stale pre-tokenHash session state), correlation
+        // is impossible — route to `unknown` rather than fall through and
+        // misreport the parent as cleanly resumed.
+        if (status.hadInvalidDelegations) {
           return { kind: 'unknown' };
         }
         // Otherwise: parent resumed after child completion. Any delegations
