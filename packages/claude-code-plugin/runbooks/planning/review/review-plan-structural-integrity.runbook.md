@@ -1,5 +1,5 @@
 ---
-name: review-structural-integrity
+name: review-plan-structural-integrity
 description: Validate step ordering, dependencies, scope, and completeness of a plan
 tags:
   - planning
@@ -14,9 +14,7 @@ Validate the plan's structure, ordering, and completeness.
 - PASS CONTINUE
 - FAIL STOP
 
-```bash
-rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} find "*plan.json"
-```
+Read the plan at `{{ PlanPath }}`.
 
 ## 2. Read the output schema
 - PASS CONTINUE
@@ -26,7 +24,7 @@ rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} find "*plan.json"
 {{ CLAUDE_PLUGIN_ROOT }}/schemas/review.schema.json
 ```
 
-## 3. Review the plan for structural integrity
+## 3. Is the plan structurally sound?
 - PASS COMPLETE
 - FAIL CONTINUE
 
@@ -43,12 +41,20 @@ rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} find "*plan.json"
 - Explicitly deferred work or known limitations are documented and tracked
 
 ## 4. Write the review
-- PASS COMPLETE
+- PASS CONTINUE
 - FAIL STOP
 
 Write the review to the output path as JSON.
 Follow the review output schema.
 
 ```bash
-rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file plan-review-{{ RunId }}.json
+rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file review-plan-{{ RunId }}.json
+```
+
+## 5. Check Schema
+- PASS COMPLETE
+- FAIL GOTO 4
+
+```bash
+rdx --check "$(rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file review-plan-{{ RunId }}.json)"
 ```

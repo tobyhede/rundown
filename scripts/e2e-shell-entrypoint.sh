@@ -81,6 +81,8 @@ hr
 log "Starting interactive Claude Code session..."
 echo ""
 
-CLAUDE_DEBUG_LOG="/tmp/claude-debug.log"
+CLAUDE_DEBUG_DIR="$HOME/logs"
+mkdir -p "$CLAUDE_DEBUG_DIR"
+CLAUDE_DEBUG_LOG="$CLAUDE_DEBUG_DIR/claude-debug-$(date +%Y%m%d-%H%M%S).log"
 log "Debug log: $CLAUDE_DEBUG_LOG"
-exec claude --plugin-dir "$PLUGIN_DIR" --debug-file "$CLAUDE_DEBUG_LOG"
+exec claude --dangerously-skip-permissions --plugin-dir "$PLUGIN_DIR" --debug-file "$CLAUDE_DEBUG_LOG"

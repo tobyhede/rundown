@@ -61,11 +61,33 @@ describe('rdpath find integration', () => {
     expect(lines[1]).toContain('pass2.md');
   });
 
-  it('exits 0 with no output when nothing matches', async () => {
+  it('exits 1 with empty stdout and empty stderr when nothing matches', async () => {
+    // `rdpath find` is purpose-built for runbook flow control; the default
+    // treats an empty match set as a negative answer. Stderr stays empty so
+    // callers can distinguish "no matches" from a real error (which writes
+    // `error:` to stderr).
     const result = await runRdpath(['--dir', testDir, 'find', '*.md']);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toBe('');
+  });
+
+  it('exits 0 with no output when nothing matches and --allow-empty is set', async () => {
+    const result = await runRdpath(['--dir', testDir, 'find', '--allow-empty', '*.md']);
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toBe('');
+    expect(result.stderr).toBe('');
+  });
+
+  it('--allow-empty still exits 0 when matches are present', async () => {
+    await fs.writeFile(path.join(testDir, 'has-match.md'), '');
+
+    const result = await runRdpath(['--dir', testDir, 'find', '--allow-empty', '*.md']);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.trim()).toContain('has-match.md');
   });
 
   it('exits 1 with error to stderr for invalid pattern', async () => {

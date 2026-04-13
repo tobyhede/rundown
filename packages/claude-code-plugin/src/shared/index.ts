@@ -6,6 +6,12 @@ export {
   HookInputSchema,
   type ParseResult,
   parseHookInput,
+  ParentLinkageSchema,
+  type ParentLinkageBody,
+  RunbookPositionBodySchema,
+  type RunbookPositionBody,
+  RunbookStepBodySchema,
+  type RunbookStepBody,
   SessionStateSchema,
   type ValidatedSessionState,
 } from './schemas.js';

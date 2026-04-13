@@ -141,15 +141,16 @@ describe('subagent-stop contract tests', () => {
       expect(result).toEqual({});
     });
 
-    it('parses active status mid-execution (no delegations → completed)', async () => {
+    it('surfaces parent state when active with no delegations and token unmatched', async () => {
       writeFileSync(join(tempDir, 'test.runbook.md'), SIMPLE_RUNBOOK);
       const runResult = runCli(['run', join(tempDir, 'test.runbook.md'), '--prompted'], tempDir);
       expect(runResult.exitCode).toBe(0);
 
       const result = await captureStatusAndHandle(FAKE_TOKEN);
 
-      // Active with no delegations → treated as completed (parent resumed)
-      expect(result).toEqual({});
+      // Active with no delegations → completed with parent state surfaced
+      expect(result.context).toContain('Delegation Step Complete');
+      expect(result.context).toContain('test.runbook.md');
     });
 
     it('parses stashed status', async () => {
@@ -179,7 +180,7 @@ describe('subagent-stop contract tests', () => {
       expect(result.context).toContain('child.runbook.md');
     });
 
-    it('treats claimed child with no delegations as completed', async () => {
+    it('classifies claimed-but-idle child via parentLinkage tokenHash', async () => {
       const token = setupDelegation();
 
       const claimResult = runCli(`claim ${token}`, tempDir);
@@ -187,12 +188,15 @@ describe('subagent-stop contract tests', () => {
 
       const result = await captureStatusAndHandle(token);
 
-      // After claim, child is active with no delegations → completed
-      // (cannot distinguish from parent-resumed; no-delegations = completed)
-      expect(result).toEqual({});
+      // After claim, child is active and its parentLinkage.tokenHash matches
+      // our consumed token → child_claimed_idle outcome. The banner must point
+      // at the child and must NOT claim the parent has advanced.
+      expect(result.context).toContain('Delegation Not Resolved');
+      expect(result.context).toContain('child.runbook.md');
+      expect(result.context).not.toContain('Delegation Step Complete');
     });
 
-    it('treats parent resumed after child pass as completed', async () => {
+    it('surfaces parent state after child pass (parent resumed)', async () => {
       const token = setupDelegation();
 
       let cliResult = runCli(`claim ${token}`, tempDir);
@@ -203,30 +207,33 @@ describe('subagent-stop contract tests', () => {
 
       const result = await captureStatusAndHandle(token);
 
-      // Parent resumes at step 2, no delegations → completed
-      expect(result).toEqual({});
+      // Parent resumes at step 2, no delegations → surfaces parent state
+      expect(result.context).toContain('Delegation Step Complete');
+      expect(result.context).toContain('parent.runbook.md');
     });
   });
 
   describe('delegation lifecycle', () => {
-    it('full lifecycle: delegate → claim → pass → completed', async () => {
+    it('full lifecycle: delegate → claim (idle) → pass → parent resumed', async () => {
       const token = setupDelegation();
 
-      // Claim — child becomes active (no delegations visible)
+      // Claim — child becomes active carrying parentLinkage.tokenHash
       let cliResult = runCli(`claim ${token}`, tempDir);
       expect(cliResult.exitCode).toBe(0);
 
-      // After claim: no delegations → treated as completed
+      // After claim only: child_claimed_idle via parentLinkage correlation.
       let result = await captureStatusAndHandle(token);
-      expect(result).toEqual({});
+      expect(result.context).toContain('Delegation Not Resolved');
+      expect(result.context).toContain('child.runbook.md');
 
       // Complete child
       cliResult = runCli('pass', tempDir);
       expect(cliResult.exitCode).toBe(0);
 
-      // After child pass: parent resumed, no delegations → completed
+      // After child pass: parent resumed, no delegations → completed banner.
       result = await captureStatusAndHandle(token);
-      expect(result).toEqual({});
+      expect(result.context).toContain('Delegation Step Complete');
+      expect(result.context).toContain('parent.runbook.md');
     });
   });
 });

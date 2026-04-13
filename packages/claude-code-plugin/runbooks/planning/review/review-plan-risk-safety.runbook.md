@@ -1,5 +1,5 @@
 ---
-name: review-risk-safety
+name: review-plan-risk-safety
 description: Assess security, performance, breaking changes, and safety concerns in a plan
 tags:
   - planning
@@ -14,9 +14,7 @@ Assess risk, security, and safety concerns in the plan.
 - PASS CONTINUE
 - FAIL STOP
 
-```bash
-rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} find "*plan.json"
-```
+Read the plan at `{{ PlanPath }}`.
 
 ## 2. Read the output schema
 - PASS CONTINUE
@@ -26,7 +24,7 @@ rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} find "*plan.json"
 {{ CLAUDE_PLUGIN_ROOT }}/schemas/review.schema.json
 ```
 
-## 3. Review the plan for risk and safety
+## 3. Is the plan safe and risk-free?
 - PASS COMPLETE
 - FAIL CONTINUE
 
@@ -39,13 +37,22 @@ rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} find "*plan.json"
 - Failure scenarios have documented recovery procedures beyond "retry"
 - Changes include appropriate logging, metrics, or monitoring where observable behavior is touched
 
+
 ## 4. Write the review
-- PASS COMPLETE
+- PASS CONTINUE
 - FAIL STOP
 
 Write the review to the output path as JSON.
 Follow the review output schema.
 
 ```bash
-rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file plan-review-{{ RunId }}.json
+rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file review-plan-{{ RunId }}.json
+```
+
+## 5. Check Schema
+- PASS COMPLETE
+- FAIL GOTO 4
+
+```bash
+rdx --check "$(rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file review-plan-{{ RunId }}.json)"
 ```

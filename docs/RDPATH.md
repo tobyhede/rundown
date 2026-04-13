@@ -46,10 +46,10 @@ rdpath --dir .rundown/work find '**/*.json'
 
 | Code | Meaning |
 |------|---------|
-| `0` | Success |
-| `1` | Error (invalid input, directory not found, traversal attempt) |
+| `0` | Success — for `find`, one or more matches (or zero matches with `--allow-empty`) |
+| `1` | For `find`: zero matches (stderr empty) **or** error (stderr prefixed with `error:`). For `path`: error. |
 
-Errors are written to stderr with an `error:` prefix.
+Errors are written to stderr with an `error:` prefix. For `find`, an empty stderr plus exit 1 means "zero matches" — distinct from a real error like an invalid pattern or missing directory.
 
 ---
 
@@ -75,9 +75,12 @@ Discovers files matching a glob pattern within an artifact directory.
 |-----------------|----------|-------------|
 | `--dir <path>` | Yes | Base directory to search |
 | `--ctx <id>` | No | Context scope — searches within `.rd-<id>/` subdirectory |
+| `--allow-empty` | No | Exit 0 when zero files match (default: exit 1 on empty) |
 | `<pattern>` | Yes | Glob pattern (relative to target directory) |
 
-Output is one matching file path per line, sorted lexicographically. Empty output (exit 0) when no files match. Only regular files are returned — directories matching the pattern are excluded.
+Output is one matching file path per line, sorted lexicographically. Only regular files are returned — directories matching the pattern are excluded.
+
+**Exit code on empty match.** `rdpath find` is purpose-built for runbook flow control: an empty match set is a negative answer, not a listing result. The default exits 1 with empty stdout and empty stderr, so runbook step handlers (`PASS CONTINUE` / `FAIL COMPLETE`) can drive flow from the exit code directly. Pass `--allow-empty` to treat an empty result as success — useful when piping into a consumer that tolerates empty input. This divergence from `find`/`fd` (which always exit 0) follows the same precedent as `grep`/`rg` deliberately diverging from `find`. For vanilla file listing where empty is valid, reach for `find`, `fd`, or shell glob expansion instead.
 
 ---
 

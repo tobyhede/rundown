@@ -1,6 +1,8 @@
 ---
 name: review-plan
 description: Review and validate an implementation plan
+required:
+  - PlanPath
 tags:
   - planning
   - review
@@ -8,15 +10,13 @@ tags:
 
 # Review Implementation Plan
 
-Review the plan in the current context.
+Review the plan at the provided path.
 
 ## 1. Find plan
 - PASS CONTINUE
 - FAIL STOP
 
-```bash
-rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} find "*plan.json"
-```
+Read the plan at `{{ PlanPath }}`.
 
 ## 2. Context and scope
 - PASS CONTINUE
@@ -30,19 +30,23 @@ Verify the plan includes:
 - Clearly defined scope
 - Accurate assumptions about current state
 
+
 ## 3. Delegate subagents to review the plan
 - PASS ALL CONTINUE
 - FAIL ANY CONTINUE
 
 Delegate subagents to review the plan.
 
-- review-technical-accuracy.runbook.md
-- review-structural-integrity.runbook.md
-- review-build-runtime.runbook.md
-- review-risk-safety.runbook.md
+- review-plan-technical-accuracy.runbook.md
+- review-plan-structural-integrity.runbook.md
+- review-plan-build-runtime.runbook.md
+- review-plan-risk-safety.runbook.md
 
-## 4. Collate review documents
+
+## 4. Collate review findings
 - PASS ALL COMPLETE
 - FAIL ANY STOP
 
-- review-synthesize.runbook.md
+Delegate a subagent to collate the review findings.
+
+- review-plan-collate.runbook.md

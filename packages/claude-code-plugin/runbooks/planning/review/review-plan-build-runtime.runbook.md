@@ -1,5 +1,5 @@
 ---
-name: review-build-runtime
+name: review-plan-build-runtime
 description: Verify build commands, test commands, dependencies, and environment in a plan
 tags:
   - planning
@@ -14,9 +14,7 @@ Verify that build, test, and runtime concerns are addressed.
 - PASS CONTINUE
 - FAIL STOP
 
-```bash
-rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} find "*plan.json"
-```
+Read the plan at `{{ PlanPath }}`.
 
 ## 2. Read the output schema
 - PASS CONTINUE
@@ -26,7 +24,7 @@ rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} find "*plan.json"
 {{ CLAUDE_PLUGIN_ROOT }}/schemas/review.schema.json
 ```
 
-## 3. Review the plan for build and runtime concerns
+## 3. Are build and runtime concerns addressed?
 - PASS COMPLETE
 - FAIL CONTINUE
 
@@ -37,12 +35,20 @@ rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} find "*plan.json"
 - Changes won't break CI/CD pipelines and any pipeline modifications are included
 
 ## 4. Write the review
-- PASS COMPLETE
+- PASS CONTINUE
 - FAIL STOP
 
 Write the review to the output path as JSON.
 Follow the review output schema.
 
 ```bash
-rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file plan-review-{{ RunId }}.json
+rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file review-plan-{{ RunId }}.json
+```
+
+## 5. Check Schema
+- PASS COMPLETE
+- FAIL GOTO 4
+
+```bash
+rdx --check "$(rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file review-plan-{{ RunId }}.json)"
 ```

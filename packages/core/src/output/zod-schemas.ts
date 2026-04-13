@@ -314,6 +314,31 @@ export const StatusResponseSchema = z
       .array(DelegationStatusEntrySchema)
       .optional()
       .describe('Active delegations on the current step'),
+    /**
+     * Parent linkage when the runbook was launched as a child.
+     *
+     * Discriminated on `kind` so narrowing enforces the contract:
+     * - `delegation` variant carries a required `tokenHash`.
+     * - `inline` variant omits `tokenHash` entirely.
+     */
+    parentLinkage: z
+      .discriminatedUnion('kind', [
+        z.object({
+          kind: z.literal('delegation'),
+          tokenHash: z.string().describe('SHA-256 hash of the delegation token'),
+          parentRunId: z.string().describe('RunId of the parent runbook execution'),
+          parentStepId: z.string().describe('Parent substep ID at link time'),
+          parentStep: z.string().optional().describe('Parent step name at link time'),
+        }),
+        z.object({
+          kind: z.literal('inline'),
+          parentRunId: z.string().describe('RunId of the parent runbook execution'),
+          parentStepId: z.string().describe('Parent substep ID at link time'),
+          parentStep: z.string().optional().describe('Parent step name at link time'),
+        }),
+      ])
+      .optional()
+      .describe('Parent linkage projection when this runbook is a child'),
     // Flat structure fields
     file: z.string().optional().describe('Path to the active runbook file'),
     state: z.string().optional().describe('Current runbook execution state'),

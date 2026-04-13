@@ -1,6 +1,11 @@
 // src/workflow/hooks/subagent-stop.ts
 import { createHash } from 'node:crypto';
-import type { HookInput } from '../../shared/index.js';
+import {
+  type HookInput,
+  ParentLinkageSchema,
+  RunbookPositionBodySchema,
+  RunbookStepBodySchema,
+} from '../../shared/index.js';
 import { Session } from '../../session.js';
 import { rundown } from './rundown.js';
 
@@ -21,11 +26,42 @@ export interface SubagentStopResult {
 // Domain types — discriminated unions for runbook status and delegation state
 // ---------------------------------------------------------------------------
 
+/**
+ * Parent linkage surfaced by `rd status --json` when the runbook was launched
+ * as a child. Used by the hook to correlate a consumed delegation token with
+ * the child it produced.
+ */
+type ParentLinkage =
+  | {
+      readonly kind: 'delegation';
+      readonly tokenHash: string;
+      readonly parentRunId: string;
+      readonly parentStepId: string;
+      readonly parentStep?: string;
+    }
+  | {
+      readonly kind: 'inline';
+      readonly parentRunId: string;
+      readonly parentStepId: string;
+      readonly parentStep?: string;
+    }
+  | {
+      /**
+       * Status emitted a `parentLinkage` field but its contents failed schema
+       * validation. Preserved as a distinct variant so classifiers can
+       * distinguish "field absent" (undefined) from "field present but
+       * unverifiable" (this variant) — the latter must not fall through to
+       * the parent-resumed code path.
+       */
+      readonly kind: 'malformed';
+    };
+
 /** Shared fields for runbook states that carry position information. */
 interface RunbookPosition {
   file: string;
-  position?: { current: string; total: number; substep?: string };
+  position?: { current: string; total: number; substep?: string; unresolved?: number };
   step?: { name: string; description?: string };
+  parentLinkage?: ParentLinkage;
 }
 
 /** Delegation status as a discriminated union — each state carries only its valid fields. */
@@ -60,13 +96,32 @@ type RunbookStatus =
       readonly delegations: readonly DelegationStatus[];
     } & RunbookPosition);
 
+/** Parent state carried on a completed outcome when the parent runbook is still active. */
+interface CompletedParentState extends RunbookPosition {
+  readonly delegations: readonly DelegationStatus[];
+}
+
+/**
+ * Project an active RunbookStatus into a CompletedParentState with the given delegations.
+ *
+ * @param status - Source runbook position to project
+ * @param delegations - Delegations to carry on the projected state (typically siblings only)
+ * @returns A CompletedParentState carrying the provided delegations
+ */
+function toParentState(
+  status: RunbookPosition,
+  delegations: readonly DelegationStatus[],
+): CompletedParentState {
+  return { file: status.file, position: status.position, step: status.step, delegations };
+}
+
 /**
  * Delegation outcome — the hook's decision as a discriminated union.
  * Each variant carries exactly the data needed for its context message.
  */
 type DelegationOutcome =
-  | { readonly kind: 'completed' }
-  | { readonly kind: 'child_active'; readonly status: RunbookPosition }
+  | { readonly kind: 'completed'; readonly parent?: CompletedParentState }
+  | { readonly kind: 'child_claimed_idle'; readonly child: RunbookPosition }
   | { readonly kind: 'child_stashed'; readonly status: RunbookPosition }
   | { readonly kind: 'unclaimed'; readonly delegation: DelegationStatus & { state: 'pending' } }
   | { readonly kind: 'unknown' };
@@ -93,25 +148,74 @@ function hashToken(token: string): string {
 // ---------------------------------------------------------------------------
 
 /**
- * Parse a validated position field from raw JSON.
+ * Parse a validated position field from raw JSON using {@link RunbookPositionBodySchema}.
+ *
+ * Graceful degradation: returns undefined for any malformed input so the hook
+ * never throws during display-only classification. The caller treats `undefined`
+ * as "no position detail available" and omits that section from the banner.
  *
  * @param raw - Raw value from parsed JSON
- * @returns Position info if the value is an object, otherwise undefined
+ * @returns Validated position info, or undefined on validation failure
  */
 function parsePosition(raw: unknown): RunbookPosition['position'] {
-  if (!raw || typeof raw !== 'object') return undefined;
-  return raw as RunbookPosition['position'];
+  const result = RunbookPositionBodySchema.safeParse(raw);
+  return result.success ? result.data : undefined;
 }
 
 /**
- * Parse a validated step field from raw JSON.
+ * Parse a validated step field from raw JSON using {@link RunbookStepBodySchema}.
+ *
+ * Graceful degradation: returns undefined for any malformed input.
  *
  * @param raw - Raw value from parsed JSON
- * @returns Step info if the value is an object, otherwise undefined
+ * @returns Validated step info, or undefined on validation failure
  */
 function parseStep(raw: unknown): RunbookPosition['step'] {
-  if (!raw || typeof raw !== 'object') return undefined;
-  return raw as RunbookPosition['step'];
+  const result = RunbookStepBodySchema.safeParse(raw);
+  return result.success ? result.data : undefined;
+}
+
+/**
+ * Parse a validated parent linkage field from raw JSON using {@link ParentLinkageSchema}.
+ *
+ * Distinguishes three cases:
+ * - **Absent** (`raw === undefined`, i.e. the key was omitted from the status
+ *   payload): returns `undefined`. The runbook genuinely has no parent
+ *   linkage — caller proceeds with normal classification.
+ * - **Malformed** (any other value that fails schema validation, including
+ *   `null`): returns a `{ kind: 'malformed' }` sentinel. `null` is treated
+ *   as a suspicious signal rather than silently coerced to absence —
+ *   `rd status` never emits `null` here, so receiving it indicates upstream
+ *   drift or corruption. Caller sees `status.parentLinkage !== undefined`
+ *   and routes to the `unknown` outcome.
+ * - **Valid**: returns the narrowed delegation or inline variant.
+ *
+ * @param raw - Raw value from parsed JSON
+ * @returns Validated parent linkage, `{ kind: 'malformed' }` if present but
+ *   invalid, or `undefined` when the field is absent
+ */
+function parseParentLinkage(raw: unknown): ParentLinkage | undefined {
+  if (raw === undefined) return undefined;
+  const result = ParentLinkageSchema.safeParse(raw);
+  if (!result.success) return { kind: 'malformed' };
+  const data = result.data;
+  // Discriminant narrows `data` to its variant — delegation carries a typed
+  // `tokenHash: string`, inline does not declare one. No assertion needed.
+  if (data.kind === 'delegation') {
+    return {
+      kind: 'delegation',
+      tokenHash: data.tokenHash,
+      parentRunId: data.parentRunId,
+      parentStepId: data.parentStepId,
+      ...(data.parentStep !== undefined ? { parentStep: data.parentStep } : {}),
+    };
+  }
+  return {
+    kind: 'inline',
+    parentRunId: data.parentRunId,
+    parentStepId: data.parentStepId,
+    ...(data.parentStep !== undefined ? { parentStep: data.parentStep } : {}),
+  };
 }
 
 /**
@@ -168,6 +272,8 @@ function queryRunbookStatus(cwd: string): RunbookStatus | undefined {
     const stashed = parsed.stashed === true;
     const file = typeof parsed.file === 'string' ? parsed.file : undefined;
 
+    const parentLinkage = parseParentLinkage(parsed.parentLinkage);
+
     // Stashed-only: runbook paused via `rd stash`, not completed.
     // When both active and stashed are true (active child + stashed parent),
     // fall through to the active branch which preserves delegations.
@@ -177,6 +283,7 @@ function queryRunbookStatus(cwd: string): RunbookStatus | undefined {
         file,
         position: parsePosition(parsed.position),
         step: parseStep(parsed.step),
+        ...(parentLinkage ? { parentLinkage } : {}),
       };
     }
 
@@ -192,6 +299,7 @@ function queryRunbookStatus(cwd: string): RunbookStatus | undefined {
       position: parsePosition(parsed.position),
       step: parseStep(parsed.step),
       delegations: parseDelegations(parsed.delegations),
+      ...(parentLinkage ? { parentLinkage } : {}),
     };
   } catch {
     return undefined;
@@ -221,41 +329,66 @@ function classifyOutcome(status: RunbookStatus, tokenHash: string): DelegationOu
       return { kind: 'child_stashed', status };
 
     case 'active': {
-      // If no delegations carry token hashes, correlation is impossible (stale session state)
-      if (
-        status.delegations.length > 0 &&
-        !status.delegations.some((d) => d.tokenHash !== undefined)
-      ) {
+      // Primary correlation (Option 2): active runbook's parentLinkage carries
+      // the tokenHash of the delegation that spawned it. A match means the
+      // child is currently active — most commonly: claimed but no progress yet.
+      const childMatched =
+        status.parentLinkage?.kind === 'delegation' && status.parentLinkage.tokenHash === tokenHash;
+
+      if (childMatched) {
+        // Defense-in-depth (Option 1): delegations cannot nest. A claimed
+        // child with its own outgoing delegations violates that invariant and
+        // indicates corrupt session state — fall back to unknown rather than
+        // emit a confidently wrong banner.
+        if (status.delegations.length > 0) {
+          return { kind: 'unknown' };
+        }
+        return { kind: 'child_claimed_idle', child: status };
+      }
+
+      // If a parentLinkage is present but did not match (wrong token, inline
+      // linkage, or malformed payload), the active runbook is not our parent
+      // and we cannot verify it is our child either. Fall back to unknown
+      // rather than mis-claim the parent resumed.
+      if (status.parentLinkage !== undefined) {
         return { kind: 'unknown' };
       }
 
-      // Find the delegation matching our token
+      // No parent-linkage at all → the active runbook is the parent (resumed
+      // after the child completed or cancelled). Confirm by correlating our
+      // token hash against the parent's outgoing delegations.
       const ours = status.delegations.find((d) => d.tokenHash === tokenHash);
 
       if (!ours) {
-        // Our delegation not found — two possible scenarios:
-        // 1. Parent resumed after child completed (no delegations remain)
-        // 2. Child is active with its own nested delegations (grandchild)
-        if (status.delegations.length > 0) {
-          // Active runbook has delegations we don't recognize — likely a child
-          // with nested delegations still in progress
-          return { kind: 'child_active', status };
+        // No match on either signal. If delegations exist but none carry a
+        // tokenHash, correlation is impossible (stale session state).
+        if (
+          status.delegations.length > 0 &&
+          !status.delegations.some((d) => d.tokenHash !== undefined)
+        ) {
+          return { kind: 'unknown' };
         }
-        // No delegations — delegation was resolved and parent resumed
-        return { kind: 'completed' };
+        // Otherwise: parent resumed after child completion. Any delegations
+        // present are siblings (no-nesting invariant means they can't be
+        // grandchildren).
+        return { kind: 'completed', parent: status };
       }
 
-      // Found our delegation — classify by its state
+      // Found our delegation on the parent — classify by its state.
+      // Filter out our own so the parent state only shows siblings.
+      const siblings = status.delegations.filter((d) => d.tokenHash !== tokenHash);
+      const parentWithSiblings = toParentState(status, siblings);
+
       switch (ours.state) {
         case 'pending':
           // Never claimed — subagent stopped before calling rd claim
           return { kind: 'unclaimed', delegation: ours };
         case 'claimed':
           // Claimed and parent is active — child completed and was popped
-          return { kind: 'completed' };
+          return { kind: 'completed', parent: parentWithSiblings };
         case 'cancelled':
           // Already cancelled — treat as completed (nothing more to do)
-          return { kind: 'completed' };
+          return { kind: 'completed', parent: parentWithSiblings };
       }
     }
   }
@@ -297,23 +430,71 @@ function formatPositionLines(pos: RunbookPosition): string[] {
  */
 function buildContextMessage(outcome: DelegationOutcome): string | undefined {
   switch (outcome.kind) {
-    case 'completed':
-      return undefined;
+    case 'completed': {
+      if (!outcome.parent) {
+        return undefined;
+      }
+
+      const { parent } = outcome;
+      const unresolvedDelegations = parent.delegations.filter(
+        (d) => d.state === 'pending' || d.state === 'claimed',
+      );
+
+      if (unresolvedDelegations.length > 0) {
+        const lines: string[] = [
+          '## Delegation Completed',
+          '',
+          `Delegation completed. ${String(unresolvedDelegations.length)} ${unresolvedDelegations.length === 1 ? 'delegation' : 'delegations'} still unresolved.`,
+          '',
+          ...formatPositionLines(parent),
+          '',
+          '**Remaining delegations:**',
+          ...unresolvedDelegations.map(
+            (d) => `- Substep ${d.substep}: \`${d.runbook}\` (${d.state})`,
+          ),
+          '',
+          'Wait for remaining delegations to complete, then run `rd status` to check the current step.',
+        ];
+        return lines.join('\n');
+      }
+
+      const unresolved = parent.position?.unresolved;
+      const lines: string[] = [
+        '## Delegation Step Complete',
+        '',
+        'All delegations for the previous step have resolved. The parent runbook has advanced.',
+        '',
+        ...formatPositionLines(parent),
+        '',
+      ];
+
+      if (typeof unresolved === 'number' && unresolved > 0) {
+        lines.push(
+          `This step has ${String(unresolved)} unresolved ${unresolved === 1 ? 'substep' : 'substeps'} requiring delegation.`,
+          'Run `rd delegate` to create a delegation token, then dispatch a subagent to claim it.',
+        );
+      } else {
+        lines.push('Proceed with the current step.');
+      }
+
+      return lines.join('\n');
+    }
 
     case 'unknown':
       return 'Subagent stopped with an active delegation. Unable to verify child runbook state — check with `rd status`.';
 
-    case 'child_active': {
+    case 'child_claimed_idle': {
       const lines: string[] = [
-        '## Delegation Incomplete',
+        '## Delegation Not Resolved',
         '',
-        'The subagent stopped but the child runbook is still active.',
+        'The subagent claimed the delegation token but stopped without calling `rd pass` or `rd fail`.',
+        'The child runbook is still active — its current position is shown below.',
         '',
-        ...formatPositionLines(outcome.status),
+        ...formatPositionLines(outcome.child),
         '',
-        'The child runbook was not completed by the subagent. You should:',
+        'The delegation is not complete. You should:',
         '1. Run `rd status` to inspect the current state',
-        '2. Decide whether to retry the delegation, complete the work yourself, or fail the step',
+        '2. Decide whether to retry with a new subagent, resume manually, or fail the step',
         '3. Do NOT assume the work was completed — verify before proceeding',
       ];
       return lines.join('\n');
@@ -357,23 +538,43 @@ function buildContextMessage(outcome: DelegationOutcome): string | undefined {
 // ---------------------------------------------------------------------------
 
 /**
- * Handle a SubagentStop hook by consuming any active delegation token and checking
- * whether the child runbook was completed.
+ * Handle a SubagentStop hook by consuming any active delegation token and
+ * classifying the state of the child runbook it spawned.
  *
- * Hashes the consumed token and correlates it with the delegation entries in
- * `rd status --json` to identify the exact delegation belonging to this subagent.
+ * Reads (and consumes, once) `delegation_active_token` from session metadata
+ * at `input.cwd`, hashes the token, and correlates it with the active
+ * runbook's `parentLinkage.tokenHash` and the parent's outgoing delegations
+ * in `rd status --json` to identify the exact delegation belonging to this
+ * subagent.
  *
- * Classifies the delegation state into one of five outcomes:
- * - **completed**: Child runbook finished (`rd pass`/`rd fail`) and was popped.
- * - **child_active**: Child runbook is running but subagent stopped without completing.
- * - **child_stashed**: Child runbook was stashed via `rd stash` but not completed.
- * - **unclaimed**: Subagent stopped before calling `rd claim`. Parent is still active.
- * - **unknown**: Status check failed. Fallback context returned.
+ * Classifies the delegation into one of five {@link DelegationOutcome}
+ * variants:
+ * - **completed**: Child runbook finished (`rd pass`/`rd fail`) and was
+ *   popped. If siblings remain, they are surfaced on the parent state.
+ * - **child_claimed_idle**: Active runbook's `parentLinkage.tokenHash`
+ *   matches ours — the subagent claimed the delegation but stopped before
+ *   calling `rd pass`/`rd fail`. The child may have progressed internally.
+ * - **child_stashed**: Child runbook was stashed via `rd stash`, not
+ *   completed.
+ * - **unclaimed**: Our token matches a pending delegation on the parent —
+ *   the subagent stopped before calling `rd claim`.
+ * - **unknown**: Correlation failed (stale session state, malformed
+ *   parentLinkage, non-matching parentLinkage present on the active
+ *   runbook, status query failed, or no-nesting invariant violated).
+ *   Fallback context returned.
  *
  * Never destroys child runbook state.
  *
- * @param input - Hook event payload (includes cwd, hook_event_name, and last_assistant_message)
- * @returns An object with `context` when the child runbook is incomplete, or an empty object if no action was needed
+ * @param input - Hook event payload. Only `input.hook_event_name` (used to
+ *   gate execution) and `input.cwd` (used to open the session and run
+ *   `rd status`) are read; other fields are ignored.
+ * @returns A promise for a {@link SubagentStopResult}: `{ context }` when
+ *   the classification produces a message for the orchestrator, or `{}`
+ *   when no action is needed (non-SubagentStop event, no active delegation
+ *   token, or child completed cleanly with nothing further to report).
+ * @throws Rejects if session metadata I/O fails (e.g. the session file is
+ *   unreadable, not writable, or corrupt). Status-query failures, in
+ *   contrast, are absorbed and collapsed to the `unknown` outcome.
  */
 export async function handleSubagentStop(input: HookInput): Promise<SubagentStopResult> {
   if (input.hook_event_name !== 'SubagentStop') {
