@@ -710,6 +710,29 @@ describe('handleSubagentStop', () => {
       expect(result.context).not.toContain('Delegation Not Resolved');
     });
 
+    it('treats parentLinkage: null as malformed (not absent)', async () => {
+      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setExecSync(
+        createStatusMock({
+          active: true,
+          stashed: false,
+          file: 'child.runbook.md',
+          // `rd status` never emits null for this field — it either omits
+          // the key entirely or emits a valid linkage object. Receiving
+          // null indicates upstream drift; parser must surface that as
+          // malformed rather than silently coercing it to "absent".
+          parentLinkage: null,
+        }) as never,
+      );
+
+      const input = createMockHookInput('SubagentStop');
+      const result = await handleSubagentStop(input);
+
+      expect(result.context).toContain('Unable to verify');
+      expect(result.context).not.toContain('Delegation Step Complete');
+      expect(result.context).not.toContain('Delegation Not Resolved');
+    });
+
     it('does not throw when status is null', async () => {
       mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
       setExecSync(createMockExecSync('null') as never);

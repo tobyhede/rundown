@@ -178,21 +178,24 @@ function parseStep(raw: unknown): RunbookPosition['step'] {
 /**
  * Parse a validated parent linkage field from raw JSON using {@link ParentLinkageSchema}.
  *
- * Distinguishes two failure modes:
- * - **Absent** (`raw` is `undefined`/`null`): returns `undefined`. The runbook
- *   genuinely has no parent linkage — caller proceeds with normal
- *   classification.
- * - **Malformed** (field present but schema validation fails): returns a
- *   `{ kind: 'malformed' }` sentinel. Caller sees `status.parentLinkage !==
- *   undefined` and routes to the `unknown` outcome, preventing a malformed
- *   child from being misreported as a resumed parent.
+ * Distinguishes three cases:
+ * - **Absent** (`raw === undefined`, i.e. the key was omitted from the status
+ *   payload): returns `undefined`. The runbook genuinely has no parent
+ *   linkage — caller proceeds with normal classification.
+ * - **Malformed** (any other value that fails schema validation, including
+ *   `null`): returns a `{ kind: 'malformed' }` sentinel. `null` is treated
+ *   as a suspicious signal rather than silently coerced to absence —
+ *   `rd status` never emits `null` here, so receiving it indicates upstream
+ *   drift or corruption. Caller sees `status.parentLinkage !== undefined`
+ *   and routes to the `unknown` outcome.
+ * - **Valid**: returns the narrowed delegation or inline variant.
  *
  * @param raw - Raw value from parsed JSON
  * @returns Validated parent linkage, `{ kind: 'malformed' }` if present but
  *   invalid, or `undefined` when the field is absent
  */
 function parseParentLinkage(raw: unknown): ParentLinkage | undefined {
-  if (raw === undefined || raw === null) return undefined;
+  if (raw === undefined) return undefined;
   const result = ParentLinkageSchema.safeParse(raw);
   if (!result.success) return { kind: 'malformed' };
   const data = result.data;
@@ -535,23 +538,43 @@ function buildContextMessage(outcome: DelegationOutcome): string | undefined {
 // ---------------------------------------------------------------------------
 
 /**
- * Handle a SubagentStop hook by consuming any active delegation token and checking
- * whether the child runbook was completed.
+ * Handle a SubagentStop hook by consuming any active delegation token and
+ * classifying the state of the child runbook it spawned.
  *
- * Hashes the consumed token and correlates it with the delegation entries in
- * `rd status --json` to identify the exact delegation belonging to this subagent.
+ * Reads (and consumes, once) `delegation_active_token` from session metadata
+ * at `input.cwd`, hashes the token, and correlates it with the active
+ * runbook's `parentLinkage.tokenHash` and the parent's outgoing delegations
+ * in `rd status --json` to identify the exact delegation belonging to this
+ * subagent.
  *
- * Classifies the delegation state into one of five outcomes:
- * - **completed**: Child runbook finished (`rd pass`/`rd fail`) and was popped.
- * - **child_claimed_idle**: Child was claimed via our token but has made no progress.
- * - **child_stashed**: Child runbook was stashed via `rd stash` but not completed.
- * - **unclaimed**: Subagent stopped before calling `rd claim`. Parent is still active.
- * - **unknown**: Correlation failed or invariants violated. Fallback context returned.
+ * Classifies the delegation into one of five {@link DelegationOutcome}
+ * variants:
+ * - **completed**: Child runbook finished (`rd pass`/`rd fail`) and was
+ *   popped. If siblings remain, they are surfaced on the parent state.
+ * - **child_claimed_idle**: Active runbook's `parentLinkage.tokenHash`
+ *   matches ours — the subagent claimed the delegation but stopped before
+ *   calling `rd pass`/`rd fail`. The child may have progressed internally.
+ * - **child_stashed**: Child runbook was stashed via `rd stash`, not
+ *   completed.
+ * - **unclaimed**: Our token matches a pending delegation on the parent —
+ *   the subagent stopped before calling `rd claim`.
+ * - **unknown**: Correlation failed (stale session state, malformed
+ *   parentLinkage, non-matching parentLinkage present on the active
+ *   runbook, status query failed, or no-nesting invariant violated).
+ *   Fallback context returned.
  *
  * Never destroys child runbook state.
  *
- * @param input - Hook event payload (includes cwd, hook_event_name, and last_assistant_message)
- * @returns An object with `context` when the child runbook is incomplete, or an empty object if no action was needed
+ * @param input - Hook event payload. Only `input.hook_event_name` (used to
+ *   gate execution) and `input.cwd` (used to open the session and run
+ *   `rd status`) are read; other fields are ignored.
+ * @returns A promise for a {@link SubagentStopResult}: `{ context }` when
+ *   the classification produces a message for the orchestrator, or `{}`
+ *   when no action is needed (non-SubagentStop event, no active delegation
+ *   token, or child completed cleanly with nothing further to report).
+ * @throws Rejects if session metadata I/O fails (e.g. the session file is
+ *   unreadable, not writable, or corrupt). Status-query failures, in
+ *   contrast, are absorbed and collapsed to the `unknown` outcome.
  */
 export async function handleSubagentStop(input: HookInput): Promise<SubagentStopResult> {
   if (input.hook_event_name !== 'SubagentStop') {
