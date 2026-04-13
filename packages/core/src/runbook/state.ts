@@ -58,8 +58,12 @@ interface CreateOptions {
  * Supports runbook stacks for nested runbooks.
  */
 export class RunbookStateManager {
+  /**
+   * Module-level guard so the legacy-state warning is emitted at most once
+   * per process regardless of how many RunbookStateManager instances exist.
+   */
+  private static legacyWarningEmitted = false;
   private readonly cwd: string;
-  private legacyWarningEmitted = false;
 
   /**
    * Create a new RunbookStateManager.
@@ -82,12 +86,12 @@ export class RunbookStateManager {
     return _statePath(this.cwd, id);
   }
 
-  /** Emit a per-instance warning (at most once) when legacy `.claude/rundown/` state is detected. */
+  /** Emit a process-wide one-time warning when legacy `.claude/rundown/` state is detected. */
   private async warnIfLegacyStateExists(): Promise<void> {
-    if (this.legacyWarningEmitted) return;
+    if (RunbookStateManager.legacyWarningEmitted) return;
     try {
       await fs.access(path.join(this.cwd, LEGACY_SESSION_FILE));
-      this.legacyWarningEmitted = true;
+      RunbookStateManager.legacyWarningEmitted = true;
       process.stderr.write(
         '[rundown] Warning: State from a previous installation was found at .claude/rundown/.\n' +
           '  State is now stored in .rundown/. Complete or abort any in-flight runbooks\n' +
