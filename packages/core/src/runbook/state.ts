@@ -59,6 +59,7 @@ interface CreateOptions {
  */
 export class RunbookStateManager {
   private readonly cwd: string;
+  private legacyWarningEmitted = false;
 
   /**
    * Create a new RunbookStateManager.
@@ -81,10 +82,12 @@ export class RunbookStateManager {
     return _statePath(this.cwd, id);
   }
 
-  /** Emit a one-time console warning when legacy `.claude/rundown/` state is detected. */
+  /** Emit a per-instance warning (at most once) when legacy `.claude/rundown/` state is detected. */
   private async warnIfLegacyStateExists(): Promise<void> {
+    if (this.legacyWarningEmitted) return;
     try {
       await fs.access(path.join(this.cwd, LEGACY_SESSION_FILE));
+      this.legacyWarningEmitted = true;
       process.stderr.write(
         '[rundown] Warning: State from a previous installation was found at .claude/rundown/.\n' +
           '  State is now stored in .rundown/. Complete or abort any in-flight runbooks\n' +

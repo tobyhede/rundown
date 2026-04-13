@@ -57,6 +57,7 @@ export async function setupRundown(container: WebContainer): Promise<void> {
  * @param container - The WebContainer instance to mount to
  * @param path - Relative path within the runbooks directory
  * @param content - The runbook file content
+ * @throws {Error} If the runbook path is empty, contains traversal segments (`..`), or has invalid segments (`.`, empty)
  */
 export async function mountRunbook(
   container: WebContainer,
@@ -66,7 +67,8 @@ export async function mountRunbook(
   // Normalize separators, strip leading slashes, and guard against path traversal.
   // Path layout mirrors packages/core/src/paths.ts (RUNBOOKS_DIR / RUNS_DIR / SESSION_FILE).
   const normalized = path.replace(/\\/g, '/').replace(/^\/+/, '');
-  if (normalized.split('/').some((seg) => seg === '..')) {
+  const segments = normalized.split('/');
+  if (!normalized || segments.some((seg) => seg === '' || seg === '.' || seg === '..')) {
     throw new Error(`Invalid runbook path: ${path}`);
   }
   const fullPath = `.rundown/runbooks/${normalized}`;
@@ -82,13 +84,11 @@ export async function mountRunbook(
  * @param container - The WebContainer instance to clean up
  */
 export async function cleanRundownState(container: WebContainer): Promise<void> {
-  try {
-    // Remove state files to ensure clean slate
-    await container.fs.rm('.rundown/runs', { recursive: true });
-    await container.fs.rm('.rundown/session.json');
-  } catch {
-    // Ignore errors if files don't exist
-  }
+  // Remove state files best-effort per path so one missing entry doesn't skip the other
+  await Promise.allSettled([
+    container.fs.rm('.rundown/runs', { recursive: true }),
+    container.fs.rm('.rundown/session.json'),
+  ]);
 }
 
 /**

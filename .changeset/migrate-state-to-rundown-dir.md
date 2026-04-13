@@ -15,6 +15,7 @@ State files, session tracking, and delegation locks are now stored under `.rundo
 1. Complete or abort any in-flight runbooks *before* upgrading.
 2. Update `.gitignore` — replace `.claude/rundown/` entries with:
    ```
+   .rundown/work/
    .rundown/runs/
    .rundown/session.json
    .rundown/locks/
