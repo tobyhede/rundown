@@ -31,7 +31,9 @@ export interface SubagentStopResult {
  * as a child. Used by the hook to correlate a consumed delegation token with
  * the child it produced.
  *
- * @internal Exported for testing. Not part of the plugin's public API.
+ * Exported for testing. Not part of the plugin's public API.
+ *
+ * @internal
  */
 export type ParentLinkage =
   | {
@@ -61,7 +63,9 @@ export type ParentLinkage =
 /**
  * Shared fields for runbook states that carry position information.
  *
- * @internal Exported for testing. Not part of the plugin's public API.
+ * Exported for testing. Not part of the plugin's public API.
+ *
+ * @internal
  */
 export interface RunbookPosition {
   file: string;
@@ -73,7 +77,9 @@ export interface RunbookPosition {
 /**
  * Delegation status as a discriminated union — each state carries only its valid fields.
  *
- * @internal Exported for testing. Not part of the plugin's public API.
+ * Exported for testing. Not part of the plugin's public API.
+ *
+ * @internal
  */
 export type DelegationStatus =
   | {
@@ -100,7 +106,9 @@ export type DelegationStatus =
 /**
  * Runbook status as a discriminated union — impossible combinations are unrepresentable.
  *
- * @internal Exported for testing. Not part of the plugin's public API.
+ * Exported for testing. Not part of the plugin's public API.
+ *
+ * @internal
  */
 export type RunbookStatus =
   | { readonly kind: 'inactive' }
@@ -121,7 +129,9 @@ export type RunbookStatus =
 /**
  * Parent state carried on a completed outcome when the parent runbook is still active.
  *
- * @internal Exported for testing. Not part of the plugin's public API.
+ * Exported for testing. Not part of the plugin's public API.
+ *
+ * @internal
  */
 export interface CompletedParentState extends RunbookPosition {
   readonly delegations: readonly DelegationStatus[];
@@ -145,7 +155,9 @@ function toParentState(
  * Delegation outcome — the hook's decision as a discriminated union.
  * Each variant carries exactly the data needed for its context message.
  *
- * @internal Exported for testing. Not part of the plugin's public API.
+ * Exported for testing. Not part of the plugin's public API.
+ *
+ * @internal
  */
 export type DelegationOutcome =
   | { readonly kind: 'completed'; readonly parent?: CompletedParentState }
@@ -284,7 +296,9 @@ function isDelegationStatus(d: unknown): d is DelegationStatus {
  * @returns Struct with validated entries and a flag indicating whether any
  *   raw entries failed validation
  *
- * @internal Exported for testing. Not part of the plugin's public API.
+ * Exported for testing. Not part of the plugin's public API.
+ *
+ * @internal
  */
 export function parseDelegations(raw: unknown): {
   readonly entries: readonly DelegationStatus[];
@@ -303,7 +317,9 @@ export function parseDelegations(raw: unknown): {
  * @param cwd - Working directory for the CLI call
  * @returns Parsed runbook status, or undefined on failure
  *
- * @internal Exported for testing. Not part of the plugin's public API.
+ * Exported for testing. Not part of the plugin's public API.
+ *
+ * @internal
  */
 export function queryRunbookStatus(cwd: string): RunbookStatus | undefined {
   try {
@@ -364,7 +380,9 @@ export function queryRunbookStatus(cwd: string): RunbookStatus | undefined {
  * @param tokenHash - SHA-256 hash of the consumed delegation token
  * @returns The delegation outcome determining which context message to produce
  *
- * @internal Exported for testing. Not part of the plugin's public API.
+ * Exported for testing. Not part of the plugin's public API.
+ *
+ * @internal
  */
 export function classifyOutcome(status: RunbookStatus, tokenHash: string): DelegationOutcome {
   switch (status.kind) {

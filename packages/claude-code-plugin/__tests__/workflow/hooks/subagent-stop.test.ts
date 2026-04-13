@@ -29,21 +29,6 @@ const VALID_TOKEN = 'rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 const VALID_TOKEN_HASH = `sha256:${createHash('sha256').update(VALID_TOKEN).digest('hex')}`;
 const OTHER_TOKEN_HASH = `sha256:${createHash('sha256').update('rdtk_OTHER00000000000000000000000').digest('hex')}`;
 
-/**
- * Outcome-distinguishing markers from {@link buildContextMessage}.
- *
- * These substrings are the test seam — `handleSubagentStop` returns only
- * `{ context: string | undefined }`, so outcome discrimination at the
- * public boundary must go through user-visible banner text. Centralized
- * here so banner wording changes only need updating in one place.
- *
- * - {@link BANNER_COMPLETED_NO_SIBLINGS}: `completed` outcome with no
- *   unresolved sibling delegations (H2 heading).
- * - {@link BANNER_UNKNOWN}: `unknown` outcome fallback message.
- */
-const BANNER_COMPLETED_NO_SIBLINGS = 'Delegation Step Complete';
-const BANNER_UNKNOWN = 'Unable to verify';
-
 /** Helper to create a mock that returns `rd status --json` output. */
 function createStatusMock(status: Record<string, unknown>) {
   return createMockExecSync(JSON.stringify(status));
