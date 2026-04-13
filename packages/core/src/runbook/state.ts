@@ -14,10 +14,12 @@ import type {
 } from './types.js';
 import { RunbookStateSchema } from '../schemas.js';
 import { isNodeError } from '../errors.js';
-
-/** Directory path (relative to project root) where runbook execution state files are stored. */
-export const STATE_DIR = '.claude/rundown/runs';
-const SESSION_FILE = '.claude/rundown/session.json';
+import {
+  runsDir as _runsDir,
+  sessionPath as _sessionPath,
+  statePath as _statePath,
+  LEGACY_SESSION_FILE,
+} from '../paths.js';
 
 function generateId(): string {
   const now = new Date();
@@ -52,11 +54,12 @@ interface CreateOptions {
  * Manager for runbook state persistence and lifecycle.
  *
  * Handles creating, loading, saving, and updating runbook state.
- * State is persisted to `.claude/rundown/runs/` as JSON files.
+ * State is persisted to `.rundown/runs/` as JSON files.
  * Supports runbook stacks for nested runbooks.
  */
 export class RunbookStateManager {
   private readonly cwd: string;
+  private legacyWarningEmitted = false;
 
   /**
    * Create a new RunbookStateManager.
@@ -68,15 +71,31 @@ export class RunbookStateManager {
   }
 
   private get stateDir(): string {
-    return path.join(this.cwd, STATE_DIR);
+    return _runsDir(this.cwd);
   }
 
   private get sessionPath(): string {
-    return path.join(this.cwd, SESSION_FILE);
+    return _sessionPath(this.cwd);
   }
 
   private statePath(id: string): string {
-    return path.join(this.stateDir, `${id}.json`);
+    return _statePath(this.cwd, id);
+  }
+
+  /** Emit a per-instance warning (at most once) when legacy `.claude/rundown/` state is detected. */
+  private async warnIfLegacyStateExists(): Promise<void> {
+    if (this.legacyWarningEmitted) return;
+    try {
+      await fs.access(path.join(this.cwd, LEGACY_SESSION_FILE));
+      this.legacyWarningEmitted = true;
+      process.stderr.write(
+        '[rundown] Warning: State from a previous installation was found at .claude/rundown/.\n' +
+          '  State is now stored in .rundown/. Complete or abort any in-flight runbooks\n' +
+          '  from the old location, then remove the .claude/rundown/ directory.\n',
+      );
+    } catch {
+      // No legacy state — normal startup.
+    }
   }
 
   /**
@@ -281,6 +300,7 @@ export class RunbookStateManager {
       content = await fs.readFile(this.sessionPath, 'utf8');
     } catch (err: unknown) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+        await this.warnIfLegacyStateExists();
         return { defaultStack: [] };
       }
       throw err;

@@ -8,6 +8,7 @@
  */
 
 import { z } from 'zod';
+import { RUNDOWN_DIR } from '../paths.js';
 
 /**
  * Policy mode determines how permissions are handled.
@@ -216,6 +217,7 @@ export const DEFAULT_POLICY: PolicyConfig = {
     write: {
       allow: [
         '{repo}/.claude/**',
+        `{repo}/${RUNDOWN_DIR}/**`,
         '{repo}/node_modules/**',
         '{repo}/dist/**',
         '{repo}/build/**',

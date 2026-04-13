@@ -1,8 +1,9 @@
 import * as fs from 'node:fs/promises';
-import * as path from 'node:path';
 import { isNodeError } from '../errors.js';
+// Lock-file naming convention and directory layout are defined in ../paths.ts
+// (`delegationLockPath`, `locksDir`).
+import { locksDir, delegationLockPath as _delegationLockPath } from '../paths.js';
 
-const LOCK_DIR = '.claude/rundown/locks';
 const LOCK_DEADLINE_MS = 5_000;
 const STALE_AGE_MS = 60_000;
 const RETRY_MIN_MS = 50;
@@ -34,9 +35,10 @@ function isProcessAlive(pid: number): boolean {
  * Uses `O_CREAT | O_EXCL` (`'wx'` flag) for atomic acquisition.
  * Covers claim, completion propagation, and abort operations.
  *
- * Lock path: `.claude/rundown/locks/run-<parentRunId>.delegation.lock`
+ * Lock path: `.rundown/locks/run-<parentRunId>.delegation.lock`
  */
 export class DelegationLock {
+  private readonly cwd: string;
   private readonly lockDir: string;
 
   /**
@@ -45,11 +47,12 @@ export class DelegationLock {
    * @param cwd - Project root directory
    */
   constructor(cwd: string) {
-    this.lockDir = path.join(cwd, LOCK_DIR);
+    this.cwd = cwd;
+    this.lockDir = locksDir(cwd);
   }
 
   private lockPath(parentRunId: string): string {
-    return path.join(this.lockDir, `run-${parentRunId}.delegation.lock`);
+    return _delegationLockPath(this.cwd, parentRunId);
   }
 
   /**

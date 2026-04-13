@@ -151,6 +151,7 @@ jest.unstable_mockModule('@rundown-org/core', () => {
       },
     ),
     ...mockErrorHelpers,
+    RUNS_DIR: '.rundown/runs',
   };
 });
 

@@ -17,7 +17,7 @@ describe('ExecutionEventEmitter', () => {
     emitter.emit('RUNBOOK_STARTED', {
       title: 'Test',
       prompted: false,
-      statePath: '.claude/rundown/runs/wf-test-123.json',
+      statePath: '.rundown/runs/wf-test-123.json',
     });
 
     expect(received).toHaveLength(1);
@@ -32,7 +32,7 @@ describe('ExecutionEventEmitter', () => {
     emitter.emit('RUNBOOK_STARTED', {
       title: 'Test',
       prompted: false,
-      statePath: '.claude/rundown/runs/wf-test-123.json',
+      statePath: '.rundown/runs/wf-test-123.json',
     });
     emitter.emit('STEP_ENTERED', {
       position: { current: '1', total: 5 },
@@ -54,7 +54,7 @@ describe('ExecutionEventEmitter', () => {
     emitter.emit('RUNBOOK_STARTED', {
       title: 'Test',
       prompted: false,
-      statePath: '.claude/rundown/runs/wf-test-123.json',
+      statePath: '.rundown/runs/wf-test-123.json',
     });
 
     expect(received[0].ts).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
@@ -67,7 +67,7 @@ describe('ExecutionEventEmitter', () => {
     emitter.emit('RUNBOOK_STARTED', {
       title: 'Test',
       prompted: false,
-      statePath: '.claude/rundown/runs/wf-test-123.json',
+      statePath: '.rundown/runs/wf-test-123.json',
     });
     unsub();
     emitter.emit('RUNBOOK_COMPLETED', {
@@ -85,7 +85,7 @@ describe('ExecutionEventEmitter', () => {
     emitter.emit('RUNBOOK_STARTED', {
       title: 'Test',
       prompted: false,
-      statePath: '.claude/rundown/runs/wf-test-123.json',
+      statePath: '.rundown/runs/wf-test-123.json',
     });
 
     expect(received).toHaveLength(0);

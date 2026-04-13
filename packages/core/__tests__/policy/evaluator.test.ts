@@ -2,6 +2,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { PolicyEvaluator, createDefaultEvaluator } from '../../src/policy/evaluator.js';
 import { DEFAULT_POLICY, type PolicyConfig } from '../../src/policy/schema.js';
+import { RUNDOWN_DIR } from '../../src/paths.js';
 
 describe('PolicyEvaluator', () => {
   const repoRoot = '/test/repo';
@@ -168,12 +169,9 @@ describe('PolicyEvaluator', () => {
       expect(decision.requiresPrompt).toBe(true);
     });
 
-    it('should allow write to .claude directory', () => {
+    it('should allow write to .rundown directory', () => {
       const evaluator = new PolicyEvaluator(DEFAULT_POLICY, { repoRoot });
-      const decision = evaluator.checkPath(
-        path.join(repoRoot, '.claude/rundown/state.json'),
-        'write',
-      );
+      const decision = evaluator.checkPath(path.join(repoRoot, RUNDOWN_DIR, 'state.json'), 'write');
 
       expect(decision.allowed).toBe(true);
     });

@@ -6,7 +6,14 @@ import {
   isInternalRdCommand,
   executeRdCommandInternal,
 } from '../../src/services/internal-commands.js';
-import { RunbookStateManager, SessionService, parseRunbook, type Runbook } from '@rundown-org/core';
+import {
+  RunbookStateManager,
+  SessionService,
+  parseRunbook,
+  type Runbook,
+  runbooksDir,
+  runsDir,
+} from '@rundown-org/core';
 
 describe('internal-commands', () => {
   describe('isInternalRdCommand()', () => {
@@ -68,8 +75,8 @@ rd echo test
      * Creates runbook state file and adds it to the session.
      */
     async function setupActiveRunbook(): Promise<void> {
-      const runbooksDir = join(tempDir, '.claude', 'rundown', 'runbooks');
-      await writeFile(join(runbooksDir, 'test.runbook.md'), runbookContent);
+      const runbooksDirPath = runbooksDir(tempDir);
+      await writeFile(join(runbooksDirPath, 'test.runbook.md'), runbookContent);
 
       // Parse runbook to get Runbook object
       const steps = parseRunbook(runbookContent);
@@ -92,11 +99,11 @@ rd echo test
     beforeEach(async () => {
       // Create isolated temp directory with .claude structure
       tempDir = await mkdtemp(join(tmpdir(), 'internal-cmd-test-'));
-      const runbooksDir = join(tempDir, '.claude', 'rundown', 'runbooks');
-      const runsDir = join(tempDir, '.claude', 'rundown', 'runs');
+      const runbooksDirPath = runbooksDir(tempDir);
+      const runsDirPath = runsDir(tempDir);
 
-      await mkdir(runbooksDir, { recursive: true });
-      await mkdir(runsDir, { recursive: true });
+      await mkdir(runbooksDirPath, { recursive: true });
+      await mkdir(runsDirPath, { recursive: true });
 
       manager = new RunbookStateManager(tempDir);
 

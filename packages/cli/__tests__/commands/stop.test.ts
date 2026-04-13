@@ -58,7 +58,7 @@ describe('stop command', () => {
       const state = await getActiveState(workspace);
 
       // Simulate corruption: delete state file but leave session stack intact
-      const stateDir = join(workspace.cwd, '.claude', 'rundown', 'runs');
+      const stateDir = workspace.statePath();
       const stateId = state!.id as string;
       await unlink(join(stateDir, `${stateId}.json`));
 
@@ -77,7 +77,7 @@ describe('stop command', () => {
       const state = await getActiveState(workspace);
 
       // Write invalid JSON to state file
-      const stateDir = join(workspace.cwd, '.claude', 'rundown', 'runs');
+      const stateDir = workspace.statePath();
       const stateId = state!.id as string;
       await writeFile(join(stateDir, `${stateId}.json`), '{invalid');
 
@@ -93,7 +93,7 @@ describe('stop command', () => {
       await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
       const state = await getActiveState(workspace);
       const stateId = state!.id as string;
-      const stateDir = join(workspace.cwd, '.claude', 'rundown', 'runs');
+      const stateDir = workspace.statePath();
 
       // Write a legacy snapshot state that triggers a stale-state error in load()
       const legacyState = { ...state, lastAction: { type: 'GOTO_NEXT' } };

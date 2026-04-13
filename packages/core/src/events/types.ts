@@ -41,7 +41,7 @@ export interface RunbookStartedPayload {
   readonly title?: string;
   readonly description?: string;
   readonly prompted: boolean;
-  /** State file path for metadata display (e.g., ".claude/rundown/runs/wf-xxx.json") */
+  /** State file path for metadata display (e.g., ".rundown/runs/wf-xxx.json") */
   readonly statePath: string;
 }
 

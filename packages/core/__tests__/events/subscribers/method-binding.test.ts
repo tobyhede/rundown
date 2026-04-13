@@ -27,7 +27,7 @@ describe('Subscriber method binding', () => {
 
       emitter.emit('RUNBOOK_STARTED', {
         prompted: false,
-        statePath: '.claude/rundown/runs/wf-test.json',
+        statePath: '.rundown/runs/wf-test.json',
       });
 
       // If handle lost its this binding, this would be empty or throw
@@ -43,7 +43,7 @@ describe('Subscriber method binding', () => {
 
       emitter.emit('RUNBOOK_STARTED', {
         prompted: false,
-        statePath: '.claude/rundown/runs/wf-test.json',
+        statePath: '.rundown/runs/wf-test.json',
       });
       emitter.emit('STEP_TRANSITIONED', {
         action: 'CONTINUE',
@@ -95,7 +95,7 @@ describe('Subscriber method binding', () => {
       expect(() => {
         emitter.emit('RUNBOOK_STARTED', {
           prompted: false,
-          statePath: '.claude/rundown/runs/wf-test.json',
+          statePath: '.rundown/runs/wf-test.json',
         });
       }).not.toThrow();
 
@@ -130,7 +130,7 @@ describe('Subscriber method binding', () => {
       // Emit various events - each calls different this.handleXxx methods
       emitter.emit('RUNBOOK_STARTED', {
         prompted: false,
-        statePath: '.claude/rundown/runs/wf-test.json',
+        statePath: '.rundown/runs/wf-test.json',
       });
       emitter.emit('STEP_ENTERED', {
         position: { current: '1', total: 2 },

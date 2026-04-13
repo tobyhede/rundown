@@ -9,6 +9,7 @@ import {
 } from '../helpers/test-utils.js';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import { RUNDOWN_DIR } from '@rundown-org/core';
 
 /**
  * Create a standard FOR-source runbook: one FOR step with one substep.
@@ -62,9 +63,9 @@ describe('FOR loop data source integration', () => {
 
   it('iterates over YAML array variable from config file', async () => {
     // Create .rundown directory and config with array variable
-    await mkdir(join(workspace.cwd, '.rundown'), { recursive: true });
+    await mkdir(join(workspace.cwd, RUNDOWN_DIR), { recursive: true });
     await writeFile(
-      join(workspace.cwd, '.rundown', 'config.yaml'),
+      join(workspace.cwd, RUNDOWN_DIR, 'config.yaml'),
       `servers:
   - alpha
   - beta
@@ -111,9 +112,9 @@ describe('FOR loop data source integration', () => {
 
   it('iterates over windowed array (2 TO 4 OF {{items}})', async () => {
     // Create config with 5-element array
-    await mkdir(join(workspace.cwd, '.rundown'), { recursive: true });
+    await mkdir(join(workspace.cwd, RUNDOWN_DIR), { recursive: true });
     await writeFile(
-      join(workspace.cwd, '.rundown', 'config.yaml'),
+      join(workspace.cwd, RUNDOWN_DIR, 'config.yaml'),
       `items:
   - one
   - two
@@ -159,9 +160,9 @@ describe('FOR loop data source integration', () => {
 
   it('handles empty array with 0 iterations', async () => {
     // Create config with empty array
-    await mkdir(join(workspace.cwd, '.rundown'), { recursive: true });
+    await mkdir(join(workspace.cwd, RUNDOWN_DIR), { recursive: true });
     await writeFile(
-      join(workspace.cwd, '.rundown', 'config.yaml'),
+      join(workspace.cwd, RUNDOWN_DIR, 'config.yaml'),
       `items: []
 `,
     );
@@ -197,9 +198,9 @@ describe('FOR loop data source integration', () => {
 
   it('clamps window to array length (1 TO 100 OF 3-element array)', async () => {
     // Create config with 3-element array
-    await mkdir(join(workspace.cwd, '.rundown'), { recursive: true });
+    await mkdir(join(workspace.cwd, RUNDOWN_DIR), { recursive: true });
     await writeFile(
-      join(workspace.cwd, '.rundown', 'config.yaml'),
+      join(workspace.cwd, RUNDOWN_DIR, 'config.yaml'),
       `items:
   - first
   - second
@@ -325,9 +326,9 @@ describe('FOR loop data source integration', () => {
 
   it('handles shell special chars in array source values', async () => {
     // Create config with array containing special characters
-    await mkdir(join(workspace.cwd, '.rundown'), { recursive: true });
+    await mkdir(join(workspace.cwd, RUNDOWN_DIR), { recursive: true });
     await writeFile(
-      join(workspace.cwd, '.rundown', 'config.yaml'),
+      join(workspace.cwd, RUNDOWN_DIR, 'config.yaml'),
       `items:
   - hello world
   - safe-value
@@ -363,9 +364,9 @@ describe('FOR loop data source integration', () => {
 
   it('combines array source with template variables in commands', async () => {
     // Create config with servers array
-    await mkdir(join(workspace.cwd, '.rundown'), { recursive: true });
+    await mkdir(join(workspace.cwd, RUNDOWN_DIR), { recursive: true });
     await writeFile(
-      join(workspace.cwd, '.rundown', 'config.yaml'),
+      join(workspace.cwd, RUNDOWN_DIR, 'config.yaml'),
       `servers:
   - s1
   - s2
@@ -403,9 +404,9 @@ describe('FOR loop data source integration', () => {
   it('large array source (50 elements)', async () => {
     // Create config with 50-element array
     const items = Array.from({ length: 50 }, (_, i) => `item${String(i + 1)}`);
-    await mkdir(join(workspace.cwd, '.rundown'), { recursive: true });
+    await mkdir(join(workspace.cwd, RUNDOWN_DIR), { recursive: true });
     await writeFile(
-      join(workspace.cwd, '.rundown', 'config.yaml'),
+      join(workspace.cwd, RUNDOWN_DIR, 'config.yaml'),
       `items:\n${items.map((item) => `  - ${item}`).join('\n')}\n`,
     );
 
@@ -523,9 +524,9 @@ describe('FOR loop data source integration', () => {
   });
 
   it('iterates descending array source (4 TO 2) in reverse order', async () => {
-    await mkdir(join(workspace.cwd, '.rundown'), { recursive: true });
+    await mkdir(join(workspace.cwd, RUNDOWN_DIR), { recursive: true });
     await writeFile(
-      join(workspace.cwd, '.rundown', 'config.yaml'),
+      join(workspace.cwd, RUNDOWN_DIR, 'config.yaml'),
       `items:
   - alpha
   - beta
@@ -595,9 +596,9 @@ describe('FOR loop data source integration', () => {
   });
 
   it('resolves array variable values before template expansion (protocol proof)', async () => {
-    await mkdir(join(workspace.cwd, '.rundown'), { recursive: true });
+    await mkdir(join(workspace.cwd, RUNDOWN_DIR), { recursive: true });
     await writeFile(
-      join(workspace.cwd, '.rundown', 'config.yaml'),
+      join(workspace.cwd, RUNDOWN_DIR, 'config.yaml'),
       'hosts:\n  - web-01\n  - web-02\n',
     );
 

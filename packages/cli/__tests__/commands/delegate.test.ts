@@ -146,10 +146,7 @@ describe('delegate command', () => {
         steps: [{ title: 'Child step', pass: 'COMPLETE', command: 'rd echo --result pass' }],
       });
       await writeFile(join(workspace.cwd, 'runbooks', 'child.runbook.md'), childContent);
-      await writeFile(
-        join(workspace.cwd, '.claude', 'rundown', 'runbooks', 'child.runbook.md'),
-        childContent,
-      );
+      await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childContent);
 
       const startResult = await runCliInProcess(
         'run --prompted runbooks/with-ref.runbook.md',

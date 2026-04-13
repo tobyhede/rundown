@@ -3,6 +3,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { RunbookStateManager } from '../../src/runbook/state.js';
+import { runsDir as _runsDir } from '../../src/paths.js';
 import { DelegationScanService } from '../../src/runbook/delegation-scan.js';
 import {
   hashDelegationToken,
@@ -28,7 +29,7 @@ describe('DelegationScanService', () => {
 
   /** Write a state file directly to bypass schema validation. */
   async function writeState(state: RunbookState): Promise<void> {
-    const stateDir = path.join(tmpDir, '.claude/rundown/runs');
+    const stateDir = _runsDir(tmpDir);
     await fs.mkdir(stateDir, { recursive: true });
     await fs.writeFile(path.join(stateDir, `${state.id}.json`), JSON.stringify(state, null, 2), {
       mode: 0o600,

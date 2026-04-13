@@ -11,7 +11,7 @@ import { readFile, rm, cp } from 'node:fs/promises';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { isNodeError } from '@rundown-org/core';
+import { isNodeError, runbooksDir } from '@rundown-org/core';
 import {
   parseScenarios,
   getEffectiveResult,
@@ -207,17 +207,17 @@ export async function executeScenario(
   const tmpDir = mkdtempSync(join(tmpdir(), 'rd-scenario-'));
 
   try {
-    const runbooksDir = join(tmpDir, '.claude', 'rundown', 'runbooks');
-    mkdirSync(runbooksDir, { recursive: true });
+    const runbooksDirPath = runbooksDir(tmpDir);
+    mkdirSync(runbooksDirPath, { recursive: true });
     // Copy runbook and any referenced child runbooks
-    copyFileSync(filePath, join(runbooksDir, runbookFilename));
+    copyFileSync(filePath, join(runbooksDirPath, runbookFilename));
 
     const referenced = extractReferencedRunbooks(scenario);
     const sourceDir = dirname(filePath);
     for (const ref of referenced) {
       if (ref !== runbookFilename) {
         try {
-          copyFileSync(join(sourceDir, ref), join(runbooksDir, ref));
+          copyFileSync(join(sourceDir, ref), join(runbooksDirPath, ref));
         } catch (err: unknown) {
           if (isNodeError(err) && err.code === 'ENOENT') {
             throw new Error(`Referenced runbook not found: ${ref} (searched in: ${sourceDir})`);

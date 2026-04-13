@@ -97,7 +97,7 @@ The `rd` command is an alias for `rundown`.
 **Run a runbook:**
 ```bash
 # Using an absolute path
-rundown run /path/to/project/.claude/rundown/runbooks/simple.runbook.md
+rundown run /path/to/project/.rundown/runbooks/simple.runbook.md
 
 # Or from the project root, with runbook in the standard location
 rundown run simple.runbook.md
@@ -106,7 +106,7 @@ rundown run simple.runbook.md
 The CLI resolves runbook paths in this order:
 1. Absolute path (used as-is)
 2. Relative to current working directory
-3. Relative to `.claude/rundown/runbooks/` in the project root
+3. Relative to `.rundown/runbooks/` in the project root
 
 **Check status:**
 ```bash
@@ -388,9 +388,9 @@ Only `.json` and `.jsonl` extensions are supported for `file:` sources.
 
 | Path | Purpose |
 |------|---------|
-| `.claude/rundown/runs/` | Runbook state files (`wf-YYYY-MM-DD-xxxxx.json`) |
-| `.claude/rundown/session.json` | Active runbook tracking and stash state |
-| `.claude/rundown/runbooks/` | Runbook source files (discovered for `rundown ls --all`) |
+| `.rundown/runs/` | Runbook state files (`wf-YYYY-MM-DD-xxxxx.json`) |
+| `.rundown/session.json` | Active runbook tracking and stash state |
+| `.rundown/runbooks/` | Runbook source files (discovered for `rundown ls --all`) |
 
 ### Session Structure
 
@@ -414,7 +414,7 @@ Each runbook state file contains:
 {
   "id": "wf-2024-01-07-abc123",
   "runbook": "my-runbook.runbook.md",
-  "runbookPath": ".claude/rundown/runbooks/my-runbook.runbook.md",
+  "runbookPath": ".rundown/runbooks/my-runbook.runbook.md",
   "title": "My Runbook",
   "description": "Runbook description",
   "step": "2",
@@ -432,7 +432,7 @@ Each runbook state file contains:
       "substep": "1",
       "delegation": {
         "tokenHash": "abc123...",
-        "childRunbookPath": ".claude/rundown/runbooks/child.runbook.md",
+        "childRunbookPath": ".rundown/runbooks/child.runbook.md",
         "status": "claimed",
         "childRunId": "wf-2024-01-07-child1"
       }
@@ -771,7 +771,7 @@ rundown status
 **Output:**
 ```
 File:     my-runbook.runbook.md
-State:    .claude/rundown/runs/wf-2024-01-07-abc123.json
+State:    .rundown/runs/wf-2024-01-07-abc123.json
 Action:   CONTINUE
 Result:   PASS
 
@@ -1033,7 +1033,7 @@ Output formatting is implemented in `packages/cli/src/services/output-emitter.ts
 
 ```
 File:     runbook.runbook.md
-State:    .claude/rundown/runs/wf-xxx.json
+State:    .rundown/runs/wf-xxx.json
 Action:   START
 At:       1/5
 

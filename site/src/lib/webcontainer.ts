@@ -57,15 +57,25 @@ export async function setupRundown(container: WebContainer): Promise<void> {
  * @param container - The WebContainer instance to mount to
  * @param path - Relative path within the runbooks directory
  * @param content - The runbook file content
+ * @throws {Error} If the runbook path is empty, contains traversal segments (`..`), or has invalid segments (`.`, empty)
  */
 export async function mountRunbook(
   container: WebContainer,
   path: string,
   content: string
 ): Promise<void> {
-  // Use container.fs.mkdir to avoid race condition (recursive: true creates parents)
-  await container.fs.mkdir('.claude/rundown/runbooks', { recursive: true });
-  await container.fs.writeFile(`.claude/rundown/runbooks/${path}`, content);
+  // Normalize separators, strip leading slashes, and guard against path traversal.
+  // Path layout mirrors packages/core/src/paths.ts (RUNBOOKS_DIR / RUNS_DIR / SESSION_FILE).
+  const normalized = path.replace(/\\/g, '/').replace(/^\/+/, '');
+  const segments = normalized.split('/');
+  if (!normalized || segments.some((seg) => seg === '' || seg === '.' || seg === '..')) {
+    throw new Error(`Invalid runbook path: ${path}`);
+  }
+  const fullPath = `.rundown/runbooks/${normalized}`;
+  // Create parent directories (handles nested paths like planning/write-plan.runbook.md)
+  const dir = fullPath.substring(0, fullPath.lastIndexOf('/'));
+  await container.fs.mkdir(dir, { recursive: true });
+  await container.fs.writeFile(fullPath, content);
 }
 
 /**
@@ -74,13 +84,11 @@ export async function mountRunbook(
  * @param container - The WebContainer instance to clean up
  */
 export async function cleanRundownState(container: WebContainer): Promise<void> {
-  try {
-    // Remove state files to ensure clean slate
-    await container.fs.rm('.claude/rundown/runs', { recursive: true });
-    await container.fs.rm('.claude/rundown/session.json');
-  } catch {
-    // Ignore errors if files don't exist
-  }
+  // Remove state files best-effort per path so one missing entry doesn't skip the other
+  await Promise.allSettled([
+    container.fs.rm('.rundown/runs', { recursive: true }),
+    container.fs.rm('.rundown/session.json'),
+  ]);
 }
 
 /**

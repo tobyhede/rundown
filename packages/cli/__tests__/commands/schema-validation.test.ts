@@ -191,10 +191,10 @@ prompt: Wait
     });
 
     it('validates available runbooks list output (--all)', async () => {
-      const runbooksDir = path.join(workspace.cwd, '.claude', 'rundown', 'runbooks');
-      fs.mkdirSync(runbooksDir, { recursive: true });
+      const runbooksDirPath = workspace.runbooksDir();
+      fs.mkdirSync(runbooksDirPath, { recursive: true });
 
-      const runbookPath = path.join(runbooksDir, 'test.runbook.md');
+      const runbookPath = path.join(runbooksDirPath, 'test.runbook.md');
       fs.writeFileSync(
         runbookPath,
         `---

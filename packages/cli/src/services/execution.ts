@@ -35,6 +35,7 @@ import {
   isJsonArray,
   isJsonArrayStream,
   assertResolvedVariableForContext,
+  RUNS_DIR,
 } from '@rundown-org/core';
 import { isSourced, resolvedStepHasSubsteps, type ForClause } from '@rundown-org/parser';
 import { isInternalRdCommand, executeRdCommandInternal } from './internal-commands.js';
@@ -751,7 +752,7 @@ export function getStepRetryMax(item: Step | ResolvedStep | Substep): number {
 export function buildMetadata(state: RunbookState): RunbookMetadata {
   return {
     file: state.runbook,
-    state: `.claude/rundown/runs/${state.id}.json`,
+    state: `${RUNS_DIR}/${state.id}.json`,
     prompted: state.prompted ?? undefined,
   };
 }

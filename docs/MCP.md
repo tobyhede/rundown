@@ -493,7 +493,7 @@ See [RUNDOWN.md](./RUNDOWN.md#delegation-commands) for full delegation command r
 
 1. **Check MCP server logs** - Look for errors in Claude Desktop console
 2. **Test CLI directly** - Run `rundown status --json` in terminal
-3. **Verify state files** - Check `.claude/rundown/` directory
+3. **Verify state files** - Check `.rundown/` directory
 4. **Check permissions** - Ensure npx can find rundown
 
 ### Server Startup Message

@@ -59,7 +59,7 @@ describe('Delegation propagation integration', () => {
   /** Helper: read resolvedCompletions from a run state file. */
   async function readResolvedCompletions(runId: string): Promise<Record<string, unknown>> {
     try {
-      const statePath = join(workspace.cwd, '.claude', 'rundown', 'runs', `${runId}.json`);
+      const statePath = join(workspace.statePath(), `${runId}.json`);
       const content = await readFile(statePath, 'utf-8');
       const state = JSON.parse(content) as Record<string, unknown>;
       const completions = state.resolvedCompletions;

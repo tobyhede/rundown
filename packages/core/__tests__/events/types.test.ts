@@ -12,12 +12,12 @@ describe('RunbookEventV1 types', () => {
       type: 'RUNBOOK_STARTED',
       ts: '2026-01-21T00:00:00.000Z',
       runbookId: 'wf-2026-01-21-abc123',
-      runbook: { name: 'test', path: '.claude/rundown/runbooks/test.md' },
+      runbook: { name: 'test', path: '.rundown/runbooks/test.md' },
       seq: 1,
       payload: {
         title: 'Test Runbook',
         prompted: false,
-        statePath: '.claude/rundown/runs/wf-2026-01-21-abc123.json',
+        statePath: '.rundown/runs/wf-2026-01-21-abc123.json',
       } satisfies RunbookStartedPayload,
     };
     expect(event.type).toBe('RUNBOOK_STARTED');
@@ -30,7 +30,7 @@ describe('RunbookEventV1 types', () => {
       type: 'STEP_TRANSITIONED',
       ts: '2026-01-21T00:00:00.000Z',
       runbookId: 'wf-2026-01-21-abc123',
-      runbook: { name: 'test', path: '.claude/rundown/runbooks/test.md' },
+      runbook: { name: 'test', path: '.rundown/runbooks/test.md' },
       seq: 2,
       payload: {
         action: 'CONTINUE',

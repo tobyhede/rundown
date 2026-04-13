@@ -70,7 +70,7 @@ describe('Inline linkage integration (rd run --step)', () => {
 
   /** Helper: find child state in runs directory by scanning for parentLinkage. */
   async function findChildState(parentRunId: string): Promise<Record<string, unknown> | null> {
-    const runsDir = join(workspace.cwd, '.claude', 'rundown', 'runs');
+    const runsDir = workspace.statePath();
     const files = await readdir(runsDir);
     const stateFiles = files.filter((f) => f.endsWith('.json') && f !== 'session.json');
 
@@ -525,7 +525,7 @@ describe('Inline linkage integration (rd run --step)', () => {
       // completion marking substeps done). The cursor has NOT advanced, so only
       // the status === 'done' guard catches this.
 
-      const statePath = join(workspace.cwd, '.claude', 'rundown', 'runs', `${parentRunId}.json`);
+      const statePath = join(workspace.statePath(), `${parentRunId}.json`);
       const stateData = JSON.parse(await readFile(statePath, 'utf-8'));
       const substeps = stateData.substepStates as Array<Record<string, unknown>>;
       const target = substeps.find((ss) => ss.id === '1');

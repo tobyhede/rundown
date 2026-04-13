@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { runbooksDir } from '@rundown-org/core';
 
 // Mock plugin-root — passthrough for env var, controlled sibling discovery
 const mockGetPluginRoot = jest.fn<() => string | null>().mockImplementation(() => {
@@ -31,7 +32,7 @@ describe('discovery service', () => {
   beforeEach(async () => {
     // Create isolated temp directories
     tempDir = await mkdtemp(join(tmpdir(), 'discovery-test-'));
-    projectRunbooksDir = join(tempDir, '.claude', 'rundown', 'runbooks');
+    projectRunbooksDir = runbooksDir(tempDir);
     pluginRunbooksDir = join(tempDir, 'plugin-runbooks');
 
     await mkdir(projectRunbooksDir, { recursive: true });

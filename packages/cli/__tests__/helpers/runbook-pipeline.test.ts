@@ -19,7 +19,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
       `${step}|${iteration !== undefined ? String(iteration) : ''}`,
   ),
   parseStepIdFromString: jest.fn(),
-  STATE_DIR: '.claude/rundown/runs',
+  RUNS_DIR: '.rundown/runs',
   DELEGATION_TOKEN_PREFIX: 'rdtk_',
   DEFAULT_POLICY: {
     version: 1,
@@ -674,7 +674,7 @@ describe('prepareRunbook', () => {
 
   it('does not inject CLAUDE_PLUGIN_ROOT when runbook resolves from project source', async () => {
     resolveRunbookFile.mockResolvedValue({
-      path: '/test/.claude/rundown/runbooks/my-runbook.runbook.md',
+      path: '/test/.rundown/runbooks/my-runbook.runbook.md',
       source: 'project' as const,
     });
     (

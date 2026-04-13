@@ -28,6 +28,9 @@ export * from './errors.js';
 export * from './utils.js';
 export * from './logger.js';
 
+// Path layout — single source of truth for the .rundown/ directory structure
+export * from './paths.js';
+
 // Runbook system
 export * from './runbook/index.js';
 // Explicit re-exports for Jest ESM VM module compatibility

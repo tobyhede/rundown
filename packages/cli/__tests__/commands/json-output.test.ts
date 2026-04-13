@@ -51,10 +51,10 @@ prompt: Wait
 
     it('outputs array of available runbooks with --all', async () => {
       // discovery requires runbooks to be in specific dirs
-      const runbooksDir = path.join(workspace.cwd, '.claude', 'rundown', 'runbooks');
-      fs.mkdirSync(runbooksDir, { recursive: true });
+      const runbooksDirPath = workspace.runbooksDir();
+      fs.mkdirSync(runbooksDirPath, { recursive: true });
 
-      const runbookPath = path.join(runbooksDir, 'test.runbook.md');
+      const runbookPath = path.join(runbooksDirPath, 'test.runbook.md');
       fs.writeFileSync(
         runbookPath,
         `---
