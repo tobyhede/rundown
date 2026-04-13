@@ -37,16 +37,25 @@ export interface SubagentStopResult {
  */
 export type ParentLinkage =
   | {
+      /** Child was launched via `rd delegate` + `rd claim` from a parent's outgoing delegation. */
       readonly kind: 'delegation';
+      /** SHA-256 hash (`sha256:<hex>`) of the delegation token consumed at claim time. Used for parent ↔ child correlation. */
       readonly tokenHash: string;
+      /** RunId of the parent runbook that issued the delegation. */
       readonly parentRunId: string;
+      /** Qualified step id on the parent (e.g. `3.1`) where the delegation was issued. */
       readonly parentStepId: string;
+      /** Parent step's display name when available; absent if the parent did not surface one. */
       readonly parentStep?: string;
     }
   | {
+      /** Child was launched inline (e.g. `rundown run --step`) from a parent rather than via a delegation token. */
       readonly kind: 'inline';
+      /** RunId of the parent runbook that started the inline child. */
       readonly parentRunId: string;
+      /** Qualified step id on the parent (e.g. `3.1`) where the inline child was launched. */
       readonly parentStepId: string;
+      /** Parent step's display name when available; absent if the parent did not surface one. */
       readonly parentStep?: string;
     }
   | {
@@ -68,9 +77,24 @@ export type ParentLinkage =
  * @internal
  */
 export interface RunbookPosition {
+  /** Source file path of the runbook (e.g. `parent.runbook.md`). */
   file: string;
+  /**
+   * Execution cursor when known.
+   *
+   * - `current`: qualified step id at the cursor (e.g. `3` or `3.1`).
+   * - `total`: total top-level steps in the runbook.
+   * - `substep`: substep id within the current step, when inside one.
+   * - `unresolved`: count of unresolved substeps at the current step (drives the
+   *   "delegate further" guidance in the completed banner).
+   */
   position?: { current: string; total: number; substep?: string; unresolved?: number };
+  /** Display info for the current step: its name and optional description. */
   step?: { name: string; description?: string };
+  /**
+   * Linkage to the parent runbook when this status describes a child. Absent
+   * for a top-level (non-child) runbook.
+   */
   parentLinkage?: ParentLinkage;
 }
 
@@ -83,23 +107,37 @@ export interface RunbookPosition {
  */
 export type DelegationStatus =
   | {
+      /** Token issued by `rd delegate` but not yet consumed by `rd claim`. */
       readonly state: 'pending';
+      /** Qualified substep id on the parent (e.g. `3.1`) where the delegation lives. */
       readonly substep: string;
+      /** Child runbook source path or namespace target. */
       readonly runbook: string;
+      /** SHA-256 hash (`sha256:<hex>`) of the delegation token. Used for parent ↔ child correlation. */
       readonly tokenHash: string;
     }
   | {
+      /** Token claimed by a subagent; the child runbook has been launched. */
       readonly state: 'claimed';
+      /** Qualified substep id on the parent (e.g. `3.1`) where the delegation lives. */
       readonly substep: string;
+      /** Child runbook source path or namespace target. */
       readonly runbook: string;
+      /** RunId of the child runbook started by the claim. Always present in this state. */
       readonly childRunId: string;
+      /** SHA-256 hash (`sha256:<hex>`) of the delegation token. Used for parent ↔ child correlation. */
       readonly tokenHash: string;
     }
   | {
+      /** Delegation aborted via `rd abort` (token cancelled before or after claim). */
       readonly state: 'cancelled';
+      /** Qualified substep id on the parent (e.g. `3.1`) where the delegation lived. */
       readonly substep: string;
+      /** Child runbook source path or namespace target. */
       readonly runbook: string;
+      /** RunId of the child runbook if the delegation was claimed before being cancelled. Absent if cancelled while pending. */
       readonly childRunId?: string;
+      /** SHA-256 hash (`sha256:<hex>`) of the delegation token. Used for parent ↔ child correlation. */
       readonly tokenHash: string;
     };
 
@@ -134,6 +172,13 @@ export type RunbookStatus =
  * @internal
  */
 export interface CompletedParentState extends RunbookPosition {
+  /**
+   * Sibling delegations carried on the parent at the moment the child completed.
+   * The hook filters out the delegation that produced this child via
+   * {@link toParentState}, so only siblings (other delegations at the same step)
+   * appear here. Drives the "remaining delegations" section of the completed
+   * banner.
+   */
   readonly delegations: readonly DelegationStatus[];
 }
 
