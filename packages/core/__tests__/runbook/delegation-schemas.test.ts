@@ -327,8 +327,15 @@ describe('RunbookStateSchema round-trip with delegation', () => {
 });
 
 describe('DelegationStatusEntrySchema', () => {
+  const TOKEN_HASH = 'sha256:0000000000000000000000000000000000000000000000000000000000000000';
+
   it('validates a pending entry', () => {
-    const entry = { substep: '1.1', runbook: 'child.md', state: 'pending' };
+    const entry = {
+      substep: '1.1',
+      runbook: 'child.md',
+      state: 'pending',
+      tokenHash: TOKEN_HASH,
+    };
     expect(() => DelegationStatusEntrySchema.parse(entry)).not.toThrow();
   });
 
@@ -338,34 +345,59 @@ describe('DelegationStatusEntrySchema', () => {
       runbook: 'child.md',
       state: 'claimed',
       childRunId: 'run_abc123',
+      tokenHash: TOKEN_HASH,
     };
     expect(() => DelegationStatusEntrySchema.parse(entry)).not.toThrow();
   });
 
   it('validates a cancelled entry', () => {
-    const entry = { substep: '1.1', runbook: 'child.md', state: 'cancelled' };
+    const entry = {
+      substep: '1.1',
+      runbook: 'child.md',
+      state: 'cancelled',
+      tokenHash: TOKEN_HASH,
+    };
     expect(() => DelegationStatusEntrySchema.parse(entry)).not.toThrow();
   });
 
   it('rejects invalid state', () => {
-    const entry = { substep: '1.1', runbook: 'child.md', state: 'resolved' };
+    const entry = {
+      substep: '1.1',
+      runbook: 'child.md',
+      state: 'resolved',
+      tokenHash: TOKEN_HASH,
+    };
     expect(() => DelegationStatusEntrySchema.parse(entry)).toThrow();
   });
 
   it('rejects missing required fields', () => {
     expect(() => DelegationStatusEntrySchema.parse({})).toThrow();
   });
+
+  it('rejects entry missing tokenHash', () => {
+    const entry = { substep: '1.1', runbook: 'child.md', state: 'pending' };
+    expect(() => DelegationStatusEntrySchema.parse(entry)).toThrow();
+  });
 });
 
 describe('StatusResponseSchema with delegations', () => {
+  const TOKEN_HASH_A = 'sha256:1111111111111111111111111111111111111111111111111111111111111111';
+  const TOKEN_HASH_B = 'sha256:2222222222222222222222222222222222222222222222222222222222222222';
+
   it('accepts delegations field', () => {
     const status = {
       kind: 'status',
       active: true,
       stashed: false,
       delegations: [
-        { substep: '1.1', runbook: 'review.md', state: 'pending' },
-        { substep: '1.2', runbook: 'test.md', state: 'claimed', childRunId: 'run_xyz' },
+        { substep: '1.1', runbook: 'review.md', state: 'pending', tokenHash: TOKEN_HASH_A },
+        {
+          substep: '1.2',
+          runbook: 'test.md',
+          state: 'claimed',
+          childRunId: 'run_xyz',
+          tokenHash: TOKEN_HASH_B,
+        },
       ],
     };
     expect(() => StatusResponseSchema.parse(status)).not.toThrow();
