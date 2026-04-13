@@ -40,7 +40,7 @@
     "node": ">=24.0.0"
   },
   "dependencies": {
-    "@inquirer/prompts": "^8.3.2",
+    "@inquirer/prompts": "^8.4.1",
     "@rundown-org/parser": "*",
     "js-yaml": "^4.1.1",
     "lilconfig": "^3.1.3",
@@ -52,7 +52,7 @@
   "devDependencies": {
     "@types/jest": "^30.0.0",
     "@types/js-yaml": "^4.0.9",
-    "@types/node": "^25.5.2",
+    "@types/node": "^25.6.0",
     "@types/picomatch": "^4.0.3",
     "@types/shell-quote": "^1.7.5",
     "fast-check": "^4.6.0",
