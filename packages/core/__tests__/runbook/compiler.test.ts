@@ -150,6 +150,82 @@ describe('runbook compiler', () => {
       expect(actor.getSnapshot().value).toBe('step::2');
     });
 
+    it('H3 runbook substeps under aggregating parent DEFER and aggregate on PASS ALL', () => {
+      const steps = createRunbook(`## 1. Review
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+### 1.1 Code review
+- code-review.runbook.md
+
+### 1.2 Security review
+- security-review.runbook.md
+`);
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      // 1.1 passes — DEFER advances to 1.2, aggregation waits
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('step::1::2');
+
+      // 1.2 passes — all results in, PASS ALL: COMPLETE
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('COMPLETE');
+    });
+
+    it('H3 runbook substeps under aggregating parent FAIL ANY triggers STOP', () => {
+      const steps = createRunbook(`## 1. Review
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+### 1.1 Code review
+- code-review.runbook.md
+
+### 1.2 Security review
+- security-review.runbook.md
+`);
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      // 1.1 fails — DEFER collects result, advances to 1.2
+      actor.send({ type: 'FAIL' });
+      expect(actor.getSnapshot().value).toBe('step::1::2');
+
+      // 1.2 passes — all results in, FAIL ANY has a fail → STOPPED
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('STOPPED');
+    });
+
+    it('mixed H3 substeps: prose and runbook-list both DEFER under aggregating parent', () => {
+      const steps = createRunbook(`## 1. Plan and review
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+### 1.1 Write plan
+Write the plan manually.
+
+### 1.2 Review plan
+- review-plan.runbook.md
+`);
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      // Both substeps get DEFER under aggregating parent
+      // 1.1 (prose) passes → DEFER → advances to 1.2
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('step::1::2');
+
+      // 1.2 (runbook list) passes → DEFER → PASS ALL: COMPLETE
+      actor.send({ type: 'PASS' });
+      expect(actor.getSnapshot().value).toBe('COMPLETE');
+    });
+
     it('non-aggregating substeps with sequential flow (Case D)', () => {
       const steps = inferSteps([
         {

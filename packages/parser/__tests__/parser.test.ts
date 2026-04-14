@@ -74,6 +74,84 @@ describe('parseRunbook with substep runbooks', () => {
   });
 });
 
+describe('H3 substep with runbook list — variations', () => {
+  it('parses mixed H3 substeps: prose sibling and runbook-list sibling in same parent', () => {
+    const markdown = `## 1. Execute
+
+### 1.1 Analyze
+- PASS CONTINUE
+- FAIL STOP
+
+Do analysis work.
+
+### 1.2 Run child
+- PASS CONTINUE
+- FAIL STOP
+
+- child.runbook.md
+`;
+    const steps = parseRunbook(markdown);
+    expect(steps[0].substeps).toHaveLength(2);
+    expect(steps[0].substeps![0].prompt).toBe('Do analysis work.');
+    expect(steps[0].substeps![0].runbooks).toBeUndefined();
+    expect(steps[0].substeps![1].prompt).toBeUndefined();
+    expect(steps[0].substeps![1].runbooks).toEqual(['child.runbook.md']);
+  });
+
+  it('parses template variable reference in H3 runbook list path', () => {
+    const markdown = `## 1. Execute
+
+### 1.1 Run plan
+- PASS CONTINUE
+- FAIL STOP
+
+- {{ PlanPath }}
+`;
+    const steps = parseRunbook(markdown);
+    const substep = steps[0].substeps![0];
+    expect(substep.runbooks).toEqual([{ ref: 'PlanPath' }]);
+  });
+
+  it('preserves H3 header description when substep body is runbook list only', () => {
+    const markdown = `## 1. Execute
+
+### 1.1 Review plan
+- PASS CONTINUE
+- FAIL STOP
+
+- review-plan.runbook.md
+`;
+    const steps = parseRunbook(markdown);
+    const substep = steps[0].substeps![0];
+    expect(substep.id).toBe('1');
+    expect(substep.description).toBe('Review plan');
+    expect(substep.runbooks).toEqual(['review-plan.runbook.md']);
+    expect(substep.prompt).toBeUndefined();
+  });
+
+  it('parses two H3 runbook-list substeps preserving both descriptions', () => {
+    const markdown = `## 1. Execute
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+### 1.1 Write plan
+- write-plan.runbook.md
+
+### 1.2 Review plan
+- review-plan.runbook.md
+`;
+    const steps = parseRunbook(markdown);
+    expect(steps[0].substeps).toHaveLength(2);
+    const [sub1, sub2] = steps[0].substeps!;
+    expect(sub1.description).toBe('Write plan');
+    expect(sub1.runbooks).toEqual(['write-plan.runbook.md']);
+    expect(sub1.prompt).toBeUndefined();
+    expect(sub2.description).toBe('Review plan');
+    expect(sub2.runbooks).toEqual(['review-plan.runbook.md']);
+    expect(sub2.prompt).toBeUndefined();
+  });
+});
+
 describe('inline code preservation', () => {
   it('preserves inline code in step description', () => {
     const md = `## 1. Path: \`/some/path\`
