@@ -14,13 +14,13 @@ describe('CLI program', () => {
 
   describe('command registration', () => {
     it('shows help message with no arguments', () => {
-      const result = runCli('--help --text', workspace);
+      const result = runCli('--help', workspace);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('rundown');
     });
 
     it('shows version with --version flag', () => {
-      const result = runCli('--version --text', workspace);
+      const result = runCli('--version', workspace);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toMatch(/\d+\.\d+\.\d+/);
     });

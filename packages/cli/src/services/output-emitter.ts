@@ -350,11 +350,12 @@ export class OutputEmitter {
    *
    * Use this for backwards compatibility when a specific JSON format is required.
    * This bypasses the event system and writes JSON directly to the output.
-   * Only works in JSON mode - does nothing in text mode.
+   * Does nothing in text mode.
    *
    * @param data - The data to output as JSON
    */
   json(data: unknown): void {
+    if (!this.isJson()) return;
     this.writer.writeJson(data);
   }
 

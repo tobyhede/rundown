@@ -262,4 +262,21 @@ echo hello
       });
     });
   });
+
+  describe('breaking change: --json flag removed', () => {
+    it('rejects --json on status as unknown option', async () => {
+      const result = await runCliInProcess('status --json', workspace);
+      expect(result.exitCode).not.toBe(0);
+    });
+
+    it('rejects --json on ls as unknown option', async () => {
+      const result = await runCliInProcess('ls --json', workspace);
+      expect(result.exitCode).not.toBe(0);
+    });
+
+    it('rejects --json on pass as unknown option', async () => {
+      const result = await runCliInProcess('pass --json', workspace);
+      expect(result.exitCode).not.toBe(0);
+    });
+  });
 });

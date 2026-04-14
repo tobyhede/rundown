@@ -105,6 +105,6 @@ export function registerPruneCommand(program: Command): void {
 
         output.list(enrichedItems, columns as Parameters<typeof output.list>[1], { jsonMapper });
         output.flush();
-      });
+      }, { text: options.text });
     });
 }

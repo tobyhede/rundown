@@ -65,6 +65,6 @@ export function registerStatusCommand(program: Command): void {
           'status',
         );
         output.flush();
-      });
+      }, { text: options.text });
     });
 }

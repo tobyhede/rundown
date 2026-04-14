@@ -122,6 +122,6 @@ export function registerLsCommand(program: Command): void {
           },
         );
         output.flush();
-      });
+      }, { text: options.text });
     });
 }
