@@ -426,11 +426,7 @@ export function registerScenarioSuiteCommand(program: Command): void {
 
             output.detail(detailData, 'custom');
 
-            if (
-              options.text &&
-              caseResult.stepAssertions &&
-              caseResult.stepAssertions.length > 0
-            ) {
+            if (options.text && caseResult.stepAssertions && caseResult.stepAssertions.length > 0) {
               output.message('', 'info');
               output.message('Step Assertions:', 'info');
               for (const sa of caseResult.stepAssertions) {

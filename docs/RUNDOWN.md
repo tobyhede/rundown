@@ -788,7 +788,7 @@ List active or available runbooks.
 ```bash
 rundown ls           # List active runbooks
 rundown ls --all     # List available runbook files
-rundown ls --json    # JSON output
+rundown ls    # JSON output (default)
 rundown ls --all --tags review  # Filter by tag
 ```
 
@@ -1064,7 +1064,7 @@ List commands (`rd ls`, `rd scenario ls`) use aligned tables following Linux CLI
 | **Separator** | 2 spaces between columns |
 | **Last column** | Extends to end (no padding) |
 | **Empty values** | Empty string |
-| **Machine output** | `--json` flag for programmatic use |
+| **Machine output** | JSON output by default |
 
 Example (`rd ls --all`):
 ```

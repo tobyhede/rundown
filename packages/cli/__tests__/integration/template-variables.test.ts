@@ -43,7 +43,8 @@ describe('Template Variables Integration', () => {
     it('--var overrides --var-file', async () => {
       await writeFile(join(workspace.cwd, 'vars.yaml'), 'message: from-file');
 
-      const result = runCli('run test.runbook.md --var-file vars.yaml --var message=from-flag',
+      const result = runCli(
+        'run test.runbook.md --var-file vars.yaml --var message=from-flag',
         workspace,
       );
 
@@ -60,9 +61,7 @@ describe('Template Variables Integration', () => {
 
     it('--var with empty value overrides --var-file', async () => {
       await writeFile(join(workspace.cwd, 'vars.yaml'), 'message: from-file');
-      const result = runCli('run test.runbook.md --var-file vars.yaml --var message=',
-        workspace,
-      );
+      const result = runCli('run test.runbook.md --var-file vars.yaml --var message=', workspace);
       expect(result.exitCode).toBe(0);
 
       // Parse JSON events and verify empty value was used
@@ -367,9 +366,7 @@ rd echo host={{config.host}} port={{config.port}}
       });
       await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
 
-      const result = runCli('run test.runbook.md --var count=10 --var-json count=99',
-        workspace,
-      );
+      const result = runCli('run test.runbook.md --var count=10 --var-json count=99', workspace);
 
       expect(result.exitCode).toBe(0);
       const events = parseJsonlEvents(result.stdout);
@@ -385,7 +382,8 @@ rd echo host={{config.host}} port={{config.port}}
       await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
       await writeFile(join(workspace.cwd, 'vars.yaml'), 'count: 10');
 
-      const result = runCli('run test.runbook.md --var-file vars.yaml --var-json count=99',
+      const result = runCli(
+        'run test.runbook.md --var-file vars.yaml --var-json count=99',
         workspace,
       );
 

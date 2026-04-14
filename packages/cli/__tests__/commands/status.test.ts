@@ -227,9 +227,7 @@ describe('complete command', () => {
   it('includes message in JSON output', async () => {
     await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
 
-    const result = await runCliInProcess(['complete', 'Early exit - tests passed'],
-      workspace,
-    );
+    const result = await runCliInProcess(['complete', 'Early exit - tests passed'], workspace);
 
     const output = JSON.parse(result.stdout);
     expect(output.message).toBe('Early exit - tests passed');

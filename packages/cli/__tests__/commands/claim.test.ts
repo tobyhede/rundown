@@ -65,8 +65,12 @@ describe('claim command', () => {
     });
 
     it('rejects claim with token missing prefix', async () => {
-      // cspell:disable-next-line
-      const result = await runCliInProcess('claim AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH --text', workspace);
+      // cspell:disable
+      const result = await runCliInProcess(
+        'claim AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH --text',
+        workspace,
+      );
+      // cspell:enable
       expect(result.exitCode).toBe(1);
       expect(result.stdout + result.stderr).toMatch(/invalid.*token|rdtk_/i);
     });
@@ -242,7 +246,8 @@ Execute with {{Env}} environment.
       result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
       const token = extractToken(result.stdout);
 
-      result = await runCliInProcess(`claim ${token} --var Env=staging --var Region=us-west --text`,
+      result = await runCliInProcess(
+        `claim ${token} --var Env=staging --var Region=us-west --text`,
         workspace,
       );
       expect(result.exitCode).toBe(0);
@@ -252,7 +257,8 @@ Execute with {{Env}} environment.
       await writeParentRunbook();
       await writeChildRunbook();
 
-      let result = await runCliInProcess('run --prompted parent.runbook.md --var ContextId=ctx-parent --text',
+      let result = await runCliInProcess(
+        'run --prompted parent.runbook.md --var ContextId=ctx-parent --text',
         workspace,
       );
       expect(result.exitCode).toBe(0);

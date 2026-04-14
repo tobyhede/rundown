@@ -20,7 +20,7 @@ npm install -g @rundown-org/cli
 
 ```bash
 rundown run [file]       # Run a runbook
-rundown run [file] --json # Output execution events as JSON
+rundown run [file]       # Output execution events as JSON (default)
 rundown run [file] --var key=value  # Set template variable (repeatable, omit =value to inherit from env)
 rundown run [file] --var-json key=json  # Set variable with JSON value (repeatable)
 rundown run [file] --var-file path  # Load variables from YAML file (repeatable)
@@ -172,7 +172,7 @@ Data sources are referenced in FOR clauses: `FOR item IN {{ items }}`.
 
 ## Schema Output
 
-The `--schema` flag outputs the JSON Schema for a command's `--json` output (supported by all commands with `--json` output):
+The `--schema` flag outputs the JSON Schema for a command's output (supported by all commands that produce JSON output):
 
 ```bash
 rd status --schema           # Status response schema
@@ -355,12 +355,12 @@ output.action({ action, from, result, at });
 output.flush();
 ```
 
-For direct table formatting (no `--json` flag support), use `formatTable` from `../helpers/table-formatter.js` (also relative to commands/).
+For direct table formatting (when not using JSON output), use `formatTable` from `../helpers/table-formatter.js` (also relative to commands/).
 
 Key conventions:
 - UPPERCASE headers, 2-space column separators
 - Left-align text, right-align numbers
-- `--json` flag for machine-readable output
+- Machine-readable JSON output by default
 
 See [docs/RUNDOWN.md](docs/RUNDOWN.md#output-format) for full output formatting standards.
 

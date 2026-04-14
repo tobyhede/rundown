@@ -89,7 +89,8 @@ Deploy to {{ environment }}.
 `,
     );
 
-    const result = await runCliInProcess(`resolve ${runbookPath} --var environment=staging`,
+    const result = await runCliInProcess(
+      `resolve ${runbookPath} --var environment=staging`,
       workspace,
     );
     const output = JSON.parse(result.stdout);
@@ -174,9 +175,7 @@ echo {{ item }}
 `,
     );
 
-    const result = await runCliInProcess(`resolve ${runbookPath} --var-file ${varFile}`,
-      workspace,
-    );
+    const result = await runCliInProcess(`resolve ${runbookPath} --var-file ${varFile}`, workspace);
     const output = JSON.parse(result.stdout);
 
     expect(output.valid).toBe(true);
@@ -325,7 +324,8 @@ echo hello
 `,
     );
 
-    const result = await runCliInProcess(`resolve ${runbookPath} --var-file ${badVarFile}`,
+    const result = await runCliInProcess(
+      `resolve ${runbookPath} --var-file ${badVarFile}`,
       workspace,
     );
     const output = JSON.parse(result.stdout);
@@ -353,7 +353,8 @@ Say {{ greeting }} to {{ recipient }}.
 `,
     );
 
-    const result = await runCliInProcess(`resolve ${runbookPath} --var-file ${badVarFile}`,
+    const result = await runCliInProcess(
+      `resolve ${runbookPath} --var-file ${badVarFile}`,
       workspace,
     );
     const output = JSON.parse(result.stdout);
@@ -395,7 +396,8 @@ echo hello
     );
 
     // bad!=value has an invalid key (contains '!'), which now fails at parse time
-    const result = await runCliInProcess(`resolve ${runbookPath} --var bad!=value --text`,
+    const result = await runCliInProcess(
+      `resolve ${runbookPath} --var bad!=value --text`,
       workspace,
     );
 
@@ -514,7 +516,8 @@ vars:
 `,
       );
 
-      const result = await runCliInProcess(`resolve ${runbookPath} --var Target=child.runbook.md`,
+      const result = await runCliInProcess(
+        `resolve ${runbookPath} --var Target=child.runbook.md`,
         workspace,
       );
       const output = JSON.parse(result.stdout);
@@ -557,7 +560,8 @@ vars:
 `,
       );
 
-      const result = await runCliInProcess(`resolve ${runbookPath} --var Target=rundown:write-plan`,
+      const result = await runCliInProcess(
+        `resolve ${runbookPath} --var Target=rundown:write-plan`,
         workspace,
       );
       const output = JSON.parse(result.stdout);

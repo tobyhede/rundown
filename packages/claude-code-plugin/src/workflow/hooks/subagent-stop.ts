@@ -27,7 +27,7 @@ export interface SubagentStopResult {
 // ---------------------------------------------------------------------------
 
 /**
- * Parent linkage surfaced by `rd status --json` when the runbook was launched
+ * Parent linkage surfaced by `rd status` when the runbook was launched
  * as a child. Used by the hook to correlate a consumed delegation token with
  * the child it produced.
  *
@@ -304,7 +304,7 @@ function parseParentLinkage(raw: unknown): ParentLinkage | undefined {
 }
 
 /**
- * Type guard for raw delegation objects from `rd status --json`.
+ * Type guard for raw delegation objects from `rd status`.
  *
  * @param d - Raw value from the delegations array
  * @returns True if the value is a valid DelegationStatus
@@ -355,7 +355,7 @@ export function parseDelegations(raw: unknown): {
 }
 
 /**
- * Query runbook state via `rd status --json` and parse into a discriminated union.
+ * Query runbook state via `rd status` and parse into a discriminated union.
  *
  * Best-effort: returns undefined if the CLI call fails for any reason.
  *
@@ -421,7 +421,7 @@ export function queryRunbookStatus(cwd: string): RunbookStatus | undefined {
  * Classify the delegation outcome by correlating the token hash with the
  * active runbook's delegation state.
  *
- * @param status - Parsed runbook status from `rd status --json`
+ * @param status - Parsed runbook status from `rd status`
  * @param tokenHash - SHA-256 hash of the consumed delegation token
  * @returns The delegation outcome determining which context message to produce
  *
@@ -654,7 +654,7 @@ function buildContextMessage(outcome: DelegationOutcome): string | undefined {
  * Reads (and consumes, once) `delegation_active_token` from session metadata
  * at `input.cwd`, hashes the token, and correlates it with the active
  * runbook's `parentLinkage.tokenHash` and the parent's outgoing delegations
- * in `rd status --json` to identify the exact delegation belonging to this
+ * in `rd status` to identify the exact delegation belonging to this
  * subagent.
  *
  * Classifies the delegation into one of five {@link DelegationOutcome}

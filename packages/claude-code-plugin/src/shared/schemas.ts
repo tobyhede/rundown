@@ -92,7 +92,7 @@ export function parseHookInput(json: string): ParseResult<HookInput> {
 }
 
 /**
- * Runbook position body schema — validates the `position` field of `rd status --json`.
+ * Runbook position body schema — validates the `position` field of `rd status`.
  *
  * Fields match {@link StatusOutputData.position} in the CLI's status builder.
  * Required fields (`current`, `total`) are enforced; optional fields are passed
@@ -107,7 +107,7 @@ export const RunbookPositionBodySchema = z
   })
   .passthrough();
 
-/** Runbook step detail schema — validates the `step` field of `rd status --json`. */
+/** Runbook step detail schema — validates the `step` field of `rd status`. */
 export const RunbookStepBodySchema = z
   .object({
     name: z.string(),
@@ -116,7 +116,7 @@ export const RunbookStepBodySchema = z
   .passthrough();
 
 /**
- * Parent linkage schema — validates the `parentLinkage` field of `rd status --json`.
+ * Parent linkage schema — validates the `parentLinkage` field of `rd status`.
  *
  * Mirrors the projection produced by `buildParentLinkage` in
  * `packages/cli/src/helpers/status-builder.ts`.

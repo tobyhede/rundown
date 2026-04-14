@@ -122,7 +122,7 @@ The MCP server acts as a bridge between MCP clients (like Claude Desktop) and th
 ```
 [MCP Client] --> [MCP Server] --> [Rundown CLI] --> [State Files]
                      |                   |
-                stdio transport     execFile + --json
+                stdio transport     execFile
 ```
 
 **Key characteristics:**
@@ -130,12 +130,12 @@ The MCP server acts as a bridge between MCP clients (like Claude Desktop) and th
 | Aspect | Implementation |
 |--------|----------------|
 | **Transport** | stdio (standard input/output) |
-| **CLI Invocation** | `npx --no rundown <cmd> --json` |
+| **CLI Invocation** | `npx --no rundown <cmd>` |
 | **Response Format** | JSON wrapped in MCP content blocks |
 | **Timeout** | 30 seconds per command |
 | **Error Handling** | Parses JSON errors from stdout/stderr |
 
-The server delegates all operations to the CLI with `--json` flag for machine-readable output, then wraps the response in MCP content format.
+The server delegates all operations to the CLI, then wraps the JSON response in MCP content format.
 
 ---
 
@@ -179,7 +179,7 @@ Check runbook syntax before execution.
 }
 ```
 
-**CLI Equivalent:** `rundown check <file> --json`
+**CLI Equivalent:** `rundown check <file>`
 
 ---
 
@@ -223,7 +223,7 @@ List active or available runbooks.
 }
 ```
 
-**CLI Equivalent:** `rundown ls [--all] [--tags <tags>] --json`
+**CLI Equivalent:** `rundown ls [--all] [--tags <tags>]`
 
 ---
 
@@ -241,7 +241,7 @@ Get current runbook state.
 }
 ```
 
-**CLI Equivalent:** `rundown status --json`
+**CLI Equivalent:** `rundown status`
 
 ---
 
@@ -277,7 +277,7 @@ Start a runbook.
 }
 ```
 
-**CLI Equivalent:** `rundown run [<file>] [--prompted] [--var key=value]... [--var-file path] --json`
+**CLI Equivalent:** `rundown run [<file>] [--prompted] [--var key=value]... [--var-file path]`
 
 **Note:** The `--var` and `--var-file` options are CLI-only. The MCP `run` tool does not currently expose variable configuration parameters. Delegation to child runbooks uses the CLI `delegate`/`claim`/`abort` commands. See [CLI documentation](../CLAUDE.md#template-variables) for full variable configuration details.
 
@@ -297,7 +297,7 @@ Mark the current step as passed.
 }
 ```
 
-**CLI Equivalent:** `rundown pass --json`
+**CLI Equivalent:** `rundown pass`
 
 ---
 
@@ -315,7 +315,7 @@ Mark the current step as failed.
 }
 ```
 
-**CLI Equivalent:** `rundown fail --json`
+**CLI Equivalent:** `rundown fail`
 
 ---
 
@@ -349,7 +349,7 @@ Jump to a specific step.
 }
 ```
 
-**CLI Equivalent:** `rundown goto <step> --json`
+**CLI Equivalent:** `rundown goto <step>`
 
 ---
 
@@ -383,7 +383,7 @@ Force early completion of a runbook (runbooks auto-complete on final step).
 }
 ```
 
-**CLI Equivalent:** `rundown complete [<message>] --json`
+**CLI Equivalent:** `rundown complete [<message>]`
 
 ---
 
@@ -415,7 +415,7 @@ Stop the runbook (abort execution).
 }
 ```
 
-**CLI Equivalent:** `rundown stop [<message>] --json`
+**CLI Equivalent:** `rundown stop [<message>]`
 
 ---
 
@@ -492,7 +492,7 @@ See [RUNDOWN.md](./RUNDOWN.md#delegation-commands) for full delegation command r
 ### Debugging
 
 1. **Check MCP server logs** - Look for errors in Claude Desktop console
-2. **Test CLI directly** - Run `rundown status --json` in terminal
+2. **Test CLI directly** - Run `rundown status` in terminal
 3. **Verify state files** - Check `.rundown/` directory
 4. **Check permissions** - Ensure npx can find rundown
 

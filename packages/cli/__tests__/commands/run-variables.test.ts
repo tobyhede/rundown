@@ -28,7 +28,8 @@ rd echo {{message}}
 
     await writeFile(join(workspace.cwd, 'vars.yaml'), 'message: hello');
 
-    const result = await runCliInProcess('run test.runbook.md --var-file vars.yaml --text',
+    const result = await runCliInProcess(
+      'run test.runbook.md --var-file vars.yaml --text',
       workspace,
     );
 
@@ -48,7 +49,8 @@ rd echo {{message}}
 `;
     await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
 
-    const result = await runCliInProcess('run test.runbook.md --var message=world --text',
+    const result = await runCliInProcess(
+      'run test.runbook.md --var message=world --text',
       workspace,
     );
 
@@ -68,7 +70,8 @@ rd echo {{a}} {{b}}
 `;
     await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
 
-    const result = await runCliInProcess('run test.runbook.md --var a=first --var b=second --text',
+    const result = await runCliInProcess(
+      'run test.runbook.md --var a=first --var b=second --text',
       workspace,
     );
 
@@ -91,7 +94,8 @@ rd echo {{MY_TEST_VAR}}
 
     process.env.MY_TEST_VAR = 'inherited-value';
     try {
-      const result = await runCliInProcess('run test.runbook.md --var MY_TEST_VAR --text',
+      const result = await runCliInProcess(
+        'run test.runbook.md --var MY_TEST_VAR --text',
         workspace,
       );
 
@@ -116,7 +120,8 @@ rd echo {{alpha}} {{beta}}
     await writeFile(join(workspace.cwd, 'a.yaml'), 'alpha: from-a');
     await writeFile(join(workspace.cwd, 'b.yaml'), 'beta: from-b');
 
-    const result = await runCliInProcess('run test.runbook.md --var-file a.yaml --var-file b.yaml --text',
+    const result = await runCliInProcess(
+      'run test.runbook.md --var-file a.yaml --var-file b.yaml --text',
       workspace,
     );
 
@@ -160,7 +165,8 @@ rd echo {{count}}
 `;
     await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
 
-    const result = await runCliInProcess('run test.runbook.md --var-json count=42 --text',
+    const result = await runCliInProcess(
+      'run test.runbook.md --var-json count=42 --text',
       workspace,
     );
 
@@ -180,7 +186,8 @@ rd echo {{count}}
 `;
     await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
 
-    const result = await runCliInProcess('run test.runbook.md --var-json count=not-json --text',
+    const result = await runCliInProcess(
+      'run test.runbook.md --var-json count=not-json --text',
       workspace,
     );
 

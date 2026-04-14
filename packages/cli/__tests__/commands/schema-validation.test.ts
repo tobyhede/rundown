@@ -550,9 +550,7 @@ echo hello
 `,
       );
 
-      const result = await runCliInProcess(`scenario show ${runbookPath} test-scenario`,
-        workspace,
-      );
+      const result = await runCliInProcess(`scenario show ${runbookPath} test-scenario`, workspace);
       const output = parseJsonOutput(result.stdout);
 
       const validation = validateScenarioShowOutput(output);
@@ -585,9 +583,7 @@ echo hello
 `,
       );
 
-      const result = await runCliInProcess(`scenario show ${runbookPath} non-existent`,
-        workspace,
-      );
+      const result = await runCliInProcess(`scenario show ${runbookPath} non-existent`, workspace);
       const output = parseJsonOutput(result.stdout);
 
       // Error responses use the standard ErrorResponse schema
@@ -683,9 +679,7 @@ prompt: Wait
 
     it('validates prompt with special characters', async () => {
       // Use array form to preserve content with spaces as single argument
-      const result = await runCliInProcess(['prompt', 'Test with spaces and chars'],
-        workspace,
-      );
+      const result = await runCliInProcess(['prompt', 'Test with spaces and chars'], workspace);
       const output = parseJsonOutput(result.stdout);
 
       const validation = validatePromptOutput(output);

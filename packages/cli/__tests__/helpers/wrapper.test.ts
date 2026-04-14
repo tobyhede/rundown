@@ -62,11 +62,9 @@ describe('withErrorHandling', () => {
       path: '/some/path.md',
     });
 
-    await withErrorHandling(
-      async () => {
-        throw nodeError;
-      },
-    );
+    await withErrorHandling(async () => {
+      throw nodeError;
+    });
 
     expect(mockExit).toHaveBeenCalledWith(1);
     const parsed = JSON.parse(errorSpy.mock.calls[0]?.[0] as string);
@@ -79,11 +77,9 @@ describe('withErrorHandling', () => {
       path: '/some/path.md',
     });
 
-    await withErrorHandling(
-      async () => {
-        throw nodeError;
-      },
-    );
+    await withErrorHandling(async () => {
+      throw nodeError;
+    });
 
     expect(mockExit).toHaveBeenCalledWith(1);
     const parsed = JSON.parse(errorSpy.mock.calls[0]?.[0] as string);
@@ -96,11 +92,9 @@ describe('withErrorHandling', () => {
       path: '/some/path.md',
     });
 
-    await withErrorHandling(
-      async () => {
-        throw nodeError;
-      },
-    );
+    await withErrorHandling(async () => {
+      throw nodeError;
+    });
 
     expect(mockExit).toHaveBeenCalledWith(1);
     const parsed = JSON.parse(errorSpy.mock.calls[0]?.[0] as string);
@@ -110,11 +104,9 @@ describe('withErrorHandling', () => {
   it('converts RunbookSyntaxError to syntaxError', async () => {
     const syntaxErr = new RunbookSyntaxError('bad syntax at line 5');
 
-    await withErrorHandling(
-      async () => {
-        throw syntaxErr;
-      },
-    );
+    await withErrorHandling(async () => {
+      throw syntaxErr;
+    });
 
     expect(mockExit).toHaveBeenCalledWith(1);
     const parsed = JSON.parse(errorSpy.mock.calls[0]?.[0] as string);
@@ -122,11 +114,9 @@ describe('withErrorHandling', () => {
   });
 
   it('wraps generic Error as unknown', async () => {
-    await withErrorHandling(
-      async () => {
-        throw new Error('something went wrong');
-      },
-    );
+    await withErrorHandling(async () => {
+      throw new Error('something went wrong');
+    });
 
     expect(mockExit).toHaveBeenCalledWith(1);
     const parsed = JSON.parse(errorSpy.mock.calls[0]?.[0] as string);
@@ -134,12 +124,10 @@ describe('withErrorHandling', () => {
   });
 
   it('wraps non-Error values as unknown', async () => {
-    await withErrorHandling(
-      async () => {
-        // eslint-disable-next-line @typescript-eslint/only-throw-error
-        throw 'string error';
-      },
-    );
+    await withErrorHandling(async () => {
+      // eslint-disable-next-line @typescript-eslint/only-throw-error
+      throw 'string error';
+    });
 
     expect(mockExit).toHaveBeenCalledWith(1);
     const parsed = JSON.parse(errorSpy.mock.calls[0]?.[0] as string);

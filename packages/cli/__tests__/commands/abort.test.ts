@@ -208,8 +208,12 @@ describe('abort command - unit tests', () => {
 
   describe('error handling', () => {
     it('handles non-existent parent runbook gracefully', async () => {
-      // cspell:disable-next-line
-      const result = await runCliInProcess('abort rdtk_NONEXISTENTTOKEN12345678901234 --text', workspace);
+      // cspell:disable
+      const result = await runCliInProcess(
+        'abort rdtk_NONEXISTENTTOKEN12345678901234 --text',
+        workspace,
+      );
+      // cspell:enable
       expect(result.exitCode).toBe(1);
       expect(result.stdout + result.stderr).toMatch(/not found|no active run/i);
     });
@@ -217,8 +221,12 @@ describe('abort command - unit tests', () => {
     it('handles malformed JSON in state file gracefully', async () => {
       // This is hard to test without directly corrupting files
       // but the command should handle errors gracefully
-      // cspell:disable-next-line
-      const result = await runCliInProcess('abort rdtk_INVALIDTOKEN123456789012345678 --text', workspace);
+      // cspell:disable
+      const result = await runCliInProcess(
+        'abort rdtk_INVALIDTOKEN123456789012345678 --text',
+        workspace,
+      );
+      // cspell:enable
       expect(result.exitCode).toBe(1);
     });
   });

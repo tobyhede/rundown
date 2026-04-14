@@ -14,7 +14,10 @@ describe('output format integration tests', () => {
 
   describe('start command output', () => {
     it('prints metadata and action block', async () => {
-      const result = await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+      const result = await runCliInProcess(
+        'run --prompted runbooks/simple.runbook.md --text',
+        workspace,
+      );
 
       expect(result.exitCode).toBe(0);
       // Metadata section
@@ -26,13 +29,19 @@ describe('output format integration tests', () => {
     });
 
     it('includes runbook ID in metadata', async () => {
-      const result = await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+      const result = await runCliInProcess(
+        'run --prompted runbooks/simple.runbook.md --text',
+        workspace,
+      );
 
       expect(result.stdout).toMatch(/wf-\d{4}-\d{2}-\d{2}/);
     });
 
     it('shows first step details in action block', async () => {
-      const result = await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+      const result = await runCliInProcess(
+        'run --prompted runbooks/simple.runbook.md --text',
+        workspace,
+      );
 
       // Step heading and description are shown
       expect(result.stdout).toContain('## 1.');
@@ -344,7 +353,8 @@ describe('output format integration tests', () => {
     });
 
     it('all commands exit cleanly with proper status codes', async () => {
-      const startResult = await runCliInProcess('run --prompted runbooks/simple.runbook.md --text',
+      const startResult = await runCliInProcess(
+        'run --prompted runbooks/simple.runbook.md --text',
         workspace,
       );
       const statusResult = await runCliInProcess('status --text', workspace);

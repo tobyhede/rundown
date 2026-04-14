@@ -244,9 +244,7 @@ echo hello
 `,
       );
 
-      const result = await runCliInProcess(`scenario show ${runbookPath} non-existent`,
-        workspace,
-      );
+      const result = await runCliInProcess(`scenario show ${runbookPath} non-existent`, workspace);
       expect(result.exitCode).toBe(1);
       // In-process mode may append a process.exit error object after the real output;
       // parse the first complete JSON object from stdout

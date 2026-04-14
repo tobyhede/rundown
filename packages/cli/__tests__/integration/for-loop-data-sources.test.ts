@@ -269,9 +269,7 @@ describe('FOR loop data source integration', () => {
     });
     await writeFile(join(workspace.cwd, 'file-loop.runbook.md'), content);
 
-    const result = runCli('run --var servers=file:servers.jsonl file-loop.runbook.md',
-      workspace,
-    );
+    const result = runCli('run --var servers=file:servers.jsonl file-loop.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
 
     const events = parseJsonEvents(result.stdout);
@@ -454,9 +452,7 @@ describe('FOR loop data source integration', () => {
     });
     await writeFile(join(workspace.cwd, 'jsonl-fields.runbook.md'), content);
 
-    const result = runCli('run --var items=file:items.jsonl jsonl-fields.runbook.md',
-      workspace,
-    );
+    const result = runCli('run --var items=file:items.jsonl jsonl-fields.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
 
     const events = parseJsonEvents(result.stdout);
@@ -509,7 +505,10 @@ describe('FOR loop data source integration', () => {
     });
     await writeFile(join(workspace.cwd, 'jsonl-bad.runbook.md'), content);
 
-    const result = runCli('run --var items=file:bad-items.jsonl jsonl-bad.runbook.md --text', workspace);
+    const result = runCli(
+      'run --var items=file:bad-items.jsonl jsonl-bad.runbook.md --text',
+      workspace,
+    );
 
     // Should fail with non-zero exit code
     expect(result.exitCode).not.toBe(0);
@@ -576,7 +575,8 @@ describe('FOR loop data source integration', () => {
     });
     await writeFile(join(workspace.cwd, 'descending-file.runbook.md'), content);
 
-    const result = runCli('run --var servers=file:servers.jsonl descending-file.runbook.md',
+    const result = runCli(
+      'run --var servers=file:servers.jsonl descending-file.runbook.md',
       workspace,
     );
     expect(result.exitCode).toBe(0);
@@ -739,9 +739,7 @@ describe('FOR loop data source integration', () => {
     });
     await writeFile(join(workspace.cwd, 'jsonl-protocol.runbook.md'), content);
 
-    const result = runCli('run --var items=file:items.jsonl jsonl-protocol.runbook.md',
-      workspace,
-    );
+    const result = runCli('run --var items=file:items.jsonl jsonl-protocol.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
 
     const events = parseJsonEvents(result.stdout);

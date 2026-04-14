@@ -21,7 +21,10 @@ describe('start command', () => {
 
   describe('file mode', () => {
     it('creates runbook state from valid runbook file', async () => {
-      const result = await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+      const result = await runCliInProcess(
+        'run --prompted runbooks/simple.runbook.md --text',
+        workspace,
+      );
 
       if (result.exitCode !== 0) {
         console.log('Run failed:', result.stdout, result.stderr);
@@ -56,7 +59,10 @@ describe('start command', () => {
     });
 
     it('outputs first step description', async () => {
-      const result = await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+      const result = await runCliInProcess(
+        'run --prompted runbooks/simple.runbook.md --text',
+        workspace,
+      );
 
       expect(result.stdout).toContain('## 1.');
       expect(result.stdout).toContain('First step');
@@ -104,13 +110,17 @@ describe('start command', () => {
 
   describe('option validation', () => {
     it('rejects --step without active parent runbook', async () => {
-      const result = await runCliInProcess('run runbooks/simple.runbook.md --step 1 --text', workspace);
+      const result = await runCliInProcess(
+        'run runbooks/simple.runbook.md --step 1 --text',
+        workspace,
+      );
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain('--step requires an active parent runbook');
     });
 
     it('rejects --index without --step', async () => {
-      const result = await runCliInProcess('run runbooks/simple.runbook.md --prompted --index 1 --text',
+      const result = await runCliInProcess(
+        'run runbooks/simple.runbook.md --prompted --index 1 --text',
         workspace,
       );
       expect(result.exitCode).toBe(1);

@@ -126,7 +126,7 @@ The `rd` command is an alias for `rundown`.
 | `rundown pop` | Resume enforcement (restore stashed runbook) |
 | `rundown ls` | List active runbooks |
 | `rundown ls --all` | List available runbook files |
-| `rundown ls --json` | Output as JSON for programmatic use |
+| `rundown ls` | Output as JSON for programmatic use (default) |
 | `rundown ls --tags <tags>` | Filter runbooks by comma-separated tags |
 | `rundown check <file>` | Validate runbook file |
 | `rundown echo` | Test helper: echo with configurable result |

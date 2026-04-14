@@ -84,7 +84,8 @@ name: no-scenarios
 
   describe('show subcommand', () => {
     it('shows details for a specific scenario', async () => {
-      const result = await runCliInProcess('scenario show test-runbook.runbook.md success --text',
+      const result = await runCliInProcess(
+        'scenario show test-runbook.runbook.md success --text',
         workspace,
       );
 
@@ -97,7 +98,8 @@ name: no-scenarios
     });
 
     it('shows error for non-existent scenario', async () => {
-      const result = await runCliInProcess('scenario show test-runbook.runbook.md nonexistent --text',
+      const result = await runCliInProcess(
+        'scenario show test-runbook.runbook.md nonexistent --text',
         workspace,
       );
 

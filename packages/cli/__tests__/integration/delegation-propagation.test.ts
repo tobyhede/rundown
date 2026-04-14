@@ -376,7 +376,10 @@ describe('Delegation propagation integration', () => {
       await writeChildRunbook();
 
       // Start parent
-      let result = await runCliInProcess('run --prompted triple-parent.runbook.md --text', workspace);
+      let result = await runCliInProcess(
+        'run --prompted triple-parent.runbook.md --text',
+        workspace,
+      );
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);

@@ -614,7 +614,8 @@ describe('Inline linkage integration (rd run --step)', () => {
       const parentRunId = parentState!.id as string;
 
       // Pass --var to override the inherited Region
-      result = await runCliInProcess(['run', 'child.runbook.md', '--step', '1.1', '--var', 'Region=eu-central', '--text'],
+      result = await runCliInProcess(
+        ['run', 'child.runbook.md', '--step', '1.1', '--var', 'Region=eu-central', '--text'],
         workspace,
       );
       expect(result.exitCode).toBe(0);
