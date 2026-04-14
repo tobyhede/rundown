@@ -25,6 +25,10 @@ export interface CapturedTransition {
   command?: string;
   /** Whether this transition resulted from aggregation (deferred result evaluation). */
   aggregated?: boolean;
+  /** Runbook that produced this transition (from event envelope). */
+  runbook?: { name?: string; path?: string };
+  /** Present for delegated/nested child runs — identifies the delegating parent step. */
+  parentStepId?: string;
 }
 
 /** Result of matching a single step assertion against the event stream. */
@@ -183,6 +187,8 @@ function processJsonObject(
       result: obj.result as 'PASS' | 'FAIL',
       command: obj.command as string | undefined,
       aggregated: obj.aggregated === true ? true : undefined,
+      runbook: obj.runbook as { name?: string; path?: string } | undefined,
+      parentStepId: typeof obj.parentStepId === 'string' ? obj.parentStepId : undefined,
     });
   } else if (obj.type === 'runbook_completed') {
     terminal = 'COMPLETE';
@@ -209,12 +215,12 @@ function processJsonObject(
  *
  * Handles two output formats:
  * - NDJSON: Multiple compact JSON objects, one per line (execution events + flushed object)
- * - Pretty-printed: A single multi-line JSON object (flushed object only, e.g., from `rd pass --json`)
+ * - Pretty-printed: A single multi-line JSON object (flushed object only, e.g., from `rd pass`)
  *
  * Transitions are extracted ONLY from streamed `step_transitioned` events.
  * The flushed JSON object (without a `type` field) is used ONLY for terminal detection.
  *
- * @param stdout - Raw stdout string from an rd command run with `--json`
+ * @param stdout - Raw stdout string from an rd command (JSON is the default format)
  * @returns Object with extracted transitions and terminal result (or null if not determined)
  */
 export function parseJsonLines(stdout: string): {
@@ -277,6 +283,12 @@ function eventMatchesAssertion(event: CapturedTransition, assertion: StepAsserti
   if (assertion.result !== undefined && event.result !== assertion.result) return false;
   if (assertion.command !== undefined && event.command !== assertion.command) return false;
   if (assertion.aggregated !== undefined && event.aggregated !== assertion.aggregated) return false;
+  if (assertion.runbook !== undefined) {
+    const rb = event.runbook;
+    const pathMatch = rb?.path !== undefined && rb.path.endsWith(assertion.runbook);
+    const nameMatch = rb?.name !== undefined && rb.name.endsWith(assertion.runbook);
+    if (!pathMatch && !nameMatch) return false;
+  }
   return true;
 }
 
@@ -326,6 +338,7 @@ export function matchStepAssertions(
  */
 export function formatStepAssertionDescription(sa: StepAssertionResult): string {
   const parts: string[] = [];
+  if (sa.assertion.runbook !== undefined) parts.push(`runbook=${sa.assertion.runbook}`);
   if (sa.assertion.at !== undefined) parts.push(`at=${sa.assertion.at}`);
   if (sa.assertion.from !== undefined) parts.push(`from=${sa.assertion.from}`);
   if (sa.assertion.action !== undefined) parts.push(`action=${sa.assertion.action}`);
@@ -399,7 +412,7 @@ export function extractVarFileReferences(commands: string[]): string[] {
 /**
  * Execute a sequence of commands in order, accumulating transitions and tokens.
  *
- * Handles `rd` commands (routed through the CLI with `--json`) and generic
+ * Handles `rd` commands (routed through the CLI with JSON output) and generic
  * shell commands. Token placeholders (`${TOKEN}`, `${TOKEN_2}`, etc.) are
  * substituted with previously captured delegation tokens before each
  * command runs. Tokens are extracted from parsed JSON `delegate` responses.
@@ -429,7 +442,7 @@ export async function executeCommandSequence(
     let stdout: string;
 
     if (rdMatch) {
-      // rd command — parse args and inject --json
+      // rd command — parse args (JSON output is the default)
       const shellArgs = shellParse(rdMatch[1]);
       const hasOperators = shellArgs.some((entry) => typeof entry !== 'string');
       if (hasOperators) {
@@ -438,7 +451,7 @@ export async function executeCommandSequence(
             'Split into separate commands instead of using &&, ||, |, etc.',
         );
       }
-      const args = injectJsonFlag(shellArgs as string[]);
+      const args = shellArgs as string[];
       const result = await runCommandWithTee({ kind: 'rd', args }, { cwd, quiet, cliPath, env });
       stdout = result.stdout;
 

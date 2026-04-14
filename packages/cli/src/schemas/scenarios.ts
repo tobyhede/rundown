@@ -6,6 +6,10 @@ import { z } from 'zod';
  * All fields are optional — only specified fields are matched against
  * the transition event. String/number union on `at`/`from` handles
  * YAML's tendency to parse `1.10` as a float.
+ *
+ * The `runbook` field is matched as a suffix against the transition's
+ * `runbook.path` (falling back to `runbook.name`). For example,
+ * `"child.runbook.md"` matches `"/abs/path/child.runbook.md"`.
  */
 export const StepAssertionSchema = z.object({
   at: z.union([z.string(), z.number()]).transform(String).optional(),
@@ -16,6 +20,7 @@ export const StepAssertionSchema = z.object({
   result: z.enum(['PASS', 'FAIL']).optional(),
   command: z.string().optional(),
   aggregated: z.boolean().optional(),
+  runbook: z.string().optional(),
 });
 
 /** A parsed step assertion used to match against captured transition events. */

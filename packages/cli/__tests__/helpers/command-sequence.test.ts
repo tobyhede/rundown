@@ -136,6 +136,28 @@ describe('parseJsonLines', () => {
     expect(result.transitions).toHaveLength(0);
     expect(result.terminal).toBeNull();
   });
+
+  it('captures runbook envelope field from step_transitioned event', () => {
+    const stdout =
+      '{"type":"step_transitioned","action":"COMPLETE","from":"1","at":"1","result":"PASS","runbook":{"path":"/abs/child.runbook.md","name":"child"}}\n';
+    const result = parseJsonLines(stdout);
+    expect(result.transitions[0].runbook).toEqual({ path: '/abs/child.runbook.md', name: 'child' });
+  });
+
+  it('captures parentStepId envelope field from step_transitioned event', () => {
+    const stdout =
+      '{"type":"step_transitioned","action":"COMPLETE","from":"1","at":"1","result":"PASS","parentStepId":"1.1"}\n';
+    const result = parseJsonLines(stdout);
+    expect(result.transitions[0].parentStepId).toBe('1.1');
+  });
+
+  it('leaves runbook and parentStepId undefined when absent', () => {
+    const stdout =
+      '{"type":"step_transitioned","action":"CONTINUE","from":"1","at":"2","result":"PASS"}\n';
+    const result = parseJsonLines(stdout);
+    expect(result.transitions[0].runbook).toBeUndefined();
+    expect(result.transitions[0].parentStepId).toBeUndefined();
+  });
 });
 
 describe('matchStepAssertions', () => {
@@ -209,6 +231,98 @@ describe('matchStepAssertions', () => {
     expect(results[0].matched).toBe(true); // GOTO matches second event
     expect(results[1].matched).toBe(false); // CONTINUE at position 2 already consumed
   });
+
+  it('matches runbook filter by path suffix', () => {
+    const events = [
+      {
+        action: 'COMPLETE',
+        from: '1',
+        result: 'PASS' as const,
+        runbook: { path: '/abs/child.runbook.md' },
+      },
+    ];
+    const results = matchStepAssertions(
+      [{ runbook: 'child.runbook.md', action: 'COMPLETE' }],
+      events,
+    );
+    expect(results[0].matched).toBe(true);
+  });
+
+  it('matches runbook filter by name suffix when path absent', () => {
+    const events = [
+      {
+        action: 'COMPLETE',
+        from: '1',
+        result: 'PASS' as const,
+        runbook: { name: 'child.runbook.md' },
+      },
+    ];
+    const results = matchStepAssertions([{ runbook: 'child.runbook.md' }], events);
+    expect(results[0].matched).toBe(true);
+  });
+
+  it('rejects runbook filter when path does not match', () => {
+    const events = [
+      {
+        action: 'COMPLETE',
+        from: '1',
+        result: 'PASS' as const,
+        runbook: { path: '/abs/parent.runbook.md' },
+      },
+    ];
+    const results = matchStepAssertions([{ runbook: 'child.runbook.md' }], events);
+    expect(results[0].matched).toBe(false);
+  });
+
+  it('runbook filter is a suffix match — handles subdirectory paths', () => {
+    const events = [
+      {
+        action: 'COMPLETE',
+        from: '1',
+        result: 'PASS' as const,
+        runbook: { path: '/abs/delegation/child.runbook.md' },
+      },
+    ];
+    const results = matchStepAssertions([{ runbook: 'child.runbook.md' }], events);
+    expect(results[0].matched).toBe(true);
+  });
+
+  it('assertion without runbook matches events regardless of their runbook field', () => {
+    const events = [
+      {
+        action: 'COMPLETE',
+        from: '1',
+        result: 'PASS' as const,
+        runbook: { path: '/abs/anything.runbook.md' },
+      },
+    ];
+    const results = matchStepAssertions([{ action: 'COMPLETE' }], events);
+    expect(results[0].matched).toBe(true);
+  });
+
+  it('runbook filter distinguishes child from parent when both at same step position', () => {
+    const events = [
+      {
+        action: 'COMPLETE',
+        from: '1',
+        result: 'PASS' as const,
+        runbook: { path: '/abs/child.runbook.md' },
+      },
+      {
+        action: 'COMPLETE',
+        from: '1',
+        result: 'PASS' as const,
+        runbook: { path: '/abs/parent.runbook.md' },
+      },
+    ];
+    const assertions = [
+      { runbook: 'child.runbook.md', from: '1', action: 'COMPLETE' as const },
+      { runbook: 'parent.runbook.md', from: '1', action: 'COMPLETE' as const },
+    ];
+    const results = matchStepAssertions(assertions, events);
+    expect(results[0].matched).toBe(true);
+    expect(results[1].matched).toBe(true);
+  });
 });
 
 describe('formatStepAssertionDescription', () => {
@@ -234,6 +348,14 @@ describe('formatStepAssertionDescription', () => {
       matched: true,
     });
     expect(result).toBe('step (empty assertion): matched');
+  });
+
+  it('includes runbook first when present', () => {
+    const result = formatStepAssertionDescription({
+      assertion: { runbook: 'child.runbook.md', from: '1', action: 'COMPLETE' },
+      matched: true,
+    });
+    expect(result).toBe('step runbook=child.runbook.md from=1 action=COMPLETE: matched');
   });
 });
 
