@@ -274,6 +274,20 @@ describe('matchStepAssertions', () => {
     expect(results[0].matched).toBe(false);
   });
 
+  it('rejects runbook filter when path does not match even if name matches', () => {
+    // path takes precedence when present — name is not a fallback matcher alongside path
+    const events = [
+      {
+        action: 'COMPLETE',
+        from: '1',
+        result: 'PASS' as const,
+        runbook: { path: '/abs/parent.runbook.md', name: 'child.runbook.md' },
+      },
+    ];
+    const results = matchStepAssertions([{ runbook: 'child.runbook.md' }], events);
+    expect(results[0].matched).toBe(false);
+  });
+
   it('runbook filter is a suffix match — handles subdirectory paths', () => {
     const events = [
       {
