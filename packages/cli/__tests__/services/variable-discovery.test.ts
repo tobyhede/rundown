@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import {
-  DEFAULT_WORK_PATH,
   discoverVariables,
   FileSourcePolicyError,
   findConfigFile,
@@ -17,7 +16,7 @@ import { execFileSync as nodeExecFileSync } from 'node:child_process';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { RUNDOWN_DIR } from '@rundown-org/core';
+import { RUNDOWN_DIR, WORK_DIR } from '@rundown-org/core';
 
 describe('parseVarFlag', () => {
   it('should parse key=value format', () => {
@@ -113,10 +112,10 @@ describe('getBuiltinVariables', () => {
     expect(builtins.Day).toMatch(/^(0[1-9]|[12]\d|3[01])$/);
   });
 
-  it('should return WorkPath starting with DEFAULT_WORK_PATH', () => {
+  it('should return WorkPath starting with WORK_DIR', () => {
     const builtins = getBuiltinVariables();
 
-    expect(builtins.WorkPath.startsWith(DEFAULT_WORK_PATH)).toBe(true);
+    expect(builtins.WorkPath.startsWith(WORK_DIR)).toBe(true);
   });
 
   it('should return Branch property', () => {
@@ -129,25 +128,25 @@ describe('getBuiltinVariables', () => {
     setExecFileSyncImpl((() => 'feature/my-branch\n') as typeof nodeExecFileSync);
 
     const builtins = getBuiltinVariables();
-    expect(builtins.WorkPath).toBe(`${DEFAULT_WORK_PATH}/feature-my-branch`);
+    expect(builtins.WorkPath).toBe(`${WORK_DIR}/feature-my-branch`);
     expect(builtins.Branch).toBe('feature/my-branch');
   });
 
-  it('should fall back to DEFAULT_WORK_PATH when not in git', () => {
+  it('should fall back to WORK_DIR when not in git', () => {
     setExecFileSyncImpl((() => {
       throw new Error('not a git repo');
     }) as typeof nodeExecFileSync);
 
     const builtins = getBuiltinVariables();
-    expect(builtins.WorkPath).toBe(DEFAULT_WORK_PATH);
+    expect(builtins.WorkPath).toBe(WORK_DIR);
     expect(builtins.Branch).toBe('');
   });
 
-  it('should fall back to DEFAULT_WORK_PATH on detached HEAD', () => {
+  it('should fall back to WORK_DIR on detached HEAD', () => {
     setExecFileSyncImpl((() => 'HEAD\n') as typeof nodeExecFileSync);
 
     const builtins = getBuiltinVariables();
-    expect(builtins.WorkPath).toBe(DEFAULT_WORK_PATH);
+    expect(builtins.WorkPath).toBe(WORK_DIR);
     expect(builtins.Branch).toBe('');
   });
 

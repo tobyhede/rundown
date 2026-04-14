@@ -43,6 +43,12 @@ export const LOCKS_DIR = `${RUNDOWN_DIR}/locks`;
 /** Directory path (relative to project root) for project-local runbook sources. */
 export const RUNBOOKS_DIR = `${RUNDOWN_DIR}/runbooks`;
 
+/** Directory path (relative to project root) for runbook work artifacts. */
+export const WORK_DIR = `${RUNDOWN_DIR}/work`;
+
+/** File path (relative to project root) for the user-managed variable config file. */
+export const CONFIG_FILE = `${RUNDOWN_DIR}/config.yaml`;
+
 /**
  * Absolute path to the runbook execution state directory.
  *
@@ -74,6 +80,14 @@ export const locksDir = (cwd: string): string => path.join(cwd, LOCKS_DIR);
  * @returns Path to `.rundown/runbooks/`
  */
 export const runbooksDir = (cwd: string): string => path.join(cwd, RUNBOOKS_DIR);
+
+/**
+ * Absolute path to the runbook work artifact directory.
+ *
+ * @param cwd - Project root directory
+ * @returns Path to `.rundown/work/`
+ */
+export const workDir = (cwd: string): string => path.join(cwd, WORK_DIR);
 
 /**
  * Absolute path to a specific runbook state file.
