@@ -172,7 +172,12 @@ describe('runbook compiler', () => {
 
       // 1.2 passes — all results in, PASS ALL: COMPLETE
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('COMPLETE');
+      const passAllSnapshot = actor.getSnapshot();
+      expect(passAllSnapshot.value).toBe('COMPLETE');
+      expect(passAllSnapshot.context.deferredResults).toEqual(['pass', 'pass']);
+      expect(passAllSnapshot.context.lastAction).toEqual(
+        expect.objectContaining({ type: 'COMPLETE' }),
+      );
     });
 
     it('H3 runbook substeps under aggregating parent FAIL ANY triggers STOP', () => {
@@ -197,7 +202,10 @@ describe('runbook compiler', () => {
 
       // 1.2 passes — all results in, FAIL ANY has a fail → STOPPED
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('STOPPED');
+      const failAnySnapshot = actor.getSnapshot();
+      expect(failAnySnapshot.value).toBe('STOPPED');
+      expect(failAnySnapshot.context.deferredResults).toEqual(['fail', 'pass']);
+      expect(failAnySnapshot.context.lastAction).toEqual(expect.objectContaining({ type: 'STOP' }));
     });
 
     it('mixed H3 substeps: prose and runbook-list both DEFER under aggregating parent', () => {
@@ -223,7 +231,9 @@ Write the plan manually.
 
       // 1.2 (runbook list) passes → DEFER → PASS ALL: COMPLETE
       actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().value).toBe('COMPLETE');
+      const mixedSnapshot = actor.getSnapshot();
+      expect(mixedSnapshot.value).toBe('COMPLETE');
+      expect(mixedSnapshot.context.deferredResults).toEqual(['pass', 'pass']);
     });
 
     it('non-aggregating substeps with sequential flow (Case D)', () => {
