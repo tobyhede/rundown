@@ -7,8 +7,8 @@ import { RunbookSyntaxError } from '@rundown-org/parser';
 interface ErrorHandlingOptions {
   /** Show verbose error output including description and docs link */
   verbose?: boolean;
-  /** Output error as JSON */
-  json?: boolean;
+  /** Output error as human-readable text instead of JSON (JSON is the default) */
+  text?: boolean;
 }
 
 /**
@@ -61,10 +61,10 @@ export async function withErrorHandling(
   } catch (error) {
     const rundownError = toRundownError(error);
 
-    if (options.json) {
-      console.error(JSON.stringify(rundownError.toJSON(), null, 2));
-    } else {
+    if (options.text) {
       console.error(rundownError.toCliString(options.verbose));
+    } else {
+      console.error(JSON.stringify(rundownError.toJSON(), null, 2));
     }
 
     process.exit(1);

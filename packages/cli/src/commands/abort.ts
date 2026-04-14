@@ -141,11 +141,11 @@ export function registerAbortCommand(program: Command): void {
     .command('abort <token>')
     .description('Cancel a delegation token')
     .option('--force', 'Force cancel even if delegation is claimed (stops child run)')
-    .option('--json', 'Output as JSON')
-    .action(async (token: string, options: { force?: boolean; json?: boolean }) => {
+    .option('--text', 'Output as human-readable text')
+    .action(async (token: string, options: { force?: boolean; text?: boolean }) => {
       await withErrorHandling(
         async () => {
-          const output = new OutputEmitter({ json: options.json });
+          const output = new OutputEmitter({ text: options.text });
           const cwd = getCwd();
           const manager = new RunbookStateManager(cwd);
           const hint = truncateDelegationToken(token);
@@ -231,7 +231,7 @@ export function registerAbortCommand(program: Command): void {
 
             // 7. Handle early-exit results (already_cancelled, needs_force)
             if (abortResult.status === 'already_cancelled') {
-              if (options.json) {
+              if (!options.text) {
                 output.json({
                   kind: 'abort',
                   action: 'abort',
@@ -303,7 +303,7 @@ export function registerAbortCommand(program: Command): void {
           }
 
           // 12. Output result
-          if (options.json) {
+          if (!options.text) {
             output.json({
               kind: 'abort',
               action: 'abort',
@@ -329,7 +329,7 @@ export function registerAbortCommand(program: Command): void {
 
           output.flush();
         },
-        { json: options.json },
+        { text: options.text },
       );
     });
 }

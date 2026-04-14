@@ -15,11 +15,11 @@ export function registerGotoCommand(program: Command): void {
     .command('goto <step>')
     .description('Jump to specific step (e.g., "3" or "3.1" for substep)')
     .option('--index <number>', 'FOR loop iteration to target')
-    .option('--json', 'Output as JSON for programmatic use')
-    .action(async (stepArg: string, options: { index?: string; json?: boolean }) => {
+    .option('--text', 'Output as human-readable text')
+    .action(async (stepArg: string, options: { index?: string; text?: boolean }) => {
       await withErrorHandling(
         async () => {
-          const output = new OutputEmitter({ json: options.json });
+          const output = new OutputEmitter({ text: options.text });
           const cwd = getCwd();
 
           const ctx = await buildGotoContext(output, cwd);
@@ -50,7 +50,7 @@ export function registerGotoCommand(program: Command): void {
             process.exit(1);
           }
         },
-        { json: options.json },
+        { text: options.text },
       );
     });
 }

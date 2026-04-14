@@ -68,17 +68,6 @@ export interface CommandSequenceOptions {
 }
 
 /**
- * Inject `--json` flag into an args array if not already present.
- *
- * @param args - The argument array to inject into
- * @returns New array with `--json` appended, or original if already present
- */
-export function injectJsonFlag(args: string[]): string[] {
-  if (args.includes('--json')) return args;
-  return [...args, '--json'];
-}
-
-/**
  * Substitute captured token placeholders in a command string.
  *
  * `${TOKEN}` maps to `tokens[0]`, `${TOKEN_2}` maps to `tokens[1]`, etc.
@@ -215,12 +204,12 @@ function processJsonObject(
  *
  * Handles two output formats:
  * - NDJSON: Multiple compact JSON objects, one per line (execution events + flushed object)
- * - Pretty-printed: A single multi-line JSON object (flushed object only, e.g., from `rd pass --json`)
+ * - Pretty-printed: A single multi-line JSON object (flushed object only, e.g., from `rd pass`)
  *
  * Transitions are extracted ONLY from streamed `step_transitioned` events.
  * The flushed JSON object (without a `type` field) is used ONLY for terminal detection.
  *
- * @param stdout - Raw stdout string from an rd command run with `--json`
+ * @param stdout - Raw stdout string from an rd command (JSON is the default output)
  * @returns Object with extracted transitions and terminal result (or null if not determined)
  */
 export function parseJsonLines(stdout: string): {
@@ -416,7 +405,7 @@ export function extractVarFileReferences(commands: string[]): string[] {
 /**
  * Execute a sequence of commands in order, accumulating transitions and tokens.
  *
- * Handles `rd` commands (routed through the CLI with `--json`) and generic
+ * Handles `rd` commands (JSON is the default output format) and generic
  * shell commands. Token placeholders (`${TOKEN}`, `${TOKEN_2}`, etc.) are
  * substituted with previously captured delegation tokens before each
  * command runs. Tokens are extracted from parsed JSON `delegate` responses.
@@ -446,7 +435,7 @@ export async function executeCommandSequence(
     let stdout: string;
 
     if (rdMatch) {
-      // rd command — parse args and inject --json
+      // rd command — parse args (JSON is the default output format)
       const shellArgs = shellParse(rdMatch[1]);
       const hasOperators = shellArgs.some((entry) => typeof entry !== 'string');
       if (hasOperators) {
@@ -455,7 +444,7 @@ export async function executeCommandSequence(
             'Split into separate commands instead of using &&, ||, |, etc.',
         );
       }
-      const args = injectJsonFlag(shellArgs as string[]);
+      const args = shellArgs as string[];
       const result = await runCommandWithTee({ kind: 'rd', args }, { cwd, quiet, cliPath, env });
       stdout = result.stdout;
 

@@ -25,11 +25,11 @@ export function registerCompleteCommand(program: Command): void {
     .command('complete')
     .description('Force early completion of current runbook (runbooks auto-complete on final step)')
     .argument('[message]', 'Completion message')
-    .option('--json', 'Output as JSON for programmatic use')
-    .action(async (message: string | undefined, options: { json?: boolean }) => {
+    .option('--text', 'Output as human-readable text')
+    .action(async (message: string | undefined, options: { text?: boolean }) => {
       await withErrorHandling(
         async () => {
-          const output = new OutputEmitter({ json: options.json });
+          const output = new OutputEmitter({ text: options.text });
           const cwd = getCwd();
           const manager = new RunbookStateManager(cwd);
           const sessionService = new SessionService(manager);
@@ -55,7 +55,7 @@ export function registerCompleteCommand(program: Command): void {
           output.complete(message ?? 'Runbook completed successfully');
           output.flush();
         },
-        { json: options.json },
+        { text: options.text },
       );
     });
 }

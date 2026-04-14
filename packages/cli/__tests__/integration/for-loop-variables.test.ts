@@ -40,7 +40,7 @@ describe('Per-step variable expansion ({{Step}}, {{Index}}, FOR loop variables)'
     });
     await writeFile(join(workspace.cwd, 'for-vars.runbook.md'), content);
 
-    const result = runCli('run --json for-vars.runbook.md', workspace);
+    const result = runCli('run for-vars.runbook.md --text', workspace);
     expect(result.exitCode).toBe(0);
 
     // Parse JSON events from output
@@ -94,7 +94,7 @@ describe('Per-step variable expansion ({{Step}}, {{Index}}, FOR loop variables)'
     });
     await writeFile(join(workspace.cwd, 'step-var-simple.runbook.md'), content);
 
-    const result = runCli('run --json step-var-simple.runbook.md', workspace);
+    const result = runCli('run step-var-simple.runbook.md --text', workspace);
     expect(result.exitCode).toBe(0);
 
     const events = result.stdout
@@ -146,7 +146,7 @@ describe('Per-step variable expansion ({{Step}}, {{Index}}, FOR loop variables)'
     });
     await writeFile(join(workspace.cwd, 'step-var-substep.runbook.md'), content);
 
-    const result = runCli('run --json step-var-substep.runbook.md', workspace);
+    const result = runCli('run step-var-substep.runbook.md --text', workspace);
     expect(result.exitCode).toBe(0);
 
     const events = result.stdout
@@ -198,7 +198,7 @@ describe('Per-step variable expansion ({{Step}}, {{Index}}, FOR loop variables)'
     });
     await writeFile(join(workspace.cwd, 'step-var-for.runbook.md'), content);
 
-    const result = runCli('run --json step-var-for.runbook.md', workspace);
+    const result = runCli('run step-var-for.runbook.md --text', workspace);
     expect(result.exitCode).toBe(0);
 
     const events = result.stdout
@@ -246,7 +246,7 @@ describe('Per-step variable expansion ({{Step}}, {{Index}}, FOR loop variables)'
     });
     await writeFile(join(workspace.cwd, 'for-bootstrap.runbook.md'), content);
 
-    const result = runCli('run --json for-bootstrap.runbook.md', workspace);
+    const result = runCli('run for-bootstrap.runbook.md --text', workspace);
     expect(result.exitCode).toBe(0);
 
     const events = result.stdout
@@ -280,7 +280,7 @@ describe('Per-step variable expansion ({{Step}}, {{Index}}, FOR loop variables)'
     });
     await writeFile(join(workspace.cwd, 'index-outside-for.runbook.md'), content);
 
-    const result = runCli('run --json index-outside-for.runbook.md', workspace);
+    const result = runCli('run index-outside-for.runbook.md --text', workspace);
     expect(result.exitCode).toBe(0);
 
     const events = result.stdout
@@ -312,7 +312,7 @@ describe('Per-step variable expansion ({{Step}}, {{Index}}, FOR loop variables)'
     });
     await writeFile(join(workspace.cwd, 'step-named.runbook.md'), content);
 
-    const result = runCli('run --json step-named.runbook.md', workspace);
+    const result = runCli('run step-named.runbook.md --text', workspace);
     expect(result.exitCode).toBe(0);
 
     const events = result.stdout
@@ -356,7 +356,7 @@ describe('Per-step variable expansion ({{Step}}, {{Index}}, FOR loop variables)'
     });
     await writeFile(join(workspace.cwd, 'for-prompt.runbook.md'), content);
 
-    const result = runCli('run --json for-prompt.runbook.md', workspace);
+    const result = runCli('run for-prompt.runbook.md --text', workspace);
     expect(result.exitCode).toBe(0);
 
     const events = result.stdout
@@ -394,7 +394,7 @@ describe('Per-step variable expansion ({{Step}}, {{Index}}, FOR loop variables)'
     });
     await writeFile(join(workspace.cwd, 'for-var-bounds.runbook.md'), content);
 
-    const result = runCli('run --json for-var-bounds.runbook.md', workspace);
+    const result = runCli('run for-var-bounds.runbook.md --text', workspace);
     expect(result.exitCode).toBe(0);
 
     const events = result.stdout
@@ -431,7 +431,7 @@ describe('Per-step variable expansion ({{Step}}, {{Index}}, FOR loop variables)'
     });
     await writeFile(join(workspace.cwd, 'for-multi-sub.runbook.md'), content);
 
-    const result = runCli('run --json for-multi-sub.runbook.md', workspace);
+    const result = runCli('run for-multi-sub.runbook.md --text', workspace);
     expect(result.exitCode).toBe(0);
 
     const events = result.stdout
@@ -475,7 +475,7 @@ describe('Per-step variable expansion ({{Step}}, {{Index}}, FOR loop variables)'
     });
     await writeFile(join(workspace.cwd, 'for-single-iter.runbook.md'), content);
 
-    const result = runCli('run --json for-single-iter.runbook.md', workspace);
+    const result = runCli('run for-single-iter.runbook.md --text', workspace);
     expect(result.exitCode).toBe(0);
 
     const events = result.stdout
@@ -509,7 +509,7 @@ describe('Per-step variable expansion ({{Step}}, {{Index}}, FOR loop variables)'
     });
     await writeFile(join(workspace.cwd, 'item-outside-for.runbook.md'), content);
 
-    const result = runCli('run --json item-outside-for.runbook.md', workspace);
+    const result = runCli('run item-outside-for.runbook.md --text', workspace);
     expect(result.exitCode).toBe(0);
 
     const events = result.stdout
@@ -557,7 +557,7 @@ describe('Per-step variable expansion ({{Step}}, {{Index}}, FOR loop variables)'
     });
     await writeFile(join(workspace.cwd, 'for-scope.runbook.md'), content);
 
-    const result = runCli('run --json for-scope.runbook.md', workspace);
+    const result = runCli('run for-scope.runbook.md --text', workspace);
     expect(result.exitCode).toBe(0);
 
     const events = result.stdout
@@ -596,7 +596,7 @@ describe('Per-step variable expansion ({{Step}}, {{Index}}, FOR loop variables)'
     });
     await writeFile(join(workspace.cwd, 'context-current.runbook.md'), content);
 
-    const result = runCli('run --json context-current.runbook.md', workspace);
+    const result = runCli('run context-current.runbook.md --text', workspace);
     expect(result.exitCode).toBe(0);
 
     const events = result.stdout
@@ -636,7 +636,7 @@ describe('Per-step variable expansion ({{Step}}, {{Index}}, FOR loop variables)'
     });
     await writeFile(join(workspace.cwd, 'context-vars.runbook.md'), content);
 
-    const result = runCli('run --json context-vars.runbook.md --var env=prod', workspace);
+    const result = runCli('run context-vars.runbook.md --var env=prod --text', workspace);
     expect(result.exitCode).toBe(0);
 
     const events = result.stdout
@@ -684,7 +684,7 @@ rd echo item={{item}}
 `,
     );
 
-    const result = runCli('resolve --json fallback.runbook.md', workspace);
+    const result = runCli('resolve fallback.runbook.md', workspace);
     const output = JSON.parse(result.stdout);
 
     expect(output.valid).toBe(true);
@@ -729,7 +729,7 @@ rd echo item={{item}}
     );
 
     // Verify resolve succeeds and reports the fallback warning
-    const result = runCli('resolve --json fallback-trans.runbook.md', workspace);
+    const result = runCli('resolve fallback-trans.runbook.md', workspace);
     const output = JSON.parse(result.stdout);
 
     expect(output.valid).toBe(true);

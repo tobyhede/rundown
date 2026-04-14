@@ -4,7 +4,6 @@ import {
   matchStepAssertions,
   formatStepAssertionDescription,
   substituteTokens,
-  injectJsonFlag,
   extractRunbookReferences,
 } from '../../src/helpers/command-sequence.js';
 
@@ -370,22 +369,6 @@ describe('formatStepAssertionDescription', () => {
       matched: true,
     });
     expect(result).toBe('step runbook=child.runbook.md from=1 action=COMPLETE: matched');
-  });
-});
-
-describe('injectJsonFlag', () => {
-  it('appends --json when not present', () => {
-    expect(injectJsonFlag(['run', 'test.md'])).toEqual(['run', 'test.md', '--json']);
-  });
-
-  it('returns original array when --json already present', () => {
-    const args = ['run', 'test.md', '--json'];
-    expect(injectJsonFlag(args)).toBe(args);
-  });
-
-  it('works with various arg combinations', () => {
-    expect(injectJsonFlag(['pass'])).toEqual(['pass', '--json']);
-    expect(injectJsonFlag(['run', '--var', 'x=1'])).toEqual(['run', '--var', 'x=1', '--json']);
   });
 });
 

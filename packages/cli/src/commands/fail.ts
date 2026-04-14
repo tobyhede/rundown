@@ -24,11 +24,11 @@ export function registerFailCommand(program: Command): void {
     .description('Mark current step as failed (triggers FAIL transition)')
     .option('--step <stepId>', 'Target specific substep')
     .option('--index <number>', 'FOR loop iteration to target (requires --step)')
-    .option('--json', 'Output as JSON')
-    .action(async (options: { step?: string; index?: string; json?: boolean }) => {
+    .option('--text', 'Output as human-readable text')
+    .action(async (options: { step?: string; index?: string; text?: boolean }) => {
       await withErrorHandling(
         async () => {
-          const output = new OutputEmitter({ json: options.json });
+          const output = new OutputEmitter({ text: options.text });
 
           const depError = validateIndexRequiresStep(options.index, options.step);
           if (depError) {
@@ -79,7 +79,7 @@ export function registerFailCommand(program: Command): void {
             process.exitCode = 1;
           }
         },
-        { json: options.json },
+        { text: options.text },
       );
     });
 }

@@ -13,7 +13,7 @@ interface PruneOptions {
   active?: boolean;
   inactive?: boolean;
   all?: boolean;
-  json?: boolean;
+  text?: boolean;
 }
 
 /**
@@ -29,11 +29,11 @@ export function registerPruneCommand(program: Command): void {
     .option('--active', 'Prune active runbook state')
     .option('--inactive', 'Prune inactive runbook state')
     .option('--all', 'Prune all runbook state')
-    .option('--json', 'Output as JSON')
+    .option('--text', 'Output as human-readable text')
     .action(async (options: PruneOptions) => {
       await withErrorHandling(async () => {
         const cwd = getCwd();
-        const output = new OutputEmitter({ json: options.json });
+        const output = new OutputEmitter({ text: options.text });
 
         const manager = new RunbookStateManager(cwd);
         const sessionService = new SessionService(manager);

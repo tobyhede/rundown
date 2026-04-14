@@ -14,90 +14,90 @@ describe('CLI program', () => {
 
   describe('command registration', () => {
     it('shows help message with no arguments', () => {
-      const result = runCli('--help', workspace);
+      const result = runCli('--help --text', workspace);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('rundown');
     });
 
     it('shows version with --version flag', () => {
-      const result = runCli('--version', workspace);
+      const result = runCli('--version --text', workspace);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toMatch(/\d+\.\d+\.\d+/);
     });
 
     it('registers run command', () => {
-      const result = runCli('run --help', workspace);
+      const result = runCli('run --help --text', workspace);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('run');
     });
 
     it('registers pass command', () => {
-      const result = runCli('pass --help', workspace);
+      const result = runCli('pass --help --text', workspace);
       expect(result.exitCode).toBe(0);
     });
 
     it('registers fail command', () => {
-      const result = runCli('fail --help', workspace);
+      const result = runCli('fail --help --text', workspace);
       expect(result.exitCode).toBe(0);
     });
 
     it('registers complete command', () => {
-      const result = runCli('complete --help', workspace);
+      const result = runCli('complete --help --text', workspace);
       expect(result.exitCode).toBe(0);
     });
 
     it('registers goto command', () => {
-      const result = runCli('goto --help', workspace);
+      const result = runCli('goto --help --text', workspace);
       expect(result.exitCode).toBe(0);
     });
 
     it('registers status command', () => {
-      const result = runCli('status --help', workspace);
+      const result = runCli('status --help --text', workspace);
       expect(result.exitCode).toBe(0);
     });
 
     it('registers stop command', () => {
-      const result = runCli('stop --help', workspace);
+      const result = runCli('stop --help --text', workspace);
       expect(result.exitCode).toBe(0);
     });
 
     it('registers ls command', () => {
-      const result = runCli('ls --help', workspace);
+      const result = runCli('ls --help --text', workspace);
       expect(result.exitCode).toBe(0);
     });
 
     it('registers stash command', () => {
-      const result = runCli('stash --help', workspace);
+      const result = runCli('stash --help --text', workspace);
       expect(result.exitCode).toBe(0);
     });
 
     it('registers pop command', () => {
-      const result = runCli('pop --help', workspace);
+      const result = runCli('pop --help --text', workspace);
       expect(result.exitCode).toBe(0);
     });
 
     it('registers echo command', () => {
-      const result = runCli('echo --help', workspace);
+      const result = runCli('echo --help --text', workspace);
       expect(result.exitCode).toBe(0);
     });
 
     it('registers check command', () => {
-      const result = runCli('check --help', workspace);
+      const result = runCli('check --help --text', workspace);
       expect(result.exitCode).toBe(0);
     });
 
     it('registers prune command', () => {
-      const result = runCli('prune --help', workspace);
+      const result = runCli('prune --help --text', workspace);
       expect(result.exitCode).toBe(0);
     });
 
     it('registers prompt command', () => {
-      const result = runCli('prompt --help', workspace);
+      const result = runCli('prompt --help --text', workspace);
       expect(result.exitCode).toBe(0);
     });
 
     it('registers scenarios command', () => {
-      const result = runCli('scenarios --help', workspace);
+      const result = runCli('scenarios --help --text', workspace);
       expect(result.exitCode).toBe(0);
     });
 
@@ -132,38 +132,38 @@ describe('CLI program', () => {
     });
 
     it('accepts --allow-all flag', () => {
-      const result = runCli('status --allow-all', workspace);
+      const result = runCli('status --allow-all --text', workspace);
       expect(result.exitCode).toBe(0);
     });
 
     it('accepts --deny-all flag', () => {
-      const result = runCli('status --deny-all', workspace);
+      const result = runCli('status --deny-all --text', workspace);
       // May succeed or fail depending on implementation
       expect([0, 1]).toContain(result.exitCode);
     });
 
     it('accepts --yes flag', () => {
-      const result = runCli('prune --yes', workspace);
+      const result = runCli('prune --yes --text', workspace);
       expect(result.exitCode).toBe(0);
     });
 
     it('accepts --non-interactive flag', () => {
-      const result = runCli('status --non-interactive', workspace);
+      const result = runCli('status --non-interactive --text', workspace);
       expect(result.exitCode).toBe(0);
     });
 
     it('accepts --sandbox flag', () => {
-      const result = runCli('status --sandbox', workspace);
+      const result = runCli('status --sandbox --text', workspace);
       expect(result.exitCode).toBe(0);
     });
 
     it('accepts --no-sandbox flag', () => {
-      const result = runCli('status --no-sandbox', workspace);
+      const result = runCli('status --no-sandbox --text', workspace);
       expect(result.exitCode).toBe(0);
     });
 
     it('accepts --sandbox-strict flag', () => {
-      const result = runCli('status --sandbox-strict', workspace);
+      const result = runCli('status --sandbox-strict --text', workspace);
       // May succeed or fail based on sandbox availability
       expect([0, 1]).toContain(result.exitCode);
     });
@@ -171,27 +171,27 @@ describe('CLI program', () => {
 
   describe('policy options', () => {
     it('accepts --allow-run option', () => {
-      const result = runCli('status --allow-run echo,ls', workspace);
+      const result = runCli('status --allow-run echo,ls --text', workspace);
       expect(result.exitCode).toBe(0);
     });
 
     it('accepts --allow-read option', () => {
-      const result = runCli('status --allow-read /tmp', workspace);
+      const result = runCli('status --allow-read /tmp --text', workspace);
       expect(result.exitCode).toBe(0);
     });
 
     it('accepts --allow-write option', () => {
-      const result = runCli('status --allow-write /tmp', workspace);
+      const result = runCli('status --allow-write /tmp --text', workspace);
       expect(result.exitCode).toBe(0);
     });
 
     it('accepts --allow-env option', () => {
-      const result = runCli('status --allow-env HOME,PATH', workspace);
+      const result = runCli('status --allow-env HOME,PATH --text', workspace);
       expect(result.exitCode).toBe(0);
     });
 
     it('accepts --policy option', () => {
-      const result = runCli('status --policy policy.json', workspace);
+      const result = runCli('status --policy policy.json --text', workspace);
       // May fail if file doesn't exist, but flag is accepted
       expect([0, 1]).toContain(result.exitCode);
     });
@@ -199,13 +199,13 @@ describe('CLI program', () => {
 
   describe('error handling', () => {
     it('shows error for unknown command', () => {
-      const result = runCli('unknown-command', workspace);
+      const result = runCli('unknown-command --text', workspace);
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toMatch(/unknown|error/i);
     });
 
     it('shows error for invalid option', () => {
-      const result = runCli('status --invalid-option', workspace);
+      const result = runCli('status --invalid-option --text', workspace);
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toMatch(/unknown option|error/i);
     });
@@ -264,8 +264,8 @@ describe('CLI program', () => {
   });
 
   describe('multiple flags combination', () => {
-    it('handles --json and --no-color together', () => {
-      const result = runCli('status --json --no-color', workspace);
+    it('handles and --no-color together', () => {
+      const result = runCli('status --no-color', workspace);
       expect(result.exitCode).toBe(0);
       // Should output valid JSON
       expect(() => JSON.parse(result.stdout)).not.toThrow();
@@ -282,23 +282,23 @@ describe('CLI program', () => {
     });
   });
 
-  describe('command-specific --json output', () => {
-    it('outputs JSON for status --json', () => {
-      const result = runCli('status --json', workspace);
+  describe('command-specific output', () => {
+    it('outputs JSON for status', () => {
+      const result = runCli('status', workspace);
       expect(result.exitCode).toBe(0);
       const output = JSON.parse(result.stdout);
       expect(output).toHaveProperty('active');
     });
 
-    it('outputs JSON for ls --json', () => {
-      const result = runCli('ls --json', workspace);
+    it('outputs JSON for ls', () => {
+      const result = runCli('ls', workspace);
       expect(result.exitCode).toBe(0);
       const output = JSON.parse(result.stdout);
       expect(output).toBeDefined();
     });
 
-    it('outputs JSON for pass --json with no active runbook', () => {
-      const result = runCli('pass --json', workspace);
+    it('outputs JSON for pass with no active runbook', () => {
+      const result = runCli('pass', workspace);
       expect(result.exitCode).toBe(0);
       const output = JSON.parse(result.stdout);
       expect(output).toHaveProperty('error');

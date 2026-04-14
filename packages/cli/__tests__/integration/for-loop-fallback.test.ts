@@ -41,7 +41,7 @@ describe('FOR loop fallback (prompted FOR with unresolved bounds)', () => {
     await writeFile(join(workspace.cwd, 'unresolved-for.runbook.md'), content);
 
     // Run WITHOUT providing N — should wait (prompted FOR)
-    const result = runCli('run --json unresolved-for.runbook.md', workspace);
+    const result = runCli('run unresolved-for.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
 
     const events = parseJsonEvents(result.stdout) as Record<string, unknown>[];
@@ -88,7 +88,7 @@ describe('FOR loop fallback (prompted FOR with unresolved bounds)', () => {
     await writeFile(join(workspace.cwd, 'resolved-for.runbook.md'), content);
 
     // Run WITH N=3 — should execute all 3 iterations
-    const result = runCli('run --json resolved-for.runbook.md --var N=3', workspace);
+    const result = runCli('run resolved-for.runbook.md --var N=3', workspace);
     expect(result.exitCode).toBe(0);
 
     const events = parseJsonEvents(result.stdout) as Record<string, unknown>[];

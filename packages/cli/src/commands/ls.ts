@@ -17,12 +17,12 @@ export function registerLsCommand(program: Command): void {
     .command('ls')
     .description('List runbooks (active by default, --all for available)')
     .option('-a, --all', 'List all available runbook files')
-    .option('--json', 'Output as JSON for programmatic use')
+    .option('--text', 'Output as human-readable text')
     .option('--tags <tags>', 'Filter available runbooks by comma-separated tags')
-    .action(async (options: { all?: boolean; json?: boolean; tags?: string }) => {
+    .action(async (options: { all?: boolean; text?: boolean; tags?: string }) => {
       await withErrorHandling(async () => {
         const cwd = getCwd();
-        const output = new OutputEmitter({ json: options.json });
+        const output = new OutputEmitter({ text: options.text });
 
         // MODE 1: List available runbooks (--all)
         if (options.all) {

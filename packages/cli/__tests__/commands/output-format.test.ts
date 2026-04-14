@@ -14,7 +14,7 @@ describe('output format integration tests', () => {
 
   describe('start command output', () => {
     it('prints metadata and action block', async () => {
-      const result = await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+      const result = await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
 
       expect(result.exitCode).toBe(0);
       // Metadata section
@@ -26,13 +26,13 @@ describe('output format integration tests', () => {
     });
 
     it('includes runbook ID in metadata', async () => {
-      const result = await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+      const result = await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
 
       expect(result.stdout).toMatch(/wf-\d{4}-\d{2}-\d{2}/);
     });
 
     it('shows first step details in action block', async () => {
-      const result = await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+      const result = await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
 
       // Step heading and description are shown
       expect(result.stdout).toContain('## 1.');
@@ -42,11 +42,11 @@ describe('output format integration tests', () => {
 
   describe('pass command output', () => {
     beforeEach(async () => {
-      await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
     });
 
     it('prints separator before action block', async () => {
-      const result = await runCliInProcess('pass', workspace);
+      const result = await runCliInProcess('pass --text', workspace);
 
       expect(result.exitCode).toBe(0);
       // Should contain separator with step number (─── N ───)
@@ -56,14 +56,14 @@ describe('output format integration tests', () => {
     });
 
     it('shows new step details in action block', async () => {
-      const result = await runCliInProcess('pass', workspace);
+      const result = await runCliInProcess('pass --text', workspace);
 
       expect(result.stdout).toContain('## 2.');
       expect(result.stdout).toContain('Second step');
     });
 
     it('includes metadata about state progression', async () => {
-      const result = await runCliInProcess('pass', workspace);
+      const result = await runCliInProcess('pass --text', workspace);
 
       // Should show we're on step 2 via At: field in action block
       expect(result.stdout).toContain('At:       2');
@@ -72,9 +72,9 @@ describe('output format integration tests', () => {
 
   describe('fail command output', () => {
     it('prints retry action message for FAIL: RETRY', async () => {
-      await runCliInProcess('run --prompted runbooks/retry.runbook.md', workspace);
+      await runCliInProcess('run --prompted runbooks/retry.runbook.md --text', workspace);
 
-      const result = await runCliInProcess('fail', workspace);
+      const result = await runCliInProcess('fail --text', workspace);
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('RETRY');
@@ -83,9 +83,9 @@ describe('output format integration tests', () => {
     });
 
     it('prints stopped message for FAIL: STOP', async () => {
-      await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
 
-      const result = await runCliInProcess('fail', workspace);
+      const result = await runCliInProcess('fail --text', workspace);
 
       expect(result.exitCode).toBe(1);
       // Error message may be in stdout or stderr
@@ -94,9 +94,9 @@ describe('output format integration tests', () => {
     });
 
     it('shows retry count in output', async () => {
-      await runCliInProcess('run --prompted runbooks/retry.runbook.md', workspace);
+      await runCliInProcess('run --prompted runbooks/retry.runbook.md --text', workspace);
 
-      const result = await runCliInProcess('fail', workspace);
+      const result = await runCliInProcess('fail --text', workspace);
 
       // Retry count should appear after fail (retry count becomes 1)
       expect(result.stdout).toMatch(/\d/);
@@ -105,11 +105,11 @@ describe('output format integration tests', () => {
 
   describe('goto command output', () => {
     beforeEach(async () => {
-      await runCliInProcess('run --prompted runbooks/goto.runbook.md', workspace);
+      await runCliInProcess('run --prompted runbooks/goto.runbook.md --text', workspace);
     });
 
     it('prints action without outcome', async () => {
-      const result = await runCliInProcess(['goto', '3'], workspace);
+      const result = await runCliInProcess(['goto', '3', '--text'], workspace);
 
       expect(result.exitCode).toBe(0);
       // Should show action GOTO
@@ -119,7 +119,7 @@ describe('output format integration tests', () => {
     });
 
     it('shows target step details in action block', async () => {
-      const result = await runCliInProcess(['goto', '3'], workspace);
+      const result = await runCliInProcess(['goto', '3', '--text'], workspace);
 
       // Step position is shown in heading
       expect(result.stdout).toContain('## 3.');
@@ -127,7 +127,7 @@ describe('output format integration tests', () => {
     });
 
     it('no outcome block (just action)', async () => {
-      const result = await runCliInProcess(['goto', '3'], workspace);
+      const result = await runCliInProcess(['goto', '3', '--text'], workspace);
 
       // goto shows GOTO action - outcome depends on whether step has one
       expect(result.stdout).toContain('GOTO 3');
@@ -136,11 +136,11 @@ describe('output format integration tests', () => {
 
   describe('status command output', () => {
     beforeEach(async () => {
-      await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
     });
 
     it('prints metadata and step block', async () => {
-      const result = await runCliInProcess('status', workspace);
+      const result = await runCliInProcess('status --text', workspace);
 
       expect(result.exitCode).toBe(0);
       // Metadata
@@ -152,14 +152,14 @@ describe('output format integration tests', () => {
     });
 
     it('includes runbook details in metadata', async () => {
-      const result = await runCliInProcess('status', workspace);
+      const result = await runCliInProcess('status --text', workspace);
 
       expect(result.stdout).toContain('State:');
       expect(result.stdout).toMatch(/wf-\d{4}-\d{2}-\d{2}/);
     });
 
     it('shows current step block', async () => {
-      const result = await runCliInProcess('status', workspace);
+      const result = await runCliInProcess('status --text', workspace);
 
       expect(result.stdout).toContain('## 1.');
       expect(result.stdout).toContain('First step');
@@ -168,11 +168,11 @@ describe('output format integration tests', () => {
 
   describe('stop command output', () => {
     beforeEach(async () => {
-      await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
     });
 
     it('prints metadata and stopped message', async () => {
-      const result = await runCliInProcess('stop', workspace);
+      const result = await runCliInProcess('stop --text', workspace);
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('STOP');
@@ -180,20 +180,20 @@ describe('output format integration tests', () => {
     });
 
     it('includes runbook ID in output', async () => {
-      const result = await runCliInProcess('stop', workspace);
+      const result = await runCliInProcess('stop --text', workspace);
 
       expect(result.stdout).toMatch(/wf-\d{4}-\d{2}-\d{2}/);
     });
 
     it('shows confirmation message', async () => {
-      const result = await runCliInProcess('stop', workspace);
+      const result = await runCliInProcess('stop --text', workspace);
 
       // Should confirm the stop action
       expect(result.stdout).toContain('STOP');
     });
 
     it('prints stop message details when provided', async () => {
-      const result = await runCliInProcess(['stop', 'User cancelled'], workspace);
+      const result = await runCliInProcess(['stop', 'User cancelled', '--text'], workspace);
 
       expect(result.stdout).toContain('Runbook:  STOP');
     });
@@ -201,12 +201,12 @@ describe('output format integration tests', () => {
 
   describe('complete command output', () => {
     beforeEach(async () => {
-      await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
-      await runCliInProcess('pass', workspace); // Move to step 2 which has PASS: COMPLETE
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+      await runCliInProcess('pass --text', workspace); // Move to step 2 which has PASS: COMPLETE
     });
 
     it('prints metadata and complete message', async () => {
-      const result = await runCliInProcess('pass', workspace);
+      const result = await runCliInProcess('pass --text', workspace);
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('COMPLETE');
@@ -215,13 +215,13 @@ describe('output format integration tests', () => {
     });
 
     it('shows completion confirmation', async () => {
-      const result = await runCliInProcess('pass', workspace);
+      const result = await runCliInProcess('pass --text', workspace);
 
       expect(result.stdout).toContain('COMPLETE');
     });
 
     it('includes action in output', async () => {
-      const result = await runCliInProcess('pass', workspace);
+      const result = await runCliInProcess('pass --text', workspace);
 
       expect(result.stdout).toContain('Action:');
       expect(result.stdout).toContain('COMPLETE');
@@ -230,11 +230,11 @@ describe('output format integration tests', () => {
 
   describe('stash command output', () => {
     beforeEach(async () => {
-      await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
     });
 
     it('prints metadata, step, and stashed message', async () => {
-      const result = await runCliInProcess('stash', workspace);
+      const result = await runCliInProcess('stash --text', workspace);
 
       expect(result.exitCode).toBe(0);
       // Metadata
@@ -246,14 +246,14 @@ describe('output format integration tests', () => {
     });
 
     it('shows file metadata in output', async () => {
-      const result = await runCliInProcess('stash', workspace);
+      const result = await runCliInProcess('stash --text', workspace);
 
       expect(result.stdout).toContain('File:');
       expect(result.stdout).toContain('simple.runbook.md');
     });
 
     it('includes stashed confirmation', async () => {
-      const result = await runCliInProcess('stash', workspace);
+      const result = await runCliInProcess('stash --text', workspace);
 
       expect(result.stdout).toContain('Runbook:  STASHED');
     });
@@ -261,13 +261,13 @@ describe('output format integration tests', () => {
 
   describe('pop command output', () => {
     beforeEach(async () => {
-      await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
-      await runCliInProcess('pass', workspace); // Move to step 2
-      await runCliInProcess('stash', workspace);
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+      await runCliInProcess('pass --text', workspace); // Move to step 2
+      await runCliInProcess('stash --text', workspace);
     });
 
     it('prints metadata, action, and step block', async () => {
-      const result = await runCliInProcess('pop', workspace);
+      const result = await runCliInProcess('pop --text', workspace);
 
       expect(result.exitCode).toBe(0);
       // Metadata
@@ -279,14 +279,14 @@ describe('output format integration tests', () => {
     });
 
     it('shows restored step details in action block', async () => {
-      const result = await runCliInProcess('pop', workspace);
+      const result = await runCliInProcess('pop --text', workspace);
 
       expect(result.stdout).toContain('## 2.');
       expect(result.stdout).toContain('Second step');
     });
 
     it('shows step is now active again', async () => {
-      const result = await runCliInProcess('pop', workspace);
+      const result = await runCliInProcess('pop --text', workspace);
 
       expect(result.stdout).toContain('File:');
       expect(result.stdout).toContain('simple.runbook.md');
@@ -295,9 +295,9 @@ describe('output format integration tests', () => {
 
   describe('ls command output', () => {
     it('prints runbook entries', async () => {
-      await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
 
-      const result = await runCliInProcess('ls', workspace);
+      const result = await runCliInProcess('ls --text', workspace);
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('simple.runbook.md');
@@ -305,34 +305,34 @@ describe('output format integration tests', () => {
     });
 
     it('marks active runbook', async () => {
-      await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
 
-      const result = await runCliInProcess('ls', workspace);
+      const result = await runCliInProcess('ls --text', workspace);
 
       expect(result.stdout).toContain('active');
     });
 
     it('shows step number for each runbook', async () => {
-      await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
 
-      const result = await runCliInProcess('ls', workspace);
+      const result = await runCliInProcess('ls --text', workspace);
 
       expect(result.stdout).toContain('1/2');
     });
 
     it('shows all runbooks in state directory', async () => {
-      await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
       // Start another runbook to have multiple entries
-      await runCliInProcess('stop', workspace);
-      await runCliInProcess('run --prompted runbooks/retry.runbook.md', workspace);
+      await runCliInProcess('stop --text', workspace);
+      await runCliInProcess('run --prompted runbooks/retry.runbook.md --text', workspace);
 
-      const result = await runCliInProcess('ls', workspace);
+      const result = await runCliInProcess('ls --text', workspace);
 
       expect(result.stdout).toContain('retry.runbook.md');
     });
 
     it('displays "No runbooks" when empty', async () => {
-      const result = await runCliInProcess('ls', workspace);
+      const result = await runCliInProcess('ls --text', workspace);
 
       expect(result.stdout).toContain('No active runbooks');
     });
@@ -340,16 +340,15 @@ describe('output format integration tests', () => {
 
   describe('output formatting consistency across commands', () => {
     beforeEach(async () => {
-      await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
     });
 
     it('all commands exit cleanly with proper status codes', async () => {
-      const startResult = await runCliInProcess(
-        'run --prompted runbooks/simple.runbook.md',
+      const startResult = await runCliInProcess('run --prompted runbooks/simple.runbook.md --text',
         workspace,
       );
-      const statusResult = await runCliInProcess('status', workspace);
-      const listResult = await runCliInProcess('ls', workspace);
+      const statusResult = await runCliInProcess('status --text', workspace);
+      const listResult = await runCliInProcess('ls --text', workspace);
 
       expect(startResult.exitCode).toBe(0);
       expect(statusResult.exitCode).toBe(0);
@@ -357,8 +356,8 @@ describe('output format integration tests', () => {
     });
 
     it('metadata appears consistently across commands', async () => {
-      const statusResult = await runCliInProcess('status', workspace);
-      const listResult = await runCliInProcess('ls', workspace);
+      const statusResult = await runCliInProcess('status --text', workspace);
+      const listResult = await runCliInProcess('ls --text', workspace);
 
       // Both should contain runbook file reference
       expect(statusResult.stdout).toContain('simple.runbook.md');
@@ -366,8 +365,8 @@ describe('output format integration tests', () => {
     });
 
     it('step information is consistently formatted', async () => {
-      const statusResult = await runCliInProcess('status', workspace);
-      const listResult = await runCliInProcess('ls', workspace);
+      const statusResult = await runCliInProcess('status --text', workspace);
+      const listResult = await runCliInProcess('ls --text', workspace);
 
       // List shows step number in format 1/2
       expect(listResult.stdout).toContain('1/2');

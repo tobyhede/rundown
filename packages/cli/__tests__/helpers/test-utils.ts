@@ -436,7 +436,7 @@ export async function getAllStates(workspace: TestWorkspace): Promise<Record<str
 }
 
 /**
- * Parse JSON events from CLI `--json` output.
+ * Parse JSON events from CLI JSON output (the default format).
  *
  * Splits stdout by newline, keeps only lines starting with `{`, and
  * parses each as JSON.

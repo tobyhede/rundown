@@ -1,7 +1,7 @@
 /**
  * Schema validation tests for CLI JSON output.
  *
- * These tests verify that all commands with --json flag produce output
+ * These tests verify that all commands produce default JSON output
  * that conforms to the standardized JSON output schema.
  *
  * @module tests/commands/schema-validation
@@ -112,9 +112,9 @@ describe('CLI JSON Output Schema Validation', () => {
   // Status Command
   // ==========================================================================
 
-  describe('status --json', () => {
+  describe('status', () => {
     it('validates inactive status output', async () => {
-      const result = await runCliInProcess('status --json', workspace);
+      const result = await runCliInProcess('status', workspace);
       const output = parseJsonOutput(result.stdout);
 
       const validation = validateStatusOutput(output);
@@ -133,9 +133,9 @@ name: test-runbook
 prompt: Wait
 `,
       );
-      await runCliInProcess('run --prompted test.runbook.md', workspace);
+      await runCliInProcess('run --prompted test.runbook.md --text', workspace);
 
-      const result = await runCliInProcess('status --json', workspace);
+      const result = await runCliInProcess('status', workspace);
       const output = parseJsonOutput(result.stdout);
 
       const validation = validateStatusOutput(output);
@@ -152,9 +152,9 @@ prompt: Wait
   // List Commands
   // ==========================================================================
 
-  describe('ls --json', () => {
+  describe('ls', () => {
     it('validates empty list output', async () => {
-      const result = await runCliInProcess('ls --json', workspace);
+      const result = await runCliInProcess('ls', workspace);
       const output = parseJsonOutput(result.stdout);
 
       const validation = validateLsOutput(output);
@@ -174,9 +174,9 @@ name: test-runbook
 prompt: Wait
 `,
       );
-      await runCliInProcess('run --prompted test.runbook.md', workspace);
+      await runCliInProcess('run --prompted test.runbook.md --text', workspace);
 
-      const result = await runCliInProcess('ls --json', workspace);
+      const result = await runCliInProcess('ls', workspace);
       const output = parseJsonOutput(result.stdout);
 
       const validation = validateLsOutput(output);
@@ -206,7 +206,7 @@ echo hello
 `,
       );
 
-      const result = await runCliInProcess('ls --all --json', workspace);
+      const result = await runCliInProcess('ls --all', workspace);
       expect(result.exitCode).toBe(0);
       const output = parseJsonOutput(result.stdout);
 
@@ -226,7 +226,7 @@ echo hello
   // Check Command
   // ==========================================================================
 
-  describe('check --json', () => {
+  describe('check', () => {
     it('validates successful check output', async () => {
       const runbookPath = path.join(workspace.cwd, 'valid.runbook.md');
       fs.writeFileSync(
@@ -236,7 +236,7 @@ echo hello
 `,
       );
 
-      const result = await runCliInProcess(`check ${runbookPath} --json`, workspace);
+      const result = await runCliInProcess(`check ${runbookPath}`, workspace);
       const output = parseJsonOutput(result.stdout);
 
       const validation = validateCheckOutput(output);
@@ -259,7 +259,7 @@ echo hello
 `,
       );
 
-      const result = await runCliInProcess(`check ${runbookPath} --json`, workspace);
+      const result = await runCliInProcess(`check ${runbookPath}`, workspace);
       const output = parseJsonOutput(result.stdout);
 
       const validation = validateCheckOutput(output);
@@ -272,7 +272,7 @@ echo hello
     });
 
     it('validates check output for missing file', async () => {
-      const result = await runCliInProcess('check non-existent.md --json', workspace);
+      const result = await runCliInProcess('check non-existent.md', workspace);
       const output = parseJsonOutput(result.stdout);
 
       const validation = validateCheckOutput(output);
@@ -289,7 +289,7 @@ echo hello
   // Action Commands (pass, fail, goto)
   // ==========================================================================
 
-  describe('pass --json', () => {
+  describe('pass', () => {
     it('validates pass command output', async () => {
       const runbookPath = path.join(workspace.cwd, 'test.runbook.md');
       fs.writeFileSync(
@@ -304,9 +304,9 @@ prompt: First step
 echo done
 `,
       );
-      await runCliInProcess('run --prompted test.runbook.md', workspace);
+      await runCliInProcess('run --prompted test.runbook.md --text', workspace);
 
-      const result = await runCliInProcess('pass --json', workspace);
+      const result = await runCliInProcess('pass', workspace);
       const output = parseJsonOutput(result.stdout);
 
       const validation = validateActionOutput(output);
@@ -318,7 +318,7 @@ echo done
     });
 
     it('validates pass error when no active runbook', async () => {
-      const result = await runCliInProcess('pass --json', workspace);
+      const result = await runCliInProcess('pass', workspace);
       const output = parseJsonOutput(result.stdout);
 
       // Should still be valid JSON
@@ -328,7 +328,7 @@ echo done
     });
   });
 
-  describe('fail --json', () => {
+  describe('fail', () => {
     it('validates fail command output', async () => {
       const runbookPath = path.join(workspace.cwd, 'test.runbook.md');
       fs.writeFileSync(
@@ -343,9 +343,9 @@ prompt: First step
 echo done
 `,
       );
-      await runCliInProcess('run --prompted test.runbook.md', workspace);
+      await runCliInProcess('run --prompted test.runbook.md --text', workspace);
 
-      const result = await runCliInProcess('fail --json', workspace);
+      const result = await runCliInProcess('fail', workspace);
       const output = parseJsonOutput(result.stdout);
 
       const validation = validateActionOutput(output);
@@ -354,7 +354,7 @@ echo done
     });
   });
 
-  describe('goto --json', () => {
+  describe('goto', () => {
     it('validates goto command JSONL output', async () => {
       const runbookPath = path.join(workspace.cwd, 'test.runbook.md');
       // Use numeric step names (## 1, ## 2, ## 3) for goto to work
@@ -373,9 +373,9 @@ prompt: Second step
 echo done
 `,
       );
-      await runCliInProcess('run --prompted test.runbook.md', workspace);
+      await runCliInProcess('run --prompted test.runbook.md --text', workspace);
 
-      const result = await runCliInProcess('goto 2 --json', workspace);
+      const result = await runCliInProcess('goto 2', workspace);
       const events = parseJsonlOutput(result.stdout);
 
       // Goto command now streams JSONL events plus a final JSON object
@@ -410,7 +410,7 @@ echo done
   // Stash/Pop Commands
   // ==========================================================================
 
-  describe('stash --json', () => {
+  describe('stash', () => {
     it('validates stash command output', async () => {
       const runbookPath = path.join(workspace.cwd, 'test.runbook.md');
       fs.writeFileSync(
@@ -422,9 +422,9 @@ name: test-runbook
 prompt: Wait
 `,
       );
-      await runCliInProcess('run --prompted test.runbook.md', workspace);
+      await runCliInProcess('run --prompted test.runbook.md --text', workspace);
 
-      const result = await runCliInProcess('stash --json', workspace);
+      const result = await runCliInProcess('stash', workspace);
       const output = parseJsonOutput(result.stdout);
 
       const validation = validateStashOutput(output);
@@ -435,7 +435,7 @@ prompt: Wait
     });
 
     it('validates stash error when no active runbook', async () => {
-      const result = await runCliInProcess('stash --json', workspace);
+      const result = await runCliInProcess('stash', workspace);
       const output = parseJsonOutput(result.stdout);
 
       // Should indicate error via error field
@@ -443,7 +443,7 @@ prompt: Wait
     });
   });
 
-  describe('pop --json', () => {
+  describe('pop', () => {
     it('validates pop command output', async () => {
       const runbookPath = path.join(workspace.cwd, 'test.runbook.md');
       fs.writeFileSync(
@@ -455,10 +455,10 @@ name: test-runbook
 prompt: Wait
 `,
       );
-      await runCliInProcess('run --prompted test.runbook.md', workspace);
-      await runCliInProcess('stash', workspace);
+      await runCliInProcess('run --prompted test.runbook.md --text', workspace);
+      await runCliInProcess('stash --text', workspace);
 
-      const result = await runCliInProcess('pop --json', workspace);
+      const result = await runCliInProcess('pop', workspace);
       const output = parseJsonOutput(result.stdout);
 
       const validation = validatePopOutput(output);
@@ -469,7 +469,7 @@ prompt: Wait
     });
 
     it('validates pop error when no stashed runbook', async () => {
-      const result = await runCliInProcess('pop --json', workspace);
+      const result = await runCliInProcess('pop', workspace);
       const output = parseJsonOutput(result.stdout);
 
       // Should indicate error via error field
@@ -482,9 +482,9 @@ prompt: Wait
   // Prune Command
   // ==========================================================================
 
-  describe('prune --json', () => {
+  describe('prune', () => {
     it('validates empty prune output', async () => {
-      const result = await runCliInProcess('prune --dry-run --json', workspace);
+      const result = await runCliInProcess('prune --dry-run', workspace);
       const output = parseJsonOutput(result.stdout);
 
       const validation = validatePruneOutput(output);
@@ -498,7 +498,7 @@ prompt: Wait
   // Scenario Commands
   // ==========================================================================
 
-  describe('scenario ls --json', () => {
+  describe('scenario ls', () => {
     it('validates scenario list output', async () => {
       const runbookPath = path.join(workspace.cwd, 'scenarios.runbook.md');
       fs.writeFileSync(
@@ -517,7 +517,7 @@ echo hello
 `,
       );
 
-      const result = await runCliInProcess(`scenario ls ${runbookPath} --json`, workspace);
+      const result = await runCliInProcess(`scenario ls ${runbookPath}`, workspace);
       const output = parseJsonOutput(result.stdout);
 
       const validation = validateScenarioLsOutput(output);
@@ -531,7 +531,7 @@ echo hello
     });
   });
 
-  describe('scenario show --json', () => {
+  describe('scenario show', () => {
     it('validates scenario show success output', async () => {
       const runbookPath = path.join(workspace.cwd, 'show-success.runbook.md');
       fs.writeFileSync(
@@ -550,8 +550,7 @@ echo hello
 `,
       );
 
-      const result = await runCliInProcess(
-        `scenario show ${runbookPath} test-scenario --json`,
+      const result = await runCliInProcess(`scenario show ${runbookPath} test-scenario`,
         workspace,
       );
       const output = parseJsonOutput(result.stdout);
@@ -586,8 +585,7 @@ echo hello
 `,
       );
 
-      const result = await runCliInProcess(
-        `scenario show ${runbookPath} non-existent --json`,
+      const result = await runCliInProcess(`scenario show ${runbookPath} non-existent`,
         workspace,
       );
       const output = parseJsonOutput(result.stdout);
@@ -607,7 +605,7 @@ echo hello
   // Echo Command
   // ==========================================================================
 
-  describe('echo --json', () => {
+  describe('echo', () => {
     it('validates echo command output', async () => {
       const runbookPath = path.join(workspace.cwd, 'test.runbook.md');
       fs.writeFileSync(
@@ -619,9 +617,9 @@ name: test-runbook
 prompt: Wait
 `,
       );
-      await runCliInProcess('run --prompted test.runbook.md', workspace);
+      await runCliInProcess('run --prompted test.runbook.md --text', workspace);
 
-      const result = await runCliInProcess('echo --json hello world', workspace);
+      const result = await runCliInProcess('echo hello world', workspace);
       const output = parseJsonOutput(result.stdout);
 
       const validation = validateEchoOutput(output);
@@ -648,9 +646,9 @@ name: test-runbook
 prompt: Wait
 `,
       );
-      await runCliInProcess('run --prompted test.runbook.md', workspace);
+      await runCliInProcess('run --prompted test.runbook.md --text', workspace);
 
-      const result = await runCliInProcess('echo --json --result PASS test', workspace);
+      const result = await runCliInProcess('echo --result PASS test', workspace);
       const output = parseJsonOutput(result.stdout);
 
       const validation = validateEchoOutput(output);
@@ -669,10 +667,10 @@ prompt: Wait
   // Prompt Command
   // ==========================================================================
 
-  describe('prompt --json', () => {
+  describe('prompt', () => {
     it('validates prompt command output', async () => {
       // Use array form to preserve quoted content as single argument
-      const result = await runCliInProcess(['prompt', 'Hello World', '--json'], workspace);
+      const result = await runCliInProcess(['prompt', 'Hello World'], workspace);
       const output = parseJsonOutput(result.stdout);
 
       const validation = validatePromptOutput(output);
@@ -685,8 +683,7 @@ prompt: Wait
 
     it('validates prompt with special characters', async () => {
       // Use array form to preserve content with spaces as single argument
-      const result = await runCliInProcess(
-        ['prompt', 'Test with spaces and chars', '--json'],
+      const result = await runCliInProcess(['prompt', 'Test with spaces and chars'],
         workspace,
       );
       const output = parseJsonOutput(result.stdout);
@@ -703,7 +700,7 @@ prompt: Wait
   // Run Command
   // ==========================================================================
 
-  describe('run --json', () => {
+  describe('run', () => {
     it('validates run command JSONL completion output', async () => {
       const runbookPath = path.join(workspace.cwd, 'simple.runbook.md');
       fs.writeFileSync(
@@ -716,7 +713,7 @@ echo hello
 `,
       );
 
-      const result = await runCliInProcess('run --json simple.runbook.md', workspace);
+      const result = await runCliInProcess('run simple.runbook.md', workspace);
       const events = parseJsonlOutput(result.stdout);
 
       // Run command now streams JSONL events
@@ -752,7 +749,7 @@ prompt: Wait for user
 `,
       );
 
-      const result = await runCliInProcess('run --json --prompted prompted.runbook.md', workspace);
+      const result = await runCliInProcess('run --prompted prompted.runbook.md', workspace);
       const events = parseJsonlOutput(result.stdout);
 
       // Run command with prompted flag streams JSONL events
@@ -776,7 +773,7 @@ prompt: Wait for user
   // Scenario Run Command
   // ==========================================================================
 
-  describe('scenario run --json', () => {
+  describe('scenario run', () => {
     it('validates scenario run success output', async () => {
       const runbookPath = path.join(workspace.cwd, 'test-scenarios.runbook.md');
       fs.writeFileSync(
@@ -794,7 +791,7 @@ echo hello
 `,
       );
 
-      const result = await runCliInProcess(`scenario run ${runbookPath} simple --json`, workspace);
+      const result = await runCliInProcess(`scenario run ${runbookPath} simple`, workspace);
       const output = parseJsonOutput(result.stdout);
 
       const validation = validateScenarioRunOutput(output);
@@ -812,7 +809,7 @@ echo hello
   // Stop/Complete Commands
   // ==========================================================================
 
-  describe('stop --json', () => {
+  describe('stop', () => {
     it('validates stop command output', async () => {
       const runbookPath = path.join(workspace.cwd, 'test.runbook.md');
       fs.writeFileSync(
@@ -824,9 +821,9 @@ name: test-runbook
 prompt: Wait
 `,
       );
-      await runCliInProcess('run --prompted test.runbook.md', workspace);
+      await runCliInProcess('run --prompted test.runbook.md --text', workspace);
 
-      const result = await runCliInProcess('stop --json', workspace);
+      const result = await runCliInProcess('stop', workspace);
       const output = parseJsonOutput(result.stdout);
 
       const validation = validateActionOutput(output);
@@ -838,7 +835,7 @@ prompt: Wait
     });
   });
 
-  describe('complete --json', () => {
+  describe('complete', () => {
     it('validates complete command output', async () => {
       const runbookPath = path.join(workspace.cwd, 'test.runbook.md');
       fs.writeFileSync(
@@ -850,9 +847,9 @@ name: test-runbook
 prompt: Wait
 `,
       );
-      await runCliInProcess('run --prompted test.runbook.md', workspace);
+      await runCliInProcess('run --prompted test.runbook.md --text', workspace);
 
-      const result = await runCliInProcess('complete --json', workspace);
+      const result = await runCliInProcess('complete', workspace);
       const output = parseJsonOutput(result.stdout);
 
       const validation = validateActionOutput(output);
@@ -870,7 +867,7 @@ prompt: Wait
 
   describe('error responses', () => {
     it('validates no active runbook error format', async () => {
-      const result = await runCliInProcess('pass --json', workspace);
+      const result = await runCliInProcess('pass', workspace);
       const output = parseJsonOutput(result.stdout);
 
       // Verify error structure - should have error field
@@ -897,7 +894,7 @@ echo hello
 `,
       );
 
-      const result = await runCliInProcess(`check ${runbookPath} --json`, workspace);
+      const result = await runCliInProcess(`check ${runbookPath} --text`, workspace);
       expect(result.exitCode).toBe(0);
     });
 
@@ -911,13 +908,13 @@ echo hello
 `,
       );
 
-      const result = await runCliInProcess(`check ${runbookPath} --json`, workspace);
+      const result = await runCliInProcess(`check ${runbookPath} --text`, workspace);
       expect(result.exitCode).toBe(1);
     });
 
     it('returns 0 for JSON mode even when result is false', async () => {
       // ls with no runbooks still exits 0 (empty list is valid)
-      const result = await runCliInProcess('ls --json', workspace);
+      const result = await runCliInProcess('ls --text', workspace);
       expect(result.exitCode).toBe(0);
     });
   });

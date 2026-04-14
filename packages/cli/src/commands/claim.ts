@@ -25,7 +25,7 @@ export function registerClaimCommand(program: Command): void {
   program
     .command('claim <token>')
     .description('Claim a delegation token and launch the child runbook')
-    .option('--json', 'Output as JSON')
+    .option('--text', 'Output as human-readable text')
     .addOption(
       new Option('--var-file <path>', 'Load variables from YAML file (repeatable)')
         .argParser(collect)
@@ -48,7 +48,7 @@ export function registerClaimCommand(program: Command): void {
       async (
         token: string,
         options: {
-          json?: boolean;
+          text?: boolean;
           varFile?: string[];
           var?: string[];
           varJson?: string[];
@@ -56,7 +56,7 @@ export function registerClaimCommand(program: Command): void {
       ) => {
         await withErrorHandling(
           async () => {
-            const output = new OutputEmitter({ json: options.json });
+            const output = new OutputEmitter({ text: options.text });
             const cwd = getCwd();
             const manager = new RunbookStateManager(cwd);
             const actorService = new RunbookActorService(manager);
@@ -106,7 +106,7 @@ export function registerClaimCommand(program: Command): void {
               process.exit(1);
             }
           },
-          { json: options.json },
+          { text: options.text },
         );
       },
     );

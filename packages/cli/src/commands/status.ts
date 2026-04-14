@@ -19,11 +19,11 @@ export function registerStatusCommand(program: Command): void {
   program
     .command('status')
     .description('Show current runbook state')
-    .option('--json', 'Output as JSON for programmatic use')
-    .action(async (options: { json?: boolean }) => {
+    .option('--text', 'Output as human-readable text')
+    .action(async (options: { text?: boolean }) => {
       await withErrorHandling(async () => {
         const cwd = getCwd();
-        const output = new OutputEmitter({ json: options.json });
+        const output = new OutputEmitter({ text: options.text });
 
         const manager = new RunbookStateManager(cwd);
         const sessionService = new SessionService(manager);

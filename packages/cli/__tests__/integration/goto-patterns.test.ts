@@ -45,13 +45,13 @@ describe('integration: GOTO patterns', () => {
 
   describe('GOTO N (step jump)', () => {
     it('jumps from step 1 to step 3, skipping step 2', async () => {
-      const start = runCli('run --prompted goto-step.runbook.md', workspace);
+      const start = runCli('run --prompted goto-step.runbook.md --text', workspace);
 
       expect(start.exitCode).toBe(0);
 
       // Step 1 passes → GOTO 3
 
-      const result1 = runCli('pass', workspace);
+      const result1 = runCli('pass --text', workspace);
 
       expect(result1.stdout).toContain('## 3');
 
@@ -63,7 +63,7 @@ describe('integration: GOTO patterns', () => {
 
       // Complete from step 3
 
-      const result2 = runCli('pass', workspace);
+      const result2 = runCli('pass --text', workspace);
 
       expect(result2.stdout).toContain('COMPLETE');
     });
@@ -71,13 +71,13 @@ describe('integration: GOTO patterns', () => {
 
   describe('GOTO N.M (substep jump)', () => {
     it('jumps from 1.1 to 1.3, skipping 1.2', async () => {
-      const start = runCli('run --prompted goto-substep.runbook.md', workspace);
+      const start = runCli('run --prompted goto-substep.runbook.md --text', workspace);
 
       expect(start.exitCode).toBe(0);
 
       // Substep 1.1 passes → GOTO 1.3
 
-      const result1 = runCli('pass', workspace);
+      const result1 = runCli('pass --text', workspace);
 
       expect(result1.stdout).toContain('GOTO 1.3');
 
@@ -94,7 +94,7 @@ describe('integration: GOTO patterns', () => {
 
       // Complete from 1.3
 
-      const result2 = runCli('pass', workspace);
+      const result2 = runCli('pass --text', workspace);
 
       expect(result2.stdout).toContain('COMPLETE');
     });
@@ -102,13 +102,13 @@ describe('integration: GOTO patterns', () => {
 
   describe('GOTO named (named step jump)', () => {
     it('jumps to named steps (Initialize → Cleanup)', async () => {
-      const start = runCli('run --prompted goto-named-step.runbook.md', workspace);
+      const start = runCli('run --prompted goto-named-step.runbook.md --text', workspace);
 
       expect(start.exitCode).toBe(0);
 
       // Initialize passes → GOTO Cleanup
 
-      const result1 = runCli('pass', workspace);
+      const result1 = runCli('pass --text', workspace);
 
       expect(result1.stdout).toContain('Cleanup');
 
@@ -116,21 +116,21 @@ describe('integration: GOTO patterns', () => {
 
       // Complete from step 3
 
-      const result2 = runCli('pass', workspace);
+      const result2 = runCli('pass --text', workspace);
 
       expect(result2.stdout).toContain('COMPLETE');
     });
 
     it('jumps from named to static (Process → 1)', async () => {
-      const start = runCli('run --prompted goto-named-step.runbook.md', workspace);
+      const start = runCli('run --prompted goto-named-step.runbook.md --text', workspace);
 
       expect(start.exitCode).toBe(0);
 
-      runCli('goto Process', workspace);
+      runCli('goto Process --text', workspace);
 
       // Process passes → GOTO 1
 
-      const result = runCli('pass', workspace);
+      const result = runCli('pass --text', workspace);
 
       expect(result.stdout).toContain('## 1');
 

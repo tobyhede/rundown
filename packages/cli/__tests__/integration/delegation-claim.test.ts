@@ -48,7 +48,7 @@ describe('Delegation claim integration', () => {
   }
 
   it('rejects invalid token format', () => {
-    const result = runCli('claim bad-token', workspace);
+    const result = runCli('claim bad-token --text', workspace);
     expect(result.exitCode).toBe(1);
     expect(result.stdout + result.stderr).toMatch(/invalid.*token|rdtk_/i);
   });
@@ -56,7 +56,7 @@ describe('Delegation claim integration', () => {
   it('rejects unknown token', () => {
     // Token with correct format but no matching delegation
     // cspell:disable-next-line
-    const result = runCli('claim rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', workspace);
+    const result = runCli('claim rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH --text', workspace);
     expect(result.exitCode).toBe(1);
     expect(result.stdout + result.stderr).toMatch(/not found|no active run/i);
   });
@@ -66,7 +66,7 @@ describe('Delegation claim integration', () => {
     await writeChildRunbook();
 
     // Start parent in prompted mode
-    let result = runCli('run --prompted parent.runbook.md', workspace);
+    let result = runCli('run --prompted parent.runbook.md --text', workspace);
     expect(result.exitCode).toBe(0);
 
     // Delegate substep 1.1 to child runbook
@@ -75,12 +75,12 @@ describe('Delegation claim integration', () => {
     expect(result.stdout).toContain('DELEGATED');
 
     // Extract token from output
-    const tokenMatch = /Token:\s*(rdtk_\S+)/.exec(result.stdout);
+    const tokenMatch = /"token":\s*"(rdtk_[^"]+)"/.exec(result.stdout);
     expect(tokenMatch).not.toBeNull();
     const token = tokenMatch![1];
 
     // Claim the token — should launch child runbook
-    result = runCli(`claim ${token}`, workspace);
+    result = runCli(`claim ${token} --text`, workspace);
     expect(result.exitCode).toBe(0);
   });
 
@@ -89,38 +89,38 @@ describe('Delegation claim integration', () => {
     await writeChildRunbook();
 
     // Start parent, delegate
-    let result = runCli('run --prompted parent.runbook.md', workspace);
+    let result = runCli('run --prompted parent.runbook.md --text', workspace);
     expect(result.exitCode).toBe(0);
 
     result = runCli('delegate child.runbook.md --step 1.1', workspace);
     expect(result.exitCode).toBe(0);
-    const tokenMatch2 = /Token:\s*(rdtk_\S+)/.exec(result.stdout);
+    const tokenMatch2 = /"token":\s*"(rdtk_[^"]+)"/.exec(result.stdout);
     expect(tokenMatch2).not.toBeNull();
     const token = tokenMatch2![1];
 
     // First claim
-    result = runCli(`claim ${token}`, workspace);
+    result = runCli(`claim ${token} --text`, workspace);
     expect(result.exitCode).toBe(0);
 
     // Second claim — should succeed (idempotent)
-    result = runCli(`claim ${token}`, workspace);
+    result = runCli(`claim ${token} --text`, workspace);
     expect(result.exitCode).toBe(0);
   });
 
-  it('claim with --json outputs structured data', async () => {
+  it('claim with outputs structured data', async () => {
     await writeParentRunbook();
     await writeChildRunbook();
 
     let result = runCli('run --prompted parent.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
 
-    result = runCli('delegate child.runbook.md --step 1.1 --json', workspace);
+    result = runCli('delegate child.runbook.md --step 1.1', workspace);
     expect(result.exitCode).toBe(0);
     const delegateOutput = JSON.parse(result.stdout);
     expect(delegateOutput.token).toBeDefined();
 
     const claimToken = delegateOutput.token as string;
-    result = runCli(`claim ${claimToken} --json`, workspace);
+    result = runCli(`claim ${claimToken} --text`, workspace);
 
     // Command should succeed
     expect(result.exitCode).toBe(0);
@@ -151,17 +151,17 @@ Task uses {{ myVar }}.
     await writeFile(join(workspace.cwd, 'vars.yaml'), 'myVar: fromFile\n');
 
     // Start parent, delegate
-    let result = runCli('run --prompted parent.runbook.md', workspace);
+    let result = runCli('run --prompted parent.runbook.md --text', workspace);
     expect(result.exitCode).toBe(0);
 
     result = runCli('delegate child.runbook.md --step 1.1', workspace);
     expect(result.exitCode).toBe(0);
-    const tokenMatch = /Token:\s*(rdtk_\S+)/.exec(result.stdout);
+    const tokenMatch = /"token":\s*"(rdtk_[^"]+)"/.exec(result.stdout);
     expect(tokenMatch).not.toBeNull();
     const token = tokenMatch![1];
 
     // Claim with --var-file
-    result = runCli(`claim ${token} --var-file vars.yaml --json`, workspace);
+    result = runCli(`claim ${token} --var-file vars.yaml --text`, workspace);
     expect(result.exitCode).toBe(0);
 
     // Verify the variable was rendered in child execution output
@@ -173,8 +173,8 @@ Task uses {{ myVar }}.
     expect(claimOutput.action).toBe('claimed');
   });
 
-  it('claim --json outputs structured error for invalid token', () => {
-    const result = runCli('claim bad-token --json', workspace);
+  it('claim outputs structured error for invalid token', () => {
+    const result = runCli('claim bad-token --text', workspace);
     expect(result.exitCode).toBe(1);
 
     const output = JSON.parse(result.stderr);
@@ -214,7 +214,7 @@ Task uses {{ myVar }}.
     const childContent = '## 1. Execute\n- PASS COMPLETE\n\nRun task.\n';
     await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childContent);
 
-    const result = runCli('scenario run bad-token.runbook.md bad-token -q', workspace);
+    const result = runCli('scenario run bad-token.runbook.md bad-token -q --text', workspace);
     expect(result.exitCode).not.toBe(0);
     expect(result.stdout + result.stderr).toMatch(/TOKEN_0|references uncaptured token/);
   });
@@ -237,7 +237,7 @@ rd echo --result pass
       await writeAutoCompleteChildRunbook();
 
       // Start parent in non-prompted mode (so child will auto-complete)
-      let result = runCli('run parent.runbook.md', workspace);
+      let result = runCli('run parent.runbook.md --text', workspace);
       expect(result.exitCode).toBe(0);
 
       // Verify parent is waiting at substep 1.1
@@ -250,15 +250,15 @@ rd echo --result pass
       // Delegate substep 1.1
       result = runCli('delegate auto-child.runbook.md --step 1.1', workspace);
       expect(result.exitCode).toBe(0);
-      const token = /Token:\s*(rdtk_\S+)/.exec(result.stdout)![1];
+      const token = /"token":\s*"(rdtk_[^"]+)"/.exec(result.stdout)![1];
 
       // Claim — child auto-completes and propagates pass to parent 1.1
       // DEFER model: parent advances to 1.2
-      result = runCli(`claim ${token}`, workspace);
+      result = runCli(`claim ${token} --text`, workspace);
       expect(result.exitCode).toBe(0);
 
       // Complete parent substep 1.2 → aggregation → PASS ALL → CONTINUE → step 2
-      result = runCli('pass', workspace);
+      result = runCli('pass --text', workspace);
       expect(result.exitCode).toBe(0);
 
       const updatedParent = await readRunbookState(workspace, parentRunId);
@@ -279,7 +279,7 @@ rd echo --result fail
       await writeFile(join(workspace.cwd, 'fail-child.runbook.md'), failChildContent);
 
       // Start parent
-      let result = runCli('run parent.runbook.md', workspace);
+      let result = runCli('run parent.runbook.md --text', workspace);
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);
@@ -288,15 +288,15 @@ rd echo --result fail
       // Delegate substep 1.1
       result = runCli('delegate fail-child.runbook.md --step 1.1', workspace);
       expect(result.exitCode).toBe(0);
-      const token = /Token:\s*(rdtk_\S+)/.exec(result.stdout)![1];
+      const token = /"token":\s*"(rdtk_[^"]+)"/.exec(result.stdout)![1];
 
       // Claim — child auto-fails and propagates fail to parent 1.1
       // DEFER model: parent advances to 1.2
-      result = runCli(`claim ${token}`, workspace);
+      result = runCli(`claim ${token} --text`, workspace);
       expect(result.exitCode).toBe(1);
 
       // Complete parent substep 1.2 → aggregation → FAIL ANY: STOP
-      result = runCli('pass', workspace);
+      result = runCli('pass --text', workspace);
       expect(result.exitCode).toBe(1);
 
       // Parent should be stopped

@@ -69,7 +69,7 @@ export function createProgram(): Command {
 
   // Display options
   program.option('--no-color', 'Disable colored output');
-  program.option('--schema', "Output JSON schema for command's --json output");
+  program.option('--schema', "Output JSON schema for the command's JSON output");
 
   // Policy options
   program

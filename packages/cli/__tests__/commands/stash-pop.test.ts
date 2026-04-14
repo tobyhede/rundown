@@ -22,47 +22,47 @@ describe('stash command', () => {
   });
 
   it('moves active runbook to stashed', async () => {
-    await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
     const beforeSession = await readSession(workspace);
     const runbookId = beforeSession.active;
 
-    await runCliInProcess('stash', workspace);
+    await runCliInProcess('stash --text', workspace);
 
     const afterSession = await readSession(workspace);
     expect(afterSession.stashed).toBe(runbookId);
   });
 
   it('clears active runbook', async () => {
-    await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
 
-    await runCliInProcess('stash', workspace);
+    await runCliInProcess('stash --text', workspace);
 
     const session = await readSession(workspace);
     expect(session.active).toBeNull();
   });
 
   it('outputs stash confirmation', async () => {
-    await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
 
-    const result = await runCliInProcess('stash', workspace);
+    const result = await runCliInProcess('stash --text', workspace);
 
     expect(result.stdout).toContain('STASHED');
     expect(result.stdout).toContain('Runbook:');
   });
 
   it('fails if no active runbook', async () => {
-    const result = await runCliInProcess('stash', workspace);
+    const result = await runCliInProcess('stash --text', workspace);
 
     expect(result.stdout).toContain('No active runbook');
   });
 
   it('preserves runbook state', async () => {
-    await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
-    await runCliInProcess('pass', workspace); // Advance to step 2
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+    await runCliInProcess('pass --text', workspace); // Advance to step 2
     const beforeState = await getActiveState(workspace);
 
-    await runCliInProcess('stash', workspace);
-    await runCliInProcess('pop', workspace);
+    await runCliInProcess('stash --text', workspace);
+    await runCliInProcess('pop --text', workspace);
 
     const afterState = await getActiveState(workspace);
     expect(afterState?.step).toBe(beforeState?.step);
@@ -70,11 +70,11 @@ describe('stash command', () => {
   });
 
   it('returns non-zero when another runbook is already stashed', async () => {
-    await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
-    await runCliInProcess('stash', workspace);
-    await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+    await runCliInProcess('stash --text', workspace);
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
 
-    const result = await runCliInProcess('stash --json', workspace);
+    const result = await runCliInProcess('stash', workspace);
 
     expect(result.exitCode).toBe(1);
     expect(JSON.parse(result.stdout)).toEqual({
@@ -97,50 +97,50 @@ describe('pop command', () => {
   });
 
   it('restores stashed runbook to active', async () => {
-    await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
     const beforeSession = await readSession(workspace);
     const runbookId = beforeSession.active;
 
-    await runCliInProcess('stash', workspace);
-    await runCliInProcess('pop', workspace);
+    await runCliInProcess('stash --text', workspace);
+    await runCliInProcess('pop --text', workspace);
 
     const afterSession = await readSession(workspace);
     expect(afterSession.active).toBe(runbookId);
   });
 
   it('clears stashed state', async () => {
-    await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
-    await runCliInProcess('stash', workspace);
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+    await runCliInProcess('stash --text', workspace);
 
-    await runCliInProcess('pop', workspace);
+    await runCliInProcess('pop --text', workspace);
 
     const session = await readSession(workspace);
     expect(session.stashed).toBeNull();
   });
 
   it('outputs restored runbook info', async () => {
-    await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
-    await runCliInProcess('stash', workspace);
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+    await runCliInProcess('stash --text', workspace);
 
-    const result = await runCliInProcess('pop', workspace);
+    const result = await runCliInProcess('pop --text', workspace);
 
     expect(result.stdout).toContain('First step');
     expect(result.stdout).toContain('## 1');
   });
 
   it('fails if nothing stashed', async () => {
-    const result = await runCliInProcess('pop', workspace);
+    const result = await runCliInProcess('pop --text', workspace);
 
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain('No stashed runbook');
   });
 
   it('shows resuming step info', async () => {
-    await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
-    await runCliInProcess('pass', workspace); // Advance to step 2
-    await runCliInProcess('stash', workspace);
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+    await runCliInProcess('pass --text', workspace); // Advance to step 2
+    await runCliInProcess('stash --text', workspace);
 
-    const result = await runCliInProcess('pop', workspace);
+    const result = await runCliInProcess('pop --text', workspace);
 
     expect(result.stdout).toContain('Second step');
   });
@@ -178,7 +178,7 @@ rd echo "hello"
     // Set up session to have this runbook stashed (with empty defaultStack)
     await writeSession(workspace, { stashed: runbookId, defaultStack: [] });
 
-    const result = await runCliInProcess('pop', workspace);
+    const result = await runCliInProcess('pop --text', workspace);
 
     // Text mode should NOT be silent - should show error message on stderr
     expect(result.exitCode).toBe(1);

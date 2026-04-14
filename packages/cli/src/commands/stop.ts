@@ -17,12 +17,12 @@ export function registerStopCommand(program: Command): void {
     .command('stop')
     .description('Abort current runbook')
     .argument('[message]', 'Stop message')
-    .option('--json', 'Output as JSON for programmatic use')
-    .action(async (message: string | undefined, options: { json?: boolean }) => {
+    .option('--text', 'Output as human-readable text')
+    .action(async (message: string | undefined, options: { text?: boolean }) => {
       await withErrorHandling(
         async () => {
           const cwd = getCwd();
-          const output = new OutputEmitter({ json: options.json });
+          const output = new OutputEmitter({ text: options.text });
           const manager = new RunbookStateManager(cwd);
           const sessionService = new SessionService(manager);
 
@@ -82,7 +82,7 @@ export function registerStopCommand(program: Command): void {
 
           output.flush();
         },
-        { json: options.json },
+        { text: options.text },
       );
     });
 }

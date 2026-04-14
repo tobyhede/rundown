@@ -46,7 +46,7 @@ rd echo --result pass
 
       writeFileSync(workspace.runbookPath('test.runbook.md'), runbook);
 
-      const result = runCli('run runbooks/test.runbook.md', workspace);
+      const result = runCli('run runbooks/test.runbook.md --text', workspace);
 
       // All transitions should show CONTINUE because that's the default
       const lines = result.stdout.split('\n');
@@ -95,7 +95,7 @@ rd echo --result pass
 
       writeFileSync(workspace.runbookPath('test.runbook.md'), runbook);
 
-      const result = runCli('run runbooks/test.runbook.md', workspace);
+      const result = runCli('run runbooks/test.runbook.md --text', workspace);
 
       // Should show GOTO 3 for the explicit GOTO transition
       expect(result.stdout).toContain('GOTO 3');
@@ -124,7 +124,7 @@ rd echo --result pass
 
       writeFileSync(workspace.runbookPath('test.runbook.md'), runbook);
 
-      const result = runCli('run runbooks/test.runbook.md', workspace);
+      const result = runCli('run runbooks/test.runbook.md --text', workspace);
 
       // Should show GOTO ErrorHandler
       expect(result.stdout).toContain('GOTO ErrorHandler');
@@ -134,7 +134,7 @@ rd echo --result pass
   describe('RETRY action display', () => {
     it('displays RETRY with count for RETRY transitions', () => {
       // Use the existing retry.runbook.md fixture which has proper RETRY syntax
-      const result = runCli('run runbooks/retry.runbook.md', workspace);
+      const result = runCli('run runbooks/retry.runbook.md --text', workspace);
 
       // Should show RETRY with count (fixture has FAIL: RETRY 3)
       expect(result.stdout).toMatch(/RETRY\s+\(1\/3\)/);
@@ -175,7 +175,7 @@ rd echo --result pass
 
       writeFileSync(workspace.runbookPath('substeps-continue.runbook.md'), runbook);
 
-      const result = runCli('run runbooks/substeps-continue.runbook.md', workspace);
+      const result = runCli('run runbooks/substeps-continue.runbook.md --text', workspace);
 
       // Should contain CONTINUE actions for substep transitions (1.1 -> 1.2)
       expect(result.stdout).toContain('CONTINUE');
@@ -215,7 +215,7 @@ rd echo --result pass
 
       writeFileSync(workspace.runbookPath('substep-goto.runbook.md'), runbook);
 
-      const result = runCli('run runbooks/substep-goto.runbook.md', workspace);
+      const result = runCli('run runbooks/substep-goto.runbook.md --text', workspace);
 
       // Should show GOTO 1.3 for the explicit GOTO transition
       expect(result.stdout).toContain('GOTO 1.3');
