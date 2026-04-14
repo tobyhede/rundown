@@ -177,6 +177,32 @@ describe('StepAssertionSchema', () => {
     const result = StepAssertionSchema.safeParse({ result: 'pass' }); // lowercase
     expect(result.success).toBe(false);
   });
+
+  it('accepts runbook as a string', () => {
+    const result = StepAssertionSchema.safeParse({ runbook: 'child.runbook.md' });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.runbook).toBe('child.runbook.md');
+    }
+  });
+
+  it('runbook is optional — absent from parsed data when not provided', () => {
+    const result = StepAssertionSchema.safeParse({ action: 'COMPLETE' });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.runbook).toBeUndefined();
+    }
+  });
+
+  it('validates full assertion including runbook', () => {
+    const result = StepAssertionSchema.safeParse({
+      runbook: 'delegation-child-pass.runbook.md',
+      from: '1',
+      action: 'COMPLETE',
+      result: 'PASS',
+    });
+    expect(result.success).toBe(true);
+  });
 });
 
 describe('getEffectiveResult', () => {
