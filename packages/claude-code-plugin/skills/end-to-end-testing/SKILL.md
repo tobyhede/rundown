@@ -18,11 +18,11 @@ Start the runbook:
 
 ## Workflow
 
-The end-to-end test runbook runs write-plan, then review-plan, then collects feedback.
-Follow the running-runbooks skill for step execution.
-The review-plan step involves delegation — follow the delegating-runbooks skill to dispatch and monitor subagents.
+The end-to-end test runbook has two parent steps:
 
-When the child workflows complete, the parent advances to the feedback step.
+**Step 1** runs write-plan and review-plan as substeps (1.1 and 1.2). Follow the running-runbooks skill for substep execution. Substep 1.1 (write-plan) runs inline. Substep 1.2 (review-plan) requires delegation — follow the delegating-runbooks skill to dispatch and monitor the subagent, passing `PlanPath` as instructed in the runbook body.
+
+**Step 2** collects feedback once both substeps complete.
 
 ## Feedback
 

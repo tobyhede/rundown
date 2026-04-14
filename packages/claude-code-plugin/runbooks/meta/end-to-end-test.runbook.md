@@ -8,35 +8,30 @@ tags:
 
 # End-to-End Test
 
-## 1. Run write-plan
+## 1. Execute planning workflow
+- PASS ALL CONTINUE
+- FAIL ANY STOP
 
-- PASS CONTINUE
-- FAIL STOP
+### 1.1 Write plan
 
-planning/write-plan.runbook.md
+- planning/write-plan.runbook.md
 
-## 2. Run review-plan
+### 1.2 Review plan
 
-- PASS CONTINUE
-- FAIL STOP
+Delegate `planning/review-plan.runbook.md`, passing `PlanPath` resolved from:
 
-Run `planning/review-plan.runbook.md` with `PlanPath` set to the plan output from the previous step.
+`rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file plan.json`
 
-PlanPath:
-```bash
-rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file plan.json
-```
-
-## 3. Collect feedback
+## 2. Collect feedback
 - PASS COMPLETE
 - FAIL COMPLETE
 
 Review each step for clarity and friction.
 Note any instructions that were ambiguous, missing, or required improvisation.
 Include an overall assessment of the skill and runbook quality.
-Write your feedback to the output path using the Feedback JSON schema.
+Write your feedback to the output path using the Review JSON schema.
 
-Schema: `{{ CLAUDE_PLUGIN_ROOT }}/schemas/feedback.schema.json`
+Schema: `{{ CLAUDE_PLUGIN_ROOT }}/schemas/review.schema.json`
 
 ```bash
 rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file feedback.json
