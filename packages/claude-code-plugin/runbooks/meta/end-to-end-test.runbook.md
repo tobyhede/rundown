@@ -18,9 +18,7 @@ tags:
 
 ### 1.2 Review plan
 
-Delegate `planning/review-plan.runbook.md`, passing `PlanPath` resolved from:
-
-`rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file plan.json`
+- planning/review-plan.runbook.md
 
 ## 2. Collect feedback
 - PASS COMPLETE
