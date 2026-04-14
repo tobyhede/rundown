@@ -112,7 +112,7 @@ describe('subagent-stop contract tests', () => {
   ): Promise<{ context?: string; violation?: string }> {
     mockGet.mockResolvedValue({ delegation_active_token: token });
 
-    const statusResult = runCli('status --json', tempDir);
+    const statusResult = runCli('status', tempDir);
     expect(statusResult.exitCode).toBe(0);
 
     setExecSync(createMockExecSync(statusResult.stdout) as never);

@@ -40,7 +40,7 @@ export function getCliPath(): string {
  * @returns CLI execution result with stdout, stderr, and exit code
  *
  * @example
- * runCli('status --json', tempDir)           // Simple args
+ * runCli('status', tempDir)           // Simple args (JSON output by default)
  * runCli(['check', '/path/to/file.md'], tempDir)  // Path with spaces
  */
 export function runCli(args: string | string[], cwd: string): CliResult {

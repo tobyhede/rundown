@@ -20,8 +20,7 @@ rd delegate --step 2.1 --var-file <path>   # Variables from YAML
 rd abort <token>                      # Cancel unclaimed delegation
 rd abort <token> --force              # Cancel claimed delegation
 
-rd status                             # Monitor delegation state
-rd status --json                      # Structured state (for parsing)
+rd status                             # Monitor delegation state (JSON by default)
 ```
 
 ## Delegation Flow

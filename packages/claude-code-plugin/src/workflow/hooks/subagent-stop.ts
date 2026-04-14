@@ -368,7 +368,7 @@ export function parseDelegations(raw: unknown): {
  */
 export function queryRunbookStatus(cwd: string): RunbookStatus | undefined {
   try {
-    const output = rundown(['status', '--json'], cwd);
+    const output = rundown(['status'], cwd);
     const parsed = JSON.parse(output) as Record<string, unknown>;
 
     const active = parsed.active === true;

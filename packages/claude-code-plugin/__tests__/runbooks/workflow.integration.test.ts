@@ -82,7 +82,7 @@ Do the second thing.
       expect(result.exitCode).toBe(0);
 
       // Check we're on step 1
-      result = runCli('status --json', tempDir);
+      result = runCli('status', tempDir);
       expect(result.exitCode).toBe(0);
       const status1 = JSON.parse(result.stdout);
       expect(status1.position.current).toBe('1');
@@ -92,7 +92,7 @@ Do the second thing.
       expect(result.exitCode).toBe(0);
 
       // Check we're on step 2
-      result = runCli('status --json', tempDir);
+      result = runCli('status', tempDir);
       expect(result.exitCode).toBe(0);
       const status2 = JSON.parse(result.stdout);
       expect(status2.position.current).toBe('2');
@@ -136,7 +136,7 @@ Recovery step.
       expect(result.exitCode).toBe(0);
 
       // Check we're on step 3 (recovery)
-      result = runCli('status --json', tempDir);
+      result = runCli('status', tempDir);
       expect(result.exitCode).toBe(0);
       const status = JSON.parse(result.stdout);
       expect(status.position.current).toBe('3');
@@ -181,7 +181,7 @@ Third step.
       expect(result.exitCode).toBe(0);
 
       // Check we're on step 3
-      result = runCli('status --json', tempDir);
+      result = runCli('status', tempDir);
       expect(result.exitCode).toBe(0);
       const status = JSON.parse(result.stdout);
       expect(status.position.current).toBe('3');
