@@ -24,6 +24,7 @@ Locate the plan to review:
 
 Read the plan.
 
+
 ## 2. Context and scope
 - PASS CONTINUE
 - FAIL STOP
@@ -41,7 +42,8 @@ Verify the plan includes:
 - PASS ALL CONTINUE
 - FAIL ANY CONTINUE
 
-Delegate subagents to review the plan.
+Delegate 4x subagents to review the plan.
+Delegate subagents for Steps 3.1 - 3.4.
 
 - review-plan-technical-accuracy.runbook.md
 - review-plan-structural-integrity.runbook.md

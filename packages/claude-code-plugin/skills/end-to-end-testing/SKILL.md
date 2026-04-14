@@ -16,16 +16,27 @@ Start the runbook:
 `rd run rundown:end-to-end-test --prompted`
 </important>
 
+
 ## Workflow
 
-The end-to-end test runbook has two parent steps:
+The end-to-end test runbook coordinates multiple runbooks to test the end-to-end process.
 
-**Step 1** runs write-plan and review-plan as substeps (1.1 and 1.2). Follow the running-runbooks skill for substep execution. Substep 1.1 (write-plan) runs inline. Substep 1.2 (review-plan) requires delegation — follow the delegating-runbooks skill to dispatch and monitor the subagent, passing `PlanPath` as instructed in the runbook body.
+Your goal is to step through the entire workflow, ensuring that the runbooks are clear and correct, and that the workflow runs without error.
+Follow the rundown process and provide your feedback once complete.
+
+The end-to-end runbook includes:
+
+- write plan (delegating to a subagent)
+- review plan (delegating the review tasks to multiple subagents)
 
 **Step 2** collects feedback once both substeps complete.
 
-## Feedback
+## Important notes
 
-After all steps complete, rate each step for clarity and friction. Note any instructions that were ambiguous, missing, or that required improvisation. Write feedback as JSON conforming to the feedback schema.
+Use the correct skills.
+Follow the rundown prompts.
 
-Do not use prune or other commands that delete state information. This is useful for review.
+Do not clear, prune or delete state information.
+If errors or issues are encountered, it is important to identify the problem and report to the user.
+
+Note any instructions, commands or context that is ambiguous, missing, incorrect, or required improvisation.

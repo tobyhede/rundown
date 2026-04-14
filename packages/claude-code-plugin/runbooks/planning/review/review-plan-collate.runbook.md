@@ -14,9 +14,7 @@ Collate multiple plan reviews into a single canonical review document.
 - PASS CONTINUE
 - FAIL COMPLETE
 
-`rdpath find` exits non-zero when zero files match, so `FAIL COMPLETE`
-handles the empty-review-set case as graceful early completion — if no
-reviewers produced findings, there is nothing to collate.
+If there are no review files, there is nothing to collate.
 
 ```bash
 rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} find "review-plan-*.json"
