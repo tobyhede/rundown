@@ -89,7 +89,8 @@ describe('start --prompted', () => {
         workspace,
       );
       expect(delegateResult.exitCode).toBe(0);
-      const token = /"token":\s*"(rdtk_[^"]+)"/.exec(delegateResult.stdout)?.[1];
+      const delegateOutput = JSON.parse(delegateResult.stdout) as { token?: string };
+      const token = delegateOutput.token;
       expect(token).toBeDefined();
 
       // Claim the delegation token — launches child runbook

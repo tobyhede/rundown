@@ -19,8 +19,8 @@ npm install -g @rundown-org/cli
 ## Commands
 
 ```bash
-rundown run [file]       # Run a runbook
-rundown run [file]       # Output execution events as JSON (default)
+rundown run [file]       # Run a runbook (JSON output by default)
+rundown run [file] --text # Output execution events as human-readable text
 rundown run [file] --var key=value  # Set template variable (repeatable, omit =value to inherit from env)
 rundown run [file] --var-json key=json  # Set variable with JSON value (repeatable)
 rundown run [file] --var-file path  # Load variables from YAML file (repeatable)
@@ -340,7 +340,7 @@ New CLI commands MUST use `OutputEmitter` for consistent output with format-agno
 // In packages/cli/src/commands/your-command.ts
 import { OutputEmitter } from '../services/output-emitter.js';
 
-const output = new OutputEmitter({ json: options.json });
+const output = new OutputEmitter({ text: options.text });
 
 output.list(items, [
   { header: 'NAME', key: 'name' },

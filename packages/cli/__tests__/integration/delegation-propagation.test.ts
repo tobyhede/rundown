@@ -51,10 +51,9 @@ describe('Delegation propagation integration', () => {
 
   /** Helper: extract delegation token from CLI output. */
   function extractToken(stdout: string): string {
-    // JSON output (default): delegate response is a JSON object with a token field
-    const match = /"token":\s*"(rdtk_[^"]+)"/.exec(stdout);
-    if (!match) throw new Error(`No token found in output:\n${stdout}`);
-    return match[1];
+    const parsed = JSON.parse(stdout) as { token?: string };
+    if (!parsed.token) throw new Error(`No token found in delegate output:\n${stdout}`);
+    return parsed.token;
   }
 
   /** Helper: read resolvedCompletions from a run state file. */

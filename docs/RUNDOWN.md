@@ -786,9 +786,8 @@ Execute batch...
 List active or available runbooks.
 
 ```bash
-rundown ls           # List active runbooks
+rundown ls           # List active runbooks (JSON output by default)
 rundown ls --all     # List available runbook files
-rundown ls    # JSON output (default)
 rundown ls --all --tags review  # Filter by tag
 ```
 

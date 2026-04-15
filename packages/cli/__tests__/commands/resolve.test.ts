@@ -264,7 +264,7 @@ echo {{ server }}
     expect(output.sources.servers.items).toBe(2);
   });
 
-  it('outputs valid JSON matching schema with', async () => {
+  it('outputs valid JSON matching schema by default', async () => {
     const runbookPath = path.join(workspace.cwd, 'schema-test.runbook.md');
     fs.writeFileSync(
       runbookPath,

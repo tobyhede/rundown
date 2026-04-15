@@ -75,9 +75,9 @@ describe('Delegation claim integration', () => {
     expect(JSON.parse(result.stdout).action).toBe('delegated');
 
     // Extract token from output
-    const tokenMatch = /"token":\s*"(rdtk_[^"]+)"/.exec(result.stdout);
-    expect(tokenMatch).not.toBeNull();
-    const token = tokenMatch![1];
+    const delegateOutput = JSON.parse(result.stdout) as { token?: string };
+    expect(delegateOutput.token).toBeDefined();
+    const token = delegateOutput.token!;
 
     // Claim the token — should launch child runbook
     result = runCli(`claim ${token} --text`, workspace);
@@ -94,9 +94,9 @@ describe('Delegation claim integration', () => {
 
     result = runCli('delegate child.runbook.md --step 1.1', workspace);
     expect(result.exitCode).toBe(0);
-    const tokenMatch2 = /"token":\s*"(rdtk_[^"]+)"/.exec(result.stdout);
-    expect(tokenMatch2).not.toBeNull();
-    const token = tokenMatch2![1];
+    const delegateOutput2 = JSON.parse(result.stdout) as { token?: string };
+    expect(delegateOutput2.token).toBeDefined();
+    const token = delegateOutput2.token!;
 
     // First claim
     result = runCli(`claim ${token} --text`, workspace);

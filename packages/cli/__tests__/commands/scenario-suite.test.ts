@@ -111,7 +111,7 @@ cases:
       expect(result.stdout).toMatch(/NAME\s{2,}FILE\s{2,}EXPECTED/);
     });
 
-    it('outputs JSON with flag', async () => {
+    it('outputs JSON by default', async () => {
       const result = await runCliInProcess('scenario-suite ls test.scenario-suite.yaml', workspace);
 
       expect(result.exitCode).toBe(0);
@@ -167,7 +167,7 @@ cases:
       expect(result.stdout).toContain('suite-test.runbook.md');
     });
 
-    it('outputs JSON with flag', async () => {
+    it('outputs JSON by default', async () => {
       const result = await runCliInProcess(
         'scenario-suite show test.scenario-suite.yaml happy-path',
         workspace,
@@ -231,7 +231,7 @@ cases:
       expect(parsed.actual).toBe('STOP');
     }, 30000);
 
-    it('outputs JSON for single case with', async () => {
+    it('outputs JSON for single case by default', async () => {
       const result = await runCliInProcess(
         'scenario-suite run test.scenario-suite.yaml happy-path',
         workspace,
