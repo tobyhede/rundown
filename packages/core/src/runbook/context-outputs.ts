@@ -61,7 +61,15 @@ export async function loadContextOutputs(
  * Store context outputs for a given context ID.
  *
  * Merges new outputs into any existing outputs (additive, not replace). Creates
- * the directory if it does not exist.
+ * the directory if it does not exist. The write is atomic (write-then-rename) to
+ * prevent partial-write corruption on crash.
+ *
+ * **Concurrency note:** This function performs a read-merge-write sequence without
+ * a file lock. Concurrent writes from two processes sharing the same ContextId
+ * can race and clobber each other's entries. Current delegation patterns are
+ * sequential (parent waits for child before reading outputs), so this race is
+ * latent. If parallel delegation patterns are introduced, add a file lock using
+ * the existing `delegationLockPath` infrastructure.
  *
  * @param cwd - Project root directory
  * @param contextId - Context identifier shared across the delegation tree
@@ -78,10 +86,18 @@ export async function storeContextOutputs(
 
   await fs.mkdir(dir, { recursive: true });
 
-  // Merge with existing outputs (existing wins for already-set keys only if we want idempotency;
-  // new outputs overwrite old ones for the same key — caller controls what they publish)
+  // Merge with existing outputs — new outputs overwrite old ones for the same key
   const existing = await loadContextOutputs(cwd, contextId);
   const merged = { ...existing, ...outputs };
 
-  await fs.writeFile(filePath, JSON.stringify(merged, null, 2), 'utf-8');
+  // Atomic write: write to a temp file then rename to prevent partial-write corruption
+  const tmp = `${filePath}.${String(process.pid)}.tmp`;
+  try {
+    await fs.writeFile(tmp, JSON.stringify(merged, null, 2), 'utf-8');
+    await fs.rename(tmp, filePath);
+  } catch (err) {
+    // Clean up temp file on failure (best-effort)
+    await fs.unlink(tmp).catch(() => undefined);
+    throw err;
+  }
 }

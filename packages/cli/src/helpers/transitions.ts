@@ -290,9 +290,13 @@ async function storeStepOutputs(
     }
   }
 
-  if (Object.keys(evaluated).length > 0) {
-    await storeContextOutputs(cwd, contextId, evaluated);
+  if (Object.keys(evaluated).length === 0) {
+    void logger.warn(
+      'storeStepOutputs: all OUTPUTS declarations failed to evaluate — nothing stored to context',
+    );
+    return;
   }
+  await storeContextOutputs(cwd, contextId, evaluated);
 }
 
 /**

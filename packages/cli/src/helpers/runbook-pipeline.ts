@@ -32,6 +32,7 @@ import {
   DELEGATION_TOKEN_PREFIX,
   ErrorCodes,
   getErrorMessage,
+  logger,
   type TemplateVarValue,
   isJsonArray,
   isJsonArrayStream,
@@ -542,9 +543,13 @@ export async function prepareRunbook(
           templateVars = buildTemplateVars(mergedVariables, options);
         }
       }
-    } catch {
-      // Context outputs file missing or unreadable — not a hard error; required: check will
+    } catch (err) {
+      // Context outputs are not available — not a hard error; required: check will
       // surface missing vars if they can't be satisfied by any other channel.
+      // Log real errors (permission denied, malformed JSON) so users can diagnose.
+      void logger.warn('runbook-pipeline: failed to load context outputs for INPUTS injection', {
+        error: getErrorMessage(err),
+      });
     }
   }
 

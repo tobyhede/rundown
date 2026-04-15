@@ -63,6 +63,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
       (v as Record<string, unknown>).kind === 'json-array-stream',
   ),
   loadContextOutputs: jest.fn().mockResolvedValue({}),
+  logger: { warn: jest.fn(), info: jest.fn(), debug: jest.fn(), error: jest.fn() },
   ...mockErrorHelpers,
 }));
 

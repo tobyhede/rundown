@@ -646,7 +646,12 @@ function handleListItem(node: ListItem, ctx: ActiveStepContext): typeof SKIP | u
   const text = extractText(firstParagraph as PhrasingContent | Heading | Paragraph | ListItem);
 
   // Check for OUTPUTS directive (step-level only, not substep)
-  if (text.trim() === 'OUTPUTS' && !ctx.currentStep.pendingSubstep) {
+  if (text.trim() === 'OUTPUTS') {
+    if (ctx.currentStep.pendingSubstep) {
+      throw new RunbookSyntaxError(
+        `OUTPUTS directive${formatLineNum(node)} is not supported inside a substep — declare OUTPUTS at the step level`,
+      );
+    }
     return handleOutputsDirective(node, ctx);
   }
 
@@ -654,7 +659,12 @@ function handleListItem(node: ListItem, ctx: ActiveStepContext): typeof SKIP | u
   // Exact match only — prose starting with "INPUTS" (e.g., "INPUTS are validated by…")
   // is not a directive. Variable names live in the nested list, not inline text.
   const trimmedText = text.trim();
-  if (trimmedText === 'INPUTS' && !ctx.currentStep.pendingSubstep) {
+  if (trimmedText === 'INPUTS') {
+    if (ctx.currentStep.pendingSubstep) {
+      throw new RunbookSyntaxError(
+        `INPUTS directive${formatLineNum(node)} is not supported inside a substep — declare INPUTS at the step level`,
+      );
+    }
     return handleInputsDirective(node, ctx);
   }
 
