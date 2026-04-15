@@ -10,10 +10,11 @@
  * @module
  */
 
+import { randomBytes } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { contextOutputsPath, contextOutputsLockPath, locksDir } from '../paths.js';
 import { isNodeError } from '../errors.js';
+import { contextOutputsLockPath, contextOutputsPath, locksDir } from '../paths.js';
 import { acquireFileLock, releaseFileLock } from './file-lock.js';
 
 /**
@@ -94,10 +95,15 @@ export async function storeContextOutputs(
     const existing = await loadContextOutputs(cwd, contextId);
     const merged = { ...existing, ...outputs };
 
-    // Atomic write: write to a temp file then rename to prevent partial-write corruption
-    const tmp = `${filePath}.${String(process.pid)}.tmp`;
+    // Atomic write: write to a temp file then rename to prevent partial-write corruption.
+    // Use a cryptographically random suffix and O_CREAT | O_EXCL (flag: 'wx') so a
+    // pre-existing file or symlink at the tmp path cannot be silently followed/overwritten.
+    const tmp = `${filePath}.${randomBytes(8).toString('hex')}.tmp`;
     try {
-      await fs.writeFile(tmp, JSON.stringify(merged, null, 2), 'utf-8');
+      await fs.writeFile(tmp, JSON.stringify(merged, null, 2), {
+        encoding: 'utf-8',
+        flag: 'wx',
+      });
       await fs.rename(tmp, filePath);
     } catch (err) {
       // Clean up temp file on failure (best-effort)
