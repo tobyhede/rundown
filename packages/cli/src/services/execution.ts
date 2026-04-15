@@ -635,9 +635,23 @@ export async function runExecutionLoop(
           }
         }
         if (Object.keys(injected).length > 0) {
+          // Mirror the static pipeline: every var source produces context.vars.* aliases,
+          // so prompts and OUTPUTS expressions can reference INPUTS via either namespace.
+          const aliases: Record<string, TemplateVarValue> = {};
+          for (const [k, v] of Object.entries(injected)) {
+            aliases[`context.vars.${k}`] = v;
+          }
+          const mergedTemplateVars = {
+            ...existing,
+            ...injected,
+            ...aliases,
+          };
+          // Persist before any 'waiting' return so manual `rd pass`/`rd fail` (which
+          // reload state from disk) can evaluate OUTPUTS against the injected INPUTS.
+          await manager.update(runbookId, { templateVars: mergedTemplateVars });
           currentState = {
             ...currentState,
-            templateVars: { ...existing, ...injected },
+            templateVars: mergedTemplateVars,
           };
         }
       }

@@ -405,23 +405,20 @@ describe('prepareRunbook', () => {
       PlanPath: '/ctx/plan.json',
       Tag: 'from-output',
     });
+    // Inheritance now happens AFTER resolveVariables, keyed by the final
+    // ContextId from the resolved vars. Outputs whose keys are not already
+    // provided by a VARS channel are injected as a gap-filling pass.
     (resolveVariables as jest.Mock).mockResolvedValue({
-      vars: {
-        ContextId: 'ctx-parent',
-        Region: 'us-west',
-        Tag: 'from-output',
-        PlanPath: '/ctx/plan.json',
-      },
+      vars: { ContextId: 'ctx-parent', Region: 'us-west' },
       sources: {},
       warnings: [],
-      providedKeys: new Set(['ContextId', 'Region', 'Tag', 'PlanPath']),
+      providedKeys: new Set(['ContextId', 'Region']),
     });
 
     const result = await prepareRunbook('child.md', {}, '/test', {
       inheritedUserVars: {
         ContextId: 'ctx-parent',
         Region: 'us-west',
-        Tag: 'from-parent',
       },
     });
 
@@ -429,12 +426,7 @@ describe('prepareRunbook', () => {
     expect(core.loadContextOutputs).toHaveBeenCalledWith('/test', 'ctx-parent');
     expect(resolveVariables).toHaveBeenCalledWith(
       expect.objectContaining({
-        inheritedVars: {
-          ContextId: 'ctx-parent',
-          Region: 'us-west',
-          Tag: 'from-output',
-          PlanPath: '/ctx/plan.json',
-        },
+        inheritedVars: { ContextId: 'ctx-parent', Region: 'us-west' },
       }),
       '/test',
       expect.anything(),
@@ -446,6 +438,44 @@ describe('prepareRunbook', () => {
         PlanPath: '/ctx/plan.json',
         'context.vars.Tag': 'from-output',
         'context.vars.PlanPath': '/ctx/plan.json',
+      }),
+    );
+  });
+
+  it('inherits outputs from the child ContextId override, not the parent', async () => {
+    resolveRunbookFile.mockResolvedValue({ path: '/test/child.md', source: 'project' });
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue(mockParseResult());
+    // Whichever ContextId the final templateVars holds is the one we load.
+    // Parent-context outputs must not bleed through when the child overrides ContextId.
+    (core.loadContextOutputs as jest.Mock).mockImplementation(async (_cwd, ctxId: string) => {
+      if (ctxId === 'ctx-child') return { Tag: 'from-child' };
+      if (ctxId === 'ctx-parent') return { Tag: 'from-parent' };
+      return {};
+    });
+    (resolveVariables as jest.Mock).mockResolvedValue({
+      vars: { ContextId: 'ctx-child' },
+      sources: {},
+      warnings: [],
+      providedKeys: new Set(['ContextId']),
+    });
+
+    const result = await prepareRunbook('child.md', {}, '/test', {
+      inheritedUserVars: { ContextId: 'ctx-parent' },
+    });
+
+    expect(result.ok).toBe(true);
+    // Only the child's ContextId is consulted — parent context outputs are not
+    // pre-merged into inheritedVars (which would mark them as "provided" and
+    // mask the new context's outputs).
+    expect(core.loadContextOutputs).toHaveBeenCalledWith('/test', 'ctx-child');
+    expect(core.loadContextOutputs).not.toHaveBeenCalledWith('/test', 'ctx-parent');
+    expect(substituteRunbookVariables).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        Tag: 'from-child',
+        'context.vars.Tag': 'from-child',
       }),
     );
   });
@@ -1479,6 +1509,10 @@ describe('claimAndLaunch', () => {
     const result = await claimAndLaunch(ctx as any, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
 
     expect(result.ok).toBe(true);
+    // Inheritance is now keyed by the resolved ContextId after variable
+    // resolution, not by pre-merging into inheritedVars. The inherited vars
+    // passed into resolveVariables are the parent vars untouched; outputs flow
+    // in via the post-resolution stage 3.5 pass.
     expect(core.loadContextOutputs).toHaveBeenCalledWith('/test', 'ctx-parent');
     const resolveCall = (resolveVariables as jest.Mock).mock.calls.at(-1);
     expect(resolveCall?.[0]).toEqual(
@@ -1486,8 +1520,7 @@ describe('claimAndLaunch', () => {
         inheritedVars: {
           ContextId: 'ctx-parent',
           Region: 'us-west',
-          Tag: 'from-output',
-          PlanPath: '/ctx/plan.json',
+          Tag: 'from-parent',
         },
       }),
     );

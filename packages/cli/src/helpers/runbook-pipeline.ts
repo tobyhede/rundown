@@ -447,26 +447,13 @@ export async function prepareRunbook(
     }
   }
 
-  // Child runbooks inherit parent user vars plus any published context OUTPUTS
-  // available under the shared ContextId. Treating OUTPUTS as part of the
-  // inherited layer keeps delegation behavior aligned with the documented
-  // variable precedence while still allowing child-local overrides later.
-  let cachedContextOutputs: { contextId: string; values: Record<string, string> } | undefined;
-  const inheritedUserVars = { ...(options?.inheritedUserVars ?? {}) };
-  const inheritedContextId =
-    typeof inheritedUserVars.ContextId === 'string' ? inheritedUserVars.ContextId : undefined;
-  if (inheritedContextId) {
-    try {
-      const values = await loadContextOutputs(cwd, inheritedContextId);
-      cachedContextOutputs = { contextId: inheritedContextId, values };
-      Object.assign(inheritedUserVars, values);
-    } catch (err) {
-      void logger.warn('runbook-pipeline: failed to load context outputs for child inheritance', {
-        contextId: inheritedContextId,
-        error: getErrorMessage(err),
-      });
-    }
-  }
+  // Inherited user vars pass through untouched here. Context OUTPUTS are
+  // inherited after variable resolution (stage 3.5 below), once the child's
+  // final ContextId is known. Merging context outputs before resolution would
+  // mark their keys as "provided" against the child's own ContextId override
+  // (e.g. `claim --var ContextId=...`) and prevent the correct outputs from
+  // being loaded from the new context.
+  const inheritedUserVars = options?.inheritedUserVars ?? {};
 
   // Variable resolution
   let mergedVariables: Record<string, TemplateVarValue>;
@@ -540,41 +527,53 @@ export async function prepareRunbook(
     };
   }
 
-  // Stage 3.5 — Resolve INPUTS from context outputs
-  // Reads prior runbook OUTPUTS stored under the shared ContextId and injects
-  // declared input variables into the template vars before the required: check.
+  // Stage 3.5 — Inherit OUTPUTS from the child's final ContextId.
+  //
+  // Loads outputs published under the **resolved** ContextId (so child
+  // overrides via `claim --var ContextId=...` are respected) and injects keys
+  // that were not already provided by a VARS channel.
+  //
+  // Two injection rules apply, with different scopes:
+  //   1. Declared INPUTS — always injected when present in context outputs.
+  //      This satisfies the runbook's required-input contract regardless of
+  //      whether the runbook was launched standalone or via delegation.
+  //   2. Undeclared keys — only injected when this run is a delegation child
+  //      (i.e., the caller passed `inheritedUserVars`). Standalone runs that
+  //      happen to share a ContextId must not silently absorb arbitrary keys
+  //      from prior runs in that context — only declared INPUTS opt in.
   const inputsResolvedKeys = new Set<string>();
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- tsc resolves index signature as unknown via .d.ts
   const declaredInputs = frontmatter?.inputs as string[] | undefined;
-  if (declaredInputs && declaredInputs.length > 0) {
-    try {
-      const contextId =
-        typeof templateVars.ContextId === 'string' ? templateVars.ContextId : undefined;
-      if (contextId) {
-        const contextOutputs =
-          cachedContextOutputs?.contextId === contextId
-            ? cachedContextOutputs.values
-            : await loadContextOutputs(cwd, contextId);
-        for (const inputName of declaredInputs) {
-          // Only inject if not already provided via VARS channel (VARS take precedence)
-          if (!providedKeys.has(inputName) && Object.hasOwn(contextOutputs, inputName)) {
-            mergedVariables[inputName] = contextOutputs[inputName];
-            inputsResolvedKeys.add(inputName);
-          }
-        }
-        if (inputsResolvedKeys.size > 0) {
-          // Rebuild templateVars with INPUTS-injected variables
-          templateVars = buildTemplateVars(mergedVariables, options);
+  const declaredInputSet = declaredInputs ? new Set(declaredInputs) : undefined;
+  const isDelegationChild = (options?.inheritedUserVars ?? undefined) !== undefined;
+  try {
+    const contextId =
+      typeof templateVars.ContextId === 'string' ? templateVars.ContextId : undefined;
+    if (contextId && (declaredInputSet || isDelegationChild)) {
+      const contextOutputs = await loadContextOutputs(cwd, contextId);
+      let injected = false;
+      for (const [key, value] of Object.entries(contextOutputs)) {
+        if (providedKeys.has(key)) continue;
+        const isDeclaredInput = declaredInputSet?.has(key) === true;
+        if (!isDeclaredInput && !isDelegationChild) continue;
+        mergedVariables[key] = value;
+        injected = true;
+        if (isDeclaredInput) {
+          inputsResolvedKeys.add(key);
         }
       }
-    } catch (err) {
-      // Context outputs are not available — not a hard error; required: check will
-      // surface missing vars if they can't be satisfied by any other channel.
-      // Log real errors (permission denied, malformed JSON) so users can diagnose.
-      void logger.warn('runbook-pipeline: failed to load context outputs for INPUTS injection', {
-        error: getErrorMessage(err),
-      });
+      if (injected) {
+        // Rebuild templateVars with context-output-injected variables
+        templateVars = buildTemplateVars(mergedVariables, options);
+      }
     }
+  } catch (err) {
+    // Context outputs are not available — not a hard error; required: check will
+    // surface missing vars if they can't be satisfied by any other channel.
+    // Log real errors (permission denied, malformed JSON) so users can diagnose.
+    void logger.warn('runbook-pipeline: failed to load context outputs for inheritance', {
+      error: getErrorMessage(err),
+    });
   }
 
   // Validate required variables are provided by an external layer

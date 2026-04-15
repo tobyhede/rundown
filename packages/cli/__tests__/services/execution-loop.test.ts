@@ -384,6 +384,58 @@ describe('runExecutionLoop', () => {
         }),
       );
     });
+
+    it('persists injected INPUTS and adds context.vars.* aliases', async () => {
+      // Step has no command and declares INPUTS — prompted/no-command path
+      // returns 'waiting' before any transition. The injection must persist so
+      // a later `rd pass` (which reloads state from disk) can evaluate OUTPUTS
+      // expressions that reference the injected INPUTS.
+      const inputsSteps: any[] = [
+        {
+          kind: 'base',
+          name: '1',
+          description: 'Use INPUT',
+          inputs: ['Message'],
+          transitions: {
+            pass: { next: 'COMPLETE' },
+            fail: { next: 'STOP' },
+          },
+        },
+      ];
+
+      mockManager.load.mockResolvedValue({
+        id: runbookId,
+        step: '1',
+        status: 'running',
+        templateVars: { ContextId: 'ctx-persist-inputs' },
+      });
+      (core.loadContextOutputs as jest.Mock).mockResolvedValue({
+        Message: 'hello from context',
+      });
+
+      const result = await runExecutionLoop(
+        mockManager,
+        runbookId,
+        inputsSteps,
+        '/tmp',
+        false,
+        mockEmitter,
+      );
+
+      expect(result).toBe('waiting');
+      // Injected INPUTS persisted to disk so manual transitions see them.
+      expect(mockManager.update).toHaveBeenCalledWith(
+        runbookId,
+        expect.objectContaining({
+          templateVars: expect.objectContaining({
+            ContextId: 'ctx-persist-inputs',
+            Message: 'hello from context',
+            // context.vars.* alias is required for the documented namespace.
+            'context.vars.Message': 'hello from context',
+          }),
+        }),
+      );
+    });
   });
 
   it('executes command and advances to next step', async () => {
