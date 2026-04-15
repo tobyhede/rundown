@@ -50,6 +50,7 @@ jest.unstable_mockModule('../../src/services/execution', () => ({
   drainResolvedCompletions: jest.fn().mockResolvedValue({ status: 'done', applied: 0 }),
   findStepOrThrow: jest.fn(),
   runExecutionLoop: jest.fn().mockResolvedValue('done'),
+  buildStepVariables: jest.fn().mockReturnValue({}),
 }));
 
 // Mock execution-emitter
@@ -728,13 +729,13 @@ describe('storeStepOutputs via step-level PASS transition', () => {
     expect(core.storeContextOutputs).not.toHaveBeenCalled();
   });
 
-  it('logs warning and skips when templateVars is undefined', async () => {
+  it('logs warning and skips when templateVars is undefined (ContextId absent from built frame)', async () => {
     const ctx = makeStepLevelCtx(undefined);
     const config = createPassTransitionConfig();
 
     await executeTransition(ctx, config);
 
-    expect(core.logger.warn).toHaveBeenCalledWith(expect.stringContaining('templateVars'));
+    expect(core.logger.warn).toHaveBeenCalledWith(expect.stringContaining('ContextId'));
     expect(core.storeContextOutputs).not.toHaveBeenCalled();
   });
 

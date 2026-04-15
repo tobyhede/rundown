@@ -264,7 +264,7 @@ Parent value: {{ParentValue}}
 
     const useEvents = parseJsonOutput(passUse.stdout);
     const step2Entered = useEvents.find(
-      (e) => e.type === 'step_entered' && (e.position as { current?: string })?.current === '2',
+      (e) => e.type === 'step_entered' && (e.position as { current?: string }).current === '2',
     );
     expect(step2Entered).toBeDefined();
     expect(step2Entered?.prompt).toContain('parent-complete');
@@ -440,6 +440,63 @@ Value: {{Message}}
     const stepEntered = events.find((e) => e.type === 'step_entered');
     expect(stepEntered).toBeDefined();
     expect(stepEntered?.prompt).toContain('{{Message}}');
+  });
+});
+
+describe('OUTPUTS expression evaluation — per-step runtime frame', () => {
+  let workspace: TestWorkspace;
+
+  // Runbook where step 1's OUTPUTS references {{Step}} — a per-step runtime
+  // variable that must be available when the OUTPUTS expression is evaluated.
+  const STEP_FRAME_RUNBOOK = `---
+name: step-frame-test
+---
+# Step frame test
+
+## 1. Produce output
+- PASS CONTINUE
+- FAIL STOP
+- OUTPUTS
+  - Tag {{ Step }}
+  - At {{ context.current.step }}
+
+\`\`\`sh
+rd echo --result pass
+\`\`\`
+
+## 2. Sink
+- PASS COMPLETE
+- FAIL STOP
+
+\`\`\`sh
+rd echo --result pass
+\`\`\`
+`;
+
+  beforeEach(async () => {
+    workspace = await createTestWorkspace();
+    await writeFile(join(workspace.cwd, 'step-frame.runbook.md'), STEP_FRAME_RUNBOOK);
+  });
+
+  afterEach(async () => {
+    await workspace.cleanup();
+  });
+
+  it('OUTPUTS expression resolves {{Step}} using the per-step runtime frame', async () => {
+    const contextId = 'step-frame-ctx';
+    const result = runCli(
+      `run step-frame.runbook.md --var ContextId=${contextId} --json`,
+      workspace,
+    );
+    expect(result.exitCode).toBe(0);
+
+    const outputsPath = join(workspace.cwd, '.rundown', 'contexts', contextId, 'outputs.json');
+    const raw = await readFile(outputsPath, 'utf-8');
+    const outputs = JSON.parse(raw) as Record<string, unknown>;
+    // Bug: {{ Step }} and {{ context.current.step }} won't resolve unless the
+    // per-step runtime frame (Step, Index, context.current.*) is merged into the
+    // templateVars passed to storeStepOutputs.
+    expect(outputs).toEqual({ Tag: '1', At: '1' });
   });
 });
 

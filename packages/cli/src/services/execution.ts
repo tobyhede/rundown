@@ -255,6 +255,15 @@ async function applyResultTransition({
 
   // Store OUTPUTS for PASS transitions (best-effort, non-fatal).
   if (cwd && result === 'pass') {
+    // Build the per-step runtime frame (Step, Index, context.current.*) so that
+    // OUTPUTS expressions referencing loop/step variables resolve correctly.
+    const preTransitionStepVars = buildStepVariables(
+      currentState.step,
+      currentState.substep,
+      currentState.forStack,
+      currentStep.kind === 'for' ? currentStep.forClause : undefined,
+      currentState.templateVars,
+    ) as Record<string, TemplateVarValue>;
     await persistPassOutputs({
       cwd,
       currentStep,
@@ -262,7 +271,7 @@ async function applyResultTransition({
       previousStepId: currentState.step,
       updatedStepId: syncResult.state.step,
       actionType,
-      templateVarsBefore: currentState.templateVars,
+      templateVarsBefore: preTransitionStepVars,
       templateVarsAfter: syncResult.state.templateVars,
     });
   }
@@ -657,7 +666,7 @@ export async function runExecutionLoop(
     );
     const isSubstep = 'id' in itemToRender;
     const command = isSubstep
-      ? (itemToRender as Substep).command
+      ? itemToRender.command
       : currentStep.kind === 'command'
         ? currentStep.command
         : undefined;
@@ -667,7 +676,7 @@ export async function runExecutionLoop(
 
     emitter.emit('STEP_ENTERED', {
       position: stepPosition,
-      stepName: isSubstep ? (itemToRender as Substep).id : (itemToRender as ResolvedStep).name,
+      stepName: isSubstep ? itemToRender.id : itemToRender.name,
       description: expandedDescription,
       prompt: expandedPrompt,
       hasCommand: !!command,
