@@ -151,6 +151,7 @@ jest.unstable_mockModule('@rundown-org/core', () => {
       },
     ),
     loadContextOutputs: jest.fn().mockResolvedValue({}),
+    storeContextOutputs: jest.fn().mockResolvedValue(undefined),
     assembleArtifactPath: jest.fn((dir: string, ctx: string, file: string) => {
       const date = new Date().toISOString().slice(0, 10);
       return `${dir}/.rd-${ctx}/${date}-${file}`;
@@ -630,6 +631,141 @@ describe('runExecutionLoop', () => {
         prompted: true,
       }),
     );
+  });
+
+  describe('OUTPUTS storage on auto-execution', () => {
+    const stepsWithOutputs: any[] = [
+      {
+        kind: 'command',
+        name: '1',
+        description: 'Step 1 with outputs',
+        command: { code: 'rd echo --result pass', lang: 'sh' },
+        outputs: [{ name: 'PlanPath', value: '"plan-value"' }],
+        transitions: {
+          pass: { next: '2' },
+          fail: { next: 'STOP' },
+        },
+      },
+      {
+        kind: 'base',
+        name: '2',
+        description: 'Step 2',
+        transitions: {
+          pass: { next: 'COMPLETE' },
+          fail: { next: 'STOP' },
+        },
+      },
+    ];
+
+    it('calls storeContextOutputs when a command step auto-executes with PASS', async () => {
+      // orchestrateTransition calls manager.load once more (for the reloaded continue state),
+      // so we need two sequential returns: step 1 (initial load) → step 2 (reload after transition).
+      mockManager.load
+        .mockResolvedValueOnce({
+          id: runbookId,
+          step: '1',
+          status: 'running',
+          templateVars: { ContextId: 'ctx-unit' },
+        })
+        .mockResolvedValueOnce({
+          id: runbookId,
+          step: '2',
+          status: 'running',
+          templateVars: { ContextId: 'ctx-unit' },
+        });
+
+      (core.executeCommand as any).mockResolvedValue({ success: true, exitCode: 0 });
+
+      // Non-terminal snapshot (active/CONTINUE) → orchestrateTransition takes the reload path
+      mockActorService.sendAndSync.mockResolvedValue({
+        state: {
+          id: runbookId,
+          step: '2',
+          status: 'running',
+          templateVars: { ContextId: 'ctx-unit' },
+        },
+        snapshot: {
+          status: 'active',
+          value: '2',
+          context: { lastAction: { type: 'CONTINUE' } },
+        },
+      });
+
+      await runExecutionLoop(mockManager, runbookId, stepsWithOutputs, '/tmp', false, mockEmitter);
+
+      expect(core.storeContextOutputs).toHaveBeenCalledWith(
+        '/tmp',
+        'ctx-unit',
+        expect.objectContaining({ PlanPath: 'plan-value' }),
+      );
+    });
+
+    it('does NOT call storeContextOutputs when a command step auto-executes with FAIL', async () => {
+      mockManager.load.mockResolvedValue({
+        id: runbookId,
+        step: '1',
+        status: 'running',
+        templateVars: { ContextId: 'ctx-unit' },
+      });
+
+      (core.executeCommand as any).mockResolvedValue({ success: false, exitCode: 1 });
+
+      mockActorService.sendAndSync.mockResolvedValue({
+        state: {
+          id: runbookId,
+          step: '1',
+          status: 'stopped',
+          templateVars: { ContextId: 'ctx-unit' },
+        },
+        snapshot: {
+          status: 'done',
+          value: 'STOPPED',
+          context: { lastAction: { type: 'STOP' } },
+        },
+      });
+
+      await runExecutionLoop(mockManager, runbookId, stepsWithOutputs, '/tmp', false, mockEmitter);
+
+      expect(core.storeContextOutputs).not.toHaveBeenCalled();
+    });
+
+    it('does NOT call storeContextOutputs when the step has no outputs declaration', async () => {
+      // Same two-call pattern as the PASS test (orchestrateTransition reloads state)
+      mockManager.load
+        .mockResolvedValueOnce({
+          id: runbookId,
+          step: '1',
+          status: 'running',
+          templateVars: { ContextId: 'ctx-unit' },
+        })
+        .mockResolvedValueOnce({
+          id: runbookId,
+          step: '2',
+          status: 'running',
+          templateVars: { ContextId: 'ctx-unit' },
+        });
+
+      (core.executeCommand as any).mockResolvedValue({ success: true, exitCode: 0 });
+
+      mockActorService.sendAndSync.mockResolvedValue({
+        state: {
+          id: runbookId,
+          step: '2',
+          status: 'running',
+          templateVars: { ContextId: 'ctx-unit' },
+        },
+        snapshot: {
+          status: 'active',
+          value: '2',
+          context: { lastAction: { type: 'CONTINUE' } },
+        },
+      });
+
+      // Use the basic steps fixture (no outputs on step 1)
+      await runExecutionLoop(mockManager, runbookId, steps, '/tmp', false, mockEmitter);
+
+      expect(core.storeContextOutputs).not.toHaveBeenCalled();
+    });
   });
 });
 

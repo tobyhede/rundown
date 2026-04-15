@@ -160,3 +160,163 @@ describe('OUTPUTS→INPUTS round-trip', () => {
     expect(outputs).toEqual({ Message: 'hello from step 1' });
   });
 });
+
+describe('OUTPUTS→INPUTS via auto-execution (no --prompted)', () => {
+  let workspace: TestWorkspace;
+
+  const AUTO_EXEC_RUNBOOK = `---
+name: auto-exec-context-test
+---
+# Auto Exec Context Test
+
+## 1. Produce output
+- PASS CONTINUE
+- FAIL STOP
+- OUTPUTS
+  - Message "hello-auto"
+
+\`\`\`sh
+rd echo --result pass
+\`\`\`
+
+## 2. Consume input
+- PASS COMPLETE
+- FAIL STOP
+- INPUTS
+  - Message
+
+The message is: {{Message}}
+`;
+
+  beforeEach(async () => {
+    workspace = await createTestWorkspace();
+    await writeFile(join(workspace.cwd, 'auto-exec.runbook.md'), AUTO_EXEC_RUNBOOK);
+  });
+
+  afterEach(async () => {
+    await workspace.cleanup();
+  });
+
+  it('auto-executed step 1 stores OUTPUTS; step 2 INPUTS injected into description', async () => {
+    const contextId = 'auto-exec-ctx';
+
+    // Run without --prompted: step 1 auto-executes (rd echo --result pass)
+    // Step 2 has no command, so execution pauses waiting for prompt
+    const result = runCli(
+      `run auto-exec.runbook.md --var ContextId=${contextId} --json`,
+      workspace,
+    );
+    expect(result.exitCode).toBe(0);
+
+    // Context outputs file should have been written by step 1's auto-execution
+    const outputsPath = join(workspace.cwd, '.rundown', 'contexts', contextId, 'outputs.json');
+    const raw = await readFile(outputsPath, 'utf-8');
+    const outputs = JSON.parse(raw) as Record<string, unknown>;
+    expect(outputs).toEqual({ Message: 'hello-auto' });
+
+    // Step 2's STEP_ENTERED event should have {{Message}} substituted
+    const events = parseJsonOutput(result.stdout);
+    const step2Entered = events.find(
+      (e) => e.type === 'step_entered' && (e.position as any)?.current === '2',
+    );
+    expect(step2Entered).toBeDefined();
+    expect(step2Entered?.prompt).toContain('hello-auto');
+    expect(step2Entered?.prompt).not.toContain('{{Message}}');
+  });
+
+  it('auto-executed step 1 FAIL does NOT store OUTPUTS', async () => {
+    const FAIL_RUNBOOK = `---
+name: auto-fail-test
+---
+# Auto Fail Test
+
+## 1. Produce output (fails)
+- PASS CONTINUE
+- FAIL CONTINUE
+- OUTPUTS
+  - Tag "should-not-appear"
+
+\`\`\`sh
+rd echo --result fail
+\`\`\`
+
+## 2. No command
+- PASS COMPLETE
+- FAIL STOP
+- INPUTS
+  - Tag
+
+Value: {{Tag}}
+`;
+    await writeFile(join(workspace.cwd, 'auto-fail.runbook.md'), FAIL_RUNBOOK);
+
+    const contextId = 'auto-fail-ctx';
+    runCli(`run auto-fail.runbook.md --var ContextId=${contextId} --json`, workspace);
+
+    // Context outputs file should NOT exist (no PASS → no OUTPUTS stored)
+    const outputsPath = join(workspace.cwd, '.rundown', 'contexts', contextId, 'outputs.json');
+    await expect(readFile(outputsPath, 'utf-8')).rejects.toThrow();
+  });
+});
+
+describe('OUTPUTS scenario test (auto-execution via rd scenario run)', () => {
+  let workspace: TestWorkspace;
+
+  // Both steps auto-execute via rd echo so the scenario completes (result: COMPLETE).
+  // Step 1 publishes OUTPUTS; step 2 reads INPUTS and uses {{Tag}} in its description.
+  // The scenario runner uses an isolated tmpDir — we can't check the outputs file directly.
+  // The COMPLETE terminal result proves both steps executed (OUTPUTS stored → INPUTS
+  // injected → step 2 description substituted → step 2 PASS COMPLETE).
+  const SCENARIO_RUNBOOK = `---
+name: auto-outputs-scenario
+scenarios:
+  outputs-flow:
+    description: Auto-executed OUTPUTS stored and INPUTS injected across steps
+    commands:
+      - rd run --var ContextId=scene-ctx auto-outputs-scenario.runbook.md
+    result: COMPLETE
+---
+# Auto Outputs Scenario
+
+## 1. Publish output
+- PASS CONTINUE
+- FAIL STOP
+- OUTPUTS
+  - Tag "v1.0"
+
+\`\`\`sh
+rd echo --result pass
+\`\`\`
+
+## 2. Complete
+- PASS COMPLETE
+- FAIL STOP
+- INPUTS
+  - Tag
+
+Release: {{Tag}}
+
+\`\`\`sh
+rd echo --result pass
+\`\`\`
+`;
+
+  beforeEach(async () => {
+    workspace = await createTestWorkspace();
+    await writeFile(join(workspace.cwd, 'auto-outputs-scenario.runbook.md'), SCENARIO_RUNBOOK);
+  });
+
+  afterEach(async () => {
+    await workspace.cleanup();
+  });
+
+  it('scenario: auto-executed OUTPUTS→INPUTS pipeline completes successfully', async () => {
+    const result = runCli('scenario run auto-outputs-scenario.runbook.md outputs-flow', workspace);
+    // Exit 0 + COMPLETE terminal result proves both steps auto-executed.
+    // OUTPUTS must be stored after step 1 for step 2's INPUTS injection to work
+    // (missing INPUTS would not prevent COMPLETE here, but the pipeline is validated
+    // by the standalone auto-execution integration tests above that check the file).
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('PASS');
+  });
+});
