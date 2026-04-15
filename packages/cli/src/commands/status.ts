@@ -47,7 +47,11 @@ export function registerStatusCommand(program: Command): void {
                 'status',
               );
               output.flush();
+              return;
             }
+            // Stale stash reference — treat as inactive
+            output.detail(buildInactiveStatus() as unknown as Record<string, unknown>, 'status');
+            output.flush();
             return;
           }
 
