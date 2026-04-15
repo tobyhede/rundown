@@ -26,7 +26,10 @@ const SAFE_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
  *         character outside the safe set
  */
 function assertSafeId(value: string, field: 'id' | 'runId'): void {
-  if (!value || !SAFE_ID_PATTERN.test(value)) {
+  // Reject `.` and `..` explicitly: both match SAFE_ID_PATTERN but resolve to
+  // parent/current directory under path.join, enabling traversal out of the
+  // intended `.rundown/` subtree.
+  if (!value || value === '.' || value === '..' || !SAFE_ID_PATTERN.test(value)) {
     throw new Error(`Invalid ${field}: ${JSON.stringify(value)}`);
   }
 }
