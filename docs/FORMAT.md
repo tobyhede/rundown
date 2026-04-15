@@ -78,7 +78,7 @@ substep ::= "### " substep_id separator? text? newline
             ( code_block | runbook_list )?
 ```
 
-Substeps cannot contain nested substeps.
+Substeps cannot contain nested substeps. See [SPEC.md §1.1](./SPEC.md) for the heading hierarchy rules.
 
 ## Identifiers
 
@@ -101,6 +101,8 @@ separator ::= ( "." | ":" | "\u2014" | "\u2192" | "-" | ")" | " " )+
 Unicode escapes: `\u2014` is em dash (—), `\u2192` is right arrow (→).
 
 Separators are matched greedily — the longest sequence of separator characters between identifier and description text is consumed.
+
+**Note:** Two distinct separator sets apply at different parse phases. Only space, dash (`-`), and colon (`:`) may terminate a step identifier inside the header (the in-header step-ID terminator set). The broader set listed in the production above (`.` `:` `—` `→` `-` `)` space) is stripped from the leading edge of the description text after the identifier has been parsed. Authors writing `## 1. Foo` rely on the trailing-strip behavior; the `.` is not itself a valid in-header terminator.
 
 ## FOR Clauses
 
@@ -177,6 +179,8 @@ Context constraints:
 | `DEFER` | Substeps, FOR nested transitions |
 | `NEXT` | FOR substeps, FOR nested transitions |
 | `BREAK` | FOR substeps, FOR nested transitions |
+
+Note: `- DEFER` on its own line is a shorthand transition equivalent to `PASS DEFER` + `FAIL DEFER` (see [Transitions](#transitions)). The `DEFER` action listed here is the target of that shorthand and of explicit `PASS DEFER` / `FAIL DEFER` transitions.
 
 FOR nested transitions allow: `CONTINUE`, `DEFER`, `NEXT`, `BREAK`, `GOTO`, `STOP`, `COMPLETE` (with optional `RETRY` wrapper).
 

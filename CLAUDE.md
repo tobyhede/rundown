@@ -128,7 +128,7 @@ Template variables use Handlebars syntax `{{variableName}}` and are expanded at 
 | `context.current.step` | `3.1` | Current qualified step identifier |
 | `context.current.substep` | `1` | Current substep number (when in substep) |
 | `context.current.index` | `3` | Current loop iteration (inside FOR) |
-| `context.current.at` | `3.1[3]` | Full execution position |
+| `context.current.at` | `3.3.1` | Full execution position (`STEP.INDEX.SUBSTEP` inside a FOR loop, `STEP.SUBSTEP` otherwise) |
 
 **Plugin Variables:**
 
