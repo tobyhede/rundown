@@ -52,6 +52,7 @@ import {
   transitionSinkFromEmitter,
   type TransitionOrchestrationPolicy,
 } from '../helpers/transition-orchestrator.js';
+import { storeStepOutputs } from '../helpers/step-outputs.js';
 
 /**
  * Per-step dynamic variables (e.g., `Step`, `Index`, named loop variable).
@@ -208,6 +209,8 @@ interface ApplyResultTransitionArgs {
   transitionPolicy: TransitionOrchestrationPolicy;
   computeActionResult?: (actionType: ActionType) => boolean;
   command?: string;
+  /** Project root directory — used for OUTPUTS persistence on PASS. */
+  cwd?: string;
 }
 
 const EXECUTION_TERMINAL_POLICY: TransitionOrchestrationPolicy = {
@@ -233,6 +236,7 @@ async function applyResultTransition({
   transitionPolicy,
   computeActionResult,
   command,
+  cwd,
 }: ApplyResultTransitionArgs): Promise<
   { status: 'continue'; state: RunbookState } | { status: 'done' } | { status: 'stopped' }
 > {
@@ -240,6 +244,18 @@ async function applyResultTransition({
     type: result === 'pass' ? 'PASS' : 'FAIL',
   });
   if (!syncResult) return { status: 'stopped' };
+
+  // Store OUTPUTS for PASS transitions (best-effort, non-fatal).
+  // For substep-driven completions, only store when the parent step itself advances
+  // (i.e. all substeps resolved and the step moved forward). For direct command
+  // steps there is no active substep, so always store on PASS.
+  if (cwd && result === 'pass' && currentStep.outputs && currentStep.outputs.length > 0) {
+    const isSubstepContext = currentState.substep !== undefined;
+    const stepAdvanced = syncResult.state.step !== currentState.step;
+    if (!isSubstepContext || stepAdvanced) {
+      await storeStepOutputs(currentStep.outputs, syncResult.state.templateVars, cwd);
+    }
+  }
 
   const ensured = await lifecycleService.ensureActiveEntry(
     runbookId,
@@ -300,6 +316,8 @@ export interface DrainResolvedCompletionsArgs {
   command?: string;
   /** Override frame key for frame-scoped lookups (e.g., prompted-for with explicit --index). */
   frameKeyOverride?: FrameKey;
+  /** Project root directory — used for OUTPUTS persistence on PASS. */
+  cwd?: string;
 }
 
 /** Result of draining resolved substep completions. */
@@ -355,6 +373,7 @@ export async function drainResolvedCompletions({
   computeActionResult,
   command,
   frameKeyOverride,
+  cwd,
 }: DrainResolvedCompletionsArgs): Promise<DrainResolvedCompletionsResult> {
   let state = currentState;
   let applied = 0;
@@ -408,6 +427,7 @@ export async function drainResolvedCompletions({
       transitionPolicy,
       computeActionResult,
       command,
+      cwd,
     });
     applied += 1;
 
@@ -561,6 +581,7 @@ export async function runExecutionLoop(
       steps,
       currentState,
       transitionPolicy: EXECUTION_TERMINAL_POLICY,
+      cwd,
     });
     if (drainResult.status === 'done') return 'done';
     if (drainResult.status === 'stopped') return 'stopped';
@@ -725,6 +746,7 @@ export async function runExecutionLoop(
       result: lastResult,
       transitionPolicy: EXECUTION_TERMINAL_POLICY,
       command: displayCommand,
+      cwd,
     });
     if (transitionResult.status === 'done') return 'done';
     if (transitionResult.status === 'stopped') return 'stopped';
