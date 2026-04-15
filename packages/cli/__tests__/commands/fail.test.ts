@@ -24,11 +24,11 @@ describe('fail command', () => {
 
   describe('FAIL: RETRY N', () => {
     beforeEach(async () => {
-      await runCliInProcess('run --prompted runbooks/retry.runbook.md', workspace);
+      await runCliInProcess('run --prompted runbooks/retry.runbook.md --text', workspace);
     });
 
     it('increments retryCount if under max', async () => {
-      await runCliInProcess('fail', workspace);
+      await runCliInProcess('fail --text', workspace);
 
       const state = await getActiveState(workspace);
       expect(state?.retryCount).toBe(1);
@@ -36,7 +36,7 @@ describe('fail command', () => {
     });
 
     it('outputs retry info', async () => {
-      const result = await runCliInProcess('fail', workspace);
+      const result = await runCliInProcess('fail --text', workspace);
 
       expect(result.stdout).toContain('Retry');
     });
@@ -44,24 +44,24 @@ describe('fail command', () => {
 
   describe('FAIL: STOP', () => {
     beforeEach(async () => {
-      await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
     });
 
     it('blocks runbook', async () => {
-      const result = await runCliInProcess('fail', workspace);
+      const result = await runCliInProcess('fail --text', workspace);
 
       expect(result.exitCode).toBe(1);
     });
 
     it('outputs error message', async () => {
-      const result = await runCliInProcess('fail', workspace);
+      const result = await runCliInProcess('fail --text', workspace);
 
       expect(result.stdout).toContain('STOP');
     });
 
     it('should set variables.stopped=true when STOP action triggered', async () => {
       // runbook already started by beforeEach
-      await runCliInProcess('fail', workspace);
+      await runCliInProcess('fail --text', workspace);
 
       // After blocking, the runbook is saved but no longer active
       // Retrieve from all states
@@ -73,11 +73,11 @@ describe('fail command', () => {
 
   describe('FAIL: GOTO N', () => {
     beforeEach(async () => {
-      await runCliInProcess('run --prompted runbooks/fail-goto.runbook.md', workspace);
+      await runCliInProcess('run --prompted runbooks/fail-goto.runbook.md --text', workspace);
     });
 
     it('jumps to specified step on failure', async () => {
-      const result = await runCliInProcess('fail', workspace);
+      const result = await runCliInProcess('fail --text', workspace);
 
       expect(result.exitCode).toBe(0);
       const state = await getActiveState(workspace);
@@ -105,25 +105,25 @@ Do work.
       await writeFile(join(workspace.cwd, 'runbooks', 'child-fail.md'), childRunbook);
 
       // Start parent (prompted to prevent auto-completion)
-      await runCliInProcess('run --prompted runbooks/parent-fail.md', workspace);
+      await runCliInProcess('run --prompted runbooks/parent-fail.md --text', workspace);
 
       // Start child in same stack (prompted to prevent auto-completion)
-      await runCliInProcess('run --prompted runbooks/child-fail.md', workspace);
+      await runCliInProcess('run --prompted runbooks/child-fail.md --text', workspace);
 
       // Fail child - should complete (FAIL: COMPLETE) and pop to parent
-      const result = await runCliInProcess('fail', workspace);
+      const result = await runCliInProcess('fail --text', workspace);
       expect(result.stdout).toContain('COMPLETE');
 
       // Should now be on parent
-      const statusResult = await runCliInProcess('status', workspace);
+      const statusResult = await runCliInProcess('status --text', workspace);
       expect(statusResult.stdout).toContain('parent-fail.md');
     });
   });
 
   describe('JSON output', () => {
     it('includes action field when no active runbook', async () => {
-      // Run fail --json with no active runbook
-      const result = await runCliInProcess('fail --json', workspace);
+      // Run fail with no active runbook
+      const result = await runCliInProcess('fail', workspace);
 
       // Should exit with error code
       expect(result.exitCode).toBe(0);
@@ -145,10 +145,10 @@ Do work.
   describe('JSON action result semantics', () => {
     it('reports stepResult FAIL for RETRY transitions', async () => {
       // Start retry runbook in prompted mode
-      await runCliInProcess('run --prompted runbooks/retry.runbook.md', workspace);
+      await runCliInProcess('run --prompted runbooks/retry.runbook.md --text', workspace);
 
       // Fail should trigger RETRY (since FAIL: RETRY 3)
-      const result = await runCliInProcess('fail --json', workspace);
+      const result = await runCliInProcess('fail', workspace);
       const output = findActionOutput(result.stdout);
 
       expect(output).not.toBeNull();
@@ -162,10 +162,10 @@ Do work.
 
     it('reports action stop for STOP transitions', async () => {
       // Start simple runbook in prompted mode (FAIL: STOP on step 1)
-      await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
 
       // Fail should trigger STOP
-      const result = await runCliInProcess('fail --json', workspace);
+      const result = await runCliInProcess('fail', workspace);
       const output = findActionOutput(result.stdout);
 
       expect(output).not.toBeNull();
@@ -178,10 +178,10 @@ Do work.
 
     it('reports stepResult FAIL for GOTO transitions', async () => {
       // Start fail-goto runbook in prompted mode (FAIL: GOTO 3)
-      await runCliInProcess('run --prompted runbooks/fail-goto.runbook.md', workspace);
+      await runCliInProcess('run --prompted runbooks/fail-goto.runbook.md --text', workspace);
 
       // Fail should trigger GOTO 3
-      const result = await runCliInProcess('fail --json', workspace);
+      const result = await runCliInProcess('fail', workspace);
       const output = findActionOutput(result.stdout);
 
       expect(output).not.toBeNull();
@@ -197,7 +197,7 @@ Do work.
   describe('edge cases and boundary conditions', () => {
     it('fail with no active runbook exits cleanly', async () => {
       // No runbook started
-      const result = await runCliInProcess('fail', workspace);
+      const result = await runCliInProcess('fail --text', workspace);
 
       // Should exit without error (graceful handling)
       expect(result.exitCode).toBe(0);
@@ -206,13 +206,13 @@ Do work.
 
     it('fail after max retries exhausted triggers fallback action', async () => {
       // Start retry runbook
-      await runCliInProcess('run --prompted runbooks/retry.runbook.md', workspace);
+      await runCliInProcess('run --prompted runbooks/retry.runbook.md --text', workspace);
 
       // Fail repeatedly until retries exhausted (RETRY 3 = 3 retries allowed, 4 total attempts)
-      await runCliInProcess('fail', workspace); // retry 1 (retryCount: 0→1)
-      await runCliInProcess('fail', workspace); // retry 2 (retryCount: 1→2)
-      await runCliInProcess('fail', workspace); // retry 3 (retryCount: 2→3)
-      const result = await runCliInProcess('fail', workspace); // retries exhausted, fallback STOP
+      await runCliInProcess('fail --text', workspace); // retry 1 (retryCount: 0→1)
+      await runCliInProcess('fail --text', workspace); // retry 2 (retryCount: 1→2)
+      await runCliInProcess('fail --text', workspace); // retry 3 (retryCount: 2→3)
+      const result = await runCliInProcess('fail --text', workspace); // retries exhausted, fallback STOP
 
       // After max retries, should use on_fail action (STOP by default)
       expect(result.exitCode).toBe(1);
@@ -240,14 +240,14 @@ Final step.
       await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
       await writeFile(join(workspace.cwd, 'runbooks', 'substep-fail-any.md'), substepRunbook);
 
-      await runCliInProcess('run --prompted runbooks/substep-fail-any.md', workspace);
+      await runCliInProcess('run --prompted runbooks/substep-fail-any.md --text', workspace);
 
       // Fail substep 1.1 -- result is deferred, machine advances to 1.2
-      await runCliInProcess('fail', workspace);
+      await runCliInProcess('fail --text', workspace);
 
       // Pass substep 1.2 -- all substeps now complete, aggregation fires
       // FAIL ANY: STOP triggers because substep 1.1 was failed
-      const result = await runCliInProcess('pass', workspace);
+      const result = await runCliInProcess('pass --text', workspace);
 
       expect(result.exitCode).toBe(1);
       const states = await getAllStates(workspace);
@@ -271,22 +271,22 @@ Final step.
       await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
       await writeFile(join(workspace.cwd, 'runbooks', 'multi-fail.md'), multiFailRunbook);
 
-      await runCliInProcess('run --prompted runbooks/multi-fail.md', workspace);
+      await runCliInProcess('run --prompted runbooks/multi-fail.md --text', workspace);
 
       // First fail - retry
-      let result = await runCliInProcess('fail', workspace);
+      let result = await runCliInProcess('fail --text', workspace);
       let state = await getActiveState(workspace);
       expect(state?.retryCount).toBe(1);
       expect(state?.step).toBe('1');
 
       // Second fail - retry again
-      result = await runCliInProcess('fail', workspace);
+      result = await runCliInProcess('fail --text', workspace);
       state = await getActiveState(workspace);
       expect(state?.retryCount).toBe(2);
       expect(state?.step).toBe('1');
 
       // Third fail - exhausted retries, triggers explicit STOP fallback
-      result = await runCliInProcess('fail', workspace);
+      result = await runCliInProcess('fail --text', workspace);
       expect(result.exitCode).toBe(1);
     });
 
@@ -300,10 +300,10 @@ Do something.
       await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
       await writeFile(join(workspace.cwd, 'runbooks', 'no-fail.md'), noFailTransition);
 
-      await runCliInProcess('run --prompted runbooks/no-fail.md', workspace);
+      await runCliInProcess('run --prompted runbooks/no-fail.md --text', workspace);
 
       // Fail should use default action (STOP)
-      const result = await runCliInProcess('fail', workspace);
+      const result = await runCliInProcess('fail --text', workspace);
       expect(result.exitCode).toBe(1);
     });
   });

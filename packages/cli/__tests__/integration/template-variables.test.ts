@@ -10,7 +10,7 @@ import {
 } from '../helpers/test-utils.js';
 
 /**
- * Parse JSONL output from `run --json`, filtering out non-JSON lines (command output).
+ * Parse JSONL output from `run`, filtering out non-JSON lines (command output).
  */
 function parseJsonlEvents(stdout: string): Record<string, unknown>[] {
   return stdout
@@ -44,7 +44,7 @@ describe('Template Variables Integration', () => {
       await writeFile(join(workspace.cwd, 'vars.yaml'), 'message: from-file');
 
       const result = runCli(
-        'run test.runbook.md --var-file vars.yaml --var message=from-flag --json',
+        'run test.runbook.md --var-file vars.yaml --var message=from-flag',
         workspace,
       );
 
@@ -61,10 +61,7 @@ describe('Template Variables Integration', () => {
 
     it('--var with empty value overrides --var-file', async () => {
       await writeFile(join(workspace.cwd, 'vars.yaml'), 'message: from-file');
-      const result = runCli(
-        'run test.runbook.md --var-file vars.yaml --var message= --json',
-        workspace,
-      );
+      const result = runCli('run test.runbook.md --var-file vars.yaml --var message=', workspace);
       expect(result.exitCode).toBe(0);
 
       // Parse JSON events and verify empty value was used
@@ -85,7 +82,7 @@ describe('Template Variables Integration', () => {
       // Create explicit var file
       await writeFile(join(workspace.cwd, 'custom.yaml'), 'message: explicit');
 
-      const result = runCli('run test.runbook.md --var-file custom.yaml --json', workspace);
+      const result = runCli('run test.runbook.md --var-file custom.yaml', workspace);
 
       expect(result.exitCode).toBe(0);
 
@@ -102,7 +99,7 @@ describe('Template Variables Integration', () => {
       await mkdir(join(workspace.cwd, RUNDOWN_DIR), { recursive: true });
       await writeFile(join(workspace.cwd, RUNDOWN_DIR, 'config.yaml'), 'message: auto-discovered');
 
-      const result = runCli('run test.runbook.md --json', workspace);
+      const result = runCli('run test.runbook.md', workspace);
 
       expect(result.exitCode).toBe(0);
 
@@ -124,7 +121,7 @@ describe('Template Variables Integration', () => {
       });
       await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
 
-      const result = runCli('run test.runbook.md --json', workspace);
+      const result = runCli('run test.runbook.md', workspace);
 
       expect(result.exitCode).toBe(0);
 
@@ -143,7 +140,7 @@ describe('Template Variables Integration', () => {
       });
       await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
 
-      const result = runCli('run test.runbook.md --var message=from-flag --json', workspace);
+      const result = runCli('run test.runbook.md --var message=from-flag', workspace);
 
       expect(result.exitCode).toBe(0);
 
@@ -163,7 +160,7 @@ describe('Template Variables Integration', () => {
       await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
       await writeFile(join(workspace.cwd, 'vars.yaml'), 'message: from-file');
 
-      const result = runCli('run test.runbook.md --var-file vars.yaml --json', workspace);
+      const result = runCli('run test.runbook.md --var-file vars.yaml', workspace);
 
       expect(result.exitCode).toBe(0);
 
@@ -186,7 +183,7 @@ describe('Template Variables Integration', () => {
       await mkdir(join(workspace.cwd, RUNDOWN_DIR), { recursive: true });
       await writeFile(join(workspace.cwd, RUNDOWN_DIR, 'config.yaml'), 'message: from-config');
 
-      const result = runCli('run test.runbook.md --json', workspace);
+      const result = runCli('run test.runbook.md', workspace);
 
       expect(result.exitCode).toBe(0);
 
@@ -207,7 +204,7 @@ describe('Template Variables Integration', () => {
       });
       await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
 
-      const result = runCli('run test.runbook.md --json', workspace);
+      const result = runCli('run test.runbook.md', workspace);
 
       expect(result.exitCode).toBe(0);
 
@@ -232,7 +229,7 @@ describe('Template Variables Integration', () => {
       });
       await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
 
-      const result = runCli('run test.runbook.md --var greeting=Hi --json', workspace);
+      const result = runCli('run test.runbook.md --var greeting=Hi', workspace);
 
       expect(result.exitCode).toBe(0);
 
@@ -256,8 +253,8 @@ describe('Template Variables Integration', () => {
 
       await writeFile(join(workspace.cwd, 'child.runbook.md'), childRunbook);
 
-      // Run child runbook directly with --json to capture JSONL events
-      const result = runCli('run child.runbook.md --json', workspace);
+      // Run child runbook directly (JSON is default) to capture JSONL events
+      const result = runCli('run child.runbook.md', workspace);
       expect(result.exitCode).toBe(0);
 
       // Verify the command was expanded with the frontmatter default variable
@@ -275,7 +272,7 @@ describe('Template Variables Integration', () => {
       });
       await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
 
-      const result = runCli('run test.runbook.md --var-json count=42 --json', workspace);
+      const result = runCli('run test.runbook.md --var-json count=42', workspace);
 
       expect(result.exitCode).toBe(0);
       const events = parseJsonlEvents(result.stdout);
@@ -290,7 +287,7 @@ describe('Template Variables Integration', () => {
       });
       await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
 
-      const result = runCli('run test.runbook.md --var-json debug=true --json', workspace);
+      const result = runCli('run test.runbook.md --var-json debug=true', workspace);
 
       expect(result.exitCode).toBe(0);
       const events = parseJsonlEvents(result.stdout);
@@ -305,7 +302,7 @@ describe('Template Variables Integration', () => {
       });
       await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
 
-      const result = runCli('run test.runbook.md --var-json val=null --json', workspace);
+      const result = runCli('run test.runbook.md --var-json val=null', workspace);
 
       expect(result.exitCode).toBe(0);
       const events = parseJsonlEvents(result.stdout);
@@ -332,7 +329,7 @@ rd echo host={{config.host}} port={{config.port}}
       );
 
       const result = runCli(
-        'run test.runbook.md --var-json config={"host":"localhost","port":3000} --json',
+        'run test.runbook.md --var-json config={"host":"localhost","port":3000}',
         workspace,
       );
 
@@ -351,7 +348,7 @@ rd echo host={{config.host}} port={{config.port}}
       await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
 
       const result = runCli(
-        'run test.runbook.md --var-json config={"host":"localhost"} --json',
+        'run test.runbook.md --var-json config={"host":"localhost"}',
         workspace,
       );
 
@@ -369,10 +366,7 @@ rd echo host={{config.host}} port={{config.port}}
       });
       await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
 
-      const result = runCli(
-        'run test.runbook.md --var count=10 --var-json count=99 --json',
-        workspace,
-      );
+      const result = runCli('run test.runbook.md --var count=10 --var-json count=99', workspace);
 
       expect(result.exitCode).toBe(0);
       const events = parseJsonlEvents(result.stdout);
@@ -389,7 +383,7 @@ rd echo host={{config.host}} port={{config.port}}
       await writeFile(join(workspace.cwd, 'vars.yaml'), 'count: 10');
 
       const result = runCli(
-        'run test.runbook.md --var-file vars.yaml --var-json count=99 --json',
+        'run test.runbook.md --var-file vars.yaml --var-json count=99',
         workspace,
       );
 
@@ -417,7 +411,7 @@ rd echo a={{a}} b={{b}}
 `,
       );
 
-      const result = runCli('run test.runbook.md --var-json a=1 --var-json b=2 --json', workspace);
+      const result = runCli('run test.runbook.md --var-json a=1 --var-json b=2', workspace);
 
       expect(result.exitCode).toBe(0);
       const events = parseJsonlEvents(result.stdout);
@@ -435,7 +429,7 @@ rd echo a={{a}} b={{b}}
       });
       await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
 
-      const result = runCli('run test.runbook.md --json', workspace);
+      const result = runCli('run test.runbook.md', workspace);
 
       expect(result.exitCode).toBe(0);
 
@@ -461,13 +455,13 @@ rd echo a={{a}} b={{b}}
       await writeFile(runbookPath, runbookContent);
 
       // Run with variable to store expanded content
-      runCli('run test.runbook.md --var message=original --prompted', workspace);
+      runCli('run test.runbook.md --var message=original --prompted --text', workspace);
 
       // Delete source file to confirm we're using runbookSrc
       await rm(runbookPath);
 
       // Pass should work with stored runbookSrc
-      const result = runCli('pass --json', workspace);
+      const result = runCli('pass', workspace);
       expect(result.exitCode).toBe(0);
 
       // Parse JSONL output - the last line contains the final state
@@ -497,10 +491,10 @@ rd echo a={{a}} b={{b}}
       const runbookPath = join(workspace.cwd, 'test.runbook.md');
       await writeFile(runbookPath, runbookContent);
 
-      runCli('run test.runbook.md --var message=original --prompted', workspace);
+      runCli('run test.runbook.md --var message=original --prompted --text', workspace);
       await rm(runbookPath);
 
-      const result = runCli('fail --json', workspace);
+      const result = runCli('fail', workspace);
       expect(result.exitCode).toBe(0);
 
       // Parse JSONL output - the last line contains the final state
@@ -525,10 +519,10 @@ rd echo a={{a}} b={{b}}
       const runbookPath = join(workspace.cwd, 'test.runbook.md');
       await writeFile(runbookPath, runbookContent);
 
-      runCli('run test.runbook.md --var message=original --prompted', workspace);
+      runCli('run test.runbook.md --var message=original --prompted --text', workspace);
       await rm(runbookPath);
 
-      const result = runCli('goto 2 --json', workspace);
+      const result = runCli('goto 2', workspace);
       expect(result.exitCode).toBe(0);
 
       // Parse JSONL output - the last line contains the final state
@@ -553,10 +547,10 @@ rd echo a={{a}} b={{b}}
       const runbookPath = join(workspace.cwd, 'test.runbook.md');
       await writeFile(runbookPath, runbookContent);
 
-      runCli('run test.runbook.md --var message=original --prompted', workspace);
+      runCli('run test.runbook.md --var message=original --prompted --text', workspace);
       await rm(runbookPath);
 
-      const result = runCli('complete --json', workspace);
+      const result = runCli('complete', workspace);
       expect(result.exitCode).toBe(0);
 
       // Complete outputs a single pretty-printed JSON object
@@ -575,10 +569,10 @@ rd echo a={{a}} b={{b}}
       const runbookPath = join(workspace.cwd, 'test.runbook.md');
       await writeFile(runbookPath, runbookContent);
 
-      runCli('run test.runbook.md --var message=original --prompted', workspace);
+      runCli('run test.runbook.md --var message=original --prompted --text', workspace);
       await rm(runbookPath);
 
-      const result = runCli('status --json', workspace);
+      const result = runCli('status', workspace);
       expect(result.exitCode).toBe(0);
       const output = JSON.parse(result.stdout);
       expect(output.position.total).toBe(2);
@@ -596,16 +590,16 @@ rd echo a={{a}} b={{b}}
       await writeFile(runbookPath, runbookContent);
 
       // Run with variable to store expanded content
-      runCli('run test.runbook.md --var message=original --prompted', workspace);
+      runCli('run test.runbook.md --var message=original --prompted --text', workspace);
 
       // Stash the runbook
-      runCli('stash', workspace);
+      runCli('stash --text', workspace);
 
       // Delete source file to confirm we're using runbookSrc
       await rm(runbookPath);
 
       // Pop should work with stored runbookSrc
-      const result = runCli('pop --json', workspace);
+      const result = runCli('pop', workspace);
       expect(result.exitCode).toBe(0);
 
       // Parse JSON output and verify runbook was restored

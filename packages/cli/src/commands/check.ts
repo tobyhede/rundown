@@ -10,9 +10,9 @@ export function registerCheckCommand(program: Command): void {
   program
     .command('check <file>')
     .description('Check a runbook file for errors')
-    .option('--json', 'Output as JSON')
-    .action(async (file: string, options: { json?: boolean }) => {
-      const output = new OutputEmitter({ json: options.json });
+    .option('--text', 'Output as human-readable text')
+    .action(async (file: string, options: { text?: boolean }) => {
+      const output = new OutputEmitter({ text: options.text });
       const cwd = process.cwd();
 
       const result = await loadAndParseRunbook(file, cwd);

@@ -83,7 +83,7 @@ describe('FOR loop data source integration', () => {
     });
     await writeFile(join(workspace.cwd, 'deploy.runbook.md'), content);
 
-    const result = runCli('run --json deploy.runbook.md', workspace);
+    const result = runCli('run deploy.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
 
     const events = parseJsonEvents(result.stdout);
@@ -136,7 +136,7 @@ describe('FOR loop data source integration', () => {
     });
     await writeFile(join(workspace.cwd, 'windowed.runbook.md'), content);
 
-    const result = runCli('run --json windowed.runbook.md', workspace);
+    const result = runCli('run windowed.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
 
     const events = parseJsonEvents(result.stdout);
@@ -178,7 +178,7 @@ describe('FOR loop data source integration', () => {
     });
     await writeFile(join(workspace.cwd, 'empty.runbook.md'), content);
 
-    const result = runCli('run --json empty.runbook.md', workspace);
+    const result = runCli('run empty.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
 
     const events = parseJsonEvents(result.stdout);
@@ -220,7 +220,7 @@ describe('FOR loop data source integration', () => {
     });
     await writeFile(join(workspace.cwd, 'clamp.runbook.md'), content);
 
-    const result = runCli('run --json clamp.runbook.md', workspace);
+    const result = runCli('run clamp.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
 
     const events = parseJsonEvents(result.stdout);
@@ -245,7 +245,7 @@ describe('FOR loop data source integration', () => {
     });
     await writeFile(join(workspace.cwd, 'missing.runbook.md'), content);
 
-    const result = runCli('run missing.runbook.md', workspace);
+    const result = runCli('run missing.runbook.md --text', workspace);
 
     // Should fail with non-zero exit code
     expect(result.exitCode).not.toBe(0);
@@ -269,10 +269,7 @@ describe('FOR loop data source integration', () => {
     });
     await writeFile(join(workspace.cwd, 'file-loop.runbook.md'), content);
 
-    const result = runCli(
-      'run --json --var servers=file:servers.jsonl file-loop.runbook.md',
-      workspace,
-    );
+    const result = runCli('run --var servers=file:servers.jsonl file-loop.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
 
     const events = parseJsonEvents(result.stdout);
@@ -308,7 +305,7 @@ describe('FOR loop data source integration', () => {
     });
     await writeFile(join(workspace.cwd, 'iterate.runbook.md'), content);
 
-    const result = runCli('run --json iterate.runbook.md --var-file vars.yaml', workspace);
+    const result = runCli('run iterate.runbook.md --var-file vars.yaml', workspace);
     expect(result.exitCode).toBe(0);
 
     const events = parseJsonEvents(result.stdout);
@@ -346,7 +343,7 @@ describe('FOR loop data source integration', () => {
     });
     await writeFile(join(workspace.cwd, 'special.runbook.md'), content);
 
-    const result = runCli('run --json special.runbook.md', workspace);
+    const result = runCli('run special.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
 
     const events = parseJsonEvents(result.stdout);
@@ -383,7 +380,7 @@ describe('FOR loop data source integration', () => {
     });
     await writeFile(join(workspace.cwd, 'combined.runbook.md'), content);
 
-    const result = runCli('run --json combined.runbook.md --var env=staging', workspace);
+    const result = runCli('run combined.runbook.md --var env=staging', workspace);
     expect(result.exitCode).toBe(0);
 
     const events = parseJsonEvents(result.stdout);
@@ -420,7 +417,7 @@ describe('FOR loop data source integration', () => {
     });
     await writeFile(join(workspace.cwd, 'large.runbook.md'), content);
 
-    const result = runCli('run --json large.runbook.md', workspace);
+    const result = runCli('run large.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
 
     const events = parseJsonEvents(result.stdout);
@@ -455,10 +452,7 @@ describe('FOR loop data source integration', () => {
     });
     await writeFile(join(workspace.cwd, 'jsonl-fields.runbook.md'), content);
 
-    const result = runCli(
-      'run --json --var items=file:items.jsonl jsonl-fields.runbook.md',
-      workspace,
-    );
+    const result = runCli('run --var items=file:items.jsonl jsonl-fields.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
 
     const events = parseJsonEvents(result.stdout);
@@ -511,7 +505,10 @@ describe('FOR loop data source integration', () => {
     });
     await writeFile(join(workspace.cwd, 'jsonl-bad.runbook.md'), content);
 
-    const result = runCli('run --var items=file:bad-items.jsonl jsonl-bad.runbook.md', workspace);
+    const result = runCli(
+      'run --var items=file:bad-items.jsonl jsonl-bad.runbook.md --text',
+      workspace,
+    );
 
     // Should fail with non-zero exit code
     expect(result.exitCode).not.toBe(0);
@@ -547,7 +544,7 @@ describe('FOR loop data source integration', () => {
     });
     await writeFile(join(workspace.cwd, 'descending-array.runbook.md'), content);
 
-    const result = runCli('run --json descending-array.runbook.md', workspace);
+    const result = runCli('run descending-array.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
 
     const events = parseJsonEvents(result.stdout);
@@ -579,7 +576,7 @@ describe('FOR loop data source integration', () => {
     await writeFile(join(workspace.cwd, 'descending-file.runbook.md'), content);
 
     const result = runCli(
-      'run --json --var servers=file:servers.jsonl descending-file.runbook.md',
+      'run --var servers=file:servers.jsonl descending-file.runbook.md',
       workspace,
     );
     expect(result.exitCode).toBe(0);
@@ -611,7 +608,7 @@ describe('FOR loop data source integration', () => {
     });
     await writeFile(join(workspace.cwd, 'protocol-proof.runbook.md'), content);
 
-    const result = runCli('run --json protocol-proof.runbook.md', workspace);
+    const result = runCli('run protocol-proof.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
 
     const events = parseJsonEvents(result.stdout);
@@ -637,7 +634,7 @@ describe('FOR loop data source integration', () => {
     await writeFile(join(workspace.cwd, 'json-array.runbook.md'), content);
 
     const result = runCli(
-      'run --json --var-json items=["alpha","bravo","charlie"] json-array.runbook.md',
+      'run --var-json items=["alpha","bravo","charlie"] json-array.runbook.md',
       workspace,
     );
     expect(result.exitCode).toBe(0);
@@ -662,7 +659,7 @@ describe('FOR loop data source integration', () => {
     await writeFile(join(workspace.cwd, 'json-objects.runbook.md'), content);
 
     const result = runCli(
-      'run --json --var-json items=[{"name":"alice","count":10},{"name":"bob","count":20}] json-objects.runbook.md',
+      'run --var-json items=[{"name":"alice","count":10},{"name":"bob","count":20}] json-objects.runbook.md',
       workspace,
     );
     expect(result.exitCode).toBe(0);
@@ -688,7 +685,7 @@ describe('FOR loop data source integration', () => {
     });
     await writeFile(join(workspace.cwd, 'json-empty.runbook.md'), content);
 
-    const result = runCli('run --json --var-json items=[] json-empty.runbook.md', workspace);
+    const result = runCli('run --var-json items=[] json-empty.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
 
     const events = parseJsonEvents(result.stdout);
@@ -715,7 +712,7 @@ describe('FOR loop data source integration', () => {
     await writeFile(join(workspace.cwd, 'json-windowed.runbook.md'), content);
 
     const result = runCli(
-      'run --json --var-json items=["a","b","c","d","e"] json-windowed.runbook.md',
+      'run --var-json items=["a","b","c","d","e"] json-windowed.runbook.md',
       workspace,
     );
     expect(result.exitCode).toBe(0);
@@ -742,10 +739,7 @@ describe('FOR loop data source integration', () => {
     });
     await writeFile(join(workspace.cwd, 'jsonl-protocol.runbook.md'), content);
 
-    const result = runCli(
-      'run --json --var items=file:items.jsonl jsonl-protocol.runbook.md',
-      workspace,
-    );
+    const result = runCli('run --var items=file:items.jsonl jsonl-protocol.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
 
     const events = parseJsonEvents(result.stdout);

@@ -58,7 +58,7 @@ export function registerDelegateCommand(program: Command): void {
         .default([])
         .helpGroup('Variable options:'),
     )
-    .option('--json', 'Output as JSON')
+    .option('--text', 'Output as human-readable text')
     .action(
       async (
         runbookArg: string | undefined,
@@ -68,12 +68,12 @@ export function registerDelegateCommand(program: Command): void {
           var: string[];
           varJson?: string[];
           varFile?: string[];
-          json?: boolean;
+          text?: boolean;
         },
       ) => {
         await withErrorHandling(
           async () => {
-            const output = new OutputEmitter({ json: options.json });
+            const output = new OutputEmitter({ text: options.text });
 
             const depError = validateIndexRequiresStep(options.index, options.step);
             if (depError) {
@@ -195,7 +195,7 @@ export function registerDelegateCommand(program: Command): void {
             });
 
             // Output
-            if (options.json) {
+            if (!options.text) {
               output.json({
                 kind: 'delegate',
                 action: 'delegated',
@@ -214,7 +214,7 @@ export function registerDelegateCommand(program: Command): void {
 
             output.flush();
           },
-          { json: options.json },
+          { text: options.text },
         );
       },
     );

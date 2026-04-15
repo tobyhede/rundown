@@ -107,15 +107,15 @@ export interface CliResult {
 /**
  * Execute rundown CLI with args array (safe from injection).
  *
- * Uses npx to find local or global rundown installation. Commands are
- * executed with `--json` flag automatically appended for machine-readable output.
+ * Uses npx to find local or global rundown installation. Commands produce
+ * JSON output by default (machine-readable).
  *
  * @param args - Array of CLI arguments (e.g., ['status'] or ['goto', '3'])
  * @returns Promise resolving to the CLI execution result
  */
 export async function runCli(args: string[]): Promise<CliResult> {
   try {
-    const { stdout } = await execFileAsync('npx', ['--no', 'rundown', ...args, '--json'], {
+    const { stdout } = await execFileAsync('npx', ['--no', 'rundown', ...args], {
       timeout: 30000,
     });
 

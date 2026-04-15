@@ -18,16 +18,16 @@ if [ -z "$RUNBOOKS" ]; then
 fi
 
 for runbook in $RUNBOOKS; do
-  # List scenario names (skip header line)
-  NAMES=$(node packages/cli/dist/cli.js scenario ls "$runbook" | tail -n +2 | awk '{print $1}')
-  for name in $NAMES; do
+  # List scenario names using JSON output to handle names with spaces
+  NAMES=$(node packages/cli/dist/cli.js scenario ls "$runbook" | node -e "process.stdin.setEncoding('utf8');let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>JSON.parse(d).forEach(s=>console.log(s.name)))")
+  while IFS= read -r name; do
     if node packages/cli/dist/cli.js scenario run "$runbook" "$name" --quiet; then
       PASSED=$((PASSED + 1))
     else
       echo "FAIL: $runbook :: $name"
       FAILURES=$((FAILURES + 1))
     fi
-  done
+  done <<< "$NAMES"
 done
 
 echo ""

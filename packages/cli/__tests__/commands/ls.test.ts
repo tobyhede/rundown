@@ -16,12 +16,12 @@ describe('rd ls', () => {
 
   it('shows correct step count for naturally completed runbook', async () => {
     // Run in prompted mode to manually step through
-    await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
-    await runCliInProcess('pass', workspace); // Step 1 -> 2
-    await runCliInProcess('pass', workspace); // Step 2 -> DONE
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+    await runCliInProcess('pass --text', workspace); // Step 1 -> 2
+    await runCliInProcess('pass --text', workspace); // Step 2 -> DONE
 
-    // Now, run `ls`
-    const result = await runCliInProcess('ls', workspace);
+    // Now, run `ls --text` for human-readable output
+    const result = await runCliInProcess('ls --text', workspace);
 
     // It should show 2/2
     expect(result.stdout).toContain('complete');
@@ -29,7 +29,7 @@ describe('rd ls', () => {
   });
 
   it('shows available runbooks with --all flag', async () => {
-    const result = await runCliInProcess('ls --all', workspace);
+    const result = await runCliInProcess('ls --all --text', workspace);
     expect(result.stdout).toContain('NAME');
     expect(result.stdout).toContain('DESCRIPTION');
     expect(result.stdout).toContain('simple');

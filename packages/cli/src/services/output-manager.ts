@@ -5,8 +5,8 @@ import { formatTable } from '../helpers/table-formatter.js';
 
 /** Options for constructing an OutputManager instance. */
 export interface OutputManagerOptions {
-  /** Whether to output in JSON format */
-  json?: boolean;
+  /** Whether to output in human-readable text format instead of JSON (JSON is the default) */
+  text?: boolean;
   /** Custom writer to use (default: ConsoleWriter) */
   writer?: OutputWriter;
 }
@@ -38,7 +38,7 @@ export class OutputManager {
    * @param options - Configuration options for the manager
    */
   constructor(options: OutputManagerOptions = {}) {
-    this.json = options.json ?? false;
+    this.json = !options.text;
     this.writer = options.writer ?? new ConsoleWriter();
   }
 

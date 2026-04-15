@@ -22,7 +22,7 @@ describe('start --prompted', () => {
   describe('prompted mode behavior', () => {
     it('creates runbook in prompted mode', async () => {
       const result = await runCliInProcess(
-        'run --prompted runbooks/with-commands.runbook.md',
+        'run --prompted runbooks/with-commands.runbook.md --text',
         workspace,
       );
 
@@ -32,7 +32,7 @@ describe('start --prompted', () => {
     });
 
     it('sets prompted flag in state', async () => {
-      await runCliInProcess('run --prompted runbooks/with-commands.runbook.md', workspace);
+      await runCliInProcess('run --prompted runbooks/with-commands.runbook.md --text', workspace);
 
       const state = await getActiveState(workspace);
       expect(state?.prompted).toBe(true);
@@ -40,7 +40,7 @@ describe('start --prompted', () => {
 
     it('does not auto-execute bash commands in prompted mode', async () => {
       const result = await runCliInProcess(
-        'run --prompted runbooks/with-commands.runbook.md',
+        'run --prompted runbooks/with-commands.runbook.md --text',
         workspace,
       );
 
@@ -54,14 +54,14 @@ describe('start --prompted', () => {
     });
 
     it('waits for manual pass/fail in prompted mode', async () => {
-      await runCliInProcess('run --prompted runbooks/with-commands.runbook.md', workspace);
+      await runCliInProcess('run --prompted runbooks/with-commands.runbook.md --text', workspace);
 
       // After starting in prompted mode, should be at step 1
       let state = await getActiveState(workspace);
       expect(state?.step).toBe('1');
 
       // Manual pass should advance to next step
-      await runCliInProcess('pass', workspace);
+      await runCliInProcess('pass --text', workspace);
 
       state = await getActiveState(workspace);
       expect(state?.step).toBe('2');
@@ -69,7 +69,7 @@ describe('start --prompted', () => {
 
     it('shows command in output without executing', async () => {
       const result = await runCliInProcess(
-        'run --prompted runbooks/with-commands.runbook.md',
+        'run --prompted runbooks/with-commands.runbook.md --text',
         workspace,
       );
 
@@ -81,7 +81,7 @@ describe('start --prompted', () => {
 
     it('inherits prompted flag in child runbooks via delegation', async () => {
       // Start parent runbook (with substeps) in prompted mode
-      await runCliInProcess('run --prompted runbooks/substeps.runbook.md', workspace);
+      await runCliInProcess('run --prompted runbooks/substeps.runbook.md --text', workspace);
 
       // Delegate substep to child runbook
       const delegateResult = await runCliInProcess(
@@ -89,11 +89,12 @@ describe('start --prompted', () => {
         workspace,
       );
       expect(delegateResult.exitCode).toBe(0);
-      const token = /rdtk_\S+/.exec(delegateResult.stdout)?.[0];
+      const delegateOutput = JSON.parse(delegateResult.stdout) as { token?: string };
+      const token = delegateOutput.token;
       expect(token).toBeDefined();
 
       // Claim the delegation token — launches child runbook
-      const claimResult = await runCliInProcess(`claim ${token!}`, workspace);
+      const claimResult = await runCliInProcess(`claim ${token!} --text`, workspace);
       expect(claimResult.exitCode).toBe(0);
 
       // Child should inherit prompted flag from parent
@@ -105,7 +106,10 @@ describe('start --prompted', () => {
 
   describe('auto-execution without --prompted', () => {
     it('executes bash commands automatically in auto mode', async () => {
-      const result = await runCliInProcess('run runbooks/with-commands.runbook.md', workspace);
+      const result = await runCliInProcess(
+        'run runbooks/with-commands.runbook.md --text',
+        workspace,
+      );
 
       // Without --prompted, commands execute automatically
       expect(result.stdout).toContain('Execute command');
@@ -114,14 +118,20 @@ describe('start --prompted', () => {
     });
 
     it('stores lastResult after successful execution', async () => {
-      const result = await runCliInProcess('run runbooks/with-commands.runbook.md', workspace);
+      const result = await runCliInProcess(
+        'run runbooks/with-commands.runbook.md --text',
+        workspace,
+      );
 
       // Runbook completes in auto mode (both steps pass)
       expect(result.stdout).toContain('COMPLETE');
     });
 
     it('stores lastResult as pass on successful command', async () => {
-      const result = await runCliInProcess('run runbooks/with-commands.runbook.md', workspace);
+      const result = await runCliInProcess(
+        'run runbooks/with-commands.runbook.md --text',
+        workspace,
+      );
 
       // Runbook completes in auto mode
       expect(result.stdout).toContain('COMPLETE');
@@ -130,7 +140,7 @@ describe('start --prompted', () => {
     it('stores lastResult as fail on failed command', async () => {
       // Using failing command runbook - now uses rd echo which succeeds after retries
       const result = await runCliInProcess(
-        'run runbooks/with-failing-command.runbook.md',
+        'run runbooks/with-failing-command.runbook.md --text',
         workspace,
       );
 
@@ -141,7 +151,10 @@ describe('start --prompted', () => {
     });
 
     it('continues execution loop on pass condition', async () => {
-      const result = await runCliInProcess('run runbooks/with-commands.runbook.md', workspace);
+      const result = await runCliInProcess(
+        'run runbooks/with-commands.runbook.md --text',
+        workspace,
+      );
 
       // Runbook should complete (both steps executed in auto mode)
       expect(result.stdout).toContain('## 1.');
@@ -150,7 +163,10 @@ describe('start --prompted', () => {
     });
 
     it('chains multiple auto-executing steps', async () => {
-      const result = await runCliInProcess('run runbooks/with-commands.runbook.md', workspace);
+      const result = await runCliInProcess(
+        'run runbooks/with-commands.runbook.md --text',
+        workspace,
+      );
 
       // Both steps should execute automatically
       expect(result.stdout).toContain('Execute command');
@@ -159,7 +175,7 @@ describe('start --prompted', () => {
 
     it('applies FAIL condition when command fails', async () => {
       const result = await runCliInProcess(
-        'run runbooks/with-failing-command.runbook.md',
+        'run runbooks/with-failing-command.runbook.md --text',
         workspace,
       );
 
@@ -172,20 +188,23 @@ describe('start --prompted', () => {
 
     it('respects max retries on repeated failures', async () => {
       // Manually step through retries to test tracking
-      await runCliInProcess('run --prompted runbooks/with-failing-command.runbook.md', workspace);
+      await runCliInProcess(
+        'run --prompted runbooks/with-failing-command.runbook.md --text',
+        workspace,
+      );
 
       // Step 1 with retry in prompted mode
-      let result = await runCliInProcess('fail', workspace);
+      let result = await runCliInProcess('fail --text', workspace);
       let state = await getActiveState(workspace);
       expect(state?.retryCount).toBe(1);
 
       // Step 2 with retry
-      result = await runCliInProcess('fail', workspace);
+      result = await runCliInProcess('fail --text', workspace);
       state = await getActiveState(workspace);
       expect(state?.retryCount).toBe(2);
 
       // Third fail should block (max retries exceeded)
-      result = await runCliInProcess('fail', workspace);
+      result = await runCliInProcess('fail --text', workspace);
       expect(result.exitCode).not.toBe(0);
     });
 
@@ -208,7 +227,10 @@ npm run dangerous-command
 `,
       );
 
-      const result = await runCliInProcess('run runbooks/with-prompt-block.runbook.md', workspace);
+      const result = await runCliInProcess(
+        'run runbooks/with-prompt-block.runbook.md --text',
+        workspace,
+      );
 
       // Should NOT execute the command (no $ prefix showing execution)
       expect(result.stdout).not.toContain('$ npm run dangerous-command');
@@ -222,29 +244,29 @@ npm run dangerous-command
   describe('mode consistency', () => {
     it('can start same runbook in auto mode after prompted mode', async () => {
       // First: prompted mode
-      await runCliInProcess('stop', workspace);
-      await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+      await runCliInProcess('stop --text', workspace);
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
       const state = await getActiveState(workspace);
       expect(state?.prompted).toBe(true);
 
       // Clean up
-      await runCliInProcess('stop', workspace);
+      await runCliInProcess('stop --text', workspace);
 
       // Second: auto mode - runbook completes immediately
-      const result = await runCliInProcess('run runbooks/simple.runbook.md', workspace);
+      const result = await runCliInProcess('run runbooks/simple.runbook.md --text', workspace);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('COMPLETE');
     });
 
     it('enforces prompted mode across manual steps', async () => {
-      await runCliInProcess('run --prompted runbooks/with-commands.runbook.md', workspace);
+      await runCliInProcess('run --prompted runbooks/with-commands.runbook.md --text', workspace);
 
       // In prompted mode, no auto-execution should happen
       const state1 = await getActiveState(workspace);
       expect(state1?.step).toBe('1');
 
       // Manually pass
-      await runCliInProcess('pass', workspace);
+      await runCliInProcess('pass --text', workspace);
 
       const state2 = await getActiveState(workspace);
       expect(state2?.step).toBe('2');
@@ -252,12 +274,15 @@ npm run dangerous-command
 
     it('allows mixed auto and prompted runbooks', async () => {
       // Auto mode - runbook completes immediately
-      const result1 = await runCliInProcess('run runbooks/simple.runbook.md', workspace);
+      const result1 = await runCliInProcess('run runbooks/simple.runbook.md --text', workspace);
       expect(result1.stdout).not.toContain('Prompt:   Yes');
       expect(result1.stdout).toContain('COMPLETE');
 
       // Prompted mode
-      const result2 = await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+      const result2 = await runCliInProcess(
+        'run --prompted runbooks/simple.runbook.md --text',
+        workspace,
+      );
       expect(result2.stdout).toContain('Prompt:   Yes');
     });
   });
@@ -265,7 +290,7 @@ npm run dangerous-command
   describe('command execution details', () => {
     it('shows command code in prompt', async () => {
       const result = await runCliInProcess(
-        'run --prompted runbooks/with-commands.runbook.md',
+        'run --prompted runbooks/with-commands.runbook.md --text',
         workspace,
       );
 
@@ -275,7 +300,7 @@ npm run dangerous-command
 
     it('renders command as code block in prompted mode', async () => {
       const result = await runCliInProcess(
-        'run --prompted runbooks/with-commands.runbook.md',
+        'run --prompted runbooks/with-commands.runbook.md --text',
         workspace,
       );
 
@@ -287,14 +312,20 @@ npm run dangerous-command
 
     it('executes with correct working directory', async () => {
       // Command uses rd echo, which succeeds
-      const result = await runCliInProcess('run runbooks/with-commands.runbook.md', workspace);
+      const result = await runCliInProcess(
+        'run runbooks/with-commands.runbook.md --text',
+        workspace,
+      );
 
       // If working directory is wrong, command might fail
       expect(result.stdout).toContain('$ rd echo --result pass');
     });
 
     it('handles command output correctly', async () => {
-      const result = await runCliInProcess('run runbooks/with-commands.runbook.md', workspace);
+      const result = await runCliInProcess(
+        'run runbooks/with-commands.runbook.md --text',
+        workspace,
+      );
 
       // Should show execution happened
       expect(result.stdout).toContain('$ rd echo --result pass');
@@ -302,7 +333,10 @@ npm run dangerous-command
     });
 
     it('updates step progression after auto-execution', async () => {
-      const result = await runCliInProcess('run runbooks/with-commands.runbook.md', workspace);
+      const result = await runCliInProcess(
+        'run runbooks/with-commands.runbook.md --text',
+        workspace,
+      );
 
       // Runbook completes in auto mode (all steps pass)
       expect(result.stdout).toContain('COMPLETE');

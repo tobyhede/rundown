@@ -55,7 +55,7 @@ interface JsonOutput {
  * Accumulates events and outputs a single JSON object when flush() is called.
  * This ensures all command output is collected into one JSON response.
  *
- * For list-only output (e.g., `ls --json`), outputs a raw array instead of
+ * For list-only output (e.g., `ls`), outputs a raw array instead of
  * wrapping in `{ items: [...] }`.
  */
 export class JSONRenderer implements OutputRenderer {

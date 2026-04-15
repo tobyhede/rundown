@@ -20,9 +20,9 @@ describe('status command', () => {
   });
 
   it('displays current step info', async () => {
-    await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
 
-    const result = await runCliInProcess('status', workspace);
+    const result = await runCliInProcess('status --text', workspace);
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain('## 1.');
@@ -30,18 +30,18 @@ describe('status command', () => {
   });
 
   it('shows runbook file path', async () => {
-    await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
 
-    const result = await runCliInProcess('status', workspace);
+    const result = await runCliInProcess('status --text', workspace);
 
     expect(result.stdout).toContain('File:');
     expect(result.stdout).toContain('simple.runbook.md');
   });
 
   it('shows retryCount', async () => {
-    await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
 
-    const result = await runCliInProcess('status', workspace);
+    const result = await runCliInProcess('status --text', workspace);
 
     // Status shows step information, retryCount is internal state
     expect(result.exitCode).toBe(0);
@@ -49,23 +49,23 @@ describe('status command', () => {
   });
 
   it('shows runbook ID', async () => {
-    await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
 
-    const result = await runCliInProcess('status', workspace);
+    const result = await runCliInProcess('status --text', workspace);
 
     expect(result.stdout).toContain('State:');
     expect(result.stdout).toMatch(/wf-\d{4}-\d{2}-\d{2}/);
   });
 
   it('outputs "No active runbook" when none', async () => {
-    const result = await runCliInProcess('status', workspace);
+    const result = await runCliInProcess('status --text', workspace);
 
     expect(result.stdout).toContain('No active runbook');
   });
 
   it('shows stashed runbook info when stashed but not active', async () => {
-    await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
-    await runCliInProcess('stash', workspace);
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+    await runCliInProcess('stash --text', workspace);
 
     const result = await runCliInProcess('status', workspace);
 
@@ -74,10 +74,10 @@ describe('status command', () => {
   });
 
   it('shows stashed status in JSON when stashed but not active', async () => {
-    await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
-    await runCliInProcess('stash', workspace);
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+    await runCliInProcess('stash --text', workspace);
 
-    const result = await runCliInProcess('status --json', workspace);
+    const result = await runCliInProcess('status', workspace);
 
     expect(result.exitCode).toBe(0);
     const output = JSON.parse(result.stdout);
@@ -99,10 +99,10 @@ describe('JSON lastAction.result semantics', () => {
   });
 
   it('reports lastAction.result PASS after successful pass', async () => {
-    await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
-    await runCliInProcess('pass', workspace); // Triggers CONTINUE (success)
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+    await runCliInProcess('pass --text', workspace); // Triggers CONTINUE (success)
 
-    const result = await runCliInProcess('status --json', workspace);
+    const result = await runCliInProcess('status', workspace);
     const output = JSON.parse(result.stdout);
 
     expect(output.lastAction).toBeDefined();
@@ -111,10 +111,10 @@ describe('JSON lastAction.result semantics', () => {
   });
 
   it('reports lastAction.result FAIL after fail triggers RETRY', async () => {
-    await runCliInProcess('run --prompted runbooks/retry.runbook.md', workspace);
-    await runCliInProcess('fail', workspace); // Triggers RETRY (failure)
+    await runCliInProcess('run --prompted runbooks/retry.runbook.md --text', workspace);
+    await runCliInProcess('fail --text', workspace); // Triggers RETRY (failure)
 
-    const result = await runCliInProcess('status --json', workspace);
+    const result = await runCliInProcess('status', workspace);
     const output = JSON.parse(result.stdout);
 
     expect(output.lastAction).toBeDefined();
@@ -123,10 +123,10 @@ describe('JSON lastAction.result semantics', () => {
   });
 
   it('reports lastAction.result PASS after pass triggers GOTO', async () => {
-    await runCliInProcess('run --prompted runbooks/goto.runbook.md', workspace);
-    await runCliInProcess('pass', workspace); // Triggers GOTO 3 (success)
+    await runCliInProcess('run --prompted runbooks/goto.runbook.md --text', workspace);
+    await runCliInProcess('pass --text', workspace); // Triggers GOTO 3 (success)
 
-    const result = await runCliInProcess('status --json', workspace);
+    const result = await runCliInProcess('status', workspace);
     const output = JSON.parse(result.stdout);
 
     expect(output.lastAction).toBeDefined();
@@ -135,10 +135,10 @@ describe('JSON lastAction.result semantics', () => {
   });
 
   it('reports lastAction.result FAIL after fail triggers GOTO', async () => {
-    await runCliInProcess('run --prompted runbooks/fail-goto.runbook.md', workspace);
-    await runCliInProcess('fail', workspace); // Triggers GOTO 3 (failure)
+    await runCliInProcess('run --prompted runbooks/fail-goto.runbook.md --text', workspace);
+    await runCliInProcess('fail --text', workspace); // Triggers GOTO 3 (failure)
 
-    const result = await runCliInProcess('status --json', workspace);
+    const result = await runCliInProcess('status', workspace);
     const output = JSON.parse(result.stdout);
 
     expect(output.lastAction).toBeDefined();
@@ -159,32 +159,32 @@ describe('ls command', () => {
   });
 
   it('lists all runbook states', async () => {
-    await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
 
-    const result = await runCliInProcess('ls', workspace);
+    const result = await runCliInProcess('ls --text', workspace);
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain('simple.runbook.md');
   });
 
   it('marks active runbook', async () => {
-    await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
 
-    const result = await runCliInProcess('ls', workspace);
+    const result = await runCliInProcess('ls --text', workspace);
 
     expect(result.stdout).toContain('active');
   });
 
   it('shows current step for each', async () => {
-    await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
 
-    const result = await runCliInProcess('ls', workspace);
+    const result = await runCliInProcess('ls --text', workspace);
 
     expect(result.stdout).toContain('1/');
   });
 
   it('outputs "No active runbooks" when empty', async () => {
-    const result = await runCliInProcess('ls', workspace);
+    const result = await runCliInProcess('ls --text', workspace);
 
     expect(result.stdout).toContain('No active runbooks');
   });
@@ -202,17 +202,17 @@ describe('complete command', () => {
   });
 
   it('marks runbook as complete', async () => {
-    await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
 
-    const result = await runCliInProcess('complete', workspace);
+    const result = await runCliInProcess('complete --text', workspace);
 
     expect(result.stdout).toContain('COMPLETE');
   });
 
   it('clears active runbook', async () => {
-    await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
 
-    await runCliInProcess('complete', workspace);
+    await runCliInProcess('complete --text', workspace);
 
     const session = await readSession(workspace);
     expect(session.active).toBeNull();
@@ -225,21 +225,18 @@ describe('complete command', () => {
   });
 
   it('includes message in JSON output', async () => {
-    await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
 
-    const result = await runCliInProcess(
-      ['complete', 'Early exit - tests passed', '--json'],
-      workspace,
-    );
+    const result = await runCliInProcess(['complete', 'Early exit - tests passed'], workspace);
 
     const output = JSON.parse(result.stdout);
     expect(output.message).toBe('Early exit - tests passed');
   });
 
   it('uses default message when none provided', async () => {
-    await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
 
-    const result = await runCliInProcess('complete --json', workspace);
+    const result = await runCliInProcess('complete', workspace);
 
     const output = JSON.parse(result.stdout);
     expect(output.message).toBe('Runbook completed successfully');
@@ -278,13 +275,13 @@ rd echo done
     await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
 
     // Run with variable to store runbookSrc
-    await runCliInProcess('run test.runbook.md --var message=hello --prompted', workspace);
+    await runCliInProcess('run test.runbook.md --var message=hello --prompted --text', workspace);
 
     // Delete the source file to prove we're using runbookSrc, not disk
     await rm(join(workspace.cwd, 'test.runbook.md'));
 
     // Status should work using runbookSrc (not disk fallback)
-    const result = await runCliInProcess('status --json', workspace);
+    const result = await runCliInProcess('status', workspace);
 
     expect(result.exitCode).toBe(0);
     const output = JSON.parse(result.stdout);

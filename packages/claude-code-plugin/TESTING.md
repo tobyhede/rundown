@@ -128,7 +128,7 @@ echo '{"hook_event_name":"PreToolUse","cwd":"'$(pwd)'","tool_name":"Skill","tool
 echo '{"hook_event_name":"SubagentStop","cwd":"'$(pwd)'","agent_id":"test-agent","agent_type":"code-review-agent","last_assistant_message":"Agent completed successfully."}' | node dist/cli.js
 ```
 
-**Delegation correlation path** (exercises `rd status --json` flow):
+**Delegation correlation path** (exercises `rd status` flow):
 
 1. Start a runbook with a delegation substep and create a delegation token:
    ```bash
@@ -144,7 +144,7 @@ echo '{"hook_event_name":"SubagentStop","cwd":"'$(pwd)'","agent_id":"test-agent"
    echo '{"hook_event_name":"SubagentStop","cwd":"'$(pwd)'","agent_id":"test-agent","agent_type":"code-review-agent","last_assistant_message":"Agent completed successfully."}' | node dist/cli.js
    ```
 
-The handler will call `rd status --json`, correlate the token hash against active delegations, and produce a context message based on the delegation state.
+The handler will call `rd status`, correlate the token hash against active delegations, and produce a context message based on the delegation state.
 
 ### UserPromptSubmit
 

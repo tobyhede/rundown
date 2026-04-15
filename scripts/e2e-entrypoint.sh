@@ -188,7 +188,7 @@ fi
 
 # Check rd status for active/completed runbooks
 set +e
-RD_STATUS="$(rd status --json 2>/dev/null)"
+RD_STATUS="$(rd status 2>/dev/null)"
 set -e
 if [ -n "$RD_STATUS" ] && echo "$RD_STATUS" | grep -q '"name"'; then
   pass "rd status reports runbook activity"

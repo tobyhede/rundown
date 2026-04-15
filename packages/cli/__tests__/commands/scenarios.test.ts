@@ -50,7 +50,7 @@ scenarios:
 
   describe('list subcommand', () => {
     it('lists available scenarios', async () => {
-      const result = await runCliInProcess('scenario ls test-runbook.runbook.md', workspace);
+      const result = await runCliInProcess('scenario ls test-runbook.runbook.md --text', workspace);
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('NAME');
@@ -75,7 +75,7 @@ name: no-scenarios
 `;
       await writeFile(join(workspace.runbooksDir(), 'no-scenarios.runbook.md'), noScenarios);
 
-      const result = await runCliInProcess('scenario ls no-scenarios.runbook.md', workspace);
+      const result = await runCliInProcess('scenario ls no-scenarios.runbook.md --text', workspace);
 
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain('No scenarios');
@@ -85,7 +85,7 @@ name: no-scenarios
   describe('show subcommand', () => {
     it('shows details for a specific scenario', async () => {
       const result = await runCliInProcess(
-        'scenario show test-runbook.runbook.md success',
+        'scenario show test-runbook.runbook.md success --text',
         workspace,
       );
 
@@ -99,7 +99,7 @@ name: no-scenarios
 
     it('shows error for non-existent scenario', async () => {
       const result = await runCliInProcess(
-        'scenario show test-runbook.runbook.md nonexistent',
+        'scenario show test-runbook.runbook.md nonexistent --text',
         workspace,
       );
 

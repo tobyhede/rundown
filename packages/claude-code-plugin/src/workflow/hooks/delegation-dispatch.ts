@@ -77,7 +77,7 @@ export async function handleDelegationDispatch(
 
   // Best-effort: enrich with current delegation status
   try {
-    const statusOutput = rundown(['status', '--json'], input.cwd);
+    const statusOutput = rundown(['status'], input.cwd);
     const status = JSON.parse(statusOutput) as Record<string, unknown>;
     const runbook = typeof status.runbook === 'string' ? status.runbook : undefined;
     const step = typeof status.step === 'string' ? status.step : undefined;

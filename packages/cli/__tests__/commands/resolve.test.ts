@@ -39,7 +39,7 @@ echo hello
 `,
     );
 
-    const result = await runCliInProcess(`resolve ${runbookPath} --json`, workspace);
+    const result = await runCliInProcess(`resolve ${runbookPath}`, workspace);
     const output = JSON.parse(result.stdout);
 
     expect(output.valid).toBe(true);
@@ -67,7 +67,7 @@ Server on port {{ port }} in {{ environment }} mode.
 `,
     );
 
-    const result = await runCliInProcess(`resolve ${runbookPath} --json`, workspace);
+    const result = await runCliInProcess(`resolve ${runbookPath}`, workspace);
     const output = JSON.parse(result.stdout);
 
     expect(output.valid).toBe(true);
@@ -90,7 +90,7 @@ Deploy to {{ environment }}.
     );
 
     const result = await runCliInProcess(
-      `resolve ${runbookPath} --var environment=staging --json`,
+      `resolve ${runbookPath} --var environment=staging`,
       workspace,
     );
     const output = JSON.parse(result.stdout);
@@ -108,7 +108,7 @@ Deploy to {{ missingVar }}.
 `,
     );
 
-    const result = await runCliInProcess(`resolve ${runbookPath} --json`, workspace);
+    const result = await runCliInProcess(`resolve ${runbookPath}`, workspace);
     const output = JSON.parse(result.stdout);
 
     // Unresolved vars are warnings, not errors — still valid structurally
@@ -136,7 +136,7 @@ Deploy to {{ environment }}.
 `,
     );
 
-    const result = await runCliInProcess(`resolve ${runbookPath} --json`, workspace);
+    const result = await runCliInProcess(`resolve ${runbookPath}`, workspace);
     const output = JSON.parse(result.stdout);
 
     expect(output.valid).toBe(false);
@@ -175,10 +175,7 @@ echo {{ item }}
 `,
     );
 
-    const result = await runCliInProcess(
-      `resolve ${runbookPath} --var-file ${varFile} --json`,
-      workspace,
-    );
+    const result = await runCliInProcess(`resolve ${runbookPath} --var-file ${varFile}`, workspace);
     const output = JSON.parse(result.stdout);
 
     expect(output.valid).toBe(true);
@@ -206,7 +203,7 @@ echo hello
 `,
     );
 
-    const result = await runCliInProcess(`resolve ${runbookPath} --json`, workspace);
+    const result = await runCliInProcess(`resolve ${runbookPath}`, workspace);
     const output = JSON.parse(result.stdout);
 
     expect(output.valid).toBe(false);
@@ -217,7 +214,7 @@ echo hello
   });
 
   it('exits 1 for file not found', async () => {
-    const result = await runCliInProcess('resolve nonexistent.md --json', workspace);
+    const result = await runCliInProcess('resolve nonexistent.md', workspace);
     expect(result.exitCode).toBe(1);
 
     const output = JSON.parse(result.stdout);
@@ -255,7 +252,7 @@ echo {{ server }}
 `,
     );
 
-    const result = await runCliInProcess(`resolve ${runbookPath} --json`, workspace);
+    const result = await runCliInProcess(`resolve ${runbookPath}`, workspace);
     const output = JSON.parse(result.stdout);
 
     // Config discovery should find .rundown/config.yaml within the workspace
@@ -267,7 +264,7 @@ echo {{ server }}
     expect(output.sources.servers.items).toBe(2);
   });
 
-  it('outputs valid JSON matching schema with --json', async () => {
+  it('outputs valid JSON matching schema by default', async () => {
     const runbookPath = path.join(workspace.cwd, 'schema-test.runbook.md');
     fs.writeFileSync(
       runbookPath,
@@ -280,7 +277,7 @@ Hello {{ name }}.
 `,
     );
 
-    const result = await runCliInProcess(`resolve ${runbookPath} --json`, workspace);
+    const result = await runCliInProcess(`resolve ${runbookPath}`, workspace);
     const output = JSON.parse(result.stdout);
 
     // Validate against Zod schema (single source of truth)
@@ -309,7 +306,7 @@ touch ${sentinel}
 `,
     );
 
-    await runCliInProcess(`resolve ${runbookPath} --json`, workspace);
+    await runCliInProcess(`resolve ${runbookPath} --text`, workspace);
 
     expect(fs.existsSync(sentinel)).toBe(false);
   });
@@ -328,7 +325,7 @@ echo hello
     );
 
     const result = await runCliInProcess(
-      `resolve ${runbookPath} --var-file ${badVarFile} --json`,
+      `resolve ${runbookPath} --var-file ${badVarFile}`,
       workspace,
     );
     const output = JSON.parse(result.stdout);
@@ -357,7 +354,7 @@ Say {{ greeting }} to {{ recipient }}.
     );
 
     const result = await runCliInProcess(
-      `resolve ${runbookPath} --var-file ${badVarFile} --json`,
+      `resolve ${runbookPath} --var-file ${badVarFile}`,
       workspace,
     );
     const output = JSON.parse(result.stdout);
@@ -383,7 +380,7 @@ echo hello
 `,
     );
 
-    const result = await runCliInProcess(`resolve ${runbookPath} --json`, workspace);
+    const result = await runCliInProcess(`resolve ${runbookPath}`, workspace);
     const output = JSON.parse(result.stdout);
 
     expect(output.kind).toBe('resolve');
@@ -400,7 +397,7 @@ echo hello
 
     // bad!=value has an invalid key (contains '!'), which now fails at parse time
     const result = await runCliInProcess(
-      `resolve ${runbookPath} --var bad!=value --json`,
+      `resolve ${runbookPath} --var bad!=value --text`,
       workspace,
     );
 
@@ -430,7 +427,7 @@ echo hello
 `,
     );
 
-    const result = await runCliInProcess(`resolve ${runbookPath} --json`, workspace);
+    const result = await runCliInProcess(`resolve ${runbookPath}`, workspace);
     const output = JSON.parse(result.stdout);
 
     // Valid runbook should pass both structural and post-expansion validation
@@ -476,7 +473,7 @@ echo batch
 `,
     );
 
-    const result = await runCliInProcess(`resolve ${runbookPath} --json`, workspace);
+    const result = await runCliInProcess(`resolve ${runbookPath}`, workspace);
     const output = JSON.parse(result.stdout);
 
     expect(output.valid).toBe(true);
@@ -497,7 +494,7 @@ Say {{ greeting }}.
 `,
     );
 
-    const result = await runCliInProcess(`resolve ${runbookPath}`, workspace);
+    const result = await runCliInProcess(`resolve ${runbookPath} --text`, workspace);
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain('PASS');
     expect(result.stdout).toContain('Variables:');
@@ -520,7 +517,7 @@ vars:
       );
 
       const result = await runCliInProcess(
-        `resolve ${runbookPath} --var Target=child.runbook.md --json`,
+        `resolve ${runbookPath} --var Target=child.runbook.md`,
         workspace,
       );
       const output = JSON.parse(result.stdout);
@@ -543,7 +540,7 @@ vars:
 `,
       );
 
-      const result = await runCliInProcess(`resolve ${runbookPath} --json`, workspace);
+      const result = await runCliInProcess(`resolve ${runbookPath}`, workspace);
       const output = JSON.parse(result.stdout);
 
       expect(output.valid).toBe(true);
@@ -564,7 +561,7 @@ vars:
       );
 
       const result = await runCliInProcess(
-        `resolve ${runbookPath} --var Target=rundown:write-plan --json`,
+        `resolve ${runbookPath} --var Target=rundown:write-plan`,
         workspace,
       );
       const output = JSON.parse(result.stdout);

@@ -51,9 +51,9 @@ describe('Delegation propagation integration', () => {
 
   /** Helper: extract delegation token from CLI output. */
   function extractToken(stdout: string): string {
-    const match = /Token:\s*(rdtk_\S+)/.exec(stdout);
-    if (!match) throw new Error(`No token found in output:\n${stdout}`);
-    return match[1];
+    const parsed = JSON.parse(stdout) as { token?: string };
+    if (!parsed.token) throw new Error(`No token found in delegate output:\n${stdout}`);
+    return parsed.token;
   }
 
   /** Helper: read resolvedCompletions from a run state file. */
@@ -83,7 +83,7 @@ describe('Delegation propagation integration', () => {
       await writeChildRunbook();
 
       // Start parent in prompted mode
-      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
       expect(result.exitCode).toBe(0);
 
       // Get parent run ID
@@ -97,7 +97,7 @@ describe('Delegation propagation integration', () => {
       const token = extractToken(result.stdout);
 
       // Claim the token — launches child runbook in prompted mode
-      result = await runCliInProcess(`claim ${token}`, workspace);
+      result = await runCliInProcess(`claim ${token} --text`, workspace);
       expect(result.exitCode).toBe(0);
 
       // Verify child state has delegation linkage via parentLinkage
@@ -108,7 +108,7 @@ describe('Delegation propagation integration', () => {
 
       // Pass the child step — propagates pass to parent substep 1.1
       // DEFER model: parent advances to 1.2
-      result = await runCliInProcess('pass', workspace);
+      result = await runCliInProcess('pass --text', workspace);
       if (result.exitCode !== 0) {
         throw new Error(`rd pass failed: ${result.stdout}\n${result.stderr}`);
       }
@@ -121,7 +121,7 @@ describe('Delegation propagation integration', () => {
 
       // Parent is now at substep 1.2 — complete it to trigger aggregation
       // PASS ALL (both passed) → CONTINUE → step 2
-      result = await runCliInProcess('pass', workspace);
+      result = await runCliInProcess('pass --text', workspace);
 
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
@@ -136,7 +136,7 @@ describe('Delegation propagation integration', () => {
       await writeChildRunbook();
 
       // Start parent in prompted mode
-      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);
@@ -148,17 +148,17 @@ describe('Delegation propagation integration', () => {
       const token = extractToken(result.stdout);
 
       // Claim
-      result = await runCliInProcess(`claim ${token}`, workspace);
+      result = await runCliInProcess(`claim ${token} --text`, workspace);
       expect(result.exitCode).toBe(0);
 
       // Fail the child step — propagates fail to parent substep 1.1
       // DEFER model: parent advances to 1.2
-      result = await runCliInProcess('fail', workspace);
+      result = await runCliInProcess('fail --text', workspace);
       expect(result.exitCode).toBe(1);
 
       // Parent is now at substep 1.2 — complete it to trigger aggregation
       // FAIL ANY (1.1 failed) → STOP
-      result = await runCliInProcess('pass', workspace);
+      result = await runCliInProcess('pass --text', workspace);
 
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
@@ -172,7 +172,7 @@ describe('Delegation propagation integration', () => {
       await writeChildRunbook();
 
       // Start parent in prompted mode
-      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);
@@ -184,17 +184,17 @@ describe('Delegation propagation integration', () => {
       const token = extractToken(result.stdout);
 
       // Claim
-      result = await runCliInProcess(`claim ${token}`, workspace);
+      result = await runCliInProcess(`claim ${token} --text`, workspace);
       expect(result.exitCode).toBe(0);
 
       // Stop the child — propagates fail to parent substep 1.1
       // DEFER model: parent advances to 1.2
-      result = await runCliInProcess('stop', workspace);
+      result = await runCliInProcess('stop --text', workspace);
       expect(result.exitCode).toBe(0);
 
       // Parent is now at substep 1.2 — complete it to trigger aggregation
       // FAIL ANY (1.1 failed) → STOP
-      result = await runCliInProcess('pass', workspace);
+      result = await runCliInProcess('pass --text', workspace);
 
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
@@ -239,7 +239,7 @@ describe('Delegation propagation integration', () => {
       await writeChildRunbook();
 
       // Start grandparent
-      let result = await runCliInProcess('run --prompted grandparent.runbook.md', workspace);
+      let result = await runCliInProcess('run --prompted grandparent.runbook.md --text', workspace);
       expect(result.exitCode).toBe(0);
 
       const grandparentState = await getActiveState(workspace);
@@ -250,7 +250,7 @@ describe('Delegation propagation integration', () => {
       expect(result.exitCode).toBe(0);
       const token1 = extractToken(result.stdout);
 
-      result = await runCliInProcess(`claim ${token1}`, workspace);
+      result = await runCliInProcess(`claim ${token1} --text`, workspace);
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);
@@ -263,18 +263,18 @@ describe('Delegation propagation integration', () => {
       expect(result.exitCode).toBe(0);
       const token2 = extractToken(result.stdout);
 
-      result = await runCliInProcess(`claim ${token2}`, workspace);
+      result = await runCliInProcess(`claim ${token2} --text`, workspace);
       expect(result.exitCode).toBe(0);
 
       // Pass the child — propagates pass to parent substep 1.1
       // DEFER model: parent advances to 1.2
-      result = await runCliInProcess('pass', workspace);
+      result = await runCliInProcess('pass --text', workspace);
       expect(result.exitCode).toBe(0);
 
       // Parent is at substep 1.2 — complete it
       // PASS ALL (both passed) → COMPLETE → propagates pass to grandparent 1.1
       // DEFER model: grandparent advances to 1.2
-      result = await runCliInProcess('pass', workspace);
+      result = await runCliInProcess('pass --text', workspace);
 
       // Verify parent completed
       const updatedParent = await readRunbookState(workspace, parentRunId);
@@ -283,7 +283,7 @@ describe('Delegation propagation integration', () => {
 
       // Grandparent is at substep 1.2 — complete it
       // PASS ALL (both passed) → COMPLETE
-      result = await runCliInProcess('pass', workspace);
+      result = await runCliInProcess('pass --text', workspace);
 
       // Verify grandparent completed
       const updatedGrandparent = await readRunbookState(workspace, grandparentRunId);
@@ -300,7 +300,7 @@ describe('Delegation propagation integration', () => {
       await writeChildRunbook();
 
       // Start parent
-      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);
@@ -316,11 +316,11 @@ describe('Delegation propagation integration', () => {
       const token2 = extractToken(result.stdout);
 
       // Claim 1.2 first
-      result = await runCliInProcess(`claim ${token2}`, workspace);
+      result = await runCliInProcess(`claim ${token2} --text`, workspace);
       expect(result.exitCode).toBe(0);
 
       // Pass 1.2 first
-      result = await runCliInProcess('pass', workspace);
+      result = await runCliInProcess('pass --text', workspace);
       expect(result.exitCode).toBe(0);
 
       // Parent cursor is at substep 1.1 (not yet resolved), so drain couldn't
@@ -335,10 +335,10 @@ describe('Delegation propagation integration', () => {
       expect(updatedParent!.substep).toBe('1');
 
       // Now claim and complete 1.1
-      result = await runCliInProcess(`claim ${token1}`, workspace);
+      result = await runCliInProcess(`claim ${token1} --text`, workspace);
       expect(result.exitCode).toBe(0);
 
-      result = await runCliInProcess('pass', workspace);
+      result = await runCliInProcess('pass --text', workspace);
       expect(result.exitCode).toBe(0);
 
       // After both substeps resolve, parent should advance past step 1
@@ -375,7 +375,10 @@ describe('Delegation propagation integration', () => {
       await writeChildRunbook();
 
       // Start parent
-      let result = await runCliInProcess('run --prompted triple-parent.runbook.md', workspace);
+      let result = await runCliInProcess(
+        'run --prompted triple-parent.runbook.md --text',
+        workspace,
+      );
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);
@@ -395,9 +398,9 @@ describe('Delegation propagation integration', () => {
       const token3 = extractToken(result.stdout);
 
       // Complete children in reverse order: 3, 2, 1
-      result = await runCliInProcess(`claim ${token3}`, workspace);
+      result = await runCliInProcess(`claim ${token3} --text`, workspace);
       expect(result.exitCode).toBe(0);
-      result = await runCliInProcess('pass', workspace);
+      result = await runCliInProcess('pass --text', workspace);
       expect(result.exitCode).toBe(0);
 
       // Parent should still be waiting (1.1 not yet resolved)
@@ -405,9 +408,9 @@ describe('Delegation propagation integration', () => {
       expect(parentAfter3).not.toBeNull();
       expect(parentAfter3!.step).toBe('1');
 
-      result = await runCliInProcess(`claim ${token2}`, workspace);
+      result = await runCliInProcess(`claim ${token2} --text`, workspace);
       expect(result.exitCode).toBe(0);
-      result = await runCliInProcess('pass', workspace);
+      result = await runCliInProcess('pass --text', workspace);
       expect(result.exitCode).toBe(0);
 
       // Parent should still be waiting (1.1 not yet resolved)
@@ -415,9 +418,9 @@ describe('Delegation propagation integration', () => {
       expect(parentAfter2).not.toBeNull();
       expect(parentAfter2!.step).toBe('1');
 
-      result = await runCliInProcess(`claim ${token1}`, workspace);
+      result = await runCliInProcess(`claim ${token1} --text`, workspace);
       expect(result.exitCode).toBe(0);
-      result = await runCliInProcess('pass', workspace);
+      result = await runCliInProcess('pass --text', workspace);
       expect(result.exitCode).toBe(0);
 
       // After all 3 resolve, parent should complete (PASS ALL: COMPLETE)
@@ -438,7 +441,7 @@ describe('Delegation propagation integration', () => {
 
       // This scenario shouldn't normally happen with delegation, but test defensive handling
       // Start a simple parent that completes immediately
-      const result = await runCliInProcess('run simple-parent.runbook.md', workspace);
+      const result = await runCliInProcess('run simple-parent.runbook.md --text', workspace);
       expect(result.exitCode).toBe(0);
     });
 
@@ -447,7 +450,7 @@ describe('Delegation propagation integration', () => {
       await writeChildRunbook();
 
       // Start parent
-      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);
@@ -459,16 +462,16 @@ describe('Delegation propagation integration', () => {
       const token = extractToken(result.stdout);
 
       // Manually complete the parent before claiming
-      result = await runCliInProcess('pass', workspace);
+      result = await runCliInProcess('pass --text', workspace);
       expect(result.exitCode).toBe(0);
-      result = await runCliInProcess('pass', workspace);
+      result = await runCliInProcess('pass --text', workspace);
       expect(result.exitCode).toBe(0);
 
       // Now claim and complete child - parent already done
-      result = await runCliInProcess(`claim ${token}`, workspace);
+      result = await runCliInProcess(`claim ${token} --text`, workspace);
       expect(result.exitCode).toBe(0);
 
-      result = await runCliInProcess('pass', workspace);
+      result = await runCliInProcess('pass --text', workspace);
       // Should succeed even though parent is already done
       expect(result.exitCode).toBe(0);
     });
@@ -479,7 +482,7 @@ describe('Delegation propagation integration', () => {
       await writeChildRunbook();
 
       // Start parent
-      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
       expect(result.exitCode).toBe(0);
 
       // Delegate both substeps
@@ -492,19 +495,19 @@ describe('Delegation propagation integration', () => {
       const token2 = extractToken(result.stdout);
 
       // Claim both
-      result = await runCliInProcess(`claim ${token1}`, workspace);
+      result = await runCliInProcess(`claim ${token1} --text`, workspace);
       expect(result.exitCode).toBe(0);
 
-      result = await runCliInProcess(`claim ${token2}`, workspace);
+      result = await runCliInProcess(`claim ${token2} --text`, workspace);
       expect(result.exitCode).toBe(0);
 
       // Complete both in quick succession
       // First completion
-      result = await runCliInProcess('pass', workspace);
+      result = await runCliInProcess('pass --text', workspace);
       expect(result.exitCode).toBe(0);
 
       // Second completion
-      result = await runCliInProcess('pass', workspace);
+      result = await runCliInProcess('pass --text', workspace);
       expect(result.exitCode).toBe(0);
 
       // Both should complete successfully
@@ -514,7 +517,7 @@ describe('Delegation propagation integration', () => {
       await writeChildRunbook();
 
       // Start a standalone child runbook (no parent)
-      let result = await runCliInProcess('run --prompted child.runbook.md', workspace);
+      let result = await runCliInProcess('run --prompted child.runbook.md --text', workspace);
       expect(result.exitCode).toBe(0);
 
       const childState = await getActiveState(workspace);
@@ -522,7 +525,7 @@ describe('Delegation propagation integration', () => {
       const childRunId = childState!.id as string;
 
       // Pass should work normally without propagation
-      result = await runCliInProcess('pass', workspace);
+      result = await runCliInProcess('pass --text', workspace);
       expect(result.exitCode).toBe(0);
 
       // Runbook completed and was deactivated — read state by ID
@@ -535,7 +538,7 @@ describe('Delegation propagation integration', () => {
       await writeChildRunbook();
 
       // Start a standalone child runbook (no parent)
-      let result = await runCliInProcess('run --prompted child.runbook.md', workspace);
+      let result = await runCliInProcess('run --prompted child.runbook.md --text', workspace);
       expect(result.exitCode).toBe(0);
 
       const childState = await getActiveState(workspace);
@@ -543,7 +546,7 @@ describe('Delegation propagation integration', () => {
       const childRunId = childState!.id as string;
 
       // Fail triggers STOP transition → exit code 1
-      result = await runCliInProcess('fail', workspace);
+      result = await runCliInProcess('fail --text', workspace);
       expect(result.exitCode).toBe(1);
 
       // Runbook stopped and was deactivated — read state by ID
@@ -556,11 +559,11 @@ describe('Delegation propagation integration', () => {
       await writeChildRunbook();
 
       // Start a standalone child runbook (no parent)
-      let result = await runCliInProcess('run --prompted child.runbook.md', workspace);
+      let result = await runCliInProcess('run --prompted child.runbook.md --text', workspace);
       expect(result.exitCode).toBe(0);
 
       // Stop should work normally without propagation
-      result = await runCliInProcess(['stop', 'User cancelled'], workspace);
+      result = await runCliInProcess(['stop', 'User cancelled', '--text'], workspace);
       expect(result.exitCode).toBe(0);
 
       // State should be deleted

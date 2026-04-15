@@ -23,7 +23,7 @@ This doesn't have proper ## headers
 `;
       await writeFile(join(workspace.cwd, 'invalid.md'), invalidRunbook);
 
-      const result = runCli('run invalid.md', workspace);
+      const result = runCli('run invalid.md --text', workspace);
 
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toMatch(/(no steps|at least one step)/i);
@@ -32,7 +32,7 @@ This doesn't have proper ## headers
     it('handles empty runbook file', async () => {
       await writeFile(join(workspace.cwd, 'empty.md'), '');
 
-      const result = runCli('run empty.md', workspace);
+      const result = runCli('run empty.md --text', workspace);
 
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toMatch(/(no steps|at least one step)/i);
@@ -41,7 +41,7 @@ This doesn't have proper ## headers
 
   describe('file not found', () => {
     it('handles missing runbook file', async () => {
-      const result = runCli('run nonexistent.md', workspace);
+      const result = runCli('run nonexistent.md --text', workspace);
 
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain('not found');
@@ -51,7 +51,7 @@ This doesn't have proper ## headers
   describe('invalid state', () => {
     it('handles corrupted state file', async () => {
       // Start a runbook
-      runCli('run --prompted runbooks/simple.runbook.md', workspace);
+      runCli('run --prompted runbooks/simple.runbook.md --text', workspace);
 
       // Corrupt the state file
       const stateDir = workspace.statePath();
@@ -62,7 +62,7 @@ This doesn't have proper ## headers
       }
 
       // Try to use the runbook
-      const result = runCli('pass', workspace);
+      const result = runCli('pass --text', workspace);
 
       // Corrupted state files now fail fast with an error
       expect(result.exitCode).toBe(1);
@@ -71,7 +71,7 @@ This doesn't have proper ## headers
 
   describe('invalid arguments', () => {
     it('shows help on unknown command', async () => {
-      const result = runCli('unknowncommand', workspace);
+      const result = runCli('unknowncommand --text', workspace);
 
       expect(result.stderr.length).toBeGreaterThan(0);
     });

@@ -21,7 +21,10 @@ describe('start command', () => {
 
   describe('file mode', () => {
     it('creates runbook state from valid runbook file', async () => {
-      const result = await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+      const result = await runCliInProcess(
+        'run --prompted runbooks/simple.runbook.md --text',
+        workspace,
+      );
 
       if (result.exitCode !== 0) {
         console.log('Run failed:', result.stdout, result.stderr);
@@ -33,14 +36,14 @@ describe('start command', () => {
     });
 
     it('sets runbook as active', async () => {
-      await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
 
       const session = await readSession(workspace);
       expect(session.active).toBeTruthy();
     });
 
     it('stores relative path in state', async () => {
-      await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
 
       const state = await getActiveState(workspace);
       expect(state).not.toBeNull();
@@ -48,7 +51,7 @@ describe('start command', () => {
     });
 
     it('initializes step=1 and retryCount=0', async () => {
-      await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
 
       const state = await getActiveState(workspace);
       expect(state?.step).toBe('1');
@@ -56,28 +59,31 @@ describe('start command', () => {
     });
 
     it('outputs first step description', async () => {
-      const result = await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+      const result = await runCliInProcess(
+        'run --prompted runbooks/simple.runbook.md --text',
+        workspace,
+      );
 
       expect(result.stdout).toContain('## 1.');
       expect(result.stdout).toContain('First step');
     });
 
     it('fails if file does not exist', async () => {
-      const result = await runCliInProcess('run runbooks/nonexistent.md', workspace);
+      const result = await runCliInProcess('run runbooks/nonexistent.md --text', workspace);
 
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain('not found');
     });
 
     it('fails if no file argument provided', async () => {
-      const result = await runCliInProcess('run', workspace);
+      const result = await runCliInProcess('run --text', workspace);
 
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain('required');
     });
 
     it('creates state file on disk', async () => {
-      await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
 
       const stateFiles = await listRunbookStates(workspace);
       expect(stateFiles.length).toBe(1);
@@ -86,7 +92,7 @@ describe('start command', () => {
 
   describe('auto-execution mode', () => {
     it('executes commands and advances through runbook', async () => {
-      const result = await runCliInProcess('run runbooks/simple.runbook.md', workspace);
+      const result = await runCliInProcess('run runbooks/simple.runbook.md --text', workspace);
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('$ rd echo --result pass');
@@ -94,7 +100,7 @@ describe('start command', () => {
     });
 
     it('completes runbook when all commands pass', async () => {
-      await runCliInProcess('run runbooks/simple.runbook.md', workspace);
+      await runCliInProcess('run runbooks/simple.runbook.md --text', workspace);
 
       // Runbook completed, so active runbook is null
       const session = await readSession(workspace);
@@ -104,14 +110,17 @@ describe('start command', () => {
 
   describe('option validation', () => {
     it('rejects --step without active parent runbook', async () => {
-      const result = await runCliInProcess('run runbooks/simple.runbook.md --step 1', workspace);
+      const result = await runCliInProcess(
+        'run runbooks/simple.runbook.md --step 1 --text',
+        workspace,
+      );
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain('--step requires an active parent runbook');
     });
 
     it('rejects --index without --step', async () => {
       const result = await runCliInProcess(
-        'run runbooks/simple.runbook.md --prompted --index 1',
+        'run runbooks/simple.runbook.md --prompted --index 1 --text',
         workspace,
       );
       expect(result.exitCode).toBe(1);

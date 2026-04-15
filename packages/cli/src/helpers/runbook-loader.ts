@@ -69,7 +69,7 @@ export function getRunbookFromState(state: RunbookState, _cwd: string): readonly
     const { runbook: resolved } = resolveForBounds(runbook, state.templateVars);
     const substituted = substituteRunbookVariables(resolved, state.templateVars);
     // Unresolved variable warnings were already shown at startup via the pipeline path.
-    // Suppress them here to avoid duplicating warnings and leaking into --json output.
+    // Suppress them here to avoid duplicating warnings and leaking into command output.
     return substituted.steps;
   }
 

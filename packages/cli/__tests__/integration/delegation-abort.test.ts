@@ -50,26 +50,26 @@ describe('Delegation abort integration', () => {
     await writeParentRunbook();
     await writeChildRunbook();
 
-    let result = runCli('run --prompted parent.runbook.md', workspace);
+    let result = runCli('run --prompted parent.runbook.md --text', workspace);
     expect(result.exitCode).toBe(0);
 
     result = runCli('delegate child.runbook.md --step 1.1', workspace);
     expect(result.exitCode).toBe(0);
 
-    const tokenMatch = /Token:\s*(rdtk_\S+)/.exec(result.stdout);
+    const tokenMatch = /"token":\s*"(rdtk_[^"]+)"/.exec(result.stdout);
     expect(tokenMatch).not.toBeNull();
     return tokenMatch![1];
   }
 
   it('rejects invalid token format', () => {
-    const result = runCli('abort bad-token', workspace);
+    const result = runCli('abort bad-token --text', workspace);
     expect(result.exitCode).toBe(1);
     expect(result.stdout + result.stderr).toMatch(/invalid.*token|rdtk_/i);
   });
 
   it('rejects unknown token', () => {
     // cspell:disable-next-line
-    const result = runCli('abort rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', workspace);
+    const result = runCli('abort rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH --text', workspace);
     expect(result.exitCode).toBe(1);
     expect(result.stdout + result.stderr).toMatch(/not found|no active run/i);
   });
@@ -77,7 +77,7 @@ describe('Delegation abort integration', () => {
   it('pending abort succeeds', async () => {
     const token = await setupDelegation();
 
-    const result = runCli(`abort ${token}`, workspace);
+    const result = runCli(`abort ${token} --text`, workspace);
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toMatch(/CANCELLED/i);
   });
@@ -86,11 +86,11 @@ describe('Delegation abort integration', () => {
     const token = await setupDelegation();
 
     // Abort the delegation
-    let result = runCli(`abort ${token}`, workspace);
+    let result = runCli(`abort ${token} --text`, workspace);
     expect(result.exitCode).toBe(0);
 
     // Try to claim — should fail
-    result = runCli(`claim ${token}`, workspace);
+    result = runCli(`claim ${token} --text`, workspace);
     expect(result.exitCode).toBe(1);
     expect(result.stdout + result.stderr).toMatch(/cancelled|RD-809/i);
   });
@@ -99,11 +99,11 @@ describe('Delegation abort integration', () => {
     const token = await setupDelegation();
 
     // Claim the token
-    let result = runCli(`claim ${token}`, workspace);
+    let result = runCli(`claim ${token} --text`, workspace);
     expect(result.exitCode).toBe(0);
 
     // Try to abort without force — should fail
-    result = runCli(`abort ${token}`, workspace);
+    result = runCli(`abort ${token} --text`, workspace);
     expect(result.exitCode).toBe(1);
     expect(result.stdout + result.stderr).toMatch(/already claimed|--force|RD-811/i);
   });
@@ -112,11 +112,11 @@ describe('Delegation abort integration', () => {
     const token = await setupDelegation();
 
     // Claim the token
-    let result = runCli(`claim ${token}`, workspace);
+    let result = runCli(`claim ${token} --text`, workspace);
     expect(result.exitCode).toBe(0);
 
     // Force abort
-    result = runCli(`abort ${token} --force`, workspace);
+    result = runCli(`abort ${token} --force --text`, workspace);
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toMatch(/CANCELLED/i);
   });
@@ -128,7 +128,7 @@ describe('Delegation abort integration', () => {
     let result = runCli(`abort ${token}`, workspace);
     expect(result.exitCode).toBe(0);
 
-    result = runCli(`abort ${token}`, workspace);
+    result = runCli(`abort ${token} --text`, workspace);
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toMatch(/already cancelled/i);
   });
@@ -136,7 +136,7 @@ describe('Delegation abort integration', () => {
   it('JSON output structure', async () => {
     const token = await setupDelegation();
 
-    const result = runCli(`abort ${token} --json`, workspace);
+    const result = runCli(`abort ${token}`, workspace);
     expect(result.exitCode).toBe(0);
 
     const output = JSON.parse(result.stdout);

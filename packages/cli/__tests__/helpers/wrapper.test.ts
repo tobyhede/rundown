@@ -27,15 +27,12 @@ describe('withErrorHandling', () => {
     expect(errorSpy).not.toHaveBeenCalled();
   });
 
-  it('outputs JSON and exits on RundownError when json=true', async () => {
+  it('outputs JSON and exits on RundownError by default', async () => {
     const error = Errors.fileNotFound('missing.md');
 
-    await withErrorHandling(
-      async () => {
-        throw error;
-      },
-      { json: true },
-    );
+    await withErrorHandling(async () => {
+      throw error;
+    });
 
     expect(mockExit).toHaveBeenCalledWith(1);
     const output = errorSpy.mock.calls[0]?.[0] as string;
@@ -44,12 +41,15 @@ describe('withErrorHandling', () => {
     expect(parsed.message).toBe(error.message);
   });
 
-  it('outputs CLI string and exits on RundownError when json=false', async () => {
+  it('outputs CLI string and exits on RundownError when text=true', async () => {
     const error = Errors.fileNotFound('missing.md');
 
-    await withErrorHandling(async () => {
-      throw error;
-    });
+    await withErrorHandling(
+      async () => {
+        throw error;
+      },
+      { text: true },
+    );
 
     expect(mockExit).toHaveBeenCalledWith(1);
     const output = errorSpy.mock.calls[0]?.[0] as string;
@@ -62,12 +62,9 @@ describe('withErrorHandling', () => {
       path: '/some/path.md',
     });
 
-    await withErrorHandling(
-      async () => {
-        throw nodeError;
-      },
-      { json: true },
-    );
+    await withErrorHandling(async () => {
+      throw nodeError;
+    });
 
     expect(mockExit).toHaveBeenCalledWith(1);
     const parsed = JSON.parse(errorSpy.mock.calls[0]?.[0] as string);
@@ -80,12 +77,9 @@ describe('withErrorHandling', () => {
       path: '/some/path.md',
     });
 
-    await withErrorHandling(
-      async () => {
-        throw nodeError;
-      },
-      { json: true },
-    );
+    await withErrorHandling(async () => {
+      throw nodeError;
+    });
 
     expect(mockExit).toHaveBeenCalledWith(1);
     const parsed = JSON.parse(errorSpy.mock.calls[0]?.[0] as string);
@@ -98,12 +92,9 @@ describe('withErrorHandling', () => {
       path: '/some/path.md',
     });
 
-    await withErrorHandling(
-      async () => {
-        throw nodeError;
-      },
-      { json: true },
-    );
+    await withErrorHandling(async () => {
+      throw nodeError;
+    });
 
     expect(mockExit).toHaveBeenCalledWith(1);
     const parsed = JSON.parse(errorSpy.mock.calls[0]?.[0] as string);
@@ -113,12 +104,9 @@ describe('withErrorHandling', () => {
   it('converts RunbookSyntaxError to syntaxError', async () => {
     const syntaxErr = new RunbookSyntaxError('bad syntax at line 5');
 
-    await withErrorHandling(
-      async () => {
-        throw syntaxErr;
-      },
-      { json: true },
-    );
+    await withErrorHandling(async () => {
+      throw syntaxErr;
+    });
 
     expect(mockExit).toHaveBeenCalledWith(1);
     const parsed = JSON.parse(errorSpy.mock.calls[0]?.[0] as string);
@@ -126,12 +114,9 @@ describe('withErrorHandling', () => {
   });
 
   it('wraps generic Error as unknown', async () => {
-    await withErrorHandling(
-      async () => {
-        throw new Error('something went wrong');
-      },
-      { json: true },
-    );
+    await withErrorHandling(async () => {
+      throw new Error('something went wrong');
+    });
 
     expect(mockExit).toHaveBeenCalledWith(1);
     const parsed = JSON.parse(errorSpy.mock.calls[0]?.[0] as string);
@@ -139,27 +124,24 @@ describe('withErrorHandling', () => {
   });
 
   it('wraps non-Error values as unknown', async () => {
-    await withErrorHandling(
-      async () => {
-        // eslint-disable-next-line @typescript-eslint/only-throw-error
-        throw 'string error';
-      },
-      { json: true },
-    );
+    await withErrorHandling(async () => {
+      // eslint-disable-next-line @typescript-eslint/only-throw-error
+      throw 'string error';
+    });
 
     expect(mockExit).toHaveBeenCalledWith(1);
     const parsed = JSON.parse(errorSpy.mock.calls[0]?.[0] as string);
     expect(parsed.code).toBe(Errors.unknown('x').code);
   });
 
-  it('uses verbose CLI string when verbose=true', async () => {
+  it('uses verbose CLI string when verbose=true and text=true', async () => {
     const error = Errors.fileNotFound('missing.md');
 
     await withErrorHandling(
       async () => {
         throw error;
       },
-      { verbose: true },
+      { verbose: true, text: true },
     );
 
     expect(mockExit).toHaveBeenCalledWith(1);

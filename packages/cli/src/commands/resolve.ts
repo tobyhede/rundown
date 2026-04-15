@@ -55,8 +55,8 @@ interface ResolveOptions {
   var?: string[];
   /** CLI variable assignments with JSON values (key=json) */
   varJson?: string[];
-  /** Output as JSON */
-  json?: boolean;
+  /** Output as human-readable text instead of JSON */
+  text?: boolean;
 }
 
 /**
@@ -86,9 +86,9 @@ export function registerResolveCommand(program: Command): void {
         .default([])
         .helpGroup('Variable options:'),
     )
-    .option('--json', 'Output as JSON')
+    .option('--text', 'Output as human-readable text')
     .action(async (file: string, options: ResolveOptions) => {
-      const output = new OutputEmitter({ json: options.json });
+      const output = new OutputEmitter({ text: options.text });
       const cwd = process.cwd();
 
       const result = await prepareRunbook(

@@ -14,9 +14,9 @@ describe('JSON output integration tests', () => {
     await workspace.cleanup();
   });
 
-  describe('ls --json', () => {
+  describe('ls', () => {
     it('outputs empty array when no runbooks', async () => {
-      const result = await runCliInProcess('ls --json', workspace);
+      const result = await runCliInProcess('ls', workspace);
       const output = JSON.parse(result.stdout);
       expect(Array.isArray(output)).toBe(true);
       expect(output).toHaveLength(0);
@@ -35,9 +35,9 @@ name: test-runbook
 prompt: Wait
 `,
       );
-      await runCliInProcess('run --prompted test.runbook.md', workspace);
+      await runCliInProcess('run --prompted test.runbook.md --text', workspace);
 
-      const result = await runCliInProcess('ls --json', workspace);
+      const result = await runCliInProcess('ls', workspace);
       const output = JSON.parse(result.stdout);
 
       expect(Array.isArray(output)).toBe(true);
@@ -66,7 +66,7 @@ echo hello
 `,
       );
 
-      const result = await runCliInProcess('ls --all --json', workspace);
+      const result = await runCliInProcess('ls --all', workspace);
       expect(result.exitCode).toBe(0);
       const output = JSON.parse(result.stdout);
 
@@ -79,9 +79,9 @@ echo hello
     });
   });
 
-  describe('status --json', () => {
+  describe('status', () => {
     it('outputs inactive status when empty', async () => {
-      const result = await runCliInProcess('status --json', workspace);
+      const result = await runCliInProcess('status', workspace);
       const output = JSON.parse(result.stdout);
 
       expect(output).toEqual({
@@ -102,9 +102,9 @@ name: test-runbook
 prompt: Wait
 `,
       );
-      await runCliInProcess('run --prompted test.runbook.md', workspace);
+      await runCliInProcess('run --prompted test.runbook.md --text', workspace);
 
-      const result = await runCliInProcess('status --json', workspace);
+      const result = await runCliInProcess('status', workspace);
       const output = JSON.parse(result.stdout);
 
       expect(output.active).toBe(true);
@@ -116,7 +116,7 @@ prompt: Wait
     });
   });
 
-  describe('check --json', () => {
+  describe('check', () => {
     it('outputs valid status for correct runbook', async () => {
       const runbookPath = path.join(workspace.cwd, 'valid.runbook.md');
       fs.writeFileSync(
@@ -126,7 +126,7 @@ echo hello
 `,
       );
 
-      const result = await runCliInProcess(`check ${runbookPath} --json`, workspace);
+      const result = await runCliInProcess(`check ${runbookPath}`, workspace);
       const output = JSON.parse(result.stdout);
 
       expect(output.valid).toBe(true);
@@ -145,7 +145,7 @@ echo hello
 `,
       );
 
-      const result = await runCliInProcess(`check ${runbookPath} --json`, workspace);
+      const result = await runCliInProcess(`check ${runbookPath}`, workspace);
       // Exit code should be 1
       expect(result.exitCode).toBe(1);
 
@@ -168,7 +168,7 @@ echo hello
 `,
       );
 
-      const result = await runCliInProcess(`check ${runbookPath} --json`, workspace);
+      const result = await runCliInProcess(`check ${runbookPath}`, workspace);
       const output = JSON.parse(result.stdout);
 
       expect(output.valid).toBe(true);
@@ -176,7 +176,7 @@ echo hello
     });
 
     it('outputs error for non-existent file', async () => {
-      const result = await runCliInProcess('check non-existent.md --json', workspace);
+      const result = await runCliInProcess('check non-existent.md', workspace);
       expect(result.exitCode).toBe(1);
 
       const output = JSON.parse(result.stdout);
@@ -185,15 +185,15 @@ echo hello
     });
   });
 
-  describe('prune --json', () => {
+  describe('prune', () => {
     it('outputs empty array when nothing to prune', async () => {
-      const result = await runCliInProcess('prune --dry-run --json', workspace);
+      const result = await runCliInProcess('prune --dry-run', workspace);
       const output = JSON.parse(result.stdout);
       expect(output).toEqual([]);
     });
   });
 
-  describe('scenario --json', () => {
+  describe('scenario', () => {
     it('ls outputs scenarios list', async () => {
       const runbookPath = path.join(workspace.cwd, 'scenarios.runbook.md');
       fs.writeFileSync(
@@ -212,7 +212,7 @@ echo hello
 `,
       );
 
-      const result = await runCliInProcess(`scenario ls ${runbookPath} --json`, workspace);
+      const result = await runCliInProcess(`scenario ls ${runbookPath}`, workspace);
       expect(result.exitCode).toBe(0);
       const output = JSON.parse(result.stdout);
 
@@ -244,10 +244,7 @@ echo hello
 `,
       );
 
-      const result = await runCliInProcess(
-        `scenario show ${runbookPath} non-existent --json`,
-        workspace,
-      );
+      const result = await runCliInProcess(`scenario show ${runbookPath} non-existent`, workspace);
       expect(result.exitCode).toBe(1);
       // In-process mode may append a process.exit error object after the real output;
       // parse the first complete JSON object from stdout
@@ -261,6 +258,23 @@ echo hello
         code: 'SCENARIO_NOT_FOUND',
         details: { available: ['test-scenario'] },
       });
+    });
+  });
+
+  describe('breaking change: --json flag removed', () => {
+    it('rejects --json on status as unknown option', async () => {
+      const result = await runCliInProcess('status --json', workspace);
+      expect(result.exitCode).not.toBe(0);
+    });
+
+    it('rejects --json on ls as unknown option', async () => {
+      const result = await runCliInProcess('ls --json', workspace);
+      expect(result.exitCode).not.toBe(0);
+    });
+
+    it('rejects --json on pass as unknown option', async () => {
+      const result = await runCliInProcess('pass --json', workspace);
+      expect(result.exitCode).not.toBe(0);
     });
   });
 });

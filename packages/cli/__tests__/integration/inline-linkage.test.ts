@@ -97,7 +97,7 @@ describe('Inline linkage integration (rd run --step)', () => {
       await writePassingChild();
 
       // Start parent in prompted mode -- sits at step 1
-      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);
@@ -114,7 +114,7 @@ describe('Inline linkage integration (rd run --step)', () => {
 
       // Run child targeting substep 1.1 -- afterInit marks it 'running',
       // then child completes and propagation marks it 'done'
-      result = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
+      result = await runCliInProcess('run child.runbook.md --step 1.1 --text', workspace);
       expect(result.exitCode).toBe(0);
 
       // Load parent state and verify substep 1 reached 'done'
@@ -155,7 +155,7 @@ describe('Inline linkage integration (rd run --step)', () => {
       await writePassingChild();
 
       // Start parent in prompted mode
-      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);
@@ -163,11 +163,11 @@ describe('Inline linkage integration (rd run --step)', () => {
       const parentRunId = parentState!.id as string;
 
       // Run first child targeting substep 1.1
-      result = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
+      result = await runCliInProcess('run child.runbook.md --step 1.1 --text', workspace);
       expect(result.exitCode).toBe(0);
 
       // Run second child targeting substep 1.2
-      result = await runCliInProcess('run child.runbook.md --step 1.2', workspace);
+      result = await runCliInProcess('run child.runbook.md --step 1.2 --text', workspace);
       expect(result.exitCode).toBe(0);
 
       // Load parent state and verify both substeps were marked
@@ -197,7 +197,7 @@ describe('Inline linkage integration (rd run --step)', () => {
       await writePassingChild();
 
       // Start parent in prompted mode
-      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);
@@ -205,12 +205,12 @@ describe('Inline linkage integration (rd run --step)', () => {
       const parentRunId = parentState!.id as string;
 
       // Run child with inline linkage to substep 1.1
-      result = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
+      result = await runCliInProcess('run child.runbook.md --step 1.1 --text', workspace);
       expect(result.exitCode).toBe(0);
 
       // Parent should now be at substep 1.2 (child pass resolved 1.1)
       // Complete 1.2 to trigger aggregation
-      result = await runCliInProcess('pass', workspace);
+      result = await runCliInProcess('pass --text', workspace);
       expect(result.exitCode).toBe(0);
 
       const updatedParent = await readRunbookState(workspace, parentRunId);
@@ -223,20 +223,20 @@ describe('Inline linkage integration (rd run --step)', () => {
       await writeFailingChild();
 
       // Start parent in prompted mode
-      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);
       const parentRunId = parentState!.id as string;
 
       // Run child with inline linkage — child will fail and stop
-      result = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
+      result = await runCliInProcess('run child.runbook.md --step 1.1 --text', workspace);
       // Child stopped → exit 1
       expect(result.exitCode).toBe(1);
 
       // Parent substep 1.1 should have a fail recorded.
       // Complete 1.2 to trigger aggregation — FAIL ANY STOP
-      result = await runCliInProcess('pass', workspace);
+      result = await runCliInProcess('pass --text', workspace);
 
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
@@ -250,7 +250,7 @@ describe('Inline linkage integration (rd run --step)', () => {
       await writePassingChild();
 
       // Start parent in prompted mode
-      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);
@@ -258,7 +258,7 @@ describe('Inline linkage integration (rd run --step)', () => {
 
       // Run auto-executing child with inline linkage to substep 1.2
       // Using 1.2 (not 1.1) so parentStepId='2' is unambiguously the substep ID
-      result = await runCliInProcess('run child.runbook.md --step 1.2', workspace);
+      result = await runCliInProcess('run child.runbook.md --step 1.2 --text', workspace);
       expect(result.exitCode).toBe(0);
 
       // Child completed and was popped — parent is active again.
@@ -295,7 +295,7 @@ describe('Inline linkage integration (rd run --step)', () => {
       await writePassingChild();
 
       // Start parent in prompted mode
-      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);
@@ -303,7 +303,7 @@ describe('Inline linkage integration (rd run --step)', () => {
       const parentRunId = parentState!.id as string;
 
       // Run child with inline linkage targeting iteration 2 of substep 1.1
-      result = await runCliInProcess('run child.runbook.md --step 1.1 --index 2', workspace);
+      result = await runCliInProcess('run child.runbook.md --step 1.1 --index 2 --text', workspace);
       expect(result.exitCode).toBe(0);
 
       // Scan runs directory for the child state
@@ -343,14 +343,14 @@ describe('Inline linkage integration (rd run --step)', () => {
       await writePassingChild();
 
       // Start parent in prompted mode — sits at step 1, iteration 1
-      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);
       const parentRunId = parentState!.id as string;
 
       // Run child targeting iteration 2, substep 1.1 (non-active frame)
-      result = await runCliInProcess('run child.runbook.md --step 1.1 --index 2', workspace);
+      result = await runCliInProcess('run child.runbook.md --step 1.1 --index 2 --text', workspace);
       expect(result.exitCode).toBe(0);
 
       // Parent state should have a SubstepState for frameKey "1|2" marked done
@@ -372,19 +372,19 @@ describe('Inline linkage integration (rd run --step)', () => {
       await writePassingChild();
 
       // Start parent in prompted mode — sits at step 1, iteration 1, substep 1
-      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
       expect(result.exitCode).toBe(0);
 
       // Advance the cursor in the active iteration past substep 1
       // by passing substep 1.1 and 1.2 in the active frame
-      result = await runCliInProcess('pass --step 1.1', workspace);
+      result = await runCliInProcess('pass --step 1.1 --text', workspace);
       expect(result.exitCode).toBe(0);
-      result = await runCliInProcess('pass --step 1.2', workspace);
+      result = await runCliInProcess('pass --step 1.2 --text', workspace);
       expect(result.exitCode).toBe(0);
 
       // Now cursor is at substep 3 in iteration 1.
       // Targeting substep 1.1 in iteration 2 should succeed (different frame).
-      result = await runCliInProcess('run child.runbook.md --step 1.1 --index 2', workspace);
+      result = await runCliInProcess('run child.runbook.md --step 1.1 --index 2 --text', workspace);
       expect(result.exitCode).toBe(0);
     });
 
@@ -393,15 +393,15 @@ describe('Inline linkage integration (rd run --step)', () => {
       await writePassingChild();
 
       // Start parent in prompted mode — sits at step 1, iteration 1
-      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
       expect(result.exitCode).toBe(0);
 
       // First child targeting iteration 2, substep 1.1 — should succeed
-      result = await runCliInProcess('run child.runbook.md --step 1.1 --index 2', workspace);
+      result = await runCliInProcess('run child.runbook.md --step 1.1 --index 2 --text', workspace);
       expect(result.exitCode).toBe(0);
 
       // Second child targeting the same iteration 2, substep 1.1 — should be rejected
-      result = await runCliInProcess('run child.runbook.md --step 1.1 --index 2', workspace);
+      result = await runCliInProcess('run child.runbook.md --step 1.1 --index 2 --text', workspace);
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain('already resolved');
     });
@@ -411,14 +411,14 @@ describe('Inline linkage integration (rd run --step)', () => {
       await writeForParent();
 
       // Start parent — sits at step 1, iteration 1
-      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);
       const parentRunId = parentState!.id as string;
 
       // Run child targeting iteration 3 (parent is at iteration 1)
-      result = await runCliInProcess('run child.runbook.md --step 1.1 --index 3', workspace);
+      result = await runCliInProcess('run child.runbook.md --step 1.1 --index 3 --text', workspace);
       expect(result.exitCode).toBe(0);
 
       // Find the child state and verify its templateVars
@@ -434,7 +434,7 @@ describe('Inline linkage integration (rd run --step)', () => {
     it('rejects --step without active parent runbook', async () => {
       await writePassingChild();
 
-      const result = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
+      const result = await runCliInProcess('run child.runbook.md --step 1.1 --text', workspace);
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain('--step requires an active parent runbook');
     });
@@ -444,11 +444,11 @@ describe('Inline linkage integration (rd run --step)', () => {
       await writePassingChild();
 
       // Start parent — auto-executes past step 1
-      const result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+      const result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
       expect(result.exitCode).toBe(0);
 
       // Try to link to step 2.1 (step 2 has no substeps, and step 2 is not current)
-      const linkResult = await runCliInProcess('run child.runbook.md --step 2.1', workspace);
+      const linkResult = await runCliInProcess('run child.runbook.md --step 2.1 --text', workspace);
       expect(linkResult.exitCode).toBe(1);
     });
 
@@ -465,12 +465,12 @@ describe('Inline linkage integration (rd run --step)', () => {
       await writePassingChild();
 
       // Start parent in prompted mode — sits at step 1
-      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
       expect(result.exitCode).toBe(0);
 
       // Advance parent to step 1 pass, then it should be at step 1
       // Try to link to step 1 (no substep qualifier, step has no substeps)
-      result = await runCliInProcess('run child.runbook.md --step 1', workspace);
+      result = await runCliInProcess('run child.runbook.md --step 1 --text', workspace);
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain('RD-815');
       expect(result.stderr).toContain('no substeps');
@@ -480,11 +480,11 @@ describe('Inline linkage integration (rd run --step)', () => {
       await writePassingChild();
       await writeParentRunbook();
 
-      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
       expect(result.exitCode).toBe(0);
 
       // Target nonexistent step 9 — should get RD-801 (DELEGATION_STEP_NOT_FOUND)
-      result = await runCliInProcess('run child.runbook.md --step 9', workspace);
+      result = await runCliInProcess('run child.runbook.md --step 9 --text', workspace);
       expect(result.exitCode).toBe(1);
       const output = result.stdout + result.stderr;
       expect(output).toContain('RD-801');
@@ -495,15 +495,15 @@ describe('Inline linkage integration (rd run --step)', () => {
       await writePassingChild();
 
       // Start parent in prompted mode
-      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
       expect(result.exitCode).toBe(0);
 
       // Manually resolve substep 1.1 — drain advances cursor past it
-      result = await runCliInProcess('pass --step 1.1', workspace);
+      result = await runCliInProcess('pass --step 1.1 --text', workspace);
       expect(result.exitCode).toBe(0);
 
       // Try to run with inline linkage to already-drained substep
-      result = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
+      result = await runCliInProcess('run child.runbook.md --step 1.1 --text', workspace);
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain('already resolved');
     });
@@ -513,7 +513,7 @@ describe('Inline linkage integration (rd run --step)', () => {
       await writePassingChild();
 
       // Start parent in prompted mode
-      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);
@@ -535,7 +535,7 @@ describe('Inline linkage integration (rd run --step)', () => {
       await writeFile(statePath, JSON.stringify(stateData, null, 2));
 
       // Try to run with inline linkage to done substep
-      result = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
+      result = await runCliInProcess('run child.runbook.md --step 1.1 --text', workspace);
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain('already resolved');
     });
@@ -546,13 +546,13 @@ describe('Inline linkage integration (rd run --step)', () => {
       await writeParentRunbook({ Region: 'us-west' });
       await writePassingChild();
 
-      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);
       const parentRunId = parentState!.id as string;
 
-      result = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
+      result = await runCliInProcess('run child.runbook.md --step 1.1 --text', workspace);
       expect(result.exitCode).toBe(0);
 
       const childState = await findChildState(parentRunId);
@@ -567,14 +567,14 @@ describe('Inline linkage integration (rd run --step)', () => {
       await writeParentRunbook();
       await writePassingChild();
 
-      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);
       const parentRunId = parentState!.id as string;
 
       // Child has auto-executing command — should complete, not wait
-      result = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
+      result = await runCliInProcess('run child.runbook.md --step 1.1 --text', workspace);
       expect(result.exitCode).toBe(0);
 
       const childState = await findChildState(parentRunId);
@@ -587,13 +587,13 @@ describe('Inline linkage integration (rd run --step)', () => {
       await writeParentRunbook({ AppName: 'rundown' });
       await writePassingChild();
 
-      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);
       const parentRunId = parentState!.id as string;
 
-      result = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
+      result = await runCliInProcess('run child.runbook.md --step 1.1 --text', workspace);
       expect(result.exitCode).toBe(0);
 
       const childState = await findChildState(parentRunId);
@@ -607,7 +607,7 @@ describe('Inline linkage integration (rd run --step)', () => {
       await writeParentRunbook({ Region: 'us-west' });
       await writePassingChild();
 
-      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);
@@ -615,7 +615,7 @@ describe('Inline linkage integration (rd run --step)', () => {
 
       // Pass --var to override the inherited Region
       result = await runCliInProcess(
-        ['run', 'child.runbook.md', '--step', '1.1', '--var', 'Region=eu-central'],
+        ['run', 'child.runbook.md', '--step', '1.1', '--var', 'Region=eu-central', '--text'],
         workspace,
       );
       expect(result.exitCode).toBe(0);

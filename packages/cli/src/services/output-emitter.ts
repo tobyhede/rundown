@@ -37,11 +37,11 @@ import { JSONRenderer } from './renderers/json-renderer.js';
  * Options for creating an OutputEmitter.
  */
 export interface OutputEmitterOptions {
-  /** Whether to output JSON instead of text */
-  json?: boolean;
+  /** Whether to output text instead of JSON (JSON is the default) */
+  text?: boolean;
   /** Custom writer to use for output */
   writer?: OutputWriter;
-  /** Custom renderer (overrides json option) */
+  /** Custom renderer (overrides text option) */
   renderer?: OutputRenderer;
 }
 
@@ -64,7 +64,7 @@ export interface ListOptions<T, U = T> {
  *
  * @example
  * ```typescript
- * const output = new OutputEmitter({ json: options.json });
+ * const output = new OutputEmitter({ text: options.text });
  *
  * // Emit events without caring about format
  * output.metadata(buildMetadata(state));
@@ -86,10 +86,10 @@ export class OutputEmitter {
 
     if (options.renderer) {
       this.renderer = options.renderer;
-    } else if (options.json) {
-      this.renderer = new JSONRenderer({ writer: this.writer });
-    } else {
+    } else if (options.text) {
       this.renderer = new TextRenderer({ writer: this.writer });
+    } else {
+      this.renderer = new JSONRenderer({ writer: this.writer });
     }
   }
 
@@ -350,11 +350,12 @@ export class OutputEmitter {
    *
    * Use this for backwards compatibility when a specific JSON format is required.
    * This bypasses the event system and writes JSON directly to the output.
-   * Only works in JSON mode - does nothing in text mode.
+   * Does nothing in text mode.
    *
    * @param data - The data to output as JSON
    */
   json(data: unknown): void {
+    if (!this.isJson()) return;
     this.writer.writeJson(data);
   }
 

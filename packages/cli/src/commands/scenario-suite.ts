@@ -203,9 +203,9 @@ export function registerScenarioSuiteCommand(program: Command): void {
   suite
     .command('ls <suite-file>')
     .description('List all cases in a scenario suite')
-    .option('--json', 'Output as JSON')
-    .action(async (suiteFile: string, options: { json?: boolean }) => {
-      const output = new OutputEmitter({ json: options.json });
+    .option('--text', 'Output as human-readable text')
+    .action(async (suiteFile: string, options: { text?: boolean }) => {
+      const output = new OutputEmitter({ text: options.text });
       try {
         const result = await loadScenarioSuite(suiteFile);
         if (!result.ok) {
@@ -246,9 +246,9 @@ export function registerScenarioSuiteCommand(program: Command): void {
   suite
     .command('show <suite-file> <case>')
     .description('Show details for a specific case in a suite')
-    .option('--json', 'Output as JSON')
-    .action(async (suiteFile: string, caseName: string, options: { json?: boolean }) => {
-      const output = new OutputEmitter({ json: options.json });
+    .option('--text', 'Output as human-readable text')
+    .action(async (suiteFile: string, caseName: string, options: { text?: boolean }) => {
+      const output = new OutputEmitter({ text: options.text });
       try {
         const result = await loadScenarioSuite(suiteFile);
         if (!result.ok) {
@@ -294,14 +294,14 @@ export function registerScenarioSuiteCommand(program: Command): void {
     .description('Execute a case (or all cases with --all) from a suite')
     .option('--all', 'Run all cases in the suite')
     .option('-q, --quiet', 'Suppress command output')
-    .option('--json', 'Output as JSON')
+    .option('--text', 'Output as human-readable text')
     .action(
       async (
         suiteFile: string,
         caseName: string | undefined,
-        options: { all?: boolean; quiet?: boolean; json?: boolean },
+        options: { all?: boolean; quiet?: boolean; text?: boolean },
       ) => {
-        const output = new OutputEmitter({ json: options.json });
+        const output = new OutputEmitter({ text: options.text });
         try {
           const result = await loadScenarioSuite(suiteFile);
           if (!result.ok) {
@@ -316,7 +316,7 @@ export function registerScenarioSuiteCommand(program: Command): void {
           }
 
           const suiteDir = dirname(resolve(suiteFile));
-          const runQuiet = (options.quiet ?? false) || !!options.json;
+          const runQuiet = (options.quiet ?? false) || !options.text;
 
           if (options.all) {
             // Run all cases
@@ -371,7 +371,7 @@ export function registerScenarioSuiteCommand(program: Command): void {
             );
 
             // Display per-case summary in text mode
-            if (!options.json) {
+            if (options.text) {
               output.message('', 'info');
               for (const cr of caseResults) {
                 const icon = cr.passed ? '\u2713' : '\u2717';
@@ -426,11 +426,7 @@ export function registerScenarioSuiteCommand(program: Command): void {
 
             output.detail(detailData, 'custom');
 
-            if (
-              !options.json &&
-              caseResult.stepAssertions &&
-              caseResult.stepAssertions.length > 0
-            ) {
+            if (options.text && caseResult.stepAssertions && caseResult.stepAssertions.length > 0) {
               output.message('', 'info');
               output.message('Step Assertions:', 'info');
               for (const sa of caseResult.stepAssertions) {

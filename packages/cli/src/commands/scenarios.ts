@@ -58,9 +58,9 @@ export function registerScenariosCommand(program: Command): void {
   scenario
     .command('ls <file>')
     .description('List all scenarios in a runbook')
-    .option('--json', 'Output as JSON')
-    .action(async (file: string, options: { json?: boolean }) => {
-      const output = new OutputEmitter({ json: options.json });
+    .option('--text', 'Output as human-readable text')
+    .action(async (file: string, options: { text?: boolean }) => {
+      const output = new OutputEmitter({ text: options.text });
       try {
         const result = await loadScenarios(file, process.cwd());
         if (!result.ok) {
@@ -86,9 +86,9 @@ export function registerScenariosCommand(program: Command): void {
   scenario
     .command('show <file> <name>')
     .description('Show details for a specific scenario')
-    .option('--json', 'Output as JSON')
-    .action(async (file: string, scenarioName: string, options: { json?: boolean }) => {
-      const output = new OutputEmitter({ json: options.json });
+    .option('--text', 'Output as human-readable text')
+    .action(async (file: string, scenarioName: string, options: { text?: boolean }) => {
+      const output = new OutputEmitter({ text: options.text });
       try {
         const result = await loadScenarios(file, process.cwd());
         if (!result.ok) {
@@ -131,10 +131,10 @@ export function registerScenariosCommand(program: Command): void {
     .command('run <file> <name>')
     .description('Execute a scenario and verify the result')
     .option('-q, --quiet', 'Suppress command output')
-    .option('--json', 'Output as JSON for programmatic use')
+    .option('--text', 'Output as human-readable text')
     .action(
-      async (file: string, scenarioName: string, options: { quiet?: boolean; json?: boolean }) => {
-        const output = new OutputEmitter({ json: options.json });
+      async (file: string, scenarioName: string, options: { quiet?: boolean; text?: boolean }) => {
+        const output = new OutputEmitter({ text: options.text });
 
         const result = await loadScenarios(file, process.cwd());
         if (!result.ok) {
@@ -149,7 +149,7 @@ export function registerScenariosCommand(program: Command): void {
           process.exit(1);
         }
 
-        const runQuiet = (options.quiet ?? false) || !!options.json;
+        const runQuiet = (options.quiet ?? false) || !options.text;
 
         const runResult = await executeScenario(
           result.loaded,
@@ -174,7 +174,7 @@ export function registerScenariosCommand(program: Command): void {
         output.detail(detailData, 'scenario_result');
 
         // Display step assertions in text mode
-        if (!options.json && runResult.stepAssertions && runResult.stepAssertions.length > 0) {
+        if (options.text && runResult.stepAssertions && runResult.stepAssertions.length > 0) {
           output.message('', 'info');
           output.message('Step Assertions:', 'info');
           for (const sa of runResult.stepAssertions) {

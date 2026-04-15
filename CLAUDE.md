@@ -19,8 +19,8 @@ npm install -g @rundown-org/cli
 ## Commands
 
 ```bash
-rundown run [file]       # Run a runbook
-rundown run [file] --json # Output execution events as JSON
+rundown run [file]       # Run a runbook (JSON output by default)
+rundown run [file] --text # Output execution events as human-readable text
 rundown run [file] --var key=value  # Set template variable (repeatable, omit =value to inherit from env)
 rundown run [file] --var-json key=json  # Set variable with JSON value (repeatable)
 rundown run [file] --var-file path  # Load variables from YAML file (repeatable)
@@ -201,7 +201,7 @@ Data sources are referenced in FOR clauses: `FOR item IN {{ items }}`.
 
 ## Schema Output
 
-The `--schema` flag outputs the JSON Schema for a command's `--json` output (supported by all commands with `--json` output):
+The `--schema` flag outputs the JSON Schema for a command's JSON output (supported by all commands with JSON output):
 
 ```bash
 rd status --schema           # Status response schema
@@ -377,7 +377,7 @@ New CLI commands MUST use `OutputEmitter` for consistent output with format-agno
 // In packages/cli/src/commands/your-command.ts
 import { OutputEmitter } from '../services/output-emitter.js';
 
-const output = new OutputEmitter({ json: options.json });
+const output = new OutputEmitter({ text: options.text });
 
 output.list(items, [
   { header: 'NAME', key: 'name' },
@@ -392,12 +392,12 @@ output.action({ action, from, result, at });
 output.flush();
 ```
 
-For direct table formatting (no `--json` flag support), use `formatTable` from `../helpers/table-formatter.js` (also relative to commands/).
+For direct table formatting (no JSON output support), use `formatTable` from `../helpers/table-formatter.js` (also relative to commands/).
 
 Key conventions:
 - UPPERCASE headers, 2-space column separators
 - Left-align text, right-align numbers
-- `--json` flag for machine-readable output
+- JSON output by default; `--text` flag for human-readable output
 
 See [docs/RUNDOWN.md](docs/RUNDOWN.md#output-format) for full output formatting standards.
 

@@ -54,7 +54,7 @@ export function registerRunCommand(program: Command): void {
     .option('--prompted', 'Prompted mode: show commands without auto-executing')
     .option('--step <stepId>', 'Link child to parent substep (or jump to step with --prompted)')
     .option('--index <number>', 'FOR loop iteration to target (requires --step)')
-    .option('--json', 'Output execution events as JSON')
+    .option('--text', 'Output execution events as human-readable text')
     .addOption(
       new Option('--var-file <path>', 'Load variables from YAML file (repeatable)')
         .argParser(collect)
@@ -80,13 +80,13 @@ export function registerRunCommand(program: Command): void {
           prompted?: boolean;
           step?: string;
           index?: string;
-          json?: boolean;
+          text?: boolean;
           varFile?: string[];
           var?: string[];
           varJson?: string[];
         },
       ) => {
-        const output = new OutputEmitter({ json: options.json });
+        const output = new OutputEmitter({ text: options.text });
 
         try {
           const cwd = getCwd();

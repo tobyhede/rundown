@@ -93,7 +93,7 @@ Agent types support namespace prefixes using `namespace:name` syntax (e.g., `cip
 
 Subagents complete delegated work using `rd pass` or `rd fail`, which updates the child runbook state directly. The parent agent observes results via `rd status`.
 
-When a subagent stops, the plugin checks the child runbook state via `rd status --json`:
+When a subagent stops, the plugin checks the child runbook state via `rd status`:
 
 - **Child completed** (`rd pass`/`rd fail` was called): The child runbook has already been popped from the session stack and the result propagated to the parent. No action needed.
 - **Child still active** (subagent stopped without completing): The plugin surfaces context to the parent agent with the child's current position and step, so the parent can decide how to proceed (retry, complete manually, or fail the step).

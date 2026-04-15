@@ -11,9 +11,9 @@ export function registerPromptCommand(program: Command): void {
   program
     .command('prompt <content>')
     .description('Output content wrapped in markdown fences')
-    .option('--json', 'Output as JSON for programmatic use')
-    .action((content: string, options: { json?: boolean }) => {
-      const output = new OutputEmitter({ json: options.json });
+    .option('--text', 'Output as human-readable text')
+    .action((content: string, options: { text?: boolean }) => {
+      const output = new OutputEmitter({ text: options.text });
 
       // Emit structured data unconditionally - renderer handles formatting
       // TextRenderer wraps in markdown fences, JSONRenderer outputs as-is

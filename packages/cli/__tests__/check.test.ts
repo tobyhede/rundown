@@ -30,7 +30,7 @@ Do another thing.
 `,
     );
 
-    const result = await runCliInProcess(`check ${runbookPath}`, workspace);
+    const result = await runCliInProcess(`check ${runbookPath} --text`, workspace);
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain('PASS:');
@@ -53,7 +53,7 @@ Do another thing.
 `,
     );
 
-    const result = await runCliInProcess(`check ${runbookPath}`, workspace);
+    const result = await runCliInProcess(`check ${runbookPath} --text`, workspace);
 
     expect(result.exitCode).toBe(1);
     // Check both stdout and stderr since validate uses both console.log and console.error
@@ -79,7 +79,7 @@ Missing step 2.
 `,
     );
 
-    const result = await runCliInProcess(`check ${runbookPath}`, workspace);
+    const result = await runCliInProcess(`check ${runbookPath} --text`, workspace);
 
     expect(result.exitCode).toBe(1);
     // Check both stdout and stderr since validate uses console.error for failures
@@ -101,7 +101,7 @@ Do something.
 `,
     );
 
-    const result = await runCliInProcess(`check ${runbookPath}`, workspace);
+    const result = await runCliInProcess(`check ${runbookPath} --text`, workspace);
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain('PASS:');
@@ -109,7 +109,7 @@ Do something.
   });
 
   it('outputs FAIL for non-existent file', async () => {
-    const result = await runCliInProcess('check /nonexistent/path/runbook.md', workspace);
+    const result = await runCliInProcess('check /nonexistent/path/runbook.md --text', workspace);
 
     expect(result.exitCode).toBe(1);
     expect(result.stderr || result.stdout).toContain('FAIL');
@@ -131,7 +131,7 @@ Hello.
 `,
     );
 
-    const result = await runCliInProcess(`check ${runbookPath}`, workspace);
+    const result = await runCliInProcess(`check ${runbookPath} --text`, workspace);
 
     expect(result.exitCode).toBe(1);
     const output = result.stdout + result.stderr;
@@ -154,7 +154,7 @@ Hello.
 `,
     );
 
-    const result = await runCliInProcess(`check ${runbookPath}`, workspace);
+    const result = await runCliInProcess(`check ${runbookPath} --text`, workspace);
 
     expect(result.exitCode).toBe(1);
     const output = result.stdout + result.stderr;
@@ -177,7 +177,7 @@ Hello.
 `,
     );
 
-    const result = await runCliInProcess(`check ${runbookPath}`, workspace);
+    const result = await runCliInProcess(`check ${runbookPath} --text`, workspace);
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain('PASS:');
@@ -192,7 +192,7 @@ Hello.
 `,
     );
 
-    const result = await runCliInProcess(`check ${runbookPath}`, workspace);
+    const result = await runCliInProcess(`check ${runbookPath} --text`, workspace);
 
     // check only parses, doesn't resolve variables — should pass
     expect(result.exitCode).toBe(0);

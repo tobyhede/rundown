@@ -14,7 +14,7 @@ import { COMMAND_SCHEMAS } from '../schemas/output-schemas.js';
  * Authoritative list of CLI commands that produce JSON output.
  *
  * This is the source of truth for which commands should have schemas.
- * When adding a new command with `--json` support, add it here first,
+ * When adding a new command with JSON output support, add it here first,
  * then add its schema to COMMAND_SCHEMAS.
  *
  * Compound commands (like "scenario ls") use space-separated keys.

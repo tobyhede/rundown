@@ -149,7 +149,7 @@ scenarios:
       result: STOP
 ```
 
-Commands are written **without `--json`**. The scenario runner injects `--json` automatically when `expect.steps` is present or when running `rd delegate` (for token capture). This keeps commands clean and human-readable -- the same commands work for site demos (plain text) and test assertions (JSON events).
+Commands output JSON by default. The scenario runner parses JSON output when `expect.steps` is present or when running `rd delegate` (for token capture). Use `--text` for human-readable terminal output in demo scenarios.
 
 ### Naming Convention
 
@@ -177,7 +177,7 @@ Scenario names describe the execution path:
 
 ### Token Capture
 
-The scenario runner extracts delegation tokens from parsed JSON output. When `rd delegate` runs with `--json` (injected automatically), the response includes a `token` field. These tokens are captured in order and available for substitution in subsequent commands:
+The scenario runner extracts delegation tokens from parsed JSON output. When `rd delegate` runs, the JSON response includes a `token` field. These tokens are captured in order and available for substitution in subsequent commands:
 
 - First token captured: `${TOKEN}`
 - Second token: `${TOKEN_2}`
@@ -291,7 +291,7 @@ There is no separate `final` block. The last `steps` entry serves as the termina
 
 ### Matching Semantics
 
-`steps` entries are matched **in order** against the `STEP_TRANSITIONED` event stream captured from `--json` output. Each entry matches the next event that satisfies all specified fields. Non-matching events are skipped.
+`steps` entries are matched **in order** against the `STEP_TRANSITIONED` event stream from command output. Each entry matches the next event that satisfies all specified fields. Non-matching events are skipped.
 
 This means you do not have to assert on every transition -- just the ones relevant to the test:
 

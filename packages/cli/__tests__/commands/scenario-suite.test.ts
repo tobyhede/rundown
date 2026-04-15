@@ -92,7 +92,10 @@ cases:
 
   describe('ls subcommand', () => {
     it('lists cases with table headers', async () => {
-      const result = await runCliInProcess('scenario-suite ls test.scenario-suite.yaml', workspace);
+      const result = await runCliInProcess(
+        'scenario-suite ls test.scenario-suite.yaml --text',
+        workspace,
+      );
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('NAME');
@@ -108,11 +111,8 @@ cases:
       expect(result.stdout).toMatch(/NAME\s{2,}FILE\s{2,}EXPECTED/);
     });
 
-    it('outputs JSON with --json flag', async () => {
-      const result = await runCliInProcess(
-        'scenario-suite ls test.scenario-suite.yaml --json',
-        workspace,
-      );
+    it('outputs JSON by default', async () => {
+      const result = await runCliInProcess('scenario-suite ls test.scenario-suite.yaml', workspace);
 
       expect(result.exitCode).toBe(0);
       const parsed = JSON.parse(result.stdout.trim());
@@ -126,14 +126,17 @@ cases:
     it('shows VALIDATION_ERROR for invalid suite file', async () => {
       await writeFile(join(workspace.cwd, 'bad.scenario-suite.yaml'), 'version: 99\nname: Bad\n');
 
-      const result = await runCliInProcess('scenario-suite ls bad.scenario-suite.yaml', workspace);
+      const result = await runCliInProcess(
+        'scenario-suite ls bad.scenario-suite.yaml --text',
+        workspace,
+      );
 
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain('VALIDATION_ERROR');
     });
 
     it('shows error for missing file', async () => {
-      const result = await runCliInProcess('scenario-suite ls nonexistent.yaml', workspace);
+      const result = await runCliInProcess('scenario-suite ls nonexistent.yaml --text', workspace);
 
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain('not found');
@@ -141,7 +144,7 @@ cases:
 
     it('shows expect.result when result is omitted', async () => {
       const result = await runCliInProcess(
-        'scenario-suite ls expect.scenario-suite.yaml',
+        'scenario-suite ls expect.scenario-suite.yaml --text',
         workspace,
       );
 
@@ -164,9 +167,9 @@ cases:
       expect(result.stdout).toContain('suite-test.runbook.md');
     });
 
-    it('outputs JSON with --json flag', async () => {
+    it('outputs JSON by default', async () => {
       const result = await runCliInProcess(
-        'scenario-suite show test.scenario-suite.yaml happy-path --json',
+        'scenario-suite show test.scenario-suite.yaml happy-path',
         workspace,
       );
 
@@ -179,7 +182,7 @@ cases:
 
     it('includes expect block when present', async () => {
       const result = await runCliInProcess(
-        'scenario-suite show expect.scenario-suite.yaml with-expect --json',
+        'scenario-suite show expect.scenario-suite.yaml with-expect',
         workspace,
       );
 
@@ -196,14 +199,15 @@ cases:
       );
 
       expect(result.exitCode).toBe(1);
-      expect(result.stderr).toContain('SCENARIO_NOT_FOUND');
+      // Error is emitted as JSON to stdout (JSON is the default output mode)
+      expect(result.stdout + result.stderr).toContain('SCENARIO_NOT_FOUND');
     });
   });
 
   describe('run subcommand', () => {
     it('runs single passing case successfully', async () => {
       const result = await runCliInProcess(
-        'scenario-suite run test.scenario-suite.yaml happy-path --json',
+        'scenario-suite run test.scenario-suite.yaml happy-path',
         workspace,
       );
 
@@ -216,7 +220,7 @@ cases:
 
     it('runs case where actual differs from expected with exit code 1', async () => {
       const result = await runCliInProcess(
-        'scenario-suite run test.scenario-suite.yaml wrong-expectation --json',
+        'scenario-suite run test.scenario-suite.yaml wrong-expectation',
         workspace,
       );
 
@@ -227,9 +231,9 @@ cases:
       expect(parsed.actual).toBe('STOP');
     }, 30000);
 
-    it('outputs JSON for single case with --json', async () => {
+    it('outputs JSON for single case by default', async () => {
       const result = await runCliInProcess(
-        'scenario-suite run test.scenario-suite.yaml happy-path --json',
+        'scenario-suite run test.scenario-suite.yaml happy-path',
         workspace,
       );
 
@@ -244,7 +248,7 @@ cases:
 
     it('runs all cases with --all and verifies results', async () => {
       const result = await runCliInProcess(
-        'scenario-suite run test.scenario-suite.yaml --all --json',
+        'scenario-suite run test.scenario-suite.yaml --all',
         workspace,
       );
 
@@ -258,9 +262,9 @@ cases:
       expect(failedCase.actual).toBe('STOP');
     }, 60000);
 
-    it('outputs summary JSON with --all --json', async () => {
+    it('outputs summary JSON with --all', async () => {
       const result = await runCliInProcess(
-        'scenario-suite run test.scenario-suite.yaml --all --json',
+        'scenario-suite run test.scenario-suite.yaml --all',
         workspace,
       );
 
@@ -275,7 +279,7 @@ cases:
 
     it('errors without case name or --all', async () => {
       const result = await runCliInProcess(
-        'scenario-suite run test.scenario-suite.yaml',
+        'scenario-suite run test.scenario-suite.yaml --text',
         workspace,
       );
 
@@ -286,7 +290,7 @@ cases:
 
     it('errors for non-existent case', async () => {
       const result = await runCliInProcess(
-        'scenario-suite run test.scenario-suite.yaml nonexistent -q',
+        'scenario-suite run test.scenario-suite.yaml nonexistent -q --text',
         workspace,
       );
 
@@ -309,7 +313,7 @@ cases:
       await writeFile(join(workspace.cwd, 'child-ref.scenario-suite.yaml'), suiteWithChild);
 
       const result = await runCliInProcess(
-        'scenario-suite run child-ref.scenario-suite.yaml needs-child -q',
+        'scenario-suite run child-ref.scenario-suite.yaml needs-child -q --text',
         workspace,
       );
 
@@ -332,7 +336,7 @@ cases:
       await writeFile(join(workspace.cwd, 'child-all.scenario-suite.yaml'), suiteWithChild);
 
       const result = await runCliInProcess(
-        'scenario-suite run child-all.scenario-suite.yaml --all --json',
+        'scenario-suite run child-all.scenario-suite.yaml --all',
         workspace,
       );
 
@@ -345,7 +349,7 @@ cases:
       expect(failedCase.actual).toContain('CHILD_RUNBOOK_NOT_FOUND');
     }, 30000);
 
-    it('reports child runbook error with ERROR prefix in single-case --json mode', async () => {
+    it('reports child runbook error with ERROR prefix in single-case mode', async () => {
       const suiteWithChild = `version: 1
 name: Child Test Single
 cases:
@@ -359,7 +363,7 @@ cases:
       await writeFile(join(workspace.cwd, 'child-single.scenario-suite.yaml'), suiteWithChild);
 
       const result = await runCliInProcess(
-        'scenario-suite run child-single.scenario-suite.yaml needs-child --json',
+        'scenario-suite run child-single.scenario-suite.yaml needs-child',
         workspace,
       );
 
@@ -374,7 +378,7 @@ cases:
       await writeFile(join(workspace.cwd, 'bad.scenario-suite.yaml'), 'not: valid\n');
 
       const result = await runCliInProcess(
-        'scenario-suite run bad.scenario-suite.yaml --all -q',
+        'scenario-suite run bad.scenario-suite.yaml --all -q --text',
         workspace,
       );
 

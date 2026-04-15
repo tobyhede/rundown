@@ -21,10 +21,10 @@ export function registerEchoCommand(program: Command): void {
     .command('echo [command...]')
     .description('Echo command for runbook testing')
     .option('-r, --result <outcome>', 'Add result to sequence (pass|fail)', collect, [])
-    .option('--json', 'Output as JSON for programmatic use')
+    .option('--text', 'Output as human-readable text')
     .action(
-      async (command: string[] | undefined, options: { result: string[]; json?: boolean }) => {
-        const output = new OutputEmitter({ json: options.json });
+      async (command: string[] | undefined, options: { result: string[]; text?: boolean }) => {
+        const output = new OutputEmitter({ text: options.text });
 
         try {
           const cwd = getCwd();

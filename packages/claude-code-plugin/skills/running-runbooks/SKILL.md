@@ -18,8 +18,7 @@ rd run <file> --var-file <path>  # Load variables from YAML
 rd pass                    # Mark step passed (aliases: yes, ok)
 rd fail                    # Mark step failed (alias: no)
 
-rd status                  # Show current state
-rd status --json           # Structured state (for parsing)
+rd status                  # Show current state (JSON by default)
 rd stop                    # Abort runbook
 rd complete                # Force early completion
 ```
@@ -112,11 +111,12 @@ rd prune --all       # Remove all runbook state
 
 ## Structured Output
 
-Use `--json` for machine-readable output when you need to parse state programmatically:
+JSON is the default output format — all commands emit machine-readable JSON unless `--text` is passed:
 
 ```bash
-rd status --json           # Current state as JSON
-rd run <file> --json       # Execution events as JSON
+rd status           # Current state as JSON (default)
+rd run <file>       # Execution events as JSON (default)
+rd status --text    # Human-readable text output
 ```
 
 ## Rules
