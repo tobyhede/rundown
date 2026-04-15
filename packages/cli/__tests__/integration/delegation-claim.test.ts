@@ -250,7 +250,9 @@ rd echo --result pass
       // Delegate substep 1.1
       result = runCli('delegate auto-child.runbook.md --step 1.1', workspace);
       expect(result.exitCode).toBe(0);
-      const token = /"token":\s*"(rdtk_[^"]+)"/.exec(result.stdout)![1];
+      const delegateOutput = JSON.parse(result.stdout) as { token?: string };
+      expect(delegateOutput.token).toBeDefined();
+      const token = delegateOutput.token!;
 
       // Claim — child auto-completes and propagates pass to parent 1.1
       // DEFER model: parent advances to 1.2
@@ -288,7 +290,9 @@ rd echo --result fail
       // Delegate substep 1.1
       result = runCli('delegate fail-child.runbook.md --step 1.1', workspace);
       expect(result.exitCode).toBe(0);
-      const token = /"token":\s*"(rdtk_[^"]+)"/.exec(result.stdout)![1];
+      const delegateOutput = JSON.parse(result.stdout) as { token?: string };
+      expect(delegateOutput.token).toBeDefined();
+      const token = delegateOutput.token!;
 
       // Claim — child auto-fails and propagates fail to parent 1.1
       // DEFER model: parent advances to 1.2

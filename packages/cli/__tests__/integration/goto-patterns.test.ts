@@ -126,7 +126,8 @@ describe('integration: GOTO patterns', () => {
 
       expect(start.exitCode).toBe(0);
 
-      runCli('goto Process --text', workspace);
+      const gotoResult = runCli('goto Process --text', workspace);
+      expect(gotoResult.exitCode).toBe(0);
 
       // Process passes → GOTO 1
 

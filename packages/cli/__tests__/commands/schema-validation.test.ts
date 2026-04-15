@@ -906,7 +906,7 @@ echo hello
       expect(result.exitCode).toBe(1);
     });
 
-    it('returns 0 for JSON mode even when result is false', async () => {
+    it('returns 0 for text mode even when result is false', async () => {
       // ls with no runbooks still exits 0 (empty list is valid)
       const result = await runCliInProcess('ls --text', workspace);
       expect(result.exitCode).toBe(0);

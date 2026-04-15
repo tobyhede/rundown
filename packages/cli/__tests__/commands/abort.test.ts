@@ -244,7 +244,9 @@ describe('abort command - unit tests', () => {
       result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
       expect(result.exitCode).toBe(0);
 
-      const token = /"token":\s*"(rdtk_[^"]+)"/.exec(result.stdout)![1];
+      const delegateOutput = JSON.parse(result.stdout) as { token?: string };
+      expect(delegateOutput.token).toBeDefined();
+      const token = delegateOutput.token!;
 
       // Abort should work
       result = await runCliInProcess(`abort ${token} --text`, workspace);

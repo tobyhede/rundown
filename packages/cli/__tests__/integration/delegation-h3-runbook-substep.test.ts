@@ -81,10 +81,9 @@ rd echo "child completed"
     // Provide --step but omit runbook path — inferred from substep.runbooks[0]
     result = runCli('delegate --step 1.1', workspace);
     expect(result.exitCode).toBe(0);
-    expect(JSON.parse(result.stdout).action).toBe('delegated');
-
-    const tokenMatch = /"token":\s*"(rdtk_[^"]+)"/.exec(result.stdout);
-    expect(tokenMatch).not.toBeNull();
+    const delegateOutput = JSON.parse(result.stdout) as { action: string; token?: string };
+    expect(delegateOutput.action).toBe('delegated');
+    expect(delegateOutput.token).toBeDefined();
   });
 
   it('delegates substep using fully inferred step and runbook (no args)', async () => {
@@ -97,10 +96,9 @@ rd echo "child completed"
     // No args — infers step (1.1) and runbook (child.runbook.md) from state
     result = runCli('delegate', workspace);
     expect(result.exitCode).toBe(0);
-    expect(JSON.parse(result.stdout).action).toBe('delegated');
-
-    const tokenMatch = /"token":\s*"(rdtk_[^"]+)"/.exec(result.stdout);
-    expect(tokenMatch).not.toBeNull();
+    const delegateOutput2 = JSON.parse(result.stdout) as { action: string; token?: string };
+    expect(delegateOutput2.action).toBe('delegated');
+    expect(delegateOutput2.token).toBeDefined();
   });
 
   it('completes parent after delegate → claim for single H3 runbook-list substep', async () => {
