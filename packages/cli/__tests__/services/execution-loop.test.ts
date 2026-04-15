@@ -176,7 +176,7 @@ jest.unstable_mockModule('../../src/services/policy-context', () => ({
 // Import after mocking
 const core = await import('@rundown-org/core');
 const policyContext = await import('../../src/services/policy-context');
-const { runExecutionLoop, executeCommandWithPolicyCheck } = await import(
+const { runExecutionLoop, executeCommandWithPolicyCheck, drainResolvedCompletions } = await import(
   '../../src/services/execution'
 );
 
@@ -765,6 +765,182 @@ describe('runExecutionLoop', () => {
       await runExecutionLoop(mockManager, runbookId, steps, '/tmp', false, mockEmitter);
 
       expect(core.storeContextOutputs).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('drainResolvedCompletions — OUTPUTS guard', () => {
+    const stepsWithSubstepsAndOutputs: any[] = [
+      {
+        kind: 'substeps',
+        name: '1',
+        description: 'Step 1 with substeps',
+        substeps: [
+          { id: 'a', description: 'Substep A' },
+          { id: 'b', description: 'Substep B' },
+        ],
+        outputs: [{ name: 'PlanPath', value: '"plan-value"' }],
+        transitions: {
+          pass: { next: '2' },
+          fail: { next: 'STOP' },
+        },
+      },
+      {
+        kind: 'base',
+        name: '2',
+        description: 'Step 2',
+        transitions: {
+          pass: { next: 'COMPLETE' },
+          fail: { next: 'STOP' },
+        },
+      },
+    ];
+
+    it('stores OUTPUTS when substep-driven step PASS action is COMPLETE (terminal, no step advance)', async () => {
+      // Regression for the terminal-action guard: when the substep-driven step's PASS
+      // resolves to COMPLETE, the step name never changes (stepAdvanced === false),
+      // so the old guard silently dropped OUTPUTS. The fixed guard checks isTerminalAction.
+      mockLifecycleService.listResolvedCompletions.mockResolvedValue([
+        { completion: { targetSubstep: 'a', result: 'pass' } },
+      ]);
+      mockLifecycleService.consumeResolvedCompletion.mockResolvedValueOnce({
+        result: 'pass',
+        targetSubstep: 'a',
+      });
+
+      // Terminal snapshot: COMPLETE, step name unchanged ('1' → '1')
+      mockActorService.sendAndSync.mockResolvedValue({
+        state: {
+          id: runbookId,
+          step: '1',
+          status: 'done',
+          templateVars: { ContextId: 'ctx-terminal' },
+        },
+        snapshot: {
+          status: 'done',
+          value: 'COMPLETE',
+          context: { lastAction: { type: 'COMPLETE' } },
+        },
+      });
+
+      await drainResolvedCompletions({
+        manager: mockManager,
+        actorService: mockActorService,
+        sessionService: mockSessionService,
+        lifecycleService: mockLifecycleService,
+        emitter: mockEmitter,
+        runbookId,
+        steps: stepsWithSubstepsAndOutputs,
+        currentState: {
+          id: runbookId,
+          step: '1',
+          substep: 'a',
+          status: 'running',
+          templateVars: { ContextId: 'ctx-terminal' },
+        },
+        transitionPolicy: { onComplete: { popRunbook: true }, onStopped: { popRunbook: true } },
+        cwd: '/tmp',
+      });
+
+      expect(core.storeContextOutputs).toHaveBeenCalledWith(
+        '/tmp',
+        'ctx-terminal',
+        expect.objectContaining({ PlanPath: 'plan-value' }),
+      );
+    });
+
+    it('stores OUTPUTS exactly once — only when the parent step advances (final substep)', async () => {
+      // Both substeps are pre-resolved. On the first drain (substep 'a' passes) the parent
+      // step stays at '1' → OUTPUTS must NOT be stored. On the second drain (substep 'b'
+      // passes) the parent advances to '2' → OUTPUTS stored exactly once.
+      //
+      // orchestrateTransition calls manager.load for the CONTINUE reload path — mock the
+      // two sequential loads so the drain loop can proceed past each substep.
+      mockManager.load
+        .mockResolvedValueOnce({
+          id: runbookId,
+          step: '1',
+          substep: 'b',
+          status: 'running',
+          templateVars: { ContextId: 'ctx-drain' },
+        })
+        .mockResolvedValueOnce({
+          id: runbookId,
+          step: '2',
+          status: 'running',
+          templateVars: { ContextId: 'ctx-drain' },
+        });
+
+      mockLifecycleService.listResolvedCompletions
+        .mockResolvedValueOnce([
+          { completion: { targetSubstep: 'a', result: 'pass' } },
+          { completion: { targetSubstep: 'b', result: 'pass' } },
+        ])
+        .mockResolvedValueOnce([
+          { completion: { targetSubstep: 'a', result: 'pass' } },
+          { completion: { targetSubstep: 'b', result: 'pass' } },
+        ]);
+
+      mockLifecycleService.consumeResolvedCompletion
+        .mockResolvedValueOnce({ result: 'pass', targetSubstep: 'a' })
+        .mockResolvedValueOnce({ result: 'pass', targetSubstep: 'b' });
+
+      // First sendAndSync: substep 'a' passes — parent still at step '1', moves to substep 'b'
+      mockActorService.sendAndSync
+        .mockResolvedValueOnce({
+          state: {
+            id: runbookId,
+            step: '1',
+            substep: 'b',
+            status: 'running',
+            templateVars: { ContextId: 'ctx-drain' },
+          },
+          snapshot: {
+            status: 'active',
+            value: '1',
+            context: { lastAction: { type: 'CONTINUE' } },
+          },
+        })
+        // Second sendAndSync: substep 'b' passes — parent advances to step '2'
+        .mockResolvedValueOnce({
+          state: {
+            id: runbookId,
+            step: '2',
+            status: 'running',
+            templateVars: { ContextId: 'ctx-drain' },
+          },
+          snapshot: {
+            status: 'active',
+            value: '2',
+            context: { lastAction: { type: 'CONTINUE' } },
+          },
+        });
+
+      await drainResolvedCompletions({
+        manager: mockManager,
+        actorService: mockActorService,
+        sessionService: mockSessionService,
+        lifecycleService: mockLifecycleService,
+        emitter: mockEmitter,
+        runbookId,
+        steps: stepsWithSubstepsAndOutputs,
+        currentState: {
+          id: runbookId,
+          step: '1',
+          substep: 'a',
+          status: 'running',
+          templateVars: { ContextId: 'ctx-drain' },
+        },
+        transitionPolicy: { onComplete: { popRunbook: true }, onStopped: { popRunbook: true } },
+        cwd: '/tmp',
+      });
+
+      // OUTPUTS stored exactly once — on the second drain where the parent step advances
+      expect(core.storeContextOutputs).toHaveBeenCalledTimes(1);
+      expect(core.storeContextOutputs).toHaveBeenCalledWith(
+        '/tmp',
+        'ctx-drain',
+        expect.objectContaining({ PlanPath: 'plan-value' }),
+      );
     });
   });
 });

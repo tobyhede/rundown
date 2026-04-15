@@ -245,14 +245,20 @@ async function applyResultTransition({
   });
   if (!syncResult) return { status: 'stopped' };
 
+  // Compute actionType early — needed by the OUTPUTS guard below and later for orchestration.
+  const actionType = parseActionType(extractLastAction(syncResult.snapshot));
+
   // Store OUTPUTS for PASS transitions (best-effort, non-fatal).
   // For substep-driven completions, only store when the parent step itself advances
-  // (i.e. all substeps resolved and the step moved forward). For direct command
-  // steps there is no active substep, so always store on PASS.
+  // (i.e. all substeps resolved and the step moved forward) OR when the action is
+  // terminal (COMPLETE/STOP on the final step, where the step name never changes).
+  // For direct command steps there is no active substep, so always store on PASS.
   if (cwd && result === 'pass' && currentStep.outputs && currentStep.outputs.length > 0) {
     const isSubstepContext = currentState.substep !== undefined;
     const stepAdvanced = syncResult.state.step !== currentState.step;
-    if (!isSubstepContext || stepAdvanced) {
+    const isTerminalAction = actionType === 'COMPLETE' || actionType === 'STOP';
+    if (!isSubstepContext || stepAdvanced || isTerminalAction) {
+      // postTransitionTemplateVars — must reflect state *after* the PASS event was applied
       await storeStepOutputs(currentStep.outputs, syncResult.state.templateVars, cwd);
     }
   }
@@ -262,7 +268,6 @@ async function applyResultTransition({
     currentState,
     syncResult.state,
   );
-  const actionType = parseActionType(extractLastAction(syncResult.snapshot));
   const actionResult = computeActionResult ? computeActionResult(actionType) : result === 'pass';
 
   const orchestration = await orchestrateTransition({
@@ -358,6 +363,7 @@ export type DrainResolvedCompletionsResult =
  * @param args.computeActionResult - Optional function to compute action result for transitions
  * @param args.command - Optional command string for event context
  * @param args.frameKeyOverride - Optional frame key override for frame-scoped lookups (e.g., prompted-for with explicit --index)
+ * @param args.cwd - Project root directory — used for OUTPUTS persistence on PASS
  * @returns Drain result indicating continue/done/stopped with counts of applied and unresolved completions
  */
 export async function drainResolvedCompletions({
