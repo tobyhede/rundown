@@ -1,7 +1,7 @@
 // packages/cli/__tests__/integration/context-passing.test.ts
 
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { writeFile, readFile } from 'node:fs/promises';
+import { writeFile, readFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createTestWorkspace, runCli, type TestWorkspace } from '../helpers/test-utils.js';
 
@@ -256,6 +256,79 @@ Value: {{Tag}}
     // Context outputs file should NOT exist (no PASS → no OUTPUTS stored)
     const outputsPath = join(workspace.cwd, '.rundown', 'contexts', contextId, 'outputs.json');
     await expect(readFile(outputsPath, 'utf-8')).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+});
+
+describe('INPUTS injection precedence and fault tolerance', () => {
+  let workspace: TestWorkspace;
+
+  const INPUTS_RUNBOOK = `---
+name: inputs-precedence-test
+---
+# Inputs Precedence Test
+
+## 1. Consume input
+- PASS COMPLETE
+- FAIL STOP
+- INPUTS
+  - Message
+
+Value: {{Message}}
+`;
+
+  beforeEach(async () => {
+    workspace = await createTestWorkspace();
+    await writeFile(join(workspace.cwd, 'inputs.runbook.md'), INPUTS_RUNBOOK);
+  });
+
+  afterEach(async () => {
+    await workspace.cleanup();
+  });
+
+  it('CLI --var wins over context outputs for same-name INPUTS var', async () => {
+    const contextId = 'precedence-ctx';
+    // Seed context outputs with a value that must NOT override CLI flag
+    const outputsDir = join(workspace.cwd, '.rundown', 'contexts', contextId);
+    await mkdir(outputsDir, { recursive: true });
+    await writeFile(
+      join(outputsDir, 'outputs.json'),
+      JSON.stringify({ Message: 'from-context' }),
+      'utf-8',
+    );
+
+    // CLI flag provides Message=from-cli — higher precedence than context outputs
+    const result = runCli(
+      `run --prompted inputs.runbook.md --var ContextId=${contextId} --var Message=from-cli --json`,
+      workspace,
+    );
+    expect(result.exitCode).toBe(0);
+
+    const events = parseJsonOutput(result.stdout);
+    const stepEntered = events.find((e) => e.type === 'step_entered');
+    expect(stepEntered).toBeDefined();
+    // CLI-provided value wins; context value is ignored for that key
+    expect(stepEntered?.prompt).toContain('from-cli');
+    expect(stepEntered?.prompt).not.toContain('from-context');
+  });
+
+  it('malformed outputs.json does not abort the run; INPUTS skipped with literal fallback', async () => {
+    const contextId = 'malformed-ctx';
+    const outputsDir = join(workspace.cwd, '.rundown', 'contexts', contextId);
+    await mkdir(outputsDir, { recursive: true });
+    // Write invalid JSON — loadContextOutputs will throw during parse
+    await writeFile(join(outputsDir, 'outputs.json'), '{not valid json', 'utf-8');
+
+    const result = runCli(
+      `run --prompted inputs.runbook.md --var ContextId=${contextId} --json`,
+      workspace,
+    );
+    // Run should start successfully; step 1 renders with {{Message}} as literal
+    expect(result.exitCode).toBe(0);
+
+    const events = parseJsonOutput(result.stdout);
+    const stepEntered = events.find((e) => e.type === 'step_entered');
+    expect(stepEntered).toBeDefined();
+    expect(stepEntered?.prompt).toContain('{{Message}}');
   });
 });
 

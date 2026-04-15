@@ -37,6 +37,7 @@ import {
   assertResolvedVariableForContext,
   RUNS_DIR,
   loadContextOutputs,
+  getErrorMessage,
 } from '@rundown-org/core';
 import { isSourced, resolvedStepHasSubsteps, type ForClause } from '@rundown-org/parser';
 import { isInternalRdCommand, executeRdCommandInternal } from './internal-commands.js';
@@ -599,23 +600,36 @@ export async function runExecutionLoop(
     // Step-level INPUTS injection: load declared input names from context outputs into templateVars.
     // Missing keys are silently skipped — they render literally as {{name}} in the prompt,
     // consistent with the general template variable behavior for undefined vars.
+    // INPUTS only fill gaps: a name already present in templateVars (via CLI flags, config,
+    // frontmatter, etc.) takes precedence over the context value, preserving documented
+    // variable precedence. A malformed outputs.json is logged and tolerated — INPUTS are
+    // optional by design and should not abort an otherwise healthy run.
     if (!currentState.substep && currentStep.inputs && currentStep.inputs.length > 0) {
       const contextId =
         typeof currentState.templateVars?.ContextId === 'string'
           ? currentState.templateVars.ContextId
           : undefined;
       if (contextId) {
-        const contextOutputs = await loadContextOutputs(cwd, contextId);
+        let contextOutputs: Record<string, string> = {};
+        try {
+          contextOutputs = await loadContextOutputs(cwd, contextId);
+        } catch (err) {
+          void logger.warn('INPUTS injection: failed to load context outputs, skipping', {
+            contextId,
+            error: getErrorMessage(err),
+          });
+        }
+        const existing = currentState.templateVars ?? {};
         const injected: Record<string, string> = {};
         for (const name of currentStep.inputs) {
-          if (Object.hasOwn(contextOutputs, name)) {
+          if (!Object.hasOwn(existing, name) && Object.hasOwn(contextOutputs, name)) {
             injected[name] = contextOutputs[name];
           }
         }
         if (Object.keys(injected).length > 0) {
           currentState = {
             ...currentState,
-            templateVars: { ...currentState.templateVars, ...injected },
+            templateVars: { ...existing, ...injected },
           };
         }
       }
