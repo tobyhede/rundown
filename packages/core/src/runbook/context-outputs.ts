@@ -14,6 +14,7 @@ import { randomBytes } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { isNodeError } from '../errors.js';
+import { logger } from '../logger.js';
 import { contextOutputsLockPath, contextOutputsPath, locksDir } from '../paths.js';
 import { acquireFileLock, releaseFileLock } from './file-lock.js';
 
@@ -27,6 +28,7 @@ import { acquireFileLock, releaseFileLock } from './file-lock.js';
  * @param contextId - Context identifier shared across the delegation tree
  * @returns Record of variable names to their string values
  * @throws {Error} If the file exists but cannot be read or parsed as JSON
+ * @throws {Error} If the parsed JSON is not a plain object (e.g. array, null, primitive)
  */
 export async function loadContextOutputs(
   cwd: string,
@@ -46,14 +48,25 @@ export async function loadContextOutputs(
 
   const parsed: unknown = JSON.parse(raw);
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    return {};
+    const shape = Array.isArray(parsed) ? 'array' : parsed === null ? 'null' : typeof parsed;
+    throw new Error(
+      `outputs.json has unexpected top-level shape (expected JSON object, got ${shape}) at ${filePath}`,
+    );
   }
 
-  // Coerce to Record<string, string> — keep only string-valued entries
+  // Coerce to Record<string, string> — keep only string-valued entries.
+  // Non-string values are dropped with a warning so corruption or schema drift
+  // is visible rather than silently hiding data.
   const result: Record<string, string> = {};
   for (const [key, val] of Object.entries(parsed)) {
     if (typeof val === 'string') {
       result[key] = val;
+    } else {
+      void logger.warn('context outputs: dropping non-string value', {
+        key,
+        type: typeof val,
+        filePath,
+      });
     }
   }
   return result;
