@@ -593,6 +593,12 @@ function handleOutputsDirective(node: ListItem, ctx: ActiveStepContext): typeof 
     );
   }
 
+  if (target.outputs && target.outputs.length > 0) {
+    throw new RunbookSyntaxError(
+      `Duplicate OUTPUTS directive in ${targetLabel}${formatLineNum(node)}: a target may declare OUTPUTS at most once`,
+    );
+  }
+
   const declarations: OutputDeclaration[] = [];
   for (const item of nestedList.children) {
     const paragraph = item.children.find((c) => c.type === 'paragraph');

@@ -99,9 +99,8 @@ describe('parseRunbookDocument INPUTS directive', () => {
     // Should parse without error and NOT set inputs on the step
     const { runbook } = parseRunbookDocument(md);
     expect(runbook.steps[0].inputs).toBeUndefined();
-    // The prose should be included in the step content
-    const step = runbook.steps[0];
-    expect(JSON.stringify(step)).toContain('INPUTS are validated');
+    // The prose should be included in the step's prompt (not as a directive)
+    expect(runbook.steps[0].prompt).toContain('INPUTS are validated');
   });
 
   it('old indented-text form (no list item marker) is treated as step content, not a directive', () => {
@@ -201,6 +200,17 @@ describe('parseRunbookDocument with OUTPUTS directive', () => {
     expect(step.substeps[0].outputs).toEqual([
       { name: 'ChildPath', value: '{{ path "child.json" }}' },
     ]);
+  });
+
+  it('throws RunbookSyntaxError on duplicate OUTPUTS directive for the same target', () => {
+    const md = `## 1. Duplicate outputs
+- OUTPUTS
+  - First {{ path "a.json" }}
+- OUTPUTS
+  - Second {{ path "b.json" }}
+`;
+    expect(() => parseRunbookDocument(md)).toThrow(RunbookSyntaxError);
+    expect(() => parseRunbookDocument(md)).toThrow(/duplicate.*OUTPUTS/i);
   });
 
   it('preserves both parent-step and substep OUTPUTS when both are declared', () => {
