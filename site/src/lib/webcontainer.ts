@@ -185,6 +185,9 @@ export async function runRdCommand(
 ): Promise<{ output: string; exitCode: number }> {
   // Use node to run the CLI script directly (avoids execute permission issues)
   const cliPath = './node_modules/@rundown-org/cli/dist/cli.js';
-  console.log(`[WebContainer] Running rd via node: ${cliPath} ${args.join(' ')}`);
-  return runCommand(container, 'node', [cliPath, ...args], 10000, onOutput);
+  // Always use --text for the site's interactive demo — the processChunk parser
+  // in RunbookRunner.tsx extracts step/result info from text-mode output patterns.
+  const textArgs = args.includes('--text') ? args : [...args, '--text'];
+  console.log(`[WebContainer] Running rd via node: ${cliPath} ${textArgs.join(' ')}`);
+  return runCommand(container, 'node', [cliPath, ...textArgs], 10000, onOutput);
 }
