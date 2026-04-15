@@ -455,10 +455,22 @@ export async function executeTransition(
     steps,
   );
 
-  // Store OUTPUTS for step-level PASS transitions (best-effort, non-fatal)
+  const actionType = parseActionType(extractLastAction(rawSnapshot));
+
+  // Store OUTPUTS for step-level PASS transitions (best-effort, non-fatal).
+  // For substep-driven completions, only store when the parent step itself advances
+  // (all substeps resolved and the step moved forward) OR when the action is terminal
+  // (COMPLETE/STOP on the final step, where the step name never changes).
+  // Mirrors the auto-execution guard in services/execution.ts so manual PASS through a
+  // substep cannot publish outputs computed from an incomplete parent step.
   if (config.lastResult === 'pass' && currentStep.outputs && currentStep.outputs.length > 0) {
-    // postTransitionTemplateVars — must reflect state *after* the PASS event was applied
-    await storeStepOutputs(currentStep.outputs, actorUpdatedState.templateVars, cwd);
+    const isSubstepContext = previousState.substep !== undefined;
+    const stepAdvanced = actorUpdatedState.step !== previousState.step;
+    const isTerminalAction = actionType === 'COMPLETE' || actionType === 'STOP';
+    if (!isSubstepContext || stepAdvanced || isTerminalAction) {
+      // postTransitionTemplateVars — must reflect state *after* the PASS event was applied
+      await storeStepOutputs(currentStep.outputs, actorUpdatedState.templateVars, cwd);
+    }
   }
 
   const ensuredAfterTransition = await lifecycleService.ensureActiveEntry(
@@ -468,7 +480,6 @@ export async function executeTransition(
   );
   const updatedState = ensuredAfterTransition.state;
 
-  const actionType = parseActionType(extractLastAction(rawSnapshot));
   const actionResult = config.computeActionResult(actionType);
   const commandSink: TransitionEventSink = {
     onStepTransitioned: (payload: StepTransitionedPayload) => {

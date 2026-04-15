@@ -778,3 +778,118 @@ describe('storeStepOutputs via step-level PASS transition', () => {
     });
   });
 });
+
+describe('storeStepOutputs gating on substep PASS transitions', () => {
+  // ctx where PASS happens inside a substep and the step does NOT advance.
+  // The parent step declares OUTPUTS — they must NOT be persisted until the step
+  // itself advances or a terminal action fires.
+  function makeSubstepCtx(opts: {
+    substepBefore: string;
+    substepAfter: string | undefined;
+    stepBefore: string;
+    stepAfter: string;
+    templateVars?: Record<string, unknown>;
+  }): any {
+    const stateBefore = {
+      id: 'run-1',
+      step: opts.stepBefore,
+      substep: opts.substepBefore,
+      activeEntry: 1,
+      activeFrameKey: opts.stepBefore,
+    };
+    const stateAfter = {
+      ...stateBefore,
+      step: opts.stepAfter,
+      substep: opts.substepAfter,
+      templateVars: opts.templateVars,
+    };
+    return {
+      output: { action: jest.fn(), flush: jest.fn(), status: jest.fn(), warning: jest.fn() },
+      manager: { update: jest.fn<any>().mockResolvedValue(undefined) },
+      actorService: {
+        updateFromActor: jest.fn<any>().mockResolvedValue({
+          state: stateAfter,
+          snapshot: {},
+        }),
+      },
+      sessionService: {},
+      lifecycleService: {
+        ensureActiveEntry: jest.fn<any>().mockResolvedValue({ state: stateAfter, entryId: 1 }),
+        getResolvedCompletion: jest.fn<any>().mockResolvedValue(null),
+        upsertResolvedCompletion: jest.fn<any>().mockResolvedValue(undefined),
+      },
+      state: stateBefore,
+      steps: [{ name: '1', kind: 'substeps', substeps: [{ id: '1' }, { id: '2' }] }],
+      actor: { send: jest.fn(), stop: jest.fn() },
+      cwd: '/test',
+    };
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    // Force the non-substep branch in executeTransition so we exercise the
+    // actor.send path where the OUTPUTS guard lives. We still set substep in
+    // previousState to simulate the edge case where cursor is in a substep
+    // context but resolvedStepHasSubsteps returns false.
+    (
+      resolvedStepHasSubsteps as jest.MockedFunction<typeof resolvedStepHasSubsteps>
+    ).mockReturnValue(false);
+    (findStepOrThrow as jest.Mock).mockReturnValue({
+      name: '1',
+      kind: 'base',
+      outputs: [{ name: 'PlanPath', value: '{{ path "plan.json" }}' }],
+    });
+    (core.parseActionType as jest.Mock).mockReturnValue('CONTINUE');
+  });
+
+  it('does NOT persist OUTPUTS on PASS of an early substep (step did not advance)', async () => {
+    const ctx = makeSubstepCtx({
+      substepBefore: '1',
+      substepAfter: '2', // cursor moved to next substep, parent step unchanged
+      stepBefore: '1',
+      stepAfter: '1',
+      templateVars: { ContextId: 'ctx-abc', WorkPath: '.rundown/work' },
+    });
+    const config = createPassTransitionConfig();
+
+    await executeTransition(ctx, config);
+
+    expect(evaluateOutputExpression).not.toHaveBeenCalled();
+    expect(core.storeContextOutputs).not.toHaveBeenCalled();
+  });
+
+  it('persists OUTPUTS when PASS advances the parent step (all substeps resolved)', async () => {
+    const ctx = makeSubstepCtx({
+      substepBefore: '2',
+      substepAfter: undefined,
+      stepBefore: '1',
+      stepAfter: '2', // parent step moved forward
+      templateVars: { ContextId: 'ctx-abc', WorkPath: '.rundown/work' },
+    });
+    const config = createPassTransitionConfig();
+
+    await executeTransition(ctx, config);
+
+    expect(core.storeContextOutputs).toHaveBeenCalledWith('/test', 'ctx-abc', {
+      PlanPath: '/mock/path/plan.json',
+    });
+  });
+
+  it('persists OUTPUTS on terminal COMPLETE action even when step name is unchanged', async () => {
+    (core.parseActionType as jest.Mock).mockReturnValue('COMPLETE');
+    const ctx = makeSubstepCtx({
+      substepBefore: '2',
+      substepAfter: '2', // terminal: step name never changes on final step
+      stepBefore: '1',
+      stepAfter: '1',
+      templateVars: { ContextId: 'ctx-abc', WorkPath: '.rundown/work' },
+    });
+    const config = createPassTransitionConfig();
+
+    await executeTransition(ctx, config);
+
+    expect(core.storeContextOutputs).toHaveBeenCalledWith('/test', 'ctx-abc', {
+      PlanPath: '/mock/path/plan.json',
+    });
+  });
+});
