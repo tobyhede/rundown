@@ -19,7 +19,7 @@ fi
 
 for runbook in $RUNBOOKS; do
   # List scenario names (skip header line)
-  NAMES=$(node packages/cli/dist/cli.js scenario ls "$runbook" | tail -n +2 | awk '{print $1}')
+  NAMES=$(node packages/cli/dist/cli.js scenario ls "$runbook" --text | tail -n +2 | awk '{print $1}')
   for name in $NAMES; do
     if node packages/cli/dist/cli.js scenario run "$runbook" "$name" --quiet; then
       PASSED=$((PASSED + 1))
