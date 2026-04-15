@@ -61,6 +61,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
       v !== null &&
       (v as Record<string, unknown>).kind === 'json-array-stream',
   ),
+  loadContextOutputs: jest.fn().mockResolvedValue({}),
   ...mockErrorHelpers,
 }));
 
@@ -126,6 +127,7 @@ jest.unstable_mockModule('../../src/services/template-renderer', () => ({
 jest.unstable_mockModule('../../src/helpers/validate-frontmatter-vars', () => ({
   validateFrontmatterVars: jest.fn().mockReturnValue([]),
   validateRequiredVars: jest.fn().mockReturnValue([]),
+  validateInputsDeclarations: jest.fn().mockReturnValue([]),
 }));
 
 // Mock node:fs/promises
@@ -151,7 +153,7 @@ const {
   warnUnresolvedRunbookVariables,
   collectUnresolvedRunbookVariables,
 } = await import('../../src/services/template-renderer');
-const { validateFrontmatterVars, validateRequiredVars } = await import(
+const { validateFrontmatterVars, validateRequiredVars, validateInputsDeclarations } = await import(
   '../../src/helpers/validate-frontmatter-vars'
 );
 const fsPromises = await import('node:fs/promises');
@@ -256,6 +258,7 @@ beforeEach(() => {
   (collectUnresolvedRunbookVariables as jest.Mock).mockReturnValue(new Set());
   (validateFrontmatterVars as jest.Mock).mockReturnValue([]);
   (validateRequiredVars as jest.Mock).mockReturnValue([]);
+  (validateInputsDeclarations as jest.Mock).mockReturnValue([]);
   (fsPromises.readFile as jest.Mock).mockResolvedValue('# Test\n\n## 1. Step\n- PASS CONTINUE');
   (
     parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
@@ -715,6 +718,97 @@ describe('prepareRunbook', () => {
       expect.anything(),
       expect.objectContaining({
         CLAUDE_PLUGIN_ROOT: '/custom/override',
+      }),
+    );
+  });
+
+  it('resolves INPUTS from context outputs', async () => {
+    resolveRunbookFile.mockResolvedValue({ path: '/test/inputs.md', source: 'project' });
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue(
+      mockParseResult({
+        frontmatter: { inputs: ['PlanPath'] },
+      }),
+    );
+    // ContextId must be present so the pipeline will look up context outputs
+    (resolveVariables as jest.Mock).mockResolvedValue({
+      vars: { ContextId: 'ctx-123' },
+      sources: {},
+      warnings: [],
+      providedKeys: new Set(),
+    });
+    (core.loadContextOutputs as jest.Mock).mockResolvedValue({
+      PlanPath: '/some/path/plan.json',
+    });
+
+    const result = await prepareRunbook('inputs.md', {}, '/test');
+
+    expect(result.ok).toBe(true);
+    // INPUTS-resolved var should be injected into the template vars passed to substitution
+    expect(substituteRunbookVariables).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        PlanPath: '/some/path/plan.json',
+      }),
+    );
+  });
+
+  it('INPUTS-resolved variable satisfies required check', async () => {
+    resolveRunbookFile.mockResolvedValue({ path: '/test/inputs-req.md', source: 'project' });
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue(
+      mockParseResult({
+        frontmatter: { inputs: ['PlanPath'], required: ['PlanPath'] },
+      }),
+    );
+    (resolveVariables as jest.Mock).mockResolvedValue({
+      vars: { ContextId: 'ctx-123' },
+      sources: {},
+      warnings: [],
+      providedKeys: new Set(), // NOT provided via CLI — must come from context outputs
+    });
+    (core.loadContextOutputs as jest.Mock).mockResolvedValue({
+      PlanPath: '/some/path/plan.json',
+    });
+
+    const result = await prepareRunbook('inputs-req.md', {}, '/test');
+
+    // Without INPUTS resolution, this would fail as MISSING_REQUIRED_VARS
+    expect(result.ok).toBe(true);
+  });
+
+  it('does not inject INPUTS when frontmatter.inputs is absent', async () => {
+    resolveRunbookFile.mockResolvedValue({ path: '/test/no-inputs.md', source: 'project' });
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue(mockParseResult({ frontmatter: null }));
+    (resolveVariables as jest.Mock).mockResolvedValue({
+      vars: { ContextId: 'ctx-123' },
+      sources: {},
+      warnings: [],
+      providedKeys: new Set(),
+    });
+    (core.loadContextOutputs as jest.Mock).mockResolvedValue({
+      PlanPath: '/some/path/plan.json',
+      Region: 'us-west',
+    });
+
+    const result = await prepareRunbook('no-inputs.md', {}, '/test');
+
+    expect(result.ok).toBe(true);
+    // Context outputs must NOT be injected when no inputs declared
+    expect(substituteRunbookVariables).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.not.objectContaining({
+        PlanPath: '/some/path/plan.json',
+      }),
+    );
+    expect(substituteRunbookVariables).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.not.objectContaining({
+        Region: 'us-west',
       }),
     );
   });

@@ -150,6 +150,11 @@ jest.unstable_mockModule('@rundown-org/core', () => {
         }
       },
     ),
+    loadContextOutputs: jest.fn().mockResolvedValue({}),
+    assembleArtifactPath: jest.fn((dir: string, ctx: string, file: string) => {
+      const date = new Date().toISOString().slice(0, 10);
+      return `${dir}/.rd-${ctx}/${date}-${file}`;
+    }),
     ...mockErrorHelpers,
     RUNS_DIR: '.rundown/runs',
   };

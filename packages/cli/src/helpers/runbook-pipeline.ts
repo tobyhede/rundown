@@ -35,6 +35,7 @@ import {
   type TemplateVarValue,
   isJsonArray,
   isJsonArrayStream,
+  loadContextOutputs,
 } from '@rundown-org/core';
 import {
   parseRunbookDocument,
@@ -58,7 +59,11 @@ import {
   collectUnresolvedRunbookVariables,
 } from '../services/template-renderer.js';
 import { getPolicyEvaluator, getPolicyPrompter } from '../services/policy-context.js';
-import { validateFrontmatterVars, validateRequiredVars } from './validate-frontmatter-vars.js';
+import {
+  validateFrontmatterVars,
+  validateRequiredVars,
+  validateInputsDeclarations,
+} from './validate-frontmatter-vars.js';
 
 /**
  * Variable options from CLI flags.
@@ -365,11 +370,15 @@ export async function loadAndParseRunbook(file: string, cwd: string): Promise<Lo
     const varDiagnostics = validateFrontmatterVars(frontmatter?.vars);
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- tsc resolves index signature as unknown via .d.ts
     const fmRequired = frontmatter?.required as string[] | undefined;
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- tsc resolves index signature as unknown via .d.ts
+    const fmInputs = frontmatter?.inputs as string[] | undefined;
     const requiredDiagnostics = validateRequiredVars(fmRequired, frontmatter?.vars);
+    const inputsDiagnostics = validateInputsDeclarations(fmInputs, frontmatter?.vars);
     const diagnostics: readonly ValidationDiagnostic[] = [
       ...parseDiagnostics,
       ...varDiagnostics,
       ...requiredDiagnostics,
+      ...inputsDiagnostics,
     ];
 
     const stats = {
@@ -489,7 +498,7 @@ export async function prepareRunbook(
       diagnostics,
     };
   }
-  const templateVars = buildTemplateVars(mergedVariables, options);
+  let templateVars = buildTemplateVars(mergedVariables, options);
 
   // Bail early if there are structural errors — don't pass a broken AST to transform passes
   // This must run before the missing-required check so that malformed `required` entries
@@ -509,16 +518,48 @@ export async function prepareRunbook(
     };
   }
 
+  // Stage 3.5 — Resolve INPUTS from context outputs
+  // Reads prior runbook OUTPUTS stored under the shared ContextId and injects
+  // declared input variables into the template vars before the required: check.
+  const inputsResolvedKeys = new Set<string>();
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- tsc resolves index signature as unknown via .d.ts
+  const declaredInputs = frontmatter?.inputs as string[] | undefined;
+  if (declaredInputs && declaredInputs.length > 0) {
+    try {
+      const contextId =
+        typeof templateVars.ContextId === 'string' ? templateVars.ContextId : undefined;
+      if (contextId) {
+        const contextOutputs = await loadContextOutputs(cwd, contextId);
+        for (const inputName of declaredInputs) {
+          // Only inject if not already provided via VARS channel (VARS take precedence)
+          if (!providedKeys.has(inputName) && Object.hasOwn(contextOutputs, inputName)) {
+            mergedVariables[inputName] = contextOutputs[inputName];
+            inputsResolvedKeys.add(inputName);
+          }
+        }
+        if (inputsResolvedKeys.size > 0) {
+          // Rebuild templateVars with INPUTS-injected variables
+          templateVars = buildTemplateVars(mergedVariables, options);
+        }
+      }
+    } catch {
+      // Context outputs file missing or unreadable — not a hard error; required: check will
+      // surface missing vars if they can't be satisfied by any other channel.
+    }
+  }
+
   // Validate required variables are provided by an external layer
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- tsc resolves index signature as unknown via .d.ts
   const requiredVars = frontmatter?.required as string[] | undefined;
   if (requiredVars && requiredVars.length > 0) {
-    const missing = requiredVars.filter((name: string) => !providedKeys.has(name));
+    const missing = requiredVars.filter(
+      (name: string) => !providedKeys.has(name) && !inputsResolvedKeys.has(name),
+    );
     if (missing.length > 0) {
       const names = missing.map((n: string) => `"${n}"`).join(', ');
       return {
         ok: false,
-        error: `Missing required variable${missing.length > 1 ? 's' : ''}: ${names}. Provide via --var, --var-file, config.yaml, or RD_VAR_* environment variable.`,
+        error: `Missing required variable${missing.length > 1 ? 's' : ''}: ${names}. Provide via --var, --var-file, config.yaml, RD_VAR_* environment variable, or prior runbook OUTPUTS.`,
         code: 'MISSING_REQUIRED_VARS',
         details: { runbook: file, missing },
         variables: templateVars,

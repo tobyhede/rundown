@@ -21,6 +21,7 @@ import {
   resolveForBounds,
   collectUnresolvedVariables,
   warnUnresolvedRunbookVariables,
+  evaluateOutputExpression,
 } from '../../src/services/template-renderer.js';
 
 describe('expandLoopVariables', () => {
@@ -1654,5 +1655,60 @@ describe('resolveForBounds', () => {
         (result.steps[0] as { substeps: { runbooks?: string[] }[] }).substeps[0].runbooks,
       ).toEqual(['parent.runbook.md']);
     });
+  });
+});
+
+describe('evaluateOutputExpression', () => {
+  it('evaluates {{ path "file" }} against WorkPath, ContextId, and current date', () => {
+    const result = evaluateOutputExpression('{{ path "plan.json" }}', {
+      WorkPath: '.rundown/work/feature',
+      ContextId: 'ctx-abc',
+    });
+    // Format: <WorkPath>/.rd-<ContextId>/YYYY-MM-DD-<filename>
+    expect(result).toMatch(
+      /^\.rundown\/work\/feature\/\.rd-ctx-abc\/\d{4}-\d{2}-\d{2}-plan\.json$/,
+    );
+  });
+
+  it('strips surrounding quotes from a literal string value', () => {
+    expect(evaluateOutputExpression('"HELLO"', {})).toBe('HELLO');
+  });
+
+  it('resolves a {{ VarName }} template expression against vars', () => {
+    expect(evaluateOutputExpression('{{ Region }}', { Region: 'us-west' })).toBe('us-west');
+  });
+
+  it('resolves a bare identifier as a variable lookup', () => {
+    expect(evaluateOutputExpression('myVar', { myVar: 'resolved-value' })).toBe('resolved-value');
+  });
+
+  it('throws for path traversal filename (../../etc/passwd)', () => {
+    expect(() =>
+      evaluateOutputExpression('{{ path "../../etc/passwd" }}', {
+        WorkPath: '.rundown/work',
+        ContextId: 'ctx-abc',
+      }),
+    ).toThrow(/invalid file/i);
+  });
+
+  it('throws for filename with directory separator', () => {
+    expect(() =>
+      evaluateOutputExpression('{{ path "sub/dir.json" }}', {
+        WorkPath: '.rundown/work',
+        ContextId: 'ctx-abc',
+      }),
+    ).toThrow(/invalid file/i);
+  });
+
+  it('throws when WorkPath is missing from path() helper', () => {
+    expect(() =>
+      evaluateOutputExpression('{{ path "plan.json" }}', { ContextId: 'ctx-abc' }),
+    ).toThrow(/WorkPath/);
+  });
+
+  it('throws when ContextId is missing from path() helper', () => {
+    expect(() =>
+      evaluateOutputExpression('{{ path "plan.json" }}', { WorkPath: '.rundown/work' }),
+    ).toThrow(/ContextId/);
   });
 });

@@ -25,12 +25,19 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
       `${step}${iteration !== undefined ? `[${String(iteration)}]` : ''}${substep ? `.${substep}` : ''}`,
   ),
   deriveActiveFrame: jest.fn().mockReturnValue({ step: '1', iteration: undefined, frameKey: '1' }),
+  storeContextOutputs: jest.fn().mockResolvedValue(undefined),
+  logger: { warn: jest.fn().mockResolvedValue(undefined) },
   ...mockErrorHelpers,
 }));
 
 // Mock @rundown-org/parser
 jest.unstable_mockModule('@rundown-org/parser', () => ({
   resolvedStepHasSubsteps: jest.fn(),
+}));
+
+// Mock template-renderer to avoid pulling its @rundown-org/parser dependencies into scope
+jest.unstable_mockModule('../../src/services/template-renderer', () => ({
+  evaluateOutputExpression: jest.fn().mockReturnValue('/mock/path/plan.json'),
 }));
 
 // Mock runbook-loader
@@ -58,7 +65,8 @@ jest.unstable_mockModule('../../src/helpers/transition-orchestrator', () => ({
 const core = await import('@rundown-org/core');
 const { resolvedStepHasSubsteps } = await import('@rundown-org/parser');
 const { findStepOrThrow, drainResolvedCompletions } = await import('../../src/services/execution');
-const { executeTransition, createPassTransitionConfig } = await import(
+const { evaluateOutputExpression } = await import('../../src/services/template-renderer');
+const { executeTransition, createPassTransitionConfig, createFailTransitionConfig } = await import(
   '../../src/helpers/transitions'
 );
 
@@ -647,5 +655,126 @@ describe('executeTransition with ExplicitTarget', () => {
     expect(drainResolvedCompletions).toHaveBeenCalled();
     const drainCall = (drainResolvedCompletions as jest.Mock).mock.calls[0][0];
     expect(drainCall.frameKeyOverride).toBeUndefined();
+  });
+});
+
+describe('storeStepOutputs via step-level PASS transition', () => {
+  // Helper that creates a step-level (non-substep) ctx: substep is undefined so
+  // executeTransition goes to the actor.send / storeStepOutputs path.
+  function makeStepLevelCtx(templateVars?: Record<string, unknown>): any {
+    const state = {
+      id: 'run-1',
+      step: '1',
+      substep: undefined,
+      activeEntry: 1,
+      activeFrameKey: '1',
+    };
+    return {
+      output: { action: jest.fn(), flush: jest.fn(), status: jest.fn(), warning: jest.fn() },
+      manager: { update: jest.fn<any>().mockResolvedValue(undefined) },
+      actorService: {
+        updateFromActor: jest.fn<any>().mockResolvedValue({
+          state: { ...state, templateVars },
+          snapshot: {},
+        }),
+      },
+      sessionService: {},
+      lifecycleService: {
+        ensureActiveEntry: jest.fn<any>().mockResolvedValue({ state, entryId: 1 }),
+        getResolvedCompletion: jest.fn<any>().mockResolvedValue(null),
+        upsertResolvedCompletion: jest.fn<any>().mockResolvedValue(undefined),
+      },
+      state,
+      steps: [{ name: '1', kind: 'base' }],
+      actor: { send: jest.fn(), stop: jest.fn() },
+      cwd: '/test',
+    };
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (
+      resolvedStepHasSubsteps as jest.MockedFunction<typeof resolvedStepHasSubsteps>
+    ).mockReturnValue(false);
+    (findStepOrThrow as jest.Mock).mockReturnValue({
+      name: '1',
+      kind: 'base',
+      outputs: [{ name: 'PlanPath', value: '{{ path "plan.json" }}' }],
+    });
+  });
+
+  it('calls evaluateOutputExpression and storeContextOutputs on step-level PASS with outputs', async () => {
+    const ctx = makeStepLevelCtx({ ContextId: 'ctx-abc', WorkPath: '.rundown/work' });
+    const config = createPassTransitionConfig();
+
+    await executeTransition(ctx, config);
+
+    expect(evaluateOutputExpression).toHaveBeenCalledWith(
+      '{{ path "plan.json" }}',
+      expect.objectContaining({ ContextId: 'ctx-abc' }),
+    );
+    expect(core.storeContextOutputs).toHaveBeenCalledWith('/test', 'ctx-abc', {
+      PlanPath: '/mock/path/plan.json',
+    });
+  });
+
+  it('skips OUTPUTS storage on step-level FAIL even when step has outputs', async () => {
+    const ctx = makeStepLevelCtx({ ContextId: 'ctx-abc', WorkPath: '.rundown/work' });
+    const config = createFailTransitionConfig();
+
+    await executeTransition(ctx, config);
+
+    expect(evaluateOutputExpression).not.toHaveBeenCalled();
+    expect(core.storeContextOutputs).not.toHaveBeenCalled();
+  });
+
+  it('logs warning and skips when templateVars is undefined', async () => {
+    const ctx = makeStepLevelCtx(undefined);
+    const config = createPassTransitionConfig();
+
+    await executeTransition(ctx, config);
+
+    expect(core.logger.warn).toHaveBeenCalledWith(expect.stringContaining('templateVars'));
+    expect(core.storeContextOutputs).not.toHaveBeenCalled();
+  });
+
+  it('logs warning and skips when ContextId is missing from templateVars', async () => {
+    const ctx = makeStepLevelCtx({ WorkPath: '.rundown/work' }); // no ContextId
+    const config = createPassTransitionConfig();
+
+    await executeTransition(ctx, config);
+
+    expect(core.logger.warn).toHaveBeenCalledWith(expect.stringContaining('ContextId'));
+    expect(core.storeContextOutputs).not.toHaveBeenCalled();
+  });
+
+  it('logs warning for individual expression failures but still stores valid outputs', async () => {
+    (findStepOrThrow as jest.Mock).mockReturnValue({
+      name: '1',
+      kind: 'base',
+      outputs: [
+        { name: 'Good', value: '"literal-value"' },
+        { name: 'Bad', value: '{{ path "plan.json" }}' },
+      ],
+    });
+    (evaluateOutputExpression as jest.Mock)
+      .mockReturnValueOnce('literal-value') // Good succeeds
+      .mockImplementationOnce(() => {
+        throw new Error('mock eval failure');
+      }); // Bad throws
+    const ctx = makeStepLevelCtx({ ContextId: 'ctx-abc', WorkPath: '.rundown/work' });
+    const config = createPassTransitionConfig();
+
+    await executeTransition(ctx, config);
+
+    // Warning logged for the bad output
+    expect(core.logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('failed to evaluate'),
+      expect.objectContaining({ name: 'Bad' }),
+    );
+    // Only Good was stored (Bad was skipped)
+    expect(core.storeContextOutputs).toHaveBeenCalledWith('/test', 'ctx-abc', {
+      Good: 'literal-value',
+    });
   });
 });

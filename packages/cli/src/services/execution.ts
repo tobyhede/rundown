@@ -36,6 +36,7 @@ import {
   isJsonArrayStream,
   assertResolvedVariableForContext,
   RUNS_DIR,
+  loadContextOutputs,
 } from '@rundown-org/core';
 import { isSourced, resolvedStepHasSubsteps, type ForClause } from '@rundown-org/parser';
 import { isInternalRdCommand, executeRdCommandInternal } from './internal-commands.js';
@@ -566,6 +567,31 @@ export async function runExecutionLoop(
     if (drainResult.applied > 0) {
       currentState = drainResult.state;
       continue;
+    }
+
+    // Step-level INPUTS injection: load declared input names from context outputs into templateVars.
+    // Missing keys are silently skipped — they render literally as {{name}} in the prompt,
+    // consistent with the general template variable behavior for undefined vars.
+    if (!currentState.substep && currentStep.inputs && currentStep.inputs.length > 0) {
+      const contextId =
+        typeof currentState.templateVars?.ContextId === 'string'
+          ? currentState.templateVars.ContextId
+          : undefined;
+      if (contextId) {
+        const contextOutputs = await loadContextOutputs(cwd, contextId);
+        const injected: Record<string, string> = {};
+        for (const name of currentStep.inputs) {
+          if (Object.hasOwn(contextOutputs, name)) {
+            injected[name] = contextOutputs[name];
+          }
+        }
+        if (Object.keys(injected).length > 0) {
+          currentState = {
+            ...currentState,
+            templateVars: { ...currentState.templateVars, ...injected },
+          };
+        }
+      }
     }
 
     // Expand per-step dynamic variables ({{Step}}, {{Index}}, {{var}}) for current iteration

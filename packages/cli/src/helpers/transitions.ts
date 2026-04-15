@@ -31,8 +31,13 @@ import {
   type RunbookCompletedPayload,
   type RunbookStoppedPayload,
   type StepTransitionedPayload,
+  storeContextOutputs,
+  logger,
+  type TemplateVarValue,
 } from '@rundown-org/core';
+import type { OutputDeclaration } from '@rundown-org/parser';
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
+import { evaluateOutputExpression } from '../services/template-renderer.js';
 import { resolveIndexOption } from './index-option.js';
 import { getRunbookFromState } from './runbook-loader.js';
 import {
@@ -245,6 +250,52 @@ export interface ExplicitTarget {
 }
 
 /**
+ * Evaluate and store OUTPUTS declarations for a step that just passed.
+ *
+ * Silently skips if templateVars is missing or any expression fails to evaluate.
+ * Failures are non-fatal — OUTPUTS storage is best-effort; the pass transition
+ * is already recorded.
+ *
+ * @param outputs - Output declarations from the step definition
+ * @param templateVars - Resolved template variables from the runbook state
+ * @param cwd - Project root directory
+ */
+async function storeStepOutputs(
+  outputs: readonly OutputDeclaration[],
+  templateVars: Readonly<Record<string, TemplateVarValue>> | undefined,
+  cwd: string,
+): Promise<void> {
+  if (!templateVars) {
+    void logger.warn('storeStepOutputs: templateVars not available, skipping OUTPUTS storage');
+    return;
+  }
+  const contextId = typeof templateVars.ContextId === 'string' ? templateVars.ContextId : undefined;
+  if (!contextId) {
+    void logger.warn(
+      'storeStepOutputs: ContextId variable is not defined, skipping OUTPUTS storage',
+    );
+    return;
+  }
+
+  const evaluated: Record<string, string> = {};
+  for (const output of outputs) {
+    try {
+      evaluated[output.name] = evaluateOutputExpression(output.value, { ...templateVars });
+    } catch (err) {
+      void logger.warn('storeStepOutputs: failed to evaluate output expression', {
+        name: output.name,
+        value: output.value,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  if (Object.keys(evaluated).length > 0) {
+    await storeContextOutputs(cwd, contextId, evaluated);
+  }
+}
+
+/**
  * Perform a pass/fail transition against the active runbook state.
  *
  * Records or reuses a resolved completion when targeting a substep; otherwise sends the configured
@@ -452,6 +503,12 @@ export async function executeTransition(
     actor,
     steps,
   );
+
+  // Store OUTPUTS for step-level PASS transitions (best-effort, non-fatal)
+  if (config.lastResult === 'pass' && currentStep.outputs && currentStep.outputs.length > 0) {
+    await storeStepOutputs(currentStep.outputs, actorUpdatedState.templateVars, cwd);
+  }
+
   const ensuredAfterTransition = await lifecycleService.ensureActiveEntry(
     activeState.id,
     previousState,
