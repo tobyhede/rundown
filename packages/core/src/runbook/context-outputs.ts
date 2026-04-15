@@ -66,7 +66,7 @@ export async function loadContextOutputs(
  * prevent partial-write corruption on crash.
  *
  * Concurrent callers sharing the same `contextId` are serialized with a file
- * lock under `.rundown/locks/<contextId>.context-outputs.lock` so that no
+ * lock under `.rundown/locks/ctx-<contextId>.context-outputs.lock` so that no
  * read-merge-write entries are lost to a race.
  *
  * @param cwd - Project root directory
@@ -89,7 +89,8 @@ export async function storeContextOutputs(
   try {
     await fs.mkdir(dir, { recursive: true });
 
-    // Merge with existing outputs — new outputs overwrite old ones for the same key
+    // read-merge-write must stay inside the lock — moving loadContextOutputs out would
+    // reintroduce the race where two writers read the same stale snapshot.
     const existing = await loadContextOutputs(cwd, contextId);
     const merged = { ...existing, ...outputs };
 

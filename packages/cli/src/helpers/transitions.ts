@@ -31,7 +31,6 @@ import {
   type RunbookCompletedPayload,
   type RunbookStoppedPayload,
   type StepTransitionedPayload,
-  logger,
 } from '@rundown-org/core';
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { storeStepOutputs } from './step-outputs.js';
@@ -458,6 +457,7 @@ export async function executeTransition(
 
   // Store OUTPUTS for step-level PASS transitions (best-effort, non-fatal)
   if (config.lastResult === 'pass' && currentStep.outputs && currentStep.outputs.length > 0) {
+    // postTransitionTemplateVars — must reflect state *after* the PASS event was applied
     await storeStepOutputs(currentStep.outputs, actorUpdatedState.templateVars, cwd);
   }
 

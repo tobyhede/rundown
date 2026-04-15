@@ -151,7 +151,7 @@ export const delegationLockPath = (cwd: string, runId: string): string => {
 /**
  * Absolute path to the context-outputs write-serialization lock file.
  *
- * Lock path: `.rundown/locks/<contextId>.context-outputs.lock`
+ * Lock path: `.rundown/locks/ctx-<contextId>.context-outputs.lock`
  *
  * @param cwd - Project root directory
  * @param contextId - Context identifier (must match `[A-Za-z0-9._-]+`)
@@ -160,5 +160,5 @@ export const delegationLockPath = (cwd: string, runId: string): string => {
  */
 export const contextOutputsLockPath = (cwd: string, contextId: string): string => {
   assertSafeId(contextId, 'id');
-  return path.join(cwd, LOCKS_DIR, `${contextId}.context-outputs.lock`);
+  return path.join(cwd, LOCKS_DIR, `ctx-${contextId}.context-outputs.lock`);
 };

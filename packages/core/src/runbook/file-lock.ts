@@ -15,6 +15,8 @@ import * as fs from 'node:fs/promises';
 import { isNodeError } from '../errors.js';
 
 const LOCK_DEADLINE_MS = 5_000;
+// Locks must be held < 60 s. Callers that may exceed this must structure their
+// work into shorter critical sections or refresh the lock.
 const STALE_AGE_MS = 60_000;
 const RETRY_MIN_MS = 50;
 const RETRY_MAX_MS = 100;
