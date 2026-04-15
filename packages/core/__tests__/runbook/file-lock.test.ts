@@ -38,7 +38,7 @@ describe('file-lock', () => {
         const content = JSON.parse(raw) as { pid: number; created_at: string };
         expect(content.pid).toBe(process.pid);
         expect(typeof content.created_at).toBe('string');
-        expect(() => new Date(content.created_at)).not.toThrow();
+        expect(Number.isNaN(Date.parse(content.created_at))).toBe(false);
       } finally {
         await releaseFileLock(lockFile);
       }

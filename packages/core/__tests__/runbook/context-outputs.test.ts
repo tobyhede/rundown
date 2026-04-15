@@ -55,6 +55,20 @@ describe('context-outputs', () => {
 
       await expect(loadContextOutputs(tmpDir, contextId)).rejects.toThrow();
     });
+
+    it.each([
+      ['array', '[1,2,3]'],
+      ['null', 'null'],
+      ['string primitive', '"hello"'],
+      ['number primitive', '42'],
+      ['boolean primitive', 'true'],
+    ])('throws a descriptive error when outputs.json has top-level shape: %s', async (_label, raw) => {
+      const filePath = contextOutputsPath(tmpDir, contextId);
+      await fs.mkdir(path.dirname(filePath), { recursive: true });
+      await fs.writeFile(filePath, raw, 'utf-8');
+
+      await expect(loadContextOutputs(tmpDir, contextId)).rejects.toThrow(/outputs\.json.*shape/);
+    });
   });
 
   describe('storeContextOutputs', () => {
@@ -113,13 +127,26 @@ describe('context-outputs', () => {
       expect(result.KeyB).toBe('valueB');
     });
 
-    it('concurrent writes with overlapping keys: later write wins', async () => {
-      // Serialize so we know which write "wins" (last write wins on same key)
+    it('sequential writes with overlapping keys: later write wins', async () => {
+      // Awaited in sequence — the second call's value must be the one that persists.
       await storeContextOutputs(tmpDir, contextId, { Key: 'first' });
       await storeContextOutputs(tmpDir, contextId, { Key: 'second' });
 
       const result = await loadContextOutputs(tmpDir, contextId);
       expect(result.Key).toBe('second');
+    });
+
+    it('concurrent writes with overlapping keys: one writer wins, file stays valid', async () => {
+      // Race two writes to the same key. The file lock serializes them, so the final
+      // value is whichever call entered the critical section last — we don't care which,
+      // just that the result is one of the two values and the file is not corrupted.
+      await Promise.all([
+        storeContextOutputs(tmpDir, contextId, { Key: 'first' }),
+        storeContextOutputs(tmpDir, contextId, { Key: 'second' }),
+      ]);
+
+      const result = await loadContextOutputs(tmpDir, contextId);
+      expect(['first', 'second']).toContain(result.Key);
     });
 
     it('N=10 concurrent writes all survive — no key lost under contention', async () => {
