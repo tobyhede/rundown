@@ -255,7 +255,7 @@ Value: {{Tag}}
 
     // Context outputs file should NOT exist (no PASS → no OUTPUTS stored)
     const outputsPath = join(workspace.cwd, '.rundown', 'contexts', contextId, 'outputs.json');
-    await expect(readFile(outputsPath, 'utf-8')).rejects.toThrow();
+    await expect(readFile(outputsPath, 'utf-8')).rejects.toMatchObject({ code: 'ENOENT' });
   });
 });
 

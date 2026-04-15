@@ -121,5 +121,20 @@ describe('context-outputs', () => {
       const result = await loadContextOutputs(tmpDir, contextId);
       expect(result.Key).toBe('second');
     });
+
+    it('N=10 concurrent writes all survive — no key lost under contention', async () => {
+      // Without the file lock, interleaved read-merge-write would drop keys.
+      // Each writer adds a unique key; all 10 must survive.
+      await Promise.all(
+        Array.from({ length: 10 }, (_, i) =>
+          storeContextOutputs(tmpDir, contextId, { [`Key${String(i)}`]: `value${String(i)}` }),
+        ),
+      );
+
+      const result = await loadContextOutputs(tmpDir, contextId);
+      for (let i = 0; i < 10; i++) {
+        expect(result[`Key${String(i)}`]).toBe(`value${String(i)}`);
+      }
+    });
   });
 });
