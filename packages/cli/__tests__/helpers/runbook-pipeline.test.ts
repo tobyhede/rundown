@@ -839,6 +839,41 @@ describe('prepareRunbook', () => {
     );
   });
 
+  it('does not let context outputs overwrite auto-injected CLAUDE_PLUGIN_ROOT on delegation child', async () => {
+    // Regression: INPUTS injection only consulted providedKeys, so keys already
+    // populated into mergedVariables *after* resolveVariables (like
+    // CLAUDE_PLUGIN_ROOT) could be silently clobbered by a stale context output.
+    resolveRunbookFile.mockResolvedValue({
+      path: '/home/user/.claude/extensions/rundown-plugin/runbooks/child.runbook.md',
+      source: 'plugin' as const,
+    });
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue(mockParseResult({ frontmatter: null }));
+    (resolveVariables as jest.Mock).mockResolvedValue({
+      vars: { ContextId: 'ctx-123' },
+      sources: {},
+      warnings: [],
+      providedKeys: new Set(),
+    });
+    (core.loadContextOutputs as jest.Mock).mockResolvedValue({
+      CLAUDE_PLUGIN_ROOT: '/stale/from/context/outputs/',
+    });
+
+    // Simulate delegation child so undeclared-key inheritance kicks in
+    const result = await prepareRunbook('rundown:child', {}, '/test', {
+      inheritedUserVars: {},
+    });
+
+    expect(result.ok).toBe(true);
+    const call = (substituteRunbookVariables as jest.Mock).mock.calls.at(-1);
+    expect(call?.[1]).toEqual(
+      expect.objectContaining({
+        CLAUDE_PLUGIN_ROOT: '/home/user/.claude/extensions/rundown-plugin/',
+      }),
+    );
+  });
+
   it('INPUTS-resolved variable satisfies required check', async () => {
     resolveRunbookFile.mockResolvedValue({ path: '/test/inputs-req.md', source: 'project' });
     (

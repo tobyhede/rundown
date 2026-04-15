@@ -554,6 +554,10 @@ export async function prepareRunbook(
       let injected = false;
       for (const [key, value] of Object.entries(contextOutputs)) {
         if (providedKeys.has(key)) continue;
+        // Don't clobber keys already populated into mergedVariables by a
+        // non-providedKeys channel (e.g. auto-injected CLAUDE_PLUGIN_ROOT).
+        // INPUTS injection only fills gaps — it never overwrites.
+        if (Object.hasOwn(mergedVariables, key)) continue;
         const isDeclaredInput = declaredInputSet?.has(key) === true;
         if (!isDeclaredInput && !isDelegationChild) continue;
         mergedVariables[key] = value;
