@@ -638,7 +638,11 @@ function handleInputsDirective(node: ListItem, ctx: ActiveStepContext): typeof S
   const names: string[] = [];
   for (const item of nestedList.children) {
     const paragraph = item.children.find((c) => c.type === 'paragraph');
-    if (!paragraph) continue;
+    if (!paragraph) {
+      throw new RunbookSyntaxError(
+        `Invalid INPUTS declaration in ${targetLabel}${formatLineNum(item)}: missing variable name (expected "  - Name")`,
+      );
+    }
     const name = extractText(paragraph as PhrasingContent | Heading | Paragraph | ListItem).trim();
     if (!NAMED_IDENTIFIER_PATTERN.test(name)) {
       throw new RunbookSyntaxError(

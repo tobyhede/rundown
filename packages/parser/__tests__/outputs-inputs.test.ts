@@ -78,6 +78,18 @@ describe('parseRunbookDocument INPUTS directive', () => {
     expect(() => parseRunbookDocument(md)).toThrow(RunbookSyntaxError);
   });
 
+  it('throws RunbookSyntaxError for INPUTS list item with no paragraph (e.g., blockquote-only)', () => {
+    // Previously this silently skipped the item, producing inputs: [] and leaving
+    // the user with no diagnostic about why their declaration vanished.
+    const md = `## 1. Step
+- PASS CONTINUE
+- FAIL STOP
+- INPUTS
+  - > just a blockquote
+`;
+    expect(() => parseRunbookDocument(md)).toThrow(RunbookSyntaxError);
+  });
+
   it('does not misclassify prose starting with "INPUTS" as an INPUTS directive', () => {
     const md = `## 1. Step with INPUTS prose
 - PASS CONTINUE
@@ -234,6 +246,24 @@ name: no-inputs
 - PASS COMPLETE
 `;
     const { frontmatter } = parseRunbookDocument(md);
+    expect(frontmatter?.inputs).toBeUndefined();
+  });
+
+  it('rejects reserved name "context" in frontmatter inputs', () => {
+    // "context" would shadow the built-in `context` template namespace
+    // (context.current.step, etc.) if injected into templateVars.
+    const md = `---
+name: bad-inputs
+inputs:
+  - PlanPath
+  - context
+---
+## 1. Step
+- PASS COMPLETE
+`;
+    const { frontmatter } = parseRunbookDocument(md);
+    // .catch(undefined) at the schema level drops the entire inputs array when
+    // any element is invalid — matching existing behavior for malformed identifiers.
     expect(frontmatter?.inputs).toBeUndefined();
   });
 });

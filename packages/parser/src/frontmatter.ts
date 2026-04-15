@@ -44,7 +44,14 @@ export const RunbookFrontmatterSchema = z
       .optional()
       .catch(undefined),
     inputs: z
-      .array(z.string().regex(/^[a-zA-Z_][a-zA-Z0-9_]*$/))
+      .array(
+        z
+          .string()
+          .regex(/^[a-zA-Z_][a-zA-Z0-9_]*$/)
+          .refine((name) => name !== 'context', {
+            message: "variable name 'context' is reserved",
+          }),
+      )
       .optional()
       .catch(undefined),
   })
