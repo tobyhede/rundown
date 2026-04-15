@@ -245,7 +245,7 @@ Variables use Handlebars syntax: `{{variable}}`.
 | CLI (`--var`) | Global | Expanded at startup. |
 | `{{Step}}`, `{{step}}` | Step | Current execution identifier for this runbook context (e.g., `1`, `1.2`). |
 | `{{Index}}`, `{{index}}` | Loop | Current iteration number for this runbook context. |
-| `{{context.current.*}}` | Step/Loop | Canonical current runbook context: `step` (e.g., `3`), `substep` (e.g., `1`), `index` (e.g., `3`), `at` (e.g., `3.1[3]`). |
+| `{{context.current.*}}` | Step/Loop | Canonical current runbook context: `step` (e.g., `3`), `substep` (e.g., `1`), `index` (e.g., `3`), `at` (e.g., `3.3.1` — `STEP.INDEX.SUBSTEP` inside a FOR loop, `STEP.SUBSTEP` otherwise). |
 | `{{context.parent.*}}` | Nested | Parent runbook structural context and template variables (`vars.*`). |
 | `{{context.ancestors.N.*}}` | Nested | Ancestor runbook contexts (`0` is nearest parent). |
 | `{{context.vars.NAME}}` | Global | User/config/frontmatter variable namespace. |
@@ -273,7 +273,7 @@ Variables use Handlebars syntax: `{{variable}}`.
 3.  **Strict Ordering**: FOR -> Transitions -> Prompt -> Body.
 4.  **Exclusivity**: Only one body type (Code OR Substeps). Step-level runbook lists are shorthand for Substeps.
 5.  **Single Code Block**: Max one code block per step (executable or display-only).
-6.  **Loop Safety**: `NEXT` and `BREAK` are valid in FOR substeps and FOR iteration-level transitions.
+6.  **Loop Safety**: `NEXT` and `BREAK` are valid **only** in FOR substeps and FOR iteration-level transitions. Using them at step level outside any FOR loop is rejected by the validator.
 7.  **Source Validation**: FOR clauses referencing a data source must reference a defined source. Named variable required.
 8.  **FOR Requires Substeps**: A FOR-annotated step must contain substeps.
 9.  **No Nested RETRY**: RETRY fallback actions cannot be RETRY.

@@ -33,6 +33,7 @@ This document provides a comprehensive guide and reference for the Rundown CLI (
   - [Enforcement Control](#enforcement-control)
   - [Validation](#validation)
   - [Maintenance](#maintenance)
+  - [Testing and Utilities](#testing-and-utilities)
   - [Delegation Commands](#delegation-commands)
 - [Common Tasks](#common-tasks)
 - [Delegation Patterns](#delegation-patterns)
@@ -108,6 +109,25 @@ The CLI resolves runbook paths in this order:
 2. Relative to current working directory
 3. Relative to `.rundown/runbooks/` in the project root
 
+### Runbook Discovery
+
+When a runbook is referenced by name (rather than an explicit path), the CLI searches multiple sources in priority order:
+
+| Priority | Source | Location |
+|----------|--------|----------|
+| 1 (highest) | Project | `.rundown/runbooks/` |
+| 2 | Plugin | `$CLAUDE_PLUGIN_ROOT/runbooks/` |
+| 3 | Bundled | CLI package `dist/runbooks/` |
+
+Directories are scanned recursively, so nested layouts like `planning/write-plan.runbook.md` are supported.
+
+**Namespace syntax** — Use `namespace:name` to target a specific source explicitly:
+
+- `write-plan` — resolves via the priority chain above
+- `rundown:write-plan` — explicit: from the plugin source only
+
+`rd ls --all` lists discoverable runbooks with a `SOURCE` column indicating where each was found (`project`, `plugin`, or `bundled`).
+
 **Check status:**
 ```bash
 rundown status
@@ -152,11 +172,13 @@ Runbooks compile to XState machines at runtime. Steps become states:
 | `## 1. Title` | `step::1` |
 | `## 2. Title` | `step::2` |
 | `### 2.1 Substep` | `step::2::1` |
+| `## Cleanup` | `step::Cleanup` |
+| `### Cleanup.verify` | `step::Cleanup::verify` |
 
 Terminal states: `COMPLETE`, `STOPPED`
 
-#### Events
-The state machine responds to these events:
+#### Input Events
+The state machine responds to these input events:
 
 | Event | Trigger | Effect |
 |-------|---------|--------|
@@ -164,6 +186,8 @@ The state machine responds to these events:
 | `FAIL` | `rundown fail` or command exit non-0 | Evaluate FAIL transition |
 | `GOTO` | `rundown goto N` or GOTO action | Jump to step N |
 | `RETRY` | FAIL + RETRY action | Increment retryCount, stay in state |
+
+These input events are distinct from the action output recorded as `lastAction.type` after a transition resolves. The full `LastAction` union has nine variants: `START`, `CONTINUE`, `DEFER`, `GOTO`, `COMPLETE`, `STOP`, `RETRY`, `NEXT`, `BREAK` (see `packages/core/src/runbook/types.ts`).
 
 #### Transitions
 Default transitions when none specified:
@@ -182,7 +206,7 @@ Transition evaluation:
 | Behavior | Triggered By | What Happens |
 |----------|-------------|--------------|
 | **Automatic** | Step has `bash` or `prompt` code block | CLI runs command, exit code determines PASS/FAIL |
-| **Manual** | `--prompted` flag or no code block | CLI waits for manual `rd pass` or `rd fail` |
+| **Manual** | `--prompted` flag, or step has neither a bash nor prompt code block | CLI waits for manual `rd pass` or `rd fail` |
 
 **Note:** A `prompt` code block becomes an `rd prompt '...'` command that outputs the content wrapped in markdown fences. It executes automatically like `bash` blocks.
 
@@ -422,10 +446,7 @@ Each runbook state file contains:
   "stepName": "Execute batch",
   "retryCount": 0,
   "variables": { "environment": "staging" },
-  "sources": {
-    "items": { "kind": "array", "items": ["alpha", "bravo", "charlie"] },
-    "log_file": { "kind": "file", "path": "data/results.jsonl", "format": "jsonl" }
-  },
+  "templateVars": { "environment": "staging" },
   "steps": [],
   "substepStates": [
     {
@@ -473,7 +494,6 @@ Key fields:
 - `runbookPath`: Repo-relative resolved file path to the runbook source
 - `runbookSrc`: Raw runbook source content (template placeholders preserved)
 - `templateVars`: Frozen template variable map used for deterministic resume rendering
-- `sources`: Data source definitions for FOR loops (arrays and file references)
 - `forStack`: Active FOR loop stack (present during loop execution; see [FOR Loops](#for-loops))
 - `forStack[].source`: Resolved source for the active loop (range, array, or file with snapshot)
 - `forStack[].currentValue`: Data element at the current iteration (array/file sources)
@@ -504,11 +524,12 @@ Variables are collected from multiple sources with the following precedence (hig
 
 | Source | Description |
 |--------|-------------|
-| `--var key=value` | CLI flags (repeatable, highest priority) |
-| `--var-file path` | YAML file specified on command line |
+| CLI flags (`--var-file`, `--var`, `--var-json`) | Repeatable, highest priority |
+| `RD_VAR_*` environment variables | Prefix stripped (e.g., `RD_VAR_environment` sets `environment`) |
 | `.rundown/config.yaml` | Auto-discovered from cwd upward, stops at git root |
 | Frontmatter `vars:` field | Variables defined in runbook frontmatter |
-| Built-in defaults | System-provided variables (Date, DateTime, Year, etc.) |
+| Inherited delegation variables | Parent context in delegation tree |
+| Built-in defaults | System-provided variables (`Date`, `RunId`, `WorkPath`, etc.) |
 
 ### Auto-Discovery
 
@@ -549,7 +570,7 @@ rundown run deploy.runbook.md --var-file base.yaml --var environment=prod
 Variable names must match the pattern `/^[a-zA-Z_][a-zA-Z0-9_]*$/`:
 - Must start with a letter or underscore
 - Can contain letters, digits, and underscores
-- Runtime-reserved names cannot be overridden by user variables: `step`, `index`, `context`, `Step`, `Index`
+- Runtime-reserved names (`step`, `index`, `context`) are matched case-insensitively — any casing variant is reserved and cannot be overridden by user variables
 
 ### Runtime Context Model
 
@@ -585,10 +606,7 @@ Rundown enforces a security policy layer to control what commands runbooks can e
 
 ### Default Behavior
 
-In `prompted` mode (default), Rundown:
-- Allows common safe commands: git, npm, node, pnpm, yarn, etc.
-- Blocks dangerous commands: sudo, rm, curl, wget, etc.
-- Prompts for unlisted commands
+See [SECURITY.md](./SECURITY.md) for full default policy details, including command allow/block/prompt behavior, sandbox-on-by-default enforcement, and the default write allowlist (Rundown state paths under `.rundown/`, plus `.claude/**`, `node_modules/**`, `dist/**`, `build/**`, `.next/**`, and `{tmp}/**`).
 
 ### Quick Reference
 
@@ -700,9 +718,15 @@ Signal successful step completion.
 
 ```bash
 rundown pass
+rundown pass --step 2.1              # Target a specific substep
+rundown pass --step 2.1 --index 3    # Target substep at FOR iteration 3
 ```
 
 **Aliases:** `rundown yes`, `rundown ok`
+
+**Flags:**
+- `--step <stepId>` — Target a specific substep (not the currently active one).
+- `--index <number>` — FOR loop iteration to target (requires `--step`).
 
 **Behavior:**
 1. Send PASS event to XState
@@ -716,9 +740,15 @@ Signal step failure.
 
 ```bash
 rundown fail
+rundown fail --step 2.1              # Target a specific substep
+rundown fail --step 2.1 --index 3    # Target substep at FOR iteration 3
 ```
 
 **Alias:** `rundown no`
+
+**Flags:**
+- `--step <stepId>` — Target a specific substep (not the currently active one).
+- `--index <number>` — FOR loop iteration to target (requires `--step`).
 
 **Behavior:**
 1. Send FAIL event to XState
@@ -735,9 +765,13 @@ For RETRY transitions:
 Navigate directly to a step.
 
 ```bash
-rundown goto 3       # Jump to step 3
-rundown goto 3.1     # Jump to substep 3.1
+rundown goto 3                # Jump to step 3
+rundown goto 3.1              # Jump to substep 3.1
+rundown goto 3 --index 2      # Jump to step 3 and enter FOR iteration 2
 ```
+
+**Flags:**
+- `--index <number>` — For FOR-annotated targets, enter the loop at the specified iteration.
 
 **Restrictions:**
 - Target must exist
@@ -798,6 +832,8 @@ rundown ls --all --tags review  # Filter by tag
 - `stopped` - Terminated with failure
 - `inactive` - In session but not active
 
+**Columns (for `--all`):** `NAME`, `SOURCE`, `DESCRIPTION`, `TAGS`. The `SOURCE` column indicates where each runbook was discovered (`project`, `plugin`, or `bundled`) — see [Runbook Discovery](#runbook-discovery) and [Table Output](#table-output) for the column layout.
+
 ### Enforcement Control
 
 #### `rundown stash` - Pause Enforcement
@@ -856,6 +892,71 @@ rundown prune --completed   # Only completed
 rundown prune --inactive    # Only inactive
 rundown prune --active      # Only active (careful!)
 ```
+
+### Testing and Utilities
+
+#### `rundown echo` - Test Helper
+
+Echo command for runbook testing. Supports configurable pass/fail result sequences (useful for exercising retry logic).
+
+```bash
+rundown echo [command...]
+rundown echo -r pass                # Configure result (repeatable)
+rundown echo -r fail -r pass        # Sequence: fail first, then pass
+rundown echo --json                 # JSON output
+```
+
+#### `rundown resolve <file>` - Resolve Variables
+
+Resolve and validate template variables and data sources for a runbook without executing it.
+
+```bash
+rundown resolve my-runbook.runbook.md
+rundown resolve my-runbook.runbook.md --var environment=staging
+rundown resolve my-runbook.runbook.md --json
+```
+
+Useful for verifying that required variables are satisfied and data sources resolve before running.
+
+#### `rundown prompt <content>` - Emit Prompt Content
+
+Output content wrapped in markdown fences. Used by the runtime to render `prompt` code blocks; can also be invoked directly.
+
+```bash
+rundown prompt 'Review the implementation'
+rundown prompt 'Review the implementation' --json
+```
+
+#### `rundown scenario` - Runbook Scenarios
+
+List, show, or execute scenarios declared in a runbook's frontmatter (see [SCENARIOS.md](./SCENARIOS.md)).
+
+```bash
+rundown scenario ls <file>                  # List scenarios
+rundown scenario show <file> <name>         # Show scenario details
+rundown scenario run <file> <name>          # Execute and verify
+rundown scenario run <file> <name> --quiet  # Suppress command output
+rundown scenario ls <file> --json           # JSON output (also on show/run)
+```
+
+#### `rundown scenario-suite` - Scenario Suites
+
+List, show, or execute cases from a scenario suite file.
+
+```bash
+rundown scenario-suite ls <suite-file>
+rundown scenario-suite show <suite-file> <case>
+rundown scenario-suite run <suite-file> <case>
+rundown scenario-suite run <suite-file> --all      # Run all cases
+rundown scenario-suite run <suite-file> --quiet    # Suppress output
+```
+
+#### Sibling CLIs: `rdpath` and `rdx`
+
+Two companion CLIs ship alongside `rundown`:
+
+- **`rdpath`** — Path assembly tool for date-prefixed filenames and context-scoped paths. See [RDPATH.md](./RDPATH.md).
+- **`rdx`** — JSON-to-Markdown renderer with optional schema validation. See [RDX.md](./RDX.md).
 
 ### Delegation Commands
 
@@ -1200,7 +1301,21 @@ rundown pop                  # Resume enforcement
 
 # Maintenance
 rundown check <file>         # Validate runbook
+rundown resolve <file>       # Resolve and validate variables/data sources
 rundown prune                # Clean up state
+
+# Testing and utilities
+rundown echo [command...]              # Test helper (configurable pass/fail)
+rundown prompt <content>               # Output content in markdown fences
+rundown scenario ls <file>             # List runbook scenarios
+rundown scenario show <file> <name>    # Show scenario details
+rundown scenario run <file> <name>     # Execute a scenario
+rundown scenario-suite ls <suite>      # List scenario-suite cases
+rundown scenario-suite run <suite>     # Execute suite case(s)
+
+# Sibling CLIs
+rdpath --dir <path>          # Path assembly tool (see RDPATH.md)
+rdx <file>                   # Render JSON to Markdown (see RDX.md)
 
 # Delegation
 rd delegate <runbook> --step <id>  # Delegate substep to child runbook
