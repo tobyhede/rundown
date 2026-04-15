@@ -33,6 +33,7 @@ export {
   isLoopControlAction,
   isStepExitAction,
   isTerminalAction,
+  parseOutputDeclaration,
 } from './helpers.js';
 export type { ConvertedTransitions, ParsedStepHeader, ParsedSubstepHeader } from './helpers.js';
 export {

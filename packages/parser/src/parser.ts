@@ -2,7 +2,14 @@ import { fromMarkdown } from 'mdast-util-from-markdown';
 import { visit, SKIP } from 'unist-util-visit';
 import type { Node } from 'unist';
 import type { Code, Heading, List, ListItem, Paragraph, PhrasingContent } from 'mdast';
-import type { Step, ParsedSubstep, Command, ParsedForClause, ParseResult } from './ast.js';
+import type {
+  Step,
+  ParsedSubstep,
+  Command,
+  ParsedForClause,
+  ParseResult,
+  OutputDeclaration,
+} from './ast.js';
 import type { Transitions } from './schemas.js';
 import { type ParsedConditional, RunbookSyntaxError } from './types.js';
 import {
@@ -19,7 +26,9 @@ import {
   validateLoopControlUsage,
   validateDEFERUsage,
   parseForClause,
+  parseOutputDeclaration,
 } from './helpers.js';
+import { NAMED_IDENTIFIER_PATTERN } from './step-id.js';
 import { validateRunbook } from './validator.js';
 import { extractFrontmatter, nameFromFilename } from './frontmatter.js';
 
@@ -132,6 +141,8 @@ interface StepBuilder {
   forConditionals?: ParsedConditional[];
   stepConditionals?: ParsedConditional[];
   invalidH3s: Array<{ line: number; text: string }>;
+  inputs?: string[];
+  outputs?: OutputDeclaration[];
 }
 
 /**
@@ -545,6 +556,82 @@ function handleListItemContent(
 }
 
 /**
+ * Process an OUTPUTS directive list item.
+ *
+ * Reads the nested list under `- OUTPUTS` and collects each item as an
+ * OutputDeclaration. Returns `SKIP` to prevent double-traversal of the nested list.
+ *
+ * @param node - The list item node whose first paragraph text is "OUTPUTS"
+ * @param ctx - Active step context
+ * @returns `SKIP` to stop the visitor from descending into child nodes
+ * @throws {RunbookSyntaxError} When nested items are missing or have invalid syntax
+ */
+function handleOutputsDirective(node: ListItem, ctx: ActiveStepContext): typeof SKIP {
+  const nestedList = node.children.find((c): c is List => c.type === 'list');
+  if (!nestedList || nestedList.children.length === 0) {
+    throw new RunbookSyntaxError(
+      `OUTPUTS directive in step "${ctx.currentStep.name}"${formatLineNum(node)} requires at least one output declaration (e.g., "  - PlanPath {{ path \\"plan.json\\" }}")`,
+    );
+  }
+
+  const declarations: OutputDeclaration[] = [];
+  for (const item of nestedList.children) {
+    const paragraph = item.children.find((c) => c.type === 'paragraph');
+    if (!paragraph) {
+      throw new RunbookSyntaxError(
+        `Invalid OUTPUTS declaration in step "${ctx.currentStep.name}"${formatLineNum(item)}: expected "Name value"`,
+      );
+    }
+    const text = extractText(paragraph as PhrasingContent | Heading | Paragraph | ListItem);
+    const decl = parseOutputDeclaration(text);
+    if (!decl) {
+      throw new RunbookSyntaxError(
+        `Invalid OUTPUTS declaration in step "${ctx.currentStep.name}"${formatLineNum(item)}: "${text.trim()}" — expected "Name value" (e.g., "PlanPath {{ path \\"plan.json\\" }}")`,
+      );
+    }
+    declarations.push(decl);
+  }
+
+  ctx.currentStep.outputs = declarations;
+  return SKIP;
+}
+
+/**
+ * Process an INPUTS directive list item.
+ *
+ * Reads the nested list under `- INPUTS` and collects each item as a variable name.
+ * Returns `SKIP` to prevent double-traversal of the nested list.
+ *
+ * @param node - The list item node whose first paragraph text is "INPUTS"
+ * @param ctx - Active step context
+ * @returns `SKIP` to stop the visitor from descending into child nodes
+ * @throws {RunbookSyntaxError} When nested items are missing or have invalid identifier syntax
+ */
+function handleInputsDirective(node: ListItem, ctx: ActiveStepContext): typeof SKIP {
+  const nestedList = node.children.find((c): c is List => c.type === 'list');
+  if (!nestedList || nestedList.children.length === 0) {
+    throw new RunbookSyntaxError(
+      `INPUTS directive in step "${ctx.currentStep.name}"${formatLineNum(node)} requires at least one variable name (e.g., "  - PlanPath")`,
+    );
+  }
+  const names: string[] = [];
+  for (const item of nestedList.children) {
+    const paragraph = item.children.find((c) => c.type === 'paragraph');
+    if (!paragraph) continue;
+    const name = extractText(paragraph as PhrasingContent | Heading | Paragraph | ListItem).trim();
+    if (!NAMED_IDENTIFIER_PATTERN.test(name)) {
+      throw new RunbookSyntaxError(
+        `Invalid INPUTS declaration in step "${ctx.currentStep.name}"${formatLineNum(item)}: "${name}" is not a valid variable identifier`,
+      );
+    }
+    names.push(name);
+  }
+  // Merge with any previously declared inputs (e.g., multiple INPUTS directives)
+  ctx.currentStep.inputs = [...(ctx.currentStep.inputs ?? []), ...names];
+  return SKIP;
+}
+
+/**
  * Process a list item node within an active step.
  *
  * @param node - The list item AST node
@@ -557,6 +644,19 @@ function handleListItem(node: ListItem, ctx: ActiveStepContext): typeof SKIP | u
   if (!firstParagraph) return;
 
   const text = extractText(firstParagraph as PhrasingContent | Heading | Paragraph | ListItem);
+
+  // Check for OUTPUTS directive (step-level only, not substep)
+  if (text.trim() === 'OUTPUTS' && !ctx.currentStep.pendingSubstep) {
+    return handleOutputsDirective(node, ctx);
+  }
+
+  // Check for INPUTS directive (step-level only, not substep)
+  // Exact match only — prose starting with "INPUTS" (e.g., "INPUTS are validated by…")
+  // is not a directive. Variable names live in the nested list, not inline text.
+  const trimmedText = text.trim();
+  if (trimmedText === 'INPUTS' && !ctx.currentStep.pendingSubstep) {
+    return handleInputsDirective(node, ctx);
+  }
 
   // Check for FOR clause BEFORE conditionals
   const forResult = parseForClause(text);
@@ -802,6 +902,8 @@ function finalizeStep(
       description: step.description,
       transitions: stepTransitions,
       line: step.line,
+      inputs: step.inputs,
+      outputs: step.outputs,
     };
     if (step.forClause) {
       return {
@@ -832,6 +934,8 @@ function finalizeStep(
     prompt,
     transitions: stepTransitions,
     line: step.line,
+    inputs: step.inputs,
+    outputs: step.outputs,
   };
 
   if (step.forClause) {

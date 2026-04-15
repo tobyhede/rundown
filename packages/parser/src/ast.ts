@@ -219,6 +219,19 @@ export interface Substep extends SubstepFields {
 }
 
 /**
+ * A named output value declaration on a step.
+ *
+ * Produced by `- OUTPUTS\n  - Name value` syntax. The `value` field is a raw
+ * expression string (e.g., `{{ path "plan.json" }}`) evaluated at step completion.
+ */
+export interface OutputDeclaration {
+  /** Variable name to publish (e.g., "PlanPath") */
+  readonly name: string;
+  /** Raw value expression — template variable, `{{ path "file" }}`, or quoted literal */
+  readonly value: string;
+}
+
+/**
  * Shared fields common to all step variants.
  *
  * UNIFIED NAMING: All steps have a name.
@@ -238,6 +251,10 @@ interface StepFields {
   readonly aggregation?: Aggregation;
   /** Source line number for error reporting */
   readonly line?: number;
+  /** Variables this step expects to be resolved from context OUTPUTS (validation gate) */
+  readonly inputs?: readonly string[];
+  /** Values to publish to context after this step passes */
+  readonly outputs?: readonly OutputDeclaration[];
 }
 
 /** Prompt-only or empty step — no command, no substeps. */
