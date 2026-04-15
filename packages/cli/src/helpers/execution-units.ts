@@ -15,6 +15,20 @@ import { storeStepOutputs } from './step-outputs.js';
 export type ExecutionUnit = ResolvedStep | Substep;
 
 /**
+ * Narrow an {@link ExecutionUnit} to a {@link Substep}.
+ *
+ * Discriminates on the `kind` field: only step variants carry `kind`, so its
+ * absence uniquely identifies a substep. Preferred over ad-hoc `'id' in unit`
+ * duck-typing at call sites.
+ *
+ * @param unit - The execution unit to test
+ * @returns `true` when `unit` is a {@link Substep}
+ */
+export function isSubstep(unit: ExecutionUnit): unit is Substep {
+  return !('kind' in unit);
+}
+
+/**
  * Resolve the currently executing unit for the active cursor.
  *
  * Falls back to the parent step if the state references a substep that is not
@@ -121,7 +135,7 @@ export async function persistPassOutputs({
   const templateVars = mergeExecutionTemplateVars(templateVarsBefore, templateVarsAfter);
   const executionUnit = resolveCurrentExecutionUnit(currentStep, currentSubstepId);
 
-  if ('id' in executionUnit && executionUnit.outputs?.length) {
+  if (isSubstep(executionUnit) && executionUnit.outputs?.length) {
     await storeStepOutputs(executionUnit.outputs, templateVars, cwd);
   }
 
