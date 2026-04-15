@@ -228,6 +228,16 @@ rd echo test
         expect(result?.exitCode).toBe(0);
       });
 
+      it('strips --text flag from echo output instead of including it literally', async () => {
+        await setupActiveRunbook();
+
+        await executeRdCommandInternal('rd echo --text hello', tempDir);
+
+        // '--text' must not appear in the echoed output
+        expect(consoleSpy).not.toHaveBeenCalledWith(expect.stringContaining('--text'));
+        expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('hello'));
+      });
+
       it('supports multiple --result options', async () => {
         await setupActiveRunbook();
 

@@ -131,8 +131,13 @@ async function executeEchoInternal(args: string[], cwd: string): Promise<Executi
   // Parse --result options from args
   const { results, remaining } = parseResultOptions(args);
 
+  // Strip output-format flags — internal path outputs directly via console.log,
+  // not through OutputEmitter, so these flags are no-ops here but must not leak
+  // into commandArgs where they would appear literally in the echoed output.
+  const commandArgs = remaining.filter((arg) => arg !== '--text');
+
   // Use shared echo logic
-  const result = await executeEchoLogic(results, remaining, cwd);
+  const result = await executeEchoLogic(results, commandArgs, cwd);
 
   // Output error or result message
   if (result.error) {
