@@ -1,0 +1,102 @@
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
+import * as os from 'node:os';
+import { loadContextOutputs, storeContextOutputs } from '../../src/runbook/context-outputs.js';
+import { contextOutputsPath } from '../../src/paths.js';
+
+describe('context-outputs', () => {
+  let tmpDir: string;
+  const contextId = 'ctx-test-1';
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rundown-ctx-'));
+  });
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  describe('loadContextOutputs', () => {
+    it('returns empty object when outputs file does not exist', async () => {
+      const result = await loadContextOutputs(tmpDir, contextId);
+      expect(result).toEqual({});
+    });
+
+    it('reads and returns stored outputs when file exists', async () => {
+      const filePath = contextOutputsPath(tmpDir, contextId);
+      await fs.mkdir(path.dirname(filePath), { recursive: true });
+      await fs.writeFile(
+        filePath,
+        JSON.stringify({ PlanPath: '/tmp/plan.json', Region: 'us-west' }),
+        'utf-8',
+      );
+
+      const result = await loadContextOutputs(tmpDir, contextId);
+      expect(result).toEqual({ PlanPath: '/tmp/plan.json', Region: 'us-west' });
+    });
+
+    it('filters non-string values from stored outputs', async () => {
+      const filePath = contextOutputsPath(tmpDir, contextId);
+      await fs.mkdir(path.dirname(filePath), { recursive: true });
+      await fs.writeFile(
+        filePath,
+        JSON.stringify({ PlanPath: '/tmp/plan.json', Count: 42, Active: true }),
+        'utf-8',
+      );
+
+      const result = await loadContextOutputs(tmpDir, contextId);
+      expect(result).toEqual({ PlanPath: '/tmp/plan.json' });
+    });
+
+    it('throws when stored file contains malformed JSON', async () => {
+      const filePath = contextOutputsPath(tmpDir, contextId);
+      await fs.mkdir(path.dirname(filePath), { recursive: true });
+      await fs.writeFile(filePath, 'not valid json {{{', 'utf-8');
+
+      await expect(loadContextOutputs(tmpDir, contextId)).rejects.toThrow();
+    });
+  });
+
+  describe('storeContextOutputs', () => {
+    it('creates the directory and file when they do not exist', async () => {
+      await storeContextOutputs(tmpDir, contextId, { PlanPath: '/tmp/plan.json' });
+
+      const filePath = contextOutputsPath(tmpDir, contextId);
+      const raw = await fs.readFile(filePath, 'utf-8');
+      expect(JSON.parse(raw)).toEqual({ PlanPath: '/tmp/plan.json' });
+    });
+
+    it('merges new outputs with existing outputs on disk', async () => {
+      await storeContextOutputs(tmpDir, contextId, { PlanPath: '/tmp/plan.json' });
+      await storeContextOutputs(tmpDir, contextId, { Region: 'us-west' });
+
+      const result = await loadContextOutputs(tmpDir, contextId);
+      expect(result).toEqual({
+        PlanPath: '/tmp/plan.json',
+        Region: 'us-west',
+      });
+    });
+
+    it('overwrites existing values when the same key is published again', async () => {
+      await storeContextOutputs(tmpDir, contextId, { PlanPath: '/old/path.json' });
+      await storeContextOutputs(tmpDir, contextId, { PlanPath: '/new/path.json' });
+
+      const result = await loadContextOutputs(tmpDir, contextId);
+      expect(result).toEqual({ PlanPath: '/new/path.json' });
+    });
+  });
+
+  describe('round-trip', () => {
+    it('store then load returns the same values', async () => {
+      const payload = {
+        PlanPath: '/tmp/plan.json',
+        Region: 'us-west',
+        Version: '1.2.3',
+      };
+      await storeContextOutputs(tmpDir, contextId, payload);
+
+      const result = await loadContextOutputs(tmpDir, contextId);
+      expect(result).toEqual(payload);
+    });
+  });
+});

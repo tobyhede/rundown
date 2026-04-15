@@ -65,3 +65,10 @@ export {
   extractInheritedUserVars,
   MAX_ANCESTOR_DEPTH,
 } from './delegation-context.js';
+export { loadContextOutputs, storeContextOutputs } from './context-outputs.js';
+export {
+  assembleArtifactPath,
+  validateArtifactCtx,
+  VALID_CTX,
+  VALID_FILE,
+} from './artifact-paths.js';

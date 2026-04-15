@@ -43,11 +43,8 @@ export const LOCKS_DIR = `${RUNDOWN_DIR}/locks`;
 /** Directory path (relative to project root) for project-local runbook sources. */
 export const RUNBOOKS_DIR = `${RUNDOWN_DIR}/runbooks`;
 
-/** Directory path (relative to project root) for runbook work artifacts. */
-export const WORK_DIR = `${RUNDOWN_DIR}/work`;
-
-/** File path (relative to project root) for the user-managed variable config file. */
-export const CONFIG_FILE = `${RUNDOWN_DIR}/config.yaml`;
+/** Directory path (relative to project root) for context-scoped output stores. */
+export const CONTEXTS_DIR = `${RUNDOWN_DIR}/contexts`;
 
 /**
  * Absolute path to the runbook execution state directory.
@@ -82,12 +79,25 @@ export const locksDir = (cwd: string): string => path.join(cwd, LOCKS_DIR);
 export const runbooksDir = (cwd: string): string => path.join(cwd, RUNBOOKS_DIR);
 
 /**
- * Absolute path to the runbook work artifact directory.
+ * Absolute path to the contexts directory.
  *
  * @param cwd - Project root directory
- * @returns Path to `.rundown/work/`
+ * @returns Path to `.rundown/contexts/`
  */
-export const workDir = (cwd: string): string => path.join(cwd, WORK_DIR);
+export const contextsDir = (cwd: string): string => path.join(cwd, CONTEXTS_DIR);
+
+/**
+ * Absolute path to a context's outputs file.
+ *
+ * @param cwd - Project root directory
+ * @param contextId - Context identifier (must match `[A-Za-z0-9._-]+`)
+ * @returns Path to `.rundown/contexts/<contextId>/outputs.json`
+ * @throws {Error} If `contextId` is empty or contains unsafe characters
+ */
+export const contextOutputsPath = (cwd: string, contextId: string): string => {
+  assertSafeId(contextId, 'id');
+  return path.join(cwd, CONTEXTS_DIR, contextId, 'outputs.json');
+};
 
 /**
  * Absolute path to a specific runbook state file.
