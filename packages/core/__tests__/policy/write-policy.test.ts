@@ -15,6 +15,8 @@ describe('DEFAULT_POLICY write allowlist — semantic (glob-matcher)', () => {
       ['.rundown/session.json'],
       ['.rundown/work/main/artifact.txt'],
       ['.rundown/work/feature-foo/deep/file.md'],
+      ['.rundown/contexts/ctx-abc/outputs.json'],
+      ['.rundown/contexts/sprint-42/outputs.json'],
     ])('allows write to %s', (rel) => {
       expect(evaluator.checkPath(abs(rel), 'write').allowed).toBe(true);
     });
