@@ -51,7 +51,7 @@ describe('Built-in Runbook Workflow Integration', () => {
         const result = runCli(['check', sourcePath], tempDir);
 
         expect(result.exitCode).toBe(0);
-        expect(result.stdout).toContain('PASS');
+        expect((JSON.parse(result.stdout) as { valid?: boolean }).valid).toBe(true);
       });
     }
   });

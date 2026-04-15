@@ -72,7 +72,7 @@ describe('Delegation claim integration', () => {
     // Delegate substep 1.1 to child runbook
     result = runCli('delegate child.runbook.md --step 1.1', workspace);
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain('DELEGATED');
+    expect(JSON.parse(result.stdout).action).toBe('delegated');
 
     // Extract token from output
     const tokenMatch = /"token":\s*"(rdtk_[^"]+)"/.exec(result.stdout);
@@ -120,7 +120,7 @@ describe('Delegation claim integration', () => {
     expect(delegateOutput.token).toBeDefined();
 
     const claimToken = delegateOutput.token as string;
-    result = runCli(`claim ${claimToken} --text`, workspace);
+    result = runCli(`claim ${claimToken}`, workspace);
 
     // Command should succeed
     expect(result.exitCode).toBe(0);
@@ -161,7 +161,7 @@ Task uses {{ myVar }}.
     const token = tokenMatch![1];
 
     // Claim with --var-file
-    result = runCli(`claim ${token} --var-file vars.yaml --text`, workspace);
+    result = runCli(`claim ${token} --var-file vars.yaml`, workspace);
     expect(result.exitCode).toBe(0);
 
     // Verify the variable was rendered in child execution output
@@ -174,7 +174,7 @@ Task uses {{ myVar }}.
   });
 
   it('claim outputs structured error for invalid token', () => {
-    const result = runCli('claim bad-token --text', workspace);
+    const result = runCli('claim bad-token', workspace);
     expect(result.exitCode).toBe(1);
 
     const output = JSON.parse(result.stderr);

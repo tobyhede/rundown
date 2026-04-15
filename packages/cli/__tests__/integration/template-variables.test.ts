@@ -461,7 +461,7 @@ rd echo a={{a}} b={{b}}
       await rm(runbookPath);
 
       // Pass should work with stored runbookSrc
-      const result = runCli('pass --text', workspace);
+      const result = runCli('pass', workspace);
       expect(result.exitCode).toBe(0);
 
       // Parse JSONL output - the last line contains the final state
@@ -494,7 +494,7 @@ rd echo a={{a}} b={{b}}
       runCli('run test.runbook.md --var message=original --prompted --text', workspace);
       await rm(runbookPath);
 
-      const result = runCli('fail --text', workspace);
+      const result = runCli('fail', workspace);
       expect(result.exitCode).toBe(0);
 
       // Parse JSONL output - the last line contains the final state
@@ -522,7 +522,7 @@ rd echo a={{a}} b={{b}}
       runCli('run test.runbook.md --var message=original --prompted --text', workspace);
       await rm(runbookPath);
 
-      const result = runCli('goto 2 --text', workspace);
+      const result = runCli('goto 2', workspace);
       expect(result.exitCode).toBe(0);
 
       // Parse JSONL output - the last line contains the final state

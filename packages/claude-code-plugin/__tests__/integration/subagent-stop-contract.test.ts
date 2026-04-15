@@ -77,11 +77,11 @@ name: child-contract
 Do the child work.
 `;
 
-/** Extract delegation token from `rd delegate` stdout. */
+/** Extract delegation token from `rd delegate` JSON stdout. */
 function extractToken(stdout: string): string {
-  const match = /Token:\s*(rdtk_\S+)/.exec(stdout);
-  if (!match) throw new Error(`No token found in delegate output:\n${stdout}`);
-  return match[1];
+  const parsed = JSON.parse(stdout) as { token?: string };
+  if (!parsed.token) throw new Error(`No token found in delegate output:\n${stdout}`);
+  return parsed.token;
 }
 
 describe('subagent-stop contract tests', () => {
