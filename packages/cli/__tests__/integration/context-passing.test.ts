@@ -328,7 +328,7 @@ The message is: {{Message}}
     // Step 2's STEP_ENTERED event should have {{Message}} substituted
     const events = parseJsonOutput(result.stdout);
     const step2Entered = events.find(
-      (e) => e.type === 'step_entered' && (e.position as any)?.current === '2',
+      (e) => e.type === 'step_entered' && (e.position as { current?: string }).current === '2',
     );
     expect(step2Entered).toBeDefined();
     expect(step2Entered?.prompt).toContain('hello-auto');

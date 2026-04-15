@@ -26,7 +26,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   ),
   deriveActiveFrame: jest.fn().mockReturnValue({ step: '1', iteration: undefined, frameKey: '1' }),
   storeContextOutputs: jest.fn().mockResolvedValue(undefined),
-  logger: { warn: jest.fn().mockResolvedValue(undefined) },
+  logger: { warn: jest.fn().mockReturnValue(undefined) },
   ...mockErrorHelpers,
 }));
 
