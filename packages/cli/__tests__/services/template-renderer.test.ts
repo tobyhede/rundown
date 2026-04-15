@@ -1711,4 +1711,31 @@ describe('evaluateOutputExpression', () => {
       evaluateOutputExpression('{{ path "plan.json" }}', { WorkPath: '.rundown/work' }),
     ).toThrow(/ContextId/);
   });
+
+  it('supports ctx= override using a bare variable name', () => {
+    const result = evaluateOutputExpression('{{ path "plan.json" ctx=Override }}', {
+      WorkPath: '.rundown/work',
+      ContextId: 'ctx-abc',
+      Override: 'ctx-xyz',
+    });
+    expect(result).toMatch(/\/\.rd-ctx-xyz\//);
+  });
+
+  it('supports ctx= override using a spaced Handlebars expression', () => {
+    const result = evaluateOutputExpression('{{ path "plan.json" ctx={{ Override }} }}', {
+      WorkPath: '.rundown/work',
+      ContextId: 'ctx-abc',
+      Override: 'ctx-xyz',
+    });
+    expect(result).toMatch(/\/\.rd-ctx-xyz\//);
+  });
+
+  it('supports ctx= override using a dotted Handlebars expression with spaces', () => {
+    const result = evaluateOutputExpression('{{ path "plan.json" ctx={{ context.current.at }} }}', {
+      WorkPath: '.rundown/work',
+      ContextId: 'ctx-abc',
+      context: { current: { at: 'step-3-1' } },
+    });
+    expect(result).toMatch(/\/\.rd-step-3-1\//);
+  });
 });

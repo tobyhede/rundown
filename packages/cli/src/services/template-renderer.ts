@@ -969,7 +969,7 @@ export function warnUnresolvedRunbookVariables(runbook: ResolvedRunbook): string
  *   [1] filename — the output filename (may include extension)
  *   [2] optional ctx value — raw expression to override the default ContextId
  */
-const PATH_HELPER_REGEX = /^\{\{\s*path\s+"([^"]+)"(?:\s+ctx=(\S+))?\s*\}\}$/;
+const PATH_HELPER_REGEX = /^\{\{\s*path\s+"([^"]+)"(?:\s+ctx=(.+?))?\s*\}\}$/;
 
 /**
  * Evaluate an OUTPUTS value expression to its final string.
@@ -1009,9 +1009,10 @@ export function evaluateOutputExpression(
     // Resolve ctx — either from explicit ctx= parameter or from ContextId variable
     let contextId: string;
     if (pathMatch[2]) {
-      // ctx=SomeVar — expand as template variable first
-      const ctxExpr = pathMatch[2];
-      // Could be a bare var name or a {{var}} reference
+      // ctx=SomeVar — expand as template variable first.
+      // Accepts bare identifiers (`ctx=Foo`), compact Handlebars (`ctx={{Foo}}`),
+      // and spaced Handlebars (`ctx={{ context.current.at }}`).
+      const ctxExpr = pathMatch[2].trim();
       const ctxExpanded = expandLoopVariables(
         ctxExpr.startsWith('{{') ? ctxExpr : `{{${ctxExpr}}}`,
         variables,
