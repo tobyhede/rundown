@@ -81,9 +81,9 @@ rd echo "child completed"
     // Provide --step but omit runbook path — inferred from substep.runbooks[0]
     result = runCli('delegate --step 1.1', workspace);
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain('DELEGATED');
+    expect(JSON.parse(result.stdout).action).toBe('delegated');
 
-    const tokenMatch = /Token:\s*(rdtk_\S+)/.exec(result.stdout);
+    const tokenMatch = /"token":\s*"(rdtk_[^"]+)"/.exec(result.stdout);
     expect(tokenMatch).not.toBeNull();
   });
 
@@ -97,9 +97,9 @@ rd echo "child completed"
     // No args — infers step (1.1) and runbook (child.runbook.md) from state
     result = runCli('delegate', workspace);
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain('DELEGATED');
+    expect(JSON.parse(result.stdout).action).toBe('delegated');
 
-    const tokenMatch = /Token:\s*(rdtk_\S+)/.exec(result.stdout);
+    const tokenMatch = /"token":\s*"(rdtk_[^"]+)"/.exec(result.stdout);
     expect(tokenMatch).not.toBeNull();
   });
 
@@ -113,7 +113,7 @@ rd echo "child completed"
     result = runCli('delegate', workspace);
     expect(result.exitCode).toBe(0);
 
-    const tokenMatch = /Token:\s*(rdtk_\S+)/.exec(result.stdout);
+    const tokenMatch = /"token":\s*"(rdtk_[^"]+)"/.exec(result.stdout);
     expect(tokenMatch).not.toBeNull();
     const token = tokenMatch![1];
 
@@ -133,7 +133,7 @@ rd echo "child completed"
     // Delegate first substep (inferred → child1.runbook.md)
     result = runCli('delegate', workspace);
     expect(result.exitCode).toBe(0);
-    const token1Match = /Token:\s*(rdtk_\S+)/.exec(result.stdout);
+    const token1Match = /"token":\s*"(rdtk_[^"]+)"/.exec(result.stdout);
     expect(token1Match).not.toBeNull();
     const token1 = token1Match![1];
 
@@ -144,7 +144,7 @@ rd echo "child completed"
     // Delegate second substep (inferred → child2.runbook.md); parent is now active again
     result = runCli('delegate', workspace);
     expect(result.exitCode).toBe(0);
-    const token2Match = /Token:\s*(rdtk_\S+)/.exec(result.stdout);
+    const token2Match = /"token":\s*"(rdtk_[^"]+)"/.exec(result.stdout);
     expect(token2Match).not.toBeNull();
     const token2 = token2Match![1];
 
@@ -163,9 +163,9 @@ rd echo "child completed"
     // Pass explicit runbook path even though substep has one — explicit wins
     result = runCli('delegate explicit-child.runbook.md --step 1.1', workspace);
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain('DELEGATED');
+    expect(JSON.parse(result.stdout).action).toBe('delegated');
 
-    const tokenMatch = /Token:\s*(rdtk_\S+)/.exec(result.stdout);
+    const tokenMatch = /"token":\s*"(rdtk_[^"]+)"/.exec(result.stdout);
     expect(tokenMatch).not.toBeNull();
     const token = tokenMatch![1];
 
@@ -199,7 +199,7 @@ Do some manual work here.
     // Step 1.2 is runbook list — delegate and claim
     result = runCli('delegate', workspace);
     expect(result.exitCode).toBe(0);
-    const tokenMatch = /Token:\s*(rdtk_\S+)/.exec(result.stdout);
+    const tokenMatch = /"token":\s*"(rdtk_[^"]+)"/.exec(result.stdout);
     expect(tokenMatch).not.toBeNull();
     const token = tokenMatch![1];
 
