@@ -122,6 +122,8 @@ interface SubstepBuilder {
   hasSeenPromptText: boolean;
   pendingConditionals: ParsedConditional[];
   line?: number;
+  inputs?: string[];
+  outputs?: OutputDeclaration[];
 }
 
 interface StepBuilder {
@@ -220,10 +222,23 @@ function finalizePendingSubstep(ctx: VisitorContext): void {
       transitions: converted?.transitions ?? DEFAULT_TRANSITIONS,
       runbooks: runbooks.length > 0 ? runbooks : undefined,
       line: ps.line,
+      inputs: ps.inputs,
+      outputs: ps.outputs,
     };
     ctx.currentStep.substeps.push(substep);
     ctx.currentStep.pendingSubstep = undefined;
   }
+}
+
+function getDirectiveTarget(ctx: ActiveStepContext): StepBuilder | SubstepBuilder {
+  return ctx.currentStep.pendingSubstep ?? ctx.currentStep;
+}
+
+function formatDirectiveTarget(ctx: ActiveStepContext): string {
+  const target = ctx.currentStep.pendingSubstep;
+  return target
+    ? `substep "${ctx.currentStep.name}.${target.id}"`
+    : `step "${ctx.currentStep.name}"`;
 }
 
 function handleH1Heading(node: Heading, ctx: VisitorContext): void {
@@ -316,6 +331,8 @@ function handleH3Heading(node: Heading, ctx: ActiveStepContext): void {
       hasSeenPromptText: false,
       pendingConditionals: [],
       line: node.position?.start.line,
+      inputs: undefined,
+      outputs: undefined,
     };
   } else {
     ctx.currentStep.invalidH3s.push({
@@ -567,10 +584,12 @@ function handleListItemContent(
  * @throws {RunbookSyntaxError} When nested items are missing or have invalid syntax
  */
 function handleOutputsDirective(node: ListItem, ctx: ActiveStepContext): typeof SKIP {
+  const target = getDirectiveTarget(ctx);
+  const targetLabel = formatDirectiveTarget(ctx);
   const nestedList = node.children.find((c): c is List => c.type === 'list');
   if (!nestedList || nestedList.children.length === 0) {
     throw new RunbookSyntaxError(
-      `OUTPUTS directive in step "${ctx.currentStep.name}"${formatLineNum(node)} requires at least one output declaration (e.g., "  - PlanPath {{ path \\"plan.json\\" }}")`,
+      `OUTPUTS directive in ${targetLabel}${formatLineNum(node)} requires at least one output declaration (e.g., "  - PlanPath {{ path \\"plan.json\\" }}")`,
     );
   }
 
@@ -579,20 +598,20 @@ function handleOutputsDirective(node: ListItem, ctx: ActiveStepContext): typeof 
     const paragraph = item.children.find((c) => c.type === 'paragraph');
     if (!paragraph) {
       throw new RunbookSyntaxError(
-        `Invalid OUTPUTS declaration in step "${ctx.currentStep.name}"${formatLineNum(item)}: expected "Name value"`,
+        `Invalid OUTPUTS declaration in ${targetLabel}${formatLineNum(item)}: expected "Name value"`,
       );
     }
     const text = extractText(paragraph as PhrasingContent | Heading | Paragraph | ListItem);
     const decl = parseOutputDeclaration(text);
     if (!decl) {
       throw new RunbookSyntaxError(
-        `Invalid OUTPUTS declaration in step "${ctx.currentStep.name}"${formatLineNum(item)}: "${text.trim()}" — expected "Name value" (e.g., "PlanPath {{ path \\"plan.json\\" }}")`,
+        `Invalid OUTPUTS declaration in ${targetLabel}${formatLineNum(item)}: "${text.trim()}" — expected "Name value" (e.g., "PlanPath {{ path \\"plan.json\\" }}")`,
       );
     }
     declarations.push(decl);
   }
 
-  ctx.currentStep.outputs = declarations;
+  target.outputs = declarations;
   return SKIP;
 }
 
@@ -608,10 +627,12 @@ function handleOutputsDirective(node: ListItem, ctx: ActiveStepContext): typeof 
  * @throws {RunbookSyntaxError} When nested items are missing or have invalid identifier syntax
  */
 function handleInputsDirective(node: ListItem, ctx: ActiveStepContext): typeof SKIP {
+  const target = getDirectiveTarget(ctx);
+  const targetLabel = formatDirectiveTarget(ctx);
   const nestedList = node.children.find((c): c is List => c.type === 'list');
   if (!nestedList || nestedList.children.length === 0) {
     throw new RunbookSyntaxError(
-      `INPUTS directive in step "${ctx.currentStep.name}"${formatLineNum(node)} requires at least one variable name (e.g., "  - PlanPath")`,
+      `INPUTS directive in ${targetLabel}${formatLineNum(node)} requires at least one variable name (e.g., "  - PlanPath")`,
     );
   }
   const names: string[] = [];
@@ -621,13 +642,13 @@ function handleInputsDirective(node: ListItem, ctx: ActiveStepContext): typeof S
     const name = extractText(paragraph as PhrasingContent | Heading | Paragraph | ListItem).trim();
     if (!NAMED_IDENTIFIER_PATTERN.test(name)) {
       throw new RunbookSyntaxError(
-        `Invalid INPUTS declaration in step "${ctx.currentStep.name}"${formatLineNum(item)}: "${name}" is not a valid variable identifier`,
+        `Invalid INPUTS declaration in ${targetLabel}${formatLineNum(item)}: "${name}" is not a valid variable identifier`,
       );
     }
     names.push(name);
   }
   // Merge with any previously declared inputs (e.g., multiple INPUTS directives)
-  ctx.currentStep.inputs = [...(ctx.currentStep.inputs ?? []), ...names];
+  target.inputs = [...(target.inputs ?? []), ...names];
   return SKIP;
 }
 
@@ -645,26 +666,16 @@ function handleListItem(node: ListItem, ctx: ActiveStepContext): typeof SKIP | u
 
   const text = extractText(firstParagraph as PhrasingContent | Heading | Paragraph | ListItem);
 
-  // Check for OUTPUTS directive (step-level only, not substep)
+  // Check for OUTPUTS directive on the active execution unit (step or substep)
   if (text.trim() === 'OUTPUTS') {
-    if (ctx.currentStep.pendingSubstep) {
-      throw new RunbookSyntaxError(
-        `OUTPUTS directive${formatLineNum(node)} is not supported inside a substep — declare OUTPUTS at the step level`,
-      );
-    }
     return handleOutputsDirective(node, ctx);
   }
 
-  // Check for INPUTS directive (step-level only, not substep)
+  // Check for INPUTS directive on the active execution unit (step or substep)
   // Exact match only — prose starting with "INPUTS" (e.g., "INPUTS are validated by…")
   // is not a directive. Variable names live in the nested list, not inline text.
   const trimmedText = text.trim();
   if (trimmedText === 'INPUTS') {
-    if (ctx.currentStep.pendingSubstep) {
-      throw new RunbookSyntaxError(
-        `INPUTS directive${formatLineNum(node)} is not supported inside a substep — declare INPUTS at the step level`,
-      );
-    }
     return handleInputsDirective(node, ctx);
   }
 

@@ -432,6 +432,8 @@ function toResolvedSubstep(substep: ParsedSubstep, runbooks: string[] | undefine
     command: substep.command,
     prompt: substep.prompt,
     transitions: substep.transitions,
+    inputs: substep.inputs,
+    outputs: substep.outputs,
     runbooks: runbooks?.length ? runbooks : undefined,
     line: substep.line,
   };

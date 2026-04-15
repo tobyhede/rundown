@@ -33,7 +33,7 @@ import {
   type StepTransitionedPayload,
 } from '@rundown-org/core';
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
-import { storeStepOutputs } from './step-outputs.js';
+import { persistPassOutputs } from './execution-units.js';
 import { resolveIndexOption } from './index-option.js';
 import { getRunbookFromState } from './runbook-loader.js';
 import {
@@ -457,20 +457,18 @@ export async function executeTransition(
 
   const actionType = parseActionType(extractLastAction(rawSnapshot));
 
-  // Store OUTPUTS for step-level PASS transitions (best-effort, non-fatal).
-  // For substep-driven completions, only store when the parent step itself advances
-  // (all substeps resolved and the step moved forward) OR when the action is terminal
-  // (COMPLETE/STOP on the final step, where the step name never changes).
-  // Mirrors the auto-execution guard in services/execution.ts so manual PASS through a
-  // substep cannot publish outputs computed from an incomplete parent step.
-  if (config.lastResult === 'pass' && currentStep.outputs && currentStep.outputs.length > 0) {
-    const isSubstepContext = previousState.substep !== undefined;
-    const stepAdvanced = actorUpdatedState.step !== previousState.step;
-    const isTerminalAction = actionType === 'COMPLETE' || actionType === 'STOP';
-    if (!isSubstepContext || stepAdvanced || isTerminalAction) {
-      // postTransitionTemplateVars — must reflect state *after* the PASS event was applied
-      await storeStepOutputs(currentStep.outputs, actorUpdatedState.templateVars, cwd);
-    }
+  // Store OUTPUTS for PASS transitions (best-effort, non-fatal).
+  if (config.lastResult === 'pass') {
+    await persistPassOutputs({
+      cwd,
+      currentStep,
+      currentSubstepId: previousState.substep,
+      previousStepId: previousState.step,
+      updatedStepId: actorUpdatedState.step,
+      actionType,
+      templateVarsBefore: previousState.templateVars,
+      templateVarsAfter: actorUpdatedState.templateVars,
+    });
   }
 
   const ensuredAfterTransition = await lifecycleService.ensureActiveEntry(

@@ -53,7 +53,11 @@ import {
   transitionSinkFromEmitter,
   type TransitionOrchestrationPolicy,
 } from '../helpers/transition-orchestrator.js';
-import { storeStepOutputs } from '../helpers/step-outputs.js';
+import {
+  collectExecutionUnitInputs,
+  persistPassOutputs,
+  resolveCurrentExecutionUnit,
+} from '../helpers/execution-units.js';
 
 /**
  * Per-step dynamic variables (e.g., `Step`, `Index`, named loop variable).
@@ -250,18 +254,17 @@ async function applyResultTransition({
   const actionType = parseActionType(extractLastAction(syncResult.snapshot));
 
   // Store OUTPUTS for PASS transitions (best-effort, non-fatal).
-  // For substep-driven completions, only store when the parent step itself advances
-  // (i.e. all substeps resolved and the step moved forward) OR when the action is
-  // terminal (COMPLETE/STOP on the final step, where the step name never changes).
-  // For direct command steps there is no active substep, so always store on PASS.
-  if (cwd && result === 'pass' && currentStep.outputs && currentStep.outputs.length > 0) {
-    const isSubstepContext = currentState.substep !== undefined;
-    const stepAdvanced = syncResult.state.step !== currentState.step;
-    const isTerminalAction = actionType === 'COMPLETE' || actionType === 'STOP';
-    if (!isSubstepContext || stepAdvanced || isTerminalAction) {
-      // postTransitionTemplateVars — must reflect state *after* the PASS event was applied
-      await storeStepOutputs(currentStep.outputs, syncResult.state.templateVars, cwd);
-    }
+  if (cwd && result === 'pass') {
+    await persistPassOutputs({
+      cwd,
+      currentStep,
+      currentSubstepId: currentState.substep,
+      previousStepId: currentState.step,
+      updatedStepId: syncResult.state.step,
+      actionType,
+      templateVarsBefore: currentState.templateVars,
+      templateVarsAfter: syncResult.state.templateVars,
+    });
   }
 
   const ensured = await lifecycleService.ensureActiveEntry(
@@ -500,14 +503,8 @@ export async function runExecutionLoop(
 
     const totalSteps = countNumberedSteps(steps);
 
-    // Determine what to render: substep if we're at one, otherwise the step
-    let itemToRender: ResolvedStep | Substep = currentStep;
-    if (currentState.substep && resolvedStepHasSubsteps(currentStep)) {
-      const substep = currentStep.substeps.find((s) => s.id === currentState.substep);
-      if (substep) {
-        itemToRender = substep;
-      }
-    }
+    // Determine the active execution unit: substep if we're at one, otherwise the step.
+    const itemToRender = resolveCurrentExecutionUnit(currentStep, currentState.substep);
 
     // Resolve dynamic values for all data sources (array, file, range).
     // The ForIterationService resolves currentValue before each iteration,
@@ -597,14 +594,16 @@ export async function runExecutionLoop(
       continue;
     }
 
-    // Step-level INPUTS injection: load declared input names from context outputs into templateVars.
+    // Execution-unit INPUTS injection: load declared input names from context outputs
+    // into templateVars. Substeps inherit parent-step INPUTS and may declare their own.
     // Missing keys are silently skipped — they render literally as {{name}} in the prompt,
     // consistent with the general template variable behavior for undefined vars.
     // INPUTS only fill gaps: a name already present in templateVars (via CLI flags, config,
     // frontmatter, etc.) takes precedence over the context value, preserving documented
     // variable precedence. A malformed outputs.json is logged and tolerated — INPUTS are
     // optional by design and should not abort an otherwise healthy run.
-    if (!currentState.substep && currentStep.inputs && currentStep.inputs.length > 0) {
+    const executionInputs = collectExecutionUnitInputs(currentStep, currentState.substep);
+    if (executionInputs.length > 0) {
       const contextId =
         typeof currentState.templateVars?.ContextId === 'string'
           ? currentState.templateVars.ContextId
@@ -621,7 +620,7 @@ export async function runExecutionLoop(
         }
         const existing = currentState.templateVars ?? {};
         const injected: Record<string, string> = {};
-        for (const name of currentStep.inputs) {
+        for (const name of executionInputs) {
           if (!Object.hasOwn(existing, name) && Object.hasOwn(contextOutputs, name)) {
             injected[name] = contextOutputs[name];
           }

@@ -447,6 +447,27 @@ export async function prepareRunbook(
     }
   }
 
+  // Child runbooks inherit parent user vars plus any published context OUTPUTS
+  // available under the shared ContextId. Treating OUTPUTS as part of the
+  // inherited layer keeps delegation behavior aligned with the documented
+  // variable precedence while still allowing child-local overrides later.
+  let cachedContextOutputs: { contextId: string; values: Record<string, string> } | undefined;
+  const inheritedUserVars = { ...(options?.inheritedUserVars ?? {}) };
+  const inheritedContextId =
+    typeof inheritedUserVars.ContextId === 'string' ? inheritedUserVars.ContextId : undefined;
+  if (inheritedContextId) {
+    try {
+      const values = await loadContextOutputs(cwd, inheritedContextId);
+      cachedContextOutputs = { contextId: inheritedContextId, values };
+      Object.assign(inheritedUserVars, values);
+    } catch (err) {
+      void logger.warn('runbook-pipeline: failed to load context outputs for child inheritance', {
+        contextId: inheritedContextId,
+        error: getErrorMessage(err),
+      });
+    }
+  }
+
   // Variable resolution
   let mergedVariables: Record<string, TemplateVarValue>;
   let providedKeys: ReadonlySet<string>;
@@ -458,7 +479,7 @@ export async function prepareRunbook(
         var: varOpts.var,
         varJson: varOpts.varJson,
         frontmatterVars: frontmatter?.vars,
-        inheritedVars: options?.inheritedUserVars,
+        inheritedVars: inheritedUserVars,
       },
       cwd,
       {
@@ -530,7 +551,10 @@ export async function prepareRunbook(
       const contextId =
         typeof templateVars.ContextId === 'string' ? templateVars.ContextId : undefined;
       if (contextId) {
-        const contextOutputs = await loadContextOutputs(cwd, contextId);
+        const contextOutputs =
+          cachedContextOutputs?.contextId === contextId
+            ? cachedContextOutputs.values
+            : await loadContextOutputs(cwd, contextId);
         for (const inputName of declaredInputs) {
           // Only inject if not already provided via VARS channel (VARS take precedence)
           if (!providedKeys.has(inputName) && Object.hasOwn(contextOutputs, inputName)) {

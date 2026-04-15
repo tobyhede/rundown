@@ -312,6 +312,80 @@ describe('runExecutionLoop', () => {
     expect(result).toBe('waiting');
   });
 
+  describe('INPUTS injection for substeps', () => {
+    it('injects inherited parent inputs and substep-local inputs without overriding existing vars', async () => {
+      const substepSteps: any[] = [
+        {
+          kind: 'substeps',
+          name: '1',
+          description: 'Parent step',
+          inputs: ['SharedPath', 'ParentOnly'],
+          substeps: [
+            {
+              id: 'a',
+              description: 'Child substep',
+              prompt: 'Shared={{SharedPath}} Parent={{ParentOnly}} Child={{ChildOnly}}',
+              inputs: ['SharedPath', 'ChildOnly'],
+              transitions: {
+                pass: { next: 'CONTINUE' },
+                fail: { next: 'STOP' },
+              },
+            },
+          ],
+          transitions: {
+            pass: { next: '2' },
+            fail: { next: 'STOP' },
+          },
+        },
+        {
+          kind: 'base',
+          name: '2',
+          description: 'Done',
+          transitions: {
+            pass: { next: 'COMPLETE' },
+            fail: { next: 'STOP' },
+          },
+        },
+      ];
+
+      mockManager.load.mockResolvedValue({
+        id: runbookId,
+        step: '1',
+        substep: 'a',
+        status: 'running',
+        templateVars: {
+          ContextId: 'ctx-substep-inputs',
+          SharedPath: 'from-cli',
+        },
+      });
+      (core.loadContextOutputs as jest.Mock).mockResolvedValue({
+        SharedPath: 'from-context',
+        ParentOnly: 'from-parent',
+        ChildOnly: 'from-child',
+      });
+
+      const result = await runExecutionLoop(
+        mockManager,
+        runbookId,
+        substepSteps,
+        '/tmp',
+        false,
+        mockEmitter,
+      );
+
+      expect(result).toBe('waiting');
+      expect(core.loadContextOutputs).toHaveBeenCalledWith('/tmp', 'ctx-substep-inputs');
+      expect(mockEmitter.emit).toHaveBeenCalledWith(
+        'STEP_ENTERED',
+        expect.objectContaining({
+          isSubstep: true,
+          stepName: 'a',
+          prompt: 'Shared=from-cli Parent=from-parent Child=from-child',
+        }),
+      );
+    });
+  });
+
   it('executes command and advances to next step', async () => {
     mockManager.load
       .mockResolvedValueOnce({ id: runbookId, step: '1', status: 'running' })
@@ -942,6 +1016,104 @@ describe('runExecutionLoop', () => {
         '/tmp',
         'ctx-drain',
         expect.objectContaining({ PlanPath: 'plan-value' }),
+      );
+    });
+
+    it('stores substep OUTPUTS immediately when an early substep passes', async () => {
+      const stepsWithSubstepOutputs: any[] = [
+        {
+          kind: 'substeps',
+          name: '1',
+          description: 'Step 1 with substeps',
+          substeps: [
+            {
+              id: 'a',
+              description: 'Substep A',
+              outputs: [{ name: 'ChildPath', value: '"child-a"' }],
+              transitions: {
+                pass: { next: 'CONTINUE' },
+                fail: { next: 'STOP' },
+              },
+            },
+            {
+              id: 'b',
+              description: 'Substep B',
+              transitions: {
+                pass: { next: 'CONTINUE' },
+                fail: { next: 'STOP' },
+              },
+            },
+          ],
+          transitions: {
+            pass: { next: '2' },
+            fail: { next: 'STOP' },
+          },
+        },
+        {
+          kind: 'base',
+          name: '2',
+          description: 'Step 2',
+          transitions: {
+            pass: { next: 'COMPLETE' },
+            fail: { next: 'STOP' },
+          },
+        },
+      ];
+
+      mockManager.load.mockResolvedValueOnce({
+        id: runbookId,
+        step: '1',
+        substep: 'b',
+        status: 'running',
+        templateVars: { ContextId: 'ctx-substep-output' },
+      });
+
+      mockLifecycleService.listResolvedCompletions.mockResolvedValueOnce([
+        { completion: { targetSubstep: 'a', result: 'pass' } },
+      ]);
+      mockLifecycleService.consumeResolvedCompletion.mockResolvedValueOnce({
+        result: 'pass',
+        targetSubstep: 'a',
+      });
+
+      mockActorService.sendAndSync.mockResolvedValue({
+        state: {
+          id: runbookId,
+          step: '1',
+          substep: 'b',
+          status: 'running',
+          templateVars: { ContextId: 'ctx-substep-output' },
+        },
+        snapshot: {
+          status: 'active',
+          value: '1',
+          context: { lastAction: { type: 'CONTINUE' } },
+        },
+      });
+
+      await drainResolvedCompletions({
+        manager: mockManager,
+        actorService: mockActorService,
+        sessionService: mockSessionService,
+        lifecycleService: mockLifecycleService,
+        emitter: mockEmitter,
+        runbookId,
+        steps: stepsWithSubstepOutputs,
+        currentState: {
+          id: runbookId,
+          step: '1',
+          substep: 'a',
+          status: 'running',
+          templateVars: { ContextId: 'ctx-substep-output' },
+        },
+        transitionPolicy: { onComplete: { popRunbook: true }, onStopped: { popRunbook: true } },
+        cwd: '/tmp',
+      });
+
+      expect(core.storeContextOutputs).toHaveBeenCalledWith(
+        '/tmp',
+        'ctx-substep-output',
+        expect.objectContaining({ ChildPath: 'child-a' }),
       );
     });
   });

@@ -396,6 +396,60 @@ describe('prepareRunbook', () => {
     );
   });
 
+  it('merges published context OUTPUTS into inherited child variables', async () => {
+    resolveRunbookFile.mockResolvedValue({ path: '/test/child.md', source: 'project' });
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue(mockParseResult());
+    (core.loadContextOutputs as jest.Mock).mockResolvedValue({
+      PlanPath: '/ctx/plan.json',
+      Tag: 'from-output',
+    });
+    (resolveVariables as jest.Mock).mockResolvedValue({
+      vars: {
+        ContextId: 'ctx-parent',
+        Region: 'us-west',
+        Tag: 'from-output',
+        PlanPath: '/ctx/plan.json',
+      },
+      sources: {},
+      warnings: [],
+      providedKeys: new Set(['ContextId', 'Region', 'Tag', 'PlanPath']),
+    });
+
+    const result = await prepareRunbook('child.md', {}, '/test', {
+      inheritedUserVars: {
+        ContextId: 'ctx-parent',
+        Region: 'us-west',
+        Tag: 'from-parent',
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(core.loadContextOutputs).toHaveBeenCalledWith('/test', 'ctx-parent');
+    expect(resolveVariables).toHaveBeenCalledWith(
+      expect.objectContaining({
+        inheritedVars: {
+          ContextId: 'ctx-parent',
+          Region: 'us-west',
+          Tag: 'from-output',
+          PlanPath: '/ctx/plan.json',
+        },
+      }),
+      '/test',
+      expect.anything(),
+    );
+    expect(substituteRunbookVariables).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        Tag: 'from-output',
+        PlanPath: '/ctx/plan.json',
+        'context.vars.Tag': 'from-output',
+        'context.vars.PlanPath': '/ctx/plan.json',
+      }),
+    );
+  });
+
   it('passes parser frontmatter vars into variable resolution', async () => {
     resolveRunbookFile.mockResolvedValue({ path: '/test/good.md', source: 'project' });
     (
@@ -1328,6 +1382,114 @@ describe('claimAndLaunch', () => {
       }),
     );
     expect(resolveCall?.[0].inheritedVars).not.toHaveProperty('RunId');
+  });
+
+  it('passes published OUTPUTS into delegated child inherited vars', async () => {
+    const tokenHash = 'sha256:mock';
+    const delegation = {
+      tokenHash,
+      childRunbookPath: 'child.md',
+      contextSnapshot: {
+        vars: {
+          ContextId: 'ctx-parent',
+          Region: 'us-west',
+          Tag: 'from-parent',
+          'context.vars.Region': 'us-west',
+        },
+        ancestors: [],
+      },
+      childRunId: null,
+      createdAt: new Date().toISOString(),
+      cancelledAt: null,
+    };
+
+    const parentState = makeState('parent-id', {
+      substepStates: [
+        {
+          id: '1',
+          status: 'pending',
+          delegation,
+        },
+      ],
+    });
+
+    const mockScanner = {
+      findByToken: jest
+        .fn<any>()
+        .mockResolvedValue({ parentState, stepId: '1', substepId: '1', delegation }),
+      findOrphanedChild: jest.fn<any>().mockResolvedValue(null),
+    };
+    (core.DelegationScanService as jest.Mock).mockImplementation(() => mockScanner);
+
+    resolveRunbookFile.mockResolvedValue({ path: '/test/child.md', source: 'project' });
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue(mockParseResult());
+    (core.extractInheritedUserVars as jest.Mock).mockReturnValue({
+      ContextId: 'ctx-parent',
+      Region: 'us-west',
+      Tag: 'from-parent',
+    });
+    (core.loadContextOutputs as jest.Mock).mockResolvedValue({
+      Tag: 'from-output',
+      PlanPath: '/ctx/plan.json',
+    });
+    (resolveVariables as jest.Mock).mockResolvedValue({
+      vars: {
+        RunId: 'child-run',
+        ContextId: 'ctx-parent',
+        Region: 'us-west',
+        Tag: 'from-output',
+        PlanPath: '/ctx/plan.json',
+      },
+      sources: {},
+      warnings: [],
+      providedKeys: new Set(['RunId', 'ContextId', 'Region', 'Tag', 'PlanPath']),
+    });
+
+    const mockManager = {
+      load: jest.fn<any>().mockResolvedValue(parentState),
+      create: jest.fn<any>().mockResolvedValue({
+        id: 'new-child-id',
+        title: 'Child',
+      }),
+      update: jest.fn<any>().mockResolvedValue(undefined),
+      initializeSubsteps: jest.fn<any>().mockResolvedValue(undefined),
+    };
+    (core.RunbookStateManager as jest.Mock).mockImplementation(() => mockManager);
+
+    (core.DelegationLock as jest.Mock).mockImplementation(() => ({
+      acquire: jest.fn<any>().mockResolvedValue(undefined),
+      release: jest.fn<any>().mockResolvedValue(undefined),
+    }));
+
+    runExecutionLoop.mockResolvedValue('waiting');
+
+    const ctx = {
+      output: { status: jest.fn(), flush: jest.fn() } as any,
+      manager: mockManager,
+      actorService: { initializeState: jest.fn<any>().mockResolvedValue(undefined) } as any,
+      sessionService: { pushRunbook: jest.fn<any>().mockResolvedValue(undefined) } as any,
+      lifecycleService: makeLifecycle(),
+      cwd: '/test',
+    };
+
+    const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline');
+    const result = await claimAndLaunch(ctx as any, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+
+    expect(result.ok).toBe(true);
+    expect(core.loadContextOutputs).toHaveBeenCalledWith('/test', 'ctx-parent');
+    const resolveCall = (resolveVariables as jest.Mock).mock.calls.at(-1);
+    expect(resolveCall?.[0]).toEqual(
+      expect.objectContaining({
+        inheritedVars: {
+          ContextId: 'ctx-parent',
+          Region: 'us-west',
+          Tag: 'from-output',
+          PlanPath: '/ctx/plan.json',
+        },
+      }),
+    );
   });
 
   it('returns error when child runbook file not found', async () => {

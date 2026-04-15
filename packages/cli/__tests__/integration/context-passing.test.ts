@@ -161,6 +161,117 @@ describe('OUTPUTS→INPUTS round-trip', () => {
   });
 });
 
+describe('substep INPUTS/OUTPUTS round-trip', () => {
+  let workspace: TestWorkspace;
+
+  const SUBSTEP_CONTEXT_RUNBOOK = `---
+name: substep-context-test
+---
+# Substep Context Test
+
+## 1. Parent step
+- PASS CONTINUE
+- FAIL STOP
+- INPUTS
+  - PlanPath
+- OUTPUTS
+  - ParentValue "parent-complete"
+
+### 1.fetch Produce child output
+- PASS CONTINUE
+- FAIL STOP
+- OUTPUTS
+  - ChildValue "substep-fetch"
+
+Plan path: {{PlanPath}}
+
+### 1.use Consume child output
+- PASS CONTINUE
+- FAIL STOP
+- INPUTS
+  - ChildValue
+
+Child value: {{ChildValue}}
+
+## 2. Consume parent output
+- PASS COMPLETE
+- FAIL STOP
+- INPUTS
+  - ParentValue
+
+Parent value: {{ParentValue}}
+`;
+
+  beforeEach(async () => {
+    workspace = await createTestWorkspace();
+    await writeFile(join(workspace.cwd, 'substep-context.runbook.md'), SUBSTEP_CONTEXT_RUNBOOK);
+  });
+
+  afterEach(async () => {
+    await workspace.cleanup();
+  });
+
+  it('inherits parent inputs into substeps and publishes substep then parent outputs', async () => {
+    const contextId = 'substep-roundtrip';
+    const contextDir = join(workspace.cwd, '.rundown', 'contexts', contextId);
+    await mkdir(contextDir, { recursive: true });
+    await writeFile(
+      join(contextDir, 'outputs.json'),
+      JSON.stringify({ PlanPath: '/seeded/path/plan.json' }),
+      'utf-8',
+    );
+
+    const start = runCli(
+      `run --prompted substep-context.runbook.md --var ContextId=${contextId} --json`,
+      workspace,
+    );
+    expect(start.exitCode).toBe(0);
+
+    const startEvents = parseJsonOutput(start.stdout);
+    const fetchEntered = startEvents.find(
+      (e) => e.type === 'step_entered' && e.stepName === 'fetch',
+    );
+    expect(fetchEntered).toBeDefined();
+    expect(fetchEntered?.prompt).toContain('/seeded/path/plan.json');
+    expect(fetchEntered?.prompt).not.toContain('{{PlanPath}}');
+
+    const passFetch = runCli('pass --json', workspace);
+    expect(passFetch.exitCode).toBe(0);
+
+    const afterFetchRaw = await readFile(join(contextDir, 'outputs.json'), 'utf-8');
+    const afterFetch = JSON.parse(afterFetchRaw) as Record<string, unknown>;
+    expect(afterFetch).toEqual({
+      PlanPath: '/seeded/path/plan.json',
+      ChildValue: 'substep-fetch',
+    });
+
+    const fetchEvents = parseJsonOutput(passFetch.stdout);
+    const useEntered = fetchEvents.find((e) => e.type === 'step_entered' && e.stepName === 'use');
+    expect(useEntered).toBeDefined();
+    expect(useEntered?.prompt).toContain('substep-fetch');
+    expect(useEntered?.prompt).not.toContain('{{ChildValue}}');
+
+    const passUse = runCli('pass --json', workspace);
+    expect(passUse.exitCode).toBe(0);
+
+    const afterUseRaw = await readFile(join(contextDir, 'outputs.json'), 'utf-8');
+    const afterUse = JSON.parse(afterUseRaw) as Record<string, unknown>;
+    expect(afterUse).toEqual({
+      PlanPath: '/seeded/path/plan.json',
+      ChildValue: 'substep-fetch',
+      ParentValue: 'parent-complete',
+    });
+
+    const useEvents = parseJsonOutput(passUse.stdout);
+    const step2Entered = useEvents.find(
+      (e) => e.type === 'step_entered' && (e.position as { current?: string })?.current === '2',
+    );
+    expect(step2Entered).toBeDefined();
+    expect(step2Entered?.prompt).toContain('parent-complete');
+    expect(step2Entered?.prompt).not.toContain('{{ParentValue}}');
+  });
+});
+
 describe('OUTPUTS→INPUTS via auto-execution (no --prompted)', () => {
   let workspace: TestWorkspace;
 

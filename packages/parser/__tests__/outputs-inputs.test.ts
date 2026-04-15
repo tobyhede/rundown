@@ -106,6 +106,39 @@ describe('parseRunbookDocument INPUTS directive', () => {
     // Not an INPUTS directive — inputs is undefined
     expect(runbook.steps[0].inputs).toBeUndefined();
   });
+
+  it('attaches INPUTS to a substep when declared inside that substep', () => {
+    const md = `## 1. Parent step
+### 1.1 Child substep
+- INPUTS
+  - PlanPath
+`;
+    const { runbook } = parseRunbookDocument(md);
+    const step = runbook.steps[0];
+    expect(step.kind).toBe('substeps');
+    if (step.kind !== 'substeps') {
+      throw new Error('expected substeps step');
+    }
+    expect(step.substeps[0].inputs).toEqual(['PlanPath']);
+  });
+
+  it('preserves both parent-step and substep INPUTS when both are declared', () => {
+    const md = `## 1. Parent step
+- INPUTS
+  - SharedPath
+### 1.1 Child substep
+- INPUTS
+  - ChildOnly
+`;
+    const { runbook } = parseRunbookDocument(md);
+    const step = runbook.steps[0];
+    expect(step.inputs).toEqual(['SharedPath']);
+    expect(step.kind).toBe('substeps');
+    if (step.kind !== 'substeps') {
+      throw new Error('expected substeps step');
+    }
+    expect(step.substeps[0].inputs).toEqual(['ChildOnly']);
+  });
 });
 
 describe('parseRunbookDocument with OUTPUTS directive', () => {
@@ -139,6 +172,43 @@ describe('parseRunbookDocument with OUTPUTS directive', () => {
   - 123bad value
 `;
     expect(() => parseRunbookDocument(md)).toThrow(RunbookSyntaxError);
+  });
+
+  it('attaches parsed outputs to a substep when OUTPUTS directive is present', () => {
+    const md = `## 1. Parent step
+### 1.1 Child substep
+- OUTPUTS
+  - ChildPath {{ path "child.json" }}
+`;
+    const { runbook } = parseRunbookDocument(md);
+    const step = runbook.steps[0];
+    expect(step.kind).toBe('substeps');
+    if (step.kind !== 'substeps') {
+      throw new Error('expected substeps step');
+    }
+    expect(step.substeps[0].outputs).toEqual([
+      { name: 'ChildPath', value: '{{ path "child.json" }}' },
+    ]);
+  });
+
+  it('preserves both parent-step and substep OUTPUTS when both are declared', () => {
+    const md = `## 1. Parent step
+- OUTPUTS
+  - ParentPath {{ path "parent.json" }}
+### 1.1 Child substep
+- OUTPUTS
+  - ChildPath {{ path "child.json" }}
+`;
+    const { runbook } = parseRunbookDocument(md);
+    const step = runbook.steps[0];
+    expect(step.outputs).toEqual([{ name: 'ParentPath', value: '{{ path "parent.json" }}' }]);
+    expect(step.kind).toBe('substeps');
+    if (step.kind !== 'substeps') {
+      throw new Error('expected substeps step');
+    }
+    expect(step.substeps[0].outputs).toEqual([
+      { name: 'ChildPath', value: '{{ path "child.json" }}' },
+    ]);
   });
 });
 
