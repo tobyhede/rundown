@@ -99,4 +99,27 @@ describe('context-outputs', () => {
       expect(result).toEqual(payload);
     });
   });
+
+  describe('concurrency', () => {
+    it('concurrent writes from two callers both survive (no key lost)', async () => {
+      // Both writes race — the file lock serializes them so neither overwrites the other
+      await Promise.all([
+        storeContextOutputs(tmpDir, contextId, { KeyA: 'valueA' }),
+        storeContextOutputs(tmpDir, contextId, { KeyB: 'valueB' }),
+      ]);
+
+      const result = await loadContextOutputs(tmpDir, contextId);
+      expect(result.KeyA).toBe('valueA');
+      expect(result.KeyB).toBe('valueB');
+    });
+
+    it('concurrent writes with overlapping keys: later write wins', async () => {
+      // Serialize so we know which write "wins" (last write wins on same key)
+      await storeContextOutputs(tmpDir, contextId, { Key: 'first' });
+      await storeContextOutputs(tmpDir, contextId, { Key: 'second' });
+
+      const result = await loadContextOutputs(tmpDir, contextId);
+      expect(result.Key).toBe('second');
+    });
+  });
 });

@@ -12,8 +12,9 @@
 
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { contextOutputsPath } from '../paths.js';
+import { contextOutputsPath, contextOutputsLockPath, locksDir } from '../paths.js';
 import { isNodeError } from '../errors.js';
+import { acquireFileLock, releaseFileLock } from './file-lock.js';
 
 /**
  * Load context outputs for a given context ID.
@@ -64,17 +65,15 @@ export async function loadContextOutputs(
  * the directory if it does not exist. The write is atomic (write-then-rename) to
  * prevent partial-write corruption on crash.
  *
- * **Concurrency note:** This function performs a read-merge-write sequence without
- * a file lock. Concurrent writes from two processes sharing the same ContextId
- * can race and clobber each other's entries. Current delegation patterns are
- * sequential (parent waits for child before reading outputs), so this race is
- * latent. If parallel delegation patterns are introduced, add a file lock using
- * the existing `delegationLockPath` infrastructure.
+ * Concurrent callers sharing the same `contextId` are serialized with a file
+ * lock under `.rundown/locks/<contextId>.context-outputs.lock` so that no
+ * read-merge-write entries are lost to a race.
  *
  * @param cwd - Project root directory
  * @param contextId - Context identifier shared across the delegation tree
  * @param outputs - New key-value pairs to publish
  * @throws {Error} If the directory cannot be created or the file cannot be written
+ * @throws {Error} If the lock cannot be acquired within 5 seconds
  */
 export async function storeContextOutputs(
   cwd: string,
@@ -83,21 +82,28 @@ export async function storeContextOutputs(
 ): Promise<void> {
   const filePath = contextOutputsPath(cwd, contextId);
   const dir = path.dirname(filePath);
+  const lockFile = contextOutputsLockPath(cwd, contextId);
+  const lockDir = locksDir(cwd);
 
-  await fs.mkdir(dir, { recursive: true });
-
-  // Merge with existing outputs — new outputs overwrite old ones for the same key
-  const existing = await loadContextOutputs(cwd, contextId);
-  const merged = { ...existing, ...outputs };
-
-  // Atomic write: write to a temp file then rename to prevent partial-write corruption
-  const tmp = `${filePath}.${String(process.pid)}.tmp`;
+  await acquireFileLock(lockFile, lockDir);
   try {
-    await fs.writeFile(tmp, JSON.stringify(merged, null, 2), 'utf-8');
-    await fs.rename(tmp, filePath);
-  } catch (err) {
-    // Clean up temp file on failure (best-effort)
-    await fs.unlink(tmp).catch(() => undefined);
-    throw err;
+    await fs.mkdir(dir, { recursive: true });
+
+    // Merge with existing outputs — new outputs overwrite old ones for the same key
+    const existing = await loadContextOutputs(cwd, contextId);
+    const merged = { ...existing, ...outputs };
+
+    // Atomic write: write to a temp file then rename to prevent partial-write corruption
+    const tmp = `${filePath}.${String(process.pid)}.tmp`;
+    try {
+      await fs.writeFile(tmp, JSON.stringify(merged, null, 2), 'utf-8');
+      await fs.rename(tmp, filePath);
+    } catch (err) {
+      // Clean up temp file on failure (best-effort)
+      await fs.unlink(tmp).catch(() => undefined);
+      throw err;
+    }
+  } finally {
+    await releaseFileLock(lockFile);
   }
 }
