@@ -102,7 +102,7 @@ Unicode escapes: `\u2014` is em dash (—), `\u2192` is right arrow (→).
 
 Separators are matched greedily — the longest sequence of separator characters between identifier and description text is consumed.
 
-**Note:** Two distinct separator sets apply at different parse phases. Only space, dash (`-`), and colon (`:`) may terminate a step identifier inside the header (the in-header step-ID terminator set). The broader set listed in the production above (`.` `:` `—` `→` `-` `)` space) is stripped from the leading edge of the description text after the identifier has been parsed. Authors writing `## 1. Foo` rely on the trailing-strip behavior; the `.` is not itself a valid in-header terminator.
+**Note:** The full separator set (`.` `:` `—` `→` `-` `)` plus whitespace) is applied in two places during header parsing: trailing separator characters are stripped from the extracted step-identifier token, and leading separators are stripped from the remainder before it becomes the description. This makes headers like `## 1.`, `## 1. Foo`, `## Rollback)`, and `## Rollback — clean up` all valid with the same set of punctuation.
 
 ## FOR Clauses
 

@@ -606,7 +606,7 @@ Rundown enforces a security policy layer to control what commands runbooks can e
 
 ### Default Behavior
 
-See [SECURITY.md](./SECURITY.md) for full default policy details, including command allow/block/prompt behavior, sandbox-on-by-default enforcement, and the default write restriction to `.rundown` subpaths.
+See [SECURITY.md](./SECURITY.md) for full default policy details, including command allow/block/prompt behavior, sandbox-on-by-default enforcement, and the default write allowlist (Rundown state paths under `.rundown/`, plus `.claude/**`, `node_modules/**`, `dist/**`, `build/**`, `.next/**`, and `{tmp}/**`).
 
 ### Quick Reference
 
