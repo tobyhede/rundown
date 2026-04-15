@@ -7,7 +7,12 @@
  * @module helpers/step-outputs
  */
 
-import { storeContextOutputs, logger, type TemplateVarValue } from '@rundown-org/core';
+import {
+  getErrorMessage,
+  logger,
+  storeContextOutputs,
+  type TemplateVarValue,
+} from '@rundown-org/core';
 import type { OutputDeclaration } from '@rundown-org/parser';
 import { evaluateOutputExpression } from '../services/template-renderer.js';
 
@@ -47,7 +52,7 @@ export async function storeStepOutputs(
       void logger.warn('storeStepOutputs: failed to evaluate output expression', {
         name: output.name,
         value: output.value,
-        error: err instanceof Error ? err.message : String(err),
+        error: getErrorMessage(err),
       });
     }
   }

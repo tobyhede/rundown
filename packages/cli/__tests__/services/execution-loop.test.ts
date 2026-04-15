@@ -849,12 +849,14 @@ describe('runExecutionLoop', () => {
     });
 
     it('stores OUTPUTS exactly once — only when the parent step advances (final substep)', async () => {
-      // Both substeps are pre-resolved. On the first drain (substep 'a' passes) the parent
-      // step stays at '1' → OUTPUTS must NOT be stored. On the second drain (substep 'b'
-      // passes) the parent advances to '2' → OUTPUTS stored exactly once.
+      // Both substeps are pre-resolved. Within a single drainResolvedCompletions call
+      // the internal loop applies both substep completions in sequence: on the first
+      // iteration (substep 'a' passes) the parent step stays at '1' → OUTPUTS must NOT
+      // be stored; on the second iteration (substep 'b' passes) the parent advances to
+      // '2' → OUTPUTS stored exactly once.
       //
-      // orchestrateTransition calls manager.load for the CONTINUE reload path — mock the
-      // two sequential loads so the drain loop can proceed past each substep.
+      // orchestrateTransition calls manager.load for the CONTINUE reload path — mock two
+      // sequential loads so the internal drain loop can proceed past each substep.
       mockManager.load
         .mockResolvedValueOnce({
           id: runbookId,
