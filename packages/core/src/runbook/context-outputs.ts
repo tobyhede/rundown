@@ -135,7 +135,7 @@ export async function storeContextOutputs(
 
   await acquireFileLock(lockFile, lockDir);
   try {
-    await fs.mkdir(dir, { recursive: true });
+    await fs.mkdir(dir, { recursive: true, mode: 0o700 });
 
     // After mkdir, verify the directory hasn't been swapped for a symlink that
     // escapes the contexts root. assertSafeId blocks traversal in the id string
@@ -155,6 +155,7 @@ export async function storeContextOutputs(
       await fs.writeFile(tmp, JSON.stringify(merged, null, 2), {
         encoding: 'utf-8',
         flag: 'wx',
+        mode: 0o600,
       });
       await fs.rename(tmp, filePath);
     } catch (err) {
