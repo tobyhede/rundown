@@ -675,8 +675,12 @@ function handleInputsDirective(node: ListItem, ctx: ActiveStepContext): typeof S
     }
     names.push(name);
   }
-  // Merge with any previously declared inputs (e.g., multiple INPUTS directives)
-  target.inputs = [...(target.inputs ?? []), ...names];
+  if (target.inputs && target.inputs.length > 0) {
+    throw new RunbookSyntaxError(
+      `Duplicate INPUTS directive in ${targetLabel}${formatLineNum(node)}: a target may declare INPUTS at most once`,
+    );
+  }
+  target.inputs = [...names];
   return SKIP;
 }
 

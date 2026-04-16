@@ -1033,15 +1033,6 @@ export function escapeForShellSingleQuote(content: string): string {
 }
 
 /**
- * Format an Action object back into its string representation.
- *
- * Converts parsed Action objects into human-readable action strings
- * suitable for display or logging.
- *
- * @param action - The Action object to format
- * @returns String representation of the action (e.g., "GOTO 2", "COMPLETE", "STOP \"message\"")
- */
-/**
  * Parse a single OUTPUTS directive item into an OutputDeclaration.
  *
  * Accepts three value forms:
@@ -1073,7 +1064,7 @@ export function parseOutputDeclaration(text: string): OutputDeclaration | null {
   if (!rawValue) return null;
 
   // Unwrap quoted literals: "HELLO" → HELLO
-  const quotedMatch = /^"([^"]*)"$/.exec(rawValue);
+  const quotedMatch = /^"([^"]+)"$/.exec(rawValue);
   const value = quotedMatch ? quotedMatch[1] : rawValue;
 
   return { name, value };

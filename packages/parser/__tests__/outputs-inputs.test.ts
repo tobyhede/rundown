@@ -212,6 +212,17 @@ describe('parseRunbookDocument with OUTPUTS directive', () => {
     expect(() => parseRunbookDocument(md)).toThrow(/duplicate.*output.*PlanPath/i);
   });
 
+  it('throws RunbookSyntaxError on duplicate INPUTS directive for the same target', () => {
+    const md = `## 1. Duplicate inputs
+- INPUTS
+  - PlanPath
+- INPUTS
+  - OtherVar
+`;
+    expect(() => parseRunbookDocument(md)).toThrow(RunbookSyntaxError);
+    expect(() => parseRunbookDocument(md)).toThrow(/duplicate.*INPUTS/i);
+  });
+
   it('throws RunbookSyntaxError on duplicate OUTPUTS directive for the same target', () => {
     const md = `## 1. Duplicate outputs
 - OUTPUTS
