@@ -1012,6 +1012,12 @@ export function evaluateOutputExpression(
       // ctx=SomeVar — expand as template variable first.
       // Accepts bare identifiers (`ctx=Foo`), compact Handlebars (`ctx={{Foo}}`),
       // and spaced Handlebars (`ctx={{ context.current.at }}`).
+      //
+      // Typo safety: if the named variable is undefined, expandLoopVariables
+      // preserves `{{Name}}` as a literal, and VALID_CTX in
+      // assembleArtifactPath rejects any contextId containing `{{` — so a
+      // misspelled `ctx=PlanPat` (when `PlanPath` was intended) fails loudly
+      // rather than producing a bogus path.
       const ctxExpr = pathMatch[2].trim();
       const ctxExpanded = expandLoopVariables(
         ctxExpr.startsWith('{{') ? ctxExpr : `{{${ctxExpr}}}`,

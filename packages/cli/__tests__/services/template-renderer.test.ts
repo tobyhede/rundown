@@ -1738,4 +1738,18 @@ describe('evaluateOutputExpression', () => {
     });
     expect(result).toMatch(/\/\.rd-step-3-1\//);
   });
+
+  it('rejects ctx= when the referenced variable is undefined (typo safety)', () => {
+    // ctx=PlanPat (typo for PlanPath) — expandLoopVariables preserves the
+    // literal `{{PlanPat}}`, then assembleArtifactPath rejects a contextId
+    // containing `{{` via VALID_CTX. Documents the typo safety net so a
+    // future refactor that bypasses expansion would visibly break this test.
+    expect(() =>
+      evaluateOutputExpression('{{ path "plan.json" ctx=PlanPat }}', {
+        WorkPath: '.rundown/work',
+        ContextId: 'ctx-abc',
+        PlanPath: 'real-ctx',
+      }),
+    ).toThrow();
+  });
 });
