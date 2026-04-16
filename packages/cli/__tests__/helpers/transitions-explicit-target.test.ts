@@ -70,6 +70,7 @@ const { evaluateOutputExpression } = await import('../../src/services/template-r
 const { executeTransition, createPassTransitionConfig, createFailTransitionConfig } = await import(
   '../../src/helpers/transitions'
 );
+const { ALL_OUTPUTS_FAILED_MESSAGE } = await import('../../src/helpers/step-outputs');
 
 function makeCtx(stateOverrides: Record<string, unknown> = {}): any {
   const state = {
@@ -800,7 +801,12 @@ describe('storeStepOutputs via step-level PASS transition', () => {
 
     await executeTransition(ctx, config);
 
-    expect(core.logger.warn).toHaveBeenCalled();
+    // Assert the exact summary-warning branch (not just any warning) so the
+    // test keeps failing if the branch is removed even when per-output
+    // warnings still fire.
+    expect(core.logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining(ALL_OUTPUTS_FAILED_MESSAGE),
+    );
     expect(core.storeContextOutputs).not.toHaveBeenCalled();
   });
 });

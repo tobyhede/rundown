@@ -1026,14 +1026,11 @@ describe('prepareRunbook', () => {
     const result = await prepareRunbook('partial.md', {}, '/test');
 
     expect(result.ok).toBe(true);
-    expect(substituteRunbookVariables).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ Alpha: 'found' }),
-    );
-    expect(substituteRunbookVariables).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.not.objectContaining({ Beta: expect.anything() }),
-    );
+    // Inspect the last call directly; toHaveBeenCalledWith(not.objectContaining)
+    // would be satisfied by any unrelated call that didn't contain Beta.
+    const lastCall = (substituteRunbookVariables as jest.Mock).mock.calls.at(-1);
+    expect(lastCall?.[1]).toEqual(expect.objectContaining({ Alpha: 'found' }));
+    expect(lastCall?.[1]).not.toHaveProperty('Beta');
   });
 
   it('returns VALIDATION_ERROR when validateInputsDeclarations finds invalid identifier', async () => {
