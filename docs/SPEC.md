@@ -327,7 +327,7 @@ OUTPUTS declares values to persist after a successful step execution.
 
 ### 7.2 INPUTS
 
-INPUTS declares template variable names to inject from context outputs before step rendering. Two authoring channels exist — both read from the same `outputs.json` store and follow the same fill-gaps-only precedence.
+INPUTS declares template variable names to inject from context outputs before step rendering. Two declaration sites exist — both read from the same `outputs.json` store and follow the same fill-gaps-only precedence.
 
 **Frontmatter `inputs:`** — declared at the runbook level. Validated at parse time (identifier pattern, reserved-name rejection, no-overlap with `vars:`). Injected at pipeline setup so values are available to every step that references them.
 
@@ -349,7 +349,7 @@ inputs:
 Run the plan at {{ PlanPath }}.
 ```
 
-**Behaviour (common to both channels):**
+**Behaviour (common to both sites):**
 
 *   **Source**: `.rundown/contexts/<ContextId>/outputs.json`.
 *   **Fill-gaps-only**: INPUTS populate a variable only when it is not already defined by a higher-precedence source (CLI flags, `RD_VAR_*`, config, frontmatter `vars:`, inherited delegation). They never override an existing value.
@@ -369,7 +369,7 @@ Children in a delegation tree inherit the parent's `ContextId` via `--var`, prov
 
 ### 7.5 Example: write-plan / execute-plan
 
-A parent runbook produces a plan file and delegates to a child runbook that consumes it. Both share a `ContextId` through delegation inheritance.
+A parent runbook produces a plan file and delegates to a child runbook that consumes it. Both share a `ContextId` through delegation inheritance (see [§7.3](#73-delegation-inheritance) for the hand-off contract — the child automatically inherits the parent's `ContextId` via `--var`).
 
 Parent (`write-plan.runbook.md`):
 
