@@ -9,6 +9,11 @@ import {
   releaseFileLock,
 } from '../../src/runbook/file-lock.js';
 
+interface LockContent {
+  pid: number;
+  created_at: string;
+}
+
 describe('file-lock', () => {
   let tmpDir: string;
   let lockDir: string;
@@ -39,7 +44,7 @@ describe('file-lock', () => {
       await acquireFileLock(lockFile, lockDir);
       try {
         const raw = await fs.readFile(lockFile, 'utf8');
-        const content = JSON.parse(raw) as { pid: number; created_at: string };
+        const content = JSON.parse(raw) as LockContent;
         expect(content.pid).toBe(process.pid);
         expect(typeof content.created_at).toBe('string');
         expect(Number.isNaN(Date.parse(content.created_at))).toBe(false);
@@ -49,13 +54,17 @@ describe('file-lock', () => {
     });
 
     it('reclaims a stale lock from a dead process and rewrites content', async () => {
-      // PID 999999999 is beyond any valid PID on macOS/Linux so kill(pid,0) → ESRCH
+      // PID 999999999 is beyond any valid PID on macOS/Linux so kill(pid,0) → ESRCH.
+      // Keep created_at fresh (a few seconds old) so the age-based reclaim path
+      // cannot fire — isolating the dead-PID branch. A regression that breaks
+      // dead-PID detection will now fail this test instead of silently passing
+      // via the 60s-age fallback.
       const deadPid = 999999999;
-      const staleTimestamp = new Date(Date.now() - 5 * 60_000).toISOString();
+      const freshTimestamp = new Date(Date.now() - 5_000).toISOString();
       await fs.mkdir(lockDir, { recursive: true });
       await fs.writeFile(
         lockFile,
-        JSON.stringify({ pid: deadPid, created_at: staleTimestamp }),
+        JSON.stringify({ pid: deadPid, created_at: freshTimestamp }),
         'utf8',
       );
       const acquireStart = Date.now();
@@ -63,13 +72,13 @@ describe('file-lock', () => {
       await acquireFileLock(lockFile, lockDir);
       try {
         const raw = await fs.readFile(lockFile, 'utf8');
-        const content = JSON.parse(raw) as { pid: number; created_at: string };
+        const content = JSON.parse(raw) as LockContent;
         expect(content.pid).toBe(process.pid);
         expect(content.pid).not.toBe(deadPid);
         // created_at must have been replaced with a fresh timestamp
         expect(Number.isNaN(Date.parse(content.created_at))).toBe(false);
         expect(Date.parse(content.created_at)).toBeGreaterThanOrEqual(acquireStart - 1000);
-        expect(content.created_at).not.toBe(staleTimestamp);
+        expect(content.created_at).not.toBe(freshTimestamp);
       } finally {
         await releaseFileLock(lockFile);
       }
@@ -89,7 +98,7 @@ describe('file-lock', () => {
       await acquireFileLock(lockFile, lockDir);
       try {
         const raw = await fs.readFile(lockFile, 'utf8');
-        const content = JSON.parse(raw) as { pid: number; created_at: string };
+        const content = JSON.parse(raw) as LockContent;
         expect(content.pid).toBe(process.pid);
         expect(content.created_at).not.toBe(oldDate);
         expect(Date.parse(content.created_at)).toBeGreaterThanOrEqual(acquireStart - 1000);
@@ -106,7 +115,7 @@ describe('file-lock', () => {
       await acquireFileLock(lockFile, lockDir);
       try {
         const raw = await fs.readFile(lockFile, 'utf8');
-        const content = JSON.parse(raw) as { pid: number; created_at: string };
+        const content = JSON.parse(raw) as LockContent;
         expect(content.pid).toBe(process.pid);
         expect(Number.isNaN(Date.parse(content.created_at))).toBe(false);
         expect(Date.parse(content.created_at)).toBeGreaterThanOrEqual(acquireStart - 1000);
