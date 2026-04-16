@@ -149,7 +149,7 @@ The `rd` command is an alias for `rundown`.
 
 ## Documentation
 
-- [SPEC.md](docs/SPEC.md) - Rundown format specification
+- [SPEC.md](docs/SPEC.md) - Rundown format specification (includes §6.1 Built-in Variables and §7 Context Passing / INPUTS / OUTPUTS)
 - [FORMAT.md](docs/FORMAT.md) - Formal BNF-style grammar
 - [MCP.md](docs/MCP.md) - MCP server reference
 - [SECURITY.md](docs/SECURITY.md) - Security policy configuration

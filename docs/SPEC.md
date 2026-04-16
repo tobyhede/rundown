@@ -24,9 +24,11 @@ A Rundown document (`.runbook.md`) is a Markdown file with an optional YAML fron
 
 ### 1.2 Frontmatter
 
-Frontmatter fields beyond `name`, `description`, `version`, `author`, `tags`, `vars`, and `required` are preserved (open schema). This allows forward-compatible extensions and user-defined metadata.
+Frontmatter fields beyond `name`, `description`, `version`, `author`, `tags`, `vars`, `required`, and `inputs` are preserved (open schema). This allows forward-compatible extensions and user-defined metadata.
 
 The `required` field declares variable names that must be provided by the caller (via CLI flags, config, environment, or delegation). Each entry must be a valid template variable identifier matching `/^[a-zA-Z_][a-zA-Z0-9_]*$/`. Required variables must not appear in `vars` — they have no default. Missing required variables produce a hard error during resolution.
+
+The `inputs` field declares variable names to inject at pipeline setup from the context outputs store (see [§7 Context Passing](#7-context-passing-inputs--outputs)). Each entry must match the same identifier pattern as `required`. Entries must not also appear in `vars` — injection is gap-filling only; names already defined by `vars` would never receive an injected value. Reserved runtime names (`step`, `index`, `context`, matched case-insensitively) are rejected. Missing inputs at runtime are silently skipped; the declaration expresses intent rather than hard requirement.
 
 The frontmatter `description` field provides a summary for runbook discovery and listing (`rd ls --all`). The `Runbook.description` in the parsed AST is derived from preamble text between the H1 title and first H2 step. These are independent values.
 
@@ -266,7 +268,40 @@ Variables use Handlebars syntax: `{{variable}}`.
     3. `.rundown/config.yaml` (auto-discovered from cwd upward)
     4. Frontmatter `vars:` field
     5. Inherited delegation variables (parent context)
-    6. Built-in defaults (`Date`, `RunId`, `WorkPath`, etc.)
+    6. INPUTS injected from the context outputs store — fill gaps only, never override an existing variable. Silently skipped when `ContextId` is unset or the requested key is absent. See [§7 Context Passing](#7-context-passing-inputs--outputs).
+    7. Built-in defaults — see [§6.1 Built-in Variables](#61-built-in-variables).
+
+### 6.1 Built-in Variables
+
+Rundown sets the following built-in variables once per execution (unless marked dynamic per-step). PascalCase is canonical; lowercase aliases `step` and `index` are also accepted.
+
+| Variable | Example Value | Description |
+|----------|---------------|-------------|
+| `Date` | `2026-02-04` | Current date (YYYY-MM-DD) |
+| `DateTime` | `2026-02-04T10:30:00.000Z` | Full ISO 8601 timestamp |
+| `Year` | `2026` | Current year |
+| `Month` | `02` | Current month (01-12) |
+| `Day` | `04` | Current day (01-31) |
+| `Branch` | `feature/my-work` | Current git branch name (empty when not in git) |
+| `WorkPath` | `.rundown/work/feature-my-work` | Branch-isolated artifact directory (falls back to `.rundown/work` outside git). Default base directory for the `{{ path "..." }}` helper used in OUTPUTS expressions — see [§7.1 OUTPUTS](#71-outputs). |
+| `RunId` | `4a7f0c3e` | Unique-per-execution identifier (fresh 8-char hex per execution; each child in a delegation tree gets its own) |
+| `ContextId` | `a3b8c1d2` | Shared identity across a delegation tree. Indexes `.rundown/contexts/<ContextId>/outputs.json` for context passing — see [§7 Context Passing](#7-context-passing-inputs--outputs). Children inherit the parent's `ContextId` via `--var`. Overridable via `--var ContextId=<name>` for a meaningful identifier (e.g., `sprint-42`). |
+| `Step` | `3.1` | Current qualified step identifier (dynamic per step) |
+| `Index` | `3` | Current loop iteration number inside FOR (dynamic per iteration) |
+| `context.current.step` | `3.1` | Canonical current step identifier (dynamic) |
+| `context.current.substep` | `1` | Current substep number when in a substep (dynamic) |
+| `context.current.index` | `3` | Current loop iteration inside FOR (dynamic) |
+| `context.current.at` | `3.3.1` | Full execution position (`STEP.INDEX.SUBSTEP` inside a FOR loop, `STEP.SUBSTEP` otherwise) (dynamic) |
+
+Static variables (`Date`, `DateTime`, `Year`, `Month`, `Day`, `Branch`, `WorkPath`, `RunId`, `ContextId`) can be overridden via `--var`. Dynamic variables (`Step`, `Index`, `context.current.*` and their lowercase aliases) reflect the current execution position and cannot be overridden. The variable name `context` is reserved.
+
+**Plugin Variables:** When a runbook is resolved from a plugin source (e.g., `rundown:write-plan`), Rundown auto-injects additional variables using UPPER_SNAKE_CASE (mirroring host environment conventions):
+
+| Variable | Description |
+|----------|-------------|
+| `CLAUDE_PLUGIN_ROOT` | Plugin installation directory |
+
+Plugin variables sit in the precedence chain just below CLI flags and can be overridden via `--var`.
 
 ## 7. Context Passing (INPUTS / OUTPUTS)
 
@@ -276,20 +311,51 @@ Steps and substeps may declare INPUTS and OUTPUTS directives for passing data be
 
 OUTPUTS declares values to persist after a successful step execution.
 
+*   **Scope**: Supported on both H2 steps and H3 substeps. At most one OUTPUTS directive per step or substep (Conformance §8 rule 11).
 *   **Persistence trigger**: OUTPUTS are evaluated and stored only on PASS transitions. FAIL transitions skip OUTPUTS entirely.
 *   **Storage**: Values are written atomically to `.rundown/contexts/<ContextId>/outputs.json`. Writes are serialized with a file lock to prevent concurrent corruption.
-*   **Expressions**: Each output entry is evaluated against the step's resolved template variables. Supported forms: Handlebars expressions (`{{ path "file.json" }}`), quoted literals (`"value"`), bare variable references (`VarName`).
+*   **On-disk shape**: A flat JSON object `{ key: stringValue, ... }` — all keys and values are strings. Non-string values encountered during merge are dropped with a warning (not an error). The file is written by atomic temp-file-plus-rename. Writes are additive — new keys are added to the existing object; existing keys are overwritten; unrelated keys are preserved.
+*   **Expressions**: Each output entry is evaluated against the step's resolved template variables. Supported forms:
+    * `{{ path "file.json" }}` — path helper resolving to `<WorkPath>/.rd-<ContextId>/<Date>-file.json` (equivalent to `rdpath --dir WorkPath --ctx ContextId --file file.json`; see [docs/RDPATH.md](./RDPATH.md)).
+    * `{{ path "file.json" ctx=alt-ctx }}` — path helper with explicit context override.
+    * `{{ VarName }}` — template variable reference.
+    * `"literal value"` — quoted literal.
+    * `VarName` — bare variable reference (equivalent to `{{ VarName }}`).
+*   **Identifier constraints**: Context identifiers must match `[A-Za-z0-9_-]+` (not `.` or `..`); filenames must match `[A-Za-z0-9._-]+` (not `.` or `..`). Enforced by `VALID_CTX` and `VALID_FILE` at write time.
 *   **Best-effort**: OUTPUTS persistence is non-fatal. If storage fails (disk full, permissions, lock timeout), the step transition is not rolled back. An `ERROR_OCCURRED` event is emitted.
 *   **Merge semantics**: Outputs merge into the existing `outputs.json` — new keys are added, existing keys are overwritten.
 
 ### 7.2 INPUTS
 
-INPUTS declares template variable names to inject from context outputs before step rendering.
+INPUTS declares template variable names to inject from context outputs before step rendering. Two authoring channels exist — both read from the same `outputs.json` store and follow the same fill-gaps-only precedence.
 
-*   **Injection timing**: INPUTS are loaded from `.rundown/contexts/<ContextId>/outputs.json` and injected into the step's template variables before template expansion.
-*   **Precedence**: INPUTS sit below CLI flags, `RD_VAR_*`, config, and frontmatter `vars:` in the variable precedence chain. CLI `--var` always wins over context outputs.
-*   **Missing values**: If a declared input name is not found in context outputs, it is silently skipped (no error).
-*   **No ContextId**: If `ContextId` is not set, INPUTS injection is silently skipped.
+**Frontmatter `inputs:`** — declared at the runbook level. Validated at parse time (identifier pattern, reserved-name rejection, no-overlap with `vars:`). Injected at pipeline setup so values are available to every step that references them.
+
+```yaml
+---
+name: execute-plan
+inputs:
+  - PlanPath
+---
+```
+
+**Step-level `- INPUTS` directive** — declared on a specific H2 step or H3 substep (at most one per target; Conformance §8 rule 11). Injected at step execution time, immediately before template expansion for that step.
+
+```markdown
+## 3. Execute the plan
+- INPUTS
+  - PlanPath
+- PASS CONTINUE
+Run the plan at {{ PlanPath }}.
+```
+
+**Behaviour (common to both channels):**
+
+*   **Source**: `.rundown/contexts/<ContextId>/outputs.json`.
+*   **Fill-gaps-only**: INPUTS populate a variable only when it is not already defined by a higher-precedence source (CLI flags, `RD_VAR_*`, config, frontmatter `vars:`, inherited delegation). They never override an existing value.
+*   **Missing values**: Declared names absent from `outputs.json` are silently skipped (no error).
+*   **No ContextId**: If `ContextId` is unset, injection is silently skipped — a runbook can declare INPUTS safely without a context.
+*   **Malformed store**: `ENOENT` (file missing) is treated as an empty store. JSON parse errors and non-object top-level shapes throw. Non-string values encountered during load are dropped with a warning.
 
 ### 7.3 Delegation Inheritance
 
@@ -300,6 +366,46 @@ Children in a delegation tree inherit the parent's `ContextId` via `--var`, prov
 *   **Path traversal**: Context IDs are validated against a safe identifier pattern. `.` and `..` are rejected.
 *   **Symlink escape**: The contexts directory and output file paths are validated to stay within the project root. Symlink targets that escape the contexts directory are rejected.
 *   **File permissions**: Output files are written with restrictive permissions (mode 0o600 — owner read/write only).
+
+### 7.5 Example: write-plan / execute-plan
+
+A parent runbook produces a plan file and delegates to a child runbook that consumes it. Both share a `ContextId` through delegation inheritance.
+
+Parent (`write-plan.runbook.md`):
+
+```markdown
+## 1. Write the plan
+- OUTPUTS
+  - PlanPath {{ path "plan.md" }}
+- PASS CONTINUE
+
+Draft the plan and save it to `{{ path "plan.md" }}`.
+
+## 2. Hand off
+- ./execute-plan.runbook.md
+```
+
+Child (`execute-plan.runbook.md`):
+
+```markdown
+---
+name: execute-plan
+inputs:
+  - PlanPath
+---
+
+## 1. Execute
+- PASS COMPLETE
+
+Execute the plan stored at `{{ PlanPath }}`.
+```
+
+Flow:
+
+1. Parent step 1 runs and passes. `PlanPath` is resolved to e.g. `.rundown/work/feature-my-work/.rd-a3b8c1d2/2026-02-04-plan.md` via the `{{ path }}` helper and written to `.rundown/contexts/a3b8c1d2/outputs.json` as `{"PlanPath": "<resolved path>"}`.
+2. Parent step 2 delegates to the child. The child inherits `ContextId=a3b8c1d2` via `--var`.
+3. Child pipeline setup resolves the frontmatter `inputs:` list, reads `outputs.json`, and injects `PlanPath`.
+4. Child step 1 renders `{{ PlanPath }}` as the stored value and executes.
 
 ## 8. Conformance
 

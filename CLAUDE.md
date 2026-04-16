@@ -101,45 +101,11 @@ Schema validation is automatic when the JSON includes `"$schema": "https://rundo
 
 ## Template Variables
 
-Template variables use Handlebars syntax `{{variableName}}` and are expanded at run time.
+Template variables use Handlebars syntax `{{variableName}}` and are expanded at run time. The full precedence table, built-in variables list, and context-passing semantics live in the specification:
 
-**Variable Sources (Precedence: High to Low):**
-1. CLI flags (`--var-file`, `--var`, `--var-json`) — highest priority; within this layer: `--var-json` > `--var` > `--var-file` (all repeatable)
-2. `RD_VAR_*` environment variables (prefix stripped)
-3. `.rundown/config.yaml` (auto-discovered from cwd upward, stops at git root)
-4. Frontmatter `vars:` field
-5. Inherited delegation variables (parent context in delegation tree)
-6. Built-in defaults (lowest priority)
-
-**Built-in Variables:**
-| Variable | Example Value | Description |
-|----------|---------------|-------------|
-| `Date` | `2026-02-04` | Current date (YYYY-MM-DD) |
-| `DateTime` | `2026-02-04T10:30:00.000Z` | Full ISO 8601 timestamp |
-| `Year` | `2026` | Current year |
-| `Month` | `02` | Current month (01-12) |
-| `Day` | `04` | Current day (01-31) |
-| `Branch` | `feature/my-work` | Current git branch name (empty when not in git) |
-| `WorkPath` | `.rundown/work/feature-my-work` | Branch-isolated artifact directory (falls back to `.rundown/work` outside git) |
-| `RunId` | `4a7f0c3e` | Unique-per-execution identifier |
-| `ContextId` | `a3b8c1d2` | Shared identity across delegation tree |
-| `Step` | `3.1` | Current qualified step identifier |
-| `Index` | `3` | Current loop iteration number (inside FOR) |
-| `context.current.step` | `3.1` | Current qualified step identifier |
-| `context.current.substep` | `1` | Current substep number (when in substep) |
-| `context.current.index` | `3` | Current loop iteration (inside FOR) |
-| `context.current.at` | `3.3.1` | Full execution position (`STEP.INDEX.SUBSTEP` inside a FOR loop, `STEP.SUBSTEP` otherwise) |
-
-**Plugin Variables:**
-
-
-| Variable | Description |
-|----------|-------------|
-| `CLAUDE_PLUGIN_ROOT` | Plugin installation directory — auto-injected when running plugin-sourced runbooks |
-
-Plugin variables are automatically available when a runbook is resolved from a plugin source (e.g., `rundown:write-plan`). They use UPPER_SNAKE_CASE (not PascalCase) since they mirror host environment conventions. Plugin variables sit below CLI flags in precedence and can be overridden via `--var`.
-
-Built-in variables use PascalCase. Lowercase aliases `step` and `index` are also available. The date/time variables (`Date`, `DateTime`, `Year`, `Month`, `Day`), `Branch`, `WorkPath`, `RunId`, and `ContextId` are static run-time variables set once per execution and can be overridden via `--var`. `RunId` is a fresh 8-character hexadecimal identifier generated per execution; each child in a delegation tree gets its own RunId. `ContextId` is a fresh 8-character hexadecimal identifier generated per execution; children in a delegation tree inherit the parent's ContextId via `--var`, providing a shared identity across the tree. It can be overridden via `--var` to use a meaningful name (e.g., `--var ContextId=sprint-42`). The `Step` variable (and `Index` during FOR loops), `context.current.*` variables, and their lowercase aliases are dynamic per-step variables that reflect the current execution position and cannot be overridden via `--var`. The variable name `context` is reserved and cannot be used as a user variable name.
+- [docs/SPEC.md §6 Templating](docs/SPEC.md#6-templating) — precedence order, reserved keys, required variables
+- [docs/SPEC.md §6.1 Built-in Variables](docs/SPEC.md#61-built-in-variables) — `Date`, `Branch`, `WorkPath`, `RunId`, `ContextId`, `Step`, `Index`, `context.current.*`, plus plugin variables (`CLAUDE_PLUGIN_ROOT`)
+- [docs/SPEC.md §7 Context Passing](docs/SPEC.md#7-context-passing-inputs--outputs) — INPUTS / OUTPUTS directives and the `ContextId` delegation contract
 
 **CLI Example:**
 ```bash
@@ -413,7 +379,7 @@ Currently supported internally: `echo`, `prompt`. Unsupported commands fall back
 
 ## Documentation
 
-- [docs/SPEC.md](docs/SPEC.md) - Rundown specification
+- [docs/SPEC.md](docs/SPEC.md) - Rundown specification (includes §6.1 Built-in Variables and §7 Context Passing / INPUTS / OUTPUTS)
 - [docs/FORMAT.md](docs/FORMAT.md) - W3C EBNF grammar for runbook syntax
 - [docs/MCP.md](docs/MCP.md) - MCP server reference
 - [docs/SECURITY.md](docs/SECURITY.md) - Security policy configuration

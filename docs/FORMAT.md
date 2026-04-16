@@ -46,6 +46,7 @@ author_field   ::= "author:" ws text
 tags_field     ::= "tags:" newline tag_list
 vars_field     ::= "vars:" newline vars_map
 required_field ::= "required:" newline required_list
+inputs_field   ::= "inputs:" newline inputs_list
 
 name_string    ::= [a-zA-Z0-9_-] ( [a-zA-Z0-9_ -]* [a-zA-Z0-9_-] )?
 tag_list       ::= ( ws "- " tag newline )+
@@ -53,7 +54,10 @@ tag            ::= text
 vars_map       ::= ( ws variable_name ":" ws value newline )+
 value          ::= text
 required_list  ::= ( ws "- " variable_name newline )+
+inputs_list    ::= ( ws "- " variable_name newline )+
 ```
+
+The `inputs` field declares variable names to inject from the context outputs store at pipeline setup — see [SPEC.md §7 Context Passing](./SPEC.md#7-context-passing-inputs--outputs). Entries must not also appear in `vars` and must not be [reserved variable names](#reserved-variable-names).
 
 Additional fields beyond those listed are preserved (open schema). All fields are optional.
 
@@ -103,6 +107,8 @@ A step or substep may declare at most one INPUTS directive and at most one OUTPU
 INPUTS declares variable names that will be injected from context outputs before step rendering. OUTPUTS declares values to persist after a successful (PASS) transition. Output values may be Handlebars helper calls (`{{ path "file.json" }}`), template variable references (`{{ VarName }}`), quoted literals (`"value"`), or bare variable references (`VarName`).
 
 Variable names in INPUTS and OUTPUTS must match `variable_name` and must not be [reserved variable names](#reserved-variable-names).
+
+The `path` helper call `{{ path "file.json" }}` is syntactic sugar for the CLI form `rdpath --dir WorkPath --ctx ContextId --file file.json`. The optional `ctx=` argument (`{{ path "file.json" ctx=alt-ctx }}`) overrides the default `ContextId`. Filenames must match the [`filename`](#lexical-rules) production; context identifiers must match [`ctx_ref`](#lexical-rules). See [docs/RDPATH.md](./RDPATH.md) for the full path-assembly contract.
 
 ## Identifiers
 
@@ -180,7 +186,7 @@ Aggregation modifiers must pair complementarily: `PASS ALL` + `FAIL ANY` (pessim
 
 **Default transitions:** When no transitions are authored, the parser supplies `PASS CONTINUE`, `FAIL STOP`. Substeps under aggregation or with runbook delegation default to `PASS DEFER`, `FAIL DEFER`.
 
-**Disambiguation:** A `-`-prefixed bullet inside a step is resolved by priority: (1) FOR clause (`FOR` keyword), (2) transition (`PASS`, `FAIL`, `YES`, `NO`, or standalone `DEFER`), (3) runbook reference (`.runbook.md` suffix), (4) prompt text.
+**Disambiguation:** A `-`-prefixed bullet inside a step is resolved by priority: (1) context directive (`- INPUTS` or `- OUTPUTS` as exact, case-sensitive list-item text with no trailing content), (2) FOR clause (`FOR` keyword), (3) transition (`PASS`, `FAIL`, `YES`, `NO`, or standalone `DEFER`), (4) runbook reference (`.runbook.md` suffix), (5) prompt text. A bullet whose text merely contains `INPUTS` or `OUTPUTS` inside prose, or uses a different case (e.g., `inputs`, `Outputs`), falls through to normal list semantics.
 
 ## Actions
 
@@ -306,6 +312,8 @@ digit            ::= [0-9]
 text             ::= [^\n]+
 non_ws_char      ::= [^ \t\n]
 language_tag     ::= [a-zA-Z] [a-zA-Z0-9]*
+filename         ::= [A-Za-z0-9._-]+   /* rejected at runtime: "." and ".." */
+ctx_ref          ::= [A-Za-z0-9_-]+    /* must not be "." or ".." */
 ws               ::= ( " " | "\t" )+
 newline          ::= "\n"
 yaml_block       ::= (* opaque YAML content *)
@@ -314,3 +322,5 @@ content          ::= (* opaque code block content *)
 ```
 
 Upper bounds: step identifiers are capped at 999,999; FOR loop bounds at 10,000.
+
+`filename` and `ctx_ref` source from `VALID_FILE` and `VALID_CTX` in `packages/core/src/runbook/artifact-paths.ts`. They constrain the arguments of the [`path`](#context-directives) helper used in OUTPUTS and the underlying `rdpath` CLI.

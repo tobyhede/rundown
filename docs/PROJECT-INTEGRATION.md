@@ -124,7 +124,7 @@ rd run pr-feedback --var pr_number=11 --var repo=myorg/myrepo
 
 Variables defined in frontmatter `vars:` serve as defaults. CLI `--var` flags take precedence.
 
-See CLAUDE.md for full variable source precedence.
+See [SPEC.md §6 Templating](./SPEC.md#6-templating) for the full variable source precedence.
 
 #### Data Sources in Configuration
 
