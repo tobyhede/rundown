@@ -97,11 +97,56 @@ export function mergeExecutionTemplateVars(
 }
 
 /**
+ * Decide whether parent-step OUTPUTS should publish on a PASS transition.
+ *
+ * Decision matrix (parent has OUTPUTS in every row):
+ *
+ * | substep present | parent advanced | terminal action | publish? |
+ * |-----------------|-----------------|-----------------|----------|
+ * | no              | —               | —               | yes      |
+ * | yes             | yes             | —               | yes      |
+ * | yes             | no              | yes (STOP/COMPLETE) | yes  |
+ * | yes             | no              | no              | no       |
+ *
+ * Pure: no I/O, no state. Extracted from {@link persistPassOutputs} so the
+ * decision can be unit-tested directly across the cross-product of inputs
+ * (CONTINUE / DEFER / NEXT / BREAK / GOTO / COMPLETE / STOP × substep on/off ×
+ * parent advanced on/off).
+ *
+ * @param args                       - Decision inputs
+ * @param args.isSubstepContext      - True when the PASS originated from a substep, not the parent step itself
+ * @param args.parentStepAdvanced    - True when the post-transition step id differs from the pre-transition id
+ * @param args.isTerminalAction      - True for STOP / COMPLETE actions that exit the runbook from a substep
+ * @param args.parentHasOutputs      - True when the parent step declares any OUTPUTS
+ * @returns `true` when parent-step OUTPUTS should be persisted
+ */
+export function shouldPersistParentOutputs(args: {
+  isSubstepContext: boolean;
+  parentStepAdvanced: boolean;
+  isTerminalAction: boolean;
+  parentHasOutputs: boolean;
+}): boolean {
+  if (!args.parentHasOutputs) return false;
+  if (!args.isSubstepContext) return true;
+  return args.parentStepAdvanced || args.isTerminalAction;
+}
+
+/**
+ * Test whether an action type exits the runbook entirely.
+ *
+ * @param actionType - The action raised by the PASS transition
+ * @returns `true` for STOP and COMPLETE — actions that exit the runbook entirely
+ */
+function isTerminalActionType(actionType: ActionType): boolean {
+  return actionType === 'COMPLETE' || actionType === 'STOP';
+}
+
+/**
  * Persist OUTPUTS declarations for a PASS transition.
  *
  * Substep OUTPUTS publish immediately when that substep passes. Parent-step
  * OUTPUTS only publish when the parent step itself advances or a terminal PASS
- * action fires without step advancement.
+ * action fires without step advancement (see {@link shouldPersistParentOutputs}).
  *
  * @param args - PASS transition context
  * @param args.cwd - Project root directory
@@ -139,13 +184,16 @@ export async function persistPassOutputs({
     await storeStepOutputs(executionUnit.outputs, templateVars, cwd);
   }
 
-  const isSubstepContext = currentSubstepId !== undefined;
-  const parentStepAdvanced = updatedStepId !== previousStepId;
-  const isTerminalAction = actionType === 'COMPLETE' || actionType === 'STOP';
-  const shouldStoreParentOutputs =
-    currentStep.outputs?.length && (!isSubstepContext || parentStepAdvanced || isTerminalAction);
-
-  if (shouldStoreParentOutputs) {
-    await storeStepOutputs(currentStep.outputs, templateVars, cwd);
+  const parentOutputs = currentStep.outputs;
+  if (
+    parentOutputs &&
+    shouldPersistParentOutputs({
+      isSubstepContext: currentSubstepId !== undefined,
+      parentStepAdvanced: updatedStepId !== previousStepId,
+      isTerminalAction: isTerminalActionType(actionType),
+      parentHasOutputs: parentOutputs.length > 0,
+    })
+  ) {
+    await storeStepOutputs(parentOutputs, templateVars, cwd);
   }
 }
