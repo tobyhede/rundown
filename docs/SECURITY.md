@@ -251,7 +251,7 @@ When no configuration file is found, Rundown uses built-in defaults:
 **Default file access:**
 - Read allow: `{repo}/**`, `{tmp}/**`
 - Read deny: `**/.env`, `**/.env.*`, `**/credentials.json`, `**/*secret*`, `**/*password*`, `**/id_rsa`, `**/id_ed25519`, `**/*.pem`, `**/*.key`
-- Write allow: `{repo}/.claude/**`, `{repo}/node_modules/**`, `{repo}/dist/**`, `{repo}/build/**`, `{repo}/.next/**`, `{tmp}/**`
+- Write allow: `{repo}/.claude/**`, `{repo}/.rundown/contexts/**`, `{repo}/node_modules/**`, `{repo}/dist/**`, `{repo}/build/**`, `{repo}/.next/**`, `{tmp}/**`
 - Write deny: `**/.env`, `**/.env.*`, `**/credentials.json`, `**/*secret*`, `**/*password*`
 
 **Note:** Read deny includes SSH keys and certificates (`id_rsa`, `id_ed25519`, `*.pem`, `*.key`) to prevent credential exfiltration, but write deny does not include these patterns to allow key generation workflows.

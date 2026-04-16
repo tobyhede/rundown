@@ -50,10 +50,12 @@ Named identifiers must match `/^[A-Za-z_][A-Za-z0-9_]*$/`.
 
 ### 2.2 Content Order
 Step content must appear in this strict order:
-1.  **FOR Annotation**: Loop definition (optional). Must appear immediately after the step header as a bullet item.
-2.  **Transitions**: Control flow rules (optional). Must appear as bullet items immediately after FOR (or after step header if no FOR). Transitions must appear before any prompt text or body content.
-3.  **Prompt**: Text instructions.
-4.  **Body**: One of: Code Block or Substeps. A step-level runbook list is shorthand for implicit sequential substeps (`.1`, `.2`, ...).
+1.  **INPUTS**: Context input declarations (optional). Must appear as a bullet item immediately after the step header.
+2.  **OUTPUTS**: Context output declarations (optional). Must appear after INPUTS (or after step header if no INPUTS).
+3.  **FOR Annotation**: Loop definition (optional). Must appear as a bullet item after directives.
+4.  **Transitions**: Control flow rules (optional). Must appear as bullet items immediately after FOR (or after directives if no FOR). Transitions must appear before any prompt text or body content.
+5.  **Prompt**: Text instructions.
+6.  **Body**: One of: Code Block or Substeps. A step-level runbook list is shorthand for implicit sequential substeps (`.1`, `.2`, ...).
 
 ## 3. Step Bodies
 
@@ -266,11 +268,44 @@ Variables use Handlebars syntax: `{{variable}}`.
     5. Inherited delegation variables (parent context)
     6. Built-in defaults (`Date`, `RunId`, `WorkPath`, etc.)
 
-## 7. Conformance
+## 7. Context Passing (INPUTS / OUTPUTS)
+
+Steps and substeps may declare INPUTS and OUTPUTS directives for passing data between steps across a delegation tree.
+
+### 7.1 OUTPUTS
+
+OUTPUTS declares values to persist after a successful step execution.
+
+*   **Persistence trigger**: OUTPUTS are evaluated and stored only on PASS transitions. FAIL transitions skip OUTPUTS entirely.
+*   **Storage**: Values are written atomically to `.rundown/contexts/<ContextId>/outputs.json`. Writes are serialized with a file lock to prevent concurrent corruption.
+*   **Expressions**: Each output entry is evaluated against the step's resolved template variables. Supported forms: Handlebars expressions (`{{ path "file.json" }}`), quoted literals (`"value"`), bare variable references (`VarName`).
+*   **Best-effort**: OUTPUTS persistence is non-fatal. If storage fails (disk full, permissions, lock timeout), the step transition is not rolled back. An `ERROR_OCCURRED` event is emitted.
+*   **Merge semantics**: Outputs merge into the existing `outputs.json` — new keys are added, existing keys are overwritten.
+
+### 7.2 INPUTS
+
+INPUTS declares template variable names to inject from context outputs before step rendering.
+
+*   **Injection timing**: INPUTS are loaded from `.rundown/contexts/<ContextId>/outputs.json` and injected into the step's template variables before template expansion.
+*   **Precedence**: INPUTS sit below CLI flags, `RD_VAR_*`, config, and frontmatter `vars:` in the variable precedence chain. CLI `--var` always wins over context outputs.
+*   **Missing values**: If a declared input name is not found in context outputs, it is silently skipped (no error).
+*   **No ContextId**: If `ContextId` is not set, INPUTS injection is silently skipped.
+
+### 7.3 Delegation Inheritance
+
+Children in a delegation tree inherit the parent's `ContextId` via `--var`, providing a shared identity for context passing. A parent step writes OUTPUTS; a child (or subsequent step) reads them via INPUTS using the same `ContextId`.
+
+### 7.4 Security
+
+*   **Path traversal**: Context IDs are validated against a safe identifier pattern. `.` and `..` are rejected.
+*   **Symlink escape**: The contexts directory and output file paths are validated to stay within the project root. Symlink targets that escape the contexts directory are rejected.
+*   **File permissions**: Output files are written with restrictive permissions (mode 0o600 — owner read/write only).
+
+## 8. Conformance
 
 1.  **Strict Hierarchy**: H2 -> H3. No H4.
 2.  **Sequential IDs**: Numeric steps must be sequential (1, 2, 3...; gaps invalid). Named steps do not participate in sequential numbering.
-3.  **Strict Ordering**: FOR -> Transitions -> Prompt -> Body.
+3.  **Strict Ordering**: INPUTS -> OUTPUTS -> FOR -> Transitions -> Prompt -> Body.
 4.  **Exclusivity**: Only one body type (Code OR Substeps). Step-level runbook lists are shorthand for Substeps.
 5.  **Single Code Block**: Max one code block per step (executable or display-only).
 6.  **Loop Safety**: `NEXT` and `BREAK` are valid **only** in FOR substeps and FOR iteration-level transitions. Using them at step level outside any FOR loop is rejected by the validator.
@@ -278,7 +313,9 @@ Variables use Handlebars syntax: `{{variable}}`.
 8.  **FOR Requires Substeps**: A FOR-annotated step must contain substeps.
 9.  **No Nested RETRY**: RETRY fallback actions cannot be RETRY.
 10. **FOR Iteration Action Set**: FOR-level nested transitions only allow `CONTINUE`, `DEFER`, `NEXT`, `BREAK`, `GOTO`, `STOP`, `COMPLETE` (plus RETRY wrappers).
+11. **Single Directives**: At most one INPUTS and one OUTPUTS directive per step or substep.
+12. **Reserved Names in Directives**: INPUTS and OUTPUTS variable names must not be reserved names (case-insensitive).
 
-## 8. Compatibility
+## 9. Compatibility
 
 Step-level runbook lists are represented internally as sequential substeps (`N.1`, `N.2`, ...). In-progress sessions created before this model are not auto-migrated and must be restarted after upgrade.

@@ -61,24 +61,48 @@ Additional fields beyond those listed are preserved (open schema). All fields ar
 
 ```ebnf
 step ::= "## " step_id separator? text? newline
+         inputs_directive?
+         outputs_directive?
          for_clause?
          transition*
          prompt?
          body?
 ```
 
-Content must appear in the order shown: FOR, transitions, prompt, body.
+Content must appear in the order shown: INPUTS, OUTPUTS, FOR, transitions, prompt, body.
 
 ## Substeps
 
 ```ebnf
 substep ::= "### " substep_id separator? text? newline
+            inputs_directive?
+            outputs_directive?
             transition*
             prompt?
             ( code_block | runbook_list )?
 ```
 
 Substeps cannot contain nested substeps. See [SPEC.md §1.1](./SPEC.md) for the heading hierarchy rules.
+
+## Context Directives
+
+```ebnf
+inputs_directive  ::= "- INPUTS" newline input_list
+input_list        ::= ( ws "- " variable_name newline )+
+
+outputs_directive ::= "- OUTPUTS" newline output_list
+output_list       ::= ( ws "- " output_entry newline )+
+output_entry      ::= variable_name ws output_value
+output_value      ::= helper_call | template_variable | quoted_string | variable_name
+helper_call       ::= "{{" ws? variable_name ( ws argument )+ ws? "}}"
+argument          ::= quoted_string | variable_path
+```
+
+A step or substep may declare at most one INPUTS directive and at most one OUTPUTS directive. Duplicate directives on the same target are rejected.
+
+INPUTS declares variable names that will be injected from context outputs before step rendering. OUTPUTS declares values to persist after a successful (PASS) transition. Output values may be Handlebars helper calls (`{{ path "file.json" }}`), template variable references (`{{ VarName }}`), quoted literals (`"value"`), or bare variable references (`VarName`).
+
+Variable names in INPUTS and OUTPUTS must match `variable_name` and must not be [reserved variable names](#reserved-variable-names).
 
 ## Identifiers
 
@@ -261,6 +285,18 @@ Free-form text between transitions and body.
 `ALL`, `ANY`, `AT`, `BREAK`, `COMPLETE`, `CONTINUE`, `DEFER`, `FAIL`, `FOR`, `GOTO`, `IN`, `NEXT`, `NO`, `PASS`, `RETRY`, `STOP`, `TO`, `YES`
 
 Case-sensitive: `NEXT` is reserved; `Next` and `NextStep` are valid. `OF` is a contextual keyword in `FOR...OF...` syntax but not a reserved word.
+
+These reserved words apply to step identifiers, action keywords, and transition keywords. The [reserved variable names](#reserved-variable-names) list is distinct and governs variable identifiers.
+
+## Reserved Variable Names
+
+The following names are reserved for runtime context resolution and cannot be used as variable identifiers in `INPUTS`, `OUTPUTS`, frontmatter `vars:` / `inputs:` / `required:`, `--var` CLI flags, `--var-file` contents, `.rundown/config.yaml`, or `RD_VAR_*` environment variables:
+
+- `step`
+- `index`
+- `context`
+
+Matching is **case-insensitive**: `step`, `Step`, `STEP`, `CONTEXT`, `INDEX` are all reserved. These names are owned by runtime context resolution (`{{step}}`, `{{index}}`, `{{context.*}}`) and cannot be shadowed by user values.
 
 ## Lexical Rules
 
