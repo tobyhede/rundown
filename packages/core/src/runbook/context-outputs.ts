@@ -218,6 +218,14 @@ export async function storeContextOutputs(
     // but not a malicious pre-existing symlink at the directory path.
     await assertPathInsideContextsDir(dir, cwd);
 
+    // Capture root inode before write (Layer C defense start). The entry-time
+    // assertNotSymlink only validates once; a cooperating process can swap
+    // .rundown/contexts for a symlink after that check but before the final
+    // rename, at which point fs.realpath inside assertPathInsideContextsDir
+    // would follow the symlink and treat its target as the trusted root.
+    // We re-lstat the root below just before the rename to detect such swaps.
+    const rootStatBefore = await fs.lstat(contextsRoot);
+
     // Capture directory inode before write (Layer B defense start).
     const statBefore = await fs.lstat(dir);
 
@@ -263,6 +271,18 @@ export async function storeContextOutputs(
       }
 
       await beforeRenameHook?.();
+
+      // Layer C: verify the contexts root itself has not been swapped for a
+      // symlink (or replaced with a fresh directory) since entry. If the
+      // inode changed or the root is now a symlink, abort before rename —
+      // assertPathInsideContextsDir's realpath would otherwise follow the
+      // new symlink and accept the attacker-controlled target as valid.
+      const rootStatAfter = await fs.lstat(contextsRoot);
+      if (rootStatAfter.isSymbolicLink() || rootStatAfter.ino !== rootStatBefore.ino) {
+        throw new Error(
+          `contexts directory root was replaced during write (escapes contexts directory)`,
+        );
+      }
 
       // Re-validate the destination directory immediately before rename so a
       // parent-directory swap after tmp-file creation aborts without touching

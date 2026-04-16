@@ -141,6 +141,13 @@ describe('context-outputs', () => {
   });
 
   describe('concurrency', () => {
+    // Belt-and-braces: if any hook-using test throws outside its `try`, this
+    // clears the module-global hook so subsequent tests in the same worker
+    // see the unhooked code path.
+    afterEach(() => {
+      setContextOutputsBeforeRenameHook(undefined);
+    });
+
     it('concurrent writes from two callers both survive (no key lost)', async () => {
       // Both writes race — the file lock serializes them so neither overwrites the other
       await Promise.all([
@@ -300,7 +307,44 @@ describe('context-outputs', () => {
           fs.readFile(path.join(escapeTarget, 'outputs.json'), 'utf-8'),
         ).rejects.toThrow();
       } finally {
-        setContextOutputsBeforeRenameHook(undefined);
+        await fs.rm(escapeTarget, { recursive: true, force: true });
+      }
+    });
+
+    it('rejects when .rundown/contexts root is swapped for a symlink before rename (Layer C)', async () => {
+      // TOCTOU attack: the entry `assertNotSymlink(contextsRoot)` check at the
+      // top of storeContextOutputs passes, then an adversary swaps the root
+      // directory itself for a symlink pointing outside the repo. Without a
+      // post-check, `fs.realpath` inside `assertPathInsideContextsDir` would
+      // follow the new symlink and treat its target as the trusted root —
+      // allowing the rename to escape the project.
+      const swapContextId = 'ctx-root-race';
+      const ctxRoot = contextsDir(tmpDir);
+      const escapeTarget = await fs.mkdtemp(path.join(os.tmpdir(), 'rundown-escape-'));
+
+      // Seed the real root so the entry-time lstat/assertNotSymlink passes.
+      await storeContextOutputs(tmpDir, swapContextId, { Foo: 'one' });
+
+      setContextOutputsBeforeRenameHook(async () => {
+        // Remove the real root entirely and replant it as a symlink to an
+        // attacker-controlled directory. Pre-create the per-context dir
+        // under the target so `assertPathInsideContextsDir` would resolve
+        // "inside" the symlink target and pass a naive validation.
+        await fs.rm(ctxRoot, { recursive: true, force: true });
+        await fs.symlink(escapeTarget, ctxRoot, 'dir');
+        await fs.mkdir(path.join(escapeTarget, swapContextId), { recursive: true });
+      });
+
+      try {
+        await expect(storeContextOutputs(tmpDir, swapContextId, { Foo: 'two' })).rejects.toThrow(
+          /escapes contexts directory|was replaced during write/,
+        );
+
+        // The escape target must not receive a final outputs.json.
+        await expect(
+          fs.readFile(path.join(escapeTarget, swapContextId, 'outputs.json'), 'utf-8'),
+        ).rejects.toThrow();
+      } finally {
         await fs.rm(escapeTarget, { recursive: true, force: true });
       }
     });
