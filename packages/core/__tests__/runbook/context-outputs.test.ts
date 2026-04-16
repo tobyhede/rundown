@@ -2,7 +2,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { loadContextOutputs, storeContextOutputs } from '../../src/runbook/context-outputs.js';
-import { contextOutputsPath } from '../../src/paths.js';
+import { contextOutputsPath, contextsDir } from '../../src/paths.js';
 
 describe('context-outputs', () => {
   let tmpDir: string;
@@ -147,6 +147,24 @@ describe('context-outputs', () => {
 
       const result = await loadContextOutputs(tmpDir, contextId);
       expect(['first', 'second']).toContain(result.Key);
+    });
+
+    it('refuses to write when context dir is a symlink that escapes contextsDir', async () => {
+      // Pre-create the per-context dir as a symlink pointing outside .rundown/contexts/.
+      // Without the realpath check, fs.writeFile + rename would silently follow it.
+      const escapeTarget = await fs.mkdtemp(path.join(os.tmpdir(), 'rundown-escape-'));
+      try {
+        const ctxRoot = contextsDir(tmpDir);
+        await fs.mkdir(ctxRoot, { recursive: true });
+        const contextDir = path.join(ctxRoot, 'evil-id');
+        await fs.symlink(escapeTarget, contextDir, 'dir');
+
+        await expect(storeContextOutputs(tmpDir, 'evil-id', { Key: 'v' })).rejects.toThrow(
+          /escapes contexts directory/,
+        );
+      } finally {
+        await fs.rm(escapeTarget, { recursive: true, force: true });
+      }
     });
 
     it('N=10 concurrent writes all survive — no key lost under contention', async () => {

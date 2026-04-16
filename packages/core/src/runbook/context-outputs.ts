@@ -15,8 +15,40 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { isNodeError } from '../errors.js';
 import { logger } from '../logger.js';
-import { contextOutputsLockPath, contextOutputsPath, locksDir } from '../paths.js';
+import { contextOutputsLockPath, contextOutputsPath, contextsDir, locksDir } from '../paths.js';
 import { acquireFileLock, releaseFileLock } from './file-lock.js';
+
+/**
+ * Resolve a path through symlinks and assert it stays inside `contextsDir`.
+ *
+ * The id-string check ({@link assertSafeId}) blocks `..`, `.`, and unsafe
+ * characters but cannot detect a *symlink* placed at `.rundown/contexts/<id>`
+ * by another process or user that points outside the project root. This guard
+ * is the runtime defense for that case. Symlink-resolution-on-write is a
+ * trust-boundary check: `.rundown/` is a per-project trust root, but multi-user
+ * CI setups or shared volumes can violate that assumption.
+ *
+ * @param target - Path to validate (typically the per-context outputs directory)
+ * @param cwd    - Project root directory used to anchor the contexts root
+ * @throws {Error} when the resolved path escapes `contextsDir(cwd)`
+ */
+async function assertPathInsideContextsDir(target: string, cwd: string): Promise<void> {
+  const root = await fs.realpath(contextsDir(cwd)).catch(() => contextsDir(cwd));
+  let resolved: string;
+  try {
+    resolved = await fs.realpath(target);
+  } catch (err) {
+    // ENOENT is fine — the target hasn't been created yet, no symlink to follow.
+    if (isNodeError(err) && err.code === 'ENOENT') return;
+    throw err;
+  }
+  const rel = path.relative(root, resolved);
+  if (rel.startsWith('..') || path.isAbsolute(rel)) {
+    throw new Error(
+      `Refusing to write context outputs: resolved path "${resolved}" escapes contexts directory "${root}"`,
+    );
+  }
+}
 
 /**
  * Load context outputs for a given context ID.
@@ -102,6 +134,11 @@ export async function storeContextOutputs(
   await acquireFileLock(lockFile, lockDir);
   try {
     await fs.mkdir(dir, { recursive: true });
+
+    // After mkdir, verify the directory hasn't been swapped for a symlink that
+    // escapes the contexts root. assertSafeId blocks traversal in the id string
+    // but not a malicious pre-existing symlink at the directory path.
+    await assertPathInsideContextsDir(dir, cwd);
 
     // read-merge-write must stay inside the lock — moving loadContextOutputs out would
     // reintroduce the race where two writers read the same stale snapshot.
