@@ -268,8 +268,8 @@ Variables use Handlebars syntax: `{{variable}}`.
     3. `.rundown/config.yaml` (auto-discovered from cwd upward)
     4. Frontmatter `vars:` field
     5. Inherited delegation variables (parent context)
-    6. INPUTS injected from the context outputs store — fill gaps only, never override an existing variable. Silently skipped when `ContextId` is unset or the requested key is absent. See [§7 Context Passing](#7-context-passing-inputs--outputs).
-    7. Built-in defaults — see [§6.1 Built-in Variables](#61-built-in-variables).
+    6. Built-in defaults — see [§6.1 Built-in Variables](#61-built-in-variables).
+    7. INPUTS injected from the context outputs store — fill gaps only, never override an existing variable (including built-ins, which are always present). Silently skipped when `ContextId` is unset or the requested key is absent. See [§7 Context Passing](#7-context-passing-inputs--outputs).
 
 ### 6.1 Built-in Variables
 
@@ -311,19 +311,19 @@ Steps and substeps may declare INPUTS and OUTPUTS directives for passing data be
 
 OUTPUTS declares values to persist after a successful step execution.
 
-*   **Scope**: Supported on both H2 steps and H3 substeps. At most one OUTPUTS directive per step or substep (Conformance §8 rule 11).
-*   **Persistence trigger**: OUTPUTS are evaluated and stored only on PASS transitions. FAIL transitions skip OUTPUTS entirely.
-*   **Storage**: Values are written atomically to `.rundown/contexts/<ContextId>/outputs.json`. Writes are serialized with a file lock to prevent concurrent corruption.
-*   **On-disk shape**: A flat JSON object `{ key: stringValue, ... }` — all keys and values are strings. Non-string values encountered during merge are dropped with a warning (not an error). The file is written by atomic temp-file-plus-rename. Writes are additive — new keys are added to the existing object; existing keys are overwritten; unrelated keys are preserved.
-*   **Expressions**: Each output entry is evaluated against the step's resolved template variables. Supported forms:
+* **Scope**: Supported on both H2 steps and H3 substeps. At most one OUTPUTS directive per step or substep (Conformance §8 rule 11).
+* **Persistence trigger**: OUTPUTS are evaluated and stored only on PASS transitions. FAIL transitions skip OUTPUTS entirely.
+* **Storage**: Values are written atomically to `.rundown/contexts/<ContextId>/outputs.json`. Writes are serialized with a file lock to prevent concurrent corruption.
+* **On-disk shape**: A flat JSON object `{ key: stringValue, ... }` — all keys and values are strings. Non-string values encountered during merge are dropped with a warning (not an error). The file is written by atomic temp-file-plus-rename. Writes are additive — new keys are added to the existing object; existing keys are overwritten; unrelated keys are preserved.
+* **Expressions**: Each output entry is evaluated against the step's resolved template variables. Supported forms:
     * `{{ path "file.json" }}` — path helper resolving to `<WorkPath>/.rd-<ContextId>/<Date>-file.json` (equivalent to `rdpath --dir WorkPath --ctx ContextId --file file.json`; see [docs/RDPATH.md](./RDPATH.md)).
     * `{{ path "file.json" ctx=alt-ctx }}` — path helper with explicit context override.
     * `{{ VarName }}` — template variable reference.
     * `"literal value"` — quoted literal.
     * `VarName` — bare variable reference (equivalent to `{{ VarName }}`).
-*   **Identifier constraints**: Context identifiers must match `[A-Za-z0-9_-]+` (not `.` or `..`); filenames must match `[A-Za-z0-9._-]+` (not `.` or `..`). Enforced by `VALID_CTX` and `VALID_FILE` at write time.
-*   **Best-effort**: OUTPUTS persistence is non-fatal. If storage fails (disk full, permissions, lock timeout), the step transition is not rolled back. An `ERROR_OCCURRED` event is emitted.
-*   **Merge semantics**: Outputs merge into the existing `outputs.json` — new keys are added, existing keys are overwritten.
+* **Identifier constraints**: Context identifiers must match `[A-Za-z0-9_-]+` (not `.` or `..`); filenames must match `[A-Za-z0-9._-]+` (not `.` or `..`). Enforced by `VALID_CTX` and `VALID_FILE` at write time.
+* **Best-effort**: OUTPUTS persistence is non-fatal. If storage fails (disk full, permissions, lock timeout), the step transition is not rolled back. An `ERROR_OCCURRED` event is emitted.
+* **Merge semantics**: Outputs merge into the existing `outputs.json` — new keys are added, existing keys are overwritten.
 
 ### 7.2 INPUTS
 
@@ -351,11 +351,11 @@ Run the plan at {{ PlanPath }}.
 
 **Behaviour (common to both sites):**
 
-*   **Source**: `.rundown/contexts/<ContextId>/outputs.json`.
-*   **Fill-gaps-only**: INPUTS populate a variable only when it is not already defined by a higher-precedence source (CLI flags, `RD_VAR_*`, config, frontmatter `vars:`, inherited delegation). They never override an existing value.
-*   **Missing values**: Declared names absent from `outputs.json` are silently skipped (no error).
-*   **No ContextId**: If `ContextId` is unset, injection is silently skipped — a runbook can declare INPUTS safely without a context.
-*   **Malformed store**: `ENOENT` (file missing) is treated as an empty store. JSON parse errors and non-object top-level shapes throw. Non-string values encountered during load are dropped with a warning.
+* **Source**: `.rundown/contexts/<ContextId>/outputs.json`.
+* **Fill-gaps-only**: INPUTS populate a variable only when it is not already defined by a higher-precedence source (CLI flags, `RD_VAR_*`, config, frontmatter `vars:`, inherited delegation, built-in defaults). They never override an existing value.
+* **Missing values**: Declared names absent from `outputs.json` are silently skipped (no error).
+* **No ContextId**: If `ContextId` is unset, injection is silently skipped — a runbook can declare INPUTS safely without a context.
+* **Malformed store**: `ENOENT` (file missing) is treated as an empty store. JSON parse errors and non-object top-level shapes are caught at the injection site, logged as warnings, and INPUTS injection is skipped — the run is not aborted. Non-string values encountered during load are dropped with a warning.
 
 ### 7.3 Delegation Inheritance
 
