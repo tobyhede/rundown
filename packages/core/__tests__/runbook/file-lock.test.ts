@@ -55,10 +55,7 @@ describe('file-lock', () => {
 
     it('reclaims a stale lock from a dead process and rewrites content', async () => {
       // PID 999999999 is beyond any valid PID on macOS/Linux so kill(pid,0) → ESRCH.
-      // Keep created_at fresh (a few seconds old) so the age-based reclaim path
-      // cannot fire — isolating the dead-PID branch. A regression that breaks
-      // dead-PID detection will now fail this test instead of silently passing
-      // via the 60s-age fallback.
+      // Lock reclaim is gated solely on process liveness; age does not matter.
       const deadPid = 999999999;
       const freshTimestamp = new Date(Date.now() - 5_000).toISOString();
       await fs.mkdir(lockDir, { recursive: true });
@@ -84,28 +81,29 @@ describe('file-lock', () => {
       }
     });
 
-    it('reclaims a lock with an age over 60 seconds and refreshes created_at', async () => {
+    it('does not steal a live lock even when its age exceeds the former 60s threshold', async () => {
+      // Regression guard: a slow but live writer must retain its mutex. Age
+      // alone must not trigger reclaim. `acquireFileLock` retries for up to
+      // the 5s internal deadline before throwing `FileLockTimeoutError`, so
+      // this test needs a jest timeout strictly greater than that.
       await fs.mkdir(lockDir, { recursive: true });
-      const oldDate = new Date(Date.now() - 70_000).toISOString();
-      // Use current pid so "dead" check doesn't trigger — stale age check should
+      const veryOld = new Date(Date.now() - 10 * 60_000).toISOString();
       await fs.writeFile(
         lockFile,
-        JSON.stringify({ pid: process.pid, created_at: oldDate }),
+        JSON.stringify({ pid: process.pid, created_at: veryOld }),
         'utf8',
       );
-      const acquireStart = Date.now();
 
-      await acquireFileLock(lockFile, lockDir);
-      try {
-        const raw = await fs.readFile(lockFile, 'utf8');
-        const content = JSON.parse(raw) as LockContent;
-        expect(content.pid).toBe(process.pid);
-        expect(content.created_at).not.toBe(oldDate);
-        expect(Date.parse(content.created_at)).toBeGreaterThanOrEqual(acquireStart - 1000);
-      } finally {
-        await releaseFileLock(lockFile);
-      }
-    });
+      await expect(acquireFileLock(lockFile, lockDir)).rejects.toBeInstanceOf(FileLockTimeoutError);
+
+      // Lock file must remain intact with the original live-holder metadata.
+      const raw = await fs.readFile(lockFile, 'utf8');
+      const content = JSON.parse(raw) as LockContent;
+      expect(content.pid).toBe(process.pid);
+      expect(content.created_at).toBe(veryOld);
+
+      await fs.unlink(lockFile);
+    }, 10_000);
 
     it('reclaims a lock file with corrupted (non-JSON) content and writes valid JSON', async () => {
       await fs.mkdir(lockDir, { recursive: true });

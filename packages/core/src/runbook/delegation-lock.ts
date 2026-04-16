@@ -57,7 +57,7 @@ export class DelegationLock {
    * Acquire an exclusive lock for the given parent run ID.
    *
    * Retries with bounded jitter up to a 5-second deadline.
-   * Reclaims stale locks from dead processes or locks older than 60 seconds.
+   * Reclaims locks only when the owning process is no longer alive.
    *
    * @param parentRunId - The parent run ID to lock
    * @throws {Error} When the lock cannot be acquired within the deadline

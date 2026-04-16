@@ -15,9 +15,6 @@ import * as fs from 'node:fs/promises';
 import { isNodeError } from '../errors.js';
 
 const LOCK_DEADLINE_MS = 5_000;
-// Locks must be held < 60 s. Callers that may exceed this must structure their
-// work into shorter critical sections or refresh the lock.
-const STALE_AGE_MS = 60_000;
 const RETRY_MIN_MS = 50;
 const RETRY_MAX_MS = 100;
 
@@ -65,9 +62,11 @@ function isProcessAlive(pid: number): boolean {
 /**
  * Try to reclaim a stale lock file.
  *
- * A lock is considered stale when:
- * - The owning process is no longer alive (`kill(pid, 0)` → ESRCH)
- * - The lock file is older than {@link STALE_AGE_MS} milliseconds
+ * A lock is reclaimed only when the owning process is no longer alive
+ * (`kill(pid, 0)` → ESRCH). Age-based reclaim is intentionally not supported:
+ * a slow-but-live writer (e.g. under CI load) must not lose its mutex just
+ * because the lock file is old, or the `storeContextOutputs` read-merge-write
+ * critical section can interleave and drop updates.
  *
  * @param lockFile - Absolute path to the lock file
  * @returns `true` if the lock was reclaimed and removed
@@ -78,10 +77,7 @@ async function tryReclaimStale(lockFile: string): Promise<boolean> {
     const raw = await fs.readFile(lockFile, 'utf8');
     const content = JSON.parse(raw) as LockContent;
 
-    const age = Date.now() - new Date(content.created_at).getTime();
-    const dead = !isProcessAlive(content.pid);
-
-    if (dead || age > STALE_AGE_MS) {
+    if (!isProcessAlive(content.pid)) {
       await fs.unlink(lockFile);
       // Between this unlink and the next open('wx') attempt, another process may
       // create the lock. That's fine — the caller retries on EEXIST.
