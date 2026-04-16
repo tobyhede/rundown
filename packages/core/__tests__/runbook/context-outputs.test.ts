@@ -69,6 +69,28 @@ describe('context-outputs', () => {
 
       await expect(loadContextOutputs(tmpDir, contextId)).rejects.toThrow(/outputs\.json.*shape/);
     });
+
+    it('refuses to read when context dir is a symlink that escapes contextsDir', async () => {
+      const escapeTarget = await fs.mkdtemp(path.join(os.tmpdir(), 'rundown-escape-'));
+      try {
+        await fs.writeFile(
+          path.join(escapeTarget, 'outputs.json'),
+          JSON.stringify({ Injected: 'evil-value' }),
+          'utf-8',
+        );
+
+        const ctxRoot = contextsDir(tmpDir);
+        await fs.mkdir(ctxRoot, { recursive: true });
+        const contextDir = path.join(ctxRoot, 'evil-id');
+        await fs.symlink(escapeTarget, contextDir, 'dir');
+
+        await expect(loadContextOutputs(tmpDir, 'evil-id')).rejects.toThrow(
+          /escapes contexts directory/,
+        );
+      } finally {
+        await fs.rm(escapeTarget, { recursive: true, force: true });
+      }
+    });
   });
 
   describe('storeContextOutputs', () => {

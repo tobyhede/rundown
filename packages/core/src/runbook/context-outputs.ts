@@ -45,7 +45,7 @@ async function assertPathInsideContextsDir(target: string, cwd: string): Promise
   const rel = path.relative(root, resolved);
   if (rel.startsWith('..') || path.isAbsolute(rel)) {
     throw new Error(
-      `Refusing to write context outputs: resolved path "${resolved}" escapes contexts directory "${root}"`,
+      `Refusing to access context outputs: resolved path "${resolved}" escapes contexts directory "${root}"`,
     );
   }
 }
@@ -67,6 +67,8 @@ export async function loadContextOutputs(
   contextId: string,
 ): Promise<Record<string, string>> {
   const filePath = contextOutputsPath(cwd, contextId);
+  const dir = path.dirname(filePath);
+  await assertPathInsideContextsDir(dir, cwd);
 
   let raw: string;
   try {
