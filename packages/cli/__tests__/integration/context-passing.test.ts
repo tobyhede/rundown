@@ -546,3 +546,31 @@ rd echo --result pass
     expect(result.stdout).toContain('COMPLETE');
   });
 });
+
+describe('INPUTS/OUTPUTS ordering enforcement via rd check', () => {
+  let workspace: TestWorkspace;
+
+  beforeEach(async () => {
+    workspace = await createTestWorkspace();
+  });
+
+  afterEach(async () => {
+    await workspace.cleanup();
+  });
+
+  it('rejects INPUTS directive appearing after prompt text', async () => {
+    const content = `# Test\n\n## 1 Step\n\nSome text.\n\n- INPUTS\n  - Foo\n`;
+    await writeFile(join(workspace.cwd, 'late-inputs.runbook.md'), content);
+    const result = runCli('check late-inputs.runbook.md', workspace);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toMatch(/INPUTS.*must appear before/);
+  });
+
+  it('rejects OUTPUTS directive appearing after body content', async () => {
+    const content = `# Test\n\n## 1 Step\n\n\`\`\`bash\necho hi\n\`\`\`\n\n- OUTPUTS\n  - Foo {{ "bar" }}\n`;
+    await writeFile(join(workspace.cwd, 'late-outputs.runbook.md'), content);
+    const result = runCli('check late-outputs.runbook.md', workspace);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toMatch(/OUTPUTS.*must appear before/);
+  });
+});

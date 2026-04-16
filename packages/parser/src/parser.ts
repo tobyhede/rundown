@@ -550,9 +550,11 @@ function handleListItemContent(
     }
     // Only add content after validation passes
     ctx.currentStep.pendingSubstep.content += ` - ${text}\n`;
-    // Mark content seen if runbook list
+    // Mark content seen for runbook list entries; mark prompt seen for non-runbook bullets
     if (isRunbookListEntry) {
       ctx.currentStep.pendingSubstep.hasSeenContent = true;
+    } else {
+      ctx.currentStep.pendingSubstep.hasSeenPromptText = true;
     }
   } else {
     // Check ordering BEFORE adding content
@@ -566,6 +568,8 @@ function handleListItemContent(
     ctx.currentStep.content += itemText;
     if (!isRunbookListEntry) {
       ctx.implicitText += itemText;
+      // Non-runbook bullets are prompt text — mark so ordering guards fire correctly
+      ctx.currentStep.hasSeenPromptText = true;
     } else {
       // Mark content seen if runbook list
       ctx.currentStep.hasSeenContent = true;
@@ -587,6 +591,11 @@ function handleListItemContent(
 function handleOutputsDirective(node: ListItem, ctx: ActiveStepContext): typeof SKIP {
   const target = getDirectiveTarget(ctx);
   const targetLabel = formatDirectiveTarget(ctx);
+  if (target.hasSeenContent || target.hasSeenPromptText) {
+    throw new RunbookSyntaxError(
+      `OUTPUTS directive in ${targetLabel}${formatLineNum(node)}: must appear before prompt text and body content`,
+    );
+  }
   const nestedList = node.children.find((c): c is List => c.type === 'list');
   if (!nestedList || nestedList.children.length === 0) {
     throw new RunbookSyntaxError(
@@ -648,6 +657,11 @@ function handleOutputsDirective(node: ListItem, ctx: ActiveStepContext): typeof 
 function handleInputsDirective(node: ListItem, ctx: ActiveStepContext): typeof SKIP {
   const target = getDirectiveTarget(ctx);
   const targetLabel = formatDirectiveTarget(ctx);
+  if (target.hasSeenContent || target.hasSeenPromptText) {
+    throw new RunbookSyntaxError(
+      `INPUTS directive in ${targetLabel}${formatLineNum(node)}: must appear before prompt text and body content`,
+    );
+  }
   const nestedList = node.children.find((c): c is List => c.type === 'list');
   if (!nestedList || nestedList.children.length === 0) {
     throw new RunbookSyntaxError(
