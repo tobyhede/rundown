@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { DelegationLock } from '../../src/runbook/delegation-lock.js';
+import { DelegationLock, DelegationLockTimeoutError } from '../../src/runbook/delegation-lock.js';
+import { FileLockTimeoutError } from '../../src/runbook/file-lock.js';
 import { locksDir, delegationLockPath } from '../../src/paths.js';
 
 /** Find a PID that is guaranteed not to be running. */
@@ -126,14 +127,27 @@ describe('DelegationLock', () => {
     await lock.release('run-corrupt');
   });
 
-  it('times out when lock is held by alive process', async () => {
+  it('times out with typed DelegationLockTimeoutError when held by alive process', async () => {
     // Acquire the lock with current process
     await lock.acquire('run-timeout');
 
     // Create a second lock instance — should time out because current process is alive
     const lock2 = new DelegationLock(tmpDir);
 
-    await expect(lock2.acquire('run-timeout')).rejects.toThrow(/lock timeout/i);
+    let captured: unknown;
+    try {
+      await lock2.acquire('run-timeout');
+    } catch (err) {
+      captured = err;
+    }
+
+    expect(captured).toBeInstanceOf(DelegationLockTimeoutError);
+    expect(captured).toBeInstanceOf(FileLockTimeoutError); // hierarchy preserved
+    if (captured instanceof DelegationLockTimeoutError) {
+      expect(captured.parentRunId).toBe('run-timeout');
+      expect(captured.lockFile).toBe(delegationLockPath(tmpDir, 'run-timeout'));
+      expect(captured.message).toMatch(/Delegation lock timeout for run run-timeout/);
+    }
 
     await lock.release('run-timeout');
   }, 10_000);

@@ -39,6 +39,24 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   loadPolicy: jest.fn(),
   DelegationScanService: jest.fn(),
   DelegationLock: jest.fn(),
+  DelegationLockTimeoutError: class DelegationLockTimeoutError extends Error {
+    readonly parentRunId: string;
+    readonly lockFile: string;
+    constructor(parentRunId: string, lockFile = '/tmp/test.lock') {
+      super(`Delegation lock timeout for run ${parentRunId}: ${lockFile}.`);
+      this.name = 'DelegationLockTimeoutError';
+      this.parentRunId = parentRunId;
+      this.lockFile = lockFile;
+    }
+  },
+  FileLockTimeoutError: class FileLockTimeoutError extends Error {
+    readonly lockFile: string;
+    constructor(lockFile = '/tmp/test.lock') {
+      super(`File lock timeout: ${lockFile}.`);
+      this.name = 'FileLockTimeoutError';
+      this.lockFile = lockFile;
+    }
+  },
   reconstituteContextVars: jest.fn().mockReturnValue({}),
   extractInheritedUserVars: jest.fn(),
   hashDelegationToken: jest.fn().mockReturnValue('sha256:mock'),
@@ -53,6 +71,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     TOKEN_NOT_FOUND: { code: 'RD-808' },
     TOKEN_CANCELLED: { code: 'RD-809' },
     DELEGATION_LOCK_TIMEOUT: { code: 'RD-810' },
+    LAUNCH_FAILED: { code: 'RD-816' },
   },
   isJsonArray: jest.fn((v: unknown) => Array.isArray(v)),
   isJsonArrayStream: jest.fn(

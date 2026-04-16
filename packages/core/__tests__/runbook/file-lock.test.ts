@@ -3,7 +3,11 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { acquireFileLock, releaseFileLock } from '../../src/runbook/file-lock.js';
+import {
+  acquireFileLock,
+  FileLockTimeoutError,
+  releaseFileLock,
+} from '../../src/runbook/file-lock.js';
 
 describe('file-lock', () => {
   let tmpDir: string;
@@ -123,6 +127,27 @@ describe('file-lock', () => {
     it('is idempotent — does not throw when lock file is already gone', async () => {
       await expect(releaseFileLock(lockFile)).resolves.toBeUndefined();
     });
+  });
+
+  describe('timeout', () => {
+    it('throws typed FileLockTimeoutError when held by alive process', async () => {
+      await acquireFileLock(lockFile, lockDir);
+      try {
+        let captured: unknown;
+        try {
+          await acquireFileLock(lockFile, lockDir);
+        } catch (err) {
+          captured = err;
+        }
+        expect(captured).toBeInstanceOf(FileLockTimeoutError);
+        if (captured instanceof FileLockTimeoutError) {
+          expect(captured.lockFile).toBe(lockFile);
+          expect(captured.message).toMatch(/File lock timeout/);
+        }
+      } finally {
+        await releaseFileLock(lockFile);
+      }
+    }, 10_000);
   });
 
   describe('parallel acquisition', () => {

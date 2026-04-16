@@ -27,6 +27,27 @@ interface LockContent {
 }
 
 /**
+ * Thrown when {@link acquireFileLock} cannot acquire a lock within
+ * {@link LOCK_DEADLINE_MS}. Subclasses (e.g. `DelegationLockTimeoutError`)
+ * let callers preserve a typed error contract while reusing this primitive.
+ */
+export class FileLockTimeoutError extends Error {
+  readonly lockFile: string;
+
+  /**
+   * Construct a typed timeout error referencing the contended lock file.
+   *
+   * @param lockFile - Absolute path to the lock file that could not be acquired
+   * @param message  - Optional override for the default message
+   */
+  constructor(lockFile: string, message?: string) {
+    super(message ?? `File lock timeout: ${lockFile}. Another operation may be holding the lock.`);
+    this.name = 'FileLockTimeoutError';
+    this.lockFile = lockFile;
+  }
+}
+
+/**
  * Check if a process is alive using `kill(pid, 0)`.
  *
  * @param pid - Process ID to check
@@ -101,6 +122,16 @@ async function tryReclaimStale(lockFile: string): Promise<boolean> {
  */
 export async function acquireFileLock(lockFile: string, lockDir: string): Promise<void> {
   await fs.mkdir(lockDir, { recursive: true, mode: 0o700 });
+  // Best-effort: enforce 0o700 even if the directory was pre-created with a
+  // looser mode (e.g. by an older build or directly by a user). Lock files
+  // themselves are 0o600, so the worst-case impact of a looser dir mode is
+  // another local user observing lock filenames — but tightening is cheap.
+  try {
+    await fs.chmod(lockDir, 0o700);
+  } catch {
+    // chmod can fail on platforms that don't honor it (Windows) or when the
+    // current process is not the owner — neither is fatal for lock semantics.
+  }
 
   const deadline = Date.now() + LOCK_DEADLINE_MS;
 
@@ -134,7 +165,7 @@ export async function acquireFileLock(lockFile: string, lockDir: string): Promis
     }
   }
 
-  throw new Error(`File lock timeout: ${lockFile}. Another operation may be holding the lock.`);
+  throw new FileLockTimeoutError(lockFile);
 }
 
 /**

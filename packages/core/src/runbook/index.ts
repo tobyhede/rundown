@@ -57,7 +57,8 @@ export {
   truncateDelegationToken,
   TOKEN_PREFIX as DELEGATION_TOKEN_PREFIX,
 } from './delegation-token.js';
-export { DelegationLock } from './delegation-lock.js';
+export { DelegationLock, DelegationLockTimeoutError } from './delegation-lock.js';
+export { FileLockTimeoutError } from './file-lock.js';
 export { DelegationScanService, type TokenScanResult } from './delegation-scan.js';
 export {
   reconstituteContextVars,

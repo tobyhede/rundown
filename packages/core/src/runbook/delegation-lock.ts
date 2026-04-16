@@ -1,7 +1,31 @@
 // Lock-file naming convention and directory layout are defined in ../paths.ts
 // (`delegationLockPath`, `locksDir`).
 import { locksDir, delegationLockPath as _delegationLockPath } from '../paths.js';
-import { acquireFileLock, releaseFileLock } from './file-lock.js';
+import { acquireFileLock, FileLockTimeoutError, releaseFileLock } from './file-lock.js';
+
+/**
+ * Thrown when {@link DelegationLock.acquire} cannot acquire the lock
+ * within the {@link FileLockTimeoutError} deadline. Carries the parent
+ * run id so callers can map to a structured error code (RD-810).
+ */
+export class DelegationLockTimeoutError extends FileLockTimeoutError {
+  readonly parentRunId: string;
+
+  /**
+   * Construct a typed timeout error tagged with the parent run id.
+   *
+   * @param parentRunId - Identifier of the parent run whose delegation lock timed out
+   * @param lockFile    - Absolute path to the underlying lock file
+   */
+  constructor(parentRunId: string, lockFile: string) {
+    super(
+      lockFile,
+      `Delegation lock timeout for run ${parentRunId}: ${lockFile}. Another operation may be in progress.`,
+    );
+    this.name = 'DelegationLockTimeoutError';
+    this.parentRunId = parentRunId;
+  }
+}
 
 /**
  * File-based exclusive lock for serializing delegation mutations.
@@ -39,7 +63,15 @@ export class DelegationLock {
    * @throws {Error} When the lock cannot be acquired within the deadline
    */
   async acquire(parentRunId: string): Promise<void> {
-    await acquireFileLock(this.lockPath(parentRunId), this.lockDir);
+    const lockFile = this.lockPath(parentRunId);
+    try {
+      await acquireFileLock(lockFile, this.lockDir);
+    } catch (err) {
+      if (err instanceof FileLockTimeoutError) {
+        throw new DelegationLockTimeoutError(parentRunId, lockFile);
+      }
+      throw err;
+    }
   }
 
   /**

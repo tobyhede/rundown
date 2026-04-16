@@ -25,6 +25,7 @@ import {
   RUNS_DIR,
   DelegationScanService,
   DelegationLock,
+  DelegationLockTimeoutError,
   reconstituteContextVars,
   extractInheritedUserVars,
   hashDelegationToken,
@@ -527,7 +528,7 @@ export async function prepareRunbook(
     };
   }
 
-  // Stage 3.5 — Inherit OUTPUTS from the child's final ContextId.
+  // Inherit OUTPUTS from the child's resolved ContextId.
   //
   // Loads outputs published under the **resolved** ContextId (so child
   // overrides via `claim --var ContextId=...` are respected) and injects keys
@@ -692,54 +693,74 @@ async function launchRunbook(
   const { filePath, rawContent, runbook, mergedVariables } = prepared;
 
   const runbookPath = path.relative(cwd, filePath);
-  const state = await manager.create(options.runbookName, runbook, {
-    runbookPath,
-    prompted: options.prompted,
-    parentLinkage: options.parentLinkage,
-    runbookSrc: rawContent,
-    templateVars: mergedVariables,
-  });
 
-  // Initialize actor state (populates forStack for first step)
-  await actorService.initializeState(state.id, [...runbook.steps]);
-  await lifecycleService.ensureActiveEntry(state.id);
+  // Init phase: state creation through start-event emission. Failures here
+  // produce a structured RD-816 result so callers (notably claimAndLaunch)
+  // can release locks and report cleanly. The loop itself is outside the
+  // try/catch — loop failures still propagate as exceptions.
+  let stateId: string;
+  let runbookSteps: ResolvedStep[];
+  let emitter: ExecutionEventEmitter;
+  try {
+    const state = await manager.create(options.runbookName, runbook, {
+      runbookPath,
+      prompted: options.prompted,
+      parentLinkage: options.parentLinkage,
+      runbookSrc: rawContent,
+      templateVars: mergedVariables,
+    });
+    stateId = state.id;
 
-  // Optional post-init hook (e.g., linking delegation childRunId)
-  if (options.afterInit) {
-    await options.afterInit(state.id);
+    // Initialize actor state (populates forStack for first step)
+    await actorService.initializeState(state.id, [...runbook.steps]);
+    await lifecycleService.ensureActiveEntry(state.id);
+
+    // Optional post-init hook (e.g., linking delegation childRunId)
+    if (options.afterInit) {
+      await options.afterInit(state.id);
+    }
+
+    await sessionService.pushRunbook(state.id);
+
+    if (resolvedStepHasSubsteps(runbook.steps[0]) && runbook.steps[0].substeps.length > 0) {
+      const freshState = await manager.load(state.id);
+      const frame = freshState ? deriveActiveFrame(freshState) : undefined;
+      const frameKey =
+        freshState?.activeFrameKey ?? frame?.frameKey ?? buildFrameKey(runbook.steps[0].name);
+      await manager.initializeSubsteps(state.id, runbook.steps[0].substeps, frameKey);
+      await manager.update(state.id, { substep: runbook.steps[0].substeps[0].id });
+    }
+
+    // Update lastAction
+    await manager.update(state.id, { lastAction: { type: 'START' } });
+
+    // Create emitter bridged to unified output
+    emitter = createBridgedEmitter(state, output);
+
+    // Emit RUNBOOK_STARTED
+    emitRunbookStarted(emitter, state, options.prompted);
+
+    runbookSteps = [...runbook.steps];
+  } catch (err) {
+    return {
+      ok: false,
+      error: getErrorMessage(err),
+      code: ErrorCodes.LAUNCH_FAILED.code,
+      details: { runbookName: options.runbookName },
+    };
   }
 
-  await sessionService.pushRunbook(state.id);
-
-  if (resolvedStepHasSubsteps(runbook.steps[0]) && runbook.steps[0].substeps.length > 0) {
-    const freshState = await manager.load(state.id);
-    const frame = freshState ? deriveActiveFrame(freshState) : undefined;
-    const frameKey =
-      freshState?.activeFrameKey ?? frame?.frameKey ?? buildFrameKey(runbook.steps[0].name);
-    await manager.initializeSubsteps(state.id, runbook.steps[0].substeps, frameKey);
-    await manager.update(state.id, { substep: runbook.steps[0].substeps[0].id });
-  }
-
-  // Update lastAction
-  await manager.update(state.id, { lastAction: { type: 'START' } });
-
-  // Create emitter bridged to unified output
-  const emitter = createBridgedEmitter(state, output);
-
-  // Emit RUNBOOK_STARTED
-  emitRunbookStarted(emitter, state, options.prompted);
-
-  // Run execution loop
+  // Run execution loop (failures propagate as exceptions — caller's concern)
   const loopResult = await runExecutionLoop(
     manager,
-    state.id,
-    [...runbook.steps],
+    stateId,
+    runbookSteps,
     cwd,
     options.prompted,
     emitter,
   );
 
-  return { ok: true, loopResult, stateId: state.id };
+  return { ok: true, loopResult, stateId };
 }
 
 /**
@@ -881,9 +902,9 @@ export async function claimAndLaunch(
   try {
     await lock.acquire(parentState.id);
   } catch (err) {
-    // acquire() throws "Delegation lock timeout ..." for deadline expiry.
+    // acquire() throws DelegationLockTimeoutError on deadline expiry.
     // Re-throw anything else (EACCES, EIO, etc.) as an unexpected error.
-    if (Error.isError(err) && err.message.startsWith('Delegation lock timeout')) {
+    if (err instanceof DelegationLockTimeoutError) {
       return {
         ok: false,
         error: `Could not acquire delegation lock for run ${parentState.id}. Another operation may be in progress.`,
