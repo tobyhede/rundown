@@ -12,9 +12,9 @@ import {
   getErrorMessage,
   logger,
   storeContextOutputs,
-  type TemplateVarValue,
 } from '@rundown-org/core';
 import type { OutputDeclaration } from '@rundown-org/parser';
+import type { StepVariables } from '../services/execution-vars.js';
 import { evaluateOutputExpression } from '../services/template-renderer.js';
 
 /**
@@ -33,7 +33,7 @@ import { evaluateOutputExpression } from '../services/template-renderer.js';
  */
 export async function storeStepOutputs(
   outputs: readonly OutputDeclaration[],
-  templateVars: Readonly<Record<string, TemplateVarValue>> | undefined,
+  templateVars: Readonly<StepVariables> | undefined,
   cwd: string,
   emitter?: ExecutionEventEmitter,
 ): Promise<void> {

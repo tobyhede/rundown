@@ -7,8 +7,9 @@
  * @module helpers/execution-units
  */
 
-import type { ActionType, ResolvedStep, Substep, TemplateVarValue } from '@rundown-org/core';
+import type { ActionType, ResolvedStep, Substep } from '@rundown-org/core';
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
+import type { StepVariables } from '../services/execution-vars.js';
 import { storeStepOutputs } from './step-outputs.js';
 
 /** A runtime execution unit — either a top-level step or the active substep. */
@@ -87,9 +88,9 @@ export function collectExecutionUnitInputs(
  * @returns Combined template variables, or undefined when neither side is present
  */
 export function mergeExecutionTemplateVars(
-  before: Readonly<Record<string, TemplateVarValue>> | undefined,
-  after: Readonly<Record<string, TemplateVarValue>> | undefined,
-): Readonly<Record<string, TemplateVarValue>> | undefined {
+  before: Readonly<StepVariables> | undefined,
+  after: Readonly<StepVariables> | undefined,
+): Readonly<StepVariables> | undefined {
   if (before && after) {
     return { ...before, ...after };
   }
@@ -174,8 +175,8 @@ export async function persistPassOutputs({
   previousStepId: string;
   updatedStepId: string;
   actionType: ActionType;
-  templateVarsBefore: Readonly<Record<string, TemplateVarValue>> | undefined;
-  templateVarsAfter: Readonly<Record<string, TemplateVarValue>> | undefined;
+  templateVarsBefore: Readonly<StepVariables> | undefined;
+  templateVarsAfter: Readonly<StepVariables> | undefined;
 }): Promise<void> {
   const templateVars = mergeExecutionTemplateVars(templateVarsBefore, templateVarsAfter);
   const executionUnit = resolveCurrentExecutionUnit(currentStep, currentSubstepId);

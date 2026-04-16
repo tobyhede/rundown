@@ -38,6 +38,7 @@ import {
 } from '@rundown-org/parser';
 import { isJsonArrayStream, assembleArtifactPath } from '@rundown-org/core';
 import type { TemplateVarValue } from '@rundown-org/core';
+import type { StepVariables } from './execution-vars.js';
 
 /**
  * Mapped type that requires all keys of T to be present in object literals,
@@ -990,10 +991,7 @@ const PATH_HELPER_REGEX = /^\{\{\s*path\s+"([^"]+)"(?:\s+ctx=(.+?))?\s*\}\}$/;
  * @returns The evaluated string value
  * @throws {Error} If a `path()` call is missing required WorkPath or ContextId variables, or filename is invalid
  */
-export function evaluateOutputExpression(
-  expr: string,
-  variables: Record<string, TemplateVarValue>,
-): string {
+export function evaluateOutputExpression(expr: string, variables: StepVariables): string {
   const trimmed = expr.trim();
 
   // Handle path() helper: {{ path "filename" [ctx=Expr] }}

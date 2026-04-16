@@ -19,6 +19,63 @@ import { logger } from '../logger.js';
 import { contextOutputsLockPath, contextOutputsPath, contextsDir, locksDir } from '../paths.js';
 import { acquireFileLock, releaseFileLock } from './file-lock.js';
 
+let beforeRenameHook: (() => void | Promise<void>) | undefined;
+
+/**
+ * Replace the pre-rename hook used by context-output writes.
+ *
+ * This is a test seam for deterministically simulating filesystem races in the
+ * narrow window after the temp file is flushed but before the final rename.
+ *
+ * @param hook - Replacement hook, or `undefined` to clear it
+ * @internal
+ */
+export function setContextOutputsBeforeRenameHook(
+  hook: (() => void | Promise<void>) | undefined,
+): void {
+  beforeRenameHook = hook;
+}
+
+/**
+ * Build a temporary outputs-file path under the trusted contexts root.
+ *
+ * The temp file lives outside the mutable per-context directory so a swap of
+ * `.rundown/contexts/<id>` cannot redirect temp-file creation outside the
+ * rundown-owned root before the final `rename`.
+ *
+ * @param contextsRoot - Validated `.rundown/contexts` directory
+ * @param contextId - Context identifier used only for debuggability
+ * @returns Absolute path to a unique temp file under `contextsRoot`
+ */
+function buildContextOutputsTempPath(contextsRoot: string, contextId: string): string {
+  return path.join(
+    contextsRoot,
+    `.tmp-${contextId}-${randomBytes(8).toString('hex')}.outputs.json`,
+  );
+}
+
+/**
+ * Reject a path when it is a symlink.
+ *
+ * Used for the contexts root itself, where `assertPathInsideContextsDir()` is
+ * insufficient because it anchors validation relative to `contextsDir(cwd)`.
+ *
+ * @param target - Path to inspect
+ * @param label - Human-readable name used in the thrown error
+ * @throws {Error} When `target` exists and is a symbolic link
+ */
+async function assertNotSymlink(target: string, label: string): Promise<void> {
+  try {
+    const stat = await fs.lstat(target);
+    if (stat.isSymbolicLink()) {
+      throw new Error(`${label} is a symlink: ${target}`);
+    }
+  } catch (err) {
+    if (isNodeError(err) && err.code === 'ENOENT') return;
+    throw err;
+  }
+}
+
 /**
  * Resolve a path through symlinks and assert it stays inside `contextsDir`.
  *
@@ -119,14 +176,18 @@ export async function loadContextOutputs(
  * read-merge-write entries are lost to a race.
  *
  * @remarks
- * **TOCTOU race defense (two-layer):**
- * - **Layer A:** Tmp file is opened with `O_NOFOLLOW` (on Unix) to prevent symlink
- *   planting at the temporary path from bypassing write permissions.
- * - **Layer B:** Directory inode is captured before `mkdir` and again after `rename`.
- *   A mismatch (or post-rename symlink) indicates the directory was swapped for an
- *   escaping symlink during the write window; the final file is unlinked and an error
- *   is thrown. Post-rename realpath re-validation confirms the final path still
- *   resolves inside the contexts root.
+ * **TOCTOU race defense (best effort with Node path APIs):**
+ * - Temp files are created under the validated contexts root, not inside the
+ *   mutable per-context directory.
+ * - The contexts root itself is rejected if it is a symlink.
+ * - The per-context directory is validated after `mkdir`, again immediately
+ *   before `rename`, and once more after `rename`.
+ * - Directory inode checks after `rename` detect late swaps so the escaped
+ *   final file can be unlinked before the error is surfaced.
+ *
+ * This is intentionally best effort. Without dirfd-relative syscalls, Node's
+ * pathname APIs cannot make the rename target fully race-free against a hostile
+ * filesystem mutator.
  *
  * @param cwd - Project root directory
  * @param contextId - Context identifier shared across the delegation tree
@@ -140,6 +201,7 @@ export async function storeContextOutputs(
   contextId: string,
   outputs: Record<string, string>,
 ): Promise<void> {
+  const contextsRoot = contextsDir(cwd);
   const filePath = contextOutputsPath(cwd, contextId);
   const dir = path.dirname(filePath);
   const lockFile = contextOutputsLockPath(cwd, contextId);
@@ -147,6 +209,8 @@ export async function storeContextOutputs(
 
   await acquireFileLock(lockFile, lockDir);
   try {
+    await fs.mkdir(contextsRoot, { recursive: true, mode: 0o700 });
+    await assertNotSymlink(contextsRoot, 'contexts directory');
     await fs.mkdir(dir, { recursive: true, mode: 0o700 });
 
     // After mkdir, verify the directory hasn't been swapped for a symlink that
@@ -183,7 +247,7 @@ export async function storeContextOutputs(
     // Layer A: Use O_NOFOLLOW (on Unix) to prevent symlink planting at the tmp path.
     // Use a cryptographically random suffix and O_CREAT | O_EXCL so a pre-existing
     // file or symlink at the tmp path cannot be silently followed/overwritten.
-    const tmp = `${filePath}.${randomBytes(8).toString('hex')}.tmp`;
+    const tmp = buildContextOutputsTempPath(contextsRoot, contextId);
     const openFlags =
       fsConstants.O_WRONLY |
       fsConstants.O_CREAT |
@@ -198,6 +262,12 @@ export async function storeContextOutputs(
         await handle.close();
       }
 
+      await beforeRenameHook?.();
+
+      // Re-validate the destination directory immediately before rename so a
+      // parent-directory swap after tmp-file creation aborts without touching
+      // the final path.
+      await assertPathInsideContextsDir(dir, cwd);
       await fs.rename(tmp, filePath);
 
       // Layer B: Check directory inode after rename. If it changed or became a symlink,

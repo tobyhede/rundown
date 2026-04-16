@@ -41,6 +41,7 @@ import {
 } from '@rundown-org/core';
 import { isSourced, resolvedStepHasSubsteps, type ForClause } from '@rundown-org/parser';
 import { isInternalRdCommand, executeRdCommandInternal } from './internal-commands.js';
+import type { StepVariables } from './execution-vars.js';
 import {
   getPolicyEvaluator,
   getPolicyPrompter,
@@ -58,21 +59,7 @@ import {
   persistPassOutputs,
   resolveCurrentExecutionUnit,
 } from '../helpers/execution-units.js';
-
-/**
- * Per-step dynamic variables (e.g., `Step`, `Index`, named loop variable).
- * Produced by {@link buildStepVariables} and consumed by loop variable expansion.
- *
- * Values can be strings (for Step, Index, scalar values) or JSON values (for JSONL objects).
- * The renderer functions handle both types transparently.
- */
-export type StepVariables = Record<string, unknown>;
-
-/**
- * Template variables for AST-level substitution (e.g., `environment`, `port`).
- * Sourced from frontmatter, CLI flags, or config files.
- */
-export type TemplateVariables = Record<string, TemplateVarValue>;
+export type { ExecutionVarValue, StepVariables, TemplateVariables } from './execution-vars.js';
 
 /**
  * Build per-step dynamic variables for Phase 2 expansion.
@@ -263,7 +250,7 @@ async function applyResultTransition({
       currentState.forStack,
       currentStep.kind === 'for' ? currentStep.forClause : undefined,
       currentState.templateVars,
-    ) as Record<string, TemplateVarValue>;
+    );
     await persistPassOutputs({
       cwd,
       currentStep,

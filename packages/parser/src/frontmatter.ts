@@ -6,9 +6,9 @@ import type { ValidationDiagnostic } from './validator.js';
 const IDENTIFIER_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 
 /**
- * Runbook frontmatter metadata
+ * Known runbook frontmatter metadata fields.
  */
-export interface RunbookFrontmatter {
+interface KnownRunbookFrontmatter {
   name?: string; // Optional: runbook identifier
   description?: string; // Optional: for listing
   version?: string; // Optional: semantic version
@@ -17,8 +17,12 @@ export interface RunbookFrontmatter {
   vars?: Record<string, string | number | boolean>; // Optional: default template variables
   required?: string[]; // Optional: variables that must be provided by caller
   inputs?: string[]; // Optional: variables this runbook can receive from context OUTPUTS
-  [key: string]: unknown; // Allow unknown fields
 }
+
+/**
+ * Runbook frontmatter metadata with typed known fields plus passthrough extras.
+ */
+export type RunbookFrontmatter = KnownRunbookFrontmatter & Record<string, unknown>;
 
 /**
  * Zod schema for validating runbook frontmatter.

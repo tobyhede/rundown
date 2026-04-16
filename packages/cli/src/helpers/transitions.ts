@@ -31,7 +31,6 @@ import {
   type RunbookCompletedPayload,
   type RunbookStoppedPayload,
   type StepTransitionedPayload,
-  type TemplateVarValue,
 } from '@rundown-org/core';
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { persistPassOutputs } from './execution-units.js';
@@ -469,7 +468,7 @@ export async function executeTransition(
       previousState.forStack,
       currentStep.kind === 'for' ? currentStep.forClause : undefined,
       previousState.templateVars,
-    ) as Record<string, TemplateVarValue>;
+    );
     await persistPassOutputs({
       cwd,
       currentStep,

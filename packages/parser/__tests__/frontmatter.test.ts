@@ -242,6 +242,24 @@ another_field: 123
     expect(result.content.trim()).toBe('# Content');
   });
 
+  it('preserves typed inputs and required alongside unknown passthrough fields', () => {
+    const markdown = `---
+name: test-runbook
+inputs:
+  - PlanPath
+required:
+  - Region
+skill: my-skill
+---
+# Content`;
+
+    const result = extractFrontmatter(markdown);
+
+    expect(result.frontmatter?.inputs).toEqual(['PlanPath']);
+    expect(result.frontmatter?.required).toEqual(['Region']);
+    expect(result.frontmatter).toHaveProperty('skill', 'my-skill');
+  });
+
   it('handles horizontal rules (--) in content', () => {
     const markdown = `---
 name: test-runbook

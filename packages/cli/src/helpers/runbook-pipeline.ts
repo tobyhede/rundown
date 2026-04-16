@@ -370,10 +370,8 @@ export async function loadAndParseRunbook(file: string, cwd: string): Promise<Lo
     } = parseRunbookDocument(rawContent, path.basename(filePath));
 
     const varDiagnostics = validateFrontmatterVars(frontmatter?.vars);
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- tsc resolves index signature as unknown via .d.ts
-    const fmRequired = frontmatter?.required as string[] | undefined;
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- tsc resolves index signature as unknown via .d.ts
-    const fmInputs = frontmatter?.inputs as string[] | undefined;
+    const fmRequired = frontmatter?.required;
+    const fmInputs = frontmatter?.inputs;
     const requiredDiagnostics = validateRequiredVars(fmRequired, frontmatter?.vars);
     const inputsDiagnostics = validateInputsDeclarations(fmInputs, frontmatter?.vars);
     const diagnostics: readonly ValidationDiagnostic[] = [
@@ -543,8 +541,7 @@ export async function prepareRunbook(
   //      happen to share a ContextId must not silently absorb arbitrary keys
   //      from prior runs in that context — only declared INPUTS opt in.
   const inputsResolvedKeys = new Set<string>();
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- tsc resolves index signature as unknown via .d.ts
-  const declaredInputs = frontmatter?.inputs as string[] | undefined;
+  const declaredInputs = frontmatter?.inputs;
   const declaredInputSet = declaredInputs ? new Set(declaredInputs) : undefined;
   const isDelegationChild = (options?.inheritedUserVars ?? undefined) !== undefined;
   try {
@@ -584,8 +581,7 @@ export async function prepareRunbook(
   }
 
   // Validate required variables are provided by an external layer
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- tsc resolves index signature as unknown via .d.ts
-  const requiredVars = frontmatter?.required as string[] | undefined;
+  const requiredVars = frontmatter?.required;
   if (requiredVars && requiredVars.length > 0) {
     const missing = requiredVars.filter(
       (name: string) => !providedKeys.has(name) && !inputsResolvedKeys.has(name),

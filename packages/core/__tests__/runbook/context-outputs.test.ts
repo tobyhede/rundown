@@ -1,7 +1,11 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { loadContextOutputs, storeContextOutputs } from '../../src/runbook/context-outputs.js';
+import {
+  loadContextOutputs,
+  setContextOutputsBeforeRenameHook,
+  storeContextOutputs,
+} from '../../src/runbook/context-outputs.js';
 import { contextOutputsPath, contextsDir } from '../../src/paths.js';
 
 describe('context-outputs', () => {
@@ -266,6 +270,37 @@ describe('context-outputs', () => {
         const escapeContent = await fs.readFile(escapeOutputsFile, 'utf-8');
         expect(escapeContent).toBe('initial content');
       } finally {
+        await fs.rm(escapeTarget, { recursive: true, force: true });
+      }
+    });
+
+    it('cleans the temp file when the context dir is swapped before final rename', async () => {
+      const swapContextId = 'ctx-race';
+      const ctxRoot = contextsDir(tmpDir);
+      const contextDir = path.join(ctxRoot, swapContextId);
+      const escapeTarget = await fs.mkdtemp(path.join(os.tmpdir(), 'rundown-escape-'));
+
+      await storeContextOutputs(tmpDir, swapContextId, { Foo: 'one' });
+      setContextOutputsBeforeRenameHook(async () => {
+        await fs.rm(contextDir, { recursive: true, force: true });
+        await fs.symlink(escapeTarget, contextDir, 'dir');
+      });
+
+      try {
+        await expect(storeContextOutputs(tmpDir, swapContextId, { Foo: 'two' })).rejects.toThrow(
+          /escapes contexts directory/,
+        );
+
+        const rootEntries = await fs.readdir(ctxRoot);
+        expect(rootEntries.filter((entry) => entry.startsWith(`.tmp-${swapContextId}-`))).toEqual(
+          [],
+        );
+
+        await expect(
+          fs.readFile(path.join(escapeTarget, 'outputs.json'), 'utf-8'),
+        ).rejects.toThrow();
+      } finally {
+        setContextOutputsBeforeRenameHook(undefined);
         await fs.rm(escapeTarget, { recursive: true, force: true });
       }
     });
