@@ -28,6 +28,7 @@ import {
   parseForClause,
   parseOutputDeclaration,
 } from './helpers.js';
+import { isReservedTemplateName } from './reserved.js';
 import { NAMED_IDENTIFIER_PATTERN } from './step-id.js';
 import { validateRunbook } from './validator.js';
 import { extractFrontmatter, nameFromFilename } from './frontmatter.js';
@@ -123,7 +124,7 @@ interface SubstepBuilder {
   pendingConditionals: ParsedConditional[];
   line?: number;
   inputs?: string[];
-  outputs?: OutputDeclaration[];
+  outputs?: readonly OutputDeclaration[];
 }
 
 interface StepBuilder {
@@ -144,7 +145,7 @@ interface StepBuilder {
   stepConditionals?: ParsedConditional[];
   invalidH3s: Array<{ line: number; text: string }>;
   inputs?: string[];
-  outputs?: OutputDeclaration[];
+  outputs?: readonly OutputDeclaration[];
 }
 
 /**
@@ -614,6 +615,11 @@ function handleOutputsDirective(node: ListItem, ctx: ActiveStepContext): typeof 
         `Invalid OUTPUTS declaration in ${targetLabel}${formatLineNum(item)}: "${text.trim()}" — expected "Name value" (e.g., "PlanPath {{ path \\"plan.json\\" }}")`,
       );
     }
+    if (isReservedTemplateName(decl.name)) {
+      throw new RunbookSyntaxError(
+        `Invalid OUTPUTS declaration in ${targetLabel}${formatLineNum(item)}: "${decl.name}" is a reserved variable name (step, index, context — case-insensitive)`,
+      );
+    }
     declarations.push(decl);
   }
 
@@ -653,6 +659,11 @@ function handleInputsDirective(node: ListItem, ctx: ActiveStepContext): typeof S
     if (!NAMED_IDENTIFIER_PATTERN.test(name)) {
       throw new RunbookSyntaxError(
         `Invalid INPUTS declaration in ${targetLabel}${formatLineNum(item)}: "${name}" is not a valid variable identifier`,
+      );
+    }
+    if (isReservedTemplateName(name)) {
+      throw new RunbookSyntaxError(
+        `Invalid INPUTS declaration in ${targetLabel}${formatLineNum(item)}: "${name}" is a reserved variable name (step, index, context — case-insensitive)`,
       );
     }
     names.push(name);
@@ -816,7 +827,11 @@ export function parseRunbook(markdown: string): Step[] {
  * @see parseRunbook for simplified parsing returning only steps
  */
 export function parseRunbookDocument(markdown: string, basename?: string): ParseResult {
-  const { frontmatter, content } = extractFrontmatter(markdown);
+  const {
+    frontmatter,
+    content,
+    diagnostics: frontmatterDiagnostics,
+  } = extractFrontmatter(markdown);
   const tree = fromMarkdown(content);
 
   const ctx: VisitorContext = {
@@ -837,7 +852,7 @@ export function parseRunbookDocument(markdown: string, basename?: string): Parse
     ctx.steps.push(finalizeStep(ctx.currentStep, ctx.pendingConditionals, ctx.implicitText));
   }
 
-  const diagnostics = validateRunbook(ctx.steps);
+  const diagnostics = [...frontmatterDiagnostics, ...validateRunbook(ctx.steps)];
 
   return {
     runbook: {

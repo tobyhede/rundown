@@ -259,7 +259,7 @@ name: no-inputs
     expect(frontmatter?.inputs).toBeUndefined();
   });
 
-  it('rejects reserved name "context" in frontmatter inputs', () => {
+  it('rejects reserved name "context" in frontmatter inputs and preserves the valid entry', () => {
     // "context" would shadow the built-in `context` template namespace
     // (context.current.step, etc.) if injected into templateVars.
     const md = `---
@@ -271,9 +271,134 @@ inputs:
 ## 1. Step
 - PASS COMPLETE
 `;
-    const { frontmatter } = parseRunbookDocument(md);
-    // .catch(undefined) at the schema level drops the entire inputs array when
-    // any element is invalid — matching existing behavior for malformed identifiers.
+    const { frontmatter, diagnostics } = parseRunbookDocument(md);
+    // Valid entries are kept; the reserved entry produces a diagnostic
+    expect(frontmatter?.inputs).toEqual(['PlanPath']);
+    expect(diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: 'error',
+          message: expect.stringMatching(/inputs\[1\].*reserved/),
+        }),
+      ]),
+    );
+  });
+
+  it.each([
+    'Context',
+    'CONTEXT',
+    'Step',
+    'STEP',
+    'Index',
+    'INDEX',
+  ])('rejects case-variant reserved name "%s" in frontmatter inputs', (name) => {
+    const md = `---
+name: bad-inputs
+inputs:
+  - ${name}
+---
+## 1. Step
+- PASS COMPLETE
+`;
+    const { frontmatter, diagnostics } = parseRunbookDocument(md);
     expect(frontmatter?.inputs).toBeUndefined();
+    expect(diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: 'error',
+          message: expect.stringMatching(new RegExp(`${name}.*reserved`, 'i')),
+        }),
+      ]),
+    );
+  });
+
+  it.each([
+    'Context',
+    'context',
+    'Step',
+    'Index',
+  ])('rejects reserved name "%s" in frontmatter required', (name) => {
+    const md = `---
+name: bad-required
+required:
+  - ${name}
+---
+## 1. Step
+- PASS COMPLETE
+`;
+    const { frontmatter, diagnostics } = parseRunbookDocument(md);
+    expect(frontmatter?.required).toBeUndefined();
+    expect(diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: 'error',
+          message: expect.stringMatching(new RegExp(`${name}.*reserved`, 'i')),
+        }),
+      ]),
+    );
+  });
+});
+
+describe('parseRunbookDocument INPUTS directive — reserved-name guard', () => {
+  it.each([
+    'context',
+    'Context',
+    'CONTEXT',
+    'step',
+    'Step',
+    'index',
+    'Index',
+  ])('throws RunbookSyntaxError when step-level INPUTS contains reserved "%s"', (name) => {
+    const md = `## 1. Step
+- INPUTS
+  - ${name}
+`;
+    expect(() => parseRunbookDocument(md)).toThrow(RunbookSyntaxError);
+    expect(() => parseRunbookDocument(md)).toThrow(/reserved/i);
+  });
+
+  it('throws when substep-level INPUTS contains reserved "context"', () => {
+    const md = `## 1. Parent
+### 1.1 Child
+- INPUTS
+  - context
+`;
+    expect(() => parseRunbookDocument(md)).toThrow(RunbookSyntaxError);
+  });
+
+  it('preserves valid identifiers when reserved names are not present', () => {
+    const md = `## 1. Step
+- INPUTS
+  - PlanPath
+  - ContextDir
+`;
+    // "ContextDir" contains "Context" as a substring but is not exactly reserved
+    const { runbook } = parseRunbookDocument(md);
+    expect(runbook.steps[0].inputs).toEqual(['PlanPath', 'ContextDir']);
+  });
+});
+
+describe('parseRunbookDocument OUTPUTS directive — reserved-name guard', () => {
+  it.each([
+    'context',
+    'Context',
+    'STEP',
+    'Index',
+  ])('throws RunbookSyntaxError when OUTPUTS uses reserved name "%s"', (name) => {
+    const md = `## 1. Step
+- OUTPUTS
+  - ${name} {{ path "x.json" }}
+`;
+    expect(() => parseRunbookDocument(md)).toThrow(RunbookSyntaxError);
+    expect(() => parseRunbookDocument(md)).toThrow(/reserved/i);
+  });
+
+  it('throws when substep-level OUTPUTS uses reserved "context"', () => {
+    const md = `## 1. Parent
+### 1.1 Child
+- OUTPUTS
+  - context {{ path "x.json" }}
+`;
+    expect(() => parseRunbookDocument(md)).toThrow(RunbookSyntaxError);
   });
 });
