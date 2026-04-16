@@ -57,7 +57,8 @@ export {
   truncateDelegationToken,
   TOKEN_PREFIX as DELEGATION_TOKEN_PREFIX,
 } from './delegation-token.js';
-export { DelegationLock } from './delegation-lock.js';
+export { DelegationLock, DelegationLockTimeoutError } from './delegation-lock.js';
+export { FileLockTimeoutError } from './file-lock.js';
 export { DelegationScanService, type TokenScanResult } from './delegation-scan.js';
 export {
   reconstituteContextVars,
@@ -65,3 +66,10 @@ export {
   extractInheritedUserVars,
   MAX_ANCESTOR_DEPTH,
 } from './delegation-context.js';
+export { loadContextOutputs, storeContextOutputs } from './context-outputs.js';
+export {
+  assembleArtifactPath,
+  validateArtifactCtx,
+  VALID_CTX,
+  VALID_FILE,
+} from './artifact-paths.js';

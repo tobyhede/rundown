@@ -40,6 +40,24 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     findByToken: jest.fn().mockResolvedValue(null),
   })),
   DelegationLock: jest.fn(),
+  DelegationLockTimeoutError: class DelegationLockTimeoutError extends Error {
+    readonly parentRunId: string;
+    readonly lockFile: string;
+    constructor(parentRunId: string, lockFile = '/tmp/test.lock') {
+      super(`Delegation lock timeout for run ${parentRunId}: ${lockFile}.`);
+      this.name = 'DelegationLockTimeoutError';
+      this.parentRunId = parentRunId;
+      this.lockFile = lockFile;
+    }
+  },
+  FileLockTimeoutError: class FileLockTimeoutError extends Error {
+    readonly lockFile: string;
+    constructor(lockFile = '/tmp/test.lock') {
+      super(`File lock timeout: ${lockFile}.`);
+      this.name = 'FileLockTimeoutError';
+      this.lockFile = lockFile;
+    }
+  },
   reconstituteContextVars: jest.fn().mockReturnValue({}),
   extractInheritedUserVars: jest.fn().mockReturnValue({}),
   hashDelegationToken: jest.fn().mockReturnValue('sha256:mock'),
@@ -54,6 +72,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     TOKEN_NOT_FOUND: { code: 'RD-808' },
     TOKEN_CANCELLED: { code: 'RD-809' },
     DELEGATION_LOCK_TIMEOUT: { code: 'RD-810' },
+    LAUNCH_FAILED: { code: 'RD-816' },
   },
   isJsonArray: jest.fn((v: unknown) => Array.isArray(v)),
   isJsonArrayStream: jest.fn(
@@ -62,6 +81,8 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
       v !== null &&
       (v as Record<string, unknown>).kind === 'json-array-stream',
   ),
+  loadContextOutputs: jest.fn().mockResolvedValue({}),
+  logger: { warn: jest.fn(), info: jest.fn(), debug: jest.fn(), error: jest.fn() },
   ...mockErrorHelpers,
 }));
 
@@ -125,6 +146,7 @@ jest.unstable_mockModule('../../src/services/template-renderer', () => ({
 jest.unstable_mockModule('../../src/helpers/validate-frontmatter-vars', () => ({
   validateFrontmatterVars: jest.fn().mockReturnValue([]),
   validateRequiredVars: jest.fn().mockReturnValue([]),
+  validateInputsDeclarations: jest.fn().mockReturnValue([]),
 }));
 
 // Mock node:fs/promises
@@ -142,7 +164,7 @@ const { resolveRunbookFile } = await import('../../src/helpers/resolve-runbook')
 const { resolveVariables } = await import('../../src/services/variable-discovery');
 const { substituteRunbookVariables, resolveForBounds, collectUnresolvedRunbookVariables } =
   await import('../../src/services/template-renderer');
-const { validateFrontmatterVars, validateRequiredVars } = await import(
+const { validateFrontmatterVars, validateRequiredVars, validateInputsDeclarations } = await import(
   '../../src/helpers/validate-frontmatter-vars'
 );
 const { createBridgedEmitter } = await import('../../src/helpers/execution-emitter');
@@ -241,12 +263,11 @@ describe('claimAndLaunch', () => {
       findByToken: mockFindByToken,
     }));
 
-    // Mock lock acquisition failure with the actual timeout error message format
+    // Mock lock acquisition failure with a real DelegationLockTimeoutError
+    // (the production code now branches on `instanceof`, not on the message string).
     const mockAcquire = jest
       .fn<any>()
-      .mockRejectedValue(
-        new Error('Delegation lock timeout for run run-1. Another operation may be in progress.'),
-      );
+      .mockRejectedValue(new (core as any).DelegationLockTimeoutError('run-1', '/tmp/test.lock'));
     const mockRelease = jest.fn<any>().mockResolvedValue(undefined);
     (core.DelegationLock as jest.Mock).mockImplementation(() => ({
       acquire: mockAcquire,
@@ -734,6 +755,7 @@ describe('claimAndLaunch', () => {
     } as any);
     (validateFrontmatterVars as jest.Mock).mockReturnValue([]);
     (validateRequiredVars as jest.Mock).mockReturnValue([]);
+    (validateInputsDeclarations as jest.Mock).mockReturnValue([]);
     (resolveVariables as jest.Mock).mockResolvedValue({
       vars: {},
 
@@ -790,5 +812,103 @@ describe('claimAndLaunch', () => {
         }),
       }),
     );
+  });
+
+  it('returns LAUNCH_FAILED (RD-816) when manager.create throws and releases the lock', async () => {
+    const parentState = {
+      id: 'run-1',
+      step: '1',
+      variables: {},
+      substepStates: [
+        {
+          id: '1',
+          frameKey: '1|0',
+          status: 'pending',
+          delegation: {
+            tokenHash: 'sha256:mock',
+            childRunbookPath: 'child.md',
+            childRunId: null,
+            cancelledAt: null,
+            contextSnapshot: { vars: {}, ancestors: [] },
+            createdAt: '2026-02-27T10:00:00.000Z',
+          },
+        },
+      ],
+    };
+
+    (core.DelegationScanService as jest.Mock).mockImplementation(() => ({
+      findByToken: jest.fn<any>().mockResolvedValue({
+        parentState,
+        stepId: '1',
+        substepId: '1',
+        delegation: parentState.substepStates[0].delegation,
+      }),
+      findOrphanedChild: jest.fn<any>().mockResolvedValue(null),
+    }));
+
+    const mockRelease = jest.fn<any>().mockResolvedValue(undefined);
+    (core.DelegationLock as jest.Mock).mockImplementation(() => ({
+      acquire: jest.fn<any>().mockResolvedValue(undefined),
+      release: mockRelease,
+    }));
+
+    (resolveRunbookFile as jest.Mock).mockResolvedValue({
+      path: '/test/child.md',
+      source: 'project',
+    });
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue({
+      runbook: { steps: [{ kind: 'base', name: '1', description: 'Step' }] },
+      frontmatter: null,
+      diagnostics: [],
+    } as any);
+    (validateFrontmatterVars as jest.Mock).mockReturnValue([]);
+    (validateRequiredVars as jest.Mock).mockReturnValue([]);
+    (validateInputsDeclarations as jest.Mock).mockReturnValue([]);
+    (resolveVariables as jest.Mock).mockResolvedValue({
+      vars: {},
+      warnings: [],
+      providedKeys: new Set(),
+    });
+    (resolveForBounds as jest.Mock).mockImplementation((runbook: unknown) => ({
+      runbook,
+      warnings: [],
+    }));
+    (substituteRunbookVariables as jest.Mock).mockImplementation((runbook: unknown) => runbook);
+    (collectUnresolvedRunbookVariables as jest.Mock).mockReturnValue(new Set());
+
+    // Critical: manager.create throws — exercises the new launchRunbook
+    // try/catch and the previously-dead failure branch in claimAndLaunch.
+    const initError = new Error('disk full while writing run state');
+    const ctx = makeCtx({
+      manager: {
+        load: jest.fn<any>().mockResolvedValue(parentState),
+        create: jest.fn<any>().mockRejectedValue(initError),
+        update: jest.fn<any>().mockResolvedValue(undefined),
+        list: jest.fn<any>().mockResolvedValue([]),
+        initializeSubsteps: jest.fn<any>().mockResolvedValue(undefined),
+      },
+      actorService: { initializeState: jest.fn<any>().mockResolvedValue(undefined) },
+      sessionService: { pushRunbook: jest.fn<any>().mockResolvedValue(undefined) },
+      lifecycleService: {
+        ensureActiveEntry: jest.fn<any>().mockResolvedValue({
+          state: { activeEntry: 1, activeFrameKey: '1|0' },
+          frameKey: '1|0',
+          entry: 1,
+        }),
+      },
+    });
+
+    // cspell:disable-next-line
+    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('RD-816');
+      expect(result.error).toContain('disk full');
+    }
+    // Lock must be released even on init failure
+    expect(mockRelease).toHaveBeenCalledWith('run-1');
   });
 });

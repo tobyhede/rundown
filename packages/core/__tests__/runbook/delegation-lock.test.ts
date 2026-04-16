@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { DelegationLock } from '../../src/runbook/delegation-lock.js';
+import { DelegationLock, DelegationLockTimeoutError } from '../../src/runbook/delegation-lock.js';
+import { FileLockTimeoutError } from '../../src/runbook/file-lock.js';
 import { locksDir, delegationLockPath } from '../../src/paths.js';
 
 /** Find a PID that is guaranteed not to be running. */
@@ -126,14 +127,27 @@ describe('DelegationLock', () => {
     await lock.release('run-corrupt');
   });
 
-  it('times out when lock is held by alive process', async () => {
+  it('times out with typed DelegationLockTimeoutError when held by alive process', async () => {
     // Acquire the lock with current process
     await lock.acquire('run-timeout');
 
     // Create a second lock instance — should time out because current process is alive
     const lock2 = new DelegationLock(tmpDir);
 
-    await expect(lock2.acquire('run-timeout')).rejects.toThrow(/lock timeout/i);
+    let captured: unknown;
+    try {
+      await lock2.acquire('run-timeout');
+    } catch (err) {
+      captured = err;
+    }
+
+    expect(captured).toBeInstanceOf(DelegationLockTimeoutError);
+    expect(captured).toBeInstanceOf(FileLockTimeoutError); // hierarchy preserved
+    if (captured instanceof DelegationLockTimeoutError) {
+      expect(captured.parentRunId).toBe('run-timeout');
+      expect(captured.lockFile).toBe(delegationLockPath(tmpDir, 'run-timeout'));
+      expect(captured.message).toMatch(/Delegation lock timeout for run run-timeout/);
+    }
 
     await lock.release('run-timeout');
   }, 10_000);
@@ -158,28 +172,27 @@ describe('DelegationLock', () => {
     await lock2.release('run-concurrent');
   });
 
-  it('reclaims lock when file age exceeds stale threshold (60s)', async () => {
+  it('reclaims lock held by a dead process regardless of age', async () => {
     const lockDir = locksDir(tmpDir);
     await fs.mkdir(lockDir, { recursive: true });
 
-    const lockPath = delegationLockPath(tmpDir, 'run-old');
-    // Write a lock that's 61 seconds old (exceeds 60s threshold)
-    const oldLock = {
-      pid: process.pid, // Even if PID is alive
-      created_at: new Date(Date.now() - 61_000).toISOString(),
+    const lockPath = delegationLockPath(tmpDir, 'run-dead-owner');
+    // PID 999999999 is beyond any valid PID on macOS/Linux so kill(pid,0) → ESRCH.
+    const deadPid = 999999999;
+    const staleLock = {
+      pid: deadPid,
+      created_at: new Date(Date.now() - 5_000).toISOString(),
     };
-    await fs.writeFile(lockPath, JSON.stringify(oldLock));
+    await fs.writeFile(lockPath, JSON.stringify(staleLock));
 
-    // Should reclaim the old lock
-    await lock.acquire('run-old');
+    await lock.acquire('run-dead-owner');
 
     const content = JSON.parse(await fs.readFile(lockPath, 'utf8'));
     expect(content.pid).toBe(process.pid);
-    // Timestamp should be recent, not the old one
     const age = Date.now() - new Date(content.created_at).getTime();
     expect(age).toBeLessThan(1000);
 
-    await lock.release('run-old');
+    await lock.release('run-dead-owner');
   });
 
   it('handles lock file disappearing between check and read (race condition)', async () => {

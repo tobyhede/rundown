@@ -295,6 +295,14 @@ export const ErrorCodes = {
       'Inline linkage requires targeting a substep. The specified step has no substeps to target.',
     docSlug: 'delegation-step-no-substeps',
   },
+  LAUNCH_FAILED: {
+    code: 'RD-816',
+    category: ErrorCategory.DELEGATION,
+    title: 'Runbook launch failed',
+    description:
+      'Failed to initialize runbook state, actor, session, or post-init hook before execution started.',
+    docSlug: 'launch-failed',
+  },
 
   // Generic
   UNKNOWN_ERROR: {

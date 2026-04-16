@@ -5,6 +5,10 @@ import {
   buildStepVariables,
 } from '../../src/services/execution.js';
 import {
+  evaluateOutputExpression,
+  expandLoopVariables,
+} from '../../src/services/template-renderer.js';
+import {
   isRunbookComplete,
   isRunbookStopped,
   type Step,
@@ -407,6 +411,8 @@ describe('execution service', () => {
 
       const vars = buildStepVariables('1', '1', forStack);
       expect(vars.enabled).toBe(false);
+      expect(expandLoopVariables('enabled={{enabled}}', vars)).toBe('enabled=false');
+      expect(evaluateOutputExpression('{{ enabled }}', vars)).toBe('false');
     });
 
     it('preserves JSONL null currentValue in variable map', () => {
@@ -425,6 +431,28 @@ describe('execution service', () => {
 
       const vars = buildStepVariables('1', '1', forStack);
       expect(vars.nullable).toBe(null);
+      expect(expandLoopVariables('nullable={{nullable}}', vars)).toBe('nullable=null');
+      expect(evaluateOutputExpression('{{ nullable }}', vars)).toBe('null');
+    });
+
+    it('preserves JSONL boolean currentValue (true) through prompt and OUTPUTS rendering', () => {
+      const forStack: ForContext[] = [
+        {
+          stepId: '1',
+          iteration: 2,
+          start: 1,
+          end: 2,
+          variable: 'active',
+          implicit: false,
+          source: { kind: 'variable', name: 'flags' },
+          currentValue: true,
+        },
+      ];
+
+      const vars = buildStepVariables('1', '1', forStack);
+      expect(vars.active).toBe(true);
+      expect(expandLoopVariables('active={{active}}', vars)).toBe('active=true');
+      expect(evaluateOutputExpression('{{ active }}', vars)).toBe('true');
     });
 
     it('keeps Index and Step as strings even with object-valued loop variables', () => {

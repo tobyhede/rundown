@@ -1,31 +1,29 @@
-import * as fs from 'node:fs/promises';
-import { isNodeError } from '../errors.js';
 // Lock-file naming convention and directory layout are defined in ../paths.ts
 // (`delegationLockPath`, `locksDir`).
 import { locksDir, delegationLockPath as _delegationLockPath } from '../paths.js';
-
-const LOCK_DEADLINE_MS = 5_000;
-const STALE_AGE_MS = 60_000;
-const RETRY_MIN_MS = 50;
-const RETRY_MAX_MS = 100;
-
-interface LockContent {
-  pid: number;
-  created_at: string;
-}
+import { acquireFileLock, FileLockTimeoutError, releaseFileLock } from './file-lock.js';
 
 /**
- * Check if a process is alive using kill(pid, 0).
- *
- * @param pid - The process ID to check
- * @returns True if the process exists and is reachable
+ * Thrown when {@link DelegationLock.acquire} cannot acquire the lock
+ * within the {@link FileLockTimeoutError} deadline. Carries the parent
+ * run id so callers can map to a structured error code (RD-810).
  */
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
+export class DelegationLockTimeoutError extends FileLockTimeoutError {
+  readonly parentRunId: string;
+
+  /**
+   * Construct a typed timeout error tagged with the parent run id.
+   *
+   * @param parentRunId - Identifier of the parent run whose delegation lock timed out
+   * @param lockFile    - Absolute path to the underlying lock file
+   */
+  constructor(parentRunId: string, lockFile: string) {
+    super(
+      lockFile,
+      `Delegation lock timeout for run ${parentRunId}: ${lockFile}. Another operation may be in progress.`,
+    );
+    this.name = 'DelegationLockTimeoutError';
+    this.parentRunId = parentRunId;
   }
 }
 
@@ -59,50 +57,21 @@ export class DelegationLock {
    * Acquire an exclusive lock for the given parent run ID.
    *
    * Retries with bounded jitter up to a 5-second deadline.
-   * Reclaims stale locks from dead processes or locks older than 60 seconds.
+   * Reclaims locks only when the owning process is no longer alive.
    *
    * @param parentRunId - The parent run ID to lock
    * @throws {Error} When the lock cannot be acquired within the deadline
    */
   async acquire(parentRunId: string): Promise<void> {
-    await fs.mkdir(this.lockDir, { recursive: true, mode: 0o700 });
-
     const lockFile = this.lockPath(parentRunId);
-    const deadline = Date.now() + LOCK_DEADLINE_MS;
-
-    while (Date.now() < deadline) {
-      try {
-        const content: LockContent = {
-          pid: process.pid,
-          created_at: new Date().toISOString(),
-        };
-        const handle = await fs.open(lockFile, 'wx', 0o600);
-        try {
-          await handle.writeFile(JSON.stringify(content), 'utf8');
-        } finally {
-          await handle.close();
-        }
-        return;
-      } catch (err) {
-        if (!isNodeError(err) || err.code !== 'EEXIST') {
-          throw err;
-        }
-
-        // Lock exists — try to reclaim if stale
-        const reclaimed = await this.tryReclaimStale(lockFile);
-        if (reclaimed) {
-          continue;
-        }
-
-        // Sleep with jitter before retrying
-        const jitter = RETRY_MIN_MS + Math.random() * (RETRY_MAX_MS - RETRY_MIN_MS);
-        await new Promise((resolve) => setTimeout(resolve, jitter));
+    try {
+      await acquireFileLock(lockFile, this.lockDir);
+    } catch (err) {
+      if (err instanceof FileLockTimeoutError) {
+        throw new DelegationLockTimeoutError(parentRunId, lockFile);
       }
+      throw err;
     }
-
-    throw new Error(
-      `Delegation lock timeout for run ${parentRunId}. Another operation may be in progress.`,
-    );
   }
 
   /**
@@ -113,59 +82,6 @@ export class DelegationLock {
    * @param parentRunId - The parent run ID to unlock
    */
   async release(parentRunId: string): Promise<void> {
-    try {
-      await fs.unlink(this.lockPath(parentRunId));
-    } catch (err) {
-      if (!isNodeError(err) || err.code !== 'ENOENT') {
-        throw err;
-      }
-    }
-  }
-
-  /**
-   * Try to reclaim a stale lock file.
-   *
-   * A lock is considered stale if:
-   * - The owning process is no longer alive (kill(pid, 0) → ESRCH)
-   * - The lock is older than 60 seconds
-   *
-   * @param lockFile - Absolute path to the lock file
-   * @returns true if the lock was reclaimed and removed
-   */
-  private async tryReclaimStale(lockFile: string): Promise<boolean> {
-    try {
-      const raw = await fs.readFile(lockFile, 'utf8');
-      const content = JSON.parse(raw) as LockContent;
-
-      const age = Date.now() - new Date(content.created_at).getTime();
-      const dead = !isProcessAlive(content.pid);
-
-      if (dead || age > STALE_AGE_MS) {
-        await fs.unlink(lockFile);
-        // Note: Between this unlink and the next open('wx') attempt in acquire(),
-        // another process may create the lock. This is safe — acquire() retries on EEXIST.
-        return true;
-      }
-    } catch (err: unknown) {
-      // Lock file disappeared between check and read — reclaimable
-      if (isNodeError(err) && err.code === 'ENOENT') {
-        return true;
-      }
-      // Corrupted lock file (invalid JSON) — unlink and reclaim
-      if (Error.isError(err) && err.name === 'SyntaxError') {
-        try {
-          await fs.unlink(lockFile);
-        } catch (unlinkErr: unknown) {
-          if (!isNodeError(unlinkErr) || unlinkErr.code !== 'ENOENT') {
-            throw unlinkErr;
-          }
-        }
-        return true;
-      }
-      // Real I/O errors (EACCES, EIO, etc.) — rethrow
-      throw err;
-    }
-
-    return false;
+    await releaseFileLock(this.lockPath(parentRunId));
   }
 }

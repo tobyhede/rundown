@@ -1,0 +1,432 @@
+import { describe, it, expect } from '@jest/globals';
+import { parseOutputDeclaration, parseRunbookDocument, RunbookSyntaxError } from '../src/index.js';
+
+// Regex-escape a dynamic segment before interpolating it into a `RegExp`
+// constructor — avoids the static-analysis ReDoS warning and is defensive
+// against future callers passing non-identifier fixtures.
+function escapeForRegExp(literal: string): string {
+  return literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+describe('parseOutputDeclaration', () => {
+  it('parses name with {{ path "..." }} helper expression', () => {
+    const result = parseOutputDeclaration('PlanPath {{ path "plan.json" }}');
+    expect(result).toEqual({ name: 'PlanPath', value: '{{ path "plan.json" }}' });
+  });
+
+  it('parses name with bare identifier value', () => {
+    const result = parseOutputDeclaration('VarName item');
+    expect(result).toEqual({ name: 'VarName', value: 'item' });
+  });
+
+  it('parses name with quoted literal value (strips quotes)', () => {
+    // The parser unwraps surrounding quotes from literal values
+    const result = parseOutputDeclaration('VarName "literal"');
+    expect(result).toEqual({ name: 'VarName', value: 'literal' });
+  });
+
+  it('returns null for empty string', () => {
+    expect(parseOutputDeclaration('')).toBeNull();
+  });
+
+  it('returns null for whitespace-only string', () => {
+    expect(parseOutputDeclaration('   ')).toBeNull();
+  });
+
+  it('returns null for invalid identifier name', () => {
+    expect(parseOutputDeclaration('123bad value')).toBeNull();
+  });
+
+  it('returns null when only a name is provided (no value)', () => {
+    expect(parseOutputDeclaration('PlanPath')).toBeNull();
+  });
+});
+
+describe('parseRunbookDocument INPUTS directive', () => {
+  it('parses single variable name as a nested list item', () => {
+    const md = `## 1. Step
+- PASS CONTINUE
+- FAIL STOP
+- INPUTS
+  - PlanPath
+`;
+    const { runbook } = parseRunbookDocument(md);
+    expect(runbook.steps[0].inputs).toEqual(['PlanPath']);
+  });
+
+  it('parses multiple variable names as nested list items', () => {
+    const md = `## 1. Step
+- PASS CONTINUE
+- FAIL STOP
+- INPUTS
+  - PlanPath
+  - OtherVar
+`;
+    const { runbook } = parseRunbookDocument(md);
+    expect(runbook.steps[0].inputs).toEqual(['PlanPath', 'OtherVar']);
+  });
+
+  it('throws RunbookSyntaxError when INPUTS directive has no nested list', () => {
+    const md = `## 1. Step
+- PASS CONTINUE
+- FAIL STOP
+- INPUTS
+`;
+    expect(() => parseRunbookDocument(md)).toThrow(RunbookSyntaxError);
+  });
+
+  it('throws RunbookSyntaxError for invalid identifier in INPUTS list', () => {
+    const md = `## 1. Step
+- PASS CONTINUE
+- FAIL STOP
+- INPUTS
+  - 123bad
+`;
+    expect(() => parseRunbookDocument(md)).toThrow(RunbookSyntaxError);
+  });
+
+  it('throws RunbookSyntaxError for INPUTS list item with no paragraph (e.g., blockquote-only)', () => {
+    // Previously this silently skipped the item, producing inputs: [] and leaving
+    // the user with no diagnostic about why their declaration vanished.
+    const md = `## 1. Step
+- PASS CONTINUE
+- FAIL STOP
+- INPUTS
+  - > just a blockquote
+`;
+    expect(() => parseRunbookDocument(md)).toThrow(RunbookSyntaxError);
+  });
+
+  it('does not misclassify prose starting with "INPUTS" as an INPUTS directive', () => {
+    const md = `## 1. Step with INPUTS prose
+- PASS CONTINUE
+- FAIL STOP
+- INPUTS are validated at runtime
+`;
+    // Should parse without error and NOT set inputs on the step
+    const { runbook } = parseRunbookDocument(md);
+    expect(runbook.steps[0].inputs).toBeUndefined();
+    // The prose should be included in the step's prompt (not as a directive)
+    expect(runbook.steps[0].prompt).toContain('INPUTS are validated');
+  });
+
+  it('old indented-text form (no list item marker) is treated as step content, not a directive', () => {
+    // "  PlanPath" (indented continuation, no "- ") becomes part of the same paragraph as INPUTS,
+    // so extractText returns "INPUTS\nPlanPath" which does NOT match the exact "INPUTS" check.
+    // Result: treated as regular list item prose, not an INPUTS directive.
+    const md = `## 1. Step
+- PASS CONTINUE
+- FAIL STOP
+- INPUTS
+  PlanPath
+`;
+    const { runbook } = parseRunbookDocument(md);
+    // Not an INPUTS directive — inputs is undefined
+    expect(runbook.steps[0].inputs).toBeUndefined();
+  });
+
+  it('attaches INPUTS to a substep when declared inside that substep', () => {
+    const md = `## 1. Parent step
+### 1.1 Child substep
+- INPUTS
+  - PlanPath
+`;
+    const { runbook } = parseRunbookDocument(md);
+    const step = runbook.steps[0];
+    expect(step.kind).toBe('substeps');
+    if (step.kind !== 'substeps') {
+      throw new Error('expected substeps step');
+    }
+    expect(step.substeps[0].inputs).toEqual(['PlanPath']);
+  });
+
+  it('preserves both parent-step and substep INPUTS when both are declared', () => {
+    const md = `## 1. Parent step
+- INPUTS
+  - SharedPath
+### 1.1 Child substep
+- INPUTS
+  - ChildOnly
+`;
+    const { runbook } = parseRunbookDocument(md);
+    const step = runbook.steps[0];
+    expect(step.inputs).toEqual(['SharedPath']);
+    expect(step.kind).toBe('substeps');
+    if (step.kind !== 'substeps') {
+      throw new Error('expected substeps step');
+    }
+    expect(step.substeps[0].inputs).toEqual(['ChildOnly']);
+  });
+});
+
+describe('parseRunbookDocument with OUTPUTS directive', () => {
+  it('attaches parsed outputs to step when OUTPUTS directive is present', () => {
+    const md = `## 1. Write plan
+- PASS CONTINUE
+- FAIL STOP
+- OUTPUTS
+  - PlanPath {{ path "plan.json" }}
+`;
+    const { runbook } = parseRunbookDocument(md);
+    expect(runbook.steps[0].outputs).toEqual([
+      { name: 'PlanPath', value: '{{ path "plan.json" }}' },
+    ]);
+  });
+
+  it('leaves outputs undefined when no OUTPUTS directive is present', () => {
+    const md = `## 1. Simple step
+- PASS CONTINUE
+- FAIL STOP
+`;
+    const { runbook } = parseRunbookDocument(md);
+    expect(runbook.steps[0].outputs).toBeUndefined();
+  });
+
+  it('throws RunbookSyntaxError for invalid OUTPUTS declaration', () => {
+    const md = `## 1. Bad outputs
+- PASS CONTINUE
+- FAIL STOP
+- OUTPUTS
+  - 123bad value
+`;
+    expect(() => parseRunbookDocument(md)).toThrow(RunbookSyntaxError);
+  });
+
+  it('attaches parsed outputs to a substep when OUTPUTS directive is present', () => {
+    const md = `## 1. Parent step
+### 1.1 Child substep
+- OUTPUTS
+  - ChildPath {{ path "child.json" }}
+`;
+    const { runbook } = parseRunbookDocument(md);
+    const step = runbook.steps[0];
+    expect(step.kind).toBe('substeps');
+    if (step.kind !== 'substeps') {
+      throw new Error('expected substeps step');
+    }
+    expect(step.substeps[0].outputs).toEqual([
+      { name: 'ChildPath', value: '{{ path "child.json" }}' },
+    ]);
+  });
+
+  it('throws RunbookSyntaxError when OUTPUTS block contains duplicate names', () => {
+    const md = `## 1. Step
+- OUTPUTS
+  - PlanPath {{ path "a.json" }}
+  - PlanPath {{ path "b.json" }}
+`;
+    expect(() => parseRunbookDocument(md)).toThrow(RunbookSyntaxError);
+    expect(() => parseRunbookDocument(md)).toThrow(/duplicate.*output.*PlanPath/i);
+  });
+
+  it('throws RunbookSyntaxError on duplicate INPUTS directive for the same target', () => {
+    const md = `## 1. Duplicate inputs
+- INPUTS
+  - PlanPath
+- INPUTS
+  - OtherVar
+`;
+    expect(() => parseRunbookDocument(md)).toThrow(RunbookSyntaxError);
+    expect(() => parseRunbookDocument(md)).toThrow(/duplicate.*INPUTS/i);
+  });
+
+  it('throws RunbookSyntaxError on duplicate OUTPUTS directive for the same target', () => {
+    const md = `## 1. Duplicate outputs
+- OUTPUTS
+  - First {{ path "a.json" }}
+- OUTPUTS
+  - Second {{ path "b.json" }}
+`;
+    expect(() => parseRunbookDocument(md)).toThrow(RunbookSyntaxError);
+    expect(() => parseRunbookDocument(md)).toThrow(/duplicate.*OUTPUTS/i);
+  });
+
+  it('preserves both parent-step and substep OUTPUTS when both are declared', () => {
+    const md = `## 1. Parent step
+- OUTPUTS
+  - ParentPath {{ path "parent.json" }}
+### 1.1 Child substep
+- OUTPUTS
+  - ChildPath {{ path "child.json" }}
+`;
+    const { runbook } = parseRunbookDocument(md);
+    const step = runbook.steps[0];
+    expect(step.outputs).toEqual([{ name: 'ParentPath', value: '{{ path "parent.json" }}' }]);
+    expect(step.kind).toBe('substeps');
+    if (step.kind !== 'substeps') {
+      throw new Error('expected substeps step');
+    }
+    expect(step.substeps[0].outputs).toEqual([
+      { name: 'ChildPath', value: '{{ path "child.json" }}' },
+    ]);
+  });
+});
+
+describe('parseRunbookDocument frontmatter.inputs', () => {
+  it('parses inputs array from frontmatter', () => {
+    const md = `---
+name: child-runbook
+inputs:
+  - PlanPath
+---
+## 1. Step
+- PASS COMPLETE
+`;
+    const { frontmatter } = parseRunbookDocument(md);
+    expect(frontmatter?.inputs).toEqual(['PlanPath']);
+  });
+
+  it('leaves inputs undefined when not present in frontmatter', () => {
+    const md = `---
+name: no-inputs
+---
+## 1. Step
+- PASS COMPLETE
+`;
+    const { frontmatter } = parseRunbookDocument(md);
+    expect(frontmatter?.inputs).toBeUndefined();
+  });
+
+  it('rejects reserved name "context" in frontmatter inputs and preserves the valid entry', () => {
+    // "context" would shadow the built-in `context` template namespace
+    // (context.current.step, etc.) if injected into templateVars.
+    const md = `---
+name: bad-inputs
+inputs:
+  - PlanPath
+  - context
+---
+## 1. Step
+- PASS COMPLETE
+`;
+    const { frontmatter, diagnostics } = parseRunbookDocument(md);
+    // Valid entries are kept; the reserved entry produces a diagnostic
+    expect(frontmatter?.inputs).toEqual(['PlanPath']);
+    expect(diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: 'error',
+          message: expect.stringMatching(/inputs\[1\].*reserved/),
+        }),
+      ]),
+    );
+  });
+
+  it.each([
+    'Context',
+    'CONTEXT',
+    'Step',
+    'STEP',
+    'Index',
+    'INDEX',
+  ])('rejects case-variant reserved name "%s" in frontmatter inputs', (name) => {
+    const md = `---
+name: bad-inputs
+inputs:
+  - ${name}
+---
+## 1. Step
+- PASS COMPLETE
+`;
+    const { frontmatter, diagnostics } = parseRunbookDocument(md);
+    expect(frontmatter?.inputs).toBeUndefined();
+    expect(diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: 'error',
+          message: expect.stringMatching(new RegExp(`${escapeForRegExp(name)}.*reserved`, 'i')),
+        }),
+      ]),
+    );
+  });
+
+  it.each([
+    'Context',
+    'context',
+    'Step',
+    'Index',
+  ])('rejects reserved name "%s" in frontmatter required', (name) => {
+    const md = `---
+name: bad-required
+required:
+  - ${name}
+---
+## 1. Step
+- PASS COMPLETE
+`;
+    const { frontmatter, diagnostics } = parseRunbookDocument(md);
+    expect(frontmatter?.required).toBeUndefined();
+    expect(diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: 'error',
+          message: expect.stringMatching(new RegExp(`${escapeForRegExp(name)}.*reserved`, 'i')),
+        }),
+      ]),
+    );
+  });
+});
+
+describe('parseRunbookDocument INPUTS directive — reserved-name guard', () => {
+  it.each([
+    'context',
+    'Context',
+    'CONTEXT',
+    'step',
+    'Step',
+    'index',
+    'Index',
+  ])('throws RunbookSyntaxError when step-level INPUTS contains reserved "%s"', (name) => {
+    const md = `## 1. Step
+- INPUTS
+  - ${name}
+`;
+    expect(() => parseRunbookDocument(md)).toThrow(RunbookSyntaxError);
+    expect(() => parseRunbookDocument(md)).toThrow(/reserved/i);
+  });
+
+  it('throws when substep-level INPUTS contains reserved "context"', () => {
+    const md = `## 1. Parent
+### 1.1 Child
+- INPUTS
+  - context
+`;
+    expect(() => parseRunbookDocument(md)).toThrow(RunbookSyntaxError);
+  });
+
+  it('preserves valid identifiers when reserved names are not present', () => {
+    const md = `## 1. Step
+- INPUTS
+  - PlanPath
+  - ContextDir
+`;
+    // "ContextDir" contains "Context" as a substring but is not exactly reserved
+    const { runbook } = parseRunbookDocument(md);
+    expect(runbook.steps[0].inputs).toEqual(['PlanPath', 'ContextDir']);
+  });
+});
+
+describe('parseRunbookDocument OUTPUTS directive — reserved-name guard', () => {
+  it.each([
+    'context',
+    'Context',
+    'STEP',
+    'Index',
+  ])('throws RunbookSyntaxError when OUTPUTS uses reserved name "%s"', (name) => {
+    const md = `## 1. Step
+- OUTPUTS
+  - ${name} {{ path "x.json" }}
+`;
+    expect(() => parseRunbookDocument(md)).toThrow(RunbookSyntaxError);
+    expect(() => parseRunbookDocument(md)).toThrow(/reserved/i);
+  });
+
+  it('throws when substep-level OUTPUTS uses reserved "context"', () => {
+    const md = `## 1. Parent
+### 1.1 Child
+- OUTPUTS
+  - context {{ path "x.json" }}
+`;
+    expect(() => parseRunbookDocument(md)).toThrow(RunbookSyntaxError);
+  });
+});

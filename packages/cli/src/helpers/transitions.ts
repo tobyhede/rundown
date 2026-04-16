@@ -33,9 +33,11 @@ import {
   type StepTransitionedPayload,
 } from '@rundown-org/core';
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
+import { persistPassOutputs } from './execution-units.js';
 import { resolveIndexOption } from './index-option.js';
 import { getRunbookFromState } from './runbook-loader.js';
 import {
+  buildStepVariables,
   drainResolvedCompletions,
   findStepOrThrow,
   runExecutionLoop,
@@ -412,6 +414,7 @@ export async function executeTransition(
       currentState: activeState,
       transitionPolicy: config.policy,
       computeActionResult: config.computeActionResult,
+      cwd,
       ...(explicitTarget ? { frameKeyOverride: cursor.frameKey } : {}),
     });
     if (drained.status === 'stopped') {
@@ -452,6 +455,32 @@ export async function executeTransition(
     actor,
     steps,
   );
+
+  const actionType = parseActionType(extractLastAction(rawSnapshot));
+
+  // Store OUTPUTS for PASS transitions (best-effort, non-fatal).
+  if (config.lastResult === 'pass') {
+    // Build the per-step runtime frame (Step, Index, context.current.*) so that
+    // OUTPUTS expressions referencing loop/step variables resolve correctly.
+    const preTransitionStepVars = buildStepVariables(
+      previousState.step,
+      previousState.substep,
+      previousState.forStack,
+      currentStep.kind === 'for' ? currentStep.forClause : undefined,
+      previousState.templateVars,
+    );
+    await persistPassOutputs({
+      cwd,
+      currentStep,
+      currentSubstepId: previousState.substep,
+      previousStepId: previousState.step,
+      updatedStepId: actorUpdatedState.step,
+      actionType,
+      templateVarsBefore: preTransitionStepVars,
+      templateVarsAfter: actorUpdatedState.templateVars,
+    });
+  }
+
   const ensuredAfterTransition = await lifecycleService.ensureActiveEntry(
     activeState.id,
     previousState,
@@ -459,7 +488,6 @@ export async function executeTransition(
   );
   const updatedState = ensuredAfterTransition.state;
 
-  const actionType = parseActionType(extractLastAction(rawSnapshot));
   const actionResult = config.computeActionResult(actionType);
   const commandSink: TransitionEventSink = {
     onStepTransitioned: (payload: StepTransitionedPayload) => {

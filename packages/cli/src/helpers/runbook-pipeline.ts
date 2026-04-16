@@ -25,6 +25,7 @@ import {
   RUNS_DIR,
   DelegationScanService,
   DelegationLock,
+  DelegationLockTimeoutError,
   reconstituteContextVars,
   extractInheritedUserVars,
   hashDelegationToken,
@@ -32,9 +33,11 @@ import {
   DELEGATION_TOKEN_PREFIX,
   ErrorCodes,
   getErrorMessage,
+  logger,
   type TemplateVarValue,
   isJsonArray,
   isJsonArrayStream,
+  loadContextOutputs,
 } from '@rundown-org/core';
 import {
   parseRunbookDocument,
@@ -58,7 +61,11 @@ import {
   collectUnresolvedRunbookVariables,
 } from '../services/template-renderer.js';
 import { getPolicyEvaluator, getPolicyPrompter } from '../services/policy-context.js';
-import { validateFrontmatterVars, validateRequiredVars } from './validate-frontmatter-vars.js';
+import {
+  validateFrontmatterVars,
+  validateRequiredVars,
+  validateInputsDeclarations,
+} from './validate-frontmatter-vars.js';
 
 /**
  * Variable options from CLI flags.
@@ -363,13 +370,15 @@ export async function loadAndParseRunbook(file: string, cwd: string): Promise<Lo
     } = parseRunbookDocument(rawContent, path.basename(filePath));
 
     const varDiagnostics = validateFrontmatterVars(frontmatter?.vars);
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- tsc resolves index signature as unknown via .d.ts
-    const fmRequired = frontmatter?.required as string[] | undefined;
+    const fmRequired = frontmatter?.required;
+    const fmInputs = frontmatter?.inputs;
     const requiredDiagnostics = validateRequiredVars(fmRequired, frontmatter?.vars);
+    const inputsDiagnostics = validateInputsDeclarations(fmInputs, frontmatter?.vars);
     const diagnostics: readonly ValidationDiagnostic[] = [
       ...parseDiagnostics,
       ...varDiagnostics,
       ...requiredDiagnostics,
+      ...inputsDiagnostics,
     ];
 
     const stats = {
@@ -437,6 +446,14 @@ export async function prepareRunbook(
     }
   }
 
+  // Inherited user vars pass through untouched here. Context OUTPUTS are
+  // inherited after variable resolution (stage 3.5 below), once the child's
+  // final ContextId is known. Merging context outputs before resolution would
+  // mark their keys as "provided" against the child's own ContextId override
+  // (e.g. `claim --var ContextId=...`) and prevent the correct outputs from
+  // being loaded from the new context.
+  const inheritedUserVars = options?.inheritedUserVars ?? {};
+
   // Variable resolution
   let mergedVariables: Record<string, TemplateVarValue>;
   let providedKeys: ReadonlySet<string>;
@@ -448,7 +465,7 @@ export async function prepareRunbook(
         var: varOpts.var,
         varJson: varOpts.varJson,
         frontmatterVars: frontmatter?.vars,
-        inheritedVars: options?.inheritedUserVars,
+        inheritedVars: inheritedUserVars,
       },
       cwd,
       {
@@ -489,7 +506,7 @@ export async function prepareRunbook(
       diagnostics,
     };
   }
-  const templateVars = buildTemplateVars(mergedVariables, options);
+  let templateVars = buildTemplateVars(mergedVariables, options);
 
   // Bail early if there are structural errors — don't pass a broken AST to transform passes
   // This must run before the missing-required check so that malformed `required` entries
@@ -509,16 +526,71 @@ export async function prepareRunbook(
     };
   }
 
+  // Inherit OUTPUTS from the child's resolved ContextId.
+  //
+  // Loads outputs published under the **resolved** ContextId (so child
+  // overrides via `claim --var ContextId=...` are respected) and injects keys
+  // that were not already provided by a VARS channel.
+  //
+  // Two injection rules apply, with different scopes:
+  //   1. Declared INPUTS — always injected when present in context outputs.
+  //      This satisfies the runbook's required-input contract regardless of
+  //      whether the runbook was launched standalone or via delegation.
+  //   2. Undeclared keys — only injected when this run is a delegation child
+  //      (i.e., the caller passed `inheritedUserVars`). Standalone runs that
+  //      happen to share a ContextId must not silently absorb arbitrary keys
+  //      from prior runs in that context — only declared INPUTS opt in.
+  const inputsResolvedKeys = new Set<string>();
+  const declaredInputs = frontmatter?.inputs;
+  const declaredInputSet = declaredInputs ? new Set(declaredInputs) : undefined;
+  const isDelegationChild = (options?.inheritedUserVars ?? undefined) !== undefined;
+  try {
+    const contextId =
+      typeof templateVars.ContextId === 'string' ? templateVars.ContextId : undefined;
+    if (contextId && (declaredInputSet || isDelegationChild)) {
+      const contextOutputs = await loadContextOutputs(cwd, contextId);
+      let injected = false;
+      for (const [key, value] of Object.entries(contextOutputs)) {
+        if (providedKeys.has(key)) continue;
+        // Don't clobber keys already populated into mergedVariables by a
+        // non-providedKeys channel (e.g. auto-injected CLAUDE_PLUGIN_ROOT).
+        // INPUTS injection only fills gaps — it never overwrites.
+        if (Object.hasOwn(mergedVariables, key)) continue;
+        const isDeclaredInput = declaredInputSet?.has(key) === true;
+        if (!isDeclaredInput && !isDelegationChild) continue;
+        mergedVariables[key] = value;
+        injected = true;
+        // Record every injection — declared inputs AND delegation-inherited
+        // undeclared keys — so the later `required:` check treats them all
+        // as satisfied. Without this, a delegated child whose required vars
+        // arrive only via inheritance would falsely fail MISSING_REQUIRED_VARS.
+        inputsResolvedKeys.add(key);
+      }
+      if (injected) {
+        // Rebuild templateVars with context-output-injected variables
+        templateVars = buildTemplateVars(mergedVariables, options);
+      }
+    }
+  } catch (err) {
+    // Context outputs are not available — not a hard error; required: check will
+    // surface missing vars if they can't be satisfied by any other channel.
+    // Log real errors (permission denied, malformed JSON) so users can diagnose.
+    void logger.warn('runbook-pipeline: failed to load context outputs for inheritance', {
+      error: getErrorMessage(err),
+    });
+  }
+
   // Validate required variables are provided by an external layer
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- tsc resolves index signature as unknown via .d.ts
-  const requiredVars = frontmatter?.required as string[] | undefined;
+  const requiredVars = frontmatter?.required;
   if (requiredVars && requiredVars.length > 0) {
-    const missing = requiredVars.filter((name: string) => !providedKeys.has(name));
+    const missing = requiredVars.filter(
+      (name: string) => !providedKeys.has(name) && !inputsResolvedKeys.has(name),
+    );
     if (missing.length > 0) {
       const names = missing.map((n: string) => `"${n}"`).join(', ');
       return {
         ok: false,
-        error: `Missing required variable${missing.length > 1 ? 's' : ''}: ${names}. Provide via --var, --var-file, config.yaml, or RD_VAR_* environment variable.`,
+        error: `Missing required variable${missing.length > 1 ? 's' : ''}: ${names}. Provide via --var, --var-file, config.yaml, RD_VAR_* environment variable, or prior runbook OUTPUTS.`,
         code: 'MISSING_REQUIRED_VARS',
         details: { runbook: file, missing },
         variables: templateVars,
@@ -619,54 +691,74 @@ async function launchRunbook(
   const { filePath, rawContent, runbook, mergedVariables } = prepared;
 
   const runbookPath = path.relative(cwd, filePath);
-  const state = await manager.create(options.runbookName, runbook, {
-    runbookPath,
-    prompted: options.prompted,
-    parentLinkage: options.parentLinkage,
-    runbookSrc: rawContent,
-    templateVars: mergedVariables,
-  });
 
-  // Initialize actor state (populates forStack for first step)
-  await actorService.initializeState(state.id, [...runbook.steps]);
-  await lifecycleService.ensureActiveEntry(state.id);
+  // Init phase: state creation through start-event emission. Failures here
+  // produce a structured RD-816 result so callers (notably claimAndLaunch)
+  // can release locks and report cleanly. The loop itself is outside the
+  // try/catch — loop failures still propagate as exceptions.
+  let stateId: string;
+  let runbookSteps: ResolvedStep[];
+  let emitter: ExecutionEventEmitter;
+  try {
+    const state = await manager.create(options.runbookName, runbook, {
+      runbookPath,
+      prompted: options.prompted,
+      parentLinkage: options.parentLinkage,
+      runbookSrc: rawContent,
+      templateVars: mergedVariables,
+    });
+    stateId = state.id;
 
-  // Optional post-init hook (e.g., linking delegation childRunId)
-  if (options.afterInit) {
-    await options.afterInit(state.id);
+    // Initialize actor state (populates forStack for first step)
+    await actorService.initializeState(state.id, [...runbook.steps]);
+    await lifecycleService.ensureActiveEntry(state.id);
+
+    // Optional post-init hook (e.g., linking delegation childRunId)
+    if (options.afterInit) {
+      await options.afterInit(state.id);
+    }
+
+    await sessionService.pushRunbook(state.id);
+
+    if (resolvedStepHasSubsteps(runbook.steps[0]) && runbook.steps[0].substeps.length > 0) {
+      const freshState = await manager.load(state.id);
+      const frame = freshState ? deriveActiveFrame(freshState) : undefined;
+      const frameKey =
+        freshState?.activeFrameKey ?? frame?.frameKey ?? buildFrameKey(runbook.steps[0].name);
+      await manager.initializeSubsteps(state.id, runbook.steps[0].substeps, frameKey);
+      await manager.update(state.id, { substep: runbook.steps[0].substeps[0].id });
+    }
+
+    // Update lastAction
+    await manager.update(state.id, { lastAction: { type: 'START' } });
+
+    // Create emitter bridged to unified output
+    emitter = createBridgedEmitter(state, output);
+
+    // Emit RUNBOOK_STARTED
+    emitRunbookStarted(emitter, state, options.prompted);
+
+    runbookSteps = [...runbook.steps];
+  } catch (err) {
+    return {
+      ok: false,
+      error: getErrorMessage(err),
+      code: ErrorCodes.LAUNCH_FAILED.code,
+      details: { runbookName: options.runbookName },
+    };
   }
 
-  await sessionService.pushRunbook(state.id);
-
-  if (resolvedStepHasSubsteps(runbook.steps[0]) && runbook.steps[0].substeps.length > 0) {
-    const freshState = await manager.load(state.id);
-    const frame = freshState ? deriveActiveFrame(freshState) : undefined;
-    const frameKey =
-      freshState?.activeFrameKey ?? frame?.frameKey ?? buildFrameKey(runbook.steps[0].name);
-    await manager.initializeSubsteps(state.id, runbook.steps[0].substeps, frameKey);
-    await manager.update(state.id, { substep: runbook.steps[0].substeps[0].id });
-  }
-
-  // Update lastAction
-  await manager.update(state.id, { lastAction: { type: 'START' } });
-
-  // Create emitter bridged to unified output
-  const emitter = createBridgedEmitter(state, output);
-
-  // Emit RUNBOOK_STARTED
-  emitRunbookStarted(emitter, state, options.prompted);
-
-  // Run execution loop
+  // Run execution loop (failures propagate as exceptions — caller's concern)
   const loopResult = await runExecutionLoop(
     manager,
-    state.id,
-    [...runbook.steps],
+    stateId,
+    runbookSteps,
     cwd,
     options.prompted,
     emitter,
   );
 
-  return { ok: true, loopResult, stateId: state.id };
+  return { ok: true, loopResult, stateId };
 }
 
 /**
@@ -808,9 +900,9 @@ export async function claimAndLaunch(
   try {
     await lock.acquire(parentState.id);
   } catch (err) {
-    // acquire() throws "Delegation lock timeout ..." for deadline expiry.
+    // acquire() throws DelegationLockTimeoutError on deadline expiry.
     // Re-throw anything else (EACCES, EIO, etc.) as an unexpected error.
-    if (Error.isError(err) && err.message.startsWith('Delegation lock timeout')) {
+    if (err instanceof DelegationLockTimeoutError) {
       return {
         ok: false,
         error: `Could not acquire delegation lock for run ${parentState.id}. Another operation may be in progress.`,

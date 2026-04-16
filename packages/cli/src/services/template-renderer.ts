@@ -36,8 +36,9 @@ import {
   stepIdToString,
   RunbookSyntaxError,
 } from '@rundown-org/parser';
-import { isJsonArrayStream } from '@rundown-org/core';
+import { isJsonArrayStream, assembleArtifactPath } from '@rundown-org/core';
 import type { TemplateVarValue } from '@rundown-org/core';
+import type { StepVariables } from './execution-vars.js';
 
 /**
  * Mapped type that requires all keys of T to be present in object literals,
@@ -77,6 +78,11 @@ const TEMPLATE_PATH_REGEX =
  * Resolve a dotted path in an object using own-property traversal.
  * Uses `Object.hasOwn` at each segment and nullish checks.
  * Does not traverse the prototype chain.
+ *
+ * The typed `StepVariables` boundary ends at the top-level record — dotted
+ * traversal continues through nested `JsonObject` / `JsonArray` leaves where
+ * values are legitimately `unknown`. Callers remain responsible for passing
+ * typed variable maps at the public entry points.
  *
  * @param obj - The object to traverse
  * @param path - Dot-separated path (e.g., "meta.region")
@@ -177,10 +183,10 @@ function resolveTemplatePath(path: string, variables: Record<string, unknown>): 
  * downstream resolution errors with original source text.
  *
  * @param text - Input text that may contain placeholders
- * @param variables - Runtime/template variables for substitution
+ * @param variables - Runtime/template variables for substitution (typed `StepVariables` at the call boundary)
  * @returns Expanded text with unresolved placeholders preserved
  */
-export function expandLoopVariables(text: string, variables: Record<string, unknown>): string {
+export function expandLoopVariables(text: string, variables: Readonly<StepVariables>): string {
   return text.replace(TEMPLATE_PATH_REGEX, (match, path: string) => {
     return resolveTemplatePath(path, variables) ?? match;
   });
@@ -432,6 +438,8 @@ function toResolvedSubstep(substep: ParsedSubstep, runbooks: string[] | undefine
     command: substep.command,
     prompt: substep.prompt,
     transitions: substep.transitions,
+    inputs: substep.inputs,
+    outputs: substep.outputs,
     runbooks: runbooks?.length ? runbooks : undefined,
     line: substep.line,
   };
@@ -958,16 +966,116 @@ export function warnUnresolvedRunbookVariables(runbook: ResolvedRunbook): string
   return warnings;
 }
 
+// ─── Output expression evaluation ────────────────────────────────────────────
+
+/**
+ * Pattern matching the `{{ path "filename" }}` helper with optional `ctx=` override.
+ *
+ * Captures:
+ *   [1] filename — the output filename (may include extension)
+ *   [2] optional ctx value — raw expression to override the default ContextId
+ */
+const PATH_HELPER_REGEX = /^\{\{\s*path\s+"([^"]+)"(?:\s+ctx=(.+?))?\s*\}\}$/;
+
+/**
+ * Evaluate an OUTPUTS value expression to its final string.
+ *
+ * Handles four value forms:
+ * - `{{ path "file.json" }}` — context-scoped path helper (same semantics as rdpath)
+ * - `{{ path "file.json" ctx=SomeVar }}` — path helper with ctx override
+ * - `{{ VarName }}` or `{{ dotted.path }}` — template variable substitution
+ * - `"quoted literal"` — literal string (quotes stripped)
+ * - `bare_identifier` — template variable lookup
+ *
+ * The `path()` helper computes:
+ *   `<WorkPath>/.rd-<ContextId>/YYYY-MM-DD-<filename>`
+ * which is identical to `rdpath --dir WorkPath --ctx ContextId --file filename`.
+ *
+ * @param expr - Raw value expression from the OUTPUTS declaration
+ * @param variables - Resolved template variables (must include WorkPath and ContextId)
+ * @returns The evaluated string value
+ * @throws {Error} If a `path()` call is missing required WorkPath or ContextId variables, or filename is invalid
+ */
+export function evaluateOutputExpression(expr: string, variables: StepVariables): string {
+  const trimmed = expr.trim();
+
+  // Handle path() helper: {{ path "filename" [ctx=Expr] }}
+  const pathMatch = PATH_HELPER_REGEX.exec(trimmed);
+  if (pathMatch) {
+    const filename = pathMatch[1];
+
+    const workPath = resolveTemplatePath('WorkPath', variables);
+    if (!workPath) {
+      throw new Error('evaluateOutputExpression: WorkPath variable is not defined');
+    }
+
+    // Resolve ctx — either from explicit ctx= parameter or from ContextId variable
+    let contextId: string;
+    if (pathMatch[2]) {
+      // ctx=SomeVar — expand as template variable first.
+      // Accepts bare identifiers (`ctx=Foo`), compact Handlebars (`ctx={{Foo}}`),
+      // and spaced Handlebars (`ctx={{ context.current.at }}`).
+      //
+      // Typo safety: if the named variable is undefined, expandLoopVariables
+      // preserves `{{Name}}` as a literal, and VALID_CTX in
+      // assembleArtifactPath rejects any contextId containing `{{` — so a
+      // misspelled `ctx=PlanPat` (when `PlanPath` was intended) fails loudly
+      // rather than producing a bogus path.
+      const ctxExpr = pathMatch[2].trim();
+      const ctxExpanded = expandLoopVariables(
+        ctxExpr.startsWith('{{') ? ctxExpr : `{{${ctxExpr}}}`,
+        variables,
+      );
+      // Surface a targeted error when the expanded ctx isn't a legal ContextId
+      // (e.g. `ctx={{ context.current.at }}` resolving to a dotted or
+      // bracketed execution address like `1.2.1` or `3.1[2]`). The downstream
+      // `assembleArtifactPath` validator would still reject these, but with
+      // an opaque "Invalid ctx" error that hides the source expression.
+      if (!/^[a-zA-Z0-9_-]+$/.test(ctxExpanded)) {
+        throw new Error(
+          `evaluateOutputExpression: ctx=${ctxExpr} expanded to "${ctxExpanded}", which is not a valid ContextId. Use a precomputed ContextId variable rather than an execution address.`,
+        );
+      }
+      contextId = ctxExpanded;
+    } else {
+      const resolved = resolveTemplatePath('ContextId', variables);
+      if (!resolved) {
+        throw new Error('evaluateOutputExpression: ContextId variable is not defined');
+      }
+      contextId = resolved;
+    }
+
+    // assembleArtifactPath validates filename and ctx, throws on invalid input.
+    // Produces: workPath/.rd-contextId/YYYY-MM-DD-filename
+    return assembleArtifactPath(workPath, contextId, filename);
+  }
+
+  // Handle quoted literal: "HELLO" → HELLO
+  const quotedMatch = /^"([^"]*)"$/.exec(trimmed);
+  if (quotedMatch) {
+    return quotedMatch[1];
+  }
+
+  // Handle {{ VarName }} or {{ dotted.path }} — standard template substitution
+  if (trimmed.startsWith('{{')) {
+    return expandLoopVariables(trimmed, variables);
+  }
+
+  // Bare identifier — treat as variable name
+  const resolved = resolveTemplatePath(trimmed, variables);
+  return resolved ?? trimmed;
+}
+
 /**
  * Expand loop variables in command code with shell escaping.
  *
  * @param text - Command text containing placeholders
- * @param variables - Runtime/template variable map
+ * @param variables - Runtime/template variable map (typed `StepVariables` at the call boundary)
  * @returns Command text with resolved placeholders shell-escaped
  */
 export function expandLoopVariablesForCommand(
   text: string,
-  variables: Record<string, unknown>,
+  variables: Readonly<StepVariables>,
 ): string {
   return text.replace(TEMPLATE_PATH_REGEX, (match, path: string) => {
     const resolved = resolveTemplatePath(path, variables);

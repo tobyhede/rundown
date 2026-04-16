@@ -77,6 +77,8 @@ rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file plan.json
 ## 8. Write the plan
 - PASS CONTINUE
 - FAIL STOP
+- OUTPUTS
+  - PlanPath {{ path "plan.json" }}
 
 Write the plan to the output path.
 Follow the structure and conventions from the writing-plans skill.

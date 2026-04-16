@@ -26,7 +26,10 @@ const SAFE_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
  *         character outside the safe set
  */
 function assertSafeId(value: string, field: 'id' | 'runId'): void {
-  if (!value || !SAFE_ID_PATTERN.test(value)) {
+  // Reject `.` and `..` explicitly: both match SAFE_ID_PATTERN but resolve to
+  // parent/current directory under path.join, enabling traversal out of the
+  // intended `.rundown/` subtree.
+  if (!value || value === '.' || value === '..' || !SAFE_ID_PATTERN.test(value)) {
     throw new Error(`Invalid ${field}: ${JSON.stringify(value)}`);
   }
 }
@@ -48,6 +51,9 @@ export const WORK_DIR = `${RUNDOWN_DIR}/work`;
 
 /** File path (relative to project root) for the user-managed variable config file. */
 export const CONFIG_FILE = `${RUNDOWN_DIR}/config.yaml`;
+
+/** Directory path (relative to project root) for context-scoped output stores. */
+export const CONTEXTS_DIR = `${RUNDOWN_DIR}/contexts`;
 
 /**
  * Absolute path to the runbook execution state directory.
@@ -90,6 +96,27 @@ export const runbooksDir = (cwd: string): string => path.join(cwd, RUNBOOKS_DIR)
 export const workDir = (cwd: string): string => path.join(cwd, WORK_DIR);
 
 /**
+ * Absolute path to the contexts directory.
+ *
+ * @param cwd - Project root directory
+ * @returns Path to `.rundown/contexts/`
+ */
+export const contextsDir = (cwd: string): string => path.join(cwd, CONTEXTS_DIR);
+
+/**
+ * Absolute path to a context's outputs file.
+ *
+ * @param cwd - Project root directory
+ * @param contextId - Context identifier (must match `[A-Za-z0-9._-]+`)
+ * @returns Path to `.rundown/contexts/<contextId>/outputs.json`
+ * @throws {Error} If `contextId` is empty or contains unsafe characters
+ */
+export const contextOutputsPath = (cwd: string, contextId: string): string => {
+  assertSafeId(contextId, 'id');
+  return path.join(cwd, CONTEXTS_DIR, contextId, 'outputs.json');
+};
+
+/**
  * Absolute path to a specific runbook state file.
  *
  * @param cwd - Project root directory
@@ -122,4 +149,19 @@ export const LEGACY_SESSION_FILE = '.claude/rundown/session.json';
 export const delegationLockPath = (cwd: string, runId: string): string => {
   assertSafeId(runId, 'runId');
   return path.join(cwd, LOCKS_DIR, `run-${runId}.delegation.lock`);
+};
+
+/**
+ * Absolute path to the context-outputs write-serialization lock file.
+ *
+ * Lock path: `.rundown/locks/ctx-<contextId>.context-outputs.lock`
+ *
+ * @param cwd - Project root directory
+ * @param contextId - Context identifier (must match `[A-Za-z0-9._-]+`)
+ * @returns Path to the lock file
+ * @throws {Error} If `contextId` contains path separators, `..`, or is otherwise unsafe
+ */
+export const contextOutputsLockPath = (cwd: string, contextId: string): string => {
+  assertSafeId(contextId, 'id');
+  return path.join(cwd, LOCKS_DIR, `ctx-${contextId}.context-outputs.lock`);
 };

@@ -17,6 +17,7 @@ import {
   locksDir,
 } from '@rundown-org/core';
 import { NAMED_IDENTIFIER_PATTERN, isReservedWord } from '@rundown-org/parser';
+import type { ResolvedStep, Substep } from '@rundown-org/parser';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -731,4 +732,68 @@ export function createRunbook(options: CreateRunbookOptions): string {
   });
 
   return lines.join('\n');
+}
+
+/**
+ * Factory function to build a base ResolvedStep with defaults.
+ * Allows overriding specific fields without the awkwardness of casting.
+ *
+ * @param overrides - Partial fields to override defaults
+ * @returns A complete ResolvedStep of kind 'base'
+ */
+export function buildBaseStep(overrides: Partial<ResolvedStep> = {}): ResolvedStep {
+  return {
+    kind: 'base',
+    name: '1',
+    description: 'Test step',
+    transitions: {
+      pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+      fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+    },
+    ...overrides,
+  } as ResolvedStep;
+}
+
+/**
+ * Factory function to build a ResolvedStep with substeps.
+ * Allows building parent steps with typed substeps.
+ *
+ * @param substeps - Array of substep objects
+ * @param overrides - Partial fields to override defaults
+ * @returns A complete ResolvedStep of kind 'substeps'
+ */
+export function buildStepWithSubsteps(
+  substeps: readonly Substep[],
+  overrides: Partial<ResolvedStep> = {},
+): ResolvedStep {
+  return {
+    kind: 'substeps',
+    name: '1',
+    description: 'Test parent',
+    substeps,
+    transitions: {
+      pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+      fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+    },
+    ...overrides,
+  } as ResolvedStep;
+}
+
+/**
+ * Factory function to build a Substep with defaults.
+ * Allows building substeps without casting.
+ *
+ * @param overrides - Partial fields to override defaults
+ * @returns A complete Substep
+ */
+export function buildSubstep(overrides: Partial<Substep> = {}): Substep {
+  return {
+    id: '1',
+    description: 'Test substep',
+    transitions: {
+      pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+      fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+    },
+    ...overrides,
+  };
 }

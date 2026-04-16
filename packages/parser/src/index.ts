@@ -33,6 +33,7 @@ export {
   isLoopControlAction,
   isStepExitAction,
   isTerminalAction,
+  parseOutputDeclaration,
 } from './helpers.js';
 export type { ConvertedTransitions, ParsedStepHeader, ParsedSubstepHeader } from './helpers.js';
 export {
@@ -43,6 +44,7 @@ export {
   isReservedWord,
   NAMED_IDENTIFIER_PATTERN,
 } from './step-id.js';
+export { RESERVED_TEMPLATE_NAMES, isReservedTemplateName } from './reserved.js';
 export type { ParseStepIdOptions } from './step-id.js';
 export {
   extractFrontmatter,

@@ -242,6 +242,24 @@ another_field: 123
     expect(result.content.trim()).toBe('# Content');
   });
 
+  it('preserves typed inputs and required alongside unknown passthrough fields', () => {
+    const markdown = `---
+name: test-runbook
+inputs:
+  - PlanPath
+required:
+  - Region
+skill: my-skill
+---
+# Content`;
+
+    const result = extractFrontmatter(markdown);
+
+    expect(result.frontmatter?.inputs).toEqual(['PlanPath']);
+    expect(result.frontmatter?.required).toEqual(['Region']);
+    expect(result.frontmatter).toHaveProperty('skill', 'my-skill');
+  });
+
   it('handles horizontal rules (--) in content', () => {
     const markdown = `---
 name: test-runbook
@@ -530,16 +548,23 @@ describe('required field', () => {
     expect(frontmatter?.required).toBeUndefined();
   });
 
-  it('drops to undefined when required contains non-strings', () => {
+  it('drops invalid non-string entries and emits diagnostics', () => {
     const md = `---\nname: test\nrequired:\n  - 123\n  - true\n---\n# Content`;
-    const { frontmatter } = extractFrontmatter(md);
+    const { frontmatter, diagnostics } = extractFrontmatter(md);
+    // Both entries invalid → no valid items kept, returns undefined
     expect(frontmatter?.required).toBeUndefined();
+    expect(diagnostics).toHaveLength(2);
+    expect(diagnostics[0].severity).toBe('error');
+    expect(diagnostics[0].message).toMatch(/required\[0\].*string identifier/);
+    expect(diagnostics[1].message).toMatch(/required\[1\].*string identifier/);
   });
 
-  it('drops to undefined when required contains empty strings', () => {
+  it('preserves valid entries and emits diagnostic for each invalid one', () => {
     const md = `---\nname: test\nrequired:\n  - ""\n  - VarA\n---\n# Content`;
-    const { frontmatter } = extractFrontmatter(md);
-    expect(frontmatter?.required).toBeUndefined();
+    const { frontmatter, diagnostics } = extractFrontmatter(md);
+    expect(frontmatter?.required).toEqual(['VarA']);
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0].message).toMatch(/required\[0\].*not a valid identifier/);
   });
 
   it('coexists with vars', () => {
@@ -549,10 +574,13 @@ describe('required field', () => {
     expect(frontmatter?.required).toEqual(['PlanPath']);
   });
 
-  it('drops to undefined when required contains invalid identifiers', () => {
+  it('drops invalid identifier and emits diagnostic when only entry is invalid', () => {
     const md = `---\nname: test\nrequired:\n  - "123bad"\n---\n# Content`;
-    const { frontmatter } = extractFrontmatter(md);
+    const { frontmatter, diagnostics } = extractFrontmatter(md);
     expect(frontmatter?.required).toBeUndefined();
+    expect(diagnostics).toEqual([
+      expect.objectContaining({ severity: 'error', message: expect.stringMatching(/123bad/) }),
+    ]);
   });
 
   it('accepts valid underscore-prefixed identifiers', () => {
@@ -561,9 +589,15 @@ describe('required field', () => {
     expect(frontmatter?.required).toEqual(['_private', 'MY_VAR']);
   });
 
-  it('drops to undefined when any entry has invalid identifier', () => {
+  it('preserves valid entries when other entries have invalid identifiers', () => {
     const md = `---\nname: test\nrequired:\n  - GoodName\n  - "bad-name"\n---\n# Content`;
-    const { frontmatter } = extractFrontmatter(md);
-    expect(frontmatter?.required).toBeUndefined();
+    const { frontmatter, diagnostics } = extractFrontmatter(md);
+    expect(frontmatter?.required).toEqual(['GoodName']);
+    expect(diagnostics).toEqual([
+      expect.objectContaining({
+        severity: 'error',
+        message: expect.stringMatching(/bad-name.*not a valid identifier/),
+      }),
+    ]);
   });
 });

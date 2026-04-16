@@ -287,6 +287,19 @@ export type BreakAction = Readonly<z.output<typeof BreakActionSchema>>;
 export type Action = Readonly<z.output<typeof ActionSchema>>;
 
 /**
+ * Zod schema for OutputDeclaration
+ *
+ * Represents a named output value published by a step on completion.
+ */
+export const OutputDeclarationSchema = z.object({
+  name: z.string().regex(NAMED_IDENTIFIER_PATTERN),
+  value: z.string().min(1),
+});
+
+/** Output declaration, inferred from OutputDeclarationSchema. */
+export type OutputDeclarationSchemaType = Readonly<z.output<typeof OutputDeclarationSchema>>;
+
+/**
  * Valid transition kinds
  */
 export const TransitionKindSchema = z.enum(['pass', 'fail', 'yes', 'no']);

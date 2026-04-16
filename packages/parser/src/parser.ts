@@ -2,7 +2,14 @@ import { fromMarkdown } from 'mdast-util-from-markdown';
 import { visit, SKIP } from 'unist-util-visit';
 import type { Node } from 'unist';
 import type { Code, Heading, List, ListItem, Paragraph, PhrasingContent } from 'mdast';
-import type { Step, ParsedSubstep, Command, ParsedForClause, ParseResult } from './ast.js';
+import type {
+  Step,
+  ParsedSubstep,
+  Command,
+  ParsedForClause,
+  ParseResult,
+  OutputDeclaration,
+} from './ast.js';
 import type { Transitions } from './schemas.js';
 import { type ParsedConditional, RunbookSyntaxError } from './types.js';
 import {
@@ -19,7 +26,10 @@ import {
   validateLoopControlUsage,
   validateDEFERUsage,
   parseForClause,
+  parseOutputDeclaration,
 } from './helpers.js';
+import { isReservedTemplateName } from './reserved.js';
+import { NAMED_IDENTIFIER_PATTERN } from './step-id.js';
 import { validateRunbook } from './validator.js';
 import { extractFrontmatter, nameFromFilename } from './frontmatter.js';
 
@@ -113,6 +123,8 @@ interface SubstepBuilder {
   hasSeenPromptText: boolean;
   pendingConditionals: ParsedConditional[];
   line?: number;
+  inputs?: string[];
+  outputs?: readonly OutputDeclaration[];
 }
 
 interface StepBuilder {
@@ -132,6 +144,8 @@ interface StepBuilder {
   forConditionals?: ParsedConditional[];
   stepConditionals?: ParsedConditional[];
   invalidH3s: Array<{ line: number; text: string }>;
+  inputs?: string[];
+  outputs?: readonly OutputDeclaration[];
 }
 
 /**
@@ -209,10 +223,23 @@ function finalizePendingSubstep(ctx: VisitorContext): void {
       transitions: converted?.transitions ?? DEFAULT_TRANSITIONS,
       runbooks: runbooks.length > 0 ? runbooks : undefined,
       line: ps.line,
+      inputs: ps.inputs,
+      outputs: ps.outputs,
     };
     ctx.currentStep.substeps.push(substep);
     ctx.currentStep.pendingSubstep = undefined;
   }
+}
+
+function getDirectiveTarget(ctx: ActiveStepContext): StepBuilder | SubstepBuilder {
+  return ctx.currentStep.pendingSubstep ?? ctx.currentStep;
+}
+
+function formatDirectiveTarget(ctx: ActiveStepContext): string {
+  const target = ctx.currentStep.pendingSubstep;
+  return target
+    ? `substep "${ctx.currentStep.name}.${target.id}"`
+    : `step "${ctx.currentStep.name}"`;
 }
 
 function handleH1Heading(node: Heading, ctx: VisitorContext): void {
@@ -305,6 +332,8 @@ function handleH3Heading(node: Heading, ctx: ActiveStepContext): void {
       hasSeenPromptText: false,
       pendingConditionals: [],
       line: node.position?.start.line,
+      inputs: undefined,
+      outputs: undefined,
     };
   } else {
     ctx.currentStep.invalidH3s.push({
@@ -545,6 +574,117 @@ function handleListItemContent(
 }
 
 /**
+ * Process an OUTPUTS directive list item.
+ *
+ * Reads the nested list under `- OUTPUTS` and collects each item as an
+ * OutputDeclaration. Returns `SKIP` to prevent double-traversal of the nested list.
+ *
+ * @param node - The list item node whose first paragraph text is "OUTPUTS"
+ * @param ctx - Active step context
+ * @returns `SKIP` to stop the visitor from descending into child nodes
+ * @throws {RunbookSyntaxError} When nested items are missing or have invalid syntax
+ */
+function handleOutputsDirective(node: ListItem, ctx: ActiveStepContext): typeof SKIP {
+  const target = getDirectiveTarget(ctx);
+  const targetLabel = formatDirectiveTarget(ctx);
+  const nestedList = node.children.find((c): c is List => c.type === 'list');
+  if (!nestedList || nestedList.children.length === 0) {
+    throw new RunbookSyntaxError(
+      `OUTPUTS directive in ${targetLabel}${formatLineNum(node)} requires at least one output declaration (e.g., "  - PlanPath {{ path \\"plan.json\\" }}")`,
+    );
+  }
+
+  if (target.outputs && target.outputs.length > 0) {
+    throw new RunbookSyntaxError(
+      `Duplicate OUTPUTS directive in ${targetLabel}${formatLineNum(node)}: a target may declare OUTPUTS at most once`,
+    );
+  }
+
+  const declarations: OutputDeclaration[] = [];
+  const seen = new Set<string>();
+  for (const item of nestedList.children) {
+    const paragraph = item.children.find((c) => c.type === 'paragraph');
+    if (!paragraph) {
+      throw new RunbookSyntaxError(
+        `Invalid OUTPUTS declaration in ${targetLabel}${formatLineNum(item)}: expected "Name value"`,
+      );
+    }
+    const text = extractText(paragraph as PhrasingContent | Heading | Paragraph | ListItem);
+    const decl = parseOutputDeclaration(text);
+    if (!decl) {
+      throw new RunbookSyntaxError(
+        `Invalid OUTPUTS declaration in ${targetLabel}${formatLineNum(item)}: "${text.trim()}" — expected "Name value" (e.g., "PlanPath {{ path \\"plan.json\\" }}")`,
+      );
+    }
+    if (isReservedTemplateName(decl.name)) {
+      throw new RunbookSyntaxError(
+        `Invalid OUTPUTS declaration in ${targetLabel}${formatLineNum(item)}: "${decl.name}" is a reserved variable name (step, index, context — case-insensitive)`,
+      );
+    }
+    if (seen.has(decl.name)) {
+      throw new RunbookSyntaxError(
+        `Duplicate output name "${decl.name}" in ${targetLabel}${formatLineNum(item)}: each output name must be unique within an OUTPUTS block`,
+      );
+    }
+    seen.add(decl.name);
+    declarations.push(decl);
+  }
+
+  target.outputs = declarations;
+  return SKIP;
+}
+
+/**
+ * Process an INPUTS directive list item.
+ *
+ * Reads the nested list under `- INPUTS` and collects each item as a variable name.
+ * Returns `SKIP` to prevent double-traversal of the nested list.
+ *
+ * @param node - The list item node whose first paragraph text is "INPUTS"
+ * @param ctx - Active step context
+ * @returns `SKIP` to stop the visitor from descending into child nodes
+ * @throws {RunbookSyntaxError} When nested items are missing or have invalid identifier syntax
+ */
+function handleInputsDirective(node: ListItem, ctx: ActiveStepContext): typeof SKIP {
+  const target = getDirectiveTarget(ctx);
+  const targetLabel = formatDirectiveTarget(ctx);
+  const nestedList = node.children.find((c): c is List => c.type === 'list');
+  if (!nestedList || nestedList.children.length === 0) {
+    throw new RunbookSyntaxError(
+      `INPUTS directive in ${targetLabel}${formatLineNum(node)} requires at least one variable name (e.g., "  - PlanPath")`,
+    );
+  }
+  const names: string[] = [];
+  for (const item of nestedList.children) {
+    const paragraph = item.children.find((c) => c.type === 'paragraph');
+    if (!paragraph) {
+      throw new RunbookSyntaxError(
+        `Invalid INPUTS declaration in ${targetLabel}${formatLineNum(item)}: missing variable name (expected "  - Name")`,
+      );
+    }
+    const name = extractText(paragraph as PhrasingContent | Heading | Paragraph | ListItem).trim();
+    if (!NAMED_IDENTIFIER_PATTERN.test(name)) {
+      throw new RunbookSyntaxError(
+        `Invalid INPUTS declaration in ${targetLabel}${formatLineNum(item)}: "${name}" is not a valid variable identifier`,
+      );
+    }
+    if (isReservedTemplateName(name)) {
+      throw new RunbookSyntaxError(
+        `Invalid INPUTS declaration in ${targetLabel}${formatLineNum(item)}: "${name}" is a reserved variable name (step, index, context — case-insensitive)`,
+      );
+    }
+    names.push(name);
+  }
+  if (target.inputs && target.inputs.length > 0) {
+    throw new RunbookSyntaxError(
+      `Duplicate INPUTS directive in ${targetLabel}${formatLineNum(node)}: a target may declare INPUTS at most once`,
+    );
+  }
+  target.inputs = [...names];
+  return SKIP;
+}
+
+/**
  * Process a list item node within an active step.
  *
  * @param node - The list item AST node
@@ -557,6 +697,19 @@ function handleListItem(node: ListItem, ctx: ActiveStepContext): typeof SKIP | u
   if (!firstParagraph) return;
 
   const text = extractText(firstParagraph as PhrasingContent | Heading | Paragraph | ListItem);
+
+  // Check for OUTPUTS directive on the active execution unit (step or substep)
+  if (text.trim() === 'OUTPUTS') {
+    return handleOutputsDirective(node, ctx);
+  }
+
+  // Check for INPUTS directive on the active execution unit (step or substep)
+  // Exact match only — prose starting with "INPUTS" (e.g., "INPUTS are validated by…")
+  // is not a directive. Variable names live in the nested list, not inline text.
+  const trimmedText = text.trim();
+  if (trimmedText === 'INPUTS') {
+    return handleInputsDirective(node, ctx);
+  }
 
   // Check for FOR clause BEFORE conditionals
   const forResult = parseForClause(text);
@@ -685,7 +838,11 @@ export function parseRunbook(markdown: string): Step[] {
  * @see parseRunbook for simplified parsing returning only steps
  */
 export function parseRunbookDocument(markdown: string, basename?: string): ParseResult {
-  const { frontmatter, content } = extractFrontmatter(markdown);
+  const {
+    frontmatter,
+    content,
+    diagnostics: frontmatterDiagnostics,
+  } = extractFrontmatter(markdown);
   const tree = fromMarkdown(content);
 
   const ctx: VisitorContext = {
@@ -706,7 +863,7 @@ export function parseRunbookDocument(markdown: string, basename?: string): Parse
     ctx.steps.push(finalizeStep(ctx.currentStep, ctx.pendingConditionals, ctx.implicitText));
   }
 
-  const diagnostics = validateRunbook(ctx.steps);
+  const diagnostics = [...frontmatterDiagnostics, ...validateRunbook(ctx.steps)];
 
   return {
     runbook: {
@@ -802,6 +959,8 @@ function finalizeStep(
       description: step.description,
       transitions: stepTransitions,
       line: step.line,
+      inputs: step.inputs,
+      outputs: step.outputs,
     };
     if (step.forClause) {
       return {
@@ -832,6 +991,8 @@ function finalizeStep(
     prompt,
     transitions: stepTransitions,
     line: step.line,
+    inputs: step.inputs,
+    outputs: step.outputs,
   };
 
   if (step.forClause) {

@@ -21,7 +21,7 @@ import {
   isReservedWord,
   NAMED_IDENTIFIER_PATTERN,
 } from './step-id.js';
-import type { ParsedForClause, Bound, RunbookEntry, RunbookRef } from './ast.js';
+import type { ParsedForClause, Bound, RunbookEntry, RunbookRef, OutputDeclaration } from './ast.js';
 import { isBoundRef } from './guards.js';
 import { TEMPLATE_VAR_PATH_PATTERN } from './schemas.js';
 
@@ -1033,10 +1033,45 @@ export function escapeForShellSingleQuote(content: string): string {
 }
 
 /**
- * Format an Action object back into its string representation.
+ * Parse a single OUTPUTS directive item into an OutputDeclaration.
  *
- * Converts parsed Action objects into human-readable action strings
- * suitable for display or logging.
+ * Accepts three value forms:
+ * - `{{ path "file.json" }}` — helper invocation (preserved verbatim)
+ * - `"HELLO"` — quoted literal string (quotes stripped)
+ * - `item` — bare variable reference (preserved verbatim)
+ *
+ * The first whitespace-delimited token is the output name. Everything after
+ * the name (trimmed) is the raw value expression.
+ *
+ * @param text - The list item text, e.g., `PlanPath {{ path "plan.json" }}`
+ * @returns Parsed OutputDeclaration, or null if the text is empty or invalid
+ */
+export function parseOutputDeclaration(text: string): OutputDeclaration | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+
+  // First token is the variable name
+  const spaceIdx = trimmed.search(/\s/);
+  if (spaceIdx === -1) {
+    // No space — the whole thing might be just a name with no value
+    return null;
+  }
+
+  const name = trimmed.slice(0, spaceIdx);
+  if (!NAMED_IDENTIFIER_PATTERN.test(name)) return null;
+
+  const rawValue = trimmed.slice(spaceIdx).trim();
+  if (!rawValue) return null;
+
+  // Unwrap quoted literals: "HELLO" → HELLO
+  const quotedMatch = /^"([^"]+)"$/.exec(rawValue);
+  const value = quotedMatch ? quotedMatch[1] : rawValue;
+
+  return { name, value };
+}
+
+/**
+ * Format an action as its canonical string representation.
  *
  * @param action - The Action object to format
  * @returns String representation of the action (e.g., "GOTO 2", "COMPLETE", "STOP \"message\"")

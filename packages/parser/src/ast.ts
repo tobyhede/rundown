@@ -183,20 +183,36 @@ export type UnresolvedForClause = UnresolvedNumericWindow | UnresolvedSourceWind
  */
 export type ParsedForClause = ForClause | UnresolvedForClause;
 
-/** Shared fields common to parsed and resolved substep variants. */
-interface SubstepFields {
-  /** Substep identifier: "1", "2", or "Name" for named */
-  readonly id: string;
-  /** Human-readable description from the substep header */
+/**
+ * Shared INPUTS/OUTPUTS fields for any directive-capable execution unit.
+ *
+ * Both steps and substeps can declare the context values they consume and publish.
+ */
+interface ContextDirectiveFields {
+  /** Variables this execution unit expects to be resolved from context OUTPUTS */
+  readonly inputs?: readonly string[];
+  /** Values to publish to context after this execution unit passes */
+  readonly outputs?: readonly OutputDeclaration[];
+}
+
+/** Shared fields common to parsed and resolved execution-unit variants. */
+interface ExecutionUnitFields extends ContextDirectiveFields {
+  /** Human-readable description from the header */
   readonly description: string;
-  /** Executable command from code block */
-  readonly command?: Command;
   /** Single consolidated prompt text */
   readonly prompt?: string;
   /** Pass/fail transition handlers (always present — parser fills defaults) */
   readonly transitions: Transitions;
   /** Source line number for error reporting */
   readonly line?: number;
+}
+
+/** Shared fields common to parsed and resolved substep variants. */
+interface SubstepFields extends ExecutionUnitFields {
+  /** Substep identifier: "1", "2", or "Name" for named */
+  readonly id: string;
+  /** Executable command from code block */
+  readonly command?: Command;
 }
 
 /**
@@ -219,25 +235,31 @@ export interface Substep extends SubstepFields {
 }
 
 /**
+ * A named output value declaration on an execution unit.
+ *
+ * Produced by `- OUTPUTS\n  - Name value` syntax. The `value` field is a raw
+ * expression string (e.g., `{{ path "plan.json" }}`) evaluated when the
+ * declaring step or substep completes with PASS.
+ */
+export interface OutputDeclaration {
+  /** Variable name to publish (e.g., "PlanPath") */
+  readonly name: string;
+  /** Raw value expression — template variable, `{{ path "file" }}`, or quoted literal */
+  readonly value: string;
+}
+
+/**
  * Shared fields common to all step variants.
  *
  * UNIFIED NAMING: All steps have a name.
  * - Numeric steps: name = "1", "2", etc.
  * - Named steps: name = "ErrorHandler", "Cleanup", etc.
  */
-interface StepFields {
+interface StepFields extends ExecutionUnitFields {
   /** Step identifier: "1" or "ErrorHandler" (REQUIRED) */
   readonly name: string;
-  /** Human-readable description from the step header */
-  readonly description: string;
-  /** Single consolidated prompt text */
-  readonly prompt?: string;
-  /** Pass/fail transition handlers (always present — parser fills defaults) */
-  readonly transitions: Transitions;
   /** Aggregation strategy for combining substep/iteration results */
   readonly aggregation?: Aggregation;
-  /** Source line number for error reporting */
-  readonly line?: number;
 }
 
 /** Prompt-only or empty step — no command, no substeps. */

@@ -36,9 +36,12 @@ import {
   isJsonArrayStream,
   assertResolvedVariableForContext,
   RUNS_DIR,
+  loadContextOutputs,
+  getErrorMessage,
 } from '@rundown-org/core';
 import { isSourced, resolvedStepHasSubsteps, type ForClause } from '@rundown-org/parser';
 import { isInternalRdCommand, executeRdCommandInternal } from './internal-commands.js';
+import type { StepVariables } from './execution-vars.js';
 import {
   getPolicyEvaluator,
   getPolicyPrompter,
@@ -51,21 +54,12 @@ import {
   transitionSinkFromEmitter,
   type TransitionOrchestrationPolicy,
 } from '../helpers/transition-orchestrator.js';
-
-/**
- * Per-step dynamic variables (e.g., `Step`, `Index`, named loop variable).
- * Produced by {@link buildStepVariables} and consumed by loop variable expansion.
- *
- * Values can be strings (for Step, Index, scalar values) or JSON values (for JSONL objects).
- * The renderer functions handle both types transparently.
- */
-export type StepVariables = Record<string, unknown>;
-
-/**
- * Template variables for AST-level substitution (e.g., `environment`, `port`).
- * Sourced from frontmatter, CLI flags, or config files.
- */
-export type TemplateVariables = Record<string, TemplateVarValue>;
+import {
+  collectExecutionUnitInputs,
+  persistPassOutputs,
+  resolveCurrentExecutionUnit,
+} from '../helpers/execution-units.js';
+export type { ExecutionVarValue, StepVariables, TemplateVariables } from './execution-vars.js';
 
 /**
  * Build per-step dynamic variables for Phase 2 expansion.
@@ -207,6 +201,8 @@ interface ApplyResultTransitionArgs {
   transitionPolicy: TransitionOrchestrationPolicy;
   computeActionResult?: (actionType: ActionType) => boolean;
   command?: string;
+  /** Project root directory — used for OUTPUTS persistence on PASS. */
+  cwd?: string;
 }
 
 const EXECUTION_TERMINAL_POLICY: TransitionOrchestrationPolicy = {
@@ -232,6 +228,7 @@ async function applyResultTransition({
   transitionPolicy,
   computeActionResult,
   command,
+  cwd,
 }: ApplyResultTransitionArgs): Promise<
   { status: 'continue'; state: RunbookState } | { status: 'done' } | { status: 'stopped' }
 > {
@@ -240,12 +237,37 @@ async function applyResultTransition({
   });
   if (!syncResult) return { status: 'stopped' };
 
+  // Compute actionType early — needed by the OUTPUTS guard below and later for orchestration.
+  const actionType = parseActionType(extractLastAction(syncResult.snapshot));
+
+  // Store OUTPUTS for PASS transitions (best-effort, non-fatal).
+  if (cwd && result === 'pass') {
+    // Build the per-step runtime frame (Step, Index, context.current.*) so that
+    // OUTPUTS expressions referencing loop/step variables resolve correctly.
+    const preTransitionStepVars = buildStepVariables(
+      currentState.step,
+      currentState.substep,
+      currentState.forStack,
+      currentStep.kind === 'for' ? currentStep.forClause : undefined,
+      currentState.templateVars,
+    );
+    await persistPassOutputs({
+      cwd,
+      currentStep,
+      currentSubstepId: currentState.substep,
+      previousStepId: currentState.step,
+      updatedStepId: syncResult.state.step,
+      actionType,
+      templateVarsBefore: preTransitionStepVars,
+      templateVarsAfter: syncResult.state.templateVars,
+    });
+  }
+
   const ensured = await lifecycleService.ensureActiveEntry(
     runbookId,
     currentState,
     syncResult.state,
   );
-  const actionType = parseActionType(extractLastAction(syncResult.snapshot));
   const actionResult = computeActionResult ? computeActionResult(actionType) : result === 'pass';
 
   const orchestration = await orchestrateTransition({
@@ -299,6 +321,8 @@ export interface DrainResolvedCompletionsArgs {
   command?: string;
   /** Override frame key for frame-scoped lookups (e.g., prompted-for with explicit --index). */
   frameKeyOverride?: FrameKey;
+  /** Project root directory — used for OUTPUTS persistence on PASS. */
+  cwd?: string;
 }
 
 /** Result of draining resolved substep completions. */
@@ -339,6 +363,7 @@ export type DrainResolvedCompletionsResult =
  * @param args.computeActionResult - Optional function to compute action result for transitions
  * @param args.command - Optional command string for event context
  * @param args.frameKeyOverride - Optional frame key override for frame-scoped lookups (e.g., prompted-for with explicit --index)
+ * @param args.cwd - Project root directory — used for OUTPUTS persistence on PASS
  * @returns Drain result indicating continue/done/stopped with counts of applied and unresolved completions
  */
 export async function drainResolvedCompletions({
@@ -354,6 +379,7 @@ export async function drainResolvedCompletions({
   computeActionResult,
   command,
   frameKeyOverride,
+  cwd,
 }: DrainResolvedCompletionsArgs): Promise<DrainResolvedCompletionsResult> {
   let state = currentState;
   let applied = 0;
@@ -407,6 +433,7 @@ export async function drainResolvedCompletions({
       transitionPolicy,
       computeActionResult,
       command,
+      cwd,
     });
     applied += 1;
 
@@ -472,14 +499,8 @@ export async function runExecutionLoop(
 
     const totalSteps = countNumberedSteps(steps);
 
-    // Determine what to render: substep if we're at one, otherwise the step
-    let itemToRender: ResolvedStep | Substep = currentStep;
-    if (currentState.substep && resolvedStepHasSubsteps(currentStep)) {
-      const substep = currentStep.substeps.find((s) => s.id === currentState.substep);
-      if (substep) {
-        itemToRender = substep;
-      }
-    }
+    // Determine the active execution unit: substep if we're at one, otherwise the step.
+    const itemToRender = resolveCurrentExecutionUnit(currentStep, currentState.substep);
 
     // Resolve dynamic values for all data sources (array, file, range).
     // The ForIterationService resolves currentValue before each iteration,
@@ -549,7 +570,71 @@ export async function runExecutionLoop(
       continue;
     }
 
-    // status === 'no-resolution-needed' — drain any pre-resolved completions
+    // status === 'no-resolution-needed' — inject INPUTS, then drain.
+    //
+    // INPUTS must be injected BEFORE drainResolvedCompletions because drain
+    // may evaluate OUTPUTS expressions for a pre-recorded completion of the
+    // current execution unit (e.g., `rd pass --step 1.2` issued before the
+    // loop ever reached 1.2). Those OUTPUTS expressions can reference the
+    // unit's declared INPUTS — if injection ran *after* drain, they'd see
+    // the literal `{{name}}` instead of the resolved value.
+    //
+    // Substeps inherit parent-step INPUTS and may declare their own.
+    // Missing keys are silently skipped — they render literally as {{name}}
+    // in the prompt, consistent with the general template variable behavior
+    // for undefined vars. INPUTS only fill gaps: a name already present in
+    // templateVars (via CLI flags, config, frontmatter, etc.) takes
+    // precedence over the context value, preserving documented variable
+    // precedence. A malformed outputs.json is logged and tolerated —
+    // INPUTS are optional by design and should not abort an otherwise
+    // healthy run. Idempotent: re-injection on the next iteration no-ops
+    // because the keys are already in `existing`.
+    const executionInputs = collectExecutionUnitInputs(currentStep, currentState.substep);
+    if (executionInputs.length > 0) {
+      const contextId =
+        typeof currentState.templateVars?.ContextId === 'string'
+          ? currentState.templateVars.ContextId
+          : undefined;
+      if (contextId) {
+        let contextOutputs: Record<string, string> = {};
+        try {
+          contextOutputs = await loadContextOutputs(cwd, contextId);
+        } catch (err) {
+          void logger.warn('INPUTS injection: failed to load context outputs, skipping', {
+            contextId,
+            error: getErrorMessage(err),
+          });
+        }
+        const existing = currentState.templateVars ?? {};
+        const injected: Record<string, string> = {};
+        for (const name of executionInputs) {
+          if (!Object.hasOwn(existing, name) && Object.hasOwn(contextOutputs, name)) {
+            injected[name] = contextOutputs[name];
+          }
+        }
+        if (Object.keys(injected).length > 0) {
+          // Mirror the static pipeline: every var source produces context.vars.* aliases,
+          // so prompts and OUTPUTS expressions can reference INPUTS via either namespace.
+          const aliases: Record<string, TemplateVarValue> = {};
+          for (const [k, v] of Object.entries(injected)) {
+            aliases[`context.vars.${k}`] = v;
+          }
+          const mergedTemplateVars = {
+            ...existing,
+            ...injected,
+            ...aliases,
+          };
+          // Persist before any 'waiting' return so manual `rd pass`/`rd fail` (which
+          // reload state from disk) can evaluate OUTPUTS against the injected INPUTS.
+          await manager.update(runbookId, { templateVars: mergedTemplateVars });
+          currentState = {
+            ...currentState,
+            templateVars: mergedTemplateVars,
+          };
+        }
+      }
+    }
+
     const drainResult = await drainResolvedCompletions({
       manager,
       actorService,
@@ -560,6 +645,7 @@ export async function runExecutionLoop(
       steps,
       currentState,
       transitionPolicy: EXECUTION_TERMINAL_POLICY,
+      cwd,
     });
     if (drainResult.status === 'done') return 'done';
     if (drainResult.status === 'stopped') return 'stopped';
@@ -591,7 +677,7 @@ export async function runExecutionLoop(
     );
     const isSubstep = 'id' in itemToRender;
     const command = isSubstep
-      ? (itemToRender as Substep).command
+      ? itemToRender.command
       : currentStep.kind === 'command'
         ? currentStep.command
         : undefined;
@@ -601,7 +687,7 @@ export async function runExecutionLoop(
 
     emitter.emit('STEP_ENTERED', {
       position: stepPosition,
-      stepName: isSubstep ? (itemToRender as Substep).id : (itemToRender as ResolvedStep).name,
+      stepName: isSubstep ? itemToRender.id : itemToRender.name,
       description: expandedDescription,
       prompt: expandedPrompt,
       hasCommand: !!command,
@@ -699,6 +785,7 @@ export async function runExecutionLoop(
       result: lastResult,
       transitionPolicy: EXECUTION_TERMINAL_POLICY,
       command: displayCommand,
+      cwd,
     });
     if (transitionResult.status === 'done') return 'done';
     if (transitionResult.status === 'stopped') return 'stopped';

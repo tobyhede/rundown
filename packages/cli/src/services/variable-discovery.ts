@@ -26,6 +26,10 @@ import {
   CONFIG_FILE,
   WORK_DIR,
 } from '@rundown-org/core';
+import {
+  RESERVED_TEMPLATE_NAMES as PARSER_RESERVED_TEMPLATE_NAMES,
+  isReservedTemplateName,
+} from '@rundown-org/parser';
 
 // Allow injection for testing
 let execFileSyncImpl: typeof nodeExecFileSync = nodeExecFileSync;
@@ -117,19 +121,24 @@ export function isValidVariableName(key: string): boolean {
  * by user-provided variables.
  *
  * These keys are owned by runtime frame/context resolution and should remain
- * deterministic across runbook execution.
+ * deterministic across runbook execution. Re-exported from the parser package
+ * so the parser-level guard (`handleInputsDirective`, `handleOutputsDirective`,
+ * frontmatter zod refine) and the CLI-level validators stay in sync.
  */
-export const RUNTIME_RESERVED_VARIABLES = new Set(['step', 'index', 'context']);
+export const RUNTIME_RESERVED_VARIABLES = PARSER_RESERVED_TEMPLATE_NAMES;
 
 /**
  * Check whether a variable name is reserved for runtime context semantics.
  *
  * Matching is case-insensitive (`Step`, `STEP`, and `step` are treated equally).
+ * Thin re-export of the parser's `isReservedTemplateName` for backward
+ * compatibility — prefer importing `isReservedTemplateName` directly in new code.
+ *
  * @param name - Variable name to check
  * @returns True if the name is reserved for runtime context semantics
  */
 export function isRuntimeReservedVariable(name: string): boolean {
-  return RUNTIME_RESERVED_VARIABLES.has(name.toLowerCase());
+  return isReservedTemplateName(name);
 }
 
 /**
