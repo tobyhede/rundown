@@ -1,6 +1,13 @@
 import { describe, it, expect } from '@jest/globals';
 import { parseOutputDeclaration, parseRunbookDocument, RunbookSyntaxError } from '../src/index.js';
 
+// Regex-escape a dynamic segment before interpolating it into a `RegExp`
+// constructor — avoids the static-analysis ReDoS warning and is defensive
+// against future callers passing non-identifier fixtures.
+function escapeForRegExp(literal: string): string {
+  return literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 describe('parseOutputDeclaration', () => {
   it('parses name with {{ path "..." }} helper expression', () => {
     const result = parseOutputDeclaration('PlanPath {{ path "plan.json" }}');
@@ -327,7 +334,7 @@ inputs:
       expect.arrayContaining([
         expect.objectContaining({
           severity: 'error',
-          message: expect.stringMatching(new RegExp(`${name}.*reserved`, 'i')),
+          message: expect.stringMatching(new RegExp(`${escapeForRegExp(name)}.*reserved`, 'i')),
         }),
       ]),
     );
@@ -353,7 +360,7 @@ required:
       expect.arrayContaining([
         expect.objectContaining({
           severity: 'error',
-          message: expect.stringMatching(new RegExp(`${name}.*reserved`, 'i')),
+          message: expect.stringMatching(new RegExp(`${escapeForRegExp(name)}.*reserved`, 'i')),
         }),
       ]),
     );
