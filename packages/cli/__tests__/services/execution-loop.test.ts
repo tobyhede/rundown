@@ -436,6 +436,57 @@ describe('runExecutionLoop', () => {
         }),
       );
     });
+
+    it('injects INPUTS before draining pre-recorded completions (regression)', async () => {
+      // Regression: prior to the fix, drainResolvedCompletions ran first.
+      // A pre-recorded completion for the current execution unit could then
+      // evaluate OUTPUTS expressions that reference declared INPUTS while
+      // those INPUTS were still literal `{{name}}`. Order check: the
+      // context-outputs read must precede the consume-completion call
+      // (drain only reaches `consumeResolvedCompletion` for steps with
+      // active substeps, so the regression is exercised on a substep step).
+      const inputsSteps: any[] = [
+        {
+          kind: 'substeps',
+          name: '1',
+          description: 'Parent',
+          substeps: [
+            {
+              id: 'a',
+              description: 'Child substep',
+              inputs: ['Message'],
+              prompt: 'Got: {{Message}}',
+              transitions: {
+                pass: { next: 'CONTINUE' },
+                fail: { next: 'STOP' },
+              },
+            },
+          ],
+          transitions: {
+            pass: { next: 'COMPLETE' },
+            fail: { next: 'STOP' },
+          },
+        },
+      ];
+
+      mockManager.load.mockResolvedValue({
+        id: runbookId,
+        step: '1',
+        substep: 'a',
+        status: 'running',
+        templateVars: { ContextId: 'ctx-order' },
+      });
+      (core.loadContextOutputs as jest.Mock).mockResolvedValue({ Message: 'value' });
+
+      await runExecutionLoop(mockManager, runbookId, inputsSteps, '/tmp', false, mockEmitter);
+
+      const loadOrder = (core.loadContextOutputs as jest.Mock).mock.invocationCallOrder[0];
+      const consumeOrder =
+        mockLifecycleService.consumeResolvedCompletion.mock.invocationCallOrder[0];
+      expect(loadOrder).toBeDefined();
+      expect(consumeOrder).toBeDefined();
+      expect(loadOrder).toBeLessThan(consumeOrder);
+    });
   });
 
   it('executes command and advances to next step', async () => {

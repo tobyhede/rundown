@@ -583,34 +583,25 @@ export async function runExecutionLoop(
       continue;
     }
 
-    // status === 'no-resolution-needed' — drain any pre-resolved completions
-    const drainResult = await drainResolvedCompletions({
-      manager,
-      actorService,
-      sessionService,
-      lifecycleService,
-      emitter,
-      runbookId,
-      steps,
-      currentState,
-      transitionPolicy: EXECUTION_TERMINAL_POLICY,
-      cwd,
-    });
-    if (drainResult.status === 'done') return 'done';
-    if (drainResult.status === 'stopped') return 'stopped';
-    if (drainResult.applied > 0) {
-      currentState = drainResult.state;
-      continue;
-    }
-
-    // Execution-unit INPUTS injection: load declared input names from context outputs
-    // into templateVars. Substeps inherit parent-step INPUTS and may declare their own.
-    // Missing keys are silently skipped — they render literally as {{name}} in the prompt,
-    // consistent with the general template variable behavior for undefined vars.
-    // INPUTS only fill gaps: a name already present in templateVars (via CLI flags, config,
-    // frontmatter, etc.) takes precedence over the context value, preserving documented
-    // variable precedence. A malformed outputs.json is logged and tolerated — INPUTS are
-    // optional by design and should not abort an otherwise healthy run.
+    // status === 'no-resolution-needed' — inject INPUTS, then drain.
+    //
+    // INPUTS must be injected BEFORE drainResolvedCompletions because drain
+    // may evaluate OUTPUTS expressions for a pre-recorded completion of the
+    // current execution unit (e.g., `rd pass --step 1.2` issued before the
+    // loop ever reached 1.2). Those OUTPUTS expressions can reference the
+    // unit's declared INPUTS — if injection ran *after* drain, they'd see
+    // the literal `{{name}}` instead of the resolved value.
+    //
+    // Substeps inherit parent-step INPUTS and may declare their own.
+    // Missing keys are silently skipped — they render literally as {{name}}
+    // in the prompt, consistent with the general template variable behavior
+    // for undefined vars. INPUTS only fill gaps: a name already present in
+    // templateVars (via CLI flags, config, frontmatter, etc.) takes
+    // precedence over the context value, preserving documented variable
+    // precedence. A malformed outputs.json is logged and tolerated —
+    // INPUTS are optional by design and should not abort an otherwise
+    // healthy run. Idempotent: re-injection on the next iteration no-ops
+    // because the keys are already in `existing`.
     const executionInputs = collectExecutionUnitInputs(currentStep, currentState.substep);
     if (executionInputs.length > 0) {
       const contextId =
@@ -655,6 +646,25 @@ export async function runExecutionLoop(
           };
         }
       }
+    }
+
+    const drainResult = await drainResolvedCompletions({
+      manager,
+      actorService,
+      sessionService,
+      lifecycleService,
+      emitter,
+      runbookId,
+      steps,
+      currentState,
+      transitionPolicy: EXECUTION_TERMINAL_POLICY,
+      cwd,
+    });
+    if (drainResult.status === 'done') return 'done';
+    if (drainResult.status === 'stopped') return 'stopped';
+    if (drainResult.applied > 0) {
+      currentState = drainResult.state;
+      continue;
     }
 
     // Expand per-step dynamic variables ({{Step}}, {{Index}}, {{var}}) for current iteration
