@@ -100,9 +100,13 @@ export function extractFrontmatter(markdown: string): {
     return { frontmatter: null, content, diagnostics: [] };
   }
 
-  // No frontmatter present
+  // No frontmatter fields present. gray-matter has already separated any
+  // empty `---` / `---` fences from the body into `content`, so we must not
+  // return the original `markdown` here — doing so puts the fences back into
+  // the downstream parser input and changes the AST (the `---` becomes a
+  // thematic break / heading underline).
   if (Object.keys(data).length === 0) {
-    return { frontmatter: null, content: markdown, diagnostics: [] };
+    return { frontmatter: null, content, diagnostics: [] };
   }
 
   // Validate with Zod — .catch(undefined) on each field ensures parse always succeeds.
