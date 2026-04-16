@@ -1023,6 +1023,16 @@ export function evaluateOutputExpression(
         ctxExpr.startsWith('{{') ? ctxExpr : `{{${ctxExpr}}}`,
         variables,
       );
+      // Surface a targeted error when the expanded ctx isn't a legal ContextId
+      // (e.g. `ctx={{ context.current.at }}` resolving to a dotted or
+      // bracketed execution address like `1.2.1` or `3.1[2]`). The downstream
+      // `assembleArtifactPath` validator would still reject these, but with
+      // an opaque "Invalid ctx" error that hides the source expression.
+      if (!/^[a-zA-Z0-9_-]+$/.test(ctxExpanded)) {
+        throw new Error(
+          `evaluateOutputExpression: ctx=${ctxExpr} expanded to "${ctxExpanded}", which is not a valid ContextId. Use a precomputed ContextId variable rather than an execution address.`,
+        );
+      }
       contextId = ctxExpanded;
     } else {
       const resolved = resolveTemplatePath('ContextId', variables);

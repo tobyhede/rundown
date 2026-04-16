@@ -1739,6 +1739,30 @@ describe('evaluateOutputExpression', () => {
     expect(result).toMatch(/\/\.rd-step-3-1\//);
   });
 
+  it('throws a clear error when ctx= expands to a value with disallowed chars (dotted execution address)', () => {
+    // Regression: `context.current.at` expands to qualified addresses like
+    // "1.2.1". Dots are invalid in a ContextId, so `assembleArtifactPath`
+    // would reject it with an opaque `Invalid ctx` error. Surface a
+    // targeted error at the `ctx=` evaluation site instead.
+    expect(() =>
+      evaluateOutputExpression('{{ path "plan.json" ctx={{ context.current.at }} }}', {
+        WorkPath: '.rundown/work',
+        ContextId: 'ctx-abc',
+        context: { current: { at: '1.2.1' } },
+      }),
+    ).toThrow(/ctx=.*"1\.2\.1"/);
+  });
+
+  it('throws a clear error when ctx= expands to a value with loop iteration brackets', () => {
+    expect(() =>
+      evaluateOutputExpression('{{ path "plan.json" ctx={{ context.current.at }} }}', {
+        WorkPath: '.rundown/work',
+        ContextId: 'ctx-abc',
+        context: { current: { at: '3.1[2]' } },
+      }),
+    ).toThrow(/ctx=/);
+  });
+
   it('rejects ctx= when the referenced variable is undefined (typo safety)', () => {
     // ctx=PlanPat (typo for PlanPath) — expandLoopVariables preserves the
     // literal `{{PlanPat}}`, then assembleArtifactPath rejects a contextId
