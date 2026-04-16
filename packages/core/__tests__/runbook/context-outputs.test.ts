@@ -189,6 +189,39 @@ describe('context-outputs', () => {
       }
     });
 
+    it('storeContextOutputs rejects when context dir is swapped for an escaping symlink between calls', async () => {
+      // Test Layer B defense: inode check bracketing the mkdir→rename window.
+      // 1. Call storeContextOutputs (succeeds, creates .rundown/contexts/ctx-a/)
+      // 2. Delete the context dir and replace with escape symlink
+      // 3. Call storeContextOutputs again (should detect swap and reject)
+      const escapeTarget = await fs.mkdtemp(path.join(os.tmpdir(), 'rundown-escape-'));
+      try {
+        // First call succeeds normally
+        await storeContextOutputs(tmpDir, 'ctx-a', { Foo: 'one' });
+
+        // Verify the first write succeeded
+        const result = await loadContextOutputs(tmpDir, 'ctx-a');
+        expect(result).toEqual({ Foo: 'one' });
+
+        // Remove the real context directory and replace with escape symlink
+        const ctxRoot = contextsDir(tmpDir);
+        const contextDir = path.join(ctxRoot, 'ctx-a');
+        await fs.rm(contextDir, { recursive: true });
+        await fs.symlink(escapeTarget, contextDir, 'dir');
+
+        // Second call should detect the swap and reject
+        await expect(storeContextOutputs(tmpDir, 'ctx-a', { Foo: 'two' })).rejects.toThrow(
+          /was replaced during write|escapes contexts directory/,
+        );
+
+        // Verify the escape target was not written to (outputs.json should not exist there)
+        const escapeOutputsPath = path.join(escapeTarget, 'outputs.json');
+        await expect(fs.readFile(escapeOutputsPath)).rejects.toThrow();
+      } finally {
+        await fs.rm(escapeTarget, { recursive: true, force: true });
+      }
+    });
+
     it('N=10 concurrent writes all survive — no key lost under contention', async () => {
       // Without the file lock, interleaved read-merge-write would drop keys.
       // Each writer adds a unique key; all 10 must survive.
@@ -201,6 +234,39 @@ describe('context-outputs', () => {
       const result = await loadContextOutputs(tmpDir, contextId);
       for (let i = 0; i < 10; i++) {
         expect(result[`Key${String(i)}`]).toBe(`value${String(i)}`);
+      }
+    });
+
+    it('storeContextOutputs rejects when final outputs.json is a pre-planted symlink', async () => {
+      // Test Layer B defense: post-rename symlink detection and escape validation.
+      // 1. Create the real context directory
+      // 2. Plant an escape symlink at the outputs.json path
+      // 3. Call storeContextOutputs (should detect escape and reject)
+      const escapeTarget = await fs.mkdtemp(path.join(os.tmpdir(), 'rundown-escape-'));
+      try {
+        // Create escape target (a simple file that would be written to if the symlink was followed)
+        const escapeOutputsFile = path.join(escapeTarget, 'outputs.json');
+        await fs.writeFile(escapeOutputsFile, 'initial content', 'utf-8');
+
+        // Pre-create the context directory as a real directory
+        const ctxRoot = contextsDir(tmpDir);
+        const contextDir = path.join(ctxRoot, 'ctx-b');
+        await fs.mkdir(contextDir, { recursive: true, mode: 0o700 });
+
+        // Plant a symlink at the outputs.json path pointing to the escape target
+        const outputsPath = path.join(contextDir, 'outputs.json');
+        await fs.symlink(escapeOutputsFile, outputsPath);
+
+        // Call storeContextOutputs — it should detect the escape and reject
+        await expect(storeContextOutputs(tmpDir, 'ctx-b', { Foo: 'one' })).rejects.toThrow(
+          /escapes contexts directory|replaced/,
+        );
+
+        // Verify the escape target was not overwritten with new outputs
+        const escapeContent = await fs.readFile(escapeOutputsFile, 'utf-8');
+        expect(escapeContent).toBe('initial content');
+      } finally {
+        await fs.rm(escapeTarget, { recursive: true, force: true });
       }
     });
   });
