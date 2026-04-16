@@ -83,5 +83,17 @@ export async function storeStepOutputs(
     }
     return;
   }
-  await storeContextOutputs(cwd, contextId, evaluated);
+  try {
+    await storeContextOutputs(cwd, contextId, evaluated);
+  } catch (err) {
+    const message = getErrorMessage(err);
+    void logger.warn('storeStepOutputs: context-outputs persistence failed', {
+      contextId,
+      error: message,
+    });
+    emitter?.emit('ERROR_OCCURRED', {
+      message: `OUTPUTS persistence failed: ${message}`,
+      code: 'OUTPUTS_PERSIST_FAILED',
+    });
+  }
 }
