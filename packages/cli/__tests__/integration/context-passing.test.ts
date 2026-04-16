@@ -79,14 +79,11 @@ describe('OUTPUTS→INPUTS round-trip', () => {
     const contextId = 'testctx-pass';
 
     // Start runbook (prompted mode)
-    const start = runCli(
-      `run --prompted test.runbook.md --var ContextId=${contextId} --json`,
-      workspace,
-    );
+    const start = runCli(`run --prompted test.runbook.md --var ContextId=${contextId}`, workspace);
     expect(start.exitCode).toBe(0);
 
     // Pass step 1 — triggers storeContextOutputs with { Message: "hello from step 1" }
-    const pass1 = runCli('pass --json', workspace);
+    const pass1 = runCli('pass', workspace);
     expect(pass1.exitCode).toBe(0);
 
     // Parse events from the pass1 response — should include STEP_ENTERED for step 2
@@ -99,7 +96,7 @@ describe('OUTPUTS→INPUTS round-trip', () => {
     expect(step2Entered?.prompt).not.toContain('{{Message}}');
 
     // Pass step 2 — should COMPLETE
-    const pass2 = runCli('pass --json', workspace);
+    const pass2 = runCli('pass', workspace);
     expect(pass2.exitCode).toBe(0);
 
     const events2 = parseJsonOutput(pass2.stdout);
@@ -111,14 +108,11 @@ describe('OUTPUTS→INPUTS round-trip', () => {
     const contextId = 'testctx-fail';
 
     // Start runbook (prompted mode)
-    const start = runCli(
-      `run --prompted test.runbook.md --var ContextId=${contextId} --json`,
-      workspace,
-    );
+    const start = runCli(`run --prompted test.runbook.md --var ContextId=${contextId}`, workspace);
     expect(start.exitCode).toBe(0);
 
     // Fail step 1 — FAIL CONTINUE, so execution continues; no outputs stored
-    const fail1 = runCli('fail --json', workspace);
+    const fail1 = runCli('fail', workspace);
     expect(fail1.exitCode).toBe(0);
 
     // Parse events — step 2 STEP_ENTERED should show {{Message}} literally
@@ -131,7 +125,7 @@ describe('OUTPUTS→INPUTS round-trip', () => {
     expect(step2Entered?.prompt).not.toContain('hello from step 1');
 
     // Pass step 2 — still completes (missing inputs are not errors)
-    const pass2 = runCli('pass --json', workspace);
+    const pass2 = runCli('pass', workspace);
     expect(pass2.exitCode).toBe(0);
 
     const events2 = parseJsonOutput(pass2.stdout);
@@ -142,14 +136,11 @@ describe('OUTPUTS→INPUTS round-trip', () => {
   it('verifies context outputs file is written with correct content after step 1 PASS', async () => {
     const contextId = 'testctx-file';
 
-    const start = runCli(
-      `run --prompted test.runbook.md --var ContextId=${contextId} --json`,
-      workspace,
-    );
+    const start = runCli(`run --prompted test.runbook.md --var ContextId=${contextId}`, workspace);
     expect(start.exitCode).toBe(0);
 
     // Pass step 1
-    const pass1 = runCli('pass --json', workspace);
+    const pass1 = runCli('pass', workspace);
     expect(pass1.exitCode).toBe(0);
 
     // Read context outputs file directly
@@ -222,7 +213,7 @@ Parent value: {{ParentValue}}
     );
 
     const start = runCli(
-      `run --prompted substep-context.runbook.md --var ContextId=${contextId} --json`,
+      `run --prompted substep-context.runbook.md --var ContextId=${contextId}`,
       workspace,
     );
     expect(start.exitCode).toBe(0);
@@ -235,7 +226,7 @@ Parent value: {{ParentValue}}
     expect(fetchEntered?.prompt).toContain('/seeded/path/plan.json');
     expect(fetchEntered?.prompt).not.toContain('{{PlanPath}}');
 
-    const passFetch = runCli('pass --json', workspace);
+    const passFetch = runCli('pass', workspace);
     expect(passFetch.exitCode).toBe(0);
 
     const afterFetchRaw = await readFile(join(contextDir, 'outputs.json'), 'utf-8');
@@ -251,7 +242,7 @@ Parent value: {{ParentValue}}
     expect(useEntered?.prompt).toContain('substep-fetch');
     expect(useEntered?.prompt).not.toContain('{{ChildValue}}');
 
-    const passUse = runCli('pass --json', workspace);
+    const passUse = runCli('pass', workspace);
     expect(passUse.exitCode).toBe(0);
 
     const afterUseRaw = await readFile(join(contextDir, 'outputs.json'), 'utf-8');
@@ -313,10 +304,7 @@ The message is: {{Message}}
 
     // Run without --prompted: step 1 auto-executes (rd echo --result pass)
     // Step 2 has no command, so execution pauses waiting for prompt
-    const result = runCli(
-      `run auto-exec.runbook.md --var ContextId=${contextId} --json`,
-      workspace,
-    );
+    const result = runCli(`run auto-exec.runbook.md --var ContextId=${contextId}`, workspace);
     expect(result.exitCode).toBe(0);
 
     // Context outputs file should have been written by step 1's auto-execution
@@ -362,7 +350,7 @@ Value: {{Tag}}
     await writeFile(join(workspace.cwd, 'auto-fail.runbook.md'), FAIL_RUNBOOK);
 
     const contextId = 'auto-fail-ctx';
-    runCli(`run auto-fail.runbook.md --var ContextId=${contextId} --json`, workspace);
+    runCli(`run auto-fail.runbook.md --var ContextId=${contextId}`, workspace);
 
     // Context outputs file should NOT exist (no PASS → no OUTPUTS stored)
     const outputsPath = join(workspace.cwd, '.rundown', 'contexts', contextId, 'outputs.json');
@@ -409,7 +397,7 @@ Value: {{Message}}
 
     // CLI flag provides Message=from-cli — higher precedence than context outputs
     const result = runCli(
-      `run --prompted inputs.runbook.md --var ContextId=${contextId} --var Message=from-cli --json`,
+      `run --prompted inputs.runbook.md --var ContextId=${contextId} --var Message=from-cli`,
       workspace,
     );
     expect(result.exitCode).toBe(0);
@@ -430,7 +418,7 @@ Value: {{Message}}
     await writeFile(join(outputsDir, 'outputs.json'), '{not valid json', 'utf-8');
 
     const result = runCli(
-      `run --prompted inputs.runbook.md --var ContextId=${contextId} --json`,
+      `run --prompted inputs.runbook.md --var ContextId=${contextId}`,
       workspace,
     );
     // Run should start successfully; step 1 renders with {{Message}} as literal
@@ -484,10 +472,7 @@ rd echo --result pass
 
   it('OUTPUTS expression resolves {{Step}} using the per-step runtime frame', async () => {
     const contextId = 'step-frame-ctx';
-    const result = runCli(
-      `run step-frame.runbook.md --var ContextId=${contextId} --json`,
-      workspace,
-    );
+    const result = runCli(`run step-frame.runbook.md --var ContextId=${contextId}`, workspace);
     expect(result.exitCode).toBe(0);
 
     const outputsPath = join(workspace.cwd, '.rundown', 'contexts', contextId, 'outputs.json');
@@ -558,6 +543,6 @@ rd echo --result pass
     // (missing INPUTS would not prevent COMPLETE here, but the pipeline is validated
     // by the standalone auto-execution integration tests above that check the file).
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain('PASS');
+    expect(result.stdout).toContain('COMPLETE');
   });
 });
