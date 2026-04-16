@@ -17,6 +17,9 @@ import type { OutputDeclaration } from '@rundown-org/parser';
 import type { StepVariables } from '../services/execution-vars.js';
 import { evaluateOutputExpression } from '../services/template-renderer.js';
 
+export const ALL_OUTPUTS_FAILED_MESSAGE =
+  'all OUTPUTS declarations failed to evaluate — nothing stored to context';
+
 /**
  * Evaluate and store OUTPUTS declarations for a step that just passed.
  *
@@ -74,9 +77,7 @@ export async function storeStepOutputs(
 
   if (Object.keys(evaluated).length === 0) {
     const message =
-      failureCount > 0
-        ? 'all OUTPUTS declarations failed to evaluate — nothing stored to context'
-        : 'no OUTPUTS to store (empty declarations)';
+      failureCount > 0 ? ALL_OUTPUTS_FAILED_MESSAGE : 'no OUTPUTS to store (empty declarations)';
     void logger.warn(`storeStepOutputs: ${message}`);
     if (failureCount > 0) {
       emitter?.emit('ERROR_OCCURRED', {

@@ -982,6 +982,78 @@ describe('prepareRunbook', () => {
       }),
     );
   });
+
+  it('skips INPUTS injection when ContextId is not in templateVars', async () => {
+    resolveRunbookFile.mockResolvedValue({ path: '/test/no-ctx.md', source: 'project' });
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue(
+      mockParseResult({
+        frontmatter: { inputs: ['PlanPath'] },
+      }),
+    );
+    // Resolve WITHOUT ContextId
+    (resolveVariables as jest.Mock).mockResolvedValue({
+      vars: { SomeVar: 'value' },
+      sources: {},
+      warnings: [],
+      providedKeys: new Set(),
+    });
+
+    const result = await prepareRunbook('no-ctx.md', {}, '/test');
+
+    expect(result.ok).toBe(true);
+    expect(core.loadContextOutputs).not.toHaveBeenCalled();
+  });
+
+  it('only injects INPUTS keys present in context outputs; absent keys not injected', async () => {
+    resolveRunbookFile.mockResolvedValue({ path: '/test/partial.md', source: 'project' });
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue(
+      mockParseResult({
+        frontmatter: { inputs: ['Alpha', 'Beta'] },
+      }),
+    );
+    (resolveVariables as jest.Mock).mockResolvedValue({
+      vars: { ContextId: 'ctx-123' },
+      sources: {},
+      warnings: [],
+      providedKeys: new Set(),
+    });
+    (core.loadContextOutputs as jest.Mock).mockResolvedValue({ Alpha: 'found' });
+
+    const result = await prepareRunbook('partial.md', {}, '/test');
+
+    expect(result.ok).toBe(true);
+    // Inspect the last call directly; toHaveBeenCalledWith(not.objectContaining)
+    // would be satisfied by any unrelated call that didn't contain Beta.
+    const lastCall = (substituteRunbookVariables as jest.Mock).mock.calls.at(-1);
+    expect(lastCall?.[1]).toEqual(expect.objectContaining({ Alpha: 'found' }));
+    expect(lastCall?.[1]).not.toHaveProperty('Beta');
+  });
+
+  it('returns VALIDATION_ERROR when validateInputsDeclarations finds invalid identifier', async () => {
+    resolveRunbookFile.mockResolvedValue({ path: '/test/bad-inputs.md', source: 'project' });
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue(
+      mockParseResult({
+        frontmatter: { inputs: ['BadId!'] },
+      }),
+    );
+    (validateInputsDeclarations as jest.Mock).mockReturnValueOnce([
+      { severity: 'error', message: 'Input variable "BadId!" is not a valid identifier' },
+    ]);
+
+    const result = await prepareRunbook('bad-inputs.md', {}, '/test');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('VALIDATION_ERROR');
+      expect(result.error).toContain('not a valid identifier');
+    }
+  });
 });
 
 describe('startRunbook', () => {

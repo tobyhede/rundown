@@ -1,4 +1,5 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import type { ResolvedStep } from '@rundown-org/parser';
 import { mockErrorHelpers } from '../helpers/mock-error-helpers';
 
 // Mock dependencies
@@ -486,6 +487,44 @@ describe('runExecutionLoop', () => {
       expect(loadOrder).toBeDefined();
       expect(consumeOrder).toBeDefined();
       expect(loadOrder).toBeLessThan(consumeOrder);
+    });
+
+    it('does not call loadContextOutputs when ContextId is absent from templateVars', async () => {
+      // Note: cast-to-type gives call-site type-checking against
+      // runExecutionLoop(steps: ResolvedStep[]) but does NOT check the fixture
+      // literal's shape. buildBaseStep() would be stronger but test-utils.ts
+      // pulls in more of @rundown-org/core than this test's mock provides.
+      const inputsSteps = [
+        {
+          kind: 'base',
+          name: '1',
+          description: 'Use INPUT',
+          inputs: ['Message'],
+          transitions: {
+            pass: { next: 'COMPLETE' },
+            fail: { next: 'STOP' },
+          },
+        },
+      ] as unknown as ResolvedStep[];
+
+      mockManager.load.mockResolvedValue({
+        id: runbookId,
+        step: '1',
+        status: 'running',
+        templateVars: { WorkPath: '/work' }, // no ContextId
+      });
+
+      const result = await runExecutionLoop(
+        mockManager,
+        runbookId,
+        inputsSteps,
+        '/tmp',
+        false,
+        mockEmitter,
+      );
+
+      expect(result).toBe('waiting');
+      expect(core.loadContextOutputs).not.toHaveBeenCalled();
     });
   });
 
