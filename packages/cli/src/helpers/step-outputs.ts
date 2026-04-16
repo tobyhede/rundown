@@ -53,6 +53,9 @@ export async function storeStepOutputs(
   let failureCount = 0;
   for (const output of outputs) {
     try {
+      // evaluateOutputExpression stringifies non-string ExecutionVarValue
+      // (boolean/null/JsonObject/...) via renderTemplateValue so `evaluated`
+      // remains a Record<string, string>.
       evaluated[output.name] = evaluateOutputExpression(output.value, { ...templateVars });
     } catch (err) {
       failureCount++;

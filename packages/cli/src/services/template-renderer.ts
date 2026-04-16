@@ -79,6 +79,11 @@ const TEMPLATE_PATH_REGEX =
  * Uses `Object.hasOwn` at each segment and nullish checks.
  * Does not traverse the prototype chain.
  *
+ * The typed `StepVariables` boundary ends at the top-level record — dotted
+ * traversal continues through nested `JsonObject` / `JsonArray` leaves where
+ * values are legitimately `unknown`. Callers remain responsible for passing
+ * typed variable maps at the public entry points.
+ *
  * @param obj - The object to traverse
  * @param path - Dot-separated path (e.g., "meta.region")
  * @returns The resolved value or undefined if path cannot be resolved
@@ -178,10 +183,10 @@ function resolveTemplatePath(path: string, variables: Record<string, unknown>): 
  * downstream resolution errors with original source text.
  *
  * @param text - Input text that may contain placeholders
- * @param variables - Runtime/template variables for substitution
+ * @param variables - Runtime/template variables for substitution (typed `StepVariables` at the call boundary)
  * @returns Expanded text with unresolved placeholders preserved
  */
-export function expandLoopVariables(text: string, variables: Record<string, unknown>): string {
+export function expandLoopVariables(text: string, variables: Readonly<StepVariables>): string {
   return text.replace(TEMPLATE_PATH_REGEX, (match, path: string) => {
     return resolveTemplatePath(path, variables) ?? match;
   });
@@ -1065,12 +1070,12 @@ export function evaluateOutputExpression(expr: string, variables: StepVariables)
  * Expand loop variables in command code with shell escaping.
  *
  * @param text - Command text containing placeholders
- * @param variables - Runtime/template variable map
+ * @param variables - Runtime/template variable map (typed `StepVariables` at the call boundary)
  * @returns Command text with resolved placeholders shell-escaped
  */
 export function expandLoopVariablesForCommand(
   text: string,
-  variables: Record<string, unknown>,
+  variables: Readonly<StepVariables>,
 ): string {
   return text.replace(TEMPLATE_PATH_REGEX, (match, path: string) => {
     const resolved = resolveTemplatePath(path, variables);
