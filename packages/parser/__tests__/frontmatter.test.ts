@@ -601,3 +601,121 @@ describe('required field', () => {
     ]);
   });
 });
+
+describe('extractFrontmatter() — case-insensitive keys', () => {
+  it('parses INPUTS: (uppercase) identically to inputs:', () => {
+    const md = `---\nINPUTS:\n  - PlanPath\n---\n# Content`;
+    const { frontmatter, diagnostics } = extractFrontmatter(md);
+    expect(diagnostics).toHaveLength(0);
+    expect(frontmatter?.inputs).toEqual(['PlanPath']);
+  });
+
+  it('parses Inputs: (mixed case) identically to inputs:', () => {
+    const md = `---\nInputs:\n  - SomeVar\n---\n# Content`;
+    const { frontmatter } = extractFrontmatter(md);
+    expect(frontmatter?.inputs).toEqual(['SomeVar']);
+  });
+
+  it('parses REQUIRED: (uppercase) identically to required:', () => {
+    const md = `---\nREQUIRED:\n  - PlanPath\n---\n# Content`;
+    const { frontmatter } = extractFrontmatter(md);
+    expect(frontmatter?.required).toEqual(['PlanPath']);
+  });
+
+  it('parses NAME: (uppercase) identically to name:', () => {
+    const md = `---\nNAME: my-runbook\n---\n# Content`;
+    const { frontmatter } = extractFrontmatter(md);
+    expect(frontmatter?.name).toBe('my-runbook');
+  });
+
+  it('first-occurrence wins on key collision (inputs: + INPUTS:)', () => {
+    const md = `---\ninputs:\n  - First\nINPUTS:\n  - Second\n---\n# Content`;
+    const { frontmatter } = extractFrontmatter(md);
+    // YAML preserves the first key; second is dropped
+    expect(frontmatter?.inputs).toEqual(['First']);
+  });
+
+  it('preserves unknown passthrough keys unchanged', () => {
+    const md = `---\nname: test\nMyCustomField: hello\n---\n# Content`;
+    const { frontmatter } = extractFrontmatter(md);
+    expect((frontmatter as any)?.MyCustomField).toBe('hello');
+  });
+});
+
+describe('extractFrontmatter() — outputs field', () => {
+  it('parses outputs: with naked-form entries', () => {
+    const md = `---\noutputs:\n  - PlanPath\n---\n# Content`;
+    const { frontmatter, diagnostics } = extractFrontmatter(md);
+    expect(diagnostics).toHaveLength(0);
+    expect(frontmatter?.outputs).toEqual([{ name: 'PlanPath' }]);
+  });
+
+  it('parses OUTPUTS: (uppercase) identically to outputs:', () => {
+    const md = `---\nOUTPUTS:\n  - PlanPath\n---\n# Content`;
+    const { frontmatter, diagnostics } = extractFrontmatter(md);
+    expect(diagnostics).toHaveLength(0);
+    expect(frontmatter?.outputs).toEqual([{ name: 'PlanPath' }]);
+  });
+
+  it('parses Outputs: (mixed case)', () => {
+    const md = `---\nOutputs:\n  - ResultFile\n---\n# Content`;
+    const { frontmatter } = extractFrontmatter(md);
+    expect(frontmatter?.outputs).toEqual([{ name: 'ResultFile' }]);
+  });
+
+  it('parses outputs: with with-value form entries', () => {
+    const md = `---\noutputs:\n  - 'PlanPath {{ path "plan.json" }}'\n---\n# Content`;
+    const { frontmatter, diagnostics } = extractFrontmatter(md);
+    expect(diagnostics).toHaveLength(0);
+    expect(frontmatter?.outputs).toHaveLength(1);
+    expect(frontmatter?.outputs?.[0].name).toBe('PlanPath');
+    expect(frontmatter?.outputs?.[0].value).toBe('{{ path "plan.json" }}');
+  });
+
+  it('parses mixed naked and with-value entries', () => {
+    const md = `---\noutputs:\n  - NakedVar\n  - 'WithValue {{ path "out.json" }}'\n---\n# Content`;
+    const { frontmatter } = extractFrontmatter(md);
+    expect(frontmatter?.outputs).toHaveLength(2);
+    expect(frontmatter?.outputs?.[0]).toEqual({ name: 'NakedVar' });
+    expect(frontmatter?.outputs?.[1].name).toBe('WithValue');
+  });
+
+  it('emits error diagnostic for reserved name in outputs', () => {
+    const md = `---\noutputs:\n  - Step\n---\n# Content`;
+    const { frontmatter, diagnostics } = extractFrontmatter(md);
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0].severity).toBe('error');
+    expect(diagnostics[0].message).toContain('"Step"');
+    expect(frontmatter?.outputs).toBeUndefined();
+  });
+
+  it('emits error diagnostic for invalid identifier in outputs', () => {
+    const md = `---\noutputs:\n  - "123bad"\n---\n# Content`;
+    const { frontmatter, diagnostics } = extractFrontmatter(md);
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0].severity).toBe('error');
+    expect(frontmatter?.outputs).toBeUndefined();
+  });
+
+  it('emits error diagnostic for non-string entry in outputs', () => {
+    const md = `---\noutputs:\n  - 42\n---\n# Content`;
+    const { frontmatter, diagnostics } = extractFrontmatter(md);
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0].severity).toBe('error');
+    expect(diagnostics[0].message).toContain('outputs[0]');
+    expect(frontmatter?.outputs).toBeUndefined();
+  });
+
+  it('preserves valid entries when other entries are invalid', () => {
+    const md = `---\noutputs:\n  - GoodVar\n  - "123bad"\n---\n# Content`;
+    const { frontmatter, diagnostics } = extractFrontmatter(md);
+    expect(diagnostics).toHaveLength(1);
+    expect(frontmatter?.outputs).toEqual([{ name: 'GoodVar' }]);
+  });
+
+  it('returns empty array for empty outputs array', () => {
+    const md = `---\noutputs: []\n---\n# Content`;
+    const { frontmatter } = extractFrontmatter(md);
+    expect(frontmatter?.outputs).toEqual([]);
+  });
+});

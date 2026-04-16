@@ -2,13 +2,66 @@ import matter from 'gray-matter';
 import { z } from 'zod';
 import { isReservedTemplateName } from './reserved.js';
 import type { ValidationDiagnostic } from './validator.js';
+import type { OutputDeclaration } from './ast.js';
+import { parseFrontmatterOutputDeclaration } from './helpers.js';
 
 const IDENTIFIER_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 
 /**
- * Known runbook frontmatter metadata fields.
+ * Known frontmatter keys whose casing is normalized before Zod parsing.
+ * All other keys are passed through as-is.
  */
-interface KnownRunbookFrontmatter {
+const NORMALIZED_FRONTMATTER_KEYS = new Set([
+  'name',
+  'description',
+  'version',
+  'author',
+  'tags',
+  'vars',
+  'required',
+  'inputs',
+  'outputs',
+]);
+
+/**
+ * Normalize the casing of known frontmatter keys so that `INPUTS`, `OUTPUTS`,
+ * `REQUIRED`, etc. are treated identically to their lowercase equivalents.
+ *
+ * Unknown keys (e.g. `skill`, `scenarios`) are preserved exactly as written.
+ * When both `INPUTS` and `inputs` appear, the first one encountered wins and
+ * the duplicate is silently dropped.
+ *
+ * @param obj - Raw YAML-parsed frontmatter object
+ * @returns A new object with known keys lowercased
+ */
+function normalizeKnownFrontmatterKeys(obj: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    const lower = key.toLowerCase();
+    if (NORMALIZED_FRONTMATTER_KEYS.has(lower)) {
+      if (!Object.hasOwn(result, lower)) {
+        result[lower] = value; // first occurrence wins on case collision
+      }
+    } else {
+      result[key] = value; // unknown passthrough keys preserved as-is
+    }
+  }
+  return result;
+}
+
+/**
+ * Runbook frontmatter metadata.
+ *
+ * Known fields have explicit types. The index signature (`[key: string]: unknown`)
+ * allows unknown passthrough fields (e.g. `skill`, `scenarios`) to be preserved
+ * without loss. Named properties always take precedence over the index signature
+ * for property access.
+ *
+ * Use an explicit object type with an index signature rather than an intersection
+ * (`KnownFields & Record<string, unknown>`) so that TypeScript correctly narrows
+ * named properties to their declared types instead of widening to `unknown`.
+ */
+export interface RunbookFrontmatter {
   name?: string; // Optional: runbook identifier
   description?: string; // Optional: for listing
   version?: string; // Optional: semantic version
@@ -17,12 +70,9 @@ interface KnownRunbookFrontmatter {
   vars?: Record<string, string | number | boolean>; // Optional: default template variables
   required?: string[]; // Optional: variables that must be provided by caller
   inputs?: string[]; // Optional: variables this runbook can receive from context OUTPUTS
+  outputs?: OutputDeclaration[]; // Optional: variables to publish to context OUTPUTS at completion
+  [key: string]: unknown; // Passthrough fields preserved verbatim
 }
-
-/**
- * Runbook frontmatter metadata with typed known fields plus passthrough extras.
- */
-export type RunbookFrontmatter = KnownRunbookFrontmatter & Record<string, unknown>;
 
 /**
  * Zod schema for validating runbook frontmatter.
@@ -47,11 +97,12 @@ export const RunbookFrontmatterSchema = z
       .record(z.union([z.string(), z.number(), z.boolean()]))
       .optional()
       .catch(undefined),
-    // Defer per-element validation of `required`/`inputs` to a post-zod pass
+    // Defer per-element validation of `required`/`inputs`/`outputs` to a post-zod pass
     // so we can preserve valid entries and emit per-index diagnostics
     // (rather than silently dropping the whole array on any single failure).
     required: z.array(z.unknown()).optional().catch(undefined),
     inputs: z.array(z.unknown()).optional().catch(undefined),
+    outputs: z.array(z.unknown()).optional().catch(undefined),
   })
   .passthrough();
 
@@ -77,6 +128,9 @@ export type RunbookFrontmatterType = z.infer<typeof RunbookFrontmatterSchema>;
  * fields become `undefined` while valid fields and unknown extension fields
  * are preserved. The original markdown is only returned when gray-matter itself
  * fails to parse the YAML syntax or when no frontmatter is present.
+ *
+ * Known frontmatter keys (`name`, `inputs`, `outputs`, `required`, etc.) are
+ * case-insensitive: `INPUTS`, `Inputs`, and `inputs` are all equivalent.
  *
  * @param markdown - The raw markdown content to parse
  * @returns Object containing parsed frontmatter (or null if missing/invalid)
@@ -113,11 +167,15 @@ export function extractFrontmatter(markdown: string): {
     return { frontmatter: null, content, diagnostics: [] };
   }
 
+  // Normalize known key casing before Zod parsing so that INPUTS/OUTPUTS/etc.
+  // are treated the same as their lowercase counterparts.
+  const normalized = normalizeKnownFrontmatterKeys(data as Record<string, unknown>);
+
   // Validate with Zod — .catch(undefined) on each field ensures parse always succeeds.
   // Invalid fields become undefined; valid fields and unknown passthrough fields are preserved.
-  const parsed = RunbookFrontmatterSchema.parse(data);
+  const parsed = RunbookFrontmatterSchema.parse(normalized);
 
-  // Per-element validation of `required` / `inputs` (zod accepts unknown[] for
+  // Per-element validation of `required` / `inputs` / `outputs` (zod accepts unknown[] for
   // these and we filter here so we can preserve valid entries and emit
   // diagnostics for each invalid one — instead of silently dropping the whole
   // array on the first bad element).
@@ -131,6 +189,10 @@ export function extractFrontmatter(markdown: string): {
     inputs:
       parsed.inputs !== undefined
         ? filterIdentifierArray(parsed.inputs, 'inputs', diagnostics)
+        : undefined,
+    outputs:
+      parsed.outputs !== undefined
+        ? filterOutputDeclarationArray(parsed.outputs, diagnostics)
         : undefined,
   };
 
@@ -181,6 +243,53 @@ function filterIdentifierArray(
       return;
     }
     kept.push(entry);
+  });
+  return kept.length > 0 ? kept : undefined;
+}
+
+/**
+ * Validate each element of a frontmatter outputs array, keeping the valid
+ * entries and emitting an error diagnostic for each invalid one.
+ *
+ * Accepts both naked form (`PlanPath`) and with-value form
+ * (`PlanPath {{ path "plan.json" }}`). Returns `undefined` if no valid
+ * entries remain.
+ *
+ * @param raw         - Raw array elements from the parsed frontmatter
+ * @param diagnostics - Output array — error diagnostics are appended in-place
+ * @returns Valid OutputDeclaration[], `[]` when raw was empty, or `undefined` when all rejected
+ */
+function filterOutputDeclarationArray(
+  raw: unknown[],
+  diagnostics: ValidationDiagnostic[],
+): OutputDeclaration[] | undefined {
+  if (raw.length === 0) return [];
+
+  const kept: OutputDeclaration[] = [];
+  raw.forEach((entry, index) => {
+    if (typeof entry !== 'string') {
+      diagnostics.push({
+        severity: 'error',
+        message: `Frontmatter "outputs[${String(index)}]" must be a string (got ${typeof entry})`,
+      });
+      return;
+    }
+    const decl = parseFrontmatterOutputDeclaration(entry);
+    if (!decl) {
+      diagnostics.push({
+        severity: 'error',
+        message: `Frontmatter "outputs[${String(index)}]" — "${entry}" is not a valid output declaration`,
+      });
+      return;
+    }
+    if (isReservedTemplateName(decl.name)) {
+      diagnostics.push({
+        severity: 'error',
+        message: `Frontmatter "outputs[${String(index)}]" — "${decl.name}" is a reserved variable name (step, index, context — case-insensitive)`,
+      });
+      return;
+    }
+    kept.push(decl);
   });
   return kept.length > 0 ? kept : undefined;
 }

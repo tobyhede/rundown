@@ -1071,6 +1071,35 @@ export function parseOutputDeclaration(text: string): OutputDeclaration | null {
 }
 
 /**
+ * Parse a frontmatter OUTPUTS declaration entry.
+ *
+ * Extends the step-level format by supporting naked form (name only, no value expression):
+ * - Naked: `PlanPath` → `{ name: 'PlanPath' }` (value absent — resolved from template vars at completion)
+ * - With value: `PlanPath {{ path "plan.json" }}` → delegates to {@link parseOutputDeclaration}
+ *
+ * Step-level OUTPUTS use {@link parseOutputDeclaration} directly, which rejects naked form.
+ * Frontmatter OUTPUTS use this function to accept both forms.
+ *
+ * @param text - Raw declaration text from the frontmatter outputs array
+ * @returns Parsed OutputDeclaration, or null if the text is empty or invalid
+ */
+export function parseFrontmatterOutputDeclaration(text: string): OutputDeclaration | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+
+  const spaceIdx = trimmed.search(/\s/);
+  if (spaceIdx === -1) {
+    // Naked form: just a name, no value expression
+    const name = trimmed;
+    if (!NAMED_IDENTIFIER_PATTERN.test(name)) return null;
+    return { name };
+  }
+
+  // With-value form: delegate to existing step-level parser
+  return parseOutputDeclaration(text);
+}
+
+/**
  * Format an action as its canonical string representation.
  *
  * @param action - The Action object to format

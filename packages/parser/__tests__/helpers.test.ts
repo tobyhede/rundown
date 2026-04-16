@@ -17,6 +17,7 @@ import {
   isBoundRef,
   isUnresolvedForClause,
   isResolvedForClause,
+  parseFrontmatterOutputDeclaration,
   type ParsedConditional,
   type Bound,
   type ParsedForClause,
@@ -2802,5 +2803,48 @@ describe('isExecutableCodeBlock mutation killing', () => {
   it('handles case-insensitive matching', () => {
     expect(isExecutableCodeBlock('BASH')).toBe(true);
     expect(isExecutableCodeBlock('SH')).toBe(true);
+  });
+});
+
+describe('parseFrontmatterOutputDeclaration()', () => {
+  it('parses naked form (name only)', () => {
+    expect(parseFrontmatterOutputDeclaration('PlanPath')).toEqual({ name: 'PlanPath' });
+  });
+
+  it('naked form has no value property', () => {
+    const result = parseFrontmatterOutputDeclaration('PlanPath');
+    expect(result).not.toBeNull();
+    expect('value' in result!).toBe(false);
+  });
+
+  it('parses with-value form by delegating to parseOutputDeclaration', () => {
+    const result = parseFrontmatterOutputDeclaration('PlanPath {{ path "plan.json" }}');
+    expect(result).not.toBeNull();
+    expect(result?.name).toBe('PlanPath');
+    expect(result?.value).toBe('{{ path "plan.json" }}');
+  });
+
+  it('returns null for empty string', () => {
+    expect(parseFrontmatterOutputDeclaration('')).toBeNull();
+  });
+
+  it('returns null for whitespace-only string', () => {
+    expect(parseFrontmatterOutputDeclaration('   ')).toBeNull();
+  });
+
+  it('returns null for invalid identifier (starts with digit)', () => {
+    expect(parseFrontmatterOutputDeclaration('123bad')).toBeNull();
+  });
+
+  it('returns null for identifier with hyphens', () => {
+    expect(parseFrontmatterOutputDeclaration('plan-path')).toBeNull();
+  });
+
+  it('accepts underscore-prefixed identifiers in naked form', () => {
+    expect(parseFrontmatterOutputDeclaration('_PrivateOutput')).toEqual({ name: '_PrivateOutput' });
+  });
+
+  it('accepts ALL_CAPS identifiers in naked form', () => {
+    expect(parseFrontmatterOutputDeclaration('PLAN_PATH')).toEqual({ name: 'PLAN_PATH' });
   });
 });

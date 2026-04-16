@@ -244,8 +244,12 @@ export interface Substep extends SubstepFields {
 export interface OutputDeclaration {
   /** Variable name to publish (e.g., "PlanPath") */
   readonly name: string;
-  /** Raw value expression — template variable, `{{ path "file" }}`, or quoted literal */
-  readonly value: string;
+  /**
+   * Raw value expression — template variable, `{{ path "file" }}`, or quoted literal.
+   * Absent for the naked form used in frontmatter OUTPUTS (`PlanPath` with no expression),
+   * which resolves the value from context template vars by name at completion time.
+   */
+  readonly value?: string;
 }
 
 /**
