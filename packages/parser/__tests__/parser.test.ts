@@ -1355,8 +1355,18 @@ describe('INPUTS/OUTPUTS ordering violations', () => {
       expect(() => parseRunbook(md)).toThrow(/INPUTS.*must appear before/);
     });
 
+    it('rejects INPUTS after fenced code block', () => {
+      const md = `## 1 Step\n\n\`\`\`bash\necho hi\n\`\`\`\n\n- INPUTS\n  - Foo\n`;
+      expect(() => parseRunbook(md)).toThrow(/INPUTS.*must appear before/);
+    });
+
     it('rejects INPUTS after prompt text in substep', () => {
       const md = `## 1 Step\n\n### 1.1 Sub\n\nSome text.\n\n- INPUTS\n  - Foo\n`;
+      expect(() => parseRunbook(md)).toThrow(/INPUTS.*must appear before/);
+    });
+
+    it('rejects INPUTS after fenced code block in substep', () => {
+      const md = `## 1 Step\n\n### 1.1 Sub\n\n\`\`\`bash\necho hi\n\`\`\`\n\n- INPUTS\n  - Foo\n`;
       expect(() => parseRunbook(md)).toThrow(/INPUTS.*must appear before/);
     });
 
