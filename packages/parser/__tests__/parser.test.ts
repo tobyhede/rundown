@@ -1321,6 +1321,69 @@ echo hi
   });
 });
 
+describe('INPUTS/OUTPUTS ordering violations', () => {
+  describe('OUTPUTS after body content', () => {
+    it('rejects OUTPUTS after prompt text', () => {
+      const md = `## 1 Step\n\nSome text.\n\n- OUTPUTS\n  - Foo {{ "bar" }}\n`;
+      expect(() => parseRunbook(md)).toThrow(/OUTPUTS.*must appear before/);
+    });
+
+    it('rejects OUTPUTS after fenced code block', () => {
+      const md = `## 1 Step\n\n\`\`\`bash\necho hi\n\`\`\`\n\n- OUTPUTS\n  - Foo {{ "bar" }}\n`;
+      expect(() => parseRunbook(md)).toThrow(/OUTPUTS.*must appear before/);
+    });
+
+    it('rejects OUTPUTS after prompt text in substep', () => {
+      const md = `## 1 Step\n\n### 1.1 Sub\n\nSome text.\n\n- OUTPUTS\n  - Foo {{ "bar" }}\n`;
+      expect(() => parseRunbook(md)).toThrow(/OUTPUTS.*must appear before/);
+    });
+
+    it('rejects OUTPUTS after code block in substep', () => {
+      const md = `## 1 Step\n\n### 1.1 Sub\n\n\`\`\`bash\necho hi\n\`\`\`\n\n- OUTPUTS\n  - Foo {{ "bar" }}\n`;
+      expect(() => parseRunbook(md)).toThrow(/OUTPUTS.*must appear before/);
+    });
+  });
+
+  describe('INPUTS after body content', () => {
+    it('rejects INPUTS after prompt text', () => {
+      const md = `## 1 Step\n\nSome text.\n\n- INPUTS\n  - Foo\n`;
+      expect(() => parseRunbook(md)).toThrow(/INPUTS.*must appear before/);
+    });
+
+    it('rejects INPUTS after runbook-list entry', () => {
+      const md = `## 1 Step\n- foo.runbook.md\n\n- INPUTS\n  - Foo\n`;
+      expect(() => parseRunbook(md)).toThrow(/INPUTS.*must appear before/);
+    });
+
+    it('rejects INPUTS after prompt text in substep', () => {
+      const md = `## 1 Step\n\n### 1.1 Sub\n\nSome text.\n\n- INPUTS\n  - Foo\n`;
+      expect(() => parseRunbook(md)).toThrow(/INPUTS.*must appear before/);
+    });
+
+    it('rejects INPUTS after runbook-list in substep', () => {
+      const md = `## 1 Step\n\n### 1.1 Sub\n- foo.runbook.md\n\n- INPUTS\n  - Foo\n`;
+      expect(() => parseRunbook(md)).toThrow(/INPUTS.*must appear before/);
+    });
+  });
+
+  describe('interchangeable with transitions (must not over-reach)', () => {
+    it('allows INPUTS before transitions', () => {
+      const md = `## 1 Step\n- INPUTS\n  - Foo\n- PASS CONTINUE\n`;
+      expect(() => parseRunbook(md)).not.toThrow();
+    });
+
+    it('allows OUTPUTS after transitions', () => {
+      const md = `## 1 Step\n- PASS CONTINUE\n- OUTPUTS\n  - Foo {{ "bar" }}\n`;
+      expect(() => parseRunbook(md)).not.toThrow();
+    });
+
+    it('allows interleaved transitions and directives', () => {
+      const md = `## 1 Step\n- PASS CONTINUE\n- OUTPUTS\n  - Foo {{ "bar" }}\n- FAIL CONTINUE\n- INPUTS\n  - Bar\n`;
+      expect(() => parseRunbook(md)).not.toThrow();
+    });
+  });
+});
+
 describe('substep content filtering', () => {
   it('filters runbook references from substep prompt, preserves text', () => {
     const md = `## 1 Step

@@ -587,6 +587,11 @@ function handleListItemContent(
 function handleOutputsDirective(node: ListItem, ctx: ActiveStepContext): typeof SKIP {
   const target = getDirectiveTarget(ctx);
   const targetLabel = formatDirectiveTarget(ctx);
+  if (target.hasSeenContent || target.hasSeenPromptText) {
+    throw new RunbookSyntaxError(
+      `OUTPUTS directive in ${targetLabel}${formatLineNum(node)}: must appear before prompt text and body content`,
+    );
+  }
   const nestedList = node.children.find((c): c is List => c.type === 'list');
   if (!nestedList || nestedList.children.length === 0) {
     throw new RunbookSyntaxError(
@@ -648,6 +653,11 @@ function handleOutputsDirective(node: ListItem, ctx: ActiveStepContext): typeof 
 function handleInputsDirective(node: ListItem, ctx: ActiveStepContext): typeof SKIP {
   const target = getDirectiveTarget(ctx);
   const targetLabel = formatDirectiveTarget(ctx);
+  if (target.hasSeenContent || target.hasSeenPromptText) {
+    throw new RunbookSyntaxError(
+      `INPUTS directive in ${targetLabel}${formatLineNum(node)}: must appear before prompt text and body content`,
+    );
+  }
   const nestedList = node.children.find((c): c is List => c.type === 'list');
   if (!nestedList || nestedList.children.length === 0) {
     throw new RunbookSyntaxError(
