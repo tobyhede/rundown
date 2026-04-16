@@ -529,7 +529,8 @@ Variables are collected from multiple sources with the following precedence (hig
 | `.rundown/config.yaml` | Auto-discovered from cwd upward, stops at git root |
 | Frontmatter `vars:` field | Variables defined in runbook frontmatter |
 | Inherited delegation variables | Parent context in delegation tree |
-| Built-in defaults | System-provided variables (`Date`, `RunId`, `WorkPath`, etc.) |
+| INPUTS (context passing) | Fill-gaps-only injection from `.rundown/contexts/<ContextId>/outputs.json` — see [SPEC.md §7](./SPEC.md#7-context-passing-inputs--outputs) |
+| Built-in defaults | System-provided variables — see [SPEC.md §6.1 Built-in Variables](./SPEC.md#61-built-in-variables) for the full table |
 
 ### Auto-Discovery
 

@@ -158,7 +158,7 @@ Process {{ item }}.
 
 ## Template Variables
 
-Use `{{ variableName }}` syntax. See [CLAUDE.md — Template Variables](../../CLAUDE.md#template-variables) for full reference.
+Use `{{ variableName }}` syntax. See [SPEC.md §6 Templating](../../../../docs/SPEC.md#6-templating) and [§6.1 Built-in Variables](../../../../docs/SPEC.md#61-built-in-variables) for the full reference.
 
 Key authoring notes:
 - Undefined variables preserved as literal `{{ variable }}` text
@@ -180,4 +180,5 @@ Key authoring notes:
 - [Rundown specification](../../../../docs/SPEC.md)
 - [Format grammar (EBNF)](../../../../docs/FORMAT.md)
 - [Runbook patterns and examples](../../../../runbooks/README.md)
-- [Template variables](../../../../CLAUDE.md#template-variables)
+- [Template variables](../../../../docs/SPEC.md#6-templating) — precedence, reserved keys, required variables
+- [Built-in variables](../../../../docs/SPEC.md#61-built-in-variables) — `Date`, `WorkPath`, `ContextId`, `Step`, `Index`, etc.
