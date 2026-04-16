@@ -81,6 +81,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
       (v as Record<string, unknown>).kind === 'json-array-stream',
   ),
   loadContextOutputs: jest.fn().mockResolvedValue({}),
+  storeContextOutputs: jest.fn().mockResolvedValue(undefined),
   logger: { warn: jest.fn(), info: jest.fn(), debug: jest.fn(), error: jest.fn() },
   ...mockErrorHelpers,
 }));
@@ -141,6 +142,7 @@ jest.unstable_mockModule('../../src/services/template-renderer', () => ({
   expandLoopVariables: jest.fn((text: string) => text),
   warnUnresolvedRunbookVariables: jest.fn().mockReturnValue([]),
   collectUnresolvedRunbookVariables: jest.fn().mockReturnValue(new Set()),
+  evaluateOutputExpression: jest.fn((expr: string) => expr),
 }));
 
 // Mock validate-frontmatter-vars
@@ -148,6 +150,7 @@ jest.unstable_mockModule('../../src/helpers/validate-frontmatter-vars', () => ({
   validateFrontmatterVars: jest.fn().mockReturnValue([]),
   validateRequiredVars: jest.fn().mockReturnValue([]),
   validateInputsDeclarations: jest.fn().mockReturnValue([]),
+  validateOutputsDeclarations: jest.fn().mockReturnValue([]),
 }));
 
 // Mock node:fs/promises
@@ -173,9 +176,12 @@ const {
   warnUnresolvedRunbookVariables,
   collectUnresolvedRunbookVariables,
 } = await import('../../src/services/template-renderer');
-const { validateFrontmatterVars, validateRequiredVars, validateInputsDeclarations } = await import(
-  '../../src/helpers/validate-frontmatter-vars'
-);
+const {
+  validateFrontmatterVars,
+  validateRequiredVars,
+  validateInputsDeclarations,
+  validateOutputsDeclarations,
+} = await import('../../src/helpers/validate-frontmatter-vars');
 const fsPromises = await import('node:fs/promises');
 const { prepareRunbook, startRunbook, buildContextVars, buildTemplateVars } = await import(
   '../../src/helpers/runbook-pipeline'
@@ -279,6 +285,7 @@ beforeEach(() => {
   (validateFrontmatterVars as jest.Mock).mockReturnValue([]);
   (validateRequiredVars as jest.Mock).mockReturnValue([]);
   (validateInputsDeclarations as jest.Mock).mockReturnValue([]);
+  (validateOutputsDeclarations as jest.Mock).mockReturnValue([]);
   (fsPromises.readFile as jest.Mock).mockResolvedValue('# Test\n\n## 1. Step\n- PASS CONTINUE');
   (
     parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>

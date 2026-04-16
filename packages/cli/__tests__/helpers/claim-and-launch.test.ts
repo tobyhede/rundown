@@ -82,6 +82,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
       (v as Record<string, unknown>).kind === 'json-array-stream',
   ),
   loadContextOutputs: jest.fn().mockResolvedValue({}),
+  storeContextOutputs: jest.fn().mockResolvedValue(undefined),
   logger: { warn: jest.fn(), info: jest.fn(), debug: jest.fn(), error: jest.fn() },
   ...mockErrorHelpers,
 }));
@@ -140,6 +141,7 @@ jest.unstable_mockModule('../../src/services/template-renderer', () => ({
   expandLoopVariables: jest.fn((text: string) => text),
   warnUnresolvedRunbookVariables: jest.fn().mockReturnValue([]),
   collectUnresolvedRunbookVariables: jest.fn().mockReturnValue(new Set()),
+  evaluateOutputExpression: jest.fn((expr: string) => expr),
 }));
 
 // Mock validate-frontmatter-vars
@@ -147,6 +149,7 @@ jest.unstable_mockModule('../../src/helpers/validate-frontmatter-vars', () => ({
   validateFrontmatterVars: jest.fn().mockReturnValue([]),
   validateRequiredVars: jest.fn().mockReturnValue([]),
   validateInputsDeclarations: jest.fn().mockReturnValue([]),
+  validateOutputsDeclarations: jest.fn().mockReturnValue([]),
 }));
 
 // Mock node:fs/promises
@@ -164,9 +167,12 @@ const { resolveRunbookFile } = await import('../../src/helpers/resolve-runbook')
 const { resolveVariables } = await import('../../src/services/variable-discovery');
 const { substituteRunbookVariables, resolveForBounds, collectUnresolvedRunbookVariables } =
   await import('../../src/services/template-renderer');
-const { validateFrontmatterVars, validateRequiredVars, validateInputsDeclarations } = await import(
-  '../../src/helpers/validate-frontmatter-vars'
-);
+const {
+  validateFrontmatterVars,
+  validateRequiredVars,
+  validateInputsDeclarations,
+  validateOutputsDeclarations,
+} = await import('../../src/helpers/validate-frontmatter-vars');
 const { createBridgedEmitter } = await import('../../src/helpers/execution-emitter');
 const { runExecutionLoop } = await import('../../src/services/execution');
 const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline');
@@ -756,6 +762,7 @@ describe('claimAndLaunch', () => {
     (validateFrontmatterVars as jest.Mock).mockReturnValue([]);
     (validateRequiredVars as jest.Mock).mockReturnValue([]);
     (validateInputsDeclarations as jest.Mock).mockReturnValue([]);
+    (validateOutputsDeclarations as jest.Mock).mockReturnValue([]);
     (resolveVariables as jest.Mock).mockResolvedValue({
       vars: {},
 
@@ -866,6 +873,7 @@ describe('claimAndLaunch', () => {
     (validateFrontmatterVars as jest.Mock).mockReturnValue([]);
     (validateRequiredVars as jest.Mock).mockReturnValue([]);
     (validateInputsDeclarations as jest.Mock).mockReturnValue([]);
+    (validateOutputsDeclarations as jest.Mock).mockReturnValue([]);
     (resolveVariables as jest.Mock).mockResolvedValue({
       vars: {},
       warnings: [],

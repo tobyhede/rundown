@@ -49,6 +49,7 @@ import {
   type ValidationDiagnostic,
   type RunbookFrontmatter,
   type Runbook,
+  type OutputDeclaration,
 } from '@rundown-org/parser';
 import { resolveRunbookFile } from './resolve-runbook.js';
 import { runExecutionLoop } from '../services/execution.js';
@@ -65,7 +66,9 @@ import {
   validateFrontmatterVars,
   validateRequiredVars,
   validateInputsDeclarations,
+  validateOutputsDeclarations,
 } from './validate-frontmatter-vars.js';
+import { storeFrontmatterOutputs } from './step-outputs.js';
 
 /**
  * Variable options from CLI flags.
@@ -111,6 +114,8 @@ export interface PreparedRunbook {
   mergedVariables: Record<string, TemplateVarValue>;
   /** Step and substep counts */
   stats: { steps: number; substeps: number };
+  /** Validated frontmatter, or null if absent/invalid */
+  frontmatter: RunbookFrontmatter | null;
 }
 
 /** Result of starting a runbook execution loop via {@link startRunbook}. */
@@ -372,13 +377,16 @@ export async function loadAndParseRunbook(file: string, cwd: string): Promise<Lo
     const varDiagnostics = validateFrontmatterVars(frontmatter?.vars);
     const fmRequired = frontmatter?.required;
     const fmInputs = frontmatter?.inputs;
+    const fmOutputs = frontmatter?.outputs;
     const requiredDiagnostics = validateRequiredVars(fmRequired, frontmatter?.vars);
     const inputsDiagnostics = validateInputsDeclarations(fmInputs, frontmatter?.vars);
+    const outputsDiagnostics = validateOutputsDeclarations(fmOutputs, frontmatter?.vars);
     const diagnostics: readonly ValidationDiagnostic[] = [
       ...parseDiagnostics,
       ...varDiagnostics,
       ...requiredDiagnostics,
       ...inputsDiagnostics,
+      ...outputsDiagnostics,
     ];
 
     const stats = {
@@ -655,7 +663,7 @@ export async function prepareRunbook(
 
   return {
     ok: true,
-    prepared: { filePath, rawContent, runbook, mergedVariables: templateVars, stats },
+    prepared: { filePath, rawContent, runbook, mergedVariables: templateVars, stats, frontmatter },
     warnings: allWarnings.length > 0 ? allWarnings : undefined,
     diagnostics,
     unresolved: unresolvedNames,
@@ -757,6 +765,17 @@ async function launchRunbook(
     options.prompted,
     emitter,
   );
+
+  // Frontmatter OUTPUTS finalizer: store declared outputs to context on successful completion.
+  // Cast needed: worktree node_modules resolves to main-branch parser types which pre-date the
+  // `outputs` field on RunbookFrontmatter. Safe because extractFrontmatter only stores
+  // OutputDeclaration[] in this slot.
+  const frontmatterOutputs = prepared.frontmatter?.outputs as
+    | readonly OutputDeclaration[]
+    | undefined;
+  if (loopResult === 'done' && frontmatterOutputs?.length) {
+    await storeFrontmatterOutputs(frontmatterOutputs, prepared.mergedVariables, cwd, emitter);
+  }
 
   return { ok: true, loopResult, stateId };
 }
