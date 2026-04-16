@@ -58,7 +58,11 @@ Separators between ID and title are flexible: `.`, `:`, `-`, `)`, space, em dash
 
 ````
 ## ID. Title
-- FOR clause          (optional, must be first)
+- INPUTS              (optional, must be first)
+  - VarName
+- OUTPUTS             (optional, must follow INPUTS)
+  - Key value-expr
+- FOR clause          (optional, after directives)
 - Transition rules    (optional, must precede body)
 Prompt text           (instructions)
 ```bash              (OR substeps — not both)
@@ -73,6 +77,62 @@ command
 | **Command** | `bash`/`sh`/`shell` code block (case-insensitive) | Auto-executes; exit code → pass/fail |
 | **Prompt** | Text instructions | Requires `rd pass` or `rd fail` |
 | **Display-only** | `bash prompt`, `prompt`, `json`, `yaml` blocks | Displayed, NOT executed |
+
+## Context Passing (INPUTS / OUTPUTS)
+
+Steps and substeps may declare INPUTS and OUTPUTS directives to pass data between steps across a delegation tree. These directives apply to both H2 steps and H3 substeps.
+
+### OUTPUTS
+
+Declares values to persist after a successful step execution. Evaluated and stored only on PASS — FAIL skips OUTPUTS entirely.
+
+```markdown
+## 7. Output Path
+- OUTPUTS
+  - PlanPath {{ path "plan.json" }}
+- PASS CONTINUE
+- FAIL STOP
+```
+
+Output values may be:
+- **Helper call**: `{{ path "file.json" }}` (resolves to a context-scoped path)
+- **Template variable**: `{{ VarName }}`
+- **Quoted literal**: `"value"`
+- **Bare variable reference**: `VarName`
+
+Storage: `.rundown/contexts/<ContextId>/outputs.json`. Non-fatal if storage fails.
+
+### INPUTS
+
+Declares variable names to inject from context outputs before template expansion.
+
+```markdown
+## 1. Load plan
+- INPUTS
+  - PlanPath
+- PASS CONTINUE
+- FAIL STOP
+
+Read the plan from `{{ PlanPath }}`.
+```
+
+Injection sits below CLI `--var`, `RD_VAR_*`, config, and `vars:` in precedence — CLI always wins. If a variable is not found in context outputs, it is silently skipped. If `ContextId` is not set, INPUTS injection is skipped entirely.
+
+### Frontmatter `inputs:` field
+
+Declares variables to inject from context outputs at runbook startup (before any step runs):
+
+```yaml
+---
+name: review-plan
+required:
+  - PlanPath
+inputs:
+  - PlanPath
+---
+```
+
+Use `required:` alongside `inputs:` when the runbook cannot proceed without the variable (causes a hard error if missing from all sources including context outputs).
 
 ## Transitions
 
@@ -171,7 +231,8 @@ Key authoring notes:
 |---------|-----|
 | H4+ headings | Only H1 (title), H2 (steps), H3 (substeps) |
 | Command block + substeps in same step | Choose one — cannot mix |
-| Instructions before transition rules | Content order: FOR clause, transitions, then body |
+| INPUTS/OUTPUTS after transitions | Content order: INPUTS → OUTPUTS → FOR → transitions → body |
+| Instructions before transition rules | Content order: directives, FOR clause, transitions, then body |
 | Reserved word as step ID | `PASS`, `FAIL`, `CONTINUE`, etc. are reserved |
 | Skipping `rd check` | Always validate: `rd check <file>` |
 

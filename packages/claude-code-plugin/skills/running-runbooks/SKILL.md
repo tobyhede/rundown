@@ -76,6 +76,34 @@ For FOR loop iterations, add `--index`:
 rd run <child-runbook> --step 1.1 --index 3
 ```
 
+## Context Passing (INPUTS / OUTPUTS)
+
+Steps may declare INPUTS and OUTPUTS directives to pass data across execution.
+
+**OUTPUTS** — evaluated and stored only on PASS:
+```markdown
+## 7. Output Path
+- OUTPUTS
+  - PlanPath {{ path "plan.json" }}
+- PASS CONTINUE
+- FAIL STOP
+```
+After a PASS, the key-value pairs are written to `.rundown/contexts/<ContextId>/outputs.json`. FAIL transitions skip OUTPUTS entirely. Storage is best-effort (non-fatal).
+
+**INPUTS** — injected from context outputs before template expansion:
+```markdown
+## 1. Load plan
+- INPUTS
+  - PlanPath
+- PASS CONTINUE
+- FAIL STOP
+
+Read the plan from `{{ PlanPath }}`.
+```
+Variables declared in INPUTS are loaded from `outputs.json` for the current `ContextId`. If the variable is not found or `ContextId` is unset, injection is silently skipped. CLI `--var` always takes precedence over INPUTS.
+
+INPUTS and OUTPUTS apply to both H2 steps and H3 substeps.
+
 ## Claiming Delegated Work
 
 When another agent delegates work to you, the plugin injects claim instructions automatically. The flow:
