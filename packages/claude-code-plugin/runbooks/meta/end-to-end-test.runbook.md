@@ -26,21 +26,16 @@ Delegate a subagent to write a plan.
 
 
 ## 3. Review Plan
+- PASS CONTINUE
+- FAIL STOP
 
-### 3.1 Find PlanPath
-
-```bash
-rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file plan.json
-```
-
-### 3.2
-
-Run the review plan runbook, supplying the `PlanPath` as variable.
+Delegate a subagent to review the plan.
 
 - planning/review-plan.runbook.md
 
 
-## 4. Write the review of the end-to-end Rrundown workflow
+
+## 4. Write the review of the end-to-end Rundown workflow
 - PASS CONTINUE
 - FAIL STOP
 

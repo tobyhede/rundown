@@ -15,14 +15,13 @@ tags:
 Review the plan at the provided path.
 
 ## 1. Find plan
+- INPUTS
+  - PlanPath
 - PASS CONTINUE
 - FAIL STOP
 
-Locate the plan to review:
-- If `{{ PlanPath }}` is set, read from `{{ PlanPath }}`
-- Otherwise resolve the path: `rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file plan.json`
+Read the plan from `{{ PlanPath }}`.
 
-Read the plan.
 
 
 ## 2. Context and scope
