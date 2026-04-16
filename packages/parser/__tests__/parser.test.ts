@@ -1342,6 +1342,16 @@ describe('INPUTS/OUTPUTS ordering violations', () => {
       const md = `## 1 Step\n\n### 1.1 Sub\n\n\`\`\`bash\necho hi\n\`\`\`\n\n- OUTPUTS\n  - Foo {{ "bar" }}\n`;
       expect(() => parseRunbook(md)).toThrow(/OUTPUTS.*must appear before/);
     });
+
+    it('rejects OUTPUTS after non-runbook bullet prose', () => {
+      const md = `## 1 Step\n- some note\n\n- OUTPUTS\n  - Foo {{ "bar" }}\n`;
+      expect(() => parseRunbook(md)).toThrow(/OUTPUTS.*must appear before/);
+    });
+
+    it('rejects OUTPUTS after non-runbook bullet prose in substep', () => {
+      const md = `## 1 Step\n\n### 1.1 Sub\n- some note\n\n- OUTPUTS\n  - Foo {{ "bar" }}\n`;
+      expect(() => parseRunbook(md)).toThrow(/OUTPUTS.*must appear before/);
+    });
   });
 
   describe('INPUTS after body content', () => {
@@ -1357,6 +1367,16 @@ describe('INPUTS/OUTPUTS ordering violations', () => {
 
     it('rejects INPUTS after fenced code block', () => {
       const md = `## 1 Step\n\n\`\`\`bash\necho hi\n\`\`\`\n\n- INPUTS\n  - Foo\n`;
+      expect(() => parseRunbook(md)).toThrow(/INPUTS.*must appear before/);
+    });
+
+    it('rejects INPUTS after non-runbook bullet prose', () => {
+      const md = `## 1 Step\n- some note\n\n- INPUTS\n  - Foo\n`;
+      expect(() => parseRunbook(md)).toThrow(/INPUTS.*must appear before/);
+    });
+
+    it('rejects INPUTS after non-runbook bullet prose in substep', () => {
+      const md = `## 1 Step\n\n### 1.1 Sub\n- some note\n\n- INPUTS\n  - Foo\n`;
       expect(() => parseRunbook(md)).toThrow(/INPUTS.*must appear before/);
     });
 
