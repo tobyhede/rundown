@@ -778,6 +778,31 @@ describe('storeStepOutputs via step-level PASS transition', () => {
       Good: 'literal-value',
     });
   });
+
+  it('logs warning and skips storeContextOutputs when all OUTPUTS expressions fail', async () => {
+    (findStepOrThrow as jest.Mock).mockReturnValue({
+      name: '1',
+      kind: 'base',
+      outputs: [
+        { name: 'BadA', value: '{{ expr1 }}' },
+        { name: 'BadB', value: '{{ expr2 }}' },
+      ],
+    });
+    (evaluateOutputExpression as jest.Mock)
+      .mockImplementationOnce(() => {
+        throw new Error('mock eval failure A');
+      })
+      .mockImplementationOnce(() => {
+        throw new Error('mock eval failure B');
+      });
+    const ctx = makeStepLevelCtx({ ContextId: 'ctx-abc', WorkPath: '.rundown/work' });
+    const config = createPassTransitionConfig();
+
+    await executeTransition(ctx, config);
+
+    expect(core.logger.warn).toHaveBeenCalled();
+    expect(core.storeContextOutputs).not.toHaveBeenCalled();
+  });
 });
 
 describe('storeStepOutputs gating on substep PASS transitions', () => {

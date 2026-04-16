@@ -487,6 +487,40 @@ describe('runExecutionLoop', () => {
       expect(consumeOrder).toBeDefined();
       expect(loadOrder).toBeLessThan(consumeOrder);
     });
+
+    it('does not call loadContextOutputs when ContextId is absent from templateVars', async () => {
+      const inputsSteps: any[] = [
+        {
+          kind: 'base',
+          name: '1',
+          description: 'Use INPUT',
+          inputs: ['Message'],
+          transitions: {
+            pass: { next: 'COMPLETE' },
+            fail: { next: 'STOP' },
+          },
+        },
+      ];
+
+      mockManager.load.mockResolvedValue({
+        id: runbookId,
+        step: '1',
+        status: 'running',
+        templateVars: { WorkPath: '/work' }, // no ContextId
+      });
+
+      const result = await runExecutionLoop(
+        mockManager,
+        runbookId,
+        inputsSteps,
+        '/tmp',
+        false,
+        mockEmitter,
+      );
+
+      expect(result).toBe('waiting');
+      expect(core.loadContextOutputs).not.toHaveBeenCalled();
+    });
   });
 
   it('executes command and advances to next step', async () => {

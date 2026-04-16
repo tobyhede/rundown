@@ -192,6 +192,26 @@ describe('parseRunbookDocument with OUTPUTS directive', () => {
     expect(() => parseRunbookDocument(md)).toThrow(RunbookSyntaxError);
   });
 
+  it('throws RunbookSyntaxError when OUTPUTS directive has no nested list', () => {
+    const md = `## 1. Step
+- PASS CONTINUE
+- FAIL STOP
+- OUTPUTS
+`;
+    expect(() => parseRunbookDocument(md)).toThrow(RunbookSyntaxError);
+  });
+
+  it('does not misclassify prose starting with "OUTPUTS" as an OUTPUTS directive', () => {
+    const md = `## 1. Step with OUTPUTS prose
+- PASS CONTINUE
+- FAIL STOP
+- OUTPUTS are validated at runtime
+`;
+    const { runbook } = parseRunbookDocument(md);
+    expect(runbook.steps[0].outputs).toBeUndefined();
+    expect(runbook.steps[0].prompt).toContain('OUTPUTS are validated');
+  });
+
   it('attaches parsed outputs to a substep when OUTPUTS directive is present', () => {
     const md = `## 1. Parent step
 ### 1.1 Child substep
