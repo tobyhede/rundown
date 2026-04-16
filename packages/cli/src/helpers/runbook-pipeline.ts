@@ -563,9 +563,11 @@ export async function prepareRunbook(
         if (!isDeclaredInput && !isDelegationChild) continue;
         mergedVariables[key] = value;
         injected = true;
-        if (isDeclaredInput) {
-          inputsResolvedKeys.add(key);
-        }
+        // Record every injection — declared inputs AND delegation-inherited
+        // undeclared keys — so the later `required:` check treats them all
+        // as satisfied. Without this, a delegated child whose required vars
+        // arrive only via inheritance would falsely fail MISSING_REQUIRED_VARS.
+        inputsResolvedKeys.add(key);
       }
       if (injected) {
         // Rebuild templateVars with context-output-injected variables

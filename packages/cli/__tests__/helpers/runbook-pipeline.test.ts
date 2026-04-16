@@ -893,6 +893,37 @@ describe('prepareRunbook', () => {
     );
   });
 
+  it('delegation-inherited undeclared variable satisfies required check', async () => {
+    // Regression: a delegated child without `inputs:` could still receive
+    // vars from the parent's context OUTPUTS, but `inputsResolvedKeys` only
+    // tracked declared inputs, so `required:` validation spuriously failed.
+    resolveRunbookFile.mockResolvedValue({ path: '/test/child.md', source: 'project' });
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue(
+      mockParseResult({
+        // Note: required but NOT declared as `inputs:` — must be satisfied via
+        // delegation inheritance alone.
+        frontmatter: { required: ['PlanPath'] },
+      }),
+    );
+    (resolveVariables as jest.Mock).mockResolvedValue({
+      vars: { ContextId: 'ctx-123' },
+      sources: {},
+      warnings: [],
+      providedKeys: new Set(),
+    });
+    (core.loadContextOutputs as jest.Mock).mockResolvedValue({
+      PlanPath: '/inherited/plan.json',
+    });
+
+    const result = await prepareRunbook('child.md', {}, '/test', {
+      inheritedUserVars: {},
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
   it('INPUTS-resolved variable satisfies required check', async () => {
     resolveRunbookFile.mockResolvedValue({ path: '/test/inputs-req.md', source: 'project' });
     (
