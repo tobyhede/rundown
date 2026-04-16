@@ -202,6 +202,16 @@ describe('parseRunbookDocument with OUTPUTS directive', () => {
     ]);
   });
 
+  it('throws RunbookSyntaxError when OUTPUTS block contains duplicate names', () => {
+    const md = `## 1. Step
+- OUTPUTS
+  - PlanPath {{ path "a.json" }}
+  - PlanPath {{ path "b.json" }}
+`;
+    expect(() => parseRunbookDocument(md)).toThrow(RunbookSyntaxError);
+    expect(() => parseRunbookDocument(md)).toThrow(/duplicate.*output.*PlanPath/i);
+  });
+
   it('throws RunbookSyntaxError on duplicate OUTPUTS directive for the same target', () => {
     const md = `## 1. Duplicate outputs
 - OUTPUTS

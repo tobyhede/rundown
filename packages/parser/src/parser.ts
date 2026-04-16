@@ -601,6 +601,7 @@ function handleOutputsDirective(node: ListItem, ctx: ActiveStepContext): typeof 
   }
 
   const declarations: OutputDeclaration[] = [];
+  const seen = new Set<string>();
   for (const item of nestedList.children) {
     const paragraph = item.children.find((c) => c.type === 'paragraph');
     if (!paragraph) {
@@ -620,6 +621,12 @@ function handleOutputsDirective(node: ListItem, ctx: ActiveStepContext): typeof 
         `Invalid OUTPUTS declaration in ${targetLabel}${formatLineNum(item)}: "${decl.name}" is a reserved variable name (step, index, context — case-insensitive)`,
       );
     }
+    if (seen.has(decl.name)) {
+      throw new RunbookSyntaxError(
+        `Duplicate output name "${decl.name}" in ${targetLabel}${formatLineNum(item)}: each output name must be unique within an OUTPUTS block`,
+      );
+    }
+    seen.add(decl.name);
     declarations.push(decl);
   }
 
