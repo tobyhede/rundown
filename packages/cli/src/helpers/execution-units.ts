@@ -79,9 +79,13 @@ export function collectExecutionUnitInputs(
 /**
  * Merge template variables from the execution context and the post-transition state.
  *
- * The runtime may inject INPUTS into the in-memory execution state without
- * persisting them. Merging here preserves those injected values for OUTPUTS
- * evaluation while still letting post-transition actor state override shared keys.
+ * The execution frame (`before`) is authoritative for OUTPUTS evaluation: it
+ * carries FOR-loop iteration values, Step/Index frame, and INPUTS injection
+ * that the persisted post-transition state cannot see. Post-transition state
+ * (`after`) contributes only the keys that the execution frame did not carry
+ * — e.g., CLI `--var` overrides on non-loop names. A caller passing
+ * `--var item=stale` while a step iterates `FOR item IN {{items}}` must not
+ * shadow the current iteration value.
  *
  * @param before - Template variables used while executing the current unit
  * @param after - Template variables from the post-transition persisted state
@@ -92,7 +96,7 @@ export function mergeExecutionTemplateVars(
   after: Readonly<StepVariables> | undefined,
 ): Readonly<StepVariables> | undefined {
   if (before && after) {
-    return { ...before, ...after };
+    return { ...after, ...before };
   }
   return after ?? before;
 }

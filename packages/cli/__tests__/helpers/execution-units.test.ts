@@ -1,6 +1,11 @@
 // packages/cli/__tests__/helpers/execution-units.test.ts
 
-import { isSubstep, shouldPersistParentOutputs } from '../../src/helpers/execution-units.js';
+import type { StepVariables } from '../../src/services/execution-vars.js';
+import {
+  isSubstep,
+  mergeExecutionTemplateVars,
+  shouldPersistParentOutputs,
+} from '../../src/helpers/execution-units.js';
 import { buildBaseStep, buildStepWithSubsteps, buildSubstep } from './test-utils.js';
 
 describe('isSubstep', () => {
@@ -180,5 +185,55 @@ describe('shouldPersistParentOutputs', () => {
     }) => {
       expect(shouldPersistParentOutputs(inputs)).toBe(expected);
     });
+  });
+});
+
+describe('mergeExecutionTemplateVars', () => {
+  // The execution frame (`before`) carries values that only exist during
+  // execution: FOR-loop iteration values, Step/Index frame, INPUTS injection.
+  // Persisted state (`after`) may contain stale CLI `--var` values that must
+  // not overwrite these computed values when OUTPUTS are evaluated.
+  it('lets the execution frame win when a key is defined on both sides', () => {
+    const before: StepVariables = { item: 'iter-value', Step: '1' };
+    const after: StepVariables = { item: 'stale-cli', environment: 'prod' };
+
+    const merged = mergeExecutionTemplateVars(before, after);
+
+    expect(merged).toEqual({ item: 'iter-value', Step: '1', environment: 'prod' });
+  });
+
+  it('retains post-transition keys that the execution frame does not carry', () => {
+    const before: StepVariables = { Step: '2' };
+    const after: StepVariables = { environment: 'staging', region: 'us-east-1' };
+
+    const merged = mergeExecutionTemplateVars(before, after);
+
+    expect(merged).toEqual({ Step: '2', environment: 'staging', region: 'us-east-1' });
+  });
+
+  it('returns undefined when neither side is defined', () => {
+    expect(mergeExecutionTemplateVars(undefined, undefined)).toBeUndefined();
+  });
+
+  it('returns before when only before is defined', () => {
+    const before: StepVariables = { Step: '1', item: 'x' };
+    expect(mergeExecutionTemplateVars(before, undefined)).toEqual(before);
+  });
+
+  it('returns after when only after is defined', () => {
+    const after: StepVariables = { environment: 'staging' };
+    expect(mergeExecutionTemplateVars(undefined, after)).toEqual(after);
+  });
+
+  it('does not mutate either input', () => {
+    const before: StepVariables = { item: 'iter-value' };
+    const after: StepVariables = { item: 'stale', other: 'keep' };
+    const beforeCopy = { ...before };
+    const afterCopy = { ...after };
+
+    mergeExecutionTemplateVars(before, after);
+
+    expect(before).toEqual(beforeCopy);
+    expect(after).toEqual(afterCopy);
   });
 });
