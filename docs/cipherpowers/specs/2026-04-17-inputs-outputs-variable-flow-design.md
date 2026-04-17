@@ -77,7 +77,9 @@ Each `inputs:` entry uses the same syntax as `vars:`:
 
 **`inputs:`** — the renamed `vars:` field. Declares variables and optional defaults. Behaviour is identical to `vars:` in all respects: same precedence (level 4), same resolution order, same syntax.
 
-The additional cross-runbook behaviour layered on top of the rename: the parent reads the child's `inputs:` declaration at **delegate time** and automatically derives `--var` flags to forward. Those flags arrive in the child at level 1 (CLI). Variables not listed in `inputs:` are not forwarded automatically — they can still be passed via explicit `--var` at claim time.
+The additional cross-runbook behaviour layered on top of the rename: the parent reads the child's `inputs:` declaration at **delegate time** and encodes the matching variable values into the delegation token. When the child is **claimed**, those values are automatically available — no manual `--var` flags required. This is the standard flow.
+
+`rd claim <token> --var key=value` is an **escape hatch** to override a specific variable at claim time. It follows standard variable precedence (level 1 CLI flag) and overrides whatever value was encoded in the token. General practice is to let the token carry the variables.
 
 - `inputs:` defaults sit at **level 4** — unchanged from `vars:`.
 - When run **standalone**, `inputs:` defaults apply exactly as `vars:` did.
@@ -119,16 +121,24 @@ When a parent step runs a child runbook:
 [delegate time]
   Parent variable space
   → parent reads child frontmatter inputs: declaration
-  → parent derives --var flags from its variable space for each declared input
-  → --var flags are encoded into the delegation token
+  → parent encodes matching variable values into the delegation token
 
-[claim time]
-  → child process starts; --var flags from token arrive as level 1 CLI variables
-  → child executes; step OUTPUTS update child's variable space
+[claim time — standard]
+  → child process starts
+  → inputs: variables from the token are automatically available in the child
+  → no --var flags required from the claimer
+
+[claim time — escape hatch]
+  → rd claim <token> --var key=override
+  → overrides a specific variable at level 1, takes precedence over token values
+  → use sparingly; standard practice is to let the token carry all inputs
+
+[child execution]
+  → child executes; step OUTPUTS mutate child's variable space
 
 [termination — COMPLETE or STOP]
   → parent reads child frontmatter outputs: declaration
-  → parent evaluates and injects declared outputs into parent variable space at level 4
+  → parent mutates its variable space with declared output values
   → parent continues with updated variables
 ```
 
