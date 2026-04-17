@@ -471,7 +471,7 @@ export async function prepareRunbook(
         varFile: varOpts.varFile,
         var: varOpts.var,
         varJson: varOpts.varJson,
-        frontmatterVars: frontmatter?.vars,
+        frontmatterVars: frontmatter?.inputs,
         inheritedVars: inheritedUserVars,
       },
       cwd,
