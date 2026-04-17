@@ -37,7 +37,6 @@ import {
   type TemplateVarValue,
   isJsonArray,
   isJsonArrayStream,
-  loadContextOutputs,
 } from '@rundown-org/core';
 import {
   parseRunbookDocument,
@@ -64,9 +63,9 @@ import { getPolicyEvaluator, getPolicyPrompter } from '../services/policy-contex
 import {
   validateFrontmatterVars,
   validateRequiredVars,
-  validateInputsDeclarations,
   validateOutputsDeclarations,
 } from './validate-frontmatter-vars.js';
+import { evaluateFrontmatterOutputs } from './step-outputs.js';
 
 /**
  * Variable options from CLI flags.
@@ -372,18 +371,15 @@ export async function loadAndParseRunbook(file: string, cwd: string): Promise<Lo
       diagnostics: parseDiagnostics,
     } = parseRunbookDocument(rawContent, path.basename(filePath));
 
-    const varDiagnostics = validateFrontmatterVars(frontmatter?.vars);
+    const varDiagnostics = validateFrontmatterVars(frontmatter?.inputs);
     const fmRequired = frontmatter?.required;
-    const fmInputs = frontmatter?.inputs;
     const fmOutputs = frontmatter?.outputs;
-    const requiredDiagnostics = validateRequiredVars(fmRequired, frontmatter?.vars);
-    const inputsDiagnostics = validateInputsDeclarations(fmInputs, frontmatter?.vars);
-    const outputsDiagnostics = validateOutputsDeclarations(fmOutputs, frontmatter?.vars);
+    const requiredDiagnostics = validateRequiredVars(fmRequired, frontmatter?.inputs);
+    const outputsDiagnostics = validateOutputsDeclarations(fmOutputs, frontmatter?.inputs);
     const diagnostics: readonly ValidationDiagnostic[] = [
       ...parseDiagnostics,
       ...varDiagnostics,
       ...requiredDiagnostics,
-      ...inputsDiagnostics,
       ...outputsDiagnostics,
     ];
 
@@ -537,60 +533,11 @@ export async function prepareRunbook(
   // Loads outputs published under the **resolved** ContextId (so child
   // overrides via `claim --var ContextId=...` are respected) and injects keys
   // that were not already provided by a VARS channel.
-  //
-  // Two injection rules apply, with different scopes:
-  //   1. Declared INPUTS — always injected when present in context outputs.
-  //      This satisfies the runbook's required-input contract regardless of
-  //      whether the runbook was launched standalone or via delegation.
-  //   2. Undeclared keys — only injected when this run is a delegation child
-  //      (i.e., the caller passed `inheritedUserVars`). Standalone runs that
-  //      happen to share a ContextId must not silently absorb arbitrary keys
-  //      from prior runs in that context — only declared INPUTS opt in.
-  const inputsResolvedKeys = new Set<string>();
-  const declaredInputs = frontmatter?.inputs;
-  const declaredInputSet = declaredInputs ? new Set(declaredInputs) : undefined;
-  const isDelegationChild = (options?.inheritedUserVars ?? undefined) !== undefined;
-  try {
-    const contextId =
-      typeof templateVars.ContextId === 'string' ? templateVars.ContextId : undefined;
-    if (contextId && (declaredInputSet || isDelegationChild)) {
-      const contextOutputs = await loadContextOutputs(cwd, contextId);
-      let injected = false;
-      for (const [key, value] of Object.entries(contextOutputs)) {
-        if (providedKeys.has(key)) continue;
-        // Don't clobber keys already populated into mergedVariables by a
-        // non-providedKeys channel (e.g. auto-injected CLAUDE_PLUGIN_ROOT).
-        // INPUTS injection only fills gaps — it never overwrites.
-        if (Object.hasOwn(mergedVariables, key)) continue;
-        const isDeclaredInput = declaredInputSet?.has(key) === true;
-        if (!isDeclaredInput && !isDelegationChild) continue;
-        mergedVariables[key] = value;
-        injected = true;
-        // Record every injection — declared inputs AND delegation-inherited
-        // undeclared keys — so the later `required:` check treats them all
-        // as satisfied. Without this, a delegated child whose required vars
-        // arrive only via inheritance would falsely fail MISSING_REQUIRED_VARS.
-        inputsResolvedKeys.add(key);
-      }
-      if (injected) {
-        // Rebuild templateVars with context-output-injected variables
-        templateVars = buildTemplateVars(mergedVariables, options);
-      }
-    }
-  } catch (err) {
-    // Context outputs are not available — not a hard error; required: check will
-    // surface missing vars if they can't be satisfied by any other channel.
-    // Log real errors (permission denied, malformed JSON) so users can diagnose.
-    void logger.warn('runbook-pipeline: failed to load context outputs for inheritance', {
-      error: getErrorMessage(err),
-    });
-  }
-
   // Validate required variables are provided by an external layer
   const requiredVars = frontmatter?.required;
   if (requiredVars && requiredVars.length > 0) {
     const missing = requiredVars.filter(
-      (name: string) => !providedKeys.has(name) && !inputsResolvedKeys.has(name),
+      (name: string) => !providedKeys.has(name),
     );
     if (missing.length > 0) {
       const names = missing.map((n: string) => `"${n}"`).join(', ');
@@ -764,10 +711,24 @@ async function launchRunbook(
     emitter,
   );
 
-  // Frontmatter OUTPUTS finalizer: store declared outputs to context on successful completion.
+  // Frontmatter OUTPUTS finalizer: evaluate declared outputs and write to state.finalVars.
   const frontmatterOutputs = prepared.frontmatter?.outputs;
-  if (loopResult === 'done' && frontmatterOutputs?.length) {
-    await storeFrontmatterOutputs(frontmatterOutputs, prepared.mergedVariables, cwd, emitter);
+  if ((loopResult === 'done' || loopResult === 'stopped') && frontmatterOutputs?.length) {
+    const postState = await manager.load(stateId);
+    const effectiveVars = {
+      ...prepared.mergedVariables,
+      ...(postState?.variables ?? {}),
+    };
+    const finalVars = evaluateFrontmatterOutputs(
+      frontmatterOutputs,
+      // Cast: mergedVariables (TemplateVarValue) + state.variables (string|number|boolean)
+      // combined is a superset of StepVariables values
+      effectiveVars as unknown as Parameters<typeof evaluateFrontmatterOutputs>[1],
+      emitter,
+    );
+    if (Object.keys(finalVars).length > 0) {
+      await manager.update(stateId, { finalVars });
+    }
   }
 
   return { ok: true, loopResult, stateId };
