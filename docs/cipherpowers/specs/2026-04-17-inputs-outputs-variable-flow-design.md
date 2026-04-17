@@ -75,11 +75,11 @@ Each `inputs:` entry uses the same syntax as `vars:`:
 
 ---
 
-**`inputs:`** — the renamed `vars:` field. Declares variables and optional defaults. Behaviour is identical to `vars:` in all respects: same precedence (level 5), same resolution order, same syntax.
+**`inputs:`** — the renamed `vars:` field. Declares variables and optional defaults. Behaviour is identical to `vars:` in all respects: same precedence (level 4), same resolution order, same syntax.
 
 The additional cross-runbook behaviour layered on top of the rename: the parent reads the child's `inputs:` declaration at **delegate time** and automatically derives `--var` flags to forward. Those flags arrive in the child at level 1 (CLI). Variables not listed in `inputs:` are not forwarded automatically — they can still be passed via explicit `--var` at claim time.
 
-- `inputs:` defaults sit at **level 5** — unchanged from `vars:`.
+- `inputs:` defaults sit at **level 4** — unchanged from `vars:`.
 - When run **standalone**, `inputs:` defaults apply exactly as `vars:` did.
 - `inputs:` is distinct from `required:`. `inputs:` declares variables and defaults; `required:` enforces presence from any source at resolution time.
 - **Variables expected from a child's `outputs:` cannot be declared in the parent's `required:`**. Child outputs are injected during execution; `required:` is validated at resolution time before execution begins.
@@ -92,21 +92,24 @@ The additional cross-runbook behaviour layered on top of the rename: the parent 
 
 - Value expression failures follow the same non-fatal rule as step OUTPUTS: logged, `ERROR_OCCURRED` emitted, that output silently omitted.
 - If a declared output variable is absent from the variable space at termination time (e.g. because the producing step was never reached), that output is silently omitted — non-fatal.
-- Injected `outputs:` values land at **level 4 (runtime output injection)** in the parent's precedence order — overriding the parent's `inputs:` defaults but overridden by CLI flags, env vars, and config.
+- Injected `outputs:` values are runtime mutations to the parent's variable space — they overwrite any existing value for that variable, regardless of its original source.
 - If `outputs:` is absent, nothing is exported to the caller.
 
 ### Variable precedence
 
-The full precedence order (high to low). `vars:` is removed; `inputs:` defaults replace it at level 5.
+The precedence table governs **initial resolution** — how the variable space is populated before execution begins. It does not apply to runtime mutations.
 
 | Level | Source |
 |-------|--------|
 | 1 | CLI flags (`--var`, `--var-json`, `--var-file`) — includes caller-derived `--var` from `inputs:` forwarding |
 | 2 | `RD_VAR_*` environment variables |
 | 3 | `.rundown/config.yaml` |
-| **4** | **Runtime output injection** ← child `outputs:` land here (new) |
-| 5 | `inputs:` defaults (declared in frontmatter, replaces `vars:`) |
-| 6 | Built-in defaults |
+| 4 | `inputs:` defaults (renamed from `vars:`) |
+| 5 | Built-in defaults |
+
+**Step OUTPUTS are runtime mutations, not a precedence level.** When a step produces an output, it overwrites the variable in the variable space directly — regardless of how that variable was originally set (CLI flag, env, config, or default). A step OUTPUTS `Blah "vtha"` will overwrite `Blah` even if the user passed `--var Blah=hello`. This takes effect immediately for all subsequent steps.
+
+Child `outputs:` injected into the parent at termination follow the same rule: they are runtime mutations that overwrite the parent's variable space directly.
 
 ### Cross-runbook flow
 
@@ -151,7 +154,7 @@ When a parent step runs a child runbook:
 - **Step OUTPUTS storage:** previously `outputs.json`; now XState machine context. Syntax and evaluation semantics unchanged.
 - **Step-level `- INPUTS` directives** removed from the format.
 - **`outputs.json` context store** removed.
-- **Variable precedence:** `vars:` level renamed to `inputs:` defaults (level 5, same position); new runtime output injection at level 4.
+- **Variable precedence:** `vars:` level renamed to `inputs:` defaults (level 4, same position). Step OUTPUTS and child `outputs:` are runtime mutations — they are not a precedence level and overwrite the variable space directly.
 
 ## What does NOT change
 
@@ -160,7 +163,7 @@ When a parent step runs a child runbook:
 - `required:` field semantics — unchanged
 - Step OUTPUTS value expression syntax — unchanged
 - Delegation and claim variable passing via explicit `--var` — unchanged
-- `inputs:` / `vars:` precedence level (level 5) — unchanged
+- `inputs:` / `vars:` precedence level (level 4) — unchanged
 
 ## Migration
 
