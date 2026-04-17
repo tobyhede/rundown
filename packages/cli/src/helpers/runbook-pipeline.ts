@@ -67,7 +67,6 @@ import {
   validateInputsDeclarations,
   validateOutputsDeclarations,
 } from './validate-frontmatter-vars.js';
-import { storeFrontmatterOutputs } from './step-outputs.js';
 
 /**
  * Variable options from CLI flags.

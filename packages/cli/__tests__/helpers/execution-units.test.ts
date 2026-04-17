@@ -7,7 +7,16 @@ import {
   mergeExecutionTemplateVars,
   shouldPersistParentOutputs,
 } from '../../src/helpers/execution-units.js';
+import * as executionUnitsModule from '../../src/helpers/execution-units.js';
 import { buildBaseStep, buildStepWithSubsteps, buildSubstep } from './test-utils.js';
+
+it('collectExecutionUnitInputs is no longer exported', () => {
+  expect('collectExecutionUnitInputs' in executionUnitsModule).toBe(false);
+});
+
+it('persistPassOutputs is no longer exported', () => {
+  expect('persistPassOutputs' in executionUnitsModule).toBe(false);
+});
 
 describe('isSubstep', () => {
   it('returns true for a substep-shaped value (has id, no kind)', () => {

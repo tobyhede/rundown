@@ -36,8 +36,6 @@ import {
 import type { StepVariables } from '../services/execution-vars.js';
 import { parseRunbookDocument, resolvedStepHasSubsteps } from '@rundown-org/parser';
 import path from 'node:path';
-import { persistPassOutputs } from './execution-units.js';
-import { storeFrontmatterOutputs } from './step-outputs.js';
 import { resolveIndexOption } from './index-option.js';
 import { getRunbookFromState } from './runbook-loader.js';
 import {

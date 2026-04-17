@@ -54,11 +54,7 @@ import {
   transitionSinkFromEmitter,
   type TransitionOrchestrationPolicy,
 } from '../helpers/transition-orchestrator.js';
-import {
-  collectExecutionUnitInputs,
-  persistPassOutputs,
-  resolveCurrentExecutionUnit,
-} from '../helpers/execution-units.js';
+import { resolveCurrentExecutionUnit } from '../helpers/execution-units.js';
 export type { ExecutionVarValue, StepVariables, TemplateVariables } from './execution-vars.js';
 
 /**
