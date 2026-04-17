@@ -4,7 +4,7 @@ description: Fetch, parse, and triage PR review feedback from GitHub
 tags:
   - review
   - github
-vars:
+inputs:
   repo: tobyhede/rundown
 required:
   - pr_number

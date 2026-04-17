@@ -3,7 +3,7 @@ name: variable-precedence
 description: Variable resolution precedence from frontmatter and CLI
 tags:
   - variables
-vars:
+inputs:
   greeting: hello
 scenarios:
   override:

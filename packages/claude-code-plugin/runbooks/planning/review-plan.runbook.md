@@ -3,8 +3,6 @@ name: review-plan
 description: Review and validate an implementation plan
 required:
   - PlanPath
-inputs:
-  - PlanPath
 tags:
   - planning
   - review
@@ -15,8 +13,6 @@ tags:
 Review the plan at the provided path.
 
 ## 1. Find plan
-- INPUTS
-  - PlanPath
 - PASS CONTINUE
 - FAIL STOP
 

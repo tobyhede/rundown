@@ -5,7 +5,7 @@ version: 1.0.0
 author: Rundown Team
 tags:
   - transitions
-vars:
+inputs:
   greeting: hello
   port: 3000
 scenarios:

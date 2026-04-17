@@ -52,12 +52,11 @@ Named identifiers must match `/^[A-Za-z_][A-Za-z0-9_]*$/`.
 
 ### 2.2 Content Order
 Step content must appear in this strict order:
-1.  **INPUTS**: Context input declarations (optional). Must appear as a bullet item immediately after the step header.
-2.  **OUTPUTS**: Context output declarations (optional). Must appear after INPUTS (or after step header if no INPUTS).
-3.  **FOR Annotation**: Loop definition (optional). Must appear as a bullet item after directives.
-4.  **Transitions**: Control flow rules (optional). Must appear as bullet items immediately after FOR (or after directives if no FOR). Transitions must appear before any prompt text or body content.
-5.  **Prompt**: Text instructions.
-6.  **Body**: One of: Code Block or Substeps. A step-level runbook list is shorthand for implicit sequential substeps (`.1`, `.2`, ...).
+1.  **OUTPUTS**: Context output declarations (optional). Must appear as a bullet item immediately after the step header.
+2.  **FOR Annotation**: Loop definition (optional). Must appear as a bullet item after directives.
+3.  **Transitions**: Control flow rules (optional). Must appear as bullet items immediately after FOR (or after directives if no FOR). Transitions must appear before any prompt text or body content.
+4.  **Prompt**: Text instructions.
+5.  **Body**: One of: Code Block or Substeps. A step-level runbook list is shorthand for implicit sequential substeps (`.1`, `.2`, ...).
 
 ## 3. Step Bodies
 
@@ -260,13 +259,13 @@ Variables use Handlebars syntax: `{{variable}}`.
 *   **Parent variables**: `{{context.parent.vars.NAME}}` exposes the parent's resolved template variables. Only non-context keys propagate. Available via both chain (`context.parent.parent.vars.*`) and array (`context.ancestors.N.vars.*`) addressing.
 *   **Depth limit**: Parent context chain addressing is capped at 32 levels (enforced on the delegation ancestor chain depth). Exceeding this limit produces an error.
 *   **Path resolution**: Dotted paths are supported consistently (for example `{{context.parent.index}}`).
-*   **Required variables**: The frontmatter `required` field declares variables that must be provided by the caller via CLI flags, config, environment bridge, or delegation inheritance. Required variables must not appear in `vars:`. Missing required variables produce a hard error (`MISSING_REQUIRED_VARS`) during resolution. Reserved runtime names are also rejected in `required`.
-*   **Reserved keys**: Runtime keys `step`, `index`, and `context` are reserved (matching is case-insensitive — any case variant such as `STEP`, `Step`, `INDEX` is also reserved) and cannot be overridden by user variables. The CLI rejects these names in frontmatter `vars:`, `required`, `--var` flags, `--var-file` contents, and `.rundown/config.yaml` with an error diagnostic. Reserved names in `RD_VAR_*` environment variables are silently skipped with a warning.
+*   **Required variables**: The frontmatter `required` field declares variables that must be provided by the caller via CLI flags, config, environment bridge, or delegation inheritance. Required variables must not appear in `inputs:`. Missing required variables produce a hard error (`MISSING_REQUIRED_VARS`) during resolution. Reserved runtime names are also rejected in `required`.
+*   **Reserved keys**: Runtime keys `step`, `index`, and `context` are reserved (matching is case-insensitive — any case variant such as `STEP`, `Step`, `INDEX` is also reserved) and cannot be overridden by user variables. The CLI rejects these names in frontmatter `inputs:`, `required`, `--var` flags, `--var-file` contents, and `.rundown/config.yaml` with an error diagnostic. Reserved names in `RD_VAR_*` environment variables are silently skipped with a warning.
 *   **Precedence** (highest to lowest):
     1. CLI flags (`--var-file`, `--var`, `--var-json`) — highest priority
     2. `RD_VAR_*` environment variables (prefix stripped)
     3. `.rundown/config.yaml` (auto-discovered from cwd upward)
-    4. Frontmatter `vars:` field
+    4. Frontmatter `inputs:` field
     5. Inherited delegation variables (parent context)
     6. Built-in defaults — see [§6.1 Built-in Variables](#61-built-in-variables).
     7. INPUTS injected from the context outputs store — fill gaps only, never override an existing variable (including built-ins, which are always present). Silently skipped when `ContextId` is unset or the requested key is absent. See [§7 Context Passing](#7-context-passing-inputs--outputs).
@@ -303,69 +302,32 @@ Static variables (`Date`, `DateTime`, `Year`, `Month`, `Day`, `Branch`, `WorkPat
 
 Plugin variables sit in the precedence chain just below CLI flags and can be overridden via `--var`.
 
-## 7. Context Passing (INPUTS / OUTPUTS)
+## 7. Context Passing (OUTPUTS)
 
-Steps and substeps may declare INPUTS and OUTPUTS directives for passing data between steps across a delegation tree.
+Steps and substeps may declare OUTPUTS directives for passing data between steps and across delegation boundaries.
 
 ### 7.1 OUTPUTS
 
-OUTPUTS declares values to persist after a successful step execution.
+OUTPUTS declares values to capture after a successful step execution and inject into the runbook's live variable space.
 
-* **Scope**: Supported on both H2 steps and H3 substeps. At most one OUTPUTS directive per step or substep (Conformance §8 rule 11).
-* **Persistence trigger**: OUTPUTS are evaluated and stored only on PASS transitions. FAIL transitions skip OUTPUTS entirely.
-* **Storage**: Values are written atomically to `.rundown/contexts/<ContextId>/outputs.json`. Writes are serialized with a file lock to prevent concurrent corruption.
-* **On-disk shape**: A flat JSON object `{ key: stringValue, ... }` — all keys and values are strings. Non-string values encountered during merge are dropped with a warning (not an error). The file is written by atomic temp-file-plus-rename. Writes are additive — new keys are added to the existing object; existing keys are overwritten; unrelated keys are preserved.
-* **Expressions**: Each output entry is evaluated against the step's resolved template variables. Supported forms:
-    * `{{ path "file.json" }}` — path helper resolving to `<WorkPath>/.rd-<ContextId>/<Date>-file.json` (equivalent to `rdpath --dir WorkPath --ctx ContextId --file file.json`; see [docs/RDPATH.md](./RDPATH.md)).
-    * `{{ path "file.json" ctx=alt-ctx }}` — path helper with explicit context override.
-    * `{{ VarName }}` — template variable reference.
-    * `"literal value"` — quoted literal.
-    * `VarName` — bare variable reference (equivalent to `{{ VarName }}`).
-* **Identifier constraints**: Context identifiers must match `[A-Za-z0-9_-]+` (not `.` or `..`); filenames must match `[A-Za-z0-9._-]+` (not `.` or `..`). Enforced by `VALID_CTX` and `VALID_FILE` at write time.
-* **Best-effort**: OUTPUTS persistence is non-fatal. If storage fails (disk full, permissions, lock timeout), the step transition is not rolled back. An `ERROR_OCCURRED` event is emitted.
-* **Merge semantics**: Outputs merge into the existing `outputs.json` — new keys are added, existing keys are overwritten.
+*   **Evaluation trigger**: OUTPUTS are evaluated only on PASS transitions. FAIL transitions skip OUTPUTS entirely.
+*   **Storage**: Evaluated values are injected into the runbook's live `state.variables` via a `SET_VARIABLES` event on the XState machine. This ensures downstream steps and template rendering see the updated variable space without requiring file I/O.
+*   **Expressions**: Each output entry is evaluated against the step's resolved template variables. Supported forms: Handlebars expressions (`{{ path "file.json" }}`), quoted literals (`"value"`), bare variable references (`VarName`).
+*   **Best-effort**: OUTPUTS evaluation is non-fatal. If evaluation fails, an error is logged but the step transition is not rolled back.
+*   **Merge semantics**: Outputs merge into the existing `state.variables` — new keys are added, existing keys are overwritten.
+*   **Status visibility**: The `rd status --json` command includes a `vars` field that exposes the current merged variable space (template vars + step OUTPUTS).
 
-### 7.2 INPUTS
+### 7.2 Frontmatter `outputs:`
 
-INPUTS declares template variable names to inject from context outputs before step rendering. Two declaration sites exist — both read from the same `outputs.json` store and follow the same fill-gaps-only precedence.
+The frontmatter `outputs:` field declares variables to capture at run completion and write to `state.finalVars`.
 
-**Frontmatter `inputs:`** — declared at the runbook level. Validated at parse time (identifier pattern, reserved-name rejection, no-overlap with `vars:`). Injected at pipeline setup so values are available to every step that references them.
-
-```yaml
----
-name: execute-plan
-inputs:
-  - PlanPath
----
-```
-
-**Step-level `- INPUTS` directive** — declared on a specific H2 step or H3 substep (at most one per target; Conformance §8 rule 11). Injected at step execution time, immediately before template expansion for that step.
-
-```markdown
-## 3. Execute the plan
-- INPUTS
-  - PlanPath
-- PASS CONTINUE
-Run the plan at {{ PlanPath }}.
-```
-
-**Behaviour (common to both sites):**
-
-* **Source**: `.rundown/contexts/<ContextId>/outputs.json`.
-* **Fill-gaps-only**: INPUTS populate a variable only when it is not already defined by a higher-precedence source (CLI flags, `RD_VAR_*`, config, frontmatter `vars:`, inherited delegation, built-in defaults). They never override an existing value.
-* **Missing values**: Declared names absent from `outputs.json` are silently skipped (no error).
-* **No ContextId**: If `ContextId` is unset, injection is silently skipped — a runbook can declare INPUTS safely without a context.
-* **Malformed store**: `ENOENT` (file missing) is treated as an empty store. JSON parse errors and non-object top-level shapes are caught at the injection site, logged as warnings, and INPUTS injection is skipped — the run is not aborted. Non-string values encountered during load are dropped with a warning.
+*   **Evaluation timing**: Evaluated when the runbook reaches a terminal state (`done` or `stopped`).
+*   **Variable space**: Evaluated against the full merged variable space at termination time (template vars + accumulated step OUTPUTS).
+*   **Cross-runbook forwarding**: When a child runbook completes, its `state.finalVars` are forwarded to the parent's live variable space via `SET_VARIABLES`, making the child's outputs available to subsequent parent steps.
 
 ### 7.3 Delegation Inheritance
 
-Children in a delegation tree inherit the parent's `ContextId` via `--var`, providing a shared identity for context passing. A parent step writes OUTPUTS; a child (or subsequent step) reads them via INPUTS using the same `ContextId`.
-
-### 7.4 Security
-
-*   **Path traversal**: Context IDs are validated against a safe identifier pattern. `.` and `..` are rejected.
-*   **Symlink escape**: The contexts directory and output file paths are validated to stay within the project root. Symlink targets that escape the contexts directory are rejected.
-*   **File permissions**: Output files are written with restrictive permissions (mode 0o600 — owner read/write only).
+Children in a delegation tree inherit the parent's `ContextId` via `--var`, providing a shared identity. Step OUTPUTS accumulate in `state.variables` throughout execution; frontmatter `outputs:` at termination produce `state.finalVars` which propagate to the parent actor on completion.
 
 ### 7.5 Example: write-plan / execute-plan
 
@@ -411,7 +373,7 @@ Flow:
 
 1.  **Strict Hierarchy**: H2 -> H3. No H4.
 2.  **Sequential IDs**: Numeric steps must be sequential (1, 2, 3...; gaps invalid). Named steps do not participate in sequential numbering.
-3.  **Strict Ordering**: INPUTS -> OUTPUTS -> FOR -> Transitions -> Prompt -> Body.
+3.  **Strict Ordering**: OUTPUTS -> FOR -> Transitions -> Prompt -> Body.
 4.  **Exclusivity**: Only one body type (Code OR Substeps). Step-level runbook lists are shorthand for Substeps.
 5.  **Single Code Block**: Max one code block per step (executable or display-only).
 6.  **Loop Safety**: `NEXT` and `BREAK` are valid **only** in FOR substeps and FOR iteration-level transitions. Using them at step level outside any FOR loop is rejected by the validator.
@@ -419,8 +381,9 @@ Flow:
 8.  **FOR Requires Substeps**: A FOR-annotated step must contain substeps.
 9.  **No Nested RETRY**: RETRY fallback actions cannot be RETRY.
 10. **FOR Iteration Action Set**: FOR-level nested transitions only allow `CONTINUE`, `DEFER`, `NEXT`, `BREAK`, `GOTO`, `STOP`, `COMPLETE` (plus RETRY wrappers).
-11. **Single Directives**: At most one INPUTS and one OUTPUTS directive per step or substep.
-12. **Reserved Names in Directives**: INPUTS and OUTPUTS variable names must not be reserved names (case-insensitive).
+11. **Single Directives**: At most one OUTPUTS directive per step or substep.
+12. **Reserved Names in Directives**: OUTPUTS variable names must not be reserved names (case-insensitive).
+13. **No INPUTS Directive**: The `- INPUTS` step directive has been removed. Use the frontmatter `inputs:` field to declare default variable values; variables are injected via `--var` flags at invocation time.
 
 ## 9. Compatibility
 
