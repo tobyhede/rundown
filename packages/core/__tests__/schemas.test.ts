@@ -306,6 +306,28 @@ describe('RunbookStateSchema forStack', () => {
   });
 });
 
+describe('RunbookStateSchema finalVars', () => {
+  it('RunbookStateSchema accepts finalVars as optional Record<string, string>', () => {
+    const state = createValidState({ finalVars: { PlanPath: 'plan.json', version: '1.2.3' } });
+    expect(() => RunbookStateSchema.parse(state)).not.toThrow();
+    expect(RunbookStateSchema.parse(state).finalVars).toEqual({
+      PlanPath: 'plan.json',
+      version: '1.2.3',
+    });
+  });
+
+  it('RunbookStateSchema accepts state without finalVars (field is optional)', () => {
+    const state = createValidState();
+    expect(() => RunbookStateSchema.parse(state)).not.toThrow();
+    expect(RunbookStateSchema.parse(state).finalVars).toBeUndefined();
+  });
+
+  it('RunbookStateSchema rejects finalVars with non-string values', () => {
+    const state = createValidState({ finalVars: { PlanPath: 42 } });
+    expect(() => RunbookStateSchema.parse(state)).toThrow();
+  });
+});
+
 describe('RunbookStateSchema sources field', () => {
   it('passes through unknown fields via passthrough', () => {
     const state = createValidState({

@@ -669,4 +669,7 @@ export interface RunbookState {
 
   /** Template variables used for AST-level substitution, frozen at run time */
   readonly templateVars?: Readonly<Record<string, TemplateVarValue>>;
+
+  /** Evaluated frontmatter outputs: values at runbook termination. Read by parent delegation completion. */
+  readonly finalVars?: Readonly<Record<string, string>>;
 }
