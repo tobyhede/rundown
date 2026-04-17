@@ -63,27 +63,28 @@ outputs:
 ---
 ```
 
-**`inputs:` replaces `vars:`.** The `vars:` frontmatter field is removed. All variable declarations — whether received from a caller or defaulted for standalone use — are declared in `inputs:`.
+**`inputs:` is a rename of `vars:`.** The frontmatter `vars:` field is removed and replaced by `inputs:` with identical syntax, identical semantics, and identical precedence. No behaviour changes. The rename signals intent — these are variables the runbook accepts from outside — but the default-value and resolution mechanics are unchanged.
 
-Each `inputs:` entry is either:
-- A bare name (`- PlanPath`) — no default; must be provided by the caller, CLI, env, or config
+The CLI `--var`, `--var-json`, and `--var-file` flags are completely unaffected.
+
+Each `inputs:` entry uses the same syntax as `vars:`:
+- A bare name (`- PlanPath`) — no default; must be provided via CLI, env, or config
 - A `name: default` pair (`- environment: staging`) — has a default value used when no higher-precedence source provides it
 
 **Parsing rule for `outputs:` list entries:** the first whitespace-delimited token is the output variable name. Everything after the first whitespace is the value expression. If no whitespace is present, the entry is a bare variable reference: the variable name is both the key and the source variable looked up in the variable space by name.
 
 ---
 
-**`inputs:`** — declares which variables this runbook accepts and, optionally, their defaults. The parent reads the child's `inputs:` declaration at **delegate time** and derives the `--var` flags to forward. Those flags travel with the delegation token and arrive at the child as level-1 CLI variables when the child is claimed. Variables not listed in `inputs:` are not forwarded by the parent.
+**`inputs:`** — the renamed `vars:` field. Declares variables and optional defaults. Behaviour is identical to `vars:` in all respects: same precedence (level 5), same resolution order, same syntax.
 
-- Forwarded `inputs:` variables arrive at **level 1 (CLI flags)** in the child's precedence order — passed as `--var` flags derived from the parent's variable space at delegate time.
-- `inputs:` default values (bare `name: value` entries) sit at **level 5** — below runtime output injection and config, above built-in defaults.
-- When run **standalone** (via `rd run` with no parent), no cross-boundary injection occurs. `inputs:` defaults apply normally; `required:` validation applies against all sources.
-- Variables passed explicitly via CLI `--var` at claim time are not affected by `inputs:` filtering. Explicit `--var` flags always apply at level 1 regardless.
-- `inputs:` is distinct from `required:`. `inputs:` declares the variables and optional defaults; `required:` enforces that a variable is present from any source at resolution time. Because forwarded `inputs:` variables arrive as level-1 CLI flags, a variable in both lists will satisfy `required:` if the caller provides it.
+The additional cross-runbook behaviour layered on top of the rename: the parent reads the child's `inputs:` declaration at **delegate time** and automatically derives `--var` flags to forward. Those flags arrive in the child at level 1 (CLI). Variables not listed in `inputs:` are not forwarded automatically — they can still be passed via explicit `--var` at claim time.
+
+- `inputs:` defaults sit at **level 5** — unchanged from `vars:`.
+- When run **standalone**, `inputs:` defaults apply exactly as `vars:` did.
+- `inputs:` is distinct from `required:`. `inputs:` declares variables and defaults; `required:` enforces presence from any source at resolution time.
 - **Variables expected from a child's `outputs:` cannot be declared in the parent's `required:`**. Child outputs are injected during execution; `required:` is validated at resolution time before execution begins.
-- If `inputs:` is absent from frontmatter, no variables are declared and no cross-boundary forwarding occurs.
-- **Breaking change:** `vars:` is removed. Existing frontmatter `vars:` blocks must be migrated to `inputs:` with the same key-value pairs.
-- **Breaking change:** `inputs:` previously read from `outputs.json`. Under this design it defines the boundary contract and declares defaults.
+- **Breaking change (rename only):** `vars:` is removed. Existing frontmatter `vars:` blocks must be renamed to `inputs:`. No other changes required.
+- **Breaking change (prior `inputs:` semantics):** `inputs:` previously read from `outputs.json`. That behaviour is gone.
 
 ---
 
@@ -142,26 +143,29 @@ When a parent step runs a child runbook:
 
 ## What changes
 
-- **`vars:` is removed.** All variable declarations migrate to `inputs:`. Key-value pairs with defaults (`- environment: staging`) replace `vars:` entries.
-- `inputs:` semantics change: previously injected from `outputs.json`; now defines the boundary contract, declares defaults, and is resolved at delegate time. Variables arrive in the child as level-1 `--var` flags.
-- `outputs:` frontmatter field is new. Evaluated on **every** termination (COMPLETE, `rd complete`, `rd stop`) — orthogonal to runbook status.
-- Step OUTPUTS evaluation changes: previously evaluated on PASS only; now evaluated on every step completion regardless of PASS or FAIL.
-- Step OUTPUTS storage: previously `outputs.json`; now XState machine context. Syntax and evaluation semantics unchanged.
-- Step-level `- INPUTS` directives removed from the format.
-- `outputs.json` context store removed.
-- Variable precedence: `vars:` level (previously 4) replaced by `inputs:` defaults at level 5; new runtime output injection level at 4.
+- **`vars:` renamed to `inputs:`.** Identical syntax and behaviour — a find-and-replace migration.
+- **`inputs:` gains cross-runbook forwarding:** at delegate time, the parent auto-derives `--var` flags from the child's `inputs:` declaration. No behaviour change when run standalone.
+- **Prior `inputs:` semantics removed:** `inputs:` no longer reads from `outputs.json`.
+- **`outputs:` frontmatter field is new.** Evaluated on every termination (COMPLETE, `rd complete`, `rd stop`) — orthogonal to runbook status.
+- **Step OUTPUTS evaluation:** previously PASS only; now every step completion regardless of PASS or FAIL.
+- **Step OUTPUTS storage:** previously `outputs.json`; now XState machine context. Syntax and evaluation semantics unchanged.
+- **Step-level `- INPUTS` directives** removed from the format.
+- **`outputs.json` context store** removed.
+- **Variable precedence:** `vars:` level renamed to `inputs:` defaults (level 5, same position); new runtime output injection at level 4.
 
 ## What does NOT change
 
 - Template variable syntax (`{{ variableName }}`) — unchanged
-- `required:` field semantics — unchanged (validated at resolution time from any source)
+- CLI `--var`, `--var-json`, `--var-file` flags — unchanged
+- `required:` field semantics — unchanged
 - Step OUTPUTS value expression syntax — unchanged
 - Delegation and claim variable passing via explicit `--var` — unchanged
+- `inputs:` / `vars:` precedence level (level 5) — unchanged
 
 ## Migration
 
-- **`vars:` is removed.** All frontmatter `vars:` blocks must be rewritten as `inputs:` entries. A `vars: environment: staging` entry becomes `inputs: - environment: staging`.
+- **`vars:` → `inputs:`** in all frontmatter. Rename only; no other changes required.
 - **`outputs.json` is removed.** External tooling reading `.rundown/contexts/<ContextId>/outputs.json` must be updated to use `rd status` JSON output or the new boundary contract.
-- **`inputs:` semantics change.** Runbooks using `inputs:` to read from `outputs.json` must be updated; that behaviour is gone.
+- **Prior `inputs:` usage** (reading from `outputs.json`) must be replaced with the new boundary contract via `outputs:` and cross-runbook forwarding.
 - **Step-level `- INPUTS` directives** must be removed. The parser rejects them; `rd check` will report a parse error.
 - Run state schema bumped; active runbooks must be completed before upgrading.
