@@ -29,8 +29,8 @@ import {
   parseOutputDeclaration,
 } from './helpers.js';
 import { isReservedTemplateName } from './reserved.js';
-import { NAMED_IDENTIFIER_PATTERN } from './step-id.js';
 import { validateRunbook } from './validator.js';
+import type { ValidationDiagnostic } from './validator.js';
 import { extractFrontmatter, nameFromFilename } from './frontmatter.js';
 
 /** Default transitions for steps/substeps without explicit transitions: PASS CONTINUE, FAIL STOP. */
@@ -123,7 +123,6 @@ interface SubstepBuilder {
   hasSeenPromptText: boolean;
   pendingConditionals: ParsedConditional[];
   line?: number;
-  inputs?: string[];
   outputs?: readonly OutputDeclaration[];
 }
 
@@ -144,7 +143,6 @@ interface StepBuilder {
   forConditionals?: ParsedConditional[];
   stepConditionals?: ParsedConditional[];
   invalidH3s: Array<{ line: number; text: string }>;
-  inputs?: string[];
   outputs?: readonly OutputDeclaration[];
 }
 
@@ -161,6 +159,7 @@ interface VisitorContext {
   pendingConditionals: ParsedConditional[];
   implicitText: string;
   inPreamble: boolean;
+  diagnostics: ValidationDiagnostic[];
 }
 
 /** Narrowed context where a step is active. Handlers that require currentStep take this. */
@@ -223,7 +222,6 @@ function finalizePendingSubstep(ctx: VisitorContext): void {
       transitions: converted?.transitions ?? DEFAULT_TRANSITIONS,
       runbooks: runbooks.length > 0 ? runbooks : undefined,
       line: ps.line,
-      inputs: ps.inputs,
       outputs: ps.outputs,
     };
     ctx.currentStep.substeps.push(substep);
@@ -332,7 +330,6 @@ function handleH3Heading(node: Heading, ctx: ActiveStepContext): void {
       hasSeenPromptText: false,
       pendingConditionals: [],
       line: node.position?.start.line,
-      inputs: undefined,
       outputs: undefined,
     };
   } else {
@@ -644,61 +641,6 @@ function handleOutputsDirective(node: ListItem, ctx: ActiveStepContext): typeof 
 }
 
 /**
- * Process an INPUTS directive list item.
- *
- * Reads the nested list under `- INPUTS` and collects each item as a variable name.
- * Returns `SKIP` to prevent double-traversal of the nested list.
- *
- * @param node - The list item node whose first paragraph text is "INPUTS"
- * @param ctx - Active step context
- * @returns `SKIP` to stop the visitor from descending into child nodes
- * @throws {RunbookSyntaxError} When nested items are missing or have invalid identifier syntax
- */
-function handleInputsDirective(node: ListItem, ctx: ActiveStepContext): typeof SKIP {
-  const target = getDirectiveTarget(ctx);
-  const targetLabel = formatDirectiveTarget(ctx);
-  if (target.hasSeenContent || target.hasSeenPromptText) {
-    throw new RunbookSyntaxError(
-      `INPUTS directive in ${targetLabel}${formatLineNum(node)}: must appear before prompt text and body content`,
-    );
-  }
-  const nestedList = node.children.find((c): c is List => c.type === 'list');
-  if (!nestedList || nestedList.children.length === 0) {
-    throw new RunbookSyntaxError(
-      `INPUTS directive in ${targetLabel}${formatLineNum(node)} requires at least one variable name (e.g., "  - PlanPath")`,
-    );
-  }
-  const names: string[] = [];
-  for (const item of nestedList.children) {
-    const paragraph = item.children.find((c) => c.type === 'paragraph');
-    if (!paragraph) {
-      throw new RunbookSyntaxError(
-        `Invalid INPUTS declaration in ${targetLabel}${formatLineNum(item)}: missing variable name (expected "  - Name")`,
-      );
-    }
-    const name = extractText(paragraph as PhrasingContent | Heading | Paragraph | ListItem).trim();
-    if (!NAMED_IDENTIFIER_PATTERN.test(name)) {
-      throw new RunbookSyntaxError(
-        `Invalid INPUTS declaration in ${targetLabel}${formatLineNum(item)}: "${name}" is not a valid variable identifier`,
-      );
-    }
-    if (isReservedTemplateName(name)) {
-      throw new RunbookSyntaxError(
-        `Invalid INPUTS declaration in ${targetLabel}${formatLineNum(item)}: "${name}" is a reserved variable name (step, index, context — case-insensitive)`,
-      );
-    }
-    names.push(name);
-  }
-  if (target.inputs && target.inputs.length > 0) {
-    throw new RunbookSyntaxError(
-      `Duplicate INPUTS directive in ${targetLabel}${formatLineNum(node)}: a target may declare INPUTS at most once`,
-    );
-  }
-  target.inputs = [...names];
-  return SKIP;
-}
-
-/**
  * Process a list item node within an active step.
  *
  * @param node - The list item AST node
@@ -717,12 +659,17 @@ function handleListItem(node: ListItem, ctx: ActiveStepContext): typeof SKIP | u
     return handleOutputsDirective(node, ctx);
   }
 
-  // Check for INPUTS directive on the active execution unit (step or substep)
+  // The - INPUTS step directive has been removed.
   // Exact match only — prose starting with "INPUTS" (e.g., "INPUTS are validated by…")
-  // is not a directive. Variable names live in the nested list, not inline text.
+  // is not a directive and is not affected.
   const trimmedText = text.trim();
   if (trimmedText === 'INPUTS') {
-    return handleInputsDirective(node, ctx);
+    ctx.diagnostics.push({
+      severity: 'error',
+      message:
+        'INPUTS step directive has been removed — use frontmatter inputs: field instead',
+    });
+    return SKIP;
   }
 
   // Check for FOR clause BEFORE conditionals
@@ -867,6 +814,7 @@ export function parseRunbookDocument(markdown: string, basename?: string): Parse
     pendingConditionals: [],
     implicitText: '',
     inPreamble: true,
+    diagnostics: [],
   };
 
   visit(tree, (node: Node, _index, parent: Node | undefined) => visitNode(node, parent, ctx));
@@ -877,7 +825,7 @@ export function parseRunbookDocument(markdown: string, basename?: string): Parse
     ctx.steps.push(finalizeStep(ctx.currentStep, ctx.pendingConditionals, ctx.implicitText));
   }
 
-  const diagnostics = [...frontmatterDiagnostics, ...validateRunbook(ctx.steps)];
+  const diagnostics = [...frontmatterDiagnostics, ...ctx.diagnostics, ...validateRunbook(ctx.steps)];
 
   return {
     runbook: {
@@ -973,7 +921,6 @@ function finalizeStep(
       description: step.description,
       transitions: stepTransitions,
       line: step.line,
-      inputs: step.inputs,
       outputs: step.outputs,
     };
     if (step.forClause) {
@@ -1005,7 +952,6 @@ function finalizeStep(
     prompt,
     transitions: stepTransitions,
     line: step.line,
-    inputs: step.inputs,
     outputs: step.outputs,
   };
 

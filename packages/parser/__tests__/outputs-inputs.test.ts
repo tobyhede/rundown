@@ -42,59 +42,30 @@ describe('parseOutputDeclaration', () => {
   });
 });
 
-describe('parseRunbookDocument INPUTS directive', () => {
-  it('parses single variable name as a nested list item', () => {
+describe('parseRunbookDocument INPUTS step directive (removed)', () => {
+  it('emits a parse error diagnostic when - INPUTS directive appears in a step', () => {
     const md = `## 1. Step
 - PASS CONTINUE
 - FAIL STOP
 - INPUTS
   - PlanPath
 `;
-    const { runbook } = parseRunbookDocument(md);
-    expect(runbook.steps[0].inputs).toEqual(['PlanPath']);
+    const result = parseRunbookDocument(md);
+    const errors = result.diagnostics.filter((d) => d.severity === 'error');
+    expect(errors.length).toBeGreaterThanOrEqual(1);
+    expect(errors[0].message).toMatch(/INPUTS step directive has been removed/);
   });
 
-  it('parses multiple variable names as nested list items', () => {
-    const md = `## 1. Step
-- PASS CONTINUE
-- FAIL STOP
+  it('emits a parse error when - INPUTS directive appears in a substep', () => {
+    const md = `## 1. Parent step
+### 1.1 Child substep
 - INPUTS
   - PlanPath
-  - OtherVar
 `;
-    const { runbook } = parseRunbookDocument(md);
-    expect(runbook.steps[0].inputs).toEqual(['PlanPath', 'OtherVar']);
-  });
-
-  it('throws RunbookSyntaxError when INPUTS directive has no nested list', () => {
-    const md = `## 1. Step
-- PASS CONTINUE
-- FAIL STOP
-- INPUTS
-`;
-    expect(() => parseRunbookDocument(md)).toThrow(RunbookSyntaxError);
-  });
-
-  it('throws RunbookSyntaxError for invalid identifier in INPUTS list', () => {
-    const md = `## 1. Step
-- PASS CONTINUE
-- FAIL STOP
-- INPUTS
-  - 123bad
-`;
-    expect(() => parseRunbookDocument(md)).toThrow(RunbookSyntaxError);
-  });
-
-  it('throws RunbookSyntaxError for INPUTS list item with no paragraph (e.g., blockquote-only)', () => {
-    // Previously this silently skipped the item, producing inputs: [] and leaving
-    // the user with no diagnostic about why their declaration vanished.
-    const md = `## 1. Step
-- PASS CONTINUE
-- FAIL STOP
-- INPUTS
-  - > just a blockquote
-`;
-    expect(() => parseRunbookDocument(md)).toThrow(RunbookSyntaxError);
+    const result = parseRunbookDocument(md);
+    const errors = result.diagnostics.filter((d) => d.severity === 'error');
+    expect(errors.length).toBeGreaterThanOrEqual(1);
+    expect(errors[0].message).toMatch(/INPUTS step directive has been removed/);
   });
 
   it('does not misclassify prose starting with "INPUTS" as an INPUTS directive', () => {
@@ -103,59 +74,30 @@ describe('parseRunbookDocument INPUTS directive', () => {
 - FAIL STOP
 - INPUTS are validated at runtime
 `;
-    // Should parse without error and NOT set inputs on the step
-    const { runbook } = parseRunbookDocument(md);
-    expect(runbook.steps[0].inputs).toBeUndefined();
-    // The prose should be included in the step's prompt (not as a directive)
-    expect(runbook.steps[0].prompt).toContain('INPUTS are validated');
+    // Should parse without any INPUTS-removal error and include the prose in the prompt
+    const result = parseRunbookDocument(md);
+    const inputsErrors = result.diagnostics.filter(
+      (d) => d.severity === 'error' && d.message.includes('INPUTS step directive'),
+    );
+    expect(inputsErrors).toHaveLength(0);
+    expect(result.runbook.steps[0].prompt).toContain('INPUTS are validated');
   });
 
   it('old indented-text form (no list item marker) is treated as step content, not a directive', () => {
     // "  PlanPath" (indented continuation, no "- ") becomes part of the same paragraph as INPUTS,
     // so extractText returns "INPUTS\nPlanPath" which does NOT match the exact "INPUTS" check.
-    // Result: treated as regular list item prose, not an INPUTS directive.
+    // Result: treated as regular list item prose, no INPUTS-removal diagnostic.
     const md = `## 1. Step
 - PASS CONTINUE
 - FAIL STOP
 - INPUTS
   PlanPath
 `;
-    const { runbook } = parseRunbookDocument(md);
-    // Not an INPUTS directive — inputs is undefined
-    expect(runbook.steps[0].inputs).toBeUndefined();
-  });
-
-  it('attaches INPUTS to a substep when declared inside that substep', () => {
-    const md = `## 1. Parent step
-### 1.1 Child substep
-- INPUTS
-  - PlanPath
-`;
-    const { runbook } = parseRunbookDocument(md);
-    const step = runbook.steps[0];
-    expect(step.kind).toBe('substeps');
-    if (step.kind !== 'substeps') {
-      throw new Error('expected substeps step');
-    }
-    expect(step.substeps[0].inputs).toEqual(['PlanPath']);
-  });
-
-  it('preserves both parent-step and substep INPUTS when both are declared', () => {
-    const md = `## 1. Parent step
-- INPUTS
-  - SharedPath
-### 1.1 Child substep
-- INPUTS
-  - ChildOnly
-`;
-    const { runbook } = parseRunbookDocument(md);
-    const step = runbook.steps[0];
-    expect(step.inputs).toEqual(['SharedPath']);
-    expect(step.kind).toBe('substeps');
-    if (step.kind !== 'substeps') {
-      throw new Error('expected substeps step');
-    }
-    expect(step.substeps[0].inputs).toEqual(['ChildOnly']);
+    const result = parseRunbookDocument(md);
+    const inputsErrors = result.diagnostics.filter(
+      (d) => d.severity === 'error' && d.message.includes('INPUTS step directive'),
+    );
+    expect(inputsErrors).toHaveLength(0);
   });
 });
 
@@ -239,15 +181,19 @@ describe('parseRunbookDocument with OUTPUTS directive', () => {
     expect(() => parseRunbookDocument(md)).toThrow(/duplicate.*output.*PlanPath/i);
   });
 
-  it('throws RunbookSyntaxError on duplicate INPUTS directive for the same target', () => {
-    const md = `## 1. Duplicate inputs
+  it('emits a parse error diagnostic for each - INPUTS directive encountered', () => {
+    // Previously threw on duplicate; now each INPUTS directive emits a removal diagnostic
+    const md = `## 1. Two inputs directives
 - INPUTS
   - PlanPath
 - INPUTS
   - OtherVar
 `;
-    expect(() => parseRunbookDocument(md)).toThrow(RunbookSyntaxError);
-    expect(() => parseRunbookDocument(md)).toThrow(/duplicate.*INPUTS/i);
+    const result = parseRunbookDocument(md);
+    const errors = result.diagnostics.filter(
+      (d) => d.severity === 'error' && d.message.includes('INPUTS step directive has been removed'),
+    );
+    expect(errors.length).toBeGreaterThanOrEqual(2);
   });
 
   it('throws RunbookSyntaxError on duplicate OUTPUTS directive for the same target', () => {
@@ -387,7 +333,11 @@ required:
   });
 });
 
-describe('parseRunbookDocument INPUTS directive — reserved-name guard', () => {
+describe('parseRunbookDocument INPUTS directive — reserved-name guard (removed)', () => {
+  // The - INPUTS step directive has been removed. All of these cases now produce
+  // the generic "INPUTS step directive has been removed" error rather than specific
+  // reserved-name errors. Tests verify the directive produces a removal error.
+
   it.each([
     'context',
     'Context',
@@ -396,33 +346,70 @@ describe('parseRunbookDocument INPUTS directive — reserved-name guard', () => 
     'Step',
     'index',
     'Index',
-  ])('throws RunbookSyntaxError when step-level INPUTS contains reserved "%s"', (name) => {
+  ])('emits removal diagnostic when step-level INPUTS contains "%s"', (name) => {
     const md = `## 1. Step
 - INPUTS
   - ${name}
 `;
-    expect(() => parseRunbookDocument(md)).toThrow(RunbookSyntaxError);
-    expect(() => parseRunbookDocument(md)).toThrow(/reserved/i);
+    const result = parseRunbookDocument(md);
+    const errors = result.diagnostics.filter((d) => d.severity === 'error');
+    expect(errors.length).toBeGreaterThanOrEqual(1);
+    expect(errors[0].message).toMatch(/INPUTS step directive has been removed/);
   });
 
-  it('throws when substep-level INPUTS contains reserved "context"', () => {
+  it('emits removal diagnostic when substep-level INPUTS contains "context"', () => {
     const md = `## 1. Parent
 ### 1.1 Child
 - INPUTS
   - context
 `;
-    expect(() => parseRunbookDocument(md)).toThrow(RunbookSyntaxError);
+    const result = parseRunbookDocument(md);
+    const errors = result.diagnostics.filter((d) => d.severity === 'error');
+    expect(errors.length).toBeGreaterThanOrEqual(1);
+    expect(errors[0].message).toMatch(/INPUTS step directive has been removed/);
   });
 
-  it('preserves valid identifiers when reserved names are not present', () => {
+  it('emits removal diagnostic for any - INPUTS directive with valid identifiers', () => {
     const md = `## 1. Step
 - INPUTS
   - PlanPath
   - ContextDir
 `;
-    // "ContextDir" contains "Context" as a substring but is not exactly reserved
-    const { runbook } = parseRunbookDocument(md);
-    expect(runbook.steps[0].inputs).toEqual(['PlanPath', 'ContextDir']);
+    const result = parseRunbookDocument(md);
+    const errors = result.diagnostics.filter((d) => d.severity === 'error');
+    expect(errors.length).toBeGreaterThanOrEqual(1);
+    expect(errors[0].message).toMatch(/INPUTS step directive has been removed/);
+  });
+});
+
+describe('parseRunbookDocument - INPUTS step directive removal', () => {
+  it('emits a parse error when - INPUTS directive appears in a step', () => {
+    const markdown = `---
+inputs:
+  Message: hello
+---
+# My Runbook
+
+## 1. Use message
+- INPUTS
+  - Message
+
+The message is: {{Message}}
+PASS CONTINUE
+`;
+    const result = parseRunbookDocument(markdown);
+    const errors = result.diagnostics.filter((d) => d.severity === 'error');
+    expect(errors.length).toBeGreaterThanOrEqual(1);
+    expect(errors[0].message).toMatch(/INPUTS step directive has been removed/);
+  });
+
+  it('does not populate step.inputs on any step', () => {
+    const markdown = `# Runbook\n\n## 1. Step\nDo a thing.\nPASS CONTINUE\n`;
+    const result = parseRunbookDocument(markdown);
+    const step = result.runbook?.steps[0];
+    expect(step).toBeDefined();
+    // inputs is no longer a field on step AST nodes
+    expect((step as Record<string, unknown>)['inputs']).toBeUndefined();
   });
 });
 

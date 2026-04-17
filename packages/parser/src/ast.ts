@@ -184,13 +184,12 @@ export type UnresolvedForClause = UnresolvedNumericWindow | UnresolvedSourceWind
 export type ParsedForClause = ForClause | UnresolvedForClause;
 
 /**
- * Shared INPUTS/OUTPUTS fields for any directive-capable execution unit.
+ * Shared OUTPUTS fields for any directive-capable execution unit.
  *
- * Both steps and substeps can declare the context values they consume and publish.
+ * Steps and substeps can declare the context values they publish.
+ * The INPUTS step directive has been removed — use frontmatter inputs: field instead.
  */
 interface ContextDirectiveFields {
-  /** Variables this execution unit expects to be resolved from context OUTPUTS */
-  readonly inputs?: readonly string[];
   /** Values to publish to context after this execution unit passes */
   readonly outputs?: readonly OutputDeclaration[];
 }

@@ -1354,52 +1354,65 @@ describe('INPUTS/OUTPUTS ordering violations', () => {
     });
   });
 
-  describe('INPUTS after body content', () => {
-    it('rejects INPUTS after prompt text', () => {
+  describe('INPUTS after body content (removed directive — emits diagnostic, no throw)', () => {
+    // The - INPUTS step directive has been removed. Encountering it produces a
+    // parse error diagnostic rather than throwing a RunbookSyntaxError.
+    // These tests verify the directive no longer throws in any position.
+
+    it('emits removal diagnostic for INPUTS after prompt text', () => {
       const md = `## 1 Step\n\nSome text.\n\n- INPUTS\n  - Foo\n`;
-      expect(() => parseRunbook(md)).toThrow(/INPUTS.*must appear before/);
+      const result = parseRunbookDocument(md);
+      expect(result.diagnostics.some((d) => d.message.includes('INPUTS step directive has been removed'))).toBe(true);
     });
 
-    it('rejects INPUTS after runbook-list entry', () => {
+    it('emits removal diagnostic for INPUTS after runbook-list entry', () => {
       const md = `## 1 Step\n- foo.runbook.md\n\n- INPUTS\n  - Foo\n`;
-      expect(() => parseRunbook(md)).toThrow(/INPUTS.*must appear before/);
+      const result = parseRunbookDocument(md);
+      expect(result.diagnostics.some((d) => d.message.includes('INPUTS step directive has been removed'))).toBe(true);
     });
 
-    it('rejects INPUTS after fenced code block', () => {
+    it('emits removal diagnostic for INPUTS after fenced code block', () => {
       const md = `## 1 Step\n\n\`\`\`bash\necho hi\n\`\`\`\n\n- INPUTS\n  - Foo\n`;
-      expect(() => parseRunbook(md)).toThrow(/INPUTS.*must appear before/);
+      const result = parseRunbookDocument(md);
+      expect(result.diagnostics.some((d) => d.message.includes('INPUTS step directive has been removed'))).toBe(true);
     });
 
-    it('rejects INPUTS after non-runbook bullet prose', () => {
+    it('emits removal diagnostic for INPUTS after non-runbook bullet prose', () => {
       const md = `## 1 Step\n- some note\n\n- INPUTS\n  - Foo\n`;
-      expect(() => parseRunbook(md)).toThrow(/INPUTS.*must appear before/);
+      const result = parseRunbookDocument(md);
+      expect(result.diagnostics.some((d) => d.message.includes('INPUTS step directive has been removed'))).toBe(true);
     });
 
-    it('rejects INPUTS after non-runbook bullet prose in substep', () => {
+    it('emits removal diagnostic for INPUTS after non-runbook bullet prose in substep', () => {
       const md = `## 1 Step\n\n### 1.1 Sub\n- some note\n\n- INPUTS\n  - Foo\n`;
-      expect(() => parseRunbook(md)).toThrow(/INPUTS.*must appear before/);
+      const result = parseRunbookDocument(md);
+      expect(result.diagnostics.some((d) => d.message.includes('INPUTS step directive has been removed'))).toBe(true);
     });
 
-    it('rejects INPUTS after prompt text in substep', () => {
+    it('emits removal diagnostic for INPUTS after prompt text in substep', () => {
       const md = `## 1 Step\n\n### 1.1 Sub\n\nSome text.\n\n- INPUTS\n  - Foo\n`;
-      expect(() => parseRunbook(md)).toThrow(/INPUTS.*must appear before/);
+      const result = parseRunbookDocument(md);
+      expect(result.diagnostics.some((d) => d.message.includes('INPUTS step directive has been removed'))).toBe(true);
     });
 
-    it('rejects INPUTS after fenced code block in substep', () => {
+    it('emits removal diagnostic for INPUTS after fenced code block in substep', () => {
       const md = `## 1 Step\n\n### 1.1 Sub\n\n\`\`\`bash\necho hi\n\`\`\`\n\n- INPUTS\n  - Foo\n`;
-      expect(() => parseRunbook(md)).toThrow(/INPUTS.*must appear before/);
+      const result = parseRunbookDocument(md);
+      expect(result.diagnostics.some((d) => d.message.includes('INPUTS step directive has been removed'))).toBe(true);
     });
 
-    it('rejects INPUTS after runbook-list in substep', () => {
+    it('emits removal diagnostic for INPUTS after runbook-list in substep', () => {
       const md = `## 1 Step\n\n### 1.1 Sub\n- foo.runbook.md\n\n- INPUTS\n  - Foo\n`;
-      expect(() => parseRunbook(md)).toThrow(/INPUTS.*must appear before/);
+      const result = parseRunbookDocument(md);
+      expect(result.diagnostics.some((d) => d.message.includes('INPUTS step directive has been removed'))).toBe(true);
     });
   });
 
   describe('interchangeable with transitions (must not over-reach)', () => {
-    it('allows INPUTS before transitions', () => {
+    it('emits removal diagnostic for INPUTS before transitions (no longer valid)', () => {
       const md = `## 1 Step\n- INPUTS\n  - Foo\n- PASS CONTINUE\n`;
-      expect(() => parseRunbook(md)).not.toThrow();
+      const result = parseRunbookDocument(md);
+      expect(result.diagnostics.some((d) => d.message.includes('INPUTS step directive has been removed'))).toBe(true);
     });
 
     it('allows OUTPUTS after transitions', () => {
@@ -1407,9 +1420,10 @@ describe('INPUTS/OUTPUTS ordering violations', () => {
       expect(() => parseRunbook(md)).not.toThrow();
     });
 
-    it('allows interleaved transitions and directives', () => {
+    it('emits removal diagnostic for interleaved transitions and INPUTS directive', () => {
       const md = `## 1 Step\n- PASS CONTINUE\n- OUTPUTS\n  - Foo {{ "bar" }}\n- FAIL CONTINUE\n- INPUTS\n  - Bar\n`;
-      expect(() => parseRunbook(md)).not.toThrow();
+      const result = parseRunbookDocument(md);
+      expect(result.diagnostics.some((d) => d.message.includes('INPUTS step directive has been removed'))).toBe(true);
     });
   });
 });
