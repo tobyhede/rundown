@@ -767,9 +767,7 @@ async function launchRunbook(
   );
 
   // Frontmatter OUTPUTS finalizer: store declared outputs to context on successful completion.
-  // Cast needed: worktree node_modules resolves to main-branch parser types which pre-date the
-  // `outputs` field on RunbookFrontmatter. Safe because extractFrontmatter only stores
-  // OutputDeclaration[] in this slot.
+  // Cast needed: same worktree node_modules resolution issue as fmOutputs above.
   const frontmatterOutputs = prepared.frontmatter?.outputs as
     | readonly OutputDeclaration[]
     | undefined;

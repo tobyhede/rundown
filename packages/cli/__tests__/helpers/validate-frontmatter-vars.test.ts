@@ -263,4 +263,33 @@ describe('validateOutputsDeclarations', () => {
     // First: vars-conflict. Second: duplicate.
     expect(result).toHaveLength(2);
   });
+
+  it('returns error for reserved runtime names', () => {
+    const result = validateOutputsDeclarations([{ name: 'Step' }]);
+    expect(result).toHaveLength(1);
+    expect(result[0].severity).toBe('error');
+    expect(result[0].message).toContain('"Step"');
+    expect(result[0].message).toContain('reserved');
+  });
+
+  it('returns error for reserved names case-insensitively', () => {
+    const result = validateOutputsDeclarations([{ name: 'INDEX' }]);
+    expect(result).toHaveLength(1);
+    expect(result[0].severity).toBe('error');
+    expect(result[0].message).toContain('"INDEX"');
+    expect(result[0].message).toContain('reserved');
+  });
+
+  it('reports both reserved error and duplicate error when same reserved name repeated', () => {
+    // First occurrence: reserved error. Second occurrence: duplicate error (seen set short-circuits).
+    const result = validateOutputsDeclarations([{ name: 'Step' }, { name: 'Step' }]);
+    expect(result).toHaveLength(2);
+    const messages = result.map((d) => d.message);
+    expect(messages).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('reserved'),
+        expect.stringContaining('Duplicate'),
+      ]),
+    );
+  });
 });

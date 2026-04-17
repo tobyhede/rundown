@@ -204,4 +204,30 @@ describe('storeFrontmatterOutputs', () => {
       expect.objectContaining({ code: 'OUTPUTS_PERSIST_FAILED' }),
     );
   });
+
+  it('stores only present naked entries when multiple entries have mixed presence', async () => {
+    await storeFrontmatterOutputs(
+      [{ name: 'Present' }, { name: 'Absent' }],
+      { ContextId: 'c', Present: 'value' },
+      '/cwd',
+    );
+    // Present is in templateVars; Absent is silently skipped
+    expect(core.storeContextOutputs).toHaveBeenCalledWith('/cwd', 'c', { Present: 'value' });
+  });
+
+  it('stores with-value entry and skips non-scalar naked entry in same outputs array', async () => {
+    (evaluateOutputExpression as jest.Mock).mockReturnValue('/result/path');
+    await storeFrontmatterOutputs(
+      [{ name: 'ObjVar' }, { name: 'Out', value: '{{ path "r.json" }}' }],
+      { ContextId: 'c', ObjVar: { nested: true } as unknown as string },
+      '/cwd',
+    );
+    // ObjVar is silently skipped (non-scalar); Out is stored via expression evaluation
+    expect(core.storeContextOutputs).toHaveBeenCalledWith('/cwd', 'c', { Out: '/result/path' });
+  });
+
+  it('returns without calling storeContextOutputs for empty outputs array', async () => {
+    await storeFrontmatterOutputs([], { ContextId: 'c', SomeVar: 'val' }, '/cwd');
+    expect(core.storeContextOutputs).not.toHaveBeenCalled();
+  });
 });

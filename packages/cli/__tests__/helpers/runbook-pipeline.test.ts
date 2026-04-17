@@ -106,6 +106,12 @@ jest.unstable_mockModule('../../src/services/execution', () => ({
   runExecutionLoop: jest.fn().mockResolvedValue('done'),
 }));
 
+// Mock step-outputs
+jest.unstable_mockModule('../../src/helpers/step-outputs', () => ({
+  storeStepOutputs: jest.fn().mockResolvedValue(undefined),
+  storeFrontmatterOutputs: jest.fn().mockResolvedValue(undefined),
+}));
+
 // Mock execution-emitter
 jest.unstable_mockModule('../../src/helpers/execution-emitter', () => ({
   createBridgedEmitter: jest.fn().mockReturnValue({
@@ -182,6 +188,7 @@ const {
   validateInputsDeclarations,
   validateOutputsDeclarations,
 } = await import('../../src/helpers/validate-frontmatter-vars');
+const { storeFrontmatterOutputs } = await import('../../src/helpers/step-outputs');
 const fsPromises = await import('node:fs/promises');
 const { prepareRunbook, startRunbook, buildContextVars, buildTemplateVars } = await import(
   '../../src/helpers/runbook-pipeline'
@@ -286,6 +293,7 @@ beforeEach(() => {
   (validateRequiredVars as jest.Mock).mockReturnValue([]);
   (validateInputsDeclarations as jest.Mock).mockReturnValue([]);
   (validateOutputsDeclarations as jest.Mock).mockReturnValue([]);
+  (storeFrontmatterOutputs as jest.Mock).mockResolvedValue(undefined);
   (fsPromises.readFile as jest.Mock).mockResolvedValue('# Test\n\n## 1. Step\n- PASS CONTINUE');
   (
     parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
@@ -1159,6 +1167,76 @@ describe('startRunbook', () => {
     expect(result.ok).toBe(true);
     expect(mockInitSubsteps).toHaveBeenCalledWith('sub-id', substeps, '1|');
     expect(mockUpdate).toHaveBeenCalledWith('sub-id', { substep: 'a' });
+  });
+
+  it('calls storeFrontmatterOutputs when runbook completes with declared outputs', async () => {
+    (runExecutionLoop as jest.Mock).mockResolvedValue('done');
+
+    const ctx = {
+      output: { flush: jest.fn() } as any,
+      manager: {
+        create: jest
+          .fn<any>()
+          .mockResolvedValue({ id: 'new-id', title: 'Test', substeps: undefined }),
+        update: jest.fn<any>().mockResolvedValue(undefined),
+        initializeSubsteps: jest.fn<any>().mockResolvedValue(undefined),
+      } as any,
+      actorService: { initializeState: jest.fn<any>().mockResolvedValue(undefined) } as any,
+      sessionService: { pushRunbook: jest.fn<any>().mockResolvedValue(undefined) } as any,
+      lifecycleService: makeLifecycle(),
+      cwd: '/test',
+    };
+
+    const prepared = {
+      filePath: '/test/runbook.md',
+      rawContent: '# Test',
+      runbook: { steps: [makeStep()] } as any,
+      mergedVariables: { PlanPath: '/work/plan.json' },
+      sources: {},
+      frontmatter: { outputs: [{ name: 'PlanPath' }] },
+    };
+
+    const result = await startRunbook(ctx as any, prepared as any, { file: 'runbook.md' });
+
+    expect(result.ok).toBe(true);
+    expect(storeFrontmatterOutputs).toHaveBeenCalledWith(
+      [{ name: 'PlanPath' }],
+      { PlanPath: '/work/plan.json' },
+      '/test',
+      expect.anything(),
+    );
+  });
+
+  it('does not call storeFrontmatterOutputs when loop result is not done', async () => {
+    (runExecutionLoop as jest.Mock).mockResolvedValue('abort');
+
+    const ctx = {
+      output: { flush: jest.fn() } as any,
+      manager: {
+        create: jest
+          .fn<any>()
+          .mockResolvedValue({ id: 'new-id', title: 'Test', substeps: undefined }),
+        update: jest.fn<any>().mockResolvedValue(undefined),
+        initializeSubsteps: jest.fn<any>().mockResolvedValue(undefined),
+      } as any,
+      actorService: { initializeState: jest.fn<any>().mockResolvedValue(undefined) } as any,
+      sessionService: { pushRunbook: jest.fn<any>().mockResolvedValue(undefined) } as any,
+      lifecycleService: makeLifecycle(),
+      cwd: '/test',
+    };
+
+    const prepared = {
+      filePath: '/test/runbook.md',
+      rawContent: '# Test',
+      runbook: { steps: [makeStep()] } as any,
+      mergedVariables: {},
+      sources: {},
+      frontmatter: { outputs: [{ name: 'PlanPath' }] },
+    };
+
+    await startRunbook(ctx as any, prepared as any, { file: 'runbook.md' });
+
+    expect(storeFrontmatterOutputs).not.toHaveBeenCalled();
   });
 });
 

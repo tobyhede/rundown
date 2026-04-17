@@ -17,8 +17,8 @@ Run multiple runbooks, reviewing and testing the end-to-end process.
 ```
 
 ## 2. Write Plan
-- PASS CONTINUE
-- FAIL STOP
+- PASS ALL CONTINUE
+- FAIL ANY STOP
 
 Delegate a subagent to write a plan.
 
@@ -26,8 +26,8 @@ Delegate a subagent to write a plan.
 
 
 ## 3. Review Plan
-- PASS CONTINUE
-- FAIL STOP
+- PASS ALL CONTINUE
+- FAIL ANY STOP
 
 Delegate a subagent to review the plan.
 

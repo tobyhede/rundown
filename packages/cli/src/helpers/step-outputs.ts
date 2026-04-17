@@ -156,15 +156,25 @@ export async function storeFrontmatterOutputs(
       } else {
         // Naked form: read the variable value by name from template vars
         const rawVal = templateVars[output.name];
-        if (rawVal === null) continue;
+        if (rawVal === null) {
+          void logger.warn(
+            'storeFrontmatterOutputs: naked-form output variable not found in template vars, skipping',
+            { name: output.name },
+          );
+          continue;
+        }
         if (
           typeof rawVal === 'string' ||
           typeof rawVal === 'number' ||
           typeof rawVal === 'boolean'
         ) {
           evaluated[output.name] = String(rawVal);
+        } else {
+          void logger.warn(
+            'storeFrontmatterOutputs: naked-form output has non-scalar value, skipping',
+            { name: output.name },
+          );
         }
-        // Non-scalar values (arrays, objects) are skipped silently
       }
     } catch (err) {
       const message = getErrorMessage(err);
