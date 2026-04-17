@@ -51,6 +51,13 @@ import {
   type TransitionEventSink,
   type TransitionOrchestrationPolicy,
 } from './transition-orchestrator.js';
+import {
+  shouldPersistParentOutputs,
+  mergeExecutionTemplateVars,
+  resolveCurrentExecutionUnit,
+  isSubstep,
+} from './execution-units.js';
+import { evaluateStepOutputs, evaluateFrontmatterOutputs } from './step-outputs.js';
 export type { ActionType } from '@rundown-org/core';
 
 /**
@@ -206,19 +213,22 @@ export async function buildTransitionContext(
  * @param emitter - Optional execution event emitter for surfacing failures
  */
 async function maybePersistFrontmatterOutputs(
-  state: Pick<RunbookState, 'runbookSrc' | 'runbookPath' | 'templateVars'>,
-  cwd: string,
+  state: Pick<RunbookState, 'runbookSrc' | 'runbookPath' | 'templateVars' | 'variables'>,
+  manager: RunbookStateManager,
+  stateId: string,
   emitter?: ExecutionEventEmitter,
 ): Promise<void> {
   if (!state.runbookSrc) return;
   const { frontmatter } = parseRunbookDocument(state.runbookSrc, path.basename(state.runbookPath));
   if (!frontmatter?.outputs?.length) return;
-  await storeFrontmatterOutputs(
-    frontmatter.outputs,
-    state.templateVars as Readonly<StepVariables>,
-    cwd,
-    emitter,
-  );
+  const effectiveVars = {
+    ...(state.templateVars as Readonly<StepVariables>),
+    ...state.variables,
+  };
+  const finalVars = evaluateFrontmatterOutputs(frontmatter.outputs, effectiveVars, emitter);
+  if (Object.keys(finalVars).length > 0) {
+    await manager.update(stateId, { finalVars });
+  }
 }
 
 interface RuntimeTarget {
@@ -450,7 +460,7 @@ export async function executeTransition(
       return 'stopped';
     }
     if (drained.status === 'done') {
-      await maybePersistFrontmatterOutputs(activeState, cwd, emitter);
+      await maybePersistFrontmatterOutputs(activeState, manager, activeState.id, emitter);
       output.flush();
       return 'continue';
     }
@@ -468,7 +478,7 @@ export async function executeTransition(
       emitter,
     );
     if (loopResult === 'done') {
-      await maybePersistFrontmatterOutputs(activeState, cwd, emitter);
+      await maybePersistFrontmatterOutputs(activeState, manager, activeState.id, emitter);
     }
     output.flush();
     if (loopResult === 'stopped') {
@@ -490,10 +500,8 @@ export async function executeTransition(
 
   const actionType = parseActionType(extractLastAction(rawSnapshot));
 
-  // Store OUTPUTS for PASS transitions (best-effort, non-fatal).
+  // Evaluate step OUTPUTS for PASS transitions and inject via SET_VARIABLES.
   if (config.lastResult === 'pass') {
-    // Build the per-step runtime frame (Step, Index, context.current.*) so that
-    // OUTPUTS expressions referencing loop/step variables resolve correctly.
     const preTransitionStepVars = buildStepVariables(
       previousState.step,
       previousState.substep,
@@ -501,16 +509,35 @@ export async function executeTransition(
       currentStep.kind === 'for' ? currentStep.forClause : undefined,
       previousState.templateVars,
     );
-    await persistPassOutputs({
-      cwd,
-      currentStep,
-      currentSubstepId: previousState.substep,
-      previousStepId: previousState.step,
-      updatedStepId: actorUpdatedState.step,
-      actionType,
-      templateVarsBefore: preTransitionStepVars,
-      templateVarsAfter: actorUpdatedState.templateVars,
-    });
+    const templateVars = mergeExecutionTemplateVars(
+      preTransitionStepVars,
+      actorUpdatedState.templateVars as Readonly<StepVariables> | undefined,
+    );
+    if (templateVars) {
+      const allEvaluated: Record<string, string> = {};
+      const executionUnit = resolveCurrentExecutionUnit(currentStep, previousState.substep);
+      if (isSubstep(executionUnit) && executionUnit.outputs?.length) {
+        Object.assign(allEvaluated, evaluateStepOutputs(executionUnit.outputs, templateVars));
+      }
+      const parentOutputs = currentStep.outputs ?? [];
+      if (
+        parentOutputs.length > 0 &&
+        shouldPersistParentOutputs({
+          isSubstepContext: previousState.substep !== undefined,
+          parentStepAdvanced: actorUpdatedState.step !== previousState.step,
+          isTerminalAction: actionType === 'STOP' || actionType === 'COMPLETE',
+          parentHasOutputs: true,
+        })
+      ) {
+        Object.assign(allEvaluated, evaluateStepOutputs(parentOutputs, templateVars));
+      }
+      if (Object.keys(allEvaluated).length > 0) {
+        await actorService.sendAndSync(activeState.id, steps, {
+          type: 'SET_VARIABLES',
+          vars: allEvaluated,
+        });
+      }
+    }
   }
 
   const ensuredAfterTransition = await lifecycleService.ensureActiveEntry(
@@ -569,7 +596,7 @@ export async function executeTransition(
   }
   if (orchestration.status === 'done') {
     const doneEmitter = createBridgedEmitter(activeState, output);
-    await maybePersistFrontmatterOutputs(activeState, cwd, doneEmitter);
+    await maybePersistFrontmatterOutputs(activeState, manager, activeState.id, doneEmitter);
     output.flush();
     return 'continue';
   }
@@ -585,7 +612,7 @@ export async function executeTransition(
   );
 
   if (loopResult === 'done') {
-    await maybePersistFrontmatterOutputs(activeState, cwd, emitter);
+    await maybePersistFrontmatterOutputs(activeState, manager, activeState.id, emitter);
   }
   output.flush();
   if (loopResult === 'stopped') {
