@@ -229,19 +229,6 @@ describe('parseRunbookDocument with OUTPUTS directive', () => {
 });
 
 describe('parseRunbookDocument frontmatter.inputs', () => {
-  it('parses inputs array from frontmatter', () => {
-    const md = `---
-name: child-runbook
-inputs:
-  - PlanPath
----
-## 1. Step
-- PASS COMPLETE
-`;
-    const { frontmatter } = parseRunbookDocument(md);
-    expect(frontmatter?.inputs).toEqual(['PlanPath']);
-  });
-
   it('leaves inputs undefined when not present in frontmatter', () => {
     const md = `---
 name: no-inputs
@@ -251,59 +238,6 @@ name: no-inputs
 `;
     const { frontmatter } = parseRunbookDocument(md);
     expect(frontmatter?.inputs).toBeUndefined();
-  });
-
-  it('rejects reserved name "context" in frontmatter inputs and preserves the valid entry', () => {
-    // "context" would shadow the built-in `context` template namespace
-    // (context.current.step, etc.) if injected into templateVars.
-    const md = `---
-name: bad-inputs
-inputs:
-  - PlanPath
-  - context
----
-## 1. Step
-- PASS COMPLETE
-`;
-    const { frontmatter, diagnostics } = parseRunbookDocument(md);
-    // Valid entries are kept; the reserved entry produces a diagnostic
-    expect(frontmatter?.inputs).toEqual(['PlanPath']);
-    expect(diagnostics).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          severity: 'error',
-          message: expect.stringMatching(/inputs\[1\].*reserved/),
-        }),
-      ]),
-    );
-  });
-
-  it.each([
-    'Context',
-    'CONTEXT',
-    'Step',
-    'STEP',
-    'Index',
-    'INDEX',
-  ])('rejects case-variant reserved name "%s" in frontmatter inputs', (name) => {
-    const md = `---
-name: bad-inputs
-inputs:
-  - ${name}
----
-## 1. Step
-- PASS COMPLETE
-`;
-    const { frontmatter, diagnostics } = parseRunbookDocument(md);
-    expect(frontmatter?.inputs).toBeUndefined();
-    expect(diagnostics).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          severity: 'error',
-          message: expect.stringMatching(new RegExp(`${escapeForRegExp(name)}.*reserved`, 'i')),
-        }),
-      ]),
-    );
   });
 
   it.each([

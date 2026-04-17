@@ -1705,7 +1705,7 @@ This is the preamble description.
   it('returns validated frontmatter when present', () => {
     const md = `---
 name: my-runbook
-vars:
+inputs:
   greeting: Hello
   count: 42
 ---
@@ -1715,7 +1715,7 @@ vars:
     const { frontmatter } = parseRunbookDocument(md);
     expect(frontmatter).not.toBeNull();
     expect(frontmatter?.name).toBe('my-runbook');
-    expect(frontmatter?.vars).toEqual({ greeting: 'Hello', count: 42 });
+    expect(frontmatter?.inputs).toEqual({ greeting: 'Hello', count: 42 });
   });
 
   it('preserves extension fields in frontmatter via passthrough', () => {
