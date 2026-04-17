@@ -113,12 +113,14 @@ export interface RunbookContext {
  * - FAIL: Mark the current step as failed, triggering the FAIL transition
  * - RETRY: Increment retry count and re-enter the current step
  * - GOTO: Jump directly to a specific step by ID
+ * - SET_VARIABLES: Merge variables into context.variables without changing step
  */
 export type RunbookEvent =
   | { type: 'PASS' }
   | { type: 'FAIL' }
   | { type: 'RETRY' }
-  | { type: 'GOTO'; target: StepId };
+  | { type: 'GOTO'; target: StepId }
+  | { type: 'SET_VARIABLES'; vars: Record<string, boolean | number | string> };
 
 /**
  * XState transition configuration returned by transition builder functions.
@@ -2119,6 +2121,17 @@ export function compileRunbookToMachine(steps: ResolvedStep[]) {
   return runbookSetup.createMachine({
     id: 'runbook',
     initial: allStates.length > 0 ? allStates[0].id : 'step::1',
+    on: {
+      SET_VARIABLES: {
+        actions: runbookSetup.assign({
+          variables: ({ context, event }) => {
+            // XState v5 does not narrow event type in root on: handlers — explicit cast required.
+            const vars = (event as Extract<RunbookEvent, { type: 'SET_VARIABLES' }>).vars;
+            return { ...context.variables, ...vars };
+          },
+        }),
+      },
+    },
     context: {
       retryCount: 0,
       parentRetryCount: 0,

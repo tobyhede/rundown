@@ -8557,4 +8557,75 @@ echo "processing"
       expect(() => compileRunbookToMachine(steps)).toThrow(/duplicate state ID/);
     });
   });
+
+  describe('SET_VARIABLES event', () => {
+    it('SET_VARIABLES event merges into context.variables without changing step', () => {
+      const steps = inferSteps([
+        {
+          name: '1',
+          description: 'First step',
+          transitions: DEFAULT_TRANSITIONS,
+        },
+        {
+          name: '2',
+          description: 'Second step',
+          transitions: {
+            ...DEFAULT_TRANSITIONS,
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+          },
+        },
+      ]);
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      expect(actor.getSnapshot().context.variables).toEqual({});
+
+      actor.send({ type: 'SET_VARIABLES', vars: { PlanPath: 'plan.json', count: 3 } });
+
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.context.variables).toEqual({ PlanPath: 'plan.json', count: 3 });
+      // Step should not have changed
+      expect(snapshot.value).toMatch(/step::1/);
+    });
+
+    it('SET_VARIABLES merges additively (does not replace)', () => {
+      const steps = inferSteps([
+        {
+          name: '1',
+          description: 'First step',
+          transitions: DEFAULT_TRANSITIONS,
+        },
+      ]);
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'SET_VARIABLES', vars: { A: 'first' } });
+      actor.send({ type: 'SET_VARIABLES', vars: { B: 'second' } });
+
+      expect(actor.getSnapshot().context.variables).toEqual({ A: 'first', B: 'second' });
+    });
+
+    it('SET_VARIABLES overwrites existing key on repeated send', () => {
+      const steps = inferSteps([
+        {
+          name: '1',
+          description: 'First step',
+          transitions: DEFAULT_TRANSITIONS,
+        },
+      ]);
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'SET_VARIABLES', vars: { Answer: '41' } });
+      actor.send({ type: 'SET_VARIABLES', vars: { Answer: '42' } });
+
+      expect(actor.getSnapshot().context.variables).toEqual({ Answer: '42' });
+    });
+  });
 });
