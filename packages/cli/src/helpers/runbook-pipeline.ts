@@ -49,7 +49,6 @@ import {
   type ValidationDiagnostic,
   type RunbookFrontmatter,
   type Runbook,
-  type OutputDeclaration,
 } from '@rundown-org/parser';
 import { resolveRunbookFile } from './resolve-runbook.js';
 import { runExecutionLoop } from '../services/execution.js';
@@ -767,10 +766,7 @@ async function launchRunbook(
   );
 
   // Frontmatter OUTPUTS finalizer: store declared outputs to context on successful completion.
-  // Cast needed: same worktree node_modules resolution issue as fmOutputs above.
-  const frontmatterOutputs = prepared.frontmatter?.outputs as
-    | readonly OutputDeclaration[]
-    | undefined;
+  const frontmatterOutputs = prepared.frontmatter?.outputs;
   if (loopResult === 'done' && frontmatterOutputs?.length) {
     await storeFrontmatterOutputs(frontmatterOutputs, prepared.mergedVariables, cwd, emitter);
   }

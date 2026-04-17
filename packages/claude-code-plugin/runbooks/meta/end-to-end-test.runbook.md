@@ -52,6 +52,6 @@ rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file review-end-to-end-{{ Ru
 - FAIL GOTO 4
 
 ```bash
-rdx --check "$(rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file review-plan-{{ RunId }}.json)"
+rdx --check "$(rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file review-end-to-end-{{ RunId }}.json)"
 ```
 

@@ -31,9 +31,13 @@ import {
   type RunbookCompletedPayload,
   type RunbookStoppedPayload,
   type StepTransitionedPayload,
+  type ExecutionEventEmitter,
 } from '@rundown-org/core';
-import { resolvedStepHasSubsteps } from '@rundown-org/parser';
+import type { StepVariables } from '../services/execution-vars.js';
+import { parseRunbookDocument, resolvedStepHasSubsteps } from '@rundown-org/parser';
+import path from 'node:path';
 import { persistPassOutputs } from './execution-units.js';
+import { storeFrontmatterOutputs } from './step-outputs.js';
 import { resolveIndexOption } from './index-option.js';
 import { getRunbookFromState } from './runbook-loader.js';
 import {
@@ -191,6 +195,32 @@ export async function buildTransitionContext(
     actor,
     cwd,
   };
+}
+
+/**
+ * Parse frontmatter OUTPUTS from persisted runbook source and store them to context.
+ *
+ * Called from transition completion paths where PreparedRunbook is not available
+ * but the RunbookState has runbookSrc and templateVars frozen at run time.
+ *
+ * @param state - Runbook state with runbookSrc, runbookPath, and templateVars
+ * @param cwd - Project root directory
+ * @param emitter - Optional execution event emitter for surfacing failures
+ */
+async function maybePersistFrontmatterOutputs(
+  state: Pick<RunbookState, 'runbookSrc' | 'runbookPath' | 'templateVars'>,
+  cwd: string,
+  emitter?: ExecutionEventEmitter,
+): Promise<void> {
+  if (!state.runbookSrc) return;
+  const { frontmatter } = parseRunbookDocument(state.runbookSrc, path.basename(state.runbookPath));
+  if (!frontmatter?.outputs?.length) return;
+  await storeFrontmatterOutputs(
+    frontmatter.outputs,
+    state.templateVars as Readonly<StepVariables>,
+    cwd,
+    emitter,
+  );
 }
 
 interface RuntimeTarget {
@@ -422,6 +452,7 @@ export async function executeTransition(
       return 'stopped';
     }
     if (drained.status === 'done') {
+      await maybePersistFrontmatterOutputs(activeState, cwd, emitter);
       output.flush();
       return 'continue';
     }
@@ -438,6 +469,9 @@ export async function executeTransition(
       !!drained.state.prompted,
       emitter,
     );
+    if (loopResult === 'done') {
+      await maybePersistFrontmatterOutputs(activeState, cwd, emitter);
+    }
     output.flush();
     if (loopResult === 'stopped') {
       return 'stopped';
@@ -536,6 +570,8 @@ export async function executeTransition(
     return 'stopped';
   }
   if (orchestration.status === 'done') {
+    const doneEmitter = createBridgedEmitter(activeState, output);
+    await maybePersistFrontmatterOutputs(activeState, cwd, doneEmitter);
     output.flush();
     return 'continue';
   }
@@ -550,6 +586,9 @@ export async function executeTransition(
     emitter,
   );
 
+  if (loopResult === 'done') {
+    await maybePersistFrontmatterOutputs(activeState, cwd, emitter);
+  }
   output.flush();
   if (loopResult === 'stopped') {
     return 'stopped';

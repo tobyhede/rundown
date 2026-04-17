@@ -33,6 +33,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
 // Mock @rundown-org/parser
 jest.unstable_mockModule('@rundown-org/parser', () => ({
   resolvedStepHasSubsteps: jest.fn(),
+  parseRunbookDocument: jest.fn().mockReturnValue({ frontmatter: null }),
 }));
 
 // Mock template-renderer to avoid pulling its @rundown-org/parser dependencies into scope

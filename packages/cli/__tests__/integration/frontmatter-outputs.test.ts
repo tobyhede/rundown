@@ -187,6 +187,53 @@ rd echo --result pass
   });
 });
 
+describe('frontmatter outputs — prompted (manual pass) completion', () => {
+  let workspace: TestWorkspace;
+
+  beforeEach(async () => {
+    workspace = await createTestWorkspace();
+  });
+
+  afterEach(async () => {
+    await workspace.cleanup();
+  });
+
+  it('stores frontmatter outputs when run completes via rd pass', async () => {
+    // A runbook with no command block: execution pauses waiting for rd pass.
+    const PROMPTED_RUNBOOK = `---
+name: fm-prompted-test
+outputs:
+  - SomeVar
+---
+# Frontmatter Prompted Test
+
+## 1. Complete
+- PASS COMPLETE
+- FAIL STOP
+
+Waiting for manual pass.
+`;
+    await writeFile(join(workspace.cwd, 'prompted.runbook.md'), PROMPTED_RUNBOOK);
+
+    const contextId = 'fm-prompted';
+    // Start the runbook — execution pauses (no command block).
+    const startResult = runCli(
+      `run prompted.runbook.md --var ContextId=${contextId} --var SomeVar=manual-value`,
+      workspace,
+    );
+    expect(startResult.exitCode).toBe(0);
+
+    // Manually pass to complete — this goes through the transitions.ts path.
+    const passResult = runCli('pass', workspace);
+    expect(passResult.exitCode).toBe(0);
+
+    const outputsPath = join(workspace.cwd, '.rundown', 'contexts', contextId, 'outputs.json');
+    const raw = await readFile(outputsPath, 'utf-8');
+    const outputs = JSON.parse(raw) as Record<string, unknown>;
+    expect(outputs).toEqual({ SomeVar: 'manual-value' });
+  });
+});
+
 describe('frontmatter outputs — delegation chain', () => {
   let workspace: TestWorkspace;
 
