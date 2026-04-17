@@ -31,50 +31,6 @@ export function validateFrontmatterVars(
 }
 
 /**
- * Validate frontmatter `inputs` field against vars and reserved names.
- *
- * Returns error diagnostics for:
- * - Invalid variable identifiers in `inputs`
- * - Names appearing in both `inputs` and `vars` (inputs cannot have defaults — they come from context)
- * - Reserved runtime names (step, index, context — case-insensitive)
- *
- * @param inputs - The frontmatter `inputs` array, or undefined if absent
- * @param vars - The frontmatter `vars` object, or undefined if absent
- * @returns Array of validation diagnostics (errors only)
- */
-export function validateInputsDeclarations(
-  inputs: string[] | undefined,
-  vars: Record<string, string | number | boolean> | undefined,
-): ValidationDiagnostic[] {
-  if (!inputs || inputs.length === 0) return [];
-  const diagnostics: ValidationDiagnostic[] = [];
-  const varsKeys = new Set(Object.keys(vars ?? {}));
-
-  for (const name of inputs) {
-    if (!isValidVariableName(name)) {
-      diagnostics.push({
-        severity: 'error',
-        message: `Input variable "${name}" is not a valid identifier`,
-      });
-      continue;
-    }
-    if (isRuntimeReservedVariable(name)) {
-      diagnostics.push({
-        severity: 'error',
-        message: `Input variable "${name}" uses reserved runtime variable name. Reserved names (case-insensitive): ${[...RUNTIME_RESERVED_VARIABLES].join(', ')}`,
-      });
-    }
-    if (varsKeys.has(name)) {
-      diagnostics.push({
-        severity: 'error',
-        message: `Variable "${name}" cannot be both in "inputs" and "vars" — input variables receive their value from context OUTPUTS, not from frontmatter defaults`,
-      });
-    }
-  }
-  return diagnostics;
-}
-
-/**
  * Validate frontmatter `required` field against vars and reserved names.
  *
  * Returns error diagnostics for:
