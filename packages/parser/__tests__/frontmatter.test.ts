@@ -642,6 +642,64 @@ describe('extractFrontmatter() — case-insensitive keys', () => {
   });
 });
 
+describe('inputs: field (new — default variable values)', () => {
+  it('parses inputs: as Record<string, string|number|boolean>', () => {
+    const markdown = `---
+inputs:
+  environment: staging
+  port: 3000
+  debug: true
+---
+# Test`;
+    const { frontmatter, diagnostics } = extractFrontmatter(markdown);
+    expect(diagnostics).toHaveLength(0);
+    expect(frontmatter?.inputs).toEqual({
+      environment: 'staging',
+      port: 3000,
+      debug: true,
+    });
+  });
+
+  it('filters null values per-entry (PlanPath: with no value = null in YAML)', () => {
+    const markdown = `---
+inputs:
+  environment: staging
+  PlanPath:
+---
+# Test`;
+    const { frontmatter, diagnostics } = extractFrontmatter(markdown);
+    expect(diagnostics).toHaveLength(0);
+    // null value filtered; scalar value kept
+    expect(frontmatter?.inputs).toEqual({ environment: 'staging' });
+    // PlanPath key is absent (filtered), not present as null
+    expect((frontmatter?.inputs as Record<string, unknown>)?.PlanPath).toBeUndefined();
+  });
+
+  it('treats vars: as unknown passthrough (not a known field)', () => {
+    const markdown = `---
+vars:
+  old: value
+---
+# Test`;
+    const { frontmatter } = extractFrontmatter(markdown);
+    // vars: is no longer a known field — it passes through as-is
+    expect((frontmatter as Record<string, unknown>)['vars']).toEqual({ old: 'value' });
+    expect(frontmatter?.inputs).toBeUndefined();
+  });
+
+  it('returns undefined when all inputs: values are null (all keys with no value)', () => {
+    const markdown = `---
+inputs:
+  PlanPath:
+  OtherVar:
+---
+# Test`;
+    const { frontmatter, diagnostics } = extractFrontmatter(markdown);
+    expect(diagnostics).toHaveLength(0);
+    expect(frontmatter?.inputs).toBeUndefined();
+  });
+});
+
 describe('extractFrontmatter() — outputs field', () => {
   it('parses outputs: with naked-form entries', () => {
     const md = `---\noutputs:\n  - PlanPath\n---\n# Content`;

@@ -17,7 +17,6 @@ const NORMALIZED_FRONTMATTER_KEYS = new Set([
   'version',
   'author',
   'tags',
-  'vars',
   'required',
   'inputs',
   'outputs',
@@ -67,9 +66,8 @@ export interface RunbookFrontmatter {
   version?: string; // Optional: semantic version
   author?: string; // Optional
   tags?: string[]; // Optional: categorization
-  vars?: Record<string, string | number | boolean>; // Optional: default template variables
+  inputs?: Record<string, string | number | boolean>; // Optional: default template variables
   required?: string[]; // Optional: variables that must be provided by caller
-  inputs?: string[]; // Optional: variables this runbook can receive from context OUTPUTS
   outputs?: OutputDeclaration[]; // Optional: variables to publish to context OUTPUTS at completion
   [key: string]: unknown; // Passthrough fields preserved verbatim
 }
@@ -93,15 +91,23 @@ export const RunbookFrontmatterSchema = z
     version: z.string().optional().catch(undefined),
     author: z.string().optional().catch(undefined),
     tags: z.array(z.string()).optional().catch(undefined),
-    vars: z
-      .record(z.union([z.string(), z.number(), z.boolean()]))
+    // Note: null values (e.g., `PlanPath:` with no value in YAML) are silently filtered
+    // per-entry rather than dropping the entire record via .catch(undefined).
+    inputs: z
+      .record(z.union([z.string(), z.number(), z.boolean()]).nullable())
       .optional()
+      .transform((val) => {
+        if (!val) return undefined;
+        const filtered = Object.fromEntries(
+          Object.entries(val).filter(([, v]) => v !== null),
+        ) as Record<string, string | number | boolean>;
+        return Object.keys(filtered).length > 0 ? filtered : undefined;
+      })
       .catch(undefined),
-    // Defer per-element validation of `required`/`inputs`/`outputs` to a post-zod pass
+    // Defer per-element validation of `required`/`outputs` to a post-zod pass
     // so we can preserve valid entries and emit per-index diagnostics
     // (rather than silently dropping the whole array on any single failure).
     required: z.array(z.unknown()).optional().catch(undefined),
-    inputs: z.array(z.unknown()).optional().catch(undefined),
     outputs: z.array(z.unknown()).optional().catch(undefined),
   })
   .passthrough();
@@ -175,20 +181,18 @@ export function extractFrontmatter(markdown: string): {
   // Invalid fields become undefined; valid fields and unknown passthrough fields are preserved.
   const parsed = RunbookFrontmatterSchema.parse(normalized);
 
-  // Per-element validation of `required` / `inputs` / `outputs` (zod accepts unknown[] for
+  // Per-element validation of `required` / `outputs` (zod accepts unknown[] for
   // these and we filter here so we can preserve valid entries and emit
   // diagnostics for each invalid one — instead of silently dropping the whole
   // array on the first bad element).
+  // Note: `inputs` is no longer listed — it comes through `...parsed` already
+  // validated by Zod as Record<string, string|number|boolean> | undefined.
   const diagnostics: ValidationDiagnostic[] = [];
   const frontmatter: RunbookFrontmatter = {
     ...parsed,
     required:
       parsed.required !== undefined
         ? filterIdentifierArray(parsed.required, 'required', diagnostics)
-        : undefined,
-    inputs:
-      parsed.inputs !== undefined
-        ? filterIdentifierArray(parsed.inputs, 'inputs', diagnostics)
         : undefined,
     outputs:
       parsed.outputs !== undefined
@@ -207,13 +211,13 @@ export function extractFrontmatter(markdown: string): {
  * as `[]` (no diagnostics emitted).
  *
  * @param raw         - Raw array elements from the parsed frontmatter
- * @param field       - Field name (`inputs` or `required`) used in diagnostic messages
+ * @param field       - Field name (`required`) used in diagnostic messages
  * @param diagnostics - Output array — error diagnostics are appended in-place
  * @returns The valid identifiers, `[]` when raw was empty, or `undefined` when all entries were rejected
  */
 function filterIdentifierArray(
   raw: unknown[],
-  field: 'inputs' | 'required',
+  field: 'required',
   diagnostics: ValidationDiagnostic[],
 ): string[] | undefined {
   // Explicit empty array is preserved as-is (no diagnostics, no rejection).
