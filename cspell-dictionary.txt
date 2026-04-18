@@ -194,3 +194,4 @@ worktrees
 xstate
 zod
 testctx
+finalvars

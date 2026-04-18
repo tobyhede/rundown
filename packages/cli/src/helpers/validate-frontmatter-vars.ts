@@ -91,12 +91,12 @@ export function validateRequiredVars(
  * - Reserved runtime names (step, index, context — case-insensitive)
  *
  * @param outputs - Parsed output declarations from frontmatter, or undefined if absent
- * @param vars - The frontmatter `vars` object, or undefined if absent
+ * @param _vars - The frontmatter `vars` object, or undefined if absent (reserved for future use)
  * @returns Array of validation diagnostics (errors only)
  */
 export function validateOutputsDeclarations(
   outputs: OutputDeclaration[] | undefined,
-  vars?: Record<string, string | number | boolean>,
+  _vars?: Record<string, string | number | boolean>,
 ): ValidationDiagnostic[] {
   if (!outputs || outputs.length === 0) return [];
 

@@ -180,10 +180,9 @@ describe('validateOutputsDeclarations', () => {
   });
 
   it('allows output that references an existing input (pass-through use-case)', () => {
-    const result = validateOutputsDeclarations(
-      [{ name: 'PlanPath' }],
-      { PlanPath: '/default/plan.json' },
-    );
+    const result = validateOutputsDeclarations([{ name: 'PlanPath' }], {
+      PlanPath: '/default/plan.json',
+    });
     expect(result).toEqual([]);
   });
 

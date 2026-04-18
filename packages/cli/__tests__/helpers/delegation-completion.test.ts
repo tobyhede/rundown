@@ -793,7 +793,7 @@ describe('handleParentCompletion', () => {
     const states = new Map([[parentState.id, parentState]]);
     const manager = makeManager(states);
     const _lock = makeLock();
-    const lifecycleService = makeLifecycleService();
+    const _lifecycleService = makeLifecycleService();
     const output = makeOutput();
 
     // Override the actor mock so sendAndSync throws for this test

@@ -81,18 +81,17 @@ describe('evaluateFrontmatterOutputs', () => {
   });
 
   it('skips naked-form output when variable is undefined (not null)', () => {
-    const result = evaluateFrontmatterOutputs(
-      [{ name: 'Missing' }],
-      { PlanPath: '/some/path', ContextId: 'ctx' },
-    );
+    const result = evaluateFrontmatterOutputs([{ name: 'Missing' }], {
+      PlanPath: '/some/path',
+      ContextId: 'ctx',
+    });
     expect(result).toEqual({});
   });
 
   it('skips naked-form output when variable is null', () => {
-    const result = evaluateFrontmatterOutputs(
-      [{ name: 'NullVar' }],
-      { NullVar: null as unknown as string },
-    );
+    const result = evaluateFrontmatterOutputs([{ name: 'NullVar' }], {
+      NullVar: null as unknown as string,
+    });
     expect(result).toEqual({});
   });
 
