@@ -7,7 +7,7 @@
  * @module helpers/step-outputs
  */
 
-import { ExecutionEventEmitter, getErrorMessage, logger } from '@rundown-org/core';
+import { type ExecutionEventEmitter, getErrorMessage, logger } from '@rundown-org/core';
 import type { OutputDeclaration } from '@rundown-org/parser';
 import type { StepVariables } from '../services/execution-vars.js';
 import { evaluateOutputExpression } from '../services/template-renderer.js';
@@ -84,10 +84,9 @@ export function evaluateFrontmatterOutputs(
       } else {
         const rawVal = (effectiveVars as Record<string, unknown>)[output.name];
         if (rawVal === null || rawVal === undefined) {
-          void logger.warn(
-            'evaluateFrontmatterOutputs: naked-form variable not found, skipping',
-            { name: output.name },
-          );
+          void logger.warn('evaluateFrontmatterOutputs: naked-form variable not found, skipping', {
+            name: output.name,
+          });
           continue;
         }
         if (

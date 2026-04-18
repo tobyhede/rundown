@@ -81,8 +81,6 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
       v !== null &&
       (v as Record<string, unknown>).kind === 'json-array-stream',
   ),
-  loadContextOutputs: jest.fn().mockResolvedValue({}),
-  storeContextOutputs: jest.fn().mockResolvedValue(undefined),
   logger: { warn: jest.fn(), info: jest.fn(), debug: jest.fn(), error: jest.fn() },
   ...mockErrorHelpers,
 }));
@@ -106,6 +104,12 @@ jest.unstable_mockModule('../../src/helpers/resolve-runbook', () => ({
 jest.unstable_mockModule('../../src/services/execution', () => ({
   buildStepVariables: jest.fn().mockReturnValue({ Step: '1.1' }),
   runExecutionLoop: jest.fn().mockResolvedValue('done'),
+}));
+
+// Mock step-outputs
+jest.unstable_mockModule('../../src/helpers/step-outputs', () => ({
+  evaluateStepOutputs: jest.fn().mockReturnValue({}),
+  evaluateFrontmatterOutputs: jest.fn().mockReturnValue({}),
 }));
 
 // Mock execution-emitter
@@ -148,7 +152,6 @@ jest.unstable_mockModule('../../src/services/template-renderer', () => ({
 jest.unstable_mockModule('../../src/helpers/validate-frontmatter-vars', () => ({
   validateFrontmatterVars: jest.fn().mockReturnValue([]),
   validateRequiredVars: jest.fn().mockReturnValue([]),
-  validateInputsDeclarations: jest.fn().mockReturnValue([]),
   validateOutputsDeclarations: jest.fn().mockReturnValue([]),
 }));
 
@@ -167,12 +170,9 @@ const { resolveRunbookFile } = await import('../../src/helpers/resolve-runbook')
 const { resolveVariables } = await import('../../src/services/variable-discovery');
 const { substituteRunbookVariables, resolveForBounds, collectUnresolvedRunbookVariables } =
   await import('../../src/services/template-renderer');
-const {
-  validateFrontmatterVars,
-  validateRequiredVars,
-  validateInputsDeclarations,
-  validateOutputsDeclarations,
-} = await import('../../src/helpers/validate-frontmatter-vars');
+const { validateFrontmatterVars, validateRequiredVars, validateOutputsDeclarations } = await import(
+  '../../src/helpers/validate-frontmatter-vars'
+);
 const { createBridgedEmitter } = await import('../../src/helpers/execution-emitter');
 const { runExecutionLoop } = await import('../../src/services/execution');
 const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline');
@@ -761,7 +761,6 @@ describe('claimAndLaunch', () => {
     } as any);
     (validateFrontmatterVars as jest.Mock).mockReturnValue([]);
     (validateRequiredVars as jest.Mock).mockReturnValue([]);
-    (validateInputsDeclarations as jest.Mock).mockReturnValue([]);
     (validateOutputsDeclarations as jest.Mock).mockReturnValue([]);
     (resolveVariables as jest.Mock).mockResolvedValue({
       vars: {},
@@ -872,7 +871,6 @@ describe('claimAndLaunch', () => {
     } as any);
     (validateFrontmatterVars as jest.Mock).mockReturnValue([]);
     (validateRequiredVars as jest.Mock).mockReturnValue([]);
-    (validateInputsDeclarations as jest.Mock).mockReturnValue([]);
     (validateOutputsDeclarations as jest.Mock).mockReturnValue([]);
     (resolveVariables as jest.Mock).mockResolvedValue({
       vars: {},

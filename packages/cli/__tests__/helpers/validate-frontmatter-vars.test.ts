@@ -1,6 +1,5 @@
 import {
   validateFrontmatterVars,
-  validateInputsDeclarations,
   validateOutputsDeclarations,
   validateRequiredVars,
 } from '../../src/helpers/validate-frontmatter-vars.js';
@@ -74,71 +73,6 @@ describe('validateFrontmatterVars', () => {
 
   it('diagnostics have no line field', () => {
     const result = validateFrontmatterVars({ Step: 'custom' });
-    expect(result[0]).not.toHaveProperty('line');
-  });
-});
-
-describe('validateInputsDeclarations', () => {
-  it('returns empty for undefined inputs', () => {
-    expect(validateInputsDeclarations(undefined, undefined)).toEqual([]);
-  });
-
-  it('returns empty for empty inputs array', () => {
-    expect(validateInputsDeclarations([], undefined)).toEqual([]);
-  });
-
-  it('returns empty for valid inputs with no overlap', () => {
-    expect(validateInputsDeclarations(['PlanPath'], { port: 3000 })).toEqual([]);
-  });
-
-  it('returns empty for valid inputs with no vars', () => {
-    expect(validateInputsDeclarations(['PlanPath', 'Target'], undefined)).toEqual([]);
-  });
-
-  it('returns error when input name appears in vars (conflict)', () => {
-    const result = validateInputsDeclarations(['PlanPath'], { PlanPath: '' });
-    expect(result).toHaveLength(1);
-    expect(result[0].severity).toBe('error');
-    expect(result[0].message).toContain('"PlanPath"');
-    expect(result[0].message).toContain('inputs');
-    expect(result[0].message).toContain('vars');
-  });
-
-  it('returns error for reserved runtime names', () => {
-    const result = validateInputsDeclarations(['Step'], undefined);
-    expect(result).toHaveLength(1);
-    expect(result[0].severity).toBe('error');
-    expect(result[0].message).toContain('"Step"');
-    expect(result[0].message).toContain('reserved');
-  });
-
-  it('returns error for reserved names case-insensitively', () => {
-    const result = validateInputsDeclarations(['INDEX'], undefined);
-    expect(result).toHaveLength(1);
-    expect(result[0].message).toContain('"INDEX"');
-  });
-
-  it('returns error for invalid identifiers', () => {
-    const result = validateInputsDeclarations(['123invalid'], undefined);
-    expect(result).toHaveLength(1);
-    expect(result[0].severity).toBe('error');
-    expect(result[0].message).toContain('not a valid identifier');
-  });
-
-  it('skips overlap check for invalid identifiers', () => {
-    // Invalid identifier gets only the invalid-id error, not also an overlap error
-    const result = validateInputsDeclarations(['123bad'], { '123bad': 'val' });
-    expect(result).toHaveLength(1);
-    expect(result[0].message).toContain('not a valid identifier');
-  });
-
-  it('returns multiple errors for multiple violations', () => {
-    const result = validateInputsDeclarations(['Step', 'PlanPath', '123bad'], { PlanPath: '' });
-    expect(result).toHaveLength(3); // reserved + overlap + invalid
-  });
-
-  it('diagnostics have no line field', () => {
-    const result = validateInputsDeclarations(['Step'], undefined);
     expect(result[0]).not.toHaveProperty('line');
   });
 });

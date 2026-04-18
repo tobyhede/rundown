@@ -1,5 +1,8 @@
 import { describe, it, expect } from '@jest/globals';
-import { evaluateStepOutputs, evaluateFrontmatterOutputs } from '../../../src/helpers/step-outputs.js';
+import {
+  evaluateStepOutputs,
+  evaluateFrontmatterOutputs,
+} from '../../../src/helpers/step-outputs.js';
 import type { OutputDeclaration } from '@rundown-org/parser';
 
 describe('evaluateStepOutputs', () => {
@@ -61,13 +64,19 @@ describe('evaluateFrontmatterOutputs', () => {
 
   it('converts number values to string for naked form', () => {
     const outputs: OutputDeclaration[] = [{ name: 'Port' }];
-    const result = evaluateFrontmatterOutputs(outputs, { Port: 3000 as unknown as string, ContextId: 'ctx' });
+    const result = evaluateFrontmatterOutputs(outputs, {
+      Port: 3000 as unknown as string,
+      ContextId: 'ctx',
+    });
     expect(result).toEqual({ Port: '3000' });
   });
 
   it('converts boolean values to string for naked form', () => {
     const outputs: OutputDeclaration[] = [{ name: 'Debug' }];
-    const result = evaluateFrontmatterOutputs(outputs, { Debug: true as unknown as string, ContextId: 'ctx' });
+    const result = evaluateFrontmatterOutputs(outputs, {
+      Debug: true as unknown as string,
+      ContextId: 'ctx',
+    });
     expect(result).toEqual({ Debug: 'true' });
   });
 

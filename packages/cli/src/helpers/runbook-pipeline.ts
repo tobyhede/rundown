@@ -33,7 +33,6 @@ import {
   DELEGATION_TOKEN_PREFIX,
   ErrorCodes,
   getErrorMessage,
-  logger,
   type TemplateVarValue,
   isJsonArray,
   isJsonArrayStream,
@@ -508,7 +507,7 @@ export async function prepareRunbook(
       diagnostics,
     };
   }
-  let templateVars = buildTemplateVars(mergedVariables, options);
+  const templateVars = buildTemplateVars(mergedVariables, options);
 
   // Bail early if there are structural errors — don't pass a broken AST to transform passes
   // This must run before the missing-required check so that malformed `required` entries
@@ -536,9 +535,7 @@ export async function prepareRunbook(
   // Validate required variables are provided by an external layer
   const requiredVars = frontmatter?.required;
   if (requiredVars && requiredVars.length > 0) {
-    const missing = requiredVars.filter(
-      (name: string) => !providedKeys.has(name),
-    );
+    const missing = requiredVars.filter((name: string) => !providedKeys.has(name));
     if (missing.length > 0) {
       const names = missing.map((n: string) => `"${n}"`).join(', ');
       return {
@@ -713,7 +710,7 @@ async function launchRunbook(
 
   // Frontmatter OUTPUTS finalizer: evaluate declared outputs and write to state.finalVars.
   const frontmatterOutputs = prepared.frontmatter?.outputs;
-  if ((loopResult === 'done' || loopResult === 'stopped') && frontmatterOutputs?.length) {
+  if (loopResult === 'done' && frontmatterOutputs?.length) {
     const postState = await manager.load(stateId);
     const effectiveVars = {
       ...prepared.mergedVariables,

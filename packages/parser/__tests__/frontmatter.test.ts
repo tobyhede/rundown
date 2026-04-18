@@ -672,7 +672,7 @@ inputs:
     // null value filtered; scalar value kept
     expect(frontmatter?.inputs).toEqual({ environment: 'staging' });
     // PlanPath key is absent (filtered), not present as null
-    expect((frontmatter?.inputs as Record<string, unknown>)?.PlanPath).toBeUndefined();
+    expect((frontmatter?.inputs as Record<string, unknown>).PlanPath).toBeUndefined();
   });
 
   it('treats vars: as unknown passthrough (not a known field)', () => {
@@ -683,7 +683,7 @@ vars:
 # Test`;
     const { frontmatter } = extractFrontmatter(markdown);
     // vars: is no longer a known field — it passes through as-is
-    expect((frontmatter as Record<string, unknown>)['vars']).toEqual({ old: 'value' });
+    expect((frontmatter as Record<string, unknown>).vars).toEqual({ old: 'value' });
     expect(frontmatter?.inputs).toBeUndefined();
   });
 

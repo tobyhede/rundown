@@ -36,7 +36,6 @@ import {
   isJsonArrayStream,
   assertResolvedVariableForContext,
   RUNS_DIR,
-  getErrorMessage,
 } from '@rundown-org/core';
 import { isSourced, resolvedStepHasSubsteps, type ForClause } from '@rundown-org/parser';
 import { isInternalRdCommand, executeRdCommandInternal } from './internal-commands.js';
@@ -202,8 +201,6 @@ interface ApplyResultTransitionArgs {
   transitionPolicy: TransitionOrchestrationPolicy;
   computeActionResult?: (actionType: ActionType) => boolean;
   command?: string;
-  /** Project root directory — used for OUTPUTS persistence on PASS. */
-  cwd?: string;
 }
 
 const EXECUTION_TERMINAL_POLICY: TransitionOrchestrationPolicy = {
@@ -229,7 +226,6 @@ async function applyResultTransition({
   transitionPolicy,
   computeActionResult,
   command,
-  cwd,
 }: ApplyResultTransitionArgs): Promise<
   { status: 'continue'; state: RunbookState } | { status: 'done' } | { status: 'stopped' }
 > {
@@ -277,12 +273,20 @@ async function applyResultTransition({
         Object.assign(allEvaluated, evaluateStepOutputs(parentOutputs, templateVars));
       }
       if (Object.keys(allEvaluated).length > 0) {
-        const setVarsResult = await actorService.sendAndSync(runbookId, steps, {
-          type: 'SET_VARIABLES',
-          vars: allEvaluated,
-        });
-        if (setVarsResult) {
-          syncResult = setVarsResult;
+        if (actionType === 'COMPLETE' || actionType === 'STOP') {
+          // Machine is in a final state; SET_VARIABLES events are ignored by XState on final
+          // states. Use a direct manager update — no next actor will restore from snapshot.
+          // manager.update merges with existing variables, so orchestrateTransition's
+          // subsequent write of { completed: true } will correctly merge on top.
+          await manager.update(runbookId, { variables: allEvaluated });
+        } else {
+          const setVarsResult = await actorService.sendAndSync(runbookId, steps, {
+            type: 'SET_VARIABLES',
+            vars: allEvaluated,
+          });
+          if (setVarsResult) {
+            syncResult = setVarsResult;
+          }
         }
       }
     }
@@ -346,8 +350,6 @@ export interface DrainResolvedCompletionsArgs {
   command?: string;
   /** Override frame key for frame-scoped lookups (e.g., prompted-for with explicit --index). */
   frameKeyOverride?: FrameKey;
-  /** Project root directory — used for OUTPUTS persistence on PASS. */
-  cwd?: string;
 }
 
 /** Result of draining resolved substep completions. */
@@ -388,7 +390,6 @@ export type DrainResolvedCompletionsResult =
  * @param args.computeActionResult - Optional function to compute action result for transitions
  * @param args.command - Optional command string for event context
  * @param args.frameKeyOverride - Optional frame key override for frame-scoped lookups (e.g., prompted-for with explicit --index)
- * @param args.cwd - Project root directory — used for OUTPUTS persistence on PASS
  * @returns Drain result indicating continue/done/stopped with counts of applied and unresolved completions
  */
 export async function drainResolvedCompletions({
@@ -404,7 +405,6 @@ export async function drainResolvedCompletions({
   computeActionResult,
   command,
   frameKeyOverride,
-  cwd,
 }: DrainResolvedCompletionsArgs): Promise<DrainResolvedCompletionsResult> {
   let state = currentState;
   let applied = 0;
@@ -458,7 +458,6 @@ export async function drainResolvedCompletions({
       transitionPolicy,
       computeActionResult,
       command,
-      cwd,
     });
     applied += 1;
 
@@ -605,7 +604,6 @@ export async function runExecutionLoop(
       steps,
       currentState,
       transitionPolicy: EXECUTION_TERMINAL_POLICY,
-      cwd,
     });
     if (drainResult.status === 'done') return 'done';
     if (drainResult.status === 'stopped') return 'stopped';
@@ -618,13 +616,10 @@ export async function runExecutionLoop(
     // Merge state.variables (step OUTPUTS from prior steps) into templateVars so that
     // subsequent steps can reference them in descriptions, prompts, and OUTPUTS expressions.
     // Cast: state.variables is Record<string, boolean|number|string>; OUTPUTS only write strings.
-    const mergedTemplateVars =
-      currentState.variables && Object.keys(currentState.variables).length > 0
-        ? {
-            ...currentState.templateVars,
-            ...(currentState.variables as Record<string, TemplateVarValue>),
-          }
-        : currentState.templateVars;
+    const mergedTemplateVars = {
+      ...currentState.templateVars,
+      ...(currentState.variables as Record<string, TemplateVarValue>),
+    };
     const stepVars = buildStepVariables(
       currentState.step,
       currentState.substep,
@@ -755,7 +750,6 @@ export async function runExecutionLoop(
       result: lastResult,
       transitionPolicy: EXECUTION_TERMINAL_POLICY,
       command: displayCommand,
-      cwd,
     });
     if (transitionResult.status === 'done') return 'done';
     if (transitionResult.status === 'stopped') return 'stopped';

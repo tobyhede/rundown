@@ -340,10 +340,10 @@ PASS CONTINUE
   it('does not populate step.inputs on any step', () => {
     const markdown = `# Runbook\n\n## 1. Step\nDo a thing.\nPASS CONTINUE\n`;
     const result = parseRunbookDocument(markdown);
-    const step = result.runbook?.steps[0];
+    const step = result.runbook.steps[0];
     expect(step).toBeDefined();
     // inputs is no longer a field on step AST nodes
-    expect((step as Record<string, unknown>)['inputs']).toBeUndefined();
+    expect((step as Record<string, unknown>).inputs).toBeUndefined();
   });
 });
 

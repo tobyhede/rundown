@@ -121,7 +121,7 @@ Do something.
     fs.writeFileSync(
       runbookPath,
       `---
-vars:
+inputs:
   Step: custom
 ---
 ## 1. Do something
@@ -144,7 +144,7 @@ Hello.
     fs.writeFileSync(
       runbookPath,
       `---
-vars:
+inputs:
   Index: 5
 ---
 ## 1. Do something
@@ -167,7 +167,7 @@ Hello.
     fs.writeFileSync(
       runbookPath,
       `---
-vars:
+inputs:
   Date: "2025-01-01"
 ---
 ## 1. Do something

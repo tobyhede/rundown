@@ -1,6 +1,6 @@
 ---
 name: outputs-inputs
-description: Step 1 OUTPUTS stored in context, step 2 value injected into template vars via frontmatter inputs:
+description: "Step 1 OUTPUTS stored in context, step 2 value injected into template vars via frontmatter inputs"
 tags:
   - context-passing
 scenarios:

@@ -666,8 +666,7 @@ function handleListItem(node: ListItem, ctx: ActiveStepContext): typeof SKIP | u
   if (trimmedText === 'INPUTS') {
     ctx.diagnostics.push({
       severity: 'error',
-      message:
-        'INPUTS step directive has been removed — use frontmatter inputs: field instead',
+      message: 'INPUTS step directive has been removed — use frontmatter inputs: field instead',
     });
     return SKIP;
   }
@@ -825,7 +824,11 @@ export function parseRunbookDocument(markdown: string, basename?: string): Parse
     ctx.steps.push(finalizeStep(ctx.currentStep, ctx.pendingConditionals, ctx.implicitText));
   }
 
-  const diagnostics = [...frontmatterDiagnostics, ...ctx.diagnostics, ...validateRunbook(ctx.steps)];
+  const diagnostics = [
+    ...frontmatterDiagnostics,
+    ...ctx.diagnostics,
+    ...validateRunbook(ctx.steps),
+  ];
 
   return {
     runbook: {

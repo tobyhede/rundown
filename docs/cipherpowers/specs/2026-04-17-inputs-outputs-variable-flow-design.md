@@ -10,7 +10,7 @@ INPUTS and OUTPUTS are currently implemented as a file-based side-channel (`outp
 - No enforcement: the machine cannot validate that required outputs were produced
 - No observability: `rd status` cannot show what values are in flight
 - Flat global namespace: all steps and child runbooks write to the same file, last writer wins
-- Side-channel: persistence is manual and separate from run state serialisation
+- Side-channel: persistence is manual and separate from run state serialization
 
 ## Goal
 
@@ -109,7 +109,7 @@ The precedence table governs **initial resolution** — how the variable space i
 | 4 | `inputs:` defaults (renamed from `vars:`, same position) |
 | 5 | Built-in defaults |
 
-**Step OUTPUTS and child `outputs:` are runtime mutations, not precedence levels.** They overwrite the variable space directly, regardless of how the variable was originally set. A step OUTPUTS `Blah "vtha"` overwrites `Blah` even if the user passed `--var Blah=hello`. This takes effect immediately for all subsequent steps.
+**Step OUTPUTS and child `outputs:` are runtime mutations, not precedence levels.** They overwrite the variable space directly, regardless of how the variable was originally set. A step OUTPUTS `Blah "value"` overwrites `Blah` even if the user passed `--var Blah=hello`. This takes effect immediately for all subsequent steps.
 
 ### Cross-runbook flow
 
@@ -148,7 +148,7 @@ When a parent step runs a child runbook:
 - The variable space (including step-produced values) is stored in XState machine context using the existing variable value types (string, number, boolean, JsonArray, JsonObject, JsonArrayStream)
 - Step OUTPUTS are evaluated via `assign` actions on step completion, before the transition action is dispatched
 - Runbook `outputs:` are evaluated at every runbook termination; values written into the run state before the process exits
-- `outputs.json` is replaced by run state serialisation — persistence is automatic
+- `outputs.json` is replaced by run state serialization — persistence is automatic
 
 ### Observability
 
