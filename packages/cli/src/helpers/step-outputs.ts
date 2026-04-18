@@ -89,6 +89,12 @@ export function evaluateFrontmatterOutputs(
           });
           continue;
         }
+        if (rawVal === null) {
+          void logger.warn('evaluateFrontmatterOutputs: naked-form variable is null, skipping', {
+            name: output.name,
+          });
+          continue;
+        }
         if (
           typeof rawVal === 'string' ||
           typeof rawVal === 'number' ||
