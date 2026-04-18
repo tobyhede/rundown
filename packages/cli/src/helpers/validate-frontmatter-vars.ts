@@ -102,7 +102,6 @@ export function validateOutputsDeclarations(
 
   const diagnostics: ValidationDiagnostic[] = [];
   const seen = new Set<string>();
-  const varsKeys = new Set(Object.keys(vars ?? {}));
 
   for (const output of outputs) {
     if (seen.has(output.name)) {
