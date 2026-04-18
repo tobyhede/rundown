@@ -1,11 +1,6 @@
 // packages/core/__tests__/paths.test.ts
 
-import {
-  contextOutputsPath,
-  contextOutputsLockPath,
-  delegationLockPath,
-  statePath,
-} from '../src/paths.js';
+import { delegationLockPath, statePath } from '../src/paths.js';
 
 describe('assertSafeId (via path builders)', () => {
   const cwd = '/tmp/project';
@@ -15,8 +10,6 @@ describe('assertSafeId (via path builders)', () => {
       name: string;
       build: (id: string) => string;
     }> = [
-      { name: 'contextOutputsPath', build: (id) => contextOutputsPath(cwd, id) },
-      { name: 'contextOutputsLockPath', build: (id) => contextOutputsLockPath(cwd, id) },
       { name: 'delegationLockPath', build: (id) => delegationLockPath(cwd, id) },
       { name: 'statePath', build: (id) => statePath(cwd, id) },
     ];
@@ -29,15 +22,6 @@ describe('assertSafeId (via path builders)', () => {
           expect(() => build(bad)).toThrow(/Invalid/);
         });
       }
-    }
-  });
-
-  describe('accepts safe ids', () => {
-    const goodIds = ['abc', 'ctx-123', 'run_42', 'a.b', 'A1-b2.c3_d4'];
-    for (const good of goodIds) {
-      it(`contextOutputsPath accepts ${JSON.stringify(good)}`, () => {
-        expect(contextOutputsPath('/tmp/project', good)).toContain(good);
-      });
     }
   });
 });

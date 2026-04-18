@@ -24,9 +24,9 @@ A Rundown document (`.runbook.md`) is a Markdown file with an optional YAML fron
 
 ### 1.2 Frontmatter
 
-Frontmatter fields beyond `name`, `description`, `version`, `author`, `tags`, `vars`, `required`, and `inputs` are preserved (open schema). This allows forward-compatible extensions and user-defined metadata.
+Frontmatter fields beyond `name`, `description`, `version`, `author`, `tags`, `inputs`, and `required` are preserved (open schema). This allows forward-compatible extensions and user-defined metadata.
 
-The `required` field declares variable names that must be provided by the caller (via CLI flags, config, environment, or delegation). Each entry must be a valid template variable identifier matching `/^[a-zA-Z_][a-zA-Z0-9_]*$/`. Required variables must not appear in `vars` — they have no default. Missing required variables produce a hard error during resolution.
+The `required` field declares variable names that must be provided by the caller (via CLI flags, config, environment, or delegation). Each entry must be a valid template variable identifier matching `/^[a-zA-Z_][a-zA-Z0-9_]*$/`. Required variables must not appear in `inputs` — they have no default. Missing required variables produce a hard error during resolution.
 
 The `inputs` field declares variable names to inject at pipeline setup from the context outputs store (see [§7 Context Passing](#7-context-passing-inputs--outputs)). Each entry must match the same identifier pattern as `required`. Entries must not also appear in `vars` — injection is gap-filling only; names already defined by `vars` would never receive an injected value. Reserved runtime names (`step`, `index`, `context`, matched case-insensitively) are rejected. Missing inputs at runtime are silently skipped; the declaration expresses intent rather than hard requirement.
 

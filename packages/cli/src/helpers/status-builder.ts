@@ -107,7 +107,7 @@ function buildVars(state: RunbookState): Record<string, string> | undefined {
   const fromTemplateVars = Object.fromEntries(
     Object.entries(state.templateVars ?? {})
       .filter(([, v]) => typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean')
-      .map(([k, v]) => [k, String(v)]),
+      .map(([k, v]) => [k, String(v as string | number | boolean)]),
   );
   const fromStateVars = Object.fromEntries(
     Object.entries(state.variables).map(([k, v]) => [k, String(v)]),
@@ -183,8 +183,8 @@ export function buildStashedStatus(stashedState: RunbookState, cwd: string): Sta
   const steps = getRunbookFromState(stashedState, cwd);
   const totalSteps = countNumberedSteps(steps);
   const metadata = buildMetadata(stashedState);
-
   const parentLinkage = buildParentLinkage(stashedState);
+  const vars = buildVars(stashedState);
 
   return {
     active: false,
@@ -199,6 +199,7 @@ export function buildStashedStatus(stashedState: RunbookState, cwd: string): Sta
       stashedState.forStack,
     ),
     ...(parentLinkage ? { parentLinkage } : {}),
+    ...(vars != null && { vars }),
   };
 }
 

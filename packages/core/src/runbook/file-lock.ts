@@ -5,8 +5,7 @@
  * `.rundown/locks/` directory. Uses `O_CREAT | O_EXCL` (`'wx'` flag) for
  * atomic acquisition with retry-jitter and stale-lock reclaim.
  *
- * Used by `DelegationLock` (delegation mutations) and `storeContextOutputs`
- * (context-outputs read-merge-write serialization).
+ * Used by `DelegationLock` (delegation mutations).
  *
  * @module runbook/file-lock
  */
@@ -65,8 +64,7 @@ function isProcessAlive(pid: number): boolean {
  * A lock is reclaimed only when the owning process is no longer alive
  * (`kill(pid, 0)` → ESRCH). Age-based reclaim is intentionally not supported:
  * a slow-but-live writer (e.g. under CI load) must not lose its mutex just
- * because the lock file is old, or the `storeContextOutputs` read-merge-write
- * critical section can interleave and drop updates.
+ * because the lock file is old, or concurrent writers could interleave and drop updates.
  *
  * @param lockFile - Absolute path to the lock file
  * @returns `true` if the lock was reclaimed and removed

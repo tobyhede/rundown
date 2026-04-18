@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { setExecSync } from '../../../src/workflow/hooks/rundown.js';
 import { createMockHookInput, createMockExecSync } from '../../helpers/test-utils.js';
@@ -13,9 +14,19 @@ jest.unstable_mockModule('../../../src/session.js', () => ({
   })),
 }));
 
+// Mock node:fs/promises to control child runbook reads in buildChildVarFlags
+const mockReadFile = jest.fn<() => Promise<string>>();
+jest.unstable_mockModule('node:fs/promises', () => ({
+  readFile: mockReadFile,
+}));
+
 const { handleDelegationDispatch } = await import(
   '../../../src/workflow/hooks/delegation-dispatch.js'
 );
+
+function hashToken(token: string): string {
+  return `sha256:${createHash('sha256').update(token).digest('hex')}`;
+}
 
 const VALID_TOKEN = 'rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 
@@ -164,7 +175,9 @@ describe('handleDelegationDispatch', () => {
   });
 
   it('includes delegation status lines when rd status --json succeeds', async () => {
-    const mockExec = createMockExecSync(JSON.stringify({ runbook: 'deploy.md', step: '3.1' }));
+    const mockExec = createMockExecSync(
+      JSON.stringify({ file: 'deploy.md', step: { name: '3.1' } }),
+    );
     setExecSync(mockExec as never);
 
     const input = createMockHookInput('PreToolUse', {
@@ -175,5 +188,60 @@ describe('handleDelegationDispatch', () => {
     const result = await handleDelegationDispatch(input);
     expect(result.context).toContain('Active runbook: deploy.md');
     expect(result.context).toContain('Current step: 3.1');
+  });
+
+  it('injects --var flags for inputs declared in child runbook when parent has matching vars', async () => {
+    const tokenHash = hashToken(VALID_TOKEN);
+    const childRunbook = `---
+inputs:
+  PlanPath: ''
+  environment: staging
+---
+# Child Runbook
+
+## 1. Step
+PASS COMPLETE
+`;
+    mockReadFile.mockResolvedValue(childRunbook);
+
+    const status = {
+      file: 'parent.md',
+      step: { name: '3' },
+      vars: { PlanPath: '/work/plan.json', environment: 'production', unrelated: 'skip' },
+      delegations: [{ state: 'pending', runbook: 'child.runbook.md', tokenHash }],
+    };
+    setExecSync(createMockExecSync(JSON.stringify(status)) as never);
+
+    const input = createMockHookInput('PreToolUse', {
+      tool_name: 'Task',
+      tool_input: { prompt: `RD_CLAIM_TOKEN=${VALID_TOKEN}` },
+    });
+
+    const result = await handleDelegationDispatch(input);
+    expect(result.context).toContain(`rd claim ${VALID_TOKEN}`);
+    expect(result.context).toContain("--var PlanPath='/work/plan.json'");
+    expect(result.context).toContain("--var environment='production'");
+    expect(result.context).not.toContain('unrelated');
+  });
+
+  it('does not inject --var flags when no delegation matches the detected token', async () => {
+    const differentTokenHash = hashToken('rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ999999');
+    const status = {
+      file: 'parent.md',
+      vars: { PlanPath: '/work/plan.json' },
+      delegations: [
+        { state: 'pending', runbook: 'child.runbook.md', tokenHash: differentTokenHash },
+      ],
+    };
+    setExecSync(createMockExecSync(JSON.stringify(status)) as never);
+
+    const input = createMockHookInput('PreToolUse', {
+      tool_name: 'Task',
+      tool_input: { prompt: `RD_CLAIM_TOKEN=${VALID_TOKEN}` },
+    });
+
+    const result = await handleDelegationDispatch(input);
+    expect(result.context).toContain(`rd claim ${VALID_TOKEN}`);
+    expect(result.context).not.toContain('--var');
   });
 });

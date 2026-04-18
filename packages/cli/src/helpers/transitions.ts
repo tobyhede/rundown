@@ -209,7 +209,8 @@ export async function buildTransitionContext(
  * but the RunbookState has runbookSrc and templateVars frozen at run time.
  *
  * @param state - Runbook state with runbookSrc, runbookPath, and templateVars
- * @param cwd - Project root directory
+ * @param manager - Runbook state manager for persisting variable updates
+ * @param stateId - Runbook state identifier
  * @param emitter - Optional execution event emitter for surfacing failures
  */
 async function maybePersistFrontmatterOutputs(
@@ -502,12 +503,15 @@ export async function executeTransition(
 
   // Evaluate step OUTPUTS for PASS transitions and inject via SET_VARIABLES.
   if (config.lastResult === 'pass') {
+    // Merge state.variables (step OUTPUTS from prior steps) so OUTPUTS expressions
+    // on the current step can reference values written by earlier steps' OUTPUTS.
+    const mergedTemplateVars = { ...previousState.templateVars, ...previousState.variables };
     const preTransitionStepVars = buildStepVariables(
       previousState.step,
       previousState.substep,
       previousState.forStack,
       currentStep.kind === 'for' ? currentStep.forClause : undefined,
-      previousState.templateVars,
+      mergedTemplateVars as typeof previousState.templateVars,
     );
     const templateVars = mergeExecutionTemplateVars(
       preTransitionStepVars,
@@ -532,10 +536,16 @@ export async function executeTransition(
         Object.assign(allEvaluated, evaluateStepOutputs(parentOutputs, templateVars));
       }
       if (Object.keys(allEvaluated).length > 0) {
-        await actorService.sendAndSync(activeState.id, steps, {
-          type: 'SET_VARIABLES',
-          vars: allEvaluated,
-        });
+        if (actionType === 'COMPLETE' || actionType === 'STOP') {
+          // Machine is in a final state; SET_VARIABLES events are ignored by XState.
+          // Direct manager update is safe — no next actor will restore from snapshot.
+          await manager.update(activeState.id, { variables: allEvaluated });
+        } else {
+          await actorService.sendAndSync(activeState.id, steps, {
+            type: 'SET_VARIABLES',
+            vars: allEvaluated,
+          });
+        }
       }
     }
   }

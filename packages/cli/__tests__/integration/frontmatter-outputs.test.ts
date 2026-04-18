@@ -1,36 +1,15 @@
 // packages/cli/__tests__/integration/frontmatter-outputs.test.ts
 
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { writeFile, readFile } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { createTestWorkspace, runCli, type TestWorkspace } from '../helpers/test-utils.js';
-
-/**
- * Parse JSON output from CLI commands, handling both:
- * - Compact JSONL (one JSON object per line) from streaming execution events
- * - Pretty-printed single JSON object (from flushed summary when no JSONL events were emitted)
- */
-function parseJsonOutput(stdout: string): Record<string, unknown>[] {
-  const results: Record<string, unknown>[] = [];
-  for (const line of stdout.trim().split('\n')) {
-    if (line.startsWith('{')) {
-      try {
-        results.push(JSON.parse(line) as Record<string, unknown>);
-      } catch {
-        // Skip lines that fail (e.g., opening `{` of a pretty-printed multi-line object)
-      }
-    }
-  }
-  if (results.length === 0) {
-    try {
-      const obj = JSON.parse(stdout.trim()) as Record<string, unknown>;
-      results.push(obj);
-    } catch {
-      // Not valid JSON at all
-    }
-  }
-  return results;
-}
+import {
+  createTestWorkspace,
+  runCli,
+  getAllRunbookStates,
+  parseJsonOutput,
+  type TestWorkspace,
+} from '../helpers/test-utils.js';
 
 /**
  * Runbook that auto-passes and completes; has a naked-form frontmatter OUTPUTS
@@ -64,18 +43,14 @@ describe('frontmatter outputs — naked form', () => {
     await workspace.cleanup();
   });
 
-  it('stores naked-form frontmatter output to context on successful run', async () => {
-    const contextId = 'fm-basic';
-    const result = runCli(
-      `run test.runbook.md --var ContextId=${contextId} --var SomeVar=hello`,
-      workspace,
-    );
+  it('stores naked-form frontmatter output to state.finalVars on successful run', async () => {
+    const result = runCli('run test.runbook.md --var SomeVar=hello', workspace);
     expect(result.exitCode).toBe(0);
 
-    const outputsPath = join(workspace.cwd, '.rundown', 'contexts', contextId, 'outputs.json');
-    const raw = await readFile(outputsPath, 'utf-8');
-    const outputs = JSON.parse(raw) as Record<string, unknown>;
-    expect(outputs).toEqual({ SomeVar: 'hello' });
+    const states = await getAllRunbookStates(workspace);
+    expect(states).toHaveLength(1);
+    const state = states[0] as { finalVars?: Record<string, unknown> };
+    expect(state.finalVars).toEqual({ SomeVar: 'hello' });
   });
 
   it('does NOT store frontmatter outputs when run stops on FAIL', async () => {
@@ -96,11 +71,12 @@ rd echo --result fail
 `;
     await writeFile(join(workspace.cwd, 'fail.runbook.md'), FAIL_RUNBOOK);
 
-    const contextId = 'fm-fail';
-    runCli(`run fail.runbook.md --var ContextId=${contextId} --var SomeVar=hello`, workspace);
+    runCli('run fail.runbook.md --var SomeVar=hello', workspace);
 
-    const outputsPath = join(workspace.cwd, '.rundown', 'contexts', contextId, 'outputs.json');
-    await expect(readFile(outputsPath, 'utf-8')).rejects.toMatchObject({ code: 'ENOENT' });
+    const states = await getAllRunbookStates(workspace);
+    const state = states[0] as { finalVars?: Record<string, unknown> };
+    // finalVars should be absent or empty when run stops on FAIL
+    expect(state.finalVars).toBeUndefined();
   });
 });
 
@@ -115,7 +91,7 @@ describe('frontmatter outputs — with-value (quoted literal) form', () => {
     await workspace.cleanup();
   });
 
-  it('stores with-value quoted-literal form to context on completion', async () => {
+  it('stores with-value quoted-literal form to state.finalVars on completion', async () => {
     const LITERAL_RUNBOOK = `---
 name: fm-literal-test
 outputs:
@@ -133,14 +109,12 @@ rd echo --result pass
 `;
     await writeFile(join(workspace.cwd, 'literal.runbook.md'), LITERAL_RUNBOOK);
 
-    const contextId = 'fm-literal';
-    const result = runCli(`run literal.runbook.md --var ContextId=${contextId}`, workspace);
+    const result = runCli('run literal.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
 
-    const outputsPath = join(workspace.cwd, '.rundown', 'contexts', contextId, 'outputs.json');
-    const raw = await readFile(outputsPath, 'utf-8');
-    const outputs = JSON.parse(raw) as Record<string, unknown>;
-    expect(outputs).toEqual({ OutVar: 'literal-value' });
+    const states = await getAllRunbookStates(workspace);
+    const state = states[0] as { finalVars?: Record<string, unknown> };
+    expect(state.finalVars).toEqual({ OutVar: 'literal-value' });
   });
 });
 
@@ -173,17 +147,12 @@ rd echo --result pass
 `;
     await writeFile(join(workspace.cwd, 'uppercase.runbook.md'), UPPERCASE_RUNBOOK);
 
-    const contextId = 'fm-uppercase';
-    const result = runCli(
-      `run uppercase.runbook.md --var ContextId=${contextId} --var SomeVar=hello-upper`,
-      workspace,
-    );
+    const result = runCli('run uppercase.runbook.md --var SomeVar=hello-upper', workspace);
     expect(result.exitCode).toBe(0);
 
-    const outputsPath = join(workspace.cwd, '.rundown', 'contexts', contextId, 'outputs.json');
-    const raw = await readFile(outputsPath, 'utf-8');
-    const outputs = JSON.parse(raw) as Record<string, unknown>;
-    expect(outputs).toEqual({ SomeVar: 'hello-upper' });
+    const states = await getAllRunbookStates(workspace);
+    const state = states[0] as { finalVars?: Record<string, unknown> };
+    expect(state.finalVars).toEqual({ SomeVar: 'hello-upper' });
   });
 });
 
@@ -199,7 +168,6 @@ describe('frontmatter outputs — prompted (manual pass) completion', () => {
   });
 
   it('stores frontmatter outputs when run completes via rd pass', async () => {
-    // A runbook with no command block: execution pauses waiting for rd pass.
     const PROMPTED_RUNBOOK = `---
 name: fm-prompted-test
 outputs:
@@ -215,22 +183,60 @@ Waiting for manual pass.
 `;
     await writeFile(join(workspace.cwd, 'prompted.runbook.md'), PROMPTED_RUNBOOK);
 
-    const contextId = 'fm-prompted';
     // Start the runbook — execution pauses (no command block).
-    const startResult = runCli(
-      `run prompted.runbook.md --var ContextId=${contextId} --var SomeVar=manual-value`,
-      workspace,
-    );
+    const startResult = runCli('run prompted.runbook.md --var SomeVar=manual-value', workspace);
     expect(startResult.exitCode).toBe(0);
 
     // Manually pass to complete — this goes through the transitions.ts path.
     const passResult = runCli('pass', workspace);
     expect(passResult.exitCode).toBe(0);
 
-    const outputsPath = join(workspace.cwd, '.rundown', 'contexts', contextId, 'outputs.json');
-    const raw = await readFile(outputsPath, 'utf-8');
-    const outputs = JSON.parse(raw) as Record<string, unknown>;
-    expect(outputs).toEqual({ SomeVar: 'manual-value' });
+    const states = await getAllRunbookStates(workspace);
+    const state = states[0] as { finalVars?: Record<string, unknown> };
+    expect(state.finalVars).toEqual({ SomeVar: 'manual-value' });
+  });
+});
+
+describe('frontmatter outputs — rd status includes vars field', () => {
+  let workspace: TestWorkspace;
+
+  beforeEach(async () => {
+    workspace = await createTestWorkspace();
+  });
+
+  afterEach(async () => {
+    await workspace.cleanup();
+  });
+
+  it('rd status --json includes vars with template variables while runbook is active', async () => {
+    const RUNBOOK = `---
+name: fm-status-vars-test
+inputs:
+  environment: staging
+---
+# Status Vars Test
+
+## 1. Step one
+Waiting for manual pass.
+`;
+    await writeFile(join(workspace.cwd, 'status-vars.runbook.md'), RUNBOOK);
+
+    // Start runbook — pauses at step 1 (no command block).
+    const startResult = runCli('run status-vars.runbook.md', workspace);
+    expect(startResult.exitCode).toBe(0);
+
+    // Check that rd status includes vars field with frontmatter defaults.
+    const statusResult = runCli('status', workspace);
+    expect(statusResult.exitCode).toBe(0);
+
+    const events = parseJsonOutput(statusResult.stdout);
+    const statusOutput = events[0];
+    expect(statusOutput).toBeDefined();
+    expect(statusOutput.vars).toBeDefined();
+    expect((statusOutput.vars as Record<string, string>).environment).toBe('staging');
+
+    // Cleanup: pass to complete the runbook.
+    runCli('pass', workspace);
   });
 });
 
@@ -239,7 +245,7 @@ describe('frontmatter outputs — delegation chain', () => {
 
   /**
    * Parent runbook: auto-passes via rd echo, has frontmatter outputs: [Message].
-   * Message is expected to be passed via --var and stored to context on completion.
+   * Message is expected to be passed via --var and stored to finalVars on completion.
    */
   const PARENT_RUNBOOK = `---
 name: fm-chain-parent
@@ -258,14 +264,11 @@ rd echo --result pass
 `;
 
   /**
-   * Child runbook: declares frontmatter inputs: [Message].
-   * Step description uses {{Message}} which should be substituted from context.
-   * No command — execution pauses at step 1, allowing us to inspect step_entered events.
+   * Child runbook: uses {{Message}} in step prompt.
+   * Caller injects --var Message=value (simulating what delegation-dispatch plugin does).
    */
   const CHILD_RUNBOOK = `---
 name: fm-chain-child
-inputs:
-  - Message
 ---
 # Chain Child
 
@@ -286,30 +289,23 @@ Received: {{Message}}
     await workspace.cleanup();
   });
 
-  it('parent frontmatter outputs flow into child frontmatter inputs via context', async () => {
-    const contextId = 'fm-chain-ctx';
-
-    // Run parent — auto-executes rd echo, completes, stores Message to context
-    const parentResult = runCli(
-      `run parent.runbook.md --var ContextId=${contextId} --var Message=hello-from-parent`,
-      workspace,
-    );
+  it('parent frontmatter outputs are stored to state.finalVars on completion', async () => {
+    const parentResult = runCli('run parent.runbook.md --var Message=hello-from-parent', workspace);
     expect(parentResult.exitCode).toBe(0);
 
-    // Verify parent stored outputs
-    const outputsPath = join(workspace.cwd, '.rundown', 'contexts', contextId, 'outputs.json');
-    const raw = await readFile(outputsPath, 'utf-8');
-    const outputs = JSON.parse(raw) as Record<string, unknown>;
-    expect(outputs).toEqual({ Message: 'hello-from-parent' });
+    const states = await getAllRunbookStates(workspace);
+    const parentState = states[0] as { finalVars?: Record<string, unknown> };
+    expect(parentState.finalVars).toEqual({ Message: 'hello-from-parent' });
+  });
 
-    // Run child — no command on step 1, so execution pauses after step_entered.
-    // Frontmatter inputs: [Message] causes Message to be loaded from context outputs.
-    const childResult = runCli(`run child.runbook.md --var ContextId=${contextId}`, workspace);
+  it('child receives Message via --var injection (simulating delegation-dispatch plugin)', async () => {
+    // Simulate the plugin reading parent finalVars and injecting as --var flags.
+    const childResult = runCli('run child.runbook.md --var Message=hello-from-parent', workspace);
     expect(childResult.exitCode).toBe(0);
 
-    // Step 1's step_entered event should have {{Message}} substituted from context
+    // Step_entered event should have {{Message}} substituted.
     const events = parseJsonOutput(childResult.stdout);
-    const stepEntered = events.find((e) => e.type === 'step_entered' && e.position != null);
+    const stepEntered = events.find((e) => e.type === 'step_entered');
     expect(stepEntered).toBeDefined();
     expect(stepEntered?.prompt).toContain('hello-from-parent');
     expect(stepEntered?.prompt).not.toContain('{{Message}}');

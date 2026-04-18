@@ -104,19 +104,6 @@ export const workDir = (cwd: string): string => path.join(cwd, WORK_DIR);
 export const contextsDir = (cwd: string): string => path.join(cwd, CONTEXTS_DIR);
 
 /**
- * Absolute path to a context's outputs file.
- *
- * @param cwd - Project root directory
- * @param contextId - Context identifier (must match `[A-Za-z0-9._-]+`)
- * @returns Path to `.rundown/contexts/<contextId>/outputs.json`
- * @throws {Error} If `contextId` is empty or contains unsafe characters
- */
-export const contextOutputsPath = (cwd: string, contextId: string): string => {
-  assertSafeId(contextId, 'id');
-  return path.join(cwd, CONTEXTS_DIR, contextId, 'outputs.json');
-};
-
-/**
  * Absolute path to a specific runbook state file.
  *
  * @param cwd - Project root directory
@@ -149,19 +136,4 @@ export const LEGACY_SESSION_FILE = '.claude/rundown/session.json';
 export const delegationLockPath = (cwd: string, runId: string): string => {
   assertSafeId(runId, 'runId');
   return path.join(cwd, LOCKS_DIR, `run-${runId}.delegation.lock`);
-};
-
-/**
- * Absolute path to the context-outputs write-serialization lock file.
- *
- * Lock path: `.rundown/locks/ctx-<contextId>.context-outputs.lock`
- *
- * @param cwd - Project root directory
- * @param contextId - Context identifier (must match `[A-Za-z0-9._-]+`)
- * @returns Path to the lock file
- * @throws {Error} If `contextId` contains path separators, `..`, or is otherwise unsafe
- */
-export const contextOutputsLockPath = (cwd: string, contextId: string): string => {
-  assertSafeId(contextId, 'id');
-  return path.join(cwd, LOCKS_DIR, `ctx-${contextId}.context-outputs.lock`);
 };

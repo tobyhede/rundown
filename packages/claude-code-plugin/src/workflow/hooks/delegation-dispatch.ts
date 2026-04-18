@@ -1,5 +1,6 @@
 // src/workflow/hooks/delegation-dispatch.ts
 
+import { createHash } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { parseRunbookDocument } from '@rundown-org/parser';
@@ -7,6 +8,28 @@ import type { HookInput } from '../../shared/index.js';
 import { Session } from '../../session.js';
 import { detectDelegationInToolInput } from './delegation-detector.js';
 import { rundown } from './rundown.js';
+
+/**
+ * Compute the token hash used in delegation state for correlation.
+ * Replicates the same algorithm as `hashDelegationToken` in `@rundown-org/core`.
+ *
+ * @param token - Raw delegation token string
+ * @returns SHA-256 hash in `sha256:<hex>` format
+ */
+function hashToken(token: string): string {
+  return `sha256:${createHash('sha256').update(token).digest('hex')}`;
+}
+
+/**
+ * Shell-safe quote a string value for use in a `--var key=value` flag.
+ * Wraps in single quotes and escapes internal single quotes.
+ *
+ * @param value - The string value to quote
+ * @returns Single-quoted shell-safe string
+ */
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
 
 /** Tool names that carry delegation context. */
 type DelegationToolName = 'Agent' | 'Task';
@@ -55,9 +78,11 @@ async function buildChildVarFlags(
     const src = await fs.readFile(resolved, 'utf-8');
     const { frontmatter } = parseRunbookDocument(src);
     const inputKeys = Object.keys(frontmatter?.inputs ?? {});
+    // Shell-quote values so spaces and special characters are preserved when the
+    // claim command string is executed by Claude Code's task/agent tool.
     return inputKeys
       .filter((key) => Object.hasOwn(parentVars, key))
-      .map((key) => `--var ${key}=${JSON.stringify(parentVars[key])}`)
+      .map((key) => `--var ${key}=${shellQuote(parentVars[key])}`)
       .join(' ');
   } catch {
     return '';
@@ -109,17 +134,24 @@ export async function handleDelegationDispatch(
     const file = typeof status.file === 'string' ? status.file : undefined;
     const step =
       status.step && typeof (status.step as Record<string, unknown>).name === 'string'
-        ? (status.step as Record<string, unknown>).name
+        ? ((status.step as Record<string, unknown>).name as string)
         : undefined;
     if (file) statusLines.push(`Active runbook: ${file}`);
     if (step) statusLines.push(`Current step: ${step}`);
 
-    // Inject --var flags from child runbook's inputs: keys using parent's live vars
+    // Inject --var flags from child runbook's inputs: keys using parent's live vars.
+    // Match the delegation entry by tokenHash to correctly identify the child runbook
+    // when multiple delegations are pending simultaneously.
     const parentVars = (status as { vars?: Record<string, string> }).vars;
     const delegations = (
-      status as { delegations?: Array<{ runbook: string; state: string }> }
+      status as {
+        delegations?: Array<{ runbook: string; state: string; tokenHash: string }>;
+      }
     ).delegations;
-    const pending = delegations?.find((d) => d.state === 'pending');
+    const detectedTokenHash = hashToken(token);
+    const pending = delegations?.find(
+      (d) => d.state === 'pending' && d.tokenHash === detectedTokenHash,
+    );
     const childRunbookPath = pending?.runbook;
     if (childRunbookPath && parentVars) {
       const varFlags = await buildChildVarFlags(childRunbookPath, parentVars, input.cwd);

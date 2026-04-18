@@ -33,6 +33,12 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
       return [...substepStates, { id: substepId, frameKey, status: 'pending', ...patch }];
     },
   ),
+  logger: {
+    warn: jest.fn().mockReturnValue(Promise.resolve()),
+    info: jest.fn(),
+    debug: jest.fn(),
+    error: jest.fn(),
+  },
   ...mockErrorHelpers,
 }));
 
@@ -161,7 +167,12 @@ function wireMocks(manager: any, lifecycleService: any): void {
 
   MockManager.mockImplementation(() => manager);
   MockLifecycle.mockImplementation(() => lifecycleService);
-  MockActor.mockImplementation(() => ({}) as any);
+  MockActor.mockImplementation(
+    () =>
+      ({
+        sendAndSync: jest.fn<any>().mockResolvedValue(null),
+      }) as any,
+  );
   MockSession.mockImplementation(
     () =>
       ({
@@ -733,6 +744,72 @@ describe('handleParentCompletion', () => {
 
     const drainCall = (drainResolvedCompletions as jest.Mock).mock.calls[0][0];
     expect(drainCall.frameKeyOverride).toBeUndefined();
+  });
+
+  it('forwards child finalVars to parent actor via SET_VARIABLES before drain', async () => {
+    const delegation = makeDelegationLinkage();
+    const childState = makeState('child-run-id', {
+      parentLinkage: delegation,
+      finalVars: { PlanPath: '/work/plan.json', version: '2.1' },
+    });
+    const parentState = makeState('parent-run-id', {
+      substepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: null }],
+    });
+
+    const states = new Map([[parentState.id, parentState]]);
+    const manager = makeManager(states);
+    const _lock = makeLock();
+    const lifecycleService = makeLifecycleService();
+    const output = makeOutput();
+
+    wireMocks(manager, lifecycleService);
+
+    (drainResolvedCompletions as jest.Mock).mockResolvedValue({
+      status: 'continue',
+      applied: 0,
+      state: parentState,
+    });
+
+    await handleParentCompletion(childState, 'pass', '/test', output);
+
+    const MockActor = core.RunbookActorService as jest.MockedClass<typeof core.RunbookActorService>;
+    const actorInstance = MockActor.mock.results[0]?.value;
+    expect(actorInstance.sendAndSync).toHaveBeenCalledWith('parent-run-id', expect.any(Array), {
+      type: 'SET_VARIABLES',
+      vars: { PlanPath: '/work/plan.json', version: '2.1' },
+    });
+  });
+
+  it('does not call sendAndSync when child has no finalVars', async () => {
+    const delegation = makeDelegationLinkage();
+    const childState = makeState('child-run-id', { parentLinkage: delegation });
+    const parentState = makeState('parent-run-id', {
+      substepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: null }],
+    });
+
+    const states = new Map([[parentState.id, parentState]]);
+    const manager = makeManager(states);
+    const _lock = makeLock();
+    const lifecycleService = makeLifecycleService();
+    const output = makeOutput();
+
+    wireMocks(manager, lifecycleService);
+
+    (drainResolvedCompletions as jest.Mock).mockResolvedValue({
+      status: 'continue',
+      applied: 0,
+      state: parentState,
+    });
+
+    await handleParentCompletion(childState, 'pass', '/test', output);
+
+    const MockActor = core.RunbookActorService as jest.MockedClass<typeof core.RunbookActorService>;
+    const actorInstance = MockActor.mock.results[0]?.value;
+    expect(actorInstance.sendAndSync).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ type: 'SET_VARIABLES' }),
+    );
   });
 });
 
