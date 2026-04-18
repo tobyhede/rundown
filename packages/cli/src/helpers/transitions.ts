@@ -210,6 +210,10 @@ export async function buildTransitionContext(
  * are visible to frontmatter output expressions. Callers must not pass pre-transition
  * state — the reload is the single source of truth.
  *
+ * **Invariant:** Must be called AFTER all terminal `manager.update` writes for the
+ * transition have completed. The reload picks up variables written during the terminal
+ * transition; calling the helper earlier would race with those writes and miss values.
+ *
  * @param manager - Runbook state manager for loading fresh state and persisting finalVars
  * @param stateId - Runbook state identifier
  * @param emitter - Optional execution event emitter for surfacing evaluation failures
