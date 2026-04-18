@@ -34,6 +34,7 @@ export {
   isStepExitAction,
   isTerminalAction,
   parseOutputDeclaration,
+  parseFrontmatterOutputDeclaration,
 } from './helpers.js';
 export type { ConvertedTransitions, ParsedStepHeader, ParsedSubstepHeader } from './helpers.js';
 export {

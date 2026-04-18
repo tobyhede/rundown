@@ -22,6 +22,8 @@ import {
   deriveActiveFrame,
   findSubstepState,
   upsertSubstepState,
+  getErrorMessage,
+  logger,
   type RunbookState,
   type ParentLinkageBase,
 } from '@rundown-org/core';
@@ -182,6 +184,28 @@ export async function handleParentCompletion(
 
   const readonlySteps = getRunbookFromState(parentState, cwd);
   const parentSteps = [...readonlySteps];
+
+  // Forward child's finalVars into the parent actor's context.variables via SET_VARIABLES.
+  // Must use actorService.sendAndSync (not manager.update) — createActor() restores from
+  // state.snapshot, so a direct manager.update({ variables }) is invisible to the next actor.
+  if (childState.finalVars && Object.keys(childState.finalVars).length > 0) {
+    try {
+      await parentActorService.sendAndSync(parentRunId, parentSteps, {
+        type: 'SET_VARIABLES',
+        vars: childState.finalVars,
+      });
+    } catch (err) {
+      const errMsg = getErrorMessage(err);
+      void logger.warn('delegation-completion: failed to forward child finalVars to parent actor', {
+        error: errMsg,
+        childRunId: childState.id,
+        parentRunId,
+      });
+      output.warning(
+        `SET_VARIABLES failed — child variables not forwarded to parent run. ${errMsg}`,
+      );
+    }
+  }
 
   const emitter = createBridgedEmitter(parentState, output);
   const drained = await drainResolvedCompletions({

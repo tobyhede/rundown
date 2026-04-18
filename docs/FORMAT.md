@@ -44,20 +44,16 @@ desc_field     ::= "description:" ws text
 version_field  ::= "version:" ws text
 author_field   ::= "author:" ws text
 tags_field     ::= "tags:" newline tag_list
-vars_field     ::= "vars:" newline vars_map
-required_field ::= "required:" newline required_list
-inputs_field   ::= "inputs:" newline inputs_list
+inputs_fm_field ::= "inputs:" newline inputs_map
+required_field  ::= "required:" newline required_list
 
 name_string    ::= [a-zA-Z0-9_-] ( [a-zA-Z0-9_ -]* [a-zA-Z0-9_-] )?
 tag_list       ::= ( ws "- " tag newline )+
 tag            ::= text
-vars_map       ::= ( ws variable_name ":" ws value newline )+
+inputs_map     ::= ( ws variable_name ":" ws value newline )+
 value          ::= text
 required_list  ::= ( ws "- " variable_name newline )+
-inputs_list    ::= ( ws "- " variable_name newline )+
 ```
-
-The `inputs` field declares variable names to inject from the context outputs store at pipeline setup — see [SPEC.md §7 Context Passing](./SPEC.md#7-context-passing-inputs--outputs). Entries must not also appear in `vars` and must not be [reserved variable names](#reserved-variable-names).
 
 Additional fields beyond those listed are preserved (open schema). All fields are optional.
 
@@ -65,7 +61,6 @@ Additional fields beyond those listed are preserved (open schema). All fields ar
 
 ```ebnf
 step ::= "## " step_id separator? text? newline
-         inputs_directive?
          outputs_directive?
          for_clause?
          transition*
@@ -73,13 +68,12 @@ step ::= "## " step_id separator? text? newline
          body?
 ```
 
-Content must appear in the order shown: INPUTS, OUTPUTS, FOR, transitions, prompt, body.
+Content must appear in the order shown: OUTPUTS, FOR, transitions, prompt, body.
 
 ## Substeps
 
 ```ebnf
 substep ::= "### " substep_id separator? text? newline
-            inputs_directive?
             outputs_directive?
             transition*
             prompt?
@@ -91,9 +85,6 @@ Substeps cannot contain nested substeps. See [SPEC.md §1.1](./SPEC.md) for the 
 ## Context Directives
 
 ```ebnf
-inputs_directive  ::= "- INPUTS" newline input_list
-input_list        ::= ( ws "- " variable_name newline )+
-
 outputs_directive ::= "- OUTPUTS" newline output_list
 output_list       ::= ( ws "- " output_entry newline )+
 output_entry      ::= variable_name ws output_value
@@ -102,11 +93,11 @@ helper_call       ::= "{{" ws? variable_name ( ws argument )+ ws? "}}"
 argument          ::= quoted_string | variable_path
 ```
 
-A step or substep may declare at most one INPUTS directive and at most one OUTPUTS directive. Duplicate directives on the same target are rejected.
+A step or substep may declare at most one OUTPUTS directive. Duplicate directives on the same target are rejected. The `- INPUTS` directive has been removed — use the frontmatter `inputs:` field to declare default variable values.
 
-INPUTS declares variable names that will be injected from context outputs before step rendering. OUTPUTS declares values to persist after a successful (PASS) transition. Output values may be Handlebars helper calls (`{{ path "file.json" }}`), template variable references (`{{ VarName }}`), quoted literals (`"value"`), or bare variable references (`VarName`).
+OUTPUTS declares values to inject into the runbook's live variable space after a successful (PASS) transition. Output values may be Handlebars helper calls (`{{ path "file.json" }}`), template variable references (`{{ VarName }}`), quoted literals (`"value"`), or bare variable references (`VarName`).
 
-Variable names in INPUTS and OUTPUTS must match `variable_name` and must not be [reserved variable names](#reserved-variable-names).
+Variable names in OUTPUTS must match `variable_name` and must not be [reserved variable names](#reserved-variable-names).
 
 The `path` helper call `{{ path "file.json" }}` is syntactic sugar for the CLI form `rdpath --dir WorkPath --ctx ContextId --file file.json`. The optional `ctx=` argument (`{{ path "file.json" ctx=alt-ctx }}`) overrides the default `ContextId`. Filenames must match the [`filename`](#lexical-rules) production; context identifiers must match [`ctx_ref`](#lexical-rules). See [docs/RDPATH.md](./RDPATH.md) for the full path-assembly contract.
 
@@ -296,7 +287,7 @@ These reserved words apply to step identifiers, action keywords, and transition 
 
 ## Reserved Variable Names
 
-The following names are reserved for runtime context resolution and cannot be used as variable identifiers in `INPUTS`, `OUTPUTS`, frontmatter `vars:` / `inputs:` / `required:`, `--var` CLI flags, `--var-file` contents, `.rundown/config.yaml`, or `RD_VAR_*` environment variables:
+The following names are reserved for runtime context resolution and cannot be used as variable identifiers in `OUTPUTS`, frontmatter `inputs:` / `required:`, `--var` CLI flags, `--var-file` contents, `.rundown/config.yaml`, or `RD_VAR_*` environment variables:
 
 - `step`
 - `index`

@@ -6,9 +6,14 @@
 // packages/cli/src/helpers/execution-units.ts.
 
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { readFile, writeFile } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { createTestWorkspace, runCli, type TestWorkspace } from '../helpers/test-utils.js';
+import {
+  createTestWorkspace,
+  runCli,
+  getAllRunbookStates,
+  type TestWorkspace,
+} from '../helpers/test-utils.js';
 
 // FOR loop over {{items}}; substep's OUTPUTS reference the loop variable `item`.
 // Each iteration publishes {LastItem: <iter>}; the final merge is the last value.
@@ -46,30 +51,21 @@ describe('FOR loop OUTPUTS regression — CLI-shadowed loop variable', () => {
   });
 
   it('publishes the current iteration value for {{item}} even when --var item shadows it', async () => {
-    const contextId = 'for-outputs-ctx';
-
     const result = runCli(
-      [
-        'run',
-        'for-outputs.runbook.md',
-        `--var`,
-        `ContextId=${contextId}`,
-        `--var`,
-        `item=stale`,
-        `--var-json`,
-        `items=["a","b","c"]`,
-      ],
+      ['run', 'for-outputs.runbook.md', `--var`, `item=stale`, `--var-json`, `items=["a","b","c"]`],
       workspace,
     );
     expect(result.exitCode).toBe(0);
 
-    const outputsPath = join(workspace.cwd, '.rundown', 'contexts', contextId, 'outputs.json');
-    const raw = await readFile(outputsPath, 'utf-8');
-    const outputs = JSON.parse(raw) as Record<string, unknown>;
+    // OUTPUTS now go to state.variables (not outputs.json).
+    // After completion, verify the last iteration's value is in state.variables.
+    const states = await getAllRunbookStates(workspace);
+    expect(states).toHaveLength(1);
+    const state = states[0] as { variables: Record<string, unknown> };
 
     // Last iteration wins after merge; the fresh loop variable must not be
     // shadowed by the CLI-persisted `item=stale`.
-    expect(outputs.LastItem).toBe('c');
-    expect(outputs.LastItem).not.toBe('stale');
+    expect(state.variables.LastItem).toBe('c');
+    expect(state.variables.LastItem).not.toBe('stale');
   });
 });

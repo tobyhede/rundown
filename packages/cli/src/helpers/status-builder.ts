@@ -90,6 +90,30 @@ export interface StatusOutputData {
     /** Parent's step name at link time (e.g., "1"). */
     parentStep?: string;
   };
+  /** Effective variable space: templateVars (base) merged with step OUTPUTS (state.variables). */
+  vars?: Record<string, string>;
+}
+
+/**
+ * Build the effective variable space for status output.
+ *
+ * Merges templateVars (CLI/config/frontmatter) with state.variables (step OUTPUTS).
+ * Only scalar values (string, number, boolean) are included; arrays and streams are excluded.
+ *
+ * @param state - Runbook state with templateVars and variables
+ * @returns Stringified key-value map, or undefined if empty
+ */
+function buildVars(state: RunbookState): Record<string, string> | undefined {
+  const fromTemplateVars = Object.fromEntries(
+    Object.entries(state.templateVars ?? {})
+      .filter(([, v]) => typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean')
+      .map(([k, v]) => [k, String(v as string | number | boolean)]),
+  );
+  const fromStateVars = Object.fromEntries(
+    Object.entries(state.variables).map(([k, v]) => [k, String(v)]),
+  );
+  const merged = { ...fromTemplateVars, ...fromStateVars };
+  return Object.keys(merged).length > 0 ? merged : undefined;
 }
 
 /**
@@ -159,8 +183,8 @@ export function buildStashedStatus(stashedState: RunbookState, cwd: string): Sta
   const steps = getRunbookFromState(stashedState, cwd);
   const totalSteps = countNumberedSteps(steps);
   const metadata = buildMetadata(stashedState);
-
   const parentLinkage = buildParentLinkage(stashedState);
+  const vars = buildVars(stashedState);
 
   return {
     active: false,
@@ -175,6 +199,7 @@ export function buildStashedStatus(stashedState: RunbookState, cwd: string): Sta
       stashedState.forStack,
     ),
     ...(parentLinkage ? { parentLinkage } : {}),
+    ...(vars != null && { vars }),
   };
 }
 
@@ -283,5 +308,6 @@ export function buildActiveStatus(
     lastAction: actionBlockData,
     ...(delegations.length > 0 ? { delegations } : {}),
     ...(parentLinkage ? { parentLinkage } : {}),
+    vars: buildVars(activeState),
   };
 }

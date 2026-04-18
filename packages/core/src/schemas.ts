@@ -365,6 +365,7 @@ export const RunbookStateSchema = z
       .optional(),
     runbookSrc: z.string().optional(),
     templateVars: z.record(z.string(), TemplateVarValueSchema).optional(),
+    finalVars: z.record(z.string(), z.string()).optional(),
   })
   // passthrough() allows unknown fields (e.g., legacy pendingSteps, agentBindings,
   // agentId, parentRunbookId) to survive schema validation without breaking existing

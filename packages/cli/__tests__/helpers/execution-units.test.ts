@@ -2,12 +2,20 @@
 
 import type { StepVariables } from '../../src/services/execution-vars.js';
 import {
-  collectExecutionUnitInputs,
   isSubstep,
   mergeExecutionTemplateVars,
   shouldPersistParentOutputs,
 } from '../../src/helpers/execution-units.js';
+import * as executionUnitsModule from '../../src/helpers/execution-units.js';
 import { buildBaseStep, buildStepWithSubsteps, buildSubstep } from './test-utils.js';
+
+it('collectExecutionUnitInputs is no longer exported', () => {
+  expect('collectExecutionUnitInputs' in executionUnitsModule).toBe(false);
+});
+
+it('persistPassOutputs is no longer exported', () => {
+  expect('persistPassOutputs' in executionUnitsModule).toBe(false);
+});
 
 describe('isSubstep', () => {
   it('returns true for a substep-shaped value (has id, no kind)', () => {
@@ -236,41 +244,5 @@ describe('mergeExecutionTemplateVars', () => {
 
     expect(before).toEqual(beforeCopy);
     expect(after).toEqual(afterCopy);
-  });
-});
-
-describe('collectExecutionUnitInputs', () => {
-  it('returns parent inputs when no substep is active', () => {
-    const step = buildBaseStep({ inputs: ['Alpha', 'Beta'] });
-    expect(collectExecutionUnitInputs(step, undefined)).toEqual(['Alpha', 'Beta']);
-  });
-
-  it('returns parent inputs when step has no substeps even if substepId is provided', () => {
-    const step = buildBaseStep({ inputs: ['Alpha'] });
-    expect(collectExecutionUnitInputs(step, '1.1')).toEqual(['Alpha']);
-  });
-
-  it('returns parent inputs when substep has no local inputs', () => {
-    const step = buildStepWithSubsteps([buildSubstep({ id: '1.1' })], { inputs: ['Alpha'] });
-    expect(collectExecutionUnitInputs(step, '1.1')).toEqual(['Alpha']);
-  });
-
-  it('returns deduplicated union of parent + substep inputs', () => {
-    const step = buildStepWithSubsteps([buildSubstep({ id: '1.1', inputs: ['Beta', 'Gamma'] })], {
-      inputs: ['Alpha', 'Beta'],
-    });
-    expect(collectExecutionUnitInputs(step, '1.1')).toEqual(['Alpha', 'Beta', 'Gamma']);
-  });
-
-  it('returns parent inputs when substepId does not match any substep', () => {
-    const step = buildStepWithSubsteps([buildSubstep({ id: '1.1', inputs: ['Beta'] })], {
-      inputs: ['Alpha'],
-    });
-    expect(collectExecutionUnitInputs(step, '1.99')).toEqual(['Alpha']);
-  });
-
-  it('returns empty array when neither parent nor substep declares inputs', () => {
-    const step = buildStepWithSubsteps([buildSubstep({ id: '1.1' })]);
-    expect(collectExecutionUnitInputs(step, '1.1')).toEqual([]);
   });
 });

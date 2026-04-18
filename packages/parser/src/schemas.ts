@@ -293,7 +293,7 @@ export type Action = Readonly<z.output<typeof ActionSchema>>;
  */
 export const OutputDeclarationSchema = z.object({
   name: z.string().regex(NAMED_IDENTIFIER_PATTERN),
-  value: z.string().min(1),
+  value: z.string().min(1).optional(),
 });
 
 /** Output declaration, inferred from OutputDeclarationSchema. */

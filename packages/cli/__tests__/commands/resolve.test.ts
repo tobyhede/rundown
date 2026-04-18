@@ -58,7 +58,7 @@ echo hello
       runbookPath,
       `---
 name: test-runbook
-vars:
+inputs:
   environment: development
   port: 3000
 ---
@@ -81,7 +81,7 @@ Server on port {{ port }} in {{ environment }} mode.
       runbookPath,
       `---
 name: test-runbook
-vars:
+inputs:
   environment: development
 ---
 ## Step 1
@@ -128,7 +128,7 @@ Deploy to {{ missingVar }}.
     fs.writeFileSync(
       runbookPath,
       `---
-vars:
+inputs:
   environment: staging
 ---
 ## 3. Deploy
@@ -269,7 +269,7 @@ echo {{ server }}
     fs.writeFileSync(
       runbookPath,
       `---
-vars:
+inputs:
   name: world
 ---
 ## Step 1
@@ -345,7 +345,7 @@ echo hello
     fs.writeFileSync(
       runbookPath,
       `---
-vars:
+inputs:
   greeting: hello
 ---
 ## Step 1
@@ -456,7 +456,7 @@ echo hello
     fs.writeFileSync(
       runbookPath,
       `---
-vars:
+inputs:
   Max: 5
 ---
 ## 1. Process batches
@@ -486,7 +486,7 @@ echo batch
     fs.writeFileSync(
       runbookPath,
       `---
-vars:
+inputs:
   greeting: hello
 ---
 ## Step 1
@@ -508,7 +508,7 @@ Say {{ greeting }}.
         runbookPath,
         `---
 name: meta
-vars:
+inputs:
   Target: ""
 ---
 ## 1. Execute

@@ -33,6 +33,7 @@ changesets
 cipherpowers
 cjs
 codecov
+coderabbit
 codeql
 commonjs
 coreutils
@@ -103,8 +104,10 @@ notavar
 NOTVALID
 nums
 opts
+parallelised
 parameterizing
 parseable
+pasteable
 perf
 persistable
 picomatch
@@ -191,3 +194,4 @@ worktrees
 xstate
 zod
 testctx
+finalvars

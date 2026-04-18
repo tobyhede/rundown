@@ -65,7 +65,7 @@ export function registerStopCommand(program: Command): void {
           const updatedState = await manager.update(state.id, {
             lastAction: { type: 'STOP' },
             lastResult: 'fail',
-            variables: { ...state.variables, stopped: true },
+            variables: { stopped: true },
           });
           await sessionService.popRunbook();
 

@@ -80,7 +80,6 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
       v !== null &&
       (v as Record<string, unknown>).kind === 'json-array-stream',
   ),
-  loadContextOutputs: jest.fn().mockResolvedValue({}),
   logger: { warn: jest.fn(), info: jest.fn(), debug: jest.fn(), error: jest.fn() },
   ...mockErrorHelpers,
 }));
@@ -103,6 +102,12 @@ jest.unstable_mockModule('../../src/helpers/resolve-runbook', () => ({
 jest.unstable_mockModule('../../src/services/execution', () => ({
   buildStepVariables: jest.fn().mockReturnValue({ Step: '1.1' }),
   runExecutionLoop: jest.fn().mockResolvedValue('done'),
+}));
+
+// Mock step-outputs
+jest.unstable_mockModule('../../src/helpers/step-outputs', () => ({
+  evaluateStepOutputs: jest.fn().mockReturnValue({}),
+  evaluateFrontmatterOutputs: jest.fn().mockReturnValue({}),
 }));
 
 // Mock execution-emitter
@@ -141,13 +146,14 @@ jest.unstable_mockModule('../../src/services/template-renderer', () => ({
   expandLoopVariables: jest.fn((text: string) => text),
   warnUnresolvedRunbookVariables: jest.fn().mockReturnValue([]),
   collectUnresolvedRunbookVariables: jest.fn().mockReturnValue(new Set()),
+  evaluateOutputExpression: jest.fn((expr: string) => expr),
 }));
 
 // Mock validate-frontmatter-vars
 jest.unstable_mockModule('../../src/helpers/validate-frontmatter-vars', () => ({
   validateFrontmatterVars: jest.fn().mockReturnValue([]),
   validateRequiredVars: jest.fn().mockReturnValue([]),
-  validateInputsDeclarations: jest.fn().mockReturnValue([]),
+  validateOutputsDeclarations: jest.fn().mockReturnValue([]),
 }));
 
 // Mock node:fs/promises
@@ -173,9 +179,10 @@ const {
   warnUnresolvedRunbookVariables,
   collectUnresolvedRunbookVariables,
 } = await import('../../src/services/template-renderer');
-const { validateFrontmatterVars, validateRequiredVars, validateInputsDeclarations } = await import(
+const { validateFrontmatterVars, validateRequiredVars, validateOutputsDeclarations } = await import(
   '../../src/helpers/validate-frontmatter-vars'
 );
+const { evaluateFrontmatterOutputs } = await import('../../src/helpers/step-outputs');
 const fsPromises = await import('node:fs/promises');
 const { prepareRunbook, startRunbook, buildContextVars, buildTemplateVars } = await import(
   '../../src/helpers/runbook-pipeline'
@@ -278,7 +285,8 @@ beforeEach(() => {
   (collectUnresolvedRunbookVariables as jest.Mock).mockReturnValue(new Set());
   (validateFrontmatterVars as jest.Mock).mockReturnValue([]);
   (validateRequiredVars as jest.Mock).mockReturnValue([]);
-  (validateInputsDeclarations as jest.Mock).mockReturnValue([]);
+  (validateOutputsDeclarations as jest.Mock).mockReturnValue([]);
+  (evaluateFrontmatterOutputs as jest.Mock).mockReturnValue({});
   (fsPromises.readFile as jest.Mock).mockResolvedValue('# Test\n\n## 1. Step\n- PASS CONTINUE');
   (
     parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
@@ -415,97 +423,13 @@ describe('prepareRunbook', () => {
     );
   });
 
-  it('merges published context OUTPUTS into inherited child variables', async () => {
-    resolveRunbookFile.mockResolvedValue({ path: '/test/child.md', source: 'project' });
-    (
-      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
-    ).mockReturnValue(mockParseResult());
-    (core.loadContextOutputs as jest.Mock).mockResolvedValue({
-      PlanPath: '/ctx/plan.json',
-      Tag: 'from-output',
-    });
-    // Inheritance now happens AFTER resolveVariables, keyed by the final
-    // ContextId from the resolved vars. Outputs whose keys are not already
-    // provided by a VARS channel are injected as a gap-filling pass.
-    (resolveVariables as jest.Mock).mockResolvedValue({
-      vars: { ContextId: 'ctx-parent', Region: 'us-west' },
-      sources: {},
-      warnings: [],
-      providedKeys: new Set(['ContextId', 'Region']),
-    });
-
-    const result = await prepareRunbook('child.md', {}, '/test', {
-      inheritedUserVars: {
-        ContextId: 'ctx-parent',
-        Region: 'us-west',
-      },
-    });
-
-    expect(result.ok).toBe(true);
-    expect(core.loadContextOutputs).toHaveBeenCalledWith('/test', 'ctx-parent');
-    expect(resolveVariables).toHaveBeenCalledWith(
-      expect.objectContaining({
-        inheritedVars: { ContextId: 'ctx-parent', Region: 'us-west' },
-      }),
-      '/test',
-      expect.anything(),
-    );
-    expect(substituteRunbookVariables).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        Tag: 'from-output',
-        PlanPath: '/ctx/plan.json',
-        'context.vars.Tag': 'from-output',
-        'context.vars.PlanPath': '/ctx/plan.json',
-      }),
-    );
-  });
-
-  it('inherits outputs from the child ContextId override, not the parent', async () => {
-    resolveRunbookFile.mockResolvedValue({ path: '/test/child.md', source: 'project' });
-    (
-      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
-    ).mockReturnValue(mockParseResult());
-    // Whichever ContextId the final templateVars holds is the one we load.
-    // Parent-context outputs must not bleed through when the child overrides ContextId.
-    (core.loadContextOutputs as jest.Mock).mockImplementation(async (_cwd, ctxId: string) => {
-      if (ctxId === 'ctx-child') return { Tag: 'from-child' };
-      if (ctxId === 'ctx-parent') return { Tag: 'from-parent' };
-      return {};
-    });
-    (resolveVariables as jest.Mock).mockResolvedValue({
-      vars: { ContextId: 'ctx-child' },
-      sources: {},
-      warnings: [],
-      providedKeys: new Set(['ContextId']),
-    });
-
-    const result = await prepareRunbook('child.md', {}, '/test', {
-      inheritedUserVars: { ContextId: 'ctx-parent' },
-    });
-
-    expect(result.ok).toBe(true);
-    // Only the child's ContextId is consulted — parent context outputs are not
-    // pre-merged into inheritedVars (which would mark them as "provided" and
-    // mask the new context's outputs).
-    expect(core.loadContextOutputs).toHaveBeenCalledWith('/test', 'ctx-child');
-    expect(core.loadContextOutputs).not.toHaveBeenCalledWith('/test', 'ctx-parent');
-    expect(substituteRunbookVariables).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        Tag: 'from-child',
-        'context.vars.Tag': 'from-child',
-      }),
-    );
-  });
-
-  it('passes parser frontmatter vars into variable resolution', async () => {
+  it('passes parser frontmatter inputs into variable resolution', async () => {
     resolveRunbookFile.mockResolvedValue({ path: '/test/good.md', source: 'project' });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue(
       mockParseResult({
-        frontmatter: { vars: { Region: 'us-west' } },
+        frontmatter: { inputs: { Region: '' } },
       }),
     );
 
@@ -513,33 +437,33 @@ describe('prepareRunbook', () => {
 
     expect(resolveVariables).toHaveBeenCalledWith(
       expect.objectContaining({
-        frontmatterVars: { Region: 'us-west' },
+        frontmatterVars: { Region: '' },
       }),
       '/test',
       expect.anything(),
     );
   });
 
-  it('returns VALIDATION_ERROR when frontmatter vars use reserved names', async () => {
+  it('returns VALIDATION_ERROR when frontmatter inputs use reserved names', async () => {
     resolveRunbookFile.mockResolvedValue({ path: '/test/reserved.md', source: 'project' });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue(
       mockParseResult({
-        frontmatter: { vars: { context: 'bad' } },
+        frontmatter: { inputs: { context: '' } },
       }),
     );
     (validateFrontmatterVars as jest.Mock).mockReturnValue([
       {
         severity: 'error',
         message:
-          'Frontmatter var "context" uses reserved runtime variable name. Reserved names (case-insensitive): step, index, context',
+          'Frontmatter input "context" uses reserved runtime variable name. Reserved names (case-insensitive): step, index, context',
       },
     ]);
 
     const result = await prepareRunbook('reserved.md', {}, '/test');
 
-    expect(validateFrontmatterVars).toHaveBeenCalledWith({ context: 'bad' });
+    expect(validateFrontmatterVars).toHaveBeenCalledWith({ context: '' });
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.code).toBe('VALIDATION_ERROR');
@@ -825,235 +749,6 @@ describe('prepareRunbook', () => {
       }),
     );
   });
-
-  it('resolves INPUTS from context outputs', async () => {
-    resolveRunbookFile.mockResolvedValue({ path: '/test/inputs.md', source: 'project' });
-    (
-      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
-    ).mockReturnValue(
-      mockParseResult({
-        frontmatter: { inputs: ['PlanPath'] },
-      }),
-    );
-    // ContextId must be present so the pipeline will look up context outputs
-    (resolveVariables as jest.Mock).mockResolvedValue({
-      vars: { ContextId: 'ctx-123' },
-      sources: {},
-      warnings: [],
-      providedKeys: new Set(),
-    });
-    (core.loadContextOutputs as jest.Mock).mockResolvedValue({
-      PlanPath: '/some/path/plan.json',
-    });
-
-    const result = await prepareRunbook('inputs.md', {}, '/test');
-
-    expect(result.ok).toBe(true);
-    // INPUTS-resolved var should be injected into the template vars passed to substitution
-    expect(substituteRunbookVariables).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        PlanPath: '/some/path/plan.json',
-      }),
-    );
-  });
-
-  it('does not let context outputs overwrite auto-injected CLAUDE_PLUGIN_ROOT on delegation child', async () => {
-    // Regression: INPUTS injection only consulted providedKeys, so keys already
-    // populated into mergedVariables *after* resolveVariables (like
-    // CLAUDE_PLUGIN_ROOT) could be silently clobbered by a stale context output.
-    resolveRunbookFile.mockResolvedValue({
-      path: '/home/user/.claude/extensions/rundown-plugin/runbooks/child.runbook.md',
-      source: 'plugin' as const,
-    });
-    (
-      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
-    ).mockReturnValue(mockParseResult({ frontmatter: null }));
-    (resolveVariables as jest.Mock).mockResolvedValue({
-      vars: { ContextId: 'ctx-123' },
-      sources: {},
-      warnings: [],
-      providedKeys: new Set(),
-    });
-    (core.loadContextOutputs as jest.Mock).mockResolvedValue({
-      CLAUDE_PLUGIN_ROOT: '/stale/from/context/outputs/',
-    });
-
-    // Simulate delegation child so undeclared-key inheritance kicks in
-    const result = await prepareRunbook('rundown:child', {}, '/test', {
-      inheritedUserVars: {},
-    });
-
-    expect(result.ok).toBe(true);
-    const call = (substituteRunbookVariables as jest.Mock).mock.calls.at(-1);
-    expect(call?.[1]).toEqual(
-      expect.objectContaining({
-        CLAUDE_PLUGIN_ROOT: '/home/user/.claude/extensions/rundown-plugin/',
-      }),
-    );
-  });
-
-  it('delegation-inherited undeclared variable satisfies required check', async () => {
-    // Regression: a delegated child without `inputs:` could still receive
-    // vars from the parent's context OUTPUTS, but `inputsResolvedKeys` only
-    // tracked declared inputs, so `required:` validation spuriously failed.
-    resolveRunbookFile.mockResolvedValue({ path: '/test/child.md', source: 'project' });
-    (
-      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
-    ).mockReturnValue(
-      mockParseResult({
-        // Note: required but NOT declared as `inputs:` — must be satisfied via
-        // delegation inheritance alone.
-        frontmatter: { required: ['PlanPath'] },
-      }),
-    );
-    (resolveVariables as jest.Mock).mockResolvedValue({
-      vars: { ContextId: 'ctx-123' },
-      sources: {},
-      warnings: [],
-      providedKeys: new Set(),
-    });
-    (core.loadContextOutputs as jest.Mock).mockResolvedValue({
-      PlanPath: '/inherited/plan.json',
-    });
-
-    const result = await prepareRunbook('child.md', {}, '/test', {
-      inheritedUserVars: {},
-    });
-
-    expect(result.ok).toBe(true);
-  });
-
-  it('INPUTS-resolved variable satisfies required check', async () => {
-    resolveRunbookFile.mockResolvedValue({ path: '/test/inputs-req.md', source: 'project' });
-    (
-      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
-    ).mockReturnValue(
-      mockParseResult({
-        frontmatter: { inputs: ['PlanPath'], required: ['PlanPath'] },
-      }),
-    );
-    (resolveVariables as jest.Mock).mockResolvedValue({
-      vars: { ContextId: 'ctx-123' },
-      sources: {},
-      warnings: [],
-      providedKeys: new Set(), // NOT provided via CLI — must come from context outputs
-    });
-    (core.loadContextOutputs as jest.Mock).mockResolvedValue({
-      PlanPath: '/some/path/plan.json',
-    });
-
-    const result = await prepareRunbook('inputs-req.md', {}, '/test');
-
-    // Without INPUTS resolution, this would fail as MISSING_REQUIRED_VARS
-    expect(result.ok).toBe(true);
-  });
-
-  it('does not inject INPUTS when frontmatter.inputs is absent', async () => {
-    resolveRunbookFile.mockResolvedValue({ path: '/test/no-inputs.md', source: 'project' });
-    (
-      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
-    ).mockReturnValue(mockParseResult({ frontmatter: null }));
-    (resolveVariables as jest.Mock).mockResolvedValue({
-      vars: { ContextId: 'ctx-123' },
-      sources: {},
-      warnings: [],
-      providedKeys: new Set(),
-    });
-    (core.loadContextOutputs as jest.Mock).mockResolvedValue({
-      PlanPath: '/some/path/plan.json',
-      Region: 'us-west',
-    });
-
-    const result = await prepareRunbook('no-inputs.md', {}, '/test');
-
-    expect(result.ok).toBe(true);
-    // Context outputs must NOT be injected when no inputs declared
-    expect(substituteRunbookVariables).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.not.objectContaining({
-        PlanPath: '/some/path/plan.json',
-      }),
-    );
-    expect(substituteRunbookVariables).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.not.objectContaining({
-        Region: 'us-west',
-      }),
-    );
-  });
-
-  it('skips INPUTS injection when ContextId is not in templateVars', async () => {
-    resolveRunbookFile.mockResolvedValue({ path: '/test/no-ctx.md', source: 'project' });
-    (
-      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
-    ).mockReturnValue(
-      mockParseResult({
-        frontmatter: { inputs: ['PlanPath'] },
-      }),
-    );
-    // Resolve WITHOUT ContextId
-    (resolveVariables as jest.Mock).mockResolvedValue({
-      vars: { SomeVar: 'value' },
-      sources: {},
-      warnings: [],
-      providedKeys: new Set(),
-    });
-
-    const result = await prepareRunbook('no-ctx.md', {}, '/test');
-
-    expect(result.ok).toBe(true);
-    expect(core.loadContextOutputs).not.toHaveBeenCalled();
-  });
-
-  it('only injects INPUTS keys present in context outputs; absent keys not injected', async () => {
-    resolveRunbookFile.mockResolvedValue({ path: '/test/partial.md', source: 'project' });
-    (
-      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
-    ).mockReturnValue(
-      mockParseResult({
-        frontmatter: { inputs: ['Alpha', 'Beta'] },
-      }),
-    );
-    (resolveVariables as jest.Mock).mockResolvedValue({
-      vars: { ContextId: 'ctx-123' },
-      sources: {},
-      warnings: [],
-      providedKeys: new Set(),
-    });
-    (core.loadContextOutputs as jest.Mock).mockResolvedValue({ Alpha: 'found' });
-
-    const result = await prepareRunbook('partial.md', {}, '/test');
-
-    expect(result.ok).toBe(true);
-    // Inspect the last call directly; toHaveBeenCalledWith(not.objectContaining)
-    // would be satisfied by any unrelated call that didn't contain Beta.
-    const lastCall = (substituteRunbookVariables as jest.Mock).mock.calls.at(-1);
-    expect(lastCall?.[1]).toEqual(expect.objectContaining({ Alpha: 'found' }));
-    expect(lastCall?.[1]).not.toHaveProperty('Beta');
-  });
-
-  it('returns VALIDATION_ERROR when validateInputsDeclarations finds invalid identifier', async () => {
-    resolveRunbookFile.mockResolvedValue({ path: '/test/bad-inputs.md', source: 'project' });
-    (
-      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
-    ).mockReturnValue(
-      mockParseResult({
-        frontmatter: { inputs: ['BadId!'] },
-      }),
-    );
-    (validateInputsDeclarations as jest.Mock).mockReturnValueOnce([
-      { severity: 'error', message: 'Input variable "BadId!" is not a valid identifier' },
-    ]);
-
-    const result = await prepareRunbook('bad-inputs.md', {}, '/test');
-
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.code).toBe('VALIDATION_ERROR');
-      expect(result.error).toContain('not a valid identifier');
-    }
-  });
 });
 
 describe('startRunbook', () => {
@@ -1152,6 +847,85 @@ describe('startRunbook', () => {
     expect(result.ok).toBe(true);
     expect(mockInitSubsteps).toHaveBeenCalledWith('sub-id', substeps, '1|');
     expect(mockUpdate).toHaveBeenCalledWith('sub-id', { substep: 'a' });
+  });
+
+  it('calls evaluateFrontmatterOutputs when runbook completes with declared outputs', async () => {
+    (runExecutionLoop as jest.Mock).mockResolvedValue('done');
+    (evaluateFrontmatterOutputs as jest.Mock).mockReturnValue({ PlanPath: '/work/plan.json' });
+
+    const mockUpdate = jest.fn<any>().mockResolvedValue(undefined);
+
+    const ctx = {
+      output: { flush: jest.fn() } as any,
+      manager: {
+        create: jest
+          .fn<any>()
+          .mockResolvedValue({ id: 'new-id', title: 'Test', substeps: undefined }),
+        load: jest.fn<any>().mockResolvedValue({ variables: {} }),
+        update: mockUpdate,
+        initializeSubsteps: jest.fn<any>().mockResolvedValue(undefined),
+      } as any,
+      actorService: { initializeState: jest.fn<any>().mockResolvedValue(undefined) } as any,
+      sessionService: { pushRunbook: jest.fn<any>().mockResolvedValue(undefined) } as any,
+      lifecycleService: makeLifecycle(),
+      cwd: '/test',
+    };
+
+    const prepared = {
+      filePath: '/test/runbook.md',
+      rawContent: '# Test',
+      runbook: { steps: [makeStep()] } as any,
+      mergedVariables: { PlanPath: '/work/plan.json' },
+      sources: {},
+      frontmatter: { outputs: [{ name: 'PlanPath' }] },
+    };
+
+    const result = await startRunbook(ctx as any, prepared as any, { file: 'runbook.md' });
+
+    expect(result.ok).toBe(true);
+    expect(evaluateFrontmatterOutputs).toHaveBeenCalledWith(
+      [{ name: 'PlanPath' }],
+      expect.objectContaining({ PlanPath: '/work/plan.json' }),
+      expect.anything(),
+    );
+    // finalVars persisted to state
+    expect(mockUpdate).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ finalVars: { PlanPath: '/work/plan.json' } }),
+    );
+  });
+
+  it('does not call evaluateFrontmatterOutputs when loop result is not done', async () => {
+    (runExecutionLoop as jest.Mock).mockResolvedValue('stopped');
+
+    const ctx = {
+      output: { flush: jest.fn() } as any,
+      manager: {
+        create: jest
+          .fn<any>()
+          .mockResolvedValue({ id: 'new-id', title: 'Test', substeps: undefined }),
+        load: jest.fn<any>().mockResolvedValue(null),
+        update: jest.fn<any>().mockResolvedValue(undefined),
+        initializeSubsteps: jest.fn<any>().mockResolvedValue(undefined),
+      } as any,
+      actorService: { initializeState: jest.fn<any>().mockResolvedValue(undefined) } as any,
+      sessionService: { pushRunbook: jest.fn<any>().mockResolvedValue(undefined) } as any,
+      lifecycleService: makeLifecycle(),
+      cwd: '/test',
+    };
+
+    const prepared = {
+      filePath: '/test/runbook.md',
+      rawContent: '# Test',
+      runbook: { steps: [makeStep()] } as any,
+      mergedVariables: {},
+      sources: {},
+      frontmatter: { outputs: [{ name: 'PlanPath' }] },
+    };
+
+    await startRunbook(ctx as any, prepared as any, { file: 'runbook.md' });
+
+    expect(evaluateFrontmatterOutputs).not.toHaveBeenCalled();
   });
 });
 
@@ -1617,21 +1391,16 @@ describe('claimAndLaunch', () => {
       Region: 'us-west',
       Tag: 'from-parent',
     });
-    (core.loadContextOutputs as jest.Mock).mockResolvedValue({
-      Tag: 'from-output',
-      PlanPath: '/ctx/plan.json',
-    });
     (resolveVariables as jest.Mock).mockResolvedValue({
       vars: {
         RunId: 'child-run',
         ContextId: 'ctx-parent',
         Region: 'us-west',
-        Tag: 'from-output',
-        PlanPath: '/ctx/plan.json',
+        Tag: 'from-parent',
       },
       sources: {},
       warnings: [],
-      providedKeys: new Set(['RunId', 'ContextId', 'Region', 'Tag', 'PlanPath']),
+      providedKeys: new Set(['RunId', 'ContextId', 'Region', 'Tag']),
     });
 
     const mockManager = {
@@ -1666,11 +1435,7 @@ describe('claimAndLaunch', () => {
     const result = await claimAndLaunch(ctx as any, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
 
     expect(result.ok).toBe(true);
-    // Inheritance is now keyed by the resolved ContextId after variable
-    // resolution, not by pre-merging into inheritedVars. The inherited vars
-    // passed into resolveVariables are the parent vars untouched; outputs flow
-    // in via the post-resolution stage 3.5 pass.
-    expect(core.loadContextOutputs).toHaveBeenCalledWith('/test', 'ctx-parent');
+    // Inherited vars are passed into resolveVariables untouched
     const resolveCall = (resolveVariables as jest.Mock).mock.calls.at(-1);
     expect(resolveCall?.[0]).toEqual(
       expect.objectContaining({

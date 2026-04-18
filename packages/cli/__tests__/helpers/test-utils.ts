@@ -414,6 +414,8 @@ export async function getAgentActiveState(
 
 /**
  * Get all runbook states.
+ *
+ * Alias for getAllRunbookStates — prefer getAllRunbookStates in new tests.
  */
 export async function getAllStates(workspace: TestWorkspace): Promise<Record<string, unknown>[]> {
   try {
@@ -434,6 +436,73 @@ export async function getAllStates(workspace: TestWorkspace): Promise<Record<str
   } catch {
     return [];
   }
+}
+
+/**
+ * Get all runbook states from the workspace runs directory.
+ *
+ * Returns an array of parsed state objects. OUTPUTS directives write to
+ * `state.variables` via SET_VARIABLES events (no file I/O side-channel).
+ */
+export async function getAllRunbookStates(
+  workspace: TestWorkspace,
+): Promise<Record<string, unknown>[]> {
+  try {
+    const files = await readdir(workspace.statePath());
+    const states: Record<string, unknown>[] = [];
+
+    for (const file of files) {
+      if (file.endsWith('.json')) {
+        const id = file.replace('.json', '');
+        const state = await readRunbookState(workspace, id);
+        if (state) {
+          states.push(state);
+        }
+      }
+    }
+
+    return states;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Get the active runbook state by reading the session and resolving the top of the default stack.
+ */
+export async function getActiveRunbookState(
+  workspace: TestWorkspace,
+): Promise<Record<string, unknown> | null> {
+  return getActiveState(workspace);
+}
+
+/**
+ * Parse JSON output from CLI commands, handling both compact JSONL (one JSON
+ * object per line) and pretty-printed single JSON object output.
+ *
+ * @param stdout - Raw stdout string from CLI execution
+ * @returns Array of parsed JSON objects
+ */
+export function parseJsonOutput(stdout: string): Record<string, unknown>[] {
+  const results: Record<string, unknown>[] = [];
+  for (const line of stdout.trim().split('\n')) {
+    if (line.startsWith('{')) {
+      try {
+        results.push(JSON.parse(line) as Record<string, unknown>);
+      } catch {
+        // Skip lines that fail (e.g., opening `{` of a pretty-printed multi-line object)
+      }
+    }
+  }
+  if (results.length === 0) {
+    try {
+      const obj = JSON.parse(stdout.trim()) as Record<string, unknown>;
+      results.push(obj);
+    } catch {
+      // Not valid JSON at all
+    }
+  }
+  return results;
 }
 
 /**
@@ -582,7 +651,7 @@ export interface StepConfig {
 export interface CreateRunbookOptions {
   /** Runbook name (appears in frontmatter) */
   name?: string;
-  /** Template variables (appears in frontmatter vars:) */
+  /** Template variables (appears in frontmatter inputs:) */
   vars?: Record<string, string | number | boolean>;
   /** Runbook steps */
   steps: StepConfig[];
@@ -614,7 +683,7 @@ export function createRunbook(options: CreateRunbookOptions): string {
     lines.push('---');
     if (name) lines.push(`name: ${name}`);
     if (vars && Object.keys(vars).length > 0) {
-      lines.push('vars:');
+      lines.push('inputs:');
       for (const [key, value] of Object.entries(vars)) {
         lines.push(`  ${key}: ${String(value)}`);
       }

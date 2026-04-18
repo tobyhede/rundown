@@ -1,33 +1,57 @@
 ---
 name: End-to-End Test
-description: Run a target runbook then collect execution feedback
-tags:
-  - meta
-  - feedback
-required:
-  - TargetRunbook
+description: Run multiple runbooks and test the end-to-end process.
 ---
 
 # End-to-End Test
 
-## 1. Run the target runbook
+Run multiple runbooks, reviewing and testing the end-to-end process.
 
+
+## 1. Read the output schema
+- PASS CONTINUE
+- FAIL STOP
+
+```prompt
+{{ CLAUDE_PLUGIN_ROOT }}/schemas/review.schema.json
+```
+
+## 2. Write Plan
 - PASS ALL CONTINUE
 - FAIL ANY STOP
 
-- {{ TargetRunbook }}
+Delegate a subagent to write a plan.
 
-## 2. Collect feedback
-- PASS COMPLETE
-- FAIL COMPLETE
+- planning/write-plan.runbook.md
 
-Review each step for clarity and friction.
-Note any instructions that were ambiguous, missing, or required improvisation.
-Include an overall assessment of the skill and runbook quality.
-Write your feedback to the output path using the Feedback JSON schema.
 
-Schema: `{{ CLAUDE_PLUGIN_ROOT }}/schemas/feedback.schema.json`
+## 3. Review Plan
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+Delegate a subagent to review the plan.
+
+- planning/review-plan.runbook.md
+
+
+
+## 4. Write the review of the end-to-end Rundown workflow
+- PASS CONTINUE
+- FAIL STOP
+
+Write the review to the output path as JSON.
+Follow the review output schema.
 
 ```bash
-rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file feedback.json
+rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file review-end-to-end-{{ RunId }}.json
 ```
+
+
+## 5. Check Schema
+- PASS COMPLETE
+- FAIL GOTO 4
+
+```bash
+rdx --check "$(rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file review-end-to-end-{{ RunId }}.json)"
+```
+

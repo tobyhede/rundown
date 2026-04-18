@@ -125,7 +125,52 @@ rd abort <token> --force   # Cancel already-claimed delegation
 
 ## Variable Pass-Through
 
-`ContextId` provides shared identity across a delegation tree — children inherit the parent's ContextId. Override for meaningful names: `--var ContextId=sprint-42`. Each child gets its own `RunId`; use `ContextId` to correlate across the tree.
+`ContextId` provides shared identity across a delegation tree — children inherit the parent's ContextId automatically via `--var`. Override for meaningful names: `--var ContextId=sprint-42`. Each child gets its own `RunId`; use `ContextId` to correlate across the tree.
+
+## Context Passing (INPUTS / OUTPUTS)
+
+`ContextId` inheritance enables data to flow between steps via OUTPUTS and INPUTS — no manual variable threading required.
+
+**How it works:**
+1. A parent step writes values with OUTPUTS (on PASS) → stored to `.rundown/contexts/<ContextId>/outputs.json`
+2. A child runbook (or subsequent step) declares INPUTS → values are injected from the same `outputs.json`
+3. Both share `ContextId`, so they read/write the same context store
+
+**Example — write-plan produces PlanPath, review-plan consumes it:**
+
+```markdown
+## 8. Write the plan          ← in write-plan.runbook.md
+- OUTPUTS
+  - PlanPath {{ path "plan.json" }}
+- PASS CONTINUE
+- FAIL STOP
+```
+
+```yaml
+# review-plan.runbook.md frontmatter
+required:
+  - PlanPath
+inputs:
+  - PlanPath
+```
+
+```markdown
+## 1. Load plan               ← in review-plan.runbook.md
+- INPUTS
+  - PlanPath
+- PASS CONTINUE
+- FAIL STOP
+
+Read the plan from `{{ PlanPath }}`.
+```
+
+When `write-plan` is delegated first and `review-plan` is delegated second using the same ContextId, `PlanPath` flows automatically — no `--var PlanPath=...` needed.
+
+**Key rules:**
+- OUTPUTS fire only on PASS; FAIL skips them
+- INPUTS sit below CLI `--var` in precedence — `--var` always wins
+- Frontmatter `inputs:` injects at runbook startup (before step 1)
+- `required:` causes a hard error if the variable is missing from all sources
 
 ## Patterns
 

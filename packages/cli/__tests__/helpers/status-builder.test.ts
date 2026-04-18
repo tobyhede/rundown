@@ -333,3 +333,60 @@ describe('parentLinkage projection', () => {
     });
   });
 });
+
+describe('vars field', () => {
+  beforeEach(() => {
+    (getRunbookFromState as jest.Mock).mockReturnValue([]);
+    (core.countNumberedSteps as jest.Mock).mockReturnValue(0);
+    (buildMetadata as jest.Mock).mockReturnValue({
+      file: 'test.runbook.md',
+      state: '.rundown/runs/test-id.json',
+    });
+    (getStepRetryMax as jest.Mock).mockReturnValue(0);
+    (formatActionForDisplay as jest.Mock).mockReturnValue('CONTINUE');
+  });
+
+  it('merges templateVars (scalars) and state.variables, state.variables wins on collision', () => {
+    const state = makeState({
+      templateVars: { environment: 'staging', port: 3000 },
+      variables: { environment: 'production', PlanPath: '/work/plan.json' },
+    });
+    const result = buildActiveStatus(state, '/project');
+    expect(result.vars).toEqual({
+      environment: 'production',
+      port: '3000',
+      PlanPath: '/work/plan.json',
+    });
+  });
+
+  it('excludes non-scalar templateVars (arrays, objects)', () => {
+    const state = makeState({
+      templateVars: {
+        items: { kind: 'json-array', value: ['a', 'b'] },
+        name: 'test',
+      },
+      variables: {},
+    });
+    const result = buildActiveStatus(state, '/project');
+    expect(result.vars).toEqual({ name: 'test' });
+    expect(result.vars?.items).toBeUndefined();
+  });
+
+  it('returns undefined vars when both templateVars and variables are empty', () => {
+    const state = makeState({ templateVars: {}, variables: {} });
+    const result = buildActiveStatus(state, '/project');
+    expect(result.vars).toBeUndefined();
+  });
+
+  it('buildStashedStatus also includes vars field', () => {
+    const state = makeState({
+      templateVars: { environment: 'staging' },
+      variables: { PlanPath: '/work/plan.json' },
+    });
+    const result = buildStashedStatus(state, '/project');
+    expect(result.vars).toEqual({
+      environment: 'staging',
+      PlanPath: '/work/plan.json',
+    });
+  });
+});

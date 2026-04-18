@@ -105,7 +105,7 @@ Template variables use Handlebars syntax `{{variableName}}` and are expanded at 
 
 - [docs/SPEC.md §6 Templating](docs/SPEC.md#6-templating) — precedence order, reserved keys, required variables
 - [docs/SPEC.md §6.1 Built-in Variables](docs/SPEC.md#61-built-in-variables) — `Date`, `Branch`, `WorkPath`, `RunId`, `ContextId`, `Step`, `Index`, `context.current.*`, plus plugin variables (`CLAUDE_PLUGIN_ROOT`)
-- [docs/SPEC.md §7 Context Passing](docs/SPEC.md#7-context-passing-inputs--outputs) — INPUTS / OUTPUTS directives and the `ContextId` delegation contract
+- [docs/SPEC.md §7 Context Passing](docs/SPEC.md#7-context-passing-outputs) — OUTPUTS directives and frontmatter `outputs:` / `inputs:` fields
 
 **CLI Example:**
 ```bash
@@ -120,7 +120,7 @@ RD_VAR_environment=staging rundown run deploy.md                 # Environment b
 ```yaml
 ---
 name: my-runbook
-vars:
+inputs:
   environment: development
   port: 3000
   debug: true
@@ -134,12 +134,12 @@ Server running on port {{ port }} in {{ environment }} mode.
 Deploy plan at {{ PlanPath }}.
 ```
 
-The `required` field declares variables the caller must provide. Required variables must not appear in `vars:` (they have no default). Missing required variables produce a hard error at resolution time. Provide them via `--var`, `--var-file`, config, `RD_VAR_*` env vars, or delegation inheritance.
+The `required` field declares variables the caller must provide. Required variables must not appear in `inputs:` (they have no default). Missing required variables produce a hard error at resolution time. Provide them via `--var`, `--var-file`, config, `RD_VAR_*` env vars, or delegation inheritance.
 
 **Notes:**
 - Variable names must match pattern `/^[a-zA-Z_][a-zA-Z0-9_]*$/`
 - Undefined variables are preserved as literal `{{variable}}` text
-- Frontmatter vars support string, number, and boolean values (converted to strings). For arrays, use `--var-json` inline or `.rundown/config.yaml` / `--var-file`. For `file:` data sources, use `.rundown/config.yaml` or `--var-file`
+- Frontmatter inputs support string, number, and boolean values (converted to strings). For arrays, use `--var-json` inline or `.rundown/config.yaml` / `--var-file`. For `file:` data sources, use `.rundown/config.yaml` or `--var-file`
 - `--var KEY` (without `=`) inherits the value of environment variable `KEY`
 
 ### Data Sources

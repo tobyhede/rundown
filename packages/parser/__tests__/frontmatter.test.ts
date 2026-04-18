@@ -96,10 +96,10 @@ description: Test
     expect(result.content.trim()).toBe('');
   });
 
-  it('extracts frontmatter with vars field containing strings', () => {
+  it('extracts frontmatter with inputs field containing strings', () => {
     const markdown = `---
 name: my-runbook
-vars:
+inputs:
   greeting: Hello
   name: World
 ---
@@ -109,16 +109,16 @@ vars:
 
     expect(result.frontmatter).not.toBeNull();
     expect(result.frontmatter?.name).toBe('my-runbook');
-    expect(result.frontmatter?.vars).toEqual({
+    expect(result.frontmatter?.inputs).toEqual({
       greeting: 'Hello',
       name: 'World',
     });
   });
 
-  it('extracts frontmatter with vars field containing numbers', () => {
+  it('extracts frontmatter with inputs field containing numbers', () => {
     const markdown = `---
 name: my-runbook
-vars:
+inputs:
   port: 3000
   ratio: 1.618
 ---
@@ -127,16 +127,16 @@ vars:
     const result = extractFrontmatter(markdown);
 
     expect(result.frontmatter).not.toBeNull();
-    expect(result.frontmatter?.vars).toEqual({
+    expect(result.frontmatter?.inputs).toEqual({
       port: 3000,
       ratio: 1.618,
     });
   });
 
-  it('extracts frontmatter with vars field containing booleans', () => {
+  it('extracts frontmatter with inputs field containing booleans', () => {
     const markdown = `---
 name: my-runbook
-vars:
+inputs:
   debug: true
   production: false
 ---
@@ -145,16 +145,16 @@ vars:
     const result = extractFrontmatter(markdown);
 
     expect(result.frontmatter).not.toBeNull();
-    expect(result.frontmatter?.vars).toEqual({
+    expect(result.frontmatter?.inputs).toEqual({
       debug: true,
       production: false,
     });
   });
 
-  it('extracts frontmatter with vars field containing mixed types', () => {
+  it('extracts frontmatter with inputs field containing mixed types', () => {
     const markdown = `---
 name: my-runbook
-vars:
+inputs:
   name: test-app
   port: 8080
   debug: true
@@ -164,30 +164,30 @@ vars:
     const result = extractFrontmatter(markdown);
 
     expect(result.frontmatter).not.toBeNull();
-    expect(result.frontmatter?.vars).toEqual({
+    expect(result.frontmatter?.inputs).toEqual({
       name: 'test-app',
       port: 8080,
       debug: true,
     });
   });
 
-  it('extracts frontmatter with empty vars object', () => {
+  it('extracts frontmatter with empty inputs object', () => {
     const markdown = `---
 name: my-runbook
-vars: {}
+inputs: {}
 ---
 # Content`;
 
     const result = extractFrontmatter(markdown);
 
     expect(result.frontmatter).not.toBeNull();
-    expect(result.frontmatter?.vars).toEqual({});
+    expect(result.frontmatter?.inputs).toBeUndefined();
   });
 
-  it('drops vars when containing invalid types (arrays)', () => {
+  it('collapses entire inputs: field to undefined when values are invalid types (arrays)', () => {
     const markdown = `---
 name: my-runbook
-vars:
+inputs:
   items:
     - one
     - two
@@ -196,17 +196,17 @@ vars:
 
     const result = extractFrontmatter(markdown);
 
-    // Invalid vars dropped, valid name preserved
+    // inputs: fails Zod record validation entirely when values are non-scalar — whole field collapses to undefined via .catch(undefined)
     expect(result.frontmatter).not.toBeNull();
     expect(result.frontmatter?.name).toBe('my-runbook');
-    expect(result.frontmatter?.vars).toBeUndefined();
+    expect(result.frontmatter?.inputs).toBeUndefined();
     expect(result.content.trim()).toBe('# Content');
   });
 
-  it('drops vars when containing invalid types (nested objects)', () => {
+  it('collapses entire inputs: field to undefined when values are invalid types (nested objects)', () => {
     const markdown = `---
 name: my-runbook
-vars:
+inputs:
   config:
     nested: value
 ---
@@ -214,10 +214,10 @@ vars:
 
     const result = extractFrontmatter(markdown);
 
-    // Invalid vars dropped, valid name preserved
+    // inputs: fails Zod record validation entirely when values are non-scalar — whole field collapses to undefined via .catch(undefined)
     expect(result.frontmatter).not.toBeNull();
     expect(result.frontmatter?.name).toBe('my-runbook');
-    expect(result.frontmatter?.vars).toBeUndefined();
+    expect(result.frontmatter?.inputs).toBeUndefined();
     expect(result.content.trim()).toBe('# Content');
   });
 
@@ -246,7 +246,7 @@ another_field: 123
     const markdown = `---
 name: test-runbook
 inputs:
-  - PlanPath
+  PlanPath: /default/path
 required:
   - Region
 skill: my-skill
@@ -255,7 +255,7 @@ skill: my-skill
 
     const result = extractFrontmatter(markdown);
 
-    expect(result.frontmatter?.inputs).toEqual(['PlanPath']);
+    expect(result.frontmatter?.inputs).toEqual({ PlanPath: '/default/path' });
     expect(result.frontmatter?.required).toEqual(['Region']);
     expect(result.frontmatter).toHaveProperty('skill', 'my-skill');
   });
@@ -567,10 +567,10 @@ describe('required field', () => {
     expect(diagnostics[0].message).toMatch(/required\[0\].*not a valid identifier/);
   });
 
-  it('coexists with vars', () => {
-    const md = `---\nname: test\nvars:\n  port: 3000\nrequired:\n  - PlanPath\n---\n# Content`;
+  it('coexists with inputs', () => {
+    const md = `---\nname: test\ninputs:\n  port: 3000\nrequired:\n  - PlanPath\n---\n# Content`;
     const { frontmatter } = extractFrontmatter(md);
-    expect(frontmatter?.vars).toEqual({ port: 3000 });
+    expect(frontmatter?.inputs).toEqual({ port: 3000 });
     expect(frontmatter?.required).toEqual(['PlanPath']);
   });
 
@@ -599,5 +599,181 @@ describe('required field', () => {
         message: expect.stringMatching(/bad-name.*not a valid identifier/),
       }),
     ]);
+  });
+});
+
+describe('extractFrontmatter() — case-insensitive keys', () => {
+  it('parses INPUTS: (uppercase) identically to inputs:', () => {
+    const md = `---\nINPUTS:\n  env: staging\n---\n# Content`;
+    const { frontmatter, diagnostics } = extractFrontmatter(md);
+    expect(diagnostics).toHaveLength(0);
+    expect(frontmatter?.inputs).toEqual({ env: 'staging' });
+  });
+
+  it('parses Inputs: (mixed case) identically to inputs:', () => {
+    const md = `---\nInputs:\n  region: us-east-1\n---\n# Content`;
+    const { frontmatter } = extractFrontmatter(md);
+    expect(frontmatter?.inputs).toEqual({ region: 'us-east-1' });
+  });
+
+  it('parses REQUIRED: (uppercase) identically to required:', () => {
+    const md = `---\nREQUIRED:\n  - PlanPath\n---\n# Content`;
+    const { frontmatter } = extractFrontmatter(md);
+    expect(frontmatter?.required).toEqual(['PlanPath']);
+  });
+
+  it('parses NAME: (uppercase) identically to name:', () => {
+    const md = `---\nNAME: my-runbook\n---\n# Content`;
+    const { frontmatter } = extractFrontmatter(md);
+    expect(frontmatter?.name).toBe('my-runbook');
+  });
+
+  it('first-occurrence wins on key collision (inputs: + INPUTS:)', () => {
+    const md = `---\ninputs:\n  env: first\nINPUTS:\n  env: second\n---\n# Content`;
+    const { frontmatter } = extractFrontmatter(md);
+    // YAML preserves the first key; second is dropped
+    expect(frontmatter?.inputs).toEqual({ env: 'first' });
+  });
+
+  it('preserves unknown passthrough keys unchanged', () => {
+    const md = `---\nname: test\nMyCustomField: hello\n---\n# Content`;
+    const { frontmatter } = extractFrontmatter(md);
+    expect((frontmatter as any)?.MyCustomField).toBe('hello');
+  });
+});
+
+describe('inputs: field (new — default variable values)', () => {
+  it('parses inputs: as Record<string, string|number|boolean>', () => {
+    const markdown = `---
+inputs:
+  environment: staging
+  port: 3000
+  debug: true
+---
+# Test`;
+    const { frontmatter, diagnostics } = extractFrontmatter(markdown);
+    expect(diagnostics).toHaveLength(0);
+    expect(frontmatter?.inputs).toEqual({
+      environment: 'staging',
+      port: 3000,
+      debug: true,
+    });
+  });
+
+  it('filters null values per-entry (PlanPath: with no value = null in YAML)', () => {
+    const markdown = `---
+inputs:
+  environment: staging
+  PlanPath:
+---
+# Test`;
+    const { frontmatter, diagnostics } = extractFrontmatter(markdown);
+    expect(diagnostics).toHaveLength(0);
+    // null value filtered; scalar value kept
+    expect(frontmatter?.inputs).toEqual({ environment: 'staging' });
+    // PlanPath key is absent (filtered), not present as null
+    expect((frontmatter?.inputs as Record<string, unknown>).PlanPath).toBeUndefined();
+  });
+
+  it('treats vars: as unknown passthrough (not a known field)', () => {
+    const markdown = `---
+vars:
+  old: value
+---
+# Test`;
+    const { frontmatter } = extractFrontmatter(markdown);
+    // vars: is no longer a known field — it passes through as-is
+    expect((frontmatter as Record<string, unknown>).vars).toEqual({ old: 'value' });
+    expect(frontmatter?.inputs).toBeUndefined();
+  });
+
+  it('returns undefined when all inputs: values are null (all keys with no value)', () => {
+    const markdown = `---
+inputs:
+  PlanPath:
+  OtherVar:
+---
+# Test`;
+    const { frontmatter, diagnostics } = extractFrontmatter(markdown);
+    expect(diagnostics).toHaveLength(0);
+    expect(frontmatter?.inputs).toBeUndefined();
+  });
+});
+
+describe('extractFrontmatter() — outputs field', () => {
+  it('parses outputs: with naked-form entries', () => {
+    const md = `---\noutputs:\n  - PlanPath\n---\n# Content`;
+    const { frontmatter, diagnostics } = extractFrontmatter(md);
+    expect(diagnostics).toHaveLength(0);
+    expect(frontmatter?.outputs).toEqual([{ name: 'PlanPath' }]);
+  });
+
+  it('parses OUTPUTS: (uppercase) identically to outputs:', () => {
+    const md = `---\nOUTPUTS:\n  - PlanPath\n---\n# Content`;
+    const { frontmatter, diagnostics } = extractFrontmatter(md);
+    expect(diagnostics).toHaveLength(0);
+    expect(frontmatter?.outputs).toEqual([{ name: 'PlanPath' }]);
+  });
+
+  it('parses Outputs: (mixed case)', () => {
+    const md = `---\nOutputs:\n  - ResultFile\n---\n# Content`;
+    const { frontmatter } = extractFrontmatter(md);
+    expect(frontmatter?.outputs).toEqual([{ name: 'ResultFile' }]);
+  });
+
+  it('parses outputs: with with-value form entries', () => {
+    const md = `---\noutputs:\n  - 'PlanPath {{ path "plan.json" }}'\n---\n# Content`;
+    const { frontmatter, diagnostics } = extractFrontmatter(md);
+    expect(diagnostics).toHaveLength(0);
+    expect(frontmatter?.outputs).toHaveLength(1);
+    expect(frontmatter?.outputs?.[0].name).toBe('PlanPath');
+    expect(frontmatter?.outputs?.[0].value).toBe('{{ path "plan.json" }}');
+  });
+
+  it('parses mixed naked and with-value entries', () => {
+    const md = `---\noutputs:\n  - NakedVar\n  - 'WithValue {{ path "out.json" }}'\n---\n# Content`;
+    const { frontmatter } = extractFrontmatter(md);
+    expect(frontmatter?.outputs).toHaveLength(2);
+    expect(frontmatter?.outputs?.[0]).toEqual({ name: 'NakedVar' });
+    expect(frontmatter?.outputs?.[1].name).toBe('WithValue');
+  });
+
+  it('emits error diagnostic for reserved name in outputs', () => {
+    const md = `---\noutputs:\n  - Step\n---\n# Content`;
+    const { frontmatter, diagnostics } = extractFrontmatter(md);
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0].severity).toBe('error');
+    expect(diagnostics[0].message).toContain('"Step"');
+    expect(frontmatter?.outputs).toBeUndefined();
+  });
+
+  it('emits error diagnostic for invalid identifier in outputs', () => {
+    const md = `---\noutputs:\n  - "123bad"\n---\n# Content`;
+    const { frontmatter, diagnostics } = extractFrontmatter(md);
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0].severity).toBe('error');
+    expect(frontmatter?.outputs).toBeUndefined();
+  });
+
+  it('emits error diagnostic for non-string entry in outputs', () => {
+    const md = `---\noutputs:\n  - 42\n---\n# Content`;
+    const { frontmatter, diagnostics } = extractFrontmatter(md);
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0].severity).toBe('error');
+    expect(diagnostics[0].message).toContain('outputs[0]');
+    expect(frontmatter?.outputs).toBeUndefined();
+  });
+
+  it('preserves valid entries when other entries are invalid', () => {
+    const md = `---\noutputs:\n  - GoodVar\n  - "123bad"\n---\n# Content`;
+    const { frontmatter, diagnostics } = extractFrontmatter(md);
+    expect(diagnostics).toHaveLength(1);
+    expect(frontmatter?.outputs).toEqual([{ name: 'GoodVar' }]);
+  });
+
+  it('returns empty array for empty outputs array', () => {
+    const md = `---\noutputs: []\n---\n# Content`;
+    const { frontmatter } = extractFrontmatter(md);
+    expect(frontmatter?.outputs).toEqual([]);
   });
 });
