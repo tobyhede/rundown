@@ -1,5 +1,4 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import type { ResolvedStep } from '@rundown-org/parser';
 import { mockErrorHelpers } from '../helpers/mock-error-helpers';
 
 // Mock dependencies

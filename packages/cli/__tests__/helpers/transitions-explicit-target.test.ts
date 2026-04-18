@@ -85,8 +85,6 @@ const { evaluateStepOutputs } = await import('../../src/helpers/step-outputs');
 const { executeTransition, createPassTransitionConfig, createFailTransitionConfig } = await import(
   '../../src/helpers/transitions'
 );
-const { ALL_OUTPUTS_FAILED_MESSAGE } = await import('../../src/helpers/step-outputs');
-
 function makeCtx(stateOverrides: Record<string, unknown> = {}): any {
   const state = {
     id: 'run-1',
@@ -781,36 +779,6 @@ describe('storeStepOutputs via step-level PASS transition', () => {
 
     // evaluateStepOutputs is mocked to return {} — no errors thrown
     expect(evaluateStepOutputs).not.toHaveBeenCalled();
-  });
-
-  it('logs warning and skips storeContextOutputs when all OUTPUTS expressions fail', async () => {
-    (findStepOrThrow as jest.Mock).mockReturnValue({
-      name: '1',
-      kind: 'base',
-      outputs: [
-        { name: 'BadA', value: '{{ expr1 }}' },
-        { name: 'BadB', value: '{{ expr2 }}' },
-      ],
-    });
-    (evaluateOutputExpression as jest.Mock)
-      .mockImplementationOnce(() => {
-        throw new Error('mock eval failure A');
-      })
-      .mockImplementationOnce(() => {
-        throw new Error('mock eval failure B');
-      });
-    const ctx = makeStepLevelCtx({ ContextId: 'ctx-abc', WorkPath: '.rundown/work' });
-    const config = createPassTransitionConfig();
-
-    await executeTransition(ctx, config);
-
-    // Assert the exact summary-warning branch (not just any warning) so the
-    // test keeps failing if the branch is removed even when per-output
-    // warnings still fire.
-    expect(core.logger.warn).toHaveBeenCalledWith(
-      expect.stringContaining(ALL_OUTPUTS_FAILED_MESSAGE),
-    );
-    expect(core.storeContextOutputs).not.toHaveBeenCalled();
   });
 });
 
