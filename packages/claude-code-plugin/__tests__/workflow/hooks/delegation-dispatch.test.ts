@@ -244,4 +244,47 @@ PASS COMPLETE
     expect(result.context).toContain(`rd claim ${VALID_TOKEN}`);
     expect(result.context).not.toContain('--var');
   });
+
+  it('shell-quotes --var values containing shell-special characters', async () => {
+    const tokenHash = hashToken(VALID_TOKEN);
+    const childRunbook = `---
+name: child
+inputs:
+  DollarVar: ''
+  BacktickVar: ''
+  QuoteVar: ''
+  SpaceVar: ''
+---
+# Child
+
+## 1. Step
+PASS COMPLETE
+`;
+    mockReadFile.mockResolvedValue(childRunbook);
+
+    const status = {
+      file: 'parent.md',
+      vars: {
+        DollarVar: '$HOME/data',
+        BacktickVar: '`whoami`',
+        QuoteVar: "it's fine",
+        SpaceVar: 'has spaces',
+      },
+      delegations: [{ state: 'pending', runbook: 'child.runbook.md', tokenHash }],
+    };
+    setExecSync(createMockExecSync(JSON.stringify(status)) as never);
+
+    const input = createMockHookInput('PreToolUse', {
+      tool_name: 'Task',
+      tool_input: { prompt: `RD_CLAIM_TOKEN=${VALID_TOKEN}` },
+    });
+
+    const result = await handleDelegationDispatch(input);
+
+    // Each value wrapped in single quotes; internal single quotes closed-escaped-reopened.
+    expect(result.context).toContain("--var DollarVar='$HOME/data'");
+    expect(result.context).toContain("--var BacktickVar='`whoami`'");
+    expect(result.context).toContain("--var QuoteVar='it'\\''s fine'");
+    expect(result.context).toContain("--var SpaceVar='has spaces'");
+  });
 });
