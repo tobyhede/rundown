@@ -195,11 +195,15 @@ export async function handleParentCompletion(
         vars: childState.finalVars,
       });
     } catch (err) {
+      const errMsg = getErrorMessage(err);
       void logger.warn('delegation-completion: failed to forward child finalVars to parent actor', {
-        error: getErrorMessage(err),
+        error: errMsg,
         childRunId: childState.id,
         parentRunId,
       });
+      output.warning(
+        `SET_VARIABLES failed — child variables not forwarded to parent run. ${errMsg}`,
+      );
     }
   }
 

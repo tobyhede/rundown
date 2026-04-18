@@ -780,6 +780,48 @@ describe('handleParentCompletion', () => {
     });
   });
 
+  it('surfaces a warning to output when SET_VARIABLES fails', async () => {
+    const delegation = makeDelegationLinkage();
+    const childState = makeState('child-run-id', {
+      parentLinkage: delegation,
+      finalVars: { PlanPath: '/work/plan.json' },
+    });
+    const parentState = makeState('parent-run-id', {
+      substepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: null }],
+    });
+
+    const states = new Map([[parentState.id, parentState]]);
+    const manager = makeManager(states);
+    const _lock = makeLock();
+    const lifecycleService = makeLifecycleService();
+    const output = makeOutput();
+
+    // Override the actor mock so sendAndSync throws for this test
+    const MockActor = core.RunbookActorService as jest.MockedClass<typeof core.RunbookActorService>;
+    MockActor.mockImplementation(
+      () =>
+        ({
+          sendAndSync: jest.fn<any>().mockRejectedValue(new Error('machine rejected event')),
+        }) as any,
+    );
+
+    (core.RunbookStateManager as jest.Mock).mockImplementation(() => manager);
+    (core.ExecutionLifecycleService as jest.Mock).mockImplementation(() => makeLifecycleService());
+    (core.SessionService as jest.Mock).mockImplementation(() => ({
+      popRunbook: jest.fn().mockResolvedValue(null),
+    }));
+
+    (drainResolvedCompletions as jest.Mock).mockResolvedValue({
+      status: 'continue',
+      applied: 0,
+      state: parentState,
+    });
+
+    await handleParentCompletion(childState, 'pass', '/test', output);
+
+    expect(output.warning).toHaveBeenCalledWith(expect.stringContaining('SET_VARIABLES'));
+  });
+
   it('does not call sendAndSync when child has no finalVars', async () => {
     const delegation = makeDelegationLinkage();
     const childState = makeState('child-run-id', { parentLinkage: delegation });
