@@ -84,11 +84,10 @@ export function validateRequiredVars(
 }
 
 /**
- * Validate frontmatter `outputs` field against vars and reserved names.
+ * Validate frontmatter `outputs` field against reserved names.
  *
  * Returns error diagnostics for:
  * - Duplicate output names within the outputs array
- * - Names that conflict with `vars` declarations
  * - Reserved runtime names (step, index, context — case-insensitive)
  *
  * @param outputs - Parsed output declarations from frontmatter, or undefined if absent
@@ -119,12 +118,6 @@ export function validateOutputsDeclarations(
       diagnostics.push({
         severity: 'error',
         message: `Output variable "${output.name}" uses reserved runtime variable name. Reserved names (case-insensitive): ${[...RUNTIME_RESERVED_VARIABLES].join(', ')}`,
-      });
-    }
-    if (varsKeys.has(output.name)) {
-      diagnostics.push({
-        severity: 'error',
-        message: `Variable "${output.name}" cannot be both in "outputs" and "vars"`,
       });
     }
   }

@@ -179,23 +179,29 @@ describe('validateOutputsDeclarations', () => {
     expect(result[0].message.toLowerCase()).toContain('duplicate');
   });
 
-  it('returns error when output name conflicts with vars', () => {
+  it('allows output that references an existing input (pass-through use-case)', () => {
+    const result = validateOutputsDeclarations(
+      [{ name: 'PlanPath' }],
+      { PlanPath: '/default/plan.json' },
+    );
+    expect(result).toEqual([]);
+  });
+
+  it('allows output that shares a name with an input (no conflict)', () => {
     const result = validateOutputsDeclarations([{ name: 'PlanPath' }], {
       PlanPath: 'default.json',
     });
-    expect(result).toHaveLength(1);
-    expect(result[0].severity).toBe('error');
-    expect(result[0].message).toContain('"PlanPath"');
-    expect(result[0].message).toContain('cannot be both');
+    expect(result).toEqual([]);
   });
 
-  it('does not flag a second duplicate for vars conflict (seen set short-circuits)', () => {
-    // First occurrence PlanPath already conflicts with vars; duplicate skips vars check
+  it('flags only the duplicate error for repeated output names even when input name matches', () => {
+    // Both entries share a name with an input. First entry: no error (input overlap allowed).
+    // Second entry: duplicate error only.
     const result = validateOutputsDeclarations([{ name: 'PlanPath' }, { name: 'PlanPath' }], {
       PlanPath: 'default.json',
     });
-    // First: vars-conflict. Second: duplicate.
-    expect(result).toHaveLength(2);
+    expect(result).toHaveLength(1);
+    expect(result[0].message.toLowerCase()).toContain('duplicate');
   });
 
   it('returns error for reserved runtime names', () => {
