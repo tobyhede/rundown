@@ -194,6 +194,8 @@ STOPPED: {
 
 `storeFrontmatterOutputs` fires before the terminal marker assign so it reads clean accumulated `context.variables`. It is a no-op when `context.frontmatterOutputs` is empty. `buildTerminalTransition` targets these states unchanged.
 
+The `output` field is declared for symmetry with `setup({ types: { output } })` and for future XState-native delegation (a parent machine invoking this machine as a child actor would receive `finalVars` via `onDone`). The current CLI reads `context.finalVars` directly via `actorService` — the machine output is not consumed by the existing implementation.
+
 ### `storeStepOutputs` embedded structurally on transitions
 
 The `shouldPersistParentOutputs` runtime guard is eliminated. The compiler has structural knowledge of when outputs should fire:
@@ -221,11 +223,13 @@ actions: [
 
 `always` transitions that remain within the same parent step (substep-internal routing) do not get `storeStepOutputs`. The distinction is already structurally encoded in the transition targets.
 
-**`storeStepOutputs` fires on both PASS and FAIL** — the action is appended regardless of result kind.
+**`storeStepOutputs` fires on both PASS and FAIL** — the action is appended to transitions regardless of result kind. This applies to substeps, direct steps, and parent-step `always` transitions. For parent steps, `always` transitions that target the next step or a terminal state (`COMPLETE`, `STOPPED`) all carry `storeStepOutputs` — including FAIL→STOP and FAIL→COMPLETE cases. `always` transitions are the sole mechanism for parent-step result dispatch, so all parent-level FAIL handlers go through them.
 
 **`storeStepOutputs` fires before the terminal state is entered** — transition actions in XState execute before the target state's entry actions. A FAIL→STOP transition therefore evaluates outputs first, then enters `STOPPED`. Tests must assert that `context.variables` contains the evaluated outputs in the terminal snapshot.
 
-**FOR loop iterations** — `storeStepOutputs` fires per-iteration: for a step inside a FOR loop with outputs, the action appears on the `always` transitions that advance the loop index. Each iteration's output evaluation uses the current iteration's vars (including the loop variable). Outputs from successive iterations overwrite prior values if the same key is declared — last iteration wins.
+**FOR loop iterations — PASS and CONTINUE/NEXT** — `storeStepOutputs` fires per-iteration on the `always` transitions that advance the loop index. Each iteration's output evaluation uses the current iteration's vars (including the loop variable). Outputs from successive iterations overwrite prior values if the same key is declared — last iteration wins. An explicit test covers this: two iterations producing the same key result in iteration 2's value in `context.variables`.
+
+**FOR loop iterations — FAIL+BREAK** — BREAK exits the loop without advancing the index; it routes to the post-loop aggregation state, not through the index-advance `always` transition. `storeStepOutputs` does NOT fire on BREAK. This is an intentional exception to "fires on FAIL": within a FOR loop, BREAK is a loop-exit signal, not a step-completion signal. The substep's individual FAIL transition (handled by `buildActionTransition`) does carry `storeStepOutputs` for substeps within the iteration, but the loop-level BREAK transition does not.
 
 ---
 
@@ -238,11 +242,15 @@ const finalVars = (snapshot.context as RunbookContext).finalVars;
 // included in RunbookState update when non-empty
 ```
 
-This fires on every `updateFromActor` call. `RunbookState.finalVars` is populated as soon as the machine enters `COMPLETE` or `STOPPED`. No second write path.
+The cast is a current limitation — `snapshot` is typed as `unknown` in `actorService` because the machine type is not threaded through. The preferred fix (tracked separately) is to type `actorService` with `SnapshotFrom<typeof machine>` upstream, eliminating the cast. For this implementation, the cast is acceptable and consistent with existing context reads in the same function.
+
+`RunbookState.finalVars` is populated as soon as the machine enters `COMPLETE` or `STOPPED`. No second write path.
 
 ---
 
-## CLI Removals
+## CLI Changes
+
+**Removed:**
 
 | File | Removed |
 |---|---|
@@ -252,6 +260,12 @@ This fires on every `updateFromActor` call. `RunbookState.finalVars` is populate
 | `runbook-pipeline.ts` | `evaluateFrontmatterOutputs` call and `done`/`stopped` guard block |
 | `step-outputs.ts` | `evaluateStepOutputs`, `evaluateFrontmatterOutputs` (callers gone) |
 | `execution-units.ts` | `shouldPersistParentOutputs` function |
+
+**Modified (not removed):**
+
+| File | Change |
+|---|---|
+| `template-renderer.ts` | `evaluateOutputExpression` retained but updated to delegate to `output-evaluator.ts` in core; other template rendering uses in the file are unchanged |
 
 ---
 
@@ -268,15 +282,22 @@ This fires on every `updateFromActor` call. `RunbookState.finalVars` is populate
 - `storeStepOutputs` appears on substep transition when substep has outputs
 - `storeStepOutputs` appears on parent-advancing `always` transition when parent has outputs
 - `storeStepOutputs` absent on substep-internal `always` transitions
-- `storeStepOutputs` fires before `STOPPED` state is entered (FAIL→STOP transition has action)
+- FAIL→STOP transition carries `storeStepOutputs` action before entering `STOPPED` state
+- FAIL→BREAK transition does NOT carry `storeStepOutputs` (BREAK exits loop without advancing)
 - FOR loop step with outputs: `storeStepOutputs` on iteration-advancing `always` transitions
+- FOR loop, two iterations, same output key: `context.variables` holds iteration 2's value
 - `storeFrontmatterOutputs` present as first entry action on `COMPLETE` state
 - `storeFrontmatterOutputs` present as first entry action on `STOPPED` state
 
 **New tests in core (`output-evaluator.test.ts`):**
-- `evaluateOutputExpression`: all four expression forms
-- `evaluateOutputDeclarations`: naked form skipped at step level, with-value form evaluated
-- `flattenTemplateVars`: JsonArray → comma-joined, JsonObject → JSON string, JsonArrayStream → omitted
+- `evaluateOutputExpression`: all four expression forms (happy path)
+- `evaluateOutputExpression`: invalid/failing expression → returns empty string (non-fatal)
+- `evaluateOutputExpression`: undefined variable reference → empty string or literal passthrough
+- `evaluateOutputDeclarations`: naked form skipped at step level with warning
+- `evaluateOutputDeclarations`: with-value form evaluated correctly
+- `flattenTemplateVars`: JsonArray → comma-joined string
+- `flattenTemplateVars`: JsonObject → JSON string
+- `flattenTemplateVars`: JsonArrayStream → key omitted, warning observable via emitter/log
 
 ---
 
