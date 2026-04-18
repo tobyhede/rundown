@@ -98,7 +98,10 @@ function makeCtx(stateOverrides: Record<string, unknown> = {}): any {
   };
   return {
     output: { action: jest.fn(), flush: jest.fn(), status: jest.fn(), warning: jest.fn() },
-    manager: { update: jest.fn<any>().mockResolvedValue(undefined) },
+    manager: {
+      update: jest.fn<any>().mockResolvedValue(undefined),
+      load: jest.fn<any>().mockResolvedValue(null),
+    },
     actorService: {
       updateFromActor: jest.fn<any>().mockResolvedValue({
         state: { ...state },
@@ -688,7 +691,10 @@ describe('storeStepOutputs via step-level PASS transition', () => {
     };
     return {
       output: { action: jest.fn(), flush: jest.fn(), status: jest.fn(), warning: jest.fn() },
-      manager: { update: jest.fn<any>().mockResolvedValue(undefined) },
+      manager: {
+        update: jest.fn<any>().mockResolvedValue(undefined),
+        load: jest.fn<any>().mockResolvedValue(null),
+      },
       actorService: {
         updateFromActor: jest.fn<any>().mockResolvedValue({
           state: { ...state, templateVars },
@@ -834,7 +840,10 @@ describe('storeStepOutputs gating on substep PASS transitions', () => {
     };
     return {
       output: { action: jest.fn(), flush: jest.fn(), status: jest.fn(), warning: jest.fn() },
-      manager: { update: jest.fn<any>().mockResolvedValue(undefined) },
+      manager: {
+        update: jest.fn<any>().mockResolvedValue(undefined),
+        load: jest.fn<any>().mockResolvedValue(null),
+      },
       actorService: {
         updateFromActor: jest.fn<any>().mockResolvedValue({
           state: stateAfter,

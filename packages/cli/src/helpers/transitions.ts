@@ -203,23 +203,24 @@ export async function buildTransitionContext(
 }
 
 /**
- * Parse frontmatter OUTPUTS from persisted runbook source and store them to context.
+ * Evaluate frontmatter `outputs:` and persist to `state.finalVars` if any resolve.
  *
- * Called from transition completion paths where PreparedRunbook is not available
- * but the RunbookState has runbookSrc and templateVars frozen at run time.
+ * Reloads state from the manager so that variables written during the terminal
+ * transition (step OUTPUTS set via SET_VARIABLES or manager.update on COMPLETE/STOP)
+ * are visible to frontmatter output expressions. Callers must not pass pre-transition
+ * state — the reload is the single source of truth.
  *
- * @param state - Runbook state with runbookSrc, runbookPath, and templateVars
- * @param manager - Runbook state manager for persisting variable updates
+ * @param manager - Runbook state manager for loading fresh state and persisting finalVars
  * @param stateId - Runbook state identifier
- * @param emitter - Optional execution event emitter for surfacing failures
+ * @param emitter - Optional execution event emitter for surfacing evaluation failures
  */
 async function maybePersistFrontmatterOutputs(
-  state: Pick<RunbookState, 'runbookSrc' | 'runbookPath' | 'templateVars' | 'variables'>,
   manager: RunbookStateManager,
   stateId: string,
   emitter?: ExecutionEventEmitter,
 ): Promise<void> {
-  if (!state.runbookSrc) return;
+  const state = await manager.load(stateId);
+  if (!state?.runbookSrc) return;
   const { frontmatter } = parseRunbookDocument(state.runbookSrc, path.basename(state.runbookPath));
   if (!frontmatter?.outputs?.length) return;
   const effectiveVars = {
@@ -460,7 +461,7 @@ export async function executeTransition(
       return 'stopped';
     }
     if (drained.status === 'done') {
-      await maybePersistFrontmatterOutputs(activeState, manager, activeState.id, emitter);
+      await maybePersistFrontmatterOutputs(manager, activeState.id, emitter);
       output.flush();
       return 'continue';
     }
@@ -478,7 +479,7 @@ export async function executeTransition(
       emitter,
     );
     if (loopResult === 'done') {
-      await maybePersistFrontmatterOutputs(activeState, manager, activeState.id, emitter);
+      await maybePersistFrontmatterOutputs(manager, activeState.id, emitter);
     }
     output.flush();
     if (loopResult === 'stopped') {
@@ -605,7 +606,7 @@ export async function executeTransition(
   }
   if (orchestration.status === 'done') {
     const doneEmitter = createBridgedEmitter(activeState, output);
-    await maybePersistFrontmatterOutputs(activeState, manager, activeState.id, doneEmitter);
+    await maybePersistFrontmatterOutputs(manager, activeState.id, doneEmitter);
     output.flush();
     return 'continue';
   }
@@ -621,7 +622,7 @@ export async function executeTransition(
   );
 
   if (loopResult === 'done') {
-    await maybePersistFrontmatterOutputs(activeState, manager, activeState.id, emitter);
+    await maybePersistFrontmatterOutputs(manager, activeState.id, emitter);
   }
   output.flush();
   if (loopResult === 'stopped') {
