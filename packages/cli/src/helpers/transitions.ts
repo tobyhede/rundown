@@ -453,7 +453,6 @@ export async function executeTransition(
       currentState: activeState,
       transitionPolicy: config.policy,
       computeActionResult: config.computeActionResult,
-      cwd,
       ...(explicitTarget ? { frameKeyOverride: cursor.frameKey } : {}),
     });
     if (drained.status === 'stopped') {

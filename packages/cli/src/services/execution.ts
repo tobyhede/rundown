@@ -243,12 +243,19 @@ async function applyResultTransition({
   // createActor() restores from — direct manager.update({ variables }) would be invisible
   // to the next actor.
   if (result === 'pass') {
+    // Merge state.variables (prior steps' OUTPUTS) so the current step's OUTPUTS
+    // expressions can reference values written by earlier steps. Mirrors the
+    // manual-transition path in transitions.ts around the same point.
+    const mergedTemplateVars = {
+      ...currentState.templateVars,
+      ...currentState.variables,
+    };
     const preTransitionStepVars = buildStepVariables(
       currentState.step,
       currentState.substep,
       currentState.forStack,
       currentStep.kind === 'for' ? currentStep.forClause : undefined,
-      currentState.templateVars,
+      mergedTemplateVars as typeof currentState.templateVars,
     );
     const templateVars = mergeExecutionTemplateVars(
       preTransitionStepVars,
