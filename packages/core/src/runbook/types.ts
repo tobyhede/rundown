@@ -1,4 +1,5 @@
 // src/runbook/types.ts
+import type { OutputDeclaration } from '@rundown-org/parser';
 import type { FrameKey } from './targeting.js';
 
 // Re-export parser types needed by core package consumers
@@ -672,6 +673,13 @@ export interface RunbookState {
 
   /** Template variables used for AST-level substitution, frozen at run time */
   readonly templateVars?: Readonly<Record<string, TemplateVarValue>>;
+
+  /**
+   * Frontmatter `outputs:` declarations parsed from the runbook source at startup.
+   * Persisted so the machine compiler can seed `RunbookContext.frontmatterOutputs`
+   * on every actor creation (including resume) without re-parsing the runbook.
+   */
+  readonly frontmatterOutputs?: readonly OutputDeclaration[];
 
   /** Evaluated frontmatter outputs: values at runbook termination. Read by parent delegation completion. */
   readonly finalVars?: Readonly<Record<string, string>>;

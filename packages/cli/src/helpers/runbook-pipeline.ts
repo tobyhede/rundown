@@ -656,6 +656,7 @@ async function launchRunbook(
       parentLinkage: options.parentLinkage,
       runbookSrc: rawContent,
       templateVars: mergedVariables,
+      frontmatterOutputs: prepared.frontmatter?.outputs ?? [],
     });
     stateId = state.id;
 

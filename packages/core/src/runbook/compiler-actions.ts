@@ -1,3 +1,4 @@
+import type { OutputDeclaration } from '@rundown-org/parser';
 import type { LastAction } from './types.js';
 
 /**
@@ -17,8 +18,15 @@ import type { LastAction } from './types.js';
  */
 export interface ActionDefs {
   readonly setLastAction: { action: LastAction; msg?: string };
-  // Phase 2: add storeStepOutputs and storeFrontmatterOutputs once
-  // outputs-in-state-machine has merged.
+  readonly storeStepOutputs: {
+    outputs: readonly OutputDeclaration[];
+    stepName: string;
+    substepId?: string;
+  };
+  readonly storeFrontmatterOutputs: {
+    stepName?: string;
+    substepId?: string;
+  };
 }
 
 /** A single parameterized action reference, discriminated on `type`. */

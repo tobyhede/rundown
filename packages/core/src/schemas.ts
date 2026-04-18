@@ -123,6 +123,7 @@ import {
   StepIdSchema,
   ActionSchema,
   TransitionsSchema,
+  OutputDeclarationSchema,
   MAX_FOR_BOUND,
   TEMPLATE_VAR_PATTERN,
 } from '@rundown-org/parser';
@@ -365,6 +366,7 @@ export const RunbookStateSchema = z
       .optional(),
     runbookSrc: z.string().optional(),
     templateVars: z.record(z.string(), TemplateVarValueSchema).optional(),
+    frontmatterOutputs: z.array(OutputDeclarationSchema).optional(),
     finalVars: z.record(z.string(), z.string()).optional(),
   })
   // passthrough() allows unknown fields (e.g., legacy pendingSteps, agentBindings,

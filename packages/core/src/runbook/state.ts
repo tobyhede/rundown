@@ -1,6 +1,7 @@
 // src/runbook/state.ts
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import type { OutputDeclaration } from '@rundown-org/parser';
 import type { FrameKey } from './targeting.js';
 import type {
   RunbookState,
@@ -48,6 +49,8 @@ interface CreateOptions {
   readonly runbookSrc?: string;
   /** Optional record of template variable replacements to populate placeholders at run time. */
   readonly templateVars?: Record<string, TemplateVarValue>;
+  /** Frontmatter `outputs:` declarations seeded into the compiled machine for OUTPUTS evaluation. */
+  readonly frontmatterOutputs?: readonly OutputDeclaration[];
 }
 
 /**
@@ -139,6 +142,7 @@ export class RunbookStateManager {
       prompted: options.prompted,
       runbookSrc: options.runbookSrc,
       templateVars: options.templateVars,
+      frontmatterOutputs: options.frontmatterOutputs,
     };
 
     await this.save(state);

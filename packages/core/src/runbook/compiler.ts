@@ -10,7 +10,7 @@ import type {
 } from './types.js';
 import { isResolvedVariableForContext } from './types.js';
 import type { StepId } from './step-id.js';
-import type { ForClause } from '@rundown-org/parser';
+import type { ForClause, OutputDeclaration } from '@rundown-org/parser';
 import {
   isSourced,
   isWindowed,
@@ -22,6 +22,37 @@ import {
 } from '@rundown-org/parser';
 import { shouldAggregationPass } from './transition-handler.js';
 import { actionRef, type ActionDefs, type CompilerActionRef } from './compiler-actions.js';
+import {
+  buildExecutionFrame,
+  evaluateFrontmatterOutputDeclarations,
+  evaluateStepOutputDeclarations,
+  type OutputVars,
+} from './output-evaluator.js';
+
+/**
+ * Coerce {@link RunbookContext} into the {@link OutputFrameState} shape expected
+ * by {@link buildExecutionFrame}. The latter requires `variables` to be a string
+ * map; the runbook context allows scalar booleans/numbers, so we stringify them
+ * for the frame snapshot used during OUTPUTS expression evaluation.
+ *
+ * @param context - The runbook machine context
+ * @returns A frame state suitable for output evaluation
+ */
+function toFrameState(context: RunbookContext): {
+  templateVars?: OutputVars;
+  variables: Readonly<Record<string, string>>;
+  forStack: readonly ForContext[];
+} {
+  const stringified: Record<string, string> = {};
+  for (const [key, value] of Object.entries(context.variables)) {
+    stringified[key] = typeof value === 'string' ? value : String(value);
+  }
+  return {
+    templateVars: context.templateVars,
+    variables: stringified,
+    forStack: context.forStack,
+  };
+}
 
 /**
  * Module-level XState setup with typed context, events, and named actions.
@@ -33,12 +64,54 @@ export const runbookSetup = setup({
   types: {
     context: {} as RunbookContext,
     events: {} as RunbookEvent,
+    output: {} as { finalVars: Readonly<Record<string, string>> },
   },
   actions: {
     /** Set lastAction and optional lastMessage. */
     setLastAction: assign({
       lastAction: (_, params: ActionDefs['setLastAction']) => params.action,
       lastMessage: (_, params: ActionDefs['setLastAction']) => params.msg,
+    }),
+    /**
+     * Evaluate a step or substep's OUTPUTS declarations and merge the result
+     * into context.variables. Builds a fresh execution frame from the current
+     * step/substep cursor before evaluating each declaration.
+     */
+    storeStepOutputs: assign({
+      variables: (
+        { context },
+        params: ActionDefs['storeStepOutputs'],
+      ) => {
+        const frame = buildExecutionFrame(toFrameState(context), {
+          stepName: params.stepName,
+          substepId: params.substepId,
+        });
+        const evaluated = evaluateStepOutputDeclarations(params.outputs, frame);
+        return { ...context.variables, ...evaluated };
+      },
+    }),
+    /**
+     * Evaluate the runbook's frontmatter OUTPUTS declarations against the current
+     * execution frame and persist the snapshot to context.finalVars. Invoked on
+     * terminal-state entry (COMPLETE / STOPPED). When invoked from terminal entry
+     * there is no active step cursor — `stepName` is omitted and the frame's
+     * `Step`/`step` keys render as empty strings (inert for outputs that resolve
+     * by variable name from `templateVars` or `variables`).
+     */
+    storeFrontmatterOutputs: assign({
+      finalVars: (
+        { context },
+        params: ActionDefs['storeFrontmatterOutputs'],
+      ) => {
+        if (context.frontmatterOutputs.length === 0) {
+          return context.finalVars;
+        }
+        const frame = buildExecutionFrame(toFrameState(context), {
+          stepName: params.stepName ?? '',
+          substepId: params.substepId,
+        });
+        return evaluateFrontmatterOutputDeclarations(context.frontmatterOutputs, frame);
+      },
     }),
   },
 });
@@ -109,6 +182,12 @@ export interface RunbookContext {
   substepCompletedCount: number;
   /** Deferred results: only appended by DEFER. Used exclusively for ALL/ANY aggregation. */
   deferredResults?: ('pass' | 'fail')[];
+  /** Seeded template variables for OUTPUTS evaluation (built-ins, frontmatter inputs, CLI overrides). */
+  readonly templateVars: OutputVars;
+  /** Frontmatter `outputs:` declarations evaluated when the runbook reaches a terminal state. */
+  readonly frontmatterOutputs: readonly OutputDeclaration[];
+  /** Final OUTPUTS snapshot persisted at terminal entry. Exposed via machine output. */
+  readonly finalVars: Readonly<Record<string, string>>;
 }
 
 /**
@@ -1231,7 +1310,13 @@ function buildParentStateConfig(
         }),
       });
 
-      // Sequential exit: all substeps done, no more iterations
+      // Sequential exit: all substeps done, no more iterations.
+      // Targets nextTarget directly (not self) so that any decoration of this
+      // transition (e.g. storeStepOutputs) observes the still-populated forStack
+      // before the assign clears it. A self-target here would force a second
+      // `always` evaluation cycle in which the case C unguarded exit would fire
+      // with an already-empty forStack, losing per-iteration template variables
+      // (Index, loop variable, etc.).
       always.push({
         guard: ({ context }: { context: RunbookContext }) => {
           if (context.substep !== undefined) return false;
@@ -1241,9 +1326,13 @@ function buildParentStateConfig(
           const top = peekForStack(context.forStack);
           return top === undefined || !hasMoreIterations(top);
         },
-        target: formatStateId(stepName),
+        target: nextTarget,
         actions: runbookSetup.assign({
           forStack: EMPTY_FOR_STACK,
+          retryCount: 0,
+          parentRetryCount: 0,
+          iterationRetryCount: 0,
+          substep: extractSubstepFromStateId(nextTarget),
         }),
       });
     }
@@ -1311,7 +1400,50 @@ function buildParentStateConfig(
     }
   }
 
-  return { always };
+  return {
+    always: always.map((transition) =>
+      decorateParentTransition(transition, stepName, parentStep.outputs),
+    ),
+  };
+}
+
+/**
+ * Decorate a parent-state `always` transition with OUTPUTS-related actions.
+ *
+ * Adds a `storeStepOutputs` action when the transition exits the parent state
+ * (i.e. its target is neither the parent state itself nor a substep beneath it)
+ * and the parent step declares OUTPUTS.
+ *
+ * Self-targeting (`step::N`) and substep-internal (`step::N::M`) transitions are
+ * intra-parent routing and never carry step OUTPUTS — those represent BREAK
+ * cleanup, advance-to-substep, or loop-back machinery, not parent-step exit.
+ *
+ * Frontmatter OUTPUTS are NOT attached here: they are emitted exactly once from
+ * the terminal states' `entry` actions (COMPLETE.entry / STOPPED.entry) under
+ * the single-owner terminal-entry architecture.
+ *
+ * @param transition - The always transition to decorate
+ * @param stepName - The parent step name
+ * @param outputs - The parent step's OUTPUTS declarations (if any)
+ * @returns The decorated transition (or the original if no decoration applies)
+ */
+function decorateParentTransition(
+  transition: AlwaysTransition,
+  stepName: string,
+  outputs: readonly OutputDeclaration[] | undefined,
+): AlwaysTransition {
+  const extra: CompilerAction[] = [];
+  const target = transition.target;
+  const exitsParent =
+    target !== undefined &&
+    target !== formatStateId(stepName) &&
+    !target.startsWith(`${formatStateId(stepName)}::`);
+
+  if (exitsParent && outputs && outputs.length > 0) {
+    extra.push(actionRef('storeStepOutputs', { outputs, stepName }));
+  }
+
+  return appendActions(transition, extra) as AlwaysTransition;
 }
 
 /**
@@ -1701,8 +1833,48 @@ function buildGotoTransition(
 }
 
 /**
+ * Normalize a single action or array of actions into a guaranteed array.
+ *
+ * @param actions - Single action, array of actions, or undefined
+ * @returns Array form (empty if undefined)
+ */
+function toActionArray(actions: CompilerAction | CompilerAction[] | undefined): CompilerAction[] {
+  if (!actions) return [];
+  return Array.isArray(actions) ? actions : [actions];
+}
+
+/**
+ * Prepend extra actions to a transition's existing actions list.
+ *
+ * Extra actions run BEFORE the transition's pre-existing actions so that
+ * OUTPUTS evaluation observes the variable state captured at exit time
+ * (not the post-assign state from later cleanup actions).
+ *
+ * @param transition - Transition to decorate
+ * @param extra - Actions to prepend
+ * @returns A new transition with the extra actions prepended (or the original if extra is empty)
+ */
+function appendActions(
+  transition: TransitionEntry,
+  extra: readonly CompilerAction[],
+): TransitionEntry {
+  if (extra.length === 0) return transition;
+  return {
+    ...transition,
+    actions: [...extra, ...toActionArray(transition.actions)],
+  };
+}
+
+/**
  * Build XState transition config by dispatching on Action type
  * (CONTINUE, GOTO, NEXT, BREAK, COMPLETE, STOP).
+ *
+ * After building the base transition, decorates it with a `storeStepOutputs`
+ * action when the unit (step or substep) declares `OUTPUTS` directives.
+ *
+ * Frontmatter OUTPUTS are NOT attached here: they are emitted exactly once from
+ * the terminal states' `entry` actions (COMPLETE.entry / STOPPED.entry) under
+ * the single-owner terminal-entry architecture.
  *
  * @param action - The action to build a transition for
  * @param stepName - The current step name
@@ -1720,22 +1892,52 @@ function buildActionTransition(
 ): TransitionConfig {
   const resultKind: 'pass' | 'fail' = kind === 'fail' ? 'fail' : 'pass';
 
+  let transition: TransitionEntry;
   switch (action.type) {
     case 'CONTINUE':
-      return buildContinueTransition(stepName, substepId, steps);
+      transition = buildContinueTransition(stepName, substepId, steps) as TransitionEntry;
+      break;
     case 'DEFER':
-      return buildDeferTransition(stepName, substepId, steps, resultKind);
+      transition = buildDeferTransition(stepName, substepId, steps, resultKind) as TransitionEntry;
+      break;
     case 'COMPLETE':
-      return buildTerminalTransition('COMPLETE', 'COMPLETE', action.message);
+      transition = buildTerminalTransition(
+        'COMPLETE',
+        'COMPLETE',
+        action.message,
+      ) as TransitionEntry;
+      break;
     case 'STOP':
-      return buildTerminalTransition('STOPPED', 'STOP', action.message);
+      transition = buildTerminalTransition('STOPPED', 'STOP', action.message) as TransitionEntry;
+      break;
     case 'GOTO':
-      return buildGotoTransition(action.target, stepName, substepId, steps);
+      transition = buildGotoTransition(
+        action.target,
+        stepName,
+        substepId,
+        steps,
+      ) as TransitionEntry;
+      break;
     case 'NEXT':
-      return buildLoopControlTransition('NEXT', stepName, steps);
+      transition = buildLoopControlTransition('NEXT', stepName, steps) as TransitionEntry;
+      break;
     case 'BREAK':
-      return buildLoopControlTransition('BREAK', stepName, steps);
+      transition = buildLoopControlTransition('BREAK', stepName, steps) as TransitionEntry;
+      break;
   }
+
+  const currentStep = steps.find((step) => step.name === stepName);
+  const unitOutputs =
+    substepId && currentStep && resolvedStepHasSubsteps(currentStep)
+      ? (currentStep.substeps.find((substep) => substep.id === substepId)?.outputs ?? [])
+      : (currentStep?.outputs ?? []);
+
+  const extra: CompilerAction[] = [];
+  if (unitOutputs.length > 0) {
+    extra.push(actionRef('storeStepOutputs', { outputs: unitOutputs, stepName, substepId }));
+  }
+
+  return appendActions(transition, extra);
 }
 
 /**
@@ -1845,13 +2047,24 @@ function checkedStateInsert(
  * - COMPLETE and STOPPED final states
  *
  * @param steps - The parsed runbook steps to compile
+ * @param options - Optional compilation inputs
+ * @param options.templateVars - Seeded template variables for OUTPUTS evaluation
+ * @param options.frontmatterOutputs - Frontmatter `outputs:` declarations
+ * @param options.sources - Reserved for data-source bindings (passed through unchanged)
  * @returns An XState state machine definition
  * @throws {Error} When a GOTO target references a non-existent step or when graph invariants are violated (e.g., duplicate state IDs)
  */
 // Return type validated via `satisfies RunbookMachine` at the return site.
 // Explicit annotation would erase XState's inferred event types, breaking actor.send() downstream.
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type, @typescript-eslint/explicit-module-boundary-types
-export function compileRunbookToMachine(steps: ResolvedStep[]) {
+export function compileRunbookToMachine(
+  steps: ResolvedStep[],
+  options?: {
+    templateVars?: OutputVars;
+    frontmatterOutputs?: readonly OutputDeclaration[];
+    sources?: Readonly<Record<string, unknown>>;
+  },
+) {
   const states: Record<string, RunbookStateConfig> = {};
 
   // Build a flat list of all states to generate GOTO transitions
@@ -2149,20 +2362,31 @@ export function compileRunbookToMachine(steps: ResolvedStep[]) {
       iterationResults: undefined,
       substepCompletedCount: 0,
       deferredResults: undefined,
+      templateVars: options?.templateVars ?? {},
+      frontmatterOutputs: options?.frontmatterOutputs ?? [],
+      finalVars: {},
     },
     states: {
       ...states,
       COMPLETE: {
         type: 'final',
-        entry: runbookSetup.assign({
-          variables: ({ context }) => ({ ...context.variables, completed: true }),
-        }),
+        entry: [
+          actionRef('storeFrontmatterOutputs', {}),
+          runbookSetup.assign({
+            variables: ({ context }) => ({ ...context.variables, completed: true }),
+          }),
+        ],
+        output: ({ context }) => ({ finalVars: context.finalVars }),
       },
       STOPPED: {
         type: 'final',
-        entry: runbookSetup.assign({
-          variables: ({ context }) => ({ ...context.variables, stopped: true }),
-        }),
+        entry: [
+          actionRef('storeFrontmatterOutputs', {}),
+          runbookSetup.assign({
+            variables: ({ context }) => ({ ...context.variables, stopped: true }),
+          }),
+        ],
+        output: ({ context }) => ({ finalVars: context.finalVars }),
       },
     },
   }) satisfies RunbookMachine;

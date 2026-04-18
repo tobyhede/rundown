@@ -36,7 +36,10 @@ import {
   stepIdToString,
   RunbookSyntaxError,
 } from '@rundown-org/parser';
-import { isJsonArrayStream, assembleArtifactPath } from '@rundown-org/core';
+import {
+  isJsonArrayStream,
+  evaluateOutputExpression as evaluateCoreOutputExpression,
+} from '@rundown-org/core';
 import type { TemplateVarValue } from '@rundown-org/core';
 import type { StepVariables } from './execution-vars.js';
 
@@ -1001,15 +1004,6 @@ export function warnUnresolvedRunbookVariables(runbook: ResolvedRunbook): string
 // ─── Output expression evaluation ────────────────────────────────────────────
 
 /**
- * Pattern matching the `{{ path "filename" }}` helper with optional `ctx=` override.
- *
- * Captures:
- *   [1] filename — the output filename (may include extension)
- *   [2] optional ctx value — raw expression to override the default ContextId
- */
-const PATH_HELPER_REGEX = /^\{\{\s*path\s+"([^"]+)"(?:\s+ctx=(.+?))?\s*\}\}$/;
-
-/**
  * Evaluate an OUTPUTS value expression to its final string.
  *
  * Handles four value forms:
@@ -1029,73 +1023,10 @@ const PATH_HELPER_REGEX = /^\{\{\s*path\s+"([^"]+)"(?:\s+ctx=(.+?))?\s*\}\}$/;
  * @throws {Error} If a `path()` call is missing required WorkPath or ContextId variables, or filename is invalid
  */
 export function evaluateOutputExpression(expr: string, variables: StepVariables): string {
-  const trimmed = expr.trim();
-
-  // Handle path() helper: {{ path "filename" [ctx=Expr] }}
-  const pathMatch = PATH_HELPER_REGEX.exec(trimmed);
-  if (pathMatch) {
-    const filename = pathMatch[1];
-
-    const workPath = resolveTemplatePath('WorkPath', variables);
-    if (!workPath) {
-      throw new Error('evaluateOutputExpression: WorkPath variable is not defined');
-    }
-
-    // Resolve ctx — either from explicit ctx= parameter or from ContextId variable
-    let contextId: string;
-    if (pathMatch[2]) {
-      // ctx=SomeVar — expand as template variable first.
-      // Accepts bare identifiers (`ctx=Foo`), compact Handlebars (`ctx={{Foo}}`),
-      // and spaced Handlebars (`ctx={{ context.current.at }}`).
-      //
-      // Typo safety: if the named variable is undefined, expandLoopVariables
-      // preserves `{{Name}}` as a literal, and VALID_CTX in
-      // assembleArtifactPath rejects any contextId containing `{{` — so a
-      // misspelled `ctx=PlanPat` (when `PlanPath` was intended) fails loudly
-      // rather than producing a bogus path.
-      const ctxExpr = pathMatch[2].trim();
-      const ctxExpanded = expandLoopVariables(
-        ctxExpr.startsWith('{{') ? ctxExpr : `{{${ctxExpr}}}`,
-        variables,
-      );
-      // Surface a targeted error when the expanded ctx isn't a legal ContextId
-      // (e.g. `ctx={{ context.current.at }}` resolving to a dotted or
-      // bracketed execution address like `1.2.1` or `3.1[2]`). The downstream
-      // `assembleArtifactPath` validator would still reject these, but with
-      // an opaque "Invalid ctx" error that hides the source expression.
-      if (!/^[a-zA-Z0-9_-]+$/.test(ctxExpanded)) {
-        throw new Error(
-          `evaluateOutputExpression: ctx=${ctxExpr} expanded to "${ctxExpanded}", which is not a valid ContextId. Use a precomputed ContextId variable rather than an execution address.`,
-        );
-      }
-      contextId = ctxExpanded;
-    } else {
-      const resolved = resolveTemplatePath('ContextId', variables);
-      if (!resolved) {
-        throw new Error('evaluateOutputExpression: ContextId variable is not defined');
-      }
-      contextId = resolved;
-    }
-
-    // assembleArtifactPath validates filename and ctx, throws on invalid input.
-    // Produces: workPath/.rd-contextId/YYYY-MM-DD-filename
-    return assembleArtifactPath(workPath, contextId, filename);
-  }
-
-  // Handle quoted literal: "HELLO" → HELLO
-  const quotedMatch = /^"([^"]*)"$/.exec(trimmed);
-  if (quotedMatch) {
-    return quotedMatch[1];
-  }
-
-  // Handle {{ VarName }} or {{ dotted.path }} — standard template substitution
-  if (trimmed.startsWith('{{')) {
-    return expandLoopVariables(trimmed, variables);
-  }
-
-  // Bare identifier — treat as variable name
-  const resolved = resolveTemplatePath(trimmed, variables);
-  return resolved ?? trimmed;
+  return evaluateCoreOutputExpression(
+    expr,
+    variables as unknown as Parameters<typeof evaluateCoreOutputExpression>[1],
+  );
 }
 
 /**

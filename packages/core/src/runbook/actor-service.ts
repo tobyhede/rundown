@@ -16,6 +16,7 @@ import { createActor, type AnyActorRef } from 'xstate';
 import type { ResolvedStep, RunbookState, ForContext } from './types.js';
 import type { RunbookStateManager } from './state.js';
 import { compileRunbookToMachine, type RunbookEvent } from './compiler.js';
+import { flattenTemplateVars } from './output-evaluator.js';
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { logger } from '../logger.js';
 
@@ -60,6 +61,9 @@ export class RunbookActorService {
    *
    * Loads the persisted snapshot, applies migration from flat FOR fields
    * to forStack array if needed, compiles the machine, and starts the actor.
+   * The compiler is seeded with `state.templateVars` (flattened) and
+   * `state.frontmatterOutputs` so OUTPUTS evaluation works identically on
+   * resume as on initial start.
    *
    * @param id - Runbook state ID
    * @param steps - Parsed runbook steps for machine compilation
@@ -69,7 +73,10 @@ export class RunbookActorService {
     const state = await this.manager.load(id);
     if (!state) return null;
 
-    const machine = compileRunbookToMachine(steps);
+    const machine = compileRunbookToMachine(steps, {
+      templateVars: flattenTemplateVars(state.templateVars ?? {}),
+      frontmatterOutputs: state.frontmatterOutputs ?? [],
+    });
 
     // Migrate old snapshot context: flat FOR fields → forStack
     // Intentionally shallow copy — only snapshot.context is replaced during
@@ -162,8 +169,15 @@ export class RunbookActorService {
         string,
         boolean | number | string
       >;
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      const rawFinalVars = (snapshot.context?.finalVars ?? {}) as Record<string, string>;
+      // Empty finalVars on terminal: explicitly write `undefined` so the persisted
+      // state has no `finalVars` field. This matches the schema's optional contract
+      // and avoids storing a misleading empty object.
+      const finalVars = Object.keys(rawFinalVars).length > 0 ? rawFinalVars : undefined;
       const state = await this.manager.update(id, {
         variables,
+        finalVars,
         snapshot,
         // Clear FOR loop state on completion
         forStack: undefined,
