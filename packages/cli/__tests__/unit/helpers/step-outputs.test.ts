@@ -80,6 +80,14 @@ describe('evaluateFrontmatterOutputs', () => {
     expect(result).toEqual({ Debug: 'true' });
   });
 
+  it('skips naked-form output when variable is undefined (not null)', () => {
+    const result = evaluateFrontmatterOutputs(
+      [{ name: 'Missing' }],
+      { PlanPath: '/some/path', ContextId: 'ctx' },
+    );
+    expect(result).toEqual({});
+  });
+
   it('returns empty object for empty outputs array', () => {
     const result = evaluateFrontmatterOutputs([], { ContextId: 'ctx' });
     expect(result).toEqual({});

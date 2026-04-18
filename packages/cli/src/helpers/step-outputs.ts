@@ -83,7 +83,7 @@ export function evaluateFrontmatterOutputs(
         evaluated[output.name] = evaluateOutputExpression(output.value, { ...effectiveVars });
       } else {
         const rawVal = (effectiveVars as Record<string, unknown>)[output.name];
-        if (rawVal === null || rawVal === undefined) {
+        if (rawVal === undefined) {
           void logger.warn('evaluateFrontmatterOutputs: naked-form variable not found, skipping', {
             name: output.name,
           });
