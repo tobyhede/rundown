@@ -80,8 +80,9 @@ async function buildChildVarFlags(
     const inputKeys = Object.keys(frontmatter?.inputs ?? {});
     // Shell-quote values so spaces and special characters are preserved when the
     // claim command string is executed by Claude Code's task/agent tool.
+    const safeKey = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
     return inputKeys
-      .filter((key) => Object.hasOwn(parentVars, key))
+      .filter((key) => safeKey.test(key) && Object.hasOwn(parentVars, key))
       .map((key) => `--var ${key}=${shellQuote(parentVars[key])}`)
       .join(' ');
   } catch {
