@@ -311,3 +311,52 @@ Received: {{Message}}
     expect(stepEntered?.prompt).not.toContain('{{Message}}');
   });
 });
+
+describe('frontmatter outputs — references final-step OUTPUTS via manual pass', () => {
+  let workspace: TestWorkspace;
+
+  beforeEach(async () => {
+    workspace = await createTestWorkspace();
+  });
+
+  afterEach(async () => {
+    await workspace.cleanup();
+  });
+
+  it('frontmatter outputs see variables written by the final step OUTPUTS', async () => {
+    const RUNBOOK = `---
+name: fm-refs-final-step-outputs
+outputs:
+  - Final {{BuiltVar}}
+---
+# Final-Step OUTPUTS Test
+
+## 1. Produce then complete
+- OUTPUTS
+  - BuiltVar "step-value"
+- PASS COMPLETE
+- FAIL STOP
+
+Waiting for manual pass.
+`;
+    await writeFile(join(workspace.cwd, 'final-step.runbook.md'), RUNBOOK);
+
+    // Start — pauses at step 1 (no command block, prose only).
+    const startResult = runCli('run final-step.runbook.md', workspace);
+    expect(startResult.exitCode).toBe(0);
+
+    // Manual pass drives the transitions.ts path. Step OUTPUTS writes BuiltVar
+    // during the transition; frontmatter outputs must then see it when computing
+    // finalVars at completion.
+    const passResult = runCli('pass', workspace);
+    expect(passResult.exitCode).toBe(0);
+
+    const states = await getAllRunbookStates(workspace);
+    const state = states[0] as {
+      variables?: Record<string, unknown>;
+      finalVars?: Record<string, unknown>;
+    };
+    expect(state.variables?.BuiltVar).toBe('step-value');
+    expect(state.finalVars).toEqual({ Final: 'step-value' });
+  });
+});
