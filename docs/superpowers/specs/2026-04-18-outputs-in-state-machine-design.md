@@ -66,26 +66,47 @@ Pure functions extracted from CLI's `template-renderer.ts` and `step-outputs.ts`
 type OutputVars = Readonly<Record<string, string | number | boolean>>;
 
 /** Evaluates a single output expression against vars.
- *  Four forms: {{ path "file.json" }}, {{ VarName }}, "literal", bare_identifier */
+ *  Four forms: {{ path "file.json" }}, {{ VarName }}, "literal", bare_identifier.
+ *  On failure: throws (caller decides to omit or surface). */
 export function evaluateOutputExpression(expr: string, vars: OutputVars): string;
 
-/** Evaluates all declarations. Naked-form (no value) is invalid at step level — skipped with warning.
- *  Non-fatal: evaluation failures return empty string. */
-export function evaluateOutputDeclarations(
+/** Evaluates step-level output declarations.
+ *  Naked form (no value) is invalid at step level — skipped with warning.
+ *  Failed evaluations are OMITTED from the result (key not written; prior value in context.variables
+ *  is preserved). This matches the existing non-fatal contract: failure is surfaced via
+ *  ERROR_OCCURRED event, not by writing an empty string. */
+export function evaluateStepOutputDeclarations(
   outputs: readonly OutputDeclaration[],
   vars: OutputVars,
 ): Record<string, string>;
 
-/** Reduces TemplateVarValue map to OutputVars.
+/** Evaluates frontmatter output declarations.
+ *  Naked form (no value) is resolved by name lookup from vars — this is the canonical
+ *  frontmatter case (e.g. `- PlanPath` exports the current value of PlanPath).
+ *  Failed evaluations are OMITTED (same contract as evaluateStepOutputDeclarations). */
+export function evaluateFrontmatterOutputDeclarations(
+  outputs: readonly OutputDeclaration[],
+  vars: OutputVars,
+): Record<string, string>;
+
+/** Reduces TemplateVarValue map to OutputVars, stripping non-serializable values.
  *  JsonArray → comma-joined string (consistent with template rendering).
  *  JsonObject → JSON string.
- *  JsonArrayStream → omitted with warning (lazy stream, no concrete value). */
+ *  JsonArrayStream → omitted with warning (lazy stream, no concrete value at evaluation time). */
 export function flattenTemplateVars(
   vars: Readonly<Record<string, TemplateVarValue>>,
 ): OutputVars;
+
+/** Builds the complete evaluation frame from machine context at transition time.
+ *  Merges context.templateVars (base vars) + context.variables (accumulated step outputs) +
+ *  dynamic per-step values derived from context.step, context.substep, context.forStack
+ *  (Step, Index, context.current.*, loop iteration variable).
+ *  Called inside named action params resolvers — fires pre-transition, so context.step
+ *  still reflects the completing step, not the next one. */
+export function buildExecutionFrame(context: RunbookContext): OutputVars;
 ```
 
-The `path "file.json"` helper inside `evaluateOutputExpression` reads `WorkPath` and `ContextId` from the vars map — always plain strings, no CLI-specific type dependency.
+The `path "file.json"` helper inside `evaluateOutputExpression` reads `WorkPath` and `ContextId` from the vars map — always plain strings in `context.templateVars`, no CLI-specific type dependency.
 
 `template-renderer.ts` retains its own `evaluateOutputExpression` wrapper (used for other template rendering concerns) but delegates to the core function internally.
 
@@ -97,6 +118,12 @@ The `path "file.json"` helper inside `evaluateOutputExpression` reads `WorkPath`
 export interface RunbookContext {
   // ... existing fields unchanged ...
 
+  /** Serializable base template variables (WorkPath, ContextId, Branch, user vars, etc.).
+   *  Populated at actor initialization from RunbookState.templateVars via flattenTemplateVars()
+   *  (strips JsonArrayStream; converts JsonArray/JsonObject to strings).
+   *  Stored in the XState snapshot so resumed actors have access to base vars. */
+  readonly templateVars: Readonly<Record<string, string | number | boolean>>;
+
   /** Frontmatter output declarations, set at machine initialization. Empty array when none declared. */
   readonly frontmatterOutputs: readonly OutputDeclaration[];
 
@@ -105,16 +132,19 @@ export interface RunbookContext {
 }
 ```
 
-Both fields are `readonly` consistent with the rest of `RunbookContext`. `finalVars` starts as `{}` and is replaced (not mutated) by `storeFrontmatterOutputs` via `assign()`.
+All three fields are `readonly` consistent with the rest of `RunbookContext`. `finalVars` starts as `{}` and is replaced (not mutated) by `storeFrontmatterOutputs` via `assign()`.
 
 ### Initialization path
 
-`compileRunbookToMachine` gains a `frontmatterOutputs` option:
+`compileRunbookToMachine` gains two new options:
 
 ```typescript
 function compileRunbookToMachine(
   steps: ResolvedStep[],
-  options?: { frontmatterOutputs?: readonly OutputDeclaration[] },
+  options?: {
+    templateVars?: Readonly<Record<string, string | number | boolean>>;
+    frontmatterOutputs?: readonly OutputDeclaration[];
+  },
 )
 ```
 
@@ -123,12 +153,15 @@ The machine's initial context includes:
 ```typescript
 context: {
   // ... existing initial values ...
+  templateVars: options?.templateVars ?? {},
   frontmatterOutputs: options?.frontmatterOutputs ?? [],
   finalVars: {},
 }
 ```
 
-The CLI (wherever it calls `compileRunbookToMachine`) passes the parsed frontmatter's `outputs` field. No XState `input` type is needed — the declarations are compiler-level data, not runtime input.
+The CLI passes `flattenTemplateVars(runbookState.templateVars)` and the parsed frontmatter's `outputs` field when calling `compileRunbookToMachine`. No XState `input` type is needed — these are compiler-level initialization values, not runtime events.
+
+**Snapshot migration:** `templateVars` is a new context field. Existing persisted snapshots will not have it. The actor-service snapshot migration code (`actor-service.ts:74–116`) must default it to `{}` on restore, consistent with how it handles other new context fields. This is safe — a resumed actor with `templateVars: {}` will evaluate output expressions against an empty base (falling back to `context.variables`), which is consistent with the pre-migration behavior where templateVars were not in machine context at all.
 
 ---
 
@@ -144,19 +177,27 @@ export const runbookSetup = setup({
   actions: {
     setLastAction: /* unchanged */,
 
-    /** Evaluate step-level output declarations and merge into context.variables. */
+    /** Evaluate step-level output declarations and merge into context.variables.
+     *  buildExecutionFrame() reconstructs the full pre-transition vars from context:
+     *  context.templateVars (base) + context.variables (accumulated) + dynamic Step/Index/etc.
+     *  Transition actions fire before state changes, so context.step is the completing step. */
     storeStepOutputs: assign({
       variables: ({ context }, params: { outputs: readonly OutputDeclaration[] }) => {
-        const vars = { ...flattenTemplateVars(context.templateVars ?? {}), ...context.variables };
-        return { ...context.variables, ...evaluateOutputDeclarations(params.outputs, vars) };
+        const vars = buildExecutionFrame(context);
+        const evaluated = evaluateStepOutputDeclarations(params.outputs, vars);
+        return { ...context.variables, ...evaluated };
+        // Note: evaluated contains only successfully-evaluated keys (failures are omitted).
+        // Prior values in context.variables for failed keys are preserved.
       },
     }),
 
-    /** Evaluate frontmatter output declarations and store in context.finalVars. */
+    /** Evaluate frontmatter output declarations and store in context.finalVars.
+     *  Uses buildExecutionFrame() for consistent var resolution.
+     *  Naked-form declarations (e.g. `- PlanPath`) are resolved by name lookup from vars. */
     storeFrontmatterOutputs: assign({
       finalVars: ({ context }) => {
-        const vars = { ...flattenTemplateVars(context.templateVars ?? {}), ...context.variables };
-        return evaluateOutputDeclarations(context.frontmatterOutputs, vars);
+        const vars = buildExecutionFrame(context);
+        return evaluateFrontmatterOutputDeclarations(context.frontmatterOutputs, vars);
       },
     }),
   },
@@ -291,13 +332,20 @@ The cast is a current limitation — `snapshot` is typed as `unknown` in `actorS
 
 **New tests in core (`output-evaluator.test.ts`):**
 - `evaluateOutputExpression`: all four expression forms (happy path)
-- `evaluateOutputExpression`: invalid/failing expression → returns empty string (non-fatal)
-- `evaluateOutputExpression`: undefined variable reference → empty string or literal passthrough
-- `evaluateOutputDeclarations`: naked form skipped at step level with warning
-- `evaluateOutputDeclarations`: with-value form evaluated correctly
+- `evaluateOutputExpression`: failing expression → throws (caller omits, not empty string)
+- `evaluateStepOutputDeclarations`: naked form skipped at step level, result does not contain the key
+- `evaluateStepOutputDeclarations`: failed expression → key omitted from result, not written as `''`
+- `evaluateStepOutputDeclarations`: with-value form evaluated correctly
+- `evaluateFrontmatterOutputDeclarations`: naked form resolved by name lookup from vars
+- `evaluateFrontmatterOutputDeclarations`: failed expression → key omitted from result
 - `flattenTemplateVars`: JsonArray → comma-joined string
 - `flattenTemplateVars`: JsonObject → JSON string
 - `flattenTemplateVars`: JsonArrayStream → key omitted, warning observable via emitter/log
+- `buildExecutionFrame`: Step, Index, loop variable, context.current.* all present
+- `buildExecutionFrame`: context.variables merged after templateVars (step outputs win)
+
+**New tests in core (`actor-service.test.ts` / snapshot migration):**
+- Snapshot without `templateVars` field → migrated with `templateVars: {}`
 
 ---
 
