@@ -212,7 +212,7 @@ export async function orchestrateTransition(
       deriveTransitionMessage(result, currentStep, previousState.retryCount);
 
     await manager.update(runbookId, {
-      variables: { ...updatedState.variables, completed: true },
+      variables: { completed: true },
     });
     sink.onRunbookCompleted({
       message,
@@ -229,7 +229,7 @@ export async function orchestrateTransition(
       deriveTransitionMessage(result, currentStep, previousState.retryCount);
 
     await manager.update(runbookId, {
-      variables: { ...updatedState.variables, stopped: true },
+      variables: { stopped: true },
     });
     sink.onRunbookStopped({
       message,

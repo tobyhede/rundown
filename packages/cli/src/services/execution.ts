@@ -543,7 +543,7 @@ export async function runExecutionLoop(
         const completionMessage = extractLastMessage(iterResult.state.snapshot);
 
         await manager.update(runbookId, {
-          variables: { ...iterResult.state.variables, completed: true },
+          variables: { completed: true },
         });
 
         emitter.emit('RUNBOOK_COMPLETED', {
@@ -562,7 +562,7 @@ export async function runExecutionLoop(
         const stopMessage = extractLastMessage(iterResult.state.snapshot);
 
         await manager.update(runbookId, {
-          variables: { ...iterResult.state.variables, stopped: true },
+          variables: { stopped: true },
         });
 
         const stopPos = buildStepPosition(
