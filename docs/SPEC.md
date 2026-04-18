@@ -24,7 +24,7 @@ A Rundown document (`.runbook.md`) is a Markdown file with an optional YAML fron
 
 ### 1.2 Frontmatter
 
-Frontmatter fields beyond `name`, `description`, `version`, `author`, `tags`, `inputs`, and `required` are preserved (open schema). This allows forward-compatible extensions and user-defined metadata.
+Frontmatter fields beyond `name`, `description`, `version`, `author`, `tags`, `inputs`, `outputs`, and `required` are preserved (open schema). This allows forward-compatible extensions and user-defined metadata.
 
 The `required` field declares variable names that must be provided by the caller (via CLI flags, config, environment, or delegation). Each entry must be a valid template variable identifier matching `/^[a-zA-Z_][a-zA-Z0-9_]*$/`. Required variables must not appear in `inputs` — they have no default. Missing required variables produce a hard error during resolution.
 
@@ -315,7 +315,7 @@ OUTPUTS declares values to capture after a successful step execution and inject 
 *   **Expressions**: Each output entry is evaluated against the step's resolved template variables. Supported forms: Handlebars expressions (`{{ path "file.json" }}`), quoted literals (`"value"`), bare variable references (`VarName`).
 *   **Best-effort**: OUTPUTS evaluation is non-fatal. If evaluation fails, an error is logged but the step transition is not rolled back.
 *   **Merge semantics**: Outputs merge into the existing `state.variables` — new keys are added, existing keys are overwritten.
-*   **Status visibility**: The `rd status --json` command includes a `vars` field that exposes the current merged variable space (template vars + step OUTPUTS).
+*   **Status visibility**: The `rd status` command includes a `vars` field that exposes the current merged variable space (template vars + step OUTPUTS).
 
 ### 7.2 Frontmatter `outputs:`
 
