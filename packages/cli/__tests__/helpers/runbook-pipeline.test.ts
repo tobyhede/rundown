@@ -429,7 +429,7 @@ describe('prepareRunbook', () => {
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue(
       mockParseResult({
-        frontmatter: { inputs: ['Region'] },
+        frontmatter: { inputs: { Region: '' } },
       }),
     );
 
@@ -437,7 +437,7 @@ describe('prepareRunbook', () => {
 
     expect(resolveVariables).toHaveBeenCalledWith(
       expect.objectContaining({
-        frontmatterVars: ['Region'],
+        frontmatterVars: { Region: '' },
       }),
       '/test',
       expect.anything(),
@@ -450,7 +450,7 @@ describe('prepareRunbook', () => {
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue(
       mockParseResult({
-        frontmatter: { inputs: ['context'] },
+        frontmatter: { inputs: { context: '' } },
       }),
     );
     (validateFrontmatterVars as jest.Mock).mockReturnValue([
@@ -463,7 +463,7 @@ describe('prepareRunbook', () => {
 
     const result = await prepareRunbook('reserved.md', {}, '/test');
 
-    expect(validateFrontmatterVars).toHaveBeenCalledWith(['context']);
+    expect(validateFrontmatterVars).toHaveBeenCalledWith({ context: '' });
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.code).toBe('VALIDATION_ERROR');
