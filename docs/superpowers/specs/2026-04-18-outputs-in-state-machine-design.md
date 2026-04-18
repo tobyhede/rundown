@@ -16,6 +16,18 @@ The fix: move evaluation into the machine as named actions in `setup()`, with ou
 
 ---
 
+## Behavior Changes
+
+This refactor introduces two semantic changes alongside the structural move. Both are intentional.
+
+**OUTPUTS fire on FAIL as well as PASS.** Previously, step OUTPUTS were only evaluated on PASS transitions. Under this design, `storeStepOutputs` fires on both PASS and FAIL. Rationale: OUTPUTS express "what this step produced" — a step that fails may still produce partial output (a log path, an error code, a computed value) that downstream steps or the parent runbook need. Gating on PASS was an arbitrary restriction, not a semantic requirement.
+
+**Frontmatter OUTPUTS fire on STOPPED as well as COMPLETE.** Previously, frontmatter outputs were only evaluated when the runbook completed normally. Under this design, `storeFrontmatterOutputs` fires on both `COMPLETE` and `STOPPED`. Rationale: a stopped runbook is still a terminal state. Any outputs accumulated up to that point are valid and useful to the parent in a delegation chain.
+
+Both changes require inverting three existing test assertions (see Testing section).
+
+---
+
 ## Architecture
 
 ### Before
@@ -42,7 +54,7 @@ CLI layer (actorService):
   - No OUTPUTS evaluation code anywhere in CLI
 ```
 
-The `SET_VARIABLES` event remains in the machine as a public API for external variable injection. Only the CLI's own OUTPUTS-driven sends are removed.
+`SET_VARIABLES` remains in the machine. Its only remaining CLI caller is `delegation-completion.ts`, which forwards a completed child runbook's `finalVars` into the parent actor's `context.variables` across runbook boundaries. This is a distinct concern from OUTPUTS evaluation and stays.
 
 ---
 
@@ -75,6 +87,8 @@ export function flattenTemplateVars(
 
 The `path "file.json"` helper inside `evaluateOutputExpression` reads `WorkPath` and `ContextId` from the vars map — always plain strings, no CLI-specific type dependency.
 
+`template-renderer.ts` retains its own `evaluateOutputExpression` wrapper (used for other template rendering concerns) but delegates to the core function internally.
+
 ---
 
 ## RunbookContext Changes
@@ -84,12 +98,37 @@ export interface RunbookContext {
   // ... existing fields unchanged ...
 
   /** Frontmatter output declarations, set at machine initialization. Empty array when none declared. */
-  frontmatterOutputs: readonly OutputDeclaration[];
+  readonly frontmatterOutputs: readonly OutputDeclaration[];
 
   /** Evaluated frontmatter outputs. Populated when machine reaches COMPLETE or STOPPED. */
-  finalVars: Record<string, string>;
+  readonly finalVars: Readonly<Record<string, string>>;
 }
 ```
+
+Both fields are `readonly` consistent with the rest of `RunbookContext`. `finalVars` starts as `{}` and is replaced (not mutated) by `storeFrontmatterOutputs` via `assign()`.
+
+### Initialization path
+
+`compileRunbookToMachine` gains a `frontmatterOutputs` option:
+
+```typescript
+function compileRunbookToMachine(
+  steps: ResolvedStep[],
+  options?: { frontmatterOutputs?: readonly OutputDeclaration[] },
+)
+```
+
+The machine's initial context includes:
+
+```typescript
+context: {
+  // ... existing initial values ...
+  frontmatterOutputs: options?.frontmatterOutputs ?? [],
+  finalVars: {},
+}
+```
+
+The CLI (wherever it calls `compileRunbookToMachine`) passes the parsed frontmatter's `outputs` field. No XState `input` type is needed — the declarations are compiler-level data, not runtime input.
 
 ---
 
@@ -100,7 +139,7 @@ export const runbookSetup = setup({
   types: {
     context: {} as RunbookContext,
     events: {} as RunbookEvent,
-    output: {} as { finalVars: Record<string, string> },
+    output: {} as { finalVars: Readonly<Record<string, string>> },
   },
   actions: {
     setLastAction: /* unchanged */,
@@ -124,7 +163,7 @@ export const runbookSetup = setup({
 });
 ```
 
-Both actions are no-ops when their outputs array is empty. `storeStepOutputs` fires on PASS and FAIL paths (not conditional on result). `storeFrontmatterOutputs` fires on both `COMPLETE` and `STOPPED` terminal states.
+`assign()` inside `setup({ actions })` is correct — `runbookSetup.assign()` (the type-bound helper) is for use outside the `setup()` call, consistent with existing compiler convention. Both actions are no-ops when their outputs array is empty.
 
 ---
 
@@ -138,7 +177,7 @@ The `COMPLETE` and `STOPPED` states are defined in `compileRunbookToMachine` (li
 COMPLETE: {
   type: 'final',
   entry: [
-    { type: 'storeFrontmatterOutputs' },  // evaluate before terminal marker is written
+    { type: 'storeFrontmatterOutputs' },  // runs before terminal marker; reads clean context.variables
     runbookSetup.assign({ variables: ({ context }) => ({ ...context.variables, completed: true }) }),
   ],
   output: ({ context }) => ({ finalVars: context.finalVars }),
@@ -182,7 +221,11 @@ actions: [
 
 `always` transitions that remain within the same parent step (substep-internal routing) do not get `storeStepOutputs`. The distinction is already structurally encoded in the transition targets.
 
-**`storeStepOutputs` fires on both PASS and FAIL** — the action is appended regardless of result kind. No conditional on result.
+**`storeStepOutputs` fires on both PASS and FAIL** — the action is appended regardless of result kind.
+
+**`storeStepOutputs` fires before the terminal state is entered** — transition actions in XState execute before the target state's entry actions. A FAIL→STOP transition therefore evaluates outputs first, then enters `STOPPED`. Tests must assert that `context.variables` contains the evaluated outputs in the terminal snapshot.
+
+**FOR loop iterations** — `storeStepOutputs` fires per-iteration: for a step inside a FOR loop with outputs, the action appears on the `always` transitions that advance the loop index. Each iteration's output evaluation uses the current iteration's vars (including the loop variable). Outputs from successive iterations overwrite prior values if the same key is declared — last iteration wins.
 
 ---
 
@@ -209,26 +252,37 @@ This fires on every `updateFromActor` call. `RunbookState.finalVars` is populate
 | `runbook-pipeline.ts` | `evaluateFrontmatterOutputs` call and `done`/`stopped` guard block |
 | `step-outputs.ts` | `evaluateStepOutputs`, `evaluateFrontmatterOutputs` (callers gone) |
 | `execution-units.ts` | `shouldPersistParentOutputs` function |
-| `template-renderer.ts` | `evaluateOutputExpression` — updated to delegate to core function |
 
 ---
 
 ## Testing
 
-**Updated tests:**
+**Updated tests (behavior inversion):**
 - `frontmatter-outputs.test.ts`: FAIL STOP test inverts — `finalVars` should be populated on stopped
 - `context-passing-outputs.test.ts`: two tests asserting OUTPUTS not stored on FAIL are inverted
 - `transitions-explicit-target.test.ts`: test asserting OUTPUTS skipped on FAIL is inverted
 
-**New tests in core:**
-- `output-evaluator.test.ts`: unit tests for `evaluateOutputExpression`, `evaluateOutputDeclarations`, `flattenTemplateVars`
-- `compiler.test.ts`: tests confirming `storeStepOutputs` appears on correct transitions with correct params, both PASS and FAIL paths, substep vs parent paths
+**New tests in core (`compiler.test.ts`):**
+- `storeStepOutputs` appears on PASS transition with correct `outputs` params
+- `storeStepOutputs` appears on FAIL transition (not gated on result kind)
+- `storeStepOutputs` appears on substep transition when substep has outputs
+- `storeStepOutputs` appears on parent-advancing `always` transition when parent has outputs
+- `storeStepOutputs` absent on substep-internal `always` transitions
+- `storeStepOutputs` fires before `STOPPED` state is entered (FAIL→STOP transition has action)
+- FOR loop step with outputs: `storeStepOutputs` on iteration-advancing `always` transitions
+- `storeFrontmatterOutputs` present as first entry action on `COMPLETE` state
+- `storeFrontmatterOutputs` present as first entry action on `STOPPED` state
+
+**New tests in core (`output-evaluator.test.ts`):**
+- `evaluateOutputExpression`: all four expression forms
+- `evaluateOutputDeclarations`: naked form skipped at step level, with-value form evaluated
+- `flattenTemplateVars`: JsonArray → comma-joined, JsonObject → JSON string, JsonArrayStream → omitted
 
 ---
 
 ## What Is Not Changed
 
-- `SET_VARIABLES` event and its machine handler — stays as public API for external injection
+- `SET_VARIABLES` event and its machine handler — retained for `delegation-completion.ts` cross-runbook forwarding
 - `RunbookState.finalVars` field — persisted identically, just populated via context read instead of direct `manager.update`
 - `context.variables` field in `RunbookContext` — still stores step-level outputs, same semantics
 - The `required:` validation and variable resolution in `runbook-pipeline.ts` — unchanged
