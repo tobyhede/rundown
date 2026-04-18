@@ -856,13 +856,17 @@ const FOR_LOOP_RUNTIME_VARIABLES = new Set(['Index', 'index', 'context.current.i
  * context.current.*) are always suppressed. FOR loop-specific variables
  * (Index, context.current.index) are only suppressed within their own
  * FOR step's substeps. FOR loop variables are only suppressed within
- * their own FOR step's substeps.
+ * their own FOR step's substeps. Names declared in any step's or substep's
+ * OUTPUTS directive are suppressed runbook-wide, since those values are
+ * published into `state.variables` at runtime and re-resolved when a later
+ * step's prompt is rendered.
  *
  * @param runbook - Runbook AST after variable substitution
  * @returns Set of unresolved variable names found in the runbook
  */
 export function collectUnresolvedRunbookVariables(runbook: ResolvedRunbook): Set<string> {
   const unresolved = new Set<string>();
+  const publishedByOutputs = collectPublishedOutputNames(runbook);
 
   const collect = (text: string | undefined): void => {
     if (!text) return;
@@ -943,7 +947,36 @@ export function collectUnresolvedRunbookVariables(runbook: ResolvedRunbook): Set
     }
   }
 
+  for (const name of publishedByOutputs) {
+    unresolved.delete(name);
+  }
   return unresolved;
+}
+
+/**
+ * Collect every variable name declared by a step- or substep-level OUTPUTS directive.
+ *
+ * These names are published into `state.variables` at runtime (via SET_VARIABLES
+ * or a direct terminal write) and so will resolve when a later step's prompt is
+ * rendered — even though they are absent from startup `templateVars`. Suppressing
+ * them from the unresolved set keeps the startup warning signal meaningful.
+ *
+ * @param runbook - Runbook AST after variable substitution
+ * @returns Set of names that any OUTPUTS directive will publish
+ */
+function collectPublishedOutputNames(runbook: ResolvedRunbook): Set<string> {
+  const names = new Set<string>();
+  const addAll = (outputs: readonly { readonly name: string }[] | undefined): void => {
+    if (!outputs) return;
+    for (const o of outputs) names.add(o.name);
+  };
+  for (const step of runbook.steps) {
+    addAll(step.outputs);
+    if ('substeps' in step) {
+      for (const ss of step.substeps) addAll(ss.outputs);
+    }
+  }
+  return names;
 }
 
 /**

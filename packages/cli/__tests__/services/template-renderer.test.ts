@@ -768,6 +768,78 @@ describe('warnUnresolvedRunbookVariables', () => {
     const warnings = warnUnresolvedRunbookVariables(resolved.runbook);
     expect(warnings).toHaveLength(0);
   });
+
+  it('should suppress unresolved name when same name is declared in a later step OUTPUTS', () => {
+    const rawMarkdown = [
+      '# Test',
+      '',
+      '## 1. Produce',
+      '- OUTPUTS',
+      '  - Message "hello"',
+      '',
+      '## 2. Consume',
+      '',
+      'The message is: {{Message}}',
+    ].join('\n');
+    const { runbook } = parseRunbookDocument(rawMarkdown);
+    const warnings = warnUnresolvedRunbookVariables(runbook);
+    expect(warnings).toHaveLength(0);
+  });
+
+  it('should still warn for unresolved names not published by any OUTPUTS', () => {
+    const rawMarkdown = [
+      '# Test',
+      '',
+      '## 1. Produce',
+      '- OUTPUTS',
+      '  - Message "hello"',
+      '',
+      '## 2. Consume',
+      '',
+      'Env: {{environment}} Msg: {{Message}}',
+    ].join('\n');
+    const { runbook } = parseRunbookDocument(rawMarkdown);
+    const warnings = warnUnresolvedRunbookVariables(runbook);
+    expect(warnings).toHaveLength(1);
+    expect(warnings).toContain('Undefined variable "{{environment}}" preserved as literal text');
+  });
+
+  it('should suppress substep-published OUTPUTS names', () => {
+    const rawMarkdown = [
+      '# Test',
+      '',
+      '## 1. Parent',
+      '',
+      '### 1.1 Produce',
+      '- OUTPUTS',
+      '  - Tag "v1"',
+      '',
+      '### 1.2 Consume',
+      '',
+      'Release {{Tag}}.',
+    ].join('\n');
+    const { runbook } = parseRunbookDocument(rawMarkdown);
+    const warnings = warnUnresolvedRunbookVariables(runbook);
+    expect(warnings).toHaveLength(0);
+  });
+
+  it('should not suppress when OUTPUTS exists but uses a different name', () => {
+    const rawMarkdown = [
+      '# Test',
+      '',
+      '## 1. Produce',
+      '- OUTPUTS',
+      '  - Tag "v1"',
+      '',
+      '## 2. Consume',
+      '',
+      'Release {{Version}}.',
+    ].join('\n');
+    const { runbook } = parseRunbookDocument(rawMarkdown);
+    const warnings = warnUnresolvedRunbookVariables(runbook);
+    expect(warnings).toHaveLength(1);
+    expect(warnings).toContain('Undefined variable "{{Version}}" preserved as literal text');
+  });
 });
 
 describe('resolveForBounds', () => {
