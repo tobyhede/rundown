@@ -71,11 +71,11 @@ rd echo --result fail
 `;
     await writeFile(join(workspace.cwd, 'fail.runbook.md'), FAIL_RUNBOOK);
 
-    runCli('run fail.runbook.md --var SomeVar=hello', workspace);
+    const result = runCli('run fail.runbook.md --var SomeVar=hello', workspace);
+    expect(result.exitCode).not.toBe(0);
 
     const states = await getAllRunbookStates(workspace);
     const state = states[0] as { finalVars?: Record<string, unknown> };
-    // finalVars should be absent or empty when run stops on FAIL
     expect(state.finalVars).toBeUndefined();
   });
 });
@@ -186,6 +186,13 @@ Waiting for manual pass.
     // Start the runbook — execution pauses (no command block).
     const startResult = runCli('run prompted.runbook.md --var SomeVar=manual-value', workspace);
     expect(startResult.exitCode).toBe(0);
+
+    // Verify runbook is paused/waiting before issuing pass.
+    const statusResult = runCli('status', workspace);
+    expect(statusResult.exitCode).toBe(0);
+    const statusEvents = parseJsonOutput(statusResult.stdout);
+    const statusOutput = statusEvents[0] as { active?: boolean };
+    expect(statusOutput.active).toBe(true);
 
     // Manually pass to complete — this goes through the transitions.ts path.
     const passResult = runCli('pass', workspace);
