@@ -84,10 +84,7 @@ export const runbookSetup = setup({
      * step/substep cursor before evaluating each declaration.
      */
     storeStepOutputs: assign({
-      variables: (
-        { context },
-        params: ActionDefs['storeStepOutputs'],
-      ) => {
+      variables: ({ context }, params: ActionDefs['storeStepOutputs']) => {
         const frame = buildExecutionFrame(toFrameState(context), {
           stepName: params.stepName,
           substepId: params.substepId,
@@ -105,10 +102,7 @@ export const runbookSetup = setup({
      * by variable name from `templateVars` or `variables`).
      */
     storeFrontmatterOutputs: assign({
-      finalVars: (
-        { context },
-        params: ActionDefs['storeFrontmatterOutputs'],
-      ) => {
+      finalVars: ({ context }, params: ActionDefs['storeFrontmatterOutputs']) => {
         if (context.frontmatterOutputs.length === 0) {
           return context.finalVars;
         }

@@ -24,7 +24,6 @@ describe('actionRef', () => {
     const seen: string[] = [];
     for (const ref of refs) {
       switch (ref.type) {
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- single-variant union in Phase 1; non-trivial after Phase 2 adds entries
         case 'setLastAction':
           seen.push(`set:${ref.params.action.type}`);
           break;
