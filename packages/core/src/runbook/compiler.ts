@@ -26,6 +26,7 @@ import {
   buildExecutionFrame,
   evaluateFrontmatterOutputDeclarations,
   evaluateStepOutputDeclarations,
+  type OutputFrameState,
   type OutputVars,
 } from './output-evaluator.js';
 
@@ -38,11 +39,7 @@ import {
  * @param context - The runbook machine context
  * @returns A frame state suitable for output evaluation
  */
-function toFrameState(context: RunbookContext): {
-  templateVars?: OutputVars;
-  variables: Readonly<Record<string, string>>;
-  forStack: readonly ForContext[];
-} {
+function toFrameState(context: RunbookContext): OutputFrameState {
   const stringified: Record<string, string> = {};
   for (const [key, value] of Object.entries(context.variables)) {
     stringified[key] = typeof value === 'string' ? value : String(value);
@@ -60,11 +57,20 @@ function toFrameState(context: RunbookContext): {
  * Extracted to module scope so `runbookSetup.assign()` provides
  * compile-time context/event type inference throughout the compiler.
  */
+/**
+ * Shape of the machine output emitted when the runbook reaches a terminal
+ * state (COMPLETE or STOPPED). Mirrors the `finalVars` snapshot persisted
+ * on {@link RunbookContext} by `storeFrontmatterOutputs`.
+ */
+export interface RunbookMachineOutput {
+  readonly finalVars: Readonly<Record<string, string>>;
+}
+
 export const runbookSetup = setup({
   types: {
     context: {} as RunbookContext,
     events: {} as RunbookEvent,
-    output: {} as { finalVars: Readonly<Record<string, string>> },
+    output: {} as RunbookMachineOutput,
   },
   actions: {
     /** Set lastAction and optional lastMessage. */
@@ -187,7 +193,7 @@ export interface RunbookContext {
   /** Frontmatter `outputs:` declarations evaluated when the runbook reaches a terminal state. */
   readonly frontmatterOutputs: readonly OutputDeclaration[];
   /** Final OUTPUTS snapshot persisted at terminal entry. Exposed via machine output. */
-  readonly finalVars: Readonly<Record<string, string>>;
+  readonly finalVars: RunbookMachineOutput['finalVars'];
 }
 
 /**
@@ -218,13 +224,6 @@ interface TransitionEntry {
   target?: string;
   actions?: CompilerAction | CompilerAction[];
   guard?: (args: { context: RunbookContext; event: RunbookEvent }) => boolean;
-}
-
-/** XState `always` transition configuration within parent aggregation states. */
-interface AlwaysTransition {
-  guard?: (args: { context: RunbookContext; event: RunbookEvent }) => boolean;
-  target?: string;
-  actions?: CompilerAction | CompilerAction[];
 }
 
 type TransitionConfig = TransitionEntry | TransitionEntry[];
@@ -858,7 +857,7 @@ function buildParentExitAssign(
 function buildParentStateConfig(
   config: ParentStateConfig,
   steps: ResolvedStep[],
-): { always: AlwaysTransition[]; entry?: CompilerAction | CompilerAction[] } {
+): { always: TransitionEntry[]; entry?: CompilerAction | CompilerAction[] } {
   const parentStep = config.parentStep;
   const stepName = config.stepName;
   const hasFor = parentStep.kind === 'for';
@@ -867,7 +866,7 @@ function buildParentStateConfig(
   const firstSubstep = parentStep.substeps[0] as (typeof parentStep.substeps)[number] | undefined;
   const firstSubstepStateId = firstSubstep ? formatStateId(stepName, firstSubstep.id) : nextTarget;
 
-  const always: AlwaysTransition[] = [];
+  const always: TransitionEntry[] = [];
 
   // FOR iteration-level aggregation/transitions — default when iteration machinery is needed
   const needsIterationMachinery =
@@ -883,17 +882,17 @@ function buildParentStateConfig(
       })
     : undefined;
 
-  type GuardFn = (args: { context: RunbookContext }) => boolean;
+  type GuardFn = (args: { context: RunbookContext; event: RunbookEvent }) => boolean;
 
   // Build retry-aware transition entries for one aggregated outcome branch.
   const buildOutcomeEntries = (
     branchGuard: GuardFn,
     transition: { retry: number; action: Action },
     target: string,
-  ): AlwaysTransition[] => {
+  ): TransitionEntry[] => {
     const exhausted = {
-      guard: ({ context }: { context: RunbookContext }) =>
-        branchGuard({ context }) &&
+      guard: ({ context, event }: { context: RunbookContext; event: RunbookEvent }) =>
+        branchGuard({ context, event }) &&
         (transition.retry <= 0 || context.parentRetryCount >= transition.retry),
       target,
       actions: [
@@ -908,8 +907,8 @@ function buildParentStateConfig(
 
     return [
       {
-        guard: ({ context }: { context: RunbookContext }) =>
-          branchGuard({ context }) && context.parentRetryCount < transition.retry,
+        guard: ({ context, event }: { context: RunbookContext; event: RunbookEvent }) =>
+          branchGuard({ context, event }) && context.parentRetryCount < transition.retry,
         target: firstSubstepStateId,
         actions: runbookSetup.assign({
           lastAction: { type: 'RETRY' as const },
@@ -1509,10 +1508,10 @@ function buildParentStateConfig(
  * @returns The decorated transition (or the original if no decoration applies)
  */
 function decorateParentTransition(
-  transition: AlwaysTransition,
+  transition: TransitionEntry,
   stepName: string,
   outputs: readonly OutputDeclaration[] | undefined,
-): AlwaysTransition {
+): TransitionEntry {
   const extra: CompilerAction[] = [];
   const target = transition.target;
   const exitsParent =
@@ -1524,7 +1523,7 @@ function decorateParentTransition(
     extra.push(actionRef('storeStepOutputs', { outputs, stepName }));
   }
 
-  return appendActions(transition, extra) as AlwaysTransition;
+  return appendActions(transition, extra);
 }
 
 /**
@@ -1552,7 +1551,7 @@ function buildRetryStateConfig(
   substepId: string | undefined,
   steps: ResolvedStep[],
   resultKind: 'pass' | 'fail',
-): { always: AlwaysTransition[] } {
+): { always: TransitionEntry[] } {
   const exhaustedTransition = buildActionTransition(
     transition.action,
     stepName,
@@ -1563,8 +1562,8 @@ function buildRetryStateConfig(
   const rawEntries = Array.isArray(exhaustedTransition)
     ? exhaustedTransition
     : [exhaustedTransition];
-  const exhaustedEntries: AlwaysTransition[] = rawEntries.map(
-    (entry): AlwaysTransition => ({ target: entry.target, actions: entry.actions }),
+  const exhaustedEntries: TransitionEntry[] = rawEntries.map(
+    (entry): TransitionEntry => ({ target: entry.target, actions: entry.actions }),
   );
 
   return {
@@ -1638,7 +1637,7 @@ function buildTerminalTransition(
   target: 'COMPLETE' | 'STOPPED',
   actionType: 'COMPLETE' | 'STOP',
   message: string | undefined,
-): TransitionConfig {
+): TransitionEntry {
   return {
     target,
     actions: actionRef('setLastAction', {
@@ -1664,7 +1663,7 @@ function buildLoopControlTransition(
   actionType: 'NEXT' | 'BREAK',
   stepName: string,
   steps: ResolvedStep[],
-): TransitionConfig {
+): TransitionEntry {
   const currentStep = steps.find((s) => s.name === stepName);
   if (currentStep?.kind !== 'for') {
     return {
@@ -1718,7 +1717,7 @@ function buildDeferTransition(
   substepId: string | undefined,
   steps: ResolvedStep[],
   kind: 'pass' | 'fail',
-): TransitionConfig {
+): TransitionEntry {
   const currentStep = steps.find((s) => s.name === stepName);
 
   // Substeps: DEFER always routes to parent (enables fail-fast ALL/ANY evaluation)
@@ -1763,7 +1762,7 @@ function buildContinueTransition(
   stepName: string,
   substepId: string | undefined,
   steps: ResolvedStep[],
-): TransitionConfig {
+): TransitionEntry {
   const currentStep = steps.find((s) => s.name === stepName);
 
   // Substeps: uniform routing regardless of parent type (FOR or non-FOR)
@@ -1829,7 +1828,7 @@ function buildGotoTransition(
   stepName: string,
   substepId: string | undefined,
   steps: ResolvedStep[],
-): TransitionConfig {
+): TransitionEntry {
   const targetStep = target.step;
 
   // Named/numeric step target (both are strings now)
@@ -1976,34 +1975,25 @@ function buildActionTransition(
   let transition: TransitionEntry;
   switch (action.type) {
     case 'CONTINUE':
-      transition = buildContinueTransition(stepName, substepId, steps) as TransitionEntry;
+      transition = buildContinueTransition(stepName, substepId, steps);
       break;
     case 'DEFER':
-      transition = buildDeferTransition(stepName, substepId, steps, resultKind) as TransitionEntry;
+      transition = buildDeferTransition(stepName, substepId, steps, resultKind);
       break;
     case 'COMPLETE':
-      transition = buildTerminalTransition(
-        'COMPLETE',
-        'COMPLETE',
-        action.message,
-      ) as TransitionEntry;
+      transition = buildTerminalTransition('COMPLETE', 'COMPLETE', action.message);
       break;
     case 'STOP':
-      transition = buildTerminalTransition('STOPPED', 'STOP', action.message) as TransitionEntry;
+      transition = buildTerminalTransition('STOPPED', 'STOP', action.message);
       break;
     case 'GOTO':
-      transition = buildGotoTransition(
-        action.target,
-        stepName,
-        substepId,
-        steps,
-      ) as TransitionEntry;
+      transition = buildGotoTransition(action.target, stepName, substepId, steps);
       break;
     case 'NEXT':
-      transition = buildLoopControlTransition('NEXT', stepName, steps) as TransitionEntry;
+      transition = buildLoopControlTransition('NEXT', stepName, steps);
       break;
     case 'BREAK':
-      transition = buildLoopControlTransition('BREAK', stepName, steps) as TransitionEntry;
+      transition = buildLoopControlTransition('BREAK', stepName, steps);
       break;
   }
 

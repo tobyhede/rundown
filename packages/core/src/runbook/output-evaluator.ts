@@ -1,5 +1,5 @@
 import type { OutputDeclaration } from '@rundown-org/parser';
-import type { ForContext, JsonArray, JsonObject, TemplateVarValue } from './types.js';
+import type { ForContext, JsonValue, TemplateVarValue } from './types.js';
 import {
   assertResolvedVariableForContext,
   isJsonArray,
@@ -10,8 +10,13 @@ import { deriveExecutionAt } from './targeting.js';
 import { assembleArtifactPath } from './artifact-paths.js';
 import { logger } from '../logger.js';
 
-/** Any value an OUTPUTS expression can resolve to in the runtime frame. */
-export type OutputValue = string | number | boolean | null | JsonObject | JsonArray;
+/**
+ * Any value an OUTPUTS expression can resolve to in the runtime frame.
+ *
+ * Aliased to {@link JsonValue} so the core JSON-shape invariant is enforced
+ * at a single type definition site.
+ */
+export type OutputValue = JsonValue;
 
 /** Readonly variable frame passed to OUTPUTS expression evaluation. */
 export type OutputVars = Readonly<Record<string, OutputValue>>;
@@ -310,7 +315,7 @@ export function buildExecutionFrame(state: OutputFrameState, cursor: OutputCurso
           break;
         case 'variable':
           assertResolvedVariableForContext(top);
-          frame[top.variable] = top.currentValue as OutputValue;
+          frame[top.variable] = top.currentValue;
           break;
         default: {
           const _exhaustive: never = top.source;
