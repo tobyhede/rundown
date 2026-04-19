@@ -1372,8 +1372,11 @@ function buildParentStateConfig(
 
     // Resolve PASS / FAIL targets from the parent's declared transitions so we
     // honor `## 1. Parent\n- FAIL STOP` even without an AGGREGATION modifier.
-    // Without this, parent-level FAIL was unreachable when substeps CONTINUEd
-    // through FAIL (non-FOR) or any iteration failed (FOR) — see Bug A.
+    // Without this, parent-level FAIL was unreachable in two cases:
+    // - Case C (FOR without aggregation): any iteration failed, but
+    //   iterationResults was never checked.
+    // - Case D (non-FOR pass-through): a substep FAIL/DEFER populated
+    //   deferredResults, but there was no guarded exit that read it.
     const parentPassTarget = resolveActionTarget(
       parentStep.transitions.pass.action,
       stepName,
@@ -2121,7 +2124,6 @@ function checkedStateInsert(
  * @param options - Optional compilation inputs
  * @param options.templateVars - Seeded template variables for OUTPUTS evaluation
  * @param options.frontmatterOutputs - Frontmatter `outputs:` declarations
- * @param options.sources - Reserved for data-source bindings (passed through unchanged)
  * @returns An XState state machine definition
  * @throws {Error} When a GOTO target references a non-existent step or when graph invariants are violated (e.g., duplicate state IDs)
  */
