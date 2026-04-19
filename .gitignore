@@ -10,6 +10,7 @@ coverage/
 .rundown/locks/
 .work/
 .worktree/
+.worktrees/
 .claude/settings.local.json
 .claude/session/
 .claude/rundown/
