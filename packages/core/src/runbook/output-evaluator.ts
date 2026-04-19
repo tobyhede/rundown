@@ -154,7 +154,14 @@ export function evaluateOutputExpression(expr: string, variables: OutputVars): s
     return expandOutputVariables(trimmed, variables);
   }
 
-  return resolveOutputPath(trimmed, variables) ?? trimmed;
+  // Try to resolve as a bare identifier first; if not found, expand any templates that may appear in the value
+  const resolved = resolveOutputPath(trimmed, variables);
+  if (resolved !== undefined) {
+    return resolved;
+  }
+
+  // No bare identifier match — expand any embedded template variables
+  return expandOutputVariables(trimmed, variables);
 }
 
 /**

@@ -2056,7 +2056,7 @@ function buildActionTransition(
       target !== formatStateId(stepName) &&
       !target.startsWith(`${formatStateId(stepName)}::`);
     if (exitsParent && parentOutputs && parentOutputs.length > 0) {
-      extra.push(actionRef('storeStepOutputs', { outputs: parentOutputs, stepName }));
+      extra.push(actionRef('storeStepOutputs', { outputs: parentOutputs, stepName, substepId }));
     }
   }
 
