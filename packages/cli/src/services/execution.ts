@@ -52,13 +52,7 @@ import {
   transitionSinkFromEmitter,
   type TransitionOrchestrationPolicy,
 } from '../helpers/transition-orchestrator.js';
-import {
-  resolveCurrentExecutionUnit,
-  shouldPersistParentOutputs,
-  mergeExecutionTemplateVars,
-  isSubstep,
-} from '../helpers/execution-units.js';
-import { evaluateStepOutputs } from '../helpers/step-outputs.js';
+import { resolveCurrentExecutionUnit } from '../helpers/execution-units.js';
 export type { ExecutionVarValue, StepVariables, TemplateVariables } from './execution-vars.js';
 
 /**
@@ -229,75 +223,12 @@ async function applyResultTransition({
 }: ApplyResultTransitionArgs): Promise<
   { status: 'continue'; state: RunbookState } | { status: 'done' } | { status: 'stopped' }
 > {
-  let syncResult = await actorService.sendAndSync(runbookId, steps, {
+  const syncResult = await actorService.sendAndSync(runbookId, steps, {
     type: result === 'pass' ? 'PASS' : 'FAIL',
   });
   if (!syncResult) return { status: 'stopped' };
 
-  // Compute actionType early — needed by the OUTPUTS guard below and later for orchestration.
   const actionType = parseActionType(extractLastAction(syncResult.snapshot));
-
-  // Evaluate step OUTPUTS for PASS transitions; inject into state via SET_VARIABLES.
-  // Done AFTER PASS/FAIL so syncResult.state.step (updatedStepId) is known for the
-  // shouldPersistParentOutputs guard. SET_VARIABLES updates the XState snapshot, which
-  // createActor() restores from — direct manager.update({ variables }) would be invisible
-  // to the next actor.
-  if (result === 'pass') {
-    // Merge state.variables (prior steps' OUTPUTS) so the current step's OUTPUTS
-    // expressions can reference values written by earlier steps. Mirrors the
-    // manual-transition path in transitions.ts around the same point.
-    const mergedTemplateVars = {
-      ...currentState.templateVars,
-      ...currentState.variables,
-    };
-    const preTransitionStepVars = buildStepVariables(
-      currentState.step,
-      currentState.substep,
-      currentState.forStack,
-      currentStep.kind === 'for' ? currentStep.forClause : undefined,
-      mergedTemplateVars as typeof currentState.templateVars,
-    );
-    const templateVars = mergeExecutionTemplateVars(
-      preTransitionStepVars,
-      syncResult.state.templateVars as Readonly<StepVariables> | undefined,
-    );
-    if (templateVars) {
-      const allEvaluated: Record<string, string> = {};
-      const executionUnit = resolveCurrentExecutionUnit(currentStep, currentState.substep);
-      if (isSubstep(executionUnit) && executionUnit.outputs?.length) {
-        Object.assign(allEvaluated, evaluateStepOutputs(executionUnit.outputs, templateVars));
-      }
-      const parentOutputs = currentStep.outputs ?? [];
-      if (
-        parentOutputs.length > 0 &&
-        shouldPersistParentOutputs({
-          isSubstepContext: currentState.substep !== undefined,
-          parentStepAdvanced: syncResult.state.step !== currentState.step,
-          isTerminalAction: actionType === 'STOP' || actionType === 'COMPLETE',
-          parentHasOutputs: true,
-        })
-      ) {
-        Object.assign(allEvaluated, evaluateStepOutputs(parentOutputs, templateVars));
-      }
-      if (Object.keys(allEvaluated).length > 0) {
-        if (actionType === 'COMPLETE' || actionType === 'STOP') {
-          // Machine is in a final state; SET_VARIABLES events are ignored by XState on final
-          // states. Use a direct manager update — no next actor will restore from snapshot.
-          // manager.update merges with existing variables, so orchestrateTransition's
-          // subsequent write of { completed: true } will correctly merge on top.
-          await manager.update(runbookId, { variables: allEvaluated });
-        } else {
-          const setVarsResult = await actorService.sendAndSync(runbookId, steps, {
-            type: 'SET_VARIABLES',
-            vars: allEvaluated,
-          });
-          if (setVarsResult) {
-            syncResult = setVarsResult;
-          }
-        }
-      }
-    }
-  }
 
   const ensured = await lifecycleService.ensureActiveEntry(
     runbookId,

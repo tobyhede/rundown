@@ -64,7 +64,6 @@ import {
   validateRequiredVars,
   validateOutputsDeclarations,
 } from './validate-frontmatter-vars.js';
-import { evaluateFrontmatterOutputs } from './step-outputs.js';
 
 /**
  * Variable options from CLI flags.
@@ -699,7 +698,6 @@ async function launchRunbook(
     };
   }
 
-  // Run execution loop (failures propagate as exceptions — caller's concern)
   const loopResult = await runExecutionLoop(
     manager,
     stateId,
@@ -708,26 +706,6 @@ async function launchRunbook(
     options.prompted,
     emitter,
   );
-
-  // Frontmatter OUTPUTS finalizer: evaluate declared outputs and write to state.finalVars.
-  const frontmatterOutputs = prepared.frontmatter?.outputs;
-  if (loopResult === 'done' && frontmatterOutputs?.length) {
-    const postState = await manager.load(stateId);
-    const effectiveVars = {
-      ...prepared.mergedVariables,
-      ...(postState?.variables ?? {}),
-    };
-    const finalVars = evaluateFrontmatterOutputs(
-      frontmatterOutputs,
-      // Cast: mergedVariables (TemplateVarValue) + state.variables (string|number|boolean)
-      // combined is a superset of StepVariables values
-      effectiveVars as unknown as Parameters<typeof evaluateFrontmatterOutputs>[1],
-      emitter,
-    );
-    if (Object.keys(finalVars).length > 0) {
-      await manager.update(stateId, { finalVars });
-    }
-  }
 
   return { ok: true, loopResult, stateId };
 }

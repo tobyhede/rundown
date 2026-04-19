@@ -4346,11 +4346,7 @@ echo "processing"
         },
       ]);
 
-      const machine = compileRunbookToMachine(steps, {
-        sources: {
-          lines: { kind: 'file', path: '/tmp/test.txt', format: 'text' },
-        },
-      });
+      const machine = compileRunbookToMachine(steps);
 
       const actor = createActor(machine);
       actor.start();
@@ -4391,11 +4387,7 @@ echo "processing"
         },
       ]);
 
-      const machine = compileRunbookToMachine(steps, {
-        sources: {
-          lines: { kind: 'file', path: '/tmp/test.txt', format: 'text' },
-        },
-      });
+      const machine = compileRunbookToMachine(steps);
 
       // Start actor and inject currentValue via snapshot rehydration
       const actor = createActor(machine);
@@ -4441,11 +4433,7 @@ echo "processing"
         },
       ]);
 
-      const machine = compileRunbookToMachine(steps, {
-        sources: {
-          lines: { kind: 'file', path: '/tmp/test.txt', format: 'text' },
-        },
-      });
+      const machine = compileRunbookToMachine(steps);
 
       const actor = createActor(machine);
       actor.start();
@@ -4497,11 +4485,7 @@ echo "processing"
         },
       ]);
 
-      const machine = compileRunbookToMachine(steps, {
-        sources: {
-          data: { kind: 'file', path: '/tmp/data.txt', format: 'text' },
-        },
-      });
+      const machine = compileRunbookToMachine(steps);
 
       const actor = createActor(machine);
       actor.start();

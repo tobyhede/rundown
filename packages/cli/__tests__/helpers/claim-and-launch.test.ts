@@ -106,12 +106,6 @@ jest.unstable_mockModule('../../src/services/execution', () => ({
   runExecutionLoop: jest.fn().mockResolvedValue('done'),
 }));
 
-// Mock step-outputs
-jest.unstable_mockModule('../../src/helpers/step-outputs', () => ({
-  evaluateStepOutputs: jest.fn().mockReturnValue({}),
-  evaluateFrontmatterOutputs: jest.fn().mockReturnValue({}),
-}));
-
 // Mock execution-emitter
 jest.unstable_mockModule('../../src/helpers/execution-emitter', () => ({
   createBridgedEmitter: jest.fn().mockReturnValue({ emit: jest.fn() }),
@@ -145,7 +139,6 @@ jest.unstable_mockModule('../../src/services/template-renderer', () => ({
   expandLoopVariables: jest.fn((text: string) => text),
   warnUnresolvedRunbookVariables: jest.fn().mockReturnValue([]),
   collectUnresolvedRunbookVariables: jest.fn().mockReturnValue(new Set()),
-  evaluateOutputExpression: jest.fn((expr: string) => expr),
 }));
 
 // Mock validate-frontmatter-vars

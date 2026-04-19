@@ -17,6 +17,7 @@ coverage/
 .claude-docker/
 logs/
 docs/plans/
+graphify-out/
 
 # WebContainer snapshot (build artifact — rebuilt by CI and locally via npm run build:snapshot -w site)
 site/public/rundown-snapshot.bin

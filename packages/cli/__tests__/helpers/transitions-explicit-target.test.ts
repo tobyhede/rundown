@@ -1,20 +1,6 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { mockErrorHelpers } from './mock-error-helpers';
 
-// Mock step-outputs (must be before transitions import)
-jest.unstable_mockModule('../../src/helpers/step-outputs', () => ({
-  evaluateStepOutputs: jest.fn().mockReturnValue({}),
-  evaluateFrontmatterOutputs: jest.fn().mockReturnValue({}),
-}));
-
-// Mock execution-units (must be before transitions import)
-jest.unstable_mockModule('../../src/helpers/execution-units', () => ({
-  shouldPersistParentOutputs: jest.fn().mockReturnValue(false),
-  mergeExecutionTemplateVars: jest.fn().mockReturnValue(null),
-  resolveCurrentExecutionUnit: jest.fn().mockImplementation((currentStep: unknown) => currentStep),
-  isSubstep: jest.fn().mockReturnValue(false),
-}));
-
 // Mock @rundown-org/core
 jest.unstable_mockModule('@rundown-org/core', () => ({
   RunbookStateManager: jest.fn(),
@@ -49,11 +35,6 @@ jest.unstable_mockModule('@rundown-org/parser', () => ({
   parseRunbookDocument: jest.fn().mockReturnValue({ frontmatter: null }),
 }));
 
-// Mock template-renderer to avoid pulling its @rundown-org/parser dependencies into scope
-jest.unstable_mockModule('../../src/services/template-renderer', () => ({
-  evaluateOutputExpression: jest.fn().mockReturnValue('/mock/path/plan.json'),
-}));
-
 // Mock runbook-loader
 jest.unstable_mockModule('../../src/helpers/runbook-loader', () => ({
   getRunbookFromState: jest.fn().mockReturnValue([]),
@@ -80,9 +61,7 @@ jest.unstable_mockModule('../../src/helpers/transition-orchestrator', () => ({
 const core = await import('@rundown-org/core');
 const { resolvedStepHasSubsteps } = await import('@rundown-org/parser');
 const { findStepOrThrow, drainResolvedCompletions } = await import('../../src/services/execution');
-const { evaluateOutputExpression } = await import('../../src/services/template-renderer');
-const { evaluateStepOutputs } = await import('../../src/helpers/step-outputs');
-const { executeTransition, createPassTransitionConfig, createFailTransitionConfig } = await import(
+const { executeTransition, createPassTransitionConfig } = await import(
   '../../src/helpers/transitions'
 );
 function makeCtx(stateOverrides: Record<string, unknown> = {}): any {
@@ -724,45 +703,6 @@ describe('storeStepOutputs via step-level PASS transition', () => {
     });
   });
 
-  it('calls evaluateStepOutputs on step-level PASS with outputs', async () => {
-    const ctx = makeStepLevelCtx({ ContextId: 'ctx-abc', WorkPath: '.rundown/work' });
-    const config = createPassTransitionConfig();
-
-    await executeTransition(ctx, config);
-
-    // evaluateStepOutputs is called via execution-units helpers (mocked to return {})
-    // Behavioral logic is tested via integration tests
-    expect(evaluateOutputExpression).not.toHaveBeenCalled();
-  });
-
-  it('skips OUTPUTS storage on step-level FAIL even when step has outputs', async () => {
-    const ctx = makeStepLevelCtx({ ContextId: 'ctx-abc', WorkPath: '.rundown/work' });
-    const config = createFailTransitionConfig();
-
-    await executeTransition(ctx, config);
-
-    expect(evaluateOutputExpression).not.toHaveBeenCalled();
-    expect(evaluateStepOutputs).not.toHaveBeenCalled();
-  });
-
-  it('skips OUTPUTS evaluation when templateVars is undefined', async () => {
-    const ctx = makeStepLevelCtx(undefined);
-    const config = createPassTransitionConfig();
-
-    await executeTransition(ctx, config);
-
-    expect(evaluateStepOutputs).not.toHaveBeenCalled();
-  });
-
-  it('skips OUTPUTS evaluation when ContextId is missing from templateVars', async () => {
-    const ctx = makeStepLevelCtx({ WorkPath: '.rundown/work' }); // no ContextId
-    const config = createPassTransitionConfig();
-
-    await executeTransition(ctx, config);
-
-    expect(evaluateStepOutputs).not.toHaveBeenCalled();
-  });
-
   it('runs PASS transition without errors when outputs declared', async () => {
     (findStepOrThrow as jest.Mock).mockReturnValue({
       name: '1',
@@ -776,119 +716,5 @@ describe('storeStepOutputs via step-level PASS transition', () => {
     const config = createPassTransitionConfig();
 
     await executeTransition(ctx, config);
-
-    // evaluateStepOutputs is mocked to return {} — no errors thrown
-    expect(evaluateStepOutputs).not.toHaveBeenCalled();
-  });
-});
-
-describe('storeStepOutputs gating on substep PASS transitions', () => {
-  // ctx where PASS happens inside a substep and the step does NOT advance.
-  // The parent step declares OUTPUTS — they must NOT be persisted until the step
-  // itself advances or a terminal action fires.
-  function makeSubstepCtx(opts: {
-    substepBefore: string;
-    substepAfter: string | undefined;
-    stepBefore: string;
-    stepAfter: string;
-    templateVars?: Record<string, unknown>;
-  }): any {
-    const stateBefore = {
-      id: 'run-1',
-      step: opts.stepBefore,
-      substep: opts.substepBefore,
-      activeEntry: 1,
-      activeFrameKey: opts.stepBefore,
-    };
-    const stateAfter = {
-      ...stateBefore,
-      step: opts.stepAfter,
-      substep: opts.substepAfter,
-      templateVars: opts.templateVars,
-    };
-    return {
-      output: { action: jest.fn(), flush: jest.fn(), status: jest.fn(), warning: jest.fn() },
-      manager: {
-        update: jest.fn<any>().mockResolvedValue(undefined),
-        load: jest.fn<any>().mockResolvedValue(null),
-      },
-      actorService: {
-        updateFromActor: jest.fn<any>().mockResolvedValue({
-          state: stateAfter,
-          snapshot: {},
-        }),
-      },
-      sessionService: {},
-      lifecycleService: {
-        ensureActiveEntry: jest.fn<any>().mockResolvedValue({ state: stateAfter, entryId: 1 }),
-        getResolvedCompletion: jest.fn<any>().mockResolvedValue(null),
-        upsertResolvedCompletion: jest.fn<any>().mockResolvedValue(undefined),
-      },
-      state: stateBefore,
-      steps: [{ name: '1', kind: 'substeps', substeps: [{ id: '1' }, { id: '2' }] }],
-      actor: { send: jest.fn(), stop: jest.fn() },
-      cwd: '/test',
-    };
-  }
-
-  beforeEach(() => {
-    jest.clearAllMocks();
-    // Force the non-substep branch in executeTransition so we exercise the
-    // actor.send path where the OUTPUTS guard lives. We still set substep in
-    // previousState to simulate the edge case where cursor is in a substep
-    // context but resolvedStepHasSubsteps returns false.
-    (
-      resolvedStepHasSubsteps as jest.MockedFunction<typeof resolvedStepHasSubsteps>
-    ).mockReturnValue(false);
-    (findStepOrThrow as jest.Mock).mockReturnValue({
-      name: '1',
-      kind: 'base',
-      outputs: [{ name: 'PlanPath', value: '{{ path "plan.json" }}' }],
-    });
-    (core.parseActionType as jest.Mock).mockReturnValue('CONTINUE');
-  });
-
-  it('does NOT persist OUTPUTS on PASS of an early substep (step did not advance)', async () => {
-    const ctx = makeSubstepCtx({
-      substepBefore: '1',
-      substepAfter: '2', // cursor moved to next substep, parent step unchanged
-      stepBefore: '1',
-      stepAfter: '1',
-      templateVars: { ContextId: 'ctx-abc', WorkPath: '.rundown/work' },
-    });
-    const config = createPassTransitionConfig();
-
-    await executeTransition(ctx, config);
-
-    expect(evaluateOutputExpression).not.toHaveBeenCalled();
-  });
-
-  it('runs PASS transition when parent step advances (all substeps resolved)', async () => {
-    const ctx = makeSubstepCtx({
-      substepBefore: '2',
-      substepAfter: undefined,
-      stepBefore: '1',
-      stepAfter: '2', // parent step moved forward
-      templateVars: { ContextId: 'ctx-abc', WorkPath: '.rundown/work' },
-    });
-    const config = createPassTransitionConfig();
-
-    // Should not throw; behavioral logic tested via integration tests
-    await expect(executeTransition(ctx, config)).resolves.not.toThrow();
-  });
-
-  it('runs PASS transition on terminal COMPLETE action even when step name is unchanged', async () => {
-    (core.parseActionType as jest.Mock).mockReturnValue('COMPLETE');
-    const ctx = makeSubstepCtx({
-      substepBefore: '2',
-      substepAfter: '2', // terminal: step name never changes on final step
-      stepBefore: '1',
-      stepAfter: '1',
-      templateVars: { ContextId: 'ctx-abc', WorkPath: '.rundown/work' },
-    });
-    const config = createPassTransitionConfig();
-
-    // Should not throw; behavioral logic tested via integration tests
-    await expect(executeTransition(ctx, config)).resolves.not.toThrow();
   });
 });

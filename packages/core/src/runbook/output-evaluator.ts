@@ -10,17 +10,34 @@ import { deriveExecutionAt } from './targeting.js';
 import { assembleArtifactPath } from './artifact-paths.js';
 import { logger } from '../logger.js';
 
+/** Any value an OUTPUTS expression can resolve to in the runtime frame. */
 export type OutputValue = string | number | boolean | null | JsonObject | JsonArray;
+
+/** Readonly variable frame passed to OUTPUTS expression evaluation. */
 export type OutputVars = Readonly<Record<string, OutputValue>>;
 
+/** Machine-context subset needed to reconstruct a step's OUTPUTS evaluation frame. */
 export interface OutputFrameState {
+  /** Seeded template variables (built-ins, frontmatter inputs, CLI overrides), already flattened via {@link flattenTemplateVars}. */
   readonly templateVars?: OutputVars;
+  /** Accumulated step OUTPUTS that have already been stored as rendered strings. */
   readonly variables: Readonly<Record<string, string>>;
+  /** Active FOR loop execution stack (empty when no loop is in scope). */
   readonly forStack: readonly ForContext[];
 }
 
+/**
+ * Cursor identifying the step (and optional substep) whose OUTPUTS are being evaluated.
+ *
+ * Terminal-entry convention (Option A): at terminal state entry, no step cursor is
+ * active; callers pass `stepName: ''` so the built frame's `Step`/`step`/`context.current.step`
+ * keys render as empty strings — inert for frontmatter outputs that resolve by variable
+ * name from `templateVars` or stored `variables`.
+ */
 export interface OutputCursor {
+  /** Step name, or empty string at terminal entry (see interface-level doc). */
   readonly stepName: string;
+  /** Optional substep identifier within the step. */
   readonly substepId?: string;
 }
 
@@ -51,7 +68,7 @@ function renderOutputValue(value: unknown): string {
 }
 
 function resolveOutputPath(path: string, variables: OutputVars): string | undefined {
-  if (Object.hasOwn(variables, path) && variables[path] !== undefined) {
+  if (Object.hasOwn(variables, path)) {
     return renderOutputValue(variables[path]);
   }
 
@@ -80,6 +97,20 @@ function expandOutputVariables(text: string, variables: OutputVars): string {
   });
 }
 
+/**
+ * Evaluate a single OUTPUTS expression against the supplied variable frame.
+ *
+ * Supports four forms: `{{ path "file.json" }}` helper, `"quoted literal"`,
+ * `{{ template }}` reference, and bare `Identifier`.
+ *
+ * @param expr - Raw expression text from the runbook source
+ * @param variables - Variable frame used to resolve references
+ * @returns Rendered string value
+ * @throws {Error} If the `path` helper is used but `WorkPath` is missing from `variables`
+ * @throws {Error} If the `path` helper is used without `ctx=` and `ContextId` is missing from `variables`
+ * @throws {Error} If `ctx=` expands to a value that is not a valid ContextId identifier
+ * @throws {Error} Propagated from {@link assembleArtifactPath} (e.g. invalid `WorkPath` / `contextId`)
+ */
 export function evaluateOutputExpression(expr: string, variables: OutputVars): string {
   const trimmed = expr.trim();
 
@@ -127,6 +158,14 @@ export function evaluateOutputExpression(expr: string, variables: OutputVars): s
   return resolveOutputPath(trimmed, variables) ?? trimmed;
 }
 
+/**
+ * Evaluate step-level OUTPUTS declarations, skipping naked entries and logging
+ * (but not throwing on) individual expression failures.
+ *
+ * @param outputs - Declarations parsed from the step's OUTPUTS block
+ * @param vars - Variable frame for expression evaluation
+ * @returns Map of output name to rendered value; failed or naked entries are omitted
+ */
 export function evaluateStepOutputDeclarations(
   outputs: readonly OutputDeclaration[],
   vars: OutputVars,
@@ -154,6 +193,15 @@ export function evaluateStepOutputDeclarations(
   return evaluated;
 }
 
+/**
+ * Evaluate frontmatter OUTPUTS declarations, supporting both naked
+ * export-by-name and value-form expressions.
+ *
+ * @param outputs - Frontmatter `outputs:` declarations
+ * @param vars - Variable frame at the terminal transition
+ * @returns Map of output name to rendered value; failed entries and
+ *   naked entries whose referenced var is absent are omitted
+ */
 export function evaluateFrontmatterOutputDeclarations(
   outputs: readonly OutputDeclaration[],
   vars: OutputVars,
@@ -167,9 +215,8 @@ export function evaluateFrontmatterOutputDeclarations(
         continue;
       }
 
-      const rawValue = vars[output.name];
-      if (rawValue === undefined) continue;
-      evaluated[output.name] = renderOutputValue(rawValue);
+      if (!Object.hasOwn(vars, output.name)) continue;
+      evaluated[output.name] = renderOutputValue(vars[output.name]);
     } catch (error) {
       void logger.warn('evaluateFrontmatterOutputDeclarations: failed to evaluate output', {
         name: output.name,
@@ -182,6 +229,14 @@ export function evaluateFrontmatterOutputDeclarations(
   return evaluated;
 }
 
+/**
+ * Flatten CLI-sourced template variables into a shape suitable for OUTPUTS evaluation:
+ * arrays are comma-joined, objects are JSON-stringified, `JsonArrayStream` refs are omitted,
+ * and scalars pass through unchanged.
+ *
+ * @param vars - Template variables resolved from CLI / frontmatter inputs
+ * @returns Flattened variable frame safe to merge into an evaluation frame
+ */
 export function flattenTemplateVars(vars: Readonly<Record<string, TemplateVarValue>>): OutputVars {
   const flattened: Record<string, OutputValue> = {};
 
@@ -208,6 +263,21 @@ export function flattenTemplateVars(vars: Readonly<Record<string, TemplateVarVal
   return flattened;
 }
 
+/**
+ * Reconstruct the full runtime frame used to evaluate OUTPUTS for a given step/substep
+ * cursor: template vars, stored step outputs, `Step`/`step`/`context.current.*` keys,
+ * and — when the cursor is inside an explicit FOR frame — `Index`/`index` plus the
+ * loop variable's current value.
+ *
+ * An empty-string `cursor.stepName` is the terminal-entry convention (see {@link OutputCursor}):
+ * `Step`/`step` keys are seeded with `''`, which is inert for any frontmatter output that
+ * resolves against `templateVars` or stored `variables` by name.
+ *
+ * @param state - Machine context subset providing template vars, stored outputs, and FOR stack
+ * @param cursor - Step/substep cursor identifying the evaluation point
+ * @returns Variable frame ready for expression evaluation
+ * @throws {Error} If the active FOR frame has an unrecognized source kind (exhaustive-check guard)
+ */
 export function buildExecutionFrame(state: OutputFrameState, cursor: OutputCursor): OutputVars {
   const step = cursor.substepId ? `${cursor.stepName}.${cursor.substepId}` : cursor.stepName;
   const frame: Record<string, OutputValue> = {
@@ -222,7 +292,7 @@ export function buildExecutionFrame(state: OutputFrameState, cursor: OutputCurso
     frame['context.current.substep'] = cursor.substepId;
   }
 
-  const top = state.forStack[state.forStack.length - 1];
+  const top = state.forStack.at(-1);
   if (top && !top.implicit && top.stepId === cursor.stepName) {
     frame.Index = String(top.iteration);
     frame.index = String(top.iteration);

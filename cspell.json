@@ -26,6 +26,7 @@
     "coverage",
     "site",
     ".worktrees",
+    "docs/superpowers",
     "*.snap",
     "package-lock.json",
     "*.json",

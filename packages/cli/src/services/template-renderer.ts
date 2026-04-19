@@ -36,10 +36,7 @@ import {
   stepIdToString,
   RunbookSyntaxError,
 } from '@rundown-org/parser';
-import {
-  isJsonArrayStream,
-  evaluateOutputExpression as evaluateCoreOutputExpression,
-} from '@rundown-org/core';
+import { isJsonArrayStream } from '@rundown-org/core';
 import type { TemplateVarValue } from '@rundown-org/core';
 import type { StepVariables } from './execution-vars.js';
 
@@ -999,34 +996,6 @@ export function warnUnresolvedRunbookVariables(runbook: ResolvedRunbook): string
     warnings.push(`Undefined variable "{{${name}}}" preserved as literal text`);
   }
   return warnings;
-}
-
-// ─── Output expression evaluation ────────────────────────────────────────────
-
-/**
- * Evaluate an OUTPUTS value expression to its final string.
- *
- * Handles four value forms:
- * - `{{ path "file.json" }}` — context-scoped path helper (same semantics as rdpath)
- * - `{{ path "file.json" ctx=SomeVar }}` — path helper with ctx override
- * - `{{ VarName }}` or `{{ dotted.path }}` — template variable substitution
- * - `"quoted literal"` — literal string (quotes stripped)
- * - `bare_identifier` — template variable lookup
- *
- * The `path()` helper computes:
- *   `<WorkPath>/.rd-<ContextId>/YYYY-MM-DD-<filename>`
- * which is identical to `rdpath --dir WorkPath --ctx ContextId --file filename`.
- *
- * @param expr - Raw value expression from the OUTPUTS declaration
- * @param variables - Resolved template variables (must include WorkPath and ContextId)
- * @returns The evaluated string value
- * @throws {Error} If a `path()` call is missing required WorkPath or ContextId variables, or filename is invalid
- */
-export function evaluateOutputExpression(expr: string, variables: StepVariables): string {
-  return evaluateCoreOutputExpression(
-    expr,
-    variables as unknown as Parameters<typeof evaluateCoreOutputExpression>[1],
-  );
 }
 
 /**

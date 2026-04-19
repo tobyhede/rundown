@@ -1394,11 +1394,7 @@ function buildParentStateConfig(
     const failLastAction: LastAction =
       failAction.type === 'GOTO'
         ? buildGotoLastAction(failAction.target)
-        : failAction.type === 'NEXT' || failAction.type === 'BREAK' || failAction.type === 'DEFER'
-          ? // These are substep-only actions; resolveActionTarget already rejects
-            // them above. Branch is unreachable but required for exhaustiveness.
-            { type: failAction.type }
-          : { type: failAction.type };
+        : { type: failAction.type };
     const failLastMessage =
       failAction.type === 'STOP' || failAction.type === 'COMPLETE' ? failAction.message : undefined;
 
@@ -2147,7 +2143,6 @@ export function compileRunbookToMachine(
   options?: {
     templateVars?: OutputVars;
     frontmatterOutputs?: readonly OutputDeclaration[];
-    sources?: Readonly<Record<string, unknown>>;
   },
 ) {
   const states: Record<string, RunbookStateConfig> = {};

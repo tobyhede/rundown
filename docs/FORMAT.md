@@ -95,7 +95,7 @@ argument          ::= quoted_string | variable_path
 
 A step or substep may declare at most one OUTPUTS directive. Duplicate directives on the same target are rejected. The `- INPUTS` directive has been removed — use the frontmatter `inputs:` field to declare default variable values.
 
-OUTPUTS declares values to inject into the runbook's live variable space after a successful (PASS) transition. Output values may be Handlebars helper calls (`{{ path "file.json" }}`), template variable references (`{{ VarName }}`), quoted literals (`"value"`), or bare variable references (`VarName`).
+OUTPUTS declares values to inject into the runbook's live variable space after step completion. Output values may be Handlebars helper calls (`{{ path "file.json" }}`), template variable references (`{{ VarName }}`), quoted literals (`"value"`), or bare variable references (`VarName`).
 
 Variable names in OUTPUTS must match `variable_name` and must not be [reserved variable names](#reserved-variable-names).
 

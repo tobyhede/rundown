@@ -31,15 +31,11 @@ import {
   type RunbookCompletedPayload,
   type RunbookStoppedPayload,
   type StepTransitionedPayload,
-  type ExecutionEventEmitter,
 } from '@rundown-org/core';
-import type { StepVariables } from '../services/execution-vars.js';
-import { parseRunbookDocument, resolvedStepHasSubsteps } from '@rundown-org/parser';
-import path from 'node:path';
+import { resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { resolveIndexOption } from './index-option.js';
 import { getRunbookFromState } from './runbook-loader.js';
 import {
-  buildStepVariables,
   drainResolvedCompletions,
   findStepOrThrow,
   runExecutionLoop,
@@ -51,13 +47,6 @@ import {
   type TransitionEventSink,
   type TransitionOrchestrationPolicy,
 } from './transition-orchestrator.js';
-import {
-  shouldPersistParentOutputs,
-  mergeExecutionTemplateVars,
-  resolveCurrentExecutionUnit,
-  isSubstep,
-} from './execution-units.js';
-import { evaluateStepOutputs, evaluateFrontmatterOutputs } from './step-outputs.js';
 export type { ActionType } from '@rundown-org/core';
 
 /**
@@ -200,41 +189,6 @@ export async function buildTransitionContext(
     actor,
     cwd,
   };
-}
-
-/**
- * Evaluate frontmatter `outputs:` and persist to `state.finalVars` if any resolve.
- *
- * Reloads state from the manager so that variables written during the terminal
- * transition (step OUTPUTS set via SET_VARIABLES or manager.update on COMPLETE/STOP)
- * are visible to frontmatter output expressions. Callers must not pass pre-transition
- * state — the reload is the single source of truth.
- *
- * **Invariant:** Must be called AFTER all terminal `manager.update` writes for the
- * transition have completed. The reload picks up variables written during the terminal
- * transition; calling the helper earlier would race with those writes and miss values.
- *
- * @param manager - Runbook state manager for loading fresh state and persisting finalVars
- * @param stateId - Runbook state identifier
- * @param emitter - Optional execution event emitter for surfacing evaluation failures
- */
-async function maybePersistFrontmatterOutputs(
-  manager: RunbookStateManager,
-  stateId: string,
-  emitter?: ExecutionEventEmitter,
-): Promise<void> {
-  const state = await manager.load(stateId);
-  if (!state?.runbookSrc) return;
-  const { frontmatter } = parseRunbookDocument(state.runbookSrc, path.basename(state.runbookPath));
-  if (!frontmatter?.outputs?.length) return;
-  const effectiveVars = {
-    ...(state.templateVars as Readonly<StepVariables>),
-    ...state.variables,
-  };
-  const finalVars = evaluateFrontmatterOutputs(frontmatter.outputs, effectiveVars, emitter);
-  if (Object.keys(finalVars).length > 0) {
-    await manager.update(stateId, { finalVars });
-  }
 }
 
 interface RuntimeTarget {
@@ -460,14 +414,13 @@ export async function executeTransition(
       computeActionResult: config.computeActionResult,
       ...(explicitTarget ? { frameKeyOverride: cursor.frameKey } : {}),
     });
+    if (drained.status === 'done') {
+      output.flush();
+      return 'continue';
+    }
     if (drained.status === 'stopped') {
       output.flush();
       return 'stopped';
-    }
-    if (drained.status === 'done') {
-      await maybePersistFrontmatterOutputs(manager, activeState.id, emitter);
-      output.flush();
-      return 'continue';
     }
     if (drained.applied === 0) {
       output.flush();
@@ -482,9 +435,6 @@ export async function executeTransition(
       !!drained.state.prompted,
       emitter,
     );
-    if (loopResult === 'done') {
-      await maybePersistFrontmatterOutputs(manager, activeState.id, emitter);
-    }
     output.flush();
     if (loopResult === 'stopped') {
       return 'stopped';
@@ -504,55 +454,6 @@ export async function executeTransition(
   );
 
   const actionType = parseActionType(extractLastAction(rawSnapshot));
-
-  // Evaluate step OUTPUTS for PASS transitions and inject via SET_VARIABLES.
-  if (config.lastResult === 'pass') {
-    // Merge state.variables (step OUTPUTS from prior steps) so OUTPUTS expressions
-    // on the current step can reference values written by earlier steps' OUTPUTS.
-    const mergedTemplateVars = { ...previousState.templateVars, ...previousState.variables };
-    const preTransitionStepVars = buildStepVariables(
-      previousState.step,
-      previousState.substep,
-      previousState.forStack,
-      currentStep.kind === 'for' ? currentStep.forClause : undefined,
-      mergedTemplateVars as typeof previousState.templateVars,
-    );
-    const templateVars = mergeExecutionTemplateVars(
-      preTransitionStepVars,
-      actorUpdatedState.templateVars as Readonly<StepVariables> | undefined,
-    );
-    if (templateVars) {
-      const allEvaluated: Record<string, string> = {};
-      const executionUnit = resolveCurrentExecutionUnit(currentStep, previousState.substep);
-      if (isSubstep(executionUnit) && executionUnit.outputs?.length) {
-        Object.assign(allEvaluated, evaluateStepOutputs(executionUnit.outputs, templateVars));
-      }
-      const parentOutputs = currentStep.outputs ?? [];
-      if (
-        parentOutputs.length > 0 &&
-        shouldPersistParentOutputs({
-          isSubstepContext: previousState.substep !== undefined,
-          parentStepAdvanced: actorUpdatedState.step !== previousState.step,
-          isTerminalAction: actionType === 'STOP' || actionType === 'COMPLETE',
-          parentHasOutputs: true,
-        })
-      ) {
-        Object.assign(allEvaluated, evaluateStepOutputs(parentOutputs, templateVars));
-      }
-      if (Object.keys(allEvaluated).length > 0) {
-        if (actionType === 'COMPLETE' || actionType === 'STOP') {
-          // Machine is in a final state; SET_VARIABLES events are ignored by XState.
-          // Direct manager update is safe — no next actor will restore from snapshot.
-          await manager.update(activeState.id, { variables: allEvaluated });
-        } else {
-          await actorService.sendAndSync(activeState.id, steps, {
-            type: 'SET_VARIABLES',
-            vars: allEvaluated,
-          });
-        }
-      }
-    }
-  }
 
   const ensuredAfterTransition = await lifecycleService.ensureActiveEntry(
     activeState.id,
@@ -609,8 +510,6 @@ export async function executeTransition(
     return 'stopped';
   }
   if (orchestration.status === 'done') {
-    const doneEmitter = createBridgedEmitter(activeState, output);
-    await maybePersistFrontmatterOutputs(manager, activeState.id, doneEmitter);
     output.flush();
     return 'continue';
   }
@@ -625,9 +524,6 @@ export async function executeTransition(
     emitter,
   );
 
-  if (loopResult === 'done') {
-    await maybePersistFrontmatterOutputs(manager, activeState.id, emitter);
-  }
   output.flush();
   if (loopResult === 'stopped') {
     return 'stopped';

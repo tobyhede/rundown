@@ -132,9 +132,16 @@ rd abort <token> --force   # Cancel already-claimed delegation
 `ContextId` inheritance enables data to flow between steps via OUTPUTS and INPUTS — no manual variable threading required.
 
 **How it works:**
-1. A parent step writes values with OUTPUTS (on PASS) → stored to `.rundown/contexts/<ContextId>/outputs.json`
-2. A child runbook (or subsequent step) declares INPUTS → values are injected from the same `outputs.json`
-3. Both share `ContextId`, so they read/write the same context store
+1. A parent step writes values with OUTPUTS when that step or substep transition completes → stored in the live runbook variable space
+2. A child runbook (or subsequent step) declares INPUTS → values are injected from the inherited live variable space
+3. A completed child runbook writes frontmatter `outputs:` to `state.finalVars`, and the parent forwards those via `SET_VARIABLES`
+
+**Key rules:**
+- Step OUTPUTS fire on both PASS and FAIL when the completing step declares outputs
+- Frontmatter `outputs:` fire on both `COMPLETE` and `STOPPED`
+- INPUTS sit below CLI `--var` in precedence — `--var` always wins
+- Frontmatter `inputs:` inject at runbook startup (before step 1)
+- `required:` causes a hard error if the variable is missing from all sources
 
 **Example — write-plan produces PlanPath, review-plan consumes it:**
 
@@ -151,26 +158,18 @@ rd abort <token> --force   # Cancel already-claimed delegation
 required:
   - PlanPath
 inputs:
-  - PlanPath
+  PlanPath:
 ```
 
 ```markdown
 ## 1. Load plan               ← in review-plan.runbook.md
-- INPUTS
-  - PlanPath
 - PASS CONTINUE
 - FAIL STOP
 
 Read the plan from `{{ PlanPath }}`.
 ```
 
-When `write-plan` is delegated first and `review-plan` is delegated second using the same ContextId, `PlanPath` flows automatically — no `--var PlanPath=...` needed.
-
-**Key rules:**
-- OUTPUTS fire only on PASS; FAIL skips them
-- INPUTS sit below CLI `--var` in precedence — `--var` always wins
-- Frontmatter `inputs:` injects at runbook startup (before step 1)
-- `required:` causes a hard error if the variable is missing from all sources
+When `write-plan` is delegated first and `review-plan` is delegated second under the same parent's variable space, `PlanPath` flows automatically via the forwarded `--var` flags — no manual threading needed.
 
 ## Patterns
 
