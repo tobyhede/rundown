@@ -7,9 +7,11 @@
  * the `@ts-expect-error` directives below are evaluated on every run of
  * `npm run check:types`.
  *
- * Each block exercises one compile-time guarantee. A missing error on a
- * directive line produces `Unused '@ts-expect-error' directive` — which is
- * itself a compile error, so regressions fail the build.
+ * Each block exercises one compile-time guarantee. Regressions fail the
+ * build: a weakened guarantee either lets a previously-rejected call through
+ * (producing `Unused '@ts-expect-error' directive`) or surfaces the
+ * underlying type error directly (e.g. `TS2353`, `TS2322`). Both are
+ * compile errors.
  *
  * This file has no runtime effect.
  */
