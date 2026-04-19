@@ -23,10 +23,8 @@ describe('actionRef', () => {
 
     const seen: string[] = [];
     for (const ref of refs) {
-      // Phase 1 has only one action variant, so the case is trivially always-true.
-      // Kept for structural documentation; Phase 2 will add variants that make the narrow non-trivial.
       switch (ref.type) {
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- single-variant union in Phase 1; non-trivial after Phase 2 adds entries
         case 'setLastAction':
           seen.push(`set:${ref.params.action.type}`);
           break;
