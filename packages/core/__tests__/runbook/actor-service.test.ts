@@ -546,7 +546,7 @@ describe('RunbookActorService', () => {
       // Simulate a pre-OUTPUTS-feature state file by stripping frontmatterOutputs from disk.
       const filePath = join(testDir, '.rundown', 'runs', `${state.id}.json`);
       const raw = JSON.parse(await readFile(filePath, 'utf8')) as Record<string, unknown>;
-      delete raw['frontmatterOutputs'];
+      delete raw.frontmatterOutputs;
       await writeFile(filePath, JSON.stringify(raw));
 
       await expect(actorService.createActor(state.id, mockSteps)).rejects.toThrow(
