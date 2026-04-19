@@ -26,6 +26,12 @@ export interface ActionDefs {
     stepName: string;
     /** Substep id when evaluating substep-level OUTPUTS; omitted for step-level evaluation. */
     substepId?: string;
+    /**
+     * Use the most recently completed substep recorded in machine context.
+     * Parent-state `always` exits need this because `context.substep` has
+     * already been cleared by the time the parent OUTPUTS run.
+     */
+    useCompletedSubstep?: boolean;
   };
   /** Evaluates frontmatter OUTPUTS declarations and persists the result into terminal finalVars. */
   readonly storeFrontmatterOutputs: {

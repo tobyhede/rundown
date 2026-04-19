@@ -85,9 +85,11 @@ export const runbookSetup = setup({
      */
     storeStepOutputs: assign({
       variables: ({ context }, params: ActionDefs['storeStepOutputs']) => {
+        const substepId =
+          params.substepId ?? (params.useCompletedSubstep ? context.completedSubstep : undefined);
         const frame = buildExecutionFrame(toFrameState(context), {
           stepName: params.stepName,
-          substepId: params.substepId,
+          substepId,
         });
         const evaluated = evaluateStepOutputDeclarations(params.outputs, frame);
         return { ...context.variables, ...evaluated };
@@ -168,6 +170,8 @@ export interface RunbookContext {
   retryMax?: number;
   /** Current substep ID within the active step */
   substep?: string;
+  /** Most recently completed substep, preserved for parent OUTPUTS evaluation. */
+  completedSubstep?: string;
   /** User-defined runbook variables */
   variables: Record<string, boolean | number | string>;
   /** Last action taken by the state machine (source of truth for transition type) */
@@ -1548,7 +1552,7 @@ function decorateParentTransition(
     !target.startsWith(`${formatStateId(stepName)}::`);
 
   if (exitsParent && outputs && outputs.length > 0) {
-    extra.push(actionRef('storeStepOutputs', { outputs, stepName }));
+    extra.push(actionRef('storeStepOutputs', { outputs, stepName, useCompletedSubstep: true }));
   }
 
   return prependActions(transition, extra);
@@ -1684,12 +1688,14 @@ function buildTerminalTransition(
  *
  * @param actionType - The loop control action ('NEXT' or 'BREAK')
  * @param stepName - The current step name
+ * @param substepId - The completing substep ID when loop control is fired from a substep
  * @param steps - The full array of runbook steps
  * @returns XState transition configuration
  */
 function buildLoopControlTransition(
   actionType: 'NEXT' | 'BREAK',
   stepName: string,
+  substepId: string | undefined,
   steps: ResolvedStep[],
 ): TransitionEntry {
   const currentStep = steps.find((s) => s.name === stepName);
@@ -1711,6 +1717,7 @@ function buildLoopControlTransition(
         context.substepCompletedCount + 1,
       lastAction: { type: actionType },
       lastMessage: undefined,
+      completedSubstep: substepId,
       substep: undefined,
     }),
   };
@@ -1759,6 +1766,7 @@ function buildDeferTransition(
           context.substepCompletedCount + 1,
         lastAction: { type: 'DEFER' as const },
         lastMessage: undefined,
+        completedSubstep: substepId,
         // Keep substep set for non-last (advance guard signal); clear for last
         substep: isLast ? undefined : substepId,
       }),
@@ -1805,6 +1813,7 @@ function buildContinueTransition(
             context.substepCompletedCount + 1,
           lastAction: { type: 'CONTINUE' as const },
           lastMessage: undefined,
+          completedSubstep: substepId,
           substep: undefined,
         }),
       };
@@ -1818,6 +1827,7 @@ function buildContinueTransition(
           context.substepCompletedCount + 1,
         lastAction: { type: 'CONTINUE' as const },
         lastMessage: undefined,
+        completedSubstep: substepId,
         substep: extractSubstepFromStateId(target),
       }),
     };
@@ -2026,10 +2036,10 @@ function buildActionTransition(
       transition = buildGotoTransition(action.target, stepName, substepId, steps);
       break;
     case 'NEXT':
-      transition = buildLoopControlTransition('NEXT', stepName, steps);
+      transition = buildLoopControlTransition('NEXT', stepName, substepId, steps);
       break;
     case 'BREAK':
-      transition = buildLoopControlTransition('BREAK', stepName, steps);
+      transition = buildLoopControlTransition('BREAK', stepName, substepId, steps);
       break;
   }
 
@@ -2480,6 +2490,7 @@ export function compileRunbookToMachine(
       iterationRetryCount: 0,
       retryMax: undefined,
       substep: undefined,
+      completedSubstep: undefined,
       variables: {},
       lastAction: undefined,
       lastMessage: undefined,

@@ -32,9 +32,7 @@ describe('evaluateOutputExpression', () => {
   });
 
   it('allows quoted template expansion to resolve to a value containing literal handlebars text', () => {
-    expect(evaluateOutputExpression('"{{ Template }}"', { Template: '{{name}}' })).toBe(
-      '{{name}}',
-    );
+    expect(evaluateOutputExpression('"{{ Template }}"', { Template: '{{name}}' })).toBe('{{name}}');
   });
 
   it('throws when the path helper is used but WorkPath is missing', () => {

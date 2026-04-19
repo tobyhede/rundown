@@ -237,7 +237,9 @@ describe('runbook compiler', () => {
 
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('step::3');
-      expect(snapshot.context.lastAction).toEqual(expect.objectContaining({ type: 'GOTO' }));
+      expect(snapshot.context.lastAction).toEqual(
+        expect.objectContaining({ type: 'GOTO', target: '3' }),
+      );
     });
 
     it('H3 runbook substeps under aggregating parent DEFER and aggregate on PASS ALL', () => {
@@ -8969,6 +8971,74 @@ echo "processing"
 
       const snapshot = actor.getSnapshot();
       expect(snapshot.context.variables).toMatchObject({ LoopResult: 'loop-value' });
+    });
+
+    it('[P2] resolves parent OUTPUTS against the completing last-substep cursor on parent always exit', () => {
+      const steps = createRunbook(`## 1. Parent
+- PASS CONTINUE
+- FAIL STOP
+- OUTPUTS
+  - StepCursor "{{ Step }}"
+  - SubstepCursor "{{ context.current.substep }}"
+  - AtCursor "{{ context.current.at }}"
+
+### 1.1 First
+- PASS CONTINUE
+- FAIL STOP
+
+### 1.2 Last
+- PASS CONTINUE
+- FAIL STOP
+
+## 2. Done
+- PASS COMPLETE
+- FAIL STOP
+`);
+
+      const machine = compileRunbookToMachine(steps, { templateVars: {} });
+      const actor = createActor(machine);
+      actor.start();
+      actor.send({ type: 'PASS' });
+      actor.send({ type: 'PASS' });
+
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('step::2');
+      expect(snapshot.context.variables).toMatchObject({
+        StepCursor: '1.2',
+        SubstepCursor: '2',
+        AtCursor: '1.2',
+      });
+    });
+
+    it('[P2] resolves parent OUTPUTS against the BREAK-origin substep cursor on parent exit', () => {
+      const steps = createRunbook(`## 1. Loop
+- FOR i IN 1 TO 2
+- PASS COMPLETE
+- FAIL STOP
+- OUTPUTS
+  - StepCursor "{{ Step }}"
+  - SubstepCursor "{{ context.current.substep }}"
+
+### 1.1 Breaker
+- PASS CONTINUE
+- FAIL BREAK
+
+### 1.2 Skipped
+- PASS CONTINUE
+- FAIL CONTINUE
+`);
+
+      const machine = compileRunbookToMachine(steps, { templateVars: {} });
+      const actor = createActor(machine);
+      actor.start();
+      actor.send({ type: 'FAIL' });
+
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('COMPLETE');
+      expect(snapshot.context.variables).toMatchObject({
+        StepCursor: '1.1',
+        SubstepCursor: '1',
+      });
     });
 
     it('fires storeStepOutputs on the parent-exit transition of a FOR step', () => {
