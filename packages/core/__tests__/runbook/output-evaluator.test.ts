@@ -162,7 +162,7 @@ describe('evaluateFrontmatterOutputDeclarations', () => {
 });
 
 describe('flattenTemplateVars', () => {
-  it('keeps scalars, stringifies objects, comma-joins arrays, and omits streams', () => {
+  it('keeps scalars, arrays, and objects traversable; omits JsonArrayStream', () => {
     const vars: Record<string, TemplateVarValue> = {
       Region: 'us-east-1',
       Port: 3000,
@@ -174,9 +174,84 @@ describe('flattenTemplateVars', () => {
     expect(flattenTemplateVars(vars)).toEqual({
       Region: 'us-east-1',
       Port: 3000,
-      Items: 'a,b,c',
-      Config: '{"host":"localhost","debug":true}',
+      Items: ['a', 'b', 'c'],
+      Config: { host: 'localhost', debug: true },
     });
+  });
+
+  // P1 regression: flattenTemplateVars stringifies JsonObject/JsonArray before OUTPUTS
+  // evaluation, so dotted lookups ({{ config.host }}, {{ items.0 }}) cannot be traversed
+  // and stay as literal placeholders instead of resolving to the nested value.
+
+  it('[P1] keeps JsonObject values traversable so {{ config.host }} resolves in OUTPUTS', () => {
+    // flattenTemplateVars currently stringifies: config → '{"host":"localhost"}'
+    // resolveDottedPath cannot traverse a string, so {{ config.host }} is unresolved.
+    const vars = flattenTemplateVars({ config: { host: 'localhost', port: 5432 } });
+    expect(evaluateOutputExpression('{{ config.host }}', vars)).toBe('localhost');
+    expect(evaluateOutputExpression('{{ config.port }}', vars)).toBe('5432');
+  });
+
+  it('[P1] keeps JsonArray values traversable so {{ items.0 }} resolves in OUTPUTS', () => {
+    // flattenTemplateVars currently comma-joins arrays: items → 'a,b,c'
+    // {{ items.0 }} cannot be resolved from a comma-joined string.
+    const vars = flattenTemplateVars({ items: ['alpha', 'beta', 'gamma'] });
+    expect(evaluateOutputExpression('{{ items.0 }}', vars)).toBe('alpha');
+    expect(evaluateOutputExpression('{{ items.1 }}', vars)).toBe('beta');
+  });
+
+  it('[P1] resolves nested dotted paths: {{ config.db.host }} with JsonObject input', () => {
+    const vars = flattenTemplateVars({ config: { db: { host: 'postgres' } } });
+    expect(evaluateOutputExpression('{{ config.db.host }}', vars)).toBe('postgres');
+  });
+
+  it('[P1] bare {{ config }} still renders the whole object (not affected by fix)', () => {
+    // After the fix, {{ config }} must still produce a stable string rendering
+    // of the whole object — changing traversability must not break bare references.
+    const vars = flattenTemplateVars({ config: { host: 'localhost' } });
+    const result = evaluateOutputExpression('{{ config }}', vars);
+    // Must be a non-empty string (exact JSON form acceptable)
+    expect(typeof result).toBe('string');
+    expect(result).toContain('localhost');
+  });
+
+  // P3 regression: JsonArrayStream vars are omitted from the OUTPUTS frame, so any
+  // OUTPUTS expression that references them produces garbage (literal identifier string
+  // or unresolved `{{ items }}`) instead of being skipped or raising an error.
+
+  it('[P3] does not store literal identifier when OUTPUTS bare-ref targets an omitted JsonArrayStream', () => {
+    // flattenTemplateVars drops JsonArrayStream keys. evaluateOutputExpression('items', {})
+    // currently falls back to `trimmed` → stores the string "items". Must skip instead.
+    const vars = flattenTemplateVars({
+      items: { kind: 'json-array-stream' as const, path: '/tmp/data.jsonl' },
+      Region: 'us-east-1',
+    });
+    const result = evaluateStepOutputDeclarations(
+      [
+        { name: 'Out', value: 'items' }, // bare identifier — resolves to undefined → must skip
+        { name: 'Region', value: '{{ Region }}' }, // control: must still resolve
+      ],
+      vars,
+    );
+    expect(result).not.toHaveProperty('Out'); // must not store "items"
+    expect(result).toMatchObject({ Region: 'us-east-1' });
+  });
+
+  it('[P3] does not store unresolved placeholder when OUTPUTS template-ref targets an omitted JsonArrayStream', () => {
+    // evaluateOutputExpression('{{ items }}', {}) returns '{{ items }}' (unresolved braces).
+    // Storing that string as an output value silently corrupts the result.
+    const vars = flattenTemplateVars({
+      items: { kind: 'json-array-stream' as const, path: '/tmp/data.jsonl' },
+      Region: 'us-east-1',
+    });
+    const result = evaluateStepOutputDeclarations(
+      [
+        { name: 'Out', value: '{{ items }}' }, // template — stays unresolved → must skip
+        { name: 'Region', value: '{{ Region }}' }, // control
+      ],
+      vars,
+    );
+    expect(result).not.toHaveProperty('Out'); // must not store '{{ items }}'
+    expect(result).toMatchObject({ Region: 'us-east-1' });
   });
 });
 

@@ -1,11 +1,6 @@
 import type { OutputDeclaration } from '@rundown-org/parser';
 import type { ForContext, JsonValue, TemplateVarValue } from './types.js';
-import {
-  assertResolvedVariableForContext,
-  isJsonArray,
-  isJsonArrayStream,
-  isJsonObject,
-} from './types.js';
+import { assertResolvedVariableForContext, isJsonArrayStream } from './types.js';
 import { deriveExecutionAt } from './targeting.js';
 import { assembleArtifactPath, VALID_CTX } from './artifact-paths.js';
 import { logger } from '../logger.js';
@@ -251,17 +246,7 @@ export function flattenTemplateVars(vars: Readonly<Record<string, TemplateVarVal
       });
       continue;
     }
-    if (isJsonArray(value)) {
-      flattened[key] = value
-        .map((entry) => (typeof entry === 'string' ? entry : JSON.stringify(entry)))
-        .join(',');
-      continue;
-    }
-    if (isJsonObject(value)) {
-      flattened[key] = JSON.stringify(value);
-      continue;
-    }
-    flattened[key] = value;
+    flattened[key] = value as OutputValue;
   }
 
   return flattened;
