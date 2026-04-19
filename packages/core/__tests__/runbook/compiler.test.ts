@@ -125,7 +125,7 @@ describe('runbook compiler', () => {
       expect(actor.getSnapshot().context.iterationResults).toBeUndefined();
     });
 
-    it('explicit H3 runbook substeps with runbooks get CONTINUE defaults', () => {
+    it('explicit H3 runbook substeps with runbooks DEFER and parent FAIL-routes on deferred fail', () => {
       const steps = [
         ...parseRunbookDocument(`## 1. Review package
 ### 1.1 Review pass
@@ -142,12 +142,14 @@ describe('runbook compiler', () => {
       const actor = createActor(machine);
       actor.start();
 
-      actor.send({ type: 'PASS' }); // 1.1 CONTINUE -> parent -> 1.2
-      actor.send({ type: 'FAIL' }); // 1.2 CONTINUE (runbook default) -> parent -> Case D pass-through -> step::2
+      actor.send({ type: 'PASS' }); // 1.1 DEFER -> advance to 1.2
+      actor.send({ type: 'FAIL' }); // 1.2 DEFER -> parent -> Case D FAIL routing -> STOPPED
 
-      // Runbook substeps default to CONTINUE on both pass/fail.
-      // Parent has no transitions (Case D) so passes through to next step.
-      expect(actor.getSnapshot().value).toBe('step::2');
+      // Runbook substeps use DEFER defaults (parser DEFER_TRANSITIONS).
+      // The parent declares no explicit transitions, so the default FAIL STOP
+      // applies. Under Case D FAIL routing, any deferred 'fail' result routes
+      // to the parent's configured FAIL target (STOPPED).
+      expect(actor.getSnapshot().value).toBe('STOPPED');
     });
 
     it('H3 runbook substeps under aggregating parent DEFER and aggregate on PASS ALL', () => {
@@ -8865,6 +8867,46 @@ echo "processing"
 
       const snapshot = actor.getSnapshot() as any;
       expect(snapshot.context.variables.Value).toBe('2');
+    });
+  });
+
+  describe('parent-step unconditional-exit FAIL routing (Bug A)', () => {
+    function getState(machine: ReturnType<typeof compileRunbookToMachine>, id: string): any {
+      return (machine.config.states as Record<string, unknown>)[id] as any;
+    }
+
+    it('emits a parent-level FAIL routing entry when parentStep.transitions.fail is STOP and there is no aggregation', () => {
+      const steps = createRunbook(`## 1. Parent
+- PASS CONTINUE
+- FAIL STOP
+
+### 1.1 First
+- PASS CONTINUE
+- FAIL CONTINUE
+
+### 1.2 Last
+- PASS CONTINUE
+- FAIL CONTINUE
+
+## 2. Done
+- PASS COMPLETE
+- FAIL STOP
+`);
+
+      const machine = compileRunbookToMachine(steps);
+      const parentAlways = getState(machine, 'step::1').always as any[];
+
+      const stoppedEntry = parentAlways.find((entry) => entry.target === 'STOPPED');
+      const continueEntry = parentAlways.find((entry) => entry.target === 'step::2');
+
+      expect(stoppedEntry).toBeDefined();
+      expect(continueEntry).toBeDefined();
+
+      // Critical anti-pattern check: both entries MUST have guards. If one
+      // has a guard and the other does not, the unguarded one will fire first
+      // and shadow the guarded one (XState evaluates `always` entries in order).
+      expect(stoppedEntry.guard).toBeDefined();
+      expect(continueEntry.guard).toBeDefined();
     });
   });
 });

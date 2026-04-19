@@ -1371,30 +1371,115 @@ function buildParentStateConfig(
     // Advance to next substep (both FOR and non-FOR)
     pushAdvanceGuards();
 
+    // Resolve PASS / FAIL targets from the parent's declared transitions so we
+    // honor `## 1. Parent\n- FAIL STOP` even without an AGGREGATION modifier.
+    // Without this, parent-level FAIL was unreachable when substeps CONTINUEd
+    // through FAIL (non-FOR) or any iteration failed (FOR) — see Bug A.
+    const parentPassTarget = resolveActionTarget(
+      parentStep.transitions.pass.action,
+      stepName,
+      steps,
+    );
+    const parentFailTarget = resolveActionTarget(
+      parentStep.transitions.fail.action,
+      stepName,
+      steps,
+    );
+
+    // Derive a LastAction variant + optional message from the parent's
+    // configured FAIL action. Mirrors the shape used elsewhere (e.g.
+    // buildParentExitAssign) but without `aggregated: true` — the
+    // unconditional-exit branch is not aggregation.
+    const failAction = parentStep.transitions.fail.action;
+    const failLastAction: LastAction =
+      failAction.type === 'GOTO'
+        ? buildGotoLastAction(failAction.target)
+        : failAction.type === 'NEXT' || failAction.type === 'BREAK' || failAction.type === 'DEFER'
+          ? // These are substep-only actions; resolveActionTarget already rejects
+            // them above. Branch is unreachable but required for exhaustiveness.
+            { type: failAction.type }
+          : { type: failAction.type };
+    const failLastMessage =
+      failAction.type === 'STOP' || failAction.type === 'COMPLETE' ? failAction.message : undefined;
+
     const commonAssign = {
       forStack: EMPTY_FOR_STACK,
       retryCount: 0,
       parentRetryCount: 0,
       iterationRetryCount: 0,
-      substep: extractSubstepFromStateId(nextTarget),
     } satisfies Pick<
       RunbookContext,
-      'forStack' | 'retryCount' | 'parentRetryCount' | 'iterationRetryCount' | 'substep'
+      'forStack' | 'retryCount' | 'parentRetryCount' | 'iterationRetryCount'
     >;
 
     if (hasFor) {
-      // Case C: FOR without transitions — preserve lastAction from substep
-      always.push({ target: nextTarget, actions: runbookSetup.assign(commonAssign) });
-    } else {
-      // Case D: non-FOR pass-through — clear deferredResults, set CONTINUE
+      // Case C: FOR without aggregation.
+      //
+      // Discriminator: any FAIL in iterationResults routes to parent FAIL target;
+      // otherwise route to parent PASS target. BOTH entries must be guarded —
+      // an unguarded earlier entry would shadow the guarded one (XState v5
+      // evaluates `always` entries in order).
+      const anyIterationFail: GuardFn = ({ context }) =>
+        (context.iterationResults ?? []).some((r) => r === 'fail');
+      const noIterationFail: GuardFn = ({ context }) =>
+        !(context.iterationResults ?? []).some((r) => r === 'fail');
+
+      // PASS routing: no failed iterations → parent's PASS action target.
       always.push({
-        target: nextTarget,
+        guard: noIterationFail,
+        target: parentPassTarget,
         actions: runbookSetup.assign({
           ...commonAssign,
+          substep: extractSubstepFromStateId(parentPassTarget),
+        }),
+      });
+      // FAIL routing: any failed iteration → parent's FAIL action target.
+      always.push({
+        guard: anyIterationFail,
+        target: parentFailTarget,
+        actions: runbookSetup.assign({
+          ...commonAssign,
+          substep: extractSubstepFromStateId(parentFailTarget),
+          lastAction: failLastAction,
+          lastMessage: failLastMessage,
+        }),
+      });
+    } else {
+      // Case D: non-FOR pass-through.
+      //
+      // Discriminator: any FAIL in deferredResults routes to parent FAIL target;
+      // otherwise route to parent PASS target. BOTH entries must be guarded —
+      // an unguarded earlier entry would shadow the guarded one (XState v5
+      // evaluates `always` entries in order).
+      const anyDeferredFail: GuardFn = ({ context }) =>
+        (context.deferredResults ?? []).some((r) => r === 'fail');
+      const noDeferredFail: GuardFn = ({ context }) =>
+        !(context.deferredResults ?? []).some((r) => r === 'fail');
+
+      // PASS routing: no failed deferred substeps → parent's PASS action target.
+      always.push({
+        guard: noDeferredFail,
+        target: parentPassTarget,
+        actions: runbookSetup.assign({
+          ...commonAssign,
+          substep: extractSubstepFromStateId(parentPassTarget),
           substepCompletedCount: 0,
           deferredResults: undefined,
           lastAction: { type: 'CONTINUE' as const },
           lastMessage: undefined,
+        }),
+      });
+      // FAIL routing: any failed deferred substep → parent's FAIL action target.
+      always.push({
+        guard: anyDeferredFail,
+        target: parentFailTarget,
+        actions: runbookSetup.assign({
+          ...commonAssign,
+          substep: extractSubstepFromStateId(parentFailTarget),
+          substepCompletedCount: 0,
+          deferredResults: undefined,
+          lastAction: failLastAction,
+          lastMessage: failLastMessage,
         }),
       });
     }
