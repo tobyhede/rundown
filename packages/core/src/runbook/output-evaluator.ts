@@ -230,11 +230,12 @@ export function evaluateFrontmatterOutputDeclarations(
 
 /**
  * Flatten CLI-sourced template variables into a shape suitable for OUTPUTS evaluation:
- * arrays are comma-joined, objects are JSON-stringified, `JsonArrayStream` refs are omitted,
- * and scalars pass through unchanged.
+ * scalars (strings, numbers, booleans, null) pass through unchanged, JsonArray and JsonObject
+ * values remain traversable for dotted-path access (e.g., `{{ config.host }}`), and
+ * `JsonArrayStream` refs are omitted (logged and skipped).
  *
  * @param vars - Template variables resolved from CLI / frontmatter inputs
- * @returns Flattened variable frame safe to merge into an evaluation frame
+ * @returns Flattened variable frame with scalars, arrays, and objects pass-through; JsonArrayStream omitted
  */
 export function flattenTemplateVars(vars: Readonly<Record<string, TemplateVarValue>>): OutputVars {
   const flattened: Record<string, OutputValue> = {};
