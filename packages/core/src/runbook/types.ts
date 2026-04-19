@@ -90,6 +90,9 @@ export type { ResolvedStepWithFor } from '@rundown-org/parser';
 /** A step where all FOR bounds are resolved. */
 export type { ResolvedStep } from '@rundown-org/parser';
 
+/** Step with substeps, fully resolved — substeps are Substep (not ParsedSubstep). */
+export type { ResolvedStepWithSubsteps } from '@rundown-org/parser';
+
 /** Utility type for resolved steps with substeps. */
 export type { ResolvedStepHavingSubsteps } from '@rundown-org/parser';
 

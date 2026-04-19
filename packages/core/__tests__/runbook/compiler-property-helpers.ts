@@ -11,11 +11,11 @@ import fc from 'fast-check';
 import { createActor, type AnyStateMachine } from 'xstate';
 import { compileRunbookToMachine } from '../../src/runbook/compiler.js';
 import type {
-  Step,
+  ResolvedStep,
   BaseStep,
   StepWithCommand,
-  StepWithSubsteps,
-  StepWithFor,
+  ResolvedStepWithSubsteps,
+  ResolvedStepWithFor,
   Transitions,
   TransitionObject,
   Action,
@@ -30,15 +30,15 @@ import type {
 export type StepInput =
   | Omit<BaseStep, 'kind'>
   | Omit<StepWithCommand, 'kind'>
-  | Omit<StepWithSubsteps, 'kind'>
-  | Omit<StepWithFor, 'kind'>;
+  | Omit<ResolvedStepWithSubsteps, 'kind'>
+  | Omit<ResolvedStepWithFor, 'kind'>;
 
-/** Infer and inject `kind` on each step object so raw literals satisfy the Step union. */
-export function inferSteps(raw: StepInput[]): Step[] {
+/** Infer and inject `kind` on each step object so raw literals satisfy the ResolvedStep union. */
+export function inferSteps(raw: StepInput[]): ResolvedStep[] {
   return raw.map((s) => {
     const kind =
       'forClause' in s ? 'for' : 'substeps' in s ? 'substeps' : 'command' in s ? 'command' : 'base';
-    return { ...s, kind } as Step;
+    return { ...s, kind } as ResolvedStep;
   });
 }
 
@@ -122,7 +122,7 @@ export interface GeneralRunResult {
  * Returns a snapshot of the terminal context for property assertions.
  */
 export function runMachine(
-  steps: Step[],
+  steps: ResolvedStep[],
   events: ('PASS' | 'FAIL')[],
   opts?: { maxPad?: number },
 ): GeneralRunResult {

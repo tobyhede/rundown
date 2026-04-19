@@ -10,7 +10,7 @@
 import { createActor, type AnyStateMachine } from 'xstate';
 import { compileRunbookToMachine } from '../../src/runbook/compiler.js';
 import type {
-  Step,
+  ResolvedStep,
   Substep,
   Transitions,
   Aggregation,
@@ -100,7 +100,7 @@ export function makeAggregation(mode: 'ALL' | 'ANY' | undefined): Aggregation | 
  * @param config - Loop dimensions, transition actions, aggregation modes, and retry counts
  * @returns Two-element Step array: step 1 is the FOR loop with substeps, step 2 is a terminal step
  */
-export function buildForLoopSteps(config: ForLoopConfig): Step[] {
+export function buildForLoopSteps(config: ForLoopConfig): ResolvedStep[] {
   const substeps: Substep[] = [];
   for (let i = 1; i <= config.numSubsteps; i++) {
     substeps.push({
@@ -114,7 +114,7 @@ export function buildForLoopSteps(config: ForLoopConfig): Step[] {
     });
   }
 
-  const forStep: Step = {
+  const forStep: ResolvedStep = {
     kind: 'for',
     name: '1',
     description: 'FOR loop step',
@@ -141,7 +141,7 @@ export function buildForLoopSteps(config: ForLoopConfig): Step[] {
     substeps,
   };
 
-  const terminalStep: Step = {
+  const terminalStep: ResolvedStep = {
     kind: 'base',
     name: '2',
     description: 'Terminal',
@@ -176,7 +176,7 @@ export interface RunResult {
  * @returns Terminal state, forStack length, accumulated iteration results, and total events consumed
  * @throws {Error} When padding fails to drive the machine to terminal state within 200 events
  */
-export function runFromSteps(steps: Step[], events: EventType[]): RunResult {
+export function runFromSteps(steps: ResolvedStep[], events: EventType[]): RunResult {
   const machine = compileRunbookToMachine(steps);
   const actor = createActor(machine as AnyStateMachine);
   actor.start();
