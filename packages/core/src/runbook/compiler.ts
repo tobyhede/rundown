@@ -21,7 +21,7 @@ import {
   isStepExitAction,
 } from '@rundown-org/parser';
 import { shouldAggregationPass } from './transition-handler.js';
-import type { ActionDefs } from './compiler-actions.js';
+import { actionRef, type ActionDefs, type CompilerActionRef } from './compiler-actions.js';
 
 /**
  * Module-level XState setup with typed context, events, and named actions.
@@ -1424,10 +1424,10 @@ function buildTerminalTransition(
 ): TransitionConfig {
   return {
     target,
-    actions: {
-      type: 'setLastAction' as const,
-      params: { action: { type: actionType } as LastAction, msg: message },
-    },
+    actions: actionRef('setLastAction', {
+      action: { type: actionType } as LastAction,
+      msg: message,
+    }),
   };
 }
 
@@ -1452,10 +1452,9 @@ function buildLoopControlTransition(
   if (currentStep?.kind !== 'for') {
     return {
       target: 'STOPPED',
-      actions: {
-        type: 'setLastAction' as const,
-        params: { action: { type: actionType } as LastAction },
-      },
+      actions: actionRef('setLastAction', {
+        action: { type: actionType } as LastAction,
+      }),
     };
   }
   // FOR step: increment completed count before transitioning to parent (no deferred result — flow control only)
