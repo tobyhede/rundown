@@ -226,3 +226,47 @@ rd echo --result pass
     expect(state.variables).toMatchObject({ Tag: '1', At: '1' });
   });
 });
+
+describe('OUTPUTS path helper — ctx-scoped workspace path', () => {
+  let workspace: TestWorkspace;
+
+  const PATH_HELPER_RUNBOOK = `---
+name: path-helper-test
+---
+# Path Helper Test
+
+## 1. Record artifact path
+- PASS COMPLETE
+- FAIL STOP
+- OUTPUTS
+  - ArtifactPath {{ path "report.json" ctx=test123 }}
+
+\`\`\`sh
+rd echo --result pass
+\`\`\`
+`;
+
+  beforeEach(async () => {
+    workspace = await createTestWorkspace();
+    await writeFile(join(workspace.cwd, 'path-helper.runbook.md'), PATH_HELPER_RUNBOOK);
+  });
+
+  afterEach(async () => {
+    await workspace.cleanup();
+  });
+
+  it('resolves path helper to a ctx-scoped workspace path stored in state.variables', async () => {
+    const result = runCli('run path-helper.runbook.md', workspace);
+    expect(result.exitCode).toBe(0);
+
+    const states = await getAllRunbookStates(workspace);
+    expect(states).toHaveLength(1);
+    const state = states[0] as { variables?: Record<string, unknown> };
+
+    // Non-git workspaces: WorkPath = .rundown/work (no branch suffix)
+    // ctx=test123 adds .rd-test123/ subdirectory; file gets YYYY-MM-DD prefix
+    expect(state.variables?.ArtifactPath).toMatch(
+      /^\.rundown\/work\/\.rd-test123\/\d{4}-\d{2}-\d{2}-report\.json$/,
+    );
+  });
+});

@@ -1037,7 +1037,7 @@ export function escapeForShellSingleQuote(content: string): string {
  *
  * Accepts three value forms:
  * - `{{ path "file.json" }}` — helper invocation (preserved verbatim)
- * - `"HELLO"` — quoted literal string (quotes stripped)
+ * - `"HELLO"` — quoted literal string (preserved verbatim for evaluator)
  * - `item` — bare variable reference (preserved verbatim)
  *
  * The first whitespace-delimited token is the output name. Everything after
@@ -1063,11 +1063,7 @@ export function parseOutputDeclaration(text: string): OutputDeclaration | null {
   const rawValue = trimmed.slice(spaceIdx).trim();
   if (!rawValue) return null;
 
-  // Unwrap quoted literals: "HELLO" → HELLO
-  const quotedMatch = /^"([^"]+)"$/.exec(rawValue);
-  const value = quotedMatch ? quotedMatch[1] : rawValue;
-
-  return { name, value };
+  return { name, value: rawValue };
 }
 
 /**

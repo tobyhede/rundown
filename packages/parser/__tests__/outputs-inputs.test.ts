@@ -19,10 +19,10 @@ describe('parseOutputDeclaration', () => {
     expect(result).toEqual({ name: 'VarName', value: 'item' });
   });
 
-  it('parses name with quoted literal value (strips quotes)', () => {
-    // The parser unwraps surrounding quotes from literal values
+  it('parses name with quoted literal value (preserves quotes for evaluator)', () => {
+    // The parser preserves the raw value expression; the evaluator handles quote-stripping
     const result = parseOutputDeclaration('VarName "literal"');
-    expect(result).toEqual({ name: 'VarName', value: 'literal' });
+    expect(result).toEqual({ name: 'VarName', value: '"literal"' });
   });
 
   it('returns null for empty string', () => {

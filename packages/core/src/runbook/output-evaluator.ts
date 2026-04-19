@@ -149,7 +149,18 @@ export function evaluateOutputExpression(expr: string, variables: OutputVars): s
 
   const quotedMatch = /^"([^"]*)"$/.exec(trimmed);
   if (quotedMatch) {
-    return quotedMatch[1];
+    const inner = quotedMatch[1];
+    if (!inner.includes('{{')) {
+      return inner;
+    }
+    // Quoted string containing templates: strip quotes, expand templates
+    const expanded = expandOutputVariables(inner, variables);
+    if (expanded.includes('{{')) {
+      throw new Error(
+        `evaluateOutputExpression: template reference has unresolved variables: "${trimmed}"`,
+      );
+    }
+    return expanded;
   }
 
   if (trimmed.startsWith('{{')) {
