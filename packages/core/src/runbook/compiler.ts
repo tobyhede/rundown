@@ -21,6 +21,7 @@ import {
   isStepExitAction,
 } from '@rundown-org/parser';
 import { shouldAggregationPass } from './transition-handler.js';
+import { actionRef, type ActionDefs, type CompilerActionRef } from './compiler-actions.js';
 
 /**
  * Module-level XState setup with typed context, events, and named actions.
@@ -36,8 +37,8 @@ export const runbookSetup = setup({
   actions: {
     /** Set lastAction and optional lastMessage. */
     setLastAction: assign({
-      lastAction: (_, params: { action: LastAction; msg?: string }) => params.action,
-      lastMessage: (_, params: { action: LastAction; msg?: string }) => params.msg,
+      lastAction: (_, params: ActionDefs['setLastAction']) => params.action,
+      lastMessage: (_, params: ActionDefs['setLastAction']) => params.msg,
     }),
   },
 });
@@ -45,14 +46,18 @@ export const runbookSetup = setup({
 /** Machine type produced by {@link compileRunbookToMachine}. */
 export type RunbookMachine = ReturnType<typeof runbookSetup.createMachine>;
 
-/** Reference to the named `setLastAction` action declared in {@link runbookSetup}. */
-type SetLastActionRef = {
-  type: 'setLastAction';
-  params: { action: LastAction; msg?: string };
-};
-
-/** Union of all action types the compiler emits into XState transitions. */
-type CompilerAction = ReturnType<typeof runbookSetup.assign> | SetLastActionRef;
+/**
+ * Union of all action values the compiler emits into XState transitions.
+ *
+ * Two arms:
+ * - `ReturnType<typeof runbookSetup.assign>`: inline `assign(...)` values built
+ *   directly at state/entry sites. Required because XState's assign return type
+ *   is opaque and cannot be derived generically.
+ * - `CompilerActionRef`: parameterized refs to named actions declared in
+ *   {@link runbookSetup}. Derived from {@link ActionDefs} so call sites and
+ *   setup impls share a single source of truth.
+ */
+type CompilerAction = ReturnType<typeof runbookSetup.assign> | CompilerActionRef;
 
 /** XState state-node config type inferred from the runbook setup. */
 type RunbookStateConfig = Parameters<typeof runbookSetup.createStateConfig>[0];
@@ -1423,10 +1428,10 @@ function buildTerminalTransition(
 ): TransitionConfig {
   return {
     target,
-    actions: {
-      type: 'setLastAction' as const,
-      params: { action: { type: actionType } as LastAction, msg: message },
-    },
+    actions: actionRef('setLastAction', {
+      action: { type: actionType } as LastAction,
+      msg: message,
+    }),
   };
 }
 
@@ -1451,10 +1456,9 @@ function buildLoopControlTransition(
   if (currentStep?.kind !== 'for') {
     return {
       target: 'STOPPED',
-      actions: {
-        type: 'setLastAction' as const,
-        params: { action: { type: actionType } as LastAction },
-      },
+      actions: actionRef('setLastAction', {
+        action: { type: actionType } as LastAction,
+      }),
     };
   }
   // FOR step: increment completed count before transitioning to parent (no deferred result — flow control only)
