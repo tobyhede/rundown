@@ -631,7 +631,7 @@ describe('runExecutionLoop', () => {
     );
   });
 
-  describe('OUTPUTS storage on auto-execution', () => {
+  describe('machine-driven auto-execution does not break on a step declaring OUTPUTS', () => {
     const stepsWithOutputs: any[] = [
       {
         kind: 'command',
@@ -698,7 +698,9 @@ describe('runExecutionLoop', () => {
         mockEmitter,
       );
 
-      // Behavioral logic for OUTPUTS is tested via integration tests
+      // OUTPUTS evaluation lives in the state machine; this is a regression
+      // guard that the CLI auto-execution path still runs to completion when
+      // a step declares outputs. Behavioral coverage is in integration tests.
       expect(result).not.toBe('stopped');
     });
   });

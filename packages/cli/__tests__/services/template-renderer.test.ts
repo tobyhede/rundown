@@ -1728,4 +1728,3 @@ describe('resolveForBounds', () => {
     });
   });
 });
-

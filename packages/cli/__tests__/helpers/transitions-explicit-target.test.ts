@@ -32,7 +32,6 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
 // Mock @rundown-org/parser
 jest.unstable_mockModule('@rundown-org/parser', () => ({
   resolvedStepHasSubsteps: jest.fn(),
-  parseRunbookDocument: jest.fn().mockReturnValue({ frontmatter: null }),
 }));
 
 // Mock runbook-loader
@@ -45,7 +44,6 @@ jest.unstable_mockModule('../../src/services/execution', () => ({
   drainResolvedCompletions: jest.fn().mockResolvedValue({ status: 'done', applied: 0 }),
   findStepOrThrow: jest.fn(),
   runExecutionLoop: jest.fn().mockResolvedValue('done'),
-  buildStepVariables: jest.fn().mockReturnValue({}),
 }));
 
 // Mock execution-emitter
@@ -655,9 +653,9 @@ describe('executeTransition with ExplicitTarget', () => {
   });
 });
 
-describe('storeStepOutputs via step-level PASS transition', () => {
+describe('step-level PASS transition no longer triggers CLI-side OUTPUTS evaluation', () => {
   // Helper that creates a step-level (non-substep) ctx: substep is undefined so
-  // executeTransition goes to the actor.send / storeStepOutputs path.
+  // executeTransition exercises the actor.send path (machine-owned storeStepOutputs).
   function makeStepLevelCtx(templateVars?: Record<string, unknown>): any {
     const state = {
       id: 'run-1',
@@ -716,5 +714,9 @@ describe('storeStepOutputs via step-level PASS transition', () => {
     const config = createPassTransitionConfig();
 
     await executeTransition(ctx, config);
+
+    // Verify the machine-owned path was exercised: the PASS transition drives
+    // the actor (where storeStepOutputs now lives), so actor.send must fire.
+    expect(ctx.actor.send).toHaveBeenCalled();
   });
 });

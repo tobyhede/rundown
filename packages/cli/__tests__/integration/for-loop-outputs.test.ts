@@ -2,8 +2,8 @@
 //
 // Regression: when a FOR loop variable is shadowed by a CLI --var override,
 // OUTPUTS that reference the loop variable must publish the current iteration
-// value, not the shadowing override. See mergeExecutionTemplateVars in
-// packages/cli/src/helpers/execution-units.ts.
+// value, not the shadowing override. This invariant is now enforced by the
+// state machine's per-step OUTPUTS evaluation (see buildExecutionFrame).
 
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { writeFile } from 'node:fs/promises';

@@ -8796,14 +8796,12 @@ echo "processing"
       }
     });
 
-    it('fires storeStepOutputs on the iteration-advancing always transition of a FOR step', () => {
-      // Spec Testing §: "FOR loop step with outputs: storeStepOutputs on
-      // iteration-advancing always transitions." The loop-back transitions
-      // target the first substep state (e.g. step::1::1), which by the plan's
-      // exitsParent predicate is a same-parent route and NOT decorated. We
-      // therefore verify via runtime behavior: each iteration's outputs land
-      // in context.variables, and the final exit-to-next transition also
-      // carries outputs.
+    it('fires storeStepOutputs on the parent-exit transition of a FOR step', () => {
+      // The parent-exit always transition (target === 'step::2') must carry
+      // storeStepOutputs so the FOR step's OUTPUTS are recorded after the last
+      // iteration. The loop-back transitions stay within the same parent and
+      // are intentionally NOT decorated. Last-iteration-wins runtime behavior
+      // is covered by the adjacent 'last iteration wins…' test.
       const steps = createRunbook(`## 1. Loop
 - FOR i IN 1 TO 2
 - PASS CONTINUE
@@ -8891,6 +8889,65 @@ echo "processing"
       // and shadow the guarded one (XState evaluates `always` entries in order).
       expect(stoppedEntry.guard).toBeDefined();
       expect(continueEntry.guard).toBeDefined();
+    });
+
+    it('routes to STOPPED at runtime when any FOR iteration failed and parent has FAIL STOP (Case C)', () => {
+      // Runtime counterpart to the structural test above. Iteration-level DEFER
+      // accumulates a pass/fail verdict into iterationResults every iteration,
+      // and a mix of verdicts must route the parent-exit to the parent's FAIL
+      // target (STOPPED) — a predicate typo (`every` vs `some`) would still
+      // pass the structural test but fail this one.
+      const steps = inferSteps([
+        {
+          name: '1',
+          description: 'FOR step',
+          forClause: {
+            start: 1,
+            end: 2,
+            transitions: {
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+              fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
+            },
+            aggregation: { strategy: 'ALL' as const },
+          },
+          // No step-level aggregation — forces the unconditional-exit branch.
+          substeps: [
+            {
+              id: '1',
+              description: 'Inside',
+              transitions: {
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
+              },
+            },
+          ],
+          transitions: {
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+          },
+        },
+        {
+          name: '2',
+          description: 'Done',
+          transitions: {
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+          },
+        },
+      ]);
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      // Iteration 1: substep FAIL → DEFER → iteration aggregation fails → iterationResults += 'fail'
+      actor.send({ type: 'FAIL' });
+      // Iteration 2: substep PASS → DEFER → iteration aggregation passes → iterationResults += 'pass'
+      actor.send({ type: 'PASS' });
+
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.context.iterationResults).toEqual(['fail', 'pass']);
+      expect(snapshot.value).toBe('STOPPED');
     });
   });
 });
