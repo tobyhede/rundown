@@ -151,7 +151,13 @@ export function evaluateOutputExpression(expr: string, variables: OutputVars): s
   }
 
   if (trimmed.startsWith('{{')) {
-    return expandOutputVariables(trimmed, variables);
+    const expanded = expandOutputVariables(trimmed, variables);
+    if (expanded.includes('{{')) {
+      throw new Error(
+        `evaluateOutputExpression: template reference has unresolved variables: "${trimmed}"`,
+      );
+    }
+    return expanded;
   }
 
   // Try to resolve as a bare identifier first; if not found, expand any templates that may appear in the value
@@ -161,7 +167,24 @@ export function evaluateOutputExpression(expr: string, variables: OutputVars): s
   }
 
   // No bare identifier match — expand any embedded template variables
-  return expandOutputVariables(trimmed, variables);
+  const expanded = expandOutputVariables(trimmed, variables);
+  // If trimmed was a pure bare identifier (no {{ }}) that matches the identifier pattern,
+  // resolveOutputPath already returned undefined — the identifier is not in frame, so throw.
+  if (
+    !trimmed.includes('{{') &&
+    /^[a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*|\.[-a-zA-Z0-9_]+)*$/.test(trimmed)
+  ) {
+    throw new Error(
+      `evaluateOutputExpression: bare identifier "${trimmed}" is not defined in the output frame`,
+    );
+  }
+  // Mixed string with embedded templates: if any remain unresolved, skip it.
+  if (expanded.includes('{{')) {
+    throw new Error(
+      `evaluateOutputExpression: template reference has unresolved variables: "${trimmed}"`,
+    );
+  }
+  return expanded;
 }
 
 /**

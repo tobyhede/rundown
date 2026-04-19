@@ -79,14 +79,12 @@ describe('evaluateStepOutputDeclarations', () => {
     });
   });
 
-  it('preserves literal-looking {{ VarName }} text when the variable is unresolved', () => {
-    // Current behavior: the expander leaves the token alone when the path is
-    // unknown, so the output string still contains the `{{ }}` — not an error.
+  it('omits entries whose template reference is unresolved (variable absent from frame)', () => {
+    // When a template reference is unresolved, evaluateOutputExpression throws,
+    // and evaluateStepOutputDeclarations catches the error and skips the entry.
     const outputs: OutputDeclaration[] = [{ name: 'Missing', value: '{{ MissingVar }}' }];
 
-    expect(evaluateStepOutputDeclarations(outputs, {})).toEqual({
-      Missing: '{{ MissingVar }}',
-    });
+    expect(evaluateStepOutputDeclarations(outputs, {})).toEqual({});
   });
 
   it('omits entries whose expression evaluation throws (e.g. path helper without WorkPath)', () => {
@@ -218,7 +216,7 @@ describe('flattenTemplateVars', () => {
   // OUTPUTS expression that references them produces garbage (literal identifier string
   // or unresolved `{{ items }}`) instead of being skipped or raising an error.
 
-  it.skip('[P3] does not store literal identifier when OUTPUTS bare-ref targets an omitted JsonArrayStream', () => {
+  it('[P3] does not store literal identifier when OUTPUTS bare-ref targets an omitted JsonArrayStream', () => {
     // flattenTemplateVars drops JsonArrayStream keys. evaluateOutputExpression('items', {})
     // currently falls back to `trimmed` → stores the string "items". Must skip instead.
     const vars = flattenTemplateVars({
@@ -236,7 +234,7 @@ describe('flattenTemplateVars', () => {
     expect(result).toMatchObject({ Region: 'us-east-1' });
   });
 
-  it.skip('[P3] does not store unresolved placeholder when OUTPUTS template-ref targets an omitted JsonArrayStream', () => {
+  it('[P3] does not store unresolved placeholder when OUTPUTS template-ref targets an omitted JsonArrayStream', () => {
     // evaluateOutputExpression('{{ items }}', {}) returns '{{ items }}' (unresolved braces).
     // Storing that string as an output value silently corrupts the result.
     const vars = flattenTemplateVars({
