@@ -21,6 +21,7 @@ import {
   isStepExitAction,
 } from '@rundown-org/parser';
 import { shouldAggregationPass } from './transition-handler.js';
+import type { ActionDefs } from './compiler-actions.js';
 
 /**
  * Module-level XState setup with typed context, events, and named actions.
@@ -36,8 +37,8 @@ export const runbookSetup = setup({
   actions: {
     /** Set lastAction and optional lastMessage. */
     setLastAction: assign({
-      lastAction: (_, params: { action: LastAction; msg?: string }) => params.action,
-      lastMessage: (_, params: { action: LastAction; msg?: string }) => params.msg,
+      lastAction: (_, params: ActionDefs['setLastAction']) => params.action,
+      lastMessage: (_, params: ActionDefs['setLastAction']) => params.msg,
     }),
   },
 });
