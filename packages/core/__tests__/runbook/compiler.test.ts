@@ -152,6 +152,94 @@ describe('runbook compiler', () => {
       expect(actor.getSnapshot().value).toBe('STOPPED');
     });
 
+    it('Case D non-FOR parent with PASS STOP sets lastAction to STOP and preserves lastMessage', () => {
+      const steps = createRunbook(`## 1. Review
+- PASS STOP "all done"
+- FAIL STOP
+
+### 1.1 First
+- PASS CONTINUE
+- FAIL CONTINUE
+
+### 1.2 Last
+- PASS CONTINUE
+- FAIL CONTINUE
+
+## 2. Next
+- PASS COMPLETE
+`);
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'PASS' }); // 1.1 CONTINUE -> advance to 1.2
+      actor.send({ type: 'PASS' }); // 1.2 CONTINUE -> parent -> Case D PASS STOP -> STOPPED
+
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('STOPPED');
+      expect(snapshot.context.lastAction).toEqual(expect.objectContaining({ type: 'STOP' }));
+      expect(snapshot.context.lastMessage).toBe('all done');
+    });
+
+    it('Case D non-FOR parent with PASS COMPLETE sets lastAction to COMPLETE', () => {
+      const steps = createRunbook(`## 1. Review
+- PASS COMPLETE
+- FAIL STOP
+
+### 1.1 First
+- PASS CONTINUE
+- FAIL CONTINUE
+
+### 1.2 Last
+- PASS CONTINUE
+- FAIL CONTINUE
+`);
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'PASS' }); // 1.1 CONTINUE -> advance to 1.2
+      actor.send({ type: 'PASS' }); // 1.2 CONTINUE -> parent -> Case D PASS COMPLETE -> COMPLETE
+
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('COMPLETE');
+      expect(snapshot.context.lastAction).toEqual(expect.objectContaining({ type: 'COMPLETE' }));
+    });
+
+    it('Case D non-FOR parent with PASS GOTO sets lastAction to GOTO', () => {
+      const steps = createRunbook(`## 1. Review
+- PASS GOTO 3
+- FAIL STOP
+
+### 1.1 First
+- PASS CONTINUE
+- FAIL CONTINUE
+
+### 1.2 Last
+- PASS CONTINUE
+- FAIL CONTINUE
+
+## 2. Skipped
+- PASS COMPLETE
+
+## 3. Target
+- PASS COMPLETE
+`);
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'PASS' }); // 1.1 CONTINUE -> advance to 1.2
+      actor.send({ type: 'PASS' }); // 1.2 CONTINUE -> parent -> Case D PASS GOTO 3 -> step::3
+
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('step::3');
+      expect(snapshot.context.lastAction).toEqual(expect.objectContaining({ type: 'GOTO' }));
+    });
+
     it('H3 runbook substeps under aggregating parent DEFER and aggregate on PASS ALL', () => {
       const steps = createRunbook(`## 1. Review
 - PASS ALL COMPLETE

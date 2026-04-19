@@ -1394,6 +1394,14 @@ function buildParentStateConfig(
     const failLastMessage =
       failAction.type === 'STOP' || failAction.type === 'COMPLETE' ? failAction.message : undefined;
 
+    const passAction = parentStep.transitions.pass.action;
+    const passLastAction: LastAction =
+      passAction.type === 'GOTO'
+        ? buildGotoLastAction(passAction.target)
+        : { type: passAction.type };
+    const passLastMessage =
+      passAction.type === 'STOP' || passAction.type === 'COMPLETE' ? passAction.message : undefined;
+
     const commonAssign = {
       forStack: EMPTY_FOR_STACK,
       retryCount: 0,
@@ -1457,8 +1465,8 @@ function buildParentStateConfig(
           substep: extractSubstepFromStateId(parentPassTarget),
           substepCompletedCount: 0,
           deferredResults: undefined,
-          lastAction: { type: 'CONTINUE' as const },
-          lastMessage: undefined,
+          lastAction: passLastAction,
+          lastMessage: passLastMessage,
         }),
       });
       // FAIL routing: any failed deferred substep → parent's FAIL action target.
