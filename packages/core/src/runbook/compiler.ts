@@ -1421,16 +1421,39 @@ function buildParentStateConfig(
       // evaluates `always` entries in order).
       const anyIterationFail: GuardFn = ({ context }) =>
         (context.iterationResults ?? []).some((r) => r === 'fail');
-      const noIterationFail: GuardFn = ({ context }) =>
-        !(context.iterationResults ?? []).some((r) => r === 'fail');
+      // BREAK/NEXT exits preserve their lastAction — exclude them from the normal routing guards.
+      const isBreakOrNext: GuardFn = ({ context }) =>
+        context.lastAction?.type === 'BREAK' || context.lastAction?.type === 'NEXT';
+      const noIterationFailNormal: GuardFn = ({ context }) =>
+        !(context.iterationResults ?? []).some((r) => r === 'fail') &&
+        context.lastAction?.type !== 'BREAK' &&
+        context.lastAction?.type !== 'NEXT';
 
-      // PASS routing: no failed iterations → parent's PASS action target.
+      // BREAK/NEXT PASS routing: exit was via BREAK or NEXT — preserve lastAction as-is.
+      // lastMessage is cleared: BREAK/NEXT carry no message; any stale substep message must not leak.
+      // Safety: in Case C (no aggregation), iterationResults is never populated by sequential guards,
+      // so anyIterationFail is always false when isBreakOrNext is true. If this invariant changes,
+      // revisit guard ordering — isBreakOrNext must either check for fails or be merged with anyIterationFail.
       always.push({
-        guard: noIterationFail,
+        guard: isBreakOrNext,
         target: parentPassTarget,
         actions: runbookSetup.assign({
           ...commonAssign,
           substep: extractSubstepFromStateId(parentPassTarget),
+          lastMessage: undefined,
+        }),
+      });
+      // Normal PASS routing: no failed iterations and no BREAK/NEXT → parent's PASS action target.
+      // The BREAK/NEXT exclusion duplicates isBreakOrNext because XState evaluates guards
+      // independently (not as an if-else chain) — both guards must be self-contained.
+      always.push({
+        guard: noIterationFailNormal,
+        target: parentPassTarget,
+        actions: runbookSetup.assign({
+          ...commonAssign,
+          substep: extractSubstepFromStateId(parentPassTarget),
+          lastAction: passLastAction,
+          lastMessage: passLastMessage,
         }),
       });
       // FAIL routing: any failed iteration → parent's FAIL action target.
@@ -1954,8 +1977,16 @@ function prependActions(
  * Build XState transition config by dispatching on Action type
  * (CONTINUE, GOTO, NEXT, BREAK, COMPLETE, STOP).
  *
- * After building the base transition, decorates it with a `storeStepOutputs`
- * action when the unit (step or substep) declares `OUTPUTS` directives.
+ * After building the base transition, decorates it with `storeStepOutputs`
+ * actions for any OUTPUTS directives that must fire on this exit path:
+ *
+ * 1. The unit's own OUTPUTS (substep or step) when declared.
+ * 2. The parent step's OUTPUTS when a substep's transition bypasses the parent
+ *    aggregation state entirely (COMPLETE, STOP, or GOTO to a different step).
+ *    In the normal CONTINUE/DEFER/BREAK/NEXT path the substep routes back to the
+ *    parent state first, where `decorateParentTransition` injects parent OUTPUTS;
+ *    for direct-to-terminal or direct-to-other-step transitions that path is
+ *    unreachable, so parent OUTPUTS are injected here instead.
  *
  * Frontmatter OUTPUTS are NOT attached here: they are emitted exactly once from
  * the terminal states' `entry` actions (COMPLETE.entry / STOPPED.entry) under
@@ -2011,6 +2042,22 @@ function buildActionTransition(
   const extra: CompilerAction[] = [];
   if (unitOutputs.length > 0) {
     extra.push(actionRef('storeStepOutputs', { outputs: unitOutputs, stepName, substepId }));
+  }
+
+  // When a substep bypasses the parent aggregation state by transitioning directly
+  // to a terminal state or a different step, the parent's `always` transitions never
+  // run and `decorateParentTransition` is unreachable. Inject parent OUTPUTS here so
+  // they fire regardless of which exit path the substep takes.
+  if (substepId && currentStep && resolvedStepHasSubsteps(currentStep)) {
+    const parentOutputs = currentStep.outputs;
+    const target = transition.target;
+    const exitsParent =
+      target !== undefined &&
+      target !== formatStateId(stepName) &&
+      !target.startsWith(`${formatStateId(stepName)}::`);
+    if (exitsParent && parentOutputs && parentOutputs.length > 0) {
+      extra.push(actionRef('storeStepOutputs', { outputs: parentOutputs, stepName }));
+    }
   }
 
   return prependActions(transition, extra);
@@ -2125,7 +2172,11 @@ function checkedStateInsert(
  * @param steps - The parsed runbook steps to compile
  * @param options - Optional compilation inputs
  * @param options.templateVars - Seeded template variables for OUTPUTS evaluation
- * @param options.frontmatterOutputs - Frontmatter `outputs:` declarations
+ * @param options.frontmatterOutputs - Frontmatter `outputs:` declarations. Callers that pass a
+ *   value loaded from persisted {@link RunbookState} must validate that the field is not `undefined`
+ *   before calling (stale run states pre-dating the OUTPUTS feature will have it absent); the
+ *   {@link RunbookActorService} enforces this guard. Direct callers from tests or CLI inspection
+ *   that omit the option receive an empty array default.
  * @returns An XState state machine definition
  * @throws {Error} When a GOTO target references a non-existent step or when graph invariants are violated (e.g., duplicate state IDs)
  */

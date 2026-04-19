@@ -36,8 +36,7 @@ import {
   stepIdToString,
   RunbookSyntaxError,
 } from '@rundown-org/parser';
-import { isJsonArrayStream } from '@rundown-org/core';
-import type { TemplateVarValue } from '@rundown-org/core';
+import { isJsonArrayStream, type TemplateVarValue } from '@rundown-org/core';
 import type { StepVariables } from './execution-vars.js';
 
 /**

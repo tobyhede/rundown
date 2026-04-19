@@ -18,13 +18,20 @@ import type { LastAction } from './types.js';
  */
 export interface ActionDefs {
   readonly setLastAction: { action: LastAction; msg?: string };
+  /** Evaluates step/substep OUTPUTS declarations and merges the results into live context variables. */
   readonly storeStepOutputs: {
+    /** OUTPUTS declarations authored on the exiting step or substep. */
     outputs: readonly OutputDeclaration[];
+    /** Parent step name used to build the OUTPUTS execution frame. */
     stepName: string;
+    /** Substep id when evaluating substep-level OUTPUTS; omitted for step-level evaluation. */
     substepId?: string;
   };
+  /** Evaluates frontmatter OUTPUTS declarations and persists the result into terminal finalVars. */
   readonly storeFrontmatterOutputs: {
+    /** Step name for non-terminal evaluation contexts; omitted at terminal entry. */
     stepName?: string;
+    /** Substep id for non-terminal evaluation contexts; omitted at terminal entry. */
     substepId?: string;
   };
 }

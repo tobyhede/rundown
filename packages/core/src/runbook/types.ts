@@ -678,6 +678,11 @@ export interface RunbookState {
    * Frontmatter `outputs:` declarations parsed from the runbook source at startup.
    * Persisted so the machine compiler can seed `RunbookContext.frontmatterOutputs`
    * on every actor creation (including resume) without re-parsing the runbook.
+   *
+   * Intentionally optional: run states created before the OUTPUTS feature was introduced
+   * will not carry this field. `RunbookStateSchema` accepts `undefined` so old files pass
+   * schema validation; `RunbookActorService.createActor` then rejects them with a stale-state
+   * error. New runs always write `[]` (via `RunbookStateManager.create`), never `undefined`.
    */
   readonly frontmatterOutputs?: readonly OutputDeclaration[];
 

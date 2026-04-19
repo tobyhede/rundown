@@ -28,7 +28,7 @@ Frontmatter fields beyond `name`, `description`, `version`, `author`, `tags`, `i
 
 The `required` field declares variable names that must be provided by the caller (via CLI flags, config, environment, or delegation). Each entry must be a valid template variable identifier matching `/^[a-zA-Z_][a-zA-Z0-9_]*$/`. Required variables must not appear in `inputs` — they have no default. Missing required variables produce a hard error during resolution.
 
-The `inputs` field declares variable names to inject at pipeline setup from the context outputs store (see [§7 Context Passing](#7-context-passing-inputs--outputs)). Each entry must match the same identifier pattern as `required`. Entries must not also appear in `vars` — injection is gap-filling only; names already defined by `vars` would never receive an injected value. Reserved runtime names (`step`, `index`, `context`, matched case-insensitively) are rejected. Missing inputs at runtime are silently skipped; the declaration expresses intent rather than hard requirement.
+The `inputs` field declares variable names to inject at pipeline setup from the context outputs store (see [§7 Context Passing](#7-context-passing-outputs)). Each entry must match the same identifier pattern as `required`. Entries must not also appear in `vars` — injection is gap-filling only; names already defined by `vars` would never receive an injected value. Reserved runtime names (`step`, `index`, `context`, matched case-insensitively) are rejected. Missing inputs at runtime are silently skipped; the declaration expresses intent rather than hard requirement.
 
 The frontmatter `description` field provides a summary for runbook discovery and listing (`rd ls --all`). The `Runbook.description` in the parsed AST is derived from preamble text between the H1 title and first H2 step. These are independent values.
 
@@ -268,7 +268,7 @@ Variables use Handlebars syntax: `{{variable}}`.
     4. Frontmatter `inputs:` field
     5. Inherited delegation variables (parent context)
     6. Built-in defaults — see [§6.1 Built-in Variables](#61-built-in-variables).
-    7. INPUTS injected from the context outputs store — fill gaps only, never override an existing variable (including built-ins, which are always present). Silently skipped when `ContextId` is unset or the requested key is absent. See [§7 Context Passing](#7-context-passing-inputs--outputs).
+    7. INPUTS injected from the context outputs store — fill gaps only, never override an existing variable (including built-ins, which are always present). Silently skipped when `ContextId` is unset or the requested key is absent. See [§7 Context Passing](#7-context-passing-outputs).
 
 ### 6.1 Built-in Variables
 
@@ -284,7 +284,7 @@ Rundown sets the following built-in variables once per execution (unless marked 
 | `Branch` | `feature/my-work` | Current git branch name (empty when not in git) |
 | `WorkPath` | `.rundown/work/feature-my-work` | Branch-isolated artifact directory (falls back to `.rundown/work` outside git). Default base directory for the `{{ path "..." }}` helper used in OUTPUTS expressions — see [§7.1 OUTPUTS](#71-outputs). |
 | `RunId` | `4a7f0c3e` | Unique-per-execution identifier (fresh 8-char hex per execution; each child in a delegation tree gets its own) |
-| `ContextId` | `a3b8c1d2` | Shared identity across a delegation tree. Scopes `{{ path "..." }}` helper output into `.rd-<ContextId>/` for context passing — see [§7 Context Passing](#7-context-passing-inputs--outputs). Children inherit the parent's `ContextId` via `--var`. Overridable via `--var ContextId=<name>` for a meaningful identifier (e.g., `sprint-42`). |
+| `ContextId` | `a3b8c1d2` | Shared identity across a delegation tree. Scopes `{{ path "..." }}` helper output into `.rd-<ContextId>/` for context passing — see [§7 Context Passing](#7-context-passing-outputs). Children inherit the parent's `ContextId` via `--var`. Overridable via `--var ContextId=<name>` for a meaningful identifier (e.g., `sprint-42`). |
 | `Step` | `3.1` | Current qualified step identifier (dynamic per step) |
 | `Index` | `3` | Current loop iteration number inside FOR (dynamic per iteration) |
 | `context.current.step` | `3.1` | Canonical current step identifier (dynamic) |
@@ -310,12 +310,12 @@ Steps and substeps may declare OUTPUTS directives for passing data between steps
 
 OUTPUTS declares values to inject into the runbook's live variable space after step completion.
 
-*   **Evaluation trigger**: OUTPUTS are evaluated by the XState machine on both PASS and FAIL transitions when the completing step or substep declares outputs.
-*   **Storage**: Step-level outputs merge into the machine's live `context.variables`; terminal frontmatter outputs are written to `context.finalVars` and persisted to `RunbookState.finalVars`.
-*   **Expressions**: Each output entry is evaluated against the step's resolved runtime frame. Supported forms: Handlebars expressions (`{{ path "file.json" }}`), quoted literals (`"value"`), bare variable references (`VarName`).
-*   **Best-effort**: OUTPUTS evaluation is non-fatal. Failed expressions are omitted from the stored result and logged; the step transition is not rolled back.
-*   **Merge semantics**: Outputs merge into the existing live variable space — new keys are added, existing keys are overwritten.
-*   **Status visibility**: The `rd status` command includes a `vars` field that exposes the current merged variable space (template vars + step outputs).
+* **Evaluation trigger**: OUTPUTS are evaluated by the XState machine on both PASS and FAIL transitions when the completing step or substep declares outputs.
+* **Storage**: Step-level outputs merge into the machine's live `context.variables`; terminal frontmatter outputs are written to `context.finalVars` and persisted to `RunbookState.finalVars`.
+* **Expressions**: Each output entry is evaluated against the step's resolved runtime frame. Supported forms: Handlebars expressions (`{{ path "file.json" }}`), quoted literals (`"value"`), bare variable references (`VarName`).
+* **Best-effort**: OUTPUTS evaluation is non-fatal. Failed expressions are omitted from the stored result and logged; the step transition is not rolled back.
+* **Merge semantics**: Outputs merge into the existing live variable space — new keys are added, existing keys are overwritten.
+* **Status visibility**: The `rd status` command includes a `vars` field that exposes the current merged variable space (template vars + step outputs).
 
 ### 7.2 Frontmatter `outputs:`
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RunbookStateManager } from '../../src/runbook/state.js';
@@ -525,7 +525,7 @@ describe('RunbookActorService', () => {
       actor!.stop();
     });
 
-    it('defaults context.frontmatterOutputs to [] when state has no frontmatterOutputs', async () => {
+    it('defaults context.frontmatterOutputs to [] when no outputs declared at run time', async () => {
       const state = await manager.create('test.md', mockRunbook, {
         runbookPath: 'test.md',
       });
@@ -536,6 +536,22 @@ describe('RunbookActorService', () => {
       };
       expect(snapshot.context.frontmatterOutputs).toEqual([]);
       actor!.stop();
+    });
+
+    it('throws for stale run state missing frontmatterOutputs field', async () => {
+      const state = await manager.create('test.md', mockRunbook, {
+        runbookPath: 'test.md',
+        frontmatterOutputs: [],
+      });
+      // Simulate a pre-OUTPUTS-feature state file by stripping frontmatterOutputs from disk.
+      const filePath = join(testDir, '.rundown', 'runs', `${state.id}.json`);
+      const raw = JSON.parse(await readFile(filePath, 'utf8')) as Record<string, unknown>;
+      delete raw['frontmatterOutputs'];
+      await writeFile(filePath, JSON.stringify(raw));
+
+      await expect(actorService.createActor(state.id, mockSteps)).rejects.toThrow(
+        /Stale runbook state.*missing frontmatter outputs/,
+      );
     });
 
     it('seeds compiler context.templateVars from RunbookState.templateVars (flattened)', async () => {
@@ -588,9 +604,10 @@ describe('RunbookActorService', () => {
       expect(result!.state.finalVars).toEqual({ Result: 'passed-value' });
     });
 
-    it('clears RunbookState.finalVars when context.finalVars is empty on terminal sync', async () => {
+    it('leaves RunbookState.finalVars undefined when no frontmatter outputs are declared', async () => {
       const state = await manager.create('test.md', mockRunbook, {
         runbookPath: 'test.md',
+        frontmatterOutputs: [],
         // No frontmatterOutputs declared → context.finalVars stays {}
       });
 

@@ -7,7 +7,7 @@ import {
   isJsonObject,
 } from './types.js';
 import { deriveExecutionAt } from './targeting.js';
-import { assembleArtifactPath } from './artifact-paths.js';
+import { assembleArtifactPath, VALID_CTX } from './artifact-paths.js';
 import { logger } from '../logger.js';
 
 /**
@@ -48,7 +48,7 @@ export interface OutputCursor {
 
 const TEMPLATE_PATH_REGEX =
   /{{\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)\s*}}/g;
-const PATH_HELPER_REGEX = /^\{\{\s*path\s+"([^"]+)"(?:\s+ctx=(.+?))?\s*\}\}$/;
+const PATH_HELPER_REGEX = /^\{\{\s*path\s+"([^"]+)"(?:\s+ctx=(\S.*?\S|\S))?\s*\}\}$/;
 
 function resolveDottedPath(obj: unknown, path: string): unknown {
   const segments = path.split('.');
@@ -130,11 +130,10 @@ export function evaluateOutputExpression(expr: string, variables: OutputVars): s
     let contextId: string;
     if (pathMatch[2]) {
       const ctxExpr = pathMatch[2].trim();
-      const expanded = expandOutputVariables(
-        ctxExpr.startsWith('{{') ? ctxExpr : `{{${ctxExpr}}}`,
-        variables,
-      );
-      if (!/^[a-zA-Z0-9_-]+$/.test(expanded)) {
+      const expanded = ctxExpr.startsWith('{{')
+        ? expandOutputVariables(ctxExpr, variables)
+        : ctxExpr; // bare ctx_ref literal — pass through directly
+      if (!VALID_CTX.test(expanded)) {
         throw new Error(
           `evaluateOutputExpression: ctx=${ctxExpr} expanded to "${expanded}", which is not a valid ContextId.`,
         );

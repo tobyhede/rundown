@@ -55,6 +55,15 @@ describe('evaluateOutputExpression', () => {
       }),
     ).toMatch(/\.rd-child-123\/.*-plan\.json$/);
   });
+
+  it('honours ctx= override with a bare literal containing hyphens', () => {
+    expect(
+      evaluateOutputExpression('{{ path "plan.json" ctx=alt-ctx }}', {
+        WorkPath: '.rundown/work/demo',
+        ContextId: 'parent',
+      }),
+    ).toMatch(/\.rd-alt-ctx\/.*-plan\.json$/);
+  });
 });
 
 describe('evaluateStepOutputDeclarations', () => {

@@ -142,7 +142,7 @@ export class RunbookStateManager {
       prompted: options.prompted,
       runbookSrc: options.runbookSrc,
       templateVars: options.templateVars,
-      frontmatterOutputs: options.frontmatterOutputs,
+      frontmatterOutputs: options.frontmatterOutputs ?? [],
     };
 
     await this.save(state);

@@ -73,9 +73,16 @@ export class RunbookActorService {
     const state = await this.manager.load(id);
     if (!state) return null;
 
+    if (state.frontmatterOutputs === undefined) {
+      throw new Error(
+        `Stale runbook state for "${id}": missing frontmatter outputs declarations. ` +
+          'Run `rundown prune` and restart execution.',
+      );
+    }
+
     const machine = compileRunbookToMachine(steps, {
       templateVars: flattenTemplateVars(state.templateVars ?? {}),
-      frontmatterOutputs: state.frontmatterOutputs ?? [],
+      frontmatterOutputs: state.frontmatterOutputs,
     });
 
     // Migrate old snapshot context: flat FOR fields → forStack
