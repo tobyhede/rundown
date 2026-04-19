@@ -110,6 +110,8 @@ function expandOutputVariables(text: string, variables: OutputVars): string {
  * @throws {Error} If the `path` helper is used without `ctx=` and `ContextId` is missing from `variables`
  * @throws {Error} If `ctx=` expands to a value that is not a valid ContextId identifier
  * @throws {Error} Propagated from {@link assembleArtifactPath} (e.g. invalid `WorkPath` / `contextId`)
+ * @throws {Error} If the template reference has unresolved variables after expansion
+ * @throws {Error} If a bare identifier is not defined in the output frame
  */
 export function evaluateOutputExpression(expr: string, variables: OutputVars): string {
   const trimmed = expr.trim();
@@ -166,25 +168,22 @@ export function evaluateOutputExpression(expr: string, variables: OutputVars): s
     return resolved;
   }
 
-  // No bare identifier match — expand any embedded template variables
-  const expanded = expandOutputVariables(trimmed, variables);
-  // If trimmed was a pure bare identifier (no {{ }}) that matches the identifier pattern,
-  // resolveOutputPath already returned undefined — the identifier is not in frame, so throw.
-  if (
-    !trimmed.includes('{{') &&
-    /^[a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*|\.[-a-zA-Z0-9_]+)*$/.test(trimmed)
-  ) {
-    throw new Error(
-      `evaluateOutputExpression: bare identifier "${trimmed}" is not defined in the output frame`,
-    );
+  if (trimmed.includes('{{')) {
+    // Mixed string containing embedded templates but not starting with {{
+    // (e.g. 'at {{Step}}'): expand and throw if any tokens remain unresolved.
+    const expanded = expandOutputVariables(trimmed, variables);
+    if (expanded.includes('{{')) {
+      throw new Error(
+        `evaluateOutputExpression: template reference has unresolved variables: "${trimmed}"`,
+      );
+    }
+    return expanded;
   }
-  // Mixed string with embedded templates: if any remain unresolved, skip it.
-  if (expanded.includes('{{')) {
-    throw new Error(
-      `evaluateOutputExpression: template reference has unresolved variables: "${trimmed}"`,
-    );
-  }
-  return expanded;
+
+  // Bare identifier (or literal string) not found in the output frame — skip.
+  throw new Error(
+    `evaluateOutputExpression: bare identifier "${trimmed}" is not defined in the output frame`,
+  );
 }
 
 /**
