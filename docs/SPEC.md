@@ -312,7 +312,7 @@ OUTPUTS declares values to inject into the runbook's live variable space after s
 
 * **Evaluation trigger**: OUTPUTS are evaluated by the XState machine on both PASS and FAIL transitions when the completing step or substep declares outputs.
 * **Storage**: Step-level outputs merge into the machine's live `context.variables`; terminal frontmatter outputs are written to `context.finalVars` and persisted to `RunbookState.finalVars`.
-* **Expressions**: Each output entry is evaluated against the step's resolved runtime frame. Supported forms: Handlebars expressions (`{{ path "file.json" }}`), quoted literals (`"value"`), bare variable references (`VarName`).
+* **Expressions**: Each output entry is evaluated against the step's resolved runtime frame. Supported forms: Handlebars expressions (`{{ path "file.json" }}`), quoted literals (`"value"` — may embed Handlebars templates, e.g. `"{{ Index }}"`), bare variable references (`VarName`).
 * **Best-effort**: OUTPUTS evaluation is non-fatal. Failed expressions are omitted from the stored result and logged; the step transition is not rolled back.
 * **Merge semantics**: Outputs merge into the existing live variable space — new keys are added, existing keys are overwritten.
 * **Status visibility**: The `rd status` command includes a `vars` field that exposes the current merged variable space (template vars + step outputs).

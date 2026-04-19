@@ -27,6 +27,16 @@ describe('evaluateOutputExpression', () => {
     expect(evaluateOutputExpression('{{ nullable }}', { nullable: null })).toBe('null');
   });
 
+  it('allows a resolved template value to contain literal handlebars text', () => {
+    expect(evaluateOutputExpression('{{ Template }}', { Template: '{{name}}' })).toBe('{{name}}');
+  });
+
+  it('allows quoted template expansion to resolve to a value containing literal handlebars text', () => {
+    expect(evaluateOutputExpression('"{{ Template }}"', { Template: '{{name}}' })).toBe(
+      '{{name}}',
+    );
+  });
+
   it('throws when the path helper is used but WorkPath is missing', () => {
     expect(() => evaluateOutputExpression('{{ path "plan.json" }}', {})).toThrow(/WorkPath/);
   });
@@ -63,6 +73,18 @@ describe('evaluateOutputExpression', () => {
         ContextId: 'parent',
       }),
     ).toMatch(/\.rd-alt-ctx\/.*-plan\.json$/);
+  });
+
+  it('expands template references inside quoted strings', () => {
+    expect(evaluateOutputExpression('"{{ Region }}"', { Region: 'us-east-1' })).toBe('us-east-1');
+  });
+
+  it('throws when quoted string contains an unresolvable template reference', () => {
+    expect(() => evaluateOutputExpression('"{{ Missing }}"', {})).toThrow(/unresolved variables/);
+  });
+
+  it('returns empty string for empty quoted literal', () => {
+    expect(evaluateOutputExpression('""', {})).toBe('');
   });
 });
 

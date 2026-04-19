@@ -97,10 +97,24 @@ function expandOutputVariables(text: string, variables: OutputVars): string {
   });
 }
 
+function hasUnresolvedTemplateReferences(text: string, variables: OutputVars): boolean {
+  const regex = new RegExp(TEMPLATE_PATH_REGEX.source, 'g');
+  let match: RegExpExecArray | null = regex.exec(text);
+  while (match) {
+    const [, path] = match;
+    if (path && resolveOutputPath(path, variables) === undefined) {
+      return true;
+    }
+    match = regex.exec(text);
+  }
+  return false;
+}
+
 /**
  * Evaluate a single OUTPUTS expression against the supplied variable frame.
  *
- * Supports four forms: `{{ path "file.json" }}` helper, `"quoted literal"`,
+ * Supports four forms: `{{ path "file.json" }}` helper, `"quoted literal"` (may
+ * contain `{{ template }}` references that are expanded at evaluation time),
  * `{{ template }}` reference, and bare `Identifier`.
  *
  * @param expr - Raw expression text from the runbook source
@@ -154,23 +168,21 @@ export function evaluateOutputExpression(expr: string, variables: OutputVars): s
       return inner;
     }
     // Quoted string containing templates: strip quotes, expand templates
-    const expanded = expandOutputVariables(inner, variables);
-    if (expanded.includes('{{')) {
+    if (hasUnresolvedTemplateReferences(inner, variables)) {
       throw new Error(
         `evaluateOutputExpression: template reference has unresolved variables: "${trimmed}"`,
       );
     }
-    return expanded;
+    return expandOutputVariables(inner, variables);
   }
 
   if (trimmed.startsWith('{{')) {
-    const expanded = expandOutputVariables(trimmed, variables);
-    if (expanded.includes('{{')) {
+    if (hasUnresolvedTemplateReferences(trimmed, variables)) {
       throw new Error(
         `evaluateOutputExpression: template reference has unresolved variables: "${trimmed}"`,
       );
     }
-    return expanded;
+    return expandOutputVariables(trimmed, variables);
   }
 
   // Try to resolve as a bare identifier first; if not found, expand any templates that may appear in the value
@@ -182,13 +194,12 @@ export function evaluateOutputExpression(expr: string, variables: OutputVars): s
   if (trimmed.includes('{{')) {
     // Mixed string containing embedded templates but not starting with {{
     // (e.g. 'at {{Step}}'): expand and throw if any tokens remain unresolved.
-    const expanded = expandOutputVariables(trimmed, variables);
-    if (expanded.includes('{{')) {
+    if (hasUnresolvedTemplateReferences(trimmed, variables)) {
       throw new Error(
         `evaluateOutputExpression: template reference has unresolved variables: "${trimmed}"`,
       );
     }
-    return expanded;
+    return expandOutputVariables(trimmed, variables);
   }
 
   // Bare identifier (or literal string) not found in the output frame — skip.

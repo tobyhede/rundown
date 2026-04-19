@@ -70,7 +70,7 @@ describe('FOR loop OUTPUTS regression — CLI-shadowed loop variable', () => {
   });
 });
 
-describe('FOR loop OUTPUTS — {{ Index }} captured by frontmatter naked form', () => {
+describe('FOR loop OUTPUTS — {{ Index }} bare template reference in substep OUTPUTS', () => {
   let workspace: TestWorkspace;
 
   const INDEX_RUNBOOK = `---
