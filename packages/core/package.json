@@ -16,6 +16,7 @@
   ],
   "scripts": {
     "build": "tsc",
+    "check:types": "tsc --noEmit -p tsconfig.test.json",
     "test": "jest",
     "test:unit": "jest --maxWorkers=2",
     "test:coverage": "jest --coverage",
