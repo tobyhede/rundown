@@ -1520,7 +1520,7 @@ function decorateParentTransition(
     extra.push(actionRef('storeStepOutputs', { outputs, stepName }));
   }
 
-  return appendActions(transition, extra);
+  return prependActions(transition, extra);
 }
 
 /**
@@ -1931,7 +1931,7 @@ function toActionArray(actions: CompilerAction | CompilerAction[] | undefined): 
  * @param extra - Actions to prepend
  * @returns A new transition with the extra actions prepended (or the original if extra is empty)
  */
-function appendActions(
+function prependActions(
   transition: TransitionEntry,
   extra: readonly CompilerAction[],
 ): TransitionEntry {
@@ -2005,7 +2005,7 @@ function buildActionTransition(
     extra.push(actionRef('storeStepOutputs', { outputs: unitOutputs, stepName, substepId }));
   }
 
-  return appendActions(transition, extra);
+  return prependActions(transition, extra);
 }
 
 /**

@@ -789,11 +789,51 @@ describe('startRunbook', () => {
       expect.objectContaining({
         runbookPath: 'runbook.md',
         runbookSrc: '# Test',
+        frontmatterOutputs: [],
       }),
     );
     expect(mockInitState).toHaveBeenCalled();
     expect(mockPushRunbook).toHaveBeenCalled();
   });
+
+  it('seeds frontmatterOutputs from prepared.frontmatter.outputs to manager.create', async () => {
+    const outputDecls = [{ name: 'Result' }, { name: 'Status' }];
+    const mockCreate = jest
+      .fn<any>()
+      .mockResolvedValue({ id: 'x', title: 'T', substeps: undefined });
+    runExecutionLoop.mockResolvedValue('done');
+
+    const ctx = {
+      output: { flush: jest.fn() } as any,
+      manager: {
+        create: mockCreate,
+        update: jest.fn<any>().mockResolvedValue(undefined),
+        initializeSubsteps: jest.fn<any>().mockResolvedValue(undefined),
+      } as any,
+      actorService: { initializeState: jest.fn<any>().mockResolvedValue(undefined) } as any,
+      sessionService: { pushRunbook: jest.fn<any>().mockResolvedValue(undefined) } as any,
+      lifecycleService: makeLifecycle(),
+      cwd: '/test',
+    };
+
+    const prepared = {
+      filePath: '/test/runbook.md',
+      rawContent: '# Test',
+      runbook: { steps: [makeStep()] } as any,
+      mergedVariables: {},
+      sources: {},
+      frontmatter: { outputs: outputDecls },
+    };
+
+    await startRunbook(ctx as any, prepared as any, { file: 'runbook.md' });
+
+    expect(mockCreate).toHaveBeenCalledWith(
+      'runbook.md',
+      prepared.runbook,
+      expect.objectContaining({ frontmatterOutputs: outputDecls }),
+    );
+  });
+
   it('initializes substeps when first step has substeps', async () => {
     const mockInitSubsteps = jest.fn<any>().mockResolvedValue(undefined);
     const mockUpdate = jest.fn<any>().mockResolvedValue(undefined);
