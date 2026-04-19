@@ -11,7 +11,7 @@
  * directive line produces `Unused '@ts-expect-error' directive` — which is
  * itself a compile error, so regressions fail the build.
  *
- * This file has no runtime effect; `export {}` makes it a module.
+ * This file has no runtime effect.
  */
 
 import { withActionOverrides } from './test-actions.js';
@@ -39,5 +39,3 @@ withActionOverrides({
     void params.msg;
   },
 });
-
-export {};
