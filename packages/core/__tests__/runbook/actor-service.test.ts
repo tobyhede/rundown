@@ -566,7 +566,7 @@ describe('RunbookActorService', () => {
       };
       expect(snapshot.context.templateVars).toMatchObject({
         SomeVar: 'hello',
-        Items: 'a,b', // flattenTemplateVars: array → comma-joined string
+        Items: ['a', 'b'], // flattenTemplateVars: array passes through as array
       });
       actor!.stop();
     });
