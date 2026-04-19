@@ -134,7 +134,7 @@ rd abort <token> --force   # Cancel already-claimed delegation
 **How it works:**
 1. A parent step writes values with OUTPUTS when that step or substep transition completes → stored in the live runbook variable space
 2. A child runbook (or subsequent step) declares INPUTS → values are injected from the inherited live variable space
-3. A completed child runbook writes frontmatter `outputs:` to `state.finalVars`, and the parent forwards those via `SET_VARIABLES`
+3. A completed child runbook writes frontmatter `outputs:` to `state.finalVars`, and the parent automatically merges those into its own live runbook variable space
 
 **Key rules:**
 - Step OUTPUTS fire on both PASS and FAIL when the completing step declares outputs

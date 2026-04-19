@@ -304,7 +304,7 @@ describe('buildExecutionFrame', () => {
     expect(frame.Index).toBe('3');
   });
 
-  it('tolerates the terminal-entry empty-string cursor convention (Option A)', () => {
+  it('uses empty cursor for terminal-entry frontmatter evaluation', () => {
     // At terminal entry there is no active step — callers pass stepName: '' so
     // Step/step/context.current.step render as empty strings. Outputs that resolve
     // by name from templateVars or stored variables remain unaffected.
