@@ -9544,6 +9544,17 @@ echo "processing"
       return (machine.config.states as Record<string, unknown>)[id] as any;
     }
 
+    function getAssignPayload(actions: unknown): Record<string, unknown> {
+      const arr = Array.isArray(actions) ? actions : [actions];
+      for (const action of arr) {
+        const a = action as { type?: string; assignment?: unknown };
+        if (a.type === 'xstate.assign' && a.assignment && typeof a.assignment === 'object') {
+          return a.assignment as Record<string, unknown>;
+        }
+      }
+      throw new Error(`No assign payload found in actions: ${JSON.stringify(actions)}`);
+    }
+
     it('emits a parent-level FAIL routing entry when parentStep.transitions.fail is STOP and there is no aggregation', () => {
       const steps = createRunbook(`## 1. Parent
 - PASS CONTINUE
@@ -9755,6 +9766,56 @@ echo "processing"
       expect(snapshot.value).toBe('COMPLETE');
       expect(snapshot.context.lastAction).toEqual({ type: 'COMPLETE' });
       expect(snapshot.context.lastMessage).toBe('all done');
+    });
+
+    it('records the parent declared PASS action on lastAction when the exit fires (not a forced CONTINUE)', () => {
+      const steps = createRunbook(`## 1. Parent
+- PASS COMPLETE
+- FAIL STOP
+
+### 1.1 First
+- PASS CONTINUE
+- FAIL CONTINUE
+
+### 1.2 Last
+- PASS CONTINUE
+- FAIL CONTINUE
+`);
+
+      const machine = compileRunbookToMachine(steps);
+      const parentAlways = (machine.config.states as any)['step::1'].always as any[];
+
+      // Parent's declared PASS action is COMPLETE. The PASS-path exit entry
+      // MUST record lastAction.type === 'COMPLETE', not CONTINUE.
+      const completeEntry = parentAlways.find((entry) => entry.target === 'COMPLETE');
+      expect(completeEntry).toBeDefined();
+
+      const assignPayload = getAssignPayload(completeEntry.actions);
+      expect(assignPayload.lastAction).toEqual({ type: 'COMPLETE' });
+    });
+
+    it('records the parent declared FAIL action on lastAction when the FAIL-path exit fires', () => {
+      const steps = createRunbook(`## 1. Parent
+- PASS CONTINUE
+- FAIL STOP
+
+### 1.1 First
+- PASS CONTINUE
+- FAIL CONTINUE
+
+### 1.2 Last
+- PASS CONTINUE
+- FAIL CONTINUE
+`);
+
+      const machine = compileRunbookToMachine(steps);
+      const parentAlways = (machine.config.states as any)['step::1'].always as any[];
+
+      const stoppedEntry = parentAlways.find((entry) => entry.target === 'STOPPED');
+      expect(stoppedEntry).toBeDefined();
+
+      const assignPayload = getAssignPayload(stoppedEntry.actions);
+      expect(assignPayload.lastAction).toEqual({ type: 'STOP' });
     });
   });
 });
