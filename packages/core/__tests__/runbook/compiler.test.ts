@@ -9041,6 +9041,76 @@ echo "processing"
       });
     });
 
+    it('[P2] context.current.at on BREAK path omits the loop iteration (known limitation)', () => {
+      // current.at should be '1.1.1' (step 1, iteration 1, substep 1) when substep 1.1
+      // fires BREAK during iteration 1. It is '1.1' because the BREAK-exit always guard
+      // self-transitions to clear forStack before storeStepOutputs runs, leaving
+      // buildExecutionFrame with an empty forStack that cannot include the iteration.
+      // A completedForContext field (analogous to completedSubstep) is needed to fix this.
+      // When that fix lands, update AtCursor expected value to '1.1.1'.
+      const steps = createRunbook(`## 1. Loop
+- FOR i IN 1 TO 3
+- PASS COMPLETE
+- FAIL STOP
+- OUTPUTS
+  - StepCursor "{{ Step }}"
+  - SubstepCursor "{{ context.current.substep }}"
+  - AtCursor "{{ context.current.at }}"
+
+### 1.1 Breaker
+- PASS CONTINUE
+- FAIL BREAK
+
+### 1.2 Skipped
+- PASS CONTINUE
+- FAIL CONTINUE
+`);
+      const machine = compileRunbookToMachine(steps, { templateVars: {} });
+      const actor = createActor(machine);
+      actor.start();
+      actor.send({ type: 'FAIL' }); // substep 1.1, iteration 1, fires BREAK
+
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('COMPLETE');
+      expect(snapshot.context.variables).toMatchObject({
+        StepCursor: '1.1', // correct — completedSubstep fix
+        SubstepCursor: '1', // correct — completedSubstep fix
+        AtCursor: '1.1', // known limitation: should be '1.1.1' (iteration omitted)
+      });
+    });
+
+    it('[P2] context.current.at on NEXT-exhausted-loop path omits the loop iteration (known limitation)', () => {
+      // current.at should be '1.2.1' (step 1, iteration 2, substep 1) after NEXT
+      // exhausts a 2-iteration loop. It is '1.1' because the NEXT-at-last-iteration
+      // guard self-transitions to clear forStack before storeStepOutputs runs.
+      // Same root cause as the BREAK path; the completedForContext fix covers both.
+      // When that fix lands, update AtCursor expected value to '1.2.1'.
+      const steps = createRunbook(`## 1. Loop
+- FOR i IN 1 TO 2
+- PASS COMPLETE
+- FAIL STOP
+- OUTPUTS
+  - StepCursor "{{ Step }}"
+  - AtCursor "{{ context.current.at }}"
+
+### 1.1 Walker
+- PASS NEXT
+- FAIL STOP
+`);
+      const machine = compileRunbookToMachine(steps, { templateVars: {} });
+      const actor = createActor(machine);
+      actor.start();
+      actor.send({ type: 'PASS' }); // iteration 1 → NEXT → loop-back
+      actor.send({ type: 'PASS' }); // iteration 2 → NEXT → exhausted, exit
+
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('COMPLETE');
+      expect(snapshot.context.variables).toMatchObject({
+        StepCursor: '1.1', // correct — completedSubstep fix
+        AtCursor: '1.1', // known limitation: should be '1.2.1' (iteration omitted)
+      });
+    });
+
     it('fires storeStepOutputs on the parent-exit transition of a FOR step', () => {
       // The parent-exit always transition (target === 'step::2') must carry
       // storeStepOutputs so the FOR step's OUTPUTS are recorded after the last
