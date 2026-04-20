@@ -21,6 +21,7 @@ describe('lifecycle context field', () => {
     actor.start();
     actor.send({ type: 'PASS' });
     expect(actor.getSnapshot().context.lifecycle).toBe('completed');
+    expect(actor.getSnapshot().context.lifecycle).not.toBe('stopped');
     actor.stop();
   });
 
@@ -31,6 +32,7 @@ describe('lifecycle context field', () => {
     actor.start();
     actor.send({ type: 'FAIL' });
     expect(actor.getSnapshot().context.lifecycle).toBe('stopped');
+    expect(actor.getSnapshot().context.lifecycle).not.toBe('completed');
     actor.stop();
   });
 

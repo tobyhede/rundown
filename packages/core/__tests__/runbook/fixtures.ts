@@ -10,9 +10,9 @@ import type { ResolvedStep } from '../../src/runbook/types.js';
  */
 export function createRunbook(markdown: string): ResolvedStep[] {
   const { runbook } = parseRunbookDocument(markdown);
-  const steps = [...runbook.steps];
+  const steps = runbook.steps;
   if (!areAllStepsResolved(steps)) {
     throw new Error('Test runbook has unresolved FOR bounds or runbook references');
   }
-  return [...steps];
+  return steps as ResolvedStep[];
 }

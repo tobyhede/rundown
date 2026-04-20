@@ -555,43 +555,52 @@ describe('RunbookActorService', () => {
   describe('lifecycle surfacing from actor snapshot', () => {
     it('persists lifecycle = "completed" when machine reaches COMPLETE', async () => {
       const harness = await createLifecycleHarness('## 1. Only\n- PASS COMPLETE\n- FAIL STOP\n');
-      harness.actor.send({ type: 'PASS' });
-      const { state } = await harness.service.updateFromActor(
-        harness.runbookId,
-        harness.actor,
-        harness.steps,
-      );
-      expect(state.lifecycle).toBe('completed');
-      harness.actor.stop();
-      await rm(harness.testDir, { recursive: true, force: true });
+      try {
+        harness.actor.send({ type: 'PASS' });
+        const { state } = await harness.service.updateFromActor(
+          harness.runbookId,
+          harness.actor,
+          harness.steps,
+        );
+        expect(state.lifecycle).toBe('completed');
+      } finally {
+        harness.actor.stop();
+        await rm(harness.testDir, { recursive: true, force: true });
+      }
     });
 
     it('persists lifecycle = "stopped" when machine reaches STOPPED', async () => {
       const harness = await createLifecycleHarness('## 1. Only\n- PASS COMPLETE\n- FAIL STOP\n');
-      harness.actor.send({ type: 'FAIL' });
-      const { state } = await harness.service.updateFromActor(
-        harness.runbookId,
-        harness.actor,
-        harness.steps,
-      );
-      expect(state.lifecycle).toBe('stopped');
-      harness.actor.stop();
-      await rm(harness.testDir, { recursive: true, force: true });
+      try {
+        harness.actor.send({ type: 'FAIL' });
+        const { state } = await harness.service.updateFromActor(
+          harness.runbookId,
+          harness.actor,
+          harness.steps,
+        );
+        expect(state.lifecycle).toBe('stopped');
+      } finally {
+        harness.actor.stop();
+        await rm(harness.testDir, { recursive: true, force: true });
+      }
     });
 
     it('persists lifecycle = "running" for non-terminal snapshots', async () => {
       const harness = await createLifecycleHarness(
         '## 1. First\n- PASS CONTINUE\n- FAIL STOP\n\n## 2. Last\n- PASS COMPLETE\n- FAIL STOP\n',
       );
-      harness.actor.send({ type: 'PASS' });
-      const { state } = await harness.service.updateFromActor(
-        harness.runbookId,
-        harness.actor,
-        harness.steps,
-      );
-      expect(state.lifecycle).toBe('running');
-      harness.actor.stop();
-      await rm(harness.testDir, { recursive: true, force: true });
+      try {
+        harness.actor.send({ type: 'PASS' });
+        const { state } = await harness.service.updateFromActor(
+          harness.runbookId,
+          harness.actor,
+          harness.steps,
+        );
+        expect(state.lifecycle).toBe('running');
+      } finally {
+        harness.actor.stop();
+        await rm(harness.testDir, { recursive: true, force: true });
+      }
     });
   });
 

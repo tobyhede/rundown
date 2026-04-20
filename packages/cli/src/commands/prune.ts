@@ -1,11 +1,23 @@
 // packages/cli/src/commands/prune.ts
 
+import { readdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { Command } from 'commander';
 import { RunbookStateManager, SessionService } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { getStatus } from '../helpers/status.js';
+
+async function listAllRunIds(cwd: string): Promise<string[]> {
+  try {
+    const runsDir = join(cwd, '.rundown', 'runs');
+    const files = await readdir(runsDir);
+    return files.filter((f) => f.endsWith('.json')).map((f) => f.replace('.json', ''));
+  } catch {
+    return [];
+  }
+}
 
 interface PruneOptions {
   dryRun?: boolean;
@@ -25,7 +37,10 @@ export function registerPruneCommand(program: Command): void {
     .command('prune')
     .description('Remove runbook state (does not delete runbook files)')
     .option('--dry-run', 'Show what would be removed without deleting')
-    .option('--completed', 'Prune completed runbook state')
+    .option(
+      '--completed',
+      'Prune successfully completed runbook state (stopped runs use --inactive)',
+    )
     .option('--active', 'Prune active runbook state')
     .option('--inactive', 'Prune inactive runbook state')
     .option('--all', 'Prune all runbook state')
@@ -39,6 +54,7 @@ export function registerPruneCommand(program: Command): void {
           const manager = new RunbookStateManager(cwd);
           const sessionService = new SessionService(manager);
           const states = await manager.list();
+          const allIds = await listAllRunIds(cwd);
           const activeState = await sessionService.getActive();
           const stashedId = await sessionService.getStashedRunbookId();
 
@@ -60,11 +76,31 @@ export function registerPruneCommand(program: Command): void {
             return false;
           });
 
+          // Stale files (unloadable due to schema version mismatch) are invisible to
+          // list() but can still be deleted. Treat them as inactive: prune with
+          // --inactive or --all.
+          const loadedIds = new Set(states.map((s) => s.id));
+          const staleIds = allIds.filter((id) => !loadedIds.has(id));
+          const staleToDelete = (pruneInactive ?? options.all) ? staleIds : [];
+
           // Enrich items with status string for display
           const enrichedItems = toDelete.map((state) => ({
             ...state,
             _status: getStatus(state, activeState, stashedId),
           }));
+
+          // Stale items satisfy the display columns (id, runbook, title, _status)
+          const staleEnrichedItems = staleToDelete.map((id) => ({
+            id,
+            runbook: '(stale)',
+            title: undefined as string | undefined,
+            _status: 'stale',
+          }));
+
+          const allItems = [
+            ...enrichedItems,
+            ...(staleEnrichedItems as unknown as typeof enrichedItems),
+          ];
 
           // Define columns once for reuse
           const columns = [
@@ -83,7 +119,7 @@ export function registerPruneCommand(program: Command): void {
             return { ...rest, status: item._status };
           };
 
-          if (toDelete.length === 0) {
+          if (allItems.length === 0) {
             // Use output.list() for consistency - outputs raw array in JSON mode
             output.list([], columns as Parameters<typeof output.list>[1], {
               emptyMessage: 'No runbook state to prune.',
@@ -94,7 +130,7 @@ export function registerPruneCommand(program: Command): void {
           }
 
           if (options.dryRun) {
-            output.list(enrichedItems, columns as Parameters<typeof output.list>[1], {
+            output.list(allItems, columns as Parameters<typeof output.list>[1], {
               jsonMapper,
             });
             output.flush();
@@ -105,8 +141,11 @@ export function registerPruneCommand(program: Command): void {
           for (const state of toDelete) {
             await manager.delete(state.id);
           }
+          for (const id of staleToDelete) {
+            await manager.delete(id);
+          }
 
-          output.list(enrichedItems, columns as Parameters<typeof output.list>[1], { jsonMapper });
+          output.list(allItems, columns as Parameters<typeof output.list>[1], { jsonMapper });
           output.flush();
         },
         { text: options.text },
