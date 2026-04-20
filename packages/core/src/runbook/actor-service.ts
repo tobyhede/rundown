@@ -13,7 +13,7 @@
  */
 
 import { createActor, type AnyActorRef } from 'xstate';
-import type { ResolvedStep, RunbookState, ForContext, Lifecycle } from './types.js';
+import type { ResolvedStep, RunbookState, ForContext } from './types.js';
 import type { RunbookStateManager } from './state.js';
 import { compileRunbookToMachine, type RunbookEvent, type RunbookContext } from './compiler.js';
 import { flattenTemplateVars } from './output-evaluator.js';
@@ -185,9 +185,8 @@ export class RunbookActorService {
       // state has no `finalVars` field. This matches the schema's optional contract
       // and avoids storing a misleading empty object.
       const finalVars = Object.keys(rawFinalVars).length > 0 ? rawFinalVars : undefined;
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-      const lifecycle = (snapshot.context?.lifecycle ??
-        (stateValue === 'COMPLETE' ? 'completed' : 'stopped')) as Lifecycle;
+      const lifecycle =
+        snapshot.context?.lifecycle ?? (stateValue === 'COMPLETE' ? 'completed' : 'stopped');
       const state = await this.manager.update(id, {
         variables,
         finalVars,
@@ -249,8 +248,7 @@ export class RunbookActorService {
       stepName: step.description,
       retryCount,
       variables,
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-      lifecycle: (snapshot.context?.lifecycle ?? 'running') as Lifecycle,
+      lifecycle: snapshot.context?.lifecycle ?? 'running',
       snapshot,
       forStack: computedForStack,
       iterationResults: computedIterationResults,
