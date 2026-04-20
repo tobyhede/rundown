@@ -107,6 +107,25 @@ describe('stop command', () => {
       expect(session.active).toBeNull();
       expect(session.defaultStack).toHaveLength(0);
     });
+
+    it('cleans up stale state with wrong schemaVersion instead of propagating error', async () => {
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+      const state = await getActiveState(workspace);
+      const stateId = state!.id as string;
+      const stateDir = workspace.statePath();
+
+      // Write a state with the wrong schemaVersion to trigger StaleRunbookStateError
+      const staleState = { ...state, schemaVersion: 1 };
+      await writeFile(join(stateDir, `${stateId}.json`), JSON.stringify(staleState));
+
+      // stop is a cleanup command — StaleRunbookStateError must not propagate
+      const result = await runCliInProcess('stop --text', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const session = await readSession(workspace);
+      expect(session.active).toBeNull();
+      expect(session.defaultStack).toHaveLength(0);
+    });
   });
 
   describe('stop with message', () => {

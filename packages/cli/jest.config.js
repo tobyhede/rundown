@@ -29,6 +29,8 @@ export default {
   setupFilesAfterEnv: ['<rootDir>/jest.setup.ts'],
   moduleNameMapper: {
     '^(\\.{1,2}/.*)\\.js$': '$1',
+    '^@rundown-org/core$': '<rootDir>/../core/src/index.ts',
+    '^@rundown-org/parser$': '<rootDir>/../parser/src/index.ts',
   },
   transform: {
     '^.+\\.tsx?$': [
