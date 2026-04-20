@@ -125,6 +125,15 @@ export const runbookSetup = setup({
       },
     }),
   },
+  guards: {
+    anyIterationFailed: ({ context }) => (context.iterationResults ?? []).some((r) => r === 'fail'),
+    loopExitedViaControl: ({ context }) =>
+      context.lastAction?.type === 'BREAK' || context.lastAction?.type === 'NEXT',
+    loopCompletedNormally: ({ context }) =>
+      !(context.iterationResults ?? []).some((r) => r === 'fail') &&
+      context.lastAction?.type !== 'BREAK' &&
+      context.lastAction?.type !== 'NEXT',
+  },
 });
 
 /** Machine type produced by {@link compileRunbookToMachine}. */
@@ -145,6 +154,25 @@ type CompilerAction = ReturnType<typeof runbookSetup.assign> | CompilerActionRef
 
 /** XState state-node config type inferred from the runbook setup. */
 type RunbookStateConfig = Parameters<typeof runbookSetup.createStateConfig>[0];
+
+/**
+ * Guard type accepted by XState transitions in this machine: either an inline predicate
+ * function or a named guard string key registered in the `runbookSetup` guards block.
+ *
+ * Extracted from `RunbookStateConfig` so it stays in sync with the actual XState
+ * guard parameter type as the setup evolves.
+ */
+type RunbookGuard = NonNullable<
+  RunbookStateConfig['always'] extends infer A
+    ? A extends readonly (infer Entry)[]
+      ? Entry extends { guard?: infer G }
+        ? G
+        : never
+      : A extends { guard?: infer G }
+        ? G
+        : never
+    : never
+>;
 
 /**
  * Safety limit for file-backed data sources with open iteration windows.
@@ -232,12 +260,13 @@ export type RunbookEvent =
  * The `actions` field is typed as `unknown` because XState's internal action
  * types are deeply generic and incompatible with intermediate interfaces.
  * Type safety for actions comes from `runbookSetup.assign()` at call sites.
- * Guards and targets are properly typed.
+ * Guards accept either inline predicate functions or named guard string keys
+ * registered in the `runbookSetup` guards block (`RunbookGuard`).
  */
 interface TransitionEntry {
   target?: string;
   actions?: CompilerAction | CompilerAction[];
-  guard?: (args: { context: RunbookContext; event: RunbookEvent }) => boolean;
+  guard?: RunbookGuard;
 }
 
 type TransitionConfig = TransitionEntry | TransitionEntry[];
@@ -874,6 +903,8 @@ function buildParentStateConfig(
 ): { always: TransitionEntry[]; entry?: CompilerAction | CompilerAction[] } {
   const parentStep = config.parentStep;
   const stepName = config.stepName;
+  // parentStep.transitions is non-optional on ExecutionUnitFields — guaranteed by the parser.
+
   const hasFor = parentStep.kind === 'for';
   const hasAggregation = !!parentStep.aggregation;
   const nextTarget = findNextStateId(stepName, undefined, steps);
@@ -1453,23 +1484,15 @@ function buildParentStateConfig(
       // otherwise route to parent PASS target. BOTH entries must be guarded —
       // an unguarded earlier entry would shadow the guarded one (XState v5
       // evaluates `always` entries in order).
-      const anyIterationFail: GuardFn = ({ context }) =>
-        (context.iterationResults ?? []).some((r) => r === 'fail');
-      // BREAK/NEXT exits preserve their lastAction — exclude them from the normal routing guards.
-      const isBreakOrNext: GuardFn = ({ context }) =>
-        context.lastAction?.type === 'BREAK' || context.lastAction?.type === 'NEXT';
-      const noIterationFailNormal: GuardFn = ({ context }) =>
-        !(context.iterationResults ?? []).some((r) => r === 'fail') &&
-        context.lastAction?.type !== 'BREAK' &&
-        context.lastAction?.type !== 'NEXT';
+      // Guards: loopExitedViaControl, loopCompletedNormally, anyIterationFailed — registered in runbookSetup.
 
       // BREAK/NEXT PASS routing: exit was via BREAK or NEXT — preserve lastAction as-is.
       // lastMessage is cleared: BREAK/NEXT carry no message; any stale substep message must not leak.
       // Safety: in Case C (no aggregation), iterationResults is never populated by sequential guards,
-      // so anyIterationFail is always false when isBreakOrNext is true. If this invariant changes,
-      // revisit guard ordering — isBreakOrNext must either check for fails or be merged with anyIterationFail.
+      // so anyIterationFailed is always false when loopExitedViaControl is true. If this invariant changes,
+      // revisit guard ordering — loopExitedViaControl must either check for fails or be merged with anyIterationFailed.
       always.push({
-        guard: isBreakOrNext,
+        guard: 'loopExitedViaControl',
         target: parentPassTarget,
         actions: runbookSetup.assign({
           ...commonAssign,
@@ -1478,10 +1501,10 @@ function buildParentStateConfig(
         }),
       });
       // Normal PASS routing: no failed iterations and no BREAK/NEXT → parent's PASS action target.
-      // The BREAK/NEXT exclusion duplicates isBreakOrNext because XState evaluates guards
+      // The BREAK/NEXT exclusion duplicates loopExitedViaControl because XState evaluates guards
       // independently (not as an if-else chain) — both guards must be self-contained.
       always.push({
-        guard: noIterationFailNormal,
+        guard: 'loopCompletedNormally',
         target: parentPassTarget,
         actions: runbookSetup.assign({
           ...commonAssign,
@@ -1492,7 +1515,7 @@ function buildParentStateConfig(
       });
       // FAIL routing: any failed iteration → parent's FAIL action target.
       always.push({
-        guard: anyIterationFail,
+        guard: 'anyIterationFailed',
         target: parentFailTarget,
         actions: runbookSetup.assign({
           ...commonAssign,

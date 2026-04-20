@@ -8763,7 +8763,7 @@ echo "processing"
       expect(snapshot.context.finalVars).toEqual({ Result: 'failed-value' });
     });
 
-    it('decorates parent-step exit transitions with storeStepOutputs (no longer with storeFrontmatterOutputs)', () => {
+    it('decorates parent-step exit transitions with storeStepOutputs only (not storeFrontmatterOutputs)', () => {
       const steps = createRunbook(`## 1. Parent
 - PASS CONTINUE
 - FAIL STOP
@@ -9539,6 +9539,17 @@ echo "processing"
     });
   });
 
+  function getAssignPayload(actions: unknown): Record<string, unknown> {
+    const arr = Array.isArray(actions) ? actions : [actions];
+    for (const action of arr) {
+      const a = action as { type?: string; assignment?: unknown };
+      if (a.type === 'xstate.assign' && a.assignment && typeof a.assignment === 'object') {
+        return a.assignment as Record<string, unknown>;
+      }
+    }
+    throw new Error(`No assign payload found in actions: ${JSON.stringify(actions)}`);
+  }
+
   describe('parent-step unconditional-exit FAIL routing (Bug A)', () => {
     function getState(machine: ReturnType<typeof compileRunbookToMachine>, id: string): any {
       return (machine.config.states as Record<string, unknown>)[id] as any;
@@ -9755,6 +9766,98 @@ echo "processing"
       expect(snapshot.value).toBe('COMPLETE');
       expect(snapshot.context.lastAction).toEqual({ type: 'COMPLETE' });
       expect(snapshot.context.lastMessage).toBe('all done');
+    });
+
+    it('records the parent declared PASS action on lastAction when the exit fires (not a forced CONTINUE)', () => {
+      const steps = createRunbook(`## 1. Parent
+- PASS COMPLETE
+- FAIL STOP
+
+### 1.1 First
+- PASS CONTINUE
+- FAIL CONTINUE
+
+### 1.2 Last
+- PASS CONTINUE
+- FAIL CONTINUE
+`);
+
+      const machine = compileRunbookToMachine(steps);
+      const parentAlways = getState(machine, 'step::1').always as any[];
+
+      // Parent's declared PASS action is COMPLETE. The PASS-path exit entry
+      // MUST record lastAction.type === 'COMPLETE', not CONTINUE.
+      const completeEntry = parentAlways.find((entry) => entry.target === 'COMPLETE');
+      expect(completeEntry).toBeDefined();
+
+      const assignPayload = getAssignPayload(completeEntry.actions);
+      expect(assignPayload.lastAction).toEqual({ type: 'COMPLETE' });
+    });
+
+    it('records the parent declared FAIL action on lastAction when the FAIL-path exit fires', () => {
+      const steps = createRunbook(`## 1. Parent
+- PASS CONTINUE
+- FAIL STOP
+
+### 1.1 First
+- PASS CONTINUE
+- FAIL CONTINUE
+
+### 1.2 Last
+- PASS CONTINUE
+- FAIL CONTINUE
+`);
+
+      const machine = compileRunbookToMachine(steps);
+      const parentAlways = getState(machine, 'step::1').always as any[];
+
+      const stoppedEntry = parentAlways.find((entry) => entry.target === 'STOPPED');
+      expect(stoppedEntry).toBeDefined();
+
+      const assignPayload = getAssignPayload(stoppedEntry.actions);
+      expect(assignPayload.lastAction).toEqual({ type: 'STOP' });
+    });
+
+    it('records the parent declared PASS action on lastAction for unconditional FOR exit (Case C)', () => {
+      // Case C: FOR step, no parent-level aggregation, declared PASS COMPLETE.
+      // Omitting `aggregation` from the parent step (while keeping it inside forClause
+      // via DEFAULT_FOR_ITERATION) selects Case C in buildParentStateConfig.
+      const steps = inferSteps([
+        {
+          name: '1',
+          description: 'FOR parent, Case C — no aggregation',
+          forClause: { start: 1, end: 1, ...DEFAULT_FOR_ITERATION },
+          transitions: {
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+          },
+          substeps: [
+            {
+              id: '1',
+              description: 'Iteration substep',
+              transitions: DEFAULT_TRANSITIONS,
+            },
+          ],
+        },
+      ]);
+
+      const machine = compileRunbookToMachine(steps);
+      const parentAlways = getState(machine, 'step::1').always as any[];
+
+      // Guards are now named in runbookSetup: entry.guard is a plain string at
+      // runtime, enabling unambiguous discriminants without inspecting payload content.
+      const passEntry = parentAlways.find((e: any) => e.guard === 'loopCompletedNormally');
+      expect(passEntry).toBeDefined();
+      const assignPayload = getAssignPayload(passEntry.actions);
+      expect(assignPayload.lastAction).toEqual({ type: 'COMPLETE' });
+
+      // BREAK/NEXT entry must NOT override lastAction — it preserves the iteration's own disposition.
+      const breakEntry = parentAlways.find((e: any) => e.guard === 'loopExitedViaControl');
+      expect(breakEntry).toBeDefined();
+      const breakActions = (
+        Array.isArray(breakEntry.actions) ? breakEntry.actions : [breakEntry.actions]
+      ) as any[];
+      expect(breakActions.some((a: any) => 'lastAction' in (a.assignment ?? {}))).toBe(false);
     });
   });
 });
