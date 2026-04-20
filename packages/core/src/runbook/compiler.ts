@@ -2017,15 +2017,18 @@ function toActionArray(actions: RunbookAction | RunbookAction[] | undefined): Ru
  * @param extra - Actions to prepend
  * @returns A new transition with the extra actions prepended (or the original if extra is empty)
  */
-function prependActions(
-  transition: RunbookTransitionObject,
+function prependActions<T extends RunbookTransitionObject | (RunbookAlwaysEntry & object)>(
+  transition: T,
   extra: readonly RunbookAction[],
-): RunbookTransitionObject {
+): T {
   if (extra.length === 0) return transition;
   return {
     ...transition,
-    actions: [...extra, ...toActionArray(transition.actions)],
-  } as RunbookTransitionObject;
+    actions: [
+      ...extra,
+      ...toActionArray(transition.actions as RunbookAction | RunbookAction[] | undefined),
+    ],
+  } as T;
 }
 
 /**
