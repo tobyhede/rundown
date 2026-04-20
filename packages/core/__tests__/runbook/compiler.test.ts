@@ -9817,5 +9817,56 @@ echo "processing"
       const assignPayload = getAssignPayload(stoppedEntry.actions);
       expect(assignPayload.lastAction).toEqual({ type: 'STOP' });
     });
+
+    it('records the parent declared PASS action on lastAction for unconditional FOR exit (Case C)', () => {
+      // Case C: FOR step, no parent-level aggregation, declared PASS COMPLETE.
+      // Omitting `aggregation` from the parent step (while keeping it inside forClause
+      // via DEFAULT_FOR_ITERATION) selects Case C in buildParentStateConfig.
+      const steps = inferSteps([
+        {
+          name: '1',
+          description: 'FOR parent, Case C — no aggregation',
+          forClause: { start: 1, end: 1, ...DEFAULT_FOR_ITERATION },
+          transitions: {
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+          },
+          substeps: [
+            {
+              id: '1',
+              description: 'Iteration substep',
+              transitions: DEFAULT_TRANSITIONS,
+            },
+          ],
+        },
+      ]);
+
+      const machine = compileRunbookToMachine(steps);
+      const parentAlways = (machine.config.states as any)['step::1'].always as any[];
+
+      // Case C emits two COMPLETE-targeting entries: the BREAK/NEXT routing entry
+      // (no lastAction reassignment) and the normal PASS routing entry (sets
+      // lastAction to the parent's declared PASS action). We need the normal PASS
+      // routing entry — the one whose assign payload includes lastAction.
+      // It MUST record lastAction.type === 'COMPLETE', not CONTINUE (which was the
+      // bug before passLastAction was wired in).
+      const completeEntries = parentAlways.filter((entry: any) => entry.target === 'COMPLETE');
+      expect(completeEntries.length).toBeGreaterThanOrEqual(1);
+
+      const normalPassEntry = completeEntries.find((entry: any) => {
+        const arr = Array.isArray(entry.actions) ? entry.actions : [entry.actions];
+        return arr.some(
+          (a: any) =>
+            a.type === 'xstate.assign' &&
+            a.assignment &&
+            typeof a.assignment === 'object' &&
+            'lastAction' in a.assignment,
+        );
+      });
+      expect(normalPassEntry).toBeDefined();
+
+      const assignPayload = getAssignPayload(normalPassEntry.actions);
+      expect(assignPayload.lastAction).toEqual({ type: 'COMPLETE' });
+    });
   });
 });
