@@ -640,7 +640,7 @@ export interface RunbookState {
   readonly substep?: string;
   readonly stepName: string; // Human-readable description
   readonly retryCount: number;
-  readonly variables: Record<string, boolean | number | string>;
+  readonly variables: Record<string, string>;
   readonly steps: readonly StepState[];
 
   // Orchestration fields
@@ -699,4 +699,7 @@ export interface RunbookState {
 
   /** Lifecycle state. 'running' during execution; 'completed' or 'stopped' once terminal. */
   readonly lifecycle?: Lifecycle;
+
+  /** Schema version for stale-state detection. Present on all states written after schema v2. */
+  readonly schemaVersion?: number;
 }

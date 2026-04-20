@@ -22,6 +22,9 @@ import {
   LEGACY_SESSION_FILE,
 } from '../paths.js';
 
+/** Current persisted state schema version. Bump whenever RunbookState shape changes incompatibly. */
+const CURRENT_SCHEMA_VERSION = 2;
+
 function generateId(): string {
   const now = new Date();
   const date = now.toISOString().slice(0, 10);
@@ -143,6 +146,8 @@ export class RunbookStateManager {
       runbookSrc: options.runbookSrc,
       templateVars: options.templateVars,
       frontmatterOutputs: options.frontmatterOutputs ?? [],
+      lifecycle: 'running',
+      schemaVersion: CURRENT_SCHEMA_VERSION,
     };
 
     await this.save(state);
@@ -192,6 +197,17 @@ export class RunbookStateManager {
       }
     }
 
+    if (
+      typeof parsed === 'object' &&
+      parsed !== null &&
+      (parsed as Record<string, unknown>).schemaVersion !== CURRENT_SCHEMA_VERSION
+    ) {
+      throw new Error(
+        `Runbook state for "${id}" was persisted under a previous schema version. ` +
+          'Run `rd prune --all` to clear stale state before continuing.',
+      );
+    }
+
     const result = RunbookStateSchema.safeParse(parsed);
     if (!result.success) {
       throw new Error(
@@ -216,6 +232,7 @@ export class RunbookStateManager {
     await fs.mkdir(this.stateDir, { recursive: true });
     const updated: RunbookState = {
       ...state,
+      schemaVersion: CURRENT_SCHEMA_VERSION,
       updatedAt: new Date().toISOString(),
     };
     const content = JSON.stringify(updated, null, 2);
