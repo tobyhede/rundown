@@ -875,13 +875,6 @@ function buildParentStateConfig(
   const parentStep = config.parentStep;
   const stepName = config.stepName;
 
-  if (!parentStep.transitions) {
-    throw new Error(
-      `buildParentStateConfig invariant violated: parentStep "${parentStep.name}" has no transitions. ` +
-        `Parent steps require explicit pass/fail transitions (parser emits DEFAULT_TRANSITIONS when absent).`,
-    );
-  }
-
   const hasFor = parentStep.kind === 'for';
   const hasAggregation = !!parentStep.aggregation;
   const nextTarget = findNextStateId(stepName, undefined, steps);
