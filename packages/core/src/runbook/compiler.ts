@@ -22,7 +22,7 @@ import {
   isStepExitAction,
 } from '@rundown-org/parser';
 import { shouldAggregationPass } from './transition-handler.js';
-import { actionRef, type ActionDefs, type CompilerActionRef } from './compiler-actions.js';
+import { actionRef, type ActionDefs } from './compiler-actions.js';
 import {
   buildExecutionFrame,
   evaluateFrontmatterOutputDeclarations,
@@ -144,25 +144,6 @@ type RunbookAlwaysEntry = Extract<
  * extracted from the XState-inferred state config.
  */
 type RunbookEntryActions = NonNullable<RunbookStateConfig['entry']>;
-
-/**
- * Guard type accepted by XState transitions in this machine: either an inline predicate
- * function or a named guard string key registered in the `runbookSetup` guards block.
- *
- * Extracted from `RunbookStateConfig` so it stays in sync with the actual XState
- * guard parameter type as the setup evolves.
- */
-type RunbookGuard = NonNullable<
-  RunbookStateConfig['always'] extends infer A
-    ? A extends readonly (infer Entry)[]
-      ? Entry extends { guard?: infer G }
-        ? G
-        : never
-      : A extends { guard?: infer G }
-        ? G
-        : never
-    : never
->;
 
 /**
  * Safety limit for file-backed data sources with open iteration windows.

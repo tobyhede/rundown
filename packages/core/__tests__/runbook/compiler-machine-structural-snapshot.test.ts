@@ -21,16 +21,12 @@ type _AlwaysEntry = _AlwaysField extends readonly (infer E)[] ? E : _AlwaysField
 type AssertNotUnknown<T> = unknown extends T ? (T extends unknown ? false : true) : true;
 type AssertExtends<T, U> = T extends U ? true : false;
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const _assertOnMapIsRecord: AssertNotUnknown<_OnMap> = true;
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const _assertEventTransitionIsObject: AssertNotUnknown<_EventTransition> = true;
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const _assertAlwaysEntryIsObject: AssertNotUnknown<_AlwaysEntry> = true;
 
 // A transition MUST accept a `target?: string` field and optional `actions`.
 type _HasTargetField = AssertExtends<{ target: 'COMPLETE' }, _EventTransition | _AlwaysEntry>;
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const _assertTransitionAcceptsTarget: _HasTargetField = true;
 
 // The real builders return objects carrying an `actions` array of action refs
@@ -50,9 +46,7 @@ type _BuilderGuardedShape = {
 type _TerminalAssigns = AssertExtends<_BuilderTerminalShape, _EventTransition | _AlwaysEntry>;
 type _GuardedAssigns = AssertExtends<_BuilderGuardedShape, _EventTransition | _AlwaysEntry>;
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const _assertTerminalBuilderShapeAssigns: _TerminalAssigns = true;
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const _assertGuardedBuilderShapeAssigns: _GuardedAssigns = true;
 
 function snapshotConfig(machine: ReturnType<typeof compileRunbookToMachine>): unknown {
@@ -115,7 +109,10 @@ describe('compileRunbookToMachine (lifecycle cleanup structural snapshot)', () =
   it('context is initialized with zero retry counts', () => {
     const steps = createRunbook(`## 1. Only\n- PASS COMPLETE\n- FAIL STOP\n`);
     const machine = compileRunbookToMachine(steps);
-    const ctx = machine.config.context as unknown as { retryCount?: number; parentRetryCount?: number };
+    const ctx = machine.config.context as unknown as {
+      retryCount?: number;
+      parentRetryCount?: number;
+    };
     expect(ctx.retryCount).toBe(0);
     expect(ctx.parentRetryCount).toBe(0);
   });
