@@ -127,20 +127,17 @@ type RunbookStateConfig = Parameters<typeof runbookSetup.createStateConfig>[0];
  * `{ target, actions?, guard? }` objects (what every builder in this file returns)
  * and, per XState, bare target strings or arrays of objects.
  */
-type RunbookEventTransition = NonNullable<RunbookStateConfig['on']> extends Record<
-  string,
-  infer T
->
-  ? T
-  : never;
+type RunbookEventTransition =
+  NonNullable<RunbookStateConfig['on']> extends Record<string, infer T> ? T : never;
 
 /**
  * Shape of a single entry in a state's `always: [...]` event-less transition array,
  * extracted from the XState-inferred state config.
  */
-type RunbookAlwaysEntry = NonNullable<RunbookStateConfig['always']> extends readonly (infer T)[]
-  ? T
-  : NonNullable<RunbookStateConfig['always']>;
+type RunbookAlwaysEntry = Extract<
+  NonNullable<RunbookStateConfig['always']>,
+  readonly unknown[]
+>[number];
 
 /**
  * Shape of the state-level `entry` field — either a single action or an array of actions,
@@ -269,8 +266,8 @@ type RunbookAction = NonNullable<RunbookTransitionObject['actions']>;
  * Return shape for transition builder functions.
  *
  * Either a single XState-inferred transition entry or an array of them. Extracted
- * from `runbookSetup.createStateConfig()` rather than hand-rolled, so the `actions`
- * field is validated end-to-end against the setup's action map.
+ * from `runbookSetup.createStateConfig()` so the `actions` field is validated
+ * end-to-end against the setup's action map.
  */
 type TransitionConfig = RunbookEventTransition | RunbookEventTransition[];
 
@@ -1568,8 +1565,13 @@ function buildParentStateConfig(
   }
 
   return {
-    always: always.map((transition) =>
-      decorateParentTransition(transition as RunbookTransitionObject, stepName, parentStep.outputs) as RunbookAlwaysEntry,
+    always: always.map(
+      (transition) =>
+        decorateParentTransition(
+          transition as RunbookTransitionObject,
+          stepName,
+          parentStep.outputs,
+        ) as RunbookAlwaysEntry,
     ),
   };
 }
@@ -2024,9 +2026,7 @@ function buildGotoTransition(
  * @param actions - Single action, array of actions, or undefined
  * @returns Array form (empty if undefined)
  */
-function toActionArray(
-  actions: RunbookAction | RunbookAction[] | undefined,
-): RunbookAction[] {
+function toActionArray(actions: RunbookAction | RunbookAction[] | undefined): RunbookAction[] {
   if (!actions) return [];
   return Array.isArray(actions) ? actions : [actions];
 }
