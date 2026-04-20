@@ -241,18 +241,3 @@ jobs:
           name: playwright-report
           path: site/playwright-report/
           retention-days: 30
-
-  # Trigger turboshovel tests after successful CI on main
-  notify-dependents:
-    needs: [quality-checks, complexity-checks, lint-typed, test, scenarios, playwright]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Trigger turboshovel CI
-        continue-on-error: true
-        uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697  # v4
-        with:
-          token: ${{ secrets.CROSS_REPO_PAT }}
-          repository: tobyhede/turboshovel
-          event-type: rundown-updated
-          client-payload: '{"sha": "${{ github.sha }}", "ref": "${{ github.ref }}", "actor": "${{ github.actor }}"}'
