@@ -68,31 +68,19 @@ describe('OUTPUTS→INPUTS round-trip', () => {
     expect(completed).toBeDefined();
   });
 
-  it('step 1 FAIL does not store OUTPUTS; step 2 INPUTS missing → {{Message}} renders literally', async () => {
-    // Start runbook (prompted mode)
+  it('step 1 FAIL stores OUTPUTS; step 2 prompt is substituted from state.variables', async () => {
     const start = runCli('run --prompted test.runbook.md', workspace);
     expect(start.exitCode).toBe(0);
 
-    // Fail step 1 — FAIL CONTINUE, so execution continues; no outputs stored
     const fail1 = runCli('fail', workspace);
     expect(fail1.exitCode).toBe(0);
 
-    // Parse events — step 2 STEP_ENTERED should show {{Message}} literally
     const events1 = parseJsonOutput(fail1.stdout);
     const step2Entered = events1.find((e) => e.type === 'step_entered' && e.position != null);
 
     expect(step2Entered).toBeDefined();
-    // Missing input renders literally — not substituted
-    expect(step2Entered?.prompt).toContain('{{Message}}');
-    expect(step2Entered?.prompt).not.toContain('hello from step 1');
-
-    // Pass step 2 — still completes (missing inputs are not errors)
-    const pass2 = runCli('pass', workspace);
-    expect(pass2.exitCode).toBe(0);
-
-    const events2 = parseJsonOutput(pass2.stdout);
-    const completed = events2.find((e) => e.complete === true);
-    expect(completed).toBeDefined();
+    expect(step2Entered?.prompt).toContain('hello from step 1');
+    expect(step2Entered?.prompt).not.toContain('{{Message}}');
   });
 });
 
@@ -152,7 +140,7 @@ The message is: {{Message}}
     expect(step2Entered?.prompt).not.toContain('{{Message}}');
   });
 
-  it('auto-executed step 1 FAIL does NOT store OUTPUTS', async () => {
+  it('auto-executed step 1 FAIL still stores OUTPUTS', async () => {
     const FAIL_RUNBOOK = `---
 name: auto-fail-test
 ---
@@ -162,7 +150,7 @@ name: auto-fail-test
 - PASS CONTINUE
 - FAIL CONTINUE
 - OUTPUTS
-  - Tag "should-not-appear"
+  - Tag "should-appear-on-fail"
 
 \`\`\`sh
 rd echo --result fail
@@ -176,11 +164,18 @@ Value: {{Tag}}
 `;
     await writeFile(join(workspace.cwd, 'auto-fail.runbook.md'), FAIL_RUNBOOK);
 
-    runCli('run auto-fail.runbook.md', workspace);
+    const result = runCli('run auto-fail.runbook.md', workspace);
+    expect(result.exitCode).toBe(0);
 
     const states = await getAllRunbookStates(workspace);
     const state = states[0] as { variables?: Record<string, unknown> };
-    expect(state.variables?.Tag).toBeUndefined();
+    expect(state.variables?.Tag).toBe('should-appear-on-fail');
+
+    const events = parseJsonOutput(result.stdout);
+    const step2Entered = events.find(
+      (e) => e.type === 'step_entered' && (e.position as { current?: string }).current === '2',
+    );
+    expect(step2Entered?.prompt).toContain('should-appear-on-fail');
   });
 });
 
@@ -229,5 +224,49 @@ rd echo --result pass
     expect(states).toHaveLength(1);
     const state = states[0] as { variables?: Record<string, unknown> };
     expect(state.variables).toMatchObject({ Tag: '1', At: '1' });
+  });
+});
+
+describe('OUTPUTS path helper — ctx-scoped workspace path', () => {
+  let workspace: TestWorkspace;
+
+  const PATH_HELPER_RUNBOOK = `---
+name: path-helper-test
+---
+# Path Helper Test
+
+## 1. Record artifact path
+- PASS COMPLETE
+- FAIL STOP
+- OUTPUTS
+  - ArtifactPath {{ path "report.json" ctx=test123 }}
+
+\`\`\`sh
+rd echo --result pass
+\`\`\`
+`;
+
+  beforeEach(async () => {
+    workspace = await createTestWorkspace();
+    await writeFile(join(workspace.cwd, 'path-helper.runbook.md'), PATH_HELPER_RUNBOOK);
+  });
+
+  afterEach(async () => {
+    await workspace.cleanup();
+  });
+
+  it('resolves path helper to a ctx-scoped workspace path stored in state.variables', async () => {
+    const result = runCli('run path-helper.runbook.md', workspace);
+    expect(result.exitCode).toBe(0);
+
+    const states = await getAllRunbookStates(workspace);
+    expect(states).toHaveLength(1);
+    const state = states[0] as { variables?: Record<string, unknown> };
+
+    // Non-git workspaces: WorkPath = .rundown/work (no branch suffix)
+    // ctx=test123 adds .rd-test123/ subdirectory; file gets YYYY-MM-DD prefix
+    expect(state.variables?.ArtifactPath).toMatch(
+      /^\.rundown\/work\/\.rd-test123\/\d{4}-\d{2}-\d{2}-report\.json$/,
+    );
   });
 });

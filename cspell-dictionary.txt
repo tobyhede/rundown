@@ -1,9 +1,8 @@
 
 # Abbreviations used in code
-AUTOINCREMENT
 # British English spellings (used in codebase)
-# Capitalizations
 # CLI and config terms
+# Capitalizations
 # Domain terms
 # GitHub Actions / CI
 # Libraries and tools
@@ -14,13 +13,30 @@ AUTOINCREMENT
 # Technical terms
 # Test fixture words
 # Turborepo reference
+AKIA
+AUTOINCREMENT
+BADACTION
+EACCES
+EBNF
+ELOOP
+ENOENT
+EPERM
+Eventless
+GOPATH
+Hede
+Impls
+KUBECONFIG
+NEXTX
+NOPASSWD
+NOTVALID
+Subcategorize
+TOCTOU
+Turborepo
 agentic
 aindex
-AKIA
 ancvar
 args
 autobuild
-BADACTION
 bashisms
 behaviour
 biome
@@ -33,8 +49,8 @@ changesets
 cipherpowers
 cjs
 codecov
-coderabbit
 codeql
+coderabbit
 commonjs
 coreutils
 ctx
@@ -42,32 +58,24 @@ delegatable
 deps
 deserialized
 dirfd
-dotdot
 dogfooding
-EACCES
-EBNF
-ELOOP
-ENOENT
-EPERM
+dotdot
 émoji
 env
 esac
 esm
-GOPATH
-gopath
-gopls
-Eventless
 exfiltration
 fdisk
 featurebranch
+finalvars
 frontmatter
 gitdir
+gopath
+gopls
 handlebars
 hono
-Hede
 idempotently
 iife
-Impls
 initialisation
 initialise
 initialised
@@ -75,7 +83,6 @@ initialises
 jsdoc
 jsonl
 killall
-KUBECONFIG
 landlock
 landrun
 lcov
@@ -95,14 +102,11 @@ myrepo
 myrunbook
 ncat
 netcat
-NEXTX
 nocase
 nodenext
 nodenv
 noninteractive
-NOPASSWD
 notavar
-NOTVALID
 nums
 opts
 parallelised
@@ -142,14 +146,13 @@ sarif
 selfref
 serializable
 shellquote
-sqlite
 specialised
+sqlite
 statelessly
 stderr
 stdin
 stdout
 stryker
-Subcategorize
 subcommand
 subcommands
 subdirs
@@ -161,21 +164,21 @@ synchronisation
 synchronise
 syscalls
 tcsh
+testctx
 testuser
-TOCTOU
 tobyhede
 toolu
 transpiled
+traversability
 tsconfig
 tsconfigRootDir
 tsdoc
-Turborepo
 turboshovel
 typename
 ultrathink
 unist
-unrepresentable
 unknowncommand
+unrepresentable
 unsandboxed
 unstash
 unsub
@@ -194,5 +197,3 @@ worktree
 worktrees
 xstate
 zod
-testctx
-finalvars

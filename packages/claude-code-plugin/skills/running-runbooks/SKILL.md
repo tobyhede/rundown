@@ -80,7 +80,8 @@ rd run <child-runbook> --step 1.1 --index 3
 
 Steps may declare INPUTS and OUTPUTS directives to pass data across execution.
 
-**OUTPUTS** — evaluated and stored only on PASS:
+**OUTPUTS** — evaluated by the machine when the step transition completes (PASS or FAIL):
+
 ```markdown
 ## 7. Output Path
 - OUTPUTS
@@ -88,21 +89,34 @@ Steps may declare INPUTS and OUTPUTS directives to pass data across execution.
 - PASS CONTINUE
 - FAIL STOP
 ```
-After a PASS, the key-value pairs are written to `.rundown/contexts/<ContextId>/outputs.json`. FAIL transitions skip OUTPUTS entirely. Storage is best-effort (non-fatal).
 
-**INPUTS** — injected from context outputs before template expansion:
+After the transition, the key-value pairs are merged into the live runbook variable space. If the runbook then reaches `COMPLETE` or `STOPPED`, frontmatter `outputs:` are written to `state.finalVars`.
+
+**INPUTS** — declared in the runbook frontmatter to inject variables at runbook startup:
+
+```yaml
+---
+name: load-plan
+required:
+  - PlanPath
+inputs:
+  PlanPath:
+---
+```
+
+The `inputs:` mapping form (`PlanPath:` with no value) is intentional: it means "no default — the caller must supply this variable". Variables listed under `required:` must not appear with a value in `inputs:`.
+
 ```markdown
 ## 1. Load plan
-- INPUTS
-  - PlanPath
 - PASS CONTINUE
 - FAIL STOP
 
 Read the plan from `{{ PlanPath }}`.
 ```
-Variables declared in INPUTS are loaded from `outputs.json` for the current `ContextId`. If the variable is not found or `ContextId` is unset, injection is silently skipped. CLI `--var` always takes precedence over INPUTS.
 
-INPUTS and OUTPUTS apply to both H2 steps and H3 substeps.
+Frontmatter `inputs:` provides default values that sit below CLI `--var`, `RD_VAR_*`, and config in precedence — CLI always wins. When a parent delegates to a child, the parent's live variable space is forwarded as `--var` flags on the child's `rd claim` command, so the child sees the parent's OUTPUTS automatically. Use `required:` to fail fast when a variable must be supplied.
+
+OUTPUTS apply to both H2 steps and H3 substeps. The step-level `- INPUTS` directive has been removed — use the frontmatter `inputs:` field instead.
 
 ## Claiming Delegated Work
 

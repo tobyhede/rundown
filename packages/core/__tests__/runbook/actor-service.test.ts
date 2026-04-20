@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RunbookStateManager } from '../../src/runbook/state.js';
@@ -502,6 +502,117 @@ describe('RunbookActorService', () => {
       // Load from disk and verify templateVars still present
       const loaded = await manager.load(state.id);
       expect(loaded?.templateVars?.items).toEqual(['a', 'b', 'c']);
+    });
+  });
+
+  describe('RunbookActorService — frontmatterOutputs / templateVars seeding', () => {
+    // Replaces _scratch_bisect.test.ts and _scratch_production_mirror.test.ts.
+    // Verifies the production code path that previously called
+    // compileRunbookToMachine(steps) without options — Cause #1 in the handoff.
+
+    it('seeds compiler context.frontmatterOutputs from RunbookState.frontmatterOutputs', async () => {
+      const state = await manager.create('test.md', mockRunbook, {
+        runbookPath: 'test.md',
+        frontmatterOutputs: [{ name: 'SomeVar' }],
+      });
+
+      const actor = await actorService.createActor(state.id, mockSteps);
+      expect(actor).not.toBeNull();
+      const snapshot = actor!.getPersistedSnapshot() as {
+        context: { frontmatterOutputs: unknown };
+      };
+      expect(snapshot.context.frontmatterOutputs).toEqual([{ name: 'SomeVar' }]);
+      actor!.stop();
+    });
+
+    it('defaults context.frontmatterOutputs to [] when no outputs declared at run time', async () => {
+      const state = await manager.create('test.md', mockRunbook, {
+        runbookPath: 'test.md',
+      });
+
+      const actor = await actorService.createActor(state.id, mockSteps);
+      const snapshot = actor!.getPersistedSnapshot() as {
+        context: { frontmatterOutputs: unknown };
+      };
+      expect(snapshot.context.frontmatterOutputs).toEqual([]);
+      actor!.stop();
+    });
+
+    it('throws for stale run state missing frontmatterOutputs field', async () => {
+      const state = await manager.create('test.md', mockRunbook, {
+        runbookPath: 'test.md',
+        frontmatterOutputs: [],
+      });
+      // Simulate a pre-OUTPUTS-feature state file by stripping frontmatterOutputs from disk.
+      const filePath = join(testDir, '.rundown', 'runs', `${state.id}.json`);
+      const raw = JSON.parse(await readFile(filePath, 'utf8')) as Record<string, unknown>;
+      delete raw.frontmatterOutputs;
+      await writeFile(filePath, JSON.stringify(raw));
+
+      await expect(actorService.createActor(state.id, mockSteps)).rejects.toThrow(
+        /Stale runbook state.*missing frontmatter outputs/,
+      );
+    });
+
+    it('seeds compiler context.templateVars from RunbookState.templateVars (flattened)', async () => {
+      const state = await manager.create('test.md', mockRunbook, {
+        runbookPath: 'test.md',
+        templateVars: { SomeVar: 'hello', Items: ['a', 'b'] },
+      });
+
+      const actor = await actorService.createActor(state.id, mockSteps);
+      const snapshot = actor!.getPersistedSnapshot() as {
+        context: { templateVars: Record<string, unknown> };
+      };
+      expect(snapshot.context.templateVars).toMatchObject({
+        SomeVar: 'hello',
+        Items: ['a', 'b'], // flattenTemplateVars: array passes through as array
+      });
+      actor!.stop();
+    });
+  });
+
+  describe('RunbookActorService — finalVars persistence', () => {
+    // Replaces the production-mirror probe in _scratch_production_mirror.test.ts.
+    // Verifies that updateFromActor reads snapshot.context.finalVars (Cause #4 in
+    // the handoff: the OLD updateFromActor never touched it).
+
+    it('persists context.finalVars to RunbookState.finalVars on STOPPED snapshot', async () => {
+      const state = await manager.create('test.md', mockRunbook, {
+        runbookPath: 'test.md',
+        frontmatterOutputs: [{ name: 'Result' }],
+        templateVars: { Result: 'failed-value' },
+      });
+
+      // Drive the actor to STOPPED via FAIL on the first step (mockSteps' default
+      // transitions are PASS COMPLETE / FAIL STOP — confirm in test setup).
+      const result = await actorService.sendAndSync(state.id, mockSteps, { type: 'FAIL' });
+      expect(result).not.toBeNull();
+      expect((result!.snapshot as { value: string }).value).toBe('STOPPED');
+      expect(result!.state.finalVars).toEqual({ Result: 'failed-value' });
+    });
+
+    it('persists context.finalVars to RunbookState.finalVars on COMPLETE snapshot', async () => {
+      const state = await manager.create('test.md', mockRunbook, {
+        runbookPath: 'test.md',
+        frontmatterOutputs: [{ name: 'Result' }],
+        templateVars: { Result: 'passed-value' },
+      });
+
+      const result = await actorService.sendAndSync(state.id, mockSteps, { type: 'PASS' });
+      expect((result!.snapshot as { value: string }).value).toBe('COMPLETE');
+      expect(result!.state.finalVars).toEqual({ Result: 'passed-value' });
+    });
+
+    it('leaves RunbookState.finalVars undefined when no frontmatter outputs are declared', async () => {
+      const state = await manager.create('test.md', mockRunbook, {
+        runbookPath: 'test.md',
+        frontmatterOutputs: [],
+        // No frontmatterOutputs declared → context.finalVars stays {}
+      });
+
+      const result = await actorService.sendAndSync(state.id, mockSteps, { type: 'FAIL' });
+      expect(result!.state.finalVars).toBeUndefined();
     });
   });
 });

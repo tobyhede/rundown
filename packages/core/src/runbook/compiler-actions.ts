@@ -1,3 +1,4 @@
+import type { OutputDeclaration } from '@rundown-org/parser';
 import type { LastAction } from './types.js';
 
 /**
@@ -17,8 +18,34 @@ import type { LastAction } from './types.js';
  */
 export interface ActionDefs {
   readonly setLastAction: { action: LastAction; msg?: string };
-  // Phase 2: add storeStepOutputs and storeFrontmatterOutputs once
-  // outputs-in-state-machine has merged.
+  /** Evaluates step/substep OUTPUTS declarations and merges the results into live context variables. */
+  readonly storeStepOutputs: {
+    /** OUTPUTS declarations authored on the exiting step or substep. */
+    outputs: readonly OutputDeclaration[];
+    /** Parent step name used to build the OUTPUTS execution frame. */
+    stepName: string;
+    /** Substep id when evaluating substep-level OUTPUTS; omitted for step-level evaluation. */
+    substepId?: string;
+    /**
+     * Use the most recently completed substep recorded in machine context.
+     * Parent-state `always` exits need this because `context.substep` has
+     * already been cleared by the time the parent OUTPUTS run.
+     */
+    useCompletedSubstep?: boolean;
+    /**
+     * Use the FOR frame snapshot recorded in context.completedForContext to restore
+     * loop-scoped variables (Index, loop variable, context.current.at) when forStack
+     * has already been cleared by the parent self-transition cleanup.
+     */
+    useCompletedForContext?: boolean;
+  };
+  /** Evaluates frontmatter OUTPUTS declarations and persists the result into terminal finalVars. */
+  readonly storeFrontmatterOutputs: {
+    /** Step name for non-terminal evaluation contexts; omitted at terminal entry. */
+    stepName?: string;
+    /** Substep id for non-terminal evaluation contexts; omitted at terminal entry. */
+    substepId?: string;
+  };
 }
 
 /** A single parameterized action reference, discriminated on `type`. */

@@ -53,7 +53,7 @@ describe('frontmatter outputs — naked form', () => {
     expect(state.finalVars).toEqual({ SomeVar: 'hello' });
   });
 
-  it('does NOT store frontmatter outputs when run stops on FAIL', async () => {
+  it('stores frontmatter outputs when run stops on FAIL', async () => {
     const FAIL_RUNBOOK = `---
 name: fm-fail-test
 outputs:
@@ -76,7 +76,7 @@ rd echo --result fail
 
     const states = await getAllRunbookStates(workspace);
     const state = states[0] as { finalVars?: Record<string, unknown> };
-    expect(state.finalVars).toBeUndefined();
+    expect(state.finalVars).toEqual({ SomeVar: 'hello' });
   });
 });
 

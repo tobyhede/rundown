@@ -47,12 +47,17 @@ function buildTerminalSteps(
 
   const substepTransitions = makeTransitions(passAction, failAction);
   const substeps: Substep[] = [{ id: '1', description: 'Sub 1', transitions: substepTransitions }];
+  // Step-level transitions mirror parser DEFAULT_TRANSITIONS. Substep terminal
+  // actions (STOP/COMPLETE) exit directly and never consult parent transitions,
+  // but the compiler still builds a parent state config that reads them.
+  const stepTransitions = makeTransitions('CONTINUE', 'STOP');
 
   if (topology === 'substep') {
     return [
       {
         name: '1',
         description: 'Step with substep',
+        transitions: stepTransitions,
         substeps,
       },
     ];
@@ -63,6 +68,7 @@ function buildTerminalSteps(
     {
       name: '1',
       description: 'FOR step',
+      transitions: stepTransitions,
       forClause: { start: 1, end: 2 },
       substeps,
     },

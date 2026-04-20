@@ -125,7 +125,7 @@ describe('runbook compiler', () => {
       expect(actor.getSnapshot().context.iterationResults).toBeUndefined();
     });
 
-    it('explicit H3 runbook substeps with runbooks get CONTINUE defaults', () => {
+    it('explicit H3 runbook substeps with runbooks DEFER and parent FAIL-routes on deferred fail', () => {
       const steps = [
         ...parseRunbookDocument(`## 1. Review package
 ### 1.1 Review pass
@@ -142,12 +142,104 @@ describe('runbook compiler', () => {
       const actor = createActor(machine);
       actor.start();
 
-      actor.send({ type: 'PASS' }); // 1.1 CONTINUE -> parent -> 1.2
-      actor.send({ type: 'FAIL' }); // 1.2 CONTINUE (runbook default) -> parent -> Case D pass-through -> step::2
+      actor.send({ type: 'PASS' }); // 1.1 DEFER -> advance to 1.2
+      actor.send({ type: 'FAIL' }); // 1.2 DEFER -> parent -> Case D FAIL routing -> STOPPED
 
-      // Runbook substeps default to CONTINUE on both pass/fail.
-      // Parent has no transitions (Case D) so passes through to next step.
-      expect(actor.getSnapshot().value).toBe('step::2');
+      // Runbook substeps use DEFER defaults (parser DEFER_TRANSITIONS).
+      // The parent declares no explicit transitions, so the default FAIL STOP
+      // applies. Under Case D FAIL routing, any deferred 'fail' result routes
+      // to the parent's configured FAIL target (STOPPED).
+      expect(actor.getSnapshot().value).toBe('STOPPED');
+    });
+
+    it('Case D non-FOR parent with PASS STOP sets lastAction to STOP and preserves lastMessage', () => {
+      const steps = createRunbook(`## 1. Review
+- PASS STOP "all done"
+- FAIL STOP
+
+### 1.1 First
+- PASS CONTINUE
+- FAIL CONTINUE
+
+### 1.2 Last
+- PASS CONTINUE
+- FAIL CONTINUE
+
+## 2. Next
+- PASS COMPLETE
+`);
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'PASS' }); // 1.1 CONTINUE -> advance to 1.2
+      actor.send({ type: 'PASS' }); // 1.2 CONTINUE -> parent -> Case D PASS STOP -> STOPPED
+
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('STOPPED');
+      expect(snapshot.context.lastAction).toEqual(expect.objectContaining({ type: 'STOP' }));
+      expect(snapshot.context.lastMessage).toBe('all done');
+    });
+
+    it('Case D non-FOR parent with PASS COMPLETE sets lastAction to COMPLETE', () => {
+      const steps = createRunbook(`## 1. Review
+- PASS COMPLETE
+- FAIL STOP
+
+### 1.1 First
+- PASS CONTINUE
+- FAIL CONTINUE
+
+### 1.2 Last
+- PASS CONTINUE
+- FAIL CONTINUE
+`);
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'PASS' }); // 1.1 CONTINUE -> advance to 1.2
+      actor.send({ type: 'PASS' }); // 1.2 CONTINUE -> parent -> Case D PASS COMPLETE -> COMPLETE
+
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('COMPLETE');
+      expect(snapshot.context.lastAction).toEqual(expect.objectContaining({ type: 'COMPLETE' }));
+    });
+
+    it('Case D non-FOR parent with PASS GOTO sets lastAction to GOTO', () => {
+      const steps = createRunbook(`## 1. Review
+- PASS GOTO 3
+- FAIL STOP
+
+### 1.1 First
+- PASS CONTINUE
+- FAIL CONTINUE
+
+### 1.2 Last
+- PASS CONTINUE
+- FAIL CONTINUE
+
+## 2. Skipped
+- PASS COMPLETE
+
+## 3. Target
+- PASS COMPLETE
+`);
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'PASS' }); // 1.1 CONTINUE -> advance to 1.2
+      actor.send({ type: 'PASS' }); // 1.2 CONTINUE -> parent -> Case D PASS GOTO 3 -> step::3
+
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('step::3');
+      expect(snapshot.context.lastAction).toEqual(
+        expect.objectContaining({ type: 'GOTO', target: '3' }),
+      );
     });
 
     it('H3 runbook substeps under aggregating parent DEFER and aggregate on PASS ALL', () => {
@@ -4344,11 +4436,7 @@ echo "processing"
         },
       ]);
 
-      const machine = compileRunbookToMachine(steps, {
-        sources: {
-          lines: { kind: 'file', path: '/tmp/test.txt', format: 'text' },
-        },
-      });
+      const machine = compileRunbookToMachine(steps);
 
       const actor = createActor(machine);
       actor.start();
@@ -4389,11 +4477,7 @@ echo "processing"
         },
       ]);
 
-      const machine = compileRunbookToMachine(steps, {
-        sources: {
-          lines: { kind: 'file', path: '/tmp/test.txt', format: 'text' },
-        },
-      });
+      const machine = compileRunbookToMachine(steps);
 
       // Start actor and inject currentValue via snapshot rehydration
       const actor = createActor(machine);
@@ -4439,11 +4523,7 @@ echo "processing"
         },
       ]);
 
-      const machine = compileRunbookToMachine(steps, {
-        sources: {
-          lines: { kind: 'file', path: '/tmp/test.txt', format: 'text' },
-        },
-      });
+      const machine = compileRunbookToMachine(steps);
 
       const actor = createActor(machine);
       actor.start();
@@ -4495,11 +4575,7 @@ echo "processing"
         },
       ]);
 
-      const machine = compileRunbookToMachine(steps, {
-        sources: {
-          data: { kind: 'file', path: '/tmp/data.txt', format: 'text' },
-        },
-      });
+      const machine = compileRunbookToMachine(steps);
 
       const actor = createActor(machine);
       actor.start();
@@ -8626,6 +8702,1059 @@ echo "processing"
       actor.send({ type: 'SET_VARIABLES', vars: { Answer: '42' } });
 
       expect(actor.getSnapshot().context.variables).toEqual({ Answer: '42' });
+    });
+  });
+
+  describe('OUTPUTS actions', () => {
+    function getState(machine: ReturnType<typeof compileRunbookToMachine>, id: string): any {
+      return (machine.config.states as Record<string, unknown>)[id] as any;
+    }
+
+    function getActionTypes(actions: unknown): string[] {
+      const list = Array.isArray(actions) ? actions : actions ? [actions] : [];
+      return list.map((entry: { type: string }) => entry.type);
+    }
+
+    it('places storeFrontmatterOutputs on STOPPED.entry for direct-step FAIL terminal transitions', () => {
+      const steps = createRunbook(`## 1. Produce
+- PASS COMPLETE
+- FAIL STOP
+- OUTPUTS
+  - Result "failed-value"
+`);
+
+      const machine = compileRunbookToMachine(steps, {
+        frontmatterOutputs: [{ name: 'Result' }],
+      });
+
+      // The step's FAIL transition still carries storeStepOutputs (step OUTPUTS
+      // fire on the step's own exit) and setLastAction, but NOT
+      // storeFrontmatterOutputs (single owner: terminal-entry).
+      const failTransition = getState(machine, 'step::1').on.FAIL;
+      expect(getActionTypes(failTransition.actions)).toEqual(
+        expect.arrayContaining(['storeStepOutputs', 'setLastAction']),
+      );
+      expect(getActionTypes(failTransition.actions)).not.toContain('storeFrontmatterOutputs');
+
+      // Single-owner terminal-entry architecture: storeFrontmatterOutputs is the
+      // first action on STOPPED.entry.
+      const stoppedEntry = getState(machine, 'STOPPED').entry as any[];
+      expect(getActionTypes(stoppedEntry)[0]).toBe('storeFrontmatterOutputs');
+    });
+
+    it('stores FAIL-path step outputs and STOPPED frontmatter outputs in the terminal snapshot', () => {
+      const steps = createRunbook(`## 1. Produce
+- PASS COMPLETE
+- FAIL STOP
+- OUTPUTS
+  - Result "failed-value"
+`);
+
+      const machine = compileRunbookToMachine(steps, {
+        frontmatterOutputs: [{ name: 'Result' }],
+      });
+      const actor = createActor(machine);
+      actor.start();
+      actor.send({ type: 'FAIL' });
+
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('STOPPED');
+      expect(snapshot.context.variables).toMatchObject({ Result: 'failed-value' });
+      expect(snapshot.context.finalVars).toEqual({ Result: 'failed-value' });
+    });
+
+    it('decorates parent-step exit transitions with storeStepOutputs (no longer with storeFrontmatterOutputs)', () => {
+      const steps = createRunbook(`## 1. Parent
+- PASS CONTINUE
+- FAIL STOP
+- OUTPUTS
+  - ParentVar "parent-value"
+
+### 1.1 First
+- PASS CONTINUE
+- FAIL CONTINUE
+
+### 1.2 Last
+- PASS CONTINUE
+- FAIL STOP
+
+## 2. Done
+- PASS COMPLETE
+- FAIL STOP
+`);
+
+      const machine = compileRunbookToMachine(steps, {
+        frontmatterOutputs: [{ name: 'ParentVar' }],
+      });
+
+      const parentAlways = getState(machine, 'step::1').always as any[];
+      const continueExit = parentAlways.find((entry) => entry.target === 'step::2');
+      const failTerminal = parentAlways.find((entry) => entry.target === 'STOPPED');
+
+      // Parent exit transitions carry storeStepOutputs (not storeFrontmatterOutputs):
+      expect(continueExit).toBeDefined();
+      expect(getActionTypes(continueExit.actions)).toContain('storeStepOutputs');
+      expect(getActionTypes(continueExit.actions)).not.toContain('storeFrontmatterOutputs');
+
+      // The FAIL→STOPPED transition also carries storeStepOutputs (parent has outputs;
+      // FAIL fires step OUTPUTS per spec) but NOT storeFrontmatterOutputs (single
+      // owner is the terminal STOPPED.entry).
+      expect(failTerminal).toBeDefined();
+      expect(getActionTypes(failTerminal.actions)).toContain('storeStepOutputs');
+      expect(getActionTypes(failTerminal.actions)).not.toContain('storeFrontmatterOutputs');
+    });
+
+    it('places storeFrontmatterOutputs as the first entry action on COMPLETE and STOPPED', () => {
+      const steps = createRunbook(`## 1. Parent
+- PASS COMPLETE
+- FAIL STOP
+- OUTPUTS
+  - ParentVar "parent-value"
+`);
+
+      const machine = compileRunbookToMachine(steps, {
+        frontmatterOutputs: [{ name: 'ParentVar' }],
+      });
+
+      const completeEntry = getState(machine, 'COMPLETE').entry as any[];
+      const stoppedEntry = getState(machine, 'STOPPED').entry as any[];
+
+      // Single-owner terminal-entry architecture: storeFrontmatterOutputs is the
+      // first action on both terminal states' entry, before the lifecycle marker
+      // assign that writes completed/stopped flags.
+      expect(getActionTypes(completeEntry)[0]).toBe('storeFrontmatterOutputs');
+      expect(getActionTypes(stoppedEntry)[0]).toBe('storeFrontmatterOutputs');
+    });
+
+    it('does not decorate substep-internal always transitions with storeStepOutputs', () => {
+      // Spec Testing §: "storeStepOutputs absent on substep-internal always transitions".
+      const steps = createRunbook(`## 1. Parent
+- PASS CONTINUE
+- FAIL STOP
+- OUTPUTS
+  - ParentVar "parent-value"
+
+### 1.1 First
+- PASS CONTINUE
+- FAIL CONTINUE
+
+### 1.2 Last
+- PASS CONTINUE
+- FAIL STOP
+
+## 2. Done
+- PASS COMPLETE
+- FAIL STOP
+`);
+
+      const machine = compileRunbookToMachine(steps);
+      const parentAlways = getState(machine, 'step::1').always as any[];
+      const advanceToSecond = parentAlways.find((entry) => entry.target === 'step::1::2');
+
+      expect(advanceToSecond).toBeDefined();
+      expect(getActionTypes(advanceToSecond.actions)).not.toContain('storeStepOutputs');
+    });
+
+    it('does not fire storeStepOutputs on the substep BREAK exit transition', () => {
+      // Spec Testing §: "FAIL→BREAK transition does NOT carry storeStepOutputs
+      // (BREAK exits loop without advancing)". BREAK's parent-level cleanup
+      // always-transition targets the parent state itself (self-loop), so it is
+      // not a parent-exit and must not carry outputs. The eventual exit-to-next
+      // transition IS a parent-exit and DOES carry outputs — that's the
+      // parent-step completion, distinct from the BREAK signal itself.
+      const steps = createRunbook(`## 1. Loop
+- FOR i IN 1 TO 2
+- PASS CONTINUE
+- FAIL STOP
+- OUTPUTS
+  - LoopVar "loop-value"
+
+### 1.1 Inside
+- PASS CONTINUE
+- FAIL BREAK
+`);
+
+      const machine = compileRunbookToMachine(steps);
+      const parentAlways = getState(machine, 'step::1').always as any[];
+      // The BREAK cleanup transition is identified by its target == self-state
+      // AND an assign that sets lastAction: { type: 'BREAK' }. Here we use the
+      // simpler structural check: any always entry whose target is the parent
+      // state itself must not carry storeStepOutputs.
+      const selfTargeting = parentAlways.filter((entry) => entry.target === 'step::1');
+      for (const entry of selfTargeting) {
+        expect(getActionTypes(entry.actions)).not.toContain('storeStepOutputs');
+      }
+
+      // The substep's own FAIL transition (the BREAK signal itself) must also not
+      // carry storeStepOutputs — BREAK routes back to the parent aggregation state
+      // (exitsParent=false), so no parent output injection occurs there either.
+      const substepFail = getState(machine, 'step::1::1').on.FAIL;
+      expect(substepFail).toBeDefined();
+      expect(getActionTypes(substepFail.actions)).not.toContain('storeStepOutputs');
+    });
+
+    it('carries storeStepOutputs on the substep FAIL→BREAK transition when the substep declares OUTPUTS', () => {
+      // When the substep itself (not the parent) declares OUTPUTS, buildActionTransition
+      // attaches storeStepOutputs regardless of action type — including BREAK.
+      // The BREAK signal self-targets the parent state, so decorateParentTransition
+      // never runs for substep-level outputs. storeStepOutputs is therefore placed
+      // directly on the substep's FAIL transition by buildActionTransition.
+      const steps = createRunbook(`## 1. Loop
+- FOR i IN 1 TO 2
+- PASS CONTINUE
+- FAIL STOP
+
+### 1.1 Inside
+- PASS CONTINUE
+- FAIL BREAK
+- OUTPUTS
+  - SubResult "partial-value"
+`);
+
+      const machine = compileRunbookToMachine(steps);
+      const substepState = getState(machine, 'step::1::1');
+      const failTransition = substepState.on?.FAIL;
+      const failEntry = Array.isArray(failTransition) ? failTransition[0] : failTransition;
+      expect(getActionTypes(failEntry?.actions)).toContain('storeStepOutputs');
+    });
+
+    it('stores substep OUTPUTS in context.variables after FAIL BREAK', () => {
+      // Behavioral counterpart to the structural test above: storeStepOutputs fires
+      // on the substep's FAIL→BREAK transition, so context.variables must contain
+      // the substep's evaluated output even though the loop exited via BREAK.
+      // Terminal state is COMPLETE because the single-step loop's PASS CONTINUE
+      // routes to terminal when there is no following step.
+      const steps = createRunbook(`## 1. Loop
+- FOR i IN 1 TO 2
+- PASS CONTINUE
+- FAIL STOP
+
+### 1.1 Inside
+- PASS CONTINUE
+- FAIL BREAK
+- OUTPUTS
+  - SubResult "partial-value"
+`);
+
+      const machine = compileRunbookToMachine(steps, { templateVars: {} });
+      const actor = createActor(machine);
+      actor.start();
+      actor.send({ type: 'FAIL' });
+
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.context.variables).toMatchObject({ SubResult: 'partial-value' });
+    });
+
+    it('stores parent OUTPUTS on the parent-exit transition after BREAK (not on the BREAK signal itself)', () => {
+      // After BREAK the parent's always transitions evaluate and the parent-exit
+      // transition carries storeStepOutputs for the parent's OUTPUTS (via
+      // decorateParentTransition). Parent OUTPUTS therefore DO appear in
+      // context.variables at terminal state — they fire on exit, not on the BREAK
+      // self-targeting signal. This is distinct from the structural test asserting
+      // that the self-targeting BREAK transition does not carry storeStepOutputs.
+      const steps = createRunbook(`## 1. Loop
+- FOR i IN 1 TO 2
+- PASS CONTINUE
+- FAIL STOP
+- OUTPUTS
+  - LoopResult "loop-value"
+  - StepCursor "{{ Step }}"
+  - SubstepCursor "{{ context.current.substep }}"
+  - IterCursor "{{ Index }}"
+  - LoopCursor "{{ i }}"
+
+### 1.1 Inside
+- PASS CONTINUE
+- FAIL BREAK
+`);
+
+      const machine = compileRunbookToMachine(steps, { templateVars: {} });
+      const actor = createActor(machine);
+      actor.start();
+      actor.send({ type: 'FAIL' });
+
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.context.variables).toMatchObject({
+        LoopResult: 'loop-value',
+        StepCursor: '1.1',
+        SubstepCursor: '1',
+        IterCursor: '1',
+        LoopCursor: '1',
+      });
+    });
+
+    it('[P2] resolves parent OUTPUTS against the completing last-substep cursor on parent always exit', () => {
+      const steps = createRunbook(`## 1. Parent
+- PASS CONTINUE
+- FAIL STOP
+- OUTPUTS
+  - StepCursor "{{ Step }}"
+  - SubstepCursor "{{ context.current.substep }}"
+  - AtCursor "{{ context.current.at }}"
+
+### 1.1 First
+- PASS CONTINUE
+- FAIL STOP
+
+### 1.2 Last
+- PASS CONTINUE
+- FAIL STOP
+
+## 2. Done
+- PASS COMPLETE
+- FAIL STOP
+`);
+
+      const machine = compileRunbookToMachine(steps, { templateVars: {} });
+      const actor = createActor(machine);
+      actor.start();
+      actor.send({ type: 'PASS' });
+      actor.send({ type: 'PASS' });
+
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('step::2');
+      expect(snapshot.context.variables).toMatchObject({
+        StepCursor: '1.2',
+        SubstepCursor: '2',
+        AtCursor: '1.2',
+      });
+    });
+
+    it('[P2] resolves parent OUTPUTS against the BREAK-origin substep cursor on parent exit', () => {
+      const steps = createRunbook(`## 1. Loop
+- FOR i IN 1 TO 2
+- PASS COMPLETE
+- FAIL STOP
+- OUTPUTS
+  - StepCursor "{{ Step }}"
+  - SubstepCursor "{{ context.current.substep }}"
+
+### 1.1 Breaker
+- PASS CONTINUE
+- FAIL BREAK
+
+### 1.2 Skipped
+- PASS CONTINUE
+- FAIL CONTINUE
+`);
+
+      const machine = compileRunbookToMachine(steps, { templateVars: {} });
+      const actor = createActor(machine);
+      actor.start();
+      actor.send({ type: 'FAIL' });
+
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('COMPLETE');
+      expect(snapshot.context.variables).toMatchObject({
+        StepCursor: '1.1',
+        SubstepCursor: '1',
+      });
+    });
+
+    it('resolves parent OUTPUTS against the completed FOR frame on BREAK exit', () => {
+      const steps = createRunbook(`## 1. Loop
+- FOR i IN 1 TO 3
+- PASS COMPLETE
+- FAIL STOP
+- OUTPUTS
+  - StepCursor "{{ Step }}"
+  - SubstepCursor "{{ context.current.substep }}"
+  - AtCursor "{{ context.current.at }}"
+  - IndexCursor "{{ Index }}"
+  - LoopValue "{{ i }}"
+
+### 1.1 Breaker
+- PASS CONTINUE
+- FAIL BREAK
+
+### 1.2 Skipped
+- PASS CONTINUE
+- FAIL CONTINUE
+`);
+      const machine = compileRunbookToMachine(steps, { templateVars: {} });
+      const actor = createActor(machine);
+      actor.start();
+      actor.send({ type: 'FAIL' }); // substep 1.1, iteration 1, fires BREAK
+
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('COMPLETE');
+      expect(snapshot.context.variables).toMatchObject({
+        StepCursor: '1.1',
+        SubstepCursor: '1',
+        AtCursor: '1.1.1',
+        IndexCursor: '1',
+        LoopValue: '1',
+      });
+    });
+
+    it('resolves parent OUTPUTS against the completed FOR frame on NEXT-exhausted loop exit', () => {
+      const steps = createRunbook(`## 1. Loop
+- FOR i IN 1 TO 2
+- PASS COMPLETE
+- FAIL STOP
+- OUTPUTS
+  - StepCursor "{{ Step }}"
+  - AtCursor "{{ context.current.at }}"
+  - IndexCursor "{{ Index }}"
+  - LoopValue "{{ i }}"
+
+### 1.1 Walker
+- PASS NEXT
+- FAIL STOP
+`);
+      const machine = compileRunbookToMachine(steps, { templateVars: {} });
+      const actor = createActor(machine);
+      actor.start();
+      actor.send({ type: 'PASS' }); // iteration 1 → NEXT → loop-back
+      actor.send({ type: 'PASS' }); // iteration 2 → NEXT → exhausted, exit
+
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('COMPLETE');
+      expect(snapshot.context.variables).toMatchObject({
+        StepCursor: '1.1',
+        AtCursor: '1.2.1',
+        IndexCursor: '2',
+        LoopValue: '2',
+      });
+    });
+
+    it('fires storeStepOutputs on the parent-exit transition of a FOR step', () => {
+      // The parent-exit always transition (target === 'step::2') must carry
+      // storeStepOutputs so the FOR step's OUTPUTS are recorded after the last
+      // iteration. The loop-back transitions stay within the same parent and
+      // are intentionally NOT decorated. Last-iteration-wins runtime behavior
+      // is covered by the adjacent 'last iteration wins…' test.
+      const steps = createRunbook(`## 1. Loop
+- FOR i IN 1 TO 2
+- PASS CONTINUE
+- FAIL STOP
+- OUTPUTS
+  - Value "{{ Index }}"
+
+### 1.1 Inside
+- PASS CONTINUE
+- FAIL CONTINUE
+
+## 2. Done
+- PASS COMPLETE
+- FAIL STOP
+`);
+
+      const machine = compileRunbookToMachine(steps);
+      const parentAlways = getState(machine, 'step::1').always as any[];
+      // The parent-exit transition (target === 'step::2') must carry outputs.
+      const exitToNext = parentAlways.find((entry) => entry.target === 'step::2');
+      expect(getActionTypes(exitToNext.actions)).toContain('storeStepOutputs');
+    });
+
+    it('last iteration wins when the same FOR output key is overwritten', () => {
+      // Spec Testing §: "FOR loop, two iterations, same output key:
+      // context.variables holds iteration 2's value."
+      const steps = createRunbook(`## 1. Loop
+- FOR i IN 1 TO 2
+- PASS CONTINUE
+- FAIL STOP
+- OUTPUTS
+  - Value "{{ Index }}"
+
+### 1.1 Inside
+- PASS CONTINUE
+- FAIL CONTINUE
+`);
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+      // Drive both iterations through PASS.
+      actor.send({ type: 'PASS' });
+      actor.send({ type: 'PASS' });
+
+      const snapshot = actor.getSnapshot() as any;
+      expect(snapshot.context.variables.Value).toBe('2');
+    });
+
+    it('injects storeStepOutputs for parent OUTPUTS on substep PASS COMPLETE transition (structural)', () => {
+      // Bug: buildActionTransition only injects the substep's own storeStepOutputs.
+      // When a substep fires COMPLETE/STOP directly, the parent aggregation state is
+      // bypassed and decorateParentTransition never runs, so parent OUTPUTS are lost.
+      // The substep's PASS transition must carry storeStepOutputs for the parent.
+      const steps = createRunbook(`## 1. Parent
+- PASS COMPLETE
+- FAIL STOP
+- OUTPUTS
+  - ParentVar "parent-value"
+
+### 1.1 Only
+- PASS COMPLETE
+- FAIL STOP
+`);
+
+      const machine = compileRunbookToMachine(steps);
+
+      const substepPassTransition = getState(machine, 'step::1::1').on.PASS;
+      expect(getActionTypes(substepPassTransition.actions)).toContain('storeStepOutputs');
+    });
+
+    it('stores parent OUTPUTS in context.variables when substep fires COMPLETE directly', () => {
+      // Runtime counterpart: the parent's OUTPUTS must appear in variables after a
+      // substep takes COMPLETE directly, bypassing the parent aggregation state.
+      const steps = createRunbook(`## 1. Parent
+- PASS COMPLETE
+- FAIL STOP
+- OUTPUTS
+  - ParentVar "parent-value"
+  - StepCursor "{{ Step }}"
+  - SubstepCursor "{{ context.current.substep }}"
+
+### 1.1 Only
+- PASS COMPLETE
+- FAIL STOP
+`);
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+      actor.send({ type: 'PASS' });
+
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('COMPLETE');
+      expect(snapshot.context.variables).toMatchObject({
+        ParentVar: 'parent-value',
+        StepCursor: '1.1',
+        SubstepCursor: '1',
+      });
+    });
+
+    it('stores parent OUTPUTS in context.variables when substep fires STOP directly', () => {
+      // Same as above but for FAIL STOP: the parent's OUTPUTS must fire even when
+      // a substep routes directly to STOPPED without entering the parent state.
+      const steps = createRunbook(`## 1. Parent
+- PASS COMPLETE
+- FAIL STOP
+- OUTPUTS
+  - ParentVar "parent-value"
+  - StepCursor "{{ Step }}"
+  - SubstepCursor "{{ context.current.substep }}"
+
+### 1.1 Only
+- PASS CONTINUE
+- FAIL STOP
+`);
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+      actor.send({ type: 'FAIL' });
+
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('STOPPED');
+      expect(snapshot.context.variables).toMatchObject({
+        ParentVar: 'parent-value',
+        StepCursor: '1.1',
+        SubstepCursor: '1',
+      });
+    });
+
+    it('stores parent OUTPUTS when non-last substep fires COMPLETE directly (multi-substep early exit)', () => {
+      // Substep 1.1 of a 3-substep parent fires COMPLETE, bypassing 1.2, 1.3, and
+      // the parent aggregation state. exitsParent is position-agnostic — the check
+      // only cares that the target is not the parent or a sibling substep.
+      const steps = createRunbook(`## 1. Parent
+- PASS COMPLETE
+- FAIL STOP
+- OUTPUTS
+  - ParentVar "parent-value"
+  - StepCursor "{{ Step }}"
+  - SubstepCursor "{{ context.current.substep }}"
+
+### 1.1 First
+- PASS COMPLETE
+- FAIL STOP
+
+### 1.2 Middle
+- PASS CONTINUE
+- FAIL CONTINUE
+
+### 1.3 Last
+- PASS CONTINUE
+- FAIL CONTINUE
+`);
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+      actor.send({ type: 'PASS' });
+
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('COMPLETE');
+      expect(snapshot.context.variables).toMatchObject({
+        ParentVar: 'parent-value',
+        StepCursor: '1.1',
+        SubstepCursor: '1',
+      });
+    });
+
+    it('stores parent OUTPUTS when non-last substep fires STOP directly (multi-substep early exit)', () => {
+      const steps = createRunbook(`## 1. Parent
+- PASS COMPLETE
+- FAIL STOP
+- OUTPUTS
+  - ParentVar "parent-value"
+  - StepCursor "{{ Step }}"
+  - SubstepCursor "{{ context.current.substep }}"
+
+### 1.1 First
+- PASS CONTINUE
+- FAIL STOP
+
+### 1.2 Last
+- PASS CONTINUE
+- FAIL CONTINUE
+`);
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+      actor.send({ type: 'FAIL' });
+
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('STOPPED');
+      expect(snapshot.context.variables).toMatchObject({
+        ParentVar: 'parent-value',
+        StepCursor: '1.1',
+        SubstepCursor: '1',
+      });
+    });
+
+    it('stores parent OUTPUTS when substep fires GOTO to external step', () => {
+      // When a substep GOTOs a different step, the parent aggregation state is also
+      // bypassed. The exitsParent check applies equally to GOTO targets.
+      const steps = createRunbook(`## 1. Parent
+- PASS CONTINUE
+- FAIL STOP
+- OUTPUTS
+  - ParentVar "parent-value"
+  - StepCursor "{{ Step }}"
+  - SubstepCursor "{{ context.current.substep }}"
+
+### 1.1 Only
+- PASS GOTO 2
+- FAIL STOP
+
+## 2. Done
+- PASS COMPLETE
+- FAIL STOP
+`);
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+      actor.send({ type: 'PASS' });
+
+      // After GOTO 2, machine is at step::2 — parent outputs already fired during transition.
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('step::2');
+      expect(snapshot.context.variables).toMatchObject({
+        ParentVar: 'parent-value',
+        StepCursor: '1.1',
+        SubstepCursor: '1',
+      });
+    });
+
+    it('stores parent OUTPUTS when FOR loop substep fires COMPLETE directly', () => {
+      // resolvedStepHasSubsteps returns true for FOR steps, so the exitsParent
+      // guard applies equally — the FOR parent's outputs must fire.
+      const steps = createRunbook(`## 1. Loop
+- FOR i IN 1 TO 2
+- PASS CONTINUE
+- FAIL STOP
+- OUTPUTS
+  - LoopVar "for-parent-value"
+  - StepCursor "{{ Step }}"
+  - SubstepCursor "{{ context.current.substep }}"
+  - IterCursor "{{ Index }}"
+  - LoopCursor "{{ i }}"
+
+### 1.1 Inside
+- PASS COMPLETE
+- FAIL STOP
+`);
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+      actor.send({ type: 'PASS' });
+
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('COMPLETE');
+      expect(snapshot.context.variables).toMatchObject({
+        LoopVar: 'for-parent-value',
+        StepCursor: '1.1',
+        SubstepCursor: '1',
+        IterCursor: '1',
+        LoopCursor: '1',
+      });
+    });
+
+    it('stores parent OUTPUTS when FOR loop substep fires STOP directly', () => {
+      const steps = createRunbook(`## 1. Loop
+- FOR i IN 1 TO 2
+- PASS CONTINUE
+- FAIL STOP
+- OUTPUTS
+  - LoopVar "for-parent-value"
+  - StepCursor "{{ Step }}"
+  - SubstepCursor "{{ context.current.substep }}"
+  - IterCursor "{{ Index }}"
+  - LoopCursor "{{ i }}"
+
+### 1.1 Inside
+- PASS CONTINUE
+- FAIL STOP
+`);
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+      actor.send({ type: 'FAIL' });
+
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('STOPPED');
+      expect(snapshot.context.variables).toMatchObject({
+        LoopVar: 'for-parent-value',
+        StepCursor: '1.1',
+        SubstepCursor: '1',
+        IterCursor: '1',
+        LoopCursor: '1',
+      });
+    });
+
+    it('stores both substep and parent OUTPUTS when substep fires COMPLETE and both declare outputs', () => {
+      // Both the substep and the parent declare OUTPUTS. The substep's storeStepOutputs
+      // fires first (unitOutputs), then the parent's (parent injection). Both variables
+      // must appear in context.variables.
+      const steps = createRunbook(`## 1. Parent
+- PASS COMPLETE
+- FAIL STOP
+- OUTPUTS
+  - ParentVar "parent-value"
+  - StepCursor "{{ Step }}"
+  - SubstepCursor "{{ context.current.substep }}"
+
+### 1.1 Only
+- PASS COMPLETE
+- FAIL STOP
+- OUTPUTS
+  - SubstepVar "substep-value"
+`);
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+      actor.send({ type: 'PASS' });
+
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('COMPLETE');
+      expect(snapshot.context.variables).toMatchObject({
+        SubstepVar: 'substep-value',
+        ParentVar: 'parent-value',
+        StepCursor: '1.1',
+        SubstepCursor: '1',
+      });
+    });
+
+    it('parent OUTPUTS overwrite substep OUTPUTS when both declare the same key (last-writer-wins)', () => {
+      // Parent fires after substep (to mirror the CONTINUE path ordering where
+      // substep storeStepOutputs fires first, then parent storeStepOutputs fires
+      // via decorateParentTransition). Last writer wins on shared keys.
+      const steps = createRunbook(`## 1. Parent
+- PASS COMPLETE
+- FAIL STOP
+- OUTPUTS
+  - Result "parent-wins"
+  - StepCursor "{{ Step }}"
+  - SubstepCursor "{{ context.current.substep }}"
+
+### 1.1 Only
+- PASS COMPLETE
+- FAIL STOP
+- OUTPUTS
+  - Result "substep-first"
+`);
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+      actor.send({ type: 'PASS' });
+
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('COMPLETE');
+      expect(snapshot.context.variables).toMatchObject({
+        Result: 'parent-wins',
+        StepCursor: '1.1',
+        SubstepCursor: '1',
+      });
+    });
+
+    it('does not inject parent OUTPUTS on sibling-GOTO substep transition (exitsParent=false)', () => {
+      // When substep 1.1 GOTOs sibling substep 1.2, the target is 'step::1::2' which
+      // starts with 'step::1::' — exitsParent=false. Parent outputs must NOT fire here;
+      // they fire later when substep 1.2 actually exits the parent.
+      const steps = createRunbook(`## 1. Parent
+- PASS COMPLETE
+- FAIL STOP
+- OUTPUTS
+  - ParentVar "parent-value"
+  - StepCursor "{{ Step }}"
+  - SubstepCursor "{{ context.current.substep }}"
+
+### 1.1 First
+- PASS GOTO 1.2
+- FAIL STOP
+
+### 1.2 Last
+- PASS COMPLETE
+- FAIL STOP
+`);
+
+      const machine = compileRunbookToMachine(steps);
+
+      // Structural: sibling-GOTO transition must not carry parent storeStepOutputs.
+      const substepGotoTransition = getState(machine, 'step::1::1').on.PASS;
+      expect(getActionTypes(substepGotoTransition.actions)).not.toContain('storeStepOutputs');
+
+      // Behavioral: parent outputs fire exactly once (via substep 1.2's COMPLETE exit).
+      const actor = createActor(machine);
+      actor.start();
+      actor.send({ type: 'PASS' }); // substep 1.1 GOTOs 1.2
+      actor.send({ type: 'PASS' }); // substep 1.2 fires COMPLETE
+
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('COMPLETE');
+      expect(snapshot.context.variables).toMatchObject({
+        ParentVar: 'parent-value',
+        StepCursor: '1.2',
+        SubstepCursor: '2',
+      });
+    });
+  });
+
+  describe('parent-step unconditional-exit FAIL routing (Bug A)', () => {
+    function getState(machine: ReturnType<typeof compileRunbookToMachine>, id: string): any {
+      return (machine.config.states as Record<string, unknown>)[id] as any;
+    }
+
+    it('emits a parent-level FAIL routing entry when parentStep.transitions.fail is STOP and there is no aggregation', () => {
+      const steps = createRunbook(`## 1. Parent
+- PASS CONTINUE
+- FAIL STOP
+
+### 1.1 First
+- PASS CONTINUE
+- FAIL CONTINUE
+
+### 1.2 Last
+- PASS CONTINUE
+- FAIL CONTINUE
+
+## 2. Done
+- PASS COMPLETE
+- FAIL STOP
+`);
+
+      const machine = compileRunbookToMachine(steps);
+      const parentAlways = getState(machine, 'step::1').always as any[];
+
+      const stoppedEntry = parentAlways.find((entry) => entry.target === 'STOPPED');
+      const continueEntry = parentAlways.find((entry) => entry.target === 'step::2');
+
+      expect(stoppedEntry).toBeDefined();
+      expect(continueEntry).toBeDefined();
+
+      // Critical anti-pattern check: both entries MUST have guards. If one
+      // has a guard and the other does not, the unguarded one will fire first
+      // and shadow the guarded one (XState evaluates `always` entries in order).
+      expect(stoppedEntry.guard).toBeDefined();
+      expect(continueEntry.guard).toBeDefined();
+    });
+
+    it('routes to STOPPED at runtime when any FOR iteration failed and parent has FAIL STOP (Case C)', () => {
+      // Runtime counterpart to the structural test above. Iteration-level DEFER
+      // accumulates a pass/fail verdict into iterationResults every iteration,
+      // and a mix of verdicts must route the parent-exit to the parent's FAIL
+      // target (STOPPED) — a predicate typo (`every` vs `some`) would still
+      // pass the structural test but fail this one.
+      const steps = inferSteps([
+        {
+          name: '1',
+          description: 'FOR step',
+          forClause: {
+            start: 1,
+            end: 2,
+            transitions: {
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+              fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
+            },
+            aggregation: { strategy: 'ALL' as const },
+          },
+          // No step-level aggregation — forces the unconditional-exit branch.
+          substeps: [
+            {
+              id: '1',
+              description: 'Inside',
+              transitions: {
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
+              },
+            },
+          ],
+          transitions: {
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+          },
+        },
+        {
+          name: '2',
+          description: 'Done',
+          transitions: {
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+          },
+        },
+      ]);
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      // Iteration 1: substep FAIL → DEFER → iteration aggregation fails → iterationResults += 'fail'
+      actor.send({ type: 'FAIL' });
+      // Iteration 2: substep PASS → DEFER → iteration aggregation passes → iterationResults += 'pass'
+      actor.send({ type: 'PASS' });
+
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.context.iterationResults).toEqual(['fail', 'pass']);
+      expect(snapshot.value).toBe('STOPPED');
+    });
+
+    it('sets lastAction and lastMessage on Case C FOR PASS routing when parent PASS action is GOTO (Bug fix)', () => {
+      // Case C: FOR without aggregation. When all iterations pass, the always
+      // transition routes to the parent PASS target. Previously, lastAction and
+      // lastMessage were NOT assigned in the PASS branch — only in the FAIL branch
+      // — leaving stale substep action metadata when the parent PASS action is
+      // anything other than CONTINUE (e.g. GOTO, COMPLETE, STOP).
+      const steps = inferSteps([
+        {
+          name: '1',
+          description: 'FOR step',
+          forClause: {
+            start: 1,
+            end: 2,
+            transitions: {
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+              fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
+            },
+          },
+          // No step-level aggregation — forces Case C (unconditional-exit) branch.
+          substeps: [
+            {
+              id: '1',
+              description: 'Inside',
+              transitions: {
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
+              },
+            },
+          ],
+          transitions: {
+            pass: {
+              kind: 'pass' as const,
+              retry: 0,
+              action: { type: 'GOTO' as const, target: { step: '3' } },
+            },
+            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+          },
+        },
+        {
+          name: '2',
+          description: 'Skipped',
+          transitions: {
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+          },
+        },
+        {
+          name: '3',
+          description: 'GOTO target',
+          transitions: {
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+          },
+        },
+      ]);
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      // Iteration 1: substep PASS → DEFER → iterationResults += 'pass' → loop-back
+      actor.send({ type: 'PASS' });
+      // Iteration 2: substep PASS → DEFER → iterationResults += 'pass' → exits loop
+      actor.send({ type: 'PASS' });
+
+      // All iterations passed → parent PASS action (GOTO 3) fires → step::3
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('step::3');
+      // lastAction must reflect the GOTO target, not stale substep data
+      expect(snapshot.context.lastAction).toEqual({ type: 'GOTO', target: '3' });
+      expect(snapshot.context.lastMessage).toBeUndefined();
+    });
+
+    it('sets lastAction and lastMessage on Case C FOR PASS routing when parent PASS action is COMPLETE (Bug fix)', () => {
+      // Verify the COMPLETE variant: passLastMessage must be propagated when present.
+      const steps = inferSteps([
+        {
+          name: '1',
+          description: 'FOR step',
+          forClause: {
+            start: 1,
+            end: 1,
+            transitions: {
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+              fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
+            },
+          },
+          substeps: [
+            {
+              id: '1',
+              description: 'Inside',
+              transitions: {
+                pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+                fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
+              },
+            },
+          ],
+          transitions: {
+            pass: {
+              kind: 'pass' as const,
+              retry: 0,
+              action: { type: 'COMPLETE' as const, message: 'all done' },
+            },
+            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+          },
+        },
+      ]);
+
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'PASS' }); // single iteration passes → exits loop
+
+      const snapshot = actor.getSnapshot();
+      expect(snapshot.value).toBe('COMPLETE');
+      expect(snapshot.context.lastAction).toEqual({ type: 'COMPLETE' });
+      expect(snapshot.context.lastMessage).toBe('all done');
     });
   });
 });

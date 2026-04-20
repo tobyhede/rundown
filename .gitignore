@@ -10,12 +10,14 @@ coverage/
 .rundown/locks/
 .work/
 .worktree/
+.worktrees/
 .claude/settings.local.json
 .claude/session/
 .claude/rundown/
 .claude-docker/
 logs/
 docs/plans/
+graphify-out/
 
 # WebContainer snapshot (build artifact — rebuilt by CI and locally via npm run build:snapshot -w site)
 site/public/rundown-snapshot.bin

@@ -1,0 +1,427 @@
+import { describe, it, expect } from '@jest/globals';
+import type { OutputDeclaration } from '@rundown-org/parser';
+import type { ForContext, TemplateVarValue } from '../../src/runbook/types.js';
+import {
+  buildExecutionFrame,
+  evaluateFrontmatterOutputDeclarations,
+  evaluateOutputExpression,
+  evaluateStepOutputDeclarations,
+  flattenTemplateVars,
+} from '../../src/runbook/output-evaluator.js';
+
+describe('evaluateOutputExpression', () => {
+  it('supports path helper, quoted literal, template reference, and bare identifier forms', () => {
+    expect(
+      evaluateOutputExpression('{{ path "plan.json" }}', {
+        WorkPath: '.rundown/work/demo',
+        ContextId: 'ctx-abc',
+      }),
+    ).toMatch(/^\.rundown\/work\/demo\/\.rd-ctx-abc\/\d{4}-\d{2}-\d{2}-plan\.json$/);
+    expect(evaluateOutputExpression('"literal"', {})).toBe('literal');
+    expect(evaluateOutputExpression('{{ Region }}', { Region: 'us-east-1' })).toBe('us-east-1');
+    expect(evaluateOutputExpression('PlanPath', { PlanPath: '/tmp/plan.md' })).toBe('/tmp/plan.md');
+  });
+
+  it('renders booleans and null the same way the CLI wrapper does today', () => {
+    expect(evaluateOutputExpression('{{ enabled }}', { enabled: false })).toBe('false');
+    expect(evaluateOutputExpression('{{ nullable }}', { nullable: null })).toBe('null');
+  });
+
+  it('allows a resolved template value to contain literal handlebars text', () => {
+    expect(evaluateOutputExpression('{{ Template }}', { Template: '{{name}}' })).toBe('{{name}}');
+  });
+
+  it('allows quoted template expansion to resolve to a value containing literal handlebars text', () => {
+    expect(evaluateOutputExpression('"{{ Template }}"', { Template: '{{name}}' })).toBe('{{name}}');
+  });
+
+  it('throws when the path helper is used but WorkPath is missing', () => {
+    expect(() => evaluateOutputExpression('{{ path "plan.json" }}', {})).toThrow(/WorkPath/);
+  });
+
+  it('throws when the path helper is used without ctx= and ContextId is missing', () => {
+    expect(() =>
+      evaluateOutputExpression('{{ path "plan.json" }}', { WorkPath: '.rundown/work/demo' }),
+    ).toThrow(/ContextId/);
+  });
+
+  it('throws when ctx= expands to a value that is not a valid ContextId', () => {
+    expect(() =>
+      evaluateOutputExpression('{{ path "plan.json" ctx={{ Bad }} }}', {
+        WorkPath: '.rundown/work/demo',
+        Bad: 'not a valid id',
+      }),
+    ).toThrow(/valid ContextId/);
+  });
+
+  it('honours ctx= override with a nested Handlebars expression', () => {
+    expect(
+      evaluateOutputExpression('{{ path "plan.json" ctx={{ childCtx }} }}', {
+        WorkPath: '.rundown/work/demo',
+        ContextId: 'parent',
+        childCtx: 'child-123',
+      }),
+    ).toMatch(/\.rd-child-123\/.*-plan\.json$/);
+  });
+
+  it('honours ctx= override with a bare literal containing hyphens', () => {
+    expect(
+      evaluateOutputExpression('{{ path "plan.json" ctx=alt-ctx }}', {
+        WorkPath: '.rundown/work/demo',
+        ContextId: 'parent',
+      }),
+    ).toMatch(/\.rd-alt-ctx\/.*-plan\.json$/);
+  });
+
+  it('expands template references inside quoted strings', () => {
+    expect(evaluateOutputExpression('"{{ Region }}"', { Region: 'us-east-1' })).toBe('us-east-1');
+  });
+
+  it('throws when quoted string contains an unresolvable template reference', () => {
+    expect(() => evaluateOutputExpression('"{{ Missing }}"', {})).toThrow(/unresolved variables/);
+  });
+
+  it('throws when bare template reference is unresolvable', () => {
+    expect(() => evaluateOutputExpression('{{ Missing }}', {})).toThrow(/unresolved variables/);
+  });
+
+  it('expands template references inside mixed strings', () => {
+    expect(evaluateOutputExpression('at {{ Step }}', { Step: '1.2' })).toBe('at 1.2');
+  });
+
+  it('returns empty string for empty quoted literal', () => {
+    expect(evaluateOutputExpression('""', {})).toBe('');
+  });
+});
+
+describe('evaluateStepOutputDeclarations', () => {
+  it('returns an empty map when there are no declarations', () => {
+    expect(evaluateStepOutputDeclarations([], {})).toEqual({});
+  });
+
+  it('skips naked-form step outputs and leaves the value out of the result', () => {
+    const outputs: OutputDeclaration[] = [{ name: 'Literal', value: '"value"' }, { name: 'Naked' }];
+
+    expect(evaluateStepOutputDeclarations(outputs, {})).toEqual({
+      Literal: 'value',
+    });
+  });
+
+  it('omits entries whose template reference is unresolved (variable absent from frame)', () => {
+    // When a template reference is unresolved, evaluateOutputExpression throws,
+    // and evaluateStepOutputDeclarations catches the error and skips the entry.
+    const outputs: OutputDeclaration[] = [{ name: 'Missing', value: '{{ MissingVar }}' }];
+
+    expect(evaluateStepOutputDeclarations(outputs, {})).toEqual({});
+  });
+
+  it('omits entries whose expression evaluation throws (e.g. path helper without WorkPath)', () => {
+    const outputs: OutputDeclaration[] = [
+      { name: 'Plan', value: '{{ path "plan.json" }}' },
+      { name: 'Literal', value: '"kept"' },
+    ];
+
+    expect(evaluateStepOutputDeclarations(outputs, {})).toEqual({
+      Literal: 'kept',
+    });
+  });
+});
+
+describe('evaluateFrontmatterOutputDeclarations', () => {
+  it('returns an empty map when there are no declarations', () => {
+    expect(evaluateFrontmatterOutputDeclarations([], {})).toEqual({});
+  });
+
+  it('supports naked-form export-by-name and value-form export', () => {
+    const outputs: OutputDeclaration[] = [
+      { name: 'PlanPath' },
+      { name: 'Mode', value: '"manual"' },
+    ];
+
+    expect(
+      evaluateFrontmatterOutputDeclarations(outputs, {
+        PlanPath: '/tmp/plan.md',
+      }),
+    ).toEqual({
+      PlanPath: '/tmp/plan.md',
+      Mode: 'manual',
+    });
+  });
+
+  it('renders non-scalar naked values by delegating to renderOutputValue (boolean, number)', () => {
+    const outputs: OutputDeclaration[] = [{ name: 'Enabled' }, { name: 'Port' }];
+
+    expect(
+      evaluateFrontmatterOutputDeclarations(outputs, {
+        Enabled: true,
+        Port: 3000,
+      }),
+    ).toEqual({
+      Enabled: 'true',
+      Port: '3000',
+    });
+  });
+
+  it('renders a naked null value as the string "null"', () => {
+    const outputs: OutputDeclaration[] = [{ name: 'Missing' }];
+
+    expect(
+      evaluateFrontmatterOutputDeclarations(outputs, {
+        Missing: null,
+      }),
+    ).toEqual({
+      Missing: 'null',
+    });
+  });
+
+  it('omits naked entries whose referenced variable is absent from the frame', () => {
+    const outputs: OutputDeclaration[] = [{ name: 'Present' }, { name: 'Absent' }];
+
+    expect(
+      evaluateFrontmatterOutputDeclarations(outputs, {
+        Present: 'value',
+      }),
+    ).toEqual({
+      Present: 'value',
+    });
+  });
+});
+
+describe('flattenTemplateVars', () => {
+  it('keeps scalars, arrays, and objects traversable; omits JsonArrayStream', () => {
+    const vars: Record<string, TemplateVarValue> = {
+      Region: 'us-east-1',
+      Port: 3000,
+      Items: ['a', 'b', 'c'],
+      Config: { host: 'localhost', debug: true },
+      Stream: { kind: 'json-array-stream', path: '/tmp/items.jsonl' },
+    };
+
+    expect(flattenTemplateVars(vars)).toEqual({
+      Region: 'us-east-1',
+      Port: 3000,
+      Items: ['a', 'b', 'c'],
+      Config: { host: 'localhost', debug: true },
+    });
+  });
+
+  // P1 regression: flattenTemplateVars stringifies JsonObject/JsonArray before OUTPUTS
+  // evaluation, so dotted lookups ({{ config.host }}, {{ items.0 }}) cannot be traversed
+  // and stay as literal placeholders instead of resolving to the nested value.
+
+  it('[P1] keeps JsonObject values traversable so {{ config.host }} resolves in OUTPUTS', () => {
+    // flattenTemplateVars currently stringifies: config → '{"host":"localhost"}'
+    // resolveDottedPath cannot traverse a string, so {{ config.host }} is unresolved.
+    const vars = flattenTemplateVars({ config: { host: 'localhost', port: 5432 } });
+    expect(evaluateOutputExpression('{{ config.host }}', vars)).toBe('localhost');
+    expect(evaluateOutputExpression('{{ config.port }}', vars)).toBe('5432');
+  });
+
+  it('[P1] keeps JsonArray values traversable so {{ items.0 }} resolves in OUTPUTS', () => {
+    // flattenTemplateVars currently comma-joins arrays: items → 'a,b,c'
+    // {{ items.0 }} cannot be resolved from a comma-joined string.
+    const vars = flattenTemplateVars({ items: ['alpha', 'beta', 'gamma'] });
+    expect(evaluateOutputExpression('{{ items.0 }}', vars)).toBe('alpha');
+    expect(evaluateOutputExpression('{{ items.1 }}', vars)).toBe('beta');
+  });
+
+  it('[P1] resolves nested dotted paths: {{ config.db.host }} with JsonObject input', () => {
+    const vars = flattenTemplateVars({ config: { db: { host: 'postgres' } } });
+    expect(evaluateOutputExpression('{{ config.db.host }}', vars)).toBe('postgres');
+  });
+
+  it('[P1] bare {{ config }} still renders the whole object (not affected by fix)', () => {
+    // After the fix, {{ config }} must still produce a stable string rendering
+    // of the whole object — changing traversability must not break bare references.
+    const vars = flattenTemplateVars({ config: { host: 'localhost' } });
+    const result = evaluateOutputExpression('{{ config }}', vars);
+    // Must be a non-empty string (exact JSON form acceptable)
+    expect(typeof result).toBe('string');
+    expect(result).toContain('localhost');
+  });
+
+  // P3 regression: JsonArrayStream vars are omitted from the OUTPUTS frame, so any
+  // OUTPUTS expression that references them produces garbage (literal identifier string
+  // or unresolved `{{ items }}`) instead of being skipped or raising an error.
+
+  it('[P3] does not store literal identifier when OUTPUTS bare-ref targets an omitted JsonArrayStream', () => {
+    // flattenTemplateVars drops JsonArrayStream keys. evaluateOutputExpression('items', {})
+    // currently falls back to `trimmed` → stores the string "items". Must skip instead.
+    const vars = flattenTemplateVars({
+      items: { kind: 'json-array-stream' as const, path: '/tmp/data.jsonl' },
+      Region: 'us-east-1',
+    });
+    const result = evaluateStepOutputDeclarations(
+      [
+        { name: 'Out', value: 'items' }, // bare identifier — resolves to undefined → must skip
+        { name: 'Region', value: '{{ Region }}' }, // control: must still resolve
+      ],
+      vars,
+    );
+    expect(result).not.toHaveProperty('Out'); // must not store "items"
+    expect(result).toMatchObject({ Region: 'us-east-1' });
+  });
+
+  it('[P3] does not store unresolved placeholder when OUTPUTS template-ref targets an omitted JsonArrayStream', () => {
+    // evaluateOutputExpression('{{ items }}', {}) returns '{{ items }}' (unresolved braces).
+    // Storing that string as an output value silently corrupts the result.
+    const vars = flattenTemplateVars({
+      items: { kind: 'json-array-stream' as const, path: '/tmp/data.jsonl' },
+      Region: 'us-east-1',
+    });
+    const result = evaluateStepOutputDeclarations(
+      [
+        { name: 'Out', value: '{{ items }}' }, // template — stays unresolved → must skip
+        { name: 'Region', value: '{{ Region }}' }, // control
+      ],
+      vars,
+    );
+    expect(result).not.toHaveProperty('Out'); // must not store '{{ items }}'
+    expect(result).toMatchObject({ Region: 'us-east-1' });
+  });
+});
+
+describe('buildExecutionFrame', () => {
+  it('merges template vars, stored outputs, and the active FOR frame for the provided cursor', () => {
+    const forStack: ForContext[] = [
+      {
+        stepId: '1',
+        iteration: 2,
+        start: 1,
+        end: 3,
+        variable: 'item',
+        implicit: false,
+        source: { kind: 'variable', name: 'items' },
+        currentValue: 'b',
+      },
+    ];
+
+    expect(
+      buildExecutionFrame(
+        {
+          templateVars: {
+            ContextId: 'ctx-abc',
+            WorkPath: '.rundown/work/demo',
+            Message: 'template-value',
+          },
+          variables: {
+            Message: 'stored-value',
+            Existing: 'already-here',
+          },
+          forStack,
+        },
+        { stepName: '1', substepId: '1' },
+      ),
+    ).toMatchObject({
+      ContextId: 'ctx-abc',
+      WorkPath: '.rundown/work/demo',
+      Message: 'stored-value',
+      Existing: 'already-here',
+      Step: '1.1',
+      step: '1.1',
+      Index: '2',
+      index: '2',
+      'context.current.step': '1.1',
+      'context.current.substep': '1',
+      'context.current.index': '2',
+      'context.current.at': '1.2.1',
+      item: 'b',
+    });
+  });
+
+  it('omits Index keys when the FOR stack is empty (non-FOR step cursor)', () => {
+    const frame = buildExecutionFrame({ variables: {}, forStack: [] }, { stepName: '1' });
+
+    expect(frame).toMatchObject({
+      Step: '1',
+      step: '1',
+      'context.current.step': '1',
+      'context.current.at': '1',
+    });
+    expect(frame).not.toHaveProperty('Index');
+    expect(frame).not.toHaveProperty('index');
+    expect(frame).not.toHaveProperty('context.current.index');
+  });
+
+  it('omits Index keys when the active FOR frame is implicit', () => {
+    const forStack: ForContext[] = [
+      {
+        stepId: '1',
+        iteration: 1,
+        start: 1,
+        end: 2,
+        variable: '',
+        implicit: true,
+        source: { kind: 'range', start: 1, end: 2 },
+      },
+    ];
+
+    const frame = buildExecutionFrame({ variables: {}, forStack }, { stepName: '1' });
+
+    expect(frame).not.toHaveProperty('Index');
+    expect(frame).not.toHaveProperty('index');
+  });
+
+  it('omits Index keys when the cursor is on a step outside the active FOR frame', () => {
+    const forStack: ForContext[] = [
+      {
+        stepId: '1',
+        iteration: 1,
+        start: 1,
+        end: 2,
+        variable: 'outer',
+        implicit: false,
+        source: { kind: 'variable', name: 'outers' },
+        currentValue: 'x',
+      },
+    ];
+
+    const frame = buildExecutionFrame(
+      { variables: {}, forStack },
+      { stepName: '2', substepId: '1' },
+    );
+
+    expect(frame).not.toHaveProperty('Index');
+    expect(frame.Step).toBe('2.1');
+    expect(frame['context.current.at']).toBe('2.1');
+  });
+
+  it('sets the loop variable from iteration count for a range FOR source', () => {
+    const forStack: ForContext[] = [
+      {
+        stepId: '1',
+        iteration: 3,
+        start: 1,
+        end: 5,
+        variable: 'n',
+        implicit: false,
+        source: { kind: 'range', start: 1, end: 5 },
+      },
+    ];
+
+    const frame = buildExecutionFrame({ variables: {}, forStack }, { stepName: '1' });
+
+    expect(frame.n).toBe('3');
+    expect(frame.Index).toBe('3');
+  });
+
+  it('uses empty cursor for terminal-entry frontmatter evaluation', () => {
+    // At terminal entry there is no active step — callers pass stepName: '' so
+    // Step/step/context.current.step render as empty strings. Outputs that resolve
+    // by name from templateVars or stored variables remain unaffected.
+    const frame = buildExecutionFrame(
+      {
+        templateVars: { PlanPath: '/tmp/plan.md' },
+        variables: { Stored: 'kept' },
+        forStack: [],
+      },
+      { stepName: '' },
+    );
+
+    expect(frame.Step).toBe('');
+    expect(frame.step).toBe('');
+    expect(frame['context.current.step']).toBe('');
+    expect(frame.PlanPath).toBe('/tmp/plan.md');
+    expect(frame.Stored).toBe('kept');
+  });
+});

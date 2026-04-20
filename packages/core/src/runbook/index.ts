@@ -72,3 +72,13 @@ export {
   VALID_CTX,
   VALID_FILE,
 } from './artifact-paths.js';
+export {
+  buildExecutionFrame,
+  evaluateFrontmatterOutputDeclarations,
+  evaluateOutputExpression,
+  evaluateStepOutputDeclarations,
+  flattenTemplateVars,
+  type OutputFrameState,
+  type OutputCursor,
+  type OutputVars,
+} from './output-evaluator.js';

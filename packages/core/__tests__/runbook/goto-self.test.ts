@@ -71,12 +71,17 @@ describe('GOTO to self (implicit retry)', () => {
   });
 
   it('should increment retryCount when GOTO targets same step and substep', () => {
-    // Transitions must be defined at substep level when step has substeps
+    // Step-level transitions mirror parser DEFAULT_TRANSITIONS (PASS CONTINUE,
+    // FAIL STOP). Substep-level transitions drive the actual behavior here.
     const steps: Step[] = [
       {
         kind: 'substeps',
         name: '1',
         description: 'Step with substeps',
+        transitions: {
+          pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+          fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+        },
         substeps: [
           {
             id: 'a',
@@ -121,12 +126,17 @@ describe('GOTO to self (implicit retry)', () => {
   });
 
   it('should reset retryCount when GOTO targets same step but different substep', () => {
-    // Transitions must be defined at substep level when step has substeps
+    // Step-level transitions mirror parser DEFAULT_TRANSITIONS (PASS CONTINUE,
+    // FAIL STOP). Substep-level transitions drive the actual behavior here.
     const steps: Step[] = [
       {
         kind: 'substeps',
         name: '1',
         description: 'Step with substeps',
+        transitions: {
+          pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+          fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+        },
         substeps: [
           {
             id: 'a',

@@ -328,6 +328,31 @@ describe('RunbookStateSchema finalVars', () => {
   });
 });
 
+describe('RunbookStateSchema frontmatterOutputs', () => {
+  it('accepts frontmatterOutputs as optional readonly OutputDeclaration array', () => {
+    const state = createValidState({
+      frontmatterOutputs: [{ name: 'PlanPath' }, { name: 'Mode', value: '"manual"' }],
+    });
+
+    expect(RunbookStateSchema.parse(state).frontmatterOutputs).toEqual([
+      { name: 'PlanPath' },
+      { name: 'Mode', value: '"manual"' },
+    ]);
+  });
+
+  it('accepts state without frontmatterOutputs (field is optional)', () => {
+    const state = createValidState({});
+
+    expect(RunbookStateSchema.parse(state).frontmatterOutputs).toBeUndefined();
+  });
+
+  it('rejects frontmatterOutputs with non-string name field', () => {
+    const state = createValidState({ frontmatterOutputs: [{ name: 42 }] });
+
+    expect(() => RunbookStateSchema.parse(state)).toThrow();
+  });
+});
+
 describe('RunbookStateSchema sources field', () => {
   it('passes through unknown fields via passthrough', () => {
     const state = createValidState({

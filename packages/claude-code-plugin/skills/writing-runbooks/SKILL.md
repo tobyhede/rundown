@@ -16,7 +16,7 @@ name: my-runbook
 description: What this runbook does
 tags:
   - category
-vars:
+inputs:
   environment: staging
 ---
 
@@ -58,11 +58,9 @@ Separators between ID and title are flexible: `.`, `:`, `-`, `)`, space, em dash
 
 ````
 ## ID. Title
-- INPUTS              (optional, must be first)
-  - VarName
-- OUTPUTS             (optional, must follow INPUTS)
+- OUTPUTS             (optional, must be first)
   - Key value-expr
-- FOR clause          (optional, after directives)
+- FOR clause          (optional, after OUTPUTS)
 - Transition rules    (optional, must precede body)
 Prompt text           (instructions)
 ```bash              (OR substeps — not both)
@@ -78,13 +76,13 @@ command
 | **Prompt** | Text instructions | Requires `rd pass` or `rd fail` |
 | **Display-only** | `bash prompt`, `prompt`, `json`, `yaml` blocks | Displayed, NOT executed |
 
-## Context Passing (INPUTS / OUTPUTS)
+## Context Passing (OUTPUTS / inputs / outputs)
 
-Steps and substeps may declare INPUTS and OUTPUTS directives to pass data between steps across a delegation tree. These directives apply to both H2 steps and H3 substeps.
+Steps and substeps may declare OUTPUTS directives to pass data between steps and across a delegation tree. OUTPUTS apply to both H2 steps and H3 substeps. The step-level `- INPUTS` directive has been removed — use the frontmatter `inputs:` field instead.
 
 ### OUTPUTS
 
-Declares values to persist after a successful step execution. Evaluated and stored only on PASS — FAIL skips OUTPUTS entirely.
+Declares values to persist after step completion. Evaluated by the machine and merged into the live runbook variable space; FAIL does not suppress OUTPUTS.
 
 ```markdown
 ## 7. Output Path
@@ -100,27 +98,11 @@ Output values may be:
 - **Quoted literal**: `"value"`
 - **Bare variable reference**: `VarName`
 
-Storage: `.rundown/contexts/<ContextId>/outputs.json`. Non-fatal if storage fails.
-
-### INPUTS
-
-Declares variable names to inject from context outputs before template expansion.
-
-```markdown
-## 1. Load plan
-- INPUTS
-  - PlanPath
-- PASS CONTINUE
-- FAIL STOP
-
-Read the plan from `{{ PlanPath }}`.
-```
-
-Injection sits below CLI `--var`, `RD_VAR_*`, config, and `vars:` in precedence — CLI always wins. If a variable is not found in context outputs, it is silently skipped. If `ContextId` is not set, INPUTS injection is skipped entirely.
+Evaluation is non-fatal — failed expressions are omitted and logged; the transition is not rolled back.
 
 ### Frontmatter `inputs:` field
 
-Declares variables to inject from context outputs at runbook startup (before any step runs):
+Declares default variable values injected at runbook startup (before any step runs):
 
 ```yaml
 ---
@@ -128,11 +110,27 @@ name: review-plan
 required:
   - PlanPath
 inputs:
-  - PlanPath
+  environment: staging
+  debug: true
 ---
 ```
 
-Use `required:` alongside `inputs:` when the runbook cannot proceed without the variable (causes a hard error if missing from all sources including context outputs).
+`inputs:` is a key-value map. Defaults sit below CLI `--var`, `RD_VAR_*`, and config in precedence — CLI always wins. When a parent delegates to a child, the parent's live variable space is forwarded as `--var` flags on the child's `rd claim` command, so child steps see parent OUTPUTS automatically.
+
+Use `required:` alongside `inputs:` when the runbook cannot proceed without the variable (causes a hard error if missing from all sources). Required variables must not appear in `inputs:`.
+
+### Frontmatter `outputs:` field
+
+Declares variables to publish on terminal machine transitions (`COMPLETE` or `STOPPED`). Evaluated values are written to `state.finalVars`, and when the runbook is a delegated child, those values are forwarded into the parent's live variable space via `SET_VARIABLES`.
+
+```yaml
+---
+name: write-plan
+outputs:
+  - PlanPath
+  - PlanSummary {{ path "summary.txt" }}
+---
+```
 
 ## Transitions
 
@@ -222,7 +220,7 @@ Use `{{ variableName }}` syntax. See [SPEC.md §6 Templating](../../../../docs/S
 
 Key authoring notes:
 - Undefined variables preserved as literal `{{ variable }}` text
-- Frontmatter `vars:` supports string, number, boolean (not arrays/files)
+- Frontmatter `inputs:` supports string, number, boolean (not arrays/files)
 - Data sources for FOR loops: use `.rundown/config.yaml` or `--var-file`
 
 ## Common Mistakes
@@ -231,8 +229,8 @@ Key authoring notes:
 |---------|-----|
 | H4+ headings | Only H1 (title), H2 (steps), H3 (substeps) |
 | Command block + substeps in same step | Choose one — cannot mix |
-| INPUTS/OUTPUTS after transitions | Content order: INPUTS → OUTPUTS → FOR → transitions → body |
-| Instructions before transition rules | Content order: directives, FOR clause, transitions, then body |
+| OUTPUTS after transitions | Content order: OUTPUTS → FOR → transitions → body |
+| Instructions before transition rules | Content order: OUTPUTS, FOR clause, transitions, then body |
 | Reserved word as step ID | `PASS`, `FAIL`, `CONTINUE`, etc. are reserved |
 | Skipping `rd check` | Always validate: `rd check <file>` |
 
