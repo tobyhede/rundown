@@ -101,34 +101,37 @@ export function registerPruneCommand(program: Command): void {
             _status: getStatus(state, activeState, stashedId),
           }));
 
-          // Stale items satisfy the display columns (id, runbook, title, _status)
-          const staleEnrichedItems = staleToDelete.map((id) => ({
+          type LoadedRow = (typeof enrichedItems)[0];
+          type StaleRow = {
+            id: string;
+            runbook: string;
+            title: string | undefined;
+            _status: string;
+          };
+          type PruneRow = LoadedRow | StaleRow;
+
+          // Stale items carry only the fields needed for display and JSON output
+          const staleEnrichedItems: StaleRow[] = staleToDelete.map((id) => ({
             id,
             runbook: '(stale)',
-            title: undefined as string | undefined,
+            title: undefined,
             _status: 'stale',
           }));
 
-          const allItems = [
-            ...enrichedItems,
-            ...(staleEnrichedItems as unknown as typeof enrichedItems),
-          ];
+          const allItems: PruneRow[] = [...enrichedItems, ...staleEnrichedItems];
 
           // Define columns once for reuse
           const columns = [
             { header: 'ID', key: 'id' as const },
-            { header: 'STATUS', key: (item: (typeof enrichedItems)[0]) => item._status },
+            { header: 'STATUS', key: (item: PruneRow) => item._status },
             { header: 'RUNBOOK', key: 'runbook' as const },
-            {
-              header: 'TITLE',
-              key: (item: (typeof enrichedItems)[0]) => (item.title ? `[${item.title}]` : ''),
-            },
+            { header: 'TITLE', key: (item: PruneRow) => (item.title ? `[${item.title}]` : '') },
           ];
 
           // JSON mapper to clean internal fields
-          const jsonMapper = (item: (typeof enrichedItems)[0]): Record<string, unknown> => {
-            const { _status: _, ...rest } = item;
-            return { ...rest, status: item._status };
+          const jsonMapper = (item: PruneRow): Record<string, unknown> => {
+            const { _status, ...rest } = item as Record<string, unknown>;
+            return { ...rest, status: _status };
           };
 
           if (allItems.length === 0) {

@@ -6,6 +6,7 @@ import {
   runCliInProcess,
   readSession,
   listRunbookStates,
+  readRunbookState,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 
@@ -159,6 +160,8 @@ describe('prune command', () => {
       // Only the completed state should remain
       const statesAfter = await listRunbookStates(workspace);
       expect(statesAfter.length).toBe(1);
+      const remainingState = await readRunbookState(workspace, statesAfter[0].replace('.json', ''));
+      expect(remainingState?.lifecycle).toBe('completed');
     });
   });
 
