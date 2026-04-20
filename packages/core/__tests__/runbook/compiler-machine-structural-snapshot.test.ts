@@ -119,4 +119,61 @@ describe('compileRunbookToMachine (lifecycle cleanup structural snapshot)', () =
     expect(ctx.retryCount).toBe(0);
     expect(ctx.parentRetryCount).toBe(0);
   });
+
+  it('produces a stable structural config for FOR loop with BREAK', () => {
+    const steps = createRunbook(`## 1. Parent
+- PASS CONTINUE
+- FAIL STOP
+
+### 1.1 First
+- PASS CONTINUE
+- FAIL CONTINUE
+
+### 1.2 Last
+- PASS CONTINUE
+- FAIL STOP
+
+## 2. Loop
+- FOR i IN 1 TO 2
+- PASS CONTINUE
+- FAIL STOP
+
+### 2.1 Inside
+- PASS CONTINUE
+- FAIL BREAK
+
+## 3. Done
+- PASS COMPLETE
+- FAIL STOP
+`);
+
+    const machine = compileRunbookToMachine(steps);
+    expect(snapshotConfig(machine)).toMatchSnapshot();
+  });
+
+  it('produces a stable structural config for DEFER transitions', () => {
+    const steps = createRunbook(`## 1. Parent
+- PASS CONTINUE
+- FAIL STOP
+
+### 1.1 Deferred
+- PASS DEFER
+- FAIL DEFER
+
+## 2. Redirect
+- PASS GOTO 4
+- FAIL STOP
+
+## 3. Skipped
+- PASS CONTINUE
+- FAIL STOP
+
+## 4. Target
+- PASS COMPLETE
+- FAIL STOP
+`);
+
+    const machine = compileRunbookToMachine(steps);
+    expect(snapshotConfig(machine)).toMatchSnapshot();
+  });
 });
