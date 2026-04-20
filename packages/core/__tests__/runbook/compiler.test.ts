@@ -8763,7 +8763,7 @@ echo "processing"
       expect(snapshot.context.finalVars).toEqual({ Result: 'failed-value' });
     });
 
-    it('decorates parent-step exit transitions with storeStepOutputs (no longer with storeFrontmatterOutputs)', () => {
+    it('decorates parent-step exit transitions with storeStepOutputs only (not storeFrontmatterOutputs)', () => {
       const steps = createRunbook(`## 1. Parent
 - PASS CONTINUE
 - FAIL STOP

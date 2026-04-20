@@ -573,9 +573,9 @@ describe('RunbookActorService', () => {
   });
 
   describe('RunbookActorService — finalVars persistence', () => {
-    // Replaces the production-mirror probe in _scratch_production_mirror.test.ts.
-    // Verifies that updateFromActor reads snapshot.context.finalVars (Cause #4 in
-    // the handoff: the OLD updateFromActor never touched it).
+    // Verifies that updateFromActor reads snapshot.context.finalVars and writes
+    // it to RunbookState.finalVars on terminal sync. The earlier implementation
+    // wrote `variables` but never propagated `finalVars` out of the machine.
 
     it('persists context.finalVars to RunbookState.finalVars on STOPPED snapshot', async () => {
       const state = await manager.create('test.md', mockRunbook, {
@@ -612,6 +612,16 @@ describe('RunbookActorService', () => {
       });
 
       const result = await actorService.sendAndSync(state.id, mockSteps, { type: 'FAIL' });
+      expect(result!.state.finalVars).toBeUndefined();
+    });
+
+    it('leaves RunbookState.finalVars undefined when context.finalVars is empty on COMPLETE', async () => {
+      const state = await manager.create('test.md', mockRunbook, {
+        runbookPath: 'test.md',
+        // No frontmatterOutputs declared → context.finalVars stays {}
+      });
+
+      const result = await actorService.sendAndSync(state.id, mockSteps, { type: 'PASS' });
       expect(result!.state.finalVars).toBeUndefined();
     });
   });
