@@ -238,7 +238,7 @@ export interface RunbookContext {
   /** Final OUTPUTS snapshot persisted at terminal entry. Exposed via machine output. */
   readonly finalVars: RunbookMachineOutput['finalVars'];
   /** Machine-owned lifecycle flag. 'running' during execution; 'completed' or 'stopped' on final entry. */
-  lifecycle: Lifecycle;
+  readonly lifecycle: Lifecycle;
 }
 
 /**

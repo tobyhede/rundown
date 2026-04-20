@@ -1,17 +1,7 @@
 import { describe, it, expect } from '@jest/globals';
 import { createActor } from 'xstate';
-import { parseRunbookDocument, areAllStepsResolved } from '@rundown-org/parser';
 import { compileRunbookToMachine } from '../../src/runbook/compiler.js';
-import type { ResolvedStep } from '../../src/runbook/types.js';
-
-function createRunbook(markdown: string): ResolvedStep[] {
-  const { runbook } = parseRunbookDocument(markdown);
-  const steps = [...runbook.steps];
-  if (!areAllStepsResolved(steps)) {
-    throw new Error('Test runbook has unresolved FOR bounds or runbook references');
-  }
-  return [...steps];
-}
+import { createRunbook } from './fixtures.js';
 
 describe('lifecycle context field', () => {
   it('initializes context.lifecycle to "running"', () => {

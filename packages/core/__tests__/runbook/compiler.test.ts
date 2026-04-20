@@ -9,7 +9,7 @@ import type {
   StepWithSubsteps,
   ResolvedStepWithFor,
 } from '../../src/runbook/types.js';
-import { areAllStepsResolved } from '@rundown-org/parser';
+import { createRunbook } from './fixtures.js';
 
 describe('runbook compiler', () => {
   /** Input type: Resolved step variants without the `kind` discriminant. */
@@ -47,14 +47,6 @@ describe('runbook compiler', () => {
     });
   }
 
-  function createRunbook(markdown: string): ResolvedStep[] {
-    const { runbook } = parseRunbookDocument(markdown);
-    const steps = [...runbook.steps];
-    if (!areAllStepsResolved(steps)) {
-      throw new Error('Test runbook has unresolved FOR bounds or runbook references');
-    }
-    return [...steps];
-  }
 
 
   describe('static step compilation', () => {
