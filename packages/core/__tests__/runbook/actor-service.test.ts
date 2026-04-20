@@ -618,7 +618,7 @@ describe('RunbookActorService', () => {
     it('leaves RunbookState.finalVars undefined when context.finalVars is empty on COMPLETE', async () => {
       const state = await manager.create('test.md', mockRunbook, {
         runbookPath: 'test.md',
-        // No frontmatterOutputs declared → context.finalVars stays {}
+        frontmatterOutputs: [],
       });
 
       const result = await actorService.sendAndSync(state.id, mockSteps, { type: 'PASS' });
