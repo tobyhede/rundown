@@ -47,4 +47,17 @@ describe('lifecycle context field', () => {
     expect(vars.stopped).toBeUndefined();
     actor.stop();
   });
+
+  it('no longer writes legacy variables.completed/stopped flags on FAIL → stopped path', () => {
+    const steps = createRunbook(`## 1. Only\n- PASS COMPLETE\n- FAIL STOP\n`);
+    const machine = compileRunbookToMachine(steps);
+    const actor = createActor(machine);
+    actor.start();
+    actor.send({ type: 'FAIL' });
+    expect(actor.getSnapshot().context.lifecycle).toBe('stopped');
+    const vars = actor.getSnapshot().context.variables;
+    expect(vars.completed).toBeUndefined();
+    expect(vars.stopped).toBeUndefined();
+    actor.stop();
+  });
 });

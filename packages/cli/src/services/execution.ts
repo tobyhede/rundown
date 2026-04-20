@@ -663,12 +663,16 @@ export async function runExecutionLoop(
         reason: execResult.denialReason ?? 'Permission denied',
         position: policyPosition,
       });
+      await manager.update(runbookId, {
+        lifecycle: 'stopped',
+      });
       // Emit RUNBOOK_STOPPED so JSON output shows correct terminal state
       emitter.emit('RUNBOOK_STOPPED', {
         position: policyPosition,
         reason: 'policy_denied',
         message: `Command blocked by policy: ${execResult.denialReason ?? 'Permission denied'}`,
       });
+      await sessionService.popRunbook();
       return 'stopped';
     }
 
