@@ -135,6 +135,33 @@ type CompilerAction = ReturnType<typeof runbookSetup.assign> | CompilerActionRef
 type RunbookStateConfig = Parameters<typeof runbookSetup.createStateConfig>[0];
 
 /**
+ * Shape of a single entry in a state's `on: { ... }` event-triggered transition map,
+ * extracted from the XState-inferred state config. Accepted forms include
+ * `{ target, actions?, guard? }` objects (what every builder in this file returns)
+ * and, per XState, bare target strings or arrays of objects.
+ */
+type RunbookEventTransition = NonNullable<RunbookStateConfig['on']> extends Record<
+  string,
+  infer T
+>
+  ? T
+  : never;
+
+/**
+ * Shape of a single entry in a state's `always: [...]` event-less transition array,
+ * extracted from the XState-inferred state config.
+ */
+type RunbookAlwaysEntry = NonNullable<RunbookStateConfig['always']> extends readonly (infer E)[]
+  ? E
+  : never;
+
+/**
+ * Shape of the state-level `entry` field — either a single action or an array of actions,
+ * extracted from the XState-inferred state config.
+ */
+type RunbookEntryActions = NonNullable<RunbookStateConfig['entry']>;
+
+/**
  * Guard type accepted by XState transitions in this machine: either an inline predicate
  * function or a named guard string key registered in the `runbookSetup` guards block.
  *
