@@ -67,7 +67,7 @@ describe('fail command', () => {
       // Retrieve from all states
       const states = await getAllStates(workspace);
       const state = states.find((s) => s.runbook === 'runbooks/simple.runbook.md');
-      expect(state?.variables.stopped).toBe(true);
+      expect(state?.lifecycle).toBe('stopped');
     });
   });
 
@@ -252,7 +252,7 @@ Final step.
       expect(result.exitCode).toBe(1);
       const states = await getAllStates(workspace);
       const state = states.find((s) => s.runbook === 'runbooks/substep-fail-any.md');
-      expect(state?.variables.stopped).toBe(true);
+      expect(state?.lifecycle).toBe('stopped');
     });
 
     it('consecutive fail commands maintain state consistency', async () => {

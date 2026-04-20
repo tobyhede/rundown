@@ -1,10 +1,11 @@
 import { describe, it, expect } from '@jest/globals';
 import { getStatus } from '../../src/helpers/status.js';
+import type { Lifecycle } from '@rundown-org/core';
 
 describe('getStatus', () => {
-  const makeState = (id: string, opts: { completed?: boolean; stopped?: boolean } = {}) => ({
+  const makeState = (id: string, lifecycle?: Lifecycle) => ({
     id,
-    variables: { completed: opts.completed, stopped: opts.stopped },
+    lifecycle,
   });
 
   it('returns "active" when state matches active runbook', () => {
@@ -18,12 +19,12 @@ describe('getStatus', () => {
   });
 
   it('returns "complete" when state is completed', () => {
-    const state = makeState('run-3', { completed: true });
+    const state = makeState('run-3', 'completed');
     expect(getStatus(state, null, null)).toBe('complete');
   });
 
   it('returns "stopped" when state is stopped', () => {
-    const state = makeState('run-4', { stopped: true });
+    const state = makeState('run-4', 'stopped');
     expect(getStatus(state, null, null)).toBe('stopped');
   });
 
@@ -38,17 +39,17 @@ describe('getStatus', () => {
   });
 
   it('prioritizes stashed over completed', () => {
-    const state = makeState('run-7', { completed: true });
+    const state = makeState('run-7', 'completed');
     expect(getStatus(state, null, 'run-7')).toBe('stashed');
   });
 
   it('prioritizes stashed over stopped', () => {
-    const state = makeState('run-X', { stopped: true });
+    const state = makeState('run-X', 'stopped');
     expect(getStatus(state, null, 'run-X')).toBe('stashed');
   });
 
-  it('prioritizes completed over stopped', () => {
-    const state = makeState('run-8', { completed: true, stopped: true });
+  it('prioritizes completed over stopped (lifecycle field is canonical)', () => {
+    const state = makeState('run-8', 'completed');
     expect(getStatus(state, null, null)).toBe('complete');
   });
 });

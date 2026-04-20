@@ -875,7 +875,7 @@ export async function claimAndLaunch(
     }
 
     // Reject claims against stopped parents — the run has been aborted
-    if (freshParent.variables.stopped) {
+    if (freshParent.lifecycle === 'stopped') {
       return {
         ok: false,
         error: 'Parent run has been stopped. Delegation cannot be claimed.',

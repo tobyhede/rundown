@@ -60,9 +60,9 @@ export function registerFailCommand(program: Command): void {
             const freshState = await ctx.manager.load(ctx.state.id);
             if (freshState && extractParentLinkage(freshState)) {
               const isTerminal =
-                freshState.variables.completed === true || freshState.variables.stopped === true;
+                freshState.lifecycle === 'completed' || freshState.lifecycle === 'stopped';
               if (isTerminal) {
-                const propResult = freshState.variables.completed ? 'pass' : 'fail';
+                const propResult = freshState.lifecycle === 'completed' ? 'pass' : 'fail';
                 const propagationResult = await handleParentCompletion(
                   freshState,
                   propResult,

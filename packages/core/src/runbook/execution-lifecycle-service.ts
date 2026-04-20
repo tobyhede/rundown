@@ -266,9 +266,9 @@ export class ExecutionLifecycleService {
   /**
    * Get the result of a child runbook execution.
    *
-   * Determines the result based on the child runbook's variables:
-   * - Returns 'fail' if stopped is true
-   * - Returns 'pass' if completed is true or runbook not found
+   * Determines the result based on the child runbook's lifecycle field:
+   * - Returns 'fail' if lifecycle is 'stopped'
+   * - Returns 'pass' if lifecycle is 'completed' or runbook not found
    * - Returns null if the runbook is still in progress
    *
    * @param childId - The child runbook state ID
@@ -278,8 +278,8 @@ export class ExecutionLifecycleService {
     const child = await this.manager.load(childId);
     if (!child) return 'pass';
 
-    if (child.variables.stopped === true) return 'fail';
-    if (child.variables.completed === true) return 'pass';
+    if (child.lifecycle === 'stopped') return 'fail';
+    if (child.lifecycle === 'completed') return 'pass';
 
     return null;
   }

@@ -72,11 +72,6 @@ describe('Delegation propagation integration', () => {
     }
   }
 
-  /** Helper: extract variables from parsed state. */
-  function getVariables(state: Record<string, unknown>): Record<string, unknown> {
-    return (state.variables ?? {}) as Record<string, unknown>;
-  }
-
   describe('2-level pass propagation', () => {
     it('child pass resolves parent substep and parent advances', async () => {
       await writeParentRunbook();
@@ -113,11 +108,11 @@ describe('Delegation propagation integration', () => {
         throw new Error(`rd pass failed: ${result.stdout}\n${result.stderr}`);
       }
 
-      // After child completes, it should have variables.completed = true
+      // After child completes, it should have lifecycle = 'completed'
       const childId = childState!.id as string;
       const finalChildState = await readRunbookState(workspace, childId);
       expect(finalChildState).not.toBeNull();
-      expect(getVariables(finalChildState!).completed).toBe(true);
+      expect((finalChildState! as Record<string, unknown>).lifecycle).toBe('completed');
 
       // Parent is now at substep 1.2 — complete it to trigger aggregation
       // PASS ALL (both passed) → CONTINUE → step 2
@@ -162,7 +157,7 @@ describe('Delegation propagation integration', () => {
 
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
-      expect(getVariables(updatedParent!).stopped).toBe(true);
+      expect((updatedParent! as Record<string, unknown>).lifecycle).toBe('stopped');
     });
   });
 
@@ -198,7 +193,7 @@ describe('Delegation propagation integration', () => {
 
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
-      expect(getVariables(updatedParent!).stopped).toBe(true);
+      expect((updatedParent! as Record<string, unknown>).lifecycle).toBe('stopped');
     });
   });
 
@@ -279,7 +274,7 @@ describe('Delegation propagation integration', () => {
       // Verify parent completed
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
-      expect(getVariables(updatedParent!).completed).toBe(true);
+      expect((updatedParent! as Record<string, unknown>).lifecycle).toBe('completed');
 
       // Grandparent is at substep 1.2 — complete it
       // PASS ALL (both passed) → COMPLETE
@@ -288,8 +283,7 @@ describe('Delegation propagation integration', () => {
       // Verify grandparent completed
       const updatedGrandparent = await readRunbookState(workspace, grandparentRunId);
       expect(updatedGrandparent).not.toBeNull();
-      const gpCompleted = getVariables(updatedGrandparent!).completed === true;
-      expect(gpCompleted).toBe(true);
+      expect((updatedGrandparent! as Record<string, unknown>).lifecycle).toBe('completed');
     });
   });
 
@@ -348,9 +342,9 @@ describe('Delegation propagation integration', () => {
       // Parent should have moved to step 2 or completed
       // (PASS ALL: CONTINUE means it should advance to step 2)
       const step = finalParent!.step as string;
-      const completed = getVariables(finalParent!).completed;
+      const lifecycle = (finalParent! as Record<string, unknown>).lifecycle;
       // Either on step 2 or completed
-      expect(step === '2' || completed === true).toBe(true);
+      expect(step === '2' || lifecycle === 'completed').toBe(true);
     });
   });
 
@@ -426,7 +420,7 @@ describe('Delegation propagation integration', () => {
       // After all 3 resolve, parent should complete (PASS ALL: COMPLETE)
       const finalParent = await readRunbookState(workspace, parentRunId);
       expect(finalParent).not.toBeNull();
-      expect(getVariables(finalParent!).completed).toBe(true);
+      expect((finalParent! as Record<string, unknown>).lifecycle).toBe('completed');
     });
   });
 
@@ -531,7 +525,7 @@ describe('Delegation propagation integration', () => {
       // Runbook completed and was deactivated — read state by ID
       const finalState = await readRunbookState(workspace, childRunId);
       expect(finalState).not.toBeNull();
-      expect(getVariables(finalState!).completed).toBe(true);
+      expect((finalState! as Record<string, unknown>).lifecycle).toBe('completed');
     });
 
     it('handles fail command without delegation linkage', async () => {
@@ -552,7 +546,7 @@ describe('Delegation propagation integration', () => {
       // Runbook stopped and was deactivated — read state by ID
       const finalState = await readRunbookState(workspace, childRunId);
       expect(finalState).not.toBeNull();
-      expect(getVariables(finalState!).stopped).toBe(true);
+      expect((finalState! as Record<string, unknown>).lifecycle).toBe('stopped');
     });
 
     it('handles stop command without delegation linkage', async () => {

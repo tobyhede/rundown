@@ -51,7 +51,7 @@ export function registerPruneCommand(program: Command): void {
           const toDelete = states.filter((state) => {
             const isActive = activeState?.id === state.id;
             const isStashed = state.id === stashedId;
-            const isCompleted = state.variables.completed === true;
+            const isCompleted = state.lifecycle === 'completed';
             const isInactive = !isActive && !isStashed && !isCompleted;
 
             if (pruneCompleted && isCompleted) return true;

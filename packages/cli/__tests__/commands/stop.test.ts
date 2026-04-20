@@ -47,7 +47,7 @@ describe('stop command', () => {
       expect(stateAfter).not.toBeNull();
       expect(stateAfter!.lastAction).toEqual({ type: 'STOP' });
       expect(stateAfter!.lastResult).toBe('fail');
-      expect(stateAfter!.variables.stopped).toBe(true);
+      expect(stateAfter!.lifecycle).toBe('stopped');
     });
   });
 

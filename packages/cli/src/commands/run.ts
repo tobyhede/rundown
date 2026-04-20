@@ -215,9 +215,9 @@ export function registerRunCommand(program: Command): void {
               const childState = await manager.load(result.stateId);
               if (childState) {
                 const isTerminal =
-                  childState.variables.completed === true || childState.variables.stopped === true;
+                  childState.lifecycle === 'completed' || childState.lifecycle === 'stopped';
                 if (isTerminal) {
-                  const propResult: 'pass' | 'fail' = childState.variables.completed
+                  const propResult: 'pass' | 'fail' = childState.lifecycle === 'completed'
                     ? 'pass'
                     : 'fail';
                   const propOutcome = await handleParentCompletion(

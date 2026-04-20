@@ -61,7 +61,7 @@ describe('pass command', () => {
 
       const states = await getAllStates(workspace);
       const state = states.find((s) => s.runbook === 'runbooks/simple.runbook.md');
-      expect(state?.variables.completed).toBe(true);
+      expect(state?.lifecycle).toBe('completed');
     });
   });
 
@@ -147,7 +147,7 @@ This step stops on pass.
 
       const states = await getAllStates(workspace);
       const state = states.find((s) => s.runbook === 'runbooks/stop-on-pass.md');
-      expect(state?.variables.stopped).toBe(true);
+      expect(state?.lifecycle).toBe('stopped');
     });
   });
 
