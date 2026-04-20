@@ -270,6 +270,14 @@ export type RunbookEvent =
 type RunbookTransitionObject = Extract<RunbookEventTransition, { target?: unknown }>;
 
 /**
+ * Union of all action types accepted by XState transitions.
+ *
+ * Extracted from `RunbookTransitionObject['actions']` (excluding undefined) to avoid
+ * verbose inline type unions throughout the compiler.
+ */
+type RunbookAction = NonNullable<RunbookTransitionObject['actions']>;
+
+/**
  * Return shape for transition builder functions.
  *
  * Either a single XState-inferred transition entry or an array of them. Extracted
@@ -1603,7 +1611,7 @@ function decorateParentTransition(
   stepName: string,
   outputs: readonly OutputDeclaration[] | undefined,
 ): RunbookTransitionObject {
-  const extra: (ReturnType<typeof assign> | CompilerActionRef)[] = [];
+  const extra: RunbookAction[] = [];
   // TransitionTarget is `string | readonly string[]`, but this compiler only ever sets single-string targets.
   const target = transition.target as string | undefined;
   const exitsParent =
@@ -2029,8 +2037,8 @@ function buildGotoTransition(
  * @returns Array form (empty if undefined)
  */
 function toActionArray(
-  actions: (ReturnType<typeof assign> | CompilerActionRef) | (ReturnType<typeof assign> | CompilerActionRef)[] | undefined,
-): (ReturnType<typeof assign> | CompilerActionRef)[] {
+  actions: RunbookAction | RunbookAction[] | undefined,
+): RunbookAction[] {
   if (!actions) return [];
   return Array.isArray(actions) ? actions : [actions];
 }
@@ -2048,15 +2056,12 @@ function toActionArray(
  */
 function prependActions(
   transition: RunbookTransitionObject,
-  extra: readonly (ReturnType<typeof assign> | CompilerActionRef)[],
+  extra: readonly RunbookAction[],
 ): RunbookTransitionObject {
   if (extra.length === 0) return transition;
   return {
     ...transition,
-    actions: [
-      ...extra,
-      ...toActionArray(transition.actions as (ReturnType<typeof assign> | CompilerActionRef) | (ReturnType<typeof assign> | CompilerActionRef)[] | undefined),
-    ],
+    actions: [...extra, ...toActionArray(transition.actions)],
   } as RunbookTransitionObject;
 }
 
@@ -2126,7 +2131,7 @@ function buildActionTransition(
       ? (currentStep.substeps.find((substep) => substep.id === substepId)?.outputs ?? [])
       : (currentStep?.outputs ?? []);
 
-  const extra: (ReturnType<typeof assign> | CompilerActionRef)[] = [];
+  const extra: RunbookAction[] = [];
   if (unitOutputs.length > 0) {
     extra.push(actionRef('storeStepOutputs', { outputs: unitOutputs, stepName, substepId }));
   }
