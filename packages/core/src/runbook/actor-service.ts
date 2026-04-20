@@ -179,10 +179,7 @@ export class RunbookActorService {
     // If the runbook is in a final state, don't try to parse a step number.
     // Just update the snapshot and variables, preserving the last step number.
     if (stateValue === 'COMPLETE' || stateValue === 'STOPPED') {
-      const variables = (snapshot.context?.variables ?? {}) as Record<
-        string,
-        boolean | number | string
-      >;
+      const variables = snapshot.context?.variables ?? {};
       const rawFinalVars = (snapshot.context?.finalVars ?? {}) as Record<string, string>;
       // Empty finalVars on terminal: explicitly write `undefined` so the persisted
       // state has no `finalVars` field. This matches the schema's optional contract
@@ -216,7 +213,7 @@ export class RunbookActorService {
     const match = primaryMatch ?? legacyMatch;
     const stepName = match ? match[1] : steps[0].name;
 
-    let substep = snapshot.context?.substep as string | undefined;
+    let substep = snapshot.context?.substep;
     if (!substep && match?.[2]) {
       substep = match[2];
     }
@@ -224,16 +221,13 @@ export class RunbookActorService {
     // Find step by name (unified lookup)
     const step = steps.find((s) => s.name === stepName) ?? steps[0];
 
-    const retryCount = (snapshot.context?.retryCount as number | undefined) ?? 0;
-    const variables = (snapshot.context?.variables ?? {}) as Record<
-      string,
-      boolean | number | string
-    >;
+    const retryCount = snapshot.context?.retryCount ?? 0;
+    const variables = snapshot.context?.variables ?? {};
 
     // FOR loop context
     const forStack = snapshot.context?.forStack as ForContext[] | undefined;
-    const iterationResults = snapshot.context?.iterationResults as ('pass' | 'fail')[] | undefined;
-    const lastAction = snapshot.context?.lastAction as RunbookState['lastAction'];
+    const iterationResults = snapshot.context?.iterationResults;
+    const lastAction = snapshot.context?.lastAction;
 
     // Filter implicit ForContext entries — don't persist synthetic loop state
     const realForStack = forStack?.filter((fc) => !fc.implicit);
