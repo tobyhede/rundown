@@ -1605,6 +1605,7 @@ function decorateParentTransition(
   outputs: readonly OutputDeclaration[] | undefined,
 ): RunbookTransitionObject {
   const extra: CompilerAction[] = [];
+  // TransitionTarget is `string | readonly string[]`, but this compiler only ever sets single-string targets.
   const target = transition.target as string | undefined;
   const exitsParent =
     target !== undefined &&
@@ -2132,6 +2133,7 @@ function buildActionTransition(
   // they fire regardless of which exit path the substep takes.
   if (substepId && currentStep && resolvedStepHasSubsteps(currentStep)) {
     const parentOutputs = currentStep.outputs;
+    // TransitionTarget is `string | readonly string[]`, but this compiler only ever sets single-string targets.
     const target = transition.target as string | undefined;
     const exitsParent =
       target !== undefined &&
