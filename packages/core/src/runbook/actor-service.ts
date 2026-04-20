@@ -15,7 +15,7 @@
 import { createActor, type AnyActorRef } from 'xstate';
 import type { ResolvedStep, RunbookState, ForContext } from './types.js';
 import type { RunbookStateManager } from './state.js';
-import { compileRunbookToMachine, type RunbookEvent } from './compiler.js';
+import { compileRunbookToMachine, type RunbookEvent, type RunbookContext } from './compiler.js';
 import { flattenTemplateVars } from './output-evaluator.js';
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { logger } from '../logger.js';
@@ -48,6 +48,16 @@ export interface ActorSyncResult {
  * after transitions, and convenience methods for the two dominant usage patterns:
  * initialisation (create + sync with no event) and transition (create + send + sync).
  */
+/**
+ * Typed shape of the persisted snapshot returned by `actor.getPersistedSnapshot()`
+ * within `updateFromActor`. Only the fields accessed in that method are declared;
+ * the full XState snapshot envelope is otherwise opaque.
+ */
+type PersistedRunbookSnapshot = {
+  value: unknown;
+  context?: Partial<RunbookContext>;
+};
+
 export class RunbookActorService {
   /**
    * Create a new RunbookActorService.
@@ -156,9 +166,7 @@ export class RunbookActorService {
     actor: AnyActorRef,
     steps: ResolvedStep[],
   ): Promise<{ state: RunbookState; snapshot: unknown }> {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-    const snapshot = actor.getPersistedSnapshot() as any;
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+    const snapshot = actor.getPersistedSnapshot() as unknown as PersistedRunbookSnapshot;
     const rawValue: unknown = snapshot.value;
 
     if (typeof rawValue !== 'string') {
@@ -171,12 +179,10 @@ export class RunbookActorService {
     // If the runbook is in a final state, don't try to parse a step number.
     // Just update the snapshot and variables, preserving the last step number.
     if (stateValue === 'COMPLETE' || stateValue === 'STOPPED') {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
       const variables = (snapshot.context?.variables ?? {}) as Record<
         string,
         boolean | number | string
       >;
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
       const rawFinalVars = (snapshot.context?.finalVars ?? {}) as Record<string, string>;
       // Empty finalVars on terminal: explicitly write `undefined` so the persisted
       // state has no `finalVars` field. This matches the schema's optional contract
@@ -210,7 +216,6 @@ export class RunbookActorService {
     const match = primaryMatch ?? legacyMatch;
     const stepName = match ? match[1] : steps[0].name;
 
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     let substep = snapshot.context?.substep as string | undefined;
     if (!substep && match?.[2]) {
       substep = match[2];
@@ -219,20 +224,15 @@ export class RunbookActorService {
     // Find step by name (unified lookup)
     const step = steps.find((s) => s.name === stepName) ?? steps[0];
 
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     const retryCount = (snapshot.context?.retryCount as number | undefined) ?? 0;
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     const variables = (snapshot.context?.variables ?? {}) as Record<
       string,
       boolean | number | string
     >;
 
     // FOR loop context
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     const forStack = snapshot.context?.forStack as ForContext[] | undefined;
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     const iterationResults = snapshot.context?.iterationResults as ('pass' | 'fail')[] | undefined;
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     const lastAction = snapshot.context?.lastAction as RunbookState['lastAction'];
 
     // Filter implicit ForContext entries — don't persist synthetic loop state
