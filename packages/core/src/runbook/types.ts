@@ -620,6 +620,14 @@ export function assertResolvedVariableForContext(
 }
 
 /**
+ * Runbook lifecycle state. `'running'` covers the entire active lifetime (including
+ * paused/stashed). Reaching a final state transitions to `'completed'` (COMPLETE)
+ * or `'stopped'` (STOPPED). Replaces the previous lifecycle booleans inside
+ * `state.variables`.
+ */
+export type Lifecycle = 'running' | 'completed' | 'stopped';
+
+/**
  * Runbook execution state (persisted)
  */
 export interface RunbookState {

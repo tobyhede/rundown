@@ -7,6 +7,7 @@ import type {
   ForContext,
   ResolvedStep,
   ResolvedStepHavingSubsteps,
+  Lifecycle,
 } from './types.js';
 import { isResolvedVariableForContext } from './types.js';
 import type { StepId } from './step-id.js';
@@ -236,6 +237,8 @@ export interface RunbookContext {
   readonly frontmatterOutputs: readonly OutputDeclaration[];
   /** Final OUTPUTS snapshot persisted at terminal entry. Exposed via machine output. */
   readonly finalVars: RunbookMachineOutput['finalVars'];
+  /** Machine-owned lifecycle flag. 'running' during execution; 'completed' or 'stopped' on final entry. */
+  lifecycle: Lifecycle;
 }
 
 /**
@@ -2566,6 +2569,7 @@ export function compileRunbookToMachine(
       templateVars: options?.templateVars ?? {},
       frontmatterOutputs: options?.frontmatterOutputs ?? [],
       finalVars: {},
+      lifecycle: 'running',
     },
     states: {
       ...states,
@@ -2575,6 +2579,7 @@ export function compileRunbookToMachine(
           actionRef('storeFrontmatterOutputs', {}),
           runbookSetup.assign({
             variables: ({ context }) => ({ ...context.variables, completed: true }),
+            lifecycle: () => 'completed' as const,
           }),
         ],
         output: ({ context }) => ({ finalVars: context.finalVars }),
@@ -2585,6 +2590,7 @@ export function compileRunbookToMachine(
           actionRef('storeFrontmatterOutputs', {}),
           runbookSetup.assign({
             variables: ({ context }) => ({ ...context.variables, stopped: true }),
+            lifecycle: () => 'stopped' as const,
           }),
         ],
         output: ({ context }) => ({ finalVars: context.finalVars }),
