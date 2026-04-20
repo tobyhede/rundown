@@ -140,11 +140,6 @@ type RunbookAlwaysEntry = Extract<
 >[number];
 
 /**
- * Shape of the state-level `entry` field — either a single action or an array of actions,
- * extracted from the XState-inferred state config.
- */
-type RunbookEntryActions = NonNullable<RunbookStateConfig['entry']>;
-
 /**
  * Safety limit for file-backed data sources with open iteration windows.
  *
@@ -881,7 +876,7 @@ function buildParentExitAssign(
 function buildParentStateConfig(
   config: ParentStateConfig,
   steps: ResolvedStep[],
-): { always: RunbookAlwaysEntry[]; entry?: RunbookEntryActions } {
+): RunbookStateConfig {
   const parentStep = config.parentStep;
   const stepName = config.stepName;
 
@@ -1554,7 +1549,7 @@ function buildParentStateConfig(
           parentStep.outputs,
         ) as RunbookAlwaysEntry,
     ),
-  };
+  } satisfies RunbookStateConfig;
 }
 
 /**
@@ -1583,8 +1578,7 @@ function decorateParentTransition(
   outputs: readonly OutputDeclaration[] | undefined,
 ): RunbookTransitionObject {
   const extra: RunbookAction[] = [];
-  // TransitionTarget is `string | readonly string[]`, but this compiler only ever sets single-string targets.
-  const target = transition.target as string | undefined;
+  const target = typeof transition.target === 'string' ? transition.target : undefined;
   const exitsParent =
     target !== undefined &&
     target !== formatStateId(stepName) &&
@@ -1629,7 +1623,7 @@ function buildRetryStateConfig(
   substepId: string | undefined,
   steps: ResolvedStep[],
   resultKind: 'pass' | 'fail',
-): { always: RunbookAlwaysEntry[] } {
+): RunbookStateConfig {
   const exhaustedTransition = buildActionTransition(
     transition.action,
     stepName,
@@ -1657,7 +1651,7 @@ function buildRetryStateConfig(
       },
       ...exhaustedEntries,
     ],
-  };
+  } satisfies RunbookStateConfig;
 }
 
 /**
@@ -2111,8 +2105,7 @@ function buildActionTransition(
   // they fire regardless of which exit path the substep takes.
   if (substepId && currentStep && resolvedStepHasSubsteps(currentStep)) {
     const parentOutputs = currentStep.outputs;
-    // TransitionTarget is `string | readonly string[]`, but this compiler only ever sets single-string targets.
-    const target = transition.target as string | undefined;
+    const target = typeof transition.target === 'string' ? transition.target : undefined;
     const exitsParent =
       target !== undefined &&
       target !== formatStateId(stepName) &&
@@ -2143,8 +2136,7 @@ function extractTargets(config: RunbookStateConfig): string[] {
       return;
     }
     if (entry && typeof entry === 'object' && 'target' in entry) {
-      // TransitionTarget is `string | readonly string[]`, but this compiler only ever sets single-string targets.
-      const t = entry.target as string | undefined;
+      const { target: t } = entry;
       if (typeof t === 'string') targets.push(t);
     }
   };
@@ -2305,7 +2297,7 @@ export function compileRunbookToMachine(
       checkedStateInsert(
         states,
         config.id,
-        runbookSetup.createStateConfig(buildParentStateConfig(config, steps) as RunbookStateConfig),
+        runbookSetup.createStateConfig(buildParentStateConfig(config, steps)),
       );
       return;
     }
@@ -2489,8 +2481,8 @@ export function compileRunbookToMachine(
             target: config.id,
           },
           GOTO: buildGotoTransitionsForState,
-        },
-      } as RunbookStateConfig),
+        } as RunbookStateConfig['on'],
+      } satisfies RunbookStateConfig),
     );
 
     // Register retry states for transitions with retry > 0
@@ -2506,7 +2498,7 @@ export function compileRunbookToMachine(
             config.substepId,
             steps,
             'pass',
-          ) as RunbookStateConfig,
+          ),
         ),
       );
     }
@@ -2522,7 +2514,7 @@ export function compileRunbookToMachine(
             config.substepId,
             steps,
             'fail',
-          ) as RunbookStateConfig,
+          ),
         ),
       );
     }

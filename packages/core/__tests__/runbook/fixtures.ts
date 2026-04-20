@@ -3,10 +3,10 @@ import type { ResolvedStep } from '../../src/runbook/types.js';
 
 /**
  * Parse a markdown runbook string and return its resolved steps.
- * Throws if the runbook contains unresolved FOR bounds or runbook references.
  *
  * @param markdown - Runbook markdown content
  * @returns Array of resolved steps suitable for `compileRunbookToMachine`
+ * @throws {Error} If the parsed runbook contains unresolved FOR bounds or runbook references
  */
 export function createRunbook(markdown: string): ResolvedStep[] {
   const { runbook } = parseRunbookDocument(markdown);
