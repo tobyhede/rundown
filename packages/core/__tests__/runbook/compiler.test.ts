@@ -8958,6 +8958,10 @@ echo "processing"
 - FAIL STOP
 - OUTPUTS
   - LoopResult "loop-value"
+  - StepCursor "{{ Step }}"
+  - SubstepCursor "{{ context.current.substep }}"
+  - IterCursor "{{ Index }}"
+  - LoopCursor "{{ i }}"
 
 ### 1.1 Inside
 - PASS CONTINUE
@@ -8970,7 +8974,13 @@ echo "processing"
       actor.send({ type: 'FAIL' });
 
       const snapshot = actor.getSnapshot();
-      expect(snapshot.context.variables).toMatchObject({ LoopResult: 'loop-value' });
+      expect(snapshot.context.variables).toMatchObject({
+        LoopResult: 'loop-value',
+        StepCursor: '1.1',
+        SubstepCursor: '1',
+        IterCursor: '1',
+        LoopCursor: '1',
+      });
     });
 
     it('[P2] resolves parent OUTPUTS against the completing last-substep cursor on parent always exit', () => {
@@ -9179,9 +9189,7 @@ echo "processing"
 - FAIL STOP
 `);
 
-      const machine = compileRunbookToMachine(steps, {
-        frontmatterOutputs: [{ name: 'ParentVar' }],
-      });
+      const machine = compileRunbookToMachine(steps);
 
       const substepPassTransition = getState(machine, 'step::1::1').on.PASS;
       expect(getActionTypes(substepPassTransition.actions)).toContain('storeStepOutputs');
@@ -9195,22 +9203,26 @@ echo "processing"
 - FAIL STOP
 - OUTPUTS
   - ParentVar "parent-value"
+  - StepCursor "{{ Step }}"
+  - SubstepCursor "{{ context.current.substep }}"
 
 ### 1.1 Only
 - PASS COMPLETE
 - FAIL STOP
 `);
 
-      const machine = compileRunbookToMachine(steps, {
-        frontmatterOutputs: [{ name: 'ParentVar' }],
-      });
+      const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
       actor.send({ type: 'PASS' });
 
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('COMPLETE');
-      expect(snapshot.context.variables).toMatchObject({ ParentVar: 'parent-value' });
+      expect(snapshot.context.variables).toMatchObject({
+        ParentVar: 'parent-value',
+        StepCursor: '1.1',
+        SubstepCursor: '1',
+      });
     });
 
     it('stores parent OUTPUTS in context.variables when substep fires STOP directly', () => {
@@ -9221,22 +9233,26 @@ echo "processing"
 - FAIL STOP
 - OUTPUTS
   - ParentVar "parent-value"
+  - StepCursor "{{ Step }}"
+  - SubstepCursor "{{ context.current.substep }}"
 
 ### 1.1 Only
 - PASS CONTINUE
 - FAIL STOP
 `);
 
-      const machine = compileRunbookToMachine(steps, {
-        frontmatterOutputs: [{ name: 'ParentVar' }],
-      });
+      const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
       actor.send({ type: 'FAIL' });
 
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('STOPPED');
-      expect(snapshot.context.variables).toMatchObject({ ParentVar: 'parent-value' });
+      expect(snapshot.context.variables).toMatchObject({
+        ParentVar: 'parent-value',
+        StepCursor: '1.1',
+        SubstepCursor: '1',
+      });
     });
 
     it('stores parent OUTPUTS when non-last substep fires COMPLETE directly (multi-substep early exit)', () => {
@@ -9248,6 +9264,8 @@ echo "processing"
 - FAIL STOP
 - OUTPUTS
   - ParentVar "parent-value"
+  - StepCursor "{{ Step }}"
+  - SubstepCursor "{{ context.current.substep }}"
 
 ### 1.1 First
 - PASS COMPLETE
@@ -9262,16 +9280,18 @@ echo "processing"
 - FAIL CONTINUE
 `);
 
-      const machine = compileRunbookToMachine(steps, {
-        frontmatterOutputs: [{ name: 'ParentVar' }],
-      });
+      const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
       actor.send({ type: 'PASS' });
 
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('COMPLETE');
-      expect(snapshot.context.variables).toMatchObject({ ParentVar: 'parent-value' });
+      expect(snapshot.context.variables).toMatchObject({
+        ParentVar: 'parent-value',
+        StepCursor: '1.1',
+        SubstepCursor: '1',
+      });
     });
 
     it('stores parent OUTPUTS when non-last substep fires STOP directly (multi-substep early exit)', () => {
@@ -9280,6 +9300,8 @@ echo "processing"
 - FAIL STOP
 - OUTPUTS
   - ParentVar "parent-value"
+  - StepCursor "{{ Step }}"
+  - SubstepCursor "{{ context.current.substep }}"
 
 ### 1.1 First
 - PASS CONTINUE
@@ -9290,16 +9312,18 @@ echo "processing"
 - FAIL CONTINUE
 `);
 
-      const machine = compileRunbookToMachine(steps, {
-        frontmatterOutputs: [{ name: 'ParentVar' }],
-      });
+      const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
       actor.send({ type: 'FAIL' });
 
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('STOPPED');
-      expect(snapshot.context.variables).toMatchObject({ ParentVar: 'parent-value' });
+      expect(snapshot.context.variables).toMatchObject({
+        ParentVar: 'parent-value',
+        StepCursor: '1.1',
+        SubstepCursor: '1',
+      });
     });
 
     it('stores parent OUTPUTS when substep fires GOTO to external step', () => {
@@ -9310,6 +9334,8 @@ echo "processing"
 - FAIL STOP
 - OUTPUTS
   - ParentVar "parent-value"
+  - StepCursor "{{ Step }}"
+  - SubstepCursor "{{ context.current.substep }}"
 
 ### 1.1 Only
 - PASS GOTO 2
@@ -9320,9 +9346,7 @@ echo "processing"
 - FAIL STOP
 `);
 
-      const machine = compileRunbookToMachine(steps, {
-        frontmatterOutputs: [{ name: 'ParentVar' }],
-      });
+      const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
       actor.send({ type: 'PASS' });
@@ -9330,7 +9354,11 @@ echo "processing"
       // After GOTO 2, machine is at step::2 — parent outputs already fired during transition.
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('step::2');
-      expect(snapshot.context.variables).toMatchObject({ ParentVar: 'parent-value' });
+      expect(snapshot.context.variables).toMatchObject({
+        ParentVar: 'parent-value',
+        StepCursor: '1.1',
+        SubstepCursor: '1',
+      });
     });
 
     it('stores parent OUTPUTS when FOR loop substep fires COMPLETE directly', () => {
@@ -9342,22 +9370,30 @@ echo "processing"
 - FAIL STOP
 - OUTPUTS
   - LoopVar "for-parent-value"
+  - StepCursor "{{ Step }}"
+  - SubstepCursor "{{ context.current.substep }}"
+  - IterCursor "{{ Index }}"
+  - LoopCursor "{{ i }}"
 
 ### 1.1 Inside
 - PASS COMPLETE
 - FAIL STOP
 `);
 
-      const machine = compileRunbookToMachine(steps, {
-        frontmatterOutputs: [{ name: 'LoopVar' }],
-      });
+      const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
       actor.send({ type: 'PASS' });
 
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('COMPLETE');
-      expect(snapshot.context.variables).toMatchObject({ LoopVar: 'for-parent-value' });
+      expect(snapshot.context.variables).toMatchObject({
+        LoopVar: 'for-parent-value',
+        StepCursor: '1.1',
+        SubstepCursor: '1',
+        IterCursor: '1',
+        LoopCursor: '1',
+      });
     });
 
     it('stores parent OUTPUTS when FOR loop substep fires STOP directly', () => {
@@ -9367,22 +9403,30 @@ echo "processing"
 - FAIL STOP
 - OUTPUTS
   - LoopVar "for-parent-value"
+  - StepCursor "{{ Step }}"
+  - SubstepCursor "{{ context.current.substep }}"
+  - IterCursor "{{ Index }}"
+  - LoopCursor "{{ i }}"
 
 ### 1.1 Inside
 - PASS CONTINUE
 - FAIL STOP
 `);
 
-      const machine = compileRunbookToMachine(steps, {
-        frontmatterOutputs: [{ name: 'LoopVar' }],
-      });
+      const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
       actor.send({ type: 'FAIL' });
 
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('STOPPED');
-      expect(snapshot.context.variables).toMatchObject({ LoopVar: 'for-parent-value' });
+      expect(snapshot.context.variables).toMatchObject({
+        LoopVar: 'for-parent-value',
+        StepCursor: '1.1',
+        SubstepCursor: '1',
+        IterCursor: '1',
+        LoopCursor: '1',
+      });
     });
 
     it('stores both substep and parent OUTPUTS when substep fires COMPLETE and both declare outputs', () => {
@@ -9394,6 +9438,8 @@ echo "processing"
 - FAIL STOP
 - OUTPUTS
   - ParentVar "parent-value"
+  - StepCursor "{{ Step }}"
+  - SubstepCursor "{{ context.current.substep }}"
 
 ### 1.1 Only
 - PASS COMPLETE
@@ -9402,9 +9448,7 @@ echo "processing"
   - SubstepVar "substep-value"
 `);
 
-      const machine = compileRunbookToMachine(steps, {
-        frontmatterOutputs: [{ name: 'ParentVar' }],
-      });
+      const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
       actor.send({ type: 'PASS' });
@@ -9414,6 +9458,8 @@ echo "processing"
       expect(snapshot.context.variables).toMatchObject({
         SubstepVar: 'substep-value',
         ParentVar: 'parent-value',
+        StepCursor: '1.1',
+        SubstepCursor: '1',
       });
     });
 
@@ -9426,6 +9472,8 @@ echo "processing"
 - FAIL STOP
 - OUTPUTS
   - Result "parent-wins"
+  - StepCursor "{{ Step }}"
+  - SubstepCursor "{{ context.current.substep }}"
 
 ### 1.1 Only
 - PASS COMPLETE
@@ -9434,16 +9482,18 @@ echo "processing"
   - Result "substep-first"
 `);
 
-      const machine = compileRunbookToMachine(steps, {
-        frontmatterOutputs: [{ name: 'Result' }],
-      });
+      const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
       actor.start();
       actor.send({ type: 'PASS' });
 
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('COMPLETE');
-      expect(snapshot.context.variables).toMatchObject({ Result: 'parent-wins' });
+      expect(snapshot.context.variables).toMatchObject({
+        Result: 'parent-wins',
+        StepCursor: '1.1',
+        SubstepCursor: '1',
+      });
     });
 
     it('does not inject parent OUTPUTS on sibling-GOTO substep transition (exitsParent=false)', () => {
@@ -9455,6 +9505,8 @@ echo "processing"
 - FAIL STOP
 - OUTPUTS
   - ParentVar "parent-value"
+  - StepCursor "{{ Step }}"
+  - SubstepCursor "{{ context.current.substep }}"
 
 ### 1.1 First
 - PASS GOTO 1.2
@@ -9465,9 +9517,7 @@ echo "processing"
 - FAIL STOP
 `);
 
-      const machine = compileRunbookToMachine(steps, {
-        frontmatterOutputs: [{ name: 'ParentVar' }],
-      });
+      const machine = compileRunbookToMachine(steps);
 
       // Structural: sibling-GOTO transition must not carry parent storeStepOutputs.
       const substepGotoTransition = getState(machine, 'step::1::1').on.PASS;
@@ -9481,7 +9531,11 @@ echo "processing"
 
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('COMPLETE');
-      expect(snapshot.context.variables).toMatchObject({ ParentVar: 'parent-value' });
+      expect(snapshot.context.variables).toMatchObject({
+        ParentVar: 'parent-value',
+        StepCursor: '1.2',
+        SubstepCursor: '2',
+      });
     });
   });
 

@@ -1582,7 +1582,14 @@ function decorateParentTransition(
     !target.startsWith(`${formatStateId(stepName)}::`);
 
   if (exitsParent && outputs && outputs.length > 0) {
-    extra.push(actionRef('storeStepOutputs', { outputs, stepName, useCompletedSubstep: true, useCompletedForContext: true }));
+    extra.push(
+      actionRef('storeStepOutputs', {
+        outputs,
+        stepName,
+        useCompletedSubstep: true,
+        useCompletedForContext: true,
+      }),
+    );
   }
 
   return prependActions(transition, extra);
