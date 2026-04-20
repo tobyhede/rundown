@@ -1827,6 +1827,8 @@ function buildContinueTransition(
           context.substepCompletedCount + 1,
         lastAction: { type: 'CONTINUE' as const },
         lastMessage: undefined,
+        // Parent OUTPUTS only read this after a parent-exit transition. A later
+        // completing substep must overwrite this sibling-routing value first.
         completedSubstep: substepId,
         substep: extractSubstepFromStateId(target),
       }),
@@ -1875,6 +1877,9 @@ function buildGotoTransition(
     throw new Error(`Compiler error: GOTO target step "${targetStep}" does not exist`);
   }
 
+  // Do not set completedSubstep here: GOTO is routing, not completion.
+  // External GOTO parent OUTPUTS receive the current substep explicitly; sibling
+  // GOTO waits for the eventual completing substep to record completedSubstep.
   // Handle GOTO to step with substeps (explicit FOR or implicit 1..1)
   if (resolvedStepHasSubsteps(targetStepObj)) {
     const forClause = targetStepObj.kind === 'for' ? targetStepObj.forClause : { start: 1, end: 1 };

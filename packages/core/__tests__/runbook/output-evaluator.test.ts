@@ -81,6 +81,14 @@ describe('evaluateOutputExpression', () => {
     expect(() => evaluateOutputExpression('"{{ Missing }}"', {})).toThrow(/unresolved variables/);
   });
 
+  it('throws when bare template reference is unresolvable', () => {
+    expect(() => evaluateOutputExpression('{{ Missing }}', {})).toThrow(/unresolved variables/);
+  });
+
+  it('expands template references inside mixed strings', () => {
+    expect(evaluateOutputExpression('at {{ Step }}', { Step: '1.2' })).toBe('at 1.2');
+  });
+
   it('returns empty string for empty quoted literal', () => {
     expect(evaluateOutputExpression('""', {})).toBe('');
   });
