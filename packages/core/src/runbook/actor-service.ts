@@ -180,7 +180,7 @@ export class RunbookActorService {
     // Just update the snapshot and variables, preserving the last step number.
     if (stateValue === 'COMPLETE' || stateValue === 'STOPPED') {
       const variables = snapshot.context?.variables ?? {};
-      const rawFinalVars = (snapshot.context?.finalVars ?? {}) as Readonly<Record<string, string>>;
+      const rawFinalVars = snapshot.context?.finalVars ?? {};
       // Empty finalVars on terminal: explicitly write `undefined` so the persisted
       // state has no `finalVars` field. This matches the schema's optional contract
       // and avoids storing a misleading empty object.
