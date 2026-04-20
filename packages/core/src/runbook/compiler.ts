@@ -27,10 +27,8 @@ import {
   buildExecutionFrame,
   evaluateFrontmatterOutputDeclarations,
   evaluateStepOutputDeclarations,
-  type OutputFrameState,
   type OutputVars,
 } from './output-evaluator.js';
-
 
 /**
  * Module-level XState setup with typed context, events, and named actions.

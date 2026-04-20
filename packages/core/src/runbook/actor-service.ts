@@ -179,7 +179,7 @@ export class RunbookActorService {
     // If the runbook is in a final state, don't try to parse a step number.
     // Just update the snapshot and variables, preserving the last step number.
     if (stateValue === 'COMPLETE' || stateValue === 'STOPPED') {
-      const variables = (snapshot.context?.variables ?? {}) as Record<string, string>;
+      const variables = snapshot.context?.variables ?? {};
       const rawFinalVars = (snapshot.context?.finalVars ?? {}) as Record<string, string>;
       // Empty finalVars on terminal: explicitly write `undefined` so the persisted
       // state has no `finalVars` field. This matches the schema's optional contract
@@ -225,7 +225,7 @@ export class RunbookActorService {
     const step = steps.find((s) => s.name === stepName) ?? steps[0];
 
     const retryCount = snapshot.context?.retryCount ?? 0;
-    const variables = (snapshot.context?.variables ?? {}) as Record<string, string>;
+    const variables = snapshot.context?.variables ?? {};
 
     // FOR loop context
     const forStack = snapshot.context?.forStack as ForContext[] | undefined;

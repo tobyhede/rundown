@@ -47,8 +47,6 @@ describe('runbook compiler', () => {
     });
   }
 
-
-
   describe('static step compilation', () => {
     it('generates discrete states for substeps', () => {
       const steps = inferSteps([

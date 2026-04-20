@@ -254,7 +254,7 @@ Run the child task.
       // Aggregation: FAIL ANY (1.1 failed) triggers STOP
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
-      expect((updatedParent! as Record<string, unknown>).lifecycle).toBe('stopped');
+      expect(updatedParent!.lifecycle).toBe('stopped');
     });
 
     it('stop with custom message propagates to parent', async () => {
@@ -282,7 +282,7 @@ Run the child task.
       // Parent should be stopped (FAIL ANY: STOP)
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
-      expect((updatedParent! as Record<string, unknown>).lifecycle).toBe('stopped');
+      expect(updatedParent!.lifecycle).toBe('stopped');
     });
 
     it('stop with outputs structured data and propagates', async () => {
@@ -322,7 +322,7 @@ Run the child task.
       // Verify parent is stopped
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
-      expect((updatedParent! as Record<string, unknown>).lifecycle).toBe('stopped');
+      expect(updatedParent!.lifecycle).toBe('stopped');
     });
 
     it('stop without delegation linkage does not propagate', async () => {
@@ -398,7 +398,7 @@ Approve the deployment.
       // Verify parent is stopped
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
-      expect((updatedParent! as Record<string, unknown>).lifecycle).toBe('stopped');
+      expect(updatedParent!.lifecycle).toBe('stopped');
 
       // Grandparent is now active at substep 1.2 — complete it
       // Aggregation: FAIL ANY triggers STOP
@@ -407,7 +407,7 @@ Approve the deployment.
       // Verify grandparent is stopped
       const updatedGrandparent = await readRunbookState(workspace, grandparentRunId);
       expect(updatedGrandparent).not.toBeNull();
-      expect((updatedGrandparent! as Record<string, unknown>).lifecycle).toBe('stopped');
+      expect(updatedGrandparent!.lifecycle).toBe('stopped');
     });
   });
 });

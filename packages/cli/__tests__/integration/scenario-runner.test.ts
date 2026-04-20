@@ -278,7 +278,7 @@ async function executeScenario(
   }
 
   const state = matchingStates.find((s) => {
-    const lc = (s as Record<string, unknown>).lifecycle;
+    const lc = s.lifecycle;
     if (expectedResult === 'COMPLETE') {
       return lc === 'completed';
     } else {
@@ -289,7 +289,7 @@ async function executeScenario(
   if (!state) {
     const statesSummary = matchingStates
       .map((s) => {
-        const lc = (s as Record<string, unknown>).lifecycle;
+        const lc = s.lifecycle;
         return `ID=${String(s.id).slice(0, 8)}, lifecycle=${String(lc)}`;
       })
       .join('; ');
@@ -298,7 +298,7 @@ async function executeScenario(
     );
   }
 
-  const lc = (state as Record<string, unknown>).lifecycle;
+  const lc = state.lifecycle;
 
   if (expectedResult === 'COMPLETE') {
     expect(lc).toBe('completed');

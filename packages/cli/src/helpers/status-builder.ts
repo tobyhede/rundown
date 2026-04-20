@@ -109,9 +109,7 @@ function buildVars(state: RunbookState): Record<string, string> | undefined {
       .filter(([, v]) => typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean')
       .map(([k, v]) => [k, String(v as string | number | boolean)]),
   );
-  const fromStateVars = Object.fromEntries(
-    Object.entries(state.variables).map(([k, v]) => [k, String(v)]),
-  );
+  const fromStateVars = Object.fromEntries(Object.entries(state.variables));
   const merged = { ...fromTemplateVars, ...fromStateVars };
   return Object.keys(merged).length > 0 ? merged : undefined;
 }
