@@ -58,7 +58,6 @@ type PersistedRunbookSnapshot = {
  * after transitions, and convenience methods for the two dominant usage patterns:
  * initialisation (create + sync with no event) and transition (create + send + sync).
  */
-
 export class RunbookActorService {
   /**
    * Create a new RunbookActorService.
