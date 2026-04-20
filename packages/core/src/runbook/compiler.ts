@@ -151,9 +151,7 @@ type RunbookEventTransition = NonNullable<RunbookStateConfig['on']> extends Reco
  * Shape of a single entry in a state's `always: [...]` event-less transition array,
  * extracted from the XState-inferred state config.
  */
-type RunbookAlwaysEntry = NonNullable<RunbookStateConfig['always']> extends readonly (infer E)[]
-  ? E
-  : never;
+type RunbookAlwaysEntry = RunbookEventTransition;
 
 /**
  * Shape of the state-level `entry` field — either a single action or an array of actions,
