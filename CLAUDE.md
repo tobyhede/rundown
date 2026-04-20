@@ -183,10 +183,11 @@ State persists in `.rundown/runs/` (execution state) and `.rundown/session.json`
 
 <important>
 **Principle:** NEVER migrate persisted runbook state between versions.
-On schema changes, any running runbooks should be completed/closed and restarted.
-The CLI should error and prompt the user if state is stale.
-Never attempt to migrate state.
 </important>
+
+**Principle:** Never migrate persisted runbook state between versions. This applies to all data written to `.rundown/runs/`: structured `RunbookState` fields (step, variables, lifecycle, etc.) and the opaque `state.snapshot` blob stored inside `RunbookState`. Neither is exempt. On schema changes, running runbooks should be completed/closed and restarted. The CLI should detect stale state (via schema version or structural guard) and prompt the user to finish or prune — never silently adapt, rewrite, or shim the data.
+
+There is no in-memory migration scenario. In-memory state does not survive process restarts. Any state that reaches `createActor` originates from disk and is subject to the same no-migration rule.
 
 ## Runbook Discovery
 

@@ -233,59 +233,6 @@ describe('RunbookActorService', () => {
       expect(completed.forStack).toBeUndefined();
       expect(completed.iterationResults).toBeUndefined();
     });
-
-    it('migrates old snapshot context on createActor', async () => {
-      // Test the createActor migration path directly
-      // Start with a normal actor that has been running
-      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
-      const actor1 = await actorService.createActor(state.id, mockSteps);
-      expect(actor1).not.toBeNull();
-
-      // Get its snapshot
-      const snapshot1 = actor1!.getPersistedSnapshot() as any;
-
-      // Now manually modify the snapshot to have old-style flat fields
-      const oldSnapshot = {
-        ...snapshot1,
-        context: {
-          ...snapshot1.context,
-          forIteration: 2,
-          forStart: 1,
-          forEnd: 3,
-          forVariable: 'item',
-          // Remove forStack to simulate old state
-          forStack: undefined,
-        },
-      };
-
-      // Save this old snapshot
-      await manager.update(state.id, { snapshot: oldSnapshot });
-
-      // Create a new actor - should trigger migration
-      const actor2 = await actorService.createActor(state.id, mockSteps);
-      expect(actor2).not.toBeNull();
-
-      // Get the migrated snapshot
-      const snapshot2 = actor2!.getPersistedSnapshot() as any;
-      const context = snapshot2.context;
-
-      // Should have forStack, not flat fields
-      expect(context.forStack).toEqual([
-        {
-          stepId: '1',
-          iteration: 2,
-          start: 1,
-          end: 3,
-          variable: 'item',
-          implicit: false,
-          source: { kind: 'range' },
-        },
-      ]);
-      expect(context.forIteration).toBeUndefined();
-      expect(context.forStart).toBeUndefined();
-      expect(context.forEnd).toBeUndefined();
-      expect(context.forVariable).toBeUndefined();
-    });
   });
 
   describe('implicit ForContext filtering', () => {

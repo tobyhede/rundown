@@ -3,16 +3,16 @@
 /**
  * XState actor lifecycle service for runbooks.
  *
- * Owns actor creation (with snapshot migration), state synchronisation
- * after transitions, and convenience methods for the two dominant patterns:
- * initialisation (create + sync, no event) and transition (create + send + sync).
+ * Owns actor creation, state synchronisation after transitions, and convenience
+ * methods for the two dominant patterns: initialisation (create + sync, no event)
+ * and transition (create + send + sync).
  *
  * Composes RunbookStateManager for persistence — does not own disk I/O.
  *
  * @module
  */
 
-import { createActor, type AnyActorRef } from 'xstate';
+import { createActor, type AnyActorRef, type Snapshot } from 'xstate';
 import type { ResolvedStep, RunbookState, ForContext } from './types.js';
 import type { RunbookStateManager } from './state.js';
 import { compileRunbookToMachine, type RunbookEvent, type RunbookContext } from './compiler.js';
@@ -69,8 +69,7 @@ export class RunbookActorService {
   /**
    * Create and start an XState actor from persisted state.
    *
-   * Loads the persisted snapshot, applies migration from flat FOR fields
-   * to forStack array if needed, compiles the machine, and starts the actor.
+   * Loads the persisted snapshot, compiles the machine, and starts the actor.
    * The compiler is seeded with `state.templateVars` (flattened) and
    * `state.frontmatterOutputs` so OUTPUTS evaluation works identically on
    * resume as on initial start.
@@ -95,54 +94,8 @@ export class RunbookActorService {
       frontmatterOutputs: state.frontmatterOutputs,
     });
 
-    // Migrate old snapshot context: flat FOR fields → forStack
-    // Intentionally shallow copy — only snapshot.context is replaced during
-    // migration, so other nested properties (e.g. snapshot.children) remain
-    // aliased to the original. This is safe because we never mutate them.
-    // Snapshot migration deals with untyped persisted data — any is unavoidable
-    /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unnecessary-type-assertion */
-    const rawSnapshot = state.snapshot as any;
-    let snapshot = rawSnapshot;
-    if (rawSnapshot?.context && !rawSnapshot.context.forStack) {
-      // Only copy when migration is needed — preserve original otherwise
-      snapshot = { ...rawSnapshot };
-      const ctx = { ...(rawSnapshot.context as any) };
-      if (ctx.forIteration !== undefined) {
-        // Derive stepId from snapshot.value (authoritative) with state.step fallback
-        const stateValue = rawSnapshot.value as string | undefined;
-        const stepMatch = stateValue
-          ? (/^step::([^:]+)/.exec(stateValue) ?? /^step_([^_]+)/.exec(stateValue))
-          : null;
-        const stepId = stepMatch?.[1] ?? state.step;
-
-        snapshot.context = {
-          ...ctx,
-          forStack: [
-            {
-              stepId,
-              iteration: ctx.forIteration,
-              start: ctx.forStart ?? 1,
-              end: ctx.forEnd ?? ctx.forIteration,
-              variable: ctx.forVariable,
-              implicit: false,
-              source: { kind: 'range' as const },
-            },
-          ],
-          forIteration: undefined,
-          forStart: undefined,
-          forEnd: undefined,
-          forVariable: undefined,
-        };
-      } else {
-        // No active loop — just ensure forStack exists
-        snapshot.context = { ...ctx, forStack: [] };
-      }
-    }
-    /* eslint-enable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unnecessary-type-assertion */
-
     const actor = createActor(machine, {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-      snapshot,
+      snapshot: state.snapshot as Snapshot<unknown> | undefined,
     });
     actor.start();
     return actor;
