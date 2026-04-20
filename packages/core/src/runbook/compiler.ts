@@ -2187,7 +2187,8 @@ function extractTargets(config: RunbookStateConfig): string[] {
     if (Array.isArray(tc)) {
       tc.forEach(collectFromEntry);
     } else {
-      collectFromEntry(tc);
+      // RunbookEventTransition is a wide union that includes array members; cast to the non-array form.
+      collectFromEntry(tc as RunbookEventTransition | string);
     }
   };
 
@@ -2202,7 +2203,8 @@ function extractTargets(config: RunbookStateConfig): string[] {
     if (Array.isArray(always)) {
       always.forEach(collectFromEntry);
     } else {
-      collectFromEntry(always);
+      // Same wide-union issue: cast to the non-array element form.
+      collectFromEntry(always as RunbookAlwaysEntry);
     }
   }
 
