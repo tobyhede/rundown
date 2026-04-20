@@ -118,18 +118,6 @@ export const runbookSetup = setup({
 /** Machine type produced by {@link compileRunbookToMachine}. */
 export type RunbookMachine = ReturnType<typeof runbookSetup.createMachine>;
 
-/**
- * Union of all action values the compiler emits into XState transitions.
- *
- * Two arms:
- * - `ReturnType<typeof runbookSetup.assign>`: inline `assign(...)` values built
- *   directly at state/entry sites. Required because XState's assign return type
- *   is opaque and cannot be derived generically.
- * - `CompilerActionRef`: parameterized refs to named actions declared in
- *   {@link runbookSetup}. Derived from {@link ActionDefs} so call sites and
- *   setup impls share a single source of truth.
- */
-
 /** XState state-node config type inferred from the runbook setup. */
 type RunbookStateConfig = Parameters<typeof runbookSetup.createStateConfig>[0];
 
