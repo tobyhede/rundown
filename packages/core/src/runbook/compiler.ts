@@ -150,9 +150,10 @@ type RunbookEventTransition = NonNullable<RunbookStateConfig['on']> extends Reco
 /**
  * Shape of a single entry in a state's `always: [...]` event-less transition array,
  * extracted from the XState-inferred state config.
- * In XState v5, both `on` and `always` use the same TransitionConfig shape.
  */
-type RunbookAlwaysEntry = TransitionEntry;
+type RunbookAlwaysEntry = NonNullable<RunbookStateConfig['always']> extends readonly (infer T)[]
+  ? T
+  : NonNullable<RunbookStateConfig['always']>;
 
 /**
  * Shape of the state-level `entry` field — either a single action or an array of actions,
@@ -262,21 +263,21 @@ export type RunbookEvent =
   | { type: 'SET_VARIABLES'; vars: Record<string, string> };
 
 /**
- * XState transition configuration returned by transition builder functions.
+ * Object-form XState transition entry — the `{ target?, actions?, guard? }` variant.
  *
- * The `actions` field is typed as `unknown` because XState's internal action
- * types are deeply generic and incompatible with intermediate interfaces.
- * Type safety for actions comes from `runbookSetup.assign()` at call sites.
- * Guards accept either inline predicate functions or named guard string keys
- * registered in the `runbookSetup` guards block (`RunbookGuard`).
+ * `RunbookEventTransition` is a union that includes bare target strings and arrays;
+ * this alias extracts only the object form used by every builder in this file.
  */
-interface TransitionEntry {
-  target?: string;
-  actions?: CompilerAction | CompilerAction[];
-  guard?: RunbookGuard;
-}
+type RunbookTransitionObject = Extract<RunbookEventTransition, { target?: unknown }>;
 
-type TransitionConfig = TransitionEntry | TransitionEntry[];
+/**
+ * Return shape for transition builder functions.
+ *
+ * Either a single XState-inferred transition entry or an array of them. Extracted
+ * from `runbookSetup.createStateConfig()` rather than hand-rolled, so the `actions`
+ * field is validated end-to-end against the setup's action map.
+ */
+type TransitionConfig = RunbookEventTransition | RunbookEventTransition[];
 
 /**
  * Child/leaf state configuration — represents a concrete substep or simple step.
@@ -1573,7 +1574,7 @@ function buildParentStateConfig(
 
   return {
     always: always.map((transition) =>
-      decorateParentTransition(transition, stepName, parentStep.outputs),
+      decorateParentTransition(transition as RunbookTransitionObject, stepName, parentStep.outputs) as RunbookAlwaysEntry,
     ),
   };
 }
@@ -1599,12 +1600,12 @@ function buildParentStateConfig(
  * @returns The decorated transition (or the original if no decoration applies)
  */
 function decorateParentTransition(
-  transition: TransitionEntry,
+  transition: RunbookTransitionObject,
   stepName: string,
   outputs: readonly OutputDeclaration[] | undefined,
-): TransitionEntry {
+): RunbookTransitionObject {
   const extra: CompilerAction[] = [];
-  const target = transition.target;
+  const target = transition.target as string | undefined;
   const exitsParent =
     target !== undefined &&
     target !== formatStateId(stepName) &&
@@ -1661,7 +1662,7 @@ function buildRetryStateConfig(
     ? exhaustedTransition
     : [exhaustedTransition];
   const exhaustedEntries: RunbookAlwaysEntry[] = rawEntries.map(
-    (entry): RunbookAlwaysEntry => ({ target: entry.target, actions: entry.actions }),
+    (entry): RunbookAlwaysEntry => entry as RunbookAlwaysEntry,
   );
 
   return {
@@ -1735,7 +1736,7 @@ function buildTerminalTransition(
   target: 'COMPLETE' | 'STOPPED',
   actionType: 'COMPLETE' | 'STOP',
   message: string | undefined,
-): TransitionEntry {
+): RunbookTransitionObject {
   return {
     target,
     actions: actionRef('setLastAction', {
@@ -1763,7 +1764,7 @@ function buildLoopControlTransition(
   stepName: string,
   substepId: string | undefined,
   steps: ResolvedStep[],
-): TransitionEntry {
+): RunbookTransitionObject {
   const currentStep = steps.find((s) => s.name === stepName);
   if (currentStep?.kind !== 'for') {
     return {
@@ -1818,7 +1819,7 @@ function buildDeferTransition(
   substepId: string | undefined,
   steps: ResolvedStep[],
   kind: 'pass' | 'fail',
-): TransitionEntry {
+): RunbookTransitionObject {
   const currentStep = steps.find((s) => s.name === stepName);
 
   // Substeps: DEFER always routes to parent (enables fail-fast ALL/ANY evaluation)
@@ -1864,7 +1865,7 @@ function buildContinueTransition(
   stepName: string,
   substepId: string | undefined,
   steps: ResolvedStep[],
-): TransitionEntry {
+): RunbookTransitionObject {
   const currentStep = steps.find((s) => s.name === stepName);
 
   // Substeps: uniform routing regardless of parent type (FOR or non-FOR)
@@ -1934,7 +1935,7 @@ function buildGotoTransition(
   stepName: string,
   substepId: string | undefined,
   steps: ResolvedStep[],
-): TransitionEntry {
+): RunbookTransitionObject {
   const targetStep = target.step;
 
   // Named/numeric step target (both are strings now)
@@ -2044,14 +2045,14 @@ function toActionArray(actions: CompilerAction | CompilerAction[] | undefined): 
  * @returns A new transition with the extra actions prepended (or the original if extra is empty)
  */
 function prependActions(
-  transition: TransitionEntry,
+  transition: RunbookTransitionObject,
   extra: readonly CompilerAction[],
-): TransitionEntry {
+): RunbookTransitionObject {
   if (extra.length === 0) return transition;
   return {
     ...transition,
-    actions: [...extra, ...toActionArray(transition.actions)],
-  };
+    actions: [...extra, ...toActionArray(transition.actions as CompilerAction | CompilerAction[] | undefined)],
+  } as RunbookTransitionObject;
 }
 
 /**
@@ -2089,7 +2090,7 @@ function buildActionTransition(
 ): TransitionConfig {
   const resultKind: 'pass' | 'fail' = kind === 'fail' ? 'fail' : 'pass';
 
-  let transition: TransitionEntry;
+  let transition: RunbookTransitionObject;
   switch (action.type) {
     case 'CONTINUE':
       transition = buildContinueTransition(stepName, substepId, steps);
@@ -2131,7 +2132,7 @@ function buildActionTransition(
   // they fire regardless of which exit path the substep takes.
   if (substepId && currentStep && resolvedStepHasSubsteps(currentStep)) {
     const parentOutputs = currentStep.outputs;
-    const target = transition.target;
+    const target = transition.target as string | undefined;
     const exitsParent =
       target !== undefined &&
       target !== formatStateId(stepName) &&
@@ -2313,7 +2314,7 @@ export function compileRunbookToMachine(
       checkedStateInsert(
         states,
         config.id,
-        runbookSetup.createStateConfig(buildParentStateConfig(config, steps)),
+        runbookSetup.createStateConfig(buildParentStateConfig(config, steps) as RunbookStateConfig),
       );
       return;
     }
@@ -2498,7 +2499,7 @@ export function compileRunbookToMachine(
           },
           GOTO: buildGotoTransitionsForState,
         },
-      }),
+      } as RunbookStateConfig),
     );
 
     // Register retry states for transitions with retry > 0
@@ -2514,7 +2515,7 @@ export function compileRunbookToMachine(
             config.substepId,
             steps,
             'pass',
-          ),
+          ) as RunbookStateConfig,
         ),
       );
     }
@@ -2530,7 +2531,7 @@ export function compileRunbookToMachine(
             config.substepId,
             steps,
             'fail',
-          ),
+          ) as RunbookStateConfig,
         ),
       );
     }
