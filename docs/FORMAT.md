@@ -116,12 +116,12 @@ step_ref     ::= positive_integer | named_id
 ## Separators
 
 ```ebnf
-separator ::= ( "." | ":" | "\u2014" | "\u2192" | "-" | ")" | " " )+
+separator ::= ( "." | ":" | "\u2014" | "\u2192" | "-" | ")" | ws )+
 ```
 
 Unicode escapes: `\u2014` is em dash (—), `\u2192` is right arrow (→).
 
-Separators are matched greedily — the longest sequence of separator characters between identifier and description text is consumed.
+Separators are matched greedily — the longest sequence of separator characters between identifier and description text is consumed. The parser accepts any Unicode whitespace in separator positions (space, tab, etc.).
 
 **Note:** The full separator set (`.` `:` `—` `→` `-` `)` plus whitespace) is applied in two places during header parsing: trailing separator characters are stripped from the extracted step-identifier token, and leading separators are stripped from the remainder before it becomes the description. This makes headers like `## 1.`, `## 1. Foo`, `## Rollback)`, and `## Rollback — clean up` all valid with the same set of punctuation.
 
@@ -237,7 +237,7 @@ executable_lang ::= "bash" | "sh" | "shell"
 display_lang    ::= language_tag
 ```
 
-Opening fence is 3 or more backticks. Closing fence must use at least as many backticks as the opening fence (CommonMark §4.5). Language tag is required — bare code fences are invalid. Tags are matched case-insensitively. Non-executable tags (e.g., `json`, `yaml`) are display-only. When `prompt` follows an executable language tag (e.g., `bash prompt`), the block is demoted to display-only — it is not executed. The `prompt` suffix on non-executable tags is accepted but redundant — all non-executable code blocks are prompt blocks.
+Opening fence is 3 or more backticks. Closing fence must use at least as many backticks as the opening fence (CommonMark §4.5). Language tag is required — bare code fences are invalid. Tags are matched case-insensitively. Non-executable tags (e.g., `json`, `yaml`) are display-only. When `prompt` follows an executable language tag (e.g., `bash prompt`), the block is demoted to display-only — it is not executed. The `prompt` suffix on non-executable tags is accepted but redundant — all non-executable code blocks are prompt blocks. The parser does not validate the format of non-executable language tags against the `language_tag` production — any tag that is not an executable tag is treated as display-only.
 
 ## Template Variables
 
@@ -248,7 +248,7 @@ variable_path     ::= variable_name ( "." ( variable_name | digit+ ) )*
 variable_name     ::= [a-zA-Z_] [a-zA-Z0-9_]*
 ```
 
-Template variables with dotted paths (`{{item.name}}`) are resolved at runtime. Parse-time positions (FOR bounds, GOTO AT index) accept only simple variable names via `bound_ref`.
+Template variables with dotted paths (`{{item.name}}`) are resolved at runtime. Parse-time positions (FOR bounds, GOTO AT index) accept only simple variable names via `bound_ref`. The parser accepts any Unicode whitespace (not just space/tab) inside `{{ }}` markers.
 
 ## Runbook Lists
 

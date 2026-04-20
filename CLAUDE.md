@@ -47,6 +47,7 @@ rundown ls --all --tags <tags>  # Filter by comma-separated tags
 rundown check <file>     # Check runbook for errors
 rundown resolve <file>   # Resolve and validate variables and data sources
 rundown echo             # Test helper: echo with configurable result
+rundown echo -r pass     # Configure result (pass|fail, repeatable — sequences through results)
 rundown prune            # Remove runbook state (default: completed + stopped)
 rundown prune --dry-run  # Show what would be removed without deleting
 rundown prune --completed # Prune successfully completed runbook state
@@ -160,7 +161,7 @@ Data sources are referenced in FOR clauses: `FOR item IN {{ items }}`.
 **File formats:** Only `.json` and `.jsonl` extensions are supported. `.jsonl` files are parsed as JSON Lines (one JSON value per line). Each line may contain any JSON value (string, number, boolean, null, array, or object). When the loop variable holds a parsed JSON object, dotted field access is supported in templates (e.g., `{{item.name}}`). Using `{{item}}` alone renders the serialized JSON string. `.json` files are eagerly loaded as a `JsonObject` or `JsonArray` value.
 
 **Notes:**
-- Arrays can be passed inline via `--var-json` or in `.rundown/config.yaml` and `--var-file` (not in frontmatter `vars:`). `file:` values are supported in `.rundown/config.yaml` and `--var-file` only
+- Arrays can be passed inline via `--var-json` or in `.rundown/config.yaml` and `--var-file` (not in frontmatter `inputs:`). `file:` values are supported in `.rundown/config.yaml` and `--var-file` only
 - File paths must stay within the project root (symlinks resolved, traversal blocked)
 - `file:` values are routed into `vars` as typed values (`JsonArrayStream` for `.jsonl`, `JsonArray`/`JsonObject` for `.json`)
 

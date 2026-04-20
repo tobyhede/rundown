@@ -450,7 +450,9 @@ Each runbook state file contains:
   "steps": [],
   "substepStates": [
     {
-      "substep": "1",
+      "id": "1",
+      "frameKey": "2|",
+      "status": "done",
       "delegation": {
         "tokenHash": "abc123...",
         "childRunbookPath": ".rundown/runbooks/child.runbook.md",
@@ -498,6 +500,9 @@ Key fields:
 - `forStack[].source`: Resolved source for the active loop (range, array, or file with snapshot)
 - `forStack[].currentValue`: Data element at the current iteration (array/file sources)
 - `iterationResults`: Array of per-iteration outcomes (`"pass"` or `"fail"`) for the current loop
+- `substepStates[].id`: Substep identifier matching `Substep.id` (e.g., "1", "2")
+- `substepStates[].frameKey`: Scopes identity in FOR loops (e.g., "2|" or "2|3")
+- `substepStates[].status`: Substep lifecycle state (`pending`, `running`, `done`)
 - `substepStates[].delegation`: Delegation state for substeps (tokenHash, childRunbookPath, status, childRunId)
 - `resolvedCompletions`: Completion records keyed by `frame + entry + substep`
 - `frameEntries` / `activeFrameKey` / `activeEntry`: Re-entry-safe frame identity used to reject stale completions
@@ -905,7 +910,6 @@ Echo command for runbook testing. Supports configurable pass/fail result sequenc
 rundown echo [command...]
 rundown echo -r pass                # Configure result (repeatable)
 rundown echo -r fail -r pass        # Sequence: fail first, then pass
-rundown echo --json                 # JSON output
 ```
 
 #### `rundown resolve <file>` - Resolve Variables
