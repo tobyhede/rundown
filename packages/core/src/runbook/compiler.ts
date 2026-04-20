@@ -129,7 +129,6 @@ export type RunbookMachine = ReturnType<typeof runbookSetup.createMachine>;
  *   {@link runbookSetup}. Derived from {@link ActionDefs} so call sites and
  *   setup impls share a single source of truth.
  */
-type CompilerAction = ReturnType<typeof runbookSetup.assign> | CompilerActionRef;
 
 /** XState state-node config type inferred from the runbook setup. */
 type RunbookStateConfig = Parameters<typeof runbookSetup.createStateConfig>[0];
@@ -1604,7 +1603,7 @@ function decorateParentTransition(
   stepName: string,
   outputs: readonly OutputDeclaration[] | undefined,
 ): RunbookTransitionObject {
-  const extra: CompilerAction[] = [];
+  const extra: (ReturnType<typeof assign> | CompilerActionRef)[] = [];
   // TransitionTarget is `string | readonly string[]`, but this compiler only ever sets single-string targets.
   const target = transition.target as string | undefined;
   const exitsParent =
@@ -2029,7 +2028,9 @@ function buildGotoTransition(
  * @param actions - Single action, array of actions, or undefined
  * @returns Array form (empty if undefined)
  */
-function toActionArray(actions: CompilerAction | CompilerAction[] | undefined): CompilerAction[] {
+function toActionArray(
+  actions: (ReturnType<typeof assign> | CompilerActionRef) | (ReturnType<typeof assign> | CompilerActionRef)[] | undefined,
+): (ReturnType<typeof assign> | CompilerActionRef)[] {
   if (!actions) return [];
   return Array.isArray(actions) ? actions : [actions];
 }
@@ -2047,12 +2048,15 @@ function toActionArray(actions: CompilerAction | CompilerAction[] | undefined): 
  */
 function prependActions(
   transition: RunbookTransitionObject,
-  extra: readonly CompilerAction[],
+  extra: readonly (ReturnType<typeof assign> | CompilerActionRef)[],
 ): RunbookTransitionObject {
   if (extra.length === 0) return transition;
   return {
     ...transition,
-    actions: [...extra, ...toActionArray(transition.actions as CompilerAction | CompilerAction[] | undefined)],
+    actions: [
+      ...extra,
+      ...toActionArray(transition.actions as (ReturnType<typeof assign> | CompilerActionRef) | (ReturnType<typeof assign> | CompilerActionRef)[] | undefined),
+    ],
   } as RunbookTransitionObject;
 }
 
@@ -2122,7 +2126,7 @@ function buildActionTransition(
       ? (currentStep.substeps.find((substep) => substep.id === substepId)?.outputs ?? [])
       : (currentStep?.outputs ?? []);
 
-  const extra: CompilerAction[] = [];
+  const extra: (ReturnType<typeof assign> | CompilerActionRef)[] = [];
   if (unitOutputs.length > 0) {
     extra.push(actionRef('storeStepOutputs', { outputs: unitOutputs, stepName, substepId }));
   }
@@ -2159,16 +2163,22 @@ function buildActionTransition(
 function extractTargets(config: RunbookStateConfig): string[] {
   const targets: string[] = [];
 
-  const collectFromEntry = (entry: unknown): void => {
+  const collectFromEntry = (entry: RunbookEventTransition | RunbookAlwaysEntry | string): void => {
     if (typeof entry === 'string') {
       targets.push(entry);
-    } else if (entry && typeof entry === 'object' && 'target' in entry) {
-      const t = (entry as { target?: string }).target;
+      return;
+    }
+    if (entry && typeof entry === 'object' && 'target' in entry) {
+      // TransitionTarget is `string | readonly string[]`, but this compiler only ever sets single-string targets.
+      const t = entry.target as string | undefined;
       if (typeof t === 'string') targets.push(t);
     }
   };
 
-  const collectFromTransitionConfig = (tc: unknown): void => {
+  const collectFromTransitionConfig = (
+    tc: RunbookEventTransition | readonly RunbookEventTransition[] | string | undefined,
+  ): void => {
+    if (tc === undefined) return;
     if (Array.isArray(tc)) {
       tc.forEach(collectFromEntry);
     } else {
@@ -2176,16 +2186,19 @@ function extractTargets(config: RunbookStateConfig): string[] {
     }
   };
 
-  // Walk on: { PASS: ..., FAIL: ..., GOTO: [...], RETRY: ... }
   if (config.on) {
     for (const tc of Object.values(config.on)) {
-      collectFromTransitionConfig(tc);
+      collectFromTransitionConfig(tc as RunbookEventTransition | RunbookEventTransition[]);
     }
   }
 
-  // Walk always: [...]
   if (config.always) {
-    collectFromTransitionConfig(config.always);
+    const always = config.always as readonly RunbookAlwaysEntry[] | RunbookAlwaysEntry;
+    if (Array.isArray(always)) {
+      always.forEach(collectFromEntry);
+    } else {
+      collectFromEntry(always);
+    }
   }
 
   return targets;
