@@ -2483,7 +2483,7 @@ export function compileRunbookToMachine(
             target: config.id,
           },
           GOTO: buildGotoTransitionsForState,
-        } as RunbookStateConfig['on'],
+        } as NonNullable<RunbookStateConfig['on']>,
       } satisfies RunbookStateConfig),
     );
 
