@@ -9783,7 +9783,7 @@ echo "processing"
 `);
 
       const machine = compileRunbookToMachine(steps);
-      const parentAlways = (machine.config.states as any)['step::1'].always as any[];
+      const parentAlways = getState(machine, 'step::1').always as any[];
 
       // Parent's declared PASS action is COMPLETE. The PASS-path exit entry
       // MUST record lastAction.type === 'COMPLETE', not CONTINUE.
@@ -9809,7 +9809,7 @@ echo "processing"
 `);
 
       const machine = compileRunbookToMachine(steps);
-      const parentAlways = (machine.config.states as any)['step::1'].always as any[];
+      const parentAlways = getState(machine, 'step::1').always as any[];
 
       const stoppedEntry = parentAlways.find((entry) => entry.target === 'STOPPED');
       expect(stoppedEntry).toBeDefined();
@@ -9842,7 +9842,7 @@ echo "processing"
       ]);
 
       const machine = compileRunbookToMachine(steps);
-      const parentAlways = (machine.config.states as any)['step::1'].always as any[];
+      const parentAlways = getState(machine, 'step::1').always as any[];
 
       // Guards are now named in runbookSetup: entry.guard is a plain string at
       // runtime, enabling unambiguous discriminants without inspecting payload content.
