@@ -20,8 +20,15 @@ type _AlwaysField = NonNullable<_RunbookStateConfig['always']>;
 type _AlwaysEntry = _AlwaysField extends readonly (infer E)[] ? E : _AlwaysField;
 
 type IsAny<T> = 0 extends 1 & T ? true : false;
+type IsNever<T> = [T] extends [never] ? true : false;
 type AssertKnown<T> =
-  IsAny<T> extends true ? false : unknown extends T ? (T extends unknown ? false : true) : true;
+  IsAny<T> extends true
+    ? false
+    : IsNever<T> extends true
+      ? false
+      : unknown extends T
+        ? false
+        : true;
 type AssertTrue<T extends true> = T;
 type AssertExtends<T, U> = T extends U ? true : false;
 
