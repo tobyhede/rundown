@@ -37,13 +37,45 @@ describe('prune command', () => {
     });
   });
 
-  describe('default behavior (--completed)', () => {
+  describe('default behavior (--completed + --stopped)', () => {
     it('prunes completed runbook state by default', async () => {
       // Auto-run completes the runbook (both steps pass), leaving state with completed=true
       await runCliInProcess('run runbooks/simple.runbook.md --text', workspace);
 
       const statesBefore = await listRunbookStates(workspace);
       expect(statesBefore.length).toBe(1);
+
+      const result = await runCliInProcess('prune --text', workspace);
+
+      expect(result.exitCode).toBe(0);
+      const statesAfter = await listRunbookStates(workspace);
+      expect(statesAfter.length).toBe(0);
+    });
+
+    it('prunes stopped runbook state by default', async () => {
+      // Start runbook then stop it — leaves state with lifecycle=stopped
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+      await runCliInProcess('stop --text', workspace);
+
+      const statesBefore = await listRunbookStates(workspace);
+      expect(statesBefore.length).toBe(1);
+
+      const result = await runCliInProcess('prune --text', workspace);
+
+      expect(result.exitCode).toBe(0);
+      const statesAfter = await listRunbookStates(workspace);
+      expect(statesAfter.length).toBe(0);
+    });
+
+    it('prunes both completed and stopped runbook state by default', async () => {
+      // Create completed state
+      await runCliInProcess('run runbooks/simple.runbook.md --text', workspace);
+      // Create stopped state
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+      await runCliInProcess('stop --text', workspace);
+
+      const statesBefore = await listRunbookStates(workspace);
+      expect(statesBefore.length).toBe(2);
 
       const result = await runCliInProcess('prune --text', workspace);
 
@@ -93,6 +125,40 @@ describe('prune command', () => {
       // Remaining state should be the active one
       const session = await readSession(workspace);
       expect(session.active).not.toBeNull();
+    });
+  });
+
+  describe('--stopped flag', () => {
+    it('prunes only stopped runbook state', async () => {
+      // Create stopped state
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+      await runCliInProcess('stop --text', workspace);
+
+      const statesBefore = await listRunbookStates(workspace);
+      expect(statesBefore.length).toBe(1);
+
+      const result = await runCliInProcess('prune --stopped --text', workspace);
+
+      expect(result.exitCode).toBe(0);
+      const statesAfter = await listRunbookStates(workspace);
+      expect(statesAfter.length).toBe(0);
+    });
+
+    it('does not prune completed state when only --stopped specified', async () => {
+      // Create completed state
+      await runCliInProcess('run runbooks/simple.runbook.md --text', workspace);
+      // Create stopped state
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+      await runCliInProcess('stop --text', workspace);
+
+      const statesBefore = await listRunbookStates(workspace);
+      expect(statesBefore.length).toBe(2);
+
+      await runCliInProcess('prune --stopped --text', workspace);
+
+      // Only the completed state should remain
+      const statesAfter = await listRunbookStates(workspace);
+      expect(statesAfter.length).toBe(1);
     });
   });
 

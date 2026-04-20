@@ -47,11 +47,12 @@ rundown ls --all --tags <tags>  # Filter by comma-separated tags
 rundown check <file>     # Check runbook for errors
 rundown resolve <file>   # Resolve and validate variables and data sources
 rundown echo             # Test helper: echo with configurable result
-rundown prune            # Remove runbook state (default: completed)
+rundown prune            # Remove runbook state (default: completed + stopped)
 rundown prune --dry-run  # Show what would be removed without deleting
-rundown prune --completed # Prune completed runbook state
+rundown prune --completed # Prune successfully completed runbook state
+rundown prune --stopped  # Prune stopped (aborted/failed) runbook state
 rundown prune --active   # Prune active runbook state
-rundown prune --inactive # Prune inactive runbook state
+rundown prune --inactive # Prune inactive (orphaned) runbook state
 rundown prune --all      # Prune all runbook state
 rundown scenario ls <file>           # List scenarios in a runbook
 rundown scenario show <file> <name>  # Show scenario details

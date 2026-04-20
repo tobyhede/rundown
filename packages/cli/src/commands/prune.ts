@@ -22,6 +22,7 @@ async function listAllRunIds(cwd: string): Promise<string[]> {
 interface PruneOptions {
   dryRun?: boolean;
   completed?: boolean;
+  stopped?: boolean;
   active?: boolean;
   inactive?: boolean;
   all?: boolean;
@@ -37,12 +38,10 @@ export function registerPruneCommand(program: Command): void {
     .command('prune')
     .description('Remove runbook state (does not delete runbook files)')
     .option('--dry-run', 'Show what would be removed without deleting')
-    .option(
-      '--completed',
-      'Prune successfully completed runbook state (stopped runs use --inactive)',
-    )
+    .option('--completed', 'Prune successfully completed runbook state')
+    .option('--stopped', 'Prune stopped (aborted/failed) runbook state')
     .option('--active', 'Prune active runbook state')
-    .option('--inactive', 'Prune inactive runbook state')
+    .option('--inactive', 'Prune inactive (orphaned) runbook state')
     .option('--all', 'Prune all runbook state')
     .option('--text', 'Output as human-readable text')
     .action(async (options: PruneOptions) => {
@@ -55,12 +54,23 @@ export function registerPruneCommand(program: Command): void {
           const sessionService = new SessionService(manager);
           const states = await manager.list();
           const allIds = await listAllRunIds(cwd);
-          const activeState = await sessionService.getActive();
+          let activeState: Awaited<ReturnType<typeof sessionService.getActive>>;
+          try {
+            activeState = await sessionService.getActive();
+          } catch {
+            activeState = null;
+          }
           const stashedId = await sessionService.getStashedRunbookId();
 
-          // Default to --completed if no filter flags provided
-          const hasFilter = options.completed ?? options.active ?? options.inactive ?? options.all;
+          // Default to --completed --stopped (all terminal runs) if no filter flags provided
+          const hasFilter =
+            options.completed ??
+            options.stopped ??
+            options.active ??
+            options.inactive ??
+            options.all;
           const pruneCompleted = options.all ?? options.completed ?? !hasFilter;
+          const pruneStopped = options.all ?? options.stopped ?? !hasFilter;
           const pruneActive = options.all ?? options.active;
           const pruneInactive = options.all ?? options.inactive;
 
@@ -68,9 +78,11 @@ export function registerPruneCommand(program: Command): void {
             const isActive = activeState?.id === state.id;
             const isStashed = state.id === stashedId;
             const isCompleted = state.lifecycle === 'completed';
-            const isInactive = !isActive && !isStashed && !isCompleted;
+            const isStopped = state.lifecycle === 'stopped';
+            const isInactive = !isActive && !isStashed && !isCompleted && !isStopped;
 
             if (pruneCompleted && isCompleted) return true;
+            if (pruneStopped && isStopped) return true;
             if (pruneActive && isActive) return true;
             if (pruneInactive && isInactive) return true;
             return false;
