@@ -9846,27 +9846,17 @@ echo "processing"
 
       // Case C emits two COMPLETE-targeting entries: the BREAK/NEXT routing entry
       // (no lastAction reassignment) and the normal PASS routing entry (sets
-      // lastAction to the parent's declared PASS action). We need the normal PASS
-      // routing entry — the one whose assign payload includes lastAction.
-      // It MUST record lastAction.type === 'COMPLETE', not CONTINUE (which was the
-      // bug before passLastAction was wired in).
+      // lastAction to the parent's declared PASS action). Guards are inline
+      // functions with no runtime name, so we assert over the aggregate set.
+      // The original bug was CONTINUE being recorded — assert that directly.
       const completeEntries = parentAlways.filter((entry: any) => entry.target === 'COMPLETE');
-      expect(completeEntries.length).toBeGreaterThanOrEqual(1);
+      const lastActions = completeEntries
+        .flatMap((entry: any) => (Array.isArray(entry.actions) ? entry.actions : [entry.actions]))
+        .filter((a: any) => a.type === 'xstate.assign' && 'lastAction' in (a.assignment ?? {}))
+        .map((a: any) => a.assignment.lastAction);
 
-      const normalPassEntry = completeEntries.find((entry: any) => {
-        const arr = Array.isArray(entry.actions) ? entry.actions : [entry.actions];
-        return arr.some(
-          (a: any) =>
-            a.type === 'xstate.assign' &&
-            a.assignment &&
-            typeof a.assignment === 'object' &&
-            'lastAction' in a.assignment,
-        );
-      });
-      expect(normalPassEntry).toBeDefined();
-
-      const assignPayload = getAssignPayload(normalPassEntry.actions);
-      expect(assignPayload.lastAction).toEqual({ type: 'COMPLETE' });
+      expect(lastActions).toContainEqual({ type: 'COMPLETE' });
+      expect(lastActions).not.toContainEqual({ type: 'CONTINUE' });
     });
   });
 });
