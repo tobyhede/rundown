@@ -278,20 +278,19 @@ async function executeScenario(
   }
 
   const state = matchingStates.find((s) => {
-    const variables = s.variables as Record<string, unknown> | undefined;
+    const lc = (s as Record<string, unknown>).lifecycle;
     if (expectedResult === 'COMPLETE') {
-      return variables?.completed === true;
+      return lc === 'completed';
     } else {
-      return variables?.stopped === true;
+      return lc === 'stopped';
     }
   });
 
   if (!state) {
     const statesSummary = matchingStates
       .map((s) => {
-        const vars = s.variables as Record<string, unknown> | undefined;
-        const varsStr = vars ? JSON.stringify(vars) : 'undefined';
-        return `ID=${String(s.id).slice(0, 8)}, vars=${varsStr}`;
+        const lc = (s as Record<string, unknown>).lifecycle;
+        return `ID=${String(s.id).slice(0, 8)}, lifecycle=${String(lc)}`;
       })
       .join('; ');
     throw new Error(
@@ -299,12 +298,12 @@ async function executeScenario(
     );
   }
 
-  const variables = state.variables as Record<string, unknown> | undefined;
+  const lc = (state as Record<string, unknown>).lifecycle;
 
   if (expectedResult === 'COMPLETE') {
-    expect(variables?.completed).toBe(true);
+    expect(lc).toBe('completed');
   } else {
-    expect(variables?.stopped).toBe(true);
+    expect(lc).toBe('stopped');
   }
 }
 

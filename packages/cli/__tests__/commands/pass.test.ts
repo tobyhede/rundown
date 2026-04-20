@@ -56,7 +56,7 @@ describe('pass command', () => {
       expect(session.active).toBeNull();
     });
 
-    it('should set variables.completed=true when completing runbook', async () => {
+    it('should set lifecycle to completed when runbook completes', async () => {
       await runCliInProcess('pass --text', workspace);
 
       const states = await getAllStates(workspace);
@@ -142,7 +142,7 @@ This step stops on pass.
       expect(result.stdout).toContain('STOP');
     });
 
-    it('should set variables.stopped=true when STOP action triggered', async () => {
+    it('should set lifecycle to stopped when STOP action triggered', async () => {
       await runCliInProcess('pass --text', workspace);
 
       const states = await getAllStates(workspace);

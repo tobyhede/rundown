@@ -39,21 +39,21 @@ describe('RunbookStateManager', () => {
   });
 
   describe('getChildRunbookResult', () => {
-    it('should return pass when child has completed=true', async () => {
+    it('should return pass when child has lifecycle completed', async () => {
       const child = await manager.create('child.runbook.md', mockRunbook, {
         runbookPath: 'child.runbook.md',
       });
-      await manager.update(child.id, { variables: { completed: true } });
+      await manager.update(child.id, { lifecycle: 'completed' });
 
       const result = await lifecycleService.getChildRunbookResult(child.id);
       expect(result).toBe('pass');
     });
 
-    it('should return fail when child has stopped=true', async () => {
+    it('should return fail when child has lifecycle stopped', async () => {
       const child = await manager.create('child.runbook.md', mockRunbook, {
         runbookPath: 'child.runbook.md',
       });
-      await manager.update(child.id, { variables: { stopped: true } });
+      await manager.update(child.id, { lifecycle: 'stopped' });
 
       const result = await lifecycleService.getChildRunbookResult(child.id);
       expect(result).toBe('fail');

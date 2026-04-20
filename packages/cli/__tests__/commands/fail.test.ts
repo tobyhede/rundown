@@ -59,7 +59,7 @@ describe('fail command', () => {
       expect(result.stdout).toContain('STOP');
     });
 
-    it('should set variables.stopped=true when STOP action triggered', async () => {
+    it('should set lifecycle to stopped when STOP action triggered', async () => {
       // runbook already started by beforeEach
       await runCliInProcess('fail --text', workspace);
 

@@ -2578,7 +2578,6 @@ export function compileRunbookToMachine(
         entry: [
           actionRef('storeFrontmatterOutputs', {}),
           runbookSetup.assign({
-            variables: ({ context }) => ({ ...context.variables, completed: true }),
             lifecycle: () => 'completed' as const,
           }),
         ],
@@ -2589,7 +2588,6 @@ export function compileRunbookToMachine(
         entry: [
           actionRef('storeFrontmatterOutputs', {}),
           runbookSetup.assign({
-            variables: ({ context }) => ({ ...context.variables, stopped: true }),
             lifecycle: () => 'stopped' as const,
           }),
         ],

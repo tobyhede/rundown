@@ -34,14 +34,15 @@ describe('lifecycle context field', () => {
     actor.stop();
   });
 
-  it('still writes the legacy variables.completed flag (coexistence phase)', () => {
+  it('no longer writes legacy variables.completed/stopped flags', () => {
     const steps = createRunbook(`## 1. Only\n- PASS COMPLETE\n- FAIL STOP\n`);
     const machine = compileRunbookToMachine(steps);
     const actor = createActor(machine);
     actor.start();
     actor.send({ type: 'PASS' });
-    // Backward-compat assertion — removed in Task 5.
-    expect(actor.getSnapshot().context.variables.completed).toBe(true);
+    const vars = actor.getSnapshot().context.variables;
+    expect(vars.completed).toBeUndefined();
+    expect(vars.stopped).toBeUndefined();
     actor.stop();
   });
 });

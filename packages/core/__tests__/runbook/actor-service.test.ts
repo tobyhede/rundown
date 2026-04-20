@@ -217,7 +217,8 @@ describe('RunbookActorService', () => {
       const completeActor = mockActor({
         value: 'COMPLETE',
         context: {
-          variables: { completed: true },
+          variables: {},
+          lifecycle: 'completed',
           retryCount: 0,
         },
       });
