@@ -42,13 +42,6 @@ export interface ActorSyncResult {
 }
 
 /**
- * Manages XState actor lifecycle for runbooks.
- *
- * Encapsulates actor creation (with snapshot migration), state synchronisation
- * after transitions, and convenience methods for the two dominant usage patterns:
- * initialisation (create + sync with no event) and transition (create + send + sync).
- */
-/**
  * Typed shape of the persisted snapshot returned by `actor.getPersistedSnapshot()`
  * within `updateFromActor`. Only the fields accessed in that method are declared;
  * the full XState snapshot envelope is otherwise opaque.
@@ -58,6 +51,13 @@ type PersistedRunbookSnapshot = {
   context?: Partial<RunbookContext>;
 };
 
+/**
+ * Manages XState actor lifecycle for runbooks.
+ *
+ * Encapsulates actor creation (with snapshot migration), state synchronisation
+ * after transitions, and convenience methods for the two dominant usage patterns:
+ * initialisation (create + sync with no event) and transition (create + send + sync).
+ */
 export class RunbookActorService {
   /**
    * Create a new RunbookActorService.
