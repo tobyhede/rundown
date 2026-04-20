@@ -1636,9 +1636,6 @@ function buildRetryStateConfig(
   const rawEntries = Array.isArray(exhaustedTransition)
     ? exhaustedTransition
     : [exhaustedTransition];
-  const exhaustedEntries: RunbookAlwaysEntry[] = rawEntries.map(
-    (entry): RunbookAlwaysEntry => entry as RunbookAlwaysEntry,
-  );
 
   return {
     always: [
@@ -1651,7 +1648,7 @@ function buildRetryStateConfig(
           retryMax: transition.retry,
         }),
       },
-      ...exhaustedEntries,
+      ...(rawEntries as RunbookAlwaysEntry[]),
     ],
   } satisfies RunbookStateConfig;
 }
