@@ -696,4 +696,7 @@ export interface RunbookState {
 
   /** Evaluated frontmatter outputs: values at runbook termination. Read by parent delegation completion. */
   readonly finalVars?: Readonly<Record<string, string>>;
+
+  /** Lifecycle state. 'running' during execution; 'completed' or 'stopped' once terminal. */
+  readonly lifecycle?: Lifecycle;
 }

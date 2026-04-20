@@ -4,10 +4,41 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 import { RunbookActorService } from '../../src/runbook/actor-service.js';
-import type { Step, Runbook } from '../../src/runbook/types.js';
+import type { AnyActorRef } from '../../src/runbook/actor-service.js';
+import type { Step, Runbook, ResolvedStep } from '../../src/runbook/types.js';
+import { createRunbook } from './fixtures.js';
 
 function mockActor(snapshot: { value: string; context: Record<string, unknown> }) {
   return { getPersistedSnapshot: () => snapshot } as any;
+}
+
+interface LifecycleHarness {
+  actor: AnyActorRef;
+  service: RunbookActorService;
+  runbookId: string;
+  steps: ResolvedStep[];
+}
+
+async function createLifecycleHarness(markdown: string): Promise<LifecycleHarness> {
+  const steps = createRunbook(markdown);
+  const testDir = await mkdtemp(join(tmpdir(), 'lifecycle-harness-'));
+  const manager = new RunbookStateManager(testDir);
+  const service = new RunbookActorService(manager);
+
+  const mockRunbookDef = {
+    title: 'Lifecycle Test',
+    description: 'Lifecycle test runbook',
+    steps: steps as unknown as Step[],
+  };
+  const state = await manager.create('lifecycle-test.md', mockRunbookDef, {
+    runbookPath: 'lifecycle-test.md',
+    frontmatterOutputs: [],
+  });
+
+  const actor = await service.createActor(state.id, steps);
+  if (!actor) throw new Error('createLifecycleHarness: actor creation failed');
+
+  return { actor, service, runbookId: state.id, steps };
 }
 
 describe('RunbookActorService', () => {
@@ -569,6 +600,43 @@ describe('RunbookActorService', () => {
         Items: ['a', 'b'], // flattenTemplateVars: array passes through as array
       });
       actor!.stop();
+    });
+  });
+
+  describe('lifecycle surfacing from actor snapshot', () => {
+    it('persists lifecycle = "completed" when machine reaches COMPLETE', async () => {
+      const harness = await createLifecycleHarness('## 1. Only\n- PASS COMPLETE\n- FAIL STOP\n');
+      harness.actor.send({ type: 'PASS' });
+      const { state } = await harness.service.updateFromActor(
+        harness.runbookId,
+        harness.actor,
+        harness.steps,
+      );
+      expect(state.lifecycle).toBe('completed');
+    });
+
+    it('persists lifecycle = "stopped" when machine reaches STOPPED', async () => {
+      const harness = await createLifecycleHarness('## 1. Only\n- PASS COMPLETE\n- FAIL STOP\n');
+      harness.actor.send({ type: 'FAIL' });
+      const { state } = await harness.service.updateFromActor(
+        harness.runbookId,
+        harness.actor,
+        harness.steps,
+      );
+      expect(state.lifecycle).toBe('stopped');
+    });
+
+    it('persists lifecycle = "running" for non-terminal snapshots', async () => {
+      const harness = await createLifecycleHarness(
+        '## 1. First\n- PASS CONTINUE\n- FAIL STOP\n\n## 2. Last\n- PASS COMPLETE\n- FAIL STOP\n',
+      );
+      harness.actor.send({ type: 'PASS' });
+      const { state } = await harness.service.updateFromActor(
+        harness.runbookId,
+        harness.actor,
+        harness.steps,
+      );
+      expect(state.lifecycle).toBe('running');
     });
   });
 
