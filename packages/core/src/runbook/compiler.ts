@@ -886,7 +886,7 @@ function buildParentStateConfig(
   const firstSubstep = parentStep.substeps[0] as (typeof parentStep.substeps)[number] | undefined;
   const firstSubstepStateId = firstSubstep ? formatStateId(stepName, firstSubstep.id) : nextTarget;
 
-  const always: RunbookAlwaysEntry[] = [];
+  const always: (RunbookAlwaysEntry & object)[] = [];
 
   // FOR iteration-level aggregation/transitions — default when iteration machinery is needed
   const needsIterationMachinery =
@@ -909,7 +909,7 @@ function buildParentStateConfig(
     branchGuard: GuardFn,
     transition: { retry: number; action: Action },
     target: string,
-  ): RunbookAlwaysEntry[] => {
+  ): (RunbookAlwaysEntry & object)[] => {
     const exhausted = {
       guard: ({ context, event }: { context: RunbookContext; event: RunbookEvent }) =>
         branchGuard({ context, event }) &&
@@ -1541,16 +1541,9 @@ function buildParentStateConfig(
   }
 
   return {
-    always: always.map((transition) => {
-      // All entries in `always` are objects (the compiler never pushes bare strings).
-      // TypeScript's type narrowing doesn't automatically eliminate string/undefined options,
-      // so we narrow here before passing to decorateParentTransition.
-      return decorateParentTransition(
-        transition as RunbookAlwaysEntry & object,
-        stepName,
-        parentStep.outputs,
-      );
-    }),
+    always: always.map((transition) =>
+      decorateParentTransition(transition, stepName, parentStep.outputs),
+    ),
   } satisfies RunbookStateConfig;
 }
 
@@ -1569,7 +1562,7 @@ function buildParentStateConfig(
  * the terminal states' `entry` actions (COMPLETE.entry / STOPPED.entry) under
  * the single-owner terminal-entry architecture.
  *
- * @param transition - The always transition to decorate
+ * @param transition - The always transition entry to decorate
  * @param stepName - The parent step name
  * @param outputs - The parent step's OUTPUTS declarations (if any)
  * @returns The decorated transition (or the original if no decoration applies)
@@ -2012,7 +2005,7 @@ function toActionArray(actions: RunbookAction | RunbookAction[] | undefined): Ru
  * OUTPUTS evaluation observes the variable state captured at exit time
  * (not the post-assign state from later cleanup actions).
  *
- * @param transition - Transition to decorate
+ * @param transition - Transition to decorate (event or always entry)
  * @param extra - Actions to prepend
  * @returns A new transition with the extra actions prepended (or the original if extra is empty)
  */
