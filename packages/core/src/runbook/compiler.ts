@@ -87,7 +87,16 @@ export const runbookSetup = setup({
       variables: ({ context }, params: ActionDefs['storeStepOutputs']) => {
         const substepId =
           params.substepId ?? (params.useCompletedSubstep ? context.completedSubstep : undefined);
-        const frame = buildExecutionFrame(toFrameState(context), {
+        const baseFrameState = toFrameState(context);
+        const activeFor = baseFrameState.forStack.at(-1);
+        const completedFor = context.completedForContext;
+        const frameState =
+          params.useCompletedForContext &&
+          activeFor?.stepId !== params.stepName &&
+          completedFor?.stepId === params.stepName
+            ? { ...baseFrameState, forStack: [completedFor] }
+            : baseFrameState;
+        const frame = buildExecutionFrame(frameState, {
           stepName: params.stepName,
           substepId,
         });
@@ -172,6 +181,13 @@ export interface RunbookContext {
   substep?: string;
   /** Most recently completed substep, preserved for parent OUTPUTS evaluation. */
   completedSubstep?: string;
+  /**
+   * FOR frame snapshot captured just before a parent self-transition clears forStack.
+   * Preserved so parent OUTPUTS can reconstruct loop-scoped values (Index, loop variable,
+   * context.current.at) after the loop has exited. Only valid when stepId matches the
+   * evaluating step; the step-id check in storeStepOutputs guards against stale values.
+   */
+  completedForContext?: ForContext;
   /** User-defined runbook variables */
   variables: Record<string, boolean | number | string>;
   /** Last action taken by the state machine (source of truth for transition type) */
@@ -1019,6 +1035,8 @@ function buildParentStateConfig(
         },
         target: formatStateId(stepName),
         actions: runbookSetup.assign({
+          completedForContext: ({ context }: { context: RunbookContext }) =>
+            peekForStack(context.forStack),
           forStack: EMPTY_FOR_STACK,
           lastAction: { type: 'BREAK' as const },
           iterationResults: ({ context }: { context: RunbookContext }): ('pass' | 'fail')[] =>
@@ -1063,6 +1081,8 @@ function buildParentStateConfig(
         },
         target: formatStateId(stepName),
         actions: runbookSetup.assign({
+          completedForContext: ({ context }: { context: RunbookContext }) =>
+            peekForStack(context.forStack),
           forStack: EMPTY_FOR_STACK,
         }),
       });
@@ -1120,6 +1140,8 @@ function buildParentStateConfig(
           },
           target: formatStateId(stepName),
           actions: runbookSetup.assign({
+            completedForContext: ({ context }: { context: RunbookContext }) =>
+              peekForStack(context.forStack),
             forStack: EMPTY_FOR_STACK,
             lastAction: { type: 'CONTINUE' as const },
             iterationResults: ({ context }: { context: RunbookContext }): ('pass' | 'fail')[] =>
@@ -1150,6 +1172,8 @@ function buildParentStateConfig(
           },
           target: formatStateId(stepName),
           actions: runbookSetup.assign({
+            completedForContext: ({ context }: { context: RunbookContext }) =>
+              peekForStack(context.forStack),
             forStack: EMPTY_FOR_STACK,
             lastAction: { type: 'BREAK' as const },
             iterationResults: ({ context }: { context: RunbookContext }): ('pass' | 'fail')[] =>
@@ -1212,6 +1236,8 @@ function buildParentStateConfig(
         },
         target: formatStateId(stepName),
         actions: runbookSetup.assign({
+          completedForContext: ({ context }: { context: RunbookContext }) =>
+            peekForStack(context.forStack),
           forStack: EMPTY_FOR_STACK,
           iterationResults: ({ context }: { context: RunbookContext }): ('pass' | 'fail')[] => {
             const results = context.iterationResults ?? [];
@@ -1236,6 +1262,8 @@ function buildParentStateConfig(
         },
         target: formatStateId(stepName),
         actions: runbookSetup.assign({
+          completedForContext: ({ context }: { context: RunbookContext }) =>
+            peekForStack(context.forStack),
           forStack: EMPTY_FOR_STACK,
           lastAction: { type: 'BREAK' as const },
           iterationResults: ({ context }: { context: RunbookContext }): ('pass' | 'fail')[] =>
@@ -1280,6 +1308,8 @@ function buildParentStateConfig(
         },
         target: formatStateId(stepName),
         actions: runbookSetup.assign({
+          completedForContext: ({ context }: { context: RunbookContext }) =>
+            peekForStack(context.forStack),
           forStack: EMPTY_FOR_STACK,
         }),
       });
@@ -1552,7 +1582,7 @@ function decorateParentTransition(
     !target.startsWith(`${formatStateId(stepName)}::`);
 
   if (exitsParent && outputs && outputs.length > 0) {
-    extra.push(actionRef('storeStepOutputs', { outputs, stepName, useCompletedSubstep: true }));
+    extra.push(actionRef('storeStepOutputs', { outputs, stepName, useCompletedSubstep: true, useCompletedForContext: true }));
   }
 
   return prependActions(transition, extra);
@@ -2496,6 +2526,7 @@ export function compileRunbookToMachine(
       retryMax: undefined,
       substep: undefined,
       completedSubstep: undefined,
+      completedForContext: undefined,
       variables: {},
       lastAction: undefined,
       lastMessage: undefined,

@@ -32,6 +32,12 @@ export interface ActionDefs {
      * already been cleared by the time the parent OUTPUTS run.
      */
     useCompletedSubstep?: boolean;
+    /**
+     * Use the FOR frame snapshot recorded in context.completedForContext to restore
+     * loop-scoped variables (Index, loop variable, context.current.at) when forStack
+     * has already been cleared by the parent self-transition cleanup.
+     */
+    useCompletedForContext?: boolean;
   };
   /** Evaluates frontmatter OUTPUTS declarations and persists the result into terminal finalVars. */
   readonly storeFrontmatterOutputs: {
