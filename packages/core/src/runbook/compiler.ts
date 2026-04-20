@@ -874,6 +874,7 @@ function buildParentStateConfig(
 ): { always: TransitionEntry[]; entry?: CompilerAction | CompilerAction[] } {
   const parentStep = config.parentStep;
   const stepName = config.stepName;
+  // parentStep.transitions is non-optional on ExecutionUnitFields — guaranteed by the parser.
 
   const hasFor = parentStep.kind === 'for';
   const hasAggregation = !!parentStep.aggregation;
