@@ -1541,14 +1541,16 @@ function buildParentStateConfig(
   }
 
   return {
-    always: always.map(
-      (transition) =>
-        decorateParentTransition(
-          transition as RunbookTransitionObject,
-          stepName,
-          parentStep.outputs,
-        ) as RunbookAlwaysEntry,
-    ),
+    always: always.map((transition) => {
+      // All entries in `always` are objects (the compiler never pushes bare strings).
+      // TypeScript's type narrowing doesn't automatically eliminate string/undefined options,
+      // so we narrow here before passing to decorateParentTransition.
+      return decorateParentTransition(
+        transition as RunbookAlwaysEntry & object,
+        stepName,
+        parentStep.outputs,
+      );
+    }),
   } satisfies RunbookStateConfig;
 }
 
@@ -1572,11 +1574,11 @@ function buildParentStateConfig(
  * @param outputs - The parent step's OUTPUTS declarations (if any)
  * @returns The decorated transition (or the original if no decoration applies)
  */
-function decorateParentTransition(
-  transition: RunbookTransitionObject,
+function decorateParentTransition<T extends RunbookAlwaysEntry & object>(
+  transition: T,
   stepName: string,
   outputs: readonly OutputDeclaration[] | undefined,
-): RunbookTransitionObject {
+): T {
   const extra: RunbookAction[] = [];
   const target = typeof transition.target === 'string' ? transition.target : undefined;
   const exitsParent =
