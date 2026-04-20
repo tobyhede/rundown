@@ -22,6 +22,25 @@ import {
   LEGACY_SESSION_FILE,
 } from '../paths.js';
 
+/** Current persisted state schema version. Bump whenever RunbookState shape changes incompatibly. */
+const CURRENT_SCHEMA_VERSION = 2;
+
+/**
+ * Thrown when a persisted state file was written by an older schema version.
+ * Callers should surface this to the user with a prompt to run `rd prune --all`.
+ */
+export class StaleRunbookStateError extends Error {
+  /**
+   * Create a new StaleRunbookStateError.
+   *
+   * @param message - Human-readable description of why the state is stale
+   */
+  constructor(message: string) {
+    super(message);
+    this.name = 'StaleRunbookStateError';
+  }
+}
+
 function generateId(): string {
   const now = new Date();
   const date = now.toISOString().slice(0, 10);
@@ -143,6 +162,8 @@ export class RunbookStateManager {
       runbookSrc: options.runbookSrc,
       templateVars: options.templateVars,
       frontmatterOutputs: options.frontmatterOutputs ?? [],
+      lifecycle: 'running',
+      schemaVersion: CURRENT_SCHEMA_VERSION,
     };
 
     await this.save(state);
@@ -192,6 +213,17 @@ export class RunbookStateManager {
       }
     }
 
+    if (
+      typeof parsed === 'object' &&
+      parsed !== null &&
+      (parsed as Record<string, unknown>).schemaVersion !== CURRENT_SCHEMA_VERSION
+    ) {
+      throw new StaleRunbookStateError(
+        `Runbook state for "${id}" was persisted under a previous schema version. ` +
+          'Run `rd prune --all` to clear stale state before continuing.',
+      );
+    }
+
     const result = RunbookStateSchema.safeParse(parsed);
     if (!result.success) {
       throw new Error(
@@ -216,6 +248,7 @@ export class RunbookStateManager {
     await fs.mkdir(this.stateDir, { recursive: true });
     const updated: RunbookState = {
       ...state,
+      schemaVersion: CURRENT_SCHEMA_VERSION,
       updatedAt: new Date().toISOString(),
     };
     const content = JSON.stringify(updated, null, 2);
@@ -286,8 +319,11 @@ export class RunbookStateManager {
           try {
             const state = await this.load(id);
             if (state) states.push(state);
-          } catch {
-            // Stale/corrupt state — skip, handled by `rundown prune`
+          } catch (err) {
+            if (err instanceof StaleRunbookStateError) {
+              process.stderr.write(`[rundown] Warning: ${err.message}\n`);
+            }
+            // Other errors (corrupt JSON, missing files) — skip silently
           }
         }
       }

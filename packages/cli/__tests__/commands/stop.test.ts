@@ -47,7 +47,7 @@ describe('stop command', () => {
       expect(stateAfter).not.toBeNull();
       expect(stateAfter!.lastAction).toEqual({ type: 'STOP' });
       expect(stateAfter!.lastResult).toBe('fail');
-      expect(stateAfter!.variables.stopped).toBe(true);
+      expect(stateAfter!.lifecycle).toBe('stopped');
     });
   });
 
@@ -100,6 +100,25 @@ describe('stop command', () => {
       await writeFile(join(stateDir, `${stateId}.json`), JSON.stringify(legacyState));
 
       // stop is a cleanup command — it should handle stale state gracefully
+      const result = await runCliInProcess('stop --text', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const session = await readSession(workspace);
+      expect(session.active).toBeNull();
+      expect(session.defaultStack).toHaveLength(0);
+    });
+
+    it('cleans up stale state with wrong schemaVersion instead of propagating error', async () => {
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+      const state = await getActiveState(workspace);
+      const stateId = state!.id as string;
+      const stateDir = workspace.statePath();
+
+      // Write a state with the wrong schemaVersion to trigger StaleRunbookStateError
+      const staleState = { ...state, schemaVersion: 1 };
+      await writeFile(join(stateDir, `${stateId}.json`), JSON.stringify(staleState));
+
+      // stop is a cleanup command — StaleRunbookStateError must not propagate
       const result = await runCliInProcess('stop --text', workspace);
       expect(result.exitCode).toBe(0);
 
@@ -254,7 +273,7 @@ Run the child task.
       // Aggregation: FAIL ANY (1.1 failed) triggers STOP
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
-      expect((updatedParent!.variables as Record<string, unknown>).stopped).toBe(true);
+      expect(updatedParent!.lifecycle).toBe('stopped');
     });
 
     it('stop with custom message propagates to parent', async () => {
@@ -282,7 +301,7 @@ Run the child task.
       // Parent should be stopped (FAIL ANY: STOP)
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
-      expect((updatedParent!.variables as Record<string, unknown>).stopped).toBe(true);
+      expect(updatedParent!.lifecycle).toBe('stopped');
     });
 
     it('stop with outputs structured data and propagates', async () => {
@@ -322,7 +341,7 @@ Run the child task.
       // Verify parent is stopped
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
-      expect((updatedParent!.variables as Record<string, unknown>).stopped).toBe(true);
+      expect(updatedParent!.lifecycle).toBe('stopped');
     });
 
     it('stop without delegation linkage does not propagate', async () => {
@@ -398,7 +417,7 @@ Approve the deployment.
       // Verify parent is stopped
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
-      expect((updatedParent!.variables as Record<string, unknown>).stopped).toBe(true);
+      expect(updatedParent!.lifecycle).toBe('stopped');
 
       // Grandparent is now active at substep 1.2 — complete it
       // Aggregation: FAIL ANY triggers STOP
@@ -407,7 +426,7 @@ Approve the deployment.
       // Verify grandparent is stopped
       const updatedGrandparent = await readRunbookState(workspace, grandparentRunId);
       expect(updatedGrandparent).not.toBeNull();
-      expect((updatedGrandparent!.variables as Record<string, unknown>).stopped).toBe(true);
+      expect(updatedGrandparent!.lifecycle).toBe('stopped');
     });
   });
 });

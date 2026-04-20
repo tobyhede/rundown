@@ -354,8 +354,7 @@ rd echo --result fail
       // Parent should be stopped
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
-      const vars = updatedParent!.variables as Record<string, unknown>;
-      expect(vars.stopped).toBe(true);
+      expect(updatedParent!.lifecycle).toBe('stopped');
     });
   });
 

@@ -47,11 +47,12 @@ rundown ls --all --tags <tags>  # Filter by comma-separated tags
 rundown check <file>     # Check runbook for errors
 rundown resolve <file>   # Resolve and validate variables and data sources
 rundown echo             # Test helper: echo with configurable result
-rundown prune            # Remove runbook state (default: completed)
+rundown prune            # Remove runbook state (default: completed + stopped)
 rundown prune --dry-run  # Show what would be removed without deleting
-rundown prune --completed # Prune completed runbook state
+rundown prune --completed # Prune successfully completed runbook state
+rundown prune --stopped  # Prune stopped (aborted/failed) runbook state
 rundown prune --active   # Prune active runbook state
-rundown prune --inactive # Prune inactive runbook state
+rundown prune --inactive # Prune inactive (orphaned) runbook state
 rundown prune --all      # Prune all runbook state
 rundown scenario ls <file>           # List scenarios in a runbook
 rundown scenario show <file> <name>  # Show scenario details
@@ -183,10 +184,11 @@ State persists in `.rundown/runs/` (execution state) and `.rundown/session.json`
 
 <important>
 **Principle:** NEVER migrate persisted runbook state between versions.
-On schema changes, any running runbooks should be completed/closed and restarted.
-The CLI should error and prompt the user if state is stale.
-Never attempt to migrate state.
 </important>
+
+**Principle:** Never migrate persisted runbook state between versions. This applies to all data written to `.rundown/runs/`: structured `RunbookState` fields (step, variables, lifecycle, etc.) and the opaque `state.snapshot` blob stored inside `RunbookState`. Neither is exempt. On schema changes, running runbooks should be completed/closed and restarted. The CLI should detect stale state (via schema version or structural guard) and prompt the user to finish or prune — never silently adapt, rewrite, or shim the data.
+
+There is no in-memory migration scenario. In-memory state does not survive process restarts. Any state that reaches `createActor` originates from disk and is subject to the same no-migration rule.
 
 ## Runbook Discovery
 

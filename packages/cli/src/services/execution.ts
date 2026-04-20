@@ -474,7 +474,7 @@ export async function runExecutionLoop(
         const completionMessage = extractLastMessage(iterResult.state.snapshot);
 
         await manager.update(runbookId, {
-          variables: { completed: true },
+          lifecycle: 'completed',
         });
 
         emitter.emit('RUNBOOK_COMPLETED', {
@@ -493,7 +493,7 @@ export async function runExecutionLoop(
         const stopMessage = extractLastMessage(iterResult.state.snapshot);
 
         await manager.update(runbookId, {
-          variables: { stopped: true },
+          lifecycle: 'stopped',
         });
 
         const stopPos = buildStepPosition(
@@ -663,12 +663,16 @@ export async function runExecutionLoop(
         reason: execResult.denialReason ?? 'Permission denied',
         position: policyPosition,
       });
+      await manager.update(runbookId, {
+        lifecycle: 'stopped',
+      });
       // Emit RUNBOOK_STOPPED so JSON output shows correct terminal state
       emitter.emit('RUNBOOK_STOPPED', {
         position: policyPosition,
         reason: 'policy_denied',
         message: `Command blocked by policy: ${execResult.denialReason ?? 'Permission denied'}`,
       });
+      await sessionService.popRunbook();
       return 'stopped';
     }
 

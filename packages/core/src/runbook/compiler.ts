@@ -7,6 +7,7 @@ import type {
   ForContext,
   ResolvedStep,
   ResolvedStepHavingSubsteps,
+  Lifecycle,
 } from './types.js';
 import { isResolvedVariableForContext } from './types.js';
 import type { StepId } from './step-id.js';
@@ -26,30 +27,8 @@ import {
   buildExecutionFrame,
   evaluateFrontmatterOutputDeclarations,
   evaluateStepOutputDeclarations,
-  type OutputFrameState,
   type OutputVars,
 } from './output-evaluator.js';
-
-/**
- * Coerce {@link RunbookContext} into the {@link OutputFrameState} shape expected
- * by {@link buildExecutionFrame}. The latter requires `variables` to be a string
- * map; the runbook context allows scalar booleans/numbers, so we stringify them
- * for the frame snapshot used during OUTPUTS expression evaluation.
- *
- * @param context - The runbook machine context
- * @returns A frame state suitable for output evaluation
- */
-function toFrameState(context: RunbookContext): OutputFrameState {
-  const stringified: Record<string, string> = {};
-  for (const [key, value] of Object.entries(context.variables)) {
-    stringified[key] = typeof value === 'string' ? value : String(value);
-  }
-  return {
-    templateVars: context.templateVars,
-    variables: stringified,
-    forStack: context.forStack,
-  };
-}
 
 /**
  * Module-level XState setup with typed context, events, and named actions.
@@ -87,7 +66,7 @@ export const runbookSetup = setup({
       variables: ({ context }, params: ActionDefs['storeStepOutputs']) => {
         const substepId =
           params.substepId ?? (params.useCompletedSubstep ? context.completedSubstep : undefined);
-        const baseFrameState = toFrameState(context);
+        const baseFrameState = context;
         const activeFor = baseFrameState.forStack.at(-1);
         const completedFor = context.completedForContext;
         const frameState =
@@ -117,7 +96,7 @@ export const runbookSetup = setup({
         if (context.frontmatterOutputs.length === 0) {
           return context.finalVars;
         }
-        const frame = buildExecutionFrame(toFrameState(context), {
+        const frame = buildExecutionFrame(context, {
           stepName: params.stepName ?? '',
           substepId: params.substepId,
         });
@@ -216,8 +195,8 @@ export interface RunbookContext {
    * evaluating step; the step-id check in storeStepOutputs guards against stale values.
    */
   completedForContext?: ForContext;
-  /** User-defined runbook variables */
-  variables: Record<string, boolean | number | string>;
+  /** User-defined runbook variables. String-only after lifecycle flags moved out. */
+  variables: Record<string, string>;
   /** Last action taken by the state machine (source of truth for transition type) */
   lastAction?: LastAction;
   /** Message from STOP/COMPLETE actions */
@@ -236,6 +215,8 @@ export interface RunbookContext {
   readonly frontmatterOutputs: readonly OutputDeclaration[];
   /** Final OUTPUTS snapshot persisted at terminal entry. Exposed via machine output. */
   readonly finalVars: RunbookMachineOutput['finalVars'];
+  /** Machine-owned lifecycle flag. 'running' during execution; 'completed' or 'stopped' on final entry. */
+  readonly lifecycle: Lifecycle;
 }
 
 /**
@@ -252,7 +233,7 @@ export type RunbookEvent =
   | { type: 'FAIL' }
   | { type: 'RETRY' }
   | { type: 'GOTO'; target: StepId }
-  | { type: 'SET_VARIABLES'; vars: Record<string, boolean | number | string> };
+  | { type: 'SET_VARIABLES'; vars: Record<string, string> };
 
 /**
  * XState transition configuration returned by transition builder functions.
@@ -903,7 +884,6 @@ function buildParentStateConfig(
 ): { always: TransitionEntry[]; entry?: CompilerAction | CompilerAction[] } {
   const parentStep = config.parentStep;
   const stepName = config.stepName;
-  // parentStep.transitions is non-optional on ExecutionUnitFields — guaranteed by the parser.
 
   const hasFor = parentStep.kind === 'for';
   const hasAggregation = !!parentStep.aggregation;
@@ -2567,6 +2547,7 @@ export function compileRunbookToMachine(
       templateVars: options?.templateVars ?? {},
       frontmatterOutputs: options?.frontmatterOutputs ?? [],
       finalVars: {},
+      lifecycle: 'running',
     },
     states: {
       ...states,
@@ -2575,7 +2556,7 @@ export function compileRunbookToMachine(
         entry: [
           actionRef('storeFrontmatterOutputs', {}),
           runbookSetup.assign({
-            variables: ({ context }) => ({ ...context.variables, completed: true }),
+            lifecycle: () => 'completed' as const,
           }),
         ],
         output: ({ context }) => ({ finalVars: context.finalVars }),
@@ -2585,7 +2566,7 @@ export function compileRunbookToMachine(
         entry: [
           actionRef('storeFrontmatterOutputs', {}),
           runbookSetup.assign({
-            variables: ({ context }) => ({ ...context.variables, stopped: true }),
+            lifecycle: () => 'stopped' as const,
           }),
         ],
         output: ({ context }) => ({ finalVars: context.finalVars }),

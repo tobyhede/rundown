@@ -874,11 +874,12 @@ export async function claimAndLaunch(
       };
     }
 
-    // Reject claims against stopped parents — the run has been aborted
-    if (freshParent.variables.stopped) {
+    // Reject claims against stopped or completed parents — the run has ended
+    if (freshParent.lifecycle === 'stopped' || freshParent.lifecycle === 'completed') {
+      const reason = freshParent.lifecycle === 'completed' ? 'completed' : 'stopped';
       return {
         ok: false,
-        error: 'Parent run has been stopped. Delegation cannot be claimed.',
+        error: `Parent run has been ${reason}. Delegation cannot be claimed.`,
         code: ErrorCodes.TOKEN_NOT_FOUND.code,
         details: { parentRunId: freshParent.id },
       };

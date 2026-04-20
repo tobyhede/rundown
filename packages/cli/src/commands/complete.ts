@@ -47,7 +47,7 @@ export function registerCompleteCommand(program: Command): void {
           const steps = getRunbookFromState(state, cwd);
           await manager.update(state.id, {
             step: steps[steps.length - 1].name,
-            variables: { completed: true },
+            lifecycle: 'completed',
           });
           await sessionService.popRunbook();
 

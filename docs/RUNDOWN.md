@@ -886,10 +886,11 @@ Line 22: Invalid transition: GOTO 10 (step does not exist)
 Clean up runbook state files (not runbook source files).
 
 ```bash
-rundown prune               # Remove completed runbooks (default)
+rundown prune               # Remove completed + stopped runbooks (default)
 rundown prune --all         # Remove all runbook state
 rundown prune --dry-run     # Preview what would be removed
 rundown prune --completed   # Only completed
+rundown prune --stopped     # Only stopped (aborted/failed)
 rundown prune --inactive    # Only inactive
 rundown prune --active      # Only active (careful!)
 ```
@@ -1056,8 +1057,14 @@ Output: `PASS: N steps` or `FAIL: error details`
 # Preview what would be removed
 rundown prune --dry-run
 
-# Remove completed runbook state
+# Remove completed + stopped runbook state (default)
+rundown prune
+
+# Remove only completed runbook state
 rundown prune --completed
+
+# Remove only stopped (aborted/failed) runbook state
+rundown prune --stopped
 
 # Remove all state
 rundown prune --all

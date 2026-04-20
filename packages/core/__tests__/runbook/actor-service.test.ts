@@ -4,10 +4,42 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 import { RunbookActorService } from '../../src/runbook/actor-service.js';
-import type { Step, Runbook } from '../../src/runbook/types.js';
+import type { AnyActorRef } from '../../src/runbook/actor-service.js';
+import type { Step, Runbook, ResolvedStep } from '../../src/runbook/types.js';
+import { createRunbook } from './fixtures.js';
 
 function mockActor(snapshot: { value: string; context: Record<string, unknown> }) {
   return { getPersistedSnapshot: () => snapshot } as any;
+}
+
+interface LifecycleHarness {
+  actor: AnyActorRef;
+  service: RunbookActorService;
+  runbookId: string;
+  steps: ResolvedStep[];
+  testDir: string;
+}
+
+async function createLifecycleHarness(markdown: string): Promise<LifecycleHarness> {
+  const steps = createRunbook(markdown);
+  const testDir = await mkdtemp(join(tmpdir(), 'lifecycle-harness-'));
+  const manager = new RunbookStateManager(testDir);
+  const service = new RunbookActorService(manager);
+
+  const mockRunbookDef = {
+    title: 'Lifecycle Test',
+    description: 'Lifecycle test runbook',
+    steps: steps as unknown as Step[],
+  };
+  const state = await manager.create('lifecycle-test.md', mockRunbookDef, {
+    runbookPath: 'lifecycle-test.md',
+    frontmatterOutputs: [],
+  });
+
+  const actor = await service.createActor(state.id, steps);
+  if (!actor) throw new Error('createLifecycleHarness: actor creation failed');
+
+  return { actor, service, runbookId: state.id, steps, testDir };
 }
 
 describe('RunbookActorService', () => {
@@ -185,7 +217,8 @@ describe('RunbookActorService', () => {
       const completeActor = mockActor({
         value: 'COMPLETE',
         context: {
-          variables: { completed: true },
+          variables: {},
+          lifecycle: 'completed',
           retryCount: 0,
         },
       });
@@ -199,59 +232,6 @@ describe('RunbookActorService', () => {
       // FOR fields should be cleared
       expect(completed.forStack).toBeUndefined();
       expect(completed.iterationResults).toBeUndefined();
-    });
-
-    it('migrates old snapshot context on createActor', async () => {
-      // Test the createActor migration path directly
-      // Start with a normal actor that has been running
-      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
-      const actor1 = await actorService.createActor(state.id, mockSteps);
-      expect(actor1).not.toBeNull();
-
-      // Get its snapshot
-      const snapshot1 = actor1!.getPersistedSnapshot() as any;
-
-      // Now manually modify the snapshot to have old-style flat fields
-      const oldSnapshot = {
-        ...snapshot1,
-        context: {
-          ...snapshot1.context,
-          forIteration: 2,
-          forStart: 1,
-          forEnd: 3,
-          forVariable: 'item',
-          // Remove forStack to simulate old state
-          forStack: undefined,
-        },
-      };
-
-      // Save this old snapshot
-      await manager.update(state.id, { snapshot: oldSnapshot });
-
-      // Create a new actor - should trigger migration
-      const actor2 = await actorService.createActor(state.id, mockSteps);
-      expect(actor2).not.toBeNull();
-
-      // Get the migrated snapshot
-      const snapshot2 = actor2!.getPersistedSnapshot() as any;
-      const context = snapshot2.context;
-
-      // Should have forStack, not flat fields
-      expect(context.forStack).toEqual([
-        {
-          stepId: '1',
-          iteration: 2,
-          start: 1,
-          end: 3,
-          variable: 'item',
-          implicit: false,
-          source: { kind: 'range' },
-        },
-      ]);
-      expect(context.forIteration).toBeUndefined();
-      expect(context.forStart).toBeUndefined();
-      expect(context.forEnd).toBeUndefined();
-      expect(context.forVariable).toBeUndefined();
     });
   });
 
@@ -572,6 +552,58 @@ describe('RunbookActorService', () => {
     });
   });
 
+  describe('lifecycle surfacing from actor snapshot', () => {
+    it('persists lifecycle = "completed" when machine reaches COMPLETE', async () => {
+      const harness = await createLifecycleHarness('## 1. Only\n- PASS COMPLETE\n- FAIL STOP\n');
+      try {
+        harness.actor.send({ type: 'PASS' });
+        const { state } = await harness.service.updateFromActor(
+          harness.runbookId,
+          harness.actor,
+          harness.steps,
+        );
+        expect(state.lifecycle).toBe('completed');
+      } finally {
+        harness.actor.stop();
+        await rm(harness.testDir, { recursive: true, force: true });
+      }
+    });
+
+    it('persists lifecycle = "stopped" when machine reaches STOPPED', async () => {
+      const harness = await createLifecycleHarness('## 1. Only\n- PASS COMPLETE\n- FAIL STOP\n');
+      try {
+        harness.actor.send({ type: 'FAIL' });
+        const { state } = await harness.service.updateFromActor(
+          harness.runbookId,
+          harness.actor,
+          harness.steps,
+        );
+        expect(state.lifecycle).toBe('stopped');
+      } finally {
+        harness.actor.stop();
+        await rm(harness.testDir, { recursive: true, force: true });
+      }
+    });
+
+    it('persists lifecycle = "running" for non-terminal snapshots', async () => {
+      const harness = await createLifecycleHarness(
+        '## 1. First\n- PASS CONTINUE\n- FAIL STOP\n\n## 2. Last\n- PASS COMPLETE\n- FAIL STOP\n',
+      );
+      try {
+        harness.actor.send({ type: 'PASS' });
+        const { state } = await harness.service.updateFromActor(
+          harness.runbookId,
+          harness.actor,
+          harness.steps,
+        );
+        expect(state.lifecycle).toBe('running');
+      } finally {
+        harness.actor.stop();
+        await rm(harness.testDir, { recursive: true, force: true });
+      }
+    });
+  });
+
   describe('RunbookActorService — finalVars persistence', () => {
     // Verifies that updateFromActor reads snapshot.context.finalVars and writes
     // it to RunbookState.finalVars on terminal sync. The earlier implementation
@@ -618,7 +650,7 @@ describe('RunbookActorService', () => {
     it('leaves RunbookState.finalVars undefined when context.finalVars is empty on COMPLETE', async () => {
       const state = await manager.create('test.md', mockRunbook, {
         runbookPath: 'test.md',
-        frontmatterOutputs: [],
+        frontmatterOutputs: [], // No frontmatterOutputs declared → context.finalVars stays {}
       });
 
       const result = await actorService.sendAndSync(state.id, mockSteps, { type: 'PASS' });

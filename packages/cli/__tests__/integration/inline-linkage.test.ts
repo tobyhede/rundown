@@ -63,11 +63,6 @@ describe('Inline linkage integration (rd run --step)', () => {
     await writeFile(join(workspace.cwd, 'child.runbook.md'), content);
   }
 
-  /** Helper: extract variables from parsed state. */
-  function getVariables(state: Record<string, unknown>): Record<string, unknown> {
-    return (state.variables ?? {}) as Record<string, unknown>;
-  }
-
   /** Helper: find child state in runs directory by scanning for parentLinkage. */
   async function findChildState(parentRunId: string): Promise<Record<string, unknown> | null> {
     const runsDir = workspace.statePath();
@@ -240,7 +235,7 @@ describe('Inline linkage integration (rd run --step)', () => {
 
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
-      expect(getVariables(updatedParent!).stopped).toBe(true);
+      expect(updatedParent!.lifecycle).toBe('stopped');
     });
   });
 
@@ -579,8 +574,7 @@ describe('Inline linkage integration (rd run --step)', () => {
 
       const childState = await findChildState(parentRunId);
       expect(childState).not.toBeNull();
-      const variables = (childState!.variables ?? {}) as Record<string, unknown>;
-      expect(variables.completed).toBe(true);
+      expect(childState!.lifecycle).toBe('completed');
     });
 
     it('inline child state has context.parent vars', async () => {

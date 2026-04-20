@@ -294,7 +294,7 @@ export const RunbookStateSchema = z
     substep: z.string().optional(),
     stepName: z.string(),
     retryCount: z.number().nonnegative().int(),
-    variables: z.record(z.string(), z.union([z.boolean(), z.number(), z.string()])),
+    variables: z.record(z.string(), z.string()),
     steps: z.array(
       z.object({
         id: z.string(),
@@ -368,6 +368,12 @@ export const RunbookStateSchema = z
     templateVars: z.record(z.string(), TemplateVarValueSchema).optional(),
     frontmatterOutputs: z.array(OutputDeclarationSchema).optional(),
     finalVars: z.record(z.string(), z.string()).optional(),
+    // Optional by design: state.create() always writes these fields, but
+    // state.load() must parse legacy files (which lack them) far enough to
+    // reach the schemaVersion check and throw StaleRunbookStateError.
+    // Making them required would bypass stale-state detection. Do not tighten.
+    lifecycle: z.enum(['running', 'completed', 'stopped']).optional(),
+    schemaVersion: z.number().int().nonnegative().optional(),
   })
   // passthrough() allows unknown fields (e.g., legacy pendingSteps, agentBindings,
   // agentId, parentRunbookId) to survive schema validation without breaking existing

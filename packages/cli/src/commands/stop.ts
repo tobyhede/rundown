@@ -1,7 +1,13 @@
 // packages/cli/src/commands/stop.ts
 
 import type { Command } from 'commander';
-import { RunbookStateManager, SessionService, isError, type RunbookState } from '@rundown-org/core';
+import {
+  RunbookStateManager,
+  SessionService,
+  StaleRunbookStateError,
+  isError,
+  type RunbookState,
+} from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { buildMetadata } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
@@ -39,7 +45,7 @@ export function registerStopCommand(program: Command): void {
             // fall through to the orphan cleanup path since stop is a cleanup command.
             if (
               getActiveError &&
-              !getActiveError.message.includes('Stale runbook state') &&
+              !(getActiveError instanceof StaleRunbookStateError) &&
               !getActiveError.message.includes('dynamic-step snapshots') &&
               !(isError(getActiveError) && getActiveError.name === 'SyntaxError')
             ) {
@@ -65,7 +71,7 @@ export function registerStopCommand(program: Command): void {
           const updatedState = await manager.update(state.id, {
             lastAction: { type: 'STOP' },
             lastResult: 'fail',
-            variables: { stopped: true },
+            lifecycle: 'stopped',
           });
           await sessionService.popRunbook();
 

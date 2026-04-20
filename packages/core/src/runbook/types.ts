@@ -620,6 +620,14 @@ export function assertResolvedVariableForContext(
 }
 
 /**
+ * Runbook lifecycle state. `'running'` covers the entire active lifetime (including
+ * paused/stashed). Reaching a final state transitions to `'completed'` (COMPLETE)
+ * or `'stopped'` (STOPPED). Replaces the previous lifecycle booleans inside
+ * `state.variables`.
+ */
+export type Lifecycle = 'running' | 'completed' | 'stopped';
+
+/**
  * Runbook execution state (persisted)
  */
 export interface RunbookState {
@@ -632,7 +640,7 @@ export interface RunbookState {
   readonly substep?: string;
   readonly stepName: string; // Human-readable description
   readonly retryCount: number;
-  readonly variables: Record<string, boolean | number | string>;
+  readonly variables: Record<string, string>;
   readonly steps: readonly StepState[];
 
   // Orchestration fields
@@ -688,4 +696,10 @@ export interface RunbookState {
 
   /** Evaluated frontmatter outputs: values at runbook termination. Read by parent delegation completion. */
   readonly finalVars?: Readonly<Record<string, string>>;
+
+  /** Lifecycle state. 'running' during execution; 'completed' or 'stopped' once terminal. */
+  readonly lifecycle?: Lifecycle;
+
+  /** Schema version for stale-state detection. Present on all states written after schema v2. */
+  readonly schemaVersion?: number;
 }

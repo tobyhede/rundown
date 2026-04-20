@@ -190,9 +190,10 @@ export async function handleParentCompletion(
   // state.snapshot, so a direct manager.update({ variables }) is invisible to the next actor.
   if (childState.finalVars && Object.keys(childState.finalVars).length > 0) {
     try {
+      const vars: Record<string, string> = { ...childState.finalVars };
       await parentActorService.sendAndSync(parentRunId, parentSteps, {
         type: 'SET_VARIABLES',
-        vars: childState.finalVars,
+        vars,
       });
     } catch (err) {
       const errMsg = getErrorMessage(err);

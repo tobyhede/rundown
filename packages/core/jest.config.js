@@ -17,6 +17,7 @@ export default {
   extensionsToTreatAsEsm: ['.ts'],
   moduleNameMapper: {
     '^(\\.{1,2}/.*)\\.js$': '$1',
+    '^@rundown-org/parser$': '<rootDir>/../parser/src/index.ts',
   },
   transform: {
     '^.+\\.tsx?$': [

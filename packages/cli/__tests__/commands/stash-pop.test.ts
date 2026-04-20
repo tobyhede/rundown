@@ -172,6 +172,8 @@ rd echo "hello"
       startedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       runbookSrc, // Include runbookSrc so pop can read steps
+      lifecycle: 'running',
+      schemaVersion: 2,
     };
     await writeFile(stateFile, JSON.stringify(state, null, 2));
 
