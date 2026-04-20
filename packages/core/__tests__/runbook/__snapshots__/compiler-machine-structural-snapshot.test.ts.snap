@@ -1,5 +1,534 @@
 // Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
 
+exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produces a stable structural config for DEFER transitions 1`] = `
+{
+  "context": {
+    "finalVars": {},
+    "forStack": [],
+    "frontmatterOutputs": [],
+    "iterationRetryCount": 0,
+    "lifecycle": "running",
+    "parentRetryCount": 0,
+    "retryCount": 0,
+    "substepCompletedCount": 0,
+    "templateVars": {},
+    "variables": {},
+  },
+  "id": "runbook",
+  "initial": "step::1::1",
+  "on": {
+    "SET_VARIABLES": {
+      "actions": "[fn]",
+    },
+  },
+  "states": {
+    "COMPLETE": {
+      "entry": [
+        {
+          "params": {},
+          "type": "storeFrontmatterOutputs",
+        },
+        "[fn]",
+      ],
+      "output": "[fn]",
+      "type": "final",
+    },
+    "STOPPED": {
+      "entry": [
+        {
+          "params": {},
+          "type": "storeFrontmatterOutputs",
+        },
+        "[fn]",
+      ],
+      "output": "[fn]",
+      "type": "final",
+    },
+    "step::1": {
+      "always": [
+        {
+          "actions": "[fn]",
+          "guard": "[fn]",
+          "target": "step::2",
+        },
+        {
+          "actions": "[fn]",
+          "guard": "[fn]",
+          "target": "STOPPED",
+        },
+      ],
+    },
+    "step::1::1": {
+      "entry": "[fn]",
+      "on": {
+        "FAIL": {
+          "actions": "[fn]",
+          "target": "step::1",
+        },
+        "GOTO": [
+          {
+            "actions": "[fn]",
+            "guard": "[fn]",
+            "target": "step::1::1",
+          },
+          {
+            "actions": "[fn]",
+            "guard": "[fn]",
+            "target": "step::2",
+          },
+          {
+            "actions": "[fn]",
+            "guard": "[fn]",
+            "target": "step::3",
+          },
+          {
+            "actions": "[fn]",
+            "guard": "[fn]",
+            "target": "step::4",
+          },
+        ],
+        "PASS": {
+          "actions": "[fn]",
+          "target": "step::1",
+        },
+        "RETRY": {
+          "actions": "[fn]",
+          "target": "step::1::1",
+        },
+      },
+    },
+    "step::2": {
+      "on": {
+        "FAIL": {
+          "actions": {
+            "params": {
+              "action": {
+                "type": "STOP",
+              },
+            },
+            "type": "setLastAction",
+          },
+          "target": "STOPPED",
+        },
+        "GOTO": [
+          {
+            "actions": "[fn]",
+            "guard": "[fn]",
+            "target": "step::1::1",
+          },
+          {
+            "actions": "[fn]",
+            "guard": "[fn]",
+            "target": "step::2",
+          },
+          {
+            "actions": "[fn]",
+            "guard": "[fn]",
+            "target": "step::3",
+          },
+          {
+            "actions": "[fn]",
+            "guard": "[fn]",
+            "target": "step::4",
+          },
+        ],
+        "PASS": {
+          "actions": "[fn]",
+          "target": "step::4",
+        },
+        "RETRY": {
+          "actions": "[fn]",
+          "target": "step::2",
+        },
+      },
+    },
+    "step::3": {
+      "on": {
+        "FAIL": {
+          "actions": {
+            "params": {
+              "action": {
+                "type": "STOP",
+              },
+            },
+            "type": "setLastAction",
+          },
+          "target": "STOPPED",
+        },
+        "GOTO": [
+          {
+            "actions": "[fn]",
+            "guard": "[fn]",
+            "target": "step::1::1",
+          },
+          {
+            "actions": "[fn]",
+            "guard": "[fn]",
+            "target": "step::2",
+          },
+          {
+            "actions": "[fn]",
+            "guard": "[fn]",
+            "target": "step::3",
+          },
+          {
+            "actions": "[fn]",
+            "guard": "[fn]",
+            "target": "step::4",
+          },
+        ],
+        "PASS": {
+          "actions": "[fn]",
+          "target": "step::4",
+        },
+        "RETRY": {
+          "actions": "[fn]",
+          "target": "step::3",
+        },
+      },
+    },
+    "step::4": {
+      "on": {
+        "FAIL": {
+          "actions": {
+            "params": {
+              "action": {
+                "type": "STOP",
+              },
+            },
+            "type": "setLastAction",
+          },
+          "target": "STOPPED",
+        },
+        "GOTO": [
+          {
+            "actions": "[fn]",
+            "guard": "[fn]",
+            "target": "step::1::1",
+          },
+          {
+            "actions": "[fn]",
+            "guard": "[fn]",
+            "target": "step::2",
+          },
+          {
+            "actions": "[fn]",
+            "guard": "[fn]",
+            "target": "step::3",
+          },
+          {
+            "actions": "[fn]",
+            "guard": "[fn]",
+            "target": "step::4",
+          },
+        ],
+        "PASS": {
+          "actions": {
+            "params": {
+              "action": {
+                "type": "COMPLETE",
+              },
+            },
+            "type": "setLastAction",
+          },
+          "target": "COMPLETE",
+        },
+        "RETRY": {
+          "actions": "[fn]",
+          "target": "step::4",
+        },
+      },
+    },
+  },
+}
+`;
+
+exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produces a stable structural config for FOR loop with BREAK 1`] = `
+{
+  "context": {
+    "finalVars": {},
+    "forStack": [],
+    "frontmatterOutputs": [],
+    "iterationRetryCount": 0,
+    "lifecycle": "running",
+    "parentRetryCount": 0,
+    "retryCount": 0,
+    "substepCompletedCount": 0,
+    "templateVars": {},
+    "variables": {},
+  },
+  "id": "runbook",
+  "initial": "step::1::1",
+  "on": {
+    "SET_VARIABLES": {
+      "actions": "[fn]",
+    },
+  },
+  "states": {
+    "COMPLETE": {
+      "entry": [
+        {
+          "params": {},
+          "type": "storeFrontmatterOutputs",
+        },
+        "[fn]",
+      ],
+      "output": "[fn]",
+      "type": "final",
+    },
+    "STOPPED": {
+      "entry": [
+        {
+          "params": {},
+          "type": "storeFrontmatterOutputs",
+        },
+        "[fn]",
+      ],
+      "output": "[fn]",
+      "type": "final",
+    },
+    "step::1": {
+      "always": [
+        {
+          "actions": "[fn]",
+          "guard": "[fn]",
+          "target": "step::1::2",
+        },
+        {
+          "actions": "[fn]",
+          "guard": "[fn]",
+          "target": "step::2::1",
+        },
+        {
+          "actions": "[fn]",
+          "guard": "[fn]",
+          "target": "STOPPED",
+        },
+      ],
+    },
+    "step::1::1": {
+      "entry": "[fn]",
+      "on": {
+        "FAIL": {
+          "actions": "[fn]",
+          "target": "step::1::2",
+        },
+        "GOTO": [
+          {
+            "actions": "[fn]",
+            "guard": "[fn]",
+            "target": "step::1::1",
+          },
+          {
+            "actions": "[fn]",
+            "guard": "[fn]",
+            "target": "step::1::2",
+          },
+          {
+            "actions": "[fn]",
+            "guard": "[fn]",
+            "target": "step::2::1",
+          },
+          {
+            "actions": "[fn]",
+            "guard": "[fn]",
+            "target": "step::3",
+          },
+        ],
+        "PASS": {
+          "actions": "[fn]",
+          "target": "step::1::2",
+        },
+        "RETRY": {
+          "actions": "[fn]",
+          "target": "step::1::1",
+        },
+      },
+    },
+    "step::1::2": {
+      "on": {
+        "FAIL": {
+          "actions": {
+            "params": {
+              "action": {
+                "type": "STOP",
+              },
+            },
+            "type": "setLastAction",
+          },
+          "target": "STOPPED",
+        },
+        "GOTO": [
+          {
+            "actions": "[fn]",
+            "guard": "[fn]",
+            "target": "step::1::1",
+          },
+          {
+            "actions": "[fn]",
+            "guard": "[fn]",
+            "target": "step::1::2",
+          },
+          {
+            "actions": "[fn]",
+            "guard": "[fn]",
+            "target": "step::2::1",
+          },
+          {
+            "actions": "[fn]",
+            "guard": "[fn]",
+            "target": "step::3",
+          },
+        ],
+        "PASS": {
+          "actions": "[fn]",
+          "target": "step::1",
+        },
+        "RETRY": {
+          "actions": "[fn]",
+          "target": "step::1::2",
+        },
+      },
+    },
+    "step::2": {
+      "always": [
+        {
+          "actions": "[fn]",
+          "guard": "[fn]",
+          "target": "step::2",
+        },
+        {
+          "actions": "[fn]",
+          "guard": "[fn]",
+          "target": "step::2::1",
+        },
+        {
+          "actions": "[fn]",
+          "guard": "[fn]",
+          "target": "step::2",
+        },
+        {
+          "actions": "[fn]",
+          "guard": "[fn]",
+          "target": "step::2::1",
+        },
+        {
+          "actions": "[fn]",
+          "guard": "[fn]",
+          "target": "step::3",
+        },
+        {
+          "actions": "[fn]",
+          "guard": "loopExitedViaControl",
+          "target": "step::3",
+        },
+        {
+          "actions": "[fn]",
+          "guard": "loopCompletedNormally",
+          "target": "step::3",
+        },
+        {
+          "actions": "[fn]",
+          "guard": "anyIterationFailed",
+          "target": "STOPPED",
+        },
+      ],
+    },
+    "step::2::1": {
+      "entry": "[fn]",
+      "on": {
+        "FAIL": {
+          "actions": "[fn]",
+          "target": "step::2",
+        },
+        "GOTO": [
+          {
+            "actions": "[fn]",
+            "guard": "[fn]",
+            "target": "step::1::1",
+          },
+          {
+            "actions": "[fn]",
+            "guard": "[fn]",
+            "target": "step::1::2",
+          },
+          {
+            "actions": "[fn]",
+            "guard": "[fn]",
+            "target": "step::2::1",
+          },
+          {
+            "actions": "[fn]",
+            "guard": "[fn]",
+            "target": "step::3",
+          },
+        ],
+        "PASS": {
+          "actions": "[fn]",
+          "target": "step::2",
+        },
+        "RETRY": {
+          "actions": "[fn]",
+          "target": "step::2::1",
+        },
+      },
+    },
+    "step::3": {
+      "on": {
+        "FAIL": {
+          "actions": {
+            "params": {
+              "action": {
+                "type": "STOP",
+              },
+            },
+            "type": "setLastAction",
+          },
+          "target": "STOPPED",
+        },
+        "GOTO": [
+          {
+            "actions": "[fn]",
+            "guard": "[fn]",
+            "target": "step::1::1",
+          },
+          {
+            "actions": "[fn]",
+            "guard": "[fn]",
+            "target": "step::1::2",
+          },
+          {
+            "actions": "[fn]",
+            "guard": "[fn]",
+            "target": "step::2::1",
+          },
+          {
+            "actions": "[fn]",
+            "guard": "[fn]",
+            "target": "step::3",
+          },
+        ],
+        "PASS": {
+          "actions": {
+            "params": {
+              "action": {
+                "type": "COMPLETE",
+              },
+            },
+            "type": "setLastAction",
+          },
+          "target": "COMPLETE",
+        },
+        "RETRY": {
+          "actions": "[fn]",
+          "target": "step::3",
+        },
+      },
+    },
+  },
+}
+`;
+
 exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produces a stable structural config for GOTO construct 1`] = `
 {
   "context": {

@@ -22,7 +22,7 @@ import {
   isStepExitAction,
 } from '@rundown-org/parser';
 import { shouldAggregationPass } from './transition-handler.js';
-import { actionRef, type ActionDefs, type CompilerActionRef } from './compiler-actions.js';
+import { actionRef, type ActionDefs } from './compiler-actions.js';
 import {
   buildExecutionFrame,
   evaluateFrontmatterOutputDeclarations,
@@ -118,40 +118,32 @@ export const runbookSetup = setup({
 /** Machine type produced by {@link compileRunbookToMachine}. */
 export type RunbookMachine = ReturnType<typeof runbookSetup.createMachine>;
 
-/**
- * Union of all action values the compiler emits into XState transitions.
- *
- * Two arms:
- * - `ReturnType<typeof runbookSetup.assign>`: inline `assign(...)` values built
- *   directly at state/entry sites. Required because XState's assign return type
- *   is opaque and cannot be derived generically.
- * - `CompilerActionRef`: parameterized refs to named actions declared in
- *   {@link runbookSetup}. Derived from {@link ActionDefs} so call sites and
- *   setup impls share a single source of truth.
- */
-type CompilerAction = ReturnType<typeof runbookSetup.assign> | CompilerActionRef;
-
 /** XState state-node config type inferred from the runbook setup. */
 type RunbookStateConfig = Parameters<typeof runbookSetup.createStateConfig>[0];
 
 /**
- * Guard type accepted by XState transitions in this machine: either an inline predicate
- * function or a named guard string key registered in the `runbookSetup` guards block.
- *
- * Extracted from `RunbookStateConfig` so it stays in sync with the actual XState
- * guard parameter type as the setup evolves.
+ * Shape of a single entry in a state's `on: { ... }` event-triggered transition map,
+ * extracted from the XState-inferred state config. Accepted forms include
+ * `{ target, actions?, guard? }` objects (what every builder in this file returns)
+ * and, per XState, bare target strings or arrays of objects.
  */
-type RunbookGuard = NonNullable<
-  RunbookStateConfig['always'] extends infer A
-    ? A extends readonly (infer Entry)[]
-      ? Entry extends { guard?: infer G }
-        ? G
-        : never
-      : A extends { guard?: infer G }
-        ? G
-        : never
-    : never
->;
+type RunbookEventTransition =
+  NonNullable<RunbookStateConfig['on']> extends Record<string, infer T> ? T : never;
+
+/**
+ * Shape of a single entry in a state's `always: [...]` event-less transition array,
+ * extracted from the XState-inferred state config.
+ */
+type RunbookAlwaysEntry = Extract<
+  NonNullable<RunbookStateConfig['always']>,
+  readonly unknown[]
+>[number];
+
+/**
+ * Shape of the state-level `entry` field — either a single action or an array of actions,
+ * extracted from the XState-inferred state config.
+ */
+type RunbookEntryActions = NonNullable<RunbookStateConfig['entry']>;
 
 /**
  * Safety limit for file-backed data sources with open iteration windows.
@@ -236,21 +228,29 @@ export type RunbookEvent =
   | { type: 'SET_VARIABLES'; vars: Record<string, string> };
 
 /**
- * XState transition configuration returned by transition builder functions.
+ * Object-form XState transition entry — the `{ target?, actions?, guard? }` variant.
  *
- * The `actions` field is typed as `unknown` because XState's internal action
- * types are deeply generic and incompatible with intermediate interfaces.
- * Type safety for actions comes from `runbookSetup.assign()` at call sites.
- * Guards accept either inline predicate functions or named guard string keys
- * registered in the `runbookSetup` guards block (`RunbookGuard`).
+ * `RunbookEventTransition` is a union that includes bare target strings and arrays;
+ * this alias extracts only the object form used by every builder in this file.
  */
-interface TransitionEntry {
-  target?: string;
-  actions?: CompilerAction | CompilerAction[];
-  guard?: RunbookGuard;
-}
+type RunbookTransitionObject = Extract<RunbookEventTransition, { target?: unknown }>;
 
-type TransitionConfig = TransitionEntry | TransitionEntry[];
+/**
+ * Union of all action types accepted by XState transitions.
+ *
+ * Extracted from `RunbookTransitionObject['actions']` (excluding undefined) to avoid
+ * verbose inline type unions throughout the compiler.
+ */
+type RunbookAction = NonNullable<RunbookTransitionObject['actions']>;
+
+/**
+ * Return shape for transition builder functions.
+ *
+ * Either a single XState-inferred transition entry or an array of them. Extracted
+ * from `runbookSetup.createStateConfig()` so the `actions` field is validated
+ * end-to-end against the setup's action map.
+ */
+type TransitionConfig = RunbookEventTransition | RunbookEventTransition[];
 
 /**
  * Child/leaf state configuration — represents a concrete substep or simple step.
@@ -881,7 +881,7 @@ function buildParentExitAssign(
 function buildParentStateConfig(
   config: ParentStateConfig,
   steps: ResolvedStep[],
-): { always: TransitionEntry[]; entry?: CompilerAction | CompilerAction[] } {
+): { always: RunbookAlwaysEntry[]; entry?: RunbookEntryActions } {
   const parentStep = config.parentStep;
   const stepName = config.stepName;
 
@@ -891,7 +891,7 @@ function buildParentStateConfig(
   const firstSubstep = parentStep.substeps[0] as (typeof parentStep.substeps)[number] | undefined;
   const firstSubstepStateId = firstSubstep ? formatStateId(stepName, firstSubstep.id) : nextTarget;
 
-  const always: TransitionEntry[] = [];
+  const always: RunbookAlwaysEntry[] = [];
 
   // FOR iteration-level aggregation/transitions — default when iteration machinery is needed
   const needsIterationMachinery =
@@ -914,7 +914,7 @@ function buildParentStateConfig(
     branchGuard: GuardFn,
     transition: { retry: number; action: Action },
     target: string,
-  ): TransitionEntry[] => {
+  ): RunbookAlwaysEntry[] => {
     const exhausted = {
       guard: ({ context, event }: { context: RunbookContext; event: RunbookEvent }) =>
         branchGuard({ context, event }) &&
@@ -1546,8 +1546,13 @@ function buildParentStateConfig(
   }
 
   return {
-    always: always.map((transition) =>
-      decorateParentTransition(transition, stepName, parentStep.outputs),
+    always: always.map(
+      (transition) =>
+        decorateParentTransition(
+          transition as RunbookTransitionObject,
+          stepName,
+          parentStep.outputs,
+        ) as RunbookAlwaysEntry,
     ),
   };
 }
@@ -1573,12 +1578,13 @@ function buildParentStateConfig(
  * @returns The decorated transition (or the original if no decoration applies)
  */
 function decorateParentTransition(
-  transition: TransitionEntry,
+  transition: RunbookTransitionObject,
   stepName: string,
   outputs: readonly OutputDeclaration[] | undefined,
-): TransitionEntry {
-  const extra: CompilerAction[] = [];
-  const target = transition.target;
+): RunbookTransitionObject {
+  const extra: RunbookAction[] = [];
+  // TransitionTarget is `string | readonly string[]`, but this compiler only ever sets single-string targets.
+  const target = transition.target as string | undefined;
   const exitsParent =
     target !== undefined &&
     target !== formatStateId(stepName) &&
@@ -1623,7 +1629,7 @@ function buildRetryStateConfig(
   substepId: string | undefined,
   steps: ResolvedStep[],
   resultKind: 'pass' | 'fail',
-): { always: TransitionEntry[] } {
+): { always: RunbookAlwaysEntry[] } {
   const exhaustedTransition = buildActionTransition(
     transition.action,
     stepName,
@@ -1634,8 +1640,8 @@ function buildRetryStateConfig(
   const rawEntries = Array.isArray(exhaustedTransition)
     ? exhaustedTransition
     : [exhaustedTransition];
-  const exhaustedEntries: TransitionEntry[] = rawEntries.map(
-    (entry): TransitionEntry => ({ target: entry.target, actions: entry.actions }),
+  const exhaustedEntries: RunbookAlwaysEntry[] = rawEntries.map(
+    (entry): RunbookAlwaysEntry => entry as RunbookAlwaysEntry,
   );
 
   return {
@@ -1709,7 +1715,7 @@ function buildTerminalTransition(
   target: 'COMPLETE' | 'STOPPED',
   actionType: 'COMPLETE' | 'STOP',
   message: string | undefined,
-): TransitionEntry {
+): RunbookTransitionObject {
   return {
     target,
     actions: actionRef('setLastAction', {
@@ -1737,7 +1743,7 @@ function buildLoopControlTransition(
   stepName: string,
   substepId: string | undefined,
   steps: ResolvedStep[],
-): TransitionEntry {
+): RunbookTransitionObject {
   const currentStep = steps.find((s) => s.name === stepName);
   if (currentStep?.kind !== 'for') {
     return {
@@ -1792,7 +1798,7 @@ function buildDeferTransition(
   substepId: string | undefined,
   steps: ResolvedStep[],
   kind: 'pass' | 'fail',
-): TransitionEntry {
+): RunbookTransitionObject {
   const currentStep = steps.find((s) => s.name === stepName);
 
   // Substeps: DEFER always routes to parent (enables fail-fast ALL/ANY evaluation)
@@ -1838,7 +1844,7 @@ function buildContinueTransition(
   stepName: string,
   substepId: string | undefined,
   steps: ResolvedStep[],
-): TransitionEntry {
+): RunbookTransitionObject {
   const currentStep = steps.find((s) => s.name === stepName);
 
   // Substeps: uniform routing regardless of parent type (FOR or non-FOR)
@@ -1908,7 +1914,7 @@ function buildGotoTransition(
   stepName: string,
   substepId: string | undefined,
   steps: ResolvedStep[],
-): TransitionEntry {
+): RunbookTransitionObject {
   const targetStep = target.step;
 
   // Named/numeric step target (both are strings now)
@@ -2001,7 +2007,7 @@ function buildGotoTransition(
  * @param actions - Single action, array of actions, or undefined
  * @returns Array form (empty if undefined)
  */
-function toActionArray(actions: CompilerAction | CompilerAction[] | undefined): CompilerAction[] {
+function toActionArray(actions: RunbookAction | RunbookAction[] | undefined): RunbookAction[] {
   if (!actions) return [];
   return Array.isArray(actions) ? actions : [actions];
 }
@@ -2018,14 +2024,14 @@ function toActionArray(actions: CompilerAction | CompilerAction[] | undefined): 
  * @returns A new transition with the extra actions prepended (or the original if extra is empty)
  */
 function prependActions(
-  transition: TransitionEntry,
-  extra: readonly CompilerAction[],
-): TransitionEntry {
+  transition: RunbookTransitionObject,
+  extra: readonly RunbookAction[],
+): RunbookTransitionObject {
   if (extra.length === 0) return transition;
   return {
     ...transition,
     actions: [...extra, ...toActionArray(transition.actions)],
-  };
+  } as RunbookTransitionObject;
 }
 
 /**
@@ -2063,7 +2069,7 @@ function buildActionTransition(
 ): TransitionConfig {
   const resultKind: 'pass' | 'fail' = kind === 'fail' ? 'fail' : 'pass';
 
-  let transition: TransitionEntry;
+  let transition: RunbookTransitionObject;
   switch (action.type) {
     case 'CONTINUE':
       transition = buildContinueTransition(stepName, substepId, steps);
@@ -2094,7 +2100,7 @@ function buildActionTransition(
       ? (currentStep.substeps.find((substep) => substep.id === substepId)?.outputs ?? [])
       : (currentStep?.outputs ?? []);
 
-  const extra: CompilerAction[] = [];
+  const extra: RunbookAction[] = [];
   if (unitOutputs.length > 0) {
     extra.push(actionRef('storeStepOutputs', { outputs: unitOutputs, stepName, substepId }));
   }
@@ -2105,7 +2111,8 @@ function buildActionTransition(
   // they fire regardless of which exit path the substep takes.
   if (substepId && currentStep && resolvedStepHasSubsteps(currentStep)) {
     const parentOutputs = currentStep.outputs;
-    const target = transition.target;
+    // TransitionTarget is `string | readonly string[]`, but this compiler only ever sets single-string targets.
+    const target = transition.target as string | undefined;
     const exitsParent =
       target !== undefined &&
       target !== formatStateId(stepName) &&
@@ -2130,33 +2137,44 @@ function buildActionTransition(
 function extractTargets(config: RunbookStateConfig): string[] {
   const targets: string[] = [];
 
-  const collectFromEntry = (entry: unknown): void => {
+  const collectFromEntry = (entry: RunbookEventTransition | RunbookAlwaysEntry | string): void => {
     if (typeof entry === 'string') {
       targets.push(entry);
-    } else if (entry && typeof entry === 'object' && 'target' in entry) {
-      const t = (entry as { target?: string }).target;
+      return;
+    }
+    if (entry && typeof entry === 'object' && 'target' in entry) {
+      // TransitionTarget is `string | readonly string[]`, but this compiler only ever sets single-string targets.
+      const t = entry.target as string | undefined;
       if (typeof t === 'string') targets.push(t);
     }
   };
 
-  const collectFromTransitionConfig = (tc: unknown): void => {
+  const collectFromTransitionConfig = (
+    tc: RunbookEventTransition | readonly RunbookEventTransition[] | string | undefined,
+  ): void => {
+    if (tc === undefined) return;
     if (Array.isArray(tc)) {
       tc.forEach(collectFromEntry);
     } else {
-      collectFromEntry(tc);
+      // RunbookEventTransition is a wide union that includes array members; cast to the non-array form.
+      collectFromEntry(tc as RunbookEventTransition | string);
     }
   };
 
-  // Walk on: { PASS: ..., FAIL: ..., GOTO: [...], RETRY: ... }
   if (config.on) {
     for (const tc of Object.values(config.on)) {
-      collectFromTransitionConfig(tc);
+      collectFromTransitionConfig(tc as RunbookEventTransition | RunbookEventTransition[]);
     }
   }
 
-  // Walk always: [...]
   if (config.always) {
-    collectFromTransitionConfig(config.always);
+    const always = config.always as readonly RunbookAlwaysEntry[] | RunbookAlwaysEntry;
+    if (Array.isArray(always)) {
+      always.forEach(collectFromEntry);
+    } else {
+      // Same wide-union issue: cast to the non-array element form.
+      collectFromEntry(always as RunbookAlwaysEntry);
+    }
   }
 
   return targets;
@@ -2287,7 +2305,7 @@ export function compileRunbookToMachine(
       checkedStateInsert(
         states,
         config.id,
-        runbookSetup.createStateConfig(buildParentStateConfig(config, steps)),
+        runbookSetup.createStateConfig(buildParentStateConfig(config, steps) as RunbookStateConfig),
       );
       return;
     }
@@ -2472,7 +2490,7 @@ export function compileRunbookToMachine(
           },
           GOTO: buildGotoTransitionsForState,
         },
-      }),
+      } as RunbookStateConfig),
     );
 
     // Register retry states for transitions with retry > 0
@@ -2488,7 +2506,7 @@ export function compileRunbookToMachine(
             config.substepId,
             steps,
             'pass',
-          ),
+          ) as RunbookStateConfig,
         ),
       );
     }
@@ -2504,7 +2522,7 @@ export function compileRunbookToMachine(
             config.substepId,
             steps,
             'fail',
-          ),
+          ) as RunbookStateConfig,
         ),
       );
     }
