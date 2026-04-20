@@ -5,9 +5,10 @@ import { createRunbook } from './fixtures.js';
 // ---------------------------------------------------------------------------
 // Compile-time type assertions for the transition-builder rewrite.
 //
-// These declarations produce no runtime output. They exist so `tsc --noEmit`
-// fails loudly if XState v5.28's inference degrades the extracted types to
-// `unknown`. Every `Assert*` helper is only used at the type level.
+// These `declare const` declarations produce no runtime output. They exist so
+// `tsc --noEmit` fails loudly if XState v5.28's inference degrades the
+// extracted types to `unknown`. Every `Assert*` helper is only used at the
+// type level.
 // ---------------------------------------------------------------------------
 import type { runbookSetup, RunbookContext, RunbookEvent } from '../../src/runbook/compiler.js';
 import type { ActionRef } from '../../src/runbook/compiler-actions.js';
@@ -18,16 +19,26 @@ type _EventTransition = _OnMap[keyof _OnMap];
 type _AlwaysField = NonNullable<_RunbookStateConfig['always']>;
 type _AlwaysEntry = _AlwaysField extends readonly (infer E)[] ? E : _AlwaysField;
 
-type AssertNotUnknown<T> = unknown extends T ? (T extends unknown ? false : true) : true;
+type IsAny<T> = 0 extends 1 & T ? true : false;
+type IsNever<T> = [T] extends [never] ? true : false;
+type AssertKnown<T> =
+  IsAny<T> extends true
+    ? false
+    : IsNever<T> extends true
+      ? false
+      : unknown extends T
+        ? false
+        : true;
+type AssertTrue<T extends true> = T;
 type AssertExtends<T, U> = T extends U ? true : false;
 
-const _assertOnMapIsRecord: AssertNotUnknown<_OnMap> = true;
-const _assertEventTransitionIsObject: AssertNotUnknown<_EventTransition> = true;
-const _assertAlwaysEntryIsObject: AssertNotUnknown<_AlwaysEntry> = true;
+declare const _assertOnMapIsRecord: AssertTrue<AssertKnown<_OnMap>>;
+declare const _assertEventTransitionIsObject: AssertTrue<AssertKnown<_EventTransition>>;
+declare const _assertAlwaysEntryIsObject: AssertTrue<AssertKnown<_AlwaysEntry>>;
 
 // A transition MUST accept a `target?: string` field and optional `actions`.
 type _HasTargetField = AssertExtends<{ target: 'COMPLETE' }, _EventTransition | _AlwaysEntry>;
-const _assertTransitionAcceptsTarget: _HasTargetField = true;
+declare const _assertTransitionAcceptsTarget: AssertTrue<_HasTargetField>;
 
 // The real builders return objects carrying an `actions` array of action refs
 // plus an inline function guard. If XState's inferred `Actions<…>` union or
@@ -46,8 +57,8 @@ type _BuilderGuardedShape = {
 type _TerminalAssigns = AssertExtends<_BuilderTerminalShape, _EventTransition | _AlwaysEntry>;
 type _GuardedAssigns = AssertExtends<_BuilderGuardedShape, _EventTransition | _AlwaysEntry>;
 
-const _assertTerminalBuilderShapeAssigns: _TerminalAssigns = true;
-const _assertGuardedBuilderShapeAssigns: _GuardedAssigns = true;
+declare const _assertTerminalBuilderShapeAssigns: AssertTrue<_TerminalAssigns>;
+declare const _assertGuardedBuilderShapeAssigns: AssertTrue<_GuardedAssigns>;
 
 function snapshotConfig(machine: ReturnType<typeof compileRunbookToMachine>): unknown {
   return JSON.parse(

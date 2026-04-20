@@ -140,12 +140,6 @@ type RunbookAlwaysEntry = Extract<
 >[number];
 
 /**
- * Shape of the state-level `entry` field — either a single action or an array of actions,
- * extracted from the XState-inferred state config.
- */
-type RunbookEntryActions = NonNullable<RunbookStateConfig['entry']>;
-
-/**
  * Safety limit for file-backed data sources with open iteration windows.
  *
  * When a FOR loop iterates over a file source without an explicit end bound,
@@ -881,7 +875,7 @@ function buildParentExitAssign(
 function buildParentStateConfig(
   config: ParentStateConfig,
   steps: ResolvedStep[],
-): { always: RunbookAlwaysEntry[]; entry?: RunbookEntryActions } {
+): RunbookStateConfig {
   const parentStep = config.parentStep;
   const stepName = config.stepName;
 
@@ -891,7 +885,7 @@ function buildParentStateConfig(
   const firstSubstep = parentStep.substeps[0] as (typeof parentStep.substeps)[number] | undefined;
   const firstSubstepStateId = firstSubstep ? formatStateId(stepName, firstSubstep.id) : nextTarget;
 
-  const always: RunbookAlwaysEntry[] = [];
+  const always: (RunbookAlwaysEntry & object)[] = [];
 
   // FOR iteration-level aggregation/transitions — default when iteration machinery is needed
   const needsIterationMachinery =
@@ -914,7 +908,7 @@ function buildParentStateConfig(
     branchGuard: GuardFn,
     transition: { retry: number; action: Action },
     target: string,
-  ): RunbookAlwaysEntry[] => {
+  ): (RunbookAlwaysEntry & object)[] => {
     const exhausted = {
       guard: ({ context, event }: { context: RunbookContext; event: RunbookEvent }) =>
         branchGuard({ context, event }) &&
@@ -1546,15 +1540,10 @@ function buildParentStateConfig(
   }
 
   return {
-    always: always.map(
-      (transition) =>
-        decorateParentTransition(
-          transition as RunbookTransitionObject,
-          stepName,
-          parentStep.outputs,
-        ) as RunbookAlwaysEntry,
+    always: always.map((transition) =>
+      decorateParentTransition(transition, stepName, parentStep.outputs),
     ),
-  };
+  } satisfies RunbookStateConfig;
 }
 
 /**
@@ -1572,19 +1561,18 @@ function buildParentStateConfig(
  * the terminal states' `entry` actions (COMPLETE.entry / STOPPED.entry) under
  * the single-owner terminal-entry architecture.
  *
- * @param transition - The always transition to decorate
+ * @param transition - The always transition entry to decorate
  * @param stepName - The parent step name
  * @param outputs - The parent step's OUTPUTS declarations (if any)
  * @returns The decorated transition (or the original if no decoration applies)
  */
-function decorateParentTransition(
-  transition: RunbookTransitionObject,
+function decorateParentTransition<T extends RunbookAlwaysEntry & object>(
+  transition: T,
   stepName: string,
   outputs: readonly OutputDeclaration[] | undefined,
-): RunbookTransitionObject {
+): T {
   const extra: RunbookAction[] = [];
-  // TransitionTarget is `string | readonly string[]`, but this compiler only ever sets single-string targets.
-  const target = transition.target as string | undefined;
+  const target = typeof transition.target === 'string' ? transition.target : undefined;
   const exitsParent =
     target !== undefined &&
     target !== formatStateId(stepName) &&
@@ -1629,7 +1617,7 @@ function buildRetryStateConfig(
   substepId: string | undefined,
   steps: ResolvedStep[],
   resultKind: 'pass' | 'fail',
-): { always: RunbookAlwaysEntry[] } {
+): RunbookStateConfig {
   const exhaustedTransition = buildActionTransition(
     transition.action,
     stepName,
@@ -1640,9 +1628,6 @@ function buildRetryStateConfig(
   const rawEntries = Array.isArray(exhaustedTransition)
     ? exhaustedTransition
     : [exhaustedTransition];
-  const exhaustedEntries: RunbookAlwaysEntry[] = rawEntries.map(
-    (entry): RunbookAlwaysEntry => entry as RunbookAlwaysEntry,
-  );
 
   return {
     always: [
@@ -1655,9 +1640,9 @@ function buildRetryStateConfig(
           retryMax: transition.retry,
         }),
       },
-      ...exhaustedEntries,
+      ...(rawEntries as RunbookAlwaysEntry[]),
     ],
-  };
+  } satisfies RunbookStateConfig;
 }
 
 /**
@@ -2019,19 +2004,22 @@ function toActionArray(actions: RunbookAction | RunbookAction[] | undefined): Ru
  * OUTPUTS evaluation observes the variable state captured at exit time
  * (not the post-assign state from later cleanup actions).
  *
- * @param transition - Transition to decorate
+ * @param transition - Transition to decorate (event or always entry)
  * @param extra - Actions to prepend
  * @returns A new transition with the extra actions prepended (or the original if extra is empty)
  */
-function prependActions(
-  transition: RunbookTransitionObject,
+function prependActions<T extends RunbookTransitionObject | (RunbookAlwaysEntry & object)>(
+  transition: T,
   extra: readonly RunbookAction[],
-): RunbookTransitionObject {
+): T {
   if (extra.length === 0) return transition;
   return {
     ...transition,
-    actions: [...extra, ...toActionArray(transition.actions)],
-  } as RunbookTransitionObject;
+    actions: [
+      ...extra,
+      ...toActionArray(transition.actions as RunbookAction | RunbookAction[] | undefined),
+    ],
+  } as T;
 }
 
 /**
@@ -2111,8 +2099,7 @@ function buildActionTransition(
   // they fire regardless of which exit path the substep takes.
   if (substepId && currentStep && resolvedStepHasSubsteps(currentStep)) {
     const parentOutputs = currentStep.outputs;
-    // TransitionTarget is `string | readonly string[]`, but this compiler only ever sets single-string targets.
-    const target = transition.target as string | undefined;
+    const target = typeof transition.target === 'string' ? transition.target : undefined;
     const exitsParent =
       target !== undefined &&
       target !== formatStateId(stepName) &&
@@ -2143,8 +2130,7 @@ function extractTargets(config: RunbookStateConfig): string[] {
       return;
     }
     if (entry && typeof entry === 'object' && 'target' in entry) {
-      // TransitionTarget is `string | readonly string[]`, but this compiler only ever sets single-string targets.
-      const t = entry.target as string | undefined;
+      const { target: t } = entry;
       if (typeof t === 'string') targets.push(t);
     }
   };
@@ -2305,7 +2291,7 @@ export function compileRunbookToMachine(
       checkedStateInsert(
         states,
         config.id,
-        runbookSetup.createStateConfig(buildParentStateConfig(config, steps) as RunbookStateConfig),
+        runbookSetup.createStateConfig(buildParentStateConfig(config, steps)),
       );
       return;
     }
@@ -2489,8 +2475,8 @@ export function compileRunbookToMachine(
             target: config.id,
           },
           GOTO: buildGotoTransitionsForState,
-        },
-      } as RunbookStateConfig),
+        } as NonNullable<RunbookStateConfig['on']>,
+      } satisfies RunbookStateConfig),
     );
 
     // Register retry states for transitions with retry > 0
@@ -2506,7 +2492,7 @@ export function compileRunbookToMachine(
             config.substepId,
             steps,
             'pass',
-          ) as RunbookStateConfig,
+          ),
         ),
       );
     }
@@ -2522,7 +2508,7 @@ export function compileRunbookToMachine(
             config.substepId,
             steps,
             'fail',
-          ) as RunbookStateConfig,
+          ),
         ),
       );
     }
