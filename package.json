@@ -36,7 +36,7 @@
     "test:coverage:mcp": "npm run test:coverage -w packages/mcp",
     "format": "biome format --write .",
     "check:format": "biome check --formatter-enabled=true --linter-enabled=false .",
-    "check:spell": "cspell --no-progress .",
+    "check:spell": "cspell --no-progress --no-must-find-files .",
     "check:lint:fast": "biome lint .",
     "check:lint:typed": "eslint .",
     "check:types:core": "npm run check:types -w packages/core",

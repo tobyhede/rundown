@@ -9530,17 +9530,6 @@ echo "processing"
     });
   });
 
-  function getAssignPayload(actions: unknown): Record<string, unknown> {
-    const arr = Array.isArray(actions) ? actions : [actions];
-    for (const action of arr) {
-      const a = action as { type?: string; assignment?: unknown };
-      if (a.type === 'xstate.assign' && a.assignment && typeof a.assignment === 'object') {
-        return a.assignment as Record<string, unknown>;
-      }
-    }
-    throw new Error(`No assign payload found in actions: ${JSON.stringify(actions)}`);
-  }
-
   describe('parent-step unconditional-exit FAIL routing (Bug A)', () => {
     function getState(machine: ReturnType<typeof compileRunbookToMachine>, id: string): any {
       return (machine.config.states as Record<string, unknown>)[id] as any;
