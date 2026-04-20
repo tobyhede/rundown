@@ -17,6 +17,7 @@ interface LifecycleHarness {
   service: RunbookActorService;
   runbookId: string;
   steps: ResolvedStep[];
+  testDir: string;
 }
 
 async function createLifecycleHarness(markdown: string): Promise<LifecycleHarness> {
@@ -38,7 +39,7 @@ async function createLifecycleHarness(markdown: string): Promise<LifecycleHarnes
   const actor = await service.createActor(state.id, steps);
   if (!actor) throw new Error('createLifecycleHarness: actor creation failed');
 
-  return { actor, service, runbookId: state.id, steps };
+  return { actor, service, runbookId: state.id, steps, testDir };
 }
 
 describe('RunbookActorService', () => {
@@ -613,6 +614,8 @@ describe('RunbookActorService', () => {
         harness.steps,
       );
       expect(state.lifecycle).toBe('completed');
+      harness.actor.stop();
+      await rm(harness.testDir, { recursive: true, force: true });
     });
 
     it('persists lifecycle = "stopped" when machine reaches STOPPED', async () => {
@@ -624,6 +627,8 @@ describe('RunbookActorService', () => {
         harness.steps,
       );
       expect(state.lifecycle).toBe('stopped');
+      harness.actor.stop();
+      await rm(harness.testDir, { recursive: true, force: true });
     });
 
     it('persists lifecycle = "running" for non-terminal snapshots', async () => {
@@ -637,6 +642,8 @@ describe('RunbookActorService', () => {
         harness.steps,
       );
       expect(state.lifecycle).toBe('running');
+      harness.actor.stop();
+      await rm(harness.testDir, { recursive: true, force: true });
     });
   });
 
