@@ -13,7 +13,7 @@
  */
 
 import { createActor, type AnyActorRef } from 'xstate';
-import type { ResolvedStep, RunbookState, ForContext } from './types.js';
+import type { ResolvedStep, RunbookState } from './types.js';
 import type { RunbookStateManager } from './state.js';
 import { compileRunbookToMachine, type RunbookEvent, type RunbookContext } from './compiler.js';
 import { flattenTemplateVars } from './output-evaluator.js';
@@ -225,7 +225,7 @@ export class RunbookActorService {
     const variables = snapshot.context?.variables ?? {};
 
     // FOR loop context
-    const forStack = snapshot.context?.forStack as ForContext[] | undefined;
+    const forStack = snapshot.context?.forStack;
     const iterationResults = snapshot.context?.iterationResults;
     const lastAction = snapshot.context?.lastAction;
 
