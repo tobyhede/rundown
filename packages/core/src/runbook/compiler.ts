@@ -150,8 +150,9 @@ type RunbookEventTransition = NonNullable<RunbookStateConfig['on']> extends Reco
 /**
  * Shape of a single entry in a state's `always: [...]` event-less transition array,
  * extracted from the XState-inferred state config.
+ * In XState v5, both `on` and `always` use the same TransitionConfig shape.
  */
-type RunbookAlwaysEntry = RunbookEventTransition;
+type RunbookAlwaysEntry = TransitionEntry;
 
 /**
  * Shape of the state-level `entry` field — either a single action or an array of actions,
@@ -906,7 +907,7 @@ function buildParentExitAssign(
 function buildParentStateConfig(
   config: ParentStateConfig,
   steps: ResolvedStep[],
-): { always: TransitionEntry[]; entry?: CompilerAction | CompilerAction[] } {
+): { always: RunbookAlwaysEntry[]; entry?: RunbookEntryActions } {
   const parentStep = config.parentStep;
   const stepName = config.stepName;
 
@@ -916,7 +917,7 @@ function buildParentStateConfig(
   const firstSubstep = parentStep.substeps[0] as (typeof parentStep.substeps)[number] | undefined;
   const firstSubstepStateId = firstSubstep ? formatStateId(stepName, firstSubstep.id) : nextTarget;
 
-  const always: TransitionEntry[] = [];
+  const always: RunbookAlwaysEntry[] = [];
 
   // FOR iteration-level aggregation/transitions — default when iteration machinery is needed
   const needsIterationMachinery =
@@ -939,7 +940,7 @@ function buildParentStateConfig(
     branchGuard: GuardFn,
     transition: { retry: number; action: Action },
     target: string,
-  ): TransitionEntry[] => {
+  ): RunbookAlwaysEntry[] => {
     const exhausted = {
       guard: ({ context, event }: { context: RunbookContext; event: RunbookEvent }) =>
         branchGuard({ context, event }) &&
@@ -1648,7 +1649,7 @@ function buildRetryStateConfig(
   substepId: string | undefined,
   steps: ResolvedStep[],
   resultKind: 'pass' | 'fail',
-): { always: TransitionEntry[] } {
+): { always: RunbookAlwaysEntry[] } {
   const exhaustedTransition = buildActionTransition(
     transition.action,
     stepName,
@@ -1659,8 +1660,8 @@ function buildRetryStateConfig(
   const rawEntries = Array.isArray(exhaustedTransition)
     ? exhaustedTransition
     : [exhaustedTransition];
-  const exhaustedEntries: TransitionEntry[] = rawEntries.map(
-    (entry): TransitionEntry => ({ target: entry.target, actions: entry.actions }),
+  const exhaustedEntries: RunbookAlwaysEntry[] = rawEntries.map(
+    (entry): RunbookAlwaysEntry => ({ target: entry.target, actions: entry.actions }),
   );
 
   return {
