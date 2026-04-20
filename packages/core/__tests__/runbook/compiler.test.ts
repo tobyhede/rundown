@@ -9844,19 +9844,20 @@ echo "processing"
       const machine = compileRunbookToMachine(steps);
       const parentAlways = (machine.config.states as any)['step::1'].always as any[];
 
-      // Case C emits two COMPLETE-targeting entries: the BREAK/NEXT routing entry
-      // (no lastAction reassignment) and the normal PASS routing entry (sets
-      // lastAction to the parent's declared PASS action). Guards are inline
-      // functions with no runtime name, so we assert over the aggregate set.
-      // The original bug was CONTINUE being recorded — assert that directly.
-      const completeEntries = parentAlways.filter((entry: any) => entry.target === 'COMPLETE');
-      const lastActions = completeEntries
-        .flatMap((entry: any) => (Array.isArray(entry.actions) ? entry.actions : [entry.actions]))
-        .filter((a: any) => a.type === 'xstate.assign' && 'lastAction' in (a.assignment ?? {}))
-        .map((a: any) => a.assignment.lastAction);
+      // Guards are now named in runbookSetup: entry.guard is a plain string at
+      // runtime, enabling unambiguous discriminants without inspecting payload content.
+      const passEntry = parentAlways.find((e: any) => e.guard === 'loopCompletedNormally');
+      expect(passEntry).toBeDefined();
+      const assignPayload = getAssignPayload(passEntry.actions);
+      expect(assignPayload.lastAction).toEqual({ type: 'COMPLETE' });
 
-      expect(lastActions).toContainEqual({ type: 'COMPLETE' });
-      expect(lastActions).not.toContainEqual({ type: 'CONTINUE' });
+      // BREAK/NEXT entry must NOT override lastAction — it preserves the iteration's own disposition.
+      const breakEntry = parentAlways.find((e: any) => e.guard === 'loopExitedViaControl');
+      expect(breakEntry).toBeDefined();
+      const breakActions = (
+        Array.isArray(breakEntry.actions) ? breakEntry.actions : [breakEntry.actions]
+      ) as any[];
+      expect(breakActions.some((a: any) => 'lastAction' in (a.assignment ?? {}))).toBe(false);
     });
   });
 });

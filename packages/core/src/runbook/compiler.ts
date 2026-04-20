@@ -126,13 +126,30 @@ export const runbookSetup = setup({
     }),
   },
   guards: {
-    /** Any FOR iteration recorded a fail result. */
-    anyIterationFailed: ({ context }) =>
-      (context.iterationResults ?? []).some((r) => r === 'fail'),
-    /** FOR loop exited early via a BREAK or NEXT loop-control action. */
+    /**
+     * Any FOR iteration recorded a fail result.
+     *
+     * @param root0 - XState guard argument
+     * @param root0.context - Current runbook context
+     * @returns True if any iteration result is 'fail'
+     */
+    anyIterationFailed: ({ context }) => (context.iterationResults ?? []).some((r) => r === 'fail'),
+    /**
+     * FOR loop exited early via a BREAK or NEXT loop-control action.
+     *
+     * @param root0 - XState guard argument
+     * @param root0.context - Current runbook context
+     * @returns True if the last action was BREAK or NEXT
+     */
     loopExitedViaControl: ({ context }) =>
       context.lastAction?.type === 'BREAK' || context.lastAction?.type === 'NEXT',
-    /** FOR loop completed normally: no failed iterations, no loop-control exit. */
+    /**
+     * FOR loop completed normally: no failed iterations, no loop-control exit.
+     *
+     * @param root0 - XState guard argument
+     * @param root0.context - Current runbook context
+     * @returns True if the loop ran to completion without failures or control exits
+     */
     loopCompletedNormally: ({ context }) =>
       !(context.iterationResults ?? []).some((r) => r === 'fail') &&
       context.lastAction?.type !== 'BREAK' &&
