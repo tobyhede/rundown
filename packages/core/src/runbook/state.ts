@@ -100,6 +100,25 @@ export class RunbookStateManager {
     return _runsDir(this.cwd);
   }
 
+  /**
+   * Return a canonicalized form of `this.cwd` by resolving symlinks.
+   *
+   * On macOS, `/tmp` is a symlink to `/private/tmp`. JsonArrayStream paths are
+   * stored in canonical form (resolved via `fs.realpath` at write time), so the
+   * project-root boundary check in `makeRunbookStateSchema` must compare against
+   * the same canonical path. Falls back to the raw `cwd` if `realpath` fails
+   * (e.g., the directory was deleted between startup and load).
+   *
+   * @returns The canonicalized working directory path
+   */
+  private async canonicalCwd(): Promise<string> {
+    try {
+      return await fs.realpath(this.cwd);
+    } catch {
+      return this.cwd;
+    }
+  }
+
   private get sessionPath(): string {
     return _sessionPath(this.cwd);
   }
@@ -224,7 +243,8 @@ export class RunbookStateManager {
       );
     }
 
-    const result = makeRunbookStateSchema(this.cwd).safeParse(parsed);
+    const canonicalized = await this.canonicalCwd();
+    const result = makeRunbookStateSchema(canonicalized).safeParse(parsed);
     if (!result.success) {
       throw new Error(
         `Stale runbook state for "${id}": schema validation failed. ` +

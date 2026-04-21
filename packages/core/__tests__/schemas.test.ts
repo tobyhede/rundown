@@ -776,3 +776,30 @@ describe('makeRunbookStateSchema — disk round-trip attack prevention', () => {
     expect(result.success).toBe(true);
   });
 });
+
+describe('makeRunbookStateSchema — SEC4 cwd canonicalization note', () => {
+  it('accepts stream at /private/project/data.jsonl when projectRoot is /private/project', () => {
+    // Simulates macOS /tmp -> /private/tmp: stored canonical path uses /private/...
+    // while cwd might be passed as /tmp/... without canonicalization.
+    // After SEC4 fix, RunbookStateManager.load() passes the realpath'd cwd.
+    const schema = makeRunbookStateSchema('/private/project');
+    const state = createValidState({
+      templateVars: {
+        items: { kind: 'json-array-stream', path: '/private/project/data.jsonl' },
+      },
+    });
+    const result = schema.safeParse(state);
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects stream at /private/project/data.jsonl when projectRoot is /different', () => {
+    const schema = makeRunbookStateSchema('/different');
+    const state = createValidState({
+      templateVars: {
+        items: { kind: 'json-array-stream', path: '/private/project/data.jsonl' },
+      },
+    });
+    const result = schema.safeParse(state);
+    expect(result.success).toBe(false);
+  });
+});
