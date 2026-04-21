@@ -14,7 +14,7 @@ jest.unstable_mockModule('../../../src/session.js', () => ({
   })),
 }));
 
-// Mock node:fs/promises to control child runbook reads in buildChildVarFlags
+// Mock node:fs/promises to control child runbook reads in buildChildInputFlags
 const mockReadFile = jest.fn<() => Promise<string>>();
 jest.unstable_mockModule('node:fs/promises', () => ({
   readFile: mockReadFile,
@@ -190,7 +190,7 @@ describe('handleDelegationDispatch', () => {
     expect(result.context).toContain('Current step: 3.1');
   });
 
-  it('injects --var flags for inputs declared in child runbook when parent has matching vars', async () => {
+  it('injects --input flags for inputs declared in child runbook when parent has matching vars', async () => {
     const tokenHash = hashToken(VALID_TOKEN);
     const childRunbook = `---
 inputs:
@@ -219,12 +219,12 @@ PASS COMPLETE
 
     const result = await handleDelegationDispatch(input);
     expect(result.context).toContain(`rd claim ${VALID_TOKEN}`);
-    expect(result.context).toContain("--var PlanPath='/work/plan.json'");
-    expect(result.context).toContain("--var environment='production'");
+    expect(result.context).toContain("--input PlanPath='/work/plan.json'");
+    expect(result.context).toContain("--input environment='production'");
     expect(result.context).not.toContain('unrelated');
   });
 
-  it('does not inject --var flags when no delegation matches the detected token', async () => {
+  it('does not inject --input flags when no delegation matches the detected token', async () => {
     const differentTokenHash = hashToken('rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ999999');
     const status = {
       file: 'parent.md',
@@ -242,10 +242,10 @@ PASS COMPLETE
 
     const result = await handleDelegationDispatch(input);
     expect(result.context).toContain(`rd claim ${VALID_TOKEN}`);
-    expect(result.context).not.toContain('--var');
+    expect(result.context).not.toContain('--input');
   });
 
-  it('shell-quotes --var values containing shell-special characters', async () => {
+  it('shell-quotes --input values containing shell-special characters', async () => {
     const tokenHash = hashToken(VALID_TOKEN);
     const childRunbook = `---
 name: child
@@ -282,9 +282,9 @@ PASS COMPLETE
     const result = await handleDelegationDispatch(input);
 
     // Each value wrapped in single quotes; internal single quotes closed-escaped-reopened.
-    expect(result.context).toContain("--var DollarVar='$HOME/data'");
-    expect(result.context).toContain("--var BacktickVar='`whoami`'");
-    expect(result.context).toContain("--var QuoteVar='it'\\''s fine'");
-    expect(result.context).toContain("--var SpaceVar='has spaces'");
+    expect(result.context).toContain("--input DollarVar='$HOME/data'");
+    expect(result.context).toContain("--input BacktickVar='`whoami`'");
+    expect(result.context).toContain("--input QuoteVar='it'\\''s fine'");
+    expect(result.context).toContain("--input SpaceVar='has spaces'");
   });
 });

@@ -21,7 +21,7 @@ function hashToken(token: string): string {
 }
 
 /**
- * Shell-safe quote a string value for use in a `--var key=value` flag.
+ * Shell-safe quote a string value for use in a `--input key=value` flag.
  * Wraps in single quotes and escapes internal single quotes.
  *
  * @param value - The string value to quote
@@ -54,18 +54,18 @@ export interface DelegationDispatchResult {
 }
 
 /**
- * Build `--var key=value` flags for a child runbook from parent's live variable space.
+ * Build `--input key=value` flags for a child runbook from parent's live variable space.
  *
  * Reads the child runbook's frontmatter `inputs:` keys and, for each key that
- * exists in the parent's vars, produces a `--var key=value` flag. Non-fatal:
+ * exists in the parent's vars, produces a `--input key=value` flag. Non-fatal:
  * returns empty string on any error.
  *
  * @param childRunbookPath - Absolute or cwd-relative path to the child runbook
  * @param parentVars - Parent's live variable space from `rd status --json`
  * @param cwd - Current working directory for resolving relative paths
- * @returns Space-separated `--var` flags string, or empty string
+ * @returns Space-separated `--input` flags string, or empty string
  */
-async function buildChildVarFlags(
+async function buildChildInputFlags(
   childRunbookPath: string,
   parentVars: Record<string, string>,
   cwd: string,
@@ -83,7 +83,7 @@ async function buildChildVarFlags(
     const safeKey = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
     return inputKeys
       .filter((key) => safeKey.test(key) && Object.hasOwn(parentVars, key))
-      .map((key) => `--var ${key}=${shellQuote(parentVars[key])}`)
+      .map((key) => `--input ${key}=${shellQuote(parentVars[key])}`)
       .join(' ');
   } catch {
     return '';
@@ -126,7 +126,7 @@ export async function handleDelegationDispatch(
   const meta = await session.get('metadata');
   await session.set('metadata', { ...meta, delegation_active_token: token });
 
-  // Best-effort: enrich with current delegation status and inject child --var flags
+  // Best-effort: enrich with current delegation status and inject child --input flags
   let claimCommand = `rd claim ${token}`;
   const statusLines: string[] = [];
   try {
@@ -140,7 +140,7 @@ export async function handleDelegationDispatch(
     if (file) statusLines.push(`Active runbook: ${file}`);
     if (step) statusLines.push(`Current step: ${step}`);
 
-    // Inject --var flags from child runbook's inputs: keys using parent's live vars.
+    // Inject --input flags from child runbook's inputs: keys using parent's live vars.
     // Match the delegation entry by tokenHash to correctly identify the child runbook
     // when multiple delegations are pending simultaneously.
     const parentVars = (status as { vars?: Record<string, string> }).vars;
@@ -155,7 +155,7 @@ export async function handleDelegationDispatch(
     );
     const childRunbookPath = pending?.runbook;
     if (childRunbookPath && parentVars) {
-      const varFlags = await buildChildVarFlags(childRunbookPath, parentVars, input.cwd);
+      const varFlags = await buildChildInputFlags(childRunbookPath, parentVars, input.cwd);
       if (varFlags) claimCommand = `rd claim ${token} ${varFlags}`;
     }
   } catch {
