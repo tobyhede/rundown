@@ -19,7 +19,6 @@ import {
   createJsonArrayStream,
   isJsonValue,
   type JsonArray,
-  type JsonArrayStream,
   type JsonObject,
   type PolicyEvaluator,
   type PolicyPrompter,

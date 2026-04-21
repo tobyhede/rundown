@@ -5,7 +5,9 @@ import {
   StepIdSchema,
   ActionSchema,
   TransitionsSchema,
+  TemplateVarValueSchema,
 } from '../src/schemas.js';
+import { isJsonArrayStream } from '../src/runbook/types.js';
 
 /**
  * Creates a valid runbook state object for testing.
@@ -586,5 +588,14 @@ describe('RunbookStateSchema - JSON loop values (currentValue)', () => {
         metadata: { nested: null },
       });
     }
+  });
+});
+
+describe('TemplateVarValueSchema — JsonArrayStream deserialization', () => {
+  it('re-brands a plain json-array-stream object via createJsonArrayStream on parse', () => {
+    // Simulates loading persisted state: Symbol brand was stripped by JSON.stringify
+    const raw = { kind: 'json-array-stream', path: '/project/data.jsonl' };
+    const parsed = TemplateVarValueSchema.parse(raw);
+    expect(isJsonArrayStream(parsed)).toBe(true);
   });
 });
