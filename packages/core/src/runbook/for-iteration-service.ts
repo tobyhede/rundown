@@ -110,7 +110,10 @@ export class ForIterationService {
    * @param steps - Parsed step definitions for actor creation
    * @returns An IterationResult indicating next action for the caller
    * @throws {Error} When runbook state is not found (null)
-   * @throws {ForResolutionError} When variable source resolution fails (undefined, type mismatch, or JSONL parse failure)
+   * @throws {ForResolutionError} with code `'undefined-variable'` when the FOR variable is not in the template var map
+   * @throws {ForResolutionError} with code `'type-mismatch'` when the FOR variable is not an iterable type
+   * @throws {ForResolutionError} with code `'parse-failure'` when a JSONL line cannot be parsed as JSON
+   * @throws {ForResolutionError} with code `'policy-violation'` when a JsonArrayStream path escapes the project root
    */
   async prepareIteration(id: string, steps: ResolvedStep[]): Promise<IterationResult> {
     const state = await this.manager.load(id);
