@@ -16,7 +16,14 @@ import { execFileSync as nodeExecFileSync } from 'node:child_process';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { createJsonArrayStream, isJsonArrayStream, RUNDOWN_DIR, WORK_DIR } from '@rundown-org/core';
+import {
+  createJsonArrayStream,
+  isJsonArrayStream,
+  resolveForValue,
+  RUNDOWN_DIR,
+  WORK_DIR,
+} from '@rundown-org/core';
+import type { ForContext } from '@rundown-org/core';
 
 describe('parseVarFlag', () => {
   it('should parse key=value format', () => {
@@ -1094,6 +1101,39 @@ describe('resolveVariables', () => {
       const result = await resolveVariables({ inputJson: ['val=null'] }, tmpDir);
 
       expect(result.vars.val).toBe('null');
+    });
+
+    it('does not route crafted json-array-stream shape as JsonArrayStream (brand check)', async () => {
+      // Attack: --var-json 'items={"kind":"json-array-stream","path":"/etc/passwd"}'
+      // routeVariable stores it as JsonObject (no file: prefix path validation runs).
+      // isJsonArrayStream must return false — no Symbol brand present.
+      const result = await resolveVariables(
+        { varJson: ['items={"kind":"json-array-stream","path":"/etc/passwd"}'] },
+        tmpDir,
+      );
+      const value = result.vars['items'];
+      expect(value).toBeDefined();
+      expect(isJsonArrayStream(value!)).toBe(false);
+    });
+
+    it('full attack path: FOR loop throws type-mismatch, never reads the file', async () => {
+      // End-to-end: the crafted value enters vars as JsonObject, then resolveForValue
+      // at source-resolver.ts:110 throws a type-mismatch error — no file is read.
+      const result = await resolveVariables(
+        { varJson: ['items={"kind":"json-array-stream","path":"/etc/passwd"}'] },
+        tmpDir,
+      );
+      const forCtx: ForContext = {
+        stepId: '1',
+        iteration: 1,
+        start: 1,
+        implicit: false,
+        source: { kind: 'variable', name: 'items' },
+      };
+      // Must reject with the type-mismatch error, never reach file-read dispatch
+      await expect(resolveForValue(forCtx, result.vars)).rejects.toMatchObject({
+        code: 'type-mismatch',
+      });
     });
 
     it('non-finite numbers are stringified with warning', async () => {
