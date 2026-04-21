@@ -20,7 +20,7 @@ jest.unstable_mockModule('node:fs/promises', () => ({
   readFile: mockReadFile,
 }));
 
-const { handleDelegationDispatch } = await import(
+const { handleDelegationDispatch, buildChildInputFlags } = await import(
   '../../../src/workflow/hooks/delegation-dispatch.js'
 );
 
@@ -243,6 +243,13 @@ PASS COMPLETE
     const result = await handleDelegationDispatch(input);
     expect(result.context).toContain(`rd claim ${VALID_TOKEN}`);
     expect(result.context).not.toContain('--input');
+  });
+
+  it('passes numeric parent var as --input-json flag', async () => {
+    const childRunbook = `---\ninputs:\n  port: 3000\n---\n# Child\n\n## 1. Step\n- PASS COMPLETE\n`;
+    mockReadFile.mockResolvedValue(childRunbook);
+    const flags = await buildChildInputFlags('child.runbook.md', { port: 3000 }, '/test/project');
+    expect(flags).toBe("--input-json port='3000'");
   });
 
   it('shell-quotes --input values containing shell-special characters', async () => {
