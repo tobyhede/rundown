@@ -142,6 +142,7 @@ rd echo {{message}}
 `;
     await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
 
+    const prevMessage = process.env.RD_INPUT_message;
     process.env.RD_INPUT_message = 'hello-from-env';
     try {
       const result = await runCliInProcess('run test.runbook.md --text', workspace);
@@ -149,7 +150,11 @@ rd echo {{message}}
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('hello-from-env');
     } finally {
-      delete process.env.RD_INPUT_message;
+      if (prevMessage === undefined) {
+        delete process.env.RD_INPUT_message;
+      } else {
+        process.env.RD_INPUT_message = prevMessage;
+      }
     }
   });
 
