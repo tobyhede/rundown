@@ -1,6 +1,9 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { mockErrorHelpers } from './mock-error-helpers';
 
+// Import actual @rundown-org/core before mocking to capture real implementations
+const actualCore = await import('@rundown-org/core');
+
 // Mock @rundown-org/core
 jest.unstable_mockModule('@rundown-org/core', () => ({
   stepIdToString: jest.fn((id: { step: string; substep?: string }) =>
@@ -75,12 +78,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     LAUNCH_FAILED: { code: 'RD-816' },
   },
   isJsonArray: jest.fn((v: unknown) => Array.isArray(v)),
-  isJsonArrayStream: jest.fn(
-    (v: unknown) =>
-      typeof v === 'object' &&
-      v !== null &&
-      (v as Record<string, unknown>).kind === 'json-array-stream',
-  ),
+  isJsonArrayStream: jest.fn(actualCore.isJsonArrayStream),
   logger: { warn: jest.fn(), info: jest.fn(), debug: jest.fn(), error: jest.fn() },
   ...mockErrorHelpers,
 }));

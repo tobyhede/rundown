@@ -27,6 +27,9 @@ const mockLifecycleService = {
   consumeResolvedCompletion: jest.fn().mockResolvedValue(null),
 };
 
+// Import actual @rundown-org/core before mocking to capture real implementations
+const actualCore = await import('@rundown-org/core');
+
 jest.unstable_mockModule('@rundown-org/core', () => {
   const asTerminalSnapshot = jest.fn((snapshot: unknown) => {
     if (
@@ -128,12 +131,7 @@ jest.unstable_mockModule('@rundown-org/core', () => {
       getLogDir: jest.fn().mockReturnValue('/tmp'),
     },
     isJsonArray: jest.fn((v: unknown) => Array.isArray(v)),
-    isJsonArrayStream: jest.fn(
-      (v: unknown) =>
-        typeof v === 'object' &&
-        v !== null &&
-        (v as Record<string, unknown>).kind === 'json-array-stream',
-    ),
+    isJsonArrayStream: jest.fn(actualCore.isJsonArrayStream),
     assertResolvedVariableForContext: jest.fn(
       (fc: {
         currentValue?: unknown;
