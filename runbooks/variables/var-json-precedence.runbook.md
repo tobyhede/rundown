@@ -1,13 +1,13 @@
 ---
 name: var-json-precedence
-description: --var-json overrides --var for same key
+description: --input-json overrides --input for same key
 tags:
   - variables
 scenarios:
   override:
-    description: --var-json wins over --var for same key
+    description: --input-json wins over --input for same key
     commands:
-      - rd run --var count=10 --var-json count=99 var-json-precedence.runbook.md
+      - rd run --input count=10 --input-json count=99 var-json-precedence.runbook.md
     result: COMPLETE
 ---
 

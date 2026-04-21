@@ -7,7 +7,7 @@ scenarios:
   completed:
     description: YAML array drives iteration
     commands:
-      - rd run --var-file data/array-sources.yaml for-array-source.runbook.md
+      - rd run --input-file data/array-sources.yaml for-array-source.runbook.md
     result: COMPLETE
 ---
 

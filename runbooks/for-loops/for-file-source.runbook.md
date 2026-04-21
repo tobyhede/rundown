@@ -7,7 +7,7 @@ scenarios:
   completed:
     description: Iterates three values from JSONL file
     commands:
-      - rd run --var-file data/sources.yaml for-file-source.runbook.md
+      - rd run --input-file data/sources.yaml for-file-source.runbook.md
     result: COMPLETE
 ---
 

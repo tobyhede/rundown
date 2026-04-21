@@ -351,11 +351,11 @@ FOR loops can iterate over arrays or files instead of numeric ranges.
 
 **Defining sources:**
 
-Sources are defined via `--var-json`, `.rundown/config.yaml`, `--var-file`, or `--var` flags. Values are routed based on type:
+Sources are defined via `--input-json`, `.rundown/config.yaml`, `--input-file`, or `--input` flags. Values are routed based on type:
 
 | Value Pattern | Routing |
 |---------------|---------|
-| `--var-json items='["a","b"]'` | Comma-joined in vars, JsonArray for iteration |
+| `--input-json items='["a","b"]'` | Comma-joined in vars, JsonArray for iteration |
 | `file:path/to/data.jsonl` | JsonArrayStream in vars (lazy streaming) |
 | `file:path/to/data.json` | JsonArray or JsonObject in vars (eager load) |
 | YAML array `[a, b, c]` | Comma-joined in vars, JsonArray for iteration |
@@ -529,8 +529,8 @@ Variables are collected from multiple sources with the following precedence (hig
 
 | Source | Description |
 |--------|-------------|
-| CLI flags (`--var-file`, `--var`, `--var-json`) | Repeatable, highest priority |
-| `RD_VAR_*` environment variables | Prefix stripped (e.g., `RD_VAR_environment` sets `environment`) |
+| CLI flags (`--input-file`, `--input`, `--input-json`) | Repeatable, highest priority |
+| `RD_INPUT_*` environment variables | Prefix stripped (e.g., `RD_INPUT_environment` sets `environment`) |
 | `.rundown/config.yaml` | Auto-discovered from cwd upward, stops at git root |
 | Frontmatter `vars:` field | Variables defined in runbook frontmatter |
 | Inherited delegation variables | Parent context in delegation tree |
@@ -556,19 +556,19 @@ items:
 log_file: file:data/results.jsonl
 ```
 
-Arrays become data sources for `FOR item IN {{ items }}` — pass inline via `--var-json items='["a","b"]'` or define in YAML config. The `file:` prefix creates file-backed sources. Scalar values remain regular template variables. See [Data Sources](#data-sources) for details.
+Arrays become data sources for `FOR item IN {{ items }}` — pass inline via `--input-json items='["a","b"]'` or define in YAML config. The `file:` prefix creates file-backed sources. Scalar values remain regular template variables. See [Data Sources](#data-sources) for details.
 
 ### Usage Examples
 
 ```bash
 # Set variables via CLI flags
-rundown run deploy.runbook.md --var environment=prod --var version=2.0.0
+rundown run deploy.runbook.md --input environment=prod --input version=2.0.0
 
 # Load variables from a file
-rundown run deploy.runbook.md --var-file production.yaml
+rundown run deploy.runbook.md --input-file production.yaml
 
 # Combine sources (CLI flags override file values)
-rundown run deploy.runbook.md --var-file base.yaml --var environment=prod
+rundown run deploy.runbook.md --input-file base.yaml --input environment=prod
 ```
 
 ### Variable Name Requirements
@@ -665,8 +665,8 @@ Start a new runbook from a runbook file.
 ```bash
 rundown run my-runbook.runbook.md
 rundown run my-runbook.runbook.md --prompted  # Disable automatic execution
-rundown run my-runbook.runbook.md --var key=value  # Set template variable (repeatable)
-rundown run my-runbook.runbook.md --var-file vars.yaml  # Load variables from YAML file
+rundown run my-runbook.runbook.md --input key=value  # Set template variable (repeatable)
+rundown run my-runbook.runbook.md --input-file vars.yaml  # Load variables from YAML file
 ```
 
 **Behavior:**
@@ -918,7 +918,7 @@ Resolve and validate template variables and data sources for a runbook without e
 
 ```bash
 rundown resolve my-runbook.runbook.md
-rundown resolve my-runbook.runbook.md --var environment=staging
+rundown resolve my-runbook.runbook.md --input environment=staging
 rundown resolve my-runbook.runbook.md --json
 ```
 
@@ -969,9 +969,9 @@ Two companion CLIs ship alongside `rundown`:
 | Command | Description |
 |---------|-------------|
 | `rd delegate <runbook> --step <id>` | Delegate substep to child runbook |
-| `rd delegate <runbook> --step <id> --var key=value` | Delegate with variables |
+| `rd delegate <runbook> --step <id> --input key=value` | Delegate with variables |
 | `rd claim <token>` | Claim a delegation token and launch child |
-| `rd claim <token> --var key=value` | Claim with variables |
+| `rd claim <token> --input key=value` | Claim with variables |
 | `rd abort <token>` | Cancel a delegation token |
 | `rd abort <token> --force` | Cancel a claimed delegation |
 
@@ -1258,7 +1258,7 @@ JSON output compatibility:
 | "Runbook file not found" | Missing runbook | Check file path |
 | "Step N does not exist" | Invalid GOTO target | Check step numbers |
 | "Invalid step target" | Bad goto format | Use "N" or "N.M" |
-| "FOR loop references undefined data source" | Sourced FOR clause without matching source | Define source via --var-json, config.yaml, or --var-file |
+| "FOR loop references undefined data source" | Sourced FOR clause without matching source | Define source via --input-json, config.yaml, or --input-file |
 | "File drift detected" | Data file changed during iteration | Ensure file stability or restart runbook |
 
 ### State Recovery

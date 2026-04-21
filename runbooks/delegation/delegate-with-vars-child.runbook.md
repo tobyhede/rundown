@@ -7,7 +7,7 @@ scenarios:
   auto-pass:
     description: Child auto-executes and echoes environment variable
     commands:
-      - rd run --var environment=staging delegate-with-vars-child.runbook.md
+      - rd run --input environment=staging delegate-with-vars-child.runbook.md
     result: COMPLETE
 ---
 

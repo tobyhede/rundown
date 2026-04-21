@@ -53,7 +53,7 @@ Output shows NAME, SOURCE, DESCRIPTION, and TAGS columns. Project runbooks appea
 Run a runbook by name:
 
 ```bash
-rd run pr-feedback --var pr_number=42
+rd run pr-feedback --input pr_number=42
 ```
 
 ### Priority Chain
@@ -112,17 +112,17 @@ vars:
 | `name` | Yes | Unique identifier used with `rd run <name>` |
 | `description` | Yes | Shown in `rd ls --all` output |
 | `tags` | No | Categorization labels |
-| `vars` | No | Default variable values (overridden by `--var`) |
+| `vars` | No | Default variable values (overridden by `--input`) |
 
 ## Template Variables
 
 Use Handlebars syntax `{{variableName}}` for values that change between runs:
 
 ```bash
-rd run pr-feedback --var pr_number=11 --var repo=myorg/myrepo
+rd run pr-feedback --input pr_number=11 --input repo=myorg/myrepo
 ```
 
-Variables defined in frontmatter `vars:` serve as defaults. CLI `--var` flags take precedence.
+Variables defined in frontmatter `vars:` serve as defaults. CLI `--input` flags take precedence.
 
 See [SPEC.md §6 Templating](./SPEC.md#6-templating) for the full variable source precedence.
 
@@ -142,10 +142,10 @@ log_file: file:data/results.jsonl
 
 Arrays become data sources for `FOR item IN {{ items }}`. The `file:` prefix creates file-backed sources. Scalar values remain regular template variables.
 
-Or pass arrays inline with `--var-json`:
+Or pass arrays inline with `--input-json`:
 
 ```bash
-rd run runbook.md --var-json 'items=["alpha","bravo","charlie"]'
+rd run runbook.md --input-json 'items=["alpha","bravo","charlie"]'
 ```
 
 ## Authoring Conventions
@@ -201,7 +201,7 @@ rd ls --all
 rd check .rundown/runbooks/review/pr-feedback.runbook.md
 
 # Run against a specific PR
-rd run pr-feedback --var pr_number=11
+rd run pr-feedback --input pr_number=11
 
 # Run scripts independently for testing
 bash .rundown/runbooks/review/scripts/fetch-pr-comments.sh tobyhede/rundown 11
@@ -222,6 +222,6 @@ review/
 Guidelines:
 - Use `#!/usr/bin/env bash` and `set -euo pipefail`
 - Accept parameters positionally with usage messages
-- By default write output to `.rundown/work/<runbook-name>/` for intermediate artifacts; override via the `WorkPath` template variable (set with `--var WorkPath=...` or config) or the `WORK_PATH` environment variable read by scripts
+- By default write output to `.rundown/work/<runbook-name>/` for intermediate artifacts; override via the `WorkPath` template variable (set with `--input WorkPath=...` or config) or the `WORK_PATH` environment variable read by scripts
 - Exit 0 for success (PASS), non-zero for failure (FAIL)
 - Keep scripts focused — one responsibility per script

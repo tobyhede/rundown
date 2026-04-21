@@ -113,8 +113,8 @@ The `rd` command is an alias for `rundown`.
 | Command | Description |
 |---------|-------------|
 | `rundown run [file]` | Start a runbook |
-| `rundown run [file] --var key=value` | Set template variable (repeatable) |
-| `rundown run [file] --var-file path` | Load variables from YAML file |
+| `rundown run [file] --input key=value` | Set template variable (repeatable) |
+| `rundown run [file] --input-file path` | Load variables from YAML file |
 | `rundown run [file] --prompted` | Show commands without auto-executing |
 | `rundown pass` | Mark current step as passed (evaluates PASS condition) |
 | `rundown fail` | Mark current step as failed (evaluates FAIL condition) |

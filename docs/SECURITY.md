@@ -117,7 +117,7 @@ The policy layer protects against:
 
 ### Data Source File Security
 
-File-backed data sources (`--var items=file:data.txt`) are subject to security controls:
+File-backed data sources (`--input items=file:data.txt`) are subject to security controls:
 
 - **Symlink resolution:** `fs.realpath()` resolves symlinks before path validation
 - **Path containment:** Resolved paths must stay within the project root directory

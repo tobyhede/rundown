@@ -7,7 +7,7 @@ scenarios:
   completed:
     description: All items from data source are processed
     commands:
-      - rd run --var-file data/array-sources.yaml for-variable-source.runbook.md
+      - rd run --input-file data/array-sources.yaml for-variable-source.runbook.md
     result: COMPLETE
 ---
 

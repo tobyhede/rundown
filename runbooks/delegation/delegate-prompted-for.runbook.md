@@ -18,7 +18,7 @@ scenarios:
   resolved:
     description: Variable bounds resolve, FOR iterates with delegation
     commands:
-      - rd run --var N=2 delegate-prompted-for.runbook.md
+      - rd run --input N=2 delegate-prompted-for.runbook.md
       - rd delegate
       - rd claim ${TOKEN}
       - rd delegate

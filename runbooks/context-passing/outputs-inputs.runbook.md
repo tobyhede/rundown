@@ -7,14 +7,14 @@ scenarios:
   pass-stores-outputs:
     description: Step 1 passes — OUTPUTS stored, step 2 value injected, runbook completes
     commands:
-      - rd run --prompted outputs-inputs.runbook.md --var ContextId=scenario1
+      - rd run --prompted outputs-inputs.runbook.md --input ContextId=scenario1
       - rd pass
       - rd pass
     result: COMPLETE
   fail-missing-inputs:
     description: Step 1 fails — no OUTPUTS stored, step 2 renders literally, runbook still completes
     commands:
-      - rd run --prompted outputs-inputs.runbook.md --var ContextId=scenario2
+      - rd run --prompted outputs-inputs.runbook.md --input ContextId=scenario2
       - rd fail
       - rd pass
     result: COMPLETE

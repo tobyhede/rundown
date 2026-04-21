@@ -7,9 +7,9 @@ inputs:
   greeting: hello
 scenarios:
   override:
-    description: CLI --var overrides frontmatter default
+    description: CLI --input overrides frontmatter default
     commands:
-      - rd run --var greeting=overridden variable-precedence.runbook.md
+      - rd run --input greeting=overridden variable-precedence.runbook.md
     result: COMPLETE
   default:
     description: Frontmatter default used when no CLI override

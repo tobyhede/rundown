@@ -245,7 +245,7 @@ Variables use Handlebars syntax: `{{variable}}`.
 
 | Source | Scope | Description |
 | :--- | :--- | :--- |
-| CLI (`--var`) | Global | Expanded at startup. |
+| CLI (`--input`) | Global | Expanded at startup. |
 | `{{Step}}`, `{{step}}` | Step | Current execution identifier for this runbook context (e.g., `1`, `1.2`). |
 | `{{Index}}`, `{{index}}` | Loop | Current iteration number for this runbook context. |
 | `{{context.current.*}}` | Step/Loop | Canonical current runbook context: `step` (e.g., `3`), `substep` (e.g., `1`), `index` (e.g., `3`), `at` (e.g., `3.3.1` — `STEP.INDEX.SUBSTEP` inside a FOR loop, `STEP.SUBSTEP` otherwise). |
@@ -260,10 +260,10 @@ Variables use Handlebars syntax: `{{variable}}`.
 *   **Depth limit**: Parent context chain addressing is capped at 32 levels (enforced on the delegation ancestor chain depth). Exceeding this limit produces an error.
 *   **Path resolution**: Dotted paths are supported consistently (for example `{{context.parent.index}}`).
 *   **Required variables**: The frontmatter `required` field declares variables that must be provided by the caller via CLI flags, config, environment bridge, or delegation inheritance. Required variables must not appear in `inputs:`. Missing required variables produce a hard error (`MISSING_REQUIRED_VARS`) during resolution. Reserved runtime names are also rejected in `required`.
-*   **Reserved keys**: Runtime keys `step`, `index`, and `context` are reserved (matching is case-insensitive — any case variant such as `STEP`, `Step`, `INDEX` is also reserved) and cannot be overridden by user variables. The CLI rejects these names in frontmatter `inputs:`, `required`, `--var` flags, `--var-file` contents, and `.rundown/config.yaml` with an error diagnostic. Reserved names in `RD_VAR_*` environment variables are silently skipped with a warning.
+*   **Reserved keys**: Runtime keys `step`, `index`, and `context` are reserved (matching is case-insensitive — any case variant such as `STEP`, `Step`, `INDEX` is also reserved) and cannot be overridden by user variables. The CLI rejects these names in frontmatter `inputs:`, `required`, `--input` flags, `--input-file` contents, and `.rundown/config.yaml` with an error diagnostic. Reserved names in `RD_INPUT_*` environment variables are silently skipped with a warning.
 *   **Precedence** (highest to lowest):
-    1. CLI flags (`--var-file`, `--var`, `--var-json`) — highest priority
-    2. `RD_VAR_*` environment variables (prefix stripped)
+    1. CLI flags (`--input-file`, `--input`, `--input-json`) — highest priority
+    2. `RD_INPUT_*` environment variables (prefix stripped)
     3. `.rundown/config.yaml` (auto-discovered from cwd upward)
     4. Frontmatter `inputs:` field
     5. Inherited delegation variables (parent context)
@@ -284,7 +284,7 @@ Rundown sets the following built-in variables once per execution (unless marked 
 | `Branch` | `feature/my-work` | Current git branch name (empty when not in git) |
 | `WorkPath` | `.rundown/work/feature-my-work` | Branch-isolated artifact directory (falls back to `.rundown/work` outside git). Default base directory for the `{{ path "..." }}` helper used in OUTPUTS expressions — see [§7.1 OUTPUTS](#71-outputs). |
 | `RunId` | `4a7f0c3e` | Unique-per-execution identifier (fresh 8-char hex per execution; each child in a delegation tree gets its own) |
-| `ContextId` | `a3b8c1d2` | Shared identity across a delegation tree. Scopes `{{ path "..." }}` helper output into `.rd-<ContextId>/` for context passing — see [§7 Context Passing](#7-context-passing-outputs). Children inherit the parent's `ContextId` via `--var`. Overridable via `--var ContextId=<name>` for a meaningful identifier (e.g., `sprint-42`). |
+| `ContextId` | `a3b8c1d2` | Shared identity across a delegation tree. Scopes `{{ path "..." }}` helper output into `.rd-<ContextId>/` for context passing — see [§7 Context Passing](#7-context-passing-outputs). Children inherit the parent's `ContextId` via `--input`. Overridable via `--input ContextId=<name>` for a meaningful identifier (e.g., `sprint-42`). |
 | `Step` | `3.1` | Current qualified step identifier (dynamic per step) |
 | `Index` | `3` | Current loop iteration number inside FOR (dynamic per iteration) |
 | `context.current.step` | `3.1` | Canonical current step identifier (dynamic) |
@@ -292,7 +292,7 @@ Rundown sets the following built-in variables once per execution (unless marked 
 | `context.current.index` | `3` | Current loop iteration inside FOR (dynamic) |
 | `context.current.at` | `3.3.1` | Full execution position (`STEP.INDEX.SUBSTEP` inside a FOR loop, `STEP.SUBSTEP` otherwise) (dynamic) |
 
-Static variables (`Date`, `DateTime`, `Year`, `Month`, `Day`, `Branch`, `WorkPath`, `RunId`, `ContextId`) can be overridden via `--var`. Dynamic variables (`Step`, `Index`, `context.current.*` and their lowercase aliases) reflect the current execution position and cannot be overridden. The variable name `context` is reserved.
+Static variables (`Date`, `DateTime`, `Year`, `Month`, `Day`, `Branch`, `WorkPath`, `RunId`, `ContextId`) can be overridden via `--input`. Dynamic variables (`Step`, `Index`, `context.current.*` and their lowercase aliases) reflect the current execution position and cannot be overridden. The variable name `context` is reserved.
 
 **Plugin Variables:** When a runbook is resolved from a plugin source (e.g., `rundown:write-plan`), Rundown auto-injects additional variables using UPPER_SNAKE_CASE (mirroring host environment conventions):
 
@@ -300,7 +300,7 @@ Static variables (`Date`, `DateTime`, `Year`, `Month`, `Day`, `Branch`, `WorkPat
 |----------|-------------|
 | `CLAUDE_PLUGIN_ROOT` | Plugin installation directory |
 
-Plugin variables sit in the precedence chain just below CLI flags and can be overridden via `--var`.
+Plugin variables sit in the precedence chain just below CLI flags and can be overridden via `--input`.
 
 ## 7. Context Passing (OUTPUTS)
 
@@ -327,11 +327,11 @@ The frontmatter `outputs:` field declares variables to capture at run completion
 
 ### 7.3 Delegation Inheritance
 
-Children in a delegation tree inherit the parent's `ContextId` via `--var`, providing a shared identity. Step OUTPUTS accumulate in `state.variables` throughout execution; frontmatter `outputs:` at termination produce `state.finalVars` which propagate to the parent actor on completion.
+Children in a delegation tree inherit the parent's `ContextId` via `--input`, providing a shared identity. Step OUTPUTS accumulate in `state.variables` throughout execution; frontmatter `outputs:` at termination produce `state.finalVars` which propagate to the parent actor on completion.
 
 ### 7.5 Example: write-plan / execute-plan
 
-A parent runbook produces a plan file and delegates to a child runbook that consumes it. Both share a `ContextId` through delegation inheritance (see [§7.3](#73-delegation-inheritance) for the hand-off contract — the child automatically inherits the parent's `ContextId` via `--var`).
+A parent runbook produces a plan file and delegates to a child runbook that consumes it. Both share a `ContextId` through delegation inheritance (see [§7.3](#73-delegation-inheritance) for the hand-off contract — the child automatically inherits the parent's `ContextId` via `--input`).
 
 Parent (`write-plan.runbook.md`):
 
@@ -365,8 +365,8 @@ Execute the plan stored at `{{ PlanPath }}`.
 Flow:
 
 1. Parent step 1 runs and its transition completes. The machine evaluates the step's `OUTPUTS`, resolves `PlanPath` via the `{{ path }}` helper (e.g. `.rundown/work/feature-my-work/.rd-a3b8c1d2/2026-02-04-plan.md`), and merges `{ PlanPath: "<resolved path>" }` into the live `context.variables`.
-2. Parent step 2 delegates to the child. The child inherits `ContextId=a3b8c1d2` via `--var`, and the plugin forwards the parent's live variable space (including `PlanPath`) as `--var` flags on the child's `rd claim` invocation.
-3. Child pipeline setup resolves variables: `--var PlanPath=...` satisfies `required: PlanPath`, and frontmatter `inputs:` defaults fill any gaps.
+2. Parent step 2 delegates to the child. The child inherits `ContextId=a3b8c1d2` via `--input`, and the plugin forwards the parent's live variable space (including `PlanPath`) as `--input` flags on the child's `rd claim` invocation.
+3. Child pipeline setup resolves variables: `--input PlanPath=...` satisfies `required: PlanPath`, and frontmatter `inputs:` defaults fill any gaps.
 4. Child step 1 renders `{{ PlanPath }}` as the forwarded value and executes.
 
 ## 8. Conformance
@@ -383,7 +383,7 @@ Flow:
 10. **FOR Iteration Action Set**: FOR-level nested transitions only allow `CONTINUE`, `DEFER`, `NEXT`, `BREAK`, `GOTO`, `STOP`, `COMPLETE` (plus RETRY wrappers).
 11. **Single Directives**: At most one OUTPUTS directive per step or substep.
 12. **Reserved Names in Directives**: OUTPUTS variable names must not be reserved names (case-insensitive).
-13. **No INPUTS Directive**: The `- INPUTS` step directive has been removed. Use the frontmatter `inputs:` field to declare default variable values; variables are injected via `--var` flags at invocation time.
+13. **No INPUTS Directive**: The `- INPUTS` step directive has been removed. Use the frontmatter `inputs:` field to declare default variable values; variables are injected via `--input` flags at invocation time.
 
 ## 9. Compatibility
 
