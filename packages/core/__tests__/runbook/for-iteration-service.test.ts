@@ -1,5 +1,5 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import type { RunbookState, ForContext, Step } from '../../src/runbook/types.js';
+import type { RunbookState, ForContext, Step, TemplateVarValue } from '../../src/runbook/types.js';
 
 // Capture the real ForResolutionError before the mock is installed.
 // jest.unstable_mockModule does NOT hoist, so this top-level await executes
@@ -310,7 +310,7 @@ describe('ForIterationService', () => {
       const state = makeState({
         forStack: [fc],
         templateVars: {
-          items: stream as unknown as import('../../src/runbook/types.js').TemplateVarValue,
+          items: stream as unknown as TemplateVarValue,
         },
       });
 

@@ -480,7 +480,7 @@ export function makeTemplateVarValueSchema(projectRoot: string): z.ZodType<Templ
  * @param projectRoot - Absolute project root for path boundary enforcement
  * @returns Zod schema for AncestorSnapshot with path-validated vars
  */
-function makeAncestorSnapshotSchema(projectRoot: string) {
+function makeAncestorSnapshotSchema(projectRoot: string): z.ZodTypeAny {
   return z.object({
     runId: z.string(),
     runbook: z.string(),
@@ -503,7 +503,7 @@ function makeAncestorSnapshotSchema(projectRoot: string) {
  * @param projectRoot - Absolute project root for path boundary enforcement
  * @returns Zod schema for ContextSnapshot with path-validated vars and ancestors
  */
-function makeContextSnapshotSchema(projectRoot: string) {
+function makeContextSnapshotSchema(projectRoot: string): z.ZodTypeAny {
   return z
     .object({
       vars: z.record(z.string(), makeTemplateVarValueSchema(projectRoot)),
@@ -535,7 +535,7 @@ function makeContextSnapshotSchema(projectRoot: string) {
  * @param projectRoot - Absolute project root for path boundary enforcement
  * @returns Zod schema for StepDelegation with path-validated contextSnapshot
  */
-function makeStepDelegationSchema(projectRoot: string) {
+function makeStepDelegationSchema(projectRoot: string): z.ZodTypeAny {
   return z.object({
     tokenHash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
     childRunbookPath: z.string(),
@@ -556,7 +556,7 @@ function makeStepDelegationSchema(projectRoot: string) {
  * @param projectRoot - Absolute project root for path boundary enforcement
  * @returns Zod schema for SubstepState with path-validated delegation
  */
-function makeSubstepStateSchema(projectRoot: string) {
+function makeSubstepStateSchema(projectRoot: string): z.ZodTypeAny {
   return z.object({
     id: z.string(),
     frameKey: FrameKeySchema,

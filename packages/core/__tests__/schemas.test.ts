@@ -662,7 +662,7 @@ describe('makeRunbookStateSchema — SEC1 nested snapshot var protection', () =>
           status: 'done',
           result: 'pass',
           delegation: {
-            tokenHash: 'sha256:' + 'a'.repeat(64),
+            tokenHash: `sha256:${'a'.repeat(64)}`,
             childRunbookPath: '/project/child.md',
             contextSnapshot: {
               vars: { items: escaping },
@@ -689,7 +689,7 @@ describe('makeRunbookStateSchema — SEC1 nested snapshot var protection', () =>
           status: 'done',
           result: 'pass',
           delegation: {
-            tokenHash: 'sha256:' + 'a'.repeat(64),
+            tokenHash: `sha256:${'a'.repeat(64)}`,
             childRunbookPath: '/project/child.md',
             contextSnapshot: {
               vars: { items: safe },
@@ -716,7 +716,7 @@ describe('makeRunbookStateSchema — SEC1 nested snapshot var protection', () =>
           status: 'done',
           result: 'pass',
           delegation: {
-            tokenHash: 'sha256:' + 'a'.repeat(64),
+            tokenHash: `sha256:${'a'.repeat(64)}`,
             childRunbookPath: '/project/child.md',
             contextSnapshot: {
               vars: {},
