@@ -12,7 +12,7 @@ import {
 } from '../helpers/test-utils.js';
 
 /**
- * Two-step runbook with substeps. No INPUTS directives — variables are passed via --var.
+ * Two-step runbook with substeps. No INPUTS directives — variables are passed via --input.
  * Substep 1.fetch publishes ChildValue; substep 1.use consumes it via {{ChildValue}}.
  * Step 1 parent publishes ParentValue; step 2 consumes it via {{ParentValue}}.
  */

@@ -13,7 +13,7 @@ import {
 
 /**
  * Runbook that auto-passes and completes; has a naked-form frontmatter OUTPUTS
- * declaration. SomeVar is expected to be passed via --var.
+ * declaration. SomeVar is expected to be passed via --input.
  */
 const NAKED_FORM_RUNBOOK = `---
 name: fm-naked-test

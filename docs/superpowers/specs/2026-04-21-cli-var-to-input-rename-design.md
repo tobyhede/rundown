@@ -69,7 +69,7 @@ All changes are mechanical string/identifier replacements. No logic changes.
 - `docs/SPEC.md`, `docs/RUNDOWN.md`, `docs/FORMAT.md`, `docs/SECURITY.md`, `docs/MCP.md`, `docs/PROJECT-INTEGRATION.md`, `docs/AGENT-ORCHESTRATION.md`
 - `runbooks/` — 15+ example runbook files with `rd run --var` invocations
 - `packages/claude-code-plugin/skills/` — `running-runbooks`, `writing-runbooks`, `delegating-runbooks` SKILL.md files
-- Prior spec doc in `docs/cipherpowers/specs/`
+- Prior spec doc in `docs/superpowers/specs/`
 
 **Total: ~55 files, ~400 references.**
 

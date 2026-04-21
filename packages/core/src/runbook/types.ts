@@ -192,7 +192,7 @@ export type IterableVarValue = JsonArray | JsonArrayStream;
 /**
  * Values that can appear in the template variable map.
  *
- * - `string`: the dominant case (CLI vars, env, builtins, stringified booleans/nulls)
+ * - `string`: the dominant case (CLI inputs, env, builtins, stringified booleans/nulls)
  * - `number`: preserved from `--input-json` and YAML config (not stringified)
  * - `JsonObject`: structured values for dotted template access (`{{config.host}}`)
  * - `JsonArray`: in-memory array for eager FOR loop iteration
