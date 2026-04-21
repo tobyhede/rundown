@@ -233,16 +233,16 @@ export async function executeScenario(
     const inputFiles = extractInputFileReferences(scenario.commands);
     const copiedDirs = new Set<string>();
     for (const inputFile of inputFiles) {
-      const varDir = dirname(inputFile);
-      if (copiedDirs.has(varDir)) continue;
-      copiedDirs.add(varDir);
+      const inputDir = dirname(inputFile);
+      if (copiedDirs.has(inputDir)) continue;
+      copiedDirs.add(inputDir);
 
-      const srcDir = join(sourceDir, varDir);
-      const destDir = join(tmpDir, varDir);
+      const srcDir = join(sourceDir, inputDir);
+      const destDir = join(tmpDir, inputDir);
       if (existsSync(srcDir)) {
         await cp(srcDir, destDir, { recursive: true });
       } else {
-        throw new Error(`Input file directory not found: ${varDir} (searched in: ${sourceDir})`);
+        throw new Error(`Input file directory not found: ${inputDir} (searched in: ${sourceDir})`);
       }
     }
 
