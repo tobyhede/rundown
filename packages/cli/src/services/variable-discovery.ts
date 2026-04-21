@@ -315,27 +315,27 @@ export function parseVarFlag(flag: string): { key: string; value: string } | nul
 }
 
 /**
- * Collect CLI flag variables (--var-file, --var, --var-json) into a single dict.
+ * Collect CLI flag variables (--input-file, --input, --input-json) into a single dict.
  *
- * Merges in internal precedence order: var-file < var < var-json.
+ * Merges in internal precedence order: input-file < input < input-json.
  * Used by both {@link collectRawLayers} and the delegate command to avoid
  * duplicating flag-collection logic.
  *
  * @param options - CLI flag arrays
- * @param options.varFile - Array of paths to YAML files containing variable definitions (repeatable)
- * @param options.var - Array of key=value flag strings from CLI
- * @param options.varJson - Array of key=json flag strings from CLI for structured values
- * @param cwd - Current working directory for resolving relative var-file paths
+ * @param options.inputFile - Array of paths to YAML files containing variable definitions (repeatable)
+ * @param options.input - Array of key=value flag strings from CLI
+ * @param options.inputJson - Array of key=json flag strings from CLI for structured values
+ * @param cwd - Current working directory for resolving relative input-file paths
  * @returns Merged variable record with raw types preserved
  */
 export async function collectCliFlags(
-  options: { varFile?: string[]; var?: string[]; varJson?: string[] },
+  options: { inputFile?: string[]; input?: string[]; inputJson?: string[] },
   cwd: string,
 ): Promise<Record<string, unknown>> {
   const result: Record<string, unknown> = {};
 
-  // var-file(s) — repeatable, later overrides earlier
-  for (const vf of options.varFile ?? []) {
+  // input-file(s) — repeatable, later overrides earlier
+  for (const vf of options.inputFile ?? []) {
     const varFilePath = path.isAbsolute(vf) ? vf : path.join(cwd, vf);
     const fileVars = await loadVariablesFromFile(varFilePath, {
       normalize: false,
@@ -344,27 +344,27 @@ export async function collectCliFlags(
     Object.assign(result, fileVars);
   }
 
-  // --var flags
-  if (options.var) {
-    for (const flag of options.var) {
+  // --input flags
+  if (options.input) {
+    for (const flag of options.input) {
       const parsed = parseVarFlag(flag);
       if (!parsed) {
         throw new Error(
-          `Unexpected invalid --var entry: ${flag} (parseVarOption should have rejected this)`,
+          `Unexpected invalid --input entry: ${flag} (parseInputOption should have rejected this)`,
         );
       }
       result[parsed.key] = parsed.value;
     }
   }
 
-  // --var-json values (processed after --var, so wins for same key)
-  if (options.varJson) {
-    for (const flag of options.varJson) {
+  // --input-json values (processed after --input, so wins for same key)
+  if (options.inputJson) {
+    for (const flag of options.inputJson) {
       const eqIndex = flag.indexOf('=');
       const key = flag.slice(0, eqIndex);
       if (!isValidVariableName(key)) {
         throw new Error(
-          `Unexpected invalid --var-json key: ${key} (parseVarJsonOption should have rejected this)`,
+          `Unexpected invalid --input-json key: ${key} (parseInputJsonOption should have rejected this)`,
         );
       }
       const jsonValue = flag.slice(eqIndex + 1);
@@ -631,14 +631,14 @@ async function discoverRawVariables(cwd: string): Promise<Record<string, unknown
 
 /**
  * Environment variable prefix for the variable bridge.
- * Variables matching `RD_VAR_<name>` are mapped to template variable `<name>`.
+ * Variables matching `RD_INPUT_<name>` are mapped to template variable `<name>`.
  */
-const ENV_VAR_PREFIX = 'RD_VAR_';
+const ENV_INPUT_PREFIX = 'RD_INPUT_';
 
 /**
- * Collect variables from environment using the RD_VAR_* prefix convention.
+ * Collect variables from environment using the RD_INPUT_* prefix convention.
  *
- * Environment variables matching RD_VAR_<name> are mapped to variable <name>.
+ * Environment variables matching RD_INPUT_<name> are mapped to variable <name>.
  * Variable names are validated against the identifier pattern.
  *
  * @param warnings - Optional array to collect discovery warnings
@@ -647,8 +647,8 @@ const ENV_VAR_PREFIX = 'RD_VAR_';
 function collectEnvBridgeVars(warnings?: string[]): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   for (const [envKey, value] of Object.entries(process.env)) {
-    if (envKey.startsWith(ENV_VAR_PREFIX) && value !== undefined) {
-      const varName = envKey.slice(ENV_VAR_PREFIX.length);
+    if (envKey.startsWith(ENV_INPUT_PREFIX) && value !== undefined) {
+      const varName = envKey.slice(ENV_INPUT_PREFIX.length);
       if (!isValidVariableName(varName)) {
         warnings?.push(`Ignoring env ${envKey}: "${varName}" is not a valid identifier`);
         continue;
@@ -674,17 +674,17 @@ function collectEnvBridgeVars(warnings?: string[]): Record<string, unknown> {
  * Layer 1: inheritedVars   ← parent delegation vars (overrides builtins)
  * Layer 2: frontmatter     ← runbook YAML frontmatter vars:
  * Layer 3: discovered      ← .rundown/config.yaml (auto-discovered)
- * Layer 4: envBridge        ← RD_VAR_* environment variables
+ * Layer 4: envBridge        ← RD_INPUT_* environment variables
  * Layer 5: cliFlags        ← --var-file, --var, --var-json (highest precedence)
  * ```
  *
  * The inherited layer ensures that parent ContextId survives into child
  * runbooks during delegation, rather than being replaced by a fresh builtin.
  *
- * @param options - Variable sources from CLI flags, var-file, frontmatter vars, and inherited vars
- * @param options.varFile - Array of paths to YAML files containing variable definitions (repeatable)
- * @param options.var - Array of key=value flag strings from CLI
- * @param options.varJson - Array of key=json flag strings from CLI for structured values
+ * @param options - Variable sources from CLI flags, input-file, frontmatter vars, and inherited vars
+ * @param options.inputFile - Array of paths to YAML files containing variable definitions (repeatable)
+ * @param options.input - Array of key=value flag strings from CLI
+ * @param options.inputJson - Array of key=json flag strings from CLI for structured values
  * @param options.frontmatterVars - Pre-extracted frontmatter vars (from parser's validated RunbookFrontmatter)
  * @param options.inheritedVars - Variables inherited from parent delegation
  * @param cwd - Current working directory for resolving relative paths
@@ -693,9 +693,9 @@ function collectEnvBridgeVars(warnings?: string[]): Record<string, unknown> {
  */
 async function collectRawLayers(
   options: {
-    varFile?: string[];
-    var?: string[];
-    varJson?: string[];
+    inputFile?: string[];
+    input?: string[];
+    inputJson?: string[];
     frontmatterVars?: Record<string, string | number | boolean>;
     inheritedVars?: Record<string, TemplateVarValue>;
   },
@@ -714,10 +714,10 @@ async function collectRawLayers(
   // Layer 3: Auto-discovered config
   const discovered: Record<string, unknown> = await discoverRawVariables(cwd);
 
-  // Layer 4: Environment bridge (RD_VAR_* env vars)
+  // Layer 4: Environment bridge (RD_INPUT_* env vars)
   const envBridge = collectEnvBridgeVars(warnings);
 
-  // Layer 5: CLI flags (--var-file, --var, --var-json merged)
+  // Layer 5: CLI flags (--input-file, --input, --input-json merged)
   const cliFlags = await collectCliFlags(options, cwd);
 
   return [builtins, inherited, frontmatter, discovered, envBridge, cliFlags];
@@ -779,7 +779,7 @@ async function enforceFileSourcePolicy(
  * 1b. Inherited vars from parent delegation (overrides builtins)
  * 2. Frontmatter vars
  * 3. Auto-discovered .rundown/config.yaml
- * 3b. Environment bridge (RD_VAR_* env vars)
+ * 3b. Environment bridge (RD_INPUT_* env vars)
  * 4. --var-file contents (repeatable, later overrides earlier)
  * 5. --var flags (highest precedence)
  *
@@ -790,10 +790,10 @@ async function enforceFileSourcePolicy(
  * - Number → preserved, not stringified
  * - Other scalar (boolean, null, plain string) → stringified
  *
- * @param options - Variable sources from CLI flags, var-file, frontmatter vars, and inherited vars
- * @param options.varFile - Array of paths to YAML files containing variable definitions (repeatable)
- * @param options.var - Array of key=value flag strings from CLI
- * @param options.varJson - Array of key=json flag strings from CLI for structured values
+ * @param options - Variable sources from CLI flags, input-file, frontmatter vars, and inherited vars
+ * @param options.inputFile - Array of paths to YAML files containing variable definitions (repeatable)
+ * @param options.input - Array of key=value flag strings from CLI
+ * @param options.inputJson - Array of key=json flag strings from CLI for structured values
  * @param options.frontmatterVars - Pre-extracted frontmatter vars (from parser's validated RunbookFrontmatter)
  * @param options.inheritedVars - Variables inherited from parent delegation (overrides builtins)
  * @param cwd - Current working directory for resolving relative paths
@@ -804,9 +804,9 @@ async function enforceFileSourcePolicy(
  */
 export async function resolveVariables(
   options: {
-    varFile?: string[];
-    var?: string[];
-    varJson?: string[];
+    inputFile?: string[];
+    input?: string[];
+    inputJson?: string[];
     frontmatterVars?: Record<string, string | number | boolean>;
     inheritedVars?: Record<string, TemplateVarValue>;
   },
