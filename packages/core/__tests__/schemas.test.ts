@@ -600,6 +600,11 @@ describe('TemplateVarValueSchema — JsonArrayStream deserialization', () => {
     const parsed = TemplateVarValueSchema.parse(raw);
     expect(isJsonArrayStream(parsed)).toBe(true);
   });
+
+  it('does not brand a plain object that bypasses the schema', () => {
+    const plain = { kind: 'json-array-stream', path: '/project/data.jsonl' } as unknown as Parameters<typeof isJsonArrayStream>[0];
+    expect(isJsonArrayStream(plain)).toBe(false);
+  });
 });
 
 describe('makeTemplateVarValueSchema — path-validated JsonArrayStream', () => {
