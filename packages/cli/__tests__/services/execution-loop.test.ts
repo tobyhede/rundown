@@ -27,8 +27,10 @@ const mockLifecycleService = {
   consumeResolvedCompletion: jest.fn().mockResolvedValue(null),
 };
 
-// Import actual @rundown-org/core before mocking to capture real implementations
-const actualCore = await import('@rundown-org/core');
+// Capture the real isJsonArrayStream before the mock is registered.
+// jest.unstable_mockModule does NOT hoist (unlike jest.mock), so this top-level
+// await executes first and always captures the real branded implementation.
+const { isJsonArrayStream: realIsJsonArrayStream } = await import('@rundown-org/core');
 
 jest.unstable_mockModule('@rundown-org/core', () => {
   const asTerminalSnapshot = jest.fn((snapshot: unknown) => {
@@ -131,7 +133,7 @@ jest.unstable_mockModule('@rundown-org/core', () => {
       getLogDir: jest.fn().mockReturnValue('/tmp'),
     },
     isJsonArray: jest.fn((v: unknown) => Array.isArray(v)),
-    isJsonArrayStream: jest.fn(actualCore.isJsonArrayStream),
+    isJsonArrayStream: jest.fn(realIsJsonArrayStream),
     assertResolvedVariableForContext: jest.fn(
       (fc: {
         currentValue?: unknown;

@@ -1,8 +1,10 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { mockErrorHelpers } from './mock-error-helpers.js';
 
-// Import actual @rundown-org/core before mocking to capture real implementations
-const actualCore = await import('@rundown-org/core');
+// Capture the real isJsonArrayStream before the mock is registered.
+// jest.unstable_mockModule does NOT hoist (unlike jest.mock), so this top-level
+// await executes first and always captures the real branded implementation.
+const { isJsonArrayStream: realIsJsonArrayStream } = await import('@rundown-org/core');
 
 // Mock @rundown-org/core
 jest.unstable_mockModule('@rundown-org/core', () => ({
@@ -77,7 +79,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     LAUNCH_FAILED: { code: 'RD-816' },
   },
   isJsonArray: jest.fn((v: unknown) => Array.isArray(v)),
-  isJsonArrayStream: jest.fn(actualCore.isJsonArrayStream),
+  isJsonArrayStream: jest.fn(realIsJsonArrayStream),
   logger: { warn: jest.fn(), info: jest.fn(), debug: jest.fn(), error: jest.fn() },
   ...mockErrorHelpers,
 }));

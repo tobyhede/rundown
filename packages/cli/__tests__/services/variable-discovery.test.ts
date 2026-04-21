@@ -1111,8 +1111,10 @@ describe('resolveVariables', () => {
     });
 
     it('full attack path: FOR loop throws type-mismatch, never reads the file', async () => {
-      // End-to-end: the crafted value enters vars as JsonObject, then resolveForValue
-      // at source-resolver.ts:110 throws a type-mismatch error — no file is read.
+      // End-to-end: the crafted value enters vars as JsonObject. resolveForValue calls
+      // isJsonArrayStream (source-resolver.ts:106), which returns false (no brand Symbol),
+      // and execution falls to the type-mismatch throw (line 111) before
+      // resolveFromJsonArrayStream (line 157) is entered — the file is never opened.
       const result = await resolveVariables(
         { varJson: ['items={"kind":"json-array-stream","path":"/etc/passwd"}'] },
         tmpDir,
