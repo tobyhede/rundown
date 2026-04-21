@@ -22,6 +22,7 @@ import { registerScenarioSuiteCommand } from './commands/scenario-suite.js';
 import { registerDelegateCommand } from './commands/delegate.js';
 import { registerClaimCommand } from './commands/claim.js';
 import { registerAbortCommand } from './commands/abort.js';
+import { registerCollectCommand } from './commands/collect.js';
 import { PolicyConfigTrustRequiredError, setColorEnabled } from '@rundown-org/core';
 import { initializePolicyContext, parsePolicyCliOptions } from './services/policy-context.js';
 import { outputCommandSchema } from './services/schema-service.js';
@@ -169,6 +170,7 @@ export function createProgram(): Command {
   registerDelegateCommand(program);
   registerClaimCommand(program);
   registerAbortCommand(program);
+  registerCollectCommand(program);
 
   return program;
 }
