@@ -374,7 +374,7 @@ export function extractRunbookReferences(commands: string[]): string[] {
 /**
  * Extract relative file paths from `--input-file` arguments in command strings.
  *
- * Scans each command for `--input-file <path>` patterns and returns
+ * Scans each command for `--input-file <path>` or `--input-file=<path>` patterns and returns
  * deduplicated results preserving insertion order.
  *
  * @param commands - Array of command strings to scan
