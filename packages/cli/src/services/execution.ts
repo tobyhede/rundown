@@ -1,5 +1,6 @@
 // packages/cli/src/services/execution.ts
 
+import * as fs from 'node:fs/promises';
 import {
   buildStepPosition,
   deriveExecutionAt,
@@ -452,7 +453,8 @@ export async function runExecutionLoop(
   const actorService = new RunbookActorService(manager);
   const sessionService = new SessionService(manager);
   const lifecycleService = new ExecutionLifecycleService(manager);
-  const iterationService = new ForIterationService(manager, actorService, cwd);
+  const projectRoot = await fs.realpath(cwd).catch(() => cwd);
+  const iterationService = new ForIterationService(manager, actorService, projectRoot);
   const ensuredInitial = await lifecycleService.ensureActiveEntry(runbookId, undefined, state);
   let currentState: RunbookState = ensuredInitial.state;
 
