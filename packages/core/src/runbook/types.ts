@@ -173,7 +173,7 @@ export interface JsonArrayStream {
  * Symbol brand ensures user-supplied JSON (`--var-json`) cannot spoof a stream
  * value and bypass file-path validation in resolveFromJsonArrayStream.
  *
- * @param path - Validated absolute path to a .jsonl file
+ * @param path - Absolute filesystem path to the .jsonl file (must be validated by caller)
  * @returns Branded JsonArrayStream safe for dispatch to resolveFromJsonArrayStream
  */
 export function createJsonArrayStream(path: string): JsonArrayStream {
@@ -258,12 +258,17 @@ export function isJsonArray(value: TemplateVarValue): value is JsonArray {
  * Type guard for file-backed lazy array stream values within the template variable map.
  *
  * @param value - Template variable value to check
- * @returns True if the value is a JsonArrayStream with kind 'json-array-stream' and a valid string path
+ * @returns `true` if the value carries the internal Symbol brand set by `createJsonArrayStream`
  */
 export function isJsonArrayStream(value: TemplateVarValue): value is JsonArrayStream {
   // Symbol brand check — JSON.parse never produces Symbol keys, so objects from
   // --var-json cannot pass this guard regardless of their `kind`/`path` shape.
-  return value !== null && typeof value === 'object' && jsonArrayStreamBrand in value;
+  return (
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+    value !== null && // typeof null === 'object', so guard against null explicitly
+    typeof value === 'object' &&
+    jsonArrayStreamBrand in value
+  );
 }
 
 /**
