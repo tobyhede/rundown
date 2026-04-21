@@ -90,7 +90,7 @@ export async function buildChildInputFlags(
         return `--input ${key}=${shellQuote(value)}`;
       }
       const json = JSON.stringify(value);
-      return json !== undefined ? `--input-json ${key}=${shellQuote(json)}` : undefined;
+      return `--input-json ${key}=${shellQuote(json)}`;
     };
     return inputKeys
       .filter((key) => safeKey.test(key) && Object.hasOwn(parentVars, key))
