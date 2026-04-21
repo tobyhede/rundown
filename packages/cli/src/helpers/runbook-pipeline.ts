@@ -66,15 +66,15 @@ import {
 } from './validate-frontmatter-vars.js';
 
 /**
- * Variable options from CLI flags.
+ * Input options from CLI flags.
  */
-export interface VarOptions {
+export interface InputOptions {
   /** Paths to YAML files containing variable definitions (repeatable) */
-  varFile?: string[];
+  inputFile?: string[];
   /** Inline key=value variable overrides (repeatable) */
-  var?: string[];
+  input?: string[];
   /** Inline key=json variable overrides with JSON values (repeatable) */
-  varJson?: string[];
+  inputJson?: string[];
 }
 
 /**
@@ -245,7 +245,7 @@ export function buildTemplateVars(
 ): Record<string, TemplateVarValue> {
   const effectiveUserVars: Record<string, TemplateVarValue> = {
     ...(options?.inheritedUserVars ?? {}), // parent --var (overridable)
-    ...localVars, // child frontmatter + claim --var (overrides)
+    ...localVars, // child frontmatter + claim --input (overrides)
   };
   return {
     ...effectiveUserVars,
@@ -406,7 +406,7 @@ export async function loadAndParseRunbook(file: string, cwd: string): Promise<Lo
  * the pipeline progressed past the parse stage.
  *
  * @param file - Runbook file path or name
- * @param varOpts - Variable options from CLI flags
+ * @param inputOpts - Input options from CLI flags
  * @param cwd - Current working directory
  * @param options - Optional settings including inherited variables from parent runbook
  * @param options.inheritedContextVars - Context variables inherited from a parent delegation
@@ -416,7 +416,7 @@ export async function loadAndParseRunbook(file: string, cwd: string): Promise<Lo
  */
 export async function prepareRunbook(
   file: string,
-  varOpts: VarOptions,
+  inputOpts: InputOptions,
   cwd: string,
   options?: {
     inheritedContextVars?: Readonly<Record<string, TemplateVarValue>>;
@@ -450,7 +450,7 @@ export async function prepareRunbook(
   // inherited after variable resolution (stage 3.5 below), once the child's
   // final ContextId is known. Merging context outputs before resolution would
   // mark their keys as "provided" against the child's own ContextId override
-  // (e.g. `claim --var ContextId=...`) and prevent the correct outputs from
+  // (e.g. `claim --input ContextId=...`) and prevent the correct outputs from
   // being loaded from the new context.
   const inheritedUserVars = options?.inheritedUserVars ?? {};
 
@@ -461,9 +461,9 @@ export async function prepareRunbook(
   try {
     const resolvedVariables = await resolveVariables(
       {
-        varFile: varOpts.varFile,
-        var: varOpts.var,
-        varJson: varOpts.varJson,
+        inputFile: inputOpts.inputFile,
+        input: inputOpts.input,
+        inputJson: inputOpts.inputJson,
         frontmatterVars: frontmatter?.inputs,
         inheritedVars: inheritedUserVars,
       },
@@ -529,7 +529,7 @@ export async function prepareRunbook(
   // Inherit OUTPUTS from the child's resolved ContextId.
   //
   // Loads outputs published under the **resolved** ContextId (so child
-  // overrides via `claim --var ContextId=...` are respected) and injects keys
+  // overrides via `claim --input ContextId=...` are respected) and injects keys
   // that were not already provided by a VARS channel.
   // Validate required variables are provided by an external layer
   const requiredVars = frontmatter?.required;
@@ -539,7 +539,7 @@ export async function prepareRunbook(
       const names = missing.map((n: string) => `"${n}"`).join(', ');
       return {
         ok: false,
-        error: `Missing required variable${missing.length > 1 ? 's' : ''}: ${names}. Provide via --var, --var-file, config.yaml, RD_VAR_* environment variable, or prior runbook OUTPUTS.`,
+        error: `Missing required variable${missing.length > 1 ? 's' : ''}: ${names}. Provide via --input, --input-file, config.yaml, RD_INPUT_* environment variable, or prior runbook OUTPUTS.`,
         code: 'MISSING_REQUIRED_VARS',
         details: { runbook: file, missing },
         variables: templateVars,
@@ -808,13 +808,13 @@ async function updateStepDelegationChildRunId(
  *
  * @param ctx - Pipeline context
  * @param rawToken - The plain-text delegation token to claim
- * @param varOpts - Variable options from CLI flags
+ * @param inputOpts - Input options from CLI flags
  * @returns ClaimResult with child run details or error
  */
 export async function claimAndLaunch(
   ctx: RunPipelineContext,
   rawToken: string,
-  varOpts: VarOptions,
+  inputOpts: InputOptions,
 ): Promise<ClaimResult> {
   const { output, manager, cwd } = ctx;
   const truncatedToken = truncateDelegationToken(rawToken);
@@ -947,7 +947,7 @@ export async function claimAndLaunch(
     const inheritedUserVars = extractInheritedUserVars(freshDelegation.contextSnapshot);
 
     // 4f. Prepare child runbook
-    const prepResult = await prepareRunbook(freshDelegation.childRunbookPath, varOpts, cwd, {
+    const prepResult = await prepareRunbook(freshDelegation.childRunbookPath, inputOpts, cwd, {
       inheritedContextVars,
       inheritedUserVars,
     });
