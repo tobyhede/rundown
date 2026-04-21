@@ -714,7 +714,7 @@ describe('prepareRunbook', () => {
     );
   });
 
-  it('allows --var to override CLAUDE_PLUGIN_ROOT', async () => {
+  it('allows --input to override CLAUDE_PLUGIN_ROOT', async () => {
     resolveRunbookFile.mockResolvedValue({
       path: '/home/user/.claude/extensions/rundown-plugin/runbooks/write-plan.runbook.md',
       source: 'plugin' as const,
@@ -732,7 +732,7 @@ describe('prepareRunbook', () => {
     const result = await prepareRunbook('rundown:write-plan', {}, '/test');
 
     expect(result.ok).toBe(true);
-    // The user's --var override should win over auto-injected value
+    // The user's --input override should win over auto-injected value
     expect(substituteRunbookVariables).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({

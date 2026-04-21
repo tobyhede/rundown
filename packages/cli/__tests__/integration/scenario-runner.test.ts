@@ -144,12 +144,12 @@ function copyDirSync(src: string, dest: string): void {
 }
 
 /**
- * Extract directory paths from --var-file arguments in scenario commands.
- * E.g. "--var-file data/sources.yaml" returns ["data"]
+ * Extract directory paths from --input-file arguments in scenario commands.
+ * E.g. "--input-file data/sources.yaml" returns ["data"]
  */
 function extractVarFileDirs(scenario: Scenario): string[] {
   const dirs: string[] = [];
-  const varFilePattern = /--var-file\s+(\S+)/g;
+  const varFilePattern = /--input-file\s+(\S+)/g;
 
   for (const cmd of scenario.commands) {
     for (const match of cmd.matchAll(varFilePattern)) {

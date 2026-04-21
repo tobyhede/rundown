@@ -61,9 +61,9 @@ describe('substep INPUTS/OUTPUTS round-trip', () => {
   });
 
   it('inherits parent inputs into substeps and publishes substep then parent outputs', async () => {
-    // Start runbook in prompted mode, passing PlanPath via --var (no outputs.json seeding)
+    // Start runbook in prompted mode, passing PlanPath via --input (no outputs.json seeding)
     const start = runCli(
-      'run --prompted substep-context.runbook.md --var PlanPath=/seeded/path/plan.json',
+      'run --prompted substep-context.runbook.md --input PlanPath=/seeded/path/plan.json',
       workspace,
     );
     expect(start.exitCode).toBe(0);

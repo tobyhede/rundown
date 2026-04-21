@@ -621,7 +621,7 @@ describe('Per-step variable expansion ({{Step}}, {{Index}}, FOR loop variables)'
     expect(allEventText).not.toContain('{{context.current.at}}');
   });
 
-  it('expands {{context.vars.NAME}} from frontmatter and --var override consistently', async () => {
+  it('expands {{context.vars.NAME}} from frontmatter and --input override consistently', async () => {
     const content = createRunbook({
       name: 'Context Vars',
       title: 'Context Vars',
@@ -636,7 +636,7 @@ describe('Per-step variable expansion ({{Step}}, {{Index}}, FOR loop variables)'
     });
     await writeFile(join(workspace.cwd, 'context-vars.runbook.md'), content);
 
-    const result = runCli('run context-vars.runbook.md --var env=prod', workspace);
+    const result = runCli('run context-vars.runbook.md --input env=prod', workspace);
     expect(result.exitCode).toBe(0);
 
     const events = result.stdout

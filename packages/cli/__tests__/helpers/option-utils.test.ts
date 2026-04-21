@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from '@jest/globals';
 import { InvalidArgumentError } from 'commander';
-import { collect, parseVarOption, parseVarJsonOption } from '../../src/helpers/option-utils.js';
+import { collect, parseInputOption, parseInputJsonOption } from '../../src/helpers/option-utils.js';
 import { isValidVariableName } from '../../src/services/variable-discovery.js';
 
 describe('collect', () => {
@@ -20,7 +20,7 @@ describe('collect', () => {
   });
 });
 
-describe('parseVarOption', () => {
+describe('parseInputOption', () => {
   afterEach(() => {
     // Clean up any env vars set during tests
     delete process.env.TEST_PARSE_VAR_OPTION;
@@ -29,40 +29,40 @@ describe('parseVarOption', () => {
 
   it('accumulates key=value entries', () => {
     let result: string[] = [];
-    result = parseVarOption('foo=bar', result);
+    result = parseInputOption('foo=bar', result);
 
     expect(result).toEqual(['foo=bar']);
   });
 
   it('handles values containing equals signs', () => {
     let result: string[] = [];
-    result = parseVarOption('foo=a=b', result);
+    result = parseInputOption('foo=a=b', result);
 
     expect(result).toEqual(['foo=a=b']);
   });
 
   it('accumulates multiple entries', () => {
     let result: string[] = [];
-    result = parseVarOption('foo=bar', result);
-    result = parseVarOption('baz=qux', result);
+    result = parseInputOption('foo=bar', result);
+    result = parseInputOption('baz=qux', result);
 
     expect(result).toEqual(['foo=bar', 'baz=qux']);
   });
 
   it('throws InvalidArgumentError for key starting with digit', () => {
-    expect(() => parseVarOption('1invalid=value', [])).toThrow(InvalidArgumentError);
-    expect(() => parseVarOption('1invalid=value', [])).toThrow(/invalid variable/i);
+    expect(() => parseInputOption('1invalid=value', [])).toThrow(InvalidArgumentError);
+    expect(() => parseInputOption('1invalid=value', [])).toThrow(/invalid variable/i);
   });
 
   it('throws InvalidArgumentError for empty key', () => {
-    expect(() => parseVarOption('=value', [])).toThrow(InvalidArgumentError);
-    expect(() => parseVarOption('=value', [])).toThrow(/invalid variable/i);
+    expect(() => parseInputOption('=value', [])).toThrow(InvalidArgumentError);
+    expect(() => parseInputOption('=value', [])).toThrow(/invalid variable/i);
   });
 
   it('inherits value from env var when no = present', () => {
     process.env.MY_VAR = 'env-value';
 
-    const result = parseVarOption('MY_VAR', []);
+    const result = parseInputOption('MY_VAR', []);
 
     expect(result).toEqual(['MY_VAR=env-value']);
   });
@@ -70,65 +70,65 @@ describe('parseVarOption', () => {
   it('throws InvalidArgumentError when env var is not set', () => {
     delete process.env.NONEXISTENT_VAR;
 
-    expect(() => parseVarOption('NONEXISTENT_VAR', [])).toThrow(InvalidArgumentError);
-    expect(() => parseVarOption('NONEXISTENT_VAR', [])).toThrow(/not set/i);
+    expect(() => parseInputOption('NONEXISTENT_VAR', [])).toThrow(InvalidArgumentError);
+    expect(() => parseInputOption('NONEXISTENT_VAR', [])).toThrow(/not set/i);
   });
 
   it('throws InvalidArgumentError for invalid identifier without =', () => {
-    expect(() => parseVarOption('bad-name', [])).toThrow(InvalidArgumentError);
-    expect(() => parseVarOption('bad-name', [])).toThrow(/invalid variable name/i);
+    expect(() => parseInputOption('bad-name', [])).toThrow(InvalidArgumentError);
+    expect(() => parseInputOption('bad-name', [])).toThrow(/invalid variable name/i);
   });
 });
 
-describe('parseVarJsonOption', () => {
+describe('parseInputJsonOption', () => {
   it('accepts valid JSON array', () => {
-    const result = parseVarJsonOption('items=["a","b"]', []);
+    const result = parseInputJsonOption('items=["a","b"]', []);
 
     expect(result).toEqual(['items=["a","b"]']);
   });
 
   it('accepts JSON objects (passthrough for downstream routing)', () => {
-    const result = parseVarJsonOption('config={"host":"localhost"}', []);
+    const result = parseInputJsonOption('config={"host":"localhost"}', []);
     expect(result).toEqual(['config={"host":"localhost"}']);
   });
 
   it('accepts valid JSON number', () => {
-    const result = parseVarJsonOption('count=42', []);
+    const result = parseInputJsonOption('count=42', []);
 
     expect(result).toEqual(['count=42']);
   });
 
   it('accepts valid JSON boolean', () => {
-    const result = parseVarJsonOption('flag=true', []);
+    const result = parseInputJsonOption('flag=true', []);
 
     expect(result).toEqual(['flag=true']);
   });
 
   it('accepts valid JSON string', () => {
-    const result = parseVarJsonOption('name="hello"', []);
+    const result = parseInputJsonOption('name="hello"', []);
 
     expect(result).toEqual(['name="hello"']);
   });
 
   it('throws InvalidArgumentError when no = present', () => {
-    expect(() => parseVarJsonOption('missing', [])).toThrow(InvalidArgumentError);
-    expect(() => parseVarJsonOption('missing', [])).toThrow(/expected key=json format/i);
+    expect(() => parseInputJsonOption('missing', [])).toThrow(InvalidArgumentError);
+    expect(() => parseInputJsonOption('missing', [])).toThrow(/expected key=json format/i);
   });
 
   it('throws InvalidArgumentError for invalid key', () => {
-    expect(() => parseVarJsonOption('1bad=42', [])).toThrow(InvalidArgumentError);
-    expect(() => parseVarJsonOption('1bad=42', [])).toThrow(/invalid variable name/i);
+    expect(() => parseInputJsonOption('1bad=42', [])).toThrow(InvalidArgumentError);
+    expect(() => parseInputJsonOption('1bad=42', [])).toThrow(/invalid variable name/i);
   });
 
   it('throws InvalidArgumentError for invalid JSON', () => {
-    expect(() => parseVarJsonOption('items=[broken', [])).toThrow(InvalidArgumentError);
-    expect(() => parseVarJsonOption('items=[broken', [])).toThrow(/invalid json/i);
+    expect(() => parseInputJsonOption('items=[broken', [])).toThrow(InvalidArgumentError);
+    expect(() => parseInputJsonOption('items=[broken', [])).toThrow(/invalid json/i);
   });
 
   it('accumulates multiple entries', () => {
     let result: string[] = [];
-    result = parseVarJsonOption('a=42', result);
-    result = parseVarJsonOption('b=["x"]', result);
+    result = parseInputJsonOption('a=42', result);
+    result = parseInputJsonOption('b=["x"]', result);
 
     expect(result).toEqual(['a=42', 'b=["x"]']);
   });
@@ -148,29 +148,29 @@ describe('prototype pollution protection', () => {
     });
   });
 
-  describe('parseVarOption', () => {
-    it.each(POISONED_KEYS)('throws for --var %s=value with reserved message', (key) => {
-      expect(() => parseVarOption(`${key}=value`, [])).toThrow(InvalidArgumentError);
-      expect(() => parseVarOption(`${key}=value`, [])).toThrow(/reserved variable name/i);
+  describe('parseInputOption', () => {
+    it.each(POISONED_KEYS)('throws for --input %s=value with reserved message', (key) => {
+      expect(() => parseInputOption(`${key}=value`, [])).toThrow(InvalidArgumentError);
+      expect(() => parseInputOption(`${key}=value`, [])).toThrow(/reserved variable name/i);
     });
 
     it.each(
       POISONED_KEYS,
-    )('throws for --var %s (env inherit form) with reserved message', (key) => {
+    )('throws for --input %s (env inherit form) with reserved message', (key) => {
       process.env[key] = 'injected';
       try {
-        expect(() => parseVarOption(key, [])).toThrow(InvalidArgumentError);
-        expect(() => parseVarOption(key, [])).toThrow(/reserved variable name/i);
+        expect(() => parseInputOption(key, [])).toThrow(InvalidArgumentError);
+        expect(() => parseInputOption(key, [])).toThrow(/reserved variable name/i);
       } finally {
         delete process.env[key];
       }
     });
   });
 
-  describe('parseVarJsonOption', () => {
-    it.each(POISONED_KEYS)('throws for --var-json %s=42 with reserved message', (key) => {
-      expect(() => parseVarJsonOption(`${key}=42`, [])).toThrow(InvalidArgumentError);
-      expect(() => parseVarJsonOption(`${key}=42`, [])).toThrow(/reserved variable name/i);
+  describe('parseInputJsonOption', () => {
+    it.each(POISONED_KEYS)('throws for --input-json %s=42 with reserved message', (key) => {
+      expect(() => parseInputJsonOption(`${key}=42`, [])).toThrow(InvalidArgumentError);
+      expect(() => parseInputJsonOption(`${key}=42`, [])).toThrow(/reserved variable name/i);
     });
   });
 });

@@ -216,7 +216,7 @@ describe('claim command', () => {
   });
 
   describe('variable inheritance', () => {
-    it('passes variables via --var flag to child', async () => {
+    it('passes variables via --input flag to child', async () => {
       await writeParentRunbook();
 
       // Child that uses a variable
@@ -234,11 +234,11 @@ Execute with {{Env}} environment.
       expect(result.exitCode).toBe(0);
       const token = extractToken(result.stdout);
 
-      result = await runCliInProcess(`claim ${token} --var Env=staging --text`, workspace);
+      result = await runCliInProcess(`claim ${token} --input Env=staging --text`, workspace);
       expect(result.exitCode).toBe(0);
     });
 
-    it('handles multiple --var flags', async () => {
+    it('handles multiple --input flags', async () => {
       await writeParentRunbook();
       await writeChildRunbook();
 
@@ -247,7 +247,7 @@ Execute with {{Env}} environment.
       const token = extractToken(result.stdout);
 
       result = await runCliInProcess(
-        `claim ${token} --var Env=staging --var Region=us-west --text`,
+        `claim ${token} --input Env=staging --input Region=us-west --text`,
         workspace,
       );
       expect(result.exitCode).toBe(0);
@@ -258,7 +258,7 @@ Execute with {{Env}} environment.
       await writeChildRunbook();
 
       let result = await runCliInProcess(
-        'run --prompted parent.runbook.md --var ContextId=ctx-parent --text',
+        'run --prompted parent.runbook.md --input ContextId=ctx-parent --text',
         workspace,
       );
       expect(result.exitCode).toBe(0);
