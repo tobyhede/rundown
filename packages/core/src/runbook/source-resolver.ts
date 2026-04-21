@@ -74,6 +74,9 @@ export type ResolvedIteration =
  * @param vars - The unified template variable map for variable source lookups
  * @param projectRoot - When provided, JsonArrayStream paths are checked to be within this directory
  * @returns A discriminated result: either the resolved context or an exhaustion signal
+ * @throws {ForResolutionError} with code `'undefined-variable'` when the FOR variable is not in the template var map
+ * @throws {ForResolutionError} with code `'type-mismatch'` when the FOR variable is not an iterable type
+ * @throws {ForResolutionError} with code `'parse-failure'` when a JSONL line cannot be parsed as JSON
  * @throws {ForResolutionError} with code `'policy-violation'` if a stream path escapes `projectRoot`
  */
 export async function resolveForValue(

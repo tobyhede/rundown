@@ -109,10 +109,13 @@ export class RunbookStateManager {
    * project-root boundary check in `makeRunbookStateSchema` must compare against
    * the same canonical path.
    *
-   * Falls back to the raw `cwd` on any `fs.realpath` failure (e.g., directory
-   * deleted, permission denied, or transient I/O error). The fallback is logged
-   * at warn level so misconfiguration is visible rather than silently bypassing
-   * the canonical-path comparison.
+   * Falls back to the raw `cwd` on `fs.realpath` failure with failure-mode
+   * discrimination:
+   * - `ENOENT`: the directory no longer exists; falls back silently (the run will
+   *   fail at a more meaningful point shortly after).
+   * - Any other error (e.g. `EPERM`, `EACCES`): logs a warn with the specific
+   *   error code and a note that `JsonArrayStream` path validation may produce
+   *   false boundary-check failures if the project root is a symlink.
    *
    * @returns The canonicalized working directory path
    */
@@ -120,9 +123,12 @@ export class RunbookStateManager {
     try {
       return await fs.realpath(this.cwd);
     } catch (err) {
-      void logger.warn(
-        `canonicalCwd: fs.realpath("${this.cwd}") failed, using raw path: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      if (!isNodeError(err) || err.code !== 'ENOENT') {
+        void logger.warn(
+          `canonicalCwd: fs.realpath("${this.cwd}") failed (${isNodeError(err) ? err.code : 'unknown'}), ` +
+            `using raw path — JsonArrayStream path validation may produce false failures. Check permissions on project root.`,
+        );
+      }
       return this.cwd;
     }
   }
