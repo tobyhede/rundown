@@ -142,7 +142,7 @@ export type JsonObject = { readonly [key: string]: JsonValue };
 /**
  * In-memory JSON array for eager iteration in FOR loops.
  *
- * Loaded from JSON files, YAML arrays, or `--var-json` CLI flags.
+ * Loaded from JSON files, YAML arrays, or `--input-json` CLI flags.
  * Items retain their original JSON types (not stringified).
  */
 export type JsonArray = readonly JsonValue[];
@@ -193,7 +193,7 @@ export type IterableVarValue = JsonArray | JsonArrayStream;
  * Values that can appear in the template variable map.
  *
  * - `string`: the dominant case (CLI vars, env, builtins, stringified booleans/nulls)
- * - `number`: preserved from `--var-json` and YAML config (not stringified)
+ * - `number`: preserved from `--input-json` and YAML config (not stringified)
  * - `JsonObject`: structured values for dotted template access (`{{config.host}}`)
  * - `JsonArray`: in-memory array for eager FOR loop iteration
  * - `JsonArrayStream`: file-backed lazy array for streaming FOR loop iteration
@@ -242,7 +242,7 @@ export function isJsonArray(value: TemplateVarValue): value is JsonArray {
  */
 export function isJsonArrayStream(value: TemplateVarValue): value is JsonArrayStream {
   // Defensive: null check guards against untyped callers even though TemplateVarValue excludes null.
-  // Path validation prevents crafted --var-json values from bypassing file path checks.
+  // Path validation prevents crafted --input-json values from bypassing file path checks.
   return (
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     value !== null &&
