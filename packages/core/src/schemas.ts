@@ -409,6 +409,8 @@ function makeJsonArrayStreamSchema(
     })
     .transform((v, ctx) => {
       const rel = path.relative(projectRoot, v.path);
+      // path.isAbsolute(rel) is a Windows safety net: on different drives,
+      // path.relative() returns an absolute path rather than a dotdot sequence.
       if (rel.startsWith('..') || path.isAbsolute(rel)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
