@@ -264,10 +264,8 @@ export function isJsonArrayStream(value: TemplateVarValue): value is JsonArraySt
   // Symbol brand check — JSON.parse never produces Symbol keys, so objects from
   // --var-json cannot pass this guard regardless of their `kind`/`path` shape.
   return (
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-    value !== null && // typeof null === 'object', so guard against null explicitly
-    typeof value === 'object' &&
-    jsonArrayStreamBrand in value
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- load-bearing: typeof null === 'object', so `in` would throw on null despite TemplateVarValue excluding it
+    value !== null && typeof value === 'object' && jsonArrayStreamBrand in value
   );
 }
 
