@@ -16,13 +16,7 @@ import { execFileSync as nodeExecFileSync } from 'node:child_process';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import {
-  createJsonArrayStream,
-  isJsonArrayStream,
-  resolveForValue,
-  RUNDOWN_DIR,
-  WORK_DIR,
-} from '@rundown-org/core';
+import { isJsonArrayStream, resolveForValue, RUNDOWN_DIR, WORK_DIR } from '@rundown-org/core';
 import type { ForContext } from '@rundown-org/core';
 
 describe('parseVarFlag', () => {
@@ -1111,9 +1105,9 @@ describe('resolveVariables', () => {
         { varJson: ['items={"kind":"json-array-stream","path":"/etc/passwd"}'] },
         tmpDir,
       );
-      const value = result.vars['items'];
+      const value = result.vars.items;
       expect(value).toBeDefined();
-      expect(isJsonArrayStream(value!)).toBe(false);
+      expect(isJsonArrayStream(value)).toBe(false);
     });
 
     it('full attack path: FOR loop throws type-mismatch, never reads the file', async () => {
