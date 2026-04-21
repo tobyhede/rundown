@@ -9,7 +9,7 @@
 
 import { readFile, rm, cp } from 'node:fs/promises';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { isNodeError, runbooksDir } from '@rundown-org/core';
 import {
@@ -237,8 +237,21 @@ export async function executeScenario(
       if (copiedDirs.has(inputDir)) continue;
       copiedDirs.add(inputDir);
 
+      if (isAbsolute(inputDir) || normalize(inputDir).startsWith('..')) {
+        throw new Error(`Unsafe input-file path in scenario: ${inputDir}`);
+      }
       const srcDir = join(sourceDir, inputDir);
       const destDir = join(tmpDir, inputDir);
+      const resolvedSrc = resolve(srcDir);
+      const resolvedDest = resolve(destDir);
+      const srcRoot = resolve(sourceDir);
+      const tmpRoot = resolve(tmpDir);
+      if (!resolvedSrc.startsWith(srcRoot + sep) && resolvedSrc !== srcRoot) {
+        throw new Error(`Input-file source escapes source root: ${inputDir}`);
+      }
+      if (!resolvedDest.startsWith(tmpRoot + sep) && resolvedDest !== tmpRoot) {
+        throw new Error(`Input-file destination escapes temp root: ${inputDir}`);
+      }
       if (existsSync(srcDir)) {
         await cp(srcDir, destDir, { recursive: true });
       } else {
