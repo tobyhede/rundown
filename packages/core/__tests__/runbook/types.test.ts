@@ -184,6 +184,9 @@ describe('isJsonValue', () => {
 });
 
 describe('isJsonArrayStream — Symbol brand guard', () => {
+  const asStreamCandidate = (v: unknown): Parameters<typeof isJsonArrayStream>[0] =>
+    v as Parameters<typeof isJsonArrayStream>[0];
+
   it('returns true for a factory-created JsonArrayStream', () => {
     const stream = createJsonArrayStream('/project/data.jsonl');
     expect(isJsonArrayStream(stream)).toBe(true);
@@ -192,31 +195,25 @@ describe('isJsonArrayStream — Symbol brand guard', () => {
   it('returns false for a plain object matching the old structural shape (CVE path)', () => {
     // The attack: --var-json 'items={"kind":"json-array-stream","path":"/etc/passwd"}'
     const crafted = { kind: 'json-array-stream', path: '/etc/passwd' };
-    expect(isJsonArrayStream(crafted as unknown as Parameters<typeof isJsonArrayStream>[0])).toBe(
-      false,
-    );
+    expect(isJsonArrayStream(asStreamCandidate(crafted))).toBe(false);
   });
 
   it('returns false for a plain object with only kind', () => {
     const crafted = { kind: 'json-array-stream' };
-    expect(isJsonArrayStream(crafted as unknown as Parameters<typeof isJsonArrayStream>[0])).toBe(
-      false,
-    );
+    expect(isJsonArrayStream(asStreamCandidate(crafted))).toBe(false);
   });
 
   it('returns false for a plain object with extra properties', () => {
     const crafted = { kind: 'json-array-stream', path: '/etc/passwd', extra: 'data' };
-    expect(isJsonArrayStream(crafted as unknown as Parameters<typeof isJsonArrayStream>[0])).toBe(
-      false,
-    );
+    expect(isJsonArrayStream(asStreamCandidate(crafted))).toBe(false);
   });
 
   it('returns false for an empty object', () => {
-    expect(isJsonArrayStream({} as unknown as Parameters<typeof isJsonArrayStream>[0])).toBe(false);
+    expect(isJsonArrayStream(asStreamCandidate({}))).toBe(false);
   });
 
   it('returns false for an array', () => {
-    expect(isJsonArrayStream([] as unknown as Parameters<typeof isJsonArrayStream>[0])).toBe(false);
+    expect(isJsonArrayStream(asStreamCandidate([]))).toBe(false);
   });
 
   it('isJsonObject returns true for the crafted object (not misidentified as a stream)', () => {
