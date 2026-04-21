@@ -426,4 +426,10 @@ describe('extractInputFileReferences', () => {
     const result = extractInputFileReferences(commands);
     expect(result).toEqual(['data/sources.yaml']);
   });
+
+  it('extracts --input-file <path> (space form)', () => {
+    const commands = ['rd run my.runbook.md --input-file data/sources.yaml'];
+    const result = extractInputFileReferences(commands);
+    expect(result).toEqual(['data/sources.yaml']);
+  });
 });

@@ -16,6 +16,7 @@ import {
 } from '../../src/schemas/scenarios.js';
 import {
   executeCommandSequence,
+  extractInputFileReferences,
   extractRunbookReferences,
   matchStepAssertions,
   formatStepAssertionDescription,
@@ -148,19 +149,16 @@ function copyDirSync(src: string, dest: string): void {
  * E.g. "--input-file data/sources.yaml" returns ["data"]
  */
 function extractInputFileDirs(scenario: Scenario): string[] {
+  const filePaths = extractInputFileReferences(scenario.commands);
+  const seen = new Set<string>();
   const dirs: string[] = [];
-  const inputFilePattern = /--input-file\s+(\S+)/g;
-
-  for (const cmd of scenario.commands) {
-    for (const match of cmd.matchAll(inputFilePattern)) {
-      const inputFilePath = match[1];
-      const dir = dirname(inputFilePath);
-      if (dir && dir !== '.' && !dirs.includes(dir)) {
-        dirs.push(dir);
-      }
+  for (const fp of filePaths) {
+    const dir = dirname(fp);
+    if (dir && dir !== '.' && !seen.has(dir)) {
+      seen.add(dir);
+      dirs.push(dir);
     }
   }
-
   return dirs;
 }
 
