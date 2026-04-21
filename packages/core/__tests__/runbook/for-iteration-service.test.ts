@@ -1,6 +1,13 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import type { RunbookState, ForContext, Step } from '../../src/runbook/types.js';
 
+// Capture the real ForResolutionError before the mock is installed.
+// jest.unstable_mockModule does NOT hoist, so this top-level await executes
+// first and always captures the real class.
+const { ForResolutionError: RealForResolutionError } = await import(
+  '../../src/runbook/source-resolver.js'
+);
+
 // Mock source-resolver to avoid file I/O in unit tests
 jest.unstable_mockModule('../../src/runbook/source-resolver.js', () => ({
   resolveForValue: jest.fn(),
@@ -287,6 +294,41 @@ describe('ForIterationService', () => {
         expect(result.state).toBe(cappedState);
         expect(result.terminal).toBe('stopped');
       }
+    });
+
+    it('propagates ForResolutionError with code policy-violation from resolveForValue', async () => {
+      const fc: ForContext = {
+        stepId: '1',
+        iteration: 1,
+        start: 1,
+        end: undefined,
+        variable: 'items',
+        implicit: false,
+        source: { kind: 'variable', name: 'items' },
+      };
+      const stream = { kind: 'json-array-stream' as const, path: '/etc/passwd' };
+      const state = makeState({
+        forStack: [fc],
+        templateVars: {
+          items: stream as unknown as import('../../src/runbook/types.js').TemplateVarValue,
+        },
+      });
+
+      mockManager.load.mockResolvedValue(state);
+      mockedResolveForValue.mockRejectedValue(
+        new RealForResolutionError(
+          'JsonArrayStream path "/etc/passwd" escapes project root "/safe"',
+          'policy-violation',
+        ),
+      );
+
+      const service = new ForIterationService(mockManager, mockActorService, '/safe');
+
+      await expect(service.prepareIteration('test-123', steps)).rejects.toMatchObject({
+        name: 'ForResolutionError',
+        code: 'policy-violation',
+        message: expect.stringContaining('escapes project root'),
+      });
     });
   });
 });
