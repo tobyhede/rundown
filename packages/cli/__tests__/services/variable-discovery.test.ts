@@ -1060,7 +1060,7 @@ describe('resolveVariables', () => {
         tmpDir,
       );
 
-      // varJson is processed after var in collectRawLayers, so it wins
+      // inputJson is processed after input in collectRawLayers, so it wins
       expect(result.vars.count).toBe(99);
     });
 
