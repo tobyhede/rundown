@@ -781,7 +781,8 @@ async function enforceFileSourcePolicy(
  * 3. Auto-discovered .rundown/config.yaml
  * 3b. Environment bridge (RD_INPUT_* env vars)
  * 4. --input-file contents (repeatable, later overrides earlier)
- * 5. --input flags (highest precedence)
+ * 5. --input flags
+ * 6. --input-json flags (highest precedence)
  *
  * Each variable value is routed into `vars` based on its type:
  * - String with `file:` prefix → JsonArrayStream (.jsonl) or JsonArray/JsonObject (.json)
