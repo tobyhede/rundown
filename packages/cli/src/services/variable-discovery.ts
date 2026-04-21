@@ -153,7 +153,7 @@ export interface ResolvedVariables {
    *
    * Feeds the Handlebars template rendering pipeline — every entry is
    * substituted into `{{key}}` placeholders at render time. Values are
-   * strings, numbers (preserved from `--var-json`), or JSON objects
+   * strings, numbers (preserved from `--input-json`), or JSON objects
    * (for dotted field access like `{{config.host}}`).
    * The map is immutable for the lifetime of a single resolution pass.
    */
@@ -220,7 +220,7 @@ export class FileSourcePolicyError extends Error {
  * Normalize raw variable values to string-only records.
  *
  * @deprecated Used only by the default `loadVariablesFromFile` overload for legacy
- * frontmatter normalization. Do NOT use for `--var-file`, config, or any path where
+ * frontmatter normalization. Do NOT use for `--input-file`, config, or any path where
  * structured values (arrays, objects) should be preserved. Use `routeVariable` instead.
  *
  * @param vars - Raw variables object with unknown value types
@@ -273,7 +273,7 @@ function computeWorkPath(branch: string | null): string {
  * Returns built-in default template variables.
  *
  * These have the lowest precedence and can be overridden by any other source
- * (frontmatter, config file, --var-file, or --var flags).
+ * (frontmatter, config file, --input-file, or --input flags).
  *
  * @returns Built-in variables with PascalCase names
  */
@@ -675,7 +675,7 @@ function collectEnvBridgeVars(warnings?: string[]): Record<string, unknown> {
  * Layer 2: frontmatter     ← runbook YAML frontmatter vars:
  * Layer 3: discovered      ← .rundown/config.yaml (auto-discovered)
  * Layer 4: envBridge        ← RD_INPUT_* environment variables
- * Layer 5: cliFlags        ← --var-file, --var, --var-json (highest precedence)
+ * Layer 5: cliFlags        ← --input-file, --input, --input-json (highest precedence)
  * ```
  *
  * The inherited layer ensures that parent ContextId survives into child
@@ -780,8 +780,8 @@ async function enforceFileSourcePolicy(
  * 2. Frontmatter vars
  * 3. Auto-discovered .rundown/config.yaml
  * 3b. Environment bridge (RD_INPUT_* env vars)
- * 4. --var-file contents (repeatable, later overrides earlier)
- * 5. --var flags (highest precedence)
+ * 4. --input-file contents (repeatable, later overrides earlier)
+ * 5. --input flags (highest precedence)
  *
  * Each variable value is routed into `vars` based on its type:
  * - String with `file:` prefix → JsonArrayStream (.jsonl) or JsonArray/JsonObject (.json)
@@ -871,7 +871,7 @@ export async function resolveVariables(
 /**
  * Route raw extra variables through the standard normalization pipeline.
  *
- * Used by the delegate command to normalize --var, --var-file, and --var-json
+ * Used by the delegate command to normalize --input, --input-file, and --input-json
  * values into the unified template variable map, matching the same pipeline
  * that the run command uses via {@link resolveVariables}.
  *
