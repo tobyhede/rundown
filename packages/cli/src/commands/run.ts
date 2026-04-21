@@ -27,7 +27,7 @@ import {
 import { parseStepIdFromString, resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { getCwd } from '../helpers/context.js';
 import { OutputEmitter } from '../services/output-emitter.js';
-import { parseVarOption, parseVarJsonOption, collect } from '../helpers/option-utils.js';
+import { parseInputOption, parseInputJsonOption, collect } from '../helpers/option-utils.js';
 import {
   prepareRunbook,
   startRunbook,
@@ -56,22 +56,22 @@ export function registerRunCommand(program: Command): void {
     .option('--index <number>', 'FOR loop iteration to target (requires --step)')
     .option('--text', 'Output execution events as human-readable text')
     .addOption(
-      new Option('--var-file <path>', 'Load variables from YAML file (repeatable)')
+      new Option('--input-file <path>', 'Load inputs from YAML file (repeatable)')
         .argParser(collect)
         .default([])
-        .helpGroup('Variable options:'),
+        .helpGroup('Input options:'),
     )
     .addOption(
-      new Option('--var <key=value>', 'Set variable (repeatable, omit =value to inherit from env)')
-        .argParser(parseVarOption)
+      new Option('--input <key=value>', 'Set input (repeatable, omit =value to inherit from env)')
+        .argParser(parseInputOption)
         .default([])
-        .helpGroup('Variable options:'),
+        .helpGroup('Input options:'),
     )
     .addOption(
-      new Option('--var-json <key=json>', 'Set variable with JSON value (repeatable)')
-        .argParser(parseVarJsonOption)
+      new Option('--input-json <key=json>', 'Set input with JSON value (repeatable)')
+        .argParser(parseInputJsonOption)
         .default([])
-        .helpGroup('Variable options:'),
+        .helpGroup('Input options:'),
     )
     .action(
       async (
@@ -81,9 +81,9 @@ export function registerRunCommand(program: Command): void {
           step?: string;
           index?: string;
           text?: boolean;
-          varFile?: string[];
-          var?: string[];
-          varJson?: string[];
+          inputFile?: string[];
+          input?: string[];
+          inputJson?: string[];
         },
       ) => {
         const output = new OutputEmitter({ text: options.text });
@@ -112,7 +112,11 @@ export function registerRunCommand(program: Command): void {
             process.exit(1);
           }
 
-          const varOpts = { varFile: options.varFile, var: options.var, varJson: options.varJson };
+          const inputOpts = {
+            inputFile: options.inputFile,
+            input: options.input,
+            inputJson: options.inputJson,
+          };
 
           if (file) {
             // Build inline linkage when --step is provided without --prompted
@@ -153,7 +157,7 @@ export function registerRunCommand(program: Command): void {
               };
             }
 
-            const prepResult = await prepareRunbook(file, varOpts, cwd, inheritedOptions);
+            const prepResult = await prepareRunbook(file, inputOpts, cwd, inheritedOptions);
             if (!prepResult.ok) {
               output.error(prepResult.error, prepResult.code, prepResult.details);
               output.flush();
