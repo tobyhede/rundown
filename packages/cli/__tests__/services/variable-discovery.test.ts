@@ -510,6 +510,8 @@ describe('resolveVariables', () => {
       const error = await resolveVariables({ input: ['Step=a', 'Index=b'] }, tmpDir).catch(
         (e: unknown) => e,
       );
+      expect(Error.isError(error)).toBe(true);
+      if (!Error.isError(error)) throw new Error('Expected an Error to be thrown');
       expect(error.message).toMatch(/reserved runtime variables/i);
       expect(error.message).toContain('"Step"');
       expect(error.message).toContain('"Index"');
