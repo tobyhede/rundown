@@ -444,8 +444,12 @@ export function makeTemplateVarValueSchema(projectRoot: string): z.ZodType<Templ
     z
       .record(z.string(), JsonValueSchema)
       .refine(
-        (v) => (v as Record<string, unknown>).kind !== 'json-array-stream',
-        'Plain objects with kind:"json-array-stream" cannot be used as template vars',
+        (v) =>
+          !(
+            (v as Record<string, unknown>).kind === 'json-array-stream' &&
+            typeof (v as Record<string, unknown>).path === 'string'
+          ),
+        'JsonArrayStream path escapes project root and cannot be re-branded',
       ),
   ]);
 }

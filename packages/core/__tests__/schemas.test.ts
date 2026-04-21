@@ -620,6 +620,18 @@ describe('makeTemplateVarValueSchema — path-validated JsonArrayStream', () => 
     expect(schema.parse(42)).toBe(42);
     expect(schema.parse(['a', 'b'])).toEqual(['a', 'b']);
   });
+
+  it('accepts plain object with kind:"json-array-stream" but no path field (not a stream shape)', () => {
+    const schema = makeTemplateVarValueSchema('/project');
+    const result = schema.safeParse({ kind: 'json-array-stream', foo: 'bar' });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects stream-shaped object whose path escapes project root', () => {
+    const schema = makeTemplateVarValueSchema('/project');
+    const result = schema.safeParse({ kind: 'json-array-stream', path: '/etc/passwd' });
+    expect(result.success).toBe(false);
+  });
 });
 
 describe('makeRunbookStateSchema — disk round-trip attack prevention', () => {
