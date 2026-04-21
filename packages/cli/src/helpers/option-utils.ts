@@ -27,7 +27,7 @@ export function collect(value: string, previous: string[]): string[] {
 }
 
 /**
- * Commander argParser for --var that validates at parse time.
+ * Commander argParser for --input that validates at parse time.
  *
  * Supports two forms:
  * - `key=value`: validates identifier and accumulates
@@ -38,7 +38,7 @@ export function collect(value: string, previous: string[]): string[] {
  * @returns Updated array with new key=value entry
  * @throws {InvalidArgumentError} When identifier is invalid or env var not set
  */
-export function parseVarOption(value: string, previous: string[]): string[] {
+export function parseInputOption(value: string, previous: string[]): string[] {
   const eqIndex = value.indexOf('=');
   if (eqIndex !== -1) {
     const parsed = parseVarFlag(value);
@@ -60,21 +60,21 @@ export function parseVarOption(value: string, previous: string[]): string[] {
   const envValue = process.env[value];
   if (envValue === undefined) {
     throw new InvalidArgumentError(
-      `Environment variable "${value}" is not set (use --var ${value}=<value>)`,
+      `Environment variable "${value}" is not set (use --input ${value}=<value>)`,
     );
   }
   return [...previous, `${value}=${envValue}`];
 }
 
 /**
- * Commander argParser for --var-json that validates JSON at parse time.
+ * Commander argParser for --input-json that validates JSON at parse time.
  *
  * @param value - The raw flag value in key=json format
  * @param previous - Previously accumulated values
  * @returns Updated array with new key=json entry
  * @throws {InvalidArgumentError} When key is invalid, format wrong, or JSON invalid
  */
-export function parseVarJsonOption(value: string, previous: string[]): string[] {
+export function parseInputJsonOption(value: string, previous: string[]): string[] {
   const eqIndex = value.indexOf('=');
   if (eqIndex === -1) {
     throw new InvalidArgumentError('Expected key=json format');
