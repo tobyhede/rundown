@@ -408,6 +408,18 @@ function makeJsonArrayStreamSchema(
       path: z.string(),
     })
     .transform((v, ctx) => {
+      // Invariant: JsonArrayStream paths are stored as absolute, canonical paths at
+      // write time (variable-discovery.ts calls fs.realpath before createJsonArrayStream).
+      // Assert this invariant here so violations are caught immediately, rather than
+      // relying on path.relative() alone — which cannot detect symlinks pointing outside
+      // projectRoot (those are resolved at write time, not at load time).
+      if (!path.isAbsolute(v.path) || path.normalize(v.path) !== v.path) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `JsonArrayStream path "${v.path}" is not a canonical absolute path (expected realpath'd value from write time)`,
+        });
+        return z.NEVER;
+      }
       const rel = path.relative(projectRoot, v.path);
       // path.isAbsolute(rel) is a Windows safety net: on different drives,
       // path.relative() returns an absolute path rather than a dotdot sequence.

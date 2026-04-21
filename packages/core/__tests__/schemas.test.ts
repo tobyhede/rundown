@@ -632,6 +632,20 @@ describe('makeTemplateVarValueSchema — path-validated JsonArrayStream', () => 
     const result = schema.safeParse({ kind: 'json-array-stream', path: '/etc/passwd' });
     expect(result.success).toBe(false);
   });
+
+  it('rejects JsonArrayStream with a non-canonical path containing dot-dot components', () => {
+    const schema = makeTemplateVarValueSchema('/project');
+    expect(() =>
+      schema.parse({ kind: 'json-array-stream', path: '/project/subdir/../data.jsonl' }),
+    ).toThrow();
+  });
+
+  it('rejects JsonArrayStream with a relative path (not absolute)', () => {
+    const schema = makeTemplateVarValueSchema('/project');
+    expect(() =>
+      schema.parse({ kind: 'json-array-stream', path: 'relative/data.jsonl' }),
+    ).toThrow();
+  });
 });
 
 describe('makeRunbookStateSchema — SEC1 nested snapshot var protection', () => {
