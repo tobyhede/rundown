@@ -919,7 +919,6 @@ Resolve and validate template variables and data sources for a runbook without e
 ```bash
 rundown resolve my-runbook.runbook.md
 rundown resolve my-runbook.runbook.md --input environment=staging
-rundown resolve my-runbook.runbook.md --json
 ```
 
 Useful for verifying that required variables are satisfied and data sources resolve before running.
@@ -930,7 +929,6 @@ Output content wrapped in markdown fences. Used by the runtime to render `prompt
 
 ```bash
 rundown prompt 'Review the implementation'
-rundown prompt 'Review the implementation' --json
 ```
 
 #### `rundown scenario` - Runbook Scenarios
@@ -942,7 +940,6 @@ rundown scenario ls <file>                  # List scenarios
 rundown scenario show <file> <name>         # Show scenario details
 rundown scenario run <file> <name>          # Execute and verify
 rundown scenario run <file> <name> --quiet  # Suppress command output
-rundown scenario ls <file> --json           # JSON output (also on show/run)
 ```
 
 #### `rundown scenario-suite` - Scenario Suites
