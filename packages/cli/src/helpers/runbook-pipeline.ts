@@ -176,13 +176,13 @@ export function validateForVariables(
       if (value === undefined) {
         throw new Error(
           `FOR loop references undefined variable "{{${name}}}". ` +
-            `Define "${name}" as an array in .rundown/config.yaml or pass --var-file with an array value.`,
+            `Define "${name}" as an array in .rundown/config.yaml or pass --input-file with an array value.`,
         );
       }
       if (!isJsonArray(value) && !isJsonArrayStream(value)) {
         throw new Error(
           `FOR loop variable "{{${name}}}" is not iterable (got ${typeof value}). ` +
-            `Define "${name}" as an array in .rundown/config.yaml or pass --var-file with an array value.`,
+            `Define "${name}" as an array in .rundown/config.yaml or pass --input-file with an array value.`,
         );
       }
     }
@@ -244,7 +244,7 @@ export function buildTemplateVars(
   },
 ): Record<string, TemplateVarValue> {
   const effectiveUserVars: Record<string, TemplateVarValue> = {
-    ...(options?.inheritedUserVars ?? {}), // parent --var (overridable)
+    ...(options?.inheritedUserVars ?? {}), // parent --input (overridable)
     ...localVars, // child frontmatter + claim --input (overrides)
   };
   return {
