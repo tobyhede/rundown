@@ -63,7 +63,8 @@ export interface DelegationDispatchResult {
  * @param childRunbookPath - Absolute or cwd-relative path to the child runbook
  * @param parentVars - Parent's live variable space from `rd status --json`
  * @param cwd - Current working directory for resolving relative paths
- * @returns Space-separated `--input` flags string, or empty string
+ * @returns Space-separated flags string of `--input key=value` entries (and
+ *   `--input-json key=json` for non-string values), or empty string on error
  */
 export async function buildChildInputFlags(
   childRunbookPath: string,
