@@ -389,12 +389,17 @@ export function extractInputFileReferences(commands: string[]): string[] {
     if (!rdMatch) continue;
     const args = shellParse(rdMatch[1]).filter((a): a is string => typeof a === 'string');
     for (let i = 0; i < args.length; i++) {
-      if (args[i] === '--input-file' && i + 1 < args.length) {
-        const filePath = args[i + 1];
-        if (!seen.has(filePath)) {
-          seen.add(filePath);
-          result.push(filePath);
-        }
+      const arg = args[i];
+      let filePath: string | undefined;
+      if (arg === '--input-file' && i + 1 < args.length) {
+        filePath = args[i + 1];
+      } else if (arg.startsWith('--input-file=')) {
+        filePath = arg.slice('--input-file='.length);
+      }
+
+      if (filePath !== undefined && !seen.has(filePath)) {
+        seen.add(filePath);
+        result.push(filePath);
       }
     }
   }
