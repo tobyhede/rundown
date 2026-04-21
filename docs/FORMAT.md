@@ -234,7 +234,7 @@ info_string ::= executable_lang ( ws "prompt" )?
               | "prompt"
 
 executable_lang ::= "bash" | "sh" | "shell"
-display_lang    ::= language_tag
+display_lang    ::= non_ws_text
 ```
 
 Opening fence is 3 or more backticks. Closing fence must use at least as many backticks as the opening fence (CommonMark §4.5). Language tag is required — bare code fences are invalid. Tags are matched case-insensitively. Non-executable tags (e.g., `json`, `yaml`) are display-only. When `prompt` follows an executable language tag (e.g., `bash prompt`), the block is demoted to display-only — it is not executed. The `prompt` suffix on non-executable tags is accepted but redundant — all non-executable code blocks are prompt blocks. The parser does not validate the format of non-executable language tags against the `language_tag` production — any tag that is not an executable tag is treated as display-only.
@@ -302,6 +302,7 @@ positive_integer ::= [1-9] [0-9]*
 digit            ::= [0-9]
 text             ::= [^\n]+
 non_ws_char      ::= [^ \t\n]
+non_ws_text      ::= [^ \t\n\r]+
 language_tag     ::= [a-zA-Z] [a-zA-Z0-9]*
 filename         ::= [A-Za-z0-9._-]+   /* rejected at runtime: "." and ".." */
 ctx_ref          ::= [A-Za-z0-9_-]+    /* must not be "." or ".." */
