@@ -147,14 +147,14 @@ function copyDirSync(src: string, dest: string): void {
  * Extract directory paths from --input-file arguments in scenario commands.
  * E.g. "--input-file data/sources.yaml" returns ["data"]
  */
-function extractVarFileDirs(scenario: Scenario): string[] {
+function extractInputFileDirs(scenario: Scenario): string[] {
   const dirs: string[] = [];
-  const varFilePattern = /--input-file\s+(\S+)/g;
+  const inputFilePattern = /--input-file\s+(\S+)/g;
 
   for (const cmd of scenario.commands) {
-    for (const match of cmd.matchAll(varFilePattern)) {
-      const varFilePath = match[1];
-      const dir = dirname(varFilePath);
+    for (const match of cmd.matchAll(inputFilePattern)) {
+      const inputFilePath = match[1];
+      const dir = dirname(inputFilePath);
       if (dir && dir !== '.' && !dirs.includes(dir)) {
         dirs.push(dir);
       }
@@ -196,11 +196,11 @@ function copyPatternWithDependencies(
     }
   }
 
-  const varFileDirs = extractVarFileDirs(scenario);
-  for (const dir of varFileDirs) {
+  const inputFileDirs = extractInputFileDirs(scenario);
+  for (const dir of inputFileDirs) {
     // Reject absolute paths and path traversal
     if (isAbsolute(dir) || normalize(dir).startsWith('..')) {
-      throw new Error(`Unsafe var-file directory in scenario: ${dir}`);
+      throw new Error(`Unsafe input-file directory in scenario: ${dir}`);
     }
     const srcDir = join(RUNBOOKS_DIR, patternSubdir, dir);
     const destDir = join(workspace.cwd, dir);
@@ -208,10 +208,10 @@ function copyPatternWithDependencies(
     const resolvedDest = resolve(destDir);
     const srcRoot = resolve(RUNBOOKS_DIR, patternSubdir);
     if (!resolvedSrc.startsWith(srcRoot + sep) && resolvedSrc !== srcRoot) {
-      throw new Error(`Var-file source escapes pattern root: ${dir}`);
+      throw new Error(`Input-file source escapes pattern root: ${dir}`);
     }
     if (!resolvedDest.startsWith(workspace.cwd + sep) && resolvedDest !== workspace.cwd) {
-      throw new Error(`Var-file destination escapes workspace root: ${dir}`);
+      throw new Error(`Input-file destination escapes workspace root: ${dir}`);
     }
     copyDirSync(srcDir, destDir);
   }
