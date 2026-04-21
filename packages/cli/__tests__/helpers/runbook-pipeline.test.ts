@@ -291,6 +291,8 @@ beforeEach(() => {
     iteration: undefined,
     frameKey: '1',
   });
+  (core.isJsonArray as jest.Mock).mockImplementation((v: unknown) => Array.isArray(v));
+  (core.isJsonArrayStream as jest.Mock).mockImplementation(realIsJsonArrayStream);
 });
 
 // validateSources was removed in the unified variable model refactoring.

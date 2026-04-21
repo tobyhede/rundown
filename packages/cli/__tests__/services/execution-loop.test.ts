@@ -415,6 +415,14 @@ describe('runExecutionLoop', () => {
         reason: 'policy_denied',
       }),
     );
+
+    const emittedEvents = mockEmitter.emit.mock.calls.map(
+      ([event]: [string, ...unknown[]]) => event,
+    );
+    expect(emittedEvents.indexOf('POLICY_DENIED')).toBeGreaterThanOrEqual(0);
+    expect(emittedEvents.indexOf('RUNBOOK_STOPPED')).toBeGreaterThan(
+      emittedEvents.indexOf('POLICY_DENIED'),
+    );
   });
 
   it('completes the runbook', async () => {

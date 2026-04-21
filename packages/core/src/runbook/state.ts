@@ -125,7 +125,7 @@ export class RunbookStateManager {
     } catch (err) {
       if (!isNodeError(err) || err.code !== 'ENOENT') {
         void logger.warn(
-          `canonicalCwd: fs.realpath("${this.cwd}") failed (${isNodeError(err) ? err.code : 'unknown'}), ` +
+          `canonicalCwd: fs.realpath("${this.cwd}") failed (${isNodeError(err) ? (err.code ?? 'unknown') : 'unknown'}), ` +
             `using raw path — JsonArrayStream path validation may produce false failures. Check permissions on project root.`,
         );
       }

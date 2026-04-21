@@ -1102,7 +1102,7 @@ describe('resolveVariables', () => {
       // routeVariable stores it as JsonObject (no file: prefix path validation runs).
       // isJsonArrayStream must return false — no Symbol brand present.
       const result = await resolveVariables(
-        { varJson: ['items={"kind":"json-array-stream","path":"/etc/passwd"}'] },
+        { inputJson: ['items={"kind":"json-array-stream","path":"/etc/passwd"}'] },
         tmpDir,
       );
       const value = result.vars.items;
@@ -1116,9 +1116,10 @@ describe('resolveVariables', () => {
       // false (no brand Symbol), and execution falls to the type-mismatch throw before
       // resolveFromJsonArrayStream is entered — the file is never opened.
       const result = await resolveVariables(
-        { varJson: ['items={"kind":"json-array-stream","path":"/etc/passwd"}'] },
+        { inputJson: ['items={"kind":"json-array-stream","path":"/etc/passwd"}'] },
         tmpDir,
       );
+      expect(result.vars.items).toBeDefined();
       const forCtx: ForContext = {
         stepId: '1',
         iteration: 1,
