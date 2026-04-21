@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { FrameKey } from './runbook/targeting.js';
+import { createJsonArrayStream } from './runbook/types.js';
 import type { JsonValue, TemplateVarValue } from './runbook/types.js';
 import { getErrorMessage } from './errors.js';
 
@@ -158,11 +159,16 @@ const JsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
 
 /**
  * Zod schema for {@link JsonArrayStream} — file-backed lazy array.
+ *
+ * Uses `.transform()` to re-brand deserialized objects with the unexported Symbol brand,
+ * ensuring state loaded from disk passes the `isJsonArrayStream` guard.
  */
-const JsonArrayStreamSchema = z.object({
-  kind: z.literal('json-array-stream'),
-  path: z.string(),
-});
+const JsonArrayStreamSchema = z
+  .object({
+    kind: z.literal('json-array-stream'),
+    path: z.string(),
+  })
+  .transform((v) => createJsonArrayStream(v.path));
 
 /**
  * Schema for template variable values.

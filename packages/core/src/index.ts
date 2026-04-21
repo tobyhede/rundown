@@ -35,6 +35,7 @@ export * from './paths.js';
 export * from './runbook/index.js';
 // Explicit re-exports for Jest ESM VM module compatibility
 export {
+  createJsonArrayStream,
   isJsonArray,
   isJsonArrayStream,
   isResolvedVariableForContext,

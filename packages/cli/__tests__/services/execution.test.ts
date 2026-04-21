@@ -6,6 +6,7 @@ import {
 } from '../../src/services/execution.js';
 import { expandLoopVariables } from '../../src/services/template-renderer.js';
 import {
+  createJsonArrayStream,
   isRunbookComplete,
   isRunbookStopped,
   type Step,
@@ -286,7 +287,7 @@ describe('execution service', () => {
 
     it('falls back to forClause for stream variable bootstrap (no forStack)', () => {
       const templateVars: Readonly<Record<string, TemplateVarValue>> = {
-        data: { kind: 'json-array-stream', path: '/tmp/data.txt' },
+        data: createJsonArrayStream('/tmp/data.txt'),
       };
       const forClause = {
         start: 1,

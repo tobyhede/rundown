@@ -1,5 +1,6 @@
 import { describe, it, expect } from '@jest/globals';
 import type { OutputDeclaration } from '@rundown-org/parser';
+import { createJsonArrayStream } from '../../src/runbook/types.js';
 import type { ForContext, TemplateVarValue } from '../../src/runbook/types.js';
 import {
   buildExecutionFrame,
@@ -194,7 +195,7 @@ describe('flattenTemplateVars', () => {
       Port: 3000,
       Items: ['a', 'b', 'c'],
       Config: { host: 'localhost', debug: true },
-      Stream: { kind: 'json-array-stream', path: '/tmp/items.jsonl' },
+      Stream: createJsonArrayStream('/tmp/items.jsonl'),
     };
 
     expect(flattenTemplateVars(vars)).toEqual({
@@ -248,7 +249,7 @@ describe('flattenTemplateVars', () => {
     // flattenTemplateVars drops JsonArrayStream keys. evaluateOutputExpression('items', {})
     // currently falls back to `trimmed` → stores the string "items". Must skip instead.
     const vars = flattenTemplateVars({
-      items: { kind: 'json-array-stream' as const, path: '/tmp/data.jsonl' },
+      items: createJsonArrayStream('/tmp/data.jsonl'),
       Region: 'us-east-1',
     });
     const result = evaluateStepOutputDeclarations(
@@ -266,7 +267,7 @@ describe('flattenTemplateVars', () => {
     // evaluateOutputExpression('{{ items }}', {}) returns '{{ items }}' (unresolved braces).
     // Storing that string as an output value silently corrupts the result.
     const vars = flattenTemplateVars({
-      items: { kind: 'json-array-stream' as const, path: '/tmp/data.jsonl' },
+      items: createJsonArrayStream('/tmp/data.jsonl'),
       Region: 'us-east-1',
     });
     const result = evaluateStepOutputDeclarations(

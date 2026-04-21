@@ -16,7 +16,7 @@ import { execFileSync as nodeExecFileSync } from 'node:child_process';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { RUNDOWN_DIR, WORK_DIR } from '@rundown-org/core';
+import { createJsonArrayStream, isJsonArrayStream, RUNDOWN_DIR, WORK_DIR } from '@rundown-org/core';
 
 describe('parseVarFlag', () => {
   it('should parse key=value format', () => {
@@ -551,7 +551,8 @@ describe('resolveVariables', () => {
       await fs.writeFile(file, '{"a":1}\n');
 
       const result = await resolveVariables({ input: [`data=file:${file}`] }, tmpDir);
-      expect(result.vars.data).toEqual({
+      expect(isJsonArrayStream(result.vars.data)).toBe(true);
+      expect(result.vars.data).toMatchObject({
         kind: 'json-array-stream',
         path: await fs.realpath(file),
       });
@@ -641,7 +642,8 @@ describe('resolveVariables', () => {
       await fs.writeFile(varFile, `items: "file:${dataFile}"\n`);
 
       const result = await resolveVariables({ inputFile: [varFile] }, tmpDir);
-      expect(result.vars.items).toEqual({
+      expect(isJsonArrayStream(result.vars.items)).toBe(true);
+      expect(result.vars.items).toMatchObject({
         kind: 'json-array-stream',
         path: await fs.realpath(dataFile),
       });
@@ -701,7 +703,8 @@ describe('resolveVariables', () => {
         { inputFile: [varFile], input: [`items=file:${fileB}`] },
         tmpDir,
       );
-      expect(result.vars.items).toEqual({
+      expect(isJsonArrayStream(result.vars.items)).toBe(true);
+      expect(result.vars.items).toMatchObject({
         kind: 'json-array-stream',
         path: await fs.realpath(fileB),
       });
@@ -730,7 +733,8 @@ describe('resolveVariables', () => {
         { inputFile: [varFile], input: [`items=file:${dataFile}`] },
         tmpDir,
       );
-      expect(result.vars.items).toEqual({
+      expect(isJsonArrayStream(result.vars.items)).toBe(true);
+      expect(result.vars.items).toMatchObject({
         kind: 'json-array-stream',
         path: await fs.realpath(dataFile),
       });
@@ -879,7 +883,8 @@ describe('resolveVariables', () => {
         await fs.realpath(file),
         'Prompt before read',
       );
-      expect(result.vars.data).toEqual({
+      expect(isJsonArrayStream(result.vars.data)).toBe(true);
+      expect(result.vars.data).toMatchObject({
         kind: 'json-array-stream',
         path: await fs.realpath(file),
       });
@@ -1155,7 +1160,8 @@ describe('routeExtraVars', () => {
     await fs.writeFile(dataFile, '{"a":1}\n{"b":2}\n');
 
     const result = await routeExtraVars({ items: `file:${dataFile}` }, tmpDir);
-    expect(result.vars.items).toEqual({
+    expect(isJsonArrayStream(result.vars.items)).toBe(true);
+    expect(result.vars.items).toMatchObject({
       kind: 'json-array-stream',
       path: expect.any(String),
     });

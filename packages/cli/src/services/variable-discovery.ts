@@ -16,6 +16,7 @@ import * as path from 'node:path';
 import { execFileSync as nodeExecFileSync } from 'node:child_process';
 import * as yaml from 'js-yaml';
 import {
+  createJsonArrayStream,
   isJsonValue,
   type JsonArray,
   type JsonArrayStream,
@@ -555,7 +556,7 @@ async function routeVariable(
 
     if (canonical.endsWith('.jsonl')) {
       // JSONL → lazy stream (file read at iteration time)
-      vars[key] = { kind: 'json-array-stream', path: canonical } satisfies JsonArrayStream;
+      vars[key] = createJsonArrayStream(canonical);
     } else if (canonical.endsWith('.json')) {
       // JSON → eager load as JsonObject or JsonArray
       vars[key] = await loadJsonFile(canonical);

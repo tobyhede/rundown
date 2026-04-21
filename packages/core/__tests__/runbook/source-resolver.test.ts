@@ -1,4 +1,5 @@
 import { resolveForValue } from '../../src/runbook/source-resolver.js';
+import { createJsonArrayStream } from '../../src/runbook/types.js';
 import type { ForContext, JsonArrayStream, TemplateVarValue } from '../../src/runbook/types.js';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
@@ -122,7 +123,7 @@ describe('resolveForValue', () => {
     it('returns resolved with value and snapshot for JSONL file', async () => {
       const file = path.join(tmpDir, 'data.jsonl');
       await fs.writeFile(file, '{"id": 1, "name": "Alice"}\n{"id": 2, "name": "Bob"}\n');
-      const stream: JsonArrayStream = { kind: 'json-array-stream', path: file };
+      const stream: JsonArrayStream = createJsonArrayStream(file);
       const vars: Record<string, TemplateVarValue> = { data: stream };
 
       const result = await resolveForValue(makeContext(1), vars);
@@ -139,7 +140,7 @@ describe('resolveForValue', () => {
       const file = path.join(tmpDir, 'empty.jsonl');
       await fs.writeFile(file, '');
       const vars: Record<string, TemplateVarValue> = {
-        data: { kind: 'json-array-stream', path: file },
+        data: createJsonArrayStream(file),
       };
 
       const result = await resolveForValue(makeContext(1), vars);
@@ -154,7 +155,7 @@ describe('resolveForValue', () => {
       const file = path.join(tmpDir, 'numbers.jsonl');
       await fs.writeFile(file, '42\n100\n');
       const vars: Record<string, TemplateVarValue> = {
-        data: { kind: 'json-array-stream', path: file },
+        data: createJsonArrayStream(file),
       };
 
       const result = await resolveForValue(makeContext(1), vars);
@@ -169,7 +170,7 @@ describe('resolveForValue', () => {
       const file = path.join(tmpDir, 'arrays.jsonl');
       await fs.writeFile(file, '[1, 2, 3]\n[4, 5, 6]\n');
       const vars: Record<string, TemplateVarValue> = {
-        data: { kind: 'json-array-stream', path: file },
+        data: createJsonArrayStream(file),
       };
 
       const result = await resolveForValue(makeContext(2), vars);
@@ -184,7 +185,7 @@ describe('resolveForValue', () => {
       const file = path.join(tmpDir, 'invalid.jsonl');
       await fs.writeFile(file, '{"valid": true}\n{invalid json}\n');
       const vars: Record<string, TemplateVarValue> = {
-        data: { kind: 'json-array-stream', path: file },
+        data: createJsonArrayStream(file),
       };
 
       const err = await resolveForValue(makeContext(2), vars).catch((e: unknown) => e);
@@ -199,7 +200,7 @@ describe('resolveForValue', () => {
       const file = path.join(tmpDir, 'nulls.jsonl');
       await fs.writeFile(file, 'null\nnull\n');
       const vars: Record<string, TemplateVarValue> = {
-        data: { kind: 'json-array-stream', path: file },
+        data: createJsonArrayStream(file),
       };
 
       const result = await resolveForValue(makeContext(1), vars);
