@@ -212,4 +212,59 @@ describe('resolveForValue', () => {
       }
     });
   });
+
+  describe('projectRoot boundary enforcement', () => {
+    let projectRoot: string;
+    let outsideFile: string;
+
+    beforeEach(async () => {
+      const base = await fs.mkdtemp(path.join(os.tmpdir(), 'rundown-sr-sec-'));
+      projectRoot = path.join(base, 'project');
+      await fs.mkdir(projectRoot);
+      outsideFile = path.join(base, 'outside.jsonl');
+      await fs.writeFile(outsideFile, '"secret"\n');
+    });
+
+    afterEach(async () => {
+      await fs.rm(path.dirname(projectRoot), { recursive: true, force: true });
+    });
+
+    const makeContext = (name = 'data'): ForContext => ({
+      stepId: '1',
+      iteration: 1,
+      start: 1,
+      implicit: false,
+      source: { kind: 'variable', name },
+    });
+
+    it('throws policy-violation when JsonArrayStream path escapes project root', async () => {
+      const vars: Record<string, TemplateVarValue> = {
+        data: createJsonArrayStream(outsideFile),
+      };
+
+      await expect(resolveForValue(makeContext(), vars, projectRoot)).rejects.toMatchObject({
+        code: 'policy-violation',
+      });
+    });
+
+    it('succeeds when JsonArrayStream path is within project root', async () => {
+      const file = path.join(projectRoot, 'data.jsonl');
+      await fs.writeFile(file, '"value"\n');
+      const vars: Record<string, TemplateVarValue> = {
+        data: createJsonArrayStream(file),
+      };
+
+      const result = await resolveForValue(makeContext(), vars, projectRoot);
+      expect(result.kind).toBe('resolved');
+    });
+
+    it('skips boundary check when projectRoot is omitted', async () => {
+      const vars: Record<string, TemplateVarValue> = {
+        data: createJsonArrayStream(outsideFile),
+      };
+
+      const result = await resolveForValue(makeContext(), vars);
+      expect(result.kind).toBe('resolved');
+    });
+  });
 });

@@ -88,10 +88,12 @@ export class ForIterationService {
    *
    * @param manager - State reader for loading/updating runbook state
    * @param actorService - Actor operations for XState event dispatch
+   * @param projectRoot - Project root for JsonArrayStream path boundary enforcement
    */
   constructor(
     private readonly manager: ForStateReader,
     private readonly actorService: ForActorOperations,
+    private readonly projectRoot?: string,
   ) {}
 
   /**
@@ -135,7 +137,7 @@ export class ForIterationService {
       return { status: 'no-resolution-needed', state };
     }
 
-    const result = await resolveForValue(top, state.templateVars);
+    const result = await resolveForValue(top, state.templateVars, this.projectRoot);
 
     if (result.kind === 'resolved') {
       // Build updated forStack with resolved value.

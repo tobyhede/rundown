@@ -10,6 +10,7 @@
  * @module
  */
 
+import * as path from 'node:path';
 import { createFileProvider, computeFileSnapshot } from './file-provider.js';
 import type {
   ForContext,
@@ -37,7 +38,7 @@ export class ForResolutionError extends Error {
    */
   constructor(
     message: string,
-    readonly code: 'undefined-variable' | 'type-mismatch' | 'parse-failure',
+    readonly code: 'undefined-variable' | 'type-mismatch' | 'parse-failure' | 'policy-violation',
     options?: ErrorOptions,
   ) {
     super(message, options);
@@ -71,11 +72,14 @@ export type ResolvedIteration =
  *
  * @param fc - The ForContext whose `currentValue` needs resolution
  * @param vars - The unified template variable map for variable source lookups
+ * @param projectRoot - When provided, JsonArrayStream paths are checked to be within this directory
  * @returns A discriminated result: either the resolved context or an exhaustion signal
+ * @throws {ForResolutionError} with code `'policy-violation'` if a stream path escapes `projectRoot`
  */
 export async function resolveForValue(
   fc: ForContext,
   vars?: Readonly<Record<string, TemplateVarValue>>,
+  projectRoot?: string,
 ): Promise<ResolvedIteration> {
   switch (fc.source.kind) {
     case 'range':
@@ -104,7 +108,7 @@ export async function resolveForValue(
       }
 
       if (isJsonArrayStream(value)) {
-        return resolveFromJsonArrayStream(vfc, value);
+        return resolveFromJsonArrayStream(vfc, value, projectRoot);
       }
 
       const typeDesc = typeof value === 'object' ? 'JsonObject' : typeof value;
@@ -152,15 +156,27 @@ function resolveFromJsonArray(
  *
  * @param fc - The ForContext whose currentValue needs resolution from the file stream
  * @param stream - The JsonArrayStream metadata (path and format information)
+ * @param projectRoot - When provided, the stream path must be within this directory
  * @returns A promise resolving to a discriminated result: either the resolved context (with snapshot) or an exhaustion signal
+ * @throws {ForResolutionError} with code `'policy-violation'` if stream path escapes projectRoot
  */
 async function resolveFromJsonArrayStream(
   fc: VariableForContext,
   stream: JsonArrayStream,
+  projectRoot?: string,
 ): Promise<
   | { readonly kind: 'resolved'; readonly context: StreamResolvedForContext }
   | { readonly kind: 'exhausted'; readonly capped: ForContext }
 > {
+  if (projectRoot !== undefined) {
+    const rel = path.relative(projectRoot, stream.path);
+    if (rel.startsWith('..') || path.isAbsolute(rel)) {
+      throw new ForResolutionError(
+        `JsonArrayStream path "${stream.path}" escapes project root "${projectRoot}"`,
+        'policy-violation',
+      );
+    }
+  }
   const skipLines = fc.iteration - 1;
   const provider = await createFileProvider(stream.path, { skipLines });
   try {

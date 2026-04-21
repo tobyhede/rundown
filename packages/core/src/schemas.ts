@@ -1,3 +1,4 @@
+import * as path from 'node:path';
 import { z } from 'zod';
 import type { FrameKey } from './runbook/targeting.js';
 import { createJsonArrayStream } from './runbook/types.js';
@@ -388,3 +389,81 @@ export const RunbookStateSchema = z
 
 /** Validated runbook state. Inferred from {@link RunbookStateSchema}. */
 export type ValidatedRunbookState = z.infer<typeof RunbookStateSchema>;
+
+/**
+ * Build a path-validated variant of {@link JsonArrayStreamSchema}.
+ *
+ * Rejects streams whose path escapes `projectRoot`, preventing crafted
+ * `--var-json` objects from becoming usable file streams after a disk round-trip.
+ *
+ * @param projectRoot - Absolute project root; stream paths must be within it
+ * @returns Zod transform schema that re-brands valid stream objects and rejects escaping paths
+ */
+function makeJsonArrayStreamSchema(
+  projectRoot: string,
+): z.ZodEffects<z.ZodObject<{ kind: z.ZodLiteral<'json-array-stream'>; path: z.ZodString }>> {
+  return z
+    .object({
+      kind: z.literal('json-array-stream'),
+      path: z.string(),
+    })
+    .transform((v, ctx) => {
+      const rel = path.relative(projectRoot, v.path);
+      if (rel.startsWith('..') || path.isAbsolute(rel)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `JsonArrayStream path "${v.path}" escapes project root "${projectRoot}"`,
+        });
+        return z.NEVER;
+      }
+      return createJsonArrayStream(v.path);
+    });
+}
+
+/**
+ * Build a path-validated variant of {@link TemplateVarValueSchema}.
+ *
+ * JsonArrayStream values are deserialized only when their path stays within
+ * `projectRoot`, blocking the disk round-trip attack where a crafted
+ * `--var-json` object is persisted and re-hydrated as a file stream.
+ *
+ * The record branch explicitly rejects `kind:"json-array-stream"` shapes so
+ * that a failed stream validation (invalid path) cannot fall through to the
+ * plain-object branch and succeed as a JsonObject.
+ *
+ * @param projectRoot - Absolute project root for path boundary enforcement
+ * @returns Zod schema that validates and re-brands TemplateVarValue, rejecting
+ *   JsonArrayStream paths that escape projectRoot
+ */
+export function makeTemplateVarValueSchema(projectRoot: string): z.ZodType<TemplateVarValue> {
+  return z.union([
+    z.string(),
+    z.number(),
+    z.array(JsonValueSchema),
+    makeJsonArrayStreamSchema(projectRoot),
+    z
+      .record(z.string(), JsonValueSchema)
+      .refine(
+        (v) => (v as Record<string, unknown>).kind !== 'json-array-stream',
+        'Plain objects with kind:"json-array-stream" cannot be used as template vars',
+      ),
+  ]);
+}
+
+/**
+ * Build a path-validated variant of {@link RunbookStateSchema}.
+ *
+ * Replaces the `templateVars` field with a path-validated schema so that
+ * JsonArrayStream values loaded from disk are checked against `projectRoot`
+ * before being re-branded. This closes the disk round-trip attack vector where
+ * a crafted `--var-json` object survives as a JsonObject on disk and is
+ * re-hydrated as a usable file stream on state reload.
+ *
+ * @param projectRoot - Absolute project root; JsonArrayStream paths in
+ *   templateVars must be within this directory
+ * @returns Zod schema for RunbookState with path-validated templateVars
+ */
+export function makeRunbookStateSchema(projectRoot: string): z.ZodTypeAny {
+  const VarsSchema = z.record(z.string(), makeTemplateVarValueSchema(projectRoot));
+  return RunbookStateSchema.extend({ templateVars: VarsSchema.optional() });
+}

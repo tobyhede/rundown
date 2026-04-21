@@ -13,7 +13,7 @@ import type {
   ParentLinkage,
   TemplateVarValue,
 } from './types.js';
-import { RunbookStateSchema } from '../schemas.js';
+import { makeRunbookStateSchema } from '../schemas.js';
 import { isNodeError } from '../errors.js';
 import {
   runsDir as _runsDir,
@@ -224,7 +224,7 @@ export class RunbookStateManager {
       );
     }
 
-    const result = RunbookStateSchema.safeParse(parsed);
+    const result = makeRunbookStateSchema(this.cwd).safeParse(parsed);
     if (!result.success) {
       throw new Error(
         `Stale runbook state for "${id}": schema validation failed. ` +

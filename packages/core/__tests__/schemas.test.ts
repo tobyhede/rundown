@@ -6,6 +6,8 @@ import {
   ActionSchema,
   TransitionsSchema,
   TemplateVarValueSchema,
+  makeTemplateVarValueSchema,
+  makeRunbookStateSchema,
 } from '../src/schemas.js';
 import { isJsonArrayStream } from '../src/runbook/types.js';
 
@@ -597,5 +599,59 @@ describe('TemplateVarValueSchema — JsonArrayStream deserialization', () => {
     const raw = { kind: 'json-array-stream', path: '/project/data.jsonl' };
     const parsed = TemplateVarValueSchema.parse(raw);
     expect(isJsonArrayStream(parsed)).toBe(true);
+  });
+});
+
+describe('makeTemplateVarValueSchema — path-validated JsonArrayStream', () => {
+  it('rejects JsonArrayStream with path escaping project root', () => {
+    const schema = makeTemplateVarValueSchema('/project');
+    expect(() => schema.parse({ kind: 'json-array-stream', path: '/etc/passwd' })).toThrow();
+  });
+
+  it('accepts JsonArrayStream with path inside project root and re-brands it', () => {
+    const schema = makeTemplateVarValueSchema('/project');
+    const result = schema.parse({ kind: 'json-array-stream', path: '/project/data.jsonl' });
+    expect(isJsonArrayStream(result)).toBe(true);
+  });
+
+  it('accepts scalar and array values unchanged', () => {
+    const schema = makeTemplateVarValueSchema('/project');
+    expect(schema.parse('hello')).toBe('hello');
+    expect(schema.parse(42)).toBe(42);
+    expect(schema.parse(['a', 'b'])).toEqual(['a', 'b']);
+  });
+});
+
+describe('makeRunbookStateSchema — disk round-trip attack prevention', () => {
+  it('rejects state with JsonArrayStream templateVar escaping project root', () => {
+    const schema = makeRunbookStateSchema('/project');
+    const state = createValidState({
+      templateVars: {
+        items: { kind: 'json-array-stream', path: '/etc/passwd' },
+      },
+    });
+    const result = schema.safeParse(state);
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts state with JsonArrayStream templateVar within project root', () => {
+    const schema = makeRunbookStateSchema('/project');
+    const state = createValidState({
+      templateVars: {
+        items: { kind: 'json-array-stream', path: '/project/data.jsonl' },
+      },
+    });
+    const result = schema.safeParse(state);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(isJsonArrayStream(result.data.templateVars?.items)).toBe(true);
+    }
+  });
+
+  it('accepts state with no templateVars', () => {
+    const schema = makeRunbookStateSchema('/project');
+    const state = createValidState();
+    const result = schema.safeParse(state);
+    expect(result.success).toBe(true);
   });
 });
