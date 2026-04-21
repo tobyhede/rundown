@@ -634,6 +634,101 @@ describe('makeTemplateVarValueSchema — path-validated JsonArrayStream', () => 
   });
 });
 
+describe('makeRunbookStateSchema — SEC1 nested snapshot var protection', () => {
+  const escaping = { kind: 'json-array-stream', path: '/etc/passwd' };
+  const safe = { kind: 'json-array-stream', path: '/project/data.jsonl' };
+
+  it('rejects state with JsonArrayStream in contextSnapshot.vars escaping project root', () => {
+    const schema = makeRunbookStateSchema('/project');
+    const state = createValidState({
+      substepStates: [
+        {
+          id: 'sub1',
+          frameKey: 'frame-1',
+          status: 'done',
+          result: 'pass',
+          delegation: {
+            tokenHash: 'sha256:' + 'a'.repeat(64),
+            childRunbookPath: '/project/child.md',
+            contextSnapshot: {
+              vars: { items: escaping },
+              ancestors: [],
+            },
+            childRunId: null,
+            createdAt: new Date().toISOString(),
+            cancelledAt: null,
+          },
+        },
+      ],
+    });
+    const result = schema.safeParse(state);
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts state with JsonArrayStream in contextSnapshot.vars within project root', () => {
+    const schema = makeRunbookStateSchema('/project');
+    const state = createValidState({
+      substepStates: [
+        {
+          id: 'sub1',
+          frameKey: 'frame-1',
+          status: 'done',
+          result: 'pass',
+          delegation: {
+            tokenHash: 'sha256:' + 'a'.repeat(64),
+            childRunbookPath: '/project/child.md',
+            contextSnapshot: {
+              vars: { items: safe },
+              ancestors: [],
+            },
+            childRunId: null,
+            createdAt: new Date().toISOString(),
+            cancelledAt: null,
+          },
+        },
+      ],
+    });
+    const result = schema.safeParse(state);
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects state with JsonArrayStream in ancestors[].vars escaping project root', () => {
+    const schema = makeRunbookStateSchema('/project');
+    const state = createValidState({
+      substepStates: [
+        {
+          id: 'sub1',
+          frameKey: 'frame-1',
+          status: 'done',
+          result: 'pass',
+          delegation: {
+            tokenHash: 'sha256:' + 'a'.repeat(64),
+            childRunbookPath: '/project/child.md',
+            contextSnapshot: {
+              vars: {},
+              ancestors: [
+                {
+                  runId: 'run-1',
+                  runbook: 'parent.md',
+                  step: '1',
+                  substep: null,
+                  vars: { evil: escaping },
+                  at: new Date().toISOString(),
+                },
+              ],
+            },
+            childRunId: null,
+            createdAt: new Date().toISOString(),
+            cancelledAt: null,
+          },
+        },
+      ],
+    });
+    const result = schema.safeParse(state);
+    expect(result.success).toBe(false);
+  });
+});
+
 describe('makeRunbookStateSchema — disk round-trip attack prevention', () => {
   it('rejects state with JsonArrayStream templateVar escaping project root', () => {
     const schema = makeRunbookStateSchema('/project');

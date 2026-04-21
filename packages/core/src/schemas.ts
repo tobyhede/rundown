@@ -459,19 +459,123 @@ export function makeTemplateVarValueSchema(projectRoot: string): z.ZodType<Templ
 }
 
 /**
+ * Build a path-validated variant of {@link AncestorSnapshotSchema}.
+ *
+ * Replaces the static `TemplateVarValueSchema` used in `vars` with a
+ * path-validated variant so that JsonArrayStream paths in ancestor context
+ * are boundary-checked against `projectRoot` on state load.
+ *
+ * @param projectRoot - Absolute project root for path boundary enforcement
+ * @returns Zod schema for AncestorSnapshot with path-validated vars
+ */
+function makeAncestorSnapshotSchema(projectRoot: string) {
+  return z.object({
+    runId: z.string(),
+    runbook: z.string(),
+    step: z.string(),
+    substep: z.string().nullable(),
+    vars: z.record(z.string(), makeTemplateVarValueSchema(projectRoot)),
+    at: z.string().optional(),
+    index: z.number().int().positive().optional(),
+  });
+}
+
+/**
+ * Build a path-validated variant of {@link ContextSnapshotSchema}.
+ *
+ * Replaces the static `TemplateVarValueSchema` used in `vars` and
+ * `ancestors[].vars` with path-validated variants so that all
+ * JsonArrayStream paths in the delegation context snapshot are
+ * boundary-checked against `projectRoot` on state load.
+ *
+ * @param projectRoot - Absolute project root for path boundary enforcement
+ * @returns Zod schema for ContextSnapshot with path-validated vars and ancestors
+ */
+function makeContextSnapshotSchema(projectRoot: string) {
+  return z
+    .object({
+      vars: z.record(z.string(), makeTemplateVarValueSchema(projectRoot)),
+      ancestors: z.array(makeAncestorSnapshotSchema(projectRoot)).readonly(),
+      step: z.string().optional(),
+      substep: z.string().optional(),
+      at: z.string().optional(),
+      index: z.number().int().positive().optional(),
+    })
+    .passthrough()
+    .superRefine((val, ctx) => {
+      if ('sources' in val) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            'Legacy delegation snapshot detected (contains "sources" field). Run `rundown prune` and restart.',
+        });
+      }
+    });
+}
+
+/**
+ * Build a path-validated variant of {@link StepDelegationSchema}.
+ *
+ * Replaces the static `ContextSnapshotSchema` with a path-validated variant
+ * so that all JsonArrayStream paths in delegation metadata are boundary-checked
+ * against `projectRoot` on state load.
+ *
+ * @param projectRoot - Absolute project root for path boundary enforcement
+ * @returns Zod schema for StepDelegation with path-validated contextSnapshot
+ */
+function makeStepDelegationSchema(projectRoot: string) {
+  return z.object({
+    tokenHash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+    childRunbookPath: z.string(),
+    contextSnapshot: makeContextSnapshotSchema(projectRoot),
+    childRunId: z.string().nullable(),
+    createdAt: z.string(),
+    cancelledAt: z.string().nullable(),
+  });
+}
+
+/**
+ * Build a path-validated variant of {@link SubstepStateSchema}.
+ *
+ * Replaces the static `StepDelegationSchema` with a path-validated variant
+ * so that all JsonArrayStream paths in substep delegation metadata are
+ * boundary-checked against `projectRoot` on state load.
+ *
+ * @param projectRoot - Absolute project root for path boundary enforcement
+ * @returns Zod schema for SubstepState with path-validated delegation
+ */
+function makeSubstepStateSchema(projectRoot: string) {
+  return z.object({
+    id: z.string(),
+    frameKey: FrameKeySchema,
+    status: z.enum(['pending', 'running', 'done']),
+    result: z.enum(['pass', 'fail']).optional(),
+    delegation: makeStepDelegationSchema(projectRoot).optional(),
+  });
+}
+
+/**
  * Build a path-validated variant of {@link RunbookStateSchema}.
  *
- * Replaces the `templateVars` field with a path-validated schema so that
- * JsonArrayStream values loaded from disk are checked against `projectRoot`
- * before being re-branded. This closes the disk round-trip attack vector where
- * a crafted `--var-json` object survives as a JsonObject on disk and is
- * re-hydrated as a usable file stream on state reload.
+ * Replaces the `templateVars` field and `substepStates` field with
+ * path-validated schemas so that JsonArrayStream values loaded from disk are
+ * checked against `projectRoot` before being re-branded. This closes the disk
+ * round-trip attack vector where a crafted `--var-json` object survives as a
+ * JsonObject on disk and is re-hydrated as a usable file stream on state reload.
+ *
+ * SEC1: Also validates JsonArrayStream paths in `contextSnapshot.vars` and
+ * `ancestors[].vars` within delegation metadata, which previously used the
+ * static `TemplateVarValueSchema` and bypassed projectRoot boundary checks.
  *
  * @param projectRoot - Absolute project root; JsonArrayStream paths in
- *   templateVars must be within this directory
- * @returns Zod schema for RunbookState with path-validated templateVars
+ *   templateVars and substepStates delegation metadata must be within this directory
+ * @returns Zod schema for RunbookState with path-validated templateVars and substepStates
  */
 export function makeRunbookStateSchema(projectRoot: string): z.ZodTypeAny {
   const VarsSchema = z.record(z.string(), makeTemplateVarValueSchema(projectRoot));
-  return RunbookStateSchema.extend({ templateVars: VarsSchema.optional() });
+  const SubstepStateSchemaValidated = makeSubstepStateSchema(projectRoot);
+  return RunbookStateSchema.extend({
+    templateVars: VarsSchema.optional(),
+    substepStates: z.array(SubstepStateSchemaValidated).optional(),
+  });
 }
