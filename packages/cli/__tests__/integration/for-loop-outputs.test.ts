@@ -1,6 +1,6 @@
 // packages/cli/__tests__/integration/for-loop-outputs.test.ts
 //
-// Regression: when a FOR loop variable is shadowed by a CLI --var override,
+// Regression: when a FOR loop variable is shadowed by a CLI --input override,
 // OUTPUTS that reference the loop variable must publish the current iteration
 // value, not the shadowing override. This invariant is now enforced by the
 // state machine's per-step OUTPUTS evaluation (see buildExecutionFrame).
@@ -50,7 +50,7 @@ describe('FOR loop OUTPUTS regression — CLI-shadowed loop variable', () => {
     await workspace.cleanup();
   });
 
-  it('publishes the current iteration value for {{item}} even when --var item shadows it', async () => {
+  it('publishes the current iteration value for {{item}} even when --input item shadows it', async () => {
     const result = runCli(
       [
         'run',
