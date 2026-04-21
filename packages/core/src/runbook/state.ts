@@ -15,6 +15,7 @@ import type {
 } from './types.js';
 import { makeRunbookStateSchema } from '../schemas.js';
 import { isNodeError } from '../errors.js';
+import { logger } from '../logger.js';
 import {
   runsDir as _runsDir,
   sessionPath as _sessionPath,
@@ -106,15 +107,22 @@ export class RunbookStateManager {
    * On macOS, `/tmp` is a symlink to `/private/tmp`. JsonArrayStream paths are
    * stored in canonical form (resolved via `fs.realpath` at write time), so the
    * project-root boundary check in `makeRunbookStateSchema` must compare against
-   * the same canonical path. Falls back to the raw `cwd` if `realpath` fails
-   * (e.g., the directory was deleted between startup and load).
+   * the same canonical path.
+   *
+   * Falls back to the raw `cwd` on any `fs.realpath` failure (e.g., directory
+   * deleted, permission denied, or transient I/O error). The fallback is logged
+   * at warn level so misconfiguration is visible rather than silently bypassing
+   * the canonical-path comparison.
    *
    * @returns The canonicalized working directory path
    */
   private async canonicalCwd(): Promise<string> {
     try {
       return await fs.realpath(this.cwd);
-    } catch {
+    } catch (err) {
+      void logger.warn(
+        `canonicalCwd: fs.realpath("${this.cwd}") failed, using raw path: ${err instanceof Error ? err.message : String(err)}`,
+      );
       return this.cwd;
     }
   }

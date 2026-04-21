@@ -444,8 +444,8 @@ function makeJsonArrayStreamSchema(
  * The record branch explicitly rejects the full JsonArrayStream shape
  * (kind + string path) so that a failed stream validation (invalid path)
  * cannot fall through to the plain-object branch and succeed as a JsonObject.
- * Objects with kind but no path field are safe plain JsonObjects and are
- * permitted through.
+ * Objects with kind but no path field, or where path is not a string, are
+ * safe plain JsonObjects and are permitted through.
  *
  * @param projectRoot - Absolute project root for path boundary enforcement
  * @returns Zod schema that validates and re-brands TemplateVarValue, rejecting

@@ -35,7 +35,7 @@ import {
   isJsonArray,
   isJsonArrayStream,
   assertResolvedVariableForContext,
-  isError,
+  ForResolutionError,
   RUNS_DIR,
 } from '@rundown-org/core';
 import { isSourced, resolvedStepHasSubsteps, type ForClause } from '@rundown-org/parser';
@@ -472,11 +472,7 @@ export async function runExecutionLoop(
     try {
       iterResult = await iterationService.prepareIteration(runbookId, steps);
     } catch (err) {
-      if (
-        isError(err) &&
-        err.name === 'ForResolutionError' &&
-        (err as { code?: string }).code === 'policy-violation'
-      ) {
+      if (err instanceof ForResolutionError && err.code === 'policy-violation') {
         const policyPosition = buildStepPosition(
           currentState.step,
           countNumberedSteps(steps),
