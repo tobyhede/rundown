@@ -16,7 +16,7 @@ See [SPEC.md](./SPEC.md) for execution semantics.
 | `" "` | Literal string |
 | `[ ]` | Character class |
 
-`ws` denotes required whitespace (space or tab). `newline` denotes a line break. Keywords are case-sensitive unless noted.
+`ws` denotes whitespace. In most positions the parser accepts any Unicode whitespace (`\s`); in FOR clause keyword and variable positions, only space and tab are accepted (ReDoS guard). `newline` denotes a line break. Keywords are case-sensitive unless noted.
 
 ---
 
