@@ -37,7 +37,7 @@ describe('Security: Symlink Traversal', () => {
     // It should ideally block this because it points outside the project.
     const result = await resolveVariables(
       {
-        var: [`my_source=file:secret-link`],
+        input: [`my_source=file:secret-link`],
       },
       workspace.cwd,
     );

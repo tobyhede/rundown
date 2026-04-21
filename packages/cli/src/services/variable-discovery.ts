@@ -294,7 +294,7 @@ export function getBuiltinVariables(): Record<string, string> {
 }
 
 /**
- * Parse a --var flag value in key=value format.
+ * Parse a --input flag value in key=value format.
  *
  * Variable names must be valid identifiers (start with letter/underscore,
  * contain only letters, digits, underscores).
