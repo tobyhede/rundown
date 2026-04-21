@@ -17,10 +17,10 @@ A Rundown document (`.runbook.md`) is a Markdown file with an optional YAML fron
 | **Steps** | `## ID Title` | 1..N | Top-level execution units. |
 
 ### 1.1 Hierarchy
-*   **H1**: Metadata (Title).
-*   **H2**: Step.
-*   **H3**: Substep.
-*   **H4+**: Invalid.
+* **H1**: Metadata (Title).
+* **H2**: Step.
+* **H3**: Substep.
+* **H4+**: Invalid.
 
 ### 1.2 Frontmatter
 

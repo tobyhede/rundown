@@ -163,7 +163,7 @@ Data sources are referenced in FOR clauses: `FOR item IN {{ items }}`.
 **Notes:**
 - Arrays can be passed inline via `--input-json` or in `.rundown/config.yaml` and `--input-file` (not in frontmatter `inputs:`). `file:` values are supported in `.rundown/config.yaml` and `--input-file` only
 - File paths must stay within the project root (symlinks resolved, traversal blocked)
-- `file:` values are routed into `vars` as typed values (`JsonArrayStream` for `.jsonl`, `JsonArray`/`JsonObject` for `.json`)
+- `file:` values are routed into the internal variable store as typed values (`JsonArrayStream` for `.jsonl`, `JsonArray`/`JsonObject` for `.json`)
 
 **Note:** The `scenarios` frontmatter field is an internal testing/demo feature, not part of the public Rundown format specification. See [docs/SCENARIOS.md](docs/SCENARIOS.md).
 
