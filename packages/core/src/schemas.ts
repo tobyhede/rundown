@@ -423,7 +423,7 @@ function makeJsonArrayStreamSchema(
       const rel = path.relative(projectRoot, v.path);
       // path.isAbsolute(rel) is a Windows safety net: on different drives,
       // path.relative() returns an absolute path rather than a dotdot sequence.
-      if (rel.startsWith('..') || path.isAbsolute(rel)) {
+      if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message: `JsonArrayStream path "${v.path}" escapes project root "${projectRoot}"`,

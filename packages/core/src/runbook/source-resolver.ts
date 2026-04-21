@@ -172,7 +172,7 @@ async function resolveFromJsonArrayStream(
     const rel = path.relative(projectRoot, stream.path);
     // path.isAbsolute(rel) is a Windows safety net: on different drives,
     // path.relative() returns an absolute path rather than a dotdot sequence.
-    if (rel.startsWith('..') || path.isAbsolute(rel)) {
+    if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
       throw new ForResolutionError(
         `JsonArrayStream path "${stream.path}" escapes project root "${projectRoot}"`,
         'policy-violation',
