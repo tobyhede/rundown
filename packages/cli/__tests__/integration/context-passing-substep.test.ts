@@ -12,7 +12,7 @@ import {
 } from '../helpers/test-utils.js';
 
 /**
- * Two-step runbook with substeps. No INPUTS directives — variables are passed via --var.
+ * Two-step runbook with substeps. No INPUTS directives — variables are passed via --input.
  * Substep 1.fetch publishes ChildValue; substep 1.use consumes it via {{ChildValue}}.
  * Step 1 parent publishes ParentValue; step 2 consumes it via {{ParentValue}}.
  */
@@ -61,9 +61,9 @@ describe('substep INPUTS/OUTPUTS round-trip', () => {
   });
 
   it('inherits parent inputs into substeps and publishes substep then parent outputs', async () => {
-    // Start runbook in prompted mode, passing PlanPath via --var (no outputs.json seeding)
+    // Start runbook in prompted mode, passing PlanPath via --input (no outputs.json seeding)
     const start = runCli(
-      'run --prompted substep-context.runbook.md --var PlanPath=/seeded/path/plan.json',
+      'run --prompted substep-context.runbook.md --input PlanPath=/seeded/path/plan.json',
       workspace,
     );
     expect(start.exitCode).toBe(0);

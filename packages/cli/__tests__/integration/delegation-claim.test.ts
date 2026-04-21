@@ -136,7 +136,7 @@ describe('Delegation claim integration', () => {
     expect(typeof claimOutput.parent_step).toBe('string');
   });
 
-  it('claim with --var-file merges file variables into child context', async () => {
+  it('claim with --input-file merges file variables into child context', async () => {
     await writeParentRunbook();
 
     // Child runbook echoes the variable to confirm it was received
@@ -160,8 +160,8 @@ Task uses {{ myVar }}.
     expect(tokenMatch).not.toBeNull();
     const token = tokenMatch![1];
 
-    // Claim with --var-file
-    result = runCli(`claim ${token} --var-file vars.yaml`, workspace);
+    // Claim with --input-file
+    result = runCli(`claim ${token} --input-file vars.yaml`, workspace);
     expect(result.exitCode).toBe(0);
 
     // Verify the variable was rendered in child execution output

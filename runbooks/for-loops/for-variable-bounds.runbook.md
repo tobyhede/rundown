@@ -7,7 +7,7 @@ scenarios:
   completed:
     description: Variable bounds expand at parse time
     commands:
-      - rd run --var Max=3 for-variable-bounds.runbook.md
+      - rd run --input Max=3 for-variable-bounds.runbook.md
     result: COMPLETE
 ---
 

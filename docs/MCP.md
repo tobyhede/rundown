@@ -277,9 +277,9 @@ Start a runbook.
 }
 ```
 
-**CLI Equivalent:** `rundown run [<file>] [--prompted] [--var key=value]... [--var-file path]`
+**CLI Equivalent:** `rundown run [<file>] [--prompted] [--input key=value]... [--input-file path]`
 
-**Note:** The `--var` and `--var-file` options are CLI-only. The MCP `run` tool does not currently expose variable configuration parameters. Delegation to child runbooks uses the CLI `delegate`/`claim`/`abort` commands. See [SPEC.md §6 Templating](./SPEC.md#6-templating) for full variable configuration details.
+**Note:** The `--input` and `--input-file` options are CLI-only. The MCP `run` tool does not currently expose variable configuration parameters. Delegation to child runbooks uses the CLI `delegate`/`claim`/`abort` commands. See [SPEC.md §6 Templating](./SPEC.md#6-templating) for full variable configuration details.
 
 ---
 

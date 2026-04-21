@@ -13,9 +13,9 @@ Rundown delegation dispatches substeps to child agents. The parent delegates, a 
 rd delegate                                # Infer substep and runbook from state
 rd delegate --step 2.1                     # Delegate specific substep
 rd delegate <runbook> --step 2.1           # Explicit runbook and substep
-rd delegate --step 2.1 --var k=v           # With variables
-rd delegate --step 2.1 --var-json k=json   # With JSON variable
-rd delegate --step 2.1 --var-file <path>   # Variables from YAML
+rd delegate --step 2.1 --input k=v           # With variables
+rd delegate --step 2.1 --input-json k=json   # With JSON variable
+rd delegate --step 2.1 --input-file <path>   # Variables from YAML
 
 rd abort <token>                      # Cancel unclaimed delegation
 rd abort <token> --force              # Cancel claimed delegation
@@ -59,8 +59,8 @@ rd delegate --step 2.1
 rd delegate my-runbook --step 2.1
 
 # With variables
-rd delegate --step 2.1 --var environment=staging
-rd delegate --step 2.1 --var-json config='{"debug":true}'
+rd delegate --step 2.1 --input environment=staging
+rd delegate --step 2.1 --input-json config='{"debug":true}'
 ```
 
 The `delegate` command issues a token (`rdtk_...`) and queues the substep for external execution.
@@ -90,9 +90,9 @@ The child agent runs `rd claim <token>`, which starts the delegated runbook. The
 
 ```bash
 rd claim <token>
-rd claim <token> --var key=value
-rd claim <token> --var-json key=json
-rd claim <token> --var-file path
+rd claim <token> --input key=value
+rd claim <token> --input-json key=json
+rd claim <token> --input-file path
 # ... work through steps ...
 rd pass                # Report success
 ```
@@ -125,7 +125,7 @@ rd abort <token> --force   # Cancel already-claimed delegation
 
 ## Variable Pass-Through
 
-`ContextId` provides shared identity across a delegation tree — children inherit the parent's ContextId automatically via `--var`. Override for meaningful names: `--var ContextId=sprint-42`. Each child gets its own `RunId`; use `ContextId` to correlate across the tree.
+`ContextId` provides shared identity across a delegation tree — children inherit the parent's ContextId automatically via `--input`. Override for meaningful names: `--input ContextId=sprint-42`. Each child gets its own `RunId`; use `ContextId` to correlate across the tree.
 
 ## Context Passing (INPUTS / OUTPUTS)
 
@@ -139,7 +139,7 @@ rd abort <token> --force   # Cancel already-claimed delegation
 **Key rules:**
 - Step OUTPUTS fire on both PASS and FAIL when the completing step declares outputs
 - Frontmatter `outputs:` fire on both `COMPLETE` and `STOPPED`
-- INPUTS sit below CLI `--var` in precedence — `--var` always wins
+- INPUTS sit below CLI `--input` in precedence — `--input` always wins
 - Frontmatter `inputs:` inject at runbook startup (before step 1)
 - `required:` causes a hard error if the variable is missing from all sources
 
@@ -169,7 +169,7 @@ inputs:
 Read the plan from `{{ PlanPath }}`.
 ```
 
-When `write-plan` is delegated first and `review-plan` is delegated second under the same parent's variable space, `PlanPath` flows automatically via the forwarded `--var` flags — no manual threading needed.
+When `write-plan` is delegated first and `review-plan` is delegated second under the same parent's variable space, `PlanPath` flows automatically via the forwarded `--input` flags — no manual threading needed.
 
 ## Patterns
 
@@ -191,7 +191,7 @@ rd delegate --step 2.3
 |---------|-----|
 | `--step 2` when substeps exist | Use qualified ID: `--step 2.1` |
 | `rd abort` on claimed token | Add `--force` for already-claimed tokens |
-| Overriding ContextId unnecessarily | Children inherit automatically; only pass `--var ContextId=...` to override with a meaningful name |
+| Overriding ContextId unnecessarily | Children inherit automatically; only pass `--input ContextId=...` to override with a meaningful name |
 
 ## Reference
 

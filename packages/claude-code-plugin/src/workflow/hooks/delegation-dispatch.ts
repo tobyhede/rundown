@@ -21,7 +21,7 @@ function hashToken(token: string): string {
 }
 
 /**
- * Shell-safe quote a string value for use in a `--var key=value` flag.
+ * Shell-safe quote a string value for use in a `--input key=value` flag.
  * Wraps in single quotes and escapes internal single quotes.
  *
  * @param value - The string value to quote
@@ -54,20 +54,21 @@ export interface DelegationDispatchResult {
 }
 
 /**
- * Build `--var key=value` flags for a child runbook from parent's live variable space.
+ * Build `--input key=value` flags for a child runbook from parent's live variable space.
  *
  * Reads the child runbook's frontmatter `inputs:` keys and, for each key that
- * exists in the parent's vars, produces a `--var key=value` flag. Non-fatal:
+ * exists in the parent's vars, produces a `--input key=value` flag. Non-fatal:
  * returns empty string on any error.
  *
  * @param childRunbookPath - Absolute or cwd-relative path to the child runbook
  * @param parentVars - Parent's live variable space from `rd status --json`
  * @param cwd - Current working directory for resolving relative paths
- * @returns Space-separated `--var` flags string, or empty string
+ * @returns Space-separated flags string of `--input key=value` entries (and
+ *   `--input-json key=json` for non-string values), or empty string on error
  */
-async function buildChildVarFlags(
+export async function buildChildInputFlags(
   childRunbookPath: string,
-  parentVars: Record<string, string>,
+  parentVars: Record<string, unknown>,
   cwd: string,
 ): Promise<string> {
   if (Object.keys(parentVars).length === 0) return '';
@@ -80,10 +81,21 @@ async function buildChildVarFlags(
     const inputKeys = Object.keys(frontmatter?.inputs ?? {});
     // Shell-quote values so spaces and special characters are preserved when the
     // claim command string is executed by Claude Code's task/agent tool.
+    // Non-string values (numbers, booleans, objects) are serialized as JSON and
+    // passed via --input-json so the correct type is preserved.
     const safeKey = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+    const toInputFlag = (key: string): string | undefined => {
+      const value = parentVars[key];
+      if (typeof value === 'string') {
+        return `--input ${key}=${shellQuote(value)}`;
+      }
+      const json = JSON.stringify(value);
+      return `--input-json ${key}=${shellQuote(json)}`;
+    };
     return inputKeys
       .filter((key) => safeKey.test(key) && Object.hasOwn(parentVars, key))
-      .map((key) => `--var ${key}=${shellQuote(parentVars[key])}`)
+      .map((key) => toInputFlag(key))
+      .filter((flag): flag is string => flag !== undefined)
       .join(' ');
   } catch {
     return '';
@@ -126,7 +138,7 @@ export async function handleDelegationDispatch(
   const meta = await session.get('metadata');
   await session.set('metadata', { ...meta, delegation_active_token: token });
 
-  // Best-effort: enrich with current delegation status and inject child --var flags
+  // Best-effort: enrich with current delegation status and inject child --input flags
   let claimCommand = `rd claim ${token}`;
   const statusLines: string[] = [];
   try {
@@ -140,10 +152,10 @@ export async function handleDelegationDispatch(
     if (file) statusLines.push(`Active runbook: ${file}`);
     if (step) statusLines.push(`Current step: ${step}`);
 
-    // Inject --var flags from child runbook's inputs: keys using parent's live vars.
+    // Inject --input flags from child runbook's inputs: keys using parent's live vars.
     // Match the delegation entry by tokenHash to correctly identify the child runbook
     // when multiple delegations are pending simultaneously.
-    const parentVars = (status as { vars?: Record<string, string> }).vars;
+    const parentVars = (status as { vars?: Record<string, unknown> }).vars;
     const delegations = (
       status as {
         delegations?: Array<{ runbook: string; state: string; tokenHash: string }>;
@@ -155,8 +167,8 @@ export async function handleDelegationDispatch(
     );
     const childRunbookPath = pending?.runbook;
     if (childRunbookPath && parentVars) {
-      const varFlags = await buildChildVarFlags(childRunbookPath, parentVars, input.cwd);
-      if (varFlags) claimCommand = `rd claim ${token} ${varFlags}`;
+      const inputFlags = await buildChildInputFlags(childRunbookPath, parentVars, input.cwd);
+      if (inputFlags) claimCommand = `rd claim ${token} ${inputFlags}`;
     }
   } catch {
     // Best-effort enrichment — continue without status

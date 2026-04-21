@@ -11,9 +11,9 @@ Rundown executes markdown runbooks step-by-step. The CLI controls progress — y
 
 ```bash
 rd run <file>                    # Start a runbook
-rd run <file> --var k=v          # Start with variables
-rd run <file> --var-json k=json  # Start with JSON variable
-rd run <file> --var-file <path>  # Load variables from YAML
+rd run <file> --input k=v          # Start with variables
+rd run <file> --input-json k=json  # Start with JSON variable
+rd run <file> --input-file <path>  # Load variables from YAML
 
 rd pass                    # Mark step passed (aliases: yes, ok)
 rd fail                    # Mark step failed (alias: no)
@@ -114,7 +114,7 @@ The `inputs:` mapping form (`PlanPath:` with no value) is intentional: it means 
 Read the plan from `{{ PlanPath }}`.
 ```
 
-Frontmatter `inputs:` provides default values that sit below CLI `--var`, `RD_VAR_*`, and config in precedence — CLI always wins. When a parent delegates to a child, the parent's live variable space is forwarded as `--var` flags on the child's `rd claim` command, so the child sees the parent's OUTPUTS automatically. Use `required:` to fail fast when a variable must be supplied.
+Frontmatter `inputs:` provides default values that sit below CLI `--input`, `RD_INPUT_*`, and config in precedence — CLI always wins. When a parent delegates to a child, the parent's live variable space is forwarded as `--input` flags on the child's `rd claim` command, so the child sees the parent's OUTPUTS automatically. Use `required:` to fail fast when a variable must be supplied.
 
 OUTPUTS apply to both H2 steps and H3 substeps. The step-level `- INPUTS` directive has been removed — use the frontmatter `inputs:` field instead.
 
@@ -130,9 +130,9 @@ When another agent delegates work to you, the plugin injects claim instructions 
 Variables can be passed during claiming:
 
 ```bash
-rd claim <token> --var key=value
-rd claim <token> --var-json key=json
-rd claim <token> --var-file <path>
+rd claim <token> --input key=value
+rd claim <token> --input-json key=json
+rd claim <token> --input-file <path>
 ```
 
 For orchestrating delegation from the parent side, see [delegating-runbooks](../delegating-runbooks/SKILL.md).

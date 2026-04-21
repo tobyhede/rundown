@@ -287,7 +287,7 @@ These reserved words apply to step identifiers, action keywords, and transition 
 
 ## Reserved Variable Names
 
-The following names are reserved for runtime context resolution and cannot be used as variable identifiers in `OUTPUTS`, frontmatter `inputs:` / `required:`, `--var` CLI flags, `--var-file` contents, `.rundown/config.yaml`, or `RD_VAR_*` environment variables:
+The following names are reserved for runtime context resolution and cannot be used as variable identifiers in `OUTPUTS`, frontmatter `inputs:` / `required:`, `--input` CLI flags, `--input-file` contents, `.rundown/config.yaml`, or `RD_INPUT_*` environment variables:
 
 - `step`
 - `index`

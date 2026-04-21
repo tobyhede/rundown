@@ -13,7 +13,7 @@ import {
 
 /**
  * Runbook that auto-passes and completes; has a naked-form frontmatter OUTPUTS
- * declaration. SomeVar is expected to be passed via --var.
+ * declaration. SomeVar is expected to be passed via --input.
  */
 const NAKED_FORM_RUNBOOK = `---
 name: fm-naked-test
@@ -44,7 +44,7 @@ describe('frontmatter outputs — naked form', () => {
   });
 
   it('stores naked-form frontmatter output to state.finalVars on successful run', async () => {
-    const result = runCli('run test.runbook.md --var SomeVar=hello', workspace);
+    const result = runCli('run test.runbook.md --input SomeVar=hello', workspace);
     expect(result.exitCode).toBe(0);
 
     const states = await getAllRunbookStates(workspace);
@@ -71,7 +71,7 @@ rd echo --result fail
 `;
     await writeFile(join(workspace.cwd, 'fail.runbook.md'), FAIL_RUNBOOK);
 
-    const result = runCli('run fail.runbook.md --var SomeVar=hello', workspace);
+    const result = runCli('run fail.runbook.md --input SomeVar=hello', workspace);
     expect(result.exitCode).not.toBe(0);
 
     const states = await getAllRunbookStates(workspace);
@@ -147,7 +147,7 @@ rd echo --result pass
 `;
     await writeFile(join(workspace.cwd, 'uppercase.runbook.md'), UPPERCASE_RUNBOOK);
 
-    const result = runCli('run uppercase.runbook.md --var SomeVar=hello-upper', workspace);
+    const result = runCli('run uppercase.runbook.md --input SomeVar=hello-upper', workspace);
     expect(result.exitCode).toBe(0);
 
     const states = await getAllRunbookStates(workspace);
@@ -184,7 +184,7 @@ Waiting for manual pass.
     await writeFile(join(workspace.cwd, 'prompted.runbook.md'), PROMPTED_RUNBOOK);
 
     // Start the runbook — execution pauses (no command block).
-    const startResult = runCli('run prompted.runbook.md --var SomeVar=manual-value', workspace);
+    const startResult = runCli('run prompted.runbook.md --input SomeVar=manual-value', workspace);
     expect(startResult.exitCode).toBe(0);
 
     // Verify runbook is paused/waiting before issuing pass.
@@ -252,7 +252,7 @@ describe('frontmatter outputs — delegation chain', () => {
 
   /**
    * Parent runbook: auto-passes via rd echo, has frontmatter outputs: [Message].
-   * Message is expected to be passed via --var and stored to finalVars on completion.
+   * Message is expected to be passed via --input and stored to finalVars on completion.
    */
   const PARENT_RUNBOOK = `---
 name: fm-chain-parent
@@ -272,7 +272,7 @@ rd echo --result pass
 
   /**
    * Child runbook: uses {{Message}} in step prompt.
-   * Caller injects --var Message=value (simulating what delegation-dispatch plugin does).
+   * Caller injects --input Message=value (simulating what delegation-dispatch plugin does).
    */
   const CHILD_RUNBOOK = `---
 name: fm-chain-child
@@ -297,7 +297,10 @@ Received: {{Message}}
   });
 
   it('parent frontmatter outputs are stored to state.finalVars on completion', async () => {
-    const parentResult = runCli('run parent.runbook.md --var Message=hello-from-parent', workspace);
+    const parentResult = runCli(
+      'run parent.runbook.md --input Message=hello-from-parent',
+      workspace,
+    );
     expect(parentResult.exitCode).toBe(0);
 
     const states = await getAllRunbookStates(workspace);
@@ -305,9 +308,9 @@ Received: {{Message}}
     expect(parentState.finalVars).toEqual({ Message: 'hello-from-parent' });
   });
 
-  it('child receives Message via --var injection (simulating delegation-dispatch plugin)', async () => {
-    // Simulate the plugin reading parent finalVars and injecting as --var flags.
-    const childResult = runCli('run child.runbook.md --var Message=hello-from-parent', workspace);
+  it('child receives Message via --input injection (simulating delegation-dispatch plugin)', async () => {
+    // Simulate the plugin reading parent finalVars and injecting as --input flags.
+    const childResult = runCli('run child.runbook.md --input Message=hello-from-parent', workspace);
     expect(childResult.exitCode).toBe(0);
 
     // Step_entered event should have {{Message}} substituted.

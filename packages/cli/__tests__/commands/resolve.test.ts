@@ -75,7 +75,7 @@ Server on port {{ port }} in {{ environment }} mode.
     expect(output.variables).toHaveProperty('port', 3000);
   });
 
-  it('resolves with --var flags — CLI vars override frontmatter', async () => {
+  it('resolves with --input flags — CLI vars override frontmatter', async () => {
     const runbookPath = path.join(workspace.cwd, 'override.runbook.md');
     fs.writeFileSync(
       runbookPath,
@@ -90,7 +90,7 @@ Deploy to {{ environment }}.
     );
 
     const result = await runCliInProcess(
-      `resolve ${runbookPath} --var environment=staging`,
+      `resolve ${runbookPath} --input environment=staging`,
       workspace,
     );
     const output = JSON.parse(result.stdout);
@@ -147,7 +147,7 @@ Deploy to {{ environment }}.
   });
 
   it('shows FOR loop with valid array data source', async () => {
-    // Use --var-file to supply array source (bypasses config discovery)
+    // Use --input-file to supply array source (bypasses config discovery)
     const varFile = path.join(workspace.cwd, 'vars.yaml');
     fs.writeFileSync(
       varFile,
@@ -175,7 +175,10 @@ echo {{ item }}
 `,
     );
 
-    const result = await runCliInProcess(`resolve ${runbookPath} --var-file ${varFile}`, workspace);
+    const result = await runCliInProcess(
+      `resolve ${runbookPath} --input-file ${varFile}`,
+      workspace,
+    );
     const output = JSON.parse(result.stdout);
 
     expect(output.valid).toBe(true);
@@ -325,7 +328,7 @@ echo hello
     );
 
     const result = await runCliInProcess(
-      `resolve ${runbookPath} --var-file ${badVarFile}`,
+      `resolve ${runbookPath} --input-file ${badVarFile}`,
       workspace,
     );
     const output = JSON.parse(result.stdout);
@@ -354,7 +357,7 @@ Say {{ greeting }} to {{ recipient }}.
     );
 
     const result = await runCliInProcess(
-      `resolve ${runbookPath} --var-file ${badVarFile}`,
+      `resolve ${runbookPath} --input-file ${badVarFile}`,
       workspace,
     );
     const output = JSON.parse(result.stdout);
@@ -386,7 +389,7 @@ echo hello
     expect(output.kind).toBe('resolve');
   });
 
-  it('rejects invalid --var key at parse time', async () => {
+  it('rejects invalid --input key at parse time', async () => {
     const runbookPath = path.join(workspace.cwd, 'warn-vars.runbook.md');
     fs.writeFileSync(
       runbookPath,
@@ -397,11 +400,11 @@ echo hello
 
     // bad!=value has an invalid key (contains '!'), which now fails at parse time
     const result = await runCliInProcess(
-      `resolve ${runbookPath} --var bad!=value --text`,
+      `resolve ${runbookPath} --input bad!=value --text`,
       workspace,
     );
 
-    // parseVarOption rejects invalid identifiers at parse time via InvalidArgumentError
+    // parseInputOption rejects invalid identifiers at parse time via InvalidArgumentError
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr).toContain('Invalid variable');
   });
@@ -502,7 +505,7 @@ Say {{ greeting }}.
   });
 
   describe('RunbookRef resolution', () => {
-    it('resolves RunbookRef with --var to concrete path', async () => {
+    it('resolves RunbookRef with --input to concrete path', async () => {
       const runbookPath = path.join(workspace.cwd, 'meta.runbook.md');
       fs.writeFileSync(
         runbookPath,
@@ -517,7 +520,7 @@ inputs:
       );
 
       const result = await runCliInProcess(
-        `resolve ${runbookPath} --var Target=child.runbook.md`,
+        `resolve ${runbookPath} --input Target=child.runbook.md`,
         workspace,
       );
       const output = JSON.parse(result.stdout);
@@ -561,7 +564,7 @@ inputs:
       );
 
       const result = await runCliInProcess(
-        `resolve ${runbookPath} --var Target=rundown:write-plan`,
+        `resolve ${runbookPath} --input Target=rundown:write-plan`,
         workspace,
       );
       const output = JSON.parse(result.stdout);

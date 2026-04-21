@@ -597,7 +597,7 @@ describe('Inline linkage integration (rd run --step)', () => {
       expect(templateVars['context.parent.step']).toBeDefined();
     });
 
-    it('CLI --var on inline child overrides inherited parent vars', async () => {
+    it('CLI --input on inline child overrides inherited parent vars', async () => {
       await writeParentRunbook({ Region: 'us-west' });
       await writePassingChild();
 
@@ -607,9 +607,9 @@ describe('Inline linkage integration (rd run --step)', () => {
       const parentState = await getActiveState(workspace);
       const parentRunId = parentState!.id as string;
 
-      // Pass --var to override the inherited Region
+      // Pass --input to override the inherited Region
       result = await runCliInProcess(
-        ['run', 'child.runbook.md', '--step', '1.1', '--var', 'Region=eu-central', '--text'],
+        ['run', 'child.runbook.md', '--step', '1.1', '--input', 'Region=eu-central', '--text'],
         workspace,
       );
       expect(result.exitCode).toBe(0);

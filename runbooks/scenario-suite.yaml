@@ -182,7 +182,7 @@ cases:
     description: Template variable bounds expand at parse time
     file: for-loops/for-variable-bounds.runbook.md
     commands:
-      - rd run --var Max=3 for-variable-bounds.runbook.md
+      - rd run --input Max=3 for-variable-bounds.runbook.md
     result: COMPLETE
 
   # goto/ (new coverage)
@@ -202,10 +202,10 @@ cases:
     result: COMPLETE
 
   variable-precedence-override:
-    description: CLI --var overrides frontmatter default
+    description: CLI --input overrides frontmatter default
     file: variables/variable-precedence.runbook.md
     commands:
-      - rd run --var greeting=overridden variable-precedence.runbook.md
+      - rd run --input greeting=overridden variable-precedence.runbook.md
     result: COMPLETE
 
   # transitions/ (new coverage)

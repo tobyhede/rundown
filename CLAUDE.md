@@ -21,9 +21,9 @@ npm install -g @rundown-org/cli
 ```bash
 rundown run [file]       # Run a runbook (JSON output by default)
 rundown run [file] --text # Output execution events as human-readable text
-rundown run [file] --var key=value  # Set template variable (repeatable, omit =value to inherit from env)
-rundown run [file] --var-json key=json  # Set variable with JSON value (repeatable)
-rundown run [file] --var-file path  # Load variables from YAML file (repeatable)
+rundown run [file] --input key=value  # Set template variable (repeatable, omit =value to inherit from env)
+rundown run [file] --input-json key=json  # Set variable with JSON value (repeatable)
+rundown run [file] --input-file path  # Load variables from YAML file (repeatable)
 rundown run [file] --prompted  # Show commands without auto-executing
 rundown run [file] --step <stepId>   # Link child to parent substep (inline nested execution)
 rundown run [file] --step <stepId> --prompted  # Jump to step after starting (goto)
@@ -66,14 +66,14 @@ rundown prompt <content> # Output content in markdown fences
 rundown delegate                        # Infer substep and runbook from state
 rundown delegate --step <id>            # Infer runbook from substep reference
 rundown delegate <runbook> --step <id>  # Explicit delegation
-rundown delegate <runbook> --step <id> --var key=value  # With variables (repeatable)
-rundown delegate <runbook> --step <id> --var-json key=json  # With JSON variables
-rundown delegate <runbook> --step <id> --var-file path  # Load variables from YAML file (repeatable)
+rundown delegate <runbook> --step <id> --input key=value  # With variables (repeatable)
+rundown delegate <runbook> --step <id> --input-json key=json  # With JSON variables
+rundown delegate <runbook> --step <id> --input-file path  # Load variables from YAML file (repeatable)
 rundown delegate --step <id> --index <number>  # FOR loop iteration to target
 rundown claim <token>                   # Claim a delegation token and launch child
-rundown claim <token> --var key=value   # Claim with variables (repeatable)
-rundown claim <token> --var-json key=json  # Claim with JSON variables
-rundown claim <token> --var-file path   # Load variables from YAML file (repeatable)
+rundown claim <token> --input key=value   # Claim with variables (repeatable)
+rundown claim <token> --input-json key=json  # Claim with JSON variables
+rundown claim <token> --input-file path   # Load variables from YAML file (repeatable)
 rundown abort <token>                   # Cancel a delegation token (--force for claimed)
 ```
 
@@ -111,11 +111,11 @@ Template variables use Handlebars syntax `{{variableName}}` and are expanded at 
 
 **CLI Example:**
 ```bash
-rundown run deploy.md --var environment=staging --var version=1.2.3
-rundown run deploy.md --var-file base.yaml --var-file env.yaml  # Layer multiple files
-rundown run deploy.md --var API_KEY                              # Inherit from env
-rundown run deploy.md --var-json 'items=["a","b","c"]'          # JSON array value
-RD_VAR_environment=staging rundown run deploy.md                 # Environment bridge
+rundown run deploy.md --input environment=staging --input version=1.2.3
+rundown run deploy.md --input-file base.yaml --input-file env.yaml  # Layer multiple files
+rundown run deploy.md --input API_KEY                              # Inherit from env
+rundown run deploy.md --input-json 'items=["a","b","c"]'          # JSON array value
+RD_INPUT_environment=staging rundown run deploy.md                 # Environment bridge
 ```
 
 **Frontmatter Example:**
@@ -136,13 +136,13 @@ Server running on port {{ port }} in {{ environment }} mode.
 Deploy plan at {{ PlanPath }}.
 ```
 
-The `required` field declares variables the caller must provide. Required variables must not appear in `inputs:` (they have no default). Missing required variables produce a hard error at resolution time. Provide them via `--var`, `--var-file`, config, `RD_VAR_*` env vars, or delegation inheritance.
+The `required` field declares variables the caller must provide. Required variables must not appear in `inputs:` (they have no default). Missing required variables produce a hard error at resolution time. Provide them via `--input`, `--input-file`, config, `RD_INPUT_*` env vars, or delegation inheritance.
 
 **Notes:**
 - Variable names must match pattern `/^[a-zA-Z_][a-zA-Z0-9_]*$/`
 - Undefined variables are preserved as literal `{{variable}}` text
-- Frontmatter inputs support string, number, and boolean values (converted to strings). For arrays, use `--var-json` inline or `.rundown/config.yaml` / `--var-file`. For `file:` data sources, use `.rundown/config.yaml` or `--var-file`
-- `--var KEY` (without `=`) inherits the value of environment variable `KEY`
+- Frontmatter inputs support string, number, and boolean values (converted to strings). For arrays, use `--input-json` inline or `.rundown/config.yaml` / `--input-file`. For `file:` data sources, use `.rundown/config.yaml` or `--input-file`
+- `--input KEY` (without `=`) inherits the value of environment variable `KEY`
 
 ### Data Sources
 
@@ -150,20 +150,20 @@ Variables whose values are arrays or `file:`-prefixed paths become **data source
 
 | Value Type | Template Variable | Data Source | Example |
 |------------|-------------------|-------------|---------|
-| JSON array (`--var-json`) | Comma-joined | Array DataSource | `--var-json items='["a","b","c"]'` |
-| `file:path/to/data.jsonl` | JsonArrayStream ref | File DataSource | `--var items=file:data.jsonl` |
-| `file:path/to/data.json` | JsonArray/JsonObject | File DataSource (if array) | `--var items=file:data.json` |
+| JSON array (`--input-json`) | Comma-joined | Array DataSource | `--input-json items='["a","b","c"]'` |
+| `file:path/to/data.jsonl` | JsonArrayStream ref | File DataSource | `--input items=file:data.jsonl` |
+| `file:path/to/data.json` | JsonArray/JsonObject | File DataSource (if array) | `--input items=file:data.json` |
 | Array (YAML) | Comma-joined | Array DataSource | `items: [a, b, c]` in config |
-| Scalar | String value | Not set | `--var name=value` |
+| Scalar | String value | Not set | `--input name=value` |
 
 Data sources are referenced in FOR clauses: `FOR item IN {{ items }}`.
 
 **File formats:** Only `.json` and `.jsonl` extensions are supported. `.jsonl` files are parsed as JSON Lines (one JSON value per line). Each line may contain any JSON value (string, number, boolean, null, array, or object). When the loop variable holds a parsed JSON object, dotted field access is supported in templates (e.g., `{{item.name}}`). Using `{{item}}` alone renders the serialized JSON string. `.json` files are eagerly loaded as a `JsonObject` or `JsonArray` value.
 
 **Notes:**
-- Arrays can be passed inline via `--var-json` or in `.rundown/config.yaml` and `--var-file` (not in frontmatter `inputs:`). `file:` values are supported in `.rundown/config.yaml` and `--var-file` only
+- Arrays can be passed inline via `--input-json` or in `.rundown/config.yaml` and `--input-file` (not in frontmatter `inputs:`). `file:` values are supported in `.rundown/config.yaml` and `--input-file` only
 - File paths must stay within the project root (symlinks resolved, traversal blocked)
-- `file:` values are routed into `vars` as typed values (`JsonArrayStream` for `.jsonl`, `JsonArray`/`JsonObject` for `.json`)
+- `file:` values are routed into the internal variable store as typed values (`JsonArrayStream` for `.jsonl`, `JsonArray`/`JsonObject` for `.json`)
 
 **Note:** The `scenarios` frontmatter field is an internal testing/demo feature, not part of the public Rundown format specification. See [docs/SCENARIOS.md](docs/SCENARIOS.md).
 
@@ -261,7 +261,7 @@ See [docs/SECURITY.md](docs/SECURITY.md) for full security policy documentation.
 
 - `RUNDOWN_LOG=0` - Disable logging (enabled by default)
 - `RUNDOWN_LOG_LEVEL=debug|info|warn|error` - Set log verbosity (default: info)
-- `RD_VAR_<name>=<value>` - Set template variable `<name>` via environment (prefix stripped). E.g., `RD_VAR_environment=staging` sets `{{environment}}`
+- `RD_INPUT_<name>=<value>` - Set template variable `<name>` via environment (prefix stripped). E.g., `RD_INPUT_environment=staging` sets `{{environment}}`
 - `NO_COLOR=1` - Disable colored output (standard convention)
 - `FORCE_COLOR=1` - Force colored output even in non-TTY environments
 

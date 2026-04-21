@@ -3,7 +3,7 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createTestWorkspace, runCliInProcess, type TestWorkspace } from '../helpers/test-utils.js';
 
-describe('rd run --var and --var-file', () => {
+describe('rd run --input and --input-file', () => {
   let workspace: TestWorkspace;
 
   beforeEach(async () => {
@@ -14,7 +14,7 @@ describe('rd run --var and --var-file', () => {
     await workspace.cleanup();
   });
 
-  it('should accept --var-file option', async () => {
+  it('should accept --input-file option', async () => {
     const runbookContent = `# Test Runbook
 
 ## 1. Echo Test
@@ -29,7 +29,7 @@ rd echo {{message}}
     await writeFile(join(workspace.cwd, 'vars.yaml'), 'message: hello');
 
     const result = await runCliInProcess(
-      'run test.runbook.md --var-file vars.yaml --text',
+      'run test.runbook.md --input-file vars.yaml --text',
       workspace,
     );
 
@@ -37,7 +37,7 @@ rd echo {{message}}
     expect(result.stdout).toContain('hello');
   });
 
-  it('should accept --var option', async () => {
+  it('should accept --input option', async () => {
     const runbookContent = `# Test Runbook
 
 ## 1. Echo Test
@@ -50,7 +50,7 @@ rd echo {{message}}
     await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
 
     const result = await runCliInProcess(
-      'run test.runbook.md --var message=world --text',
+      'run test.runbook.md --input message=world --text',
       workspace,
     );
 
@@ -58,7 +58,7 @@ rd echo {{message}}
     expect(result.stdout).toContain('world');
   });
 
-  it('should allow multiple --var options', async () => {
+  it('should allow multiple --input options', async () => {
     const runbookContent = `# Test Runbook
 
 ## 1. Echo Test
@@ -71,7 +71,7 @@ rd echo {{a}} {{b}}
     await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
 
     const result = await runCliInProcess(
-      'run test.runbook.md --var a=first --var b=second --text',
+      'run test.runbook.md --input a=first --input b=second --text',
       workspace,
     );
 
@@ -80,7 +80,7 @@ rd echo {{a}} {{b}}
     expect(result.stdout).toContain('second');
   });
 
-  it('should inherit env var value with --var KEY (no =)', async () => {
+  it('should inherit env var value with --input KEY (no =)', async () => {
     const runbookContent = `# Test Runbook
 
 ## 1. Echo Test
@@ -95,7 +95,7 @@ rd echo {{MY_TEST_VAR}}
     process.env.MY_TEST_VAR = 'inherited-value';
     try {
       const result = await runCliInProcess(
-        'run test.runbook.md --var MY_TEST_VAR --text',
+        'run test.runbook.md --input MY_TEST_VAR --text',
         workspace,
       );
 
@@ -106,7 +106,7 @@ rd echo {{MY_TEST_VAR}}
     }
   });
 
-  it('should merge multiple --var-file options', async () => {
+  it('should merge multiple --input-file options', async () => {
     const runbookContent = `# Test Runbook
 
 ## 1. Echo Test
@@ -121,7 +121,7 @@ rd echo {{alpha}} {{beta}}
     await writeFile(join(workspace.cwd, 'b.yaml'), 'beta: from-b');
 
     const result = await runCliInProcess(
-      'run test.runbook.md --var-file a.yaml --var-file b.yaml --text',
+      'run test.runbook.md --input-file a.yaml --input-file b.yaml --text',
       workspace,
     );
 
@@ -130,7 +130,7 @@ rd echo {{alpha}} {{beta}}
     expect(result.stdout).toContain('from-b');
   });
 
-  it('should pick up RD_VAR_* environment variables', async () => {
+  it('should pick up RD_INPUT_* environment variables', async () => {
     const runbookContent = `# Test Runbook
 
 ## 1. Echo Test
@@ -142,18 +142,23 @@ rd echo {{message}}
 `;
     await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
 
-    process.env.RD_VAR_message = 'hello-from-env';
+    const prevMessage = process.env.RD_INPUT_message;
+    process.env.RD_INPUT_message = 'hello-from-env';
     try {
       const result = await runCliInProcess('run test.runbook.md --text', workspace);
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('hello-from-env');
     } finally {
-      delete process.env.RD_VAR_message;
+      if (prevMessage === undefined) {
+        delete process.env.RD_INPUT_message;
+      } else {
+        process.env.RD_INPUT_message = prevMessage;
+      }
     }
   });
 
-  it('should accept --var-json for inline JSON values', async () => {
+  it('should accept --input-json for inline JSON values', async () => {
     const runbookContent = `# Test Runbook
 
 ## 1. Echo Test
@@ -166,7 +171,7 @@ rd echo {{count}}
     await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
 
     const result = await runCliInProcess(
-      'run test.runbook.md --var-json count=42 --text',
+      'run test.runbook.md --input-json count=42 --text',
       workspace,
     );
 
@@ -174,7 +179,7 @@ rd echo {{count}}
     expect(result.stdout).toContain('42');
   });
 
-  it('should reject malformed --var-json values', async () => {
+  it('should reject malformed --input-json values', async () => {
     const runbookContent = `# Test Runbook
 
 ## 1. Echo Test
@@ -187,7 +192,7 @@ rd echo {{count}}
     await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
 
     const result = await runCliInProcess(
-      'run test.runbook.md --var-json count=not-json --text',
+      'run test.runbook.md --input-json count=not-json --text',
       workspace,
     );
 

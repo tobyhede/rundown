@@ -372,15 +372,15 @@ export function extractRunbookReferences(commands: string[]): string[] {
 }
 
 /**
- * Extract relative file paths from `--var-file` arguments in command strings.
+ * Extract relative file paths from `--input-file` arguments in command strings.
  *
- * Scans each command for `--var-file <path>` patterns and returns
+ * Scans each command for `--input-file <path>` or `--input-file=<path>` patterns and returns
  * deduplicated results preserving insertion order.
  *
  * @param commands - Array of command strings to scan
- * @returns Array of unique relative file paths found in --var-file arguments
+ * @returns Array of unique relative file paths found in --input-file arguments
  */
-export function extractVarFileReferences(commands: string[]): string[] {
+export function extractInputFileReferences(commands: string[]): string[] {
   const seen = new Set<string>();
   const result: string[] = [];
 
@@ -389,12 +389,17 @@ export function extractVarFileReferences(commands: string[]): string[] {
     if (!rdMatch) continue;
     const args = shellParse(rdMatch[1]).filter((a): a is string => typeof a === 'string');
     for (let i = 0; i < args.length; i++) {
-      if (args[i] === '--var-file' && i + 1 < args.length) {
-        const filePath = args[i + 1];
-        if (!seen.has(filePath)) {
-          seen.add(filePath);
-          result.push(filePath);
-        }
+      const arg = args[i];
+      let filePath: string | undefined;
+      if (arg === '--input-file' && i + 1 < args.length) {
+        filePath = args[i + 1];
+      } else if (arg.startsWith('--input-file=')) {
+        filePath = arg.slice('--input-file='.length);
+      }
+
+      if (filePath !== undefined && !seen.has(filePath)) {
+        seen.add(filePath);
+        result.push(filePath);
       }
     }
   }

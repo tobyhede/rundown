@@ -86,7 +86,7 @@ ls "$(rdpath --dir {{ WorkPath }} --ctx {{ ContextId }})"/*-pass*.md
 
 ### How ContextId Flows
 
-`ContextId` is a built-in variable generated once per execution. Children in a delegation tree inherit the parent's `ContextId` automatically via `--var`, so all runbooks in the same delegation tree share the same context directory. This allows the synthesis step to find all review findings without knowing which children produced them.
+`ContextId` is a built-in variable generated once per execution. Children in a delegation tree inherit the parent's `ContextId` automatically via `--input`, so all runbooks in the same delegation tree share the same context directory. This allows the synthesis step to find all review findings without knowing which children produced them.
 
 ## See Also
 

@@ -13,7 +13,7 @@ scenarios:
   resolved:
     description: Variable bounds expand at parse time, FOR iterates normally
     commands:
-      - rd run --var N=2 for-prompted-fallback.runbook.md
+      - rd run --input N=2 for-prompted-fallback.runbook.md
     result: COMPLETE
 ---
 

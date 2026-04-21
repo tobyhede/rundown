@@ -9,7 +9,7 @@ import {
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
-import { parseVarOption, parseVarJsonOption, collect } from '../helpers/option-utils.js';
+import { parseInputOption, parseInputJsonOption, collect } from '../helpers/option-utils.js';
 import { claimAndLaunch, type RunPipelineContext } from '../helpers/runbook-pipeline.js';
 import { handleParentCompletion, extractParentLinkage } from '../helpers/delegation-completion.js';
 
@@ -27,31 +27,31 @@ export function registerClaimCommand(program: Command): void {
     .description('Claim a delegation token and launch the child runbook')
     .option('--text', 'Output as human-readable text')
     .addOption(
-      new Option('--var-file <path>', 'Load variables from YAML file (repeatable)')
+      new Option('--input-file <path>', 'Load inputs from YAML file (repeatable)')
         .argParser(collect)
         .default([])
-        .helpGroup('Variable options:'),
+        .helpGroup('Input options:'),
     )
     .addOption(
-      new Option('--var <key=value>', 'Set variable (repeatable, omit =value to inherit from env)')
-        .argParser(parseVarOption)
+      new Option('--input <key=value>', 'Set input (repeatable, omit =value to inherit from env)')
+        .argParser(parseInputOption)
         .default([])
-        .helpGroup('Variable options:'),
+        .helpGroup('Input options:'),
     )
     .addOption(
-      new Option('--var-json <key=json>', 'Set variable with JSON value (repeatable)')
-        .argParser(parseVarJsonOption)
+      new Option('--input-json <key=json>', 'Set input with JSON value (repeatable)')
+        .argParser(parseInputJsonOption)
         .default([])
-        .helpGroup('Variable options:'),
+        .helpGroup('Input options:'),
     )
     .action(
       async (
         token: string,
         options: {
           text?: boolean;
-          varFile?: string[];
-          var?: string[];
-          varJson?: string[];
+          inputFile?: string[];
+          input?: string[];
+          inputJson?: string[];
         },
       ) => {
         await withErrorHandling(
@@ -72,12 +72,12 @@ export function registerClaimCommand(program: Command): void {
               cwd,
             };
 
-            const varOpts = {
-              varFile: options.varFile,
-              var: options.var,
-              varJson: options.varJson,
+            const inputOpts = {
+              inputFile: options.inputFile,
+              input: options.input,
+              inputJson: options.inputJson,
             };
-            const result = await claimAndLaunch(ctx, token, varOpts);
+            const result = await claimAndLaunch(ctx, token, inputOpts);
 
             if (!result.ok) {
               throw Errors.unknown(result.error);

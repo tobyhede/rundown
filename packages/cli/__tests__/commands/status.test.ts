@@ -275,7 +275,7 @@ rd echo done
     await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
 
     // Run with variable to store runbookSrc
-    await runCliInProcess('run test.runbook.md --var message=hello --prompted --text', workspace);
+    await runCliInProcess('run test.runbook.md --input message=hello --prompted --text', workspace);
 
     // Delete the source file to prove we're using runbookSrc, not disk
     await rm(join(workspace.cwd, 'test.runbook.md'));

@@ -40,13 +40,13 @@ jest.unstable_mockModule('shell-quote', () => ({
   parse: jest.fn().mockImplementation((str: string) => str.split(/\s+/)),
 }));
 
-// Mock command-sequence (pass through extract helpers so extractReferencedRunbooks/var-file copying works)
+// Mock command-sequence (pass through extract helpers so extractReferencedRunbooks/input-file copying works)
 const actualCommandSequence = await import('../../src/helpers/command-sequence');
 jest.unstable_mockModule('../../src/helpers/command-sequence', () => ({
   executeCommandSequence: jest.fn(),
   matchStepAssertions: jest.fn(),
   extractRunbookReferences: actualCommandSequence.extractRunbookReferences,
-  extractVarFileReferences: actualCommandSequence.extractVarFileReferences,
+  extractInputFileReferences: actualCommandSequence.extractInputFileReferences,
 }));
 
 // Import after mocking
@@ -533,5 +533,51 @@ describe('executeScenario', () => {
     await expect(
       executeScenario(loaded as any, 'happy', true, mockOutput, '/cli/dist/cli.js'),
     ).rejects.toThrow(/searched in:/);
+  });
+
+  describe('input-file path traversal guard', () => {
+    beforeEach(() => {
+      jest.mocked(executeCommandSequence).mockResolvedValue({
+        terminalResult: 'COMPLETE',
+        transitions: [],
+        capturedTokens: [],
+      });
+    });
+
+    it('rejects absolute --input-file paths', async () => {
+      const loaded = {
+        filePath: '/test/patterns/my.runbook.md',
+        name: 'my-runbook',
+        description: 'Test',
+        scenarios: {
+          s: {
+            result: 'COMPLETE',
+            commands: ['rd run my.runbook.md --input-file /etc/passwd'],
+          },
+        },
+      };
+
+      await expect(
+        executeScenario(loaded as any, 's', true, mockOutput, '/cli/dist/cli.js'),
+      ).rejects.toThrow(/Unsafe input-file path in scenario/);
+    });
+
+    it('rejects --input-file paths with .. traversal', async () => {
+      const loaded = {
+        filePath: '/test/patterns/my.runbook.md',
+        name: 'my-runbook',
+        description: 'Test',
+        scenarios: {
+          s: {
+            result: 'COMPLETE',
+            commands: ['rd run my.runbook.md --input-file=../outside/data.yaml'],
+          },
+        },
+      };
+
+      await expect(
+        executeScenario(loaded as any, 's', true, mockOutput, '/cli/dist/cli.js'),
+      ).rejects.toThrow(/Unsafe input-file path in scenario/);
+    });
   });
 });

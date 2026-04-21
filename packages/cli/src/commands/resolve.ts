@@ -16,7 +16,7 @@ import type {
 } from '@rundown-org/core';
 import { isJsonArray, isJsonArrayStream } from '@rundown-org/core';
 import { OutputEmitter } from '../services/output-emitter.js';
-import { parseVarOption, parseVarJsonOption, collect } from '../helpers/option-utils.js';
+import { parseInputOption, parseInputJsonOption, collect } from '../helpers/option-utils.js';
 import { prepareRunbook } from '../helpers/runbook-pipeline.js';
 
 /**
@@ -49,12 +49,12 @@ function buildSourceInfo(
  * Commander dispatch and is not part of these options.
  */
 interface ResolveOptions {
-  /** Paths to YAML variable files (repeatable) */
-  varFile?: string[];
-  /** CLI variable assignments (key=value) */
-  var?: string[];
-  /** CLI variable assignments with JSON values (key=json) */
-  varJson?: string[];
+  /** Paths to YAML input files (repeatable) */
+  inputFile?: string[];
+  /** CLI input assignments (key=value) */
+  input?: string[];
+  /** CLI input assignments with JSON values (key=json) */
+  inputJson?: string[];
   /** Output as human-readable text instead of JSON */
   text?: boolean;
 }
@@ -69,22 +69,22 @@ export function registerResolveCommand(program: Command): void {
     .command('resolve <file>')
     .description('Resolve and validate runbook variables and data sources')
     .addOption(
-      new Option('--var-file <path>', 'Load variables from YAML file (repeatable)')
+      new Option('--input-file <path>', 'Load inputs from YAML file (repeatable)')
         .argParser(collect)
         .default([])
-        .helpGroup('Variable options:'),
+        .helpGroup('Input options:'),
     )
     .addOption(
-      new Option('--var <key=value>', 'Set variable (repeatable, omit =value to inherit from env)')
-        .argParser(parseVarOption)
+      new Option('--input <key=value>', 'Set input (repeatable, omit =value to inherit from env)')
+        .argParser(parseInputOption)
         .default([])
-        .helpGroup('Variable options:'),
+        .helpGroup('Input options:'),
     )
     .addOption(
-      new Option('--var-json <key=json>', 'Set variable with JSON value (repeatable)')
-        .argParser(parseVarJsonOption)
+      new Option('--input-json <key=json>', 'Set input with JSON value (repeatable)')
+        .argParser(parseInputJsonOption)
         .default([])
-        .helpGroup('Variable options:'),
+        .helpGroup('Input options:'),
     )
     .option('--text', 'Output as human-readable text')
     .action(async (file: string, options: ResolveOptions) => {
@@ -93,7 +93,7 @@ export function registerResolveCommand(program: Command): void {
 
       const result = await prepareRunbook(
         file,
-        { varFile: options.varFile, var: options.var, varJson: options.varJson },
+        { inputFile: options.inputFile, input: options.input, inputJson: options.inputJson },
         cwd,
       );
 

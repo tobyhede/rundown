@@ -106,7 +106,7 @@ The plugin never destroys child runbook state. Incomplete delegations preserve t
 - Resolved completions drain in deterministic substep order. Aggregation waits for all DEFER'd results before evaluating the step-level transition.
 - When a completion arrives for a frontier substep that is not at the active cursor, it is **deferred** — stored and applied when the cursor reaches that substep.
 
-**Data flow between parent and child:** Delegated runbooks exchange values through context passing — a parent step's `- OUTPUTS` directive writes values into the live machine variable space when that step transition completes, and frontmatter `outputs:` writes terminal values into `state.finalVars`. Children inherit the parent's `ContextId` via `--var`, and parent/child hand-off happens through forwarded live vars and `finalVars`, not through a shared `outputs.json` file.
+**Data flow between parent and child:** Delegated runbooks exchange values through context passing — a parent step's `- OUTPUTS` directive writes values into the live machine variable space when that step transition completes, and frontmatter `outputs:` writes terminal values into `state.finalVars`. Children inherit the parent's `ContextId` via `--input`, and parent/child hand-off happens through forwarded live vars and `finalVars`, not through a shared `outputs.json` file.
 
 See [Section 4: Control Flow](SPEC.md#4-control-flow) for transition semantics.
 

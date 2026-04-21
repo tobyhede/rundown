@@ -115,7 +115,7 @@ inputs:
 ---
 ```
 
-`inputs:` is a key-value map. Defaults sit below CLI `--var`, `RD_VAR_*`, and config in precedence — CLI always wins. When a parent delegates to a child, the parent's live variable space is forwarded as `--var` flags on the child's `rd claim` command, so child steps see parent OUTPUTS automatically.
+`inputs:` is a key-value map. Defaults sit below CLI `--input`, `RD_INPUT_*`, and config in precedence — CLI always wins. When a parent delegates to a child, the parent's live variable space is forwarded as `--input` flags on the child's `rd claim` command, so child steps see parent OUTPUTS automatically.
 
 Use `required:` alongside `inputs:` when the runbook cannot proceed without the variable (causes a hard error if missing from all sources). Required variables must not appear in `inputs:`.
 
@@ -221,7 +221,7 @@ Use `{{ variableName }}` syntax. See [SPEC.md §6 Templating](../../../../docs/S
 Key authoring notes:
 - Undefined variables preserved as literal `{{ variable }}` text
 - Frontmatter `inputs:` supports string, number, boolean (not arrays/files)
-- Data sources for FOR loops: use `.rundown/config.yaml` or `--var-file`
+- Data sources for FOR loops: use `.rundown/config.yaml` or `--input-file`
 
 ## Common Mistakes
 

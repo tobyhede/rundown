@@ -20,7 +20,7 @@ import {
   validateIndexRequiresStep,
 } from '../helpers/index-option.js';
 import { collectCliFlags, routeExtraVars } from '../services/variable-discovery.js';
-import { parseVarOption, parseVarJsonOption, collect } from '../helpers/option-utils.js';
+import { parseInputOption, parseInputJsonOption, collect } from '../helpers/option-utils.js';
 import type { TemplateVarValue } from '@rundown-org/core';
 
 /**
@@ -39,24 +39,24 @@ export function registerDelegateCommand(program: Command): void {
     .option('--index <number>', 'FOR loop iteration to target (requires --step)')
     .addOption(
       new Option(
-        '--var <key=value>',
-        'Set variable for child context (repeatable, omit =value to inherit from env)',
+        '--input <key=value>',
+        'Set input for child context (repeatable, omit =value to inherit from env)',
       )
-        .argParser(parseVarOption)
+        .argParser(parseInputOption)
         .default([])
-        .helpGroup('Variable options:'),
+        .helpGroup('Input options:'),
     )
     .addOption(
-      new Option('--var-json <key=json>', 'Set variable with JSON value (repeatable)')
-        .argParser(parseVarJsonOption)
+      new Option('--input-json <key=json>', 'Set input with JSON value (repeatable)')
+        .argParser(parseInputJsonOption)
         .default([])
-        .helpGroup('Variable options:'),
+        .helpGroup('Input options:'),
     )
     .addOption(
-      new Option('--var-file <path>', 'Load variables from YAML file (repeatable)')
+      new Option('--input-file <path>', 'Load inputs from YAML file (repeatable)')
         .argParser(collect)
         .default([])
-        .helpGroup('Variable options:'),
+        .helpGroup('Input options:'),
     )
     .option('--text', 'Output as human-readable text')
     .action(
@@ -65,9 +65,9 @@ export function registerDelegateCommand(program: Command): void {
         options: {
           step?: string;
           index?: string;
-          var: string[];
-          varJson?: string[];
-          varFile?: string[];
+          input: string[];
+          inputJson?: string[];
+          inputFile?: string[];
           text?: boolean;
         },
       ) => {
@@ -130,7 +130,7 @@ export function registerDelegateCommand(program: Command): void {
 
             // Parse extra vars through the standard normalization pipeline
             const rawVars = await collectCliFlags(
-              { varFile: options.varFile, var: options.var, varJson: options.varJson },
+              { inputFile: options.inputFile, input: options.input, inputJson: options.inputJson },
               cwd,
             );
 

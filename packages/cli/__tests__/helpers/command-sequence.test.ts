@@ -5,6 +5,7 @@ import {
   formatStepAssertionDescription,
   substituteTokens,
   extractRunbookReferences,
+  extractInputFileReferences,
 } from '../../src/helpers/command-sequence.js';
 
 describe('parseJsonLines', () => {
@@ -416,5 +417,19 @@ describe('extractRunbookReferences', () => {
   it('still extracts bare filename (regression)', () => {
     const refs = extractRunbookReferences(['rd run child.runbook.md']);
     expect(refs).toContain('child.runbook.md');
+  });
+});
+
+describe('extractInputFileReferences', () => {
+  it('extracts --input-file=<path> (equals form)', () => {
+    const commands = ['rd run my.runbook.md --input-file=data/sources.yaml'];
+    const result = extractInputFileReferences(commands);
+    expect(result).toEqual(['data/sources.yaml']);
+  });
+
+  it('extracts --input-file <path> (space form)', () => {
+    const commands = ['rd run my.runbook.md --input-file data/sources.yaml'];
+    const result = extractInputFileReferences(commands);
+    expect(result).toEqual(['data/sources.yaml']);
   });
 });

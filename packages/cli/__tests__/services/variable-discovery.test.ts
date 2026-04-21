@@ -462,8 +462,8 @@ describe('resolveVariables', () => {
   });
 
   describe('scalar routing', () => {
-    it('routes --var scalar to vars only', async () => {
-      const result = await resolveVariables({ var: ['env=staging'] }, tmpDir);
+    it('routes --input scalar to vars only', async () => {
+      const result = await resolveVariables({ input: ['env=staging'] }, tmpDir);
       expect(result.vars.env).toBe('staging');
     });
   });
@@ -484,9 +484,9 @@ describe('resolveVariables', () => {
       expect(result.vars.greeting).toBeUndefined();
     });
 
-    it('CLI --var overrides frontmatter vars', async () => {
+    it('CLI --input overrides frontmatter vars', async () => {
       const result = await resolveVariables(
-        { frontmatterVars: { env: 'development' }, var: ['env=production'] },
+        { frontmatterVars: { env: 'development' }, input: ['env=production'] },
         tmpDir,
       );
       expect(result.vars.env).toBe('production');
@@ -495,21 +495,23 @@ describe('resolveVariables', () => {
 
   describe('reserved runtime keys', () => {
     it('rejects reserved keys with an error', async () => {
-      await expect(resolveVariables({ var: ['Step=shadow'] }, tmpDir)).rejects.toThrow(
+      await expect(resolveVariables({ input: ['Step=shadow'] }, tmpDir)).rejects.toThrow(
         /reserved runtime variable/i,
       );
     });
 
     it('rejects reserved keys case-insensitively', async () => {
-      await expect(resolveVariables({ var: ['INDEX=9'] }, tmpDir)).rejects.toThrow(
+      await expect(resolveVariables({ input: ['INDEX=9'] }, tmpDir)).rejects.toThrow(
         /reserved runtime variable/i,
       );
     });
 
     it('reports all reserved key violations in a single error', async () => {
-      const error = await resolveVariables({ var: ['Step=a', 'Index=b'] }, tmpDir).catch(
+      const error = await resolveVariables({ input: ['Step=a', 'Index=b'] }, tmpDir).catch(
         (e: unknown) => e,
       );
+      expect(Error.isError(error)).toBe(true);
+      if (!Error.isError(error)) throw new Error('Expected an Error to be thrown');
       expect(error.message).toMatch(/reserved runtime variables/i);
       expect(error.message).toContain('"Step"');
       expect(error.message).toContain('"Index"');
@@ -517,38 +519,38 @@ describe('resolveVariables', () => {
 
     it('does not route non-reserved keys when layer contains a reserved violation', async () => {
       await expect(
-        resolveVariables({ var: ['safe=value', 'Step=shadow'] }, tmpDir),
+        resolveVariables({ input: ['safe=value', 'Step=shadow'] }, tmpDir),
       ).rejects.toThrow(/reserved runtime variable/i);
     });
 
     it('allows non-reserved variables', async () => {
-      const result = await resolveVariables({ var: ['env=staging'] }, tmpDir);
+      const result = await resolveVariables({ input: ['env=staging'] }, tmpDir);
       expect(result.vars.env).toBe('staging');
     });
   });
 
   describe('file: prefix routing', () => {
-    it('routes --var file:.json to vars as JsonObject', async () => {
+    it('routes --input file:.json to vars as JsonObject', async () => {
       const file = path.join(tmpDir, 'servers.json');
       await fs.writeFile(file, '{"host":"server-a","port":3000}');
 
-      const result = await resolveVariables({ var: [`servers=file:${file}`] }, tmpDir);
+      const result = await resolveVariables({ input: [`servers=file:${file}`] }, tmpDir);
       expect(result.vars.servers).toEqual({ host: 'server-a', port: 3000 });
     });
 
-    it('routes --var file:.json array to vars as JsonArray', async () => {
+    it('routes --input file:.json array to vars as JsonArray', async () => {
       const file = path.join(tmpDir, 'items.json');
       await fs.writeFile(file, '["a","b","c"]');
 
-      const result = await resolveVariables({ var: [`items=file:${file}`] }, tmpDir);
+      const result = await resolveVariables({ input: [`items=file:${file}`] }, tmpDir);
       expect(result.vars.items).toEqual(['a', 'b', 'c']);
     });
 
-    it('routes --var file:.jsonl to vars as JsonArrayStream', async () => {
+    it('routes --input file:.jsonl to vars as JsonArrayStream', async () => {
       const file = path.join(tmpDir, 'data.jsonl');
       await fs.writeFile(file, '{"a":1}\n');
 
-      const result = await resolveVariables({ var: [`data=file:${file}`] }, tmpDir);
+      const result = await resolveVariables({ input: [`data=file:${file}`] }, tmpDir);
       expect(result.vars.data).toEqual({
         kind: 'json-array-stream',
         path: await fs.realpath(file),
@@ -559,7 +561,7 @@ describe('resolveVariables', () => {
       const file = path.join(tmpDir, 'hosts.json');
       await fs.writeFile(file, '["h1"]');
 
-      const result = await resolveVariables({ var: ['hosts=file:hosts.json'] }, tmpDir);
+      const result = await resolveVariables({ input: ['hosts=file:hosts.json'] }, tmpDir);
       expect(result.vars.hosts).toEqual(['h1']);
     });
 
@@ -567,7 +569,7 @@ describe('resolveVariables', () => {
       const file = path.join(tmpDir, 'data.txt');
       await fs.writeFile(file, 'content');
 
-      await expect(resolveVariables({ var: [`data=file:${file}`] }, tmpDir)).rejects.toThrow(
+      await expect(resolveVariables({ input: [`data=file:${file}`] }, tmpDir)).rejects.toThrow(
         /Unsupported file extension/,
       );
     });
@@ -578,7 +580,7 @@ describe('resolveVariables', () => {
       const varFile = path.join(tmpDir, 'vars.yaml');
       await fs.writeFile(varFile, 'servers:\n  - alpha\n  - beta\n  - gamma\n');
 
-      const result = await resolveVariables({ varFile: [varFile] }, tmpDir);
+      const result = await resolveVariables({ inputFile: [varFile] }, tmpDir);
       expect(result.vars.servers).toEqual(['alpha', 'beta', 'gamma']);
     });
   });
@@ -588,7 +590,7 @@ describe('resolveVariables', () => {
       const varFile = path.join(tmpDir, 'vars.yaml');
       await fs.writeFile(varFile, 'log: |\n  line1\n  line2\n  line3\n');
 
-      const result = await resolveVariables({ varFile: [varFile] }, tmpDir);
+      const result = await resolveVariables({ inputFile: [varFile] }, tmpDir);
       // YAML block scalar with trailing newline stripped by YAML parser produces "line1\nline2\nline3\n"
       expect(typeof result.vars.log).toBe('string');
       expect((result.vars.log as string).includes('\n')).toBe(true);
@@ -596,11 +598,11 @@ describe('resolveVariables', () => {
   });
 
   describe('YAML object routing', () => {
-    it('preserves object values from --var-file', async () => {
+    it('preserves object values from --input-file', async () => {
       const tmpFile = path.join(tmpDir, 'objects.yaml');
       await fs.writeFile(tmpFile, 'config:\n  host: localhost\n  port: 3000\n');
 
-      const result = await resolveVariables({ varFile: [tmpFile] }, tmpDir);
+      const result = await resolveVariables({ inputFile: [tmpFile] }, tmpDir);
 
       expect(result.vars.config).toEqual({ host: 'localhost', port: 3000 });
     });
@@ -610,7 +612,7 @@ describe('resolveVariables', () => {
       // YAML parses unquoted timestamps as Date objects
       await fs.writeFile(tmpFile, 'event:\n  name: launch\n  date: 2026-03-20\n');
 
-      const result = await resolveVariables({ varFile: [tmpFile] }, tmpDir);
+      const result = await resolveVariables({ inputFile: [tmpFile] }, tmpDir);
 
       // Date gets parsed by yaml.load() as a JS Date, failing isJsonValue
       expect(typeof result.vars.event).toBe('string');
@@ -624,7 +626,7 @@ describe('resolveVariables', () => {
       // Quoted strings prevent YAML date parsing
       await fs.writeFile(tmpFile, 'config:\n  host: localhost\n  port: 3000\n  debug: true\n');
 
-      const result = await resolveVariables({ varFile: [tmpFile] }, tmpDir);
+      const result = await resolveVariables({ inputFile: [tmpFile] }, tmpDir);
 
       expect(result.vars.config).toEqual({ host: 'localhost', port: 3000, debug: true });
       expect(result.warnings).toHaveLength(0);
@@ -638,7 +640,7 @@ describe('resolveVariables', () => {
       const varFile = path.join(tmpDir, 'vars.yaml');
       await fs.writeFile(varFile, `items: "file:${dataFile}"\n`);
 
-      const result = await resolveVariables({ varFile: [varFile] }, tmpDir);
+      const result = await resolveVariables({ inputFile: [varFile] }, tmpDir);
       expect(result.vars.items).toEqual({
         kind: 'json-array-stream',
         path: await fs.realpath(dataFile),
@@ -686,7 +688,7 @@ describe('resolveVariables', () => {
   });
 
   describe('precedence', () => {
-    it('flag file sources override var-file file sources', async () => {
+    it('flag file sources override input-file file sources', async () => {
       const fileA = path.join(tmpDir, 'a.jsonl');
       const fileB = path.join(tmpDir, 'b.jsonl');
       await fs.writeFile(fileA, '{"from":"a"}\n');
@@ -696,7 +698,7 @@ describe('resolveVariables', () => {
       await fs.writeFile(varFile, `items: "file:${fileA}"\n`);
 
       const result = await resolveVariables(
-        { varFile: [varFile], var: [`items=file:${fileB}`] },
+        { inputFile: [varFile], input: [`items=file:${fileB}`] },
         tmpDir,
       );
       expect(result.vars.items).toEqual({
@@ -707,22 +709,25 @@ describe('resolveVariables', () => {
   });
 
   describe('cross-source conflicts', () => {
-    it('flag scalar overrides var-file array source', async () => {
+    it('flag scalar overrides input-file array source', async () => {
       const varFile = path.join(tmpDir, 'vars.yaml');
       await fs.writeFile(varFile, 'servers:\n  - alpha\n  - beta\n');
 
-      const result = await resolveVariables({ varFile: [varFile], var: ['servers=prod'] }, tmpDir);
+      const result = await resolveVariables(
+        { inputFile: [varFile], input: ['servers=prod'] },
+        tmpDir,
+      );
       expect(result.vars.servers).toBe('prod');
     });
 
-    it('flag file: source overrides var-file array source', async () => {
+    it('flag file: source overrides input-file array source', async () => {
       const dataFile = path.join(tmpDir, 'data.jsonl');
       await fs.writeFile(dataFile, '{"x":1}\n');
       const varFile = path.join(tmpDir, 'vars.yaml');
       await fs.writeFile(varFile, 'items:\n  - x\n  - y\n');
 
       const result = await resolveVariables(
-        { varFile: [varFile], var: [`items=file:${dataFile}`] },
+        { inputFile: [varFile], input: [`items=file:${dataFile}`] },
         tmpDir,
       );
       expect(result.vars.items).toEqual({
@@ -731,18 +736,18 @@ describe('resolveVariables', () => {
       });
     });
 
-    it('var-file array overrides frontmatter scalar', async () => {
+    it('input-file array overrides frontmatter scalar', async () => {
       const varFile = path.join(tmpDir, 'vars.yaml');
       await fs.writeFile(varFile, 'servers:\n  - a\n  - b\n');
 
       const result = await resolveVariables(
-        { frontmatterVars: { servers: 'single' }, varFile: [varFile] },
+        { frontmatterVars: { servers: 'single' }, inputFile: [varFile] },
         tmpDir,
       );
       expect(result.vars.servers).toEqual(['a', 'b']);
     });
 
-    it('deterministic outcome: var-file scalar clears config array source', async () => {
+    it('deterministic outcome: input-file scalar clears config array source', async () => {
       const varFile = path.join(tmpDir, 'vars.yaml');
       await fs.writeFile(varFile, 'items: override\n');
 
@@ -750,15 +755,18 @@ describe('resolveVariables', () => {
       await fs.mkdir(configDir, { recursive: true });
       await fs.writeFile(path.join(configDir, 'config.yaml'), 'items:\n  - x\n  - "y"\n');
 
-      const result = await resolveVariables({ varFile: [varFile] }, tmpDir);
+      const result = await resolveVariables({ inputFile: [varFile] }, tmpDir);
       expect(result.vars.items).toBe('override');
     });
 
-    it('flag scalar overrides var-file multiline source', async () => {
+    it('flag scalar overrides input-file multiline source', async () => {
       const varFile = path.join(tmpDir, 'vars.yaml');
       await fs.writeFile(varFile, 'log: |\n  line1\n  line2\n');
 
-      const result = await resolveVariables({ varFile: [varFile], var: ['log=override'] }, tmpDir);
+      const result = await resolveVariables(
+        { inputFile: [varFile], input: ['log=override'] },
+        tmpDir,
+      );
       expect(result.vars.log).toBe('override');
     });
   });
@@ -774,7 +782,7 @@ describe('resolveVariables', () => {
       const siblingFile = path.join(siblingDir, 'data.txt');
       await fs.writeFile(siblingFile, 'evil\n');
 
-      const result = await resolveVariables({ var: [`data=file:${siblingFile}`] }, cwd);
+      const result = await resolveVariables({ input: [`data=file:${siblingFile}`] }, cwd);
       expect(result.vars).not.toHaveProperty('data');
       expect(result.warnings).toEqual(
         expect.arrayContaining([expect.stringContaining('path escapes project directory')]),
@@ -787,7 +795,7 @@ describe('resolveVariables', () => {
       const file = path.join(sub, 'data.json');
       await fs.writeFile(file, '["ok"]');
 
-      const result = await resolveVariables({ var: [`data=file:${file}`] }, tmpDir);
+      const result = await resolveVariables({ input: [`data=file:${file}`] }, tmpDir);
       expect(result.vars.data).toEqual(['ok']);
     });
 
@@ -795,7 +803,7 @@ describe('resolveVariables', () => {
       const nested = path.join(tmpDir, 'project');
       await fs.mkdir(nested, { recursive: true });
 
-      const result = await resolveVariables({ var: ['data=file:../escape.txt'] }, nested);
+      const result = await resolveVariables({ input: ['data=file:../escape.txt'] }, nested);
       expect(result.vars).not.toHaveProperty('data');
       expect(result.warnings).toEqual(
         expect.arrayContaining([expect.stringContaining('path escapes project directory')]),
@@ -806,7 +814,7 @@ describe('resolveVariables', () => {
       const nested = path.join(tmpDir, 'project');
       await fs.mkdir(nested, { recursive: true });
 
-      const result = await resolveVariables({ var: ['data=file:../escape.txt'] }, nested);
+      const result = await resolveVariables({ input: ['data=file:../escape.txt'] }, nested);
       expect(result.vars).not.toHaveProperty('data');
       expect(result.providedKeys.has('data')).toBe(false);
     });
@@ -815,7 +823,7 @@ describe('resolveVariables', () => {
       const file = path.join(tmpDir, 'data.json');
       await fs.writeFile(file, '["ok"]');
 
-      const result = await resolveVariables({ var: [`data=file:${file}`] }, tmpDir);
+      const result = await resolveVariables({ input: [`data=file:${file}`] }, tmpDir);
       expect(result.vars.data).toEqual(['ok']);
       expect(result.providedKeys.has('data')).toBe(true);
     });
@@ -826,7 +834,7 @@ describe('resolveVariables', () => {
       const file = path.join(dotDir, 'data.json');
       await fs.writeFile(file, '["ok"]');
 
-      const result = await resolveVariables({ var: [`data=file:${file}`] }, tmpDir);
+      const result = await resolveVariables({ input: [`data=file:${file}`] }, tmpDir);
       expect(result.vars.data).toEqual(['ok']);
     });
 
@@ -835,7 +843,7 @@ describe('resolveVariables', () => {
       await fs.writeFile(file, 'SECRET=value\n');
 
       await expect(
-        resolveVariables({ var: [`data=file:${file}`] }, tmpDir, {
+        resolveVariables({ input: [`data=file:${file}`] }, tmpDir, {
           evaluator: {
             checkPath: jest.fn().mockReturnValue({
               allowed: false,
@@ -861,7 +869,7 @@ describe('resolveVariables', () => {
         requestPermission: jest.fn().mockResolvedValue({ granted: true, persist: false }),
       };
 
-      const result = await resolveVariables({ var: [`data=file:${file}`] }, tmpDir, {
+      const result = await resolveVariables({ input: [`data=file:${file}`] }, tmpDir, {
         evaluator: evaluator as any,
         prompter: prompter as any,
       });
@@ -882,7 +890,7 @@ describe('resolveVariables', () => {
       await fs.writeFile(file, 'ok\n');
 
       await expect(
-        resolveVariables({ var: [`data=file:${file}`] }, tmpDir, {
+        resolveVariables({ input: [`data=file:${file}`] }, tmpDir, {
           evaluator: {
             checkPath: jest.fn().mockReturnValue({
               allowed: false,
@@ -897,24 +905,24 @@ describe('resolveVariables', () => {
 
   describe('collectEnvBridgeVars (via resolveVariables)', () => {
     afterEach(() => {
-      // Clean up any RD_VAR_* env vars set during tests
+      // Clean up any RD_INPUT_* env vars set during tests
       for (const key of Object.keys(process.env)) {
-        if (key.startsWith('RD_VAR_')) {
+        if (key.startsWith('RD_INPUT_')) {
           delete process.env[key];
         }
       }
     });
 
-    it('collects RD_VAR_foo=bar as variable foo with value bar', async () => {
-      process.env.RD_VAR_foo = 'bar';
+    it('collects RD_INPUT_foo=bar as variable foo with value bar', async () => {
+      process.env.RD_INPUT_foo = 'bar';
 
       const result = await resolveVariables({}, tmpDir);
 
       expect(result.vars.foo).toBe('bar');
     });
 
-    it('ignores RD_VAR_ with invalid identifier suffix and produces warning', async () => {
-      process.env.RD_VAR_1bad = 'value';
+    it('ignores RD_INPUT_ with invalid identifier suffix and produces warning', async () => {
+      process.env.RD_INPUT_1bad = 'value';
 
       const result = await resolveVariables({}, tmpDir);
 
@@ -922,40 +930,40 @@ describe('resolveVariables', () => {
       expect(result.warnings.some((w) => w.includes('1bad'))).toBe(true);
     });
 
-    it('ignores RD_VAR_step and produces warning instead of throwing', async () => {
-      process.env.RD_VAR_step = 'from-env';
+    it('ignores RD_INPUT_step and produces warning instead of throwing', async () => {
+      process.env.RD_INPUT_step = 'from-env';
 
       const result = await resolveVariables({}, tmpDir);
 
       expect(result.vars.step).toBeUndefined();
-      expect(result.warnings.some((w) => w.includes('RD_VAR_step') && w.includes('reserved'))).toBe(
-        true,
-      );
+      expect(
+        result.warnings.some((w) => w.includes('RD_INPUT_step') && w.includes('reserved')),
+      ).toBe(true);
     });
 
-    it('ignores reserved names case-insensitively in RD_VAR_* bridge', async () => {
-      process.env.RD_VAR_Step = 'from-env';
+    it('ignores reserved names case-insensitively in RD_INPUT_* bridge', async () => {
+      process.env.RD_INPUT_Step = 'from-env';
 
       const result = await resolveVariables({}, tmpDir);
 
       expect(result.vars.Step).toBeUndefined();
-      expect(result.warnings.some((w) => w.includes('RD_VAR_Step') && w.includes('reserved'))).toBe(
-        true,
-      );
+      expect(
+        result.warnings.some((w) => w.includes('RD_INPUT_Step') && w.includes('reserved')),
+      ).toBe(true);
     });
 
-    it('--var-file overrides RD_VAR_* for same key', async () => {
-      process.env.RD_VAR_message = 'from-env';
+    it('--input-file overrides RD_INPUT_* for same key', async () => {
+      process.env.RD_INPUT_message = 'from-env';
       const varFile = path.join(tmpDir, 'vars.yaml');
       await fs.writeFile(varFile, 'message: from-file\n');
 
-      const result = await resolveVariables({ varFile: [varFile] }, tmpDir);
+      const result = await resolveVariables({ inputFile: [varFile] }, tmpDir);
 
       expect(result.vars.message).toBe('from-file');
     });
 
-    it('RD_VAR_* overrides config discovery for same key', async () => {
-      process.env.RD_VAR_greeting = 'from-env';
+    it('RD_INPUT_* overrides config discovery for same key', async () => {
+      process.env.RD_INPUT_greeting = 'from-env';
       const configDir = path.join(tmpDir, RUNDOWN_DIR);
       await fs.mkdir(configDir, { recursive: true });
       await fs.writeFile(path.join(configDir, 'config.yaml'), 'greeting: from-config\n');
@@ -965,23 +973,23 @@ describe('resolveVariables', () => {
       expect(result.vars.greeting).toBe('from-env');
     });
 
-    it('--var flag overrides RD_VAR_* for same key', async () => {
-      process.env.RD_VAR_message = 'from-env';
+    it('--input flag overrides RD_INPUT_* for same key', async () => {
+      process.env.RD_INPUT_message = 'from-env';
 
-      const result = await resolveVariables({ var: ['message=from-flag'] }, tmpDir);
+      const result = await resolveVariables({ input: ['message=from-flag'] }, tmpDir);
 
       expect(result.vars.message).toBe('from-flag');
     });
   });
 
-  describe('repeatable --var-file', () => {
+  describe('repeatable --input-file', () => {
     it('merges multiple files with non-overlapping keys', async () => {
       const fileA = path.join(tmpDir, 'a.yaml');
       const fileB = path.join(tmpDir, 'b.yaml');
       await fs.writeFile(fileA, 'alpha: one\n');
       await fs.writeFile(fileB, 'beta: two\n');
 
-      const result = await resolveVariables({ varFile: [fileA, fileB] }, tmpDir);
+      const result = await resolveVariables({ inputFile: [fileA, fileB] }, tmpDir);
 
       expect(result.vars.alpha).toBe('one');
       expect(result.vars.beta).toBe('two');
@@ -993,7 +1001,7 @@ describe('resolveVariables', () => {
       await fs.writeFile(fileA, 'shared: from-a\n');
       await fs.writeFile(fileB, 'shared: from-b\n');
 
-      const result = await resolveVariables({ varFile: [fileA, fileB] }, tmpDir);
+      const result = await resolveVariables({ inputFile: [fileA, fileB] }, tmpDir);
 
       expect(result.vars.shared).toBe('from-b');
     });
@@ -1002,13 +1010,13 @@ describe('resolveVariables', () => {
       const varFile = path.join(tmpDir, 'vars.yaml');
       await fs.writeFile(varFile, 'greeting: hello\n');
 
-      const result = await resolveVariables({ varFile: [varFile] }, tmpDir);
+      const result = await resolveVariables({ inputFile: [varFile] }, tmpDir);
 
       expect(result.vars.greeting).toBe('hello');
     });
 
     it('empty array produces no file vars', async () => {
-      const result = await resolveVariables({ varFile: [] }, tmpDir);
+      const result = await resolveVariables({ inputFile: [] }, tmpDir);
 
       // Only built-in vars should be present
       expect(result.vars).toHaveProperty('Date');
@@ -1016,66 +1024,69 @@ describe('resolveVariables', () => {
     });
   });
 
-  describe('--var-json', () => {
+  describe('--input-json', () => {
     it('array value stored as JsonArray in vars', async () => {
-      const result = await resolveVariables({ varJson: ['items=["a","b","c"]'] }, tmpDir);
+      const result = await resolveVariables({ inputJson: ['items=["a","b","c"]'] }, tmpDir);
 
       expect(result.vars.items).toEqual(['a', 'b', 'c']);
     });
 
     it('object value is preserved as JsonObject', async () => {
-      const result = await resolveVariables({ varJson: ['config={"host":"localhost"}'] }, tmpDir);
+      const result = await resolveVariables({ inputJson: ['config={"host":"localhost"}'] }, tmpDir);
 
       expect(result.vars.config).toEqual({ host: 'localhost' });
       expect(result.warnings).toHaveLength(0);
     });
 
     it('number value is preserved as number', async () => {
-      const result = await resolveVariables({ varJson: ['count=42'] }, tmpDir);
+      const result = await resolveVariables({ inputJson: ['count=42'] }, tmpDir);
 
       expect(result.vars.count).toBe(42);
     });
 
     it('boolean value produces string var', async () => {
-      const result = await resolveVariables({ varJson: ['debug=true'] }, tmpDir);
+      const result = await resolveVariables({ inputJson: ['debug=true'] }, tmpDir);
 
       expect(result.vars.debug).toBe('true');
     });
 
     it('string value produces string var', async () => {
-      const result = await resolveVariables({ varJson: ['name="hello"'] }, tmpDir);
+      const result = await resolveVariables({ inputJson: ['name="hello"'] }, tmpDir);
 
       expect(result.vars.name).toBe('hello');
     });
 
-    it('--var-json overrides --var for same key', async () => {
-      const result = await resolveVariables({ var: ['count=10'], varJson: ['count=99'] }, tmpDir);
+    it('--input-json overrides --input for same key', async () => {
+      const result = await resolveVariables(
+        { input: ['count=10'], inputJson: ['count=99'] },
+        tmpDir,
+      );
 
-      // varJson is processed after var in collectRawLayers, so it wins
+      // inputJson is processed after input in collectRawLayers, so it wins
       expect(result.vars.count).toBe(99);
     });
 
     it('empty object is preserved', async () => {
-      const result = await resolveVariables({ varJson: ['config={}'] }, tmpDir);
+      const result = await resolveVariables({ inputJson: ['config={}'] }, tmpDir);
 
       expect(result.vars.config).toEqual({});
       expect(result.warnings).toHaveLength(0);
     });
 
     it('deeply nested object is preserved', async () => {
-      const result = await resolveVariables({ varJson: ['config={"a":{"b":{"c":1}}}'] }, tmpDir);
+      const result = await resolveVariables({ inputJson: ['config={"a":{"b":{"c":1}}}'] }, tmpDir);
 
       expect(result.vars.config).toEqual({ a: { b: { c: 1 } } });
     });
 
     it('object with array field is preserved', async () => {
-      const result = await resolveVariables({ varJson: ['config={"items":["a","b"]}'] }, tmpDir);
+      const result = await resolveVariables({ inputJson: ['config={"items":["a","b"]}'] }, tmpDir);
 
       expect(result.vars.config).toEqual({ items: ['a', 'b'] });
     });
 
     it('null value is stringified', async () => {
-      const result = await resolveVariables({ varJson: ['val=null'] }, tmpDir);
+      const result = await resolveVariables({ inputJson: ['val=null'] }, tmpDir);
 
       expect(result.vars.val).toBe('null');
     });
@@ -1185,30 +1196,30 @@ describe('collectCliFlags', () => {
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
-  it('collects --var flags', async () => {
-    const result = await collectCliFlags({ var: ['env=staging', 'port=3000'] }, tmpDir);
+  it('collects --input flags', async () => {
+    const result = await collectCliFlags({ input: ['env=staging', 'port=3000'] }, tmpDir);
     expect(result).toEqual({ env: 'staging', port: '3000' });
   });
 
-  it('collects --var-json flags', async () => {
-    const result = await collectCliFlags({ varJson: ['items=["a","b"]'] }, tmpDir);
+  it('collects --input-json flags', async () => {
+    const result = await collectCliFlags({ inputJson: ['items=["a","b"]'] }, tmpDir);
     expect(result).toEqual({ items: ['a', 'b'] });
   });
 
-  it('collects --var-file contents', async () => {
+  it('collects --input-file contents', async () => {
     const varFile = path.join(tmpDir, 'vars.yaml');
     await fs.writeFile(varFile, 'greeting: hello\ncount: 42\n');
 
-    const result = await collectCliFlags({ varFile: [varFile] }, tmpDir);
+    const result = await collectCliFlags({ inputFile: [varFile] }, tmpDir);
     expect(result).toEqual({ greeting: 'hello', count: 42 });
   });
 
-  it('preserves precedence: var-json > var > var-file', async () => {
+  it('preserves precedence: input-json > input > input-file', async () => {
     const varFile = path.join(tmpDir, 'vars.yaml');
     await fs.writeFile(varFile, 'key: from-file\n');
 
     const result = await collectCliFlags(
-      { varFile: [varFile], var: ['key=from-var'], varJson: ['key="from-json"'] },
+      { inputFile: [varFile], input: ['key=from-var'], inputJson: ['key="from-json"'] },
       tmpDir,
     );
     expect(result.key).toBe('from-json');

@@ -1,7 +1,7 @@
 /**
  * Reserved template-variable names that cannot be used in user-declared
  * identifiers (frontmatter `vars` / `inputs` / `required`, step-level
- * INPUTS / OUTPUTS declarations, CLI `--var`).
+ * INPUTS / OUTPUTS declarations, CLI `--input`).
  *
  * These names are owned by runtime context resolution. Allowing them to be
  * shadowed by user values would corrupt template rendering of `{{step}}`,

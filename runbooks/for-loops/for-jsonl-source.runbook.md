@@ -7,7 +7,7 @@ scenarios:
   completed:
     description: Iterates JSON records using dotted field access
     commands:
-      - rd run --var-file data/jsonl-sources.yaml for-jsonl-source.runbook.md
+      - rd run --input-file data/jsonl-sources.yaml for-jsonl-source.runbook.md
     result: COMPLETE
 ---
 

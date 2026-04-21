@@ -9,7 +9,7 @@
 
 import { readFile, rm, cp } from 'node:fs/promises';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { isNodeError, runbooksDir } from '@rundown-org/core';
 import {
@@ -25,7 +25,7 @@ import type { OutputEmitter } from '../services/output-emitter.js';
 import {
   executeCommandSequence,
   extractRunbookReferences,
-  extractVarFileReferences,
+  extractInputFileReferences,
   matchStepAssertions,
   type StepAssertionResult,
 } from './command-sequence.js';
@@ -227,22 +227,35 @@ export async function executeScenario(
       }
     }
 
-    // Copy --var-file data files and their sibling directory contents.
-    // Var files may contain file: references to sibling data files (e.g. JSONL),
+    // Copy --input-file data files and their sibling directory contents.
+    // Input files may contain file: references to sibling data files (e.g. JSONL),
     // so copy the entire containing directory to preserve those references.
-    const varFiles = extractVarFileReferences(scenario.commands);
+    const inputFiles = extractInputFileReferences(scenario.commands);
     const copiedDirs = new Set<string>();
-    for (const varFile of varFiles) {
-      const varDir = dirname(varFile);
-      if (copiedDirs.has(varDir)) continue;
-      copiedDirs.add(varDir);
+    for (const inputFile of inputFiles) {
+      const inputDir = dirname(inputFile);
+      if (copiedDirs.has(inputDir)) continue;
+      copiedDirs.add(inputDir);
 
-      const srcDir = join(sourceDir, varDir);
-      const destDir = join(tmpDir, varDir);
+      if (isAbsolute(inputDir) || normalize(inputDir).startsWith('..')) {
+        throw new Error(`Unsafe input-file path in scenario: ${inputDir}`);
+      }
+      const srcDir = join(sourceDir, inputDir);
+      const destDir = join(tmpDir, inputDir);
+      const resolvedSrc = resolve(srcDir);
+      const resolvedDest = resolve(destDir);
+      const srcRoot = resolve(sourceDir);
+      const tmpRoot = resolve(tmpDir);
+      if (!resolvedSrc.startsWith(srcRoot + sep) && resolvedSrc !== srcRoot) {
+        throw new Error(`Input-file source escapes source root: ${inputDir}`);
+      }
+      if (!resolvedDest.startsWith(tmpRoot + sep) && resolvedDest !== tmpRoot) {
+        throw new Error(`Input-file destination escapes temp root: ${inputDir}`);
+      }
       if (existsSync(srcDir)) {
         await cp(srcDir, destDir, { recursive: true });
       } else {
-        throw new Error(`Var file directory not found: ${varDir} (searched in: ${sourceDir})`);
+        throw new Error(`Input file directory not found: ${inputDir} (searched in: ${sourceDir})`);
       }
     }
 

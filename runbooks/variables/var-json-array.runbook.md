@@ -1,14 +1,14 @@
 ---
 name: var-json-array
-description: Inline JSON array via --var-json drives FOR loop iteration
+description: Inline JSON array via --input-json drives FOR loop iteration
 tags:
   - variables
   - for-loops
 scenarios:
   completed:
-    description: JSON array passed via --var-json drives FOR loop
+    description: JSON array passed via --input-json drives FOR loop
     commands:
-      - rd run --var-json 'items=["alpha","bravo","charlie"]' var-json-array.runbook.md
+      - rd run --input-json 'items=["alpha","bravo","charlie"]' var-json-array.runbook.md
     result: COMPLETE
 ---
 
