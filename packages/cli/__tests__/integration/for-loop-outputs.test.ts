@@ -52,7 +52,14 @@ describe('FOR loop OUTPUTS regression — CLI-shadowed loop variable', () => {
 
   it('publishes the current iteration value for {{item}} even when --var item shadows it', async () => {
     const result = runCli(
-      ['run', 'for-outputs.runbook.md', `--var`, `item=stale`, `--var-json`, `items=["a","b","c"]`],
+      [
+        'run',
+        'for-outputs.runbook.md',
+        `--input`,
+        `item=stale`,
+        `--input-json`,
+        `items=["a","b","c"]`,
+      ],
       workspace,
     );
     expect(result.exitCode).toBe(0);
