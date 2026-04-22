@@ -78,7 +78,7 @@ export type ResolvedIteration =
  * @throws {ForResolutionError} with code `'undefined-variable'` when the FOR variable is not in the template var map
  * @throws {ForResolutionError} with code `'type-mismatch'` when the FOR variable is not an iterable type
  * @throws {ForResolutionError} with code `'parse-failure'` when a JSONL line cannot be parsed as JSON
- * @throws {ForResolutionError} with code `'policy-violation'` if a stream path cannot be resolved (ENOENT) or escapes `projectRoot` after symlink resolution
+ * @throws {ForResolutionError} with code `'policy-violation'` if the stream path cannot be resolved or escapes `projectRoot` after symlink resolution
  */
 export async function resolveForValue(
   fc: ForContext,
@@ -162,7 +162,7 @@ function resolveFromJsonArray(
  * @param stream - The JsonArrayStream metadata (path and format information)
  * @param projectRoot - When provided, the stream path must be within this directory
  * @returns A promise resolving to a discriminated result: either the resolved context (with snapshot) or an exhaustion signal
- * @throws {ForResolutionError} with code `'policy-violation'` if stream path cannot be resolved (ENOENT) or escapes projectRoot after symlink resolution
+ * @throws {ForResolutionError} with code `'policy-violation'` if the stream path cannot be resolved or escapes projectRoot after symlink resolution
  */
 async function resolveFromJsonArrayStream(
   fc: VariableForContext,
@@ -180,8 +180,12 @@ async function resolveFromJsonArrayStream(
   try {
     canonicalPath = await fs.realpath(stream.path);
   } catch (cause) {
+    const errCode =
+      cause instanceof Error && 'code' in cause
+        ? ` (${String((cause as NodeJS.ErrnoException).code)})`
+        : '';
     throw new ForResolutionError(
-      `JsonArrayStream path "${stream.path}" could not be resolved: file not found`,
+      `JsonArrayStream path "${stream.path}" could not be resolved${errCode}`,
       'policy-violation',
       { cause },
     );
