@@ -388,7 +388,15 @@ export const RunbookStateSchema = z
     iterationResults: z.array(z.enum(['pass', 'fail'])).optional(),
     startedAt: z.string(),
     updatedAt: z.string(),
-    snapshot: z.unknown().optional(), // XState snapshot
+    // XState snapshot: intentionally not structurally validated. The persisted envelope
+    // is opaque and version-unstable (see `.work/xstate-patterns/README.md`
+    // type-check matrix — XState v5 does not expose a stable public shape for
+    // per-state context). The invariant that `snapshot.context.templateVars`
+    // contains no `JsonArrayStream` values is enforced at runtime by
+    // `flattenTemplateVars` inside `RunbookActorService.createActor`; see the
+    // TSDoc there for the bypass-prohibition. Do not add a structural
+    // `.superRefine()` here without a public XState snapshot schema to anchor it.
+    snapshot: z.unknown().optional(),
     prompted: z.boolean().optional(),
     lastResult: z.enum(['pass', 'fail']).optional(),
     lastAction: z

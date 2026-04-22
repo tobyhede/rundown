@@ -74,6 +74,26 @@ export class RunbookActorService {
    * `state.frontmatterOutputs` so OUTPUTS evaluation works identically on
    * resume as on initial start.
    *
+   * @remarks
+   * **Invariant (load-bearing):** `snapshot.context.templateVars` must never
+   * contain `JsonArrayStream` values. {@link flattenTemplateVars} is the
+   * enforcement point — it strips any `isJsonArrayStream(value) === true`
+   * entries from `state.templateVars` before they reach the compiler, so the
+   * XState snapshot this actor later persists can never carry live file-stream
+   * references.
+   *
+   * This matters because the persisted `snapshot` field in `RunbookStateSchema`
+   * is `z.unknown().optional()` — it is intentionally *not* structurally
+   * validated against `JsonArrayStream` (the XState snapshot envelope is opaque
+   * and unstable, see `.work/xstate-patterns/README.md` type-check matrix).
+   * Safety on reload relies entirely on this flatten step.
+   *
+   * **Do not remove, inline, or bypass the `flattenTemplateVars` call below.**
+   * If you need to refactor this seeding, preserve the stream-stripping contract
+   * and update the regression coverage in
+   * `packages/core/__tests__/runbook/output-evaluator.test.ts`
+   * (`describe('flattenTemplateVars', …)`).
+   *
    * @param id - Runbook state ID
    * @param steps - Parsed runbook steps for machine compilation
    * @returns Started actor, or null if state not found
