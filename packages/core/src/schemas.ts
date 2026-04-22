@@ -163,13 +163,31 @@ const JsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
  *
  * Uses `.transform()` to re-brand deserialized objects with the unexported Symbol brand,
  * ensuring state loaded from disk passes the `isJsonArrayStream` guard.
+ *
+ * The transform enforces a canonical-path invariant: the stored path must be
+ * absolute and already normalized (i.e. the value written by `variable-discovery.ts`
+ * after `fs.realpath()`). A relative path or a path with `..` components means
+ * the persisted state was corrupted or tampered with and is rejected immediately.
+ *
+ * @warning Does not enforce the project-root boundary. For deserialization of
+ * user-controlled or persisted state that arrives from outside the process, use
+ * {@link makeTemplateVarValueSchema} with the project root path instead.
  */
 const JsonArrayStreamSchema = z
   .object({
     kind: z.literal('json-array-stream'),
     path: z.string(),
   })
-  .transform((v) => createJsonArrayStream(v.path));
+  .transform((v, ctx) => {
+    if (!path.isAbsolute(v.path) || path.normalize(v.path) !== v.path) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `JsonArrayStream path "${v.path}" is not a canonical absolute path (expected realpath'd value from write time)`,
+      });
+      return z.NEVER;
+    }
+    return createJsonArrayStream(v.path);
+  });
 
 /**
  * Schema for template variable values.
@@ -177,13 +195,29 @@ const JsonArrayStreamSchema = z
  * Matches the {@link TemplateVarValue} type: string, number, JsonObject,
  * JsonArray, or JsonArrayStream.
  * Top-level booleans and nulls are stringified at variable resolution time.
+ *
+ * @warning This schema re-brands any `{kind:'json-array-stream', path}` object
+ * without validating the path against a project root. The embedded
+ * {@link JsonArrayStreamSchema} enforces a canonical absolute path invariant,
+ * but does **not** enforce the project-root boundary. It is safe for in-memory
+ * round-trips (e.g. XState snapshot hydration within a trusted process), but
+ * **must not** be used to deserialize untrusted or persisted state that arrives
+ * from outside the process. For that, use {@link makeTemplateVarValueSchema}
+ * with the project root, which enforces path boundary checks before re-branding.
  */
 export const TemplateVarValueSchema: z.ZodType<TemplateVarValue> = z.union([
   z.string(),
   z.number(),
   z.array(JsonValueSchema),
   JsonArrayStreamSchema,
-  z.record(z.string(), JsonValueSchema),
+  // Exclude json-array-stream objects from the record fallback so that objects
+  // with kind:'json-array-stream' are claimed exclusively by JsonArrayStreamSchema.
+  // Without this guard, a canonical-path failure in JsonArrayStreamSchema would
+  // fall through to this branch and silently succeed as a JsonObject.
+  z.record(z.string(), JsonValueSchema).refine(
+    (v) => !('kind' in v && v['kind'] === 'json-array-stream'),
+    { message: 'json-array-stream objects must be validated by JsonArrayStreamSchema' },
+  ),
 ]);
 
 /**

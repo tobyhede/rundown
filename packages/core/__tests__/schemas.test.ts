@@ -593,6 +593,32 @@ describe('RunbookStateSchema - JSON loop values (currentValue)', () => {
   });
 });
 
+describe('JsonArrayStreamSchema — canonical path guard', () => {
+  // JsonArrayStreamSchema is internal (not exported), but it is exercised through
+  // TemplateVarValueSchema since JsonArrayStream is one of the union members.
+
+  it('accepts a canonical absolute path', () => {
+    const raw = { kind: 'json-array-stream', path: '/project/data.jsonl' };
+    const parsed = TemplateVarValueSchema.parse(raw);
+    expect(isJsonArrayStream(parsed)).toBe(true);
+  });
+
+  it('rejects a relative path', () => {
+    const raw = { kind: 'json-array-stream', path: 'relative/data.jsonl' };
+    expect(() => TemplateVarValueSchema.parse(raw)).toThrow();
+  });
+
+  it('rejects a path with .. components', () => {
+    const raw = { kind: 'json-array-stream', path: '/project/../etc/passwd' };
+    expect(() => TemplateVarValueSchema.parse(raw)).toThrow();
+  });
+
+  it('rejects an unnormalized absolute path (/foo/../bar)', () => {
+    const raw = { kind: 'json-array-stream', path: '/foo/../bar/data.jsonl' };
+    expect(() => TemplateVarValueSchema.parse(raw)).toThrow();
+  });
+});
+
 describe('TemplateVarValueSchema — JsonArrayStream deserialization', () => {
   it('re-brands a plain json-array-stream object via createJsonArrayStream on parse', () => {
     // Simulates loading persisted state: Symbol brand was stripped by JSON.stringify
