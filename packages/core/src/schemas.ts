@@ -214,14 +214,16 @@ export const TemplateVarValueSchema: z.ZodType<TemplateVarValue> = z.union([
   // with kind:'json-array-stream' are claimed exclusively by JsonArrayStreamSchema.
   // Without this guard, a canonical-path failure in JsonArrayStreamSchema would
   // fall through to this branch and silently succeed as a JsonObject.
-  z.record(z.string(), JsonValueSchema).refine(
-    (v) =>
-      !(
-        (v as Record<string, unknown>).kind === 'json-array-stream' &&
-        typeof (v as Record<string, unknown>).path === 'string'
-      ),
-    { message: 'json-array-stream objects must be validated by JsonArrayStreamSchema' },
-  ),
+  z
+    .record(z.string(), JsonValueSchema)
+    .refine(
+      (v) =>
+        !(
+          (v as Record<string, unknown>).kind === 'json-array-stream' &&
+          typeof (v as Record<string, unknown>).path === 'string'
+        ),
+      { message: 'json-array-stream objects must be validated by JsonArrayStreamSchema' },
+    ),
 ]);
 
 /**
