@@ -88,12 +88,12 @@ export class ForIterationService {
    *
    * @param manager - State reader for loading/updating runbook state
    * @param actorService - Actor operations for XState event dispatch
-   * @param projectRoot - Project root for JsonArrayStream path boundary enforcement. Pass `undefined` to skip boundary enforcement (e.g. in tests exercising behaviour without a project root).
+   * @param projectRoot - Project root; required. JsonArrayStream paths that escape it raise `ForResolutionError('policy-violation')`.
    */
   constructor(
     private readonly manager: ForStateReader,
     private readonly actorService: ForActorOperations,
-    private readonly projectRoot: string | undefined,
+    private readonly projectRoot: string,
   ) {}
 
   /**

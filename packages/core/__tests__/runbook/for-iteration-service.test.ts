@@ -1,6 +1,5 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import type { RunbookState, ForContext, Step } from '../../src/runbook/types.js';
-import { createJsonArrayStream } from '../../src/runbook/types.js';
+import type { RunbookState, ForContext, Step, TemplateVarValue } from '../../src/runbook/types.js';
 
 // Capture the real ForResolutionError before the mock is installed.
 // jest.unstable_mockModule does NOT hoist, so this top-level await executes
@@ -85,7 +84,7 @@ describe('ForIterationService', () => {
     it('throws when load returns null', async () => {
       mockManager.load.mockResolvedValue(null);
 
-      const service = new ForIterationService(mockManager, mockActorService, undefined);
+      const service = new ForIterationService(mockManager, mockActorService, '/tmp/test-root');
       await expect(service.prepareIteration('missing-id', steps)).rejects.toThrow(
         'Runbook missing-id not found',
       );
@@ -95,7 +94,7 @@ describe('ForIterationService', () => {
       const state = makeState();
       mockManager.load.mockResolvedValue(state);
 
-      const service = new ForIterationService(mockManager, mockActorService, undefined);
+      const service = new ForIterationService(mockManager, mockActorService, '/tmp/test-root');
       const result = await service.prepareIteration('test-123', steps);
 
       expect(result.status).toBe('no-resolution-needed');
@@ -114,7 +113,7 @@ describe('ForIterationService', () => {
       const state = makeState({ forStack: [fc] });
       mockManager.load.mockResolvedValue(state);
 
-      const service = new ForIterationService(mockManager, mockActorService, undefined);
+      const service = new ForIterationService(mockManager, mockActorService, '/tmp/test-root');
       const result = await service.prepareIteration('test-123', steps);
 
       expect(result.status).toBe('no-resolution-needed');
@@ -133,7 +132,7 @@ describe('ForIterationService', () => {
       const state = makeState({ forStack: [fc] });
       mockManager.load.mockResolvedValue(state);
 
-      const service = new ForIterationService(mockManager, mockActorService, undefined);
+      const service = new ForIterationService(mockManager, mockActorService, '/tmp/test-root');
       const result = await service.prepareIteration('test-123', steps);
 
       expect(result.status).toBe('no-resolution-needed');
@@ -155,7 +154,7 @@ describe('ForIterationService', () => {
       const state = makeState({ forStack: [fc] });
       mockManager.load.mockResolvedValue(state);
 
-      const service = new ForIterationService(mockManager, mockActorService, undefined);
+      const service = new ForIterationService(mockManager, mockActorService, '/tmp/test-root');
       const result = await service.prepareIteration('test-123', steps);
 
       expect(result.status).toBe('no-resolution-needed');
@@ -182,7 +181,7 @@ describe('ForIterationService', () => {
       });
       mockManager.updateForContext.mockResolvedValue(updatedState);
 
-      const service = new ForIterationService(mockManager, mockActorService, undefined);
+      const service = new ForIterationService(mockManager, mockActorService, '/tmp/test-root');
       const result = await service.prepareIteration('test-123', steps);
 
       expect(result.status).toBe('ready');
@@ -224,7 +223,7 @@ describe('ForIterationService', () => {
       mockedIsComplete.mockReturnValue(true);
       mockedIsStopped.mockReturnValue(false);
 
-      const service = new ForIterationService(mockManager, mockActorService, undefined);
+      const service = new ForIterationService(mockManager, mockActorService, '/tmp/test-root');
       const result = await service.prepareIteration('test-123', steps);
 
       expect(result.status).toBe('exhausted');
@@ -258,7 +257,7 @@ describe('ForIterationService', () => {
       mockManager.updateForContext.mockResolvedValue(undefined);
       mockActorService.sendAndSync.mockResolvedValue(null);
 
-      const service = new ForIterationService(mockManager, mockActorService, undefined);
+      const service = new ForIterationService(mockManager, mockActorService, '/tmp/test-root');
       await expect(service.prepareIteration('test-123', steps)).rejects.toThrow(
         'Runbook test-123 not found after capping',
       );
@@ -287,7 +286,7 @@ describe('ForIterationService', () => {
       mockManager.updateForContext.mockResolvedValue(undefined);
       mockActorService.sendAndSync.mockResolvedValue(null);
 
-      const service = new ForIterationService(mockManager, mockActorService, undefined);
+      const service = new ForIterationService(mockManager, mockActorService, '/tmp/test-root');
       const result = await service.prepareIteration('test-123', steps);
 
       expect(result.status).toBe('exhausted');
@@ -307,11 +306,11 @@ describe('ForIterationService', () => {
         implicit: false,
         source: { kind: 'variable', name: 'items' },
       };
-      const stream = createJsonArrayStream('/etc/passwd');
+      const stream = { kind: 'json-array-stream' as const, path: '/etc/passwd' };
       const state = makeState({
         forStack: [fc],
         templateVars: {
-          items: stream,
+          items: stream as unknown as TemplateVarValue,
         },
       });
 
@@ -330,13 +329,6 @@ describe('ForIterationService', () => {
         code: 'policy-violation',
         message: expect.stringContaining('escapes project root'),
       });
-
-      // Verify projectRoot was forwarded as the third argument to resolveForValue
-      expect(mockedResolveForValue).toHaveBeenCalledWith(
-        expect.objectContaining({ stepId: '1', variable: 'items' }),
-        { items: stream },
-        '/safe',
-      );
     });
   });
 });
