@@ -334,7 +334,7 @@ describe('ForIterationService', () => {
       // Verify projectRoot was forwarded as the third argument to resolveForValue
       expect(mockedResolveForValue).toHaveBeenCalledWith(
         expect.objectContaining({ stepId: '1', variable: 'items' }),
-        expect.objectContaining({ items: stream }),
+        { items: stream },
         '/safe',
       );
     });
