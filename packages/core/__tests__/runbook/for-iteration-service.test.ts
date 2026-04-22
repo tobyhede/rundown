@@ -1,5 +1,5 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import type { RunbookState, ForContext, Step, TemplateVarValue } from '../../src/runbook/types.js';
+import type { RunbookState, ForContext, Step } from '../../src/runbook/types.js';
 import { createJsonArrayStream } from '../../src/runbook/types.js';
 
 // Capture the real ForResolutionError before the mock is installed.
