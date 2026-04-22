@@ -32,8 +32,11 @@ NOTVALID
 Subcategorize
 TOCTOU
 Turborepo
+UTDQH
+XFXLBSGKNPLNQGRAZO
 agentic
 aindex
+alnum
 ancvar
 args
 autobuild
@@ -69,6 +72,7 @@ fdisk
 featurebranch
 finalvars
 frontmatter
+gcrrf
 gitdir
 gopath
 gopls
@@ -106,6 +110,10 @@ nocase
 nodenext
 nodenv
 noninteractive
+normalise
+normaliser
+Normalise
+Normalised
 notavar
 nums
 opts

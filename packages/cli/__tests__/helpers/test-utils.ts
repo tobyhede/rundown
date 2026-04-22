@@ -883,7 +883,7 @@ export function buildSubstep(overrides: Partial<Substep> = {}): Substep {
  * Applied in order:
  *   1.  workspace.cwd and its realpath resolution → `<workdir>`
  *   2.  os.tmpdir() and its realpath → `<tmpdir>`
- *   3.  Delegation tokens (`rdtk_` + alnum) → `<token>`
+ *   3.  Delegation tokens (`rdtk_` + alnum, including truncated `rdtk_XXX...YYYY`) → `<token>`
  *   3.5 SHA-256 hex digests (e.g. delegation token_hash field) → `<tokenHash>`
  *   4.  Full UUIDs → `<uuid>`
  *   4.5 Run IDs of the form `wf-YYYY-MM-DD-xxxxxx` (base-36 suffix) → `<runbookId>`
@@ -936,6 +936,9 @@ export function normalizeCliOutput(output: string, workspace: TestWorkspace): st
   }
 
   // 3. Delegation tokens (TOKEN_PREFIX from packages/core/src/runbook/delegation-token.ts)
+  //    Truncated form first (`rdtk_XXX...YYYY`) so the suffix doesn't survive
+  //    after the prefix has been replaced by the broader rule below.
+  text = text.replace(/rdtk_[A-Za-z0-9]+\.{3}[A-Za-z0-9]+/g, '<token>');
   text = text.replace(/rdtk_[A-Za-z0-9]+/g, '<token>');
 
   // 3.5. SHA-256 hex digests (e.g. delegation token_hash field)

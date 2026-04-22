@@ -39,9 +39,7 @@ describe('normalizeCliOutput', () => {
   it('replaces sha256 hex digests with <tokenHash>', () => {
     const input =
       '"token_hash": "sha256:99f78f8946aa2736d1894b2f5800989c37343f04cf645e0110735913e7607306"';
-    expect(normalizeCliOutput(input, workspace)).toBe(
-      '"token_hash": "<tokenHash>"',
-    );
+    expect(normalizeCliOutput(input, workspace)).toBe('"token_hash": "<tokenHash>"');
   });
 
   it('does not match sha256 with wrong length', () => {
