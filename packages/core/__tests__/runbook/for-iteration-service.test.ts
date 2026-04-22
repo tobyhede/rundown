@@ -1,5 +1,6 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import type { RunbookState, ForContext, Step, TemplateVarValue } from '../../src/runbook/types.js';
+import { createJsonArrayStream } from '../../src/runbook/types.js';
 
 // Capture the real ForResolutionError before the mock is installed.
 // jest.unstable_mockModule does NOT hoist, so this top-level await executes
@@ -306,11 +307,11 @@ describe('ForIterationService', () => {
         implicit: false,
         source: { kind: 'variable', name: 'items' },
       };
-      const stream = { kind: 'json-array-stream' as const, path: '/etc/passwd' };
+      const stream = createJsonArrayStream('/etc/passwd');
       const state = makeState({
         forStack: [fc],
         templateVars: {
-          items: stream as unknown as TemplateVarValue,
+          items: stream,
         },
       });
 
@@ -329,6 +330,13 @@ describe('ForIterationService', () => {
         code: 'policy-violation',
         message: expect.stringContaining('escapes project root'),
       });
+
+      // Verify projectRoot was forwarded as the third argument to resolveForValue
+      expect(mockedResolveForValue).toHaveBeenCalledWith(
+        expect.objectContaining({ stepId: '1', variable: 'items' }),
+        expect.objectContaining({ items: stream }),
+        '/safe',
+      );
     });
   });
 });
