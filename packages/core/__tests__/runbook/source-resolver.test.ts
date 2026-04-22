@@ -258,6 +258,26 @@ describe('resolveForValue', () => {
       expect(result.kind).toBe('resolved');
     });
 
+    it('throws policy-violation for sibling-prefix path (e.g. /base/project-evil)', async () => {
+      // /base/project-evil/data.jsonl starts with the same string as projectRoot
+      // (/base/project) but is NOT inside it. path.relative() returns
+      // '../project-evil/data.jsonl' — the dotdot prefix is caught correctly.
+      // This test documents and regression-guards that behaviour.
+      const base = path.dirname(projectRoot); // e.g. /tmp/rundown-sr-sec-xxxxx
+      const siblingDir = path.join(base, 'project-evil');
+      await fs.mkdir(siblingDir, { recursive: true });
+      const siblingFile = path.join(siblingDir, 'data.jsonl');
+      await fs.writeFile(siblingFile, '"secret"\n');
+
+      const vars: Record<string, TemplateVarValue> = {
+        data: createJsonArrayStream(siblingFile),
+      };
+
+      await expect(resolveForValue(makeContext(), vars, projectRoot)).rejects.toMatchObject({
+        code: 'policy-violation',
+      });
+    });
+
     it('skips boundary check when projectRoot is omitted', async () => {
       const vars: Record<string, TemplateVarValue> = {
         data: createJsonArrayStream(outsideFile),
