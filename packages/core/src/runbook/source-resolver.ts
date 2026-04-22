@@ -78,7 +78,7 @@ export type ResolvedIteration =
  * @throws {ForResolutionError} with code `'undefined-variable'` when the FOR variable is not in the template var map
  * @throws {ForResolutionError} with code `'type-mismatch'` when the FOR variable is not an iterable type
  * @throws {ForResolutionError} with code `'parse-failure'` when a JSONL line cannot be parsed as JSON
- * @throws {ForResolutionError} with code `'policy-violation'` if a stream path escapes `projectRoot`
+ * @throws {ForResolutionError} with code `'policy-violation'` if a stream path cannot be resolved (ENOENT) or escapes `projectRoot` after symlink resolution
  */
 export async function resolveForValue(
   fc: ForContext,
@@ -220,7 +220,7 @@ async function resolveFromJsonArrayStream(
         { cause },
       );
     }
-    const snapshot: FileSnapshot = await computeFileSnapshot(stream.path, fc.iteration);
+    const snapshot: FileSnapshot = await computeFileSnapshot(canonicalPath, fc.iteration);
     return {
       kind: 'resolved',
       context: {
