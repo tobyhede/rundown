@@ -79,6 +79,7 @@ export {
   evaluateOutputExpression,
   evaluateStepOutputDeclarations,
   flattenTemplateVars,
+  type FlattenedTemplateVars,
   type OutputFrameState,
   type OutputCursor,
   type OutputVars,

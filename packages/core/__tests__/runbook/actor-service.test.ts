@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 import { RunbookActorService } from '../../src/runbook/actor-service.js';
 import type { AnyActorRef } from '../../src/runbook/actor-service.js';
 import type { Step, Runbook, ResolvedStep } from '../../src/runbook/types.js';
+import { createJsonArrayStream } from '../../src/runbook/types.js';
 import { createRunbook } from './fixtures.js';
 
 function mockActor(snapshot: { value: string; context: Record<string, unknown> }) {
@@ -548,6 +549,37 @@ describe('RunbookActorService', () => {
         SomeVar: 'hello',
         Items: ['a', 'b'], // flattenTemplateVars: array passes through as array
       });
+      actor!.stop();
+    });
+
+    it('strips JsonArrayStream from templateVars before seeding the machine context', async () => {
+      // Regression guard: snapshot.context.templateVars must never carry a
+      // JsonArrayStream. The `snapshot: z.unknown()` field in RunbookStateSchema
+      // is not structurally validated against streams — safety depends on
+      // flattenTemplateVars being called at this exact site. See the invariant
+      // on RunbookActorService.createActor.
+      // Path must be canonical and under testDir to satisfy
+      // `makeJsonArrayStreamSchema`'s canonical-path + project-root checks at
+      // state load time; the stream itself is never read.
+      const canonicalTestDir = await realpath(testDir);
+      const stream = createJsonArrayStream(join(canonicalTestDir, 'data.jsonl'));
+      const state = await manager.create('test.md', mockRunbook, {
+        runbookPath: 'test.md',
+        templateVars: {
+          Region: 'us-east-1',
+          Items: stream,
+        },
+      });
+
+      const actor = await actorService.createActor(state.id, mockSteps);
+      expect(actor).not.toBeNull();
+      const snapshot = actor!.getPersistedSnapshot() as {
+        context: { templateVars: Record<string, unknown> };
+      };
+
+      // Scalar seeded through; stream must have been stripped.
+      expect(snapshot.context.templateVars.Region).toBe('us-east-1');
+      expect('Items' in snapshot.context.templateVars).toBe(false);
       actor!.stop();
     });
   });

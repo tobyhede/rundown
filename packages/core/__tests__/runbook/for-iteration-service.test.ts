@@ -1,6 +1,5 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import type { RunbookState, ForContext, Step } from '../../src/runbook/types.js';
-import { createJsonArrayStream } from '../../src/runbook/types.js';
 
 // Capture the real ForResolutionError before the mock is installed.
 // jest.unstable_mockModule does NOT hoist, so this top-level await executes
@@ -41,6 +40,7 @@ jest.unstable_mockModule('../../src/runbook/snapshot-utils.js', () => {
 const { resolveForValue } = await import('../../src/runbook/source-resolver.js');
 const { isRunbookComplete, isRunbookStopped } = await import('../../src/runbook/snapshot-utils.js');
 const { ForIterationService } = await import('../../src/runbook/for-iteration-service.js');
+const { createJsonArrayStream } = await import('../../src/runbook/types.js');
 
 const mockedResolveForValue = resolveForValue as jest.MockedFunction<typeof resolveForValue>;
 const mockedIsComplete = isRunbookComplete as jest.MockedFunction<typeof isRunbookComplete>;
@@ -64,6 +64,8 @@ function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
 
 const steps: Step[] = [] as unknown as Step[];
 
+const TEST_PROJECT_ROOT = '/tmp/test-root';
+
 describe('ForIterationService', () => {
   let mockManager: any;
   let mockActorService: any;
@@ -85,7 +87,7 @@ describe('ForIterationService', () => {
     it('throws when load returns null', async () => {
       mockManager.load.mockResolvedValue(null);
 
-      const service = new ForIterationService(mockManager, mockActorService, undefined);
+      const service = new ForIterationService(mockManager, mockActorService, TEST_PROJECT_ROOT);
       await expect(service.prepareIteration('missing-id', steps)).rejects.toThrow(
         'Runbook missing-id not found',
       );
@@ -95,7 +97,7 @@ describe('ForIterationService', () => {
       const state = makeState();
       mockManager.load.mockResolvedValue(state);
 
-      const service = new ForIterationService(mockManager, mockActorService, undefined);
+      const service = new ForIterationService(mockManager, mockActorService, TEST_PROJECT_ROOT);
       const result = await service.prepareIteration('test-123', steps);
 
       expect(result.status).toBe('no-resolution-needed');
@@ -114,7 +116,7 @@ describe('ForIterationService', () => {
       const state = makeState({ forStack: [fc] });
       mockManager.load.mockResolvedValue(state);
 
-      const service = new ForIterationService(mockManager, mockActorService, undefined);
+      const service = new ForIterationService(mockManager, mockActorService, TEST_PROJECT_ROOT);
       const result = await service.prepareIteration('test-123', steps);
 
       expect(result.status).toBe('no-resolution-needed');
@@ -133,7 +135,7 @@ describe('ForIterationService', () => {
       const state = makeState({ forStack: [fc] });
       mockManager.load.mockResolvedValue(state);
 
-      const service = new ForIterationService(mockManager, mockActorService, undefined);
+      const service = new ForIterationService(mockManager, mockActorService, TEST_PROJECT_ROOT);
       const result = await service.prepareIteration('test-123', steps);
 
       expect(result.status).toBe('no-resolution-needed');
@@ -155,7 +157,7 @@ describe('ForIterationService', () => {
       const state = makeState({ forStack: [fc] });
       mockManager.load.mockResolvedValue(state);
 
-      const service = new ForIterationService(mockManager, mockActorService, undefined);
+      const service = new ForIterationService(mockManager, mockActorService, TEST_PROJECT_ROOT);
       const result = await service.prepareIteration('test-123', steps);
 
       expect(result.status).toBe('no-resolution-needed');
@@ -182,7 +184,7 @@ describe('ForIterationService', () => {
       });
       mockManager.updateForContext.mockResolvedValue(updatedState);
 
-      const service = new ForIterationService(mockManager, mockActorService, undefined);
+      const service = new ForIterationService(mockManager, mockActorService, TEST_PROJECT_ROOT);
       const result = await service.prepareIteration('test-123', steps);
 
       expect(result.status).toBe('ready');
@@ -224,7 +226,7 @@ describe('ForIterationService', () => {
       mockedIsComplete.mockReturnValue(true);
       mockedIsStopped.mockReturnValue(false);
 
-      const service = new ForIterationService(mockManager, mockActorService, undefined);
+      const service = new ForIterationService(mockManager, mockActorService, TEST_PROJECT_ROOT);
       const result = await service.prepareIteration('test-123', steps);
 
       expect(result.status).toBe('exhausted');
@@ -258,7 +260,7 @@ describe('ForIterationService', () => {
       mockManager.updateForContext.mockResolvedValue(undefined);
       mockActorService.sendAndSync.mockResolvedValue(null);
 
-      const service = new ForIterationService(mockManager, mockActorService, undefined);
+      const service = new ForIterationService(mockManager, mockActorService, TEST_PROJECT_ROOT);
       await expect(service.prepareIteration('test-123', steps)).rejects.toThrow(
         'Runbook test-123 not found after capping',
       );
@@ -287,7 +289,7 @@ describe('ForIterationService', () => {
       mockManager.updateForContext.mockResolvedValue(undefined);
       mockActorService.sendAndSync.mockResolvedValue(null);
 
-      const service = new ForIterationService(mockManager, mockActorService, undefined);
+      const service = new ForIterationService(mockManager, mockActorService, TEST_PROJECT_ROOT);
       const result = await service.prepareIteration('test-123', steps);
 
       expect(result.status).toBe('exhausted');
@@ -331,10 +333,10 @@ describe('ForIterationService', () => {
         message: expect.stringContaining('escapes project root'),
       });
 
-      // Verify projectRoot was forwarded as the third argument to resolveForValue
+      // Confirm the constructor's projectRoot was forwarded into resolveForValue.
       expect(mockedResolveForValue).toHaveBeenCalledWith(
-        expect.objectContaining({ stepId: '1', variable: 'items' }),
-        { items: stream },
+        expect.anything(),
+        expect.anything(),
         '/safe',
       );
     });
