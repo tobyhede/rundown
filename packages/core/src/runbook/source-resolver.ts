@@ -10,6 +10,7 @@
  * @module
  */
 
+import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { createFileProvider, computeFileSnapshot } from './file-provider.js';
 import type {
@@ -161,7 +162,7 @@ function resolveFromJsonArray(
  * @param stream - The JsonArrayStream metadata (path and format information)
  * @param projectRoot - When provided, the stream path must be within this directory
  * @returns A promise resolving to a discriminated result: either the resolved context (with snapshot) or an exhaustion signal
- * @throws {ForResolutionError} with code `'policy-violation'` if stream path escapes projectRoot
+ * @throws {ForResolutionError} with code `'policy-violation'` if stream path cannot be resolved (ENOENT) or escapes projectRoot after symlink resolution
  */
 async function resolveFromJsonArrayStream(
   fc: VariableForContext,
@@ -171,8 +172,26 @@ async function resolveFromJsonArrayStream(
   | { readonly kind: 'resolved'; readonly context: StreamResolvedForContext }
   | { readonly kind: 'exhausted'; readonly capped: ForContext }
 > {
+  // Resolve symlinks immediately before opening the file to close the TOCTOU
+  // window between the lexical path.relative() boundary check and createFileProvider().
+  // ENOENT means the file no longer exists (or never did) — treat as policy-violation
+  // so the caller gets a clean ForResolutionError rather than a raw ENOENT.
+  let canonicalPath: string;
+  try {
+    canonicalPath = await fs.realpath(stream.path);
+  } catch (cause) {
+    throw new ForResolutionError(
+      `JsonArrayStream path "${stream.path}" could not be resolved: file not found`,
+      'policy-violation',
+      { cause },
+    );
+  }
+
   if (projectRoot !== undefined) {
-    const rel = path.relative(projectRoot, stream.path);
+    // Resolve projectRoot to its canonical path as well so the comparison is
+    // between two fully resolved paths (important on macOS where /tmp → /private/tmp).
+    const canonicalRoot = await fs.realpath(projectRoot).catch(() => projectRoot);
+    const rel = path.relative(canonicalRoot, canonicalPath);
     // path.isAbsolute(rel) is a Windows safety net: on different drives,
     // path.relative() returns an absolute path rather than a dotdot sequence.
     if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
@@ -183,7 +202,7 @@ async function resolveFromJsonArrayStream(
     }
   }
   const skipLines = fc.iteration - 1;
-  const provider = await createFileProvider(stream.path, { skipLines });
+  const provider = await createFileProvider(canonicalPath, { skipLines });
   try {
     const { value, done } = await provider.next();
     if (done) {
