@@ -13,8 +13,9 @@ import type {
   ParentLinkage,
   TemplateVarValue,
 } from './types.js';
-import { RunbookStateSchema } from '../schemas.js';
+import { makeRunbookStateSchema } from '../schemas.js';
 import { isNodeError } from '../errors.js';
+import { logger } from '../logger.js';
 import {
   runsDir as _runsDir,
   sessionPath as _sessionPath,
@@ -98,6 +99,38 @@ export class RunbookStateManager {
 
   private get stateDir(): string {
     return _runsDir(this.cwd);
+  }
+
+  /**
+   * Return a canonicalized form of `this.cwd` by resolving symlinks.
+   *
+   * On macOS, `/tmp` is a symlink to `/private/tmp`. JsonArrayStream paths are
+   * stored in canonical form (resolved via `fs.realpath` at write time), so the
+   * project-root boundary check in `makeRunbookStateSchema` must compare against
+   * the same canonical path.
+   *
+   * Falls back to the raw `cwd` on `fs.realpath` failure with failure-mode
+   * discrimination:
+   * - `ENOENT`: the directory no longer exists; falls back silently (the run will
+   *   fail at a more meaningful point shortly after).
+   * - Any other error (e.g. `EPERM`, `EACCES`): logs a warn with the specific
+   *   error code and a note that `JsonArrayStream` path validation may produce
+   *   false boundary-check failures if the project root is a symlink.
+   *
+   * @returns The canonicalized working directory path
+   */
+  private async canonicalCwd(): Promise<string> {
+    try {
+      return await fs.realpath(this.cwd);
+    } catch (err) {
+      if (!isNodeError(err) || err.code !== 'ENOENT') {
+        void logger.warn(
+          `canonicalCwd: fs.realpath("${this.cwd}") failed (${isNodeError(err) ? (err.code ?? 'unknown') : 'unknown'}), ` +
+            `using raw path — JsonArrayStream path validation may produce false failures. Check permissions on project root.`,
+        );
+      }
+      return this.cwd;
+    }
   }
 
   private get sessionPath(): string {
@@ -224,7 +257,8 @@ export class RunbookStateManager {
       );
     }
 
-    const result = RunbookStateSchema.safeParse(parsed);
+    const canonicalized = await this.canonicalCwd();
+    const result = makeRunbookStateSchema(canonicalized).safeParse(parsed);
     if (!result.success) {
       throw new Error(
         `Stale runbook state for "${id}": schema validation failed. ` +

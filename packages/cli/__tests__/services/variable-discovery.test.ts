@@ -16,7 +16,8 @@ import { execFileSync as nodeExecFileSync } from 'node:child_process';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { RUNDOWN_DIR, WORK_DIR } from '@rundown-org/core';
+import { isJsonArrayStream, resolveForValue, RUNDOWN_DIR, WORK_DIR } from '@rundown-org/core';
+import type { ForContext } from '@rundown-org/core';
 
 describe('parseVarFlag', () => {
   it('should parse key=value format', () => {
@@ -551,7 +552,8 @@ describe('resolveVariables', () => {
       await fs.writeFile(file, '{"a":1}\n');
 
       const result = await resolveVariables({ input: [`data=file:${file}`] }, tmpDir);
-      expect(result.vars.data).toEqual({
+      expect(isJsonArrayStream(result.vars.data)).toBe(true);
+      expect(result.vars.data).toMatchObject({
         kind: 'json-array-stream',
         path: await fs.realpath(file),
       });
@@ -641,7 +643,8 @@ describe('resolveVariables', () => {
       await fs.writeFile(varFile, `items: "file:${dataFile}"\n`);
 
       const result = await resolveVariables({ inputFile: [varFile] }, tmpDir);
-      expect(result.vars.items).toEqual({
+      expect(isJsonArrayStream(result.vars.items)).toBe(true);
+      expect(result.vars.items).toMatchObject({
         kind: 'json-array-stream',
         path: await fs.realpath(dataFile),
       });
@@ -701,7 +704,8 @@ describe('resolveVariables', () => {
         { inputFile: [varFile], input: [`items=file:${fileB}`] },
         tmpDir,
       );
-      expect(result.vars.items).toEqual({
+      expect(isJsonArrayStream(result.vars.items)).toBe(true);
+      expect(result.vars.items).toMatchObject({
         kind: 'json-array-stream',
         path: await fs.realpath(fileB),
       });
@@ -730,7 +734,8 @@ describe('resolveVariables', () => {
         { inputFile: [varFile], input: [`items=file:${dataFile}`] },
         tmpDir,
       );
-      expect(result.vars.items).toEqual({
+      expect(isJsonArrayStream(result.vars.items)).toBe(true);
+      expect(result.vars.items).toMatchObject({
         kind: 'json-array-stream',
         path: await fs.realpath(dataFile),
       });
@@ -879,7 +884,8 @@ describe('resolveVariables', () => {
         await fs.realpath(file),
         'Prompt before read',
       );
-      expect(result.vars.data).toEqual({
+      expect(isJsonArrayStream(result.vars.data)).toBe(true);
+      expect(result.vars.data).toMatchObject({
         kind: 'json-array-stream',
         path: await fs.realpath(file),
       });
@@ -1091,6 +1097,42 @@ describe('resolveVariables', () => {
       expect(result.vars.val).toBe('null');
     });
 
+    it('does not route crafted json-array-stream shape as JsonArrayStream (brand check)', async () => {
+      // Attack: --var-json 'items={"kind":"json-array-stream","path":"/etc/passwd"}'
+      // routeVariable stores it as JsonObject (no file: prefix path validation runs).
+      // isJsonArrayStream must return false — no Symbol brand present.
+      const result = await resolveVariables(
+        { inputJson: ['items={"kind":"json-array-stream","path":"/etc/passwd"}'] },
+        tmpDir,
+      );
+      const value = result.vars.items;
+      expect(value).toBeDefined();
+      expect(isJsonArrayStream(value)).toBe(false);
+    });
+
+    it('full attack path: FOR loop throws type-mismatch, never reads the file', async () => {
+      // End-to-end: the crafted value enters vars as JsonObject. resolveForValue calls
+      // the isJsonArrayStream guard in resolveForValue's 'variable' case, which returns
+      // false (no brand Symbol), and execution falls to the type-mismatch throw before
+      // resolveFromJsonArrayStream is entered — the file is never opened.
+      const result = await resolveVariables(
+        { inputJson: ['items={"kind":"json-array-stream","path":"/etc/passwd"}'] },
+        tmpDir,
+      );
+      expect(result.vars.items).toBeDefined();
+      const forCtx: ForContext = {
+        stepId: '1',
+        iteration: 1,
+        start: 1,
+        implicit: false,
+        source: { kind: 'variable', name: 'items' },
+      };
+      // Must reject with the type-mismatch error, never reach file-read dispatch
+      await expect(resolveForValue(forCtx, result.vars)).rejects.toMatchObject({
+        code: 'type-mismatch',
+      });
+    });
+
     it('non-finite numbers are stringified with warning', async () => {
       // YAML .inf/-.inf/.nan produce non-finite JS numbers that break JSON.stringify
       const configPath = path.join(tmpDir, RUNDOWN_DIR, 'config.yaml');
@@ -1155,7 +1197,8 @@ describe('routeExtraVars', () => {
     await fs.writeFile(dataFile, '{"a":1}\n{"b":2}\n');
 
     const result = await routeExtraVars({ items: `file:${dataFile}` }, tmpDir);
-    expect(result.vars.items).toEqual({
+    expect(isJsonArrayStream(result.vars.items)).toBe(true);
+    expect(result.vars.items).toMatchObject({
       kind: 'json-array-stream',
       path: expect.any(String),
     });

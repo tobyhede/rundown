@@ -1,6 +1,11 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { mockErrorHelpers } from './mock-error-helpers.js';
 
+// Capture the real isJsonArrayStream before the mock is registered.
+// jest.unstable_mockModule does NOT hoist (unlike jest.mock), so this top-level
+// await executes first and always captures the real branded implementation.
+const { isJsonArrayStream: realIsJsonArrayStream } = await import('@rundown-org/core');
+
 // Mock @rundown-org/core
 jest.unstable_mockModule('@rundown-org/core', () => ({
   stepIdToString: jest.fn((id: { step: string; substep?: string }) =>
@@ -74,12 +79,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     LAUNCH_FAILED: { code: 'RD-816' },
   },
   isJsonArray: jest.fn((v: unknown) => Array.isArray(v)),
-  isJsonArrayStream: jest.fn(
-    (v: unknown) =>
-      typeof v === 'object' &&
-      v !== null &&
-      (v as Record<string, unknown>).kind === 'json-array-stream',
-  ),
+  isJsonArrayStream: jest.fn(realIsJsonArrayStream),
   logger: { warn: jest.fn(), info: jest.fn(), debug: jest.fn(), error: jest.fn() },
   ...mockErrorHelpers,
 }));
@@ -291,6 +291,8 @@ beforeEach(() => {
     iteration: undefined,
     frameKey: '1',
   });
+  (core.isJsonArray as jest.Mock).mockImplementation((v: unknown) => Array.isArray(v));
+  (core.isJsonArrayStream as jest.Mock).mockImplementation(realIsJsonArrayStream);
 });
 
 // validateSources was removed in the unified variable model refactoring.

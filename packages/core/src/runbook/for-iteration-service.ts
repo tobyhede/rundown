@@ -88,10 +88,12 @@ export class ForIterationService {
    *
    * @param manager - State reader for loading/updating runbook state
    * @param actorService - Actor operations for XState event dispatch
+   * @param projectRoot - Project root for JsonArrayStream path boundary enforcement. Pass `undefined` to skip boundary enforcement (e.g. in tests exercising behaviour without a project root).
    */
   constructor(
     private readonly manager: ForStateReader,
     private readonly actorService: ForActorOperations,
+    private readonly projectRoot: string | undefined,
   ) {}
 
   /**
@@ -108,7 +110,10 @@ export class ForIterationService {
    * @param steps - Parsed step definitions for actor creation
    * @returns An IterationResult indicating next action for the caller
    * @throws {Error} When runbook state is not found (null)
-   * @throws {ForResolutionError} When variable source resolution fails (undefined, type mismatch, or JSONL parse failure)
+   * @throws {ForResolutionError} with code `'undefined-variable'` when the FOR variable is not in the template var map
+   * @throws {ForResolutionError} with code `'type-mismatch'` when the FOR variable is not an iterable type
+   * @throws {ForResolutionError} with code `'parse-failure'` when a JSONL line cannot be parsed as JSON
+   * @throws {ForResolutionError} with code `'policy-violation'` when a JsonArrayStream path escapes the project root
    */
   async prepareIteration(id: string, steps: ResolvedStep[]): Promise<IterationResult> {
     const state = await this.manager.load(id);
@@ -135,7 +140,7 @@ export class ForIterationService {
       return { status: 'no-resolution-needed', state };
     }
 
-    const result = await resolveForValue(top, state.templateVars);
+    const result = await resolveForValue(top, state.templateVars, this.projectRoot);
 
     if (result.kind === 'resolved') {
       // Build updated forStack with resolved value.

@@ -1,5 +1,6 @@
 export type * from './types.js';
 export {
+  createJsonArrayStream,
   isJsonObject,
   isJsonArray,
   isJsonArrayStream,

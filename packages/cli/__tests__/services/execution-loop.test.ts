@@ -27,6 +27,12 @@ const mockLifecycleService = {
   consumeResolvedCompletion: jest.fn().mockResolvedValue(null),
 };
 
+// Capture the real isJsonArrayStream before the mock is registered.
+// jest.unstable_mockModule does NOT hoist (unlike jest.mock), so this top-level
+// await executes first and always captures the real branded implementation.
+const { isJsonArrayStream: realIsJsonArrayStream, ForResolutionError: RealForResolutionError } =
+  await import('@rundown-org/core');
+
 jest.unstable_mockModule('@rundown-org/core', () => {
   const asTerminalSnapshot = jest.fn((snapshot: unknown) => {
     if (
@@ -128,12 +134,8 @@ jest.unstable_mockModule('@rundown-org/core', () => {
       getLogDir: jest.fn().mockReturnValue('/tmp'),
     },
     isJsonArray: jest.fn((v: unknown) => Array.isArray(v)),
-    isJsonArrayStream: jest.fn(
-      (v: unknown) =>
-        typeof v === 'object' &&
-        v !== null &&
-        (v as Record<string, unknown>).kind === 'json-array-stream',
-    ),
+    isJsonArrayStream: jest.fn(realIsJsonArrayStream),
+    ForResolutionError: RealForResolutionError,
     assertResolvedVariableForContext: jest.fn(
       (fc: {
         currentValue?: unknown;
@@ -374,6 +376,52 @@ describe('runExecutionLoop', () => {
       expect.objectContaining({
         reason: 'Not allowed',
       }),
+    );
+  });
+
+  it('stops with policy-denied when prepareIteration throws ForResolutionError policy-violation', async () => {
+    mockManager.load.mockResolvedValue({ id: runbookId, step: '1', status: 'running' });
+
+    (core.ForIterationService as any).mockImplementation(() => ({
+      prepareIteration: jest
+        .fn()
+        .mockRejectedValue(
+          new RealForResolutionError(
+            'JsonArrayStream path "/etc/passwd" escapes project root "/project"',
+            'policy-violation',
+          ),
+        ),
+    }));
+
+    const result = await runExecutionLoop(
+      mockManager,
+      runbookId,
+      steps,
+      '/tmp',
+      false,
+      mockEmitter,
+    );
+
+    expect(result).toBe('stopped');
+    expect(mockEmitter.emit).toHaveBeenCalledWith(
+      'POLICY_DENIED',
+      expect.objectContaining({
+        reason: expect.stringContaining('escapes project root'),
+      }),
+    );
+    expect(mockEmitter.emit).toHaveBeenCalledWith(
+      'RUNBOOK_STOPPED',
+      expect.objectContaining({
+        reason: 'policy_denied',
+      }),
+    );
+
+    const emittedEvents = mockEmitter.emit.mock.calls.map(
+      ([event]: [string, ...unknown[]]) => event,
+    );
+    expect(emittedEvents.indexOf('POLICY_DENIED')).toBeGreaterThanOrEqual(0);
+    expect(emittedEvents.indexOf('RUNBOOK_STOPPED')).toBeGreaterThan(
+      emittedEvents.indexOf('POLICY_DENIED'),
     );
   });
 

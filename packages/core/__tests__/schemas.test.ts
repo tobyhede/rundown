@@ -5,7 +5,11 @@ import {
   StepIdSchema,
   ActionSchema,
   TransitionsSchema,
+  TemplateVarValueSchema,
+  makeTemplateVarValueSchema,
+  makeRunbookStateSchema,
 } from '../src/schemas.js';
+import { isJsonArrayStream } from '../src/runbook/types.js';
 
 /**
  * Creates a valid runbook state object for testing.
@@ -586,5 +590,250 @@ describe('RunbookStateSchema - JSON loop values (currentValue)', () => {
         metadata: { nested: null },
       });
     }
+  });
+});
+
+describe('JsonArrayStreamSchema — canonical path guard', () => {
+  // JsonArrayStreamSchema is internal (not exported), but it is exercised through
+  // TemplateVarValueSchema since JsonArrayStream is one of the union members.
+
+  it('accepts a canonical absolute path', () => {
+    const raw = { kind: 'json-array-stream', path: '/project/data.jsonl' };
+    const parsed = TemplateVarValueSchema.parse(raw);
+    expect(isJsonArrayStream(parsed)).toBe(true);
+  });
+
+  it('rejects a relative path', () => {
+    const raw = { kind: 'json-array-stream', path: 'relative/data.jsonl' };
+    expect(() => TemplateVarValueSchema.parse(raw)).toThrow();
+  });
+
+  it('rejects a path with .. components', () => {
+    const raw = { kind: 'json-array-stream', path: '/project/../etc/passwd' };
+    expect(() => TemplateVarValueSchema.parse(raw)).toThrow();
+  });
+
+  it('rejects an unnormalized absolute path (/foo/../bar)', () => {
+    const raw = { kind: 'json-array-stream', path: '/foo/../bar/data.jsonl' };
+    expect(() => TemplateVarValueSchema.parse(raw)).toThrow();
+  });
+});
+
+describe('TemplateVarValueSchema — JsonArrayStream deserialization', () => {
+  it('re-brands a plain json-array-stream object via createJsonArrayStream on parse', () => {
+    // Simulates loading persisted state: Symbol brand was stripped by JSON.stringify
+    const raw = { kind: 'json-array-stream', path: '/project/data.jsonl' };
+    const parsed = TemplateVarValueSchema.parse(raw);
+    expect(isJsonArrayStream(parsed)).toBe(true);
+  });
+
+  it('does not brand a plain object that bypasses the schema', () => {
+    const plain = {
+      kind: 'json-array-stream',
+      path: '/project/data.jsonl',
+    } as unknown as Parameters<typeof isJsonArrayStream>[0];
+    expect(isJsonArrayStream(plain)).toBe(false);
+  });
+});
+
+describe('makeTemplateVarValueSchema — path-validated JsonArrayStream', () => {
+  it('rejects JsonArrayStream with path escaping project root', () => {
+    const schema = makeTemplateVarValueSchema('/project');
+    expect(() => schema.parse({ kind: 'json-array-stream', path: '/etc/passwd' })).toThrow();
+  });
+
+  it('accepts JsonArrayStream with path inside project root and re-brands it', () => {
+    const schema = makeTemplateVarValueSchema('/project');
+    const result = schema.parse({ kind: 'json-array-stream', path: '/project/data.jsonl' });
+    expect(isJsonArrayStream(result)).toBe(true);
+  });
+
+  it('accepts scalar and array values unchanged', () => {
+    const schema = makeTemplateVarValueSchema('/project');
+    expect(schema.parse('hello')).toBe('hello');
+    expect(schema.parse(42)).toBe(42);
+    expect(schema.parse(['a', 'b'])).toEqual(['a', 'b']);
+  });
+
+  it('accepts plain object with kind:"json-array-stream" but no path field (not a stream shape)', () => {
+    const schema = makeTemplateVarValueSchema('/project');
+    const result = schema.safeParse({ kind: 'json-array-stream', foo: 'bar' });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects stream-shaped object whose path escapes project root', () => {
+    const schema = makeTemplateVarValueSchema('/project');
+    const result = schema.safeParse({ kind: 'json-array-stream', path: '/etc/passwd' });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects JsonArrayStream with a non-canonical path containing dot-dot components', () => {
+    const schema = makeTemplateVarValueSchema('/project');
+    expect(() =>
+      schema.parse({ kind: 'json-array-stream', path: '/project/subdir/../data.jsonl' }),
+    ).toThrow();
+  });
+
+  it('rejects JsonArrayStream with a relative path (not absolute)', () => {
+    const schema = makeTemplateVarValueSchema('/project');
+    expect(() =>
+      schema.parse({ kind: 'json-array-stream', path: 'relative/data.jsonl' }),
+    ).toThrow();
+  });
+});
+
+describe('makeRunbookStateSchema — SEC1 nested snapshot var protection', () => {
+  const escaping = { kind: 'json-array-stream', path: '/etc/passwd' };
+  const safe = { kind: 'json-array-stream', path: '/project/data.jsonl' };
+
+  it('rejects state with JsonArrayStream in contextSnapshot.vars escaping project root', () => {
+    const schema = makeRunbookStateSchema('/project');
+    const state = createValidState({
+      substepStates: [
+        {
+          id: 'sub1',
+          frameKey: 'frame-1',
+          status: 'done',
+          result: 'pass',
+          delegation: {
+            tokenHash: `sha256:${'a'.repeat(64)}`,
+            childRunbookPath: '/project/child.md',
+            contextSnapshot: {
+              vars: { items: escaping },
+              ancestors: [],
+            },
+            childRunId: null,
+            createdAt: new Date().toISOString(),
+            cancelledAt: null,
+          },
+        },
+      ],
+    });
+    const result = schema.safeParse(state);
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts state with JsonArrayStream in contextSnapshot.vars within project root', () => {
+    const schema = makeRunbookStateSchema('/project');
+    const state = createValidState({
+      substepStates: [
+        {
+          id: 'sub1',
+          frameKey: 'frame-1',
+          status: 'done',
+          result: 'pass',
+          delegation: {
+            tokenHash: `sha256:${'a'.repeat(64)}`,
+            childRunbookPath: '/project/child.md',
+            contextSnapshot: {
+              vars: { items: safe },
+              ancestors: [],
+            },
+            childRunId: null,
+            createdAt: new Date().toISOString(),
+            cancelledAt: null,
+          },
+        },
+      ],
+    });
+    const result = schema.safeParse(state);
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects state with JsonArrayStream in ancestors[].vars escaping project root', () => {
+    const schema = makeRunbookStateSchema('/project');
+    const state = createValidState({
+      substepStates: [
+        {
+          id: 'sub1',
+          frameKey: 'frame-1',
+          status: 'done',
+          result: 'pass',
+          delegation: {
+            tokenHash: `sha256:${'a'.repeat(64)}`,
+            childRunbookPath: '/project/child.md',
+            contextSnapshot: {
+              vars: {},
+              ancestors: [
+                {
+                  runId: 'run-1',
+                  runbook: 'parent.md',
+                  step: '1',
+                  substep: null,
+                  vars: { evil: escaping },
+                  at: new Date().toISOString(),
+                },
+              ],
+            },
+            childRunId: null,
+            createdAt: new Date().toISOString(),
+            cancelledAt: null,
+          },
+        },
+      ],
+    });
+    const result = schema.safeParse(state);
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('makeRunbookStateSchema — disk round-trip attack prevention', () => {
+  it('rejects state with JsonArrayStream templateVar escaping project root', () => {
+    const schema = makeRunbookStateSchema('/project');
+    const state = createValidState({
+      templateVars: {
+        items: { kind: 'json-array-stream', path: '/etc/passwd' },
+      },
+    });
+    const result = schema.safeParse(state);
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts state with JsonArrayStream templateVar within project root', () => {
+    const schema = makeRunbookStateSchema('/project');
+    const state = createValidState({
+      templateVars: {
+        items: { kind: 'json-array-stream', path: '/project/data.jsonl' },
+      },
+    });
+    const result = schema.safeParse(state);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(isJsonArrayStream(result.data.templateVars?.items)).toBe(true);
+    }
+  });
+
+  it('accepts state with no templateVars', () => {
+    const schema = makeRunbookStateSchema('/project');
+    const state = createValidState();
+    const result = schema.safeParse(state);
+    expect(result.success).toBe(true);
+  });
+});
+
+describe('makeRunbookStateSchema — SEC4 cwd canonicalization note', () => {
+  it('accepts stream at /private/project/data.jsonl when projectRoot is /private/project', () => {
+    // Simulates macOS /tmp -> /private/tmp: stored canonical path uses /private/...
+    // while cwd might be passed as /tmp/... without canonicalization.
+    // After SEC4 fix, RunbookStateManager.load() passes the realpath'd cwd.
+    const schema = makeRunbookStateSchema('/private/project');
+    const state = createValidState({
+      templateVars: {
+        items: { kind: 'json-array-stream', path: '/private/project/data.jsonl' },
+      },
+    });
+    const result = schema.safeParse(state);
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects stream at /private/project/data.jsonl when projectRoot is /different', () => {
+    const schema = makeRunbookStateSchema('/different');
+    const state = createValidState({
+      templateVars: {
+        items: { kind: 'json-array-stream', path: '/private/project/data.jsonl' },
+      },
+    });
+    const result = schema.safeParse(state);
+    expect(result.success).toBe(false);
   });
 });

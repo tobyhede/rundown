@@ -1,5 +1,6 @@
 // packages/cli/src/services/execution.ts
 
+import * as fs from 'node:fs/promises';
 import {
   buildStepPosition,
   deriveExecutionAt,
@@ -35,6 +36,7 @@ import {
   isJsonArray,
   isJsonArrayStream,
   assertResolvedVariableForContext,
+  ForResolutionError,
   RUNS_DIR,
 } from '@rundown-org/core';
 import { isSourced, resolvedStepHasSubsteps, type ForClause } from '@rundown-org/parser';
@@ -451,7 +453,16 @@ export async function runExecutionLoop(
   const actorService = new RunbookActorService(manager);
   const sessionService = new SessionService(manager);
   const lifecycleService = new ExecutionLifecycleService(manager);
-  const iterationService = new ForIterationService(manager, actorService);
+  let projectRoot: string;
+  try {
+    projectRoot = await fs.realpath(cwd);
+  } catch (err: unknown) {
+    void logger.warn(
+      `runExecutionLoop: fs.realpath("${cwd}") failed, using raw path: ${Error.isError(err) ? err.message : String(err)}`,
+    );
+    projectRoot = cwd;
+  }
+  const iterationService = new ForIterationService(manager, actorService, projectRoot);
   const ensuredInitial = await lifecycleService.ensureActiveEntry(runbookId, undefined, state);
   let currentState: RunbookState = ensuredInitial.state;
 
@@ -467,7 +478,33 @@ export async function runExecutionLoop(
     // Resolve dynamic values for all data sources (array, file, range).
     // The ForIterationService resolves currentValue before each iteration,
     // replacing the previous file-only inline resolution.
-    const iterResult = await iterationService.prepareIteration(runbookId, steps);
+    let iterResult: Awaited<ReturnType<typeof iterationService.prepareIteration>>;
+    try {
+      iterResult = await iterationService.prepareIteration(runbookId, steps);
+    } catch (err) {
+      if (err instanceof ForResolutionError && err.code === 'policy-violation') {
+        const policyPosition = buildStepPosition(
+          currentState.step,
+          countNumberedSteps(steps),
+          currentState.substep,
+          currentState.forStack,
+        );
+        emitter.emit('POLICY_DENIED', {
+          command: `JsonArrayStream variable access`,
+          reason: err.message,
+          position: policyPosition,
+        });
+        await manager.update(runbookId, { lifecycle: 'stopped' });
+        emitter.emit('RUNBOOK_STOPPED', {
+          position: policyPosition,
+          reason: 'policy_denied',
+          message: `FOR loop data source blocked by policy: ${err.message}`,
+        });
+        await sessionService.popRunbook();
+        return 'stopped';
+      }
+      throw err;
+    }
 
     if (iterResult.status === 'exhausted') {
       if (iterResult.terminal === 'complete') {

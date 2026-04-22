@@ -1,5 +1,7 @@
+import * as path from 'node:path';
 import { z } from 'zod';
 import type { FrameKey } from './runbook/targeting.js';
+import { createJsonArrayStream } from './runbook/types.js';
 import type { JsonValue, TemplateVarValue } from './runbook/types.js';
 import { getErrorMessage } from './errors.js';
 
@@ -158,11 +160,34 @@ const JsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
 
 /**
  * Zod schema for {@link JsonArrayStream} — file-backed lazy array.
+ *
+ * Uses `.transform()` to re-brand deserialized objects with the unexported Symbol brand,
+ * ensuring state loaded from disk passes the `isJsonArrayStream` guard.
+ *
+ * The transform enforces a canonical-path invariant: the stored path must be
+ * absolute and already normalized (i.e. the value written by `variable-discovery.ts`
+ * after `fs.realpath()`). A relative path or a path with `..` components means
+ * the persisted state was corrupted or tampered with and is rejected immediately.
+ *
+ * @remarks Does not enforce the project-root boundary. For deserialization of
+ * user-controlled or persisted state that arrives from outside the process, use
+ * {@link makeTemplateVarValueSchema} with the project root path instead.
  */
-const JsonArrayStreamSchema = z.object({
-  kind: z.literal('json-array-stream'),
-  path: z.string(),
-});
+const JsonArrayStreamSchema = z
+  .object({
+    kind: z.literal('json-array-stream'),
+    path: z.string(),
+  })
+  .transform((v, ctx) => {
+    if (!path.isAbsolute(v.path) || path.normalize(v.path) !== v.path) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `JsonArrayStream path "${v.path}" is not a canonical absolute path (expected realpath'd value from write time)`,
+      });
+      return z.NEVER;
+    }
+    return createJsonArrayStream(v.path);
+  });
 
 /**
  * Schema for template variable values.
@@ -170,13 +195,35 @@ const JsonArrayStreamSchema = z.object({
  * Matches the {@link TemplateVarValue} type: string, number, JsonObject,
  * JsonArray, or JsonArrayStream.
  * Top-level booleans and nulls are stringified at variable resolution time.
+ *
+ * @remarks This schema re-brands any `{kind:'json-array-stream', path}` object
+ * without validating the path against a project root. The embedded
+ * {@link JsonArrayStreamSchema} enforces a canonical absolute path invariant,
+ * but does **not** enforce the project-root boundary. It is safe for in-memory
+ * round-trips (e.g. XState snapshot hydration within a trusted process), but
+ * **must not** be used to deserialize untrusted or persisted state that arrives
+ * from outside the process. For that, use {@link makeTemplateVarValueSchema}
+ * with the project root, which enforces path boundary checks before re-branding.
  */
 export const TemplateVarValueSchema: z.ZodType<TemplateVarValue> = z.union([
   z.string(),
   z.number(),
   z.array(JsonValueSchema),
   JsonArrayStreamSchema,
-  z.record(z.string(), JsonValueSchema),
+  // Exclude json-array-stream objects from the record fallback so that objects
+  // with kind:'json-array-stream' are claimed exclusively by JsonArrayStreamSchema.
+  // Without this guard, a canonical-path failure in JsonArrayStreamSchema would
+  // fall through to this branch and silently succeed as a JsonObject.
+  z
+    .record(z.string(), JsonValueSchema)
+    .refine(
+      (v) =>
+        !(
+          (v as Record<string, unknown>).kind === 'json-array-stream' &&
+          typeof (v as Record<string, unknown>).path === 'string'
+        ),
+      { message: 'json-array-stream objects must be validated by JsonArrayStreamSchema' },
+    ),
 ]);
 
 /**
@@ -382,3 +429,205 @@ export const RunbookStateSchema = z
 
 /** Validated runbook state. Inferred from {@link RunbookStateSchema}. */
 export type ValidatedRunbookState = z.infer<typeof RunbookStateSchema>;
+
+/**
+ * Build a path-validated variant of {@link JsonArrayStreamSchema}.
+ *
+ * Rejects streams whose path escapes `projectRoot`, preventing crafted
+ * `--var-json` objects from becoming usable file streams after a disk round-trip.
+ *
+ * @param projectRoot - Absolute project root; stream paths must be within it
+ * @returns Zod transform schema that re-brands valid stream objects and rejects escaping paths
+ */
+function makeJsonArrayStreamSchema(
+  projectRoot: string,
+): z.ZodEffects<z.ZodObject<{ kind: z.ZodLiteral<'json-array-stream'>; path: z.ZodString }>> {
+  return z
+    .object({
+      kind: z.literal('json-array-stream'),
+      path: z.string(),
+    })
+    .transform((v, ctx) => {
+      // Invariant: JsonArrayStream paths are stored as absolute, canonical paths at
+      // write time (variable-discovery.ts calls fs.realpath before createJsonArrayStream).
+      // Assert this invariant here so violations are caught immediately, rather than
+      // relying on path.relative() alone — which cannot detect symlinks pointing outside
+      // projectRoot (those are resolved at write time, not at load time).
+      if (!path.isAbsolute(v.path) || path.normalize(v.path) !== v.path) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `JsonArrayStream path "${v.path}" is not a canonical absolute path (expected realpath'd value from write time)`,
+        });
+        return z.NEVER;
+      }
+      const rel = path.relative(projectRoot, v.path);
+      // path.isAbsolute(rel) is a Windows safety net: on different drives,
+      // path.relative() returns an absolute path rather than a dotdot sequence.
+      if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `JsonArrayStream path "${v.path}" escapes project root "${projectRoot}"`,
+        });
+        return z.NEVER;
+      }
+      return createJsonArrayStream(v.path);
+    });
+}
+
+/**
+ * Build a path-validated variant of {@link TemplateVarValueSchema}.
+ *
+ * JsonArrayStream values are deserialized only when their path stays within
+ * `projectRoot`, blocking the disk round-trip attack where a crafted
+ * `--var-json` object is persisted and re-hydrated as a file stream.
+ *
+ * The record branch explicitly rejects the full JsonArrayStream shape
+ * (kind + string path) so that a failed stream validation (invalid path)
+ * cannot fall through to the plain-object branch and succeed as a JsonObject.
+ * Objects with kind but no path field, or where path is not a string, are
+ * safe plain JsonObjects and are permitted through.
+ *
+ * @param projectRoot - Absolute project root for path boundary enforcement
+ * @returns Zod schema that validates and re-brands TemplateVarValue, rejecting
+ *   JsonArrayStream paths that escape projectRoot
+ */
+export function makeTemplateVarValueSchema(projectRoot: string): z.ZodType<TemplateVarValue> {
+  return z.union([
+    z.string(),
+    z.number(),
+    z.array(JsonValueSchema),
+    makeJsonArrayStreamSchema(projectRoot),
+    z
+      .record(z.string(), JsonValueSchema)
+      .refine(
+        (v) =>
+          !(
+            (v as Record<string, unknown>).kind === 'json-array-stream' &&
+            typeof (v as Record<string, unknown>).path === 'string'
+          ),
+        'JsonArrayStream path escapes project root and cannot be re-branded',
+      ),
+  ]);
+}
+
+/**
+ * Build a path-validated variant of {@link AncestorSnapshotSchema}.
+ *
+ * Replaces the static `TemplateVarValueSchema` used in `vars` with a
+ * path-validated variant so that JsonArrayStream paths in ancestor context
+ * are boundary-checked against `projectRoot` on state load.
+ *
+ * @param projectRoot - Absolute project root for path boundary enforcement
+ * @returns Zod schema for AncestorSnapshot with path-validated vars
+ */
+function makeAncestorSnapshotSchema(projectRoot: string): z.ZodTypeAny {
+  return z.object({
+    runId: z.string(),
+    runbook: z.string(),
+    step: z.string(),
+    substep: z.string().nullable(),
+    vars: z.record(z.string(), makeTemplateVarValueSchema(projectRoot)),
+    at: z.string().optional(),
+    index: z.number().int().positive().optional(),
+  });
+}
+
+/**
+ * Build a path-validated variant of {@link ContextSnapshotSchema}.
+ *
+ * Replaces the static `TemplateVarValueSchema` used in `vars` and
+ * `ancestors[].vars` with path-validated variants so that all
+ * JsonArrayStream paths in the delegation context snapshot are
+ * boundary-checked against `projectRoot` on state load.
+ *
+ * @param projectRoot - Absolute project root for path boundary enforcement
+ * @returns Zod schema for ContextSnapshot with path-validated vars and ancestors
+ */
+function makeContextSnapshotSchema(projectRoot: string): z.ZodTypeAny {
+  return z
+    .object({
+      vars: z.record(z.string(), makeTemplateVarValueSchema(projectRoot)),
+      ancestors: z.array(makeAncestorSnapshotSchema(projectRoot)).readonly(),
+      step: z.string().optional(),
+      substep: z.string().optional(),
+      at: z.string().optional(),
+      index: z.number().int().positive().optional(),
+    })
+    .passthrough()
+    .superRefine((val, ctx) => {
+      if ('sources' in val) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            'Legacy delegation snapshot detected (contains "sources" field). Run `rundown prune` and restart.',
+        });
+      }
+    });
+}
+
+/**
+ * Build a path-validated variant of {@link StepDelegationSchema}.
+ *
+ * Replaces the static `ContextSnapshotSchema` with a path-validated variant
+ * so that all JsonArrayStream paths in delegation metadata are boundary-checked
+ * against `projectRoot` on state load.
+ *
+ * @param projectRoot - Absolute project root for path boundary enforcement
+ * @returns Zod schema for StepDelegation with path-validated contextSnapshot
+ */
+function makeStepDelegationSchema(projectRoot: string): z.ZodTypeAny {
+  return z.object({
+    tokenHash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+    childRunbookPath: z.string(),
+    contextSnapshot: makeContextSnapshotSchema(projectRoot),
+    childRunId: z.string().nullable(),
+    createdAt: z.string(),
+    cancelledAt: z.string().nullable(),
+  });
+}
+
+/**
+ * Build a path-validated variant of {@link SubstepStateSchema}.
+ *
+ * Replaces the static `StepDelegationSchema` with a path-validated variant
+ * so that all JsonArrayStream paths in substep delegation metadata are
+ * boundary-checked against `projectRoot` on state load.
+ *
+ * @param projectRoot - Absolute project root for path boundary enforcement
+ * @returns Zod schema for SubstepState with path-validated delegation
+ */
+function makeSubstepStateSchema(projectRoot: string): z.ZodTypeAny {
+  return z.object({
+    id: z.string(),
+    frameKey: FrameKeySchema,
+    status: z.enum(['pending', 'running', 'done']),
+    result: z.enum(['pass', 'fail']).optional(),
+    delegation: makeStepDelegationSchema(projectRoot).optional(),
+  });
+}
+
+/**
+ * Build a path-validated variant of {@link RunbookStateSchema}.
+ *
+ * Replaces the `templateVars` field and `substepStates` field with
+ * path-validated schemas so that JsonArrayStream values loaded from disk are
+ * checked against `projectRoot` before being re-branded. This closes the disk
+ * round-trip attack vector where a crafted `--var-json` object survives as a
+ * JsonObject on disk and is re-hydrated as a usable file stream on state reload.
+ *
+ * SEC1: Also validates JsonArrayStream paths in `contextSnapshot.vars` and
+ * `ancestors[].vars` within delegation metadata, which previously used the
+ * static `TemplateVarValueSchema` and bypassed projectRoot boundary checks.
+ *
+ * @param projectRoot - Absolute project root; JsonArrayStream paths in
+ *   templateVars and substepStates delegation metadata must be within this directory
+ * @returns Zod schema for RunbookState with path-validated templateVars and substepStates
+ */
+export function makeRunbookStateSchema(projectRoot: string): z.ZodTypeAny {
+  const VarsSchema = z.record(z.string(), makeTemplateVarValueSchema(projectRoot));
+  const SubstepStateSchemaValidated = makeSubstepStateSchema(projectRoot);
+  return RunbookStateSchema.extend({
+    templateVars: VarsSchema.optional(),
+    substepStates: z.array(SubstepStateSchemaValidated).optional(),
+  });
+}

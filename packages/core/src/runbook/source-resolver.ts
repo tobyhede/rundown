@@ -10,6 +10,8 @@
  * @module
  */
 
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
 import { createFileProvider, computeFileSnapshot } from './file-provider.js';
 import type {
   ForContext,
@@ -37,7 +39,7 @@ export class ForResolutionError extends Error {
    */
   constructor(
     message: string,
-    readonly code: 'undefined-variable' | 'type-mismatch' | 'parse-failure',
+    readonly code: 'undefined-variable' | 'type-mismatch' | 'parse-failure' | 'policy-violation',
     options?: ErrorOptions,
   ) {
     super(message, options);
@@ -71,11 +73,17 @@ export type ResolvedIteration =
  *
  * @param fc - The ForContext whose `currentValue` needs resolution
  * @param vars - The unified template variable map for variable source lookups
+ * @param projectRoot - When provided, JsonArrayStream paths are checked to be within this directory
  * @returns A discriminated result: either the resolved context or an exhaustion signal
+ * @throws {ForResolutionError} with code `'undefined-variable'` when the FOR variable is not in the template var map
+ * @throws {ForResolutionError} with code `'type-mismatch'` when the FOR variable is not an iterable type
+ * @throws {ForResolutionError} with code `'parse-failure'` when a JSONL line cannot be parsed as JSON
+ * @throws {ForResolutionError} with code `'policy-violation'` if the stream path cannot be resolved or escapes `projectRoot` after symlink resolution
  */
 export async function resolveForValue(
   fc: ForContext,
   vars?: Readonly<Record<string, TemplateVarValue>>,
+  projectRoot?: string,
 ): Promise<ResolvedIteration> {
   switch (fc.source.kind) {
     case 'range':
@@ -104,7 +112,7 @@ export async function resolveForValue(
       }
 
       if (isJsonArrayStream(value)) {
-        return resolveFromJsonArrayStream(vfc, value);
+        return resolveFromJsonArrayStream(vfc, value, projectRoot);
       }
 
       const typeDesc = typeof value === 'object' ? 'JsonObject' : typeof value;
@@ -152,17 +160,53 @@ function resolveFromJsonArray(
  *
  * @param fc - The ForContext whose currentValue needs resolution from the file stream
  * @param stream - The JsonArrayStream metadata (path and format information)
+ * @param projectRoot - When provided, the stream path must be within this directory
  * @returns A promise resolving to a discriminated result: either the resolved context (with snapshot) or an exhaustion signal
+ * @throws {ForResolutionError} with code `'policy-violation'` if the stream path cannot be resolved or escapes projectRoot after symlink resolution
  */
 async function resolveFromJsonArrayStream(
   fc: VariableForContext,
   stream: JsonArrayStream,
+  projectRoot?: string,
 ): Promise<
   | { readonly kind: 'resolved'; readonly context: StreamResolvedForContext }
   | { readonly kind: 'exhausted'; readonly capped: ForContext }
 > {
+  // Resolve symlinks immediately before opening the file to close the TOCTOU
+  // window between the lexical path.relative() boundary check and createFileProvider().
+  // ENOENT means the file no longer exists (or never did) — treat as policy-violation
+  // so the caller gets a clean ForResolutionError rather than a raw ENOENT.
+  let canonicalPath: string;
+  try {
+    canonicalPath = await fs.realpath(stream.path);
+  } catch (cause) {
+    const errCode =
+      cause instanceof Error && 'code' in cause
+        ? ` (${String((cause as NodeJS.ErrnoException).code)})`
+        : '';
+    throw new ForResolutionError(
+      `JsonArrayStream path "${stream.path}" could not be resolved${errCode}`,
+      'policy-violation',
+      { cause },
+    );
+  }
+
+  if (projectRoot !== undefined) {
+    // Resolve projectRoot to its canonical path as well so the comparison is
+    // between two fully resolved paths (important on macOS where /tmp → /private/tmp).
+    const canonicalRoot = await fs.realpath(projectRoot).catch(() => projectRoot);
+    const rel = path.relative(canonicalRoot, canonicalPath);
+    // path.isAbsolute(rel) is a Windows safety net: on different drives,
+    // path.relative() returns an absolute path rather than a dotdot sequence.
+    if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
+      throw new ForResolutionError(
+        `JsonArrayStream path "${stream.path}" escapes project root "${projectRoot}"`,
+        'policy-violation',
+      );
+    }
+  }
   const skipLines = fc.iteration - 1;
-  const provider = await createFileProvider(stream.path, { skipLines });
+  const provider = await createFileProvider(canonicalPath, { skipLines });
   try {
     const { value, done } = await provider.next();
     if (done) {
@@ -180,7 +224,7 @@ async function resolveFromJsonArrayStream(
         { cause },
       );
     }
-    const snapshot: FileSnapshot = await computeFileSnapshot(stream.path, fc.iteration);
+    const snapshot: FileSnapshot = await computeFileSnapshot(canonicalPath, fc.iteration);
     return {
       kind: 'resolved',
       context: {

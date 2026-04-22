@@ -111,6 +111,10 @@ export interface StepTransitionedPayload {
 
 /** Payload emitted when a command is blocked by policy (POLICY_DENIED event). */
 export interface PolicyDeniedPayload {
+  /**
+   * The blocked shell command string, or a short description of the blocked
+   * operation when no shell command is involved (e.g. `"JsonArrayStream variable access"`).
+   */
   readonly command: string;
   readonly reason: string;
   readonly position: StepPosition;

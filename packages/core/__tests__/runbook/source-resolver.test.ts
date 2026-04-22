@@ -1,4 +1,5 @@
 import { resolveForValue } from '../../src/runbook/source-resolver.js';
+import { createJsonArrayStream } from '../../src/runbook/types.js';
 import type { ForContext, JsonArrayStream, TemplateVarValue } from '../../src/runbook/types.js';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
@@ -122,7 +123,7 @@ describe('resolveForValue', () => {
     it('returns resolved with value and snapshot for JSONL file', async () => {
       const file = path.join(tmpDir, 'data.jsonl');
       await fs.writeFile(file, '{"id": 1, "name": "Alice"}\n{"id": 2, "name": "Bob"}\n');
-      const stream: JsonArrayStream = { kind: 'json-array-stream', path: file };
+      const stream: JsonArrayStream = createJsonArrayStream(file);
       const vars: Record<string, TemplateVarValue> = { data: stream };
 
       const result = await resolveForValue(makeContext(1), vars);
@@ -139,7 +140,7 @@ describe('resolveForValue', () => {
       const file = path.join(tmpDir, 'empty.jsonl');
       await fs.writeFile(file, '');
       const vars: Record<string, TemplateVarValue> = {
-        data: { kind: 'json-array-stream', path: file },
+        data: createJsonArrayStream(file),
       };
 
       const result = await resolveForValue(makeContext(1), vars);
@@ -154,7 +155,7 @@ describe('resolveForValue', () => {
       const file = path.join(tmpDir, 'numbers.jsonl');
       await fs.writeFile(file, '42\n100\n');
       const vars: Record<string, TemplateVarValue> = {
-        data: { kind: 'json-array-stream', path: file },
+        data: createJsonArrayStream(file),
       };
 
       const result = await resolveForValue(makeContext(1), vars);
@@ -169,7 +170,7 @@ describe('resolveForValue', () => {
       const file = path.join(tmpDir, 'arrays.jsonl');
       await fs.writeFile(file, '[1, 2, 3]\n[4, 5, 6]\n');
       const vars: Record<string, TemplateVarValue> = {
-        data: { kind: 'json-array-stream', path: file },
+        data: createJsonArrayStream(file),
       };
 
       const result = await resolveForValue(makeContext(2), vars);
@@ -184,7 +185,7 @@ describe('resolveForValue', () => {
       const file = path.join(tmpDir, 'invalid.jsonl');
       await fs.writeFile(file, '{"valid": true}\n{invalid json}\n');
       const vars: Record<string, TemplateVarValue> = {
-        data: { kind: 'json-array-stream', path: file },
+        data: createJsonArrayStream(file),
       };
 
       const err = await resolveForValue(makeContext(2), vars).catch((e: unknown) => e);
@@ -199,7 +200,7 @@ describe('resolveForValue', () => {
       const file = path.join(tmpDir, 'nulls.jsonl');
       await fs.writeFile(file, 'null\nnull\n');
       const vars: Record<string, TemplateVarValue> = {
-        data: { kind: 'json-array-stream', path: file },
+        data: createJsonArrayStream(file),
       };
 
       const result = await resolveForValue(makeContext(1), vars);
@@ -209,6 +210,81 @@ describe('resolveForValue', () => {
         expect(result.context.currentValue).toBe(null);
         expect(JSON.stringify(result.context.currentValue)).toBe('null');
       }
+    });
+  });
+
+  describe('projectRoot boundary enforcement', () => {
+    let projectRoot: string;
+    let outsideFile: string;
+
+    beforeEach(async () => {
+      const base = await fs.mkdtemp(path.join(os.tmpdir(), 'rundown-sr-sec-'));
+      projectRoot = path.join(base, 'project');
+      await fs.mkdir(projectRoot);
+      outsideFile = path.join(base, 'outside.jsonl');
+      await fs.writeFile(outsideFile, '"secret"\n');
+    });
+
+    afterEach(async () => {
+      await fs.rm(path.dirname(projectRoot), { recursive: true, force: true });
+    });
+
+    const makeContext = (name = 'data'): ForContext => ({
+      stepId: '1',
+      iteration: 1,
+      start: 1,
+      implicit: false,
+      source: { kind: 'variable', name },
+    });
+
+    it('throws policy-violation when JsonArrayStream path escapes project root', async () => {
+      const vars: Record<string, TemplateVarValue> = {
+        data: createJsonArrayStream(outsideFile),
+      };
+
+      await expect(resolveForValue(makeContext(), vars, projectRoot)).rejects.toMatchObject({
+        code: 'policy-violation',
+      });
+    });
+
+    it('succeeds when JsonArrayStream path is within project root', async () => {
+      const file = path.join(projectRoot, 'data.jsonl');
+      await fs.writeFile(file, '"value"\n');
+      const vars: Record<string, TemplateVarValue> = {
+        data: createJsonArrayStream(file),
+      };
+
+      const result = await resolveForValue(makeContext(), vars, projectRoot);
+      expect(result.kind).toBe('resolved');
+    });
+
+    it('throws policy-violation for sibling-prefix path (e.g. /base/project-evil)', async () => {
+      // /base/project-evil/data.jsonl starts with the same string as projectRoot
+      // (/base/project) but is NOT inside it. path.relative() returns
+      // '../project-evil/data.jsonl' — the dotdot prefix is caught correctly.
+      // This test documents and regression-guards that behaviour.
+      const base = path.dirname(projectRoot); // e.g. /tmp/rundown-sr-sec-xxxxx
+      const siblingDir = path.join(base, 'project-evil');
+      await fs.mkdir(siblingDir, { recursive: true });
+      const siblingFile = path.join(siblingDir, 'data.jsonl');
+      await fs.writeFile(siblingFile, '"secret"\n');
+
+      const vars: Record<string, TemplateVarValue> = {
+        data: createJsonArrayStream(siblingFile),
+      };
+
+      await expect(resolveForValue(makeContext(), vars, projectRoot)).rejects.toMatchObject({
+        code: 'policy-violation',
+      });
+    });
+
+    it('skips boundary check when projectRoot is omitted', async () => {
+      const vars: Record<string, TemplateVarValue> = {
+        data: createJsonArrayStream(outsideFile),
+      };
+
+      const result = await resolveForValue(makeContext(), vars);
+      expect(result.kind).toBe('resolved');
     });
   });
 });

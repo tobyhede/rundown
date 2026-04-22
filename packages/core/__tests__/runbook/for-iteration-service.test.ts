@@ -1,5 +1,13 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import type { RunbookState, ForContext, Step } from '../../src/runbook/types.js';
+import { createJsonArrayStream } from '../../src/runbook/types.js';
+
+// Capture the real ForResolutionError before the mock is installed.
+// jest.unstable_mockModule does NOT hoist, so this top-level await executes
+// first and always captures the real class.
+const { ForResolutionError: RealForResolutionError } = await import(
+  '../../src/runbook/source-resolver.js'
+);
 
 // Mock source-resolver to avoid file I/O in unit tests
 jest.unstable_mockModule('../../src/runbook/source-resolver.js', () => ({
@@ -77,7 +85,7 @@ describe('ForIterationService', () => {
     it('throws when load returns null', async () => {
       mockManager.load.mockResolvedValue(null);
 
-      const service = new ForIterationService(mockManager, mockActorService);
+      const service = new ForIterationService(mockManager, mockActorService, undefined);
       await expect(service.prepareIteration('missing-id', steps)).rejects.toThrow(
         'Runbook missing-id not found',
       );
@@ -87,7 +95,7 @@ describe('ForIterationService', () => {
       const state = makeState();
       mockManager.load.mockResolvedValue(state);
 
-      const service = new ForIterationService(mockManager, mockActorService);
+      const service = new ForIterationService(mockManager, mockActorService, undefined);
       const result = await service.prepareIteration('test-123', steps);
 
       expect(result.status).toBe('no-resolution-needed');
@@ -106,7 +114,7 @@ describe('ForIterationService', () => {
       const state = makeState({ forStack: [fc] });
       mockManager.load.mockResolvedValue(state);
 
-      const service = new ForIterationService(mockManager, mockActorService);
+      const service = new ForIterationService(mockManager, mockActorService, undefined);
       const result = await service.prepareIteration('test-123', steps);
 
       expect(result.status).toBe('no-resolution-needed');
@@ -125,7 +133,7 @@ describe('ForIterationService', () => {
       const state = makeState({ forStack: [fc] });
       mockManager.load.mockResolvedValue(state);
 
-      const service = new ForIterationService(mockManager, mockActorService);
+      const service = new ForIterationService(mockManager, mockActorService, undefined);
       const result = await service.prepareIteration('test-123', steps);
 
       expect(result.status).toBe('no-resolution-needed');
@@ -147,7 +155,7 @@ describe('ForIterationService', () => {
       const state = makeState({ forStack: [fc] });
       mockManager.load.mockResolvedValue(state);
 
-      const service = new ForIterationService(mockManager, mockActorService);
+      const service = new ForIterationService(mockManager, mockActorService, undefined);
       const result = await service.prepareIteration('test-123', steps);
 
       expect(result.status).toBe('no-resolution-needed');
@@ -174,7 +182,7 @@ describe('ForIterationService', () => {
       });
       mockManager.updateForContext.mockResolvedValue(updatedState);
 
-      const service = new ForIterationService(mockManager, mockActorService);
+      const service = new ForIterationService(mockManager, mockActorService, undefined);
       const result = await service.prepareIteration('test-123', steps);
 
       expect(result.status).toBe('ready');
@@ -216,7 +224,7 @@ describe('ForIterationService', () => {
       mockedIsComplete.mockReturnValue(true);
       mockedIsStopped.mockReturnValue(false);
 
-      const service = new ForIterationService(mockManager, mockActorService);
+      const service = new ForIterationService(mockManager, mockActorService, undefined);
       const result = await service.prepareIteration('test-123', steps);
 
       expect(result.status).toBe('exhausted');
@@ -250,7 +258,7 @@ describe('ForIterationService', () => {
       mockManager.updateForContext.mockResolvedValue(undefined);
       mockActorService.sendAndSync.mockResolvedValue(null);
 
-      const service = new ForIterationService(mockManager, mockActorService);
+      const service = new ForIterationService(mockManager, mockActorService, undefined);
       await expect(service.prepareIteration('test-123', steps)).rejects.toThrow(
         'Runbook test-123 not found after capping',
       );
@@ -279,7 +287,7 @@ describe('ForIterationService', () => {
       mockManager.updateForContext.mockResolvedValue(undefined);
       mockActorService.sendAndSync.mockResolvedValue(null);
 
-      const service = new ForIterationService(mockManager, mockActorService);
+      const service = new ForIterationService(mockManager, mockActorService, undefined);
       const result = await service.prepareIteration('test-123', steps);
 
       expect(result.status).toBe('exhausted');
@@ -287,6 +295,48 @@ describe('ForIterationService', () => {
         expect(result.state).toBe(cappedState);
         expect(result.terminal).toBe('stopped');
       }
+    });
+
+    it('propagates ForResolutionError with code policy-violation from resolveForValue', async () => {
+      const fc: ForContext = {
+        stepId: '1',
+        iteration: 1,
+        start: 1,
+        end: undefined,
+        variable: 'items',
+        implicit: false,
+        source: { kind: 'variable', name: 'items' },
+      };
+      const stream = createJsonArrayStream('/etc/passwd');
+      const state = makeState({
+        forStack: [fc],
+        templateVars: {
+          items: stream,
+        },
+      });
+
+      mockManager.load.mockResolvedValue(state);
+      mockedResolveForValue.mockRejectedValue(
+        new RealForResolutionError(
+          'JsonArrayStream path "/etc/passwd" escapes project root "/safe"',
+          'policy-violation',
+        ),
+      );
+
+      const service = new ForIterationService(mockManager, mockActorService, '/safe');
+
+      await expect(service.prepareIteration('test-123', steps)).rejects.toMatchObject({
+        name: 'ForResolutionError',
+        code: 'policy-violation',
+        message: expect.stringContaining('escapes project root'),
+      });
+
+      // Verify projectRoot was forwarded as the third argument to resolveForValue
+      expect(mockedResolveForValue).toHaveBeenCalledWith(
+        expect.objectContaining({ stepId: '1', variable: 'items' }),
+        { items: stream },
+        '/safe',
+      );
     });
   });
 });
