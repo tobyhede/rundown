@@ -169,7 +169,7 @@ const JsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
  * after `fs.realpath()`). A relative path or a path with `..` components means
  * the persisted state was corrupted or tampered with and is rejected immediately.
  *
- * @warning Does not enforce the project-root boundary. For deserialization of
+ * @remarks Does not enforce the project-root boundary. For deserialization of
  * user-controlled or persisted state that arrives from outside the process, use
  * {@link makeTemplateVarValueSchema} with the project root path instead.
  */
@@ -196,7 +196,7 @@ const JsonArrayStreamSchema = z
  * JsonArray, or JsonArrayStream.
  * Top-level booleans and nulls are stringified at variable resolution time.
  *
- * @warning This schema re-brands any `{kind:'json-array-stream', path}` object
+ * @remarks This schema re-brands any `{kind:'json-array-stream', path}` object
  * without validating the path against a project root. The embedded
  * {@link JsonArrayStreamSchema} enforces a canonical absolute path invariant,
  * but does **not** enforce the project-root boundary. It is safe for in-memory
