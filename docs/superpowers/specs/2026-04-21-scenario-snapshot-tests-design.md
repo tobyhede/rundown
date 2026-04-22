@@ -65,6 +65,7 @@ JSON and text variants are separate `it()` blocks with distinct names.
 Two files required:
 
 **`snapshot-delegation-outputs.runbook.md`** (parent):
+
 ```yaml
 ---
 name: snapshot-delegation-outputs
@@ -88,6 +89,7 @@ Delegated to child runbook.
 ```
 
 **`snapshot-child.runbook.md`** (child):
+
 ```yaml
 ---
 name: snapshot-child
@@ -160,7 +162,7 @@ Review the diff in `.snap` files carefully before committing — snapshot update
 
 ## File Layout
 
-```
+```text
 packages/cli/
   __tests__/
     fixtures/

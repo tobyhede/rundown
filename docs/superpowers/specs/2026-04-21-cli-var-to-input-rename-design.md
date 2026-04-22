@@ -39,6 +39,7 @@ The old name `--var` was accurate (it sets template variables) but generic. `--i
 All changes are mechanical string/identifier replacements. No logic changes.
 
 ### packages/cli/src — 9 files
+
 - `commands/run.ts` — option definitions, options interface, varOpts assignment
 - `commands/claim.ts` — option definitions, options interface, varOpts passthrough
 - `commands/delegate.ts` — option definitions, options interface, varOpts passthrough
@@ -50,20 +51,25 @@ All changes are mechanical string/identifier replacements. No logic changes.
 - `services/variable-discovery.ts` — `ENV_VAR_PREFIX` constant → `ENV_INPUT_PREFIX`, interfaces, comments, error messages
 
 ### packages/claude-code-plugin/src — 1 file (live code)
+
 - `workflow/hooks/delegation-dispatch.ts:86` — generates `--var key=value` flag strings passed to the CLI
 
 ### packages/core/src — 1 file (comments only)
+
 - `runbook/types.ts` — JSDoc comments referencing `--var-json`
 
 ### packages/parser/src — 1 file (comments only)
+
 - `reserved.ts` — JSDoc comment referencing `--var`
 
 ### Tests — 14 files (~200+ touch points)
+
 - CLI argument strings in invocations
 - `RD_VAR_*` → `RD_INPUT_*` env assignments in test setup/teardown
 - `varFile`/`varJson` property names in option objects passed to service functions
 
 ### Documentation — 29 files (~175+ references)
+
 - `CLAUDE.md` — command reference tables and examples
 - `README.md` — quick-start examples
 - `docs/SPEC.md`, `docs/RUNDOWN.md`, `docs/FORMAT.md`, `docs/SECURITY.md`, `docs/MCP.md`, `docs/PROJECT-INTEGRATION.md`, `docs/AGENT-ORCHESTRATION.md`

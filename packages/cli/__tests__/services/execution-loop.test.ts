@@ -30,8 +30,10 @@ const mockLifecycleService = {
 // Capture the real isJsonArrayStream before the mock is registered.
 // jest.unstable_mockModule does NOT hoist (unlike jest.mock), so this top-level
 // await executes first and always captures the real branded implementation.
-const { isJsonArrayStream: realIsJsonArrayStream } = await import('@rundown-org/core');
-const { ForResolutionError: RealForResolutionError } = await import('@rundown-org/core');
+const {
+  isJsonArrayStream: realIsJsonArrayStream,
+  ForResolutionError: RealForResolutionError,
+} = await import('@rundown-org/core');
 
 jest.unstable_mockModule('@rundown-org/core', () => {
   const asTerminalSnapshot = jest.fn((snapshot: unknown) => {
