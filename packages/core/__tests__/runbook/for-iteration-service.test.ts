@@ -85,7 +85,7 @@ describe('ForIterationService', () => {
     it('throws when load returns null', async () => {
       mockManager.load.mockResolvedValue(null);
 
-      const service = new ForIterationService(mockManager, mockActorService);
+      const service = new ForIterationService(mockManager, mockActorService, undefined);
       await expect(service.prepareIteration('missing-id', steps)).rejects.toThrow(
         'Runbook missing-id not found',
       );
@@ -95,7 +95,7 @@ describe('ForIterationService', () => {
       const state = makeState();
       mockManager.load.mockResolvedValue(state);
 
-      const service = new ForIterationService(mockManager, mockActorService);
+      const service = new ForIterationService(mockManager, mockActorService, undefined);
       const result = await service.prepareIteration('test-123', steps);
 
       expect(result.status).toBe('no-resolution-needed');
@@ -114,7 +114,7 @@ describe('ForIterationService', () => {
       const state = makeState({ forStack: [fc] });
       mockManager.load.mockResolvedValue(state);
 
-      const service = new ForIterationService(mockManager, mockActorService);
+      const service = new ForIterationService(mockManager, mockActorService, undefined);
       const result = await service.prepareIteration('test-123', steps);
 
       expect(result.status).toBe('no-resolution-needed');
@@ -133,7 +133,7 @@ describe('ForIterationService', () => {
       const state = makeState({ forStack: [fc] });
       mockManager.load.mockResolvedValue(state);
 
-      const service = new ForIterationService(mockManager, mockActorService);
+      const service = new ForIterationService(mockManager, mockActorService, undefined);
       const result = await service.prepareIteration('test-123', steps);
 
       expect(result.status).toBe('no-resolution-needed');
@@ -155,7 +155,7 @@ describe('ForIterationService', () => {
       const state = makeState({ forStack: [fc] });
       mockManager.load.mockResolvedValue(state);
 
-      const service = new ForIterationService(mockManager, mockActorService);
+      const service = new ForIterationService(mockManager, mockActorService, undefined);
       const result = await service.prepareIteration('test-123', steps);
 
       expect(result.status).toBe('no-resolution-needed');
@@ -182,7 +182,7 @@ describe('ForIterationService', () => {
       });
       mockManager.updateForContext.mockResolvedValue(updatedState);
 
-      const service = new ForIterationService(mockManager, mockActorService);
+      const service = new ForIterationService(mockManager, mockActorService, undefined);
       const result = await service.prepareIteration('test-123', steps);
 
       expect(result.status).toBe('ready');
@@ -224,7 +224,7 @@ describe('ForIterationService', () => {
       mockedIsComplete.mockReturnValue(true);
       mockedIsStopped.mockReturnValue(false);
 
-      const service = new ForIterationService(mockManager, mockActorService);
+      const service = new ForIterationService(mockManager, mockActorService, undefined);
       const result = await service.prepareIteration('test-123', steps);
 
       expect(result.status).toBe('exhausted');
@@ -258,7 +258,7 @@ describe('ForIterationService', () => {
       mockManager.updateForContext.mockResolvedValue(undefined);
       mockActorService.sendAndSync.mockResolvedValue(null);
 
-      const service = new ForIterationService(mockManager, mockActorService);
+      const service = new ForIterationService(mockManager, mockActorService, undefined);
       await expect(service.prepareIteration('test-123', steps)).rejects.toThrow(
         'Runbook test-123 not found after capping',
       );
@@ -287,7 +287,7 @@ describe('ForIterationService', () => {
       mockManager.updateForContext.mockResolvedValue(undefined);
       mockActorService.sendAndSync.mockResolvedValue(null);
 
-      const service = new ForIterationService(mockManager, mockActorService);
+      const service = new ForIterationService(mockManager, mockActorService, undefined);
       const result = await service.prepareIteration('test-123', steps);
 
       expect(result.status).toBe('exhausted');
