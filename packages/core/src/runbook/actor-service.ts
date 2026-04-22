@@ -64,7 +64,7 @@ export class RunbookActorService {
    *
    * @param manager - State manager for persisting runbook state to disk
    */
-  constructor(private readonly manager: RunbookStateManager) {}
+  constructor(private readonly manager: RunbookStateManager) { }
 
   /**
    * Create and start an XState actor from persisted state.
@@ -112,6 +112,10 @@ export class RunbookActorService {
    * @param id - Runbook state ID
    * @param steps - Parsed runbook steps for machine compilation
    * @returns Started actor, or null if state not found
+   * @throws {Error} When the loaded state is stale — specifically when
+   *   `state.frontmatterOutputs` is `undefined`. Callers should treat this
+   *   as a signal to run `rundown prune` and restart execution; the stale
+   *   state cannot be migrated in place.
    */
   async createActor(id: string, steps: ResolvedStep[]): Promise<AnyActorRef | null> {
     const state = await this.manager.load(id);
@@ -120,7 +124,7 @@ export class RunbookActorService {
     if (state.frontmatterOutputs === undefined) {
       throw new Error(
         `Stale runbook state for "${id}": missing frontmatter outputs declarations. ` +
-          'Run `rundown prune` and restart execution.',
+        'Run `rundown prune` and restart execution.',
       );
     }
 
