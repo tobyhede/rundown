@@ -138,8 +138,29 @@ export class RunbookActorService {
       frontmatterOutputs: state.frontmatterOutputs,
     });
 
-    const actor = createActor(machine, {
+    // Mirror persisted substepStates/activeFrameKey into the actor's context so
+    // the XState retry hook (running inside `assign`) can inspect and update
+    // delegation records. We hydrate by extracting the initial snapshot context
+    // (from either the persisted snapshot or a throwaway actor), overlaying the
+    // mirrored fields, then creating the real actor from the patched snapshot.
+    const baseActor = createActor(machine, {
       snapshot: state.snapshot as Snapshot<unknown> | undefined,
+    });
+    const baseSnapshot = baseActor.getPersistedSnapshot() as unknown as {
+      context: RunbookContext;
+      [key: string]: unknown;
+    };
+    const hydratedSnapshot = {
+      ...baseSnapshot,
+      context: {
+        ...baseSnapshot.context,
+        substepStates: state.substepStates ?? baseSnapshot.context.substepStates,
+        activeFrameKey: state.activeFrameKey ?? baseSnapshot.context.activeFrameKey,
+      },
+    };
+
+    const actor = createActor(machine, {
+      snapshot: hydratedSnapshot as unknown as Snapshot<unknown>,
     });
     actor.start();
     return actor;
@@ -184,6 +205,9 @@ export class RunbookActorService {
       const finalVars = Object.keys(rawFinalVars).length > 0 ? rawFinalVars : undefined;
       const lifecycle =
         snapshot.context?.lifecycle ?? (stateValue === 'COMPLETE' ? 'completed' : 'stopped');
+      const ctxSubstepStatesTerm = snapshot.context?.substepStates;
+      const substepStatesTermPatch =
+        ctxSubstepStatesTerm !== undefined ? { substepStates: ctxSubstepStatesTerm } : {};
       const state = await this.manager.update(id, {
         variables,
         finalVars,
@@ -192,6 +216,7 @@ export class RunbookActorService {
         // Clear FOR loop state on completion
         forStack: undefined,
         iterationResults: undefined,
+        ...substepStatesTermPatch,
       });
       return { state, snapshot };
     }
@@ -239,6 +264,14 @@ export class RunbookActorService {
     const hasOnlyImplicit = forStack?.length ? forStack.every((fc) => fc.implicit) : false;
     const computedIterationResults = hasOnlyImplicit ? undefined : iterationResults;
 
+    // Write back mirrored substepStates from context. Only overwrite when the
+    // context field is defined so a pre-bootstrap `undefined` cannot wipe the
+    // authoritative persisted value. When undefined, omit the field entirely
+    // from the update so `manager.update`'s spread preserves the existing value.
+    const ctxSubstepStates = snapshot.context?.substepStates;
+    const substepStatesPatch =
+      ctxSubstepStates !== undefined ? { substepStates: ctxSubstepStates } : {};
+
     const state = await this.manager.update(id, {
       step: stepName, // string
       substep,
@@ -250,6 +283,7 @@ export class RunbookActorService {
       forStack: computedForStack,
       iterationResults: computedIterationResults,
       lastAction,
+      ...substepStatesPatch,
     });
     return { state, snapshot };
   }

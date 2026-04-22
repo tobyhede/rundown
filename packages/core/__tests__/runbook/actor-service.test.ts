@@ -5,8 +5,10 @@ import { join } from 'node:path';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 import { RunbookActorService } from '../../src/runbook/actor-service.js';
 import type { AnyActorRef } from '../../src/runbook/actor-service.js';
-import type { Step, Runbook, ResolvedStep } from '../../src/runbook/types.js';
+import type { Step, Runbook, ResolvedStep, SubstepState } from '../../src/runbook/types.js';
 import { createJsonArrayStream } from '../../src/runbook/types.js';
+import { buildFrameKey } from '../../src/runbook/targeting.js';
+import type { RunbookContext } from '../../src/runbook/compiler.js';
 import { createRunbook } from './fixtures.js';
 
 function mockActor(snapshot: { value: string; context: Record<string, unknown> }) {
@@ -687,6 +689,90 @@ describe('RunbookActorService', () => {
 
       const result = await actorService.sendAndSync(state.id, mockSteps, { type: 'PASS' });
       expect(result!.state.finalVars).toBeUndefined();
+    });
+  });
+
+  describe('substepStates / activeFrameKey mirroring (Task 4)', () => {
+    it('initial RunbookContext mirrors substepStates and activeFrameKey from RunbookState', async () => {
+      const frameKey = buildFrameKey('1');
+      const substepStates: SubstepState[] = [
+        { id: '1', frameKey, status: 'done', result: 'pass' },
+      ];
+
+      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+      await manager.update(state.id, {
+        substepStates,
+        activeFrameKey: frameKey,
+      });
+
+      const actor = await actorService.createActor(state.id, mockSteps);
+      expect(actor).not.toBeNull();
+      try {
+        const snapshot = actor!.getPersistedSnapshot() as unknown as {
+          context: RunbookContext;
+        };
+        expect(snapshot.context.substepStates).toEqual(substepStates);
+        expect(snapshot.context.activeFrameKey).toBe(frameKey);
+      } finally {
+        actor!.stop();
+      }
+    });
+
+    it('round-trips substepStates through updateFromActor back into RunbookState', async () => {
+      const frameKey = buildFrameKey('1');
+      const substepStates: SubstepState[] = [
+        { id: '1', frameKey, status: 'done', result: 'pass' },
+        { id: '2', frameKey, status: 'pending' },
+      ];
+
+      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+      await manager.update(state.id, {
+        substepStates,
+        activeFrameKey: frameKey,
+      });
+
+      // Seed a mock actor snapshot that mirrors the persisted substepStates
+      // into context (simulating what createActor's bootstrap overlay produces,
+      // or what the retry hook would write during a transition).
+      const actor = mockActor({
+        value: 'step::1',
+        context: {
+          variables: {},
+          retryCount: 0,
+          substepStates,
+          activeFrameKey: frameKey,
+          lastAction: { type: 'CONTINUE' },
+        },
+      });
+
+      const { state: updated } = await actorService.updateFromActor(state.id, actor, mockSteps);
+      expect(updated.substepStates).toEqual(substepStates);
+
+      const reloaded = await manager.load(state.id);
+      expect(reloaded?.substepStates).toEqual(substepStates);
+    });
+
+    it('preserves persisted substepStates when context.substepStates is undefined', async () => {
+      const frameKey = buildFrameKey('1');
+      const substepStates: SubstepState[] = [{ id: '1', frameKey, status: 'pending' }];
+
+      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+      await manager.update(state.id, { substepStates });
+
+      // Snapshot without substepStates in context (e.g. a legacy snapshot path
+      // or pre-Task-4 serialized state). The sync must not wipe the persisted
+      // substepStates when the context field is undefined.
+      const actor = mockActor({
+        value: 'step::1',
+        context: {
+          variables: {},
+          retryCount: 0,
+          lastAction: { type: 'CONTINUE' },
+        },
+      });
+
+      const { state: updated } = await actorService.updateFromActor(state.id, actor, mockSteps);
+      expect(updated.substepStates).toEqual(substepStates);
     });
   });
 });
