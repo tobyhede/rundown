@@ -88,7 +88,7 @@ export class ForIterationService {
    *
    * @param manager - State reader for loading/updating runbook state
    * @param actorService - Actor operations for XState event dispatch
-   * @param projectRoot - Project root; required. JsonArrayStream paths that escape it raise `ForResolutionError('policy-violation')`.
+   * @param projectRoot - Project root. JsonArrayStream paths that escape it raise `ForResolutionError('policy-violation')`.
    */
   constructor(
     private readonly manager: ForStateReader,

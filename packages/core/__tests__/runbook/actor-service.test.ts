@@ -6,7 +6,7 @@ import { RunbookStateManager } from '../../src/runbook/state.js';
 import { RunbookActorService } from '../../src/runbook/actor-service.js';
 import type { AnyActorRef } from '../../src/runbook/actor-service.js';
 import type { Step, Runbook, ResolvedStep } from '../../src/runbook/types.js';
-import { createJsonArrayStream, isJsonArrayStream } from '../../src/runbook/types.js';
+import { createJsonArrayStream } from '../../src/runbook/types.js';
 import { createRunbook } from './fixtures.js';
 
 function mockActor(snapshot: { value: string; context: Record<string, unknown> }) {
@@ -558,8 +558,9 @@ describe('RunbookActorService', () => {
       // is not structurally validated against streams — safety depends on
       // flattenTemplateVars being called at this exact site. See the invariant
       // on RunbookActorService.createActor.
-      // Path must be canonical + inside testDir to satisfy SEC1/SEC2 load-time
-      // schema checks on JsonArrayStream paths; the stream itself is never read.
+      // Path must be canonical and under testDir to satisfy
+      // `makeJsonArrayStreamSchema`'s canonical-path + project-root checks at
+      // state load time; the stream itself is never read.
       const canonicalTestDir = await realpath(testDir);
       const stream = createJsonArrayStream(join(canonicalTestDir, 'data.jsonl'));
       const state = await manager.create('test.md', mockRunbook, {
@@ -579,7 +580,6 @@ describe('RunbookActorService', () => {
       // Scalar seeded through; stream must have been stripped.
       expect(snapshot.context.templateVars.Region).toBe('us-east-1');
       expect('Items' in snapshot.context.templateVars).toBe(false);
-      expect(isJsonArrayStream(snapshot.context.templateVars.Items as never)).toBe(false);
       actor!.stop();
     });
   });
