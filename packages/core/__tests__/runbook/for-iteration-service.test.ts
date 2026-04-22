@@ -1,5 +1,5 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import type { RunbookState, ForContext, Step, TemplateVarValue } from '../../src/runbook/types.js';
+import type { RunbookState, ForContext, Step } from '../../src/runbook/types.js';
 
 // Capture the real ForResolutionError before the mock is installed.
 // jest.unstable_mockModule does NOT hoist, so this top-level await executes
@@ -40,6 +40,7 @@ jest.unstable_mockModule('../../src/runbook/snapshot-utils.js', () => {
 const { resolveForValue } = await import('../../src/runbook/source-resolver.js');
 const { isRunbookComplete, isRunbookStopped } = await import('../../src/runbook/snapshot-utils.js');
 const { ForIterationService } = await import('../../src/runbook/for-iteration-service.js');
+const { createJsonArrayStream } = await import('../../src/runbook/types.js');
 
 const mockedResolveForValue = resolveForValue as jest.MockedFunction<typeof resolveForValue>;
 const mockedIsComplete = isRunbookComplete as jest.MockedFunction<typeof isRunbookComplete>;
@@ -308,11 +309,11 @@ describe('ForIterationService', () => {
         implicit: false,
         source: { kind: 'variable', name: 'items' },
       };
-      const stream = { kind: 'json-array-stream' as const, path: '/etc/passwd' };
+      const stream = createJsonArrayStream('/etc/passwd');
       const state = makeState({
         forStack: [fc],
         templateVars: {
-          items: stream as unknown as TemplateVarValue,
+          items: stream,
         },
       });
 
@@ -331,6 +332,13 @@ describe('ForIterationService', () => {
         code: 'policy-violation',
         message: expect.stringContaining('escapes project root'),
       });
+
+      // Confirm the constructor's projectRoot was forwarded into resolveForValue.
+      expect(mockedResolveForValue).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        '/safe',
+      );
     });
   });
 });
