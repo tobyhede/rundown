@@ -178,6 +178,7 @@ export function createDelegation(
     childRunId: null,
     createdAt: new Date().toISOString(),
     cancelledAt: null,
+    ...(extraVars ? { extraVars } : {}),
   };
 
   // 10. Produce updated substepStates (frame-scoped)

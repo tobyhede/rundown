@@ -387,6 +387,17 @@ export interface StepDelegation {
   readonly childRunId: string | null;
   readonly createdAt: string;
   readonly cancelledAt: string | null;
+  /**
+   * Caller-supplied extra variables captured at issuance time.
+   *
+   * Preserved separately from `contextSnapshot.vars` (which is the merged
+   * `templateVars + extraVars` snapshot used by the child for template
+   * expansion). Retry inherits this narrow map so re-issuance can rebuild
+   * a fresh `contextSnapshot` without reusing stale snapshot vars.
+   *
+   * Undefined when no overrides were passed at issuance.
+   */
+  readonly extraVars?: Readonly<Record<string, TemplateVarValue>>;
 }
 
 /** Snapshot of execution context at delegation time. */

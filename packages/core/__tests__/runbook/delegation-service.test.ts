@@ -805,4 +805,38 @@ describe('createDelegation', () => {
     );
     expect(result.delegation.contextSnapshot).not.toHaveProperty('sources');
   });
+
+  it('persists extraVars on the StepDelegation record', () => {
+    const state = makeState();
+    const steps = makeSteps();
+    const result = createDelegation(
+      {
+        state,
+        stepId: '1.1',
+        childRunbookPath: 'child.md',
+        extraVars: { environment: 'staging', port: 3000 },
+        ancestors: [],
+        frameKey: buildFrameKey('1'),
+      },
+      steps,
+    );
+    expect(result.delegation.extraVars).toEqual({ environment: 'staging', port: 3000 });
+  });
+
+  it('omits extraVars on the StepDelegation record when none provided', () => {
+    const state = makeState();
+    const steps = makeSteps();
+    const result = createDelegation(
+      {
+        state,
+        stepId: '1.1',
+        childRunbookPath: 'child.md',
+        extraVars: undefined,
+        ancestors: [],
+        frameKey: buildFrameKey('1'),
+      },
+      steps,
+    );
+    expect(result.delegation.extraVars).toBeUndefined();
+  });
 });
