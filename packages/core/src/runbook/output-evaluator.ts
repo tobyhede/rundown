@@ -16,6 +16,30 @@ export type OutputValue = JsonValue;
 /** Readonly variable frame passed to OUTPUTS expression evaluation. */
 export type OutputVars = Readonly<Record<string, OutputValue>>;
 
+/**
+ * Module-private nominal brand applied to the output of {@link flattenTemplateVars}.
+ *
+ * Declared with `declare const` + `unique symbol` so the brand is purely
+ * type-level (zero runtime cost) and can only be produced inside this module.
+ * The symbol key does not participate in the `Record<string, …>` index
+ * signature (only string keys do), so branded values remain fully
+ * assignable to {@link OutputVars} at read sites.
+ */
+declare const flattenedTemplateVarsBrand: unique symbol;
+
+/**
+ * {@link OutputVars} carrying the module-private brand that asserts
+ * {@link flattenTemplateVars} produced the value.
+ *
+ * Used as the seed-parameter type for `compileRunbookToMachine.options.templateVars`
+ * so that the only way to supply a `templateVars` seed to the compiler is by
+ * routing it through {@link flattenTemplateVars} — the sole runtime enforcement
+ * point for the "no `JsonArrayStream` in actor snapshots" invariant.
+ */
+export type FlattenedTemplateVars = OutputVars & {
+  readonly [flattenedTemplateVarsBrand]: true;
+};
+
 /** Machine-context subset needed to reconstruct a step's OUTPUTS evaluation frame. */
 export interface OutputFrameState {
   /** Seeded template variables (built-ins, frontmatter inputs, CLI overrides), already flattened via {@link flattenTemplateVars}. */
@@ -285,10 +309,17 @@ export function evaluateFrontmatterOutputDeclarations(
  * values remain traversable for dotted-path access (e.g., `{{ config.host }}`), and
  * `JsonArrayStream` refs are omitted (logged and skipped).
  *
+ * The returned value is branded as {@link FlattenedTemplateVars}. This is the only
+ * place in the codebase allowed to produce that brand — consumers like
+ * `compileRunbookToMachine.options.templateVars` require the brand, which
+ * concentrates the "strip `JsonArrayStream`" invariant at this single call site.
+ *
  * @param vars - Template variables resolved from CLI / frontmatter inputs
  * @returns Flattened variable frame with scalars, arrays, and objects pass-through; JsonArrayStream omitted
  */
-export function flattenTemplateVars(vars: Readonly<Record<string, TemplateVarValue>>): OutputVars {
+export function flattenTemplateVars(
+  vars: Readonly<Record<string, TemplateVarValue>>,
+): FlattenedTemplateVars {
   const flattened: Record<string, OutputValue> = {};
 
   for (const [key, value] of Object.entries(vars)) {
@@ -301,7 +332,9 @@ export function flattenTemplateVars(vars: Readonly<Record<string, TemplateVarVal
     flattened[key] = value as OutputValue;
   }
 
-  return flattened;
+  // Sole sanctioned brand assertion: every other consumer must get the brand
+  // through this function, not a cast. See the FlattenedTemplateVars doc comment.
+  return flattened as FlattenedTemplateVars;
 }
 
 /**

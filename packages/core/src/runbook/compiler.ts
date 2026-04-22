@@ -27,6 +27,7 @@ import {
   buildExecutionFrame,
   evaluateFrontmatterOutputDeclarations,
   evaluateStepOutputDeclarations,
+  type FlattenedTemplateVars,
   type OutputVars,
 } from './output-evaluator.js';
 
@@ -2245,7 +2246,7 @@ function checkedStateInsert(
 export function compileRunbookToMachine(
   steps: ResolvedStep[],
   options?: {
-    templateVars?: OutputVars;
+    templateVars?: FlattenedTemplateVars;
     frontmatterOutputs?: readonly OutputDeclaration[];
   },
 ) {
