@@ -1,5 +1,6 @@
+import { readdir } from 'node:fs/promises';
 import { describe, it, expect } from '@jest/globals';
-import { createRunbook } from './test-utils.js';
+import { createRunbook, createTestWorkspace } from './test-utils.js';
 
 describe('createRunbook', () => {
   describe('basic rendering', () => {
@@ -366,5 +367,29 @@ describe('createRunbook', () => {
         ],
       });
     });
+  });
+});
+
+describe('createTestWorkspace fixtureDir option', () => {
+  it('copies only the named subdirectory into all three runbook destinations', async () => {
+    const workspace = await createTestWorkspace({ fixtureDir: 'snapshots' });
+    try {
+      const projectFiles = await readdir(workspace.runbooksDir());
+      // Only files from fixtures/snapshots/ should appear — not fixtures/simple.runbook.md etc.
+      expect(projectFiles).not.toContain('simple.runbook.md');
+      expect(projectFiles).not.toContain('with-commands.runbook.md');
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  it('copies all fixtures when fixtureDir is not passed (backwards compatible)', async () => {
+    const workspace = await createTestWorkspace();
+    try {
+      const projectFiles = await readdir(workspace.runbooksDir());
+      expect(projectFiles).toContain('simple.runbook.md');
+    } finally {
+      await workspace.cleanup();
+    }
   });
 });

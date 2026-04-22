@@ -1,4 +1,5 @@
 import { mkdir, mkdtemp, rm, cp, readFile, writeFile, readdir, symlink } from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -49,8 +50,12 @@ export interface CliResult {
 /**
  * Creates isolated temp directory with fixtures and .rundown structure.
  * Also creates a symlink to the CLI in node_modules/.bin for rd commands.
+ *
+ * @param opts - Optional configuration
+ * @param opts.fixtureDir - Copy only this named subdirectory of fixtures/ into runbook destinations.
+ *   When omitted, the full fixtures/ directory is copied (backwards-compatible default).
  */
-export async function createTestWorkspace(): Promise<TestWorkspace> {
+export async function createTestWorkspace(opts?: { fixtureDir?: string }): Promise<TestWorkspace> {
   const tempDir = await mkdtemp(join(tmpdir(), 'rd-test-'));
   const projectRunbooksDir = runbooksDir(tempDir);
   const pluginDir = join(tempDir, 'plugin');
@@ -74,11 +79,12 @@ export async function createTestWorkspace(): Promise<TestWorkspace> {
   await symlink(cliPath, join(binDir, 'rd'));
   await symlink(cliPath, join(binDir, 'rundown'));
 
-  // Copy fixtures to temp dir
-  const fixturesDir = join(__dirname, '..', 'fixtures');
-  await cp(fixturesDir, projectRunbooksDir, { recursive: true });
-  await cp(fixturesDir, pluginRunbooksDir, { recursive: true });
-  await cp(fixturesDir, rootRunbooksDir, { recursive: true });
+  // Copy fixtures (or a named subdirectory) to temp dir
+  const fixturesRoot = join(__dirname, '..', 'fixtures');
+  const fixturesSource = opts?.fixtureDir ? join(fixturesRoot, opts.fixtureDir) : fixturesRoot;
+  await cp(fixturesSource, projectRunbooksDir, { recursive: true });
+  await cp(fixturesSource, pluginRunbooksDir, { recursive: true });
+  await cp(fixturesSource, rootRunbooksDir, { recursive: true });
 
   return {
     cwd: tempDir,
@@ -865,4 +871,110 @@ export function buildSubstep(overrides: Partial<Substep> = {}): Substep {
     },
     ...overrides,
   };
+}
+
+/**
+ * Normalise CLI output for snapshot testing.
+ *
+ * Rewrites volatile values (paths, tokens, UUIDs, run IDs, timestamps,
+ * epoch ms, durations, PIDs) to stable placeholders so snapshots stay
+ * byte-stable across runs and machines.
+ *
+ * Applied in order:
+ *   1.  workspace.cwd and its realpath resolution → `<workdir>`
+ *   2.  os.tmpdir() and its realpath → `<tmpdir>`
+ *   3.  Delegation tokens (`rdtk_` + alnum) → `<token>`
+ *   3.5 SHA-256 hex digests (e.g. delegation token_hash field) → `<tokenHash>`
+ *   4.  Full UUIDs → `<uuid>`
+ *   4.5 Run IDs of the form `wf-YYYY-MM-DD-xxxxxx` (base-36 suffix) → `<runbookId>`
+ *   5.  Short 8-char hex run IDs at word boundaries → `<runId>`
+ *   6.  ISO 8601 timestamps → `<timestamp>`
+ *   7.  Numeric `"startedAt"` epoch ms field values → `<epochMs>`
+ *   8.  `"durationMs"` / `"took"` numeric field values → `<ms>`
+ *   9.  PID banners → `<pid>`
+ *
+ * @param output - Raw CLI stdout (JSON/NDJSON or rendered text)
+ * @param workspace - TestWorkspace whose cwd is rewritten to `<workdir>`
+ * @returns Normalised output safe to compare with `toMatchSnapshot()`
+ */
+export function normalizeCliOutput(output: string, workspace: TestWorkspace): string {
+  let text = output;
+
+  // 1. workspace.cwd (and its realpath resolution, e.g. /var/folders/… ↔ /private/var/folders/…)
+  const cwd = workspace.cwd;
+  let cwdReal = cwd;
+  try {
+    cwdReal = realpathSync(cwd);
+  } catch {
+    // workspace may already be cleaned up by the time we normalise; that's fine
+  }
+  // On macOS, /var/… is a symlink to /private/var/…. When the workspace
+  // directory doesn't exist on disk, realpathSync throws and we fall back to
+  // the original path. To cover both forms we add the /private-prefixed
+  // variant explicitly, giving us up to 3 distinct candidates (deduplicated).
+  const cwdPrivate = cwd.startsWith('/private') ? cwd : `/private${cwd}`;
+  // Replace the longer form first so the shorter one can't shadow it.
+  const cwdCandidates = Array.from(new Set([cwdReal, cwdPrivate, cwd])).sort(
+    (a, b) => b.length - a.length,
+  );
+  for (const candidate of cwdCandidates) {
+    text = text.split(candidate).join('<workdir>');
+  }
+
+  // 2. os.tmpdir() resolution and its realpath (only matters for paths
+  // outside the workspace — workspace paths are already rewritten above).
+  const tmp = tmpdir();
+  let tmpReal = tmp;
+  try {
+    tmpReal = realpathSync(tmp);
+  } catch {
+    // ignore
+  }
+  const tmpCandidates = Array.from(new Set([tmpReal, tmp])).sort((a, b) => b.length - a.length);
+  for (const candidate of tmpCandidates) {
+    text = text.split(candidate).join('<tmpdir>');
+  }
+
+  // 3. Delegation tokens (TOKEN_PREFIX from packages/core/src/runbook/delegation-token.ts)
+  text = text.replace(/rdtk_[A-Za-z0-9]+/g, '<token>');
+
+  // 3.5. SHA-256 hex digests (e.g. delegation token_hash field)
+  text = text.replace(/sha256:[0-9a-f]{64}/g, '<tokenHash>');
+
+  // 4. Full UUIDs (8-4-4-4-12 hex)
+  text = text.replace(
+    /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
+    '<uuid>',
+  );
+
+  // 4.5. Run IDs of the form `wf-YYYY-MM-DD-xxxxxx` (base-36 suffix, 1-6 chars)
+  text = text.replace(/\bwf-\d{4}-\d{2}-\d{2}-[a-z0-9]+\b/g, '<runbookId>');
+
+  // 5. Short 8-char hex run IDs at word boundaries.
+  //    NOTE: This is deliberately aggressive — any \b[0-9a-f]{8}\b becomes
+  //    <runId>, which will also catch short git SHAs, step hashes, and
+  //    frame keys. Ordering matters: UUIDs (rule 4) run first so 8-4-4-4-12
+  //    matches are preserved. If a future snapshot needs to preserve a real
+  //    8-hex value, narrow this rule (e.g. scope by adjacent field name).
+  text = text.replace(/\b[0-9a-f]{8}\b/g, '<runId>');
+
+  // 6. ISO 8601 timestamps (with or without fractional seconds, Z or ±HH:MM)
+  text = text.replace(
+    /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})/g,
+    '<timestamp>',
+  );
+
+  // 7. Numeric epoch ms for known fields (field-scoped so we don't eat arbitrary numbers)
+  for (const field of ['startedAt', 'completedAt', 'updatedAt', 'expiresAt', 'lastHeartbeat']) {
+    text = text.replace(new RegExp(`"${field}":\\s*\\d+`, 'g'), `"${field}": <epochMs>`);
+  }
+
+  // 8. Duration fields
+  text = text.replace(/"durationMs":\s*\d+/g, '"durationMs": <ms>');
+  text = text.replace(/"took":\s*\d+/g, '"took": <ms>');
+
+  // 9. PID banners — match `pid=1234`, `PID 1234`, or `(pid 1234)` shapes
+  text = text.replace(/\b([Pp][Ii][Dd][=:\s]+)\d+/g, '$1<pid>');
+
+  return text;
 }
