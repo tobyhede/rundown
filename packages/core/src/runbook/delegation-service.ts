@@ -308,20 +308,29 @@ export type RetryDelegationResult =
  * Atomically cancel an existing delegation (force-style) and mint a replacement
  * using the same `childRunbookPath` and inherited (or overridden) `extraVars`.
  *
- * Pure function, Result-based, **never throws**. The caller persists the
+ * Pure function, Result-based for expected outcomes. The caller persists the
  * returned `updatedSubstepStates` via `manager.update`. Preconditions are
  * validated up-front; if any fails the function returns a discriminated error
  * variant and state is unchanged.
  *
  * This diverges from `abortDelegation`'s mixed throw/return shape deliberately:
  * `retryDelegation` runs inside XState `assign` callbacks where throws conflict
- * with actor atomicity. The `error` variant wraps `createDelegation`'s
- * `RundownError` so callers can distinguish validation failures (missing
- * child runbook, substep renamed, racing delegation) from normal flow.
+ * with actor atomicity for expected outcomes. The `error` variant wraps
+ * `createDelegation`'s `RundownError` so callers can distinguish validation
+ * failures (missing child runbook, substep renamed, racing delegation) from
+ * normal flow. Non-`RundownError` exceptions from `createDelegation` are
+ * rethrown: those indicate a bug where actor atomicity is already in question,
+ * so preserving the panic is preferable to silently swallowing it. A future
+ * plan under `docs/superpowers/plans/` would refactor `createDelegation` to be
+ * fully Result-based, which would make `retryDelegation` genuinely throw-free.
  *
  * @param options - Retry options
  * @param steps - Parsed steps from the active runbook
  * @returns Discriminated union: `retried` | `not_found` | `not_current` | `error`
+ * @throws {Error} Non-`RundownError` exceptions raised by `createDelegation`
+ *   are rethrown. This indicates a bug in `createDelegation` rather than a
+ *   normal validation outcome; expected domain failures return the `error`
+ *   variant instead.
  */
 export function retryDelegation(
   options: RetryDelegationOptions,

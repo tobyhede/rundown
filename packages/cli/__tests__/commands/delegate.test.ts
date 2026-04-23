@@ -497,7 +497,7 @@ describe('delegate command', () => {
       );
       expect(del1.exitCode).toBe(0);
       const del1Output = JSON.parse(del1.stdout) as Record<string, unknown>;
-      const iter1Token = del1Output.token as string;
+      const _iter1Token = del1Output.token as string;
       const iter1Hash = del1Output.token_hash as string;
 
       const del2 = await runCliInProcess(
@@ -528,12 +528,8 @@ describe('delegate command', () => {
       const substepStates = state?.substepStates as Array<Record<string, unknown>> | undefined;
       expect(substepStates).toBeDefined();
 
-      const iter1Entry = substepStates?.find(
-        (ss) => ss.id === '1' && ss.frameKey === '1|1',
-      ) as Record<string, unknown> | undefined;
-      const iter2Entry = substepStates?.find(
-        (ss) => ss.id === '1' && ss.frameKey === '1|2',
-      ) as Record<string, unknown> | undefined;
+      const iter1Entry = substepStates?.find((ss) => ss.id === '1' && ss.frameKey === '1|1');
+      const iter2Entry = substepStates?.find((ss) => ss.id === '1' && ss.frameKey === '1|2');
       expect(iter1Entry).toBeDefined();
       expect(iter2Entry).toBeDefined();
 
