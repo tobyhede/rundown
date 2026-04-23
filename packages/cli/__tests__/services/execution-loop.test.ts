@@ -4,6 +4,7 @@ import { mockErrorHelpers } from '../helpers/mock-error-helpers';
 // Mock dependencies
 const mockActorService = {
   sendAndSync: jest.fn(),
+  getContextSnapshot: jest.fn(),
 };
 
 const mockSessionService = {
@@ -262,6 +263,8 @@ describe('runExecutionLoop', () => {
     mockLifecycleService.consumeResolvedCompletion.mockResolvedValue(null);
 
     mockActorService.sendAndSync.mockReset();
+    mockActorService.getContextSnapshot.mockReset();
+    mockActorService.getContextSnapshot.mockResolvedValue(null);
 
     mockEmitter = {
       emit: jest.fn(),
@@ -931,6 +934,150 @@ describe('runExecutionLoop', () => {
       runbookId,
       expect.objectContaining({ substepStates: expect.any(Array) }),
     );
+  });
+
+  it('STEP_ENTERED uses pendingDelegateFrontier from context when present', async () => {
+    // A step with two delegate substeps. A retry hook has already re-issued
+    // tokens and populated context.pendingDelegateFrontier. The CLI must emit
+    // those tokens and NOT run auto-issuance.
+    const delegateSteps: any[] = [
+      {
+        kind: 'substeps',
+        name: '1',
+        description: 'Parallel work',
+        substeps: [
+          {
+            id: '1',
+            description: 'First task',
+            delegate: true,
+            runbooks: ['child-a.runbook.md'],
+            transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+          },
+          {
+            id: '2',
+            description: 'Second task',
+            delegate: true,
+            runbooks: ['child-b.runbook.md'],
+            transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+          },
+        ],
+        transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+      },
+    ];
+
+    mockManager.load.mockResolvedValue({
+      id: runbookId,
+      step: '1',
+      substep: '1',
+      status: 'running',
+      substepStates: [],
+    });
+
+    const preIssued = [
+      { id: '1.1', runbook: 'child-a.runbook.md', token: 'rdtk_retry_a' },
+      { id: '1.2', runbook: 'child-b.runbook.md', token: 'rdtk_retry_b' },
+    ];
+
+    mockActorService.getContextSnapshot.mockResolvedValue({
+      pendingDelegateFrontier: preIssued,
+    });
+
+    mockManager.update = jest.fn().mockResolvedValue(undefined);
+
+    await runExecutionLoop(mockManager, runbookId, delegateSteps, '/tmp', false, mockEmitter);
+
+    // STEP_ENTERED payload should carry the pre-issued frontier
+    const stepEnteredCall = mockEmitter.emit.mock.calls.find(
+      (call: any[]) => call[0] === 'STEP_ENTERED',
+    );
+    expect(stepEnteredCall).toBeDefined();
+    const payload = stepEnteredCall[1];
+
+    expect(payload.delegateFrontier).toEqual(preIssued);
+
+    // Auto-issuance must NOT run when pending frontier is present
+    expect(delegateInference.inferAllDelegateSubsteps).not.toHaveBeenCalled();
+    expect(core.createDelegation).not.toHaveBeenCalled();
+
+    // PENDING_FRONTIER_CONSUMED should have been sent after emit to clear context
+    expect(mockActorService.sendAndSync).toHaveBeenCalledWith(runbookId, delegateSteps, {
+      type: 'PENDING_FRONTIER_CONSUMED',
+    });
+  });
+
+  it('STEP_ENTERED falls through to auto-issuance when pendingDelegateFrontier is absent', async () => {
+    // No pending frontier — the existing auto-issuance path runs as before.
+    const delegateSteps: any[] = [
+      {
+        kind: 'substeps',
+        name: '1',
+        description: 'Parallel work',
+        substeps: [
+          {
+            id: '1',
+            description: 'First task',
+            delegate: true,
+            runbooks: ['child-a.runbook.md'],
+            transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+          },
+        ],
+        transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+      },
+    ];
+
+    mockManager.load.mockResolvedValue({
+      id: runbookId,
+      step: '1',
+      substep: '1',
+      status: 'running',
+      substepStates: [],
+    });
+
+    // Snapshot with no pendingDelegateFrontier
+    mockActorService.getContextSnapshot.mockResolvedValue({});
+
+    delegateInference.inferAllDelegateSubsteps.mockReturnValue([
+      { runbookRef: 'child-a.runbook.md', stepId: '1.1' },
+    ]);
+
+    resolveRunbook.resolveRunbookFile.mockResolvedValue({
+      path: '/project/.rundown/runbooks/child-a.runbook.md',
+      source: 'project',
+    });
+
+    (core.createDelegation as any).mockReturnValue({
+      token: 'rdtk_autoissue',
+      tokenHash: 'hash-auto',
+      delegation: {},
+      updatedSubstepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: {} }],
+    });
+
+    mockManager.update = jest.fn().mockResolvedValue(undefined);
+
+    await runExecutionLoop(mockManager, runbookId, delegateSteps, '/tmp', false, mockEmitter);
+
+    // Auto-issuance was invoked
+    expect(delegateInference.inferAllDelegateSubsteps).toHaveBeenCalled();
+    expect(core.createDelegation).toHaveBeenCalled();
+
+    // STEP_ENTERED received the auto-issued frontier
+    const stepEnteredCall = mockEmitter.emit.mock.calls.find(
+      (call: any[]) => call[0] === 'STEP_ENTERED',
+    );
+    expect(stepEnteredCall).toBeDefined();
+    const payload = stepEnteredCall[1];
+    expect(payload.delegateFrontier).toHaveLength(1);
+    expect(payload.delegateFrontier[0]).toMatchObject({
+      id: '1.1',
+      runbook: 'child-a.runbook.md',
+      token: 'rdtk_autoissue',
+    });
+
+    // PENDING_FRONTIER_CONSUMED must NOT be sent when no frontier was consumed
+    const consumedCall = mockActorService.sendAndSync.mock.calls.find(
+      (call: any[]) => call[1] === delegateSteps && call[2]?.type === 'PENDING_FRONTIER_CONSUMED',
+    );
+    expect(consumedCall).toBeUndefined();
   });
 });
 

@@ -277,6 +277,7 @@ export const StepDelegationSchema = z.object({
   childRunId: z.string().nullable(),
   createdAt: z.string(),
   cancelledAt: z.string().nullable(),
+  extraVars: z.record(z.string(), TemplateVarValueSchema).optional(),
 });
 
 /**
