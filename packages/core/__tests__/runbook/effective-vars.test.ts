@@ -60,7 +60,11 @@ describe('brand symbol exposure', () => {
   it('does not export the brand symbols by name', async () => {
     const mod = await import('../../src/runbook/effective-vars.js');
     expect(Object.keys(mod)).toEqual(
-      expect.arrayContaining(['brandInitialTemplateVars', 'brandStoredOutputs', 'mergeEffectiveVars']),
+      expect.arrayContaining([
+        'brandInitialTemplateVars',
+        'brandStoredOutputs',
+        'mergeEffectiveVars',
+      ]),
     );
     // Brand symbols are declared with `declare const … : unique symbol` and must
     // not appear in the runtime export surface.

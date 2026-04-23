@@ -1,10 +1,6 @@
 // src/runbook/types.ts
 import type { OutputDeclaration } from '@rundown-org/parser';
-import type {
-  EffectiveVars,
-  InitialTemplateVars,
-  StoredOutputs,
-} from './effective-vars.js';
+import type { EffectiveVars, InitialTemplateVars, StoredOutputs } from './effective-vars.js';
 import type { FrameKey } from './targeting.js';
 
 // Re-export parser types needed by core package consumers

@@ -3,10 +3,7 @@ import { z } from 'zod';
 import type { FrameKey } from './runbook/targeting.js';
 import { createJsonArrayStream } from './runbook/types.js';
 import type { JsonValue, TemplateVarValue } from './runbook/types.js';
-import {
-  brandInitialTemplateVars,
-  brandStoredOutputs,
-} from './runbook/effective-vars.js';
+import { brandInitialTemplateVars, brandStoredOutputs } from './runbook/effective-vars.js';
 import { getErrorMessage } from './errors.js';
 
 /** Zod schema that parses strings and brands them as {@link FrameKey}. */
@@ -646,9 +643,7 @@ export function makeRunbookStateSchema(projectRoot: string): z.ZodTypeAny {
     templateVars: VarsSchema.optional().transform((v) =>
       v === undefined ? undefined : brandInitialTemplateVars(v),
     ),
-    variables: z
-      .record(z.string(), z.string())
-      .transform((v) => brandStoredOutputs(v)),
+    variables: z.record(z.string(), z.string()).transform((v) => brandStoredOutputs(v)),
     substepStates: z.array(SubstepStateSchemaValidated).optional(),
   });
 }

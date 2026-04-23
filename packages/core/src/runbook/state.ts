@@ -16,10 +16,7 @@ import type {
 import { makeRunbookStateSchema } from '../schemas.js';
 import { isNodeError } from '../errors.js';
 import { logger } from '../logger.js';
-import {
-  brandInitialTemplateVars,
-  brandStoredOutputs,
-} from './effective-vars.js';
+import { brandInitialTemplateVars, brandStoredOutputs } from './effective-vars.js';
 import {
   runsDir as _runsDir,
   sessionPath as _sessionPath,
@@ -326,8 +323,11 @@ export class RunbookStateManager {
     // Pull branded/unbranded fields out of updates so the subsequent
     // `...updates` spread does not leak the unbranded types into the
     // strictly-typed RunbookState literal.
-    const { variables: updatesVariables, templateVars: updatesTemplateVars, ...restUpdates } =
-      updates;
+    const {
+      variables: updatesVariables,
+      templateVars: updatesTemplateVars,
+      ...restUpdates
+    } = updates;
 
     const updated: RunbookState = {
       ...existing,
