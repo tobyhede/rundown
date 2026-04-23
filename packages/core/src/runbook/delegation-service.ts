@@ -399,7 +399,7 @@ export function retryDelegation(
     frameIterationPart && /^\d+$/.test(frameIterationPart) ? Number(frameIterationPart) : undefined;
   const stepIdForCreate = ownerHasSubsteps
     ? frameIteration !== undefined
-      ? `${state.step}.${frameIteration}.${substepId}`
+      ? `${state.step}.${String(frameIteration)}.${substepId}`
       : `${state.step}.${substepId}`
     : state.step;
   let createResult: DelegateResult;

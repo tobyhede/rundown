@@ -10593,9 +10593,11 @@ echo "processing"
       const ctx = actor.getSnapshot().context;
 
       // The retry hook minted exactly one fresh token for iteration 1's substep.
+      // Frontier id is the canonical contextSnapshot.at (step.iteration.substep)
+      // per commit 8ce42858; for iteration 1 of step 1, substep 1 → "1.1.1".
       expect(ctx.pendingDelegateFrontier).toBeDefined();
       expect(ctx.pendingDelegateFrontier?.length).toBe(1);
-      expect(ctx.pendingDelegateFrontier?.[0]?.id).toBe('1.1');
+      expect(ctx.pendingDelegateFrontier?.[0]?.id).toBe('1.1.1');
 
       // Iteration 1's retried substep has its state reset: status pending,
       // prior result cleared (spec §3 step 3, §3.1 invariant).
