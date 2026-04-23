@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -689,6 +689,35 @@ describe('RunbookActorService', () => {
 
       const result = await actorService.sendAndSync(state.id, mockSteps, { type: 'PASS' });
       expect(result!.state.finalVars).toBeUndefined();
+    });
+  });
+
+  describe('getContextSnapshot', () => {
+    it('returns null for nonexistent runbook', async () => {
+      const result = await actorService.getContextSnapshot('nonexistent', mockSteps);
+      expect(result).toBeNull();
+    });
+
+    it('does not call actor.start (read-only path)', async () => {
+      // Invariant: the read path must not start the actor. Starting it re-fires
+      // the initial state's entry actions on every call — an observable side
+      // effect callers of this method are not signing up for. We assert the
+      // invariant directly by spying on XState's Actor.prototype.start.
+      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+      const xstate = await import('xstate');
+      const startSpy = jest.spyOn(
+        xstate.Actor.prototype as unknown as { start: () => void },
+        'start',
+      );
+      try {
+        const first = await actorService.getContextSnapshot(state.id, mockSteps);
+        const second = await actorService.getContextSnapshot(state.id, mockSteps);
+        expect(first).not.toBeNull();
+        expect(second).toEqual(first);
+        expect(startSpy).not.toHaveBeenCalled();
+      } finally {
+        startSpy.mockRestore();
+      }
     });
   });
 

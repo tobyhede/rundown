@@ -2360,6 +2360,10 @@ export function compileRunbookToMachine(
   options?: {
     templateVars?: FlattenedTemplateVars;
     frontmatterOutputs?: readonly OutputDeclaration[];
+    /** Seeds `RunbookContext.substepStates` at machine bootstrap. Used by the actor service to hydrate from persisted state in a single `createActor` call. */
+    substepStates?: readonly SubstepState[];
+    /** Seeds `RunbookContext.activeFrameKey` at machine bootstrap. Paired with {@link substepStates} for frame-scoped substep lookup in the retry hook. */
+    activeFrameKey?: FrameKey;
   },
 ) {
   const states: Record<string, RunbookStateConfig> = {};
@@ -2668,8 +2672,8 @@ export function compileRunbookToMachine(
       frontmatterOutputs: options?.frontmatterOutputs ?? [],
       finalVars: {},
       lifecycle: 'running',
-      substepStates: undefined,
-      activeFrameKey: undefined,
+      substepStates: options?.substepStates,
+      activeFrameKey: options?.activeFrameKey,
       pendingDelegateFrontier: undefined,
     },
     states: {
