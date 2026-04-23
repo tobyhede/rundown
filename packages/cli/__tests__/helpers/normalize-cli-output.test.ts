@@ -13,6 +13,8 @@ function makeWorkspace(cwd: string): TestWorkspace {
     statePath: () => '',
     sessionPath: () => '',
     runbooksDir: () => '',
+    pluginRunbooksDir: () => '',
+    rootRunbooksDir: () => '',
     locksDir: () => '',
     binPath: () => '',
   };
@@ -128,6 +130,26 @@ describe('normalizeCliOutput', () => {
   it('replaces runbookId with shorter base-36 suffix', () => {
     const input = '"runbookId":"wf-2026-04-22-a1"';
     expect(normalizeCliOutput(input, workspace)).toBe('"runbookId":"<runbookId>"');
+  });
+
+  describe('runbook ID normalization is bounded to 1-6 base-36 chars', () => {
+    it('normalizes a 3-char base-36 suffix', () => {
+      const input = '"runbookId":"wf-2026-04-23-abc"';
+      expect(normalizeCliOutput(input, workspace)).toBe('"runbookId":"<runbookId>"');
+    });
+
+    it('normalizes a 6-char suffix (upper boundary)', () => {
+      const input = '"runbookId":"wf-2026-04-23-abcdef"';
+      expect(normalizeCliOutput(input, workspace)).toBe('"runbookId":"<runbookId>"');
+    });
+
+    it('does NOT normalize a 7-char suffix (malformed runbook ID)', () => {
+      // Suffixes longer than 6 base-36 chars do not match the production
+      // ID generator; leave them alone so genuine garbage stays visible
+      // in snapshot diffs rather than getting masked.
+      const input = '"runbookId":"wf-2026-04-23-abcdefg"';
+      expect(normalizeCliOutput(input, workspace)).toBe(input);
+    });
   });
 
   it('is idempotent — running twice produces the same output', () => {

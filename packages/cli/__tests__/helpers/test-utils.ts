@@ -36,7 +36,12 @@ export interface TestWorkspace {
   runbookPath: (name: string) => string;
   statePath: () => string;
   sessionPath: () => string;
+  /** Project-local runbook destination (`.rundown/runbooks/`). */
   runbooksDir: () => string;
+  /** Plugin runbook destination (`$CLAUDE_PLUGIN_ROOT/runbooks/`). */
+  pluginRunbooksDir: () => string;
+  /** Root-level runbook destination (`<cwd>/runbooks/`). */
+  rootRunbooksDir: () => string;
   locksDir: () => string;
   binPath: () => string;
 }
@@ -93,6 +98,8 @@ export async function createTestWorkspace(opts?: { fixtureDir?: string }): Promi
     statePath: () => runsDir(tempDir),
     sessionPath: () => _sessionPath(tempDir),
     runbooksDir: () => runbooksDir(tempDir),
+    pluginRunbooksDir: () => pluginRunbooksDir,
+    rootRunbooksDir: () => rootRunbooksDir,
     locksDir: () => locksDir(tempDir),
     binPath: () => binDir,
   };
@@ -145,6 +152,34 @@ class ExitSignal extends Error {
 }
 
 /**
+ * Strip in-process `ExitSignal` artefacts from a captured buffer.
+ *
+ * The harness intercepts `process.exit()` by throwing an `ExitSignal`. When
+ * production `withErrorHandling` catches that sentinel, it routes it through
+ * `toRundownError` and emits a JSON UNKNOWN_ERROR block whose `error` field
+ * reads "process.exit(N)". A real subprocess never sees this — `process.exit()`
+ * simply terminates. This function removes the artefact (and any bare
+ * `process.exit(N)` tail) so test snapshots match real subprocess output.
+ *
+ * Idempotent: stripping an already-clean buffer is a no-op.
+ *
+ * @param buf - Captured stdout or stderr buffer.
+ * @returns The buffer with end-of-buffer artefacts removed.
+ */
+export function stripExitArtefact(buf: string): string {
+  // The leading `(^|\n)` (preserved via $1) covers both an artefact at buffer
+  // start AND one preceded by a newline that terminated a legitimate line.
+  // The previous `(?<=\n)` lookbehind missed the buffer-start case.
+  const artefactPattern =
+    /(^|\n)\{\s*"error":\s*"process\.exit\(\d+\)",\s*"kind":\s*"error",\s*"code":\s*"UNKNOWN_ERROR"\s*\}\s*$/;
+  let out = buf.replace(artefactPattern, '$1');
+  // `getErrorMessage(err)` on ExitSignal also produces a bare "process.exit(N)"
+  // tail that may be appended elsewhere; swallow that too at end-of-buffer.
+  out = out.replace(/\s*process\.exit\(\d+\)\s*$/, '');
+  return out;
+}
+
+/**
  * Run CLI in-process via Commander for fast test execution (~1-5ms vs ~200-500ms subprocess).
  *
  * Uses `process.chdir()` to set the working directory, ensuring all code paths
@@ -179,7 +214,10 @@ export async function runCliInProcess(
   let stdoutBuf = '';
   let stderrBuf = '';
   let exitCode = 0;
-  let sawExitSignal = false;
+  // Wrapped in a holder object: the writer is the process.exit override
+  // below, and TS flow analysis can't see through the callback. Without
+  // the indirection, the post-try `if` looks unreachable to eslint.
+  const exit = { signalled: false };
 
   try {
     // Reset global state before each invocation
@@ -239,8 +277,11 @@ export async function runCliInProcess(
       stdoutBuf += `${args.map(String).join(' ')}\n`;
     };
 
-    // Intercept process.exit
+    // Intercept process.exit. Set the cleanup flag at interception so the
+    // artefact stripper still runs even if a downstream caller swallows the
+    // ExitSignal before it surfaces to the outer catch.
     process.exit = ((code?: number) => {
+      exit.signalled = true;
       throw new ExitSignal(code ?? 0);
     }) as never;
 
@@ -255,7 +296,8 @@ export async function runCliInProcess(
   } catch (err: unknown) {
     if (err instanceof ExitSignal) {
       exitCode = err.code;
-      sawExitSignal = true;
+      // exit.signalled is set at interception (in the process.exit override)
+      // so it stays true even if a downstream caller swallows the signal.
     } else if (err instanceof CommanderError) {
       exitCode = err.exitCode;
     } else {
@@ -289,26 +331,12 @@ export async function runCliInProcess(
     setWriter(new ConsoleWriter());
   }
 
-  if (sawExitSignal) {
-    // The harness intercepts `process.exit()` by throwing an ExitSignal. When
-    // production `withErrorHandling` catches that sentinel, it runs it through
-    // `toRundownError` and emits a pretty-printed UNKNOWN_ERROR block whose
-    // `error` field reads "process.exit(N)". A real subprocess never sees
-    // this — `process.exit()` simply terminates. Strip the artefact from
-    // whichever buffer captured it (console.error routes to stderr, but the
-    // writer's pipeline can surface it in stdout depending on mode).
-    //
-    // The lookbehind preserves the newline that terminated the previous
-    // legitimate output line — only the artefact object and any trailing
-    // whitespace are consumed.
-    const artefactPattern =
-      /(?<=\n)\{\s*"error":\s*"process\.exit\(\d+\)",\s*"kind":\s*"error",\s*"code":\s*"UNKNOWN_ERROR"\s*\}\s*$/;
-    stdoutBuf = stdoutBuf.replace(artefactPattern, '');
-    stderrBuf = stderrBuf.replace(artefactPattern, '');
-    // `getErrorMessage(err)` on ExitSignal also produces a bare
-    // "process.exit(N)" tail that we append to stderrBuf elsewhere; swallow
-    // that too when it appears at end-of-buffer.
-    stderrBuf = stderrBuf.replace(/\s*process\.exit\(\d+\)\s*$/, '');
+  if (exit.signalled) {
+    // Strip ExitSignal artefacts from whichever buffer captured them
+    // (console.error routes to stderr, but the writer's pipeline can surface
+    // them in stdout depending on mode). See stripExitArtefact for details.
+    stdoutBuf = stripExitArtefact(stdoutBuf);
+    stderrBuf = stripExitArtefact(stderrBuf);
   }
 
   return { stdout: stdoutBuf, stderr: stderrBuf, exitCode };
@@ -983,7 +1011,7 @@ export function normalizeCliOutput(output: string, workspace: TestWorkspace): st
   );
 
   // 6. Runbook state IDs of the form `wf-YYYY-MM-DD-xxxxxx` (base-36 suffix, 1-6 chars)
-  text = text.replace(/\bwf-\d{4}-\d{2}-\d{2}-[a-z0-9]+\b/g, '<runbookId>');
+  text = text.replace(/\bwf-\d{4}-\d{2}-\d{2}-[a-z0-9]{1,6}\b/g, '<runbookId>');
 
   // 7. Any 8-char lowercase hex at word boundaries — the catch-all for
   //    {{RunId}} and {{ContextId}} template variables (both 4 random bytes
@@ -993,22 +1021,22 @@ export function normalizeCliOutput(output: string, workspace: TestWorkspace): st
   //    preserved. Review each `<hex8>` substitution in snapshot diffs.
   text = text.replace(/\b[0-9a-f]{8}\b/g, '<hex8>');
 
-  // 6. ISO 8601 timestamps (with or without fractional seconds, Z or ±HH:MM)
+  // 8. ISO 8601 timestamps (with or without fractional seconds, Z or ±HH:MM)
   text = text.replace(
     /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})/g,
     '<timestamp>',
   );
 
-  // 7. Numeric epoch ms for known fields (field-scoped so we don't eat arbitrary numbers)
+  // 9. Numeric epoch ms for known fields (field-scoped so we don't eat arbitrary numbers)
   for (const field of ['startedAt', 'completedAt', 'updatedAt', 'expiresAt', 'lastHeartbeat']) {
     text = text.replace(new RegExp(`"${field}":\\s*\\d+`, 'g'), `"${field}": <epochMs>`);
   }
 
-  // 8. Duration fields
+  // 10. Duration fields
   text = text.replace(/"durationMs":\s*\d+/g, '"durationMs": <ms>');
   text = text.replace(/"took":\s*\d+/g, '"took": <ms>');
 
-  // 9. PID banners — match `pid=1234`, `PID 1234`, or `(pid 1234)` shapes
+  // 11. PID banners — match `pid=1234`, `PID 1234`, or `(pid 1234)` shapes
   text = text.replace(/\b([Pp][Ii][Dd][=:\s]+)\d+/g, '$1<pid>');
 
   return text;
