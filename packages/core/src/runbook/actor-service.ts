@@ -67,6 +67,39 @@ export class RunbookActorService {
   constructor(private readonly manager: RunbookStateManager) {}
 
   /**
+   * Compile a runbook machine from persisted state, asserting freshness.
+   *
+   * Guards against stale run state (pre-dating the OUTPUTS feature) by
+   * throwing when `frontmatterOutputs` is absent. Both {@link createActor}
+   * and {@link getContextSnapshot} use this helper so the guard and the
+   * options bag are maintained in one place.
+   *
+   * @param id - Runbook state ID (used in the error message)
+   * @param state - Persisted runbook state to hydrate from
+   * @param steps - Parsed runbook steps for machine compilation
+   * @returns Compiled XState machine seeded with all hydration-time context
+   * @throws {Error} If `state.frontmatterOutputs` is undefined (stale state)
+   */
+  private compileMachineFromState(
+    id: string,
+    state: RunbookState,
+    steps: ResolvedStep[],
+  ): ReturnType<typeof compileRunbookToMachine> {
+    if (state.frontmatterOutputs === undefined) {
+      throw new Error(
+        `Stale runbook state for "${id}": missing frontmatter outputs declarations. ` +
+          'Run `rundown prune` and restart execution.',
+      );
+    }
+    return compileRunbookToMachine(steps, {
+      templateVars: flattenTemplateVars(state.templateVars ?? {}),
+      frontmatterOutputs: state.frontmatterOutputs,
+      substepStates: state.substepStates,
+      activeFrameKey: state.activeFrameKey,
+    });
+  }
+
+  /**
    * Create and start an XState actor from persisted state.
    *
    * Loads the persisted snapshot, compiles the machine, and starts the actor.
@@ -126,22 +159,10 @@ export class RunbookActorService {
     const state = await this.manager.load(id);
     if (!state) return null;
 
-    if (state.frontmatterOutputs === undefined) {
-      throw new Error(
-        `Stale runbook state for "${id}": missing frontmatter outputs declarations. ` +
-          'Run `rundown prune` and restart execution.',
-      );
-    }
-
     // Compile with all hydration-time context in the options bag. The machine's
     // initial context carries substepStates / activeFrameKey directly — no
     // throwaway actor, no snapshot overlay, no Snapshot<unknown> casts.
-    const machine = compileRunbookToMachine(steps, {
-      templateVars: flattenTemplateVars(state.templateVars ?? {}),
-      frontmatterOutputs: state.frontmatterOutputs,
-      substepStates: state.substepStates,
-      activeFrameKey: state.activeFrameKey,
-    });
+    const machine = this.compileMachineFromState(id, state, steps);
 
     const actor = createActor(machine, {
       snapshot: state.snapshot as Snapshot<unknown> | undefined,
@@ -169,23 +190,12 @@ export class RunbookActorService {
   async getContextSnapshot(id: string, steps: ResolvedStep[]): Promise<RunbookContext | null> {
     const state = await this.manager.load(id);
     if (!state) return null;
-    if (state.frontmatterOutputs === undefined) {
-      throw new Error(
-        `Stale runbook state for "${id}": missing frontmatter outputs declarations. ` +
-          'Run `rundown prune` and restart execution.',
-      );
-    }
 
     // Read-only path: compile, instantiate the actor WITHOUT starting it, read
     // the persisted snapshot, discard. Starting the actor would re-fire the
     // initial state's entry actions on every call — an observable side effect
     // callers of this method are not signing up for.
-    const machine = compileRunbookToMachine(steps, {
-      templateVars: flattenTemplateVars(state.templateVars ?? {}),
-      frontmatterOutputs: state.frontmatterOutputs,
-      substepStates: state.substepStates,
-      activeFrameKey: state.activeFrameKey,
-    });
+    const machine = this.compileMachineFromState(id, state, steps);
     const actor = createActor(machine, {
       snapshot: state.snapshot as Snapshot<unknown> | undefined,
     });

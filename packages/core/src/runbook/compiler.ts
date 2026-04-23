@@ -2349,6 +2349,11 @@ function checkedStateInsert(
  *   before calling (stale run states pre-dating the OUTPUTS feature will have it absent); the
  *   {@link RunbookActorService} enforces this guard. Direct callers from tests or CLI inspection
  *   that omit the option receive an empty array default.
+ * @param options.substepStates - Seeds `RunbookContext.substepStates` at machine bootstrap. Used
+ *   by the actor service to hydrate substep delegation state from persisted state in a single
+ *   `createActor` call.
+ * @param options.activeFrameKey - Seeds `RunbookContext.activeFrameKey` at machine bootstrap.
+ *   Paired with `substepStates` for frame-scoped substep lookup in the retry hook.
  * @returns An XState state machine definition
  * @throws {Error} When a GOTO target references a non-existent step or when graph invariants are violated (e.g., duplicate state IDs)
  */
@@ -2360,9 +2365,7 @@ export function compileRunbookToMachine(
   options?: {
     templateVars?: FlattenedTemplateVars;
     frontmatterOutputs?: readonly OutputDeclaration[];
-    /** Seeds `RunbookContext.substepStates` at machine bootstrap. Used by the actor service to hydrate from persisted state in a single `createActor` call. */
     substepStates?: readonly SubstepState[];
-    /** Seeds `RunbookContext.activeFrameKey` at machine bootstrap. Paired with {@link substepStates} for frame-scoped substep lookup in the retry hook. */
     activeFrameKey?: FrameKey;
   },
 ) {
