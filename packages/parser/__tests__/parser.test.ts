@@ -929,6 +929,64 @@ npm test
         /Transitions must appear immediately after the substep header/,
       );
     });
+
+    it('rejects transitions after runbook entry followed by code block in substep', () => {
+      // Runbook bullets alone do not block transitions, but a subsequent code block
+      // must. `hasSeenNonRunbookContent` captures that non-runbook body content even
+      // when `hasSeenRunbooks` is already set.
+      const md = `## 1 Step
+### 1.1 Substep
+
+- child.runbook.md
+
+\`\`\`bash
+npm test
+\`\`\`
+
+- PASS CONTINUE
+- FAIL STOP`;
+      expect(() => parseRunbook(md)).toThrow(
+        /Transitions must appear immediately after the substep header/,
+      );
+    });
+
+    it('accepts transitions after runbook entries (structural references do not block)', () => {
+      const md = `## 1 Step
+### 1.1 Substep
+
+- first.runbook.md
+- second.runbook.md
+
+- PASS CONTINUE
+- FAIL STOP`;
+      const steps = parseRunbook(md);
+      expect(steps).toHaveLength(1);
+      expect(steps[0].substeps?.[0].transitions.pass.action).toEqual({ type: 'CONTINUE' });
+      expect(steps[0].substeps?.[0].transitions.fail.action).toEqual({ type: 'STOP' });
+    });
+
+    it('rejects transitions after runbook → code block → runbook sequence in substep', () => {
+      // Regression: `hasSeenRunbooks` remains true indefinitely, so the old gate
+      // `hasSeenContent && !hasSeenRunbooks` silently re-opened transitions after the
+      // second runbook bullet. `hasSeenNonRunbookContent` is sticky — it stays `true`
+      // once the code block is seen and keeps the gate closed.
+      const md = `## 1 Step
+### 1.1 Substep
+
+- first.runbook.md
+
+\`\`\`bash
+npm test
+\`\`\`
+
+- second.runbook.md
+
+- PASS CONTINUE
+- FAIL STOP`;
+      expect(() => parseRunbook(md)).toThrow(
+        /Transitions must appear immediately after the substep header/,
+      );
+    });
   });
 
   describe('text after content', () => {

@@ -119,6 +119,13 @@ interface SubstepBuilder {
   command?: Command;
   promptText: string;
   hasSeenContent: boolean;
+  /**
+   * Tracks body content that is NOT a runbook-list entry (code blocks, prose bullets, etc.).
+   * Unlike `hasSeenContent`, this flag is never set by runbook-list entries, so it correctly
+   * preserves the "any non-runbook content blocks later transitions/directives" rule even
+   * when a runbook bullet re-appears after a code block.
+   */
+  hasSeenNonRunbookContent: boolean;
   hasSeenTransitions: boolean;
   hasSeenPromptText: boolean;
   hasSeenDelegate: boolean;
@@ -352,6 +359,7 @@ function handleH3Heading(node: Heading, ctx: ActiveStepContext): void {
       command: undefined,
       promptText: '',
       hasSeenContent: false,
+      hasSeenNonRunbookContent: false,
       hasSeenTransitions: false,
       hasSeenPromptText: false,
       hasSeenDelegate: false,
@@ -407,6 +415,7 @@ function handleCodeBlock(node: Code, ctx: ActiveStepContext): void {
     }
     ctx.currentStep.pendingSubstep.command = cmd;
     ctx.currentStep.pendingSubstep.hasSeenContent = true;
+    ctx.currentStep.pendingSubstep.hasSeenNonRunbookContent = true;
   } else {
     if (ctx.currentStep.command) {
       const stepLabel = ctx.currentStep.name;
@@ -542,10 +551,14 @@ function handleListItemTransition(
   const lineNum = formatLineNum(node);
   if (ctx.currentStep.pendingSubstep) {
     const ps = ctx.currentStep.pendingSubstep;
-    // Reject transitions after prompt text or non-runbook content (header-adjacent requirement).
-    // Runbook entries (hasSeenRunbooks) do not block transitions — they are structural
-    // references, not prose content, so per-entry annotations are always valid.
-    const hasBlockingContent = ps.hasSeenPromptText || (ps.hasSeenContent && !ps.hasSeenRunbooks);
+    // Reject transitions after prompt text or non-runbook body content (header-adjacent
+    // requirement). Runbook entries alone do not block — they are structural references,
+    // not prose — but once any code block / prose bullet has been seen we must stay
+    // blocked even if further runbook bullets follow. `hasSeenNonRunbookContent` is a
+    // sticky flag that captures exactly that; the older `hasSeenContent && !hasSeenRunbooks`
+    // gate failed the "runbook → code block → runbook → transition" case because
+    // `hasSeenRunbooks` remained `true` indefinitely.
+    const hasBlockingContent = ps.hasSeenPromptText || ps.hasSeenNonRunbookContent;
     if (hasBlockingContent) {
       throw new RunbookSyntaxError(
         `Substep ${ctx.currentStep.name}.${ps.id}${lineNum}: Transitions must appear immediately after the substep header, before any content.`,
@@ -625,13 +638,14 @@ function handleOutputsDirective(node: ListItem, ctx: ActiveStepContext): typeof 
   const targetLabel = formatDirectiveTarget(ctx);
 
   // Gate mirrors handleDelegateAnnotation: on a pending substep, runbook-list
-  // entries (hasSeenRunbooks) do not block subsequent structural directives on
-  // the same synthesized substep. Only prose prompt text and non-runbook body
-  // content block OUTPUTS.
+  // entries alone do not block subsequent structural directives on the same
+  // synthesized substep. Only prose prompt text and non-runbook body content
+  // block OUTPUTS. `hasSeenNonRunbookContent` stays sticky across later runbook
+  // bullets so the gate still fires after "runbook → code block → runbook".
   let hasBlockingContent: boolean;
   if (ctx.currentStep.pendingSubstep) {
     const ps = ctx.currentStep.pendingSubstep;
-    hasBlockingContent = ps.hasSeenPromptText || (ps.hasSeenContent && !ps.hasSeenRunbooks);
+    hasBlockingContent = ps.hasSeenPromptText || ps.hasSeenNonRunbookContent;
   } else {
     hasBlockingContent = target.hasSeenContent || target.hasSeenPromptText;
   }
@@ -716,10 +730,12 @@ function handleDelegateAnnotation(node: ListItem, ctx: ActiveStepContext): void 
   // For substeps with runbook entries, hasSeenContent is set by the runbook entry itself.
   // We only block DELEGATE after prose prompt text or non-runbook body content — runbook
   // references are structural, not prose, so per-entry annotations are always valid.
+  // `hasSeenNonRunbookContent` remains sticky across later runbook bullets so the gate
+  // fires correctly after "runbook → code block → runbook".
   let hasBlockingContent: boolean;
   if (ctx.currentStep.pendingSubstep) {
     const ps = ctx.currentStep.pendingSubstep;
-    hasBlockingContent = ps.hasSeenPromptText || (ps.hasSeenContent && !ps.hasSeenRunbooks);
+    hasBlockingContent = ps.hasSeenPromptText || ps.hasSeenNonRunbookContent;
   } else {
     hasBlockingContent = target.hasSeenContent || target.hasSeenPromptText;
   }
@@ -831,6 +847,9 @@ function handleListItem(node: ListItem, ctx: ActiveStepContext): typeof SKIP | u
         command: undefined,
         promptText: '',
         hasSeenContent: true,
+        // Runbook-derived substeps start with only the runbook bullet — no non-runbook
+        // content has been seen yet, so directives/transitions are still valid on them.
+        hasSeenNonRunbookContent: false,
         hasSeenTransitions: false,
         hasSeenPromptText: false,
         hasSeenDelegate: false,
