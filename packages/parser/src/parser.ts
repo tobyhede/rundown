@@ -623,7 +623,19 @@ function handleListItemContent(
 function handleOutputsDirective(node: ListItem, ctx: ActiveStepContext): typeof SKIP {
   const target = getDirectiveTarget(ctx);
   const targetLabel = formatDirectiveTarget(ctx);
-  if (target.hasSeenContent || target.hasSeenPromptText) {
+
+  // Gate mirrors handleDelegateAnnotation: on a pending substep, runbook-list
+  // entries (hasSeenRunbooks) do not block subsequent structural directives on
+  // the same synthesized substep. Only prose prompt text and non-runbook body
+  // content block OUTPUTS.
+  let hasBlockingContent: boolean;
+  if (ctx.currentStep.pendingSubstep) {
+    const ps = ctx.currentStep.pendingSubstep;
+    hasBlockingContent = ps.hasSeenPromptText || (ps.hasSeenContent && !ps.hasSeenRunbooks);
+  } else {
+    hasBlockingContent = target.hasSeenContent || target.hasSeenPromptText;
+  }
+  if (hasBlockingContent) {
     throw new RunbookSyntaxError(
       `OUTPUTS directive in ${targetLabel}${formatLineNum(node)}: must appear before prompt text and body content`,
     );
