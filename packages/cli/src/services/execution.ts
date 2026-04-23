@@ -211,6 +211,29 @@ const EXECUTION_TERMINAL_POLICY: TransitionOrchestrationPolicy = {
   },
 };
 
+/**
+ * Extract the retry-hook error from a persisted XState snapshot, if present.
+ *
+ * The retry hook writes `{ code, message }` into `context.retryHookError` when
+ * `createDelegation` throws during a parent-level retry. The higher-priority
+ * always-entry in the compiler then routes the machine to STOPPED. This helper
+ * narrows the opaque snapshot envelope into the error record so the CLI can
+ * emit `ERROR_OCCURRED` before the terminal RUNBOOK_STOPPED event.
+ *
+ * @param snapshot - Raw persisted XState snapshot (unknown shape)
+ * @returns The retry-hook error record, or undefined if not present
+ */
+function extractRetryHookError(snapshot: unknown): { code: string; message: string } | undefined {
+  if (typeof snapshot !== 'object' || snapshot === null) return undefined;
+  const ctx = (snapshot as { context?: unknown }).context;
+  if (typeof ctx !== 'object' || ctx === null) return undefined;
+  const err = (ctx as { retryHookError?: unknown }).retryHookError;
+  if (typeof err !== 'object' || err === null) return undefined;
+  const record = err as { code?: unknown; message?: unknown };
+  if (typeof record.code !== 'string' || typeof record.message !== 'string') return undefined;
+  return { code: record.code, message: record.message };
+}
+
 async function applyResultTransition({
   manager,
   actorService,
@@ -241,6 +264,22 @@ async function applyResultTransition({
     syncResult.state,
   );
   const actionResult = computeActionResult ? computeActionResult(actionType) : result === 'pass';
+
+  // If the retry hook failed and the machine routed to STOPPED as a result,
+  // emit ERROR_OCCURRED so the orchestrator/CLI observer sees the root cause.
+  // This must precede orchestrateTransition (which emits the terminal
+  // RUNBOOK_STOPPED event), so consumers can correlate the error with the
+  // stop. The retryHookError is a machine-level failure, not a normal fail
+  // transition — hence the dedicated event.
+  if (ensured.state.lifecycle === 'stopped') {
+    const retryHookError = extractRetryHookError(syncResult.snapshot);
+    if (retryHookError) {
+      emitter.emit('ERROR_OCCURRED', {
+        message: retryHookError.message,
+        code: retryHookError.code,
+      });
+    }
+  }
 
   const orchestration = await orchestrateTransition({
     manager,

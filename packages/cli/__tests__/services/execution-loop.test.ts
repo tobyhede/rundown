@@ -429,6 +429,65 @@ describe('runExecutionLoop', () => {
     expect(mockSessionService.popRunbook).toHaveBeenCalled();
   });
 
+  it('emits ERROR_OCCURRED when the state machine stops with retryHookError', async () => {
+    // Seed the actor to report a stopped lifecycle with retryHookError on the
+    // returned snapshot. runExecutionLoop should emit ERROR_OCCURRED with the
+    // hook error's code + message before the terminal RUNBOOK_STOPPED event.
+    mockManager.load.mockResolvedValue({ id: runbookId, step: '1', status: 'running' });
+    (core.executeCommand as any).mockResolvedValue({ success: false, exitCode: 1 });
+
+    mockActorService.sendAndSync.mockResolvedValue({
+      state: {
+        id: runbookId,
+        step: '1',
+        status: 'done',
+        lifecycle: 'stopped',
+        variables: {},
+        runbookPath: '/tmp/test.md',
+      },
+      snapshot: {
+        status: 'done',
+        value: 'STOPPED',
+        context: {
+          lastAction: { type: 'STOP' },
+          lifecycle: 'stopped',
+          retryHookError: { code: 'RD-901', message: 'hook failed: createDelegation threw' },
+        },
+      },
+    });
+
+    const result = await runExecutionLoop(
+      mockManager,
+      runbookId,
+      steps,
+      '/tmp',
+      false,
+      mockEmitter,
+    );
+
+    expect(result).toBe('stopped');
+
+    // ERROR_OCCURRED is emitted with the retryHookError payload fields.
+    expect(mockEmitter.emit).toHaveBeenCalledWith(
+      'ERROR_OCCURRED',
+      expect.objectContaining({
+        code: 'RD-901',
+        message: 'hook failed: createDelegation threw',
+      }),
+    );
+
+    // RUNBOOK_STOPPED still fires afterwards so terminal state is reported.
+    expect(mockEmitter.emit).toHaveBeenCalledWith('RUNBOOK_STOPPED', expect.any(Object));
+
+    // Ordering: ERROR_OCCURRED precedes RUNBOOK_STOPPED.
+    const emitCalls = mockEmitter.emit.mock.calls;
+    const errorIdx = emitCalls.findIndex((c: any[]) => c[0] === 'ERROR_OCCURRED');
+    const stoppedIdx = emitCalls.findIndex((c: any[]) => c[0] === 'RUNBOOK_STOPPED');
+    expect(errorIdx).toBeGreaterThanOrEqual(0);
+    expect(stoppedIdx).toBeGreaterThanOrEqual(0);
+    expect(errorIdx).toBeLessThan(stoppedIdx);
+  });
+
   it('prompted-for step returns waiting without CLI prompted mode', async () => {
     const promptedForSteps = [
       {
