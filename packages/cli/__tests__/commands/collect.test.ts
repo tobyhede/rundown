@@ -531,4 +531,50 @@ describe('collect command', () => {
       expect(result.stdout + result.stderr).toMatch(/no active runbook/i);
     });
   });
+
+  describe('--step targeting', () => {
+    /**
+     * `rd collect --step 1.1` must scope the aggregation to step 1 the same
+     * way the default (no-flag) invocation does when the cursor is on step 1.
+     * The parsed substep segment ("1") is ignored — aggregation always operates
+     * at step scope — and the resolved completions for frame "1|" are drained.
+     */
+    it('scopes collect to the requested step when --step is provided', async () => {
+      await setupReadyToCollect(['pass', 'pass']);
+
+      const result = await runCliInProcess(['collect', '--step', '1.1'], workspace);
+      expect(result.exitCode).toBe(0);
+
+      // After collect, the parent must have advanced to step 2 — identical
+      // behaviour to the default invocation.
+      const state = await getActiveState(workspace);
+      expect(state?.step).toBe('2');
+    });
+
+    /**
+     * When `--step` targets a step that is not a DELEGATE step, the command
+     * must surface the NOT_DELEGATE_STEP guard against the requested scope.
+     */
+    it('errors when --step targets a non-DELEGATE step', async () => {
+      await setupReadyToCollect(['pass', 'pass']);
+
+      const result = await runCliInProcess(['collect', '--step', '2', '--text'], workspace);
+
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stdout + result.stderr).toMatch(/step 2 is not a DELEGATE step/i);
+    });
+
+    /**
+     * `--step` with an invalid step ID must fail cleanly with an INVALID_STEP
+     * error code rather than falling through to scope derivation.
+     */
+    it('errors on an invalid --step value', async () => {
+      await setupReadyToCollect(['pass', 'pass']);
+
+      const result = await runCliInProcess(['collect', '--step', 'not-a-step', '--text'], workspace);
+
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stdout + result.stderr).toMatch(/invalid --step value/i);
+    });
+  });
 });
