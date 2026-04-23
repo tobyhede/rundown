@@ -10055,6 +10055,24 @@ echo "processing"
       expect(ctx.retryCount).toBe(1);
       expect((ctx as { retryHookError?: unknown }).retryHookError).toBeUndefined();
 
+      // Frame-entry invariant: the retry routing (parent-self re-enter +
+      // always hop to firstSubstepStateId) must produce exactly one new
+      // frame entry per successful retry, not two. At the substepStates
+      // level this surfaces as: each (id, frameKey) pair remains a single
+      // entry — updated in-place — not duplicated by the self-re-enter.
+      //
+      // Pre-retry: 2 substep states (ids '1','2' on the parent frameKey).
+      // Post-retry: still exactly 2 substep states on the same frameKey.
+      // A duplicated entry count (e.g. 4) would indicate the retry routing
+      // appended a new SubstepState per hop instead of updating in place.
+      const retriedFrameKey = buildFrameKey('1');
+      const activeFrameSubsteps = (ctx.substepStates ?? []).filter(
+        (ss) => ss.frameKey === retriedFrameKey,
+      );
+      expect(activeFrameSubsteps.length).toBe(2);
+      const activeFrameIds = activeFrameSubsteps.map((ss) => ss.id).sort();
+      expect(activeFrameIds).toEqual(['1', '2']);
+
       actor.stop();
     });
 

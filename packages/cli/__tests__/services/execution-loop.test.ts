@@ -83,6 +83,7 @@ jest.unstable_mockModule('@rundown-org/core', () => {
       if (!lastAction) return 'CONTINUE';
       if (lastAction.type === 'GOTO') return 'GOTO';
       if (lastAction.type === 'RETRY') return 'RETRY';
+      if (lastAction.type === 'RETRY_ERROR') return 'RETRY_ERROR';
       if (lastAction.type === 'COMPLETE') return 'COMPLETE';
       if (lastAction.type === 'STOP') return 'STOP';
       return 'CONTINUE';
@@ -546,6 +547,16 @@ describe('runExecutionLoop', () => {
     expect(errorIdx).toBeGreaterThanOrEqual(0);
     expect(stoppedIdx).toBeGreaterThanOrEqual(0);
     expect(errorIdx).toBeLessThan(stoppedIdx);
+
+    // Invariant: STEP_TRANSITIONED is NEVER emitted with action: 'RETRY_ERROR'.
+    // RETRY_ERROR is a machine-internal failure signal already surfaced via
+    // ERROR_OCCURRED + RUNBOOK_STOPPED; leaking it through STEP_TRANSITIONED
+    // would widen the public action enum beyond the scenario schema
+    // (CONTINUE/DEFER/GOTO/STOP/COMPLETE/RETRY/BREAK/NEXT).
+    const stepTransitionedCalls = emitCalls.filter((c: any[]) => c[0] === 'STEP_TRANSITIONED');
+    for (const call of stepTransitionedCalls) {
+      expect(call[1]?.action).not.toBe('RETRY_ERROR');
+    }
   });
 
   it('prompted-for step returns waiting without CLI prompted mode', async () => {
