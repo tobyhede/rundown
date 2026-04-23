@@ -9935,11 +9935,13 @@ echo "processing"
             description: 'Parent with delegate substeps',
             transitions: parentTransitions,
             aggregation: { strategy: 'ALL' },
-            substeps: ids.map((id) => ({
-              id,
-              description: `Sub ${id}`,
-              transitions: substepDefer,
-            })) as any,
+            substeps: ids.map(
+              (id): StepWithSubsteps['substeps'][number] => ({
+                id,
+                description: `Sub ${id}`,
+                transitions: substepDefer,
+              }),
+            ),
           },
           { name: '2', description: 'Next', transitions: DEFAULT_TRANSITIONS },
         ]);
