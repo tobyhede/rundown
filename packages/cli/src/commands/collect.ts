@@ -1,8 +1,13 @@
 // packages/cli/src/commands/collect.ts
 
 import type { Command } from 'commander';
-import { deriveActiveFrame, findSubstepState, type FrameKey } from '@rundown-org/core';
-import { resolvedStepHasSubsteps } from '@rundown-org/parser';
+import {
+  buildFrameKey,
+  deriveActiveFrame,
+  findSubstepState,
+  type FrameKey,
+} from '@rundown-org/core';
+import { parseStepIdFromString, resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
@@ -14,6 +19,7 @@ import {
 import { handleParentCompletion, extractParentLinkage } from '../helpers/delegation-completion.js';
 import { createBridgedEmitter } from '../helpers/execution-emitter.js';
 import { drainResolvedCompletions, runExecutionLoop } from '../services/execution.js';
+import { resolveIndexOption, IndexOptionError } from '../helpers/index-option.js';
 
 /**
  * Registers the 'collect' command — triggers aggregation after DELEGATE fan-out.
@@ -36,8 +42,10 @@ export function registerCollectCommand(program: Command): void {
   program
     .command('collect')
     .description('Collect delegation results and fire aggregation transition')
+    .option('--step <stepId>', 'Target specific DELEGATE step scope (e.g., "1" or "1.2")')
+    .option('--index <number>', 'FOR loop iteration to target (requires --step on a FOR step)')
     .option('--text', 'Output as human-readable text')
-    .action(async (options: { text?: boolean }) => {
+    .action(async (options: { step?: string; index?: string; text?: boolean }) => {
       await withErrorHandling(
         async () => {
           const output = new OutputEmitter({ text: options.text });
@@ -52,7 +60,10 @@ export function registerCollectCommand(program: Command): void {
 
           let shouldExitWithError = false;
           try {
-            shouldExitWithError = await runCollect(ctx, cwd);
+            shouldExitWithError = await runCollect(ctx, cwd, {
+              step: options.step,
+              index: options.index,
+            });
           } finally {
             ctx.actor.stop();
           }
@@ -66,20 +77,95 @@ export function registerCollectCommand(program: Command): void {
     });
 }
 
+/** Options forwarded from the Commander action handler to runCollect. */
+interface CollectOptions {
+  /** Optional `--step <id>` explicitly targeting a DELEGATE step/substep scope. */
+  step?: string;
+  /** Optional `--index <number>` for FOR iteration targeting (requires --step). */
+  index?: string;
+}
+
+/**
+ * Resolve the DELEGATE step scope for `rd collect`.
+ *
+ * Without `--step`, defaults to the active cursor step + frame.
+ * With `--step`, targets the parsed step (substep ID, if present, is ignored —
+ * aggregation always operates at step scope). `--index` overrides the iteration
+ * in the derived frame key.
+ *
+ * @returns Resolved step name + frame key to use for aggregation, or null when
+ *          the CLI-provided `--step`/`--index` is invalid (in which case an
+ *          error has already been emitted via `output`).
+ */
+function resolveCollectScope(
+  state: TransitionContext['state'],
+  options: CollectOptions,
+  output: OutputEmitter,
+): { stepName: string; frameKey: FrameKey } | null {
+  if (!options.step) {
+    return {
+      stepName: state.step,
+      frameKey: state.activeFrameKey ?? deriveActiveFrame(state).frameKey,
+    };
+  }
+
+  const parsed = parseStepIdFromString(options.step);
+  if (!parsed) {
+    output.error(`Invalid --step value "${options.step}"`, 'INVALID_STEP');
+    output.flush();
+    return null;
+  }
+
+  let explicitIteration: number | undefined;
+  try {
+    explicitIteration = resolveIndexOption(options.index, parsed.at);
+  } catch (error) {
+    if (error instanceof IndexOptionError) {
+      output.error(error.message, error.code);
+      output.flush();
+      return null;
+    }
+    throw error;
+  }
+
+  // Prefer the explicit/template iteration; fall back to the active frame's
+  // iteration if the requested step matches the active step.
+  let frameKey: FrameKey;
+  if (explicitIteration !== undefined) {
+    frameKey = buildFrameKey(parsed.step, explicitIteration);
+  } else {
+    const active = deriveActiveFrame(state);
+    frameKey =
+      active.step === parsed.step
+        ? (state.activeFrameKey ?? active.frameKey)
+        : buildFrameKey(parsed.step);
+  }
+
+  return { stepName: parsed.step, frameKey };
+}
+
 /**
  * Execute the collect workflow against a resolved transition context.
  *
  * @param ctx - Transition context for the active runbook
  * @param cwd - Current working directory
+ * @param options - Optional targeting flags forwarded from the CLI
  * @returns True if the command should set a non-zero exit code
  */
-async function runCollect(ctx: TransitionContext, cwd: string): Promise<boolean> {
+async function runCollect(
+  ctx: TransitionContext,
+  cwd: string,
+  options: CollectOptions = {},
+): Promise<boolean> {
   const { output, manager, actorService, sessionService, lifecycleService, state, steps } = ctx;
 
-  const currentStep = steps.find((s) => s.name === state.step);
+  const scope = resolveCollectScope(state, options, output);
+  if (!scope) return true;
+
+  const currentStep = steps.find((s) => s.name === scope.stepName);
   if (!currentStep || !resolvedStepHasSubsteps(currentStep)) {
     output.error(
-      `Step ${state.step} is not a DELEGATE step. rd collect requires a step with - DELEGATE substeps.`,
+      `Step ${scope.stepName} is not a DELEGATE step. rd collect requires a step with - DELEGATE substeps.`,
       'NOT_DELEGATE_STEP',
     );
     output.flush();
@@ -89,15 +175,15 @@ async function runCollect(ctx: TransitionContext, cwd: string): Promise<boolean>
   const delegateSubsteps = currentStep.substeps.filter((sub) => sub.delegate);
   if (delegateSubsteps.length === 0) {
     output.error(
-      `Step ${state.step} is not a DELEGATE step. rd collect requires a step with - DELEGATE substeps.`,
+      `Step ${scope.stepName} is not a DELEGATE step. rd collect requires a step with - DELEGATE substeps.`,
       'NOT_DELEGATE_STEP',
     );
     output.flush();
     return true;
   }
 
-  // Verify all DELEGATE substeps are resolved (status === 'done') in the active frame.
-  const frameKey: FrameKey = state.activeFrameKey ?? deriveActiveFrame(state).frameKey;
+  // Verify all DELEGATE substeps are resolved (status === 'done') in the target frame.
+  const frameKey: FrameKey = scope.frameKey;
   const substepStates = state.substepStates ?? [];
   const pending = delegateSubsteps.filter((sub) => {
     const ss = findSubstepState(substepStates, sub.id, frameKey);
@@ -105,7 +191,7 @@ async function runCollect(ctx: TransitionContext, cwd: string): Promise<boolean>
   });
 
   if (pending.length > 0) {
-    const ids = pending.map((sub) => `${state.step}.${sub.id}`).join(', ');
+    const ids = pending.map((sub) => `${scope.stepName}.${sub.id}`).join(', ');
     output.error(
       `Cannot collect: not all substeps are resolved. Pending: ${ids}.`,
       'SUBSTEPS_NOT_RESOLVED',
@@ -127,7 +213,14 @@ async function runCollect(ctx: TransitionContext, cwd: string): Promise<boolean>
 
   // Drain completions — the XState machine's aggregation rule evaluates all
   // substep results and selects the appropriate parent transition.
+  //
+  // When `--step` targets a non-active frame (e.g., a different FOR iteration),
+  // pass `frameKeyOverride` so the lookup scans the requested frame's resolved
+  // completions rather than the cursor's active frame.
   const emitter = createBridgedEmitter(state, output);
+  const activeFrameKey: FrameKey = state.activeFrameKey ?? deriveActiveFrame(state).frameKey;
+  const frameKeyOverride: FrameKey | undefined =
+    scope.frameKey === activeFrameKey ? undefined : scope.frameKey;
   const drained = await drainResolvedCompletions({
     manager,
     actorService,
@@ -139,6 +232,7 @@ async function runCollect(ctx: TransitionContext, cwd: string): Promise<boolean>
     currentState: state,
     transitionPolicy: transitionConfig.policy,
     computeActionResult: transitionConfig.computeActionResult,
+    ...(frameKeyOverride ? { frameKeyOverride } : {}),
   });
 
   // Mirror the post-runExecutionLoop branch: when the drain itself terminates the
@@ -205,12 +299,12 @@ async function runCollect(ctx: TransitionContext, cwd: string): Promise<boolean>
       kind: 'collect',
       action: 'collect',
       status: 'already-aggregated',
-      step: state.step,
+      step: scope.stepName,
       parentRunId: state.id,
     });
   } else {
     output.message(
-      `Already aggregated: step ${state.step} has no unapplied delegation completions.`,
+      `Already aggregated: step ${scope.stepName} has no unapplied delegation completions.`,
       'info',
     );
   }
