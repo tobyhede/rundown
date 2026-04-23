@@ -223,6 +223,12 @@ interface SubstepFields extends ExecutionUnitFields {
 export interface ParsedSubstep extends SubstepFields {
   /** Referenced runbook files — may contain RunbookRef for template variables */
   readonly runbooks?: readonly RunbookEntry[];
+  /**
+   * Delegation dispatch signal. Sentinel marker — the value is always `true` when present;
+   * absence means no delegation. Set by `- DELEGATE` annotation on the substep or inherited
+   * from the parent step. Not an optional boolean — `delegate: false` is never written.
+   */
+  readonly delegate?: true;
 }
 
 /**
@@ -231,6 +237,12 @@ export interface ParsedSubstep extends SubstepFields {
 export interface Substep extends SubstepFields {
   /** Referenced runbook files (.runbook.md) */
   readonly runbooks?: readonly string[];
+  /**
+   * Delegation dispatch signal. Sentinel marker — the value is always `true` when present;
+   * absence means no delegation. Set by `- DELEGATE` annotation on the substep or inherited
+   * from the parent step. Not an optional boolean — `delegate: false` is never written.
+   */
+  readonly delegate?: true;
 }
 
 /**

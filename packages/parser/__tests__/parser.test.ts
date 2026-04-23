@@ -4,6 +4,7 @@ import {
   parseRunbookDocument,
   formatLineNum,
   RunbookSyntaxError,
+  isReservedWord,
 } from '../src/index.js';
 import { assertStepHasSubsteps, assertStepWithCommand, assertStepWithFor } from './helpers.js';
 
@@ -2990,5 +2991,322 @@ Some prompt text
     const step = steps[0];
     assertStepHasSubsteps(step);
     expect(step.substeps[0].runbooks).toEqual([{ ref: 'config.target' }]);
+  });
+});
+
+describe('DELEGATE annotation — reserved word and AST type', () => {
+  it('parses a substep with DELEGATE annotation and sets delegate: true', () => {
+    const md = `## 1. Step
+### 1.1 Substep
+- DELEGATE
+
+Do work.
+`;
+    const { runbook } = parseRunbookDocument(md);
+    const step = runbook.steps[0];
+    expect(step.kind).toBe('substeps');
+    if (step.kind === 'substeps') {
+      expect(step.substeps[0].delegate).toBe(true);
+    }
+  });
+
+  it('DELEGATE is in the reserved word list', () => {
+    expect(isReservedWord('DELEGATE')).toBe(true);
+  });
+});
+
+describe('DELEGATE annotation — parsing and ordering', () => {
+  it('parses DELEGATE on a substep (H3)', () => {
+    const md = `## 1. Step
+### 1.1 Substep
+- DELEGATE
+- PASS CONTINUE
+
+Do work.
+`;
+    const { runbook } = parseRunbookDocument(md);
+    const step = runbook.steps[0];
+    expect(step.kind).toBe('substeps');
+    if (step.kind === 'substeps') {
+      expect(step.substeps[0].delegate).toBe(true);
+    }
+  });
+
+  it('parses DELEGATE on a step (H2) — stored for propagation', () => {
+    // DELEGATE at step level doesn't directly set a field on the step,
+    // it propagates to substeps (tested in Task 3). Here we just confirm parsing doesn't throw.
+    const md = `## 1. Step
+- DELEGATE
+- PASS ALL CONTINUE
+- FAIL ANY CONTINUE
+
+### 1.1 Substep one
+### 1.2 Substep two
+`;
+    expect(() => parseRunbookDocument(md)).not.toThrow();
+  });
+
+  it('throws RunbookSyntaxError when DELEGATE has arguments', () => {
+    const md = `## 1. Step
+### 1.1 Substep
+- DELEGATE foo
+
+Do work.
+`;
+    expect(() => parseRunbookDocument(md)).toThrow(/DELEGATE.*no arguments/i);
+  });
+
+  it('throws RunbookSyntaxError when DELEGATE appears after transitions', () => {
+    const md = `## 1. Step
+### 1.1 Substep
+- PASS CONTINUE
+- DELEGATE
+`;
+    expect(() => parseRunbookDocument(md)).toThrow(/DELEGATE.*before transitions/i);
+  });
+
+  it('throws RunbookSyntaxError when DELEGATE appears after content', () => {
+    const md = `## 1. Step
+### 1.1 Substep
+Do work.
+- DELEGATE
+`;
+    expect(() => parseRunbookDocument(md)).toThrow(/DELEGATE.*before.*content/i);
+  });
+
+  it('throws RunbookSyntaxError when DELEGATE is duplicated on a substep', () => {
+    const md = `## 1. Step
+### 1.1 Substep
+- DELEGATE
+- DELEGATE
+`;
+    expect(() => parseRunbookDocument(md)).toThrow(/duplicate DELEGATE/i);
+  });
+
+  it('throws RunbookSyntaxError when FOR appears after DELEGATE on a step', () => {
+    const md = `## 1. Step
+- DELEGATE
+- FOR 3
+`;
+    expect(() => parseRunbookDocument(md)).toThrow(/FOR.*before DELEGATE/i);
+  });
+});
+
+describe('DELEGATE annotation — step-level propagation', () => {
+  it('propagates step-level DELEGATE to all explicit H3 substeps', () => {
+    const md = `## 1. Step
+- DELEGATE
+- PASS ALL CONTINUE
+- FAIL ANY CONTINUE
+
+### 1.1 First
+Do first.
+
+### 1.2 Second
+Do second.
+`;
+    const { runbook } = parseRunbookDocument(md);
+    const step = runbook.steps[0];
+    expect(step.kind).toBe('substeps');
+    if (step.kind === 'substeps') {
+      expect(step.substeps[0].delegate).toBe(true);
+      expect(step.substeps[1].delegate).toBe(true);
+    }
+  });
+
+  it('propagates step-level DELEGATE to synthetic substeps from runbook list', () => {
+    const md = `## 1. Step
+- DELEGATE
+- PASS ALL CONTINUE
+- FAIL ANY CONTINUE
+
+- review-a.runbook.md
+- review-b.runbook.md
+`;
+    const { runbook } = parseRunbookDocument(md);
+    const step = runbook.steps[0];
+    expect(step.kind).toBe('substeps');
+    if (step.kind === 'substeps') {
+      expect(step.substeps[0].delegate).toBe(true);
+      expect(step.substeps[1].delegate).toBe(true);
+    }
+  });
+
+  it('propagates step-level DELEGATE to substeps of a FOR step', () => {
+    const md = `## 1. Step
+- FOR 3
+- DELEGATE
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+### 1.1 First substep
+### 1.2 Second substep
+`;
+    const { runbook } = parseRunbookDocument(md);
+    const step = runbook.steps[0];
+    expect(step.kind).toBe('for');
+    if (step.kind === 'for') {
+      expect(step.substeps[0].delegate).toBe(true);
+      expect(step.substeps[1].delegate).toBe(true);
+    }
+  });
+
+  it('does not propagate when DELEGATE is not set at step level', () => {
+    const md = `## 1. Step
+### 1.1 First
+### 1.2 Second
+`;
+    const { runbook } = parseRunbookDocument(md);
+    const step = runbook.steps[0];
+    if (step.kind === 'substeps') {
+      expect(step.substeps[0].delegate).toBeUndefined();
+      expect(step.substeps[1].delegate).toBeUndefined();
+    }
+  });
+
+  it('does not override explicit substep DELEGATE when step has no DELEGATE', () => {
+    const md = `## 1. Step
+### 1.1 First
+- DELEGATE
+
+### 1.2 Second
+`;
+    const { runbook } = parseRunbookDocument(md);
+    const step = runbook.steps[0];
+    if (step.kind === 'substeps') {
+      expect(step.substeps[0].delegate).toBe(true);
+      expect(step.substeps[1].delegate).toBeUndefined();
+    }
+  });
+
+  it('all three DELEGATE syntax forms produce identical delegate flags on substeps', () => {
+    // Form 1: step-level DELEGATE propagates to H3 substeps
+    const form1 = `## 3. Step
+- DELEGATE
+- PASS ALL CONTINUE
+- FAIL ANY CONTINUE
+
+### 3.1 Technical accuracy
+- review-plan-technical-accuracy.runbook.md
+
+### 3.2 Structural integrity
+- review-plan-structural-integrity.runbook.md
+`;
+
+    // Form 2: per-entry DELEGATE nested under runbook list items (Task 4)
+    const form2 = `## 3. Step
+- PASS ALL CONTINUE
+- FAIL ANY CONTINUE
+
+- review-plan-technical-accuracy.runbook.md
+  - DELEGATE
+- review-plan-structural-integrity.runbook.md
+  - DELEGATE
+`;
+
+    // Form 3: per-substep DELEGATE on each H3
+    const form3 = `## 3. Step
+- PASS ALL CONTINUE
+- FAIL ANY CONTINUE
+
+### 3.1 Technical accuracy
+- DELEGATE
+- review-plan-technical-accuracy.runbook.md
+
+### 3.2 Structural integrity
+- DELEGATE
+- review-plan-structural-integrity.runbook.md
+`;
+
+    const step1 = parseRunbookDocument(form1).runbook.steps[0];
+    const step2 = parseRunbookDocument(form2).runbook.steps[0];
+    const step3 = parseRunbookDocument(form3).runbook.steps[0];
+
+    for (const step of [step1, step2, step3]) {
+      expect(step.kind).toBe('substeps');
+      if (step.kind === 'substeps') {
+        expect(step.substeps[0].delegate).toBe(true);
+        expect(step.substeps[1].delegate).toBe(true);
+        expect(step.substeps[0].runbooks).toBeDefined();
+        expect(step.substeps[1].runbooks).toBeDefined();
+      }
+    }
+  });
+});
+
+describe('DELEGATE annotation — runbook list shorthand', () => {
+  it('allows DELEGATE nested under a step-level runbook list entry', () => {
+    const md = `## 1. Step
+- PASS ALL CONTINUE
+- FAIL ANY CONTINUE
+
+- review-a.runbook.md
+  - DELEGATE
+- review-b.runbook.md
+  - DELEGATE
+`;
+    const { runbook } = parseRunbookDocument(md);
+    const step = runbook.steps[0];
+    expect(step.kind).toBe('substeps');
+    if (step.kind === 'substeps') {
+      expect(step.substeps[0].delegate).toBe(true);
+      expect(step.substeps[1].delegate).toBe(true);
+    }
+  });
+
+  it('allows transition annotations nested under a step-level runbook list entry', () => {
+    const md = `## 1. Step
+- PASS ALL CONTINUE
+- FAIL ANY CONTINUE
+
+- review-a.runbook.md
+  - DELEGATE
+  - FAIL STOP
+- review-b.runbook.md
+  - DELEGATE
+`;
+    const { runbook } = parseRunbookDocument(md);
+    const step = runbook.steps[0];
+    expect(step.kind).toBe('substeps');
+    if (step.kind === 'substeps') {
+      expect(step.substeps[0].delegate).toBe(true);
+      expect(step.substeps[0].transitions.fail.action.type).toBe('STOP');
+      expect(step.substeps[1].delegate).toBe(true);
+    }
+  });
+
+  it('entries without annotations are unaffected', () => {
+    const md = `## 1. Step
+- review-a.runbook.md
+  - DELEGATE
+- review-b.runbook.md
+`;
+    const { runbook } = parseRunbookDocument(md);
+    const step = runbook.steps[0];
+    if (step.kind === 'substeps') {
+      expect(step.substeps[0].delegate).toBe(true);
+      expect(step.substeps[1].delegate).toBeUndefined();
+    }
+  });
+
+  it('allows DELEGATE nested under a substep-level runbook list entry', () => {
+    const md = `## 1. Step
+### 1.1 Sub
+- review-a.runbook.md
+  - DELEGATE
+`;
+    const { runbook } = parseRunbookDocument(md);
+    const step = runbook.steps[0];
+    if (step.kind === 'substeps') {
+      expect(step.substeps[0].delegate).toBe(true);
+    }
+  });
+
+  it('throws RunbookSyntaxError for DELEGATE with arguments in runbook entry annotation', () => {
+    const md = `## 1. Step
+- review-a.runbook.md
+  - DELEGATE foo
+`;
+    expect(() => parseRunbookDocument(md)).toThrow(/DELEGATE.*no arguments/i);
   });
 });
