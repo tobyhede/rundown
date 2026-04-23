@@ -96,12 +96,15 @@ describe('resolveForValue brand contract (compile-time)', () => {
     return expect(resolveForValue(fc, tv)).resolves.toBeDefined();
   });
 
-  // The negative case lives as a comment because TypeScript compile
-  // errors can't be asserted from a passing test. Verified by the
-  // typecheck step in this task.
-  // it('rejects StoredOutputs at compile time', () => {
-  //   const sv = brandStoredOutputs({ items: 'not-an-array' });
-  //   // @ts-expect-error - StoredOutputs is not assignable to InitialTemplateVars
-  //   await resolveForValue(fc, sv);
-  // });
+  it('rejects StoredOutputs at compile time', () => {
+    // The brand contract is enforced at the type level: the
+    // @ts-expect-error directive below fails the typecheck if
+    // StoredOutputs ever becomes assignable to InitialTemplateVars.
+    // Verified by `npm run check:lint:typed`.
+    const sv = brandStoredOutputs({ items: 'not-an-array' });
+    type ResolveVarsArg = Parameters<typeof resolveForValue>[1];
+    // @ts-expect-error - StoredOutputs is not assignable to InitialTemplateVars
+    const rejected: ResolveVarsArg = sv;
+    expect(rejected).toBe(sv);
+  });
 });
