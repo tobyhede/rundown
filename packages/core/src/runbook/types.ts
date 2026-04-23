@@ -355,7 +355,7 @@ type LastActionBase = {
  *   suppresses `STEP_TRANSITIONED` emission for this variant (see
  *   `packages/cli/src/helpers/transition-orchestrator.ts`) because the
  *   failure is already surfaced via `ERROR_OCCURRED` + `RUNBOOK_STOPPED`.
- * @see The priority-0 `always` entry in `buildParentAlwaysEntries`
+ * @see The priority-0 `always` entry constructed in `buildParentStateConfig`
  *   (`packages/core/src/runbook/compiler.ts`) that routes this variant to
  *   the `STOPPED` terminal state.
  */
