@@ -116,9 +116,9 @@ rd collect --step <id>      # Target a specific substep scope
 
 Auto-aggregation fires automatically when the final DELEGATE substep resolves, so `rd collect` is usually unnecessary. It remains available for cases where explicit aggregation is needed — most commonly, a step mixing DELEGATE substeps with non-delegated substeps resolved manually.
 
-### Known limitation: RETRY
+### RETRY on DELEGATE
 
-`RETRY` transitions (e.g., `FAIL ANY RETRY 1 STOP`) do not currently compose with DELEGATE. A RETRY clause on a DELEGATE step is a silent no-op — the retry counter increments on re-entry but no new delegation tokens are issued, so the retry budget is consumed without any re-run actually happening. Authors should not use `RETRY` on DELEGATE steps.
+`RETRY` on a DELEGATE step fires uniform re-delegation. When aggregation resolves to a failure and the retry budget is non-zero, the engine cancels every delegated substep's active delegation in the frame and mints a fresh token per substep — every substep is re-delegated, not just the failures. Stale tokens from the previous attempt return `TOKEN_CANCELLED` on `rd claim`. The subsequent `STEP_ENTERED` event carries the new `delegateFrontier`; orchestrators dispatch a subagent per fresh token exactly as they do on first entry. For DELEGATE steps inside a FOR loop, retry budgets apply per iteration.
 
 ---
 

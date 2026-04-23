@@ -321,8 +321,9 @@ export type RetryDelegationResult =
  * normal flow. Non-`RundownError` exceptions from `createDelegation` are
  * rethrown: those indicate a bug where actor atomicity is already in question,
  * so preserving the panic is preferable to silently swallowing it. A future
- * plan under `docs/superpowers/plans/` would refactor `createDelegation` to be
- * fully Result-based, which would make `retryDelegation` genuinely throw-free.
+ * refactor of `createDelegation` to a Result-based shape would eliminate the
+ * non-`RundownError` rethrow path and make `retryDelegation` genuinely
+ * throw-free.
  *
  * @param options - Retry options
  * @param steps - Parsed steps from the active runbook
