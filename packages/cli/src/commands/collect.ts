@@ -63,6 +63,7 @@ export function registerCollectCommand(program: Command): void {
             shouldExitWithError = await runCollect(ctx, cwd, {
               step: options.step,
               index: options.index,
+              text: options.text,
             });
           } finally {
             ctx.actor.stop();
@@ -83,6 +84,8 @@ interface CollectOptions {
   step?: string;
   /** Optional `--index <number>` for FOR iteration targeting (requires --step). */
   index?: string;
+  /** True when `--text` is set (human-readable); false/undefined for JSON. */
+  text?: boolean;
 }
 
 /**
@@ -294,7 +297,7 @@ async function runCollect(
   // consume. Surface this as a visible, non-error outcome so a second
   // `rd collect` invocation doesn't exit silently — mirrors the
   // `already_cancelled` status emitted by `rd abort`.
-  if (output.isJson()) {
+  if (!options.text) {
     output.json({
       kind: 'collect',
       action: 'collect',
