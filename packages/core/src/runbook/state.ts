@@ -333,13 +333,8 @@ export class RunbookStateManager {
       ...existing,
       ...restUpdates,
       variables: brandStoredOutputs({ ...existing.variables, ...(updatesVariables ?? {}) }),
-      ...(updatesTemplateVars !== undefined || existing.templateVars !== undefined
-        ? {
-            templateVars: brandInitialTemplateVars({
-              ...(existing.templateVars ?? {}),
-              ...(updatesTemplateVars ?? {}),
-            }),
-          }
+      ...(updatesTemplateVars !== undefined
+        ? { templateVars: brandInitialTemplateVars(updatesTemplateVars) }
         : {}),
       updatedAt: new Date().toISOString(),
     };

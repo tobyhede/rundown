@@ -6,7 +6,8 @@ import {
   type InitialTemplateVars,
   type StoredOutputs,
 } from '../../src/runbook/effective-vars.js';
-import type { TemplateVarValue } from '../../src/runbook/types.js';
+import { resolveForValue } from '../../src/runbook/source-resolver.js';
+import type { ForContext, TemplateVarValue } from '../../src/runbook/types.js';
 
 describe('brandInitialTemplateVars', () => {
   it('returns the same reference (zero runtime cost)', () => {
@@ -79,9 +80,6 @@ describe('brand symbol exposure', () => {
     expect(Object.keys(mod)).not.toContain('storedOutputsBrand');
   });
 });
-
-import { resolveForValue } from '../../src/runbook/source-resolver.js';
-import type { ForContext } from '../../src/runbook/types.js';
 
 describe('resolveForValue brand contract (compile-time)', () => {
   it('accepts InitialTemplateVars without a cast', () => {
