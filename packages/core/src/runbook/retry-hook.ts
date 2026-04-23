@@ -228,8 +228,7 @@ export function runRetryHook(
       // carries the iteration when one is in scope. The ContextSnapshot type
       // still declares `at?: string`, so we fall back to the legacy
       // concatenation if a persisted/older snapshot happens to omit it.
-      const frontierAt =
-        result.delegation.contextSnapshot.at ?? `${parentStep.name}.${substep.id}`;
+      const frontierAt = result.delegation.contextSnapshot.at ?? `${parentStep.name}.${substep.id}`;
       frontier.push({
         id: frontierAt,
         runbook: result.delegation.childRunbookPath,
