@@ -304,6 +304,32 @@ export const ErrorCodes = {
     docSlug: 'launch-failed',
   },
 
+  // Retry hook (9xx)
+  RETRY_HOOK_ERROR: {
+    code: 'RD-901',
+    category: ErrorCategory.EXECUTION,
+    title: 'Retry hook caught an unexpected exception',
+    description:
+      'The retry hook caught a non-RundownError exception (typically a ' +
+      'programming bug in createDelegation or a downstream primitive). The ' +
+      'retry was rolled back and the runbook transitioned to stopped. If this ' +
+      'reproduces, it indicates a code defect — file an issue with the runbook ' +
+      'and step shape that triggered it.',
+    docSlug: 'retry-hook-error',
+  },
+  RETRY_HOOK_NO_FRAME: {
+    code: 'RD-902',
+    category: ErrorCategory.EXECUTION,
+    title: 'Retry hook invoked without an active frame key',
+    description:
+      'The retry hook fired while context.activeFrameKey was undefined and ' +
+      'live delegations were present — an invariant violation. Retry transitions ' +
+      'only fire from drainResolvedCompletions, which requires an active frame. ' +
+      'This indicates upstream state corruption (actor hydration bug, state-file ' +
+      'tampering, or missing frame setup in a new feature path).',
+    docSlug: 'retry-hook-no-frame',
+  },
+
   // Generic
   UNKNOWN_ERROR: {
     code: 'RD-999',
