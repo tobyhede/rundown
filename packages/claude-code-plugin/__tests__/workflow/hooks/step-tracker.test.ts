@@ -2,11 +2,12 @@ import { jest } from '@jest/globals';
 import { trackStepDispatch } from '../../../src/workflow/hooks/step-tracker.js';
 import { setExecSync } from '../../../src/workflow/hooks/rundown.js';
 import { createMockHookInput } from '../../helpers/test-utils.js';
+import { mockExecFileSync, mockExecFileSyncError } from '../../helpers/execfile-mock.js';
 
 describe('trackStepDispatch', () => {
   afterEach(() => {
     jest.restoreAllMocks();
-    setExecSync(jest.fn() as never);
+    setExecSync(mockExecFileSync(''));
   });
 
   describe('event filtering', () => {
@@ -23,8 +24,8 @@ describe('trackStepDispatch', () => {
 
   describe('Step tool processing', () => {
     it('processes Step tool name', () => {
-      const mockExec = jest.fn().mockReturnValue('ok');
-      setExecSync(mockExec as never);
+      const mockExec = mockExecFileSync('ok');
+      setExecSync(mockExec);
 
       const input = createMockHookInput('PostToolUse', {
         tool_name: 'Step',
@@ -37,8 +38,8 @@ describe('trackStepDispatch', () => {
     });
 
     it('processes Task tool name', () => {
-      const mockExec = jest.fn().mockReturnValue('ok');
-      setExecSync(mockExec as never);
+      const mockExec = mockExecFileSync('ok');
+      setExecSync(mockExec);
 
       const input = createMockHookInput('PostToolUse', {
         tool_name: 'Task',
@@ -51,8 +52,8 @@ describe('trackStepDispatch', () => {
     });
 
     it('processes Agent tool name', () => {
-      const mockExec = jest.fn().mockReturnValue('ok');
-      setExecSync(mockExec as never);
+      const mockExec = mockExecFileSync('ok');
+      setExecSync(mockExec);
 
       const input = createMockHookInput('PostToolUse', {
         tool_name: 'Agent',
@@ -112,8 +113,8 @@ describe('trackStepDispatch', () => {
 
   describe('rundown CLI invocation', () => {
     it('calls rundown with normalized numeric substep id prefix', () => {
-      const mockExec = jest.fn().mockReturnValue('ok');
-      setExecSync(mockExec as never);
+      const mockExec = mockExecFileSync('ok');
+      setExecSync(mockExec);
 
       const input = createMockHookInput('PostToolUse', {
         tool_name: 'Step',
@@ -131,8 +132,8 @@ describe('trackStepDispatch', () => {
     });
 
     it('calls rundown with exact numeric id when description is id only', () => {
-      const mockExec = jest.fn().mockReturnValue('ok');
-      setExecSync(mockExec as never);
+      const mockExec = mockExecFileSync('ok');
+      setExecSync(mockExec);
 
       const input = createMockHookInput('PostToolUse', {
         tool_name: 'Step',
@@ -149,8 +150,8 @@ describe('trackStepDispatch', () => {
     });
 
     it('calls rundown with normalized named step id prefix', () => {
-      const mockExec = jest.fn().mockReturnValue('ok');
-      setExecSync(mockExec as never);
+      const mockExec = mockExecFileSync('ok');
+      setExecSync(mockExec);
 
       const input = createMockHookInput('PostToolUse', {
         tool_name: 'Task',
@@ -167,8 +168,8 @@ describe('trackStepDispatch', () => {
     });
 
     it('returns empty result on success', () => {
-      const mockExec = jest.fn().mockReturnValue('step tracked');
-      setExecSync(mockExec as never);
+      const mockExec = mockExecFileSync('step tracked');
+      setExecSync(mockExec);
 
       const input = createMockHookInput('PostToolUse', {
         tool_name: 'Step',
@@ -179,10 +180,8 @@ describe('trackStepDispatch', () => {
     });
 
     it('returns empty result when rundown throws', () => {
-      const mockExec = jest.fn().mockImplementation(() => {
-        throw new Error('rundown failed');
-      });
-      setExecSync(mockExec as never);
+      const mockExec = mockExecFileSyncError({ message: 'rundown failed' });
+      setExecSync(mockExec);
 
       const input = createMockHookInput('PostToolUse', {
         tool_name: 'Step',

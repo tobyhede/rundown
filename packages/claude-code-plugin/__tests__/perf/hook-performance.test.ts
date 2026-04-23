@@ -20,6 +20,7 @@ import {
   writeTestConfig,
 } from '../helpers/test-utils.js';
 import { setExecSync } from '../../src/workflow/hooks/rundown.js';
+import { mockExecFileSync } from '../helpers/execfile-mock.js';
 import type { GateConfig, HookConfig } from '../../src/shared/index.js';
 
 /**
@@ -139,7 +140,7 @@ describe('Hook Performance Budget', () => {
         file: 'parent.runbook.md',
         delegations: [],
       });
-      setExecSync((() => statusJson) as never);
+      setExecSync(mockExecFileSync(statusJson));
 
       try {
         const input = createMockHookInput('SubagentStop', {
@@ -158,7 +159,7 @@ describe('Hook Performance Budget', () => {
         expect(durationMs).toBeLessThan(HOOK_BUDGET_MS);
       } finally {
         // Reset to a no-op to avoid leaking the mock
-        setExecSync((() => '') as never);
+        setExecSync(mockExecFileSync(''));
       }
     });
 

@@ -1,7 +1,6 @@
 // __tests__/workflow/hooks/rundown.test.ts
-import { jest } from '@jest/globals';
 import { getRundownCliPath, rundown, setExecSync } from '../../../src/workflow/hooks/rundown.js';
-import { createMockExecSync, createMockExecSyncError } from '../../helpers/test-utils.js';
+import { mockExecFileSync, mockExecFileSyncError } from '../../helpers/execfile-mock.js';
 
 describe('getRundownCliPath', () => {
   it('returns path to @rundown-org/cli', () => {
@@ -21,12 +20,12 @@ describe('getRundownCliPath', () => {
 describe('setExecSync', () => {
   afterEach(() => {
     // Reset to a noop for subsequent tests
-    setExecSync(jest.fn());
+    setExecSync(mockExecFileSync(''));
   });
 
   it('allows injection of custom execSync implementation', () => {
     const customOutput = 'custom exec output';
-    const mockExec = createMockExecSync(customOutput);
+    const mockExec = mockExecFileSync(customOutput);
     setExecSync(mockExec);
 
     const result = rundown(['status'], '/test');
@@ -35,7 +34,7 @@ describe('setExecSync', () => {
   });
 
   it('custom implementation receives correct arguments', () => {
-    const mockExec = createMockExecSync('ok');
+    const mockExec = mockExecFileSync('ok');
     setExecSync(mockExec);
 
     rundown(['pass', '--agent', 'abc123'], '/project/path');
@@ -54,11 +53,11 @@ describe('setExecSync', () => {
 
 describe('rundown', () => {
   afterEach(() => {
-    setExecSync(jest.fn() as any);
+    setExecSync(mockExecFileSync(''));
   });
 
   it('executes rundown CLI with provided arguments', () => {
-    const mockExec = createMockExecSync('Command output');
+    const mockExec = mockExecFileSync('Command output');
     setExecSync(mockExec);
 
     const result = rundown(['status'], '/test/cwd');
@@ -66,7 +65,7 @@ describe('rundown', () => {
   });
 
   it('passes cwd to execSync options', () => {
-    const mockExec = createMockExecSync('ok');
+    const mockExec = mockExecFileSync('ok');
     setExecSync(mockExec);
 
     rundown(['status'], '/custom/directory');
@@ -79,7 +78,7 @@ describe('rundown', () => {
   });
 
   it('handles complex arguments correctly', () => {
-    const mockExec = createMockExecSync('ok');
+    const mockExec = mockExecFileSync('ok');
     setExecSync(mockExec);
 
     rundown(['fail', '--agent', 'abc-123', '--reason', 'Task incomplete'], '/test');
@@ -92,7 +91,7 @@ describe('rundown', () => {
   });
 
   it('propagates execSync errors', () => {
-    const mockExec = createMockExecSyncError({
+    const mockExec = mockExecFileSyncError({
       message: 'Command failed',
       stderr: 'Error details',
     });
@@ -103,7 +102,7 @@ describe('rundown', () => {
 
   describe('command construction', () => {
     it('uses node to execute CLI path', () => {
-      const mockExec = createMockExecSync('ok');
+      const mockExec = mockExecFileSync('ok');
       setExecSync(mockExec);
 
       rundown(['status'], '/test');
@@ -112,19 +111,22 @@ describe('rundown', () => {
     });
 
     it('includes full CLI path in arguments', () => {
-      const mockExec = createMockExecSync('ok');
+      const mockExec = mockExecFileSync('ok');
       setExecSync(mockExec);
 
       rundown(['status'], '/test');
 
-      const args = mockExec.mock.calls[0][1] as string[];
-      expect(args[0]).toContain('cli');
+      expect(mockExec).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.arrayContaining([expect.stringContaining('cli')]),
+        expect.any(Object),
+      );
     });
   });
 
   describe('options configuration', () => {
     it('uses pipe stdio for capturing output', () => {
-      const mockExec = createMockExecSync('output');
+      const mockExec = mockExecFileSync('output');
       setExecSync(mockExec);
 
       rundown(['status'], '/test');
@@ -137,7 +139,7 @@ describe('rundown', () => {
     });
 
     it('uses utf-8 encoding', () => {
-      const mockExec = createMockExecSync('output');
+      const mockExec = mockExecFileSync('output');
       setExecSync(mockExec);
 
       rundown(['status'], '/test');

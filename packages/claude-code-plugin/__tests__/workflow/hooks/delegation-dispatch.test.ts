@@ -1,7 +1,11 @@
 import { createHash } from 'node:crypto';
 import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { setExecSync } from '../../../src/workflow/hooks/rundown.js';
-import { createMockHookInput, createMockExecSync } from '../../helpers/test-utils.js';
+import { createMockHookInput } from '../../helpers/test-utils.js';
+import {
+  mockExecFileSync,
+  mockExecFileSyncError,
+} from '../../helpers/execfile-mock.js';
 
 // Mock Session module
 const mockGet = jest.fn();
@@ -36,15 +40,11 @@ describe('handleDelegationDispatch', () => {
     mockGet.mockResolvedValue({});
     mockSet.mockResolvedValue(undefined);
     // Default: rd status --json fails (no active runbook)
-    setExecSync(
-      jest.fn().mockImplementation(() => {
-        throw new Error('no active runbook');
-      }) as never,
-    );
+    setExecSync(mockExecFileSyncError({ message: 'no active runbook' }));
   });
 
   afterEach(() => {
-    setExecSync(jest.fn() as never);
+    setExecSync(mockExecFileSync(''));
   });
 
   it('returns empty for non-PreToolUse events', async () => {
@@ -158,11 +158,7 @@ describe('handleDelegationDispatch', () => {
   });
 
   it('returns context even when rd status --json fails (best-effort)', async () => {
-    setExecSync(
-      jest.fn().mockImplementation(() => {
-        throw new Error('command failed');
-      }) as never,
-    );
+    setExecSync(mockExecFileSyncError({ message: 'command failed' }));
 
     const input = createMockHookInput('PreToolUse', {
       tool_name: 'Task',
@@ -175,10 +171,10 @@ describe('handleDelegationDispatch', () => {
   });
 
   it('includes delegation status lines when rd status --json succeeds', async () => {
-    const mockExec = createMockExecSync(
+    const mockExec = mockExecFileSync(
       JSON.stringify({ file: 'deploy.md', step: { name: '3.1' } }),
     );
-    setExecSync(mockExec as never);
+    setExecSync(mockExec);
 
     const input = createMockHookInput('PreToolUse', {
       tool_name: 'Task',
@@ -210,7 +206,7 @@ PASS COMPLETE
       vars: { PlanPath: '/work/plan.json', environment: 'production', unrelated: 'skip' },
       delegations: [{ state: 'pending', runbook: 'child.runbook.md', tokenHash }],
     };
-    setExecSync(createMockExecSync(JSON.stringify(status)) as never);
+    setExecSync(mockExecFileSync(JSON.stringify(status)));
 
     const input = createMockHookInput('PreToolUse', {
       tool_name: 'Task',
@@ -233,7 +229,7 @@ PASS COMPLETE
         { state: 'pending', runbook: 'child.runbook.md', tokenHash: differentTokenHash },
       ],
     };
-    setExecSync(createMockExecSync(JSON.stringify(status)) as never);
+    setExecSync(mockExecFileSync(JSON.stringify(status)));
 
     const input = createMockHookInput('PreToolUse', {
       tool_name: 'Task',
@@ -279,7 +275,7 @@ PASS COMPLETE
       },
       delegations: [{ state: 'pending', runbook: 'child.runbook.md', tokenHash }],
     };
-    setExecSync(createMockExecSync(JSON.stringify(status)) as never);
+    setExecSync(mockExecFileSync(JSON.stringify(status)));
 
     const input = createMockHookInput('PreToolUse', {
       tool_name: 'Task',

@@ -14,7 +14,8 @@ import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { setExecSync } from '../../src/workflow/hooks/rundown.js';
-import { runCli, createMockHookInput, createMockExecSync } from '../helpers/test-utils.js';
+import { runCli, createMockHookInput } from '../helpers/test-utils.js';
+import { mockExecFileSync } from '../helpers/execfile-mock.js';
 
 // Mock Session to control delegation_active_token
 const mockGet = jest.fn();
@@ -90,14 +91,14 @@ describe('subagent-stop contract tests', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockSet.mockResolvedValue(undefined);
-    setExecSync(jest.fn() as never);
+    setExecSync(mockExecFileSync(''));
 
     tempDir = mkdtempSync(join(tmpdir(), 'rd-subagent-stop-contract-'));
     mkdirSync(join(tempDir, '.claude', 'rundown', 'runs'), { recursive: true });
   });
 
   afterEach(() => {
-    setExecSync(jest.fn() as never);
+    setExecSync(mockExecFileSync(''));
     rmSync(tempDir, { recursive: true, force: true });
   });
 
@@ -115,7 +116,7 @@ describe('subagent-stop contract tests', () => {
     const statusResult = runCli('status', tempDir);
     expect(statusResult.exitCode).toBe(0);
 
-    setExecSync(createMockExecSync(statusResult.stdout) as never);
+    setExecSync(mockExecFileSync(statusResult.stdout));
 
     const input = createMockHookInput('SubagentStop', { cwd: tempDir });
     return handleSubagentStop(input);

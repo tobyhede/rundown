@@ -2,7 +2,12 @@
 import { createHash } from 'node:crypto';
 import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { setExecSync } from '../../../src/workflow/hooks/rundown.js';
-import { createMockHookInput, createMockExecSync } from '../../helpers/test-utils.js';
+import { createMockHookInput } from '../../helpers/test-utils.js';
+import {
+  mockExecFileSync,
+  mockExecFileSyncError,
+  type ExecFileSyncMock,
+} from '../../helpers/execfile-mock.js';
 import type {
   DelegationStatus,
   ParentLinkage,
@@ -30,8 +35,8 @@ const VALID_TOKEN_HASH = `sha256:${createHash('sha256').update(VALID_TOKEN).dige
 const OTHER_TOKEN_HASH = `sha256:${createHash('sha256').update('rdtk_OTHER00000000000000000000000').digest('hex')}`;
 
 /** Helper to create a mock that returns `rd status --json` output. */
-function createStatusMock(status: Record<string, unknown>) {
-  return createMockExecSync(JSON.stringify(status));
+function createStatusMock(status: Record<string, unknown>): ExecFileSyncMock {
+  return mockExecFileSync(JSON.stringify(status));
 }
 
 describe('handleSubagentStop', () => {
@@ -39,11 +44,11 @@ describe('handleSubagentStop', () => {
     jest.clearAllMocks();
     mockGet.mockResolvedValue({});
     mockSet.mockResolvedValue(undefined);
-    setExecSync(jest.fn() as never);
+    setExecSync(mockExecFileSync(''));
   });
 
   afterEach(() => {
-    setExecSync(jest.fn() as never);
+    setExecSync(mockExecFileSync(''));
   });
 
   describe('event filtering', () => {
@@ -64,8 +69,8 @@ describe('handleSubagentStop', () => {
 
     it('does not call rd status when no token', async () => {
       mockGet.mockResolvedValue({});
-      const mockExec = createMockExecSync('{}');
-      setExecSync(mockExec as never);
+      const mockExec = mockExecFileSync('{}');
+      setExecSync(mockExec);
 
       const input = createMockHookInput('SubagentStop');
       await handleSubagentStop(input);
@@ -80,7 +85,7 @@ describe('handleSubagentStop', () => {
         delegation_active_token: VALID_TOKEN,
         other_key: 'preserved',
       });
-      setExecSync(createStatusMock({ active: false, stashed: false }) as never);
+      setExecSync(createStatusMock({ active: false, stashed: false }));
 
       const input = createMockHookInput('SubagentStop');
       await handleSubagentStop(input);
@@ -95,7 +100,7 @@ describe('handleSubagentStop', () => {
           active: true,
           stashed: false,
           file: 'child.runbook.md',
-        }) as never,
+        }),
       );
 
       const input = createMockHookInput('SubagentStop');
@@ -122,7 +127,7 @@ describe('handleSubagentStop', () => {
             parentStepId: '1.1',
             parentStep: '1',
           },
-        }) as never,
+        }),
       );
 
       const input = createMockHookInput('SubagentStop');
@@ -148,7 +153,7 @@ describe('handleSubagentStop', () => {
             name: '4. Collate review findings',
             description: 'Aggregate results from all reviews',
           },
-        }) as never,
+        }),
       );
 
       const input = createMockHookInput('SubagentStop');
@@ -174,7 +179,7 @@ describe('handleSubagentStop', () => {
             name: '4. Collate review findings',
             description: 'Delegate a subagent to collate the review findings',
           },
-        }) as never,
+        }),
       );
 
       const input = createMockHookInput('SubagentStop');
@@ -197,7 +202,7 @@ describe('handleSubagentStop', () => {
           file: 'parent.runbook.md',
           position: { current: '3', total: 5, unresolved: 3 },
           step: { name: '3. Deploy services' },
-        }) as never,
+        }),
       );
 
       const input = createMockHookInput('SubagentStop');
@@ -216,7 +221,7 @@ describe('handleSubagentStop', () => {
           file: 'parent.runbook.md',
           position: { current: '4', total: 10 },
           step: { name: '4. Final step' },
-        }) as never,
+        }),
       );
 
       const input = createMockHookInput('SubagentStop');
@@ -258,7 +263,7 @@ describe('handleSubagentStop', () => {
               tokenHash: `sha256:${createHash('sha256').update('rdtk_THIRD000000000000000000000000').digest('hex')}`,
             },
           ],
-        }) as never,
+        }),
       );
 
       const input = createMockHookInput('SubagentStop');
@@ -297,7 +302,7 @@ describe('handleSubagentStop', () => {
               tokenHash: OTHER_TOKEN_HASH,
             },
           ],
-        }) as never,
+        }),
       );
 
       const input = createMockHookInput('SubagentStop');
@@ -310,7 +315,7 @@ describe('handleSubagentStop', () => {
 
     it('returns empty when parent is inactive (entire runbook finished)', async () => {
       mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
-      setExecSync(createStatusMock({ active: false, stashed: false }) as never);
+      setExecSync(createStatusMock({ active: false, stashed: false }));
 
       const input = createMockHookInput('SubagentStop');
       const result = await handleSubagentStop(input);
@@ -329,7 +334,7 @@ describe('handleSubagentStop', () => {
           file: 'child.runbook.md',
           step: { name: '2. Review' },
           position: { current: '2', total: 4 },
-        }) as never,
+        }),
       );
 
       const input = createMockHookInput('SubagentStop');
@@ -360,7 +365,7 @@ describe('handleSubagentStop', () => {
               tokenHash: VALID_TOKEN_HASH,
             },
           ],
-        }) as never,
+        }),
       );
 
       const input = createMockHookInput('SubagentStop');
@@ -375,10 +380,8 @@ describe('handleSubagentStop', () => {
   describe('status check failure', () => {
     it('returns fallback context when rd status --json fails', async () => {
       mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
-      const mockExec = jest.fn().mockImplementation(() => {
-        throw new Error('CLI error');
-      });
-      setExecSync(mockExec as never);
+      const mockExec = mockExecFileSyncError({ message: 'CLI error' });
+      setExecSync(mockExec);
 
       const input = createMockHookInput('SubagentStop');
       const result = await handleSubagentStop(input);
@@ -400,7 +403,7 @@ describe('handleSubagentStop', () => {
           // parsePosition returns undefined, banner simply omits position line.
           position: { substep: '1.1' },
           step: { name: '4. Collate review findings' },
-        }) as never,
+        }),
       );
 
       const input = createMockHookInput('SubagentStop');
@@ -420,7 +423,7 @@ describe('handleSubagentStop', () => {
           file: 'parent.runbook.md',
           position: { current: '2', total: 5 },
           step: { name: 42, description: true },
-        }) as never,
+        }),
       );
 
       const input = createMockHookInput('SubagentStop');
@@ -433,7 +436,7 @@ describe('handleSubagentStop', () => {
 
     it('does not throw when status is null', async () => {
       mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
-      setExecSync(createMockExecSync('null') as never);
+      setExecSync(mockExecFileSync('null'));
 
       const input = createMockHookInput('SubagentStop');
       // Should return a result object (unknown fallback), not throw.
@@ -447,7 +450,7 @@ describe('handleSubagentStop', () => {
     it('does not use agent output to determine result', async () => {
       mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
       // Child completed — should return empty regardless of message content
-      setExecSync(createStatusMock({ active: false, stashed: false }) as never);
+      setExecSync(createStatusMock({ active: false, stashed: false }));
 
       const input = createMockHookInput('SubagentStop', {
         last_assistant_message: 'STATUS: FAIL\nEverything broke',
