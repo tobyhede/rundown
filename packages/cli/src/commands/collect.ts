@@ -141,12 +141,26 @@ async function runCollect(ctx: TransitionContext, cwd: string): Promise<boolean>
     computeActionResult: transitionConfig.computeActionResult,
   });
 
+  // Mirror the post-runExecutionLoop branch: when the drain itself terminates the
+  // run (either aggregation fired a STOP/COMPLETE on the first apply, or all
+  // subsequent transitions were already captured), we must still propagate the
+  // terminal outcome to a parent runbook. Prior to this, the early returns
+  // swallowed that propagation and left orphaned DELEGATE steps in the parent.
   if (drained.status === 'stopped') {
     output.flush();
+    const freshState = await manager.load(state.id);
+    if (freshState && extractParentLinkage(freshState)) {
+      await handleParentCompletion(freshState, 'fail', cwd, output);
+    }
     return true;
   }
   if (drained.status === 'done') {
     output.flush();
+    const freshState = await manager.load(state.id);
+    if (freshState && extractParentLinkage(freshState)) {
+      const propagation = await handleParentCompletion(freshState, 'pass', cwd, output);
+      if (propagation === 'stopped') return true;
+    }
     return false;
   }
 
