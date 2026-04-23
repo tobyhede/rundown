@@ -555,14 +555,14 @@ Do the check.
       action: { type: 'COMPLETE' },
     });
     // FOR clause transitions should also be set
-    expect(steps[0].forClause?.transitions?.fail).toEqual({
+    const step0 = steps[0];
+    assertStepWithFor(step0);
+    expect(step0.forClause.transitions?.fail).toEqual({
       kind: 'fail',
       retry: 0,
       action: { type: 'CONTINUE' },
     });
     // Substeps should have context-aware defaults (DEFER/DEFER for runbooks)
-    const step0 = steps[0];
-    assertStepHasSubsteps(step0);
     expect(step0.substeps[0].transitions?.pass).toEqual({
       kind: 'pass',
       retry: 0,
@@ -1165,15 +1165,16 @@ echo check
 \`\`\`
 `;
       const steps = parseRunbook(markdown);
-      expect(steps[0].forClause).toBeDefined();
-      expect(steps[0].forClause?.transitions).toBeDefined();
-      expect(steps[0].forClause?.aggregation?.strategy).toBe('ALL');
-      expect(steps[0].forClause?.transitions?.pass).toEqual({
+      const step = steps[0];
+      assertStepWithFor(step);
+      expect(step.forClause.transitions).toBeDefined();
+      expect(step.forClause.aggregation?.strategy).toBe('ALL');
+      expect(step.forClause.transitions?.pass).toEqual({
         kind: 'pass',
         retry: 0,
         action: { type: 'CONTINUE' },
       });
-      expect(steps[0].forClause?.transitions?.fail).toEqual({
+      expect(step.forClause.transitions?.fail).toEqual({
         kind: 'fail',
         retry: 0,
         action: { type: 'BREAK' },
@@ -1190,9 +1191,10 @@ echo check
 \`\`\`
 `;
       const steps = parseRunbook(markdown);
-      expect(steps[0].forClause).toBeDefined();
+      const step = steps[0];
+      assertStepWithFor(step);
       // Without nested transitions, forClause transitions should be undefined
-      expect(steps[0].forClause?.transitions).toBeUndefined();
+      expect(step.forClause.transitions).toBeUndefined();
     });
 
     it('throws error on invalid nested bullet under FOR', () => {
@@ -1238,15 +1240,16 @@ echo check
 \`\`\`
 `;
       const steps = parseRunbook(markdown);
-      expect(steps[0].forClause).toBeDefined();
-      expect(steps[0].forClause?.transitions).toBeDefined();
-      expect(steps[0].forClause?.aggregation?.strategy).toBe('ANY');
-      expect(steps[0].forClause?.transitions?.pass).toEqual({
+      const step = steps[0];
+      assertStepWithFor(step);
+      expect(step.forClause.transitions).toBeDefined();
+      expect(step.forClause.aggregation?.strategy).toBe('ANY');
+      expect(step.forClause.transitions?.pass).toEqual({
         kind: 'pass',
         retry: 0,
         action: { type: 'CONTINUE' },
       });
-      expect(steps[0].forClause?.transitions?.fail).toEqual({
+      expect(step.forClause.transitions?.fail).toEqual({
         kind: 'fail',
         retry: 0,
         action: { type: 'BREAK' },
@@ -2187,7 +2190,7 @@ Do iteration.
 `;
     const steps = parseRunbook(md);
     const step = steps[0];
-    assertStepHasSubsteps(step);
+    assertStepWithFor(step);
     expect(step.forClause).toEqual({ variable: 'i', start: 1, end: 3 });
     expect(step.substeps[0].transitions?.pass.action).toEqual({ type: 'NEXT' });
   });
@@ -2681,11 +2684,13 @@ echo hello
 echo iteration
 \`\`\``;
     const steps = parseRunbook(md);
-    expect(steps[0].kind).toBe('for');
-    if (steps[0].kind === 'for') {
-      expect(steps[0].forClause.start).toBe(1);
-      expect(steps[0].forClause.end).toBe(3);
+    const step = steps[0];
+    assertStepWithFor(step);
+    expect(step.forClause.start).toBe(1);
+    if (!('end' in step.forClause)) {
+      throw new Error('expected forClause with end bound');
     }
+    expect(step.forClause.end).toBe(3);
   });
 
   it('assigns DEFER transitions to substeps with runbook refs', () => {
