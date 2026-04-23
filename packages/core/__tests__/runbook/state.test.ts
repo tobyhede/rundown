@@ -332,6 +332,55 @@ describe('RunbookStateManager', () => {
     });
   });
 
+  describe('update variables/templateVars semantics', () => {
+    it('replaces templateVars wholesale when updates.templateVars is defined', async () => {
+      const state = await manager.create('test.md', mockRunbook, {
+        runbookPath: 'test.md',
+        templateVars: { env: 'staging', port: 3000 },
+      });
+
+      const updated = await manager.update(state.id, {
+        templateVars: { env: 'prod' },
+      });
+
+      expect(updated.templateVars).toEqual({ env: 'prod' });
+      expect(updated.templateVars).not.toHaveProperty('port');
+    });
+
+    it('preserves existing templateVars when updates.templateVars is undefined', async () => {
+      const state = await manager.create('test.md', mockRunbook, {
+        runbookPath: 'test.md',
+        templateVars: { env: 'staging', port: 3000 },
+      });
+
+      const updated = await manager.update(state.id, { stepName: 'next' });
+
+      expect(updated.templateVars).toEqual({ env: 'staging', port: 3000 });
+    });
+
+    it('shallow-merges variables when updates.variables is defined', async () => {
+      const state = await manager.create('test.md', mockRunbook, {
+        runbookPath: 'test.md',
+      });
+      await manager.update(state.id, { variables: { A: '1', B: '2' } });
+
+      const updated = await manager.update(state.id, { variables: { B: 'two', C: '3' } });
+
+      expect(updated.variables).toEqual({ A: '1', B: 'two', C: '3' });
+    });
+
+    it('preserves existing variables when updates.variables is undefined', async () => {
+      const state = await manager.create('test.md', mockRunbook, {
+        runbookPath: 'test.md',
+      });
+      await manager.update(state.id, { variables: { A: '1' } });
+
+      const updated = await manager.update(state.id, { stepName: 'next' });
+
+      expect(updated.variables).toEqual({ A: '1' });
+    });
+  });
+
   describe('isPrompted', () => {
     it('returns true when parent has prompted flag', async () => {
       const parent = await manager.create('parent.md', mockRunbook, {
