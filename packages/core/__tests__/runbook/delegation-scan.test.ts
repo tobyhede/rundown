@@ -11,6 +11,7 @@ import {
 } from '../../src/runbook/delegation-token.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type { RunbookState, StepDelegation, DelegationLinkage } from '../../src/runbook/types.js';
+import { brandStoredOutputsForTest } from '../helpers/effective-vars.js';
 
 describe('DelegationScanService', () => {
   let tmpDir: string;
@@ -44,7 +45,7 @@ describe('DelegationScanService', () => {
       step: '1',
       stepName: 'Main step',
       retryCount: 0,
-      variables: {},
+      variables: brandStoredOutputsForTest({}),
       steps: [{ id: '1', status: 'running' }],
       startedAt: '2026-02-27T10:00:00.000Z',
       updatedAt: '2026-02-27T10:00:00.000Z',

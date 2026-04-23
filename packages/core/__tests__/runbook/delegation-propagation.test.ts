@@ -6,6 +6,7 @@ import {
   deriveActiveFrame,
 } from '../../src/runbook/targeting.js';
 import type { DelegationLinkage, RunbookState } from '../../src/runbook/types.js';
+import { brandStoredOutputsForTest } from '../helpers/effective-vars.js';
 
 describe('DelegationLinkage extended fields', () => {
   function makeSchemaState(parentLinkage: Record<string, unknown>): Record<string, unknown> {
@@ -207,7 +208,7 @@ describe('frame identity derivation for propagation', () => {
       step: '1',
       stepName: 'Step',
       retryCount: 0,
-      variables: {},
+      variables: brandStoredOutputsForTest({}),
       steps: [],
       startedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),

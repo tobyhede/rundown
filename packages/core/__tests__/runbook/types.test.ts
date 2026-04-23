@@ -7,6 +7,7 @@ import {
   isJsonObject,
 } from '../../src/runbook/types.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
+import { brandStoredOutputsForTest } from '../helpers/effective-vars.js';
 
 describe('SubstepState type', () => {
   it('has required fields', () => {
@@ -110,7 +111,7 @@ describe('RunbookState runbookSrc field', () => {
       step: '1',
       stepName: 'Test step',
       retryCount: 0,
-      variables: {},
+      variables: brandStoredOutputsForTest({}),
       steps: [],
       startedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),

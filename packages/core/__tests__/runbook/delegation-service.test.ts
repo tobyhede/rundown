@@ -4,6 +4,10 @@ import type { DelegateOptions } from '../../src/runbook/delegation-service.js';
 import { hashDelegationToken, TOKEN_PREFIX } from '../../src/runbook/delegation-token.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type { RunbookState, Step, AncestorSnapshot } from '../../src/runbook/types.js';
+import {
+  brandInitialTemplateVarsForTest,
+  brandStoredOutputsForTest,
+} from '../helpers/effective-vars.js';
 
 /** Helper: create minimal RunbookState for testing. */
 function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
@@ -14,7 +18,7 @@ function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
     step: '1',
     stepName: 'Main step',
     retryCount: 0,
-    variables: {},
+    variables: brandStoredOutputsForTest({}),
     steps: [{ id: '1', status: 'running' }],
     startedAt: '2026-02-27T10:00:00.000Z',
     updatedAt: '2026-02-27T10:00:00.000Z',
@@ -22,7 +26,7 @@ function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
       { id: '1', frameKey: buildFrameKey('1'), status: 'pending' },
       { id: '2', frameKey: buildFrameKey('1'), status: 'pending' },
     ],
-    templateVars: { env: 'staging' },
+    templateVars: brandInitialTemplateVarsForTest({ env: 'staging' }),
     ...overrides,
   } as RunbookState;
 }
@@ -273,7 +277,9 @@ describe('createDelegation', () => {
   });
 
   it('captures state.templateVars in context snapshot', () => {
-    const state = makeState({ templateVars: { env: 'prod', version: '2.0' } });
+    const state = makeState({
+      templateVars: brandInitialTemplateVarsForTest({ env: 'prod', version: '2.0' }),
+    });
     const steps = makeSteps();
     const result = createDelegation(
       { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
@@ -314,7 +320,9 @@ describe('createDelegation', () => {
   });
 
   it('merges extra vars into snapshot vars', () => {
-    const state = makeState({ templateVars: { env: 'staging' } });
+    const state = makeState({
+      templateVars: brandInitialTemplateVarsForTest({ env: 'staging' }),
+    });
     const steps = makeSteps();
     const result = createDelegation(
       {
@@ -556,7 +564,9 @@ describe('createDelegation', () => {
   });
 
   it('includes extraVars with higher precedence than templateVars', () => {
-    const state = makeState({ templateVars: { env: 'staging', region: 'us-west' } });
+    const state = makeState({
+      templateVars: brandInitialTemplateVarsForTest({ env: 'staging', region: 'us-west' }),
+    });
     const steps = makeSteps();
     const result = createDelegation(
       {

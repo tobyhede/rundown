@@ -6,6 +6,10 @@ import {
 } from '../../src/runbook/delegation-context.js';
 import { mergeEffectiveVars } from '../../src/runbook/effective-vars.js';
 import type { AncestorSnapshot, ContextSnapshot, RunbookState } from '../../src/runbook/types.js';
+import {
+  brandInitialTemplateVarsForTest,
+  brandStoredOutputsForTest,
+} from '../helpers/effective-vars.js';
 
 /** Helper: create minimal RunbookState for buildContextSnapshot tests. */
 function makeMinimalState(overrides: Partial<RunbookState> = {}): RunbookState {
@@ -16,7 +20,7 @@ function makeMinimalState(overrides: Partial<RunbookState> = {}): RunbookState {
     step: '1',
     stepName: 'Main step',
     retryCount: 0,
-    variables: {},
+    variables: brandStoredOutputsForTest({}),
     steps: [{ id: '1', status: 'running' }],
     startedAt: '2026-04-22T10:00:00.000Z',
     updatedAt: '2026-04-22T10:00:00.000Z',
@@ -497,8 +501,8 @@ describe('reconstituteContextVars', () => {
 describe('buildContextSnapshot', () => {
   it('merges state.variables (step OUTPUTS) into snapshot.vars', () => {
     const state = makeMinimalState({
-      templateVars: { Other: 'kept' },
-      variables: { Message: 'hello from outputs' },
+      templateVars: brandInitialTemplateVarsForTest({ Other: 'kept' }),
+      variables: brandStoredOutputsForTest({ Message: 'hello from outputs' }),
     });
     const snap = buildContextSnapshot(state);
     expect(snap.vars.Message).toBe('hello from outputs');
@@ -507,8 +511,8 @@ describe('buildContextSnapshot', () => {
 
   it('state.variables takes precedence over state.templateVars on key conflict', () => {
     const state = makeMinimalState({
-      templateVars: { X: 'template-default' },
-      variables: { X: 'output-overlay' },
+      templateVars: brandInitialTemplateVarsForTest({ X: 'template-default' }),
+      variables: brandStoredOutputsForTest({ X: 'output-overlay' }),
     });
     const snap = buildContextSnapshot(state);
     expect(snap.vars.X).toBe('output-overlay');
@@ -516,8 +520,8 @@ describe('buildContextSnapshot', () => {
 
   it('extraVars take precedence over both templateVars and variables', () => {
     const state = makeMinimalState({
-      templateVars: { X: 'tv' },
-      variables: { X: 'sv' },
+      templateVars: brandInitialTemplateVarsForTest({ X: 'tv' }),
+      variables: brandStoredOutputsForTest({ X: 'sv' }),
     });
     const snap = buildContextSnapshot(state, undefined, [], { extraVars: { X: 'ev' } });
     expect(snap.vars.X).toBe('ev');
@@ -525,8 +529,8 @@ describe('buildContextSnapshot', () => {
 
   it('handles state with no variables field (only templateVars)', () => {
     const state = makeMinimalState({
-      templateVars: { Only: 'one' },
-      variables: {},
+      templateVars: brandInitialTemplateVarsForTest({ Only: 'one' }),
+      variables: brandStoredOutputsForTest({}),
     });
     const snap = buildContextSnapshot(state);
     expect(snap.vars.Only).toBe('one');
@@ -534,7 +538,7 @@ describe('buildContextSnapshot', () => {
 
   it('handles state with no templateVars field (only variables)', () => {
     const state = makeMinimalState({
-      variables: { Just: 'outputs' },
+      variables: brandStoredOutputsForTest({ Just: 'outputs' }),
     });
     const snap = buildContextSnapshot(state);
     expect(snap.vars.Just).toBe('outputs');
