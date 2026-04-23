@@ -3324,3 +3324,33 @@ describe('DELEGATE annotation — runbook list shorthand', () => {
     expect(() => parseRunbookDocument(md)).toThrow(/DELEGATE.*no arguments/i);
   });
 });
+
+describe('OUTPUTS nested under runbook-list entry', () => {
+  it('accepts OUTPUTS nested under a runbook-list entry (symmetric with DELEGATE)', () => {
+    const md = `## 1 Step
+- child.runbook.md
+  - OUTPUTS
+    - PlanPath {{ path "plan.json" }}
+`;
+    const result = parseRunbookDocument(md);
+    expect(result.diagnostics.filter((d) => d.severity === 'error')).toHaveLength(0);
+    const step = result.runbook.steps[0];
+    if (step.kind !== 'substeps' && step.kind !== 'for') {
+      throw new Error(`expected substeps-kind step, got ${step.kind}`);
+    }
+    expect(step.substeps).toHaveLength(1);
+    expect(step.substeps[0].outputs).toEqual([
+      { name: 'PlanPath', value: '{{ path "plan.json" }}' },
+    ]);
+  });
+
+  it('still rejects OUTPUTS after prose prompt text under a runbook-list entry', () => {
+    const md = `## 1 Step
+- child.runbook.md
+  - some prose note
+  - OUTPUTS
+    - PlanPath {{ path "plan.json" }}
+`;
+    expect(() => parseRunbookDocument(md)).toThrow(/OUTPUTS.*must appear before/);
+  });
+});
