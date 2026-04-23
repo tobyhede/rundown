@@ -348,7 +348,14 @@ export function retryDelegation(
   }
 
   // 2. Verify step is at the execution frontier.
-  const ownerStep = existingDelegation.contextSnapshot.step ?? state.step;
+  //    `buildContextSnapshot` always records `contextSnapshot.step` for fresh
+  //    delegations. A missing owner step here means the persisted snapshot
+  //    predates that guarantee — reject rather than silently accepting
+  //    `state.step`, which would degrade the currency check to always-true.
+  const ownerStep = existingDelegation.contextSnapshot.step;
+  if (ownerStep === undefined) {
+    return { status: 'error', error: Errors.delegationSnapshotStale(substepId, state.step) };
+  }
   if (state.step !== ownerStep) {
     return { status: 'not_current', ownerStep, currentStep: state.step };
   }
@@ -380,7 +387,21 @@ export function retryDelegation(
   const ownerStepDefinition = steps.find((s) => s.name === state.step);
   const ownerHasSubsteps =
     ownerStepDefinition !== undefined && resolvedStepHasSubsteps(ownerStepDefinition);
-  const stepIdForCreate = ownerHasSubsteps ? `${state.step}.${substepId}` : state.step;
+  // Extract the FOR iteration from the frame key (format: "step|iteration",
+  // see buildFrameKey). A FOR-scoped retry must pass a three-level
+  // "${step}.${iteration}.${substep}" ID so parseStepIdFromString sets
+  // `parsed.at` and deriveExecutionAt records the iteration on the
+  // re-issued delegation. Falling back to two-level would emit e.g. "1.1"
+  // where the canonical location is "1.2.1", losing the iteration context
+  // on the retry.
+  const frameIterationPart = frameKey.split('|')[1];
+  const frameIteration =
+    frameIterationPart && /^\d+$/.test(frameIterationPart) ? Number(frameIterationPart) : undefined;
+  const stepIdForCreate = ownerHasSubsteps
+    ? frameIteration !== undefined
+      ? `${state.step}.${frameIteration}.${substepId}`
+      : `${state.step}.${substepId}`
+    : state.step;
   let createResult: DelegateResult;
   try {
     createResult = createDelegation(

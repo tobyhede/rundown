@@ -1179,4 +1179,106 @@ describe('retryDelegation', () => {
     expect(newDelegation?.cancelledAt).toBeNull();
     expect(newDelegation?.tokenHash).not.toBe(initial.tokenHash);
   });
+
+  it('preserves the FOR iteration on the re-issued delegation snapshot', () => {
+    // Regression: retryDelegation was building `stepIdForCreate` as
+    // `${state.step}.${substepId}` regardless of frameKey, dropping the FOR
+    // iteration segment. createDelegation then parsed it as 2-level and fell
+    // back to `activeFor.iteration`, which can diverge from the frame's
+    // iteration during per-iteration retry. The re-issued delegation's
+    // contextSnapshot.at must match the frame (e.g. "1.2.1" at iteration 2),
+    // not the concatenated "1.1".
+    const baseState = makeState({
+      forStack: [
+        {
+          stepId: '1',
+          iteration: 2,
+          start: 1,
+          end: 3,
+          implicit: false,
+          source: { kind: 'range' as const },
+        },
+      ],
+      substepStates: [
+        { id: '1', frameKey: buildFrameKey('1', 2), status: 'pending' },
+        { id: '2', frameKey: buildFrameKey('1', 2), status: 'pending' },
+      ],
+    });
+    const steps = makeForSteps();
+
+    const initial = createDelegation(
+      {
+        state: baseState,
+        stepId: '1.2.1',
+        childRunbookPath: 'child.md',
+        ancestors: [],
+        frameKey: buildFrameKey('1', 2),
+      },
+      steps,
+    );
+    expect(initial.delegation.contextSnapshot.at).toBe('1.2.1');
+
+    const stateWithDelegation = { ...baseState, substepStates: initial.updatedSubstepStates };
+
+    const result = retryDelegation(
+      {
+        state: stateWithDelegation,
+        substepId: '1',
+        frameKey: buildFrameKey('1', 2),
+      },
+      steps,
+    );
+
+    expect(result.status).toBe('retried');
+    if (result.status !== 'retried') return;
+    expect(result.delegation.contextSnapshot.at).toBe('1.2.1');
+    expect(result.delegation.contextSnapshot.index).toBe(2);
+    expect(result.delegation.contextSnapshot.substep).toBe('1');
+  });
+
+  it('returns { status: "error" } when the persisted snapshot omits the owner step', () => {
+    // Regression: the previous `?? state.step` fallback masked stale-state
+    // detection for delegations whose contextSnapshot predates the step
+    // guarantee. Such delegations cannot be safely retried — the currency
+    // check degrades to always-true — so retry must reject with a stale-state
+    // error rather than silently proceeding.
+    const baseState = makeState();
+    const steps = makeSteps();
+    const initial = createDelegation(
+      {
+        state: baseState,
+        stepId: '1.1',
+        childRunbookPath: 'child.md',
+        ancestors: [],
+        frameKey: buildFrameKey('1'),
+      },
+      steps,
+    );
+    // Strip the step field from the persisted snapshot to simulate older state.
+    const staleSubstepStates = initial.updatedSubstepStates.map((ss) =>
+      ss.id === '1' && ss.delegation
+        ? {
+            ...ss,
+            delegation: {
+              ...ss.delegation,
+              contextSnapshot: { ...ss.delegation.contextSnapshot, step: undefined },
+            },
+          }
+        : ss,
+    );
+    const stateWithStale = { ...baseState, substepStates: staleSubstepStates };
+
+    const result = retryDelegation(
+      {
+        state: stateWithStale,
+        substepId: '1',
+        frameKey: buildFrameKey('1'),
+      },
+      steps,
+    );
+
+    expect(result.status).toBe('error');
+    if (result.status !== 'error') return;
+    expect(result.error.code).toBe('RD-817');
+  });
 });

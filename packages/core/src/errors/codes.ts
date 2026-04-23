@@ -303,6 +303,15 @@ export const ErrorCodes = {
       'Failed to initialize runbook state, actor, session, or post-init hook before execution started.',
     docSlug: 'launch-failed',
   },
+  DELEGATION_SNAPSHOT_STALE: {
+    code: 'RD-817',
+    category: ErrorCategory.DELEGATION,
+    title: 'Delegation snapshot missing owner step',
+    description:
+      'Cannot retry: the persisted delegation snapshot does not record an owner step. ' +
+      'This indicates the delegation was created by an older schema and cannot be safely re-issued.',
+    docSlug: 'delegation-snapshot-stale',
+  },
 
   // Retry hook (9xx)
   RETRY_HOOK_ERROR: {

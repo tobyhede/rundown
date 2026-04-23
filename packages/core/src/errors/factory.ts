@@ -113,6 +113,9 @@ export const Errors = {
   delegationStepNoSubsteps: (step: string): RundownError =>
     new RundownError('DELEGATION_STEP_NO_SUBSTEPS', { step }),
 
+  delegationSnapshotStale: (substepId: string, step: string): RundownError =>
+    new RundownError('DELEGATION_SNAPSHOT_STALE', { substepId, step }),
+
   // Generic
   unknown: (message: string, cause?: Error): RundownError =>
     new RundownError('UNKNOWN_ERROR', { message }, cause),
