@@ -191,16 +191,25 @@ export async function orchestrateTransition(
   });
 
   const toPos = positions.to;
-  sink.onStepTransitioned({
-    action: actionType,
-    from: fromStr,
-    at: atStr,
-    result: actionResult ? 'PASS' : 'FAIL',
-    command,
-    ...(actionType === 'RETRY' ? { retryAttempt: retryDisplayCount, retryMax } : {}),
-    ...(toPos.for ? { forIndex: toPos.for.index, forEnd: toPos.for.end } : {}),
-    ...(aggregated ? { aggregated: true } : {}),
-  });
+  // RETRY_ERROR signals a machine-internal failure (retry hook threw /
+  // invariant violated). It is already surfaced via ERROR_OCCURRED +
+  // RUNBOOK_STOPPED (see execution.ts `applyResultTransition`). Emitting
+  // it through STEP_TRANSITIONED would widen the external action enum
+  // beyond the scenario schema (CONTINUE/DEFER/GOTO/STOP/COMPLETE/RETRY/
+  // BREAK/NEXT — see packages/cli/src/schemas/scenarios.ts). The terminal
+  // RUNBOOK_STOPPED emission below still fires.
+  if (actionType !== 'RETRY_ERROR') {
+    sink.onStepTransitioned({
+      action: actionType,
+      from: fromStr,
+      at: atStr,
+      result: actionResult ? 'PASS' : 'FAIL',
+      command,
+      ...(actionType === 'RETRY' ? { retryAttempt: retryDisplayCount, retryMax } : {}),
+      ...(toPos.for ? { forIndex: toPos.for.index, forEnd: toPos.for.end } : {}),
+      ...(aggregated ? { aggregated: true } : {}),
+    });
+  }
 
   const terminalSnapshot = asTerminalSnapshotOrDefault(snapshot);
   const isComplete = isRunbookComplete(terminalSnapshot);

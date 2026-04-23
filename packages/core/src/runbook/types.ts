@@ -333,6 +333,15 @@ type LastActionBase = {
  * transitions, `rd stop`). `RETRY_ERROR` is a machine-internal-failure
  * signal — the retry could not complete because `createDelegation` threw or
  * an invariant (e.g. missing active frame) was violated.
+ *
+ * @see parseActionType in `packages/core/src/runbook/transition-kernel.ts`
+ *   — maps this variant to the `'RETRY_ERROR'` ActionType. The CLI layer
+ *   suppresses `STEP_TRANSITIONED` emission for this variant (see
+ *   `packages/cli/src/helpers/transition-orchestrator.ts`) because the
+ *   failure is already surfaced via `ERROR_OCCURRED` + `RUNBOOK_STOPPED`.
+ * @see The priority-0 `always` entry in `buildParentAlwaysEntries`
+ *   (`packages/core/src/runbook/compiler.ts`) that routes this variant to
+ *   the `STOPPED` terminal state.
  */
 export interface RetryErrorLastAction extends LastActionBase {
   readonly type: 'RETRY_ERROR';
