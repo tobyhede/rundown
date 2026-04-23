@@ -116,6 +116,87 @@ describe('parseJsonLines', () => {
     expect(result.tokens[1]).toBe('rdtk_second');
   });
 
+  it('extracts auto-issued tokens from step_entered delegateFrontier', () => {
+    const stdout = JSON.stringify({
+      type: 'step_entered',
+      position: { current: '1.1', total: 2 },
+      stepName: '1.1',
+      hasCommand: false,
+      isSubstep: true,
+      prompted: false,
+      delegateFrontier: [
+        { id: '1.1', runbook: 'child-a.runbook.md', token: 'rdtk_auto1' },
+        { id: '1.2', runbook: 'child-b.runbook.md', token: 'rdtk_auto2' },
+      ],
+    });
+    const result = parseJsonLines(stdout);
+    expect(result.tokens).toEqual(['rdtk_auto1', 'rdtk_auto2']);
+  });
+
+  it('ignores non-string delegateFrontier tokens', () => {
+    const stdout = JSON.stringify({
+      type: 'step_entered',
+      delegateFrontier: [
+        { id: '1.1', runbook: 'child.runbook.md', token: 'rdtk_ok' },
+        { id: '1.2', runbook: 'child.runbook.md' }, // token missing
+        { id: '1.3', runbook: 'child.runbook.md', token: 42 }, // token not a string
+      ],
+    });
+    const result = parseJsonLines(stdout);
+    expect(result.tokens).toEqual(['rdtk_ok']);
+  });
+
+  it('safely skips null / primitive entries in delegateFrontier', () => {
+    const stdout = JSON.stringify({
+      type: 'step_entered',
+      delegateFrontier: [null, 'string-entry', 5, { token: 'rdtk_ok' }],
+    });
+    const result = parseJsonLines(stdout);
+    expect(result.tokens).toEqual(['rdtk_ok']);
+  });
+
+  it('ignores delegateFrontier on non step_entered events', () => {
+    const stdout = JSON.stringify({
+      type: 'step_transitioned',
+      action: 'CONTINUE',
+      from: '1',
+      at: '2',
+      result: 'PASS',
+      delegateFrontier: [{ id: '1.1', runbook: 'x.runbook.md', token: 'rdtk_ignored' }],
+    });
+    const result = parseJsonLines(stdout);
+    expect(result.tokens).toHaveLength(0);
+  });
+
+  it('ignores non-array delegateFrontier field', () => {
+    const stdout = JSON.stringify({
+      type: 'step_entered',
+      delegateFrontier: 'not an array',
+    });
+    const result = parseJsonLines(stdout);
+    expect(result.tokens).toHaveLength(0);
+  });
+
+  it('extracts auto-issued tokens from NDJSON step_entered line', () => {
+    const stdout = [
+      JSON.stringify({
+        type: 'step_entered',
+        stepName: '1.1',
+        isSubstep: true,
+        hasCommand: false,
+        prompted: false,
+        delegateFrontier: [
+          { id: '1.1', runbook: 'a.runbook.md', token: 'rdtk_first' },
+          { id: '1.2', runbook: 'b.runbook.md', token: 'rdtk_second' },
+        ],
+      }),
+      JSON.stringify({ type: 'runbook_completed' }),
+    ].join('\n');
+    const result = parseJsonLines(stdout);
+    expect(result.tokens).toEqual(['rdtk_first', 'rdtk_second']);
+    expect(result.terminal).toBe('COMPLETE');
+  });
+
   it('ignores objects without action=delegated', () => {
     const stdout = [
       '{"type":"step_transitioned","action":"CONTINUE","from":"1","at":"2","result":"PASS"}',

@@ -156,8 +156,20 @@ jest.unstable_mockModule('@rundown-org/core', () => {
     }),
     ...mockErrorHelpers,
     RUNS_DIR: '.rundown/runs',
+    createDelegation: jest.fn(),
+    Errors: {
+      delegationRunbookNotFound: jest.fn((ref: string) => new Error(`Runbook not found: ${ref}`)),
+    },
   };
 });
+
+jest.unstable_mockModule('../../src/helpers/delegate-inference', () => ({
+  inferAllDelegateSubsteps: jest.fn().mockReturnValue([]),
+}));
+
+jest.unstable_mockModule('../../src/helpers/resolve-runbook', () => ({
+  resolveRunbookFile: jest.fn().mockResolvedValue(null),
+}));
 
 jest.unstable_mockModule('../../src/services/internal-commands', () => ({
   isInternalRdCommand: jest.fn().mockReturnValue(false),
@@ -174,6 +186,8 @@ jest.unstable_mockModule('../../src/services/policy-context', () => ({
 // Import after mocking
 const core = await import('@rundown-org/core');
 const policyContext = await import('../../src/services/policy-context');
+const delegateInference = await import('../../src/helpers/delegate-inference');
+const resolveRunbook = await import('../../src/helpers/resolve-runbook');
 const { runExecutionLoop, executeCommandWithPolicyCheck } = await import(
   '../../src/services/execution'
 );
@@ -703,6 +717,108 @@ describe('runExecutionLoop', () => {
       // a step declares outputs. Behavioral coverage is in integration tests.
       expect(result).not.toBe('stopped');
     });
+  });
+
+  it('auto-issues delegation tokens and includes delegateFrontier in STEP_ENTERED when entering a DELEGATE step', async () => {
+    // A step with two substeps that have delegate: true
+    const delegateSteps: any[] = [
+      {
+        kind: 'substeps',
+        name: '1',
+        description: 'Parallel work',
+        substeps: [
+          {
+            id: '1',
+            description: 'First task',
+            delegate: true,
+            runbooks: ['child-a.runbook.md'],
+            transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+          },
+          {
+            id: '2',
+            description: 'Second task',
+            delegate: true,
+            runbooks: ['child-b.runbook.md'],
+            transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+          },
+        ],
+        transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+      },
+    ];
+
+    mockManager.load.mockResolvedValue({
+      id: runbookId,
+      step: '1',
+      substep: '1',
+      status: 'running',
+      substepStates: [],
+    });
+
+    // inferAllDelegateSubsteps returns two targets
+    delegateInference.inferAllDelegateSubsteps.mockReturnValue([
+      { runbookRef: 'child-a.runbook.md', stepId: '1.1' },
+      { runbookRef: 'child-b.runbook.md', stepId: '1.2' },
+    ]);
+
+    // resolveRunbookFile resolves to a path
+    resolveRunbook.resolveRunbookFile
+      .mockResolvedValueOnce({
+        path: '/project/.rundown/runbooks/child-a.runbook.md',
+        source: 'project',
+      })
+      .mockResolvedValueOnce({
+        path: '/project/.rundown/runbooks/child-b.runbook.md',
+        source: 'project',
+      });
+
+    // createDelegation returns a token for each substep
+    (core.createDelegation as any)
+      .mockReturnValueOnce({
+        token: 'rdtk_aaaa1111',
+        tokenHash: 'hash-a',
+        delegation: {},
+        updatedSubstepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: {} }],
+      })
+      .mockReturnValueOnce({
+        token: 'rdtk_bbbb2222',
+        tokenHash: 'hash-b',
+        delegation: {},
+        updatedSubstepStates: [
+          { id: '1', frameKey: '1|', status: 'pending', delegation: {} },
+          { id: '2', frameKey: '1|', status: 'pending', delegation: {} },
+        ],
+      });
+
+    mockManager.update = jest.fn().mockResolvedValue(undefined);
+
+    await runExecutionLoop(mockManager, runbookId, delegateSteps, '/tmp', false, mockEmitter);
+
+    // STEP_ENTERED should have been emitted with delegateFrontier
+    const stepEnteredCall = mockEmitter.emit.mock.calls.find(
+      (call: any[]) => call[0] === 'STEP_ENTERED',
+    );
+    expect(stepEnteredCall).toBeDefined();
+    const payload = stepEnteredCall[1];
+
+    expect(payload.delegateFrontier).toBeDefined();
+    expect(payload.delegateFrontier).toHaveLength(2);
+
+    expect(payload.delegateFrontier[0]).toMatchObject({
+      id: '1.1',
+      runbook: 'child-a.runbook.md',
+      token: 'rdtk_aaaa1111',
+    });
+    expect(payload.delegateFrontier[1]).toMatchObject({
+      id: '1.2',
+      runbook: 'child-b.runbook.md',
+      token: 'rdtk_bbbb2222',
+    });
+
+    // manager.update should have been called to persist tokens
+    expect(mockManager.update).toHaveBeenCalledWith(
+      runbookId,
+      expect.objectContaining({ substepStates: expect.any(Array) }),
+    );
   });
 });
 
