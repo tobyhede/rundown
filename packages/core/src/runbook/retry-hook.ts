@@ -11,10 +11,47 @@
  */
 
 import type { DelegateFrontierEntry } from '../events/types.js';
-import type { ResolvedStep, ResolvedStepHavingSubsteps, RunbookState, SubstepState } from './types.js';
+import type { ResolvedStep, ResolvedStepHavingSubsteps, RunbookState, SubstepState, TemplateVarValue } from './types.js';
 import type { RunbookContext } from './compiler.js';
+import type { OutputVars } from './output-evaluator.js';
 import { retryDelegation } from './delegation-service.js';
 import { findSubstepState } from './targeting.js';
+import { logger } from '../logger.js';
+
+/**
+ * Narrow `OutputVars` (context-side map, `JsonValue` entries — permits
+ * `boolean | null`) to a `TemplateVarValue` map (state-side map — forbids
+ * `boolean | null`).
+ *
+ * The `flattenTemplateVars` pipeline upstream guarantees this narrowing is
+ * safe: booleans are stringified at routing time, nulls never enter the
+ * template-var channel. This helper documents the invariant at the boundary
+ * and filters (with a warning) any rogue values that slip through from
+ * untyped callers — preferable to a blanket cast that would let a `null` or
+ * `boolean` reach a state-machine consumer unchecked.
+ *
+ * @param vars - Output-evaluator frame with `JsonValue` entries
+ * @returns Map restricted to `TemplateVarValue` — unsafe values dropped
+ */
+export function asTemplateVars(
+  vars: OutputVars,
+): Readonly<Record<string, TemplateVarValue>> {
+  const result: Record<string, TemplateVarValue> = {};
+  for (const [key, value] of Object.entries(vars)) {
+    if (value === null || typeof value === 'boolean') {
+      void logger.warn('asTemplateVars: dropping unsupported value at boundary', {
+        name: key,
+        kind: value === null ? 'null' : 'boolean',
+      });
+      continue;
+    }
+    // string | number | JsonArray | JsonObject — all valid TemplateVarValue
+    // subtypes. (TemplateVarValue also permits JsonArrayStream, which cannot
+    // appear here: OutputVars is already a flattened output frame.)
+    result[key] = value as TemplateVarValue;
+  }
+  return result;
+}
 
 /**
  * Discriminated success variant of {@link RetryHookResult}.
@@ -130,7 +167,7 @@ export function runRetryHook(
   > = {
     step: parentStep.name,
     substepStates,
-    templateVars: context.templateVars as RunbookState['templateVars'],
+    templateVars: asTemplateVars(context.templateVars ?? {}),
     forStack: context.forStack,
     activeFrameKey,
     variables: context.variables,
