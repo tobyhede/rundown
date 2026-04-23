@@ -99,9 +99,10 @@ export interface StatusOutputData {
  * Build the effective variable space for status output.
  *
  * Merges templateVars (CLI/config/frontmatter) with state.variables (step OUTPUTS).
- * From templateVars, only scalar values (string, number, boolean) are included;
- * arrays and streams are excluded. state.variables is already Record<string, string>
- * and is merged as-is; step outputs win over templateVars on key collision.
+ * From templateVars, only scalar values (string, number) are included;
+ * arrays, streams, and JSON objects are excluded. state.variables is already
+ * Record<string, string> and is merged as-is; step outputs win over templateVars
+ * on key collision.
  *
  * @param state - Runbook state with templateVars and variables
  * @returns Stringified key-value map, or undefined if empty
@@ -115,9 +116,10 @@ function buildVars(state: RunbookState): Record<string, string> | undefined {
   // Status output requires Record<string, string>, so the merged view is
   // post-filtered to scalars and stringified. Arrays, JsonObjects, and
   // JsonArrayStream refs are intentionally omitted from the status surface.
+  // TemplateVarValue does not admit booleans (see TemplateVarValueSchema).
   const merged: Record<string, string> = {};
   for (const [k, v] of Object.entries(mergeEffectiveVars(state))) {
-    if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+    if (typeof v === 'string' || typeof v === 'number') {
       merged[k] = String(v);
     }
   }
