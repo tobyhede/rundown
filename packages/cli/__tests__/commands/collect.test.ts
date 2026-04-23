@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { buildFrameKey, buildCompletionKey } from '@rundown-org/core';
 import {
   createTestWorkspace,
   createRunbook,
@@ -45,10 +46,13 @@ interface MutableRunbookState {
  *
  * WARNING — schema-coupled helper:
  *   This bypasses `rd claim` + `rd pass`/`rd fail` and writes to the
- *   persisted state schema directly. The project's "never migrate state"
- *   rule means any refactor to the `substepStates` / `resolvedCompletions`
- *   shape will silently break these tests. Prefer the CLI-driven flow
- *   (see the `end-to-end CLI flow` describe block below) whenever possible.
+ *   persisted state schema directly. Frame and completion keys are built
+ *   via the canonical `buildFrameKey` / `buildCompletionKey` helpers from
+ *   `@rundown-org/core` so the shape stays aligned with the runtime. The
+ *   project's "never migrate state" rule means any refactor to the
+ *   `substepStates` / `resolvedCompletions` shape will silently break
+ *   these tests. Prefer the CLI-driven flow (see the `end-to-end CLI flow`
+ *   describe block below) whenever possible.
  *
  *   This shortcut is kept because the end-to-end flow auto-propagates and
  *   auto-aggregates via `handleParentCompletion`, so it cannot produce the
@@ -70,7 +74,7 @@ async function markSubstepsResolved(
   const statePath = join(workspace.statePath(), `${runbookId}.json`);
   const raw = JSON.parse(await readFile(statePath, 'utf-8')) as MutableRunbookState;
 
-  const frameKey = raw.activeFrameKey ?? `${raw.step}|`;
+  const frameKey = raw.activeFrameKey ?? buildFrameKey(raw.step);
   const entry = raw.activeEntry ?? 1;
 
   const substepStates: SubstepState[] = results.map((result, i) => ({
@@ -83,7 +87,7 @@ async function markSubstepsResolved(
   const resolvedCompletions: Record<string, ResolvedCompletion> = {};
   for (let i = 0; i < results.length; i++) {
     const substepId = String(i + 1);
-    const key = `${frameKey}|${String(entry)}|${substepId}`;
+    const key = buildCompletionKey(frameKey, entry, substepId);
     resolvedCompletions[key] = {
       agentId: 'manual',
       result: results[i],
