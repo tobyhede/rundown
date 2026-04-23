@@ -2,10 +2,7 @@ import { createHash } from 'node:crypto';
 import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { setExecSync } from '../../../src/workflow/hooks/rundown.js';
 import { createMockHookInput } from '../../helpers/test-utils.js';
-import {
-  mockExecFileSync,
-  mockExecFileSyncError,
-} from '../../helpers/execfile-mock.js';
+import { mockExecFileSync, mockExecFileSyncError } from '../../helpers/execfile-mock.js';
 
 // Mock Session module
 import { createSessionMock, setGet } from '../../helpers/session-mock.js';
@@ -171,9 +168,7 @@ describe('handleDelegationDispatch', () => {
   });
 
   it('includes delegation status lines when rd status --json succeeds', async () => {
-    const mockExec = mockExecFileSync(
-      JSON.stringify({ file: 'deploy.md', step: { name: '3.1' } }),
-    );
+    const mockExec = mockExecFileSync(JSON.stringify({ file: 'deploy.md', step: { name: '3.1' } }));
     setExecSync(mockExec);
 
     const input = createMockHookInput('PreToolUse', {
