@@ -3142,6 +3142,16 @@ Do work.
     expect(() => parseRunbookDocument(md)).toThrow(/DELEGATE.*no arguments/i);
   });
 
+  it('throws RunbookSyntaxError when DELEGATE is followed by a non-ascii whitespace and args', () => {
+    // U+00A0 NO-BREAK SPACE — \s matches it; the legacy space/tab check does not.
+    const md = `## 1 Step
+### 1.1 Sub
+- child.runbook.md
+- DELEGATE foo
+`;
+    expect(() => parseRunbookDocument(md)).toThrow(/DELEGATE.*no arguments/i);
+  });
+
   it('throws RunbookSyntaxError when DELEGATE appears after transitions', () => {
     const md = `## 1. Step
 ### 1.1 Substep
@@ -3442,7 +3452,7 @@ describe('DELEGATE annotation — runbook list shorthand', () => {
   it('throws RunbookSyntaxError for DELEGATE with arguments in runbook entry annotation', () => {
     const md = `## 1. Step
 - review-a.runbook.md
-  - DELEGATE foo
+  - DELEGATE foo
 `;
     expect(() => parseRunbookDocument(md)).toThrow(/DELEGATE.*no arguments/i);
   });
