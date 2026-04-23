@@ -1058,12 +1058,12 @@ describe('DELEGATE re-entry and retry', () => {
     // again. Under β, the retry budget is already consumed (retryCount=1);
     // the second aggregation cycle finds FAIL ANY satisfied and the retry
     // guard no longer matches → exhaustion action (STOP) fires.
-    r = await runCliInProcess(`claim ${tokenB1}`, workspace);
+    r = await runCliInProcess(`claim ${tokenB1!}`, workspace);
     expect(r.exitCode).toBe(0);
     r = await runCliInProcess(['pass'], workspace);
     expect(r.exitCode).toBe(0);
 
-    r = await runCliInProcess(`claim ${tokenB2}`, workspace);
+    r = await runCliInProcess(`claim ${tokenB2!}`, workspace);
     expect(r.exitCode).toBe(0);
     const secondFail = await runCliInProcess(['fail'], workspace);
 
@@ -1287,7 +1287,7 @@ describe('DELEGATE re-entry and retry', () => {
     );
     expect(retryTransition).toBeDefined();
     expect(retryTransition?.aggregated).toBe(true);
-    expect((retryTransition as Record<string, unknown>).forIndex).toBe(1);
+    expect(retryTransition!.forIndex).toBe(1);
   }, 30_000);
 
   // ---------------------------------------------------------------------------

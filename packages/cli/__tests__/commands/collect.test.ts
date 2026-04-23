@@ -387,14 +387,14 @@ describe('collect command', () => {
         const results: unknown[] = [];
         let i = 0;
         while (i < raw.length) {
-          while (i < raw.length && /\s/.test(raw[i]!)) i++;
+          while (i < raw.length && /\s/.test(raw[i])) i++;
           if (i >= raw.length) break;
           const start = i;
           let depth = 0;
           let inString = false;
           let escaped = false;
           for (; i < raw.length; i++) {
-            const ch = raw[i]!;
+            const ch = raw[i];
             if (inString) {
               if (escaped) {
                 escaped = false;

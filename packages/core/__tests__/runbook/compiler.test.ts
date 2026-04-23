@@ -10217,7 +10217,7 @@ echo "processing"
       actor.send({ type: 'FAIL' });
 
       const mid = actor.getSnapshot();
-      const midCtx = mid.context as RunbookContext;
+      const midCtx = mid.context;
 
       // Error surfaced on context with the invariant code, and counters
       // remain at zero (spec §3.1 Failure handling invariant: no partial
@@ -10235,7 +10235,7 @@ echo "processing"
       actor.send({ type: 'PASS' });
 
       const snap = actor.getSnapshot();
-      const ctx = snap.context as RunbookContext;
+      const ctx = snap.context;
 
       expect(snap.value).toBe('STOPPED');
       expect(ctx.lifecycle).toBe('stopped');
@@ -10322,7 +10322,7 @@ echo "processing"
       // Final FAIL closes the aggregation → ALL fails → retry fires → hook runs.
       actor.send({ type: 'FAIL' });
 
-      const ctx = actor.getSnapshot().context as RunbookContext;
+      const ctx = actor.getSnapshot().context;
 
       // Under uniform re-delegation (docs/SPEC.md §4.2, §5):
       //   1.1 (pass + delegation)    → RE-ISSUED (prior pass no longer excludes)
@@ -10387,7 +10387,7 @@ echo "processing"
         {
           state: baseState,
           stepId: `1.${substepId}`,
-          childRunbookPath: `child-${substepId}-iter${iteration}.md`,
+          childRunbookPath: `child-${substepId}-iter${String(iteration)}.md`,
           ancestors: [],
           frameKey,
         },
@@ -10488,7 +10488,7 @@ echo "processing"
       // iteration-retry guard fires → runRetryHook runs for iteration 1's frame.
       actor.send({ type: 'FAIL' });
 
-      const ctx = actor.getSnapshot().context as RunbookContext;
+      const ctx = actor.getSnapshot().context;
 
       // The retry hook minted exactly one fresh token for iteration 1's substep.
       expect(ctx.pendingDelegateFrontier).toBeDefined();
