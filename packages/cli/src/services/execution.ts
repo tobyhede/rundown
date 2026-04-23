@@ -632,49 +632,63 @@ export async function runExecutionLoop(
     // Compute before STEP_ENTERED so the event includes the prompted FOR flag
     const stepIsPrompted = currentStep.kind === 'prompted-for';
 
-    // Auto-issue delegation tokens for DELEGATE steps.
-    // Triggers on entry to the first substep of a step with delegate substeps.
+    // Delegation frontier emission.
+    // Prefer a pre-issued frontier from the retry hook (context.pendingDelegateFrontier)
+    // over re-running auto-issuance. If consumed, signal the machine to clear the
+    // context field via PENDING_FRONTIER_CONSUMED after the emit.
     let delegateFrontier: Array<DelegateFrontierEntry> | undefined;
+    let pendingFrontierConsumed = false;
 
-    const hasDelegateSubsteps =
-      isSubstep &&
-      resolvedStepHasSubsteps(currentStep) &&
-      currentState.substep === currentStep.substeps[0]?.id &&
-      currentStep.substeps.some((sub) => sub.delegate);
+    const pendingSnapshot = await actorService.getContextSnapshot(currentState.id, steps);
+    const pending = pendingSnapshot?.pendingDelegateFrontier;
 
-    if (hasDelegateSubsteps) {
-      const targets = inferAllDelegateSubsteps(currentState, steps);
+    if (pending && pending.length > 0) {
+      delegateFrontier = [...pending];
+      pendingFrontierConsumed = true;
+    } else {
+      // Auto-issue delegation tokens for DELEGATE steps.
+      // Triggers on entry to the first substep of a step with delegate substeps.
+      const hasDelegateSubsteps =
+        isSubstep &&
+        resolvedStepHasSubsteps(currentStep) &&
+        currentState.substep === currentStep.substeps[0]?.id &&
+        currentStep.substeps.some((sub) => sub.delegate);
 
-      if (targets.length > 0) {
-        const fanOut: Array<DelegateFrontierEntry> = [];
-        let threadedState = currentState;
-        const frameKey = threadedState.activeFrameKey ?? deriveActiveFrame(threadedState).frameKey;
+      if (hasDelegateSubsteps) {
+        const targets = inferAllDelegateSubsteps(currentState, steps);
 
-        for (const target of targets) {
-          const childResolved = await resolveRunbookFile(cwd, target.runbookRef);
-          if (!childResolved) {
-            throw Errors.delegationRunbookNotFound(target.runbookRef);
+        if (targets.length > 0) {
+          const fanOut: Array<DelegateFrontierEntry> = [];
+          let threadedState = currentState;
+          const frameKey =
+            threadedState.activeFrameKey ?? deriveActiveFrame(threadedState).frameKey;
+
+          for (const target of targets) {
+            const childResolved = await resolveRunbookFile(cwd, target.runbookRef);
+            if (!childResolved) {
+              throw Errors.delegationRunbookNotFound(target.runbookRef);
+            }
+
+            const result = createDelegation(
+              {
+                state: threadedState,
+                stepId: target.stepId,
+                childRunbookPath: childResolved.path,
+                extraVars: undefined,
+                ancestors: [],
+                frameKey,
+              },
+              steps,
+            );
+
+            threadedState = { ...threadedState, substepStates: result.updatedSubstepStates };
+            fanOut.push({ id: target.stepId, runbook: target.runbookRef, token: result.token });
           }
 
-          const result = createDelegation(
-            {
-              state: threadedState,
-              stepId: target.stepId,
-              childRunbookPath: childResolved.path,
-              extraVars: undefined,
-              ancestors: [],
-              frameKey,
-            },
-            steps,
-          );
-
-          threadedState = { ...threadedState, substepStates: result.updatedSubstepStates };
-          fanOut.push({ id: target.stepId, runbook: target.runbookRef, token: result.token });
+          // Persist all tokens in one write
+          await manager.update(currentState.id, { substepStates: threadedState.substepStates });
+          delegateFrontier = fanOut;
         }
-
-        // Persist all tokens in one write
-        await manager.update(currentState.id, { substepStates: threadedState.substepStates });
-        delegateFrontier = fanOut;
       }
     }
 
@@ -692,6 +706,12 @@ export async function runExecutionLoop(
       prompted: prompted || stepIsPrompted,
       delegateFrontier,
     });
+
+    if (pendingFrontierConsumed) {
+      await actorService.sendAndSync(currentState.id, steps, {
+        type: 'PENDING_FRONTIER_CONSUMED',
+      });
+    }
 
     // If CLI prompted mode, per-step prompted FOR, OR no command
     // Use itemToRender which may be a substep with its own command

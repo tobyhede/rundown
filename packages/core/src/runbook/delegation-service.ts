@@ -370,9 +370,7 @@ export function retryDelegation(
   const ownerStepDefinition = steps.find((s) => s.name === state.step);
   const ownerHasSubsteps =
     ownerStepDefinition !== undefined && resolvedStepHasSubsteps(ownerStepDefinition);
-  const stepIdForCreate = ownerHasSubsteps
-    ? `${state.step}.${substepId}`
-    : state.step;
+  const stepIdForCreate = ownerHasSubsteps ? `${state.step}.${substepId}` : state.step;
   let createResult: DelegateResult;
   try {
     createResult = createDelegation(

@@ -69,6 +69,11 @@ rundown delegate <runbook> --step <id> --var key=value  # With variables (repeat
 rundown delegate <runbook> --step <id> --var-json key=json  # With JSON variables
 rundown delegate <runbook> --step <id> --var-file path  # Load variables from YAML file (repeatable)
 rundown delegate --step <id> --index <number>  # FOR loop iteration to target
+rundown delegate --retry <token>                         # Retry delegation by token
+rundown delegate --retry --step <id>                     # Retry delegation on substep
+rundown delegate --retry --step <id> --index <n>         # Retry delegation in FOR iteration
+rundown delegate --retry                                 # Retry inferred from active substep
+rundown delegate --retry --step <id> --var key=value     # Retry with var overrides
 rundown claim <token>                   # Claim a delegation token and launch child
 rundown claim <token> --var key=value   # Claim with variables (repeatable)
 rundown claim <token> --var-json key=json  # Claim with JSON variables

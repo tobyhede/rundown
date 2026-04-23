@@ -663,9 +663,7 @@ describe('RunbookActorService', () => {
   describe('substepStates / activeFrameKey mirroring (Task 4)', () => {
     it('initial RunbookContext mirrors substepStates and activeFrameKey from RunbookState', async () => {
       const frameKey = buildFrameKey('1');
-      const substepStates: SubstepState[] = [
-        { id: '1', frameKey, status: 'done', result: 'pass' },
-      ];
+      const substepStates: SubstepState[] = [{ id: '1', frameKey, status: 'done', result: 'pass' }];
 
       const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
       await manager.update(state.id, {

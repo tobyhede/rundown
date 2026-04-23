@@ -221,6 +221,25 @@ describe('StepDelegationSchema', () => {
     });
     expect(result.success).toBe(true);
   });
+
+  it('preserves extraVars through parse (round-trip)', () => {
+    const result = StepDelegationSchema.safeParse({
+      ...validDelegation,
+      extraVars: { environment: 'staging', port: 3000 },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.extraVars).toEqual({ environment: 'staging', port: 3000 });
+    }
+  });
+
+  it('accepts StepDelegation without extraVars (result.extraVars is undefined)', () => {
+    const result = StepDelegationSchema.safeParse(validDelegation);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.extraVars).toBeUndefined();
+    }
+  });
 });
 
 describe('SubstepStateSchema backward compatibility', () => {
