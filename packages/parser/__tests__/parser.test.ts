@@ -202,8 +202,12 @@ pwd
 \`\`\`
 `;
     const steps = parseRunbook(markdown);
-    expect(steps[0].command?.code).toBe('ls');
-    expect(steps[1].command?.code).toBe('pwd');
+    const step0 = steps[0];
+    assertStepWithCommand(step0);
+    expect(step0.command.code).toBe('ls');
+    const step1 = steps[1];
+    assertStepWithCommand(step1);
+    expect(step1.command.code).toBe('pwd');
   });
 
   it('treats prompt tag as rd prompt command', () => {
@@ -214,7 +218,9 @@ Please look at this example.
 `;
     const steps = parseRunbook(markdown);
     // prompt blocks become rd prompt commands
-    expect(steps[0].command).toEqual({
+    const step = steps[0];
+    assertStepWithCommand(step);
+    expect(step.command).toEqual({
       code: "rd prompt 'Please look at this example.'",
       lang: 'prompt',
     });
@@ -228,7 +234,9 @@ Please look at this example.
 \`\`\`
 `;
     const steps = parseRunbook(markdown);
-    expect(steps[0].command).toEqual({
+    const step = steps[0];
+    assertStepWithCommand(step);
+    expect(step.command).toEqual({
       code: 'rd prompt \'{"key": "value"}\'',
       lang: 'prompt',
     });
@@ -241,7 +249,9 @@ key: value
 \`\`\`
 `;
     const steps = parseRunbook(markdown);
-    expect(steps[0].command).toEqual({
+    const step = steps[0];
+    assertStepWithCommand(step);
+    expect(step.command).toEqual({
       code: "rd prompt 'key: value'",
       lang: 'prompt',
     });
@@ -268,7 +278,9 @@ npm run example --flag value
 `;
     const steps = parseRunbook(md);
     // prompt block becomes command, text before it becomes prompt
-    expect(steps[0].command).toEqual({
+    const step = steps[0];
+    assertStepWithCommand(step);
+    expect(step.command).toEqual({
       code: "rd prompt 'npm run example --flag value'",
       lang: 'prompt',
     });
@@ -283,7 +295,9 @@ echo 'hello world'
 \`\`\`
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].command).toEqual({
+    const step = steps[0];
+    assertStepWithCommand(step);
+    expect(step.command).toEqual({
       code: "rd prompt 'echo '\\''hello world'\\'''",
       lang: 'prompt',
     });
@@ -301,7 +315,9 @@ npm run build
 \`\`\`
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].command).toEqual({
+    const step = steps[0];
+    assertStepWithCommand(step);
+    expect(step.command).toEqual({
       code: 'npm run build',
       lang: 'bash',
     });
@@ -759,7 +775,9 @@ npm test
 `;
     const steps = parseRunbook(markdown);
     expect(steps[0].prompt).toBe('This prompt appears before the code block.');
-    expect(steps[0].command?.code).toBe('npm test');
+    const step = steps[0];
+    assertStepWithCommand(step);
+    expect(step.command.code).toBe('npm test');
   });
 
   it('throws error when text appears after code block in substep', () => {
@@ -2028,7 +2046,7 @@ echo outside
 `;
     const { runbook: doc } = parseRunbookDocument(md);
     expect(doc.steps).toHaveLength(1);
-    expect(doc.steps[0].command).toBeUndefined();
+    expect('command' in doc.steps[0]).toBe(false);
   });
 
   it('parses markdown with no steps and returns diagnostics', () => {
@@ -2150,7 +2168,7 @@ Do second.
 `;
     const steps = parseRunbook(md);
     expect(steps[0].prompt).toBeUndefined();
-    expect(steps[0].command).toBeUndefined();
+    expect('command' in steps[0]).toBe(false);
     expect('substeps' in steps[0]).toBe(false);
     expect(steps[0].transitions.pass.action).toEqual({ type: 'CONTINUE' });
   });
@@ -2210,9 +2228,10 @@ rd prompt 'Hello world'
 \`\`\`
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].command).toBeDefined();
-    expect(steps[0].command!.lang).toBe('prompt');
-    expect(steps[0].command!.code).toContain('rd prompt');
+    const step = steps[0];
+    assertStepWithCommand(step);
+    expect(step.command.lang).toBe('prompt');
+    expect(step.command.code).toContain('rd prompt');
   });
 });
 
