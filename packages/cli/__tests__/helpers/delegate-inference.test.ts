@@ -253,16 +253,20 @@ describe('inferAllDelegateSubsteps', () => {
     expect(result[0].stepId).toBe('1.2');
   });
 
-  it('returns empty array when no delegate substeps have runbooks', () => {
+  it('throws RD-814 when a delegate substep is missing its runbook reference', () => {
+    // Invariant: the parser rejects DELEGATE substeps that lack a runbook
+    // (packages/parser/src/parser.ts finalizePendingSubstep). If that guard
+    // is ever bypassed — e.g., programmatic step construction — inference
+    // must surface a hard error rather than silently skip the substep.
     const substeps = [
       makeSubstep({ id: '1', description: 'A', delegate: true }), // no runbooks
     ];
     const steps: Step[] = [makeStepWithSubsteps('1', substeps)];
     const state = makeState({ step: '1' });
 
-    const result = inferAllDelegateSubsteps(state, steps as any);
-
-    expect(result).toHaveLength(0);
+    expect(() => inferAllDelegateSubsteps(state, steps as any)).toThrow(
+      expect.objectContaining({ code: 'RD-814' }),
+    );
   });
 
   it('throws RD-813 when current step has no substeps', () => {

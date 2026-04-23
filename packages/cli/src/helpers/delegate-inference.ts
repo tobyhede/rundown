@@ -138,7 +138,16 @@ export function inferAllDelegateSubsteps(
 
   for (const substep of currentStep.substeps) {
     if (!substep.delegate) continue;
-    if (!hasRunbooks(substep)) continue;
+    // Invariant: the parser rejects DELEGATE substeps that lack a runbook
+    // reference (see packages/parser/src/parser.ts `finalizePendingSubstep`).
+    // Keep a defensive throw so regressions surface here instead of pushing
+    // an ill-formed entry into results.
+    if (!hasRunbooks(substep)) {
+      throw Errors.delegationSubstepNoRunbook(
+        `${currentStep.name}.${substep.id}`,
+        state.step,
+      );
+    }
     if (hasActiveDelegation(substep.id, state.substepStates, activeFrameKey)) continue;
     if (isSubstepDone(substep.id, state.substepStates, activeFrameKey)) continue;
 
