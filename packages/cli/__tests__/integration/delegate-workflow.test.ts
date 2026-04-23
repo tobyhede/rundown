@@ -490,10 +490,8 @@ describe('DELEGATE backward compatibility — manual rd delegate --step alongsid
 });
 
 describe('DELEGATE re-entry and retry', () => {
-  // Pending design: docs/superpowers/specs/2026-04-22-delegate-retry-semantics.md
   // RETRY on DELEGATE steps is currently a no-op — failed substeps are not
-  // re-delegated with fresh tokens. These test names are the contract the
-  // implementation should verify once the design decision lands.
+  // re-delegated with fresh tokens.
   it.skip('RETRY re-entry: completed substeps are excluded from the new frontier', () => {});
   it.skip('on re-entry, previously issued tokens are not reused — new tokens are generated', () => {});
 });

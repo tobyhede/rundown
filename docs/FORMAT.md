@@ -63,18 +63,20 @@ Additional fields beyond those listed are preserved (open schema). All fields ar
 step ::= "## " step_id separator? text? newline
          outputs_directive?
          for_clause?
+         delegate_annotation?
          transition*
          prompt?
          body?
 ```
 
-Content must appear in the order shown: OUTPUTS, FOR, transitions, prompt, body.
+Content must appear in the order shown: OUTPUTS, FOR, DELEGATE, transitions, prompt, body.
 
 ## Substeps
 
 ```ebnf
 substep ::= "### " substep_id separator? text? newline
             outputs_directive?
+            delegate_annotation?
             transition*
             prompt?
             ( code_block | runbook_list )?
@@ -158,6 +160,14 @@ A step may contain at most one FOR clause. The FOR clause must appear before tra
 - FOR item IN 3 TO 7 OF {{ items }}
 ```
 
+## DELEGATE Annotation
+
+```ebnf
+delegate_annotation ::= "- DELEGATE" newline
+```
+
+`DELEGATE` is bare — it takes no arguments. On an H2 step it propagates to every H3 substep; on an H3 substep or runbook-list entry it applies only to that target. DELEGATE precedes transitions within the step's or substep's bullet block; when a FOR clause is present, FOR precedes DELEGATE. A DELEGATE substep must resolve to a runbook reference. See [SPEC.md §4.3](./SPEC.md#43-delegate) for execution semantics.
+
 ## Transitions
 
 ```ebnf
@@ -177,7 +187,7 @@ Aggregation modifiers must pair complementarily: `PASS ALL` + `FAIL ANY` (pessim
 
 **Default transitions:** When no transitions are authored, the parser supplies `PASS CONTINUE`, `FAIL STOP`. Substeps under aggregation or with runbook delegation default to `PASS DEFER`, `FAIL DEFER`.
 
-**Disambiguation:** A `-`-prefixed bullet inside a step is resolved by priority: (1) context directive (`- INPUTS` or `- OUTPUTS` as exact, case-sensitive list-item text with no trailing content), (2) FOR clause (`FOR` keyword), (3) transition (`PASS`, `FAIL`, `YES`, `NO`, or standalone `DEFER`), (4) runbook reference (`.runbook.md` suffix), (5) prompt text. A bullet whose text merely contains `INPUTS` or `OUTPUTS` inside prose, or uses a different case (e.g., `inputs`, `Outputs`), falls through to normal list semantics.
+**Disambiguation:** A `-`-prefixed bullet inside a step is resolved by priority: (1) context directive (`- INPUTS` or `- OUTPUTS` as exact, case-sensitive list-item text with no trailing content), (2) FOR clause (`FOR` keyword), (3) DELEGATE annotation (`- DELEGATE` as exact, case-sensitive list-item text with no trailing content), (4) transition (`PASS`, `FAIL`, `YES`, `NO`, or standalone `DEFER`), (5) runbook reference (`.runbook.md` suffix), (6) prompt text. A bullet whose text merely contains `INPUTS`, `OUTPUTS`, or `DELEGATE` inside prose, or uses a different case (e.g., `inputs`, `Outputs`, `delegate`), falls through to normal list semantics.
 
 ## Actions
 
@@ -253,13 +263,15 @@ Template variables with dotted paths (`{{item.name}}`) are resolved at runtime. 
 ## Runbook Lists
 
 ```ebnf
-runbook_list  ::= ( "- " runbook_entry newline )+
+runbook_list  ::= ( "- " runbook_entry newline nested_delegate? )+
 runbook_entry ::= runbook_path | runbook_ref
 runbook_path  ::= non_ws_char+ ".runbook.md"
 runbook_ref   ::= "{{" ws? variable_path ws? "}}"
+
+nested_delegate ::= ws "- DELEGATE" newline
 ```
 
-Step-level runbook lists are shorthand for implicit sequential substeps. Entries may be literal paths or template variable references (`runbook_ref`), which are resolved to concrete paths during the variable resolution phase. See [Transitions](#transitions) for bullet disambiguation priority.
+Step-level runbook lists are shorthand for implicit sequential substeps. Entries may be literal paths or template variable references (`runbook_ref`), which are resolved to concrete paths during the variable resolution phase. Entries may carry a nested `- DELEGATE` bullet to mark that entry for delegation — see [DELEGATE Annotation](#delegate-annotation). See [Transitions](#transitions) for bullet disambiguation priority.
 
 ## Body
 
@@ -279,7 +291,7 @@ Free-form text between transitions and body.
 
 ## Reserved Words
 
-`ALL`, `ANY`, `AT`, `BREAK`, `COMPLETE`, `CONTINUE`, `DEFER`, `FAIL`, `FOR`, `GOTO`, `IN`, `NEXT`, `NO`, `PASS`, `RETRY`, `STOP`, `TO`, `YES`
+`ALL`, `ANY`, `AT`, `BREAK`, `COMPLETE`, `CONTINUE`, `DEFER`, `DELEGATE`, `FAIL`, `FOR`, `GOTO`, `IN`, `NEXT`, `NO`, `PASS`, `RETRY`, `STOP`, `TO`, `YES`
 
 Case-sensitive: `NEXT` is reserved; `Next` and `NextStep` are valid. `OF` is a contextual keyword in `FOR...OF...` syntax but not a reserved word.
 

@@ -44,7 +44,7 @@ Steps must be identified sequentially or by name.
 | `## 1` | Static | Sequential execution. Must start at 1. |
 | `## Name` | Named | GOTO target only. Skipped by default flow. |
 
-**Reserved Names**: `NEXT`, `CONTINUE`, `DEFER`, `COMPLETE`, `STOP`, `GOTO`, `RETRY`, `PASS`, `FAIL`, `YES`, `NO`, `ALL`, `ANY`, `BREAK`, `FOR`, `IN`, `TO`, `AT`.
+**Reserved Names**: `NEXT`, `CONTINUE`, `DEFER`, `DELEGATE`, `COMPLETE`, `STOP`, `GOTO`, `RETRY`, `PASS`, `FAIL`, `YES`, `NO`, `ALL`, `ANY`, `BREAK`, `FOR`, `IN`, `TO`, `AT`.
 
 Reserved word matching is case-sensitive. `NEXT` is reserved; `Next` and `NextStep` are valid.
 
@@ -54,9 +54,10 @@ Named identifiers must match `/^[A-Za-z_][A-Za-z0-9_]*$/`.
 Step content must appear in this strict order:
 1.  **OUTPUTS**: Context output declarations (optional). Must appear as a bullet item immediately after the step header.
 2.  **FOR Annotation**: Loop definition (optional). Must appear as a bullet item after directives.
-3.  **Transitions**: Control flow rules (optional). Must appear as bullet items immediately after FOR (or after directives if no FOR). Transitions must appear before any prompt text or body content.
-4.  **Prompt**: Text instructions.
-5.  **Body**: One of: Code Block or Substeps. A step-level runbook list is shorthand for implicit sequential substeps (`.1`, `.2`, ...).
+3.  **DELEGATE Annotation**: Delegation marker (optional). See [§4.3 DELEGATE](#43-delegate).
+4.  **Transitions**: Control flow rules (optional). Must appear as bullet items immediately after DELEGATE / FOR (or after directives if neither is present). Transitions must appear before any prompt text or body content.
+5.  **Prompt**: Text instructions.
+6.  **Body**: One of: Code Block or Substeps. A step-level runbook list is shorthand for implicit sequential substeps (`.1`, `.2`, ...).
 
 ## 3. Step Bodies
 
@@ -115,6 +116,8 @@ These two forms are execution-equivalent:
 ```
 
 Runbook list entries may use template variable references (`{{ VarName }}`) instead of literal paths. These are resolved to concrete runbook target strings during the variable resolution phase. Undefined references are preserved as literal text, consistent with general template variable behavior.
+
+A runbook-list entry may carry a nested `- DELEGATE` bullet to mark that entry for delegation; see [§4.3 DELEGATE](#43-delegate).
 
 ### 3.4 Runtime Target Identity
 Runtime dispatch/completion identity is canonicalized as:
@@ -176,6 +179,43 @@ GOTO targeting the containing step (self-reference) without an AT qualifier may 
 *   `GOTO 3 AT {{Index}}`: Re-enter Step 3 at current iteration.
 
 > **Internal:** The compiler resolves step-to-step advancement using `CONTINUE` actions mapped to concrete next-step state IDs at compile time. `NEXT` is rejected as a GOTO target by the parser.
+
+### 4.3 DELEGATE
+
+`- DELEGATE` is a structural bullet annotation that marks substeps for delegation. When a DELEGATE step is entered, the execution engine auto-issues a delegation token for each marked substep and surfaces them in the `STEP_ENTERED` event's `delegateFrontier` field (an array of `{id, runbook, token}`). Subagents claim each token with `rd claim`, resolve with `rd pass`/`rd fail`, and the final resolution triggers auto-aggregation of the parent step's transition.
+
+**Syntax.** The annotation is bare — `DELEGATE foo` is a syntax error. DELEGATE accepts three equivalent forms:
+
+* **Step-level** — on the H2 step, propagates to all H3 substeps:
+    ```markdown
+    ## 1. Delegated work
+    - DELEGATE
+    - PASS ALL CONTINUE
+    - FAIL ANY STOP
+
+    ### 1.1 First task
+    - child-a.runbook.md
+    ```
+* **Per-substep** — on individual H3 substeps, applies only to the annotated substeps:
+    ```markdown
+    ### 1.1 First task
+    - DELEGATE
+    - child-a.runbook.md
+    ```
+* **Runbook-list shorthand** — nested under runbook-list entries (no H3 headers):
+    ```markdown
+    ## 1. Delegated work
+    - child-a.runbook.md
+      - DELEGATE
+    ```
+
+**Ordering.** `- DELEGATE` precedes transitions and prompt content. When a FOR clause is also present, `FOR ... IN ...` precedes `DELEGATE`.
+
+**Target requirement.** A DELEGATE substep must resolve to a runbook reference (either a `.runbook.md` entry or a template reference). A DELEGATE substep with no runbook target is a structural error.
+
+**Aggregation.** The final substep resolution auto-aggregates the parent step's transition. An explicit `rd collect` CLI invocation triggers aggregation without waiting (primarily used when a DELEGATE step contains a mix of delegated and non-delegated substeps).
+
+**Known limitations.** `RETRY` transitions (e.g., `FAIL ANY RETRY 1 STOP`) do not currently compose with DELEGATE. A `RETRY` clause on a DELEGATE step is a silent no-op: the retry counter increments on re-entry but no new delegation tokens are issued. Authors should not use `RETRY` on DELEGATE steps.
 
 ## 5. Iteration (FOR)
 
