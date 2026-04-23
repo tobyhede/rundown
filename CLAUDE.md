@@ -75,6 +75,8 @@ rundown claim <token> --input key=value   # Claim with variables (repeatable)
 rundown claim <token> --input-json key=json  # Claim with JSON variables
 rundown claim <token> --input-file path   # Load variables from YAML file (repeatable)
 rundown abort <token>                   # Cancel a delegation token (--force for claimed)
+rundown collect                         # Aggregate current DELEGATE step and fire transition
+rundown collect --step <id>             # Target a specific substep scope
 ```
 
 The `rd` command is an alias for `rundown`.
