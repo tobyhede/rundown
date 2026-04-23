@@ -10137,40 +10137,18 @@ echo "processing"
       return { actor, frameKey };
     }
 
-    it('writes RETRY_ERROR lastAction when createDelegation fails (no retryHookError field)', () => {
-      // End-to-end: when the retry hook's createDelegation fails, the machine
-      // arrives at STOPPED with lastAction.type === 'RETRY_ERROR' carrying the
-      // code/message. The retryHookError context field no longer exists.
-      const { actor } = buildSeededRetryHookError();
-
-      // Nudge the actor — XState v5 resolves always transitions on event
-      // dispatch. Send a no-op event; the higher-priority always entry
-      // should fire on re-evaluation.
-      actor.send({ type: 'PASS' });
-
-      const snap = actor.getSnapshot();
-      const ctx = snap.context as RunbookContext;
-
-      expect(snap.value).toBe('STOPPED');
-      expect(ctx.lastAction?.type).toBe('RETRY_ERROR');
-      if (ctx.lastAction?.type === 'RETRY_ERROR') {
-        expect(ctx.lastAction.code).toMatch(/^RD-/);
-        expect(typeof ctx.lastAction.message).toBe('string');
-      }
-      // Counters untouched (retry never actually taken).
-      expect(ctx.parentRetryCount).toBe(0);
-      expect(ctx.retryCount).toBe(0);
-      // Old context field no longer exists.
-      expect((ctx as { retryHookError?: unknown }).retryHookError).toBeUndefined();
-
-      actor.stop();
-    });
-
-    it('RETRY_ERROR lastAction transitions the machine to stopped', () => {
-      // Higher-priority always entry on the parent state observes
-      // lastAction.type === 'RETRY_ERROR' and routes to the STOPPED terminal
-      // state, which assigns lifecycle='stopped' in its entry action.
-      // Counters must remain at zero — the retry was never actually taken.
+    it('seeded RETRY_ERROR lastAction routes to STOPPED with lifecycle=stopped and no retryHookError context field', () => {
+      // Seeded routing test: when context.lastAction is a RETRY_ERROR variant
+      // on actor start, the priority-0 always-entry on the parent state
+      // routes the machine to STOPPED. The STOPPED entry action assigns
+      // lifecycle='stopped'. Counters must remain at zero (retry never
+      // actually taken) and the removed `retryHookError` context field must
+      // not reappear.
+      //
+      // This test does NOT trigger createDelegation to fail; it verifies the
+      // assign → always-guard → STOPPED chain given a pre-populated variant.
+      // The only naturally-reachable RETRY_ERROR production path
+      // (RD-INVARIANT-RETRY-NO-FRAME) is covered separately below.
       const { actor } = buildSeededRetryHookError();
 
       // Nudge the actor — XState v5 resolves always transitions on event
@@ -10184,8 +10162,16 @@ echo "processing"
       expect(snap.value).toBe('STOPPED');
       expect(ctx.lifecycle).toBe('stopped');
       expect(ctx.lastAction?.type).toBe('RETRY_ERROR');
+      if (ctx.lastAction?.type === 'RETRY_ERROR') {
+        expect(ctx.lastAction.code).toMatch(/^RD-/);
+        expect(typeof ctx.lastAction.message).toBe('string');
+      }
+      // Counters untouched (retry never actually taken).
       expect(ctx.parentRetryCount).toBe(0);
       expect(ctx.retryCount).toBe(0);
+      // Old context field no longer exists (migration from retryHookError to
+      // the RetryErrorLastAction variant).
+      expect((ctx as { retryHookError?: unknown }).retryHookError).toBeUndefined();
 
       actor.stop();
     });
