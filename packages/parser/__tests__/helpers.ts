@@ -1,9 +1,4 @@
-import type {
-  Step,
-  StepWithCommand,
-  StepWithFor,
-  StepHavingSubsteps,
-} from '../src/ast.js';
+import type { Step, StepWithCommand, StepWithFor, StepHavingSubsteps } from '../src/ast.js';
 
 /**
  * Narrows `step` to `StepWithCommand`. Throws if `step.kind !== 'command'`.

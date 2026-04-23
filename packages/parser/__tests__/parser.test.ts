@@ -5,11 +5,7 @@ import {
   formatLineNum,
   RunbookSyntaxError,
 } from '../src/index.js';
-import {
-  assertStepHasSubsteps,
-  assertStepWithCommand,
-  assertStepWithFor,
-} from './helpers.js';
+import { assertStepHasSubsteps, assertStepWithCommand, assertStepWithFor } from './helpers.js';
 
 describe('Step-level runbooks', () => {
   it('parses runbook list in substep', () => {
@@ -56,10 +52,7 @@ Do work.
     const step = steps[0];
     assertStepHasSubsteps(step);
     expect(step.substeps).toHaveLength(1);
-    expect(step.substeps[0].runbooks).toEqual([
-      'runbook-a.runbook.md',
-      'runbook-b.runbook.md',
-    ]);
+    expect(step.substeps[0].runbooks).toEqual(['runbook-a.runbook.md', 'runbook-b.runbook.md']);
   });
 });
 

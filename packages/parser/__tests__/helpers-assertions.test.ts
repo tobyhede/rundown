@@ -62,9 +62,7 @@ describe('assertStepHasSubsteps', () => {
       name: '1',
       description: 'loop',
       forClause: { start: 1, end: 3 },
-      substeps: [
-        { id: '1', description: 'child', transitions: baseTransitions },
-      ],
+      substeps: [{ id: '1', description: 'child', transitions: baseTransitions }],
       transitions: baseTransitions,
     };
     assertStepHasSubsteps(step);
@@ -79,7 +77,9 @@ describe('assertStepHasSubsteps', () => {
       command: { code: 'x' },
       transitions: baseTransitions,
     };
-    expect(() => assertStepHasSubsteps(step)).toThrow(/expected kind 'substeps' or 'for', got 'command'/);
+    expect(() => assertStepHasSubsteps(step)).toThrow(
+      /expected kind 'substeps' or 'for', got 'command'/,
+    );
   });
 
   it('throws when step has kind "base"', () => {
@@ -89,7 +89,9 @@ describe('assertStepHasSubsteps', () => {
       description: '',
       transitions: baseTransitions,
     };
-    expect(() => assertStepHasSubsteps(step)).toThrow(/expected kind 'substeps' or 'for', got 'base'/);
+    expect(() => assertStepHasSubsteps(step)).toThrow(
+      /expected kind 'substeps' or 'for', got 'base'/,
+    );
   });
 });
 

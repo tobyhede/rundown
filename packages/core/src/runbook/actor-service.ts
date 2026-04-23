@@ -64,7 +64,7 @@ export class RunbookActorService {
    *
    * @param manager - State manager for persisting runbook state to disk
    */
-  constructor(private readonly manager: RunbookStateManager) { }
+  constructor(private readonly manager: RunbookStateManager) {}
 
   /**
    * Create and start an XState actor from persisted state.
@@ -124,7 +124,7 @@ export class RunbookActorService {
     if (state.frontmatterOutputs === undefined) {
       throw new Error(
         `Stale runbook state for "${id}": missing frontmatter outputs declarations. ` +
-        'Run `rundown prune` and restart execution.',
+          'Run `rundown prune` and restart execution.',
       );
     }
 
