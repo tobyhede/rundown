@@ -3178,6 +3178,30 @@ Do work.
 `;
     expect(() => parseRunbookDocument(md)).toThrow(/FOR.*before DELEGATE/i);
   });
+
+  it('throws RunbookSyntaxError when DELEGATE appears on a base step (no substeps)', () => {
+    const md = `## 1 Step
+- DELEGATE
+
+Some prompt text.
+`;
+    expect(() => parseRunbookDocument(md)).toThrow(
+      /step "1".*DELEGATE.*no.*(substep|runbook)/i,
+    );
+  });
+
+  it('throws RunbookSyntaxError when DELEGATE appears on a command step', () => {
+    const md = `## 1 Step
+- DELEGATE
+
+\`\`\`bash
+echo hi
+\`\`\`
+`;
+    expect(() => parseRunbookDocument(md)).toThrow(
+      /step "1".*DELEGATE.*no.*(substep|runbook)/i,
+    );
+  });
 });
 
 describe('DELEGATE annotation — step-level propagation', () => {

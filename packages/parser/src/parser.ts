@@ -1046,6 +1046,16 @@ function finalizeStep(
     // step.substeps is already populated; fall through to the shared substep path below.
   }
 
+  // Step-level DELEGATE requires at least one substep to propagate to.
+  // Base steps (no body, no substeps) and command steps (body only) have
+  // nothing to delegate — reject per docs/SPEC.md §4.3.
+  if (step.hasSeenDelegate && step.substeps.length === 0) {
+    throw new RunbookSyntaxError(
+      `Step "${step.name}": DELEGATE requires at least one substep; ` +
+        `base and command steps have no substep or runbook target to delegate to.`,
+    );
+  }
+
   // Resolve substep defaults and propagate step-level DELEGATE flag
   const resolvedSubsteps = propagateDelegateToSubsteps(resolveSubstepDefaults(step.substeps));
 
