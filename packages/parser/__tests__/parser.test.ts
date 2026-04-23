@@ -3301,8 +3301,8 @@ Do second.
       if (step.kind === 'substeps') {
         expect(step.substeps[0].delegate).toBe(true);
         expect(step.substeps[1].delegate).toBe(true);
-        expect(step.substeps[0].runbooks).toBeDefined();
-        expect(step.substeps[1].runbooks).toBeDefined();
+        expect(step.substeps[0].runbooks).toEqual(['review-plan-technical-accuracy.runbook.md']);
+        expect(step.substeps[1].runbooks).toEqual(['review-plan-structural-integrity.runbook.md']);
       }
     }
   });
