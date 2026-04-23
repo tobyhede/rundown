@@ -1545,7 +1545,7 @@ Review the tasks carefully.
     });
   });
 
-  it('moves step-level prompt onto the implicit substep', () => {
+  it('step owns step-level prompt even when substeps are synthesized from a runbook list', () => {
     const md = `## 1 Step
 - PASS CONTINUE
 - FAIL STOP
@@ -1555,13 +1555,102 @@ Review this checklist.
 - deploy.runbook.md
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].prompt).toBeUndefined();
+    expect(steps[0].prompt).toBe('Review this checklist.');
     expect(steps[0].substeps?.[0]).toMatchObject({
       id: '1',
       description: '',
-      prompt: 'Review this checklist.',
       runbooks: ['deploy.runbook.md'],
     });
+    expect(steps[0].substeps?.[0]?.prompt).toBeUndefined();
+  });
+
+  it('step-owns-prose contract: paragraph prose lands on step.prompt when followed by a runbook list', () => {
+    const md = `## 1. Delegate subagents to review the plan
+- DELEGATE
+- PASS ALL CONTINUE
+- FAIL ANY CONTINUE
+
+Delegate 4x subagents to review the plan.
+
+- review-plan-technical-accuracy.runbook.md
+- review-plan-structural-integrity.runbook.md
+- review-plan-build-runtime.runbook.md
+- review-plan-risk-safety.runbook.md
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].prompt).toBe('Delegate 4x subagents to review the plan.');
+    expect(steps[0].kind).toBe('substeps');
+    if (steps[0].kind === 'substeps') {
+      expect(steps[0].substeps).toHaveLength(4);
+      for (const substep of steps[0].substeps) {
+        expect(substep.prompt).toBeUndefined();
+        expect(substep.delegate).toBe(true);
+      }
+      expect(steps[0].substeps.map((s) => s.runbooks)).toEqual([
+        ['review-plan-technical-accuracy.runbook.md'],
+        ['review-plan-structural-integrity.runbook.md'],
+        ['review-plan-build-runtime.runbook.md'],
+        ['review-plan-risk-safety.runbook.md'],
+      ]);
+    }
+    expect(steps[0].substepsDerivedFromRunbookList).toBe(true);
+  });
+
+  it('step-owns-prose contract: single-entry runbook list does not migrate prose to substep[0]', () => {
+    const md = `## 1 Step
+- PASS CONTINUE
+- FAIL STOP
+
+Review this checklist before continuing.
+
+- deploy.runbook.md
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].prompt).toBe('Review this checklist before continuing.');
+    if (steps[0].kind === 'substeps') {
+      expect(steps[0].substeps).toHaveLength(1);
+      expect(steps[0].substeps[0].prompt).toBeUndefined();
+      expect(steps[0].substeps[0].runbooks).toEqual(['deploy.runbook.md']);
+    }
+  });
+
+  it('step-owns-prose contract: step with no prose and a runbook list produces no step.prompt', () => {
+    const md = `## 1 Step
+- PASS CONTINUE
+- FAIL STOP
+
+- deploy.runbook.md
+- verify.runbook.md
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].prompt).toBeUndefined();
+    if (steps[0].kind === 'substeps') {
+      expect(steps[0].substeps.every((s) => s.prompt === undefined)).toBe(true);
+    }
+  });
+
+  it('step-owns-prose contract: non-runbook bullets preceding a runbook list roll up into step.prompt', () => {
+    // Non-runbook bullets take the handleListItemContent path (parser.ts:599),
+    // accumulating into ctx.implicitText. Paragraph prose takes the
+    // appendPromptToStep path (parser.ts:445). Both must route to step.prompt
+    // once a runbook list follows.
+    const md = `## 1 Step
+- PASS CONTINUE
+- FAIL STOP
+
+- look at X
+- check for Y
+
+- deploy.runbook.md
+`;
+    const steps = parseRunbook(md);
+    expect(steps[0].prompt).toContain('look at X');
+    expect(steps[0].prompt).toContain('check for Y');
+    if (steps[0].kind === 'substeps') {
+      expect(steps[0].substeps).toHaveLength(1);
+      expect(steps[0].substeps[0].prompt).toBeUndefined();
+      expect(steps[0].substeps[0].runbooks).toEqual(['deploy.runbook.md']);
+    }
   });
 
   it('canonicalizes FOR + step-level runbook list into runbook-list-derived substeps', () => {

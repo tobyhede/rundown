@@ -216,18 +216,18 @@ describe('renderStep', () => {
     expect(result).not.toContain('### 2.1');
   });
 
-  it('renders shorthand runbook-list-derived substep with prompt', () => {
+  it('renders shorthand runbook-list-derived substep with step-level prompt', () => {
     const step = {
       kind: 'substeps',
       name: '2',
       substepsDerivedFromRunbookList: true,
       description: 'Review the plan',
+      prompt: 'Review the following items carefully.',
       transitions: DEFAULT_TRANSITIONS,
       substeps: [
         {
           id: '1',
           description: '',
-          prompt: 'Review the following items carefully.',
           runbooks: ['review.runbook.md'],
           transitions: DEFAULT_TRANSITIONS,
         },
@@ -237,6 +237,36 @@ describe('renderStep', () => {
     expect(result).toContain('Review the following items carefully.');
     expect(result).toContain('- review.runbook.md');
     expect(result).not.toContain('### 2.1');
+  });
+
+  it('renders step prompt when runbook-list shorthand has step-level prose', () => {
+    const step = {
+      kind: 'substeps',
+      name: '3',
+      description: 'Delegate subagents to review the plan',
+      prompt: 'Delegate 4x subagents to review the plan.',
+      substepsDerivedFromRunbookList: true,
+      transitions: DEFAULT_TRANSITIONS,
+      substeps: [
+        {
+          id: '1',
+          description: '',
+          runbooks: ['review-plan-technical-accuracy.runbook.md'],
+          transitions: DEFAULT_TRANSITIONS,
+        },
+        {
+          id: '2',
+          description: '',
+          runbooks: ['review-plan-structural-integrity.runbook.md'],
+          transitions: DEFAULT_TRANSITIONS,
+        },
+      ],
+    } as Step;
+    const result = renderStep(step);
+    expect(result).toContain('Delegate 4x subagents to review the plan.');
+    expect(result).toContain('- review-plan-technical-accuracy.runbook.md');
+    expect(result).toContain('- review-plan-structural-integrity.runbook.md');
+    expect(result).not.toContain('### 3.1');
   });
 });
 
@@ -588,7 +618,7 @@ Review the following items carefully.
     expect(parsed2[0].kind).toBe('for');
     expect((parsed2[0] as any).forClause).toEqual({ variable: 'pass', start: 1, end: 2 });
     expect((parsed2[0] as any).substepsDerivedFromRunbookList).toBe(true);
-    expect(parsed2[0].substeps?.[0].prompt).toBe('Review the following items carefully.');
+    expect(parsed2[0].prompt).toBe('Review the following items carefully.');
   });
 
   it('round-trips FOR with default transitions and step prompt', () => {
