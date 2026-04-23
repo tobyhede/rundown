@@ -270,7 +270,7 @@ interface RetryHandlerOptions {
  * 4. Inferred (no token, no `--step` — from active substep)
  * 5. Invalid: token + `--step` both provided → ambiguity error
  *
- * Result-agnostic per spec §4.4 — succeeds regardless of substep result.
+ * Result-agnostic per spec §4.3 (RETRY on DELEGATE) — succeeds regardless of substep result.
  *
  * @param args - Retry options
  */
