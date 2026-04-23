@@ -17,6 +17,10 @@ import { makeRunbookStateSchema } from '../schemas.js';
 import { isNodeError } from '../errors.js';
 import { logger } from '../logger.js';
 import {
+  brandInitialTemplateVars,
+  brandStoredOutputs,
+} from './effective-vars.js';
+import {
   runsDir as _runsDir,
   sessionPath as _sessionPath,
   statePath as _statePath,
@@ -184,7 +188,7 @@ export class RunbookStateManager {
       step: initialStep.name,
       stepName: initialStep.description,
       retryCount: 0,
-      variables: {},
+      variables: brandStoredOutputs({}),
       steps: [],
       resolvedCompletions: {},
       frameEntries: {},
@@ -193,7 +197,10 @@ export class RunbookStateManager {
       updatedAt: now,
       prompted: options.prompted,
       runbookSrc: options.runbookSrc,
-      templateVars: options.templateVars,
+      templateVars:
+        options.templateVars === undefined
+          ? undefined
+          : brandInitialTemplateVars(options.templateVars),
       frontmatterOutputs: options.frontmatterOutputs ?? [],
       lifecycle: 'running',
       schemaVersion: CURRENT_SCHEMA_VERSION,
@@ -302,17 +309,38 @@ export class RunbookStateManager {
    */
   async update(
     id: string,
-    updates: Partial<Omit<RunbookState, 'id' | 'startedAt'>>,
+    updates: Partial<Omit<RunbookState, 'id' | 'startedAt' | 'variables' | 'templateVars'>> & {
+      // Accept unbranded records on the update path; the manager re-mints
+      // the brand inside the merge below. Internal callers (actor-service
+      // sync, compiler reducers) hold the unbranded XState context shape
+      // and shouldn't need to know about the persistence-layer brand.
+      readonly variables?: Readonly<Record<string, string>>;
+      readonly templateVars?: Readonly<Record<string, TemplateVarValue>>;
+    },
   ): Promise<RunbookState> {
     const existing = await this.load(id);
     if (!existing) {
       throw new Error(`Runbook ${id} not found`);
     }
 
+    // Pull branded/unbranded fields out of updates so the subsequent
+    // `...updates` spread does not leak the unbranded types into the
+    // strictly-typed RunbookState literal.
+    const { variables: updatesVariables, templateVars: updatesTemplateVars, ...restUpdates } =
+      updates;
+
     const updated: RunbookState = {
       ...existing,
-      ...updates,
-      variables: { ...existing.variables, ...(updates.variables ?? {}) },
+      ...restUpdates,
+      variables: brandStoredOutputs({ ...existing.variables, ...(updatesVariables ?? {}) }),
+      ...(updatesTemplateVars !== undefined || existing.templateVars !== undefined
+        ? {
+            templateVars: brandInitialTemplateVars({
+              ...(existing.templateVars ?? {}),
+              ...(updatesTemplateVars ?? {}),
+            }),
+          }
+        : {}),
       updatedAt: new Date().toISOString(),
     };
 

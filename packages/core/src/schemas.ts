@@ -3,6 +3,10 @@ import { z } from 'zod';
 import type { FrameKey } from './runbook/targeting.js';
 import { createJsonArrayStream } from './runbook/types.js';
 import type { JsonValue, TemplateVarValue } from './runbook/types.js';
+import {
+  brandInitialTemplateVars,
+  brandStoredOutputs,
+} from './runbook/effective-vars.js';
 import { getErrorMessage } from './errors.js';
 
 /** Zod schema that parses strings and brands them as {@link FrameKey}. */
@@ -635,7 +639,16 @@ export function makeRunbookStateSchema(projectRoot: string): z.ZodTypeAny {
   const VarsSchema = z.record(z.string(), makeTemplateVarValueSchema(projectRoot));
   const SubstepStateSchemaValidated = makeSubstepStateSchema(projectRoot);
   return RunbookStateSchema.extend({
-    templateVars: VarsSchema.optional(),
+    // Brand at the parse seam: every persisted state that re-enters the
+    // process via `state.load` flows through this schema, so applying
+    // the brand here covers the entire load path. The matching write
+    // path is in `RunbookStateManager.create` / `update` (state.ts).
+    templateVars: VarsSchema.optional().transform((v) =>
+      v === undefined ? undefined : brandInitialTemplateVars(v),
+    ),
+    variables: z
+      .record(z.string(), z.string())
+      .transform((v) => brandStoredOutputs(v)),
     substepStates: z.array(SubstepStateSchemaValidated).optional(),
   });
 }

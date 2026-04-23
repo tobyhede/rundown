@@ -1,6 +1,10 @@
 // src/runbook/types.ts
 import type { OutputDeclaration } from '@rundown-org/parser';
-import type { EffectiveVars } from './effective-vars.js';
+import type {
+  EffectiveVars,
+  InitialTemplateVars,
+  StoredOutputs,
+} from './effective-vars.js';
 import type { FrameKey } from './targeting.js';
 
 // Re-export parser types needed by core package consumers
@@ -666,7 +670,7 @@ export interface RunbookState {
   readonly substep?: string;
   readonly stepName: string; // Human-readable description
   readonly retryCount: number;
-  readonly variables: Record<string, string>;
+  readonly variables: StoredOutputs;
   readonly steps: readonly StepState[];
 
   // Orchestration fields
@@ -706,7 +710,7 @@ export interface RunbookState {
   readonly runbookSrc?: string;
 
   /** Template variables used for AST-level substitution, frozen at run time */
-  readonly templateVars?: Readonly<Record<string, TemplateVarValue>>;
+  readonly templateVars?: InitialTemplateVars;
 
   /**
    * Frontmatter `outputs:` declarations parsed from the runbook source at startup.
