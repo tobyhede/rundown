@@ -333,11 +333,11 @@ async function handleRetry(args: RetryHandlerOptions): Promise<void> {
     const snapshotSubstep = sr.delegation.contextSnapshot.substep;
     targetStepLabel = snapshotSubstep ? `${sr.stepId}.${snapshotSubstep}` : sr.stepId;
   } else if (options.step) {
-    const state = await sessionService.getActive();
-    if (!state) {
-      output.noActiveRunbook('delegate');
-      return;
+    const stateOrNull = await sessionService.getActive();
+    if (!stateOrNull) {
+      fail('--retry requires an active runbook', 'NO_ACTIVE_RUNBOOK');
     }
+    const state = stateOrNull!;
     const parsed = parseStepIdFromString(options.step);
     if (!parsed) {
       fail(`invalid --step value "${options.step}"`, 'INVALID_STEP');
