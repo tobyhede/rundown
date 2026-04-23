@@ -19,7 +19,6 @@ import {
   parseConditional,
   convertToTransitions,
   extractRunbookList,
-  isRunbookListLine,
   TEMPLATE_VAR_REF_RE,
   isExecutableCodeBlock,
   isPromptCodeBlock,
@@ -129,9 +128,10 @@ interface SubstepBuilder {
   outputs?: readonly OutputDeclaration[];
   runbooks: RunbookEntry[];
   /**
-   * @internal Parser canonicalization artifact. Set when this substep was synthesized
-   * from a runbook list entry rather than an explicit H3 heading. Not propagated to the
-   * ParsedSubstep AST node — runtime code must not read or depend on this field.
+   * Marks a substep synthesized from a runbook list entry rather than an explicit H3 heading.
+   * Not propagated to the ParsedSubstep AST node — runtime code must not read or depend on this field.
+   *
+   * @internal
    */
   isRunbookDerived?: true;
 }
@@ -210,19 +210,11 @@ function finalizePendingSubstep(ctx: VisitorContext): void {
 
     const converted = convertToTransitions(ps.pendingConditionals);
 
-    // Build prompt from promptText and remaining content (non-runbook lines only).
-    // Runbook entries are captured in ps.runbooks and not added to ps.content,
-    // so this filter is only needed for legacy H3 substep content strings.
+    // Build prompt from promptText and body content. Runbook-list entries are stored
+    // in ps.runbooks (not ps.content), so no filtering of ps.content is needed.
     let promptText = ps.promptText;
     if (ps.content.trim()) {
-      const contentWithoutRunbooks = ps.content
-        .split('\n')
-        .filter((line) => !isRunbookListLine(line))
-        .join('\n')
-        .trim();
-      if (contentWithoutRunbooks) {
-        promptText += `${contentWithoutRunbooks}\n`;
-      }
+      promptText += `${ps.content.trim()}\n`;
     }
 
     // Substep transitions: explicit if authored, placeholder DEFAULT_TRANSITIONS if not.
@@ -803,16 +795,15 @@ function handleListItem(node: ListItem, ctx: ActiveStepContext): typeof SKIP | u
       if (ctx.currentStep.pendingSubstep?.isRunbookDerived) {
         finalizePendingSubstep(ctx);
       }
-      // Capture step prose as the first substep's prompt.
-      const isFirst = ctx.currentStep.substeps.length === 0 && !ctx.currentStep.pendingSubstep;
-      const promptText = isFirst ? ctx.implicitText.trim() : '';
-
+      // Runbook-list entries are pure delegation targets. Paragraph prose between
+      // the step header and the list stays on the step (ctx.implicitText flows
+      // through finalizeStep into step.prompt) — do not migrate it onto substep[0].
       ctx.currentStep.pendingSubstep = {
         id: String(ctx.currentStep.substeps.length + 1),
         description: '',
         content: '',
         command: undefined,
-        promptText,
+        promptText: '',
         hasSeenContent: true,
         hasSeenTransitions: false,
         hasSeenPromptText: false,
@@ -1022,9 +1013,7 @@ function finalizeStep(
     );
   }
 
-  // When runbook list substeps are present, the step prompt has been captured in the first
-  // substep's promptText field during parsing (in handleListItem). Do not propagate to step.
-  const prompt = step.hasRunbookListSubsteps ? undefined : promptText.trim() || undefined;
+  const prompt = promptText.trim() || undefined;
 
   // Resolve substep defaults based on context.
   // Substeps with explicit transitions (from authored conditionals) keep them as-is.

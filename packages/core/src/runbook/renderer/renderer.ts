@@ -223,9 +223,8 @@ export function renderStep(step: Step): string {
 
   const shorthandSubsteps = getShorthandRunbookSubsteps(step);
   if (shorthandSubsteps?.length) {
-    const firstPrompt = shorthandSubsteps[0]?.prompt;
-    if (firstPrompt) {
-      lines.push(firstPrompt);
+    if (step.prompt) {
+      lines.push(step.prompt);
       lines.push('');
     }
     for (const shorthandSubstep of shorthandSubsteps) {
