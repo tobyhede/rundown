@@ -85,3 +85,102 @@ export function mergeEffectiveVars<V extends TemplateVarValue | OutputValue = Te
     ...(extraVars ?? {}),
   } as EffectiveVars<V>;
 }
+
+/**
+ * Module-private nominal brand applied to {@link RunbookState.templateVars}.
+ *
+ * Distinguishes seeded template inputs (CLI flags / built-ins / frontmatter)
+ * from accumulated step OUTPUTS ({@link StoredOutputs}). The two are
+ * structurally similar (both are `Record<string, …>`) but semantically
+ * distinct — one is immutable after init, the other is mutated as steps
+ * complete. Without this brand a function that legitimately accepts only
+ * the seeded inputs (e.g. {@link import('./source-resolver.js').resolveForValue})
+ * would silently accept `state.variables` as well, repeating the bug class
+ * fixed in commit `19067f6f`.
+ *
+ * Declared with `declare const` + `unique symbol` so the brand is purely
+ * type-level (zero runtime cost) and can only be produced inside this
+ * module via {@link brandInitialTemplateVars}. The symbol key does not
+ * participate in any `Record<string, …>` index signature, so branded values
+ * remain fully assignable to plain `Readonly<Record<string, TemplateVarValue>>`
+ * at read sites.
+ */
+declare const initialTemplateVarsBrand: unique symbol;
+
+/**
+ * Seeded template-variable space at runbook init.
+ *
+ * Carries CLI inputs, frontmatter `inputs:`, and built-ins (`Date`,
+ * `Branch`, `WorkPath`, `RunId`, etc.). Frozen for the lifetime of the
+ * run — never mutated by step execution. Use {@link StoredOutputs} for
+ * the mutable accumulator of step OUTPUTS.
+ */
+export type InitialTemplateVars = Readonly<Record<string, TemplateVarValue>> & {
+  readonly [initialTemplateVarsBrand]: true;
+};
+
+/**
+ * Sole producer of {@link InitialTemplateVars}.
+ *
+ * Apply at the two seams where seeded variables enter {@link RunbookState}:
+ *   1. The Zod parse seam in {@link makeRunbookStateSchema} when state is
+ *      loaded from disk.
+ *   2. {@link RunbookStateManager.create} when a new run is initialised
+ *      in-memory.
+ *
+ * Identity-preserving — the brand is type-only.
+ *
+ * @param vars - Plain seeded-template-variable record
+ * @returns The same object, branded.
+ */
+export function brandInitialTemplateVars(
+  vars: Readonly<Record<string, TemplateVarValue>>,
+): InitialTemplateVars {
+  return vars as InitialTemplateVars;
+}
+
+/**
+ * Module-private nominal brand applied to {@link RunbookState.variables}.
+ *
+ * Distinguishes the mutable accumulator of step OUTPUTS from the seeded
+ * input space ({@link InitialTemplateVars}). All values are strings —
+ * OUTPUTS are stringified before persistence by `evaluateStepOutputDeclarations`
+ * in `output-evaluator.ts`, so the value type is `Record<string, string>`
+ * rather than `Record<string, TemplateVarValue>`.
+ *
+ * Without this brand a function that legitimately accepts only stored
+ * OUTPUTS (e.g. a future serializer) would silently accept any
+ * `Record<string, string>` — including a partial spread of the seeded
+ * inputs that happen to be string-typed.
+ */
+declare const storedOutputsBrand: unique symbol;
+
+/**
+ * Mutable step-OUTPUTS accumulator persisted in {@link RunbookState.variables}.
+ *
+ * Each entry is a stringified value emitted by an `OUTPUTS` directive that
+ * has resolved via `evaluateStepOutputDeclarations`. Keys may collide with
+ * {@link InitialTemplateVars} entries; the merge in {@link mergeEffectiveVars}
+ * gives outputs precedence over template inputs.
+ */
+export type StoredOutputs = Readonly<Record<string, string>> & {
+  readonly [storedOutputsBrand]: true;
+};
+
+/**
+ * Sole producer of {@link StoredOutputs}.
+ *
+ * Apply at the two seams where step OUTPUTS land in {@link RunbookState}:
+ *   1. The Zod parse seam in {@link makeRunbookStateSchema} when state is
+ *      loaded from disk.
+ *   2. {@link RunbookStateManager.create} / {@link RunbookStateManager.update}
+ *      when XState reducer output is persisted.
+ *
+ * Identity-preserving — the brand is type-only.
+ *
+ * @param vars - Plain stringified-OUTPUTS record
+ * @returns The same object, branded.
+ */
+export function brandStoredOutputs(vars: Readonly<Record<string, string>>): StoredOutputs {
+  return vars as StoredOutputs;
+}
