@@ -116,8 +116,13 @@ export function reconstituteContextVars(
 /**
  * Build a context snapshot from live runbook state.
  *
- * Captures the current execution position and template variables,
- * suitable for passing to {@link reconstituteContextVars}.
+ * Captures the current execution position and effective variable space:
+ * `state.templateVars` overlaid by accumulated step OUTPUTS in
+ * `state.variables` (per SPEC §7.1), with optional `extraVars` taking
+ * final precedence. Mirrors the merge order used by
+ * {@link buildExecutionFrame} in `output-evaluator.ts` so delegation
+ * snapshots see the same effective variable space as in-process
+ * expression evaluation.
  *
  * @param state - Current runbook state
  * @param substep - Target substep identifier (e.g., "1")
@@ -136,7 +141,7 @@ export function buildContextSnapshot(
     iterationOverride?: number;
   },
 ): ContextSnapshot {
-  const baseVars = { ...(state.templateVars ?? {}) };
+  const baseVars = { ...(state.templateVars ?? {}), ...(state.variables ?? {}) };
   const vars = options?.extraVars ? { ...baseVars, ...options.extraVars } : baseVars;
   const activeFor = getActiveForContext(state.forStack, state.step);
   const iteration = options?.iterationOverride ?? activeFor?.iteration;
