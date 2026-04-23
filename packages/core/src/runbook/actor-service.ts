@@ -54,7 +54,7 @@ type PersistedRunbookSnapshot = {
 /**
  * Manages XState actor lifecycle for runbooks.
  *
- * Encapsulates actor creation (with snapshot migration), state synchronisation
+ * Encapsulates actor creation (with snapshot-based hydration), state synchronisation
  * after transitions, and convenience methods for the two dominant usage patterns:
  * initialisation (create + sync with no event) and transition (create + send + sync).
  */
