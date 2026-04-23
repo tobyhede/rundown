@@ -12,12 +12,12 @@
 
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import type { InitialTemplateVars } from './effective-vars.js';
 import { createFileProvider, computeFileSnapshot } from './file-provider.js';
 import type {
   ForContext,
   FileSnapshot,
   JsonValue,
-  TemplateVarValue,
   JsonArrayStream,
   StreamResolvedForContext,
 } from './types.js';
@@ -82,7 +82,7 @@ export type ResolvedIteration =
  */
 export async function resolveForValue(
   fc: ForContext,
-  vars?: Readonly<Record<string, TemplateVarValue>>,
+  vars?: InitialTemplateVars,
   projectRoot?: string,
 ): Promise<ResolvedIteration> {
   switch (fc.source.kind) {
