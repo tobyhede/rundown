@@ -15,7 +15,7 @@ const allActions: Action[] = [
   { type: 'BREAK' },
   { type: 'STOP' },
   { type: 'COMPLETE' },
-  { type: 'GOTO', target: '2' },
+  { type: 'GOTO', target: { step: '2' } },
 ];
 
 function typesMatching(guard: (a: Action) => boolean): string[] {

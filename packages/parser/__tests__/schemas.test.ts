@@ -404,7 +404,7 @@ describe('SourceWindow validation', () => {
     });
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.end).toBeUndefined();
+      expect('end' in result.data ? result.data.end : undefined).toBeUndefined();
     }
   });
 });
