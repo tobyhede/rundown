@@ -357,13 +357,37 @@ describe('delegate command', () => {
       expect(retry.stdout + retry.stderr).toMatch(/token .* not found/i);
     });
 
-    it('errors when inferred form has nothing to infer', async () => {
-      // No runbook started — inferred retry has nothing to work with.
+    it('errors when inferred form has no active runbook', async () => {
+      // No runbook started — sessionService.getActive() returns null on the
+      // inferred path, hitting the explicit fail() at delegate.ts:388-390.
       const retry = await runCliInProcess(['delegate', '--retry'], workspace);
 
-      // Either surfaces "no active runbook" (no state at all) or "requires a token, --step, or active substep".
-      expect(retry.exitCode === 0 ? retry.stdout : retry.stdout + retry.stderr).toMatch(
-        /No active runbook|--retry requires a token, --step|no active substep/,
+      expect(retry.exitCode).not.toBe(0);
+      expect(retry.stdout + retry.stderr).toContain(
+        '--retry requires a token, --step <id>, or an active substep',
+      );
+    });
+
+    it('errors when inferred form has no active substep', async () => {
+      // Start a runbook whose active cursor sits on a step with no substeps
+      // (single-step runbook, prompted mode) — state exists but
+      // activeState.substep is undefined, hitting the fail() at
+      // delegate.ts:392-394.
+      const content = createRunbook({
+        steps: [{ title: 'Only step', pass: 'COMPLETE', command: 'rd echo --result pass' }],
+      });
+      await writeFile(join(workspace.cwd, 'runbooks', 'single.runbook.md'), content);
+      const start = await runCliInProcess(
+        'run --prompted runbooks/single.runbook.md --text',
+        workspace,
+      );
+      expect(start.exitCode).toBe(0);
+
+      const retry = await runCliInProcess(['delegate', '--retry'], workspace);
+
+      expect(retry.exitCode).not.toBe(0);
+      expect(retry.stdout + retry.stderr).toContain(
+        '--retry requires a token, --step <id>, or an active substep',
       );
     });
 
