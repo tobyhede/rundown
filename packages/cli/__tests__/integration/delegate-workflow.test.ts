@@ -1085,6 +1085,7 @@ describe('DELEGATE re-entry and retry', () => {
     );
     expect(ss2?.result).toBe('fail');
     expect(parentState!.retryCount).toBe(1);
+    expect(parentState!.lifecycle).toBe('stopped');
   }, 30_000);
 
   // ---------------------------------------------------------------------------
