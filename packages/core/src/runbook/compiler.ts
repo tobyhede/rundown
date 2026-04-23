@@ -921,12 +921,17 @@ interface RetryHookError {
 type RetryHookResult = RetryHookSuccess | RetryHookError;
 
 /**
- * Run the retry hook over a parent step's failed-and-delegated substeps.
+ * Run the retry hook over a parent step's delegated substeps.
  *
  * Inspects `context.substepStates` for the active frame; for each substep with
- * `result === 'fail'` AND a delegation record, calls `retryDelegation`.
- * Threads the updated substepStates through successive calls so that a single
- * retry transition can re-issue multiple delegations atomically.
+ * a delegation record — regardless of prior `result` — calls `retryDelegation`.
+ * Uniform re-delegation per `docs/SPEC.md` §4.2, §5 (RETRY is universal):
+ * every delegation in the frame is cancelled and re-issued with a fresh token
+ * on retry, not just failed ones. Each retried substep's state is reset to
+ * `{ status: 'pending', result: undefined }` so the fresh subagent's
+ * `rd pass`/`rd fail` overlays onto a clean entry. Threads the updated
+ * substepStates through successive calls so a single retry transition can
+ * re-issue multiple delegations atomically.
  *
  * Returns a discriminated union so the caller (XState `assign`) can branch on
  * success vs. error without try/catch. The hook never throws: `retryDelegation`
