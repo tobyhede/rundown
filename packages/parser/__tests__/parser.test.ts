@@ -2964,8 +2964,7 @@ describe('DELEGATE annotation — reserved word and AST type', () => {
     const md = `## 1. Step
 ### 1.1 Substep
 - DELEGATE
-
-Do work.
+- work.runbook.md
 `;
     const { runbook } = parseRunbookDocument(md);
     const step = runbook.steps[0];
@@ -2981,13 +2980,12 @@ Do work.
 });
 
 describe('DELEGATE annotation — parsing and ordering', () => {
-  it('parses DELEGATE on a substep (H3)', () => {
+  it('parses DELEGATE on a substep (H3) with a runbook target', () => {
     const md = `## 1. Step
 ### 1.1 Substep
 - DELEGATE
+- work.runbook.md
 - PASS CONTINUE
-
-Do work.
 `;
     const { runbook } = parseRunbookDocument(md);
     const step = runbook.steps[0];
@@ -3079,6 +3077,32 @@ echo hi
       /step "1".*DELEGATE.*no.*(substep|runbook)/i,
     );
   });
+
+  it('throws RunbookSyntaxError when DELEGATE substep has no runbook target', () => {
+    const md = `## 1 Step
+### 1.1 Sub
+- DELEGATE
+
+Prompt for this substep.
+`;
+    expect(() => parseRunbookDocument(md)).toThrow(
+      /substep "1\.1".*DELEGATE.*runbook/i,
+    );
+  });
+
+  it('throws RunbookSyntaxError when DELEGATE substep has prompt-only body', () => {
+    const md = `## 1 Step
+### 1.1 Sub
+- DELEGATE
+
+\`\`\`bash
+echo not-a-runbook
+\`\`\`
+`;
+    expect(() => parseRunbookDocument(md)).toThrow(
+      /substep "1\.1".*DELEGATE.*runbook/i,
+    );
+  });
 });
 
 describe('DELEGATE annotation — step-level propagation', () => {
@@ -3157,6 +3181,7 @@ Do second.
     const md = `## 1. Step
 ### 1.1 First
 - DELEGATE
+- work.runbook.md
 
 ### 1.2 Second
 `;
