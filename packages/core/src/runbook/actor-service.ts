@@ -167,6 +167,29 @@ export class RunbookActorService {
   }
 
   /**
+   * Load an actor's current context without mutating state.
+   *
+   * Creates a short-lived actor from the persisted snapshot solely to read
+   * `context`, then stops it. No events are sent and no persistence occurs.
+   * Used by observers (e.g. the CLI execution loop) that need machine-level
+   * context fields — such as `retryHookError` — without advancing the machine.
+   *
+   * @param id - Runbook run ID
+   * @param steps - Resolved steps for actor rebuild
+   * @returns RunbookContext or null if no actor/state exists
+   */
+  async getContextSnapshot(id: string, steps: ResolvedStep[]): Promise<RunbookContext | null> {
+    const actor = await this.createActor(id, steps);
+    if (!actor) return null;
+    try {
+      const snap = actor.getPersistedSnapshot() as unknown as { context: RunbookContext };
+      return snap.context;
+    } finally {
+      actor.stop();
+    }
+  }
+
+  /**
    * Synchronise persisted state from actor snapshot.
    *
    * Extracts step/substep position, variables, forStack, and lastAction

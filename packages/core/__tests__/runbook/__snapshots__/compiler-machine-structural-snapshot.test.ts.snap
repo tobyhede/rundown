@@ -52,6 +52,11 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
         {
           "actions": "[fn]",
           "guard": "[fn]",
+          "target": "STOPPED",
+        },
+        {
+          "actions": "[fn]",
+          "guard": "[fn]",
           "target": "step::2",
         },
         {
@@ -298,6 +303,11 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
         {
           "actions": "[fn]",
           "guard": "[fn]",
+          "target": "STOPPED",
+        },
+        {
+          "actions": "[fn]",
+          "guard": "[fn]",
           "target": "step::1::2",
         },
         {
@@ -398,6 +408,11 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
     },
     "step::2": {
       "always": [
+        {
+          "actions": "[fn]",
+          "guard": "[fn]",
+          "target": "STOPPED",
+        },
         {
           "actions": "[fn]",
           "guard": "[fn]",
@@ -762,6 +777,11 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
     },
     "step::1": {
       "always": [
+        {
+          "actions": "[fn]",
+          "guard": "[fn]",
+          "target": "STOPPED",
+        },
         {
           "actions": "[fn]",
           "guard": "[fn]",
