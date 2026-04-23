@@ -3,7 +3,7 @@ import { jest, expect, describe, it, beforeEach, afterEach } from '@jest/globals
 import type { HookInput } from '../../src/shared/index.js';
 
 const mockRundown = jest.fn();
-const mockReadFileSync = jest.fn();
+const mockReadFileSync = jest.fn<(filePath: string, encoding?: string) => string>();
 
 jest.unstable_mockModule('../../src/workflow/hooks/rundown.js', () => ({
   rundown: mockRundown,

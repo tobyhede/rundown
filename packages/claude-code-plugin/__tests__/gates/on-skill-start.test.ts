@@ -4,7 +4,7 @@ import * as path from 'node:path';
 import type { HookInput } from '../../src/shared/index.js';
 
 const mockRundown = jest.fn();
-const mockReadFileSync = jest.fn();
+const mockReadFileSync = jest.fn<(filePath: string, encoding?: string) => string>();
 
 jest.unstable_mockModule('../../src/workflow/hooks/rundown.js', () => ({
   rundown: mockRundown,
