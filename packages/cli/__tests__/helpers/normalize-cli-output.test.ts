@@ -32,6 +32,7 @@ describe('normalizeCliOutput', () => {
   });
 
   it('replaces delegation tokens with <token>', () => {
+    // cspell:disable-next-line
     const input = '"token": "rdtk_UTDQH4LPV3I364XFXLBSGKNPLNQGRAZO"';
     expect(normalizeCliOutput(input, workspace)).toBe('"token": "<token>"');
   });
@@ -53,9 +54,26 @@ describe('normalizeCliOutput', () => {
     expect(normalizeCliOutput(input, workspace)).toBe('"runId": "<uuid>"');
   });
 
-  it('replaces short 8-char hex run IDs at word boundaries with <runId>', () => {
-    const input = 'run id: abcd1234 done';
-    expect(normalizeCliOutput(input, workspace)).toBe('run id: <runId> done');
+  it('masks an 8-char hex RunId template-variable value as <hex8>', () => {
+    // {{RunId}} is a built-in template variable — `randomBytes(4).toString('hex')`.
+    const input = 'RunId value is abcd1234 done';
+    expect(normalizeCliOutput(input, workspace)).toBe('RunId value is <hex8> done');
+  });
+
+  it('masks an 8-char hex ContextId template-variable value as <hex8>', () => {
+    // {{ContextId}} shares the same randomBytes(4)→hex shape as {{RunId}};
+    // one rule covers both.
+    const input = 'ContextId value is deadbeef';
+    expect(normalizeCliOutput(input, workspace)).toBe('ContextId value is <hex8>');
+  });
+
+  it('also masks arbitrary 8-char hex tokens at word boundaries (documented false-positive)', () => {
+    // The 8-hex rule is deliberately aggressive: a git short SHA, step-frame
+    // hash, or hex-like user token will also be normalised. When reviewing
+    // snapshot diffs, verify each <hex8> substitution is legitimate — anything
+    // unexpected masked by this rule is a signal, not noise.
+    const input = 'commit abcdef01 fixed the thing';
+    expect(normalizeCliOutput(input, workspace)).toBe('commit <hex8> fixed the thing');
   });
 
   it('replaces ISO 8601 timestamps with <timestamp>', () => {
@@ -95,6 +113,7 @@ describe('normalizeCliOutput', () => {
   });
 
   it('replaces wf-YYYY-MM-DD-xxxxxx runbookId values with <runbookId>', () => {
+    // cspell:disable-next-line
     const input = '"runbookId":"wf-2026-04-22-8gcrrf"';
     expect(normalizeCliOutput(input, workspace)).toBe('"runbookId":"<runbookId>"');
   });

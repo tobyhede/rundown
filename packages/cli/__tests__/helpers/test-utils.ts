@@ -179,6 +179,7 @@ export async function runCliInProcess(
   let stdoutBuf = '';
   let stderrBuf = '';
   let exitCode = 0;
+  let sawExitSignal = false;
 
   try {
     // Reset global state before each invocation
@@ -254,6 +255,7 @@ export async function runCliInProcess(
   } catch (err: unknown) {
     if (err instanceof ExitSignal) {
       exitCode = err.code;
+      sawExitSignal = true;
     } else if (err instanceof CommanderError) {
       exitCode = err.exitCode;
     } else {
@@ -285,6 +287,28 @@ export async function runCliInProcess(
     resetPolicyContext();
     resetColorCache();
     setWriter(new ConsoleWriter());
+  }
+
+  if (sawExitSignal) {
+    // The harness intercepts `process.exit()` by throwing an ExitSignal. When
+    // production `withErrorHandling` catches that sentinel, it runs it through
+    // `toRundownError` and emits a pretty-printed UNKNOWN_ERROR block whose
+    // `error` field reads "process.exit(N)". A real subprocess never sees
+    // this — `process.exit()` simply terminates. Strip the artefact from
+    // whichever buffer captured it (console.error routes to stderr, but the
+    // writer's pipeline can surface it in stdout depending on mode).
+    //
+    // The lookbehind preserves the newline that terminated the previous
+    // legitimate output line — only the artefact object and any trailing
+    // whitespace are consumed.
+    const artefactPattern =
+      /(?<=\n)\{\s*"error":\s*"process\.exit\(\d+\)",\s*"kind":\s*"error",\s*"code":\s*"UNKNOWN_ERROR"\s*\}\s*$/;
+    stdoutBuf = stdoutBuf.replace(artefactPattern, '');
+    stderrBuf = stderrBuf.replace(artefactPattern, '');
+    // `getErrorMessage(err)` on ExitSignal also produces a bare
+    // "process.exit(N)" tail that we append to stderrBuf elsewhere; swallow
+    // that too when it appears at end-of-buffer.
+    stderrBuf = stderrBuf.replace(/\s*process\.exit\(\d+\)\s*$/, '');
   }
 
   return { stdout: stdoutBuf, stderr: stderrBuf, exitCode };
@@ -884,14 +908,22 @@ export function buildSubstep(overrides: Partial<Substep> = {}): Substep {
  *   1.  workspace.cwd and its realpath resolution → `<workdir>`
  *   2.  os.tmpdir() and its realpath → `<tmpdir>`
  *   3.  Delegation tokens (`rdtk_` + alnum, including truncated `rdtk_XXX...YYYY`) → `<token>`
- *   3.5 SHA-256 hex digests (e.g. delegation token_hash field) → `<tokenHash>`
- *   4.  Full UUIDs → `<uuid>`
- *   4.5 Run IDs of the form `wf-YYYY-MM-DD-xxxxxx` (base-36 suffix) → `<runbookId>`
- *   5.  Short 8-char hex run IDs at word boundaries → `<runId>`
- *   6.  ISO 8601 timestamps → `<timestamp>`
- *   7.  Numeric `"startedAt"` epoch ms field values → `<epochMs>`
- *   8.  `"durationMs"` / `"took"` numeric field values → `<ms>`
- *   9.  PID banners → `<pid>`
+ *   4.  SHA-256 hex digests (e.g. delegation token_hash field) → `<tokenHash>`
+ *   5.  Full UUIDs → `<uuid>`
+ *   6.  Runbook state IDs of the form `wf-YYYY-MM-DD-xxxxxx` (base-36 suffix) → `<runbookId>`
+ *   7.  Any 8-char lowercase hex string at word boundaries → `<hex8>` (see note)
+ *   8.  ISO 8601 timestamps → `<timestamp>`
+ *   9.  Numeric `"startedAt"` / `"completedAt"` / `"expiresAt"` / etc. epoch ms field values → `<epochMs>`
+ *   10. `"durationMs"` / `"took"` numeric field values → `<ms>`
+ *   11. PID banners → `<pid>`
+ *
+ * Rule 7 note: the 8-hex rule is the catch-all for built-in template variables
+ * `{{RunId}}` and `{{ContextId}}` (both `randomBytes(4).toString('hex')`, see
+ * `packages/cli/src/services/variable-discovery.ts`). It is deliberately
+ * aggressive and will ALSO mask git short SHAs, step-frame hashes, and any
+ * 8-hex token that happens to appear in user prompt text. When reviewing a
+ * snapshot diff, confirm each `<hex8>` substitution is legitimate — anything
+ * unexpected masked by this rule is a signal, not noise.
  *
  * @param output - Raw CLI stdout (JSON/NDJSON or rendered text)
  * @param workspace - TestWorkspace whose cwd is rewritten to `<workdir>`
@@ -941,25 +973,25 @@ export function normalizeCliOutput(output: string, workspace: TestWorkspace): st
   text = text.replace(/rdtk_[A-Za-z0-9]+\.{3}[A-Za-z0-9]+/g, '<token>');
   text = text.replace(/rdtk_[A-Za-z0-9]+/g, '<token>');
 
-  // 3.5. SHA-256 hex digests (e.g. delegation token_hash field)
+  // 4. SHA-256 hex digests (e.g. delegation token_hash field)
   text = text.replace(/sha256:[0-9a-f]{64}/g, '<tokenHash>');
 
-  // 4. Full UUIDs (8-4-4-4-12 hex)
+  // 5. Full UUIDs (8-4-4-4-12 hex)
   text = text.replace(
     /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
     '<uuid>',
   );
 
-  // 4.5. Run IDs of the form `wf-YYYY-MM-DD-xxxxxx` (base-36 suffix, 1-6 chars)
+  // 6. Runbook state IDs of the form `wf-YYYY-MM-DD-xxxxxx` (base-36 suffix, 1-6 chars)
   text = text.replace(/\bwf-\d{4}-\d{2}-\d{2}-[a-z0-9]+\b/g, '<runbookId>');
 
-  // 5. Short 8-char hex run IDs at word boundaries.
-  //    NOTE: This is deliberately aggressive — any \b[0-9a-f]{8}\b becomes
-  //    <runId>, which will also catch short git SHAs, step hashes, and
-  //    frame keys. Ordering matters: UUIDs (rule 4) run first so 8-4-4-4-12
-  //    matches are preserved. If a future snapshot needs to preserve a real
-  //    8-hex value, narrow this rule (e.g. scope by adjacent field name).
-  text = text.replace(/\b[0-9a-f]{8}\b/g, '<runId>');
+  // 7. Any 8-char lowercase hex at word boundaries — the catch-all for
+  //    {{RunId}} and {{ContextId}} template variables (both 4 random bytes
+  //    rendered as hex, see variable-discovery.ts). Deliberately aggressive:
+  //    also masks git short SHAs, step-frame hashes, and 8-hex tokens in
+  //    user prompt text. Rules 5 and 6 run first so UUIDs and wf-* ids are
+  //    preserved. Review each `<hex8>` substitution in snapshot diffs.
+  text = text.replace(/\b[0-9a-f]{8}\b/g, '<hex8>');
 
   // 6. ISO 8601 timestamps (with or without fractional seconds, Z or ±HH:MM)
   text = text.replace(

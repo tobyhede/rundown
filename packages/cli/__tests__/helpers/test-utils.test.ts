@@ -1,6 +1,6 @@
 import { readdir } from 'node:fs/promises';
 import { describe, it, expect } from '@jest/globals';
-import { createRunbook, createTestWorkspace } from './test-utils.js';
+import { createRunbook, createTestWorkspace, runCliInProcess } from './test-utils.js';
 
 describe('createRunbook', () => {
   describe('basic rendering', () => {
@@ -388,6 +388,25 @@ describe('createTestWorkspace fixtureDir option', () => {
     try {
       const projectFiles = await readdir(workspace.runbooksDir());
       expect(projectFiles).toContain('simple.runbook.md');
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+});
+
+describe('runCliInProcess', () => {
+  it('does not leak ExitSignal artefacts into captured output when a command aborts with process.exit', async () => {
+    const workspace = await createTestWorkspace({ fixtureDir: 'snapshots' });
+    try {
+      const result = await runCliInProcess(['run', 'snapshot-simple-stop.runbook.md'], workspace);
+
+      expect(result.exitCode).not.toBe(0);
+      const combined = `${result.stdout}\n${result.stderr}`;
+      // The harness intercepts process.exit() by throwing an ExitSignal, which
+      // the production withErrorHandling wrapper then serialises. That is test
+      // plumbing, not real CLI output — it must not appear in captured buffers.
+      expect(combined).not.toContain('process.exit(');
+      expect(combined).not.toContain('"code": "UNKNOWN_ERROR"');
     } finally {
       await workspace.cleanup();
     }

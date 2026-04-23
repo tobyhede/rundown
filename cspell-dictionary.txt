@@ -32,13 +32,12 @@ NOTVALID
 Subcategorize
 TOCTOU
 Turborepo
-UTDQH
-XFXLBSGKNPLNQGRAZO
 agentic
 aindex
 alnum
 ancvar
 args
+artefacts
 autobuild
 bashisms
 behaviour
@@ -72,7 +71,6 @@ fdisk
 featurebranch
 finalvars
 frontmatter
-gcrrf
 gitdir
 gopath
 gopls
@@ -152,6 +150,7 @@ rustc
 sandboxing
 sarif
 selfref
+serialises
 serializable
 shellquote
 specialised

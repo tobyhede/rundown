@@ -163,10 +163,16 @@ export function buildContextSnapshot(
  * Extract parent user-level variables from a context snapshot.
  *
  * Filters out `context.*` namespace keys and `RunId` (which is per-execution),
- * returning only user-defined variables suitable for child inheritance.
+ * returning the remaining user-addressable variables suitable for child
+ * inheritance. Since `buildContextSnapshot` folds `state.variables` into
+ * `snapshot.vars` via `mergeEffectiveVars`, the returned set intentionally
+ * includes step OUTPUTS (which live in `state.variables`) as well as the
+ * caller-provided `state.templateVars`. Do not re-filter `state.variables`
+ * back out — their visibility to children is the entire point of the OUTPUTS
+ * flow (SPEC §7).
  *
  * @param snapshot - The context snapshot to extract user variables from
- * @returns User-defined variables (excludes context.* and RunId)
+ * @returns User-defined variables including step OUTPUTS (excludes context.* and RunId)
  */
 export function extractInheritedUserVars(
   snapshot: ContextSnapshot,
