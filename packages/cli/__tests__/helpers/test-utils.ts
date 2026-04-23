@@ -50,6 +50,14 @@ export interface CliResult {
   stdout: string;
   stderr: string;
   exitCode: number;
+  /**
+   * True when the CLI triggered `process.exit` during this run and the
+   * test harness intercepted it via the override in `runCliInProcess`.
+   * Observes the interception seam itself — distinct from `exitCode !== 0`,
+   * which can also occur when a command returns a non-zero code without
+   * calling `process.exit`.
+   */
+  exitIntercepted?: boolean;
 }
 
 /**
@@ -339,7 +347,7 @@ export async function runCliInProcess(
     stderrBuf = stripExitArtefact(stderrBuf);
   }
 
-  return { stdout: stdoutBuf, stderr: stderrBuf, exitCode };
+  return { stdout: stdoutBuf, stderr: stderrBuf, exitCode, exitIntercepted: exit.signalled };
 }
 
 /**

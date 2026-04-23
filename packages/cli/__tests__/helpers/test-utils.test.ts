@@ -433,6 +433,30 @@ describe('runCliInProcess', () => {
       await workspace.cleanup();
     }
   });
+
+  it('sets exitIntercepted=true when the CLI triggers process.exit', async () => {
+    const workspace = await createTestWorkspace({ fixtureDir: 'snapshots' });
+    try {
+      const result = await runCliInProcess(['run', 'snapshot-simple-stop.runbook.md'], workspace);
+      // Observes the interception seam directly — proves the flag fires inside
+      // the process.exit override, not just via the outer ExitSignal catch.
+      expect(result.exitIntercepted).toBe(true);
+      expect(result.exitCode).not.toBe(0);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  it('sets exitIntercepted=false when the CLI completes without calling process.exit', async () => {
+    const workspace = await createTestWorkspace({ fixtureDir: 'snapshots' });
+    try {
+      const result = await runCliInProcess(['run', 'snapshot-multi-step.runbook.md'], workspace);
+      expect(result.exitCode).toBe(0);
+      expect(result.exitIntercepted).toBe(false);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
 });
 
 describe('stripExitArtefact', () => {
