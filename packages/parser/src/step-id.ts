@@ -30,6 +30,7 @@ export const RESERVED_WORDS = new Set([
   'IN',
   'TO',
   'AT',
+  'DELEGATE',
 ]);
 
 /**

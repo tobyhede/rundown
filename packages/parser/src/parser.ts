@@ -9,6 +9,7 @@ import type {
   ParsedForClause,
   ParseResult,
   OutputDeclaration,
+  RunbookEntry,
 } from './ast.js';
 import type { Transitions } from './schemas.js';
 import { type ParsedConditional, RunbookSyntaxError } from './types.js';
@@ -121,9 +122,18 @@ interface SubstepBuilder {
   hasSeenContent: boolean;
   hasSeenTransitions: boolean;
   hasSeenPromptText: boolean;
+  hasSeenDelegate: boolean;
+  hasSeenRunbooks?: true;
   pendingConditionals: ParsedConditional[];
   line?: number;
   outputs?: readonly OutputDeclaration[];
+  runbooks: RunbookEntry[];
+  /**
+   * @internal Parser canonicalization artifact. Set when this substep was synthesized
+   * from a runbook list entry rather than an explicit H3 heading. Not propagated to the
+   * ParsedSubstep AST node — runtime code must not read or depend on this field.
+   */
+  isRunbookDerived?: true;
 }
 
 interface StepBuilder {
@@ -134,6 +144,7 @@ interface StepBuilder {
   hasSeenContent: boolean;
   hasSeenTransitions: boolean;
   hasSeenPromptText: boolean;
+  hasSeenDelegate: boolean;
   substeps: ParsedSubstep[];
   pendingSubstep?: SubstepBuilder;
   content: string;
@@ -144,6 +155,7 @@ interface StepBuilder {
   stepConditionals?: ParsedConditional[];
   invalidH3s: Array<{ line: number; text: string }>;
   outputs?: readonly OutputDeclaration[];
+  hasRunbookListSubsteps?: true;
 }
 
 /**
@@ -192,14 +204,15 @@ export function formatLineNum(nodeOrLine: Positioned | number | undefined): stri
 function finalizePendingSubstep(ctx: VisitorContext): void {
   if (ctx.currentStep?.pendingSubstep) {
     const ps = ctx.currentStep.pendingSubstep;
-    const runbooks = extractRunbookList(ps.content);
 
     // Validate NEXT usage before converting to transitions
     validateLoopControlUsage(ps.pendingConditionals, ctx.currentStep.forClause !== undefined);
 
     const converted = convertToTransitions(ps.pendingConditionals);
 
-    // Build prompt from promptText and remaining content
+    // Build prompt from promptText and remaining content (non-runbook lines only).
+    // Runbook entries are captured in ps.runbooks and not added to ps.content,
+    // so this filter is only needed for legacy H3 substep content strings.
     let promptText = ps.promptText;
     if (ps.content.trim()) {
       const contentWithoutRunbooks = ps.content
@@ -220,9 +233,10 @@ function finalizePendingSubstep(ctx: VisitorContext): void {
       command: ps.command,
       prompt: promptText.trim() || undefined,
       transitions: converted?.transitions ?? DEFAULT_TRANSITIONS,
-      runbooks: runbooks.length > 0 ? runbooks : undefined,
+      runbooks: ps.runbooks.length > 0 ? ps.runbooks : undefined,
       line: ps.line,
       outputs: ps.outputs,
+      delegate: ps.hasSeenDelegate ? true : undefined,
     };
     ctx.currentStep.substeps.push(substep);
     ctx.currentStep.pendingSubstep = undefined;
@@ -277,6 +291,7 @@ function handleH2Heading(node: Heading, ctx: VisitorContext): void {
       hasSeenContent: false,
       hasSeenTransitions: false,
       hasSeenPromptText: false,
+      hasSeenDelegate: false,
       substeps: [],
       content: '',
       line: node.position?.start.line,
@@ -298,6 +313,13 @@ function handleH3Heading(node: Heading, ctx: ActiveStepContext): void {
     ctx.pendingConditionals = [];
   }
   finalizePendingSubstep(ctx);
+
+  // If step already has runbook-list substeps, mixing explicit H3 substeps violates exclusivity.
+  if (ctx.currentStep.hasRunbookListSubsteps) {
+    throw new RunbookSyntaxError(
+      `Step ${ctx.currentStep.name}: Violates Exclusivity Rule. A step must have exactly one of {Body, Substeps}.`,
+    );
+  }
 
   const headingText = extractText(node);
   const parsed = extractSubstepHeader(headingText);
@@ -328,9 +350,11 @@ function handleH3Heading(node: Heading, ctx: ActiveStepContext): void {
       hasSeenContent: false,
       hasSeenTransitions: false,
       hasSeenPromptText: false,
+      hasSeenDelegate: false,
       pendingConditionals: [],
       line: node.position?.start.line,
       outputs: undefined,
+      runbooks: [],
     };
   } else {
     ctx.currentStep.invalidH3s.push({
@@ -465,6 +489,12 @@ function handleForClause(
       `Step "${ctx.currentStep.name}": FOR clause must appear before content${formatLineNum(listItemNode)}`,
     );
   }
+  // Enforce: FOR must appear before DELEGATE
+  if (ctx.currentStep.hasSeenDelegate) {
+    throw new RunbookSyntaxError(
+      `Step "${ctx.currentStep.name}": FOR clause must appear before DELEGATE${formatLineNum(listItemNode)}`,
+    );
+  }
   ctx.currentStep.forClause = forClause;
   ctx.currentStep.hasSeenForClause = true;
 
@@ -507,17 +537,18 @@ function handleListItemTransition(
 ): void {
   const lineNum = formatLineNum(node);
   if (ctx.currentStep.pendingSubstep) {
-    // Reject transitions after prompt text or content (header-adjacent requirement)
-    if (
-      ctx.currentStep.pendingSubstep.hasSeenPromptText ||
-      ctx.currentStep.pendingSubstep.hasSeenContent
-    ) {
+    const ps = ctx.currentStep.pendingSubstep;
+    // Reject transitions after prompt text or non-runbook content (header-adjacent requirement).
+    // Runbook entries (hasSeenRunbooks) do not block transitions — they are structural
+    // references, not prose content, so per-entry annotations are always valid.
+    const hasBlockingContent = ps.hasSeenPromptText || (ps.hasSeenContent && !ps.hasSeenRunbooks);
+    if (hasBlockingContent) {
       throw new RunbookSyntaxError(
-        `Substep ${ctx.currentStep.name}.${ctx.currentStep.pendingSubstep.id}${lineNum}: Transitions must appear immediately after the substep header, before any content.`,
+        `Substep ${ctx.currentStep.name}.${ps.id}${lineNum}: Transitions must appear immediately after the substep header, before any content.`,
       );
     }
-    ctx.currentStep.pendingSubstep.pendingConditionals.push(...conditionals);
-    ctx.currentStep.pendingSubstep.hasSeenTransitions = true;
+    ps.pendingConditionals.push(...conditionals);
+    ps.hasSeenTransitions = true;
   } else {
     // Reject transitions after prompt text or content (header-adjacent requirement)
     if (ctx.currentStep.hasSeenPromptText || ctx.currentStep.hasSeenContent) {
@@ -641,6 +672,51 @@ function handleOutputsDirective(node: ListItem, ctx: ActiveStepContext): typeof 
 }
 
 /**
+ * Process a `- DELEGATE` annotation on a step or substep.
+ *
+ * DELEGATE marks a step or substep as a delegation dispatch point.
+ * Valid ordering: DELEGATE must appear before transitions and content.
+ * At step level, it may follow a FOR clause but not precede one.
+ *
+ * @param node - The list item node whose text is "DELEGATE"
+ * @param ctx - Active step context
+ * @throws {RunbookSyntaxError} When ordering is violated or DELEGATE is duplicated
+ */
+function handleDelegateAnnotation(node: ListItem, ctx: ActiveStepContext): void {
+  const target = getDirectiveTarget(ctx);
+  const targetLabel = formatDirectiveTarget(ctx);
+  const lineNum = formatLineNum(node);
+
+  if (target.hasSeenDelegate) {
+    throw new RunbookSyntaxError(
+      `Duplicate DELEGATE in ${targetLabel}${lineNum}: DELEGATE may only appear once`,
+    );
+  }
+  if (target.hasSeenTransitions) {
+    throw new RunbookSyntaxError(
+      `DELEGATE in ${targetLabel}${lineNum}: DELEGATE must appear before transitions`,
+    );
+  }
+  // For substeps with runbook entries, hasSeenContent is set by the runbook entry itself.
+  // We only block DELEGATE after prose prompt text or non-runbook body content — runbook
+  // references are structural, not prose, so per-entry annotations are always valid.
+  let hasBlockingContent: boolean;
+  if (ctx.currentStep.pendingSubstep) {
+    const ps = ctx.currentStep.pendingSubstep;
+    hasBlockingContent = ps.hasSeenPromptText || (ps.hasSeenContent && !ps.hasSeenRunbooks);
+  } else {
+    hasBlockingContent = target.hasSeenContent || target.hasSeenPromptText;
+  }
+  if (hasBlockingContent) {
+    throw new RunbookSyntaxError(
+      `DELEGATE in ${targetLabel}${lineNum}: DELEGATE must appear before prompt text and body content`,
+    );
+  }
+
+  target.hasSeenDelegate = true;
+}
+
+/**
  * Process a list item node within an active step.
  *
  * @param node - The list item AST node
@@ -671,6 +747,19 @@ function handleListItem(node: ListItem, ctx: ActiveStepContext): typeof SKIP | u
     return SKIP;
   }
 
+  // Check for DELEGATE annotation (bare keyword, no arguments)
+  if (trimmedText === 'DELEGATE') {
+    handleDelegateAnnotation(node, ctx);
+    return;
+  }
+
+  // Reject DELEGATE with arguments (syntax error)
+  if (trimmedText.startsWith('DELEGATE ') || trimmedText.startsWith('DELEGATE\t')) {
+    throw new RunbookSyntaxError(
+      `DELEGATE takes no arguments${formatLineNum(node)}; use bare "- DELEGATE" to mark a step for delegation. Found: "${trimmedText}"`,
+    );
+  }
+
   // Check for FOR clause BEFORE conditionals
   const forResult = parseForClause(text);
 
@@ -693,15 +782,63 @@ function handleListItem(node: ListItem, ctx: ActiveStepContext): typeof SKIP | u
     );
   }
 
+  const isRunbookListEntry =
+    /^\S+\.runbook\.md$/.test(trimmedText) || TEMPLATE_VAR_REF_RE.test(trimmedText);
+
+  if (isRunbookListEntry) {
+    // Parse the single entry by reusing extractRunbookList with a single-line string.
+    const entries = extractRunbookList(` - ${trimmedText}\n`);
+    const entry = entries[0];
+
+    if (ctx.currentStep.pendingSubstep && !ctx.currentStep.pendingSubstep.isRunbookDerived) {
+      // H3 substep context: add the runbook reference directly to the substep.
+      // Nested annotations (- DELEGATE, - PASS CONTINUE) will be visited by the
+      // walker and land on this pendingSubstep via the existing handlers.
+      ctx.currentStep.pendingSubstep.runbooks.push(entry);
+      ctx.currentStep.pendingSubstep.hasSeenContent = true;
+      ctx.currentStep.pendingSubstep.hasSeenRunbooks = true;
+    } else {
+      // Step-level (or successive runbook entry after a prior runbook-derived substep):
+      // finalize the previous runbook-derived substep, then start a new one.
+      if (ctx.currentStep.pendingSubstep?.isRunbookDerived) {
+        finalizePendingSubstep(ctx);
+      }
+      // Capture step prose as the first substep's prompt.
+      const isFirst = ctx.currentStep.substeps.length === 0 && !ctx.currentStep.pendingSubstep;
+      const promptText = isFirst ? ctx.implicitText.trim() : '';
+
+      ctx.currentStep.pendingSubstep = {
+        id: String(ctx.currentStep.substeps.length + 1),
+        description: '',
+        content: '',
+        command: undefined,
+        promptText,
+        hasSeenContent: true,
+        hasSeenTransitions: false,
+        hasSeenPromptText: false,
+        hasSeenDelegate: false,
+        hasSeenRunbooks: true,
+        pendingConditionals: [],
+        line: node.position?.start.line,
+        outputs: undefined,
+        runbooks: [entry],
+        isRunbookDerived: true,
+      };
+      ctx.currentStep.hasRunbookListSubsteps = true;
+      ctx.currentStep.hasSeenContent = true;
+    }
+    // Do NOT return SKIP. The AST walker visits the nested list items (- DELEGATE,
+    // - PASS CONTINUE, etc.) as subsequent ListItem nodes. At that point
+    // ctx.currentStep.pendingSubstep is set, so existing handlers apply correctly.
+    return;
+  }
+
   const conditionalResult = parseConditional(text);
   if (conditionalResult) {
     const conditionals = Array.isArray(conditionalResult) ? conditionalResult : [conditionalResult];
     handleListItemTransition(conditionals, node, ctx);
   } else {
-    const trimmed = text.trim();
-    const isRunbookListEntry =
-      /^\S+\.runbook\.md$/.test(trimmed) || TEMPLATE_VAR_REF_RE.test(trimmed);
-    handleListItemContent(text, isRunbookListEntry, node, ctx);
+    handleListItemContent(text, false, node, ctx);
   }
 }
 
@@ -885,8 +1022,9 @@ function finalizeStep(
     );
   }
 
-  const runbooks = extractRunbookList(step.content);
-  const prompt = promptText.trim() || undefined;
+  // When runbook list substeps are present, the step prompt has been captured in the first
+  // substep's promptText field during parsing (in handleListItem). Do not propagate to step.
+  const prompt = step.hasRunbookListSubsteps ? undefined : promptText.trim() || undefined;
 
   // Resolve substep defaults based on context.
   // Substeps with explicit transitions (from authored conditionals) keep them as-is.
@@ -901,52 +1039,26 @@ function finalizeStep(
       return sub; // DEFAULT_TRANSITIONS is correct for sequential
     });
 
-  // Step-level runbook lists are syntax sugar for implicit substeps.
-  if (runbooks.length > 0) {
-    if (step.command || step.substeps.length > 0) {
+  // Propagate step-level delegate flag to all substeps.
+  // Step-level DELEGATE is shorthand for DELEGATE on all substeps.
+  const propagateDelegateToSubsteps = (substeps: ParsedSubstep[]): ParsedSubstep[] => {
+    if (!step.hasSeenDelegate) return substeps;
+    return substeps.map((sub) => (sub.delegate ? sub : { ...sub, delegate: true as const }));
+  };
+
+  // Runbook list entries are now finalized as individual substeps during parsing.
+  // Validate exclusivity and fall through to the shared substep path below.
+  if (step.hasRunbookListSubsteps) {
+    if (step.command) {
       throw new RunbookSyntaxError(
         `Step ${step.name}: Violates Exclusivity Rule. A step must have exactly one of {Body, Substeps}.`,
       );
     }
-    // Canonicalize each step-level runbook bullet into its own synthetic substep.
-    // Synthetic substeps always DEFER (they delegate to runbooks).
-    const syntheticSubsteps: ParsedSubstep[] = runbooks.map((entry, index) => ({
-      id: String(index + 1),
-      description: '',
-      prompt: index === 0 ? prompt : undefined,
-      runbooks: [entry],
-      transitions: DEFER_TRANSITIONS,
-      line: step.line,
-    }));
-
-    const shared = {
-      name: step.name,
-      description: step.description,
-      transitions: stepTransitions,
-      line: step.line,
-      outputs: step.outputs,
-    };
-    if (step.forClause) {
-      return {
-        ...shared,
-        kind: 'for' as const,
-        aggregation: stepAggregation,
-        substepsDerivedFromRunbookList: true as const,
-        forClause: step.forClause,
-        substeps: syntheticSubsteps,
-      };
-    }
-    return {
-      ...shared,
-      kind: 'substeps' as const,
-      aggregation: stepAggregation,
-      substepsDerivedFromRunbookList: true as const,
-      substeps: syntheticSubsteps,
-    };
+    // step.substeps is already populated; fall through to the shared substep path below.
   }
 
-  // Resolve substep defaults
-  const resolvedSubsteps = resolveSubstepDefaults(step.substeps);
+  // Resolve substep defaults and propagate step-level DELEGATE flag
+  const resolvedSubsteps = propagateDelegateToSubsteps(resolveSubstepDefaults(step.substeps));
 
   // Build shared fields once (aggregation excluded — only added to parent step kinds)
   const shared = {
@@ -963,6 +1075,7 @@ function finalizeStep(
       ...shared,
       kind: 'for' as const,
       aggregation: stepAggregation,
+      substepsDerivedFromRunbookList: step.hasRunbookListSubsteps,
       forClause: step.forClause,
       substeps: resolvedSubsteps.length > 0 ? resolvedSubsteps : [],
     };
@@ -973,6 +1086,7 @@ function finalizeStep(
       ...shared,
       kind: 'substeps' as const,
       aggregation: stepAggregation,
+      substepsDerivedFromRunbookList: step.hasRunbookListSubsteps,
       substeps: resolvedSubsteps,
     };
   }
