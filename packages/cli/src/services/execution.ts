@@ -39,10 +39,15 @@ import {
   assertResolvedVariableForContext,
   ForResolutionError,
   RUNS_DIR,
+  createDelegation,
+  Errors,
+  type DelegateFrontierEntry,
 } from '@rundown-org/core';
 import { isSourced, resolvedStepHasSubsteps, type ForClause } from '@rundown-org/parser';
 import { isInternalRdCommand, executeRdCommandInternal } from './internal-commands.js';
 import type { StepVariables } from './execution-vars.js';
+import { inferAllDelegateSubsteps } from '../helpers/delegate-inference.js';
+import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import {
   getPolicyEvaluator,
   getPolicyPrompter,
@@ -624,6 +629,52 @@ export async function runExecutionLoop(
     // Compute before STEP_ENTERED so the event includes the prompted FOR flag
     const stepIsPrompted = currentStep.kind === 'prompted-for';
 
+    // Auto-issue delegation tokens for DELEGATE steps.
+    // Triggers on entry to the first substep of a step with delegate substeps.
+    let delegateFrontier: Array<DelegateFrontierEntry> | undefined;
+
+    const hasDelegateSubsteps =
+      isSubstep &&
+      resolvedStepHasSubsteps(currentStep) &&
+      currentState.substep === currentStep.substeps[0]?.id &&
+      currentStep.substeps.some((sub) => sub.delegate);
+
+    if (hasDelegateSubsteps) {
+      const targets = inferAllDelegateSubsteps(currentState, steps);
+
+      if (targets.length > 0) {
+        const fanOut: Array<DelegateFrontierEntry> = [];
+        let threadedState = currentState;
+        const frameKey = threadedState.activeFrameKey ?? deriveActiveFrame(threadedState).frameKey;
+
+        for (const target of targets) {
+          const childResolved = await resolveRunbookFile(cwd, target.runbookRef);
+          if (!childResolved) {
+            throw Errors.delegationRunbookNotFound(target.runbookRef);
+          }
+
+          const result = createDelegation(
+            {
+              state: threadedState,
+              stepId: target.stepId,
+              childRunbookPath: childResolved.path,
+              extraVars: undefined,
+              ancestors: [],
+              frameKey,
+            },
+            steps,
+          );
+
+          threadedState = { ...threadedState, substepStates: result.updatedSubstepStates };
+          fanOut.push({ id: target.stepId, runbook: target.runbookRef, token: result.token });
+        }
+
+        // Persist all tokens in one write
+        await manager.update(currentState.id, { substepStates: threadedState.substepStates });
+        delegateFrontier = fanOut;
+      }
+    }
+
     emitter.emit('STEP_ENTERED', {
       position: stepPosition,
       stepName: isSubstep ? itemToRender.id : itemToRender.name,
@@ -636,6 +687,7 @@ export async function runExecutionLoop(
       commandLang: command?.lang,
       isSubstep,
       prompted: prompted || stepIsPrompted,
+      delegateFrontier,
     });
 
     // If CLI prompted mode, per-step prompted FOR, OR no command

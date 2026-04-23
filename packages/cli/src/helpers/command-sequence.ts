@@ -196,6 +196,23 @@ function processJsonObject(
     tokens.push(obj.token);
   }
 
+  // Extract pre-issued delegation tokens from STEP_ENTERED delegateFrontier.
+  // Emitted when `rd run` enters a DELEGATE step: tokens are auto-issued for
+  // each delegated substep so the agent can claim without a separate
+  // `rd delegate` command.
+  if (obj.type === 'step_entered' && Array.isArray(obj.delegateFrontier)) {
+    for (const entry of obj.delegateFrontier) {
+      if (
+        entry !== null &&
+        typeof entry === 'object' &&
+        'token' in entry &&
+        typeof (entry as { token: unknown }).token === 'string'
+      ) {
+        tokens.push((entry as { token: string }).token);
+      }
+    }
+  }
+
   return terminal;
 }
 

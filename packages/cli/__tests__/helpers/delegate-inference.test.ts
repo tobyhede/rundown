@@ -1,9 +1,10 @@
 import { describe, it, expect } from '@jest/globals';
-import type { Step, Substep, StepWithSubsteps } from '@rundown-org/parser';
+import type { Step, Substep, StepWithSubsteps, StepWithFor } from '@rundown-org/parser';
 import type { RunbookState, SubstepState, StepDelegation } from '@rundown-org/core';
 import {
   inferDelegationTarget,
   inferRunbookFromStep,
+  inferAllDelegateSubsteps,
 } from '../../src/helpers/delegate-inference.js';
 
 /** Build a minimal substep for testing. */
@@ -45,6 +46,22 @@ function makeActiveDelegation(): StepDelegation {
     childRunId: null,
     createdAt: new Date().toISOString(),
     cancelledAt: null,
+  };
+}
+
+/** Build a minimal FOR-type step with substeps. */
+function makeStepWithFor(
+  name: string,
+  substeps: Substep[],
+  range: { start: number; end: number },
+): StepWithFor {
+  return {
+    kind: 'for' as const,
+    name,
+    description: `Step ${name}`,
+    substeps,
+    transitions: {} as any,
+    forClause: { start: range.start, end: range.end },
   };
 }
 
@@ -182,6 +199,130 @@ describe('inferDelegationTarget', () => {
     const result = inferDelegationTarget(state, steps);
 
     expect(result).toEqual({ runbookRef: 'child.runbook.md', stepId: '1.1' });
+  });
+});
+
+describe('inferAllDelegateSubsteps', () => {
+  it('returns all unresolved substeps with delegate: true and runbooks', () => {
+    const substeps = [
+      makeSubstep({ id: '1', description: 'A', runbooks: ['a.runbook.md'], delegate: true }),
+      makeSubstep({ id: '2', description: 'B', runbooks: ['b.runbook.md'], delegate: true }),
+      makeSubstep({ id: '3', description: 'C', runbooks: ['c.runbook.md'] }), // no delegate
+    ];
+    const steps: Step[] = [makeStepWithSubsteps('1', substeps)];
+    const state = makeState({ step: '1' });
+
+    const result = inferAllDelegateSubsteps(state, steps as any);
+
+    expect(result).toHaveLength(2);
+    expect(result[0]).toEqual({ runbookRef: 'a.runbook.md', stepId: '1.1' });
+    expect(result[1]).toEqual({ runbookRef: 'b.runbook.md', stepId: '1.2' });
+  });
+
+  it('skips substeps that are already delegated', () => {
+    const substeps = [
+      makeSubstep({ id: '1', description: 'A', runbooks: ['a.runbook.md'], delegate: true }),
+      makeSubstep({ id: '2', description: 'B', runbooks: ['b.runbook.md'], delegate: true }),
+    ];
+    const steps: Step[] = [makeStepWithSubsteps('1', substeps)];
+    const substepStates: SubstepState[] = [
+      { id: '1', frameKey: '1|', status: 'pending', delegation: makeActiveDelegation() },
+    ];
+    const state = makeState({ step: '1', substepStates });
+
+    const result = inferAllDelegateSubsteps(state, steps as any);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].stepId).toBe('1.2');
+  });
+
+  it('skips substeps that are done', () => {
+    const substeps = [
+      makeSubstep({ id: '1', description: 'A', runbooks: ['a.runbook.md'], delegate: true }),
+      makeSubstep({ id: '2', description: 'B', runbooks: ['b.runbook.md'], delegate: true }),
+    ];
+    const steps: Step[] = [makeStepWithSubsteps('1', substeps)];
+    const substepStates: SubstepState[] = [
+      { id: '1', frameKey: '1|', status: 'done', result: 'pass' },
+    ];
+    const state = makeState({ step: '1', substepStates });
+
+    const result = inferAllDelegateSubsteps(state, steps as any);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].stepId).toBe('1.2');
+  });
+
+  it('returns empty array when no delegate substeps have runbooks', () => {
+    const substeps = [
+      makeSubstep({ id: '1', description: 'A', delegate: true }), // no runbooks
+    ];
+    const steps: Step[] = [makeStepWithSubsteps('1', substeps)];
+    const state = makeState({ step: '1' });
+
+    const result = inferAllDelegateSubsteps(state, steps as any);
+
+    expect(result).toHaveLength(0);
+  });
+
+  it('throws RD-813 when current step has no substeps', () => {
+    const steps: Step[] = [{ kind: 'base' as const, name: '1', description: 'Step' } as any];
+    const state = makeState({ step: '1' });
+
+    expect(() => inferAllDelegateSubsteps(state, steps as any)).toThrow(
+      expect.objectContaining({ code: 'RD-813' }),
+    );
+  });
+
+  it('scopes frontier to the current FOR iteration — substeps from other iterations are excluded', () => {
+    const substeps = [
+      makeSubstep({ id: '1', description: 'A', runbooks: ['a.runbook.md'], delegate: true }),
+      makeSubstep({ id: '2', description: 'B', runbooks: ['b.runbook.md'], delegate: true }),
+    ];
+    const steps: Step[] = [makeStepWithFor('1', substeps, { start: 1, end: 3 })];
+
+    // Iteration 1: substep 1 is done; substep 2 is pending
+    const substepStatesIter1: SubstepState[] = [
+      { id: '1', frameKey: '1|1', status: 'done', result: 'pass' },
+    ];
+    const stateIter1 = makeState({
+      step: '1',
+      substepStates: substepStatesIter1,
+      activeFrameKey: '1|1',
+      forStack: [
+        {
+          stepId: '1',
+          iteration: 1,
+          start: 1,
+          end: 3,
+          implicit: false,
+          source: { kind: 'range' as const },
+        },
+      ],
+    });
+
+    const resultIter1 = inferAllDelegateSubsteps(stateIter1, steps as any);
+    expect(resultIter1).toHaveLength(1);
+    expect(resultIter1[0].stepId).toBe('1.2');
+
+    // Iteration 2: fresh slate
+    const stateIter2 = makeState({
+      step: '1',
+      substepStates: [],
+      activeFrameKey: '1|2',
+      forStack: [
+        {
+          stepId: '1',
+          iteration: 2,
+          start: 1,
+          end: 3,
+          implicit: false,
+          source: { kind: 'range' as const },
+        },
+      ],
+    });
+    const resultIter2 = inferAllDelegateSubsteps(stateIter2, steps as any);
+    expect(resultIter2).toHaveLength(2);
   });
 });
 

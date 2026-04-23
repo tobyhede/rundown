@@ -45,6 +45,16 @@ export interface RunbookStartedPayload {
   readonly statePath: string;
 }
 
+/**
+ * A single entry in the delegate frontier — one pre-issued delegation token
+ * per substep, returned when execution enters a DELEGATE step.
+ */
+export interface DelegateFrontierEntry {
+  readonly id: string;
+  readonly runbook: string;
+  readonly token: string;
+}
+
 /** Payload emitted when a step begins execution (STEP_ENTERED event). */
 export interface StepEnteredPayload {
   readonly position: StepPosition;
@@ -59,6 +69,12 @@ export interface StepEnteredPayload {
   readonly isSubstep: boolean;
   /** Whether runbook is in prompted mode (affects command display) */
   readonly prompted: boolean;
+  /**
+   * Delegation frontier — present when entering the first substep of a DELEGATE step.
+   * Each entry contains the substep id, runbook path, and pre-issued delegation token.
+   * The agent dispatches N subagents using these tokens, then calls `rd collect`.
+   */
+  readonly delegateFrontier?: ReadonlyArray<DelegateFrontierEntry>;
 }
 
 /** Payload emitted when a step command begins execution (COMMAND_STARTED event). */
