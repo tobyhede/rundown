@@ -89,34 +89,18 @@ export class RunbookActorService {
       );
     }
 
+    // Compile with all hydration-time context in the options bag. The machine's
+    // initial context carries substepStates / activeFrameKey directly — no
+    // throwaway actor, no snapshot overlay, no Snapshot<unknown> casts.
     const machine = compileRunbookToMachine(steps, {
       templateVars: flattenTemplateVars(state.templateVars ?? {}),
       frontmatterOutputs: state.frontmatterOutputs,
+      substepStates: state.substepStates,
+      activeFrameKey: state.activeFrameKey,
     });
-
-    // Mirror persisted substepStates/activeFrameKey into the actor's context so
-    // the XState retry hook (running inside `assign`) can inspect and update
-    // delegation records. We hydrate by extracting the initial snapshot context
-    // (from either the persisted snapshot or a throwaway actor), overlaying the
-    // mirrored fields, then creating the real actor from the patched snapshot.
-    const baseActor = createActor(machine, {
-      snapshot: state.snapshot as Snapshot<unknown> | undefined,
-    });
-    const baseSnapshot = baseActor.getPersistedSnapshot() as unknown as {
-      context: RunbookContext;
-      [key: string]: unknown;
-    };
-    const hydratedSnapshot = {
-      ...baseSnapshot,
-      context: {
-        ...baseSnapshot.context,
-        substepStates: state.substepStates ?? baseSnapshot.context.substepStates,
-        activeFrameKey: state.activeFrameKey ?? baseSnapshot.context.activeFrameKey,
-      },
-    };
 
     const actor = createActor(machine, {
-      snapshot: hydratedSnapshot as unknown as Snapshot<unknown>,
+      snapshot: state.snapshot as Snapshot<unknown> | undefined,
     });
     actor.start();
     return actor;
@@ -125,24 +109,44 @@ export class RunbookActorService {
   /**
    * Load an actor's current context without mutating state.
    *
-   * Creates a short-lived actor from the persisted snapshot solely to read
-   * `context`, then stops it. No events are sent and no persistence occurs.
+   * Compiles the machine and instantiates an actor WITHOUT starting it, reads
+   * the persisted snapshot context, then discards the actor. No events are sent
+   * and no persistence occurs. Starting the actor would re-fire the initial
+   * state's entry actions on every call — an observable side effect callers of
+   * this method are not signing up for.
+   *
    * Used by observers (e.g. the CLI execution loop) that need machine-level
    * context fields — such as `lastAction` — without advancing the machine.
    *
    * @param id - Runbook run ID
    * @param steps - Resolved steps for actor rebuild
-   * @returns RunbookContext or null if no actor/state exists
+   * @returns RunbookContext or null if no state exists
    */
   async getContextSnapshot(id: string, steps: ResolvedStep[]): Promise<RunbookContext | null> {
-    const actor = await this.createActor(id, steps);
-    if (!actor) return null;
-    try {
-      const snap = actor.getPersistedSnapshot() as unknown as { context: RunbookContext };
-      return snap.context;
-    } finally {
-      actor.stop();
+    const state = await this.manager.load(id);
+    if (!state) return null;
+    if (state.frontmatterOutputs === undefined) {
+      throw new Error(
+        `Stale runbook state for "${id}": missing frontmatter outputs declarations. ` +
+          'Run `rundown prune` and restart execution.',
+      );
     }
+
+    // Read-only path: compile, instantiate the actor WITHOUT starting it, read
+    // the persisted snapshot, discard. Starting the actor would re-fire the
+    // initial state's entry actions on every call — an observable side effect
+    // callers of this method are not signing up for.
+    const machine = compileRunbookToMachine(steps, {
+      templateVars: flattenTemplateVars(state.templateVars ?? {}),
+      frontmatterOutputs: state.frontmatterOutputs,
+      substepStates: state.substepStates,
+      activeFrameKey: state.activeFrameKey,
+    });
+    const actor = createActor(machine, {
+      snapshot: state.snapshot as Snapshot<unknown> | undefined,
+    });
+    const snap = actor.getPersistedSnapshot() as unknown as { context: RunbookContext };
+    return snap.context;
   }
 
   /**
