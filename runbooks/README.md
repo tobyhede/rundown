@@ -120,7 +120,7 @@ Three equivalent forms are available. Pick whichever reads best for the step:
 
 Worked examples for each form live in `delegation/delegate-keyword-*.runbook.md` (e.g., `delegate-keyword-h2-propagation.runbook.md`, `delegate-keyword-h3-explicit.runbook.md`, `delegate-keyword-runbook-shorthand.runbook.md`). See [SPEC.md §4.3](../docs/SPEC.md#43-delegate) for syntax rules and [AGENT-ORCHESTRATION.md](../docs/AGENT-ORCHESTRATION.md#delegate-annotation) for the auto-issuance lifecycle and `rd collect`.
 
-`RETRY` transitions do not currently compose with DELEGATE — see the limitation note in [SPEC.md §4.3](../docs/SPEC.md#43-delegate).
+For `RETRY` + DELEGATE examples, see `delegation/delegate-keyword-retry-recovers.runbook.md` and `delegation/delegate-keyword-retry-exhausts.runbook.md`. `delegation/delegation-child-fail-once.runbook.md` uses a filesystem marker pattern for stateful fail-then-pass behavior; see its description for details.
 
 ## See Also
 

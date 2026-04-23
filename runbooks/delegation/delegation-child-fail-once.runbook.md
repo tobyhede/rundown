@@ -17,14 +17,22 @@ scenarios:
 Stateful child runbook used as a delegation target for RETRY scenarios.
 
 The child fails on the first claim within a given parent run and passes on
-every subsequent claim. State lives in a filesystem marker scoped by the
-parent's `RunId` and `at` (substep path), so two substeps of the same parent
-each get their own independent marker and reruns from separate parent
-executions never collide.
+every subsequent claim. State lives in a filesystem marker at
+`{{ WorkPath }}/retry-markers/{{ context.parent.vars.RunId }}-{{ context.parent.at }}`,
+scoped by the parent's `RunId` and `at` (substep path). This scoping means
+two substeps of the same parent each get their own independent marker, and
+reruns from separate parent executions never collide.
 
 When run standalone, `{{context.parent.vars.RunId}}` and `{{context.parent.at}}`
 are undefined and stay as literal `{{...}}` text, so the standalone scenario
 simply fails once and stops (no retry context available).
+
+**Marker lifetime.** Markers are not explicitly cleaned up by this runbook
+or by `rd prune` (which only touches `.rundown/` state). They persist under
+`{{ WorkPath }}/retry-markers/` until the work directory is cleared (for
+example, when a scratch worktree is refreshed or the user deletes the
+directory). Because markers are keyed by `RunId` + `at`, stale markers from
+previous runs do not affect new executions.
 
 ## 1. Execute child task
 

@@ -215,7 +215,7 @@ GOTO targeting the containing step (self-reference) without an AT qualifier may 
 
 **Aggregation.** The final substep resolution auto-aggregates the parent step's transition. An explicit `rd collect` CLI invocation triggers aggregation without waiting (primarily used when a DELEGATE step contains a mix of delegated and non-delegated substeps).
 
-**Known limitations.** `RETRY` transitions (e.g., `FAIL ANY RETRY 1 STOP`) do not currently compose with DELEGATE. A `RETRY` clause on a DELEGATE step is a silent no-op: the retry counter increments on re-entry but no new delegation tokens are issued. Authors should not use `RETRY` on DELEGATE steps.
+**RETRY on DELEGATE.** `RETRY N Act` on a DELEGATE step is uniform: on retry, every delegated substep in the active frame is cancelled and re-issued with a fresh token, regardless of the substep's prior pass/fail result. Stale tokens return `TOKEN_CANCELLED` on `rd claim`. The `STEP_TRANSITIONED { action: 'RETRY', aggregated: true }` event signals the boundary; the subsequent `STEP_ENTERED` carries the new `delegateFrontier`. This matches §4.2 — `RETRY` re-executes the step's work, and for DELEGATE that work is the fan-out.
 
 ## 5. Iteration (FOR)
 
