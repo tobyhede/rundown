@@ -19,6 +19,7 @@ import {
   ExecutionLifecycleService,
   ForIterationService,
   logger,
+  mergeEffectiveVars,
   type Step,
   type ResolvedStep,
   type Substep,
@@ -588,13 +589,11 @@ export async function runExecutionLoop(
     }
 
     // Expand per-step dynamic variables ({{Step}}, {{Index}}, {{var}}) for current iteration.
-    // Merge state.variables (step OUTPUTS from prior steps) into templateVars so that
-    // subsequent steps can reference them in descriptions, prompts, and OUTPUTS expressions.
-    // Cast: state.variables is Record<string, boolean|number|string>; OUTPUTS only write strings.
-    const mergedTemplateVars = {
-      ...currentState.templateVars,
-      ...(currentState.variables as Record<string, TemplateVarValue>),
-    };
+    // mergeEffectiveVars overlays state.variables (step OUTPUTS) on state.templateVars
+    // (seeded inputs) so subsequent steps can reference outputs from prior steps in
+    // descriptions, prompts, and OUTPUTS expressions. Sole producer of EffectiveVars
+    // — same precedence as buildContextSnapshot and buildExecutionFrame.
+    const mergedTemplateVars = mergeEffectiveVars(currentState);
     const stepVars = buildStepVariables(
       currentState.step,
       currentState.substep,

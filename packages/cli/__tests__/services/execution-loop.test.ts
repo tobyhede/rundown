@@ -135,6 +135,11 @@ jest.unstable_mockModule('@rundown-org/core', () => {
     },
     isJsonArray: jest.fn((v: unknown) => Array.isArray(v)),
     isJsonArrayStream: jest.fn(realIsJsonArrayStream),
+    mergeEffectiveVars: jest.fn((state: any, extra?: Record<string, unknown>) => ({
+      ...(state?.templateVars ?? {}),
+      ...(state?.variables ?? {}),
+      ...(extra ?? {}),
+    })),
     ForResolutionError: RealForResolutionError,
     assertResolvedVariableForContext: jest.fn(
       (fc: {
