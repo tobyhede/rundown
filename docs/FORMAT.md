@@ -187,7 +187,7 @@ Aggregation modifiers must pair complementarily: `PASS ALL` + `FAIL ANY` (pessim
 
 **Default transitions:** When no transitions are authored, the parser supplies `PASS CONTINUE`, `FAIL STOP`. Substeps under aggregation or with runbook delegation default to `PASS DEFER`, `FAIL DEFER`.
 
-**Disambiguation:** A `-`-prefixed bullet inside a step is resolved by priority: (1) context directive (`- INPUTS` or `- OUTPUTS` as exact, case-sensitive list-item text with no trailing content), (2) FOR clause (`FOR` keyword), (3) DELEGATE annotation (`- DELEGATE` as exact, case-sensitive list-item text with no trailing content), (4) transition (`PASS`, `FAIL`, `YES`, `NO`, or standalone `DEFER`), (5) runbook reference (`.runbook.md` suffix), (6) prompt text. A bullet whose text merely contains `INPUTS`, `OUTPUTS`, or `DELEGATE` inside prose, or uses a different case (e.g., `inputs`, `Outputs`, `delegate`), falls through to normal list semantics.
+**Disambiguation:** A `-`-prefixed bullet inside a step is resolved by priority: (1) context directive (`- OUTPUTS` as exact, case-sensitive list-item text with no trailing content), (2) FOR clause (`FOR` keyword), (3) DELEGATE annotation (`- DELEGATE` as exact, case-sensitive list-item text with no trailing content), (4) transition (`PASS`, `FAIL`, `YES`, `NO`, or standalone `DEFER`), (5) runbook reference (`.runbook.md` suffix), (6) prompt text. A bullet whose text merely contains `OUTPUTS` or `DELEGATE` inside prose, or uses a different case (e.g., `Outputs`, `delegate`), falls through to normal list semantics.
 
 ## Actions
 
