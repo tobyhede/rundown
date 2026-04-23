@@ -432,10 +432,11 @@ describe('runExecutionLoop', () => {
     expect(mockSessionService.popRunbook).toHaveBeenCalled();
   });
 
-  it('emits ERROR_OCCURRED when the state machine stops with retryHookError', async () => {
-    // Seed the actor to report a stopped lifecycle with retryHookError on the
-    // returned snapshot. runExecutionLoop should emit ERROR_OCCURRED with the
-    // hook error's code + message before the terminal RUNBOOK_STOPPED event.
+  it('emits ERROR_OCCURRED when the state machine stops with a RETRY_ERROR lastAction', async () => {
+    // Seed the actor to report a stopped lifecycle with a RETRY_ERROR
+    // lastAction variant on the returned snapshot. runExecutionLoop should
+    // emit ERROR_OCCURRED with the hook error's code + message before the
+    // terminal RUNBOOK_STOPPED event.
     mockManager.load.mockResolvedValue({ id: runbookId, step: '1', status: 'running' });
     (core.executeCommand as any).mockResolvedValue({ success: false, exitCode: 1 });
 
@@ -452,9 +453,12 @@ describe('runExecutionLoop', () => {
         status: 'done',
         value: 'STOPPED',
         context: {
-          lastAction: { type: 'STOP' },
+          lastAction: {
+            type: 'RETRY_ERROR' as const,
+            code: 'RD-901',
+            message: 'hook failed: createDelegation threw',
+          },
           lifecycle: 'stopped',
-          retryHookError: { code: 'RD-901', message: 'hook failed: createDelegation threw' },
         },
       },
     });
@@ -470,7 +474,7 @@ describe('runExecutionLoop', () => {
 
     expect(result).toBe('stopped');
 
-    // ERROR_OCCURRED is emitted with the retryHookError payload fields.
+    // ERROR_OCCURRED is emitted with the RETRY_ERROR lastAction payload fields.
     expect(mockEmitter.emit).toHaveBeenCalledWith(
       'ERROR_OCCURRED',
       expect.objectContaining({

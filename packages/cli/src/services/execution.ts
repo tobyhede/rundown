@@ -212,24 +212,31 @@ const EXECUTION_TERMINAL_POLICY: TransitionOrchestrationPolicy = {
 };
 
 /**
- * Extract the retry-hook error from a persisted XState snapshot, if present.
+ * Extract a RETRY_ERROR diagnostic from a persisted XState snapshot.
  *
- * The retry hook writes `{ code, message }` into `context.retryHookError` when
- * `createDelegation` throws during a parent-level retry. The higher-priority
- * always-entry in the compiler then routes the machine to STOPPED. This helper
- * narrows the opaque snapshot envelope into the error record so the CLI can
- * emit `ERROR_OCCURRED` before the terminal RUNBOOK_STOPPED event.
+ * Reads `context.lastAction` and returns `code`/`message` only when the
+ * variant is `RETRY_ERROR`. Other lastAction variants (including `STOP`)
+ * return undefined — `STOP` is a pure domain action, not a machine-internal
+ * failure signal.
+ *
+ * The retry hook writes a `RetryErrorLastAction` onto `context.lastAction`
+ * when `createDelegation` throws during a parent-level retry (or an
+ * invariant is violated). The priority-0 always-entry in the compiler then
+ * routes the machine to STOPPED. This helper narrows the opaque snapshot
+ * envelope into the error record so the CLI can emit `ERROR_OCCURRED`
+ * before the terminal RUNBOOK_STOPPED event.
  *
  * @param snapshot - Raw persisted XState snapshot (unknown shape)
- * @returns The retry-hook error record, or undefined if not present
+ * @returns Coded diagnostic, or undefined if lastAction is not RETRY_ERROR
  */
-function extractRetryHookError(snapshot: unknown): { code: string; message: string } | undefined {
+function extractRetryError(snapshot: unknown): { code: string; message: string } | undefined {
   if (typeof snapshot !== 'object' || snapshot === null) return undefined;
   const ctx = (snapshot as { context?: unknown }).context;
   if (typeof ctx !== 'object' || ctx === null) return undefined;
-  const err = (ctx as { retryHookError?: unknown }).retryHookError;
-  if (typeof err !== 'object' || err === null) return undefined;
-  const record = err as { code?: unknown; message?: unknown };
+  const lastAction = (ctx as { lastAction?: unknown }).lastAction;
+  if (typeof lastAction !== 'object' || lastAction === null) return undefined;
+  const record = lastAction as { type?: unknown; code?: unknown; message?: unknown };
+  if (record.type !== 'RETRY_ERROR') return undefined;
   if (typeof record.code !== 'string' || typeof record.message !== 'string') return undefined;
   return { code: record.code, message: record.message };
 }
@@ -269,14 +276,15 @@ async function applyResultTransition({
   // emit ERROR_OCCURRED so the orchestrator/CLI observer sees the root cause.
   // This must precede orchestrateTransition (which emits the terminal
   // RUNBOOK_STOPPED event), so consumers can correlate the error with the
-  // stop. The retryHookError is a machine-level failure, not a normal fail
-  // transition — hence the dedicated event.
+  // stop. RETRY_ERROR is a machine-internal failure, not a normal fail
+  // transition — hence the dedicated event. A plain STOP action (authored
+  // STOP transitions, `rd stop`) does NOT emit ERROR_OCCURRED.
   if (ensured.state.lifecycle === 'stopped') {
-    const retryHookError = extractRetryHookError(syncResult.snapshot);
-    if (retryHookError) {
+    const retryError = extractRetryError(syncResult.snapshot);
+    if (retryError) {
       emitter.emit('ERROR_OCCURRED', {
-        message: retryHookError.message,
-        code: retryHookError.code,
+        message: retryError.message,
+        code: retryError.code,
       });
     }
   }

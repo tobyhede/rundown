@@ -8785,7 +8785,12 @@ echo "processing"
 
       const parentAlways = getState(machine, 'step::1').always as any[];
       const continueExit = parentAlways.find((entry) => entry.target === 'step::2');
-      const failTerminal = parentAlways.find((entry) => entry.target === 'STOPPED');
+      // Two STOPPED entries coexist on the parent: the priority-0
+      // RETRY_ERROR router (no actions) and the FAIL-path exit (carries
+      // storeStepOutputs). Target the latter via the `actions` filter.
+      const failTerminal = parentAlways.find(
+        (entry) => entry.target === 'STOPPED' && entry.actions !== undefined,
+      );
 
       // Parent exit transitions carry storeStepOutputs (not storeFrontmatterOutputs):
       expect(continueExit).toBeDefined();
@@ -9807,7 +9812,14 @@ echo "processing"
       const machine = compileRunbookToMachine(steps);
       const parentAlways = getState(machine, 'step::1').always as any[];
 
-      const stoppedEntry = parentAlways.find((entry) => entry.target === 'STOPPED');
+      // Two STOPPED entries coexist on the parent: the priority-0
+      // RETRY_ERROR router (no actions — lastAction is already the
+      // RetryErrorLastAction variant, preserved verbatim) and the
+      // FAIL-path exit entry (assigns `lastAction: { type: 'STOP' }`).
+      // This test targets the latter.
+      const stoppedEntry = parentAlways.find(
+        (entry) => entry.target === 'STOPPED' && entry.actions !== undefined,
+      );
       expect(stoppedEntry).toBeDefined();
 
       const assignPayload = getAssignPayload(stoppedEntry.actions);
@@ -10041,22 +10053,21 @@ echo "processing"
       // Counters incremented on success.
       expect(ctx.parentRetryCount).toBe(1);
       expect(ctx.retryCount).toBe(1);
-      expect(ctx.retryHookError).toBeUndefined();
+      expect((ctx as { retryHookError?: unknown }).retryHookError).toBeUndefined();
 
       actor.stop();
     });
 
     /**
-     * Build a scenario where `retryHookError` is seeded directly into the
-     * actor's context before it is started.
+     * Build a scenario where a `RETRY_ERROR` lastAction variant is seeded
+     * directly into the actor's context before it is started.
      *
      * Triggering the hook error via the natural flow (making
      * `retryDelegation` return `{ status: 'error' }`) requires a step
      * topology that XState's state-ID parser cannot represent (substep ids
      * containing dots) or heavy module-level mocking. The always-entry
-     * routing itself — which is what Task 6 adds — only inspects
-     * `context.retryHookError !== undefined`; seeding that flag exercises
-     * the transition under test directly.
+     * routing itself inspects `context.lastAction?.type === 'RETRY_ERROR'`;
+     * seeding that variant exercises the transition under test directly.
      */
     function buildSeededRetryHookError(): ReturnType<typeof buildRetryScenario> {
       const frameKey = buildFrameKey('1');
@@ -10086,8 +10097,8 @@ echo "processing"
       const baseSnap = tmp.getSnapshot();
       tmp.stop();
 
-      // Seed the actor at the parent aggregation state with retryHookError
-      // already populated. The always-entry (Task 6) should observe it on
+      // Seed the actor at the parent aggregation state with a RETRY_ERROR
+      // lastAction already populated. The always-entry should observe it on
       // start and immediately route to STOPPED.
       const persisted = {
         ...baseSnap,
@@ -10096,7 +10107,7 @@ echo "processing"
           ...baseSnap.context,
           activeFrameKey: frameKey,
           substep: undefined,
-          retryHookError: { code: 'RD-901', message: 'hook failed' },
+          lastAction: { type: 'RETRY_ERROR' as const, code: 'RD-901', message: 'hook failed' },
           parentRetryCount: 0,
           retryCount: 0,
           pendingDelegateFrontier: undefined,
@@ -10108,27 +10119,40 @@ echo "processing"
       return { actor, frameKey };
     }
 
-    it('writes retryHookError (not counters) when createDelegation fails', () => {
-      // End-to-end check that pairs Task 5 (write retryHookError in the retry
-      // branch) with Task 6 (route to STOPPED). We verify the post-routing
-      // observable state: retryHookError is present and counters are
-      // untouched.
+    it('writes RETRY_ERROR lastAction when createDelegation fails (no retryHookError field)', () => {
+      // End-to-end: when the retry hook's createDelegation fails, the machine
+      // arrives at STOPPED with lastAction.type === 'RETRY_ERROR' carrying the
+      // code/message. The retryHookError context field no longer exists.
       const { actor } = buildSeededRetryHookError();
 
-      const ctx = actor.getSnapshot().context as RunbookContext;
-      expect(ctx.retryHookError).toBeDefined();
-      expect(ctx.retryHookError?.code).toMatch(/^RD-\d+/);
+      // Nudge the actor — XState v5 resolves always transitions on event
+      // dispatch. Send a no-op event; the higher-priority always entry
+      // should fire on re-evaluation.
+      actor.send({ type: 'PASS' });
+
+      const snap = actor.getSnapshot();
+      const ctx = snap.context as RunbookContext;
+
+      expect(snap.value).toBe('STOPPED');
+      expect(ctx.lastAction?.type).toBe('RETRY_ERROR');
+      if (ctx.lastAction?.type === 'RETRY_ERROR') {
+        expect(ctx.lastAction.code).toMatch(/^RD-/);
+        expect(typeof ctx.lastAction.message).toBe('string');
+      }
+      // Counters untouched (retry never actually taken).
       expect(ctx.parentRetryCount).toBe(0);
-      expect(ctx.pendingDelegateFrontier).toBeUndefined();
+      expect(ctx.retryCount).toBe(0);
+      // Old context field no longer exists.
+      expect((ctx as { retryHookError?: unknown }).retryHookError).toBeUndefined();
 
       actor.stop();
     });
 
-    it('retryHookError transitions the machine to stopped', () => {
+    it('RETRY_ERROR lastAction transitions the machine to stopped', () => {
       // Higher-priority always entry on the parent state observes
-      // retryHookError and routes to the STOPPED terminal state, which
-      // assigns lifecycle='stopped' in its entry action. Counters must
-      // remain at zero — the retry was never actually taken.
+      // lastAction.type === 'RETRY_ERROR' and routes to the STOPPED terminal
+      // state, which assigns lifecycle='stopped' in its entry action.
+      // Counters must remain at zero — the retry was never actually taken.
       const { actor } = buildSeededRetryHookError();
 
       // Nudge the actor — XState v5 resolves always transitions on event
@@ -10141,28 +10165,30 @@ echo "processing"
 
       expect(snap.value).toBe('STOPPED');
       expect(ctx.lifecycle).toBe('stopped');
-      expect(ctx.retryHookError).toBeDefined();
+      expect(ctx.lastAction?.type).toBe('RETRY_ERROR');
       expect(ctx.parentRetryCount).toBe(0);
       expect(ctx.retryCount).toBe(0);
 
       actor.stop();
     });
 
-    it('writes retryHookError when the retry hook fires without an active frame key', () => {
+    it('writes RETRY_ERROR lastAction when the retry hook fires without an active frame key', () => {
       // Invariant violation: the retry hook's preconditions require
       // context.activeFrameKey (drainResolvedCompletions guarantees an
       // active frame). Previously the hook no-op'd silently on a missing
       // key — masking the failure as a zero-frontier retry that consumed
       // the budget without re-issuing any delegation. Under the hardened
-      // guard the hook now routes through retryHookError (Task 6), so the
-      // machine observes ERROR_OCCURRED + lifecycle: 'stopped' instead.
+      // guard the hook now routes through a RETRY_ERROR lastAction variant,
+      // so the machine observes ERROR_OCCURRED + lifecycle: 'stopped'
+      // instead.
       //
       // We seed a snapshot positioned at the parent aggregation guard with
       // a seeded delegation on '1' but activeFrameKey UNDEFINED, then
       // drive a FAIL that closes aggregation. The retry branch fires and
       // `runRetryHook` returns the error variant, which the always-assign
-      // converts into retryHookError on context. The Task 6 always-entry
-      // then routes to STOPPED without incrementing any counters.
+      // converts into a RetryErrorLastAction on context. The priority-0
+      // always-entry then routes to STOPPED without incrementing any
+      // counters.
       const substepDefer = {
         pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
         fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
@@ -10212,26 +10238,94 @@ echo "processing"
       actor.start();
 
       // FAIL closes ALL aggregation with [fail] → retry branch fires →
-      // runRetryHook returns the missing-frame error → retryHookError is
-      // written to context.
+      // runRetryHook returns the missing-frame error → RETRY_ERROR variant
+      // is written to lastAction. Note: XState resolves eventless
+      // transitions eagerly, so after FAIL the machine may already be at
+      // STOPPED. We assert the invariant end-state below.
       actor.send({ type: 'FAIL' });
 
-      const mid = actor.getSnapshot();
-      const midCtx = mid.context;
+      // Nudge the actor — XState v5 resolves always-transitions on event
+      // dispatch. The higher-priority RETRY_ERROR always-entry routes the
+      // machine to STOPPED on re-evaluation.
+      actor.send({ type: 'PASS' });
 
-      // Error surfaced on context with the invariant code, and counters
+      const snap = actor.getSnapshot();
+      const ctx = snap.context;
+
+      // Error surfaced on lastAction with the invariant code, and counters
       // remain at zero (spec §3.1 Failure handling invariant: no partial
       // state mutations).
-      expect(midCtx.retryHookError).toBeDefined();
-      expect(midCtx.retryHookError?.code).toBe('RD-INVARIANT-RETRY-NO-FRAME');
-      expect(midCtx.retryHookError?.message).toMatch(/active frame/i);
-      expect(midCtx.parentRetryCount).toBe(0);
-      expect(midCtx.retryCount).toBe(0);
-      expect(midCtx.pendingDelegateFrontier).toBeUndefined();
+      expect(snap.value).toBe('STOPPED');
+      expect(ctx.lifecycle).toBe('stopped');
+      expect(ctx.lastAction?.type).toBe('RETRY_ERROR');
+      if (ctx.lastAction?.type === 'RETRY_ERROR') {
+        expect(ctx.lastAction.code).toBe('RD-INVARIANT-RETRY-NO-FRAME');
+        expect(ctx.lastAction.message).toMatch(/active frame/i);
+      }
+      expect(ctx.parentRetryCount).toBe(0);
+      expect(ctx.retryCount).toBe(0);
+      expect(ctx.pendingDelegateFrontier).toBeUndefined();
 
-      // Nudge the actor — XState v5 resolves always-transitions on event
-      // dispatch. The higher-priority retryHookError always-entry (Task 6)
-      // routes the machine to STOPPED on re-evaluation.
+      actor.stop();
+    });
+
+    it('iteration-retry hook failure routes to STOPPED via RETRY_ERROR variant', () => {
+      // Structural sibling of the parent-aggregation RETRY_ERROR test:
+      // confirms the iteration-retry `assign` callback also writes the
+      // RETRY_ERROR variant on hook failure, and the priority-0 always-entry
+      // on the parent state routes to STOPPED. Seeds the lastAction variant
+      // directly to avoid the FOR-loop mechanics of a natural-flow trigger —
+      // the routing is independent of which assign callback set the variant.
+      const frameKey = buildFrameKey('1');
+      const substepDefer = {
+        pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+        fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
+      };
+      const parentTransitions = {
+        pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+        fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+      };
+
+      const steps = inferSteps([
+        {
+          name: '1',
+          description: 'Parent',
+          transitions: parentTransitions,
+          aggregation: { strategy: 'ALL' },
+          substeps: [{ id: '1', description: 'Sub 1', transitions: substepDefer }],
+        },
+        { name: '2', description: 'Next', transitions: DEFAULT_TRANSITIONS },
+      ]);
+
+      const machine = compileRunbookToMachine(steps);
+      const tmp = createActor(machine);
+      tmp.start();
+      const baseSnap = tmp.getSnapshot();
+      tmp.stop();
+
+      // Seed context as-if the iteration-retry assign had just executed
+      // with a hook error. iterationRetryCount stays at 0 (retry never
+      // actually taken). retryHookError field does not exist.
+      const persisted = {
+        ...baseSnap,
+        value: `step::1`,
+        context: {
+          ...baseSnap.context,
+          activeFrameKey: frameKey,
+          substep: undefined,
+          lastAction: {
+            type: 'RETRY_ERROR' as const,
+            code: 'RD-902',
+            message: 'iteration retry hook failed',
+          },
+          iterationRetryCount: 0,
+          retryCount: 0,
+          pendingDelegateFrontier: undefined,
+        },
+      };
+
+      const actor = createActor(machine, { snapshot: persisted as any });
+      actor.start();
       actor.send({ type: 'PASS' });
 
       const snap = actor.getSnapshot();
@@ -10239,8 +10333,12 @@ echo "processing"
 
       expect(snap.value).toBe('STOPPED');
       expect(ctx.lifecycle).toBe('stopped');
-      expect(ctx.retryHookError).toBeDefined();
-      expect(ctx.parentRetryCount).toBe(0);
+      expect(ctx.lastAction?.type).toBe('RETRY_ERROR');
+      if (ctx.lastAction?.type === 'RETRY_ERROR') {
+        expect(ctx.lastAction.code).toBe('RD-902');
+        expect(ctx.lastAction.message).toMatch(/iteration retry hook failed/);
+      }
+      expect(ctx.iterationRetryCount).toBe(0);
       expect(ctx.retryCount).toBe(0);
 
       actor.stop();
@@ -10510,7 +10608,7 @@ echo "processing"
       // Iteration counters incremented on success.
       expect(ctx.iterationRetryCount).toBe(1);
       expect(ctx.retryCount).toBe(1);
-      expect(ctx.retryHookError).toBeUndefined();
+      expect((ctx as { retryHookError?: unknown }).retryHookError).toBeUndefined();
 
       // Iteration 2's substep state must be byte-for-byte unchanged: same
       // delegation object with the original tokenHash and createdAt.

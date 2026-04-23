@@ -9,7 +9,6 @@ import type {
   ResolvedStepHavingSubsteps,
   Lifecycle,
   SubstepState,
-  RunbookState,
 } from './types.js';
 import { isResolvedVariableForContext } from './types.js';
 import type { StepId } from './step-id.js';
@@ -222,15 +221,6 @@ export interface RunbookContext {
    * re-entry, then cleared via the PENDING_FRONTIER_CONSUMED event.
    */
   readonly pendingDelegateFrontier?: ReadonlyArray<DelegateFrontierEntry>;
-  /**
-   * Populated when the retry hook cannot complete (createDelegation failed,
-   * child runbook unresolvable, etc.). When present, a higher-priority always
-   * entry transitions the machine to stopped and the CLI emits ERROR_OCCURRED.
-   */
-  readonly retryHookError?: {
-    readonly code: string;
-    readonly message: string;
-  };
 }
 
 /**
@@ -957,16 +947,30 @@ function buildParentStateConfig(
       {
         guard: ({ context, event }: { context: RunbookContext; event: RunbookEvent }) =>
           branchGuard({ context, event }) && context.parentRetryCount < transition.retry,
-        target: firstSubstepStateId,
+        // Target the parent state itself (self re-enter). On success a
+        // sibling priority-0 always entry observes lastAction.type === 'RETRY'
+        // (aggregated) and routes to firstSubstepStateId; on error the
+        // priority-0 RETRY_ERROR always entry routes to STOPPED. Routing
+        // via always-entries ensures the error-path never enters the substep
+        // state (whose PASS/FAIL transitions would overwrite the
+        // RETRY_ERROR lastAction before the priority-0 guard could fire).
+        target: formatStateId(stepName),
         actions: runbookSetup.assign(({ context }: { context: RunbookContext }) => {
           // Run the retry hook: iterate every delegated substep in the active
           // frame, re-issue their delegations, collect new tokens into a
           // frontier. Uniform re-delegation (docs/SPEC.md §4.2, §5). Never throws.
           const hook = runRetryHook(context, parentStep, steps);
           if (hook.status === 'error') {
-            // Rollback: preserve counters, record error for Task 6 to route to stopped.
+            // RETRY_ERROR variant: structurally distinct LastAction type. The
+            // priority-0 always entry routes to STOPPED on this discriminant
+            // — no counter increments, no frontier population, no substep
+            // reset.
             return {
-              retryHookError: { code: hook.code, message: hook.message },
+              lastAction: {
+                type: 'RETRY_ERROR' as const,
+                code: hook.code,
+                message: hook.message,
+              },
               substepStates: hook.substepStates,
             };
           }
@@ -1057,7 +1061,12 @@ function buildParentStateConfig(
               selected.result === kind && context.iterationRetryCount < selected.transition.retry
             );
           },
-          target: firstSubstepStateId,
+          // Target parent self so post-assign always entries route based
+          // on the resulting lastAction variant (RETRY → firstSubstep,
+          // RETRY_ERROR → STOPPED). Targeting the substep directly would
+          // let its PASS/FAIL transitions overwrite lastAction before the
+          // priority-0 RETRY_ERROR guard could fire.
+          target: formatStateId(stepName),
           actions: runbookSetup.assign(({ context }: { context: RunbookContext }) => {
             // Run the retry hook: iterate every delegated substep in the
             // current iteration frame, re-issue their delegations, collect new
@@ -1066,10 +1075,17 @@ function buildParentStateConfig(
             // iteration — other iterations' substep states remain untouched.
             const hook = runRetryHook(context, parentStep, steps);
             if (hook.status === 'error') {
-              // Rollback: preserve counters, record error for Task 6's always
-              // entry to route to STOPPED on the next evaluation.
+              // RETRY_ERROR variant: structurally distinct LastAction type.
+              // The sibling priority-0 always entry on the parent state
+              // routes to STOPPED on this discriminant. Counters are not
+              // incremented (retry was never actually taken); no frontier
+              // is populated; no substep reset.
               return {
-                retryHookError: { code: hook.code, message: hook.message },
+                lastAction: {
+                  type: 'RETRY_ERROR' as const,
+                  code: hook.code,
+                  message: hook.message,
+                },
                 substepStates: hook.substepStates,
               };
             }
@@ -1601,17 +1617,38 @@ function buildParentStateConfig(
     }
   }
 
-  // Highest-priority always entry: if the retry hook wrote retryHookError into
-  // context, short-circuit to STOPPED. Must precede the retry entries so a
-  // re-evaluation of the aggregation branch cannot re-run the broken hook.
-  // Counters are preserved (the retry was never actually taken); the
-  // STOPPED.entry action assigns lifecycle='stopped' on arrival.
+  // Priority-0 (terminal) always entries, in reverse-insert order so that
+  // after two `unshift` calls the RETRY_ERROR guard lands at position 0 and
+  // the RETRY (aggregated) router at position 1 — both ahead of the retry
+  // and exhaustion branches below.
+  //
+  // (1) RETRY (aggregated, success): the retry-hook `assign` completed
+  //     without error. Routes to firstSubstepStateId to re-enter the
+  //     substep chain with fresh delegation tokens. Must precede the retry
+  //     branches so a re-evaluation of the aggregation path cannot re-run
+  //     the hook that just succeeded. Guarded on the aggregated marker to
+  //     avoid matching non-retry RETRY actions (none exist today, but the
+  //     marker narrows intent).
+  if (firstSubstep !== undefined) {
+    always.unshift({
+      guard: ({ context }: { context: RunbookContext }) =>
+        context.lastAction?.type === 'RETRY' && context.lastAction.aggregated === true,
+      target: firstSubstepStateId,
+    });
+  }
+
+  // (2) RETRY_ERROR: fires when a retry-transition assign wrote a
+  // RetryErrorLastAction onto lastAction (parent or iteration retry-hook
+  // failure). The type discriminant is structurally unique — no other code
+  // path writes this variant. The payload is already on lastAction; no
+  // action needed, which preserves code/message verbatim into STOPPED.
+  // Must precede every other always entry so a re-evaluation of the
+  // aggregation branch cannot re-run the broken hook. Counters are
+  // preserved (the retry was never actually taken); the STOPPED.entry
+  // action assigns lifecycle='stopped' on arrival.
   always.unshift({
-    guard: ({ context }: { context: RunbookContext }) => context.retryHookError !== undefined,
+    guard: ({ context }: { context: RunbookContext }) => context.lastAction?.type === 'RETRY_ERROR',
     target: 'STOPPED',
-    actions: runbookSetup.assign({
-      lastAction: { type: 'STOP' as const },
-    }),
   });
 
   return {
@@ -2633,7 +2670,6 @@ export function compileRunbookToMachine(
       substepStates: undefined,
       activeFrameKey: undefined,
       pendingDelegateFrontier: undefined,
-      retryHookError: undefined,
     },
     states: {
       ...states,

@@ -324,6 +324,25 @@ type LastActionBase = {
 };
 
 /**
+ * LastAction variant written by the retry hook (parent aggregation or
+ * iteration) when it fails during the retry transition. Carries a structured
+ * diagnostic for the CLI orchestrator to surface via ERROR_OCCURRED. Routes
+ * to STOPPED via a priority-0 guarded `always` entry on the parent state.
+ *
+ * Distinct from `STOP`: STOP is a pure domain action (authored STOP
+ * transitions, `rd stop`). `RETRY_ERROR` is a machine-internal-failure
+ * signal — the retry could not complete because `createDelegation` threw or
+ * an invariant (e.g. missing active frame) was violated.
+ */
+export interface RetryErrorLastAction extends LastActionBase {
+  readonly type: 'RETRY_ERROR';
+  /** Structured error code (e.g. `RD-901`, `RD-INVARIANT-RETRY-NO-FRAME`). */
+  readonly code: string;
+  /** Human-readable message describing the hook failure. */
+  readonly message: string;
+}
+
+/**
  * Discriminated union representing the last transition action taken by the state machine.
  */
 export type LastAction =
@@ -343,7 +362,8 @@ export type LastAction =
   | (LastActionBase & { readonly type: 'STOP' })
   | (LastActionBase & { readonly type: 'RETRY' })
   | (LastActionBase & { readonly type: 'NEXT' })
-  | (LastActionBase & { readonly type: 'BREAK' });
+  | (LastActionBase & { readonly type: 'BREAK' })
+  | RetryErrorLastAction;
 
 /**
  * Runtime state of a substep within a step

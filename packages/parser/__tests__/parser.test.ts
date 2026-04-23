@@ -3070,9 +3070,7 @@ Do work.
 
 Some prompt text.
 `;
-    expect(() => parseRunbookDocument(md)).toThrow(
-      /step "1".*DELEGATE.*no.*(substep|runbook)/i,
-    );
+    expect(() => parseRunbookDocument(md)).toThrow(/step "1".*DELEGATE.*no.*(substep|runbook)/i);
   });
 
   it('throws RunbookSyntaxError when DELEGATE appears on a command step', () => {
@@ -3083,9 +3081,7 @@ Some prompt text.
 echo hi
 \`\`\`
 `;
-    expect(() => parseRunbookDocument(md)).toThrow(
-      /step "1".*DELEGATE.*no.*(substep|runbook)/i,
-    );
+    expect(() => parseRunbookDocument(md)).toThrow(/step "1".*DELEGATE.*no.*(substep|runbook)/i);
   });
 
   it('throws RunbookSyntaxError when DELEGATE substep has no runbook target', () => {
@@ -3095,9 +3091,7 @@ echo hi
 
 Prompt for this substep.
 `;
-    expect(() => parseRunbookDocument(md)).toThrow(
-      /substep "1\.1".*DELEGATE.*runbook/i,
-    );
+    expect(() => parseRunbookDocument(md)).toThrow(/substep "1\.1".*DELEGATE.*runbook/i);
   });
 
   it('throws RunbookSyntaxError when DELEGATE substep has prompt-only body', () => {
@@ -3109,9 +3103,7 @@ Prompt for this substep.
 echo not-a-runbook
 \`\`\`
 `;
-    expect(() => parseRunbookDocument(md)).toThrow(
-      /substep "1\.1".*DELEGATE.*runbook/i,
-    );
+    expect(() => parseRunbookDocument(md)).toThrow(/substep "1\.1".*DELEGATE.*runbook/i);
   });
 });
 
