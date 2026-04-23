@@ -769,8 +769,10 @@ function handleListItem(node: ListItem, ctx: ActiveStepContext): typeof SKIP | u
     return;
   }
 
-  // Reject DELEGATE with arguments (syntax error)
-  if (trimmedText.startsWith('DELEGATE ') || trimmedText.startsWith('DELEGATE\t')) {
+  // Reject DELEGATE with arguments (syntax error). Uses /^DELEGATE\s/ so any
+  // Unicode whitespace after the keyword — not just space / tab — triggers
+  // the error message.
+  if (/^DELEGATE\s/.test(trimmedText)) {
     throw new RunbookSyntaxError(
       `DELEGATE takes no arguments${formatLineNum(node)}; use bare "- DELEGATE" to mark a step for delegation. Found: "${trimmedText}"`,
     );
