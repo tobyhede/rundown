@@ -666,6 +666,15 @@ export interface RunbookState {
   readonly substep?: string;
   readonly stepName: string; // Human-readable description
   readonly retryCount: number;
+  /**
+   * Accumulated step OUTPUTS only (branded `StoredOutputs`). This field does
+   * NOT contain template variable inputs — those live on `templateVars` (set
+   * separately by callers). To obtain the effective template space (inputs
+   * overlaid by outputs), merge with `templateVars` via `mergeEffectiveVars`
+   * (see `packages/core/src/runbook/effective-vars.ts`). Keeping the two
+   * sources distinct preserves the brand contract and lets callers see which
+   * variables were declared up-front versus produced during execution.
+   */
   readonly variables: StoredOutputs;
   readonly steps: readonly StepState[];
 

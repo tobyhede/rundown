@@ -329,7 +329,22 @@ const ForStackEntrySchema = z.object({
 });
 
 /**
- * Runbook State Schema - Runtime Validation for Persisted RunbookState
+ * Runbook State Schema - Runtime Validation for Persisted RunbookState.
+ *
+ * Produces an UNBRANDED shape: `variables` and `templateVars` come back as
+ * plain `Record<string, …>` rather than the `StoredOutputs` /
+ * `InitialTemplateVars` brands required by `RunbookState`. This schema is
+ * only safe for callers that do not need brand identity (e.g. shape checks
+ * in tests, generic validation surfaces).
+ *
+ * Load-path callers that hand the parsed value to `RunbookStateManager`,
+ * `mergeEffectiveVars`, or any other code typed against the brands MUST
+ * use {@link makeRunbookStateSchema} instead — it applies
+ * `brandInitialTemplateVars` and `brandStoredOutputs` at the parse seam so
+ * the resulting object satisfies `ValidatedRunbookState`.
+ *
+ * @see makeRunbookStateSchema for the branded variant.
+ * @see ValidatedRunbookState for the post-parse brand contract.
  */
 export const RunbookStateSchema = z
   .object({
