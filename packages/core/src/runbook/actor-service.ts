@@ -172,7 +172,7 @@ export class RunbookActorService {
    * Creates a short-lived actor from the persisted snapshot solely to read
    * `context`, then stops it. No events are sent and no persistence occurs.
    * Used by observers (e.g. the CLI execution loop) that need machine-level
-   * context fields — such as `retryHookError` — without advancing the machine.
+   * context fields — such as `lastAction` — without advancing the machine.
    *
    * @param id - Runbook run ID
    * @param steps - Resolved steps for actor rebuild

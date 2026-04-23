@@ -50,9 +50,12 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
     "step::1": {
       "always": [
         {
-          "actions": "[fn]",
           "guard": "[fn]",
           "target": "STOPPED",
+        },
+        {
+          "guard": "[fn]",
+          "target": "step::1::1",
         },
         {
           "actions": "[fn]",
@@ -301,9 +304,12 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
     "step::1": {
       "always": [
         {
-          "actions": "[fn]",
           "guard": "[fn]",
           "target": "STOPPED",
+        },
+        {
+          "guard": "[fn]",
+          "target": "step::1::1",
         },
         {
           "actions": "[fn]",
@@ -409,9 +415,12 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
     "step::2": {
       "always": [
         {
-          "actions": "[fn]",
           "guard": "[fn]",
           "target": "STOPPED",
+        },
+        {
+          "guard": "[fn]",
+          "target": "step::2::1",
         },
         {
           "actions": "[fn]",
@@ -778,9 +787,12 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
     "step::1": {
       "always": [
         {
-          "actions": "[fn]",
           "guard": "[fn]",
           "target": "STOPPED",
+        },
+        {
+          "guard": "[fn]",
+          "target": "step::1::1",
         },
         {
           "actions": "[fn]",

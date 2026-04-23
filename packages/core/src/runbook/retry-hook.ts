@@ -11,7 +11,13 @@
  */
 
 import type { DelegateFrontierEntry } from '../events/types.js';
-import type { ResolvedStep, ResolvedStepHavingSubsteps, RunbookState, SubstepState, TemplateVarValue } from './types.js';
+import type {
+  ResolvedStep,
+  ResolvedStepHavingSubsteps,
+  RunbookState,
+  SubstepState,
+  TemplateVarValue,
+} from './types.js';
 import type { RunbookContext } from './compiler.js';
 import type { OutputVars } from './output-evaluator.js';
 import { retryDelegation } from './delegation-service.js';
@@ -33,9 +39,7 @@ import { logger } from '../logger.js';
  * @param vars - Output-evaluator frame with `JsonValue` entries
  * @returns Map restricted to `TemplateVarValue` — unsafe values dropped
  */
-export function asTemplateVars(
-  vars: OutputVars,
-): Readonly<Record<string, TemplateVarValue>> {
+export function asTemplateVars(vars: OutputVars): Readonly<Record<string, TemplateVarValue>> {
   const result: Record<string, TemplateVarValue> = {};
   for (const [key, value] of Object.entries(vars)) {
     if (value === null || typeof value === 'boolean') {
@@ -136,7 +140,7 @@ export function runRetryHook(
     // firing"). Silent success there would mimic the original
     // DELEGATE + RETRY bug — the retry budget would be consumed without
     // any delegation actually being re-issued. Route through the
-    // retryHookError path (Task 6) so the failure surfaces as
+    // RETRY_ERROR lastAction variant so the failure surfaces as
     // ERROR_OCCURRED + lifecycle: 'stopped'.
     const hasDelegations = substepStates.some((ss) => ss.delegation !== undefined);
     if (hasDelegations) {
@@ -167,7 +171,7 @@ export function runRetryHook(
   > = {
     step: parentStep.name,
     substepStates,
-    templateVars: asTemplateVars(context.templateVars ?? {}),
+    templateVars: asTemplateVars(context.templateVars),
     forStack: context.forStack,
     activeFrameKey,
     variables: context.variables,
