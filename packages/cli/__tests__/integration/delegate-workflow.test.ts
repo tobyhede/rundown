@@ -1105,20 +1105,23 @@ describe('DELEGATE re-entry and retry', () => {
     await writeFile(join(workspace.cwd, 'runbooks', 'child-fail.runbook.md'), failChild);
     await writeFile(join(workspace.runbooksDir(), 'child-fail.runbook.md'), failChild);
 
-    // Step 1: DELEGATE annotated, FAIL ANY RETRY 1 CONTINUE.
-    // Substep 1.1: runbook reference (delegation, auto-issued).
+    // Step 1: Mixed fan-out with per-substep DELEGATE (spec §4.3 Form 2).
+    // Substep 1.1: DELEGATE + runbook reference (delegation, auto-issued).
     // Substep 1.2: command substep (no runbook, no delegation).
+    // Step-level `- DELEGATE` would be a structural error here: spec §4.3
+    // requires every DELEGATE substep to resolve to a runbook target, so a
+    // step-level annotation would fail the parser's guard.
     const parentContent = [
       '# Parent',
       '',
       '## 1. Mixed fan-out',
       '',
-      '- DELEGATE',
       '- PASS ALL CONTINUE',
       '- FAIL ANY RETRY 1 CONTINUE',
       '',
       '### 1.1 Delegate task',
       '',
+      '- DELEGATE',
       '- child-fail.runbook.md',
       '',
       '### 1.2 Command task',
