@@ -1,5 +1,6 @@
 import { parseStepIdFromString, resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { Errors } from '../errors/factory.js';
+import { RundownError } from '../errors/rundown-error.js';
 import { buildContextSnapshot } from './delegation-context.js';
 import { generateDelegationToken, hashDelegationToken } from './delegation-token.js';
 import { findSubstepState, type FrameKey } from './targeting.js';
@@ -249,4 +250,154 @@ export function abortDelegation(options: AbortDelegationOptions): AbortDelegatio
   );
 
   return { status: 'cancelled', updatedSubstepStates };
+}
+
+/**
+ * Options for retrying a delegation.
+ */
+export interface RetryDelegationOptions {
+  /** Current runbook state. */
+  readonly state: RunbookState;
+  /** Substep ID whose delegation will be retried. */
+  readonly substepId: string;
+  /** Frame key scoping the lookup to a specific FOR iteration. */
+  readonly frameKey: FrameKey;
+  /** Variables that override inherited extraVars; unspecified keys inherit verbatim. */
+  readonly overrides?: Readonly<Record<string, TemplateVarValue>>;
+}
+
+/** Substep had no delegation to retry. */
+interface RetryDelegationNotFoundResult {
+  readonly status: 'not_found';
+}
+
+/** State's current step is not the step that owns the delegation. */
+interface RetryDelegationNotCurrentResult {
+  readonly status: 'not_current';
+  /** Step that owns the delegation. */
+  readonly ownerStep: string;
+  /** State's current step. */
+  readonly currentStep: string;
+}
+
+/** createDelegation raised a RundownError (path unresolvable, substep removed, etc.). */
+interface RetryDelegationErrorResult {
+  readonly status: 'error';
+  readonly error: RundownError;
+}
+
+/** Retry succeeded: old delegation cancelled, new one issued. */
+interface RetryDelegationRetriedResult {
+  readonly status: 'retried';
+  readonly token: string;
+  readonly tokenHash: string;
+  readonly delegation: StepDelegation;
+  readonly updatedSubstepStates: readonly SubstepState[];
+}
+
+/**
+ * Possible outcomes of a retry attempt.
+ */
+export type RetryDelegationResult =
+  | RetryDelegationRetriedResult
+  | RetryDelegationNotFoundResult
+  | RetryDelegationNotCurrentResult
+  | RetryDelegationErrorResult;
+
+/**
+ * Atomically cancel an existing delegation (force-style) and mint a replacement
+ * using the same `childRunbookPath` and inherited (or overridden) `extraVars`.
+ *
+ * Pure function, Result-based, **never throws**. The caller persists the
+ * returned `updatedSubstepStates` via `manager.update`. Preconditions are
+ * validated up-front; if any fails the function returns a discriminated error
+ * variant and state is unchanged.
+ *
+ * This diverges from `abortDelegation`'s mixed throw/return shape deliberately:
+ * `retryDelegation` runs inside XState `assign` callbacks where throws conflict
+ * with actor atomicity. The `error` variant wraps `createDelegation`'s
+ * `RundownError` so callers can distinguish validation failures (missing
+ * child runbook, substep renamed, racing delegation) from normal flow.
+ *
+ * @param options - Retry options
+ * @param steps - Parsed steps from the active runbook
+ * @returns Discriminated union: `retried` | `not_found` | `not_current` | `error`
+ */
+export function retryDelegation(
+  options: RetryDelegationOptions,
+  steps: readonly ResolvedStep[],
+): RetryDelegationResult {
+  const { state, substepId, frameKey, overrides } = options;
+
+  // 1. Locate the existing delegation.
+  const existingStates = state.substepStates ?? [];
+  const targetSubstep = findSubstepState(existingStates, substepId, frameKey);
+  const existingDelegation = targetSubstep?.delegation;
+  if (!existingDelegation) {
+    return { status: 'not_found' };
+  }
+
+  // 2. Verify step is at the execution frontier.
+  const ownerStep = existingDelegation.contextSnapshot.step ?? state.step;
+  if (state.step !== ownerStep) {
+    return { status: 'not_current', ownerStep, currentStep: state.step };
+  }
+
+  // 3. Compose inherited + override extraVars.
+  const mergedExtraVars: Record<string, TemplateVarValue> | undefined =
+    existingDelegation.extraVars || overrides
+      ? { ...(existingDelegation.extraVars ?? {}), ...(overrides ?? {}) }
+      : undefined;
+
+  // 4. Force-cancel the existing delegation. Idempotent on already-cancelled.
+  const abortResult = abortDelegation({
+    parentState: state,
+    substepId,
+    force: true,
+    frameKey,
+  });
+  const stateAfterAbort: RunbookState =
+    abortResult.status === 'cancelled'
+      ? { ...state, substepStates: abortResult.updatedSubstepStates }
+      : state;
+
+  // 5. Mint a fresh delegation. createDelegation can throw RundownError; catch
+  //    and wrap as the `error` variant so the state-machine caller can discriminate.
+  //    Bare-step delegations are stored with substepState.id === step.name
+  //    (see createDelegation step 5: `parsed.substep ?? parsed.step`), so the
+  //    reconstructed stepId must NOT append the substep segment in that case.
+  //    Disambiguate by checking whether the owning step has substeps.
+  const ownerStepDefinition = steps.find((s) => s.name === state.step);
+  const ownerHasSubsteps =
+    ownerStepDefinition !== undefined && resolvedStepHasSubsteps(ownerStepDefinition);
+  const stepIdForCreate = ownerHasSubsteps
+    ? `${state.step}.${substepId}`
+    : state.step;
+  let createResult: DelegateResult;
+  try {
+    createResult = createDelegation(
+      {
+        state: stateAfterAbort,
+        stepId: stepIdForCreate,
+        childRunbookPath: existingDelegation.childRunbookPath,
+        ...(mergedExtraVars ? { extraVars: mergedExtraVars } : {}),
+        ancestors: [],
+        frameKey,
+      },
+      steps,
+    );
+  } catch (err) {
+    if (err instanceof RundownError) {
+      return { status: 'error', error: err };
+    }
+    throw err;
+  }
+
+  return {
+    status: 'retried',
+    token: createResult.token,
+    tokenHash: createResult.tokenHash,
+    delegation: createResult.delegation,
+    updatedSubstepStates: createResult.updatedSubstepStates,
+  };
 }

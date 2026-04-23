@@ -47,10 +47,13 @@ export type { RunbookEvent } from './compiler.js';
 export {
   createDelegation,
   abortDelegation,
+  retryDelegation,
   type DelegateOptions,
   type DelegateResult,
   type AbortDelegationOptions,
   type AbortDelegationResult,
+  type RetryDelegationOptions,
+  type RetryDelegationResult,
 } from './delegation-service.js';
 export {
   generateDelegationToken,
