@@ -4,11 +4,26 @@ import {
   reconstituteContextVars,
   MAX_ANCESTOR_DEPTH,
 } from '../../src/runbook/delegation-context.js';
+import type { EffectiveVars } from '../../src/runbook/effective-vars.js';
 import type {
   AncestorSnapshot,
   ContextSnapshot,
   RunbookState,
+  TemplateVarValue,
 } from '../../src/runbook/types.js';
+
+/**
+ * Test-only producer of {@link EffectiveVars} for fixture construction.
+ *
+ * Production code MUST go through `mergeEffectiveVars` (the sole sanctioned
+ * producer of the brand). This helper exists so tests that already know the
+ * effective view — e.g. tests of `reconstituteContextVars` whose subject is
+ * the snapshot, not the merge — can build `ContextSnapshot` literals without
+ * fighting the brand. The function-name is the acknowledgement.
+ */
+function effectiveVarsForTest(vars: Readonly<Record<string, TemplateVarValue>>): EffectiveVars {
+  return vars as EffectiveVars;
+}
 
 /** Helper: create minimal RunbookState for buildContextSnapshot tests. */
 function makeMinimalState(overrides: Partial<RunbookState> = {}): RunbookState {
@@ -30,7 +45,7 @@ function makeMinimalState(overrides: Partial<RunbookState> = {}): RunbookState {
 describe('reconstituteContextVars', () => {
   it('produces parent vars from snapshot.vars', () => {
     const snapshot: ContextSnapshot = {
-      vars: { env: 'staging', version: '1.0' },
+      vars: effectiveVarsForTest({ env: 'staging', version: '1.0' }),
       ancestors: [],
     };
 
@@ -44,11 +59,11 @@ describe('reconstituteContextVars', () => {
 
   it('excludes context.* keys from source vars', () => {
     const snapshot: ContextSnapshot = {
-      vars: {
+      vars: effectiveVarsForTest({
         env: 'staging',
         'context.parent.vars.old': 'should-be-excluded',
         'context.ancestors.0.vars.old': 'should-be-excluded',
-      },
+      }),
       ancestors: [],
     };
 
@@ -68,7 +83,7 @@ describe('reconstituteContextVars', () => {
       vars: { region: 'us-east' },
     };
     const snapshot: ContextSnapshot = {
-      vars: { env: 'staging' },
+      vars: effectiveVarsForTest({ env: 'staging' }),
       ancestors: [grandparent],
     };
 
@@ -101,7 +116,7 @@ describe('reconstituteContextVars', () => {
       vars: { ggp_var: 'ggp_value' },
     };
     const snapshot: ContextSnapshot = {
-      vars: { parent_var: 'parent_value' },
+      vars: effectiveVarsForTest({ parent_var: 'parent_value' }),
       ancestors: [grandparent, greatGrandparent],
     };
 
@@ -128,7 +143,7 @@ describe('reconstituteContextVars', () => {
 
   it('handles empty ancestors array', () => {
     const snapshot: ContextSnapshot = {
-      vars: { env: 'prod' },
+      vars: effectiveVarsForTest({ env: 'prod' }),
       ancestors: [],
     };
 
@@ -145,7 +160,7 @@ describe('reconstituteContextVars', () => {
 
   it('emits parent structural fields when present in snapshot', () => {
     const snapshot: ContextSnapshot = {
-      vars: { env: 'staging' },
+      vars: effectiveVarsForTest({ env: 'staging' }),
       ancestors: [],
       step: '2',
       substep: '1',
@@ -167,7 +182,7 @@ describe('reconstituteContextVars', () => {
 
   it('omits parent structural fields when absent (backward compat)', () => {
     const snapshot: ContextSnapshot = {
-      vars: { env: 'staging' },
+      vars: effectiveVarsForTest({ env: 'staging' }),
       ancestors: [],
     };
 
@@ -190,7 +205,7 @@ describe('reconstituteContextVars', () => {
       index: 2,
     };
     const snapshot: ContextSnapshot = {
-      vars: {},
+      vars: effectiveVarsForTest({}),
       ancestors: [ancestor],
     };
 
@@ -214,7 +229,7 @@ describe('reconstituteContextVars', () => {
       vars: {},
     };
     const snapshot: ContextSnapshot = {
-      vars: {},
+      vars: effectiveVarsForTest({}),
       ancestors: [ancestor],
     };
 
@@ -239,7 +254,7 @@ describe('reconstituteContextVars', () => {
     }
 
     const snapshot: ContextSnapshot = {
-      vars: {},
+      vars: effectiveVarsForTest({}),
       ancestors,
     };
 
@@ -261,7 +276,7 @@ describe('reconstituteContextVars', () => {
     }
 
     const snapshot: ContextSnapshot = {
-      vars: {},
+      vars: effectiveVarsForTest({}),
       ancestors,
     };
 
@@ -283,7 +298,7 @@ describe('reconstituteContextVars', () => {
     }
 
     const snapshot: ContextSnapshot = {
-      vars: { level: 'parent' },
+      vars: effectiveVarsForTest({ level: 'parent' }),
       ancestors,
     };
 
@@ -305,11 +320,11 @@ describe('reconstituteContextVars', () => {
 
   it('handles vars with special characters in keys', () => {
     const snapshot: ContextSnapshot = {
-      vars: {
+      vars: effectiveVarsForTest({
         'key-with-dashes': 'value1',
         'key.with.dots': 'value2',
         key_with_underscores: 'value3',
-      },
+      }),
       ancestors: [],
     };
 
@@ -322,7 +337,7 @@ describe('reconstituteContextVars', () => {
 
   it('handles vars with empty string values', () => {
     const snapshot: ContextSnapshot = {
-      vars: { emptyVar: '', normalVar: 'value' },
+      vars: effectiveVarsForTest({ emptyVar: '', normalVar: 'value' }),
       ancestors: [],
     };
 
@@ -341,7 +356,7 @@ describe('reconstituteContextVars', () => {
       vars: {},
     };
     const snapshot: ContextSnapshot = {
-      vars: {},
+      vars: effectiveVarsForTest({}),
       ancestors: [ancestor],
     };
 
@@ -355,7 +370,7 @@ describe('reconstituteContextVars', () => {
 
   it('handles snapshot with only structural fields (no vars)', () => {
     const snapshot: ContextSnapshot = {
-      vars: {},
+      vars: effectiveVarsForTest({}),
       ancestors: [],
       step: '3',
       substep: '2',
@@ -375,7 +390,7 @@ describe('reconstituteContextVars', () => {
 
   it('does not mutate input snapshot', () => {
     const snapshot: ContextSnapshot = {
-      vars: { env: 'staging' },
+      vars: effectiveVarsForTest({ env: 'staging' }),
       ancestors: [
         {
           runId: 'anc',
@@ -399,7 +414,7 @@ describe('reconstituteContextVars', () => {
 
   it('handles numeric string values in vars', () => {
     const snapshot: ContextSnapshot = {
-      vars: { port: '8080', count: '42' },
+      vars: effectiveVarsForTest({ port: '8080', count: '42' }),
       ancestors: [],
     };
 
@@ -411,7 +426,7 @@ describe('reconstituteContextVars', () => {
 
   it('index is properly stringified when present', () => {
     const snapshot: ContextSnapshot = {
-      vars: {},
+      vars: effectiveVarsForTest({}),
       ancestors: [],
       step: '1',
       index: 0, // Zero is valid
@@ -425,12 +440,12 @@ describe('reconstituteContextVars', () => {
 
   it('handles snapshot with deeply nested context.* keys to exclude', () => {
     const snapshot: ContextSnapshot = {
-      vars: {
+      vars: effectiveVarsForTest({
         normalVar: 'value',
         'context.parent.vars.old': 'should-exclude',
         'context.ancestors.0.step': 'should-exclude',
         'context.something.else': 'should-exclude',
-      },
+      }),
       ancestors: [],
     };
 
@@ -447,7 +462,7 @@ describe('reconstituteContextVars', () => {
 
   it('preserves JsonObject values in parent vars', () => {
     const snapshot: ContextSnapshot = {
-      vars: { config: { host: 'localhost', port: 3000 } },
+      vars: effectiveVarsForTest({ config: { host: 'localhost', port: 3000 } }),
       ancestors: [],
     };
 
@@ -466,7 +481,7 @@ describe('reconstituteContextVars', () => {
       vars: { db: { host: 'db.example.com', port: 5432 } },
     };
     const snapshot: ContextSnapshot = {
-      vars: { env: 'prod' },
+      vars: effectiveVarsForTest({ env: 'prod' }),
       ancestors: [ancestor],
     };
 
@@ -481,7 +496,7 @@ describe('reconstituteContextVars', () => {
 
   it('preserves number values in parent vars', () => {
     const snapshot: ContextSnapshot = {
-      vars: { port: 8080 },
+      vars: effectiveVarsForTest({ port: 8080 }),
       ancestors: [],
     };
 

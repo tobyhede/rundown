@@ -1,4 +1,5 @@
 import type { OutputDeclaration } from '@rundown-org/parser';
+import { mergeEffectiveVars } from './effective-vars.js';
 import type { ForContext, JsonValue, TemplateVarValue } from './types.js';
 import { assertResolvedVariableForContext, isJsonArrayStream } from './types.js';
 import { deriveExecutionAt } from './targeting.js';
@@ -354,9 +355,15 @@ export function flattenTemplateVars(
  */
 export function buildExecutionFrame(state: OutputFrameState, cursor: OutputCursor): OutputVars {
   const step = cursor.substepId ? `${cursor.stepName}.${cursor.substepId}` : cursor.stepName;
+  // Merge user-level variable sources through the sole producer so OUTPUTS
+  // evaluation sees the same effective variable space as delegation snapshots
+  // (mirrors {@link buildContextSnapshot} in `delegation-context.ts`). Cursor
+  // keys (`Step`, `step`, `Index`, FOR-loop bookkeeping, etc.) are layered on
+  // top below — they're step-execution scaffolding, not part of the pure
+  // variable space the brand represents.
+  const merged = mergeEffectiveVars<OutputValue>(state);
   const frame: Record<string, OutputValue> = {
-    ...(state.templateVars ?? {}),
-    ...state.variables,
+    ...merged,
     Step: step,
     step,
     'context.current.step': step,

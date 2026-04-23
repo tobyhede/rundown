@@ -1,3 +1,4 @@
+import { mergeEffectiveVars } from './effective-vars.js';
 import type { AncestorSnapshot, ContextSnapshot, RunbookState, TemplateVarValue } from './types.js';
 import { getActiveForContext, deriveExecutionAt } from './targeting.js';
 
@@ -116,13 +117,15 @@ export function reconstituteContextVars(
 /**
  * Build a context snapshot from live runbook state.
  *
- * Captures the current execution position and effective variable space:
- * `state.templateVars` overlaid by accumulated step OUTPUTS in
- * `state.variables` (per SPEC §7.1), with optional `extraVars` taking
- * final precedence. Mirrors the merge order used by
- * {@link buildExecutionFrame} in `output-evaluator.ts` so delegation
- * snapshots see the same effective variable space as in-process
- * expression evaluation.
+ * Captures the current execution position and effective variable space.
+ * The merge of `state.templateVars`, `state.variables`, and the optional
+ * caller-supplied `extraVars` is delegated to {@link mergeEffectiveVars}
+ * (the sole producer of {@link ContextSnapshot.vars}'s branded
+ * `EffectiveVars` type). Routing through that producer keeps delegation
+ * snapshots in lock-step with the merge order used by
+ * `buildExecutionFrame` in `output-evaluator.ts` for OUTPUTS evaluation
+ * — and prevents the bug class fixed in commit `19067f6f`, where this
+ * function silently dropped `state.variables`.
  *
  * @param state - Current runbook state
  * @param substep - Target substep identifier (e.g., "1")
@@ -141,8 +144,7 @@ export function buildContextSnapshot(
     iterationOverride?: number;
   },
 ): ContextSnapshot {
-  const baseVars = { ...(state.templateVars ?? {}), ...(state.variables ?? {}) };
-  const vars = options?.extraVars ? { ...baseVars, ...options.extraVars } : baseVars;
+  const vars = mergeEffectiveVars(state, options?.extraVars);
   const activeFor = getActiveForContext(state.forStack, state.step);
   const iteration = options?.iterationOverride ?? activeFor?.iteration;
   const at = deriveExecutionAt(state.step, substep, iteration);
