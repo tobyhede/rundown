@@ -16,6 +16,12 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
       `${step}${iteration != null ? `.${String(iteration)}` : ''}${substep ? `.${substep}` : ''}`,
   ),
   countNumberedSteps: jest.fn().mockReturnValue(5),
+  mergeEffectiveVars: jest.fn(
+    (state: { templateVars?: Record<string, unknown>; variables?: Record<string, string> }) => ({
+      ...(state.templateVars ?? {}),
+      ...(state.variables ?? {}),
+    }),
+  ),
   ...mockErrorHelpers,
 }));
 

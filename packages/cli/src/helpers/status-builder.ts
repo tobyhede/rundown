@@ -10,6 +10,7 @@
 import {
   buildStepPosition,
   countNumberedSteps,
+  mergeEffectiveVars,
   type ActionBlockData,
   type ResolvedCompletion,
   type RunbookState,
@@ -106,12 +107,20 @@ export interface StatusOutputData {
  * @returns Stringified key-value map, or undefined if empty
  */
 function buildVars(state: RunbookState): Record<string, string> | undefined {
-  const fromTemplateVars = Object.fromEntries(
-    Object.entries(state.templateVars ?? {})
-      .filter(([, v]) => typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean')
-      .map(([k, v]) => [k, String(v as string | number | boolean)]),
-  );
-  const merged = { ...fromTemplateVars, ...state.variables } as Record<string, string>;
+  // Single-source the merge order through mergeEffectiveVars (sole producer
+  // of EffectiveVars). state.variables (StoredOutputs) wins over
+  // state.templateVars (InitialTemplateVars) on key collision — the same
+  // precedence delegation snapshots and OUTPUTS frames use.
+  //
+  // Status output requires Record<string, string>, so the merged view is
+  // post-filtered to scalars and stringified. Arrays, JsonObjects, and
+  // JsonArrayStream refs are intentionally omitted from the status surface.
+  const merged: Record<string, string> = {};
+  for (const [k, v] of Object.entries(mergeEffectiveVars(state))) {
+    if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+      merged[k] = String(v);
+    }
+  }
   return Object.keys(merged).length > 0 ? merged : undefined;
 }
 
