@@ -271,7 +271,11 @@ describe('hasForClause', () => {
       if (hasForClause(step)) {
         // TypeScript should know step.forClause is ForClause, not undefined
         expect(step.forClause.start).toBe(1);
-        expect(step.forClause.end).toBe(5);
+        if ('end' in step.forClause) {
+          expect(step.forClause.end).toBe(5);
+        } else {
+          throw new Error('expected numeric or windowed for clause with end');
+        }
         expect(step.forClause.variable).toBe('batch');
       }
     });
@@ -418,7 +422,11 @@ describe('isStepWithFor', () => {
     });
     if (isStepWithFor(step)) {
       expect(step.forClause.start).toBe(1);
-      expect(step.forClause.end).toBe(3);
+      if ('end' in step.forClause) {
+        expect(step.forClause.end).toBe(3);
+      } else {
+        throw new Error('expected numeric or windowed for clause with end');
+      }
     }
   });
 });
