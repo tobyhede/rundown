@@ -1,4 +1,4 @@
-import { setup, assign } from 'xstate';
+import { setup, assign, assertEvent } from 'xstate';
 import type {
   Action,
   Aggregation,
@@ -2652,7 +2652,10 @@ export function compileRunbookToMachine(
         }),
       },
       PENDING_FRONTIER_CONSUMED: {
-        actions: runbookSetup.assign({ pendingDelegateFrontier: undefined }),
+        actions: runbookSetup.assign(({ event }) => {
+          assertEvent(event, 'PENDING_FRONTIER_CONSUMED');
+          return { pendingDelegateFrontier: undefined };
+        }),
       },
     },
     context: {
