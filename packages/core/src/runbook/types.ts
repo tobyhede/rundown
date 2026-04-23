@@ -345,7 +345,7 @@ type LastActionBase = {
  */
 export interface RetryErrorLastAction extends LastActionBase {
   readonly type: 'RETRY_ERROR';
-  /** Structured error code (e.g. `RD-901`, `RD-INVARIANT-RETRY-NO-FRAME`). */
+  /** Structured error code (e.g. `RD-901`, `RD-902`). */
   readonly code: string;
   /** Human-readable message describing the hook failure. */
   readonly message: string;

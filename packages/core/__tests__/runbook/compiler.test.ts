@@ -10148,7 +10148,7 @@ echo "processing"
       // This test does NOT trigger createDelegation to fail; it verifies the
       // assign → always-guard → STOPPED chain given a pre-populated variant.
       // The only naturally-reachable RETRY_ERROR production path
-      // (RD-INVARIANT-RETRY-NO-FRAME) is covered separately below.
+      // (RD-902) is covered separately below.
       const { actor } = buildSeededRetryHookError();
 
       // Nudge the actor — XState v5 resolves always transitions on event
@@ -10263,7 +10263,7 @@ echo "processing"
       expect(ctx.lifecycle).toBe('stopped');
       expect(ctx.lastAction?.type).toBe('RETRY_ERROR');
       if (ctx.lastAction?.type === 'RETRY_ERROR') {
-        expect(ctx.lastAction.code).toBe('RD-INVARIANT-RETRY-NO-FRAME');
+        expect(ctx.lastAction.code).toBe('RD-902');
         expect(ctx.lastAction.message).toMatch(/active frame/i);
       }
       expect(ctx.parentRetryCount).toBe(0);

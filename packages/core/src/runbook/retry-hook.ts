@@ -20,7 +20,7 @@ import type {
 } from './types.js';
 import type { RunbookContext } from './compiler.js';
 import type { OutputVars } from './output-evaluator.js';
-import { retryDelegation } from './delegation-service.js';
+import { retryDelegation, type RetryDelegationResult } from './delegation-service.js';
 import { findSubstepState } from './targeting.js';
 import { logger } from '../logger.js';
 
@@ -146,7 +146,7 @@ export function runRetryHook(
     if (hasDelegations) {
       return {
         status: 'error',
-        code: 'RD-INVARIANT-RETRY-NO-FRAME',
+        code: 'RD-902',
         message: 'Retry hook invoked without an active frame key — invariant violation',
         substepStates,
       };
@@ -186,14 +186,35 @@ export function runRetryHook(
     // skipped here — the cursor-re-entry machinery handles their re-execution.
     if (!ss.delegation) continue;
 
-    const result = retryDelegation(
-      {
-        state: working as RunbookState,
-        substepId: substep.id,
-        frameKey: activeFrameKey,
-      },
-      steps,
-    );
+    let result: RetryDelegationResult;
+    try {
+      result = retryDelegation(
+        {
+          state: working as RunbookState,
+          substepId: substep.id,
+          frameKey: activeFrameKey,
+        },
+        steps,
+      );
+    } catch (err) {
+      // retryDelegation rethrows non-RundownError exceptions from
+      // createDelegation (delegation-service.ts ~L401). These represent
+      // programming bugs — TypeError, assertion failure, stack overflow,
+      // etc. Without this catch, the exception escapes the XState `assign`
+      // callback and corrupts actor atomicity. Convert to the RETRY_ERROR
+      // path so the machine reaches STOPPED cleanly and emits
+      // ERROR_OCCURRED observably. Rollback: return the ORIGINAL
+      // substepStates captured at the top of runRetryHook, NOT
+      // working.substepStates which may hold partial mutations from prior
+      // loop iterations.
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        status: 'error',
+        code: 'RD-901',
+        message,
+        substepStates,
+      };
+    }
 
     if (result.status === 'retried') {
       // Reset the retried substep's state: status -> 'pending', prior result
