@@ -62,7 +62,14 @@ export function getRunbookFromState(state: RunbookState, _cwd: string): readonly
     }
   };
 
-  // New flow: raw runbookSrc + templateVars → parse, resolve FOR bounds, substitute
+  // New flow: raw runbookSrc + templateVars → parse, resolve FOR bounds, substitute.
+  //
+  // Substitution happens against `state.templateVars` (typed as InitialTemplateVars)
+  // — the immutable seeded inputs. Step OUTPUTS (state.variables, typed as
+  // StoredOutputs) are *not* applied here: load-time substitution rewrites the
+  // parsed AST, but OUTPUTS only become visible after a step has executed.
+  // Runtime expansion in execution.ts re-merges via mergeEffectiveVars to
+  // include OUTPUTS for descriptions, prompts, and downstream OUTPUTS expressions.
   if (state.templateVars) {
     const { runbook, diagnostics } = parseRunbookDocument(state.runbookSrc, state.runbook);
     checkDiagnostics(diagnostics);
