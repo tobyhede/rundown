@@ -2,14 +2,22 @@ import { jest } from '@jest/globals';
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
+import type { injectContext } from '../src/context.js';
+import type { executeGate } from '../src/gate-loader.js';
 
 // Mock only what is necessary and external to the logic we want to test
+const mockInjectContext = jest.fn() as jest.MockedFunction<typeof injectContext>;
+mockInjectContext.mockResolvedValue('injected context');
+
 jest.unstable_mockModule('../src/context.js', () => ({
-  injectContext: jest.fn().mockResolvedValue('injected context'),
+  injectContext: mockInjectContext,
 }));
 
+const mockExecuteGate = jest.fn() as jest.MockedFunction<typeof executeGate>;
+mockExecuteGate.mockResolvedValue({ passed: true, result: { additionalContext: 'gate result' } });
+
 jest.unstable_mockModule('../src/gate-loader.js', () => ({
-  executeGate: jest.fn().mockResolvedValue({ passed: true, result: 'gate result' }),
+  executeGate: mockExecuteGate,
 }));
 
 jest.unstable_mockModule('../src/workflow/context.js', () => ({

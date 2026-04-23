@@ -8,14 +8,14 @@ import {
 } from '../../helpers/execfile-mock.js';
 
 // Mock Session module
-const mockGet = jest.fn();
-const mockSet = jest.fn();
+import { createSessionMock, setGet } from '../../helpers/session-mock.js';
+
+const session = createSessionMock();
+const mockGet = session.get;
+const mockSet = session.set;
 
 jest.unstable_mockModule('../../../src/session.js', () => ({
-  Session: jest.fn().mockImplementation(() => ({
-    get: mockGet,
-    set: mockSet,
-  })),
+  Session: jest.fn().mockImplementation(() => session),
 }));
 
 // Mock node:fs/promises to control child runbook reads in buildChildInputFlags
@@ -37,7 +37,7 @@ const VALID_TOKEN = 'rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 describe('handleDelegationDispatch', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockGet.mockResolvedValue({});
+    setGet(session, 'metadata', {});
     mockSet.mockResolvedValue(undefined);
     // Default: rd status --json fails (no active runbook)
     setExecSync(mockExecFileSyncError({ message: 'no active runbook' }));
@@ -97,7 +97,7 @@ describe('handleDelegationDispatch', () => {
   });
 
   it('stores token in session metadata on detection', async () => {
-    mockGet.mockResolvedValue({ existing_key: 'value' });
+    setGet(session, 'metadata', { existing_key: 'value' });
 
     const input = createMockHookInput('PreToolUse', {
       tool_name: 'Task',
@@ -140,7 +140,7 @@ describe('handleDelegationDispatch', () => {
   });
 
   it('stores token in session metadata on Agent tool detection', async () => {
-    mockGet.mockResolvedValue({ existing_key: 'value' });
+    setGet(session, 'metadata', { existing_key: 'value' });
 
     const input = createMockHookInput('PreToolUse', {
       tool_name: 'Agent',

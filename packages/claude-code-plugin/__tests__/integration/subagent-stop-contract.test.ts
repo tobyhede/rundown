@@ -18,14 +18,14 @@ import { runCli, createMockHookInput } from '../helpers/test-utils.js';
 import { mockExecFileSync } from '../helpers/execfile-mock.js';
 
 // Mock Session to control delegation_active_token
-const mockGet = jest.fn();
-const mockSet = jest.fn();
+import { createSessionMock, setGet } from '../helpers/session-mock.js';
+
+const session = createSessionMock();
+const mockGet = session.get;
+const mockSet = session.set;
 
 jest.unstable_mockModule('../../src/session.js', () => ({
-  Session: jest.fn().mockImplementation(() => ({
-    get: mockGet,
-    set: mockSet,
-  })),
+  Session: jest.fn().mockImplementation(() => session),
 }));
 
 const { handleSubagentStop } = await import('../../src/workflow/hooks/subagent-stop.js');
@@ -111,7 +111,7 @@ describe('subagent-stop contract tests', () => {
   async function captureStatusAndHandle(
     token: string,
   ): Promise<{ context?: string; violation?: string }> {
-    mockGet.mockResolvedValue({ delegation_active_token: token });
+    setGet(session, 'metadata', { delegation_active_token: token });
 
     const statusResult = runCli('status', tempDir);
     expect(statusResult.exitCode).toBe(0);

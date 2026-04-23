@@ -16,14 +16,14 @@ import type {
 } from '../../../src/workflow/hooks/subagent-stop.js';
 
 // Mock Session module
-const mockGet = jest.fn();
-const mockSet = jest.fn();
+import { createSessionMock, setGet } from '../../helpers/session-mock.js';
+
+const session = createSessionMock();
+const mockGet = session.get;
+const mockSet = session.set;
 
 jest.unstable_mockModule('../../../src/session.js', () => ({
-  Session: jest.fn().mockImplementation(() => ({
-    get: mockGet,
-    set: mockSet,
-  })),
+  Session: jest.fn().mockImplementation(() => session),
 }));
 
 const { handleSubagentStop, classifyOutcome, parseDelegations } = await import(
@@ -42,7 +42,7 @@ function createStatusMock(status: Record<string, unknown>): ExecFileSyncMock {
 describe('handleSubagentStop', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockGet.mockResolvedValue({});
+    setGet(session, 'metadata', {});
     mockSet.mockResolvedValue(undefined);
     setExecSync(mockExecFileSync(''));
   });
@@ -61,14 +61,14 @@ describe('handleSubagentStop', () => {
 
   describe('no delegation token', () => {
     it('returns empty when no delegation_active_token in session', async () => {
-      mockGet.mockResolvedValue({});
+      setGet(session, 'metadata', {});
       const input = createMockHookInput('SubagentStop');
       const result = await handleSubagentStop(input);
       expect(result).toEqual({});
     });
 
     it('does not call rd status when no token', async () => {
-      mockGet.mockResolvedValue({});
+      setGet(session, 'metadata', {});
       const mockExec = mockExecFileSync('{}');
       setExecSync(mockExec);
 
@@ -81,7 +81,7 @@ describe('handleSubagentStop', () => {
 
   describe('token consumption', () => {
     it('clears delegation_active_token from session (consume-once)', async () => {
-      mockGet.mockResolvedValue({
+      setGet(session, 'metadata', {
         delegation_active_token: VALID_TOKEN,
         other_key: 'preserved',
       });
@@ -94,7 +94,7 @@ describe('handleSubagentStop', () => {
     });
 
     it('clears token regardless of child runbook state', async () => {
-      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setGet(session, 'metadata', { delegation_active_token: VALID_TOKEN });
       setExecSync(
         createStatusMock({
           active: true,
@@ -112,7 +112,7 @@ describe('handleSubagentStop', () => {
 
   describe('child runbook claimed but idle (parentLinkage correlation)', () => {
     it('classifies claimed-idle via parentLinkage.tokenHash match', async () => {
-      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setGet(session, 'metadata', { delegation_active_token: VALID_TOKEN });
       setExecSync(
         createStatusMock({
           active: true,
@@ -142,7 +142,7 @@ describe('handleSubagentStop', () => {
 
   describe('parent state surfacing on completion', () => {
     it('surfaces full step info when parent advanced to new step', async () => {
-      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setGet(session, 'metadata', { delegation_active_token: VALID_TOKEN });
       setExecSync(
         createStatusMock({
           active: true,
@@ -168,7 +168,7 @@ describe('handleSubagentStop', () => {
     });
 
     it('includes delegation guidance when parent step has unresolved substeps', async () => {
-      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setGet(session, 'metadata', { delegation_active_token: VALID_TOKEN });
       setExecSync(
         createStatusMock({
           active: true,
@@ -194,7 +194,7 @@ describe('handleSubagentStop', () => {
     });
 
     it('pluralizes substeps when multiple are unresolved', async () => {
-      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setGet(session, 'metadata', { delegation_active_token: VALID_TOKEN });
       setExecSync(
         createStatusMock({
           active: true,
@@ -213,7 +213,7 @@ describe('handleSubagentStop', () => {
     });
 
     it('shows generic proceed message when parent step has no unresolved substeps', async () => {
-      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setGet(session, 'metadata', { delegation_active_token: VALID_TOKEN });
       setExecSync(
         createStatusMock({
           active: true,
@@ -233,7 +233,7 @@ describe('handleSubagentStop', () => {
     });
 
     it('surfaces remaining delegations when siblings still unresolved', async () => {
-      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setGet(session, 'metadata', { delegation_active_token: VALID_TOKEN });
       setExecSync(
         createStatusMock({
           active: true,
@@ -279,7 +279,7 @@ describe('handleSubagentStop', () => {
     });
 
     it('treats cancelled sibling delegations as resolved', async () => {
-      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setGet(session, 'metadata', { delegation_active_token: VALID_TOKEN });
       setExecSync(
         createStatusMock({
           active: true,
@@ -314,7 +314,7 @@ describe('handleSubagentStop', () => {
     });
 
     it('returns empty when parent is inactive (entire runbook finished)', async () => {
-      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setGet(session, 'metadata', { delegation_active_token: VALID_TOKEN });
       setExecSync(createStatusMock({ active: false, stashed: false }));
 
       const input = createMockHookInput('SubagentStop');
@@ -326,7 +326,7 @@ describe('handleSubagentStop', () => {
 
   describe('child runbook stashed', () => {
     it('treats stashed runbook as incomplete', async () => {
-      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setGet(session, 'metadata', { delegation_active_token: VALID_TOKEN });
       setExecSync(
         createStatusMock({
           active: false,
@@ -350,7 +350,7 @@ describe('handleSubagentStop', () => {
 
   describe('delegation never claimed', () => {
     it('reports unclaimed when our token matches a pending delegation', async () => {
-      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setGet(session, 'metadata', { delegation_active_token: VALID_TOKEN });
       setExecSync(
         createStatusMock({
           active: true,
@@ -379,7 +379,7 @@ describe('handleSubagentStop', () => {
 
   describe('status check failure', () => {
     it('returns fallback context when rd status --json fails', async () => {
-      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setGet(session, 'metadata', { delegation_active_token: VALID_TOKEN });
       const mockExec = mockExecFileSyncError({ message: 'CLI error' });
       setExecSync(mockExec);
 
@@ -393,7 +393,7 @@ describe('handleSubagentStop', () => {
 
   describe('parser robustness (malformed status fields)', () => {
     it('degrades gracefully when position is missing required fields', async () => {
-      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setGet(session, 'metadata', { delegation_active_token: VALID_TOKEN });
       setExecSync(
         createStatusMock({
           active: true,
@@ -415,7 +415,7 @@ describe('handleSubagentStop', () => {
     });
 
     it('degrades gracefully when step has wrong types', async () => {
-      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setGet(session, 'metadata', { delegation_active_token: VALID_TOKEN });
       setExecSync(
         createStatusMock({
           active: true,
@@ -435,7 +435,7 @@ describe('handleSubagentStop', () => {
     });
 
     it('does not throw when status is null', async () => {
-      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setGet(session, 'metadata', { delegation_active_token: VALID_TOKEN });
       setExecSync(mockExecFileSync('null'));
 
       const input = createMockHookInput('SubagentStop');
@@ -448,7 +448,7 @@ describe('handleSubagentStop', () => {
 
   describe('last_assistant_message is not parsed', () => {
     it('does not use agent output to determine result', async () => {
-      mockGet.mockResolvedValue({ delegation_active_token: VALID_TOKEN });
+      setGet(session, 'metadata', { delegation_active_token: VALID_TOKEN });
       // Child completed — should return empty regardless of message content
       setExecSync(createStatusMock({ active: false, stashed: false }));
 
