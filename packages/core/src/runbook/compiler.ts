@@ -8,6 +8,7 @@ import type {
   ResolvedStep,
   ResolvedStepHavingSubsteps,
   Lifecycle,
+  SubstepState,
 } from './types.js';
 import { isResolvedVariableForContext } from './types.js';
 import type { StepId } from './step-id.js';
@@ -29,6 +30,8 @@ import {
   evaluateStepOutputDeclarations,
   type OutputVars,
 } from './output-evaluator.js';
+import type { DelegateFrontierEntry } from '../events/types.js';
+import type { FrameKey } from './targeting.js';
 
 /**
  * Module-level XState setup with typed context, events, and named actions.
@@ -203,6 +206,29 @@ export interface RunbookContext {
   readonly finalVars: RunbookMachineOutput['finalVars'];
   /** Machine-owned lifecycle flag. 'running' during execution; 'completed' or 'stopped' on final entry. */
   readonly lifecycle: Lifecycle;
+  /**
+   * Mirror of RunbookState.substepStates so the retry hook (running inside
+   * an XState assign) can inspect delegation records and write back updates.
+   * Populated at actor bootstrap (Task 4) and updated by the retry hook.
+   */
+  readonly substepStates?: readonly SubstepState[];
+  /** Mirror of RunbookState.activeFrameKey for frame-scoped substep lookup. */
+  readonly activeFrameKey?: FrameKey;
+  /**
+   * Frontier of newly-minted delegation tokens populated by the retry hook.
+   * Consumed by the execution layer when emitting STEP_ENTERED on retry
+   * re-entry, then cleared via the PENDING_FRONTIER_CONSUMED event.
+   */
+  readonly pendingDelegateFrontier?: ReadonlyArray<DelegateFrontierEntry>;
+  /**
+   * Populated when the retry hook cannot complete (createDelegation failed,
+   * child runbook unresolvable, etc.). When present, a higher-priority always
+   * entry transitions the machine to stopped and the CLI emits ERROR_OCCURRED.
+   */
+  readonly retryHookError?: {
+    readonly code: string;
+    readonly message: string;
+  };
 }
 
 /**
@@ -219,7 +245,8 @@ export type RunbookEvent =
   | { type: 'FAIL' }
   | { type: 'RETRY' }
   | { type: 'GOTO'; target: StepId }
-  | { type: 'SET_VARIABLES'; vars: Record<string, string> };
+  | { type: 'SET_VARIABLES'; vars: Record<string, string> }
+  | { type: 'PENDING_FRONTIER_CONSUMED' };
 
 /**
  * Object-form XState transition entry — the `{ target?, actions?, guard? }` variant.
@@ -2532,6 +2559,9 @@ export function compileRunbookToMachine(
           },
         }),
       },
+      PENDING_FRONTIER_CONSUMED: {
+        actions: runbookSetup.assign({ pendingDelegateFrontier: undefined }),
+      },
     },
     context: {
       retryCount: 0,
@@ -2552,6 +2582,10 @@ export function compileRunbookToMachine(
       frontmatterOutputs: options?.frontmatterOutputs ?? [],
       finalVars: {},
       lifecycle: 'running',
+      substepStates: undefined,
+      activeFrameKey: undefined,
+      pendingDelegateFrontier: undefined,
+      retryHookError: undefined,
     },
     states: {
       ...states,
