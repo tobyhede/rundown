@@ -23,6 +23,7 @@ import type { OutputVars } from './output-evaluator.js';
 import { retryDelegation, type RetryDelegationResult } from './delegation-service.js';
 import { findSubstepState } from './targeting.js';
 import { logger } from '../logger.js';
+import { getErrorMessage } from '../errors.js';
 
 /**
  * Narrow `OutputVars` (context-side map, `JsonValue` entries — permits
@@ -197,17 +198,11 @@ export function runRetryHook(
         steps,
       );
     } catch (err) {
-      // retryDelegation rethrows non-RundownError exceptions from
-      // createDelegation (delegation-service.ts ~L401). These represent
-      // programming bugs — TypeError, assertion failure, stack overflow,
-      // etc. Without this catch, the exception escapes the XState `assign`
-      // callback and corrupts actor atomicity. Convert to the RETRY_ERROR
-      // path so the machine reaches STOPPED cleanly and emits
-      // ERROR_OCCURRED observably. Rollback: return the ORIGINAL
-      // substepStates captured at the top of runRetryHook, NOT
-      // working.substepStates which may hold partial mutations from prior
-      // loop iterations.
-      const message = err instanceof Error ? err.message : String(err);
+      // Retain actor atomicity: an uncaught throw inside the XState `assign`
+      // callback would leave the actor in an indeterminate state. Route the
+      // error through the RETRY_ERROR path instead. Rollback uses the
+      // original `substepStates`, not `working.substepStates`.
+      const message = getErrorMessage(err);
       return {
         status: 'error',
         code: 'RD-901',
@@ -226,8 +221,17 @@ export function runRetryHook(
           : entry,
       );
       working = { ...working, substepStates: resetSubstepStates };
+      // Use the delegation's canonical `at` so FOR-iteration context survives:
+      // `${parentStep.name}.${substep.id}` loses the iteration segment for
+      // FOR-scoped retries (e.g. `"1.1"` instead of `"1.2.1"`). `contextSnapshot.at`
+      // is produced by deriveExecutionAt (delegation-context.ts) and always
+      // carries the iteration when one is in scope. The ContextSnapshot type
+      // still declares `at?: string`, so we fall back to the legacy
+      // concatenation if a persisted/older snapshot happens to omit it.
+      const frontierAt =
+        result.delegation.contextSnapshot.at ?? `${parentStep.name}.${substep.id}`;
       frontier.push({
-        id: `${parentStep.name}.${substep.id}`,
+        id: frontierAt,
         runbook: result.delegation.childRunbookPath,
         token: result.token,
       });

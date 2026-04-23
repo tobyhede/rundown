@@ -3,6 +3,7 @@ import type { RetryHookResult, RetryHookSuccess, RetryHookError } from '../../sr
 import type {
   ResolvedStepHavingSubsteps,
   ResolvedStep,
+  StepDelegation,
   SubstepState,
 } from '../../src/runbook/types.js';
 import type { RunbookContext } from '../../src/runbook/compiler.js';
@@ -195,6 +196,45 @@ describe('runRetryHook try/catch around retryDelegation', () => {
     if (result.status === 'error') {
       expect(result.code).toBe('RD-901');
       expect(result.message).toBe('bare string throw');
+    }
+  });
+
+  it('uses the canonical contextSnapshot.at when pushing a FOR-iteration frontier entry', () => {
+    // Regression: the pre-fix code built the frontier id from
+    // `${parentStep.name}.${substep.id}` — e.g. "1.1" — which erased the
+    // FOR-iteration segment that `deriveExecutionAt` bakes into
+    // `contextSnapshot.at`. For a retry on iteration 2 the correct frontier
+    // id is "1.2.1", not "1.1".
+    const { context, parentStep, steps, originalSubstepStates } = buildInputs();
+    const delegation: StepDelegation = {
+      tokenHash: 'hash_new',
+      childRunbookPath: 'child-1.md',
+      childRunId: null,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      cancelledAt: null,
+      contextSnapshot: {
+        vars: {},
+        ancestors: [],
+        step: '1',
+        substep: '1',
+        at: '1.2.1',
+        index: 2,
+      },
+    };
+    mockedRetryDelegation.mockImplementation(() => ({
+      status: 'retried' as const,
+      token: 'rdtk_new_token',
+      tokenHash: 'hash_new',
+      delegation,
+      updatedSubstepStates: [...originalSubstepStates],
+    }));
+
+    const result = runRetryHook(context, parentStep, steps);
+    expect(result.status).toBe('success');
+    if (result.status === 'success') {
+      expect(result.frontier).toHaveLength(1);
+      expect(result.frontier[0].id).toBe('1.2.1');
+      expect(result.frontier[0].id).not.toBe('1.1');
     }
   });
 });
