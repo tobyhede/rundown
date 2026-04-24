@@ -87,44 +87,78 @@ describe('ReviewSchema', () => {
     it('rejects missing meta', () => {
       const { meta: _, ...noMeta } = validReview();
       expect(() => ReviewSchema.parse(noMeta)).toThrow(
-        expect.objectContaining({ issues: expect.any(Array) }),
+        expect.objectContaining({
+          issues: expect.arrayContaining([
+            expect.objectContaining({ path: expect.any(Array), message: expect.any(String) }),
+          ]),
+        }),
       );
     });
 
     it('rejects missing items', () => {
       const { items: _, ...noItems } = validReview();
       expect(() => ReviewSchema.parse(noItems)).toThrow(
-        expect.objectContaining({ issues: expect.any(Array) }),
+        expect.objectContaining({
+          issues: expect.arrayContaining([
+            expect.objectContaining({ path: expect.any(Array), message: expect.any(String) }),
+          ]),
+        }),
       );
     });
 
     it('rejects empty item title', () => {
       expect(() => ReviewSchema.parse(validReview({ items: [errorItem({ title: '' })] }))).toThrow(
-        expect.objectContaining({ issues: expect.any(Array) }),
+        expect.objectContaining({
+          issues: expect.arrayContaining([
+            expect.objectContaining({ path: expect.any(Array), message: expect.any(String) }),
+          ]),
+        }),
       );
     });
 
     it('rejects empty item description', () => {
       expect(() =>
         ReviewSchema.parse(validReview({ items: [errorItem({ description: '' })] })),
-      ).toThrow(expect.objectContaining({ issues: expect.any(Array) }));
+      ).toThrow(
+        expect.objectContaining({
+          issues: expect.arrayContaining([
+            expect.objectContaining({ path: expect.any(Array), message: expect.any(String) }),
+          ]),
+        }),
+      );
     });
 
     it('rejects empty item recommendation', () => {
       expect(() =>
         ReviewSchema.parse(validReview({ items: [errorItem({ recommendation: '' })] })),
-      ).toThrow(expect.objectContaining({ issues: expect.any(Array) }));
+      ).toThrow(
+        expect.objectContaining({
+          issues: expect.arrayContaining([
+            expect.objectContaining({ path: expect.any(Array), message: expect.any(String) }),
+          ]),
+        }),
+      );
     });
 
     it('rejects item with evidence field (strict mode)', () => {
       expect(() =>
         ReviewSchema.parse(validReview({ items: [errorItem({ evidence: 'What was observed' })] })),
-      ).toThrow(expect.objectContaining({ issues: expect.any(Array) }));
+      ).toThrow(
+        expect.objectContaining({
+          issues: expect.arrayContaining([
+            expect.objectContaining({ path: expect.any(Array), message: expect.any(String) }),
+          ]),
+        }),
+      );
     });
 
     it('rejects unknown properties (strict mode)', () => {
       expect(() => ReviewSchema.parse(validReview({ unexpected: true }))).toThrow(
-        expect.objectContaining({ issues: expect.any(Array) }),
+        expect.objectContaining({
+          issues: expect.arrayContaining([
+            expect.objectContaining({ path: expect.any(Array), message: expect.any(String) }),
+          ]),
+        }),
       );
     });
   });
@@ -234,7 +268,13 @@ describe('ReviewSchema', () => {
     it('rejects empty uri', () => {
       expect(() =>
         ReviewSchema.parse(validReview({ items: [errorItem({ references: [{ uri: '' }] })] })),
-      ).toThrow(expect.objectContaining({ issues: expect.any(Array) }));
+      ).toThrow(
+        expect.objectContaining({
+          issues: expect.arrayContaining([
+            expect.objectContaining({ path: expect.any(Array), message: expect.any(String) }),
+          ]),
+        }),
+      );
     });
 
     it('rejects reference with unknown properties (strict mode)', () => {
@@ -244,7 +284,13 @@ describe('ReviewSchema', () => {
             items: [errorItem({ references: [{ uri: 'src/foo.ts', extra: true }] })],
           }),
         ),
-      ).toThrow(expect.objectContaining({ issues: expect.any(Array) }));
+      ).toThrow(
+        expect.objectContaining({
+          issues: expect.arrayContaining([
+            expect.objectContaining({ path: expect.any(Array), message: expect.any(String) }),
+          ]),
+        }),
+      );
     });
 
     it('rejects end_line < line', () => {
@@ -254,7 +300,13 @@ describe('ReviewSchema', () => {
             items: [errorItem({ references: [{ uri: 'src/foo.ts', line: 20, end_line: 10 }] })],
           }),
         ),
-      ).toThrow(expect.objectContaining({ issues: expect.any(Array) }));
+      ).toThrow(
+        expect.objectContaining({
+          issues: expect.arrayContaining([
+            expect.objectContaining({ path: expect.any(Array), message: expect.any(String) }),
+          ]),
+        }),
+      );
     });
 
     it('rejects end_line without line', () => {
@@ -264,7 +316,13 @@ describe('ReviewSchema', () => {
             items: [errorItem({ references: [{ uri: 'src/foo.ts', end_line: 20 }] })],
           }),
         ),
-      ).toThrow(expect.objectContaining({ issues: expect.any(Array) }));
+      ).toThrow(
+        expect.objectContaining({
+          issues: expect.arrayContaining([
+            expect.objectContaining({ path: expect.any(Array), message: expect.any(String) }),
+          ]),
+        }),
+      );
     });
   });
 
@@ -275,7 +333,13 @@ describe('ReviewSchema', () => {
     });
 
     it('throws for invalid data', () => {
-      expect(() => validate({})).toThrow(expect.objectContaining({ issues: expect.any(Array) }));
+      expect(() => validate({})).toThrow(
+        expect.objectContaining({
+          issues: expect.arrayContaining([
+            expect.objectContaining({ path: expect.any(Array), message: expect.any(String) }),
+          ]),
+        }),
+      );
     });
   });
 });
