@@ -1021,28 +1021,33 @@ export function normalizeCliOutput(output: string, workspace: TestWorkspace): st
   // 6. Runbook state IDs of the form `wf-YYYY-MM-DD-xxxxxx` (base-36 suffix, 1-6 chars)
   text = text.replace(/\bwf-\d{4}-\d{2}-\d{2}-[a-z0-9]{1,6}\b/g, '<runbookId>');
 
-  // 7. Any 8-char lowercase hex at word boundaries — the catch-all for
-  //    {{RunId}} and {{ContextId}} template variables (both 4 random bytes
-  //    rendered as hex, see variable-discovery.ts). Deliberately aggressive:
-  //    also masks git short SHAs, step-frame hashes, and 8-hex tokens in
-  //    user prompt text. Rules 5 and 6 run first so UUIDs and wf-* ids are
-  //    preserved. Review each `<hex8>` substitution in snapshot diffs.
-  text = text.replace(/\b[0-9a-f]{8}\b/g, '<hex8>');
-
-  // 8. ISO 8601 timestamps (with or without fractional seconds, Z or ±HH:MM)
-  text = text.replace(
-    /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})/g,
-    '<timestamp>',
-  );
-
-  // 9. Numeric epoch ms for known fields (field-scoped so we don't eat arbitrary numbers)
+  // 7. Numeric epoch ms for known fields (field-scoped so we don't eat arbitrary numbers).
+  //    Runs BEFORE rule 9 so an 8-digit epoch ms value isn't stolen by the
+  //    generic `\b[0-9a-f]{8}\b` pattern (digits are a subset of hex).
   for (const field of ['startedAt', 'completedAt', 'updatedAt', 'expiresAt', 'lastHeartbeat']) {
     text = text.replace(new RegExp(`"${field}":\\s*\\d+`, 'g'), `"${field}": <epochMs>`);
   }
 
-  // 10. Duration fields
+  // 8. Duration fields. Runs BEFORE rule 9 for the same reason — durations
+  //    of ~10,000,000ms (2.8h) and above are 8+ digits and would otherwise
+  //    match the hex8 catch-all and be masked as <hex8> instead of <ms>.
   text = text.replace(/"durationMs":\s*\d+/g, '"durationMs": <ms>');
   text = text.replace(/"took":\s*\d+/g, '"took": <ms>');
+
+  // 9. Any 8-char lowercase hex at word boundaries — the catch-all for
+  //    {{RunId}} and {{ContextId}} template variables (both 4 random bytes
+  //    rendered as hex, see variable-discovery.ts). Deliberately aggressive:
+  //    also masks git short SHAs, step-frame hashes, and 8-hex tokens in
+  //    user prompt text. Rules 5, 6, 7, and 8 run first so UUIDs, wf-* ids,
+  //    field-scoped epoch ms, and duration values are preserved. Review
+  //    each `<hex8>` substitution in snapshot diffs.
+  text = text.replace(/\b[0-9a-f]{8}\b/g, '<hex8>');
+
+  // 10. ISO 8601 timestamps (with or without fractional seconds, Z or ±HH:MM)
+  text = text.replace(
+    /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})/g,
+    '<timestamp>',
+  );
 
   // 11. PID banners — match `pid=1234`, `PID 1234`, or `(pid 1234)` shapes
   text = text.replace(/\b([Pp][Ii][Dd][=:\s]+)\d+/g, '$1<pid>');

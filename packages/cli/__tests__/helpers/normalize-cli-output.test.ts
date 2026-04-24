@@ -118,6 +118,15 @@ describe('normalizeCliOutput', () => {
     expect(normalizeCliOutput(input, workspace)).toBe('"durationMs": <ms>, "took": <ms>');
   });
 
+  it('normalises large durationMs values via the field-scoped rule (not generic hex8)', () => {
+    // Pre-fix regression: the generic `\b[0-9a-f]{8}\b` hex8 rule would match
+    // pure-digit 8-char values before the field-scoped duration rule ran,
+    // yielding `"durationMs": <hex8>` instead of `"durationMs": <ms>`.
+    // Threshold is any duration >= 10,000,000ms (~2.8h).
+    const input = '"durationMs": 10000000';
+    expect(normalizeCliOutput(input, workspace)).toBe('"durationMs": <ms>');
+  });
+
   it('replaces PID banners with <pid>', () => {
     expect(normalizeCliOutput('pid=1234', workspace)).toBe('pid=<pid>');
     expect(normalizeCliOutput('PID 4321', workspace)).toBe('PID <pid>');
