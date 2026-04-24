@@ -3179,13 +3179,17 @@ describe('DELEGATE annotation — parsing and ordering', () => {
   it('parses DELEGATE on a step (H2) — stored for propagation', () => {
     // DELEGATE at step level doesn't directly set a field on the step,
     // it propagates to substeps (tested in Task 3). Here we just confirm parsing doesn't throw.
+    // Per spec §4.3 every propagated substep must resolve to a runbook target.
     const md = `## 1. Step
 - DELEGATE
 - PASS ALL CONTINUE
 - FAIL ANY CONTINUE
 
 ### 1.1 Substep one
+- one.runbook.md
+
 ### 1.2 Substep two
+- two.runbook.md
 `;
     expect(() => parseRunbookDocument(md)).not.toThrow();
   });
@@ -3290,16 +3294,18 @@ echo not-a-runbook
 
 describe('DELEGATE annotation — step-level propagation', () => {
   it('propagates step-level DELEGATE to all explicit H3 substeps', () => {
+    // Per spec §4.3 every DELEGATE substep must resolve to a runbook target,
+    // so step-level DELEGATE requires each H3 to carry a `.runbook.md` entry.
     const md = `## 1. Step
 - DELEGATE
 - PASS ALL CONTINUE
 - FAIL ANY CONTINUE
 
 ### 1.1 First
-Do first.
+- first.runbook.md
 
 ### 1.2 Second
-Do second.
+- second.runbook.md
 `;
     const { runbook } = parseRunbookDocument(md);
     const step = runbook.steps[0];
@@ -3308,6 +3314,30 @@ Do second.
       expect(step.substeps[0].delegate).toBe(true);
       expect(step.substeps[1].delegate).toBe(true);
     }
+  });
+
+  it('rejects step-level DELEGATE when any propagated substep lacks a runbook target', () => {
+    // Spec §4.3: "A DELEGATE substep must resolve to a runbook target. A
+    // DELEGATE substep with no runbook target is a structural error." The
+    // substep-level guard in finalizePendingSubstep only sees `ps.hasSeenDelegate`
+    // when DELEGATE is on the substep itself — step-level DELEGATE must be
+    // re-checked at propagation time so mixed substeps don't slip through.
+    const md = `## 1. Step
+- DELEGATE
+- PASS ALL CONTINUE
+- FAIL ANY CONTINUE
+
+### 1.1 Has runbook
+- child.runbook.md
+
+### 1.2 Command only
+\`\`\`bash
+echo hi
+\`\`\`
+`;
+    expect(() => parseRunbookDocument(md)).toThrow(
+      /DELEGATE cannot propagate to substep "1\.2"/,
+    );
   });
 
   it('propagates step-level DELEGATE to synthetic substeps from runbook list', () => {
@@ -3336,7 +3366,10 @@ Do second.
 - FAIL ANY STOP
 
 ### 1.1 First substep
+- first.runbook.md
+
 ### 1.2 Second substep
+- second.runbook.md
 `;
     const { runbook } = parseRunbookDocument(md);
     const step = runbook.steps[0];
