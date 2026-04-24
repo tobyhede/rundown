@@ -1,6 +1,21 @@
 import { describe, it, expect } from '@jest/globals';
 import { ReviewSchema, validate } from '../src/review-schema.js';
 
+/**
+ * Shape asserted against every Zod parse failure in this suite.
+ *
+ * Matches a thrown value that carries an `issues` array whose entries each
+ * expose `path: unknown[]` and `message: string` — the invariant documented
+ * by Zod's `ZodError`. Centralized so every `toThrow(...)` branch asserts the
+ * same strength; per-case tightening (e.g. expected `path` contents) should
+ * be added at the call site rather than duplicated here.
+ */
+const ZOD_ISSUES_SHAPE = expect.objectContaining({
+  issues: expect.arrayContaining([
+    expect.objectContaining({ path: expect.any(Array), message: expect.any(String) }),
+  ]),
+});
+
 /** Minimal valid review. Override fields as needed. */
 function validReview(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -87,32 +102,20 @@ describe('ReviewSchema', () => {
     it('rejects missing meta', () => {
       const { meta: _, ...noMeta } = validReview();
       expect(() => ReviewSchema.parse(noMeta)).toThrow(
-        expect.objectContaining({
-          issues: expect.arrayContaining([
-            expect.objectContaining({ path: expect.any(Array), message: expect.any(String) }),
-          ]),
-        }),
+        ZOD_ISSUES_SHAPE,
       );
     });
 
     it('rejects missing items', () => {
       const { items: _, ...noItems } = validReview();
       expect(() => ReviewSchema.parse(noItems)).toThrow(
-        expect.objectContaining({
-          issues: expect.arrayContaining([
-            expect.objectContaining({ path: expect.any(Array), message: expect.any(String) }),
-          ]),
-        }),
+        ZOD_ISSUES_SHAPE,
       );
     });
 
     it('rejects empty item title', () => {
       expect(() => ReviewSchema.parse(validReview({ items: [errorItem({ title: '' })] }))).toThrow(
-        expect.objectContaining({
-          issues: expect.arrayContaining([
-            expect.objectContaining({ path: expect.any(Array), message: expect.any(String) }),
-          ]),
-        }),
+        ZOD_ISSUES_SHAPE,
       );
     });
 
@@ -120,11 +123,7 @@ describe('ReviewSchema', () => {
       expect(() =>
         ReviewSchema.parse(validReview({ items: [errorItem({ description: '' })] })),
       ).toThrow(
-        expect.objectContaining({
-          issues: expect.arrayContaining([
-            expect.objectContaining({ path: expect.any(Array), message: expect.any(String) }),
-          ]),
-        }),
+        ZOD_ISSUES_SHAPE,
       );
     });
 
@@ -132,11 +131,7 @@ describe('ReviewSchema', () => {
       expect(() =>
         ReviewSchema.parse(validReview({ items: [errorItem({ recommendation: '' })] })),
       ).toThrow(
-        expect.objectContaining({
-          issues: expect.arrayContaining([
-            expect.objectContaining({ path: expect.any(Array), message: expect.any(String) }),
-          ]),
-        }),
+        ZOD_ISSUES_SHAPE,
       );
     });
 
@@ -144,21 +139,13 @@ describe('ReviewSchema', () => {
       expect(() =>
         ReviewSchema.parse(validReview({ items: [errorItem({ evidence: 'What was observed' })] })),
       ).toThrow(
-        expect.objectContaining({
-          issues: expect.arrayContaining([
-            expect.objectContaining({ path: expect.any(Array), message: expect.any(String) }),
-          ]),
-        }),
+        ZOD_ISSUES_SHAPE,
       );
     });
 
     it('rejects unknown properties (strict mode)', () => {
       expect(() => ReviewSchema.parse(validReview({ unexpected: true }))).toThrow(
-        expect.objectContaining({
-          issues: expect.arrayContaining([
-            expect.objectContaining({ path: expect.any(Array), message: expect.any(String) }),
-          ]),
-        }),
+        ZOD_ISSUES_SHAPE,
       );
     });
   });
@@ -269,11 +256,7 @@ describe('ReviewSchema', () => {
       expect(() =>
         ReviewSchema.parse(validReview({ items: [errorItem({ references: [{ uri: '' }] })] })),
       ).toThrow(
-        expect.objectContaining({
-          issues: expect.arrayContaining([
-            expect.objectContaining({ path: expect.any(Array), message: expect.any(String) }),
-          ]),
-        }),
+        ZOD_ISSUES_SHAPE,
       );
     });
 
@@ -285,11 +268,7 @@ describe('ReviewSchema', () => {
           }),
         ),
       ).toThrow(
-        expect.objectContaining({
-          issues: expect.arrayContaining([
-            expect.objectContaining({ path: expect.any(Array), message: expect.any(String) }),
-          ]),
-        }),
+        ZOD_ISSUES_SHAPE,
       );
     });
 
@@ -301,11 +280,7 @@ describe('ReviewSchema', () => {
           }),
         ),
       ).toThrow(
-        expect.objectContaining({
-          issues: expect.arrayContaining([
-            expect.objectContaining({ path: expect.any(Array), message: expect.any(String) }),
-          ]),
-        }),
+        ZOD_ISSUES_SHAPE,
       );
     });
 
@@ -317,11 +292,7 @@ describe('ReviewSchema', () => {
           }),
         ),
       ).toThrow(
-        expect.objectContaining({
-          issues: expect.arrayContaining([
-            expect.objectContaining({ path: expect.any(Array), message: expect.any(String) }),
-          ]),
-        }),
+        ZOD_ISSUES_SHAPE,
       );
     });
   });
@@ -334,11 +305,7 @@ describe('ReviewSchema', () => {
 
     it('throws for invalid data', () => {
       expect(() => validate({})).toThrow(
-        expect.objectContaining({
-          issues: expect.arrayContaining([
-            expect.objectContaining({ path: expect.any(Array), message: expect.any(String) }),
-          ]),
-        }),
+        ZOD_ISSUES_SHAPE,
       );
     });
   });
