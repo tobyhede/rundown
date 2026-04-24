@@ -118,7 +118,7 @@ describe('normalizeCliOutput', () => {
     expect(normalizeCliOutput(input, workspace)).toBe('"durationMs": <ms>, "took": <ms>');
   });
 
-  it('normalises large durationMs values via the field-scoped rule (not generic hex8)', () => {
+  it('masks large durationMs values via the field-scoped rule (not generic hex8)', () => {
     // Pre-fix regression: the generic `\b[0-9a-f]{8}\b` hex8 rule would match
     // pure-digit 8-char values before the field-scoped duration rule ran,
     // yielding `"durationMs": <hex8>` instead of `"durationMs": <ms>`.
