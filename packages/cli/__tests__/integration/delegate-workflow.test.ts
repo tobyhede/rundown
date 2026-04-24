@@ -1277,9 +1277,10 @@ describe('DELEGATE re-entry and retry', () => {
     expect(iter1TokenB).not.toBe(iter1TokenA);
     expect(iter1TokenB.startsWith('rdtk_')).toBe(true);
 
-    // Frontier entry must scope to substep 1.1 (the only DELEGATE substep
-    // in this iteration).
-    expect(fr1[fr1.length - 1][0].id).toBe('1.1');
+    // Frontier entry must scope to substep 1.1 in iteration 1 (the only
+    // DELEGATE substep in this iteration). `contextSnapshot.at` carries the
+    // canonical three-level `${step}.${iteration}.${substep}` for FOR retries.
+    expect(fr1[fr1.length - 1][0].id).toBe('1.1.1');
 
     // STEP_TRANSITIONED with action=RETRY marks the iteration-retry transition.
     // Verify the retry is scoped to iteration 1 (forIndex=1) — this confirms
