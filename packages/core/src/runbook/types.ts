@@ -340,6 +340,34 @@ type LastActionBase = {
 };
 
 /**
+ * LastAction variant written by the retry hook (parent aggregation or
+ * iteration) when it fails during the retry transition. Carries a structured
+ * diagnostic for the CLI orchestrator to surface via ERROR_OCCURRED. Routes
+ * to STOPPED via a priority-0 guarded `always` entry on the parent state.
+ *
+ * Distinct from `STOP`: STOP is a pure domain action (authored STOP
+ * transitions, `rd stop`). `RETRY_ERROR` is a machine-internal-failure
+ * signal — the retry could not complete because `createDelegation` threw or
+ * an invariant (e.g. missing active frame) was violated.
+ *
+ * @see parseActionType in `packages/core/src/runbook/transition-kernel.ts`
+ *   — maps this variant to the `'RETRY_ERROR'` ActionType. The CLI layer
+ *   suppresses `STEP_TRANSITIONED` emission for this variant (see
+ *   `packages/cli/src/helpers/transition-orchestrator.ts`) because the
+ *   failure is already surfaced via `ERROR_OCCURRED` + `RUNBOOK_STOPPED`.
+ * @see The priority-0 `always` entry constructed in `buildParentStateConfig`
+ *   (`packages/core/src/runbook/compiler.ts`) that routes this variant to
+ *   the `STOPPED` terminal state.
+ */
+export interface RetryErrorLastAction extends LastActionBase {
+  readonly type: 'RETRY_ERROR';
+  /** Structured error code (e.g. `RD-901`, `RD-902`). */
+  readonly code: string;
+  /** Human-readable message describing the hook failure. */
+  readonly message: string;
+}
+
+/**
  * Discriminated union representing the last transition action taken by the state machine.
  */
 export type LastAction =
@@ -359,7 +387,8 @@ export type LastAction =
   | (LastActionBase & { readonly type: 'STOP' })
   | (LastActionBase & { readonly type: 'RETRY' })
   | (LastActionBase & { readonly type: 'NEXT' })
-  | (LastActionBase & { readonly type: 'BREAK' });
+  | (LastActionBase & { readonly type: 'BREAK' })
+  | RetryErrorLastAction;
 
 /**
  * Runtime state of a substep within a step
@@ -403,6 +432,17 @@ export interface StepDelegation {
   readonly childRunId: string | null;
   readonly createdAt: string;
   readonly cancelledAt: string | null;
+  /**
+   * Caller-supplied extra variables captured at issuance time.
+   *
+   * Preserved separately from `contextSnapshot.vars` (which is the merged
+   * `templateVars + extraVars` snapshot used by the child for template
+   * expansion). Retry inherits this narrow map so re-issuance can rebuild
+   * a fresh `contextSnapshot` without reusing stale snapshot vars.
+   *
+   * Undefined when no overrides were passed at issuance.
+   */
+  readonly extraVars?: Readonly<Record<string, TemplateVarValue>>;
 }
 
 /** Snapshot of execution context at delegation time. */

@@ -252,4 +252,335 @@ describe('delegate command', () => {
       expect(result.stdout + result.stderr).toContain('not found');
     });
   });
+
+  describe('rd delegate --retry', () => {
+    it('token form: cancels old delegation and mints fresh token', async () => {
+      await setupDelegation();
+
+      const first = await runCliInProcess(
+        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1'],
+        workspace,
+      );
+      expect(first.exitCode).toBe(0);
+      const firstOutput = JSON.parse(first.stdout) as Record<string, unknown>;
+      const originalToken = firstOutput.token as string;
+      const originalHash = firstOutput.token_hash as string;
+
+      const retry = await runCliInProcess(['delegate', '--retry', originalToken], workspace);
+
+      expect(retry.exitCode).toBe(0);
+      const retryOutput = JSON.parse(retry.stdout) as Record<string, unknown>;
+      expect(retryOutput.action).toBe('retried');
+      expect((retryOutput.token as string).startsWith('rdtk_')).toBe(true);
+      expect(retryOutput.token).not.toBe(originalToken);
+      expect(retryOutput.token_hash).not.toBe(originalHash);
+      expect(retryOutput.step).toBe('1.1');
+    });
+
+    it('--step form: resolves active-frame substep and retries', async () => {
+      await setupDelegation();
+
+      const first = await runCliInProcess(
+        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1'],
+        workspace,
+      );
+      expect(first.exitCode).toBe(0);
+      const firstOutput = JSON.parse(first.stdout) as Record<string, unknown>;
+      const originalToken = firstOutput.token as string;
+
+      const retry = await runCliInProcess(['delegate', '--retry', '--step', '1.1'], workspace);
+
+      expect(retry.exitCode).toBe(0);
+      const retryOutput = JSON.parse(retry.stdout) as Record<string, unknown>;
+      expect(retryOutput.action).toBe('retried');
+      expect(retryOutput.token).not.toBe(originalToken);
+      expect(retryOutput.step).toBe('1.1');
+    });
+
+    it('inferred form: retries the active substep delegation', async () => {
+      await setupDelegation();
+
+      const first = await runCliInProcess(
+        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1'],
+        workspace,
+      );
+      expect(first.exitCode).toBe(0);
+      const firstOutput = JSON.parse(first.stdout) as Record<string, unknown>;
+      const originalToken = firstOutput.token as string;
+
+      const retry = await runCliInProcess(['delegate', '--retry'], workspace);
+
+      expect(retry.exitCode).toBe(0);
+      const retryOutput = JSON.parse(retry.stdout) as Record<string, unknown>;
+      expect(retryOutput.action).toBe('retried');
+      expect(retryOutput.token).not.toBe(originalToken);
+    });
+
+    it('rejects ambiguity: token + --step both provided', async () => {
+      await setupDelegation();
+
+      const first = await runCliInProcess(
+        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1'],
+        workspace,
+      );
+      expect(first.exitCode).toBe(0);
+      const firstOutput = JSON.parse(first.stdout) as Record<string, unknown>;
+      const originalToken = firstOutput.token as string;
+
+      const retry = await runCliInProcess(
+        ['delegate', '--retry', originalToken, '--step', '1.1'],
+        workspace,
+      );
+
+      expect(retry.exitCode).not.toBe(0);
+      expect(retry.stdout + retry.stderr).toMatch(/specify either a token or --step/);
+    });
+
+    it('errors when --step has no delegation', async () => {
+      await setupDelegation();
+
+      const retry = await runCliInProcess(['delegate', '--retry', '--step', '1.1'], workspace);
+
+      expect(retry.exitCode).not.toBe(0);
+      expect(retry.stdout + retry.stderr).toMatch(/no delegation found for step/);
+    });
+
+    it('errors when token is unknown', async () => {
+      await setupDelegation();
+
+      const retry = await runCliInProcess(
+        ['delegate', '--retry', 'rdtk_unknown00000000000000000000000000'],
+        workspace,
+      );
+
+      expect(retry.exitCode).not.toBe(0);
+      expect(retry.stdout + retry.stderr).toMatch(/token .* not found/i);
+    });
+
+    it('errors when inferred form has no active runbook', async () => {
+      // No runbook started — sessionService.getActive() returns null on the
+      // inferred path, hitting the explicit fail() at delegate.ts:388-390.
+      const retry = await runCliInProcess(['delegate', '--retry'], workspace);
+
+      expect(retry.exitCode).not.toBe(0);
+      expect(retry.stdout + retry.stderr).toContain(
+        '--retry requires a token, --step <id>, or an active substep',
+      );
+    });
+
+    it('errors when inferred form has no active substep', async () => {
+      // Start a runbook whose active cursor sits on a step with no substeps
+      // (single-step runbook, prompted mode) — state exists but
+      // activeState.substep is undefined, hitting the fail() at
+      // delegate.ts:392-394.
+      const content = createRunbook({
+        steps: [{ title: 'Only step', pass: 'COMPLETE', command: 'rd echo --result pass' }],
+      });
+      await writeFile(join(workspace.cwd, 'runbooks', 'single.runbook.md'), content);
+      const start = await runCliInProcess(
+        'run --prompted runbooks/single.runbook.md --text',
+        workspace,
+      );
+      expect(start.exitCode).toBe(0);
+
+      const retry = await runCliInProcess(['delegate', '--retry'], workspace);
+
+      expect(retry.exitCode).not.toBe(0);
+      expect(retry.stdout + retry.stderr).toContain(
+        '--retry requires a token, --step <id>, or an active substep',
+      );
+    });
+
+    it('errors when --step targets an off-frontier step', async () => {
+      // setupDelegation starts at step '1'. Create a delegation on 1.1, then advance
+      // the cursor past step 1 so a retry --step 1.1 sees a non-current step.
+      await setupDelegation();
+      const first = await runCliInProcess(
+        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1'],
+        workspace,
+      );
+      expect(first.exitCode).toBe(0);
+
+      // Move cursor off step 1 by goto'ing step 2.
+      const goto = await runCliInProcess(['goto', '2'], workspace);
+      expect(goto.exitCode).toBe(0);
+
+      const retry = await runCliInProcess(['delegate', '--retry', '--step', '1.1'], workspace);
+
+      expect(retry.exitCode).not.toBe(0);
+      expect(retry.stdout + retry.stderr).toMatch(/is not at the execution frontier/);
+    });
+
+    it('inherits extraVars from the prior delegation', async () => {
+      await setupDelegation();
+
+      const first = await runCliInProcess(
+        [
+          'delegate',
+          'runbooks/child.runbook.md',
+          '--step',
+          '1.1',
+          '--input',
+          'environment=staging',
+        ],
+        workspace,
+      );
+      expect(first.exitCode).toBe(0);
+
+      const retry = await runCliInProcess(['delegate', '--retry', '--step', '1.1'], workspace);
+      expect(retry.exitCode).toBe(0);
+
+      const state = await getActiveState(workspace);
+      const substepStates = state?.substepStates as Array<Record<string, unknown>> | undefined;
+      const ss1 = substepStates?.find((ss) => ss.id === '1');
+      const delegation = ss1?.delegation as Record<string, unknown> | undefined;
+      const extraVars = delegation?.extraVars as Record<string, unknown> | undefined;
+      expect(extraVars).toEqual({ environment: 'staging' });
+    });
+
+    it('overrides inherited vars when --input is passed', async () => {
+      await setupDelegation();
+
+      const first = await runCliInProcess(
+        [
+          'delegate',
+          'runbooks/child.runbook.md',
+          '--step',
+          '1.1',
+          '--input',
+          'environment=staging',
+        ],
+        workspace,
+      );
+      expect(first.exitCode).toBe(0);
+
+      const retry = await runCliInProcess(
+        ['delegate', '--retry', '--step', '1.1', '--input', 'environment=production'],
+        workspace,
+      );
+      expect(retry.exitCode).toBe(0);
+
+      const state = await getActiveState(workspace);
+      const substepStates = state?.substepStates as Array<Record<string, unknown>> | undefined;
+      const ss1 = substepStates?.find((ss) => ss.id === '1');
+      const delegation = ss1?.delegation as Record<string, unknown> | undefined;
+      const extraVars = delegation?.extraVars as Record<string, unknown> | undefined;
+      expect(extraVars).toEqual({ environment: 'production' });
+    });
+
+    it('accepts retry on a non-failed delegation (result-agnostic per spec §4.4)', async () => {
+      await setupDelegation();
+
+      // Create a delegation; default substepState status is 'pending' (not failed).
+      const first = await runCliInProcess(
+        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1'],
+        workspace,
+      );
+      expect(first.exitCode).toBe(0);
+
+      // Retry succeeds regardless of substep result.
+      const retry = await runCliInProcess(['delegate', '--retry', '--step', '1.1'], workspace);
+      expect(retry.exitCode).toBe(0);
+      const retryOutput = JSON.parse(retry.stdout) as Record<string, unknown>;
+      expect(retryOutput.action).toBe('retried');
+      expect((retryOutput.token as string).startsWith('rdtk_')).toBe(true);
+    });
+
+    it('rejects --index on a non-FOR step with a clear error', async () => {
+      // substeps.runbook.md step 1 has kind 'substeps', not 'for'.
+      await setupDelegation();
+
+      const retry = await runCliInProcess(
+        ['delegate', '--retry', '--step', '1.1', '--index', '3'],
+        workspace,
+      );
+
+      expect(retry.exitCode).not.toBe(0);
+      expect(retry.stdout + retry.stderr).toMatch(/--index requires step .* to be a FOR step/);
+    });
+
+    it('FOR-iteration: --step with --index targets the right frame', async () => {
+      // Write a FOR parent with a substep that can host delegations per iteration.
+      const parentContent = createRunbook({
+        title: 'FOR Parent',
+        steps: [
+          {
+            title: 'Process items',
+            for: { variable: 'i', start: 1, end: 2 },
+            pass: 'CONTINUE',
+            substeps: [{ title: 'Handle item', content: 'Handle item {{i}}.' }],
+          },
+          { title: 'Done', pass: 'COMPLETE', content: 'Final step.' },
+        ],
+      });
+      await writeFile(join(workspace.cwd, 'runbooks', 'for-parent.runbook.md'), parentContent);
+
+      // Create the child runbook used for delegation
+      const childContent = createRunbook({
+        steps: [{ title: 'Child step', pass: 'COMPLETE', command: 'rd echo --result pass' }],
+      });
+      await writeFile(join(workspace.cwd, 'runbooks', 'child.runbook.md'), childContent);
+
+      // Start the parent in prompted mode
+      const startResult = await runCliInProcess(
+        'run --prompted runbooks/for-parent.runbook.md --text',
+        workspace,
+      );
+      expect(startResult.exitCode).toBe(0);
+
+      // Seed delegations in both FOR iteration frames (buildFrameKey('1', 1) and ('1', 2))
+      const del1 = await runCliInProcess(
+        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1', '--index', '1'],
+        workspace,
+      );
+      expect(del1.exitCode).toBe(0);
+      const del1Output = JSON.parse(del1.stdout) as Record<string, unknown>;
+      const _iter1Token = del1Output.token as string;
+      const iter1Hash = del1Output.token_hash as string;
+
+      const del2 = await runCliInProcess(
+        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1', '--index', '2'],
+        workspace,
+      );
+      expect(del2.exitCode).toBe(0);
+      const del2Output = JSON.parse(del2.stdout) as Record<string, unknown>;
+      const iter2Token = del2Output.token as string;
+      const iter2Hash = del2Output.token_hash as string;
+
+      // Retry only iteration 2
+      const retry = await runCliInProcess(
+        ['delegate', '--retry', '--step', '1.1', '--index', '2'],
+        workspace,
+      );
+      expect(retry.exitCode).toBe(0);
+      const retryOutput = JSON.parse(retry.stdout) as Record<string, unknown>;
+      expect(retryOutput.action).toBe('retried');
+
+      // Iteration 2 got a fresh token
+      expect(retryOutput.token).not.toBe(iter2Token);
+      expect(retryOutput.token_hash).not.toBe(iter2Hash);
+
+      // Verify frame isolation in persisted state: iteration 1 is untouched,
+      // iteration 2 has the new hash.
+      const state = await getActiveState(workspace);
+      const substepStates = state?.substepStates as Array<Record<string, unknown>> | undefined;
+      expect(substepStates).toBeDefined();
+
+      const iter1Entry = substepStates?.find((ss) => ss.id === '1' && ss.frameKey === '1|1');
+      const iter2Entry = substepStates?.find((ss) => ss.id === '1' && ss.frameKey === '1|2');
+      expect(iter1Entry).toBeDefined();
+      expect(iter2Entry).toBeDefined();
+
+      const iter1Delegation = iter1Entry?.delegation as Record<string, unknown> | undefined;
+      const iter2Delegation = iter2Entry?.delegation as Record<string, unknown> | undefined;
+
+      // Iteration 1 preserved its original hash — frame isolation.
+      expect(iter1Delegation?.tokenHash).toBe(iter1Hash);
+      expect(iter1Delegation?.cancelledAt).toBeNull();
+
+      // Iteration 2 has the fresh hash and the old one is gone.
+      expect(iter2Delegation?.tokenHash).toBe(retryOutput.token_hash);
+      expect(iter2Delegation?.tokenHash).not.toBe(iter2Hash);
+    });
+  });
 });

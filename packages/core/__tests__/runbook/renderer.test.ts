@@ -118,6 +118,19 @@ describe('renderSubstep', () => {
     };
     expect(renderSubstep(substep, '1')).toBe('### 1.1 With child runbook\n\n- task.runbook.md');
   });
+
+  it('renders DELEGATE annotation before runbook bullets', () => {
+    const substep = {
+      id: '1',
+      description: 'Delegated child',
+      runbooks: ['task.runbook.md'],
+      delegate: true as const,
+      transitions: DEFAULT_TRANSITIONS,
+    } as Substep;
+    expect(renderSubstep(substep, '1')).toBe(
+      '### 1.1 Delegated child\n\n- DELEGATE\n- task.runbook.md',
+    );
+  });
 });
 
 describe('renderStep', () => {
@@ -216,18 +229,18 @@ describe('renderStep', () => {
     expect(result).not.toContain('### 2.1');
   });
 
-  it('renders shorthand runbook-list-derived substep with prompt', () => {
+  it('renders shorthand runbook-list-derived substep with step-level prompt', () => {
     const step = {
       kind: 'substeps',
       name: '2',
       substepsDerivedFromRunbookList: true,
       description: 'Review the plan',
+      prompt: 'Review the following items carefully.',
       transitions: DEFAULT_TRANSITIONS,
       substeps: [
         {
           id: '1',
           description: '',
-          prompt: 'Review the following items carefully.',
           runbooks: ['review.runbook.md'],
           transitions: DEFAULT_TRANSITIONS,
         },
@@ -237,6 +250,36 @@ describe('renderStep', () => {
     expect(result).toContain('Review the following items carefully.');
     expect(result).toContain('- review.runbook.md');
     expect(result).not.toContain('### 2.1');
+  });
+
+  it('renders step prompt when runbook-list shorthand has step-level prose', () => {
+    const step = {
+      kind: 'substeps',
+      name: '3',
+      description: 'Delegate subagents to review the plan',
+      prompt: 'Delegate 4x subagents to review the plan.',
+      substepsDerivedFromRunbookList: true,
+      transitions: DEFAULT_TRANSITIONS,
+      substeps: [
+        {
+          id: '1',
+          description: '',
+          runbooks: ['review-plan-technical-accuracy.runbook.md'],
+          transitions: DEFAULT_TRANSITIONS,
+        },
+        {
+          id: '2',
+          description: '',
+          runbooks: ['review-plan-structural-integrity.runbook.md'],
+          transitions: DEFAULT_TRANSITIONS,
+        },
+      ],
+    } as Step;
+    const result = renderStep(step);
+    expect(result).toContain('Delegate 4x subagents to review the plan.');
+    expect(result).toContain('- review-plan-technical-accuracy.runbook.md');
+    expect(result).toContain('- review-plan-structural-integrity.runbook.md');
+    expect(result).not.toContain('### 3.1');
   });
 });
 
@@ -504,6 +547,53 @@ echo hello
     ]);
   });
 
+  it('round-trips DELEGATE annotation on H3 substep', () => {
+    const original = `## 1. Dispatch reviewers
+
+### 1.1 First reviewer
+
+- DELEGATE
+- review.runbook.md
+
+## 2. Synthesize`;
+
+    const parsed1 = parseRunbook(original);
+    expect((parsed1[0] as any).substeps?.[0].delegate).toBe(true);
+
+    const rendered = parsed1.map(renderStep).join('\n\n');
+    expect(rendered).toContain('- DELEGATE');
+
+    const parsed2 = parseRunbook(rendered);
+    expect((parsed2[0] as any).substeps?.[0].delegate).toBe(true);
+    expect((parsed2[0] as any).substeps?.[0].runbooks).toEqual(['review.runbook.md']);
+  });
+
+  it('round-trips DELEGATE annotation on runbook-list shorthand substep', () => {
+    const original = `## 1. Dispatch reviewers
+
+- review-a.runbook.md
+  - DELEGATE
+- review-b.runbook.md
+  - DELEGATE
+
+## 2. Synthesize`;
+
+    const parsed1 = parseRunbook(original);
+    const substeps1 = (parsed1[0] as any).substeps;
+    expect(substeps1).toHaveLength(2);
+    expect(substeps1[0].delegate).toBe(true);
+    expect(substeps1[1].delegate).toBe(true);
+
+    const rendered = parsed1.map(renderStep).join('\n\n');
+    expect(rendered.match(/- DELEGATE/g)).toHaveLength(2);
+
+    const parsed2 = parseRunbook(rendered);
+    const substeps2 = (parsed2[0] as any).substeps;
+    expect(substeps2).toHaveLength(2);
+    expect(substeps2[0].delegate).toBe(true);
+    expect(substeps2[1].delegate).toBe(true);
+  });
+
   it('round-trips FOR without forClause transitions', () => {
     const original = `## 1. Process items
 
@@ -588,7 +678,7 @@ Review the following items carefully.
     expect(parsed2[0].kind).toBe('for');
     expect((parsed2[0] as any).forClause).toEqual({ variable: 'pass', start: 1, end: 2 });
     expect((parsed2[0] as any).substepsDerivedFromRunbookList).toBe(true);
-    expect(parsed2[0].substeps?.[0].prompt).toBe('Review the following items carefully.');
+    expect(parsed2[0].prompt).toBe('Review the following items carefully.');
   });
 
   it('round-trips FOR with default transitions and step prompt', () => {

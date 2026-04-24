@@ -39,10 +39,16 @@ import {
   assertResolvedVariableForContext,
   ForResolutionError,
   RUNS_DIR,
+  createDelegation,
+  Errors,
+  isError,
+  type DelegateFrontierEntry,
 } from '@rundown-org/core';
 import { isSourced, resolvedStepHasSubsteps, type ForClause } from '@rundown-org/parser';
 import { isInternalRdCommand, executeRdCommandInternal } from './internal-commands.js';
 import type { StepVariables } from './execution-vars.js';
+import { inferAllDelegateSubsteps } from '../helpers/delegate-inference.js';
+import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import {
   getPolicyEvaluator,
   getPolicyPrompter,
@@ -209,6 +215,36 @@ const EXECUTION_TERMINAL_POLICY: TransitionOrchestrationPolicy = {
   },
 };
 
+/**
+ * Extract a RETRY_ERROR diagnostic from a persisted XState snapshot.
+ *
+ * Reads `context.lastAction` and returns `code`/`message` only when the
+ * variant is `RETRY_ERROR`. Other lastAction variants (including `STOP`)
+ * return undefined — `STOP` is a pure domain action, not a machine-internal
+ * failure signal.
+ *
+ * The retry hook writes a `RetryErrorLastAction` onto `context.lastAction`
+ * when `createDelegation` throws during a parent-level retry (or an
+ * invariant is violated). The priority-0 always-entry in the compiler then
+ * routes the machine to STOPPED. This helper narrows the opaque snapshot
+ * envelope into the error record so the CLI can emit `ERROR_OCCURRED`
+ * before the terminal RUNBOOK_STOPPED event.
+ *
+ * @param snapshot - Raw persisted XState snapshot (unknown shape)
+ * @returns Coded diagnostic, or undefined if lastAction is not RETRY_ERROR
+ */
+function extractRetryError(snapshot: unknown): { code: string; message: string } | undefined {
+  if (typeof snapshot !== 'object' || snapshot === null) return undefined;
+  const ctx = (snapshot as { context?: unknown }).context;
+  if (typeof ctx !== 'object' || ctx === null) return undefined;
+  const lastAction = (ctx as { lastAction?: unknown }).lastAction;
+  if (typeof lastAction !== 'object' || lastAction === null) return undefined;
+  const record = lastAction as { type?: unknown; code?: unknown; message?: unknown };
+  if (record.type !== 'RETRY_ERROR') return undefined;
+  if (typeof record.code !== 'string' || typeof record.message !== 'string') return undefined;
+  return { code: record.code, message: record.message };
+}
+
 async function applyResultTransition({
   manager,
   actorService,
@@ -239,6 +275,23 @@ async function applyResultTransition({
     syncResult.state,
   );
   const actionResult = computeActionResult ? computeActionResult(actionType) : result === 'pass';
+
+  // If the retry hook failed and the machine routed to STOPPED as a result,
+  // emit ERROR_OCCURRED so the orchestrator/CLI observer sees the root cause.
+  // This must precede orchestrateTransition (which emits the terminal
+  // RUNBOOK_STOPPED event), so consumers can correlate the error with the
+  // stop. RETRY_ERROR is a machine-internal failure, not a normal fail
+  // transition — hence the dedicated event. A plain STOP action (authored
+  // STOP transitions, `rd stop`) does NOT emit ERROR_OCCURRED.
+  if (ensured.state.lifecycle === 'stopped') {
+    const retryError = extractRetryError(syncResult.snapshot);
+    if (retryError) {
+      emitter.emit('ERROR_OCCURRED', {
+        message: retryError.message,
+        code: retryError.code,
+      });
+    }
+  }
 
   const orchestration = await orchestrateTransition({
     manager,
@@ -624,6 +677,93 @@ export async function runExecutionLoop(
     // Compute before STEP_ENTERED so the event includes the prompted FOR flag
     const stepIsPrompted = currentStep.kind === 'prompted-for';
 
+    // Delegation frontier emission.
+    // Prefer a pre-issued frontier from the retry hook (context.pendingDelegateFrontier)
+    // over re-running auto-issuance. If consumed, signal the machine to clear the
+    // context field via PENDING_FRONTIER_CONSUMED after the emit.
+    //
+    // The pending branch handles manual delegations as well (parents with no
+    // step-level DELEGATE annotation that nonetheless have live delegations
+    // re-issued by the retry hook), so it cannot be gated on `delegate: true`.
+    // Auto-issuance, however, only runs for steps whose substeps declare
+    // `delegate: true`, and `getContextSnapshot` is skipped entirely on
+    // non-substep entries to avoid materialising an actor every loop.
+    let delegateFrontier: Array<DelegateFrontierEntry> | undefined;
+    let pendingFrontierConsumed = false;
+
+    if (isSubstep) {
+      const pendingSnapshot = await actorService.getContextSnapshot(runbookId, steps);
+      const pending = pendingSnapshot?.pendingDelegateFrontier;
+
+      if (pending && pending.length > 0) {
+        delegateFrontier = [...pending];
+        pendingFrontierConsumed = true;
+      } else {
+        // Auto-issue delegation tokens on entry to the first substep of a step
+        // whose substeps declare `delegate: true`.
+        const isDelegateStepEntry =
+          resolvedStepHasSubsteps(currentStep) &&
+          currentState.substep === currentStep.substeps[0]?.id &&
+          currentStep.substeps.some((sub) => sub.delegate);
+
+        if (isDelegateStepEntry) {
+          const targets = inferAllDelegateSubsteps(currentState, steps);
+
+          if (targets.length > 0) {
+            try {
+              const fanOut: Array<DelegateFrontierEntry> = [];
+              let threadedState = currentState;
+              const frameKey =
+                threadedState.activeFrameKey ?? deriveActiveFrame(threadedState).frameKey;
+
+              for (const target of targets) {
+                const childResolved = await resolveRunbookFile(cwd, target.runbookRef);
+                if (!childResolved) {
+                  throw Errors.delegationRunbookNotFound(target.runbookRef);
+                }
+
+                const result = createDelegation(
+                  {
+                    state: threadedState,
+                    stepId: target.stepId,
+                    childRunbookPath: childResolved.path,
+                    extraVars: undefined,
+                    ancestors: [],
+                    frameKey,
+                  },
+                  steps,
+                );
+
+                threadedState = { ...threadedState, substepStates: result.updatedSubstepStates };
+                fanOut.push({
+                  id: target.stepId,
+                  runbook: target.runbookRef,
+                  token: result.token,
+                });
+              }
+
+              // Persist all tokens in one write
+              await manager.update(runbookId, { substepStates: threadedState.substepStates });
+              delegateFrontier = fanOut;
+            } catch (err) {
+              // Persist any partial fan-out work, then transition the runbook to
+              // stopped. An uncaught throw here would strand the runbook on a
+              // DELEGATE step waiting for tokens that will never be issued.
+              const message = isError(err) ? err.message : String(err);
+              await manager.update(runbookId, { lifecycle: 'stopped' });
+              emitter.emit('RUNBOOK_STOPPED', {
+                message,
+                position: stepPosition,
+                reason: 'delegation_resolution_failed',
+              });
+              await sessionService.popRunbook();
+              return 'stopped';
+            }
+          }
+        }
+      }
+    }
+
     emitter.emit('STEP_ENTERED', {
       position: stepPosition,
       stepName: isSubstep ? itemToRender.id : itemToRender.name,
@@ -636,7 +776,14 @@ export async function runExecutionLoop(
       commandLang: command?.lang,
       isSubstep,
       prompted: prompted || stepIsPrompted,
+      delegateFrontier,
     });
+
+    if (pendingFrontierConsumed) {
+      await actorService.sendAndSync(runbookId, steps, {
+        type: 'PENDING_FRONTIER_CONSUMED',
+      });
+    }
 
     // If CLI prompted mode, per-step prompted FOR, OR no command
     // Use itemToRender which may be a substep with its own command

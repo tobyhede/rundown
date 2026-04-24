@@ -1,4 +1,4 @@
-import { setup, assign } from 'xstate';
+import { setup, assign, assertEvent } from 'xstate';
 import type {
   Action,
   Aggregation,
@@ -8,6 +8,7 @@ import type {
   ResolvedStep,
   ResolvedStepHavingSubsteps,
   Lifecycle,
+  SubstepState,
 } from './types.js';
 import { isResolvedVariableForContext } from './types.js';
 import type { StepId } from './step-id.js';
@@ -30,6 +31,9 @@ import {
   type FlattenedTemplateVars,
   type OutputVars,
 } from './output-evaluator.js';
+import type { DelegateFrontierEntry } from '../events/types.js';
+import type { FrameKey } from './targeting.js';
+import { runRetryHook } from './retry-hook.js';
 
 /**
  * Module-level XState setup with typed context, events, and named actions.
@@ -204,6 +208,20 @@ export interface RunbookContext {
   readonly finalVars: RunbookMachineOutput['finalVars'];
   /** Machine-owned lifecycle flag. 'running' during execution; 'completed' or 'stopped' on final entry. */
   readonly lifecycle: Lifecycle;
+  /**
+   * Mirror of RunbookState.substepStates so the retry hook (running inside
+   * an XState assign) can inspect delegation records and write back updates.
+   * Populated at actor bootstrap (Task 4) and updated by the retry hook.
+   */
+  readonly substepStates?: readonly SubstepState[];
+  /** Mirror of RunbookState.activeFrameKey for frame-scoped substep lookup. */
+  readonly activeFrameKey?: FrameKey;
+  /**
+   * Frontier of newly-minted delegation tokens populated by the retry hook.
+   * Consumed by the execution layer when emitting STEP_ENTERED on retry
+   * re-entry, then cleared via the PENDING_FRONTIER_CONSUMED event.
+   */
+  readonly pendingDelegateFrontier?: ReadonlyArray<DelegateFrontierEntry>;
 }
 
 /**
@@ -220,7 +238,8 @@ export type RunbookEvent =
   | { type: 'FAIL' }
   | { type: 'RETRY' }
   | { type: 'GOTO'; target: StepId }
-  | { type: 'SET_VARIABLES'; vars: Record<string, string> };
+  | { type: 'SET_VARIABLES'; vars: Record<string, string> }
+  | { type: 'PENDING_FRONTIER_CONSUMED' };
 
 /**
  * Object-form XState transition entry — the `{ target?, actions?, guard? }` variant.
@@ -929,22 +948,51 @@ function buildParentStateConfig(
       {
         guard: ({ context, event }: { context: RunbookContext; event: RunbookEvent }) =>
           branchGuard({ context, event }) && context.parentRetryCount < transition.retry,
-        target: firstSubstepStateId,
-        actions: runbookSetup.assign({
-          lastAction: { type: 'RETRY' as const },
-          parentRetryCount: ({ context }: { context: RunbookContext }) =>
-            context.parentRetryCount + 1,
-          // Increment both counters: parentRetryCount tracks parent-level exhaustion,
-          // retryCount is exposed to the execution layer (actor-service) for visibility.
-          retryCount: ({ context }: { context: RunbookContext }) => context.retryCount + 1,
-          retryMax: transition.retry,
-          forStack: EMPTY_FOR_STACK,
-          iterationResults: EMPTY_RESULTS,
-          substepCompletedCount: 0,
-          deferredResults: EMPTY_RESULTS,
-          iterationRetryCount: 0,
-          lastMessage: undefined,
-          substep: firstSubstep?.id,
+        // Target the parent state itself (self re-enter). On success a
+        // sibling priority-0 always entry observes lastAction.type === 'RETRY'
+        // (aggregated) and routes to firstSubstepStateId; on error the
+        // priority-0 RETRY_ERROR always entry routes to STOPPED. Routing
+        // via always-entries ensures the error-path never enters the substep
+        // state (whose PASS/FAIL transitions would overwrite the
+        // RETRY_ERROR lastAction before the priority-0 guard could fire).
+        target: formatStateId(stepName),
+        actions: runbookSetup.assign(({ context }: { context: RunbookContext }) => {
+          // Run the retry hook: iterate every delegated substep in the active
+          // frame, re-issue their delegations, collect new tokens into a
+          // frontier. Uniform re-delegation (docs/SPEC.md §4.2, §5). Never throws.
+          const hook = runRetryHook(context, parentStep, steps);
+          if (hook.status === 'error') {
+            // RETRY_ERROR variant: structurally distinct LastAction type. The
+            // priority-0 always entry routes to STOPPED on this discriminant
+            // — no counter increments, no frontier population, no substep
+            // reset.
+            return {
+              lastAction: {
+                type: 'RETRY_ERROR' as const,
+                code: hook.code,
+                message: hook.message,
+              },
+              substepStates: hook.substepStates,
+            };
+          }
+          return {
+            // `aggregated: true` marks this RETRY as aggregation-driven (spec §3.5).
+            lastAction: { type: 'RETRY' as const, aggregated: true },
+            parentRetryCount: context.parentRetryCount + 1,
+            // Increment both counters: parentRetryCount tracks parent-level exhaustion,
+            // retryCount is exposed to the execution layer (actor-service) for visibility.
+            retryCount: context.retryCount + 1,
+            retryMax: transition.retry,
+            forStack: EMPTY_FOR_STACK,
+            iterationResults: EMPTY_RESULTS,
+            substepCompletedCount: 0,
+            deferredResults: EMPTY_RESULTS,
+            iterationRetryCount: 0,
+            lastMessage: undefined,
+            substep: firstSubstep?.id,
+            substepStates: hook.substepStates,
+            ...(hook.frontier.length > 0 ? { pendingDelegateFrontier: hook.frontier } : {}),
+          };
         }),
       },
       exhausted,
@@ -1014,17 +1062,47 @@ function buildParentStateConfig(
               selected.result === kind && context.iterationRetryCount < selected.transition.retry
             );
           },
-          target: firstSubstepStateId,
-          actions: runbookSetup.assign({
-            iterationRetryCount: ({ context }: { context: RunbookContext }) =>
-              context.iterationRetryCount + 1,
-            // Increment retryCount so commands (e.g. rd echo --result) see the retry attempt
-            retryCount: ({ context }: { context: RunbookContext }) => context.retryCount + 1,
-            retryMax: transition.retry,
-            lastAction: { type: 'RETRY' as const },
-            substepCompletedCount: 0,
-            deferredResults: EMPTY_RESULTS,
-            substep: firstSubstep?.id,
+          // Target parent self so post-assign always entries route based
+          // on the resulting lastAction variant (RETRY → firstSubstep,
+          // RETRY_ERROR → STOPPED). Targeting the substep directly would
+          // let its PASS/FAIL transitions overwrite lastAction before the
+          // priority-0 RETRY_ERROR guard could fire.
+          target: formatStateId(stepName),
+          actions: runbookSetup.assign(({ context }: { context: RunbookContext }) => {
+            // Run the retry hook: iterate every delegated substep in the
+            // current iteration frame, re-issue their delegations, collect new
+            // tokens into a frontier. Uniform re-delegation within the frame
+            // (docs/SPEC.md §4.2, §5). activeFrameKey scopes the hook to this
+            // iteration — other iterations' substep states remain untouched.
+            const hook = runRetryHook(context, parentStep, steps);
+            if (hook.status === 'error') {
+              // RETRY_ERROR variant: structurally distinct LastAction type.
+              // The sibling priority-0 always entry on the parent state
+              // routes to STOPPED on this discriminant. Counters are not
+              // incremented (retry was never actually taken); no frontier
+              // is populated; no substep reset.
+              return {
+                lastAction: {
+                  type: 'RETRY_ERROR' as const,
+                  code: hook.code,
+                  message: hook.message,
+                },
+                substepStates: hook.substepStates,
+              };
+            }
+            return {
+              iterationRetryCount: context.iterationRetryCount + 1,
+              // Increment retryCount so commands (e.g. rd echo --result) see the retry attempt
+              retryCount: context.retryCount + 1,
+              retryMax: transition.retry,
+              // `aggregated: true` marks this RETRY as aggregation-driven (spec §3.5).
+              lastAction: { type: 'RETRY' as const, aggregated: true },
+              substepCompletedCount: 0,
+              deferredResults: EMPTY_RESULTS,
+              substep: firstSubstep?.id,
+              substepStates: hook.substepStates,
+              ...(hook.frontier.length > 0 ? { pendingDelegateFrontier: hook.frontier } : {}),
+            };
           }),
         });
       };
@@ -1539,6 +1617,40 @@ function buildParentStateConfig(
       });
     }
   }
+
+  // Priority-0 (terminal) always entries, in reverse-insert order so that
+  // after two `unshift` calls the RETRY_ERROR guard lands at position 0 and
+  // the RETRY (aggregated) router at position 1 — both ahead of the retry
+  // and exhaustion branches below.
+  //
+  // (1) RETRY (aggregated, success): the retry-hook `assign` completed
+  //     without error. Routes to firstSubstepStateId to re-enter the
+  //     substep chain with fresh delegation tokens. Must precede the retry
+  //     branches so a re-evaluation of the aggregation path cannot re-run
+  //     the hook that just succeeded. Guarded on the aggregated marker to
+  //     avoid matching non-retry RETRY actions (none exist today, but the
+  //     marker narrows intent).
+  if (firstSubstep !== undefined) {
+    always.unshift({
+      guard: ({ context }: { context: RunbookContext }) =>
+        context.lastAction?.type === 'RETRY' && context.lastAction.aggregated === true,
+      target: firstSubstepStateId,
+    });
+  }
+
+  // (2) RETRY_ERROR: fires when a retry-transition assign wrote a
+  // RetryErrorLastAction onto lastAction (parent or iteration retry-hook
+  // failure). The type discriminant is structurally unique — no other code
+  // path writes this variant. The payload is already on lastAction; no
+  // action needed, which preserves code/message verbatim into STOPPED.
+  // Must precede every other always entry so a re-evaluation of the
+  // aggregation branch cannot re-run the broken hook. Counters are
+  // preserved (the retry was never actually taken); the STOPPED.entry
+  // action assigns lifecycle='stopped' on arrival.
+  always.unshift({
+    guard: ({ context }: { context: RunbookContext }) => context.lastAction?.type === 'RETRY_ERROR',
+    target: 'STOPPED',
+  });
 
   return {
     always: always.map((transition) =>
@@ -2237,6 +2349,11 @@ function checkedStateInsert(
  *   before calling (stale run states pre-dating the OUTPUTS feature will have it absent); the
  *   {@link RunbookActorService} enforces this guard. Direct callers from tests or CLI inspection
  *   that omit the option receive an empty array default.
+ * @param options.substepStates - Seeds `RunbookContext.substepStates` at machine bootstrap. Used
+ *   by the actor service to hydrate substep delegation state from persisted state in a single
+ *   `createActor` call.
+ * @param options.activeFrameKey - Seeds `RunbookContext.activeFrameKey` at machine bootstrap.
+ *   Paired with `substepStates` for frame-scoped substep lookup in the retry hook.
  * @returns An XState state machine definition
  * @throws {Error} When a GOTO target references a non-existent step or when graph invariants are violated (e.g., duplicate state IDs)
  */
@@ -2248,6 +2365,8 @@ export function compileRunbookToMachine(
   options?: {
     templateVars?: FlattenedTemplateVars;
     frontmatterOutputs?: readonly OutputDeclaration[];
+    substepStates?: readonly SubstepState[];
+    activeFrameKey?: FrameKey;
   },
 ) {
   const states: Record<string, RunbookStateConfig> = {};
@@ -2533,6 +2652,12 @@ export function compileRunbookToMachine(
           },
         }),
       },
+      PENDING_FRONTIER_CONSUMED: {
+        actions: runbookSetup.assign(({ event }) => {
+          assertEvent(event, 'PENDING_FRONTIER_CONSUMED');
+          return { pendingDelegateFrontier: undefined };
+        }),
+      },
     },
     context: {
       retryCount: 0,
@@ -2553,6 +2678,9 @@ export function compileRunbookToMachine(
       frontmatterOutputs: options?.frontmatterOutputs ?? [],
       finalVars: {},
       lifecycle: 'running',
+      substepStates: options?.substepStates,
+      activeFrameKey: options?.activeFrameKey,
+      pendingDelegateFrontier: undefined,
     },
     states: {
       ...states,

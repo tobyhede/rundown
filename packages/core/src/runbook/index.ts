@@ -17,6 +17,8 @@ export { SessionService } from './session-service.js';
 export { ExecutionLifecycleService } from './execution-lifecycle-service.js';
 export { compileRunbookToMachine, runbookSetup, MAX_FILE_ITERATIONS } from './compiler.js';
 export type { RunbookMachine } from './compiler.js';
+export { runRetryHook } from './retry-hook.js';
+export type { RetryHookResult, RetryHookSuccess, RetryHookError } from './retry-hook.js';
 export {
   executeCommand,
   executeCommandWithPolicy,
@@ -47,10 +49,13 @@ export type { RunbookEvent } from './compiler.js';
 export {
   createDelegation,
   abortDelegation,
+  retryDelegation,
   type DelegateOptions,
   type DelegateResult,
   type AbortDelegationOptions,
   type AbortDelegationResult,
+  type RetryDelegationOptions,
+  type RetryDelegationResult,
 } from './delegation-service.js';
 export {
   generateDelegationToken,

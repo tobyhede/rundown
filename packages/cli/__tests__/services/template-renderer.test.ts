@@ -1728,3 +1728,125 @@ describe('resolveForBounds', () => {
     });
   });
 });
+
+describe('DELEGATE field propagation through resolution', () => {
+  /**
+   * Regression guard: `toResolvedSubstep` must propagate `delegate: true` from
+   * ParsedSubstep to Substep, otherwise the auto-issue logic in
+   * `runExecutionLoop` (which reads `substep.delegate` on resolved substeps)
+   * can never observe the annotation at runtime.
+   *
+   * All earlier DELEGATE tests (parser-level + delegate-inference-level) use
+   * hand-constructed Substep objects, so the parse→resolve→execute seam was
+   * not covered end-to-end before this test was added.
+   */
+  it('preserves delegate: true on every substep through resolveForBounds', () => {
+    const rawMarkdown = [
+      '# Test',
+      '',
+      '## 1. Parallel',
+      '',
+      '### 1.1 A',
+      '- DELEGATE',
+      '- child-a.runbook.md',
+      '',
+      '### 1.2 B',
+      '- DELEGATE',
+      '- child-b.runbook.md',
+      '',
+    ].join('\n');
+    const { runbook } = parseRunbookDocument(rawMarkdown);
+
+    // Sanity: parser sets delegate on both substeps
+    const parsedStep = runbook.steps[0];
+    expect(parsedStep.kind).toBe('substeps');
+    if (parsedStep.kind !== 'substeps') return;
+    expect(parsedStep.substeps.map((s) => s.delegate)).toEqual([true, true]);
+
+    const { runbook: resolved } = resolveForBounds(runbook, {});
+    const resolvedStep = resolved.steps[0];
+    expect(resolvedStep.kind).toBe('substeps');
+    if (resolvedStep.kind !== 'substeps') return;
+
+    // Primary assertion: delegate survives toResolvedSubstep — required for
+    // execution.ts:604 `currentStep.substeps.some((sub) => sub.delegate)`.
+    expect(resolvedStep.substeps.map((s) => s.delegate)).toEqual([true, true]);
+    // Runbooks still resolved (regression guard against collateral damage).
+    expect(resolvedStep.substeps.map((s) => s.runbooks)).toEqual([
+      ['child-a.runbook.md'],
+      ['child-b.runbook.md'],
+    ]);
+  });
+
+  it('preserves delegate: true after substituteRunbookVariables', () => {
+    const rawMarkdown = [
+      '# Test',
+      '',
+      '## 1. Parallel',
+      '',
+      '### 1.1 Go',
+      '- DELEGATE',
+      '- child.runbook.md',
+      '',
+    ].join('\n');
+    const { runbook } = parseRunbookDocument(rawMarkdown);
+    const { runbook: resolved } = resolveForBounds(runbook, {});
+    const substituted = substituteRunbookVariables(resolved, {});
+    const step = substituted.steps[0];
+    expect(step.kind).toBe('substeps');
+    if (step.kind !== 'substeps') return;
+    expect(step.substeps[0].delegate).toBe(true);
+  });
+
+  it('preserves step-level DELEGATE propagated to every substep end-to-end', () => {
+    // Step-level `- DELEGATE` is shorthand for DELEGATE on all substeps
+    // (see parser `propagateDelegateToSubsteps`). It must survive resolution.
+    const rawMarkdown = [
+      '# Test',
+      '',
+      '## 1. Fan-out',
+      '- DELEGATE',
+      '- PASS ALL CONTINUE',
+      '- FAIL ANY CONTINUE',
+      '',
+      '### 1.1 A',
+      '- child-a.runbook.md',
+      '',
+      '### 1.2 B',
+      '- child-b.runbook.md',
+      '',
+    ].join('\n');
+    const { runbook } = parseRunbookDocument(rawMarkdown);
+    const { runbook: resolved } = resolveForBounds(runbook, {});
+    const step = resolved.steps[0];
+    expect(step.kind).toBe('substeps');
+    if (step.kind !== 'substeps') return;
+    expect(step.substeps.map((s) => s.delegate)).toEqual([true, true]);
+  });
+
+  it('leaves delegate undefined on substeps without DELEGATE annotation', () => {
+    const rawMarkdown = [
+      '# Test',
+      '',
+      '## 1. Mixed',
+      '- PASS ALL CONTINUE',
+      '- FAIL ANY CONTINUE',
+      '',
+      '### 1.1 Delegated',
+      '- DELEGATE',
+      '- child.runbook.md',
+      '',
+      '### 1.2 Local',
+      '',
+      'Do it inline.',
+      '',
+    ].join('\n');
+    const { runbook } = parseRunbookDocument(rawMarkdown);
+    const { runbook: resolved } = resolveForBounds(runbook, {});
+    const step = resolved.steps[0];
+    expect(step.kind).toBe('substeps');
+    if (step.kind !== 'substeps') return;
+    expect(step.substeps[0].delegate).toBe(true);
+    expect(step.substeps[1].delegate).toBeUndefined();
+  });
+});

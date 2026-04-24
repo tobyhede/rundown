@@ -115,6 +115,9 @@ export function renderSubstep(substep: ParsedSubstep, parentStepName: string): s
   lines.push(renderHeading(3, `${parentStepName}.${substep.id}`, substep.description));
   if (substep.runbooks?.length) {
     lines.push('');
+    if (substep.delegate) {
+      lines.push('- DELEGATE');
+    }
     for (const entry of substep.runbooks) {
       lines.push(`- ${renderRunbookEntry(entry)}`);
     }
@@ -223,15 +226,17 @@ export function renderStep(step: Step): string {
 
   const shorthandSubsteps = getShorthandRunbookSubsteps(step);
   if (shorthandSubsteps?.length) {
-    const firstPrompt = shorthandSubsteps[0]?.prompt;
-    if (firstPrompt) {
-      lines.push(firstPrompt);
+    if (step.prompt) {
+      lines.push(step.prompt);
       lines.push('');
     }
     for (const shorthandSubstep of shorthandSubsteps) {
       const entry = shorthandSubstep.runbooks?.[0];
       if (!entry) continue;
       lines.push(`- ${renderRunbookEntry(entry)}`);
+      if (shorthandSubstep.delegate) {
+        lines.push('  - DELEGATE');
+      }
     }
     lines.push('');
     return lines.join('\n').trim();

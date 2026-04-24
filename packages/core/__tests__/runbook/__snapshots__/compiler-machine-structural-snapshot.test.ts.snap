@@ -17,6 +17,9 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
   "id": "runbook",
   "initial": "step::1::1",
   "on": {
+    "PENDING_FRONTIER_CONSUMED": {
+      "actions": "[fn]",
+    },
     "SET_VARIABLES": {
       "actions": "[fn]",
     },
@@ -46,6 +49,14 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
     },
     "step::1": {
       "always": [
+        {
+          "guard": "[fn]",
+          "target": "STOPPED",
+        },
+        {
+          "guard": "[fn]",
+          "target": "step::1::1",
+        },
         {
           "actions": "[fn]",
           "guard": "[fn]",
@@ -260,6 +271,9 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
   "id": "runbook",
   "initial": "step::1::1",
   "on": {
+    "PENDING_FRONTIER_CONSUMED": {
+      "actions": "[fn]",
+    },
     "SET_VARIABLES": {
       "actions": "[fn]",
     },
@@ -289,6 +303,14 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
     },
     "step::1": {
       "always": [
+        {
+          "guard": "[fn]",
+          "target": "STOPPED",
+        },
+        {
+          "guard": "[fn]",
+          "target": "step::1::1",
+        },
         {
           "actions": "[fn]",
           "guard": "[fn]",
@@ -392,6 +414,14 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
     },
     "step::2": {
       "always": [
+        {
+          "guard": "[fn]",
+          "target": "STOPPED",
+        },
+        {
+          "guard": "[fn]",
+          "target": "step::2::1",
+        },
         {
           "actions": "[fn]",
           "guard": "[fn]",
@@ -546,6 +576,9 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
   "id": "runbook",
   "initial": "step::1",
   "on": {
+    "PENDING_FRONTIER_CONSUMED": {
+      "actions": "[fn]",
+    },
     "SET_VARIABLES": {
       "actions": "[fn]",
     },
@@ -721,6 +754,9 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
   "id": "runbook",
   "initial": "step::1::1",
   "on": {
+    "PENDING_FRONTIER_CONSUMED": {
+      "actions": "[fn]",
+    },
     "SET_VARIABLES": {
       "actions": "[fn]",
     },
@@ -750,6 +786,14 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
     },
     "step::1": {
       "always": [
+        {
+          "guard": "[fn]",
+          "target": "STOPPED",
+        },
+        {
+          "guard": "[fn]",
+          "target": "step::1::1",
+        },
         {
           "actions": "[fn]",
           "guard": "[fn]",

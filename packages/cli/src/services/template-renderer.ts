@@ -424,7 +424,9 @@ function validatePromptedForSteps(steps: readonly ResolvedStep[]): void {
  * Map a ParsedSubstep to a resolved Substep with the given runbook paths.
  *
  * Explicit field-by-field construction ensures TypeScript verifies every field
- * assignment — no casts, no spread from ParsedSubstep.
+ * assignment — no casts, no spread from ParsedSubstep. When adding a new
+ * optional field to `ParsedSubstep`/`Substep`, it must be copied here or it
+ * will be silently stripped during resolution.
  *
  * @param substep - Source parsed substep
  * @param runbooks - Resolved runbook paths (or undefined if none)
@@ -440,6 +442,9 @@ function toResolvedSubstep(substep: ParsedSubstep, runbooks: string[] | undefine
     outputs: substep.outputs,
     runbooks: runbooks?.length ? runbooks : undefined,
     line: substep.line,
+    // Sentinel marker — preserved when truthy so auto-issue (execution.ts)
+    // and delegate-inference can observe it on resolved substeps.
+    delegate: substep.delegate,
   };
 }
 

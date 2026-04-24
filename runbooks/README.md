@@ -88,6 +88,40 @@ ls "$(rdpath --dir {{ WorkPath }} --ctx {{ ContextId }})"/*-pass*.md
 
 `ContextId` is a built-in variable generated once per execution. Children in a delegation tree inherit the parent's `ContextId` automatically via `--input`, so all runbooks in the same delegation tree share the same context directory. This allows the synthesis step to find all review findings without knowing which children produced them.
 
+## Authoring DELEGATE Steps
+
+Use the `- DELEGATE` annotation to mark a step's substeps for delegation — when the step is entered, the engine auto-issues a token per substep and the orchestrating agent dispatches a subagent for each. This is the recommended pattern for any step that delegates more than one substep.
+
+Three equivalent forms are available. Pick whichever reads best for the step:
+
+```markdown
+## 1. Step-level — propagates to every H3 substep
+- DELEGATE
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+### 1.1 First task
+- child-a.runbook.md
+```
+
+```markdown
+## 1. Per-substep — annotate only the delegated H3 substeps
+### 1.1 First task
+- DELEGATE
+- child-a.runbook.md
+```
+
+```markdown
+## 1. Runbook-list shorthand — nested under each entry
+- child-a.runbook.md
+  - DELEGATE
+- child-b.runbook.md
+  - DELEGATE
+```
+
+Worked examples for each form live in `delegation/delegate-keyword-*.runbook.md` (e.g., `delegate-keyword-h2-propagation.runbook.md`, `delegate-keyword-h3-explicit.runbook.md`, `delegate-keyword-runbook-shorthand.runbook.md`). See [SPEC.md §4.3](../docs/SPEC.md#43-delegate) for syntax rules and [AGENT-ORCHESTRATION.md](../docs/AGENT-ORCHESTRATION.md#delegate-annotation) for the auto-issuance lifecycle and `rd collect`.
+
+For `RETRY` + DELEGATE examples, see `delegation/delegate-keyword-retry-recovers.runbook.md` and `delegation/delegate-keyword-retry-exhausts.runbook.md`. `delegation/delegation-child-fail-once.runbook.md` uses a filesystem marker pattern for stateful fail-then-pass behavior; see its description for details.
+
 ## See Also
 
 - [SPEC.md](../docs/SPEC.md) - Full specification

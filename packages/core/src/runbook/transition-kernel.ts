@@ -3,10 +3,17 @@ import type { LastAction, Step, ResolvedStep } from './types.js';
 
 /**
  * Action type derived from structured LastAction.
+ *
+ * `RETRY_ERROR` is a machine-internal-failure signal emitted when the retry
+ * hook cannot complete (e.g. `createDelegation` throws, invariant
+ * violation). It is distinct from `STOP` (a pure domain action from
+ * authored STOP transitions or `rd stop`): the CLI orchestrator emits
+ * `ERROR_OCCURRED` before the terminal RUNBOOK_STOPPED event.
  */
 export type ActionType =
   | 'GOTO'
   | 'RETRY'
+  | 'RETRY_ERROR'
   | 'CONTINUE'
   | 'DEFER'
   | 'COMPLETE'
@@ -56,6 +63,9 @@ function isLastAction(value: unknown): value is LastAction {
     case 'NEXT':
     case 'BREAK':
       return true;
+    case 'RETRY_ERROR':
+      // Machine-internal failure signal: requires code + message payload.
+      return typeof value.code === 'string' && typeof value.message === 'string';
     case 'GOTO':
       if (typeof value.target !== 'string') return false;
       if ('substep' in value && value.substep !== undefined && typeof value.substep !== 'string') {
@@ -212,6 +222,8 @@ export function parseActionType(lastAction: LastAction | undefined): ActionType 
       return 'GOTO';
     case 'RETRY':
       return 'RETRY';
+    case 'RETRY_ERROR':
+      return 'RETRY_ERROR';
     case 'DEFER':
       return 'DEFER';
     case 'COMPLETE':

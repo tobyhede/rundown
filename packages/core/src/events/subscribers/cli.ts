@@ -114,6 +114,7 @@ export class CLISubscriber {
       commandLang,
       isSubstep,
       prompted,
+      delegateFrontier,
     } = payload;
 
     // Create minimal step/substep object for rendering
@@ -129,6 +130,14 @@ export class CLISubscriber {
 
     // Pass `prompted` flag to control command display
     printStepBlock(position, item, prompted, this.writer);
+
+    if (delegateFrontier && delegateFrontier.length > 0) {
+      const count = delegateFrontier.length;
+      this.writer.writeLine(`Delegates ${String(count)} substep${count === 1 ? '' : 's'}:`);
+      for (const entry of delegateFrontier) {
+        this.writer.writeLine(`  ${entry.id}  ${entry.runbook}  ${entry.token}`);
+      }
+    }
   }
 
   private handleCommandStarted(event: RunbookEventV1 & { type: 'COMMAND_STARTED' }): void {

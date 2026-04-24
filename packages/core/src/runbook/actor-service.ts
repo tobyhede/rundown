@@ -52,9 +52,55 @@ type PersistedRunbookSnapshot = {
 };
 
 /**
+ * Overlay RunbookState's frame-scoped fields onto a persisted XState snapshot
+ * so hydration reflects CLI-level writes that happen between actor transitions.
+ *
+ * `rd delegate`, `rd pass`, `rd fail`, `rd claim`, `rd abort` write directly to
+ * `RunbookState.substepStates` via {@link RunbookStateManager} — those writes
+ * never reach the actor snapshot, which is only refreshed on actor transitions.
+ * Without this overlay, the retry hook (and any other consumer that reads
+ * `context.substepStates` during hydration) sees a stale snapshot view and
+ * produces an empty frontier for manually-issued delegations.
+ *
+ * Initial bootstrap (no persisted snapshot) — the compiler options already seed
+ * `substepStates`/`activeFrameKey` into `initial.context`, so no overlay needed.
+ *
+ * Rehydration — run the snapshot through a throwaway actor to materialise it
+ * into the XState envelope, then merge the RunbookState view on top.
+ *
+ * @param machine - Compiled runbook machine used to materialise the persisted
+ *                  snapshot into a full XState envelope.
+ * @param state - Persisted runbook state whose `snapshot`, `substepStates`, and
+ *                `activeFrameKey` fields drive the overlay.
+ * @returns A hydrated snapshot with the RunbookState view merged on top, or
+ *          `undefined` when `state.snapshot` is absent (initial bootstrap).
+ */
+function hydrateSnapshot(
+  machine: ReturnType<typeof compileRunbookToMachine>,
+  state: RunbookState,
+): Snapshot<unknown> | undefined {
+  if (!state.snapshot) return undefined;
+  const baseActor = createActor(machine, {
+    snapshot: state.snapshot as Snapshot<unknown>,
+  });
+  const baseSnapshot = baseActor.getPersistedSnapshot() as unknown as {
+    context: RunbookContext;
+    [key: string]: unknown;
+  };
+  return {
+    ...baseSnapshot,
+    context: {
+      ...baseSnapshot.context,
+      substepStates: state.substepStates ?? baseSnapshot.context.substepStates,
+      activeFrameKey: state.activeFrameKey ?? baseSnapshot.context.activeFrameKey,
+    },
+  } as unknown as Snapshot<unknown>;
+}
+
+/**
  * Manages XState actor lifecycle for runbooks.
  *
- * Encapsulates actor creation (with snapshot migration), state synchronisation
+ * Encapsulates actor creation (with snapshot-based hydration), state synchronisation
  * after transitions, and convenience methods for the two dominant usage patterns:
  * initialisation (create + sync with no event) and transition (create + send + sync).
  */
@@ -65,6 +111,39 @@ export class RunbookActorService {
    * @param manager - State manager for persisting runbook state to disk
    */
   constructor(private readonly manager: RunbookStateManager) {}
+
+  /**
+   * Compile a runbook machine from persisted state, asserting freshness.
+   *
+   * Guards against stale run state (pre-dating the OUTPUTS feature) by
+   * throwing when `frontmatterOutputs` is absent. Both {@link createActor}
+   * and {@link getContextSnapshot} use this helper so the guard and the
+   * options bag are maintained in one place.
+   *
+   * @param id - Runbook state ID (used in the error message)
+   * @param state - Persisted runbook state to hydrate from
+   * @param steps - Parsed runbook steps for machine compilation
+   * @returns Compiled XState machine seeded with all hydration-time context
+   * @throws {Error} If `state.frontmatterOutputs` is undefined (stale state)
+   */
+  private compileMachineFromState(
+    id: string,
+    state: RunbookState,
+    steps: ResolvedStep[],
+  ): ReturnType<typeof compileRunbookToMachine> {
+    if (state.frontmatterOutputs === undefined) {
+      throw new Error(
+        `Stale runbook state for "${id}": missing frontmatter outputs declarations. ` +
+          'Run `rundown prune` and restart execution.',
+      );
+    }
+    return compileRunbookToMachine(steps, {
+      templateVars: flattenTemplateVars(state.templateVars ?? {}),
+      frontmatterOutputs: state.frontmatterOutputs,
+      substepStates: state.substepStates,
+      activeFrameKey: state.activeFrameKey,
+    });
+  }
 
   /**
    * Create and start an XState actor from persisted state.
@@ -126,23 +205,43 @@ export class RunbookActorService {
     const state = await this.manager.load(id);
     if (!state) return null;
 
-    if (state.frontmatterOutputs === undefined) {
-      throw new Error(
-        `Stale runbook state for "${id}": missing frontmatter outputs declarations. ` +
-          'Run `rundown prune` and restart execution.',
-      );
-    }
+    const machine = this.compileMachineFromState(id, state, steps);
+    const snapshot = hydrateSnapshot(machine, state);
 
-    const machine = compileRunbookToMachine(steps, {
-      templateVars: flattenTemplateVars(state.templateVars ?? {}),
-      frontmatterOutputs: state.frontmatterOutputs,
-    });
-
-    const actor = createActor(machine, {
-      snapshot: state.snapshot as Snapshot<unknown> | undefined,
-    });
+    const actor = createActor(machine, { snapshot });
     actor.start();
     return actor;
+  }
+
+  /**
+   * Load an actor's current context without mutating state.
+   *
+   * Compiles the machine and instantiates an actor WITHOUT starting it, reads
+   * the persisted snapshot context, then discards the actor. No events are sent
+   * and no persistence occurs. Starting the actor would re-fire the initial
+   * state's entry actions on every call — an observable side effect callers of
+   * this method are not signing up for.
+   *
+   * Used by observers (e.g. the CLI execution loop) that need machine-level
+   * context fields — such as `lastAction` — without advancing the machine.
+   *
+   * @param id - Runbook run ID
+   * @param steps - Resolved steps for actor rebuild
+   * @returns RunbookContext or null if no state exists
+   */
+  async getContextSnapshot(id: string, steps: ResolvedStep[]): Promise<RunbookContext | null> {
+    const state = await this.manager.load(id);
+    if (!state) return null;
+
+    // Read-only path: compile, instantiate the actor WITHOUT starting it, read
+    // the persisted snapshot, discard. Starting the actor would re-fire the
+    // initial state's entry actions on every call — an observable side effect
+    // callers of this method are not signing up for.
+    const machine = this.compileMachineFromState(id, state, steps);
+    const snapshot = hydrateSnapshot(machine, state);
+    const actor = createActor(machine, { snapshot });
+    const snap = actor.getPersistedSnapshot() as unknown as { context: RunbookContext };
+    return snap.context;
   }
 
   /**
@@ -184,6 +283,20 @@ export class RunbookActorService {
       const finalVars = Object.keys(rawFinalVars).length > 0 ? rawFinalVars : undefined;
       const lifecycle =
         snapshot.context?.lifecycle ?? (stateValue === 'COMPLETE' ? 'completed' : 'stopped');
+      const ctxSubstepStatesTerm = snapshot.context?.substepStates;
+      const substepStatesTermPatch =
+        ctxSubstepStatesTerm !== undefined ? { substepStates: ctxSubstepStatesTerm } : {};
+      // Mirror activeFrameKey onto the persisted RunbookState when present in
+      // snapshot.context. Same conditional-patch pattern as substepStates: when
+      // the field is absent from context, omit it so the manager's spread
+      // preserves the existing persisted value rather than clobbering it with
+      // undefined. Without this mirror, a retry or FOR-frame transition can
+      // leave the top-level activeFrameKey stale, mis-targeting the next CLI
+      // interaction's substep scope.
+      const activeFrameKeyTermPatch =
+        snapshot.context && 'activeFrameKey' in snapshot.context
+          ? { activeFrameKey: snapshot.context.activeFrameKey }
+          : {};
       const state = await this.manager.update(id, {
         variables,
         finalVars,
@@ -192,6 +305,8 @@ export class RunbookActorService {
         // Clear FOR loop state on completion
         forStack: undefined,
         iterationResults: undefined,
+        ...substepStatesTermPatch,
+        ...activeFrameKeyTermPatch,
       });
       return { state, snapshot };
     }
@@ -239,6 +354,26 @@ export class RunbookActorService {
     const hasOnlyImplicit = forStack?.length ? forStack.every((fc) => fc.implicit) : false;
     const computedIterationResults = hasOnlyImplicit ? undefined : iterationResults;
 
+    // Write back mirrored substepStates from context. Only overwrite when the
+    // context field is defined so a pre-bootstrap `undefined` cannot wipe the
+    // authoritative persisted value. When undefined, omit the field entirely
+    // from the update so `manager.update`'s spread preserves the existing value.
+    const ctxSubstepStates = snapshot.context?.substepStates;
+    const substepStatesPatch =
+      ctxSubstepStates !== undefined ? { substepStates: ctxSubstepStates } : {};
+
+    // Mirror activeFrameKey from snapshot.context onto the persisted
+    // RunbookState. Uses `'activeFrameKey' in snapshot.context` (not `!==
+    // undefined`) because an explicit `undefined` in context is meaningful —
+    // it signals the machine has exited an active frame (post-FOR-iteration
+    // or post-GOTO) and the persisted value should follow. Without this
+    // mirror, the top-level activeFrameKey can retain a stale value and the
+    // next CLI interaction or resume targets the wrong frame's substeps.
+    const activeFrameKeyPatch =
+      snapshot.context && 'activeFrameKey' in snapshot.context
+        ? { activeFrameKey: snapshot.context.activeFrameKey }
+        : {};
+
     const state = await this.manager.update(id, {
       step: stepName, // string
       substep,
@@ -250,6 +385,8 @@ export class RunbookActorService {
       forStack: computedForStack,
       iterationResults: computedIterationResults,
       lastAction,
+      ...substepStatesPatch,
+      ...activeFrameKeyPatch,
     });
     return { state, snapshot };
   }

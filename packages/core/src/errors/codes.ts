@@ -303,6 +303,70 @@ export const ErrorCodes = {
       'Failed to initialize runbook state, actor, session, or post-init hook before execution started.',
     docSlug: 'launch-failed',
   },
+  DELEGATION_SNAPSHOT_STALE: {
+    code: 'RD-817',
+    category: ErrorCategory.DELEGATION,
+    title: 'Delegation snapshot missing owner step',
+    description:
+      `Cannot retry: the persisted delegation snapshot does not record an owner step. ` +
+      `This indicates the delegation was created by an older schema and cannot be safely re-issued.`,
+    docSlug: 'delegation-snapshot-stale',
+  },
+
+  // Retry hook (9xx) — sub-range of ErrorCategory.EXECUTION reserved for
+  // retry-hook lifecycle failures (delegation re-issuance, frame-key invariants,
+  // canonical-at requirements). Kept as EXECUTION rather than a dedicated
+  // category because consumers route on the structured RETRY_ERROR LastAction
+  // variant, not on category. New 9xx codes must stay scoped to retry-hook
+  // semantics — file unrelated runtime failures under 5xx EXECUTION.
+  RETRY_HOOK_ERROR: {
+    code: 'RD-901',
+    category: ErrorCategory.EXECUTION,
+    title: 'Retry hook caught an unexpected exception',
+    description:
+      `The retry hook caught a non-RundownError exception (typically a ` +
+      `programming bug in createDelegation or a downstream primitive). The ` +
+      `retry was rolled back and the runbook transitioned to stopped. If this ` +
+      `reproduces, it indicates a code defect — file an issue with the runbook ` +
+      `and step shape that triggered it.`,
+    docSlug: 'retry-hook-error',
+  },
+  RETRY_HOOK_NO_FRAME: {
+    code: 'RD-902',
+    category: ErrorCategory.EXECUTION,
+    title: 'Retry hook invoked without an active frame key',
+    description:
+      `The retry hook fired while context.activeFrameKey was undefined and ` +
+      `live delegations were present — an invariant violation. Retry transitions ` +
+      `only fire from drainResolvedCompletions, which requires an active frame. ` +
+      `This indicates upstream state corruption (actor hydration bug, state-file ` +
+      `tampering, or missing frame setup in a new feature path).`,
+    docSlug: 'retry-hook-no-frame',
+  },
+  RETRY_HOOK_INCONSISTENT_STATE: {
+    code: 'RD-903',
+    category: ErrorCategory.EXECUTION,
+    title: 'Retry hook saw an inconsistent delegation state',
+    description:
+      `retryDelegation reported not_found/not_current for a substep that the ` +
+      `retry hook had already confirmed had a delegation. This indicates the ` +
+      `substep state and the delegation-service view of the same entry have ` +
+      `diverged — rollback is the safe action rather than silently skipping ` +
+      `the substep and consuming the retry transition.`,
+    docSlug: 'retry-hook-inconsistent-state',
+  },
+  RETRY_HOOK_MISSING_CANONICAL_AT: {
+    code: 'RD-904',
+    category: ErrorCategory.EXECUTION,
+    title: 'Retry delegation produced no canonical execution location',
+    description:
+      `The fresh delegation snapshot returned by retryDelegation has no ` +
+      `contextSnapshot.at value. The retry frontier id would lose FOR-iteration ` +
+      `context (e.g. "1.1" instead of "1.2.1"), causing the re-entry frontier ` +
+      `to point at the wrong execution location. Rollback is the safe action ` +
+      `rather than silently emitting a degraded id.`,
+    docSlug: 'retry-hook-missing-canonical-at',
+  },
 
   // Generic
   UNKNOWN_ERROR: {

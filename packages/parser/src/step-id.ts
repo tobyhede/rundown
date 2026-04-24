@@ -8,6 +8,7 @@ import type { StepId } from './schemas.js';
  * - FOR loop: FOR, IN, TO, AT, BREAK
  * - Conditionals: PASS, FAIL, YES, NO
  * - Aggregation: ALL, ANY
+ * - Delegation: DELEGATE
  *
  * Using these as step names would create parsing ambiguity.
  */
@@ -30,6 +31,7 @@ export const RESERVED_WORDS = new Set([
   'IN',
   'TO',
   'AT',
+  'DELEGATE',
 ]);
 
 /**

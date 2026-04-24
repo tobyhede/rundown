@@ -1,12 +1,14 @@
-import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 import { RunbookActorService } from '../../src/runbook/actor-service.js';
 import type { AnyActorRef } from '../../src/runbook/actor-service.js';
-import type { Step, Runbook, ResolvedStep } from '../../src/runbook/types.js';
+import type { Step, Runbook, ResolvedStep, SubstepState } from '../../src/runbook/types.js';
 import { createJsonArrayStream } from '../../src/runbook/types.js';
+import { buildFrameKey } from '../../src/runbook/targeting.js';
+import type { RunbookContext } from '../../src/runbook/compiler.js';
 import { createRunbook } from './fixtures.js';
 
 function mockActor(snapshot: { value: string; context: Record<string, unknown> }) {
@@ -687,6 +689,168 @@ describe('RunbookActorService', () => {
 
       const result = await actorService.sendAndSync(state.id, mockSteps, { type: 'PASS' });
       expect(result!.state.finalVars).toBeUndefined();
+    });
+  });
+
+  describe('getContextSnapshot', () => {
+    it('returns null for nonexistent runbook', async () => {
+      const result = await actorService.getContextSnapshot('nonexistent', mockSteps);
+      expect(result).toBeNull();
+    });
+
+    it('does not call actor.start (read-only path)', async () => {
+      // Invariant: the read path must not start the actor. Starting it re-fires
+      // the initial state's entry actions on every call — an observable side
+      // effect callers of this method are not signing up for. We assert the
+      // invariant directly by spying on XState's Actor.prototype.start.
+      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+      const xstate = await import('xstate');
+      const startSpy = jest.spyOn(
+        xstate.Actor.prototype as unknown as { start: () => void },
+        'start',
+      );
+      try {
+        const first = await actorService.getContextSnapshot(state.id, mockSteps);
+        const second = await actorService.getContextSnapshot(state.id, mockSteps);
+        expect(first).not.toBeNull();
+        expect(second).toEqual(first);
+        expect(startSpy).not.toHaveBeenCalled();
+      } finally {
+        startSpy.mockRestore();
+      }
+    });
+  });
+
+  describe('substepStates / activeFrameKey mirroring (Task 4)', () => {
+    it('initial RunbookContext mirrors substepStates and activeFrameKey from RunbookState', async () => {
+      const frameKey = buildFrameKey('1');
+      const substepStates: SubstepState[] = [{ id: '1', frameKey, status: 'done', result: 'pass' }];
+
+      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+      await manager.update(state.id, {
+        substepStates,
+        activeFrameKey: frameKey,
+      });
+
+      const actor = await actorService.createActor(state.id, mockSteps);
+      expect(actor).not.toBeNull();
+      try {
+        const snapshot = actor!.getPersistedSnapshot() as unknown as {
+          context: RunbookContext;
+        };
+        expect(snapshot.context.substepStates).toEqual(substepStates);
+        expect(snapshot.context.activeFrameKey).toBe(frameKey);
+      } finally {
+        actor!.stop();
+      }
+    });
+
+    it('round-trips substepStates through updateFromActor back into RunbookState', async () => {
+      const frameKey = buildFrameKey('1');
+      const substepStates: SubstepState[] = [
+        { id: '1', frameKey, status: 'done', result: 'pass' },
+        { id: '2', frameKey, status: 'pending' },
+      ];
+
+      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+      await manager.update(state.id, {
+        substepStates,
+        activeFrameKey: frameKey,
+      });
+
+      // Seed a mock actor snapshot that mirrors the persisted substepStates
+      // into context (simulating what createActor's bootstrap overlay produces,
+      // or what the retry hook would write during a transition).
+      const actor = mockActor({
+        value: 'step::1',
+        context: {
+          variables: {},
+          retryCount: 0,
+          substepStates,
+          activeFrameKey: frameKey,
+          lastAction: { type: 'CONTINUE' },
+        },
+      });
+
+      const { state: updated } = await actorService.updateFromActor(state.id, actor, mockSteps);
+      expect(updated.substepStates).toEqual(substepStates);
+
+      const reloaded = await manager.load(state.id);
+      expect(reloaded?.substepStates).toEqual(substepStates);
+    });
+
+    it('preserves persisted substepStates when context.substepStates is undefined', async () => {
+      const frameKey = buildFrameKey('1');
+      const substepStates: SubstepState[] = [{ id: '1', frameKey, status: 'pending' }];
+
+      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+      await manager.update(state.id, { substepStates });
+
+      // Snapshot without substepStates in context (e.g. a legacy snapshot path
+      // or pre-Task-4 serialized state). The sync must not wipe the persisted
+      // substepStates when the context field is undefined.
+      const actor = mockActor({
+        value: 'step::1',
+        context: {
+          variables: {},
+          retryCount: 0,
+          lastAction: { type: 'CONTINUE' },
+        },
+      });
+
+      const { state: updated } = await actorService.updateFromActor(state.id, actor, mockSteps);
+      expect(updated.substepStates).toEqual(substepStates);
+    });
+
+    it('round-trips activeFrameKey through updateFromActor back into RunbookState', async () => {
+      // Finding 10 regression: updateFromActor previously mirrored substepStates
+      // but not activeFrameKey. After a retry or FOR-frame transition the
+      // top-level persisted activeFrameKey would retain a stale value, mis-
+      // targeting the next CLI interaction's substep scope.
+      const staleFrameKey = buildFrameKey('1', 1);
+      const newFrameKey = buildFrameKey('1', 2);
+
+      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+      await manager.update(state.id, { activeFrameKey: staleFrameKey });
+
+      const actor = mockActor({
+        value: 'step::1',
+        context: {
+          variables: {},
+          retryCount: 0,
+          activeFrameKey: newFrameKey,
+          lastAction: { type: 'CONTINUE' },
+        },
+      });
+
+      const { state: updated } = await actorService.updateFromActor(state.id, actor, mockSteps);
+      expect(updated.activeFrameKey).toBe(newFrameKey);
+
+      const reloaded = await manager.load(state.id);
+      expect(reloaded?.activeFrameKey).toBe(newFrameKey);
+    });
+
+    it('preserves persisted activeFrameKey when context.activeFrameKey key is absent', async () => {
+      // Symmetry with the substepStates-undefined preservation test: an
+      // absent `activeFrameKey` key in snapshot.context must not wipe the
+      // authoritative persisted value. (An explicit `undefined` value IS
+      // still mirrored — that signals the machine has left an active frame.)
+      const frameKey = buildFrameKey('1');
+
+      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+      await manager.update(state.id, { activeFrameKey: frameKey });
+
+      const actor = mockActor({
+        value: 'step::1',
+        context: {
+          variables: {},
+          retryCount: 0,
+          lastAction: { type: 'CONTINUE' },
+        },
+      });
+
+      const { state: updated } = await actorService.updateFromActor(state.id, actor, mockSteps);
+      expect(updated.activeFrameKey).toBe(frameKey);
     });
   });
 });

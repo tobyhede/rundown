@@ -13,6 +13,13 @@ How Rundown delegates substep execution to subagents via the plugin's hook syste
 
 A runbook defines substeps, each delegated to a subagent. The parent agent orchestrates; subagents execute. The plugin's hook system handles token detection, context injection, and result routing.
 
+Two flows are available:
+
+- **DELEGATE annotation** (recommended for multi-substep delegation) — the step declares its substeps are delegated, and the engine auto-issues tokens on step entry. See [DELEGATE Annotation](#delegate-annotation).
+- **Manual `rd delegate --step`** — for single-delegation or ad-hoc dispatch from an orchestrating agent.
+
+### Manual `rd delegate --step`
+
 **Example runbook:**
 ```markdown
 ## 2. Review changes
@@ -49,6 +56,69 @@ rd pass   # or: rd fail
 - `delegate --step` is constrained to the active step frontier.
 - If the active step is in a FOR loop, queueing is constrained to the active iteration frontier.
 - Plugin dispatch descriptions must begin with a step identifier matching the runbook's ID format — either a numeric qualified ID (e.g., `1.2 - Review`) or a named identifier (e.g., `ErrorHandler: Recover`).
+
+---
+
+## DELEGATE Annotation
+
+`- DELEGATE` is a structural bullet annotation that marks substeps for delegation. When the parent step is entered, the execution engine auto-issues a delegation token for each marked substep, so the orchestrating agent does not need to call `rd delegate` per substep. This is the recommended flow for any step that delegates more than one substep to subagents.
+
+See [SPEC.md §4.3](./SPEC.md#43-delegate) for the full format specification and [FORMAT.md](./FORMAT.md#delegate-annotation) for the grammar.
+
+### Three equivalent forms
+
+**Step-level** — propagates to all H3 substeps; use when every substep is delegated:
+```markdown
+## 1. Delegated work
+- DELEGATE
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+### 1.1 First task
+- child-a.runbook.md
+
+### 1.2 Second task
+- child-b.runbook.md
+```
+
+**Per-substep** — on individual H3 substeps; use when a step mixes delegated and non-delegated substeps:
+```markdown
+### 1.1 First task
+- DELEGATE
+- child-a.runbook.md
+```
+
+**Runbook-list shorthand** — nested under runbook-list entries (no H3 headers); use when the step body is already a flat runbook list:
+```markdown
+## 1. Delegated work
+- child-a.runbook.md
+  - DELEGATE
+- child-b.runbook.md
+  - DELEGATE
+```
+
+Executable scenarios for all three forms live at [runbooks/delegation/delegate-keyword-*.runbook.md](../runbooks/delegation/).
+
+### Auto-issuance lifecycle
+
+1. **Step entry** — the engine fires `STEP_ENTERED` with a `delegateFrontier` field: an array of `{id, runbook, token}` records, one per DELEGATE substep.
+2. **Dispatch** — the orchestrating agent dispatches a subagent per record, passing the token in the subagent's prompt. The plugin detects the token and injects claim instructions.
+3. **Claim** — each subagent runs `rd claim <token>`, which launches the child runbook with the inherited `ContextId` and any forwarded variables.
+4. **Resolve** — the subagent completes the child runbook and calls `rd pass` / `rd fail`.
+5. **Aggregation** — when the final substep resolves, auto-aggregation fires on the parent step's transition (e.g., `PASS ALL CONTINUE`, `FAIL ANY STOP`).
+
+### `rd collect`
+
+```bash
+rd collect                  # Aggregate the active DELEGATE step and fire its transition
+rd collect --step <id>      # Target a specific substep scope
+```
+
+Auto-aggregation fires automatically when the final DELEGATE substep resolves, so `rd collect` is usually unnecessary. It remains available for cases where explicit aggregation is needed — most commonly, a step mixing DELEGATE substeps with non-delegated substeps resolved manually.
+
+### RETRY on DELEGATE
+
+`RETRY` on a DELEGATE step fires uniform re-delegation. When aggregation resolves to a failure and the retry budget is non-zero, the engine cancels every delegated substep's active delegation in the frame and mints a fresh token per substep — every substep is re-delegated, not just the failures. Stale tokens from the previous attempt return `TOKEN_CANCELLED` on `rd claim`. The subsequent `STEP_ENTERED` event carries the new `delegateFrontier`; orchestrators dispatch a subagent per fresh token exactly as they do on first entry. For DELEGATE steps inside a FOR loop, retry budgets apply per iteration.
 
 ---
 

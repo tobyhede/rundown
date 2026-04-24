@@ -113,6 +113,51 @@ export function inferRunbookFromStep(
 }
 
 /**
+ * Infer all delegation targets for fan-out when substeps carry `delegate: true`.
+ *
+ * Returns every substep in the current step that has `delegate: true`, has a runbook
+ * reference, is not already actively delegated, and is not done.
+ *
+ * @param state - Current runbook state
+ * @param steps - Parsed steps from the runbook
+ * @returns Array of inferred delegation targets (may be empty if all are done/delegated)
+ * @throws {RundownError} RD-813 if the current step has no substeps
+ */
+export function inferAllDelegateSubsteps(
+  state: RunbookState,
+  steps: readonly ResolvedStep[],
+): InferredDelegation[] {
+  const currentStep = steps.find((s) => s.name === state.step);
+
+  if (!currentStep || !resolvedStepHasSubsteps(currentStep)) {
+    throw Errors.delegationNoDelegatableSubstep(state.step);
+  }
+
+  const activeFrameKey = state.activeFrameKey ?? deriveActiveFrame(state).frameKey;
+  const results: InferredDelegation[] = [];
+
+  for (const substep of currentStep.substeps) {
+    if (!substep.delegate) continue;
+    // Invariant: the parser rejects DELEGATE substeps that lack a runbook
+    // reference (see packages/parser/src/parser.ts `finalizePendingSubstep`).
+    // Keep a defensive throw so regressions surface here instead of pushing
+    // an ill-formed entry into results.
+    if (!hasRunbooks(substep)) {
+      throw Errors.delegationSubstepNoRunbook(`${currentStep.name}.${substep.id}`, state.step);
+    }
+    if (hasActiveDelegation(substep.id, state.substepStates, activeFrameKey)) continue;
+    if (isSubstepDone(substep.id, state.substepStates, activeFrameKey)) continue;
+
+    results.push({
+      runbookRef: substep.runbooks[0],
+      stepId: `${currentStep.name}.${substep.id}`,
+    });
+  }
+
+  return results;
+}
+
+/**
  * Check whether a substep is marked as done in the persisted state.
  * @param substepId - The substep ID to check
  * @param substepStates - Current substep states from persisted state
