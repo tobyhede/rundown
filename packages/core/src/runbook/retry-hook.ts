@@ -22,6 +22,7 @@ import type { RunbookContext } from './compiler.js';
 import type { OutputVars } from './output-evaluator.js';
 import { retryDelegation, type RetryDelegationResult } from './delegation-service.js';
 import { findSubstepState } from './targeting.js';
+import { brandInitialTemplateVars, brandStoredOutputs } from './effective-vars.js';
 import { logger } from '../logger.js';
 import { getErrorMessage } from '../errors.js';
 
@@ -172,10 +173,10 @@ export function runRetryHook(
   > = {
     step: parentStep.name,
     substepStates,
-    templateVars: asTemplateVars(context.templateVars),
+    templateVars: brandInitialTemplateVars(asTemplateVars(context.templateVars)),
     forStack: context.forStack,
     activeFrameKey,
-    variables: context.variables,
+    variables: brandStoredOutputs(context.variables),
   };
 
   for (const substep of parentStep.substeps) {
