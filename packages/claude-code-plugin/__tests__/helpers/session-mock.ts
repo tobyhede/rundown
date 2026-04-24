@@ -48,7 +48,7 @@ export function createSessionMock(initialState: Partial<SessionState> = {}): Ses
   const get = jest.fn(async <K extends keyof SessionState>(key: K) => {
     if (!state.has(key)) {
       throw new Error(
-        `SessionMock: key '${String(key)}' not configured — call setGet(mock, '${String(key)}', …) or seed via createSessionMock({ ${String(key)}: … }) first`,
+        `SessionMock: key '${key}' not configured — call setGet(mock, '${key}', …) or seed via createSessionMock({ ${key}: … }) first`,
       );
     }
     return state.get(key) as SessionState[K];

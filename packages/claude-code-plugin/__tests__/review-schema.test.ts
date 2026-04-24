@@ -101,16 +101,12 @@ describe('ReviewSchema', () => {
   describe('field validation', () => {
     it('rejects missing meta', () => {
       const { meta: _, ...noMeta } = validReview();
-      expect(() => ReviewSchema.parse(noMeta)).toThrow(
-        ZOD_ISSUES_SHAPE,
-      );
+      expect(() => ReviewSchema.parse(noMeta)).toThrow(ZOD_ISSUES_SHAPE);
     });
 
     it('rejects missing items', () => {
       const { items: _, ...noItems } = validReview();
-      expect(() => ReviewSchema.parse(noItems)).toThrow(
-        ZOD_ISSUES_SHAPE,
-      );
+      expect(() => ReviewSchema.parse(noItems)).toThrow(ZOD_ISSUES_SHAPE);
     });
 
     it('rejects empty item title', () => {
@@ -122,31 +118,23 @@ describe('ReviewSchema', () => {
     it('rejects empty item description', () => {
       expect(() =>
         ReviewSchema.parse(validReview({ items: [errorItem({ description: '' })] })),
-      ).toThrow(
-        ZOD_ISSUES_SHAPE,
-      );
+      ).toThrow(ZOD_ISSUES_SHAPE);
     });
 
     it('rejects empty item recommendation', () => {
       expect(() =>
         ReviewSchema.parse(validReview({ items: [errorItem({ recommendation: '' })] })),
-      ).toThrow(
-        ZOD_ISSUES_SHAPE,
-      );
+      ).toThrow(ZOD_ISSUES_SHAPE);
     });
 
     it('rejects item with evidence field (strict mode)', () => {
       expect(() =>
         ReviewSchema.parse(validReview({ items: [errorItem({ evidence: 'What was observed' })] })),
-      ).toThrow(
-        ZOD_ISSUES_SHAPE,
-      );
+      ).toThrow(ZOD_ISSUES_SHAPE);
     });
 
     it('rejects unknown properties (strict mode)', () => {
-      expect(() => ReviewSchema.parse(validReview({ unexpected: true }))).toThrow(
-        ZOD_ISSUES_SHAPE,
-      );
+      expect(() => ReviewSchema.parse(validReview({ unexpected: true }))).toThrow(ZOD_ISSUES_SHAPE);
     });
   });
 
@@ -255,9 +243,7 @@ describe('ReviewSchema', () => {
     it('rejects empty uri', () => {
       expect(() =>
         ReviewSchema.parse(validReview({ items: [errorItem({ references: [{ uri: '' }] })] })),
-      ).toThrow(
-        ZOD_ISSUES_SHAPE,
-      );
+      ).toThrow(ZOD_ISSUES_SHAPE);
     });
 
     it('rejects reference with unknown properties (strict mode)', () => {
@@ -267,9 +253,7 @@ describe('ReviewSchema', () => {
             items: [errorItem({ references: [{ uri: 'src/foo.ts', extra: true }] })],
           }),
         ),
-      ).toThrow(
-        ZOD_ISSUES_SHAPE,
-      );
+      ).toThrow(ZOD_ISSUES_SHAPE);
     });
 
     it('rejects end_line < line', () => {
@@ -279,9 +263,7 @@ describe('ReviewSchema', () => {
             items: [errorItem({ references: [{ uri: 'src/foo.ts', line: 20, end_line: 10 }] })],
           }),
         ),
-      ).toThrow(
-        ZOD_ISSUES_SHAPE,
-      );
+      ).toThrow(ZOD_ISSUES_SHAPE);
     });
 
     it('rejects end_line without line', () => {
@@ -291,9 +273,7 @@ describe('ReviewSchema', () => {
             items: [errorItem({ references: [{ uri: 'src/foo.ts', end_line: 20 }] })],
           }),
         ),
-      ).toThrow(
-        ZOD_ISSUES_SHAPE,
-      );
+      ).toThrow(ZOD_ISSUES_SHAPE);
     });
   });
 
@@ -304,9 +284,7 @@ describe('ReviewSchema', () => {
     });
 
     it('throws for invalid data', () => {
-      expect(() => validate({})).toThrow(
-        ZOD_ISSUES_SHAPE,
-      );
+      expect(() => validate({})).toThrow(ZOD_ISSUES_SHAPE);
     });
   });
 });
