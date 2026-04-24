@@ -41,6 +41,7 @@ import {
   RUNS_DIR,
   createDelegation,
   Errors,
+  isError,
   type DelegateFrontierEntry,
 } from '@rundown-org/core';
 import { isSourced, resolvedStepHasSubsteps, type ForClause } from '@rundown-org/parser';
@@ -680,58 +681,85 @@ export async function runExecutionLoop(
     // Prefer a pre-issued frontier from the retry hook (context.pendingDelegateFrontier)
     // over re-running auto-issuance. If consumed, signal the machine to clear the
     // context field via PENDING_FRONTIER_CONSUMED after the emit.
+    //
+    // The pending branch handles manual delegations as well (parents with no
+    // step-level DELEGATE annotation that nonetheless have live delegations
+    // re-issued by the retry hook), so it cannot be gated on `delegate: true`.
+    // Auto-issuance, however, only runs for steps whose substeps declare
+    // `delegate: true`, and `getContextSnapshot` is skipped entirely on
+    // non-substep entries to avoid materialising an actor every loop.
     let delegateFrontier: Array<DelegateFrontierEntry> | undefined;
     let pendingFrontierConsumed = false;
 
-    const pendingSnapshot = await actorService.getContextSnapshot(currentState.id, steps);
-    const pending = pendingSnapshot?.pendingDelegateFrontier;
+    if (isSubstep) {
+      const pendingSnapshot = await actorService.getContextSnapshot(runbookId, steps);
+      const pending = pendingSnapshot?.pendingDelegateFrontier;
 
-    if (pending && pending.length > 0) {
-      delegateFrontier = [...pending];
-      pendingFrontierConsumed = true;
-    } else {
-      // Auto-issue delegation tokens for DELEGATE steps.
-      // Triggers on entry to the first substep of a step with delegate substeps.
-      const hasDelegateSubsteps =
-        isSubstep &&
-        resolvedStepHasSubsteps(currentStep) &&
-        currentState.substep === currentStep.substeps[0]?.id &&
-        currentStep.substeps.some((sub) => sub.delegate);
+      if (pending && pending.length > 0) {
+        delegateFrontier = [...pending];
+        pendingFrontierConsumed = true;
+      } else {
+        // Auto-issue delegation tokens on entry to the first substep of a step
+        // whose substeps declare `delegate: true`.
+        const isDelegateStepEntry =
+          resolvedStepHasSubsteps(currentStep) &&
+          currentState.substep === currentStep.substeps[0]?.id &&
+          currentStep.substeps.some((sub) => sub.delegate);
 
-      if (hasDelegateSubsteps) {
-        const targets = inferAllDelegateSubsteps(currentState, steps);
+        if (isDelegateStepEntry) {
+          const targets = inferAllDelegateSubsteps(currentState, steps);
 
-        if (targets.length > 0) {
-          const fanOut: Array<DelegateFrontierEntry> = [];
-          let threadedState = currentState;
-          const frameKey =
-            threadedState.activeFrameKey ?? deriveActiveFrame(threadedState).frameKey;
+          if (targets.length > 0) {
+            try {
+              const fanOut: Array<DelegateFrontierEntry> = [];
+              let threadedState = currentState;
+              const frameKey =
+                threadedState.activeFrameKey ?? deriveActiveFrame(threadedState).frameKey;
 
-          for (const target of targets) {
-            const childResolved = await resolveRunbookFile(cwd, target.runbookRef);
-            if (!childResolved) {
-              throw Errors.delegationRunbookNotFound(target.runbookRef);
+              for (const target of targets) {
+                const childResolved = await resolveRunbookFile(cwd, target.runbookRef);
+                if (!childResolved) {
+                  throw Errors.delegationRunbookNotFound(target.runbookRef);
+                }
+
+                const result = createDelegation(
+                  {
+                    state: threadedState,
+                    stepId: target.stepId,
+                    childRunbookPath: childResolved.path,
+                    extraVars: undefined,
+                    ancestors: [],
+                    frameKey,
+                  },
+                  steps,
+                );
+
+                threadedState = { ...threadedState, substepStates: result.updatedSubstepStates };
+                fanOut.push({
+                  id: target.stepId,
+                  runbook: target.runbookRef,
+                  token: result.token,
+                });
+              }
+
+              // Persist all tokens in one write
+              await manager.update(runbookId, { substepStates: threadedState.substepStates });
+              delegateFrontier = fanOut;
+            } catch (err) {
+              // Persist any partial fan-out work, then transition the runbook to
+              // stopped. An uncaught throw here would strand the runbook on a
+              // DELEGATE step waiting for tokens that will never be issued.
+              const message = isError(err) ? err.message : String(err);
+              await manager.update(runbookId, { lifecycle: 'stopped' });
+              emitter.emit('RUNBOOK_STOPPED', {
+                message,
+                position: stepPosition,
+                reason: 'delegation_resolution_failed',
+              });
+              await sessionService.popRunbook();
+              return 'stopped';
             }
-
-            const result = createDelegation(
-              {
-                state: threadedState,
-                stepId: target.stepId,
-                childRunbookPath: childResolved.path,
-                extraVars: undefined,
-                ancestors: [],
-                frameKey,
-              },
-              steps,
-            );
-
-            threadedState = { ...threadedState, substepStates: result.updatedSubstepStates };
-            fanOut.push({ id: target.stepId, runbook: target.runbookRef, token: result.token });
           }
-
-          // Persist all tokens in one write
-          await manager.update(currentState.id, { substepStates: threadedState.substepStates });
-          delegateFrontier = fanOut;
         }
       }
     }
@@ -752,7 +780,7 @@ export async function runExecutionLoop(
     });
 
     if (pendingFrontierConsumed) {
-      await actorService.sendAndSync(currentState.id, steps, {
+      await actorService.sendAndSync(runbookId, steps, {
         type: 'PENDING_FRONTIER_CONSUMED',
       });
     }
