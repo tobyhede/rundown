@@ -8,8 +8,20 @@ import {
   renderRunbook,
 } from '../../src/runbook/renderer/renderer.js';
 import { parseRunbook } from '../../src/runbook/index.js';
-import { parseRunbookDocument } from '@rundown-org/parser';
-import type { Step, Substep, Runbook } from '../../src/runbook/types.js';
+import { parseRunbookDocument, stepHasSubsteps } from '@rundown-org/parser';
+import type { Step, Substep, Runbook, StepHavingSubsteps } from '../../src/runbook/types.js';
+
+/**
+ * Asserts that a step has substeps, narrowing it to StepHavingSubsteps.
+ *
+ * @param step - The step to check
+ * @throws If step is undefined or does not have substeps
+ */
+function assertHasSubsteps(step: Step | undefined): asserts step is StepHavingSubsteps {
+  if (!step || !stepHasSubsteps(step)) {
+    throw new Error('Expected step to have substeps');
+  }
+}
 
 const DEFAULT_TRANSITIONS = {
   pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
@@ -653,6 +665,7 @@ Do the check.
 
     const parsed2 = parseRunbook(rendered);
     expect(parsed2[0].kind).toBe('for');
+    assertHasSubsteps(parsed2[0]);
     expect(parsed2[0].substeps).toHaveLength(1);
     expect(parsed2[0].substeps?.[0].description).toBe('Check item');
   });
@@ -701,6 +714,7 @@ Process each item carefully.
 
     expect(parsed2[0].kind).toBe('for');
     expect(parsed2[0].prompt).toBe('Process each item carefully.');
+    assertHasSubsteps(parsed2[0]);
     expect(parsed2[0].substeps).toHaveLength(1);
   });
 
@@ -731,6 +745,7 @@ Do check two.
     const parsed2 = parseRunbook(rendered);
     expect(parsed2[0].aggregation).toBeUndefined();
     // Substeps survive round-trip
+    assertHasSubsteps(parsed2[0]);
     expect(parsed2[0].substeps).toHaveLength(2);
     expect(parsed2[0].substeps?.[0].description).toBe('First check');
     expect(parsed2[0].substeps?.[1].description).toBe('Second check');
