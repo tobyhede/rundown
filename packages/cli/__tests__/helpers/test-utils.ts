@@ -947,19 +947,21 @@ export function buildSubstep(overrides: Partial<Substep> = {}): Substep {
  *   4.  SHA-256 hex digests (e.g. delegation token_hash field) → `<tokenHash>`
  *   5.  Full UUIDs → `<uuid>`
  *   6.  Runbook state IDs of the form `wf-YYYY-MM-DD-xxxxxx` (base-36 suffix) → `<runbookId>`
- *   7.  Any 8-char lowercase hex string at word boundaries → `<hex8>` (see note)
- *   8.  ISO 8601 timestamps → `<timestamp>`
- *   9.  Numeric `"startedAt"` / `"completedAt"` / `"expiresAt"` / etc. epoch ms field values → `<epochMs>`
- *   10. `"durationMs"` / `"took"` numeric field values → `<ms>`
+ *   7.  Numeric `"startedAt"` / `"completedAt"` / `"expiresAt"` / etc. epoch ms field values → `<epochMs>`
+ *   8.  `"durationMs"` / `"took"` numeric field values → `<ms>`
+ *   9.  Any 8-char lowercase hex string at word boundaries → `<hex8>` (see note)
+ *   10. ISO 8601 timestamps → `<timestamp>`
  *   11. PID banners → `<pid>`
  *
- * Rule 7 note: the 8-hex rule is the catch-all for built-in template variables
+ * Rule 9 note: the 8-hex rule is the catch-all for built-in template variables
  * `{{RunId}}` and `{{ContextId}}` (both `randomBytes(4).toString('hex')`, see
  * `packages/cli/src/services/variable-discovery.ts`). It is deliberately
  * aggressive and will ALSO mask git short SHAs, step-frame hashes, and any
- * 8-hex token that happens to appear in user prompt text. When reviewing a
- * snapshot diff, confirm each `<hex8>` substitution is legitimate — anything
- * unexpected masked by this rule is a signal, not noise.
+ * 8-hex token that happens to appear in user prompt text. Rules 7 and 8
+ * (field-scoped epoch ms and duration) run BEFORE this rule so pure-digit
+ * 8-char values in known fields aren't stolen by the generic hex8 pattern.
+ * When reviewing a snapshot diff, confirm each `<hex8>` substitution is
+ * legitimate — anything unexpected masked by this rule is a signal, not noise.
  *
  * @param output - Raw CLI stdout (JSON/NDJSON or rendered text)
  * @param workspace - TestWorkspace whose cwd is rewritten to `<workdir>`
