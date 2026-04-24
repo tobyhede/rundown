@@ -221,14 +221,20 @@ export function runRetryHook(
           : entry,
       );
       working = { ...working, substepStates: resetSubstepStates };
-      // Use the delegation's canonical `at` so FOR-iteration context survives:
-      // `${parentStep.name}.${substep.id}` loses the iteration segment for
-      // FOR-scoped retries (e.g. `"1.1"` instead of `"1.2.1"`). `contextSnapshot.at`
-      // is produced by deriveExecutionAt (delegation-context.ts) and always
-      // carries the iteration when one is in scope. The ContextSnapshot type
-      // still declares `at?: string`, so we fall back to the legacy
-      // concatenation if a persisted/older snapshot happens to omit it.
-      const frontierAt = result.delegation.contextSnapshot.at ?? `${parentStep.name}.${substep.id}`;
+      // Use the delegation's canonical `at` so FOR-iteration context survives.
+      // deriveExecutionAt always populates this for fresh delegations created
+      // through the current path, so a missing value here is an upstream
+      // invariant violation. Rollback rather than emit a degraded frontier id
+      // (e.g. "1.1" in place of "1.2.1") that would mis-target the re-entry.
+      const frontierAt = result.delegation.contextSnapshot.at;
+      if (!frontierAt) {
+        return {
+          status: 'error',
+          code: 'RD-904',
+          message: `Retry hook aborted: fresh delegation for substep "${substep.id}" has no contextSnapshot.at value (frontier id would lose FOR-iteration context).`,
+          substepStates,
+        };
+      }
       frontier.push({
         id: frontierAt,
         runbook: result.delegation.childRunbookPath,

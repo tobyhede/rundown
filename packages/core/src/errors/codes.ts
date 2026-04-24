@@ -313,7 +313,12 @@ export const ErrorCodes = {
     docSlug: 'delegation-snapshot-stale',
   },
 
-  // Retry hook (9xx)
+  // Retry hook (9xx) — sub-range of ErrorCategory.EXECUTION reserved for
+  // retry-hook lifecycle failures (delegation re-issuance, frame-key invariants,
+  // canonical-at requirements). Kept as EXECUTION rather than a dedicated
+  // category because consumers route on the structured RETRY_ERROR LastAction
+  // variant, not on category. New 9xx codes must stay scoped to retry-hook
+  // semantics — file unrelated runtime failures under 5xx EXECUTION.
   RETRY_HOOK_ERROR: {
     code: 'RD-901',
     category: ErrorCategory.EXECUTION,
@@ -349,6 +354,18 @@ export const ErrorCodes = {
       `diverged — rollback is the safe action rather than silently skipping ` +
       `the substep and consuming the retry transition.`,
     docSlug: 'retry-hook-inconsistent-state',
+  },
+  RETRY_HOOK_MISSING_CANONICAL_AT: {
+    code: 'RD-904',
+    category: ErrorCategory.EXECUTION,
+    title: 'Retry delegation produced no canonical execution location',
+    description:
+      `The fresh delegation snapshot returned by retryDelegation has no ` +
+      `contextSnapshot.at value. The retry frontier id would lose FOR-iteration ` +
+      `context (e.g. "1.1" instead of "1.2.1"), causing the re-entry frontier ` +
+      `to point at the wrong execution location. Rollback is the safe action ` +
+      `rather than silently emitting a degraded id.`,
+    docSlug: 'retry-hook-missing-canonical-at',
   },
 
   // Generic

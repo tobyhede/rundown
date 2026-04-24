@@ -283,4 +283,42 @@ describe('runRetryHook try/catch around retryDelegation', () => {
       expect(result.substepStates).toBe(originalSubstepStates);
     }
   });
+
+  it('rolls back with RD-904 when fresh delegation has no canonical contextSnapshot.at', () => {
+    // Hard-fail rather than silently degrade: deriveExecutionAt always populates
+    // `at` for fresh delegations through the current path. A missing value here
+    // is an upstream invariant violation; emitting `${parentStep.name}.${substep.id}`
+    // would mis-target the re-entry frontier (e.g. "1.1" for an iteration-2 retry).
+    const { context, parentStep, steps, originalSubstepStates } = buildInputs();
+    const delegation: StepDelegation = {
+      tokenHash: 'hash_no_at',
+      childRunbookPath: 'child-1.md',
+      childRunId: null,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      cancelledAt: null,
+      contextSnapshot: {
+        vars: {},
+        ancestors: [],
+        step: '1',
+        substep: '1',
+        // at intentionally omitted
+      },
+    };
+    mockedRetryDelegation.mockImplementation(() => ({
+      status: 'retried' as const,
+      token: 'rdtk_new_token',
+      tokenHash: 'hash_no_at',
+      delegation,
+      updatedSubstepStates: [...originalSubstepStates],
+    }));
+
+    const result = runRetryHook(context, parentStep, steps);
+
+    expect(result.status).toBe('error');
+    if (result.status === 'error') {
+      expect(result.code).toBe('RD-904');
+      expect(result.message).toMatch(/no contextSnapshot\.at/);
+      expect(result.substepStates).toBe(originalSubstepStates);
+    }
+  });
 });
