@@ -269,5 +269,32 @@ export function runRetryHook(
     };
   }
 
+  // Frame-aware invariant mirror of the `!activeFrameKey` branch above.
+  // The per-substep loop filters by `activeFrameKey` via `findSubstepState`
+  // (see `targeting.ts`), so delegations recorded under stale frame keys
+  // (from a previous FOR iteration or post-GOTO state) are skipped
+  // silently. If every delegation in the state lives under a stale frame,
+  // the loop produces an empty frontier and the pre-fix code returned
+  // `{ status: 'success', frontier: [] }` — consuming the retry budget
+  // without re-issuing any token. Same class of bug the `!activeFrameKey`
+  // branch already guards against. Route through RETRY_ERROR with RD-902.
+  if (frontier.length === 0) {
+    const hasActiveFrameDelegations = substepStates.some(
+      (ss) => ss.delegation !== undefined && ss.frameKey === activeFrameKey,
+    );
+    const hasStaleFrameDelegations = substepStates.some(
+      (ss) => ss.delegation !== undefined && ss.frameKey !== activeFrameKey,
+    );
+    if (hasStaleFrameDelegations && !hasActiveFrameDelegations) {
+      return {
+        status: 'error',
+        code: 'RD-902',
+        message:
+          'Retry hook produced no frontier: all delegations are under stale frame keys — invariant violation',
+        substepStates,
+      };
+    }
+  }
+
   return { status: 'success', frontier, substepStates: working.substepStates ?? [] };
 }

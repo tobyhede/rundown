@@ -284,6 +284,94 @@ describe('runRetryHook try/catch around retryDelegation', () => {
     }
   });
 
+  it('returns RD-902 when all delegations are under stale frameKeys (no active-frame delegations)', () => {
+    // Finding 6 regression: activeFrameKey is set, but every delegation record
+    // in substepStates is under a stale frameKey (e.g. from a previous FOR
+    // iteration or post-GOTO state). The per-substep loop filters by the
+    // active frameKey via findSubstepState, so it produces an empty frontier
+    // and the pre-fix code silently returned `{ status: 'success', frontier: [] }`.
+    // That consumed the retry budget without re-issuing any delegation — the
+    // same class of bug the original DELEGATE + RETRY path had. The fix routes
+    // through RETRY_ERROR with RD-902.
+    const activeFrameKey = buildFrameKey('1', 2);
+    const staleFrameKey = buildFrameKey('1', 1);
+    const substepTransitions = {
+      pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+      fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
+    };
+    const parentTransitions = {
+      pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+      fail: { kind: 'fail' as const, retry: 1, action: { type: 'STOP' as const } },
+    };
+    const parentStep: ResolvedStepHavingSubsteps = {
+      kind: 'substeps',
+      name: '1',
+      description: 'Parent',
+      transitions: parentTransitions,
+      aggregation: { strategy: 'ALL' as const },
+      substeps: [
+        {
+          kind: 'base',
+          id: '1',
+          description: 'Sub 1',
+          transitions: substepTransitions,
+        },
+      ],
+    } as unknown as ResolvedStepHavingSubsteps;
+    const steps: ResolvedStep[] = [parentStep as unknown as ResolvedStep];
+
+    const staleDelegation: StepDelegation = {
+      tokenHash: 'hash_stale',
+      childRunbookPath: 'child-1.md',
+      childRunId: null,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      cancelledAt: null,
+      contextSnapshot: {
+        vars: {},
+        ancestors: [],
+        step: '1',
+        substep: '1',
+        at: '1.1.1',
+        index: 1,
+      },
+    };
+    const originalSubstepStates: readonly SubstepState[] = [
+      {
+        id: '1',
+        frameKey: staleFrameKey,
+        status: 'done',
+        result: 'fail',
+        delegation: staleDelegation,
+      },
+    ];
+    const context: RunbookContext = {
+      retryCount: 0,
+      parentRetryCount: 0,
+      iterationRetryCount: 0,
+      variables: {},
+      forStack: [],
+      substepCompletedCount: 0,
+      templateVars: {},
+      frontmatterOutputs: [],
+      finalVars: {},
+      lifecycle: 'running' as const,
+      substepStates: originalSubstepStates,
+      activeFrameKey,
+    } as unknown as RunbookContext;
+
+    const result = runRetryHook(context, parentStep, steps);
+
+    expect(result.status).toBe('error');
+    if (result.status === 'error') {
+      expect(result.code).toBe('RD-902');
+      expect(result.message).toMatch(/stale frame keys/);
+      expect(result.substepStates).toBe(originalSubstepStates);
+    }
+    // retryDelegation must NOT be called — the stale-frame substep never
+    // matches findSubstepState(..., activeFrameKey), so the loop skips it.
+    expect(mockedRetryDelegation).not.toHaveBeenCalled();
+  });
+
   it('rolls back with RD-904 when fresh delegation has no canonical contextSnapshot.at', () => {
     // Hard-fail rather than silently degrade: deriveExecutionAt always populates
     // `at` for fresh delegations through the current path. A missing value here
