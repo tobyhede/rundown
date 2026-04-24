@@ -52,6 +52,45 @@ type PersistedRunbookSnapshot = {
 };
 
 /**
+ * Overlay RunbookState's frame-scoped fields onto a persisted XState snapshot
+ * so hydration reflects CLI-level writes that happen between actor transitions.
+ *
+ * `rd delegate`, `rd pass`, `rd fail`, `rd claim`, `rd abort` write directly to
+ * `RunbookState.substepStates` via {@link RunbookStateManager} — those writes
+ * never reach the actor snapshot, which is only refreshed on actor transitions.
+ * Without this overlay, the retry hook (and any other consumer that reads
+ * `context.substepStates` during hydration) sees a stale snapshot view and
+ * produces an empty frontier for manually-issued delegations.
+ *
+ * Initial bootstrap (no persisted snapshot) — the compiler options already seed
+ * `substepStates`/`activeFrameKey` into `initial.context`, so no overlay needed.
+ *
+ * Rehydration — run the snapshot through a throwaway actor to materialise it
+ * into the XState envelope, then merge the RunbookState view on top.
+ */
+function hydrateSnapshot(
+  machine: ReturnType<typeof compileRunbookToMachine>,
+  state: RunbookState,
+): Snapshot<unknown> | undefined {
+  if (!state.snapshot) return undefined;
+  const baseActor = createActor(machine, {
+    snapshot: state.snapshot as Snapshot<unknown>,
+  });
+  const baseSnapshot = baseActor.getPersistedSnapshot() as unknown as {
+    context: RunbookContext;
+    [key: string]: unknown;
+  };
+  return {
+    ...baseSnapshot,
+    context: {
+      ...baseSnapshot.context,
+      substepStates: state.substepStates ?? baseSnapshot.context.substepStates,
+      activeFrameKey: state.activeFrameKey ?? baseSnapshot.context.activeFrameKey,
+    },
+  } as unknown as Snapshot<unknown>;
+}
+
+/**
  * Manages XState actor lifecycle for runbooks.
  *
  * Encapsulates actor creation (with snapshot-based hydration), state synchronisation
@@ -159,14 +198,10 @@ export class RunbookActorService {
     const state = await this.manager.load(id);
     if (!state) return null;
 
-    // Compile with all hydration-time context in the options bag. The machine's
-    // initial context carries substepStates / activeFrameKey directly — no
-    // throwaway actor, no snapshot overlay, no Snapshot<unknown> casts.
     const machine = this.compileMachineFromState(id, state, steps);
+    const snapshot = hydrateSnapshot(machine, state);
 
-    const actor = createActor(machine, {
-      snapshot: state.snapshot as Snapshot<unknown> | undefined,
-    });
+    const actor = createActor(machine, { snapshot });
     actor.start();
     return actor;
   }
@@ -196,9 +231,8 @@ export class RunbookActorService {
     // initial state's entry actions on every call — an observable side effect
     // callers of this method are not signing up for.
     const machine = this.compileMachineFromState(id, state, steps);
-    const actor = createActor(machine, {
-      snapshot: state.snapshot as Snapshot<unknown> | undefined,
-    });
+    const snapshot = hydrateSnapshot(machine, state);
+    const actor = createActor(machine, { snapshot });
     const snap = actor.getPersistedSnapshot() as unknown as { context: RunbookContext };
     return snap.context;
   }
