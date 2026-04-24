@@ -13,11 +13,15 @@ export type ExecFileSyncMock = jest.MockedFunction<typeof NodeExecFileSync>;
 /**
  * Create a typed execFileSync mock that returns a fixed string output.
  *
- * Returned mock is assignable to `setExecSync(fn)` without any cast.
+ * Returned mock is assignable to `setExecSync(fn)` without any call-site cast.
  *
  * @param output - Stdout string the mock returns on every call.
  */
 export function mockExecFileSync(output: string): ExecFileSyncMock {
+  // `jest.fn(() => T)` produces `Mock<() => T>`, which TS2352-rejects onto
+  // `typeof execFileSync` (four overloads, no structural overlap). The
+  // `as unknown as` double-cast is the canonical escape hatch — isolated
+  // here so call sites remain cast-free.
   return jest.fn(() => output) as unknown as ExecFileSyncMock;
 }
 
@@ -35,6 +39,7 @@ export function mockExecFileSyncError(error: {
   if (error.stderr !== undefined) {
     err.stderr = Buffer.from(error.stderr);
   }
+  // Same double-cast rationale as mockExecFileSync above.
   return jest.fn(() => {
     throw err;
   }) as unknown as ExecFileSyncMock;
