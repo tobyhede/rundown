@@ -286,6 +286,17 @@ export class RunbookActorService {
       const ctxSubstepStatesTerm = snapshot.context?.substepStates;
       const substepStatesTermPatch =
         ctxSubstepStatesTerm !== undefined ? { substepStates: ctxSubstepStatesTerm } : {};
+      // Mirror activeFrameKey onto the persisted RunbookState when present in
+      // snapshot.context. Same conditional-patch pattern as substepStates: when
+      // the field is absent from context, omit it so the manager's spread
+      // preserves the existing persisted value rather than clobbering it with
+      // undefined. Without this mirror, a retry or FOR-frame transition can
+      // leave the top-level activeFrameKey stale, mis-targeting the next CLI
+      // interaction's substep scope.
+      const activeFrameKeyTermPatch =
+        snapshot.context && 'activeFrameKey' in snapshot.context
+          ? { activeFrameKey: snapshot.context.activeFrameKey }
+          : {};
       const state = await this.manager.update(id, {
         variables,
         finalVars,
@@ -295,6 +306,7 @@ export class RunbookActorService {
         forStack: undefined,
         iterationResults: undefined,
         ...substepStatesTermPatch,
+        ...activeFrameKeyTermPatch,
       });
       return { state, snapshot };
     }
@@ -350,6 +362,18 @@ export class RunbookActorService {
     const substepStatesPatch =
       ctxSubstepStates !== undefined ? { substepStates: ctxSubstepStates } : {};
 
+    // Mirror activeFrameKey from snapshot.context onto the persisted
+    // RunbookState. Uses `'activeFrameKey' in snapshot.context` (not `!==
+    // undefined`) because an explicit `undefined` in context is meaningful —
+    // it signals the machine has exited an active frame (post-FOR-iteration
+    // or post-GOTO) and the persisted value should follow. Without this
+    // mirror, the top-level activeFrameKey can retain a stale value and the
+    // next CLI interaction or resume targets the wrong frame's substeps.
+    const activeFrameKeyPatch =
+      snapshot.context && 'activeFrameKey' in snapshot.context
+        ? { activeFrameKey: snapshot.context.activeFrameKey }
+        : {};
+
     const state = await this.manager.update(id, {
       step: stepName, // string
       substep,
@@ -362,6 +386,7 @@ export class RunbookActorService {
       iterationResults: computedIterationResults,
       lastAction,
       ...substepStatesPatch,
+      ...activeFrameKeyPatch,
     });
     return { state, snapshot };
   }

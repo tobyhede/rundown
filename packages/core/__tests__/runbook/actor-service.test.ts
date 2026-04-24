@@ -801,5 +801,56 @@ describe('RunbookActorService', () => {
       const { state: updated } = await actorService.updateFromActor(state.id, actor, mockSteps);
       expect(updated.substepStates).toEqual(substepStates);
     });
+
+    it('round-trips activeFrameKey through updateFromActor back into RunbookState', async () => {
+      // Finding 10 regression: updateFromActor previously mirrored substepStates
+      // but not activeFrameKey. After a retry or FOR-frame transition the
+      // top-level persisted activeFrameKey would retain a stale value, mis-
+      // targeting the next CLI interaction's substep scope.
+      const staleFrameKey = buildFrameKey('1', 1);
+      const newFrameKey = buildFrameKey('1', 2);
+
+      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+      await manager.update(state.id, { activeFrameKey: staleFrameKey });
+
+      const actor = mockActor({
+        value: 'step::1',
+        context: {
+          variables: {},
+          retryCount: 0,
+          activeFrameKey: newFrameKey,
+          lastAction: { type: 'CONTINUE' },
+        },
+      });
+
+      const { state: updated } = await actorService.updateFromActor(state.id, actor, mockSteps);
+      expect(updated.activeFrameKey).toBe(newFrameKey);
+
+      const reloaded = await manager.load(state.id);
+      expect(reloaded?.activeFrameKey).toBe(newFrameKey);
+    });
+
+    it('preserves persisted activeFrameKey when context.activeFrameKey key is absent', async () => {
+      // Symmetry with the substepStates-undefined preservation test: an
+      // absent `activeFrameKey` key in snapshot.context must not wipe the
+      // authoritative persisted value. (An explicit `undefined` value IS
+      // still mirrored — that signals the machine has left an active frame.)
+      const frameKey = buildFrameKey('1');
+
+      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+      await manager.update(state.id, { activeFrameKey: frameKey });
+
+      const actor = mockActor({
+        value: 'step::1',
+        context: {
+          variables: {},
+          retryCount: 0,
+          lastAction: { type: 'CONTINUE' },
+        },
+      });
+
+      const { state: updated } = await actorService.updateFromActor(state.id, actor, mockSteps);
+      expect(updated.activeFrameKey).toBe(frameKey);
+    });
   });
 });
