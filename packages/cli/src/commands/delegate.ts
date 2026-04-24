@@ -276,18 +276,6 @@ interface ResolvedTarget {
 }
 
 /**
- * Resolve a `rd delegate --retry` invocation to a concrete ResolvedTarget.
- *
- * Performs argument parsing, ambiguity checks, overrides normalization, and
- * the three branch resolutions (token / --step [--index] / inferred). Per
- * plan design decision #4, per-branch helpers are NOT extracted — the CLI is
- * tested via runCliInProcess integration tests, so inline branches avoid
- * creating a test-only export surface with no caller benefit.
- *
- * @param args - Retry options
- * @returns Resolved target (state, substepId, frameKey, stepLabel, overrides)
- */
-/**
  * Emit a CLI error via OutputEmitter, flush pending output, and exit with
  * status 1. Annotated `: never` so TypeScript narrows callers after a call
  * (e.g. `if (!x) failRetry(...); /* x is non-null here *\/`).
@@ -302,6 +290,18 @@ function failRetry(output: OutputEmitter, message: string, code: string): never 
   process.exit(1);
 }
 
+/**
+ * Resolve a `rd delegate --retry` invocation to a concrete ResolvedTarget.
+ *
+ * Performs argument parsing, ambiguity checks, overrides normalization, and
+ * the three branch resolutions (token / --step [--index] / inferred). Per
+ * plan design decision #4, per-branch helpers are NOT extracted — the CLI is
+ * tested via runCliInProcess integration tests, so inline branches avoid
+ * creating a test-only export surface with no caller benefit.
+ *
+ * @param args - Retry options
+ * @returns Resolved target (state, substepId, frameKey, stepLabel, overrides)
+ */
 async function resolveRetryTarget(args: RetryHandlerOptions): Promise<ResolvedTarget> {
   const { runbookArg, options, manager, sessionService, cwd, output } = args;
 
