@@ -40,6 +40,7 @@ import {
   ForResolutionError,
   RUNS_DIR,
   createDelegation,
+  type CreateDelegationResult,
   Errors,
   isError,
   type DelegateFrontierEntry,
@@ -224,8 +225,9 @@ const EXECUTION_TERMINAL_POLICY: TransitionOrchestrationPolicy = {
  * failure signal.
  *
  * The retry hook writes a `RetryErrorLastAction` onto `context.lastAction`
- * when `createDelegation` throws during a parent-level retry (or an
- * invariant is violated). The priority-0 always-entry in the compiler then
+ * when `createDelegation` surfaces an error variant during a parent-level
+ * retry (or an invariant is violated). The priority-0 always-entry in the
+ * compiler then
  * routes the machine to STOPPED. This helper narrows the opaque snapshot
  * envelope into the error record so the CLI can emit `ERROR_OCCURRED`
  * before the terminal RUNBOOK_STOPPED event.
@@ -734,12 +736,35 @@ export async function runExecutionLoop(
                   steps,
                 );
 
-                threadedState = { ...threadedState, substepStates: result.updatedSubstepStates };
-                fanOut.push({
-                  id: target.stepId,
-                  runbook: target.runbookRef,
-                  token: result.token,
-                });
+                switch (result.status) {
+                  case 'step_not_found':
+                  case 'step_not_current':
+                  case 'substep_required':
+                  case 'substep_not_found':
+                  case 'delegation_exists':
+                    // All-or-nothing fan-out: reject the whole batch and re-throw so
+                    // the outer catch block transitions the runbook to stopped with
+                    // the same RUNBOOK_STOPPED envelope as pre-refactor.
+                    // threadedState is local; no partial persistence.
+                    throw result.error;
+                  case 'created':
+                    threadedState = {
+                      ...threadedState,
+                      substepStates: result.updatedSubstepStates,
+                    };
+                    fanOut.push({
+                      id: target.stepId,
+                      runbook: target.runbookRef,
+                      token: result.token,
+                    });
+                    break;
+                  default: {
+                    const _exhaustive: never = result;
+                    throw new Error(
+                      `Unhandled createDelegation status in fan-out: ${(_exhaustive as CreateDelegationResult).status}`,
+                    );
+                  }
+                }
               }
 
               // Persist all tokens in one write

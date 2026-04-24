@@ -1,6 +1,6 @@
 import { parseStepIdFromString, resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { Errors } from '../errors/factory.js';
-import { RundownError } from '../errors/rundown-error.js';
+import type { RundownError } from '../errors/rundown-error.js';
 import { buildContextSnapshot } from './delegation-context.js';
 import { generateDelegationToken, hashDelegationToken } from './delegation-token.js';
 import { findSubstepState, type FrameKey } from './targeting.js';
@@ -167,63 +167,95 @@ export type DelegateResult = CreateDelegationCreatedResult;
 /**
  * Create a delegation for a substep (or bare step) of the current runbook.
  *
- * Pure function — no I/O, no persistence. The caller is responsible for
- * persisting the returned `updatedSubstepStates` into the runbook state.
+ * Pure function, Result-based, **never throws**. The caller persists the
+ * returned `updatedSubstepStates` via `manager.update` after branching on
+ * the `status` discriminant. State is unchanged on any error variant.
+ *
+ * Runs inside XState `assign` callbacks (via the auto-issuance loop in
+ * `execution.ts`) so uncontrolled throws would corrupt actor state or
+ * trigger XState's error boundary with unclear semantics.
  *
  * @param options - Delegation creation options
  * @param steps - Parsed steps from the active runbook
- * @returns Delegation result with token, hash, delegation object, and updated substep states
- * @throws {RundownError} RD-801 if step not found
- * @throws {RundownError} RD-802 if step not at execution frontier
- * @throws {RundownError} RD-803 if step has substeps but no substep specified
- * @throws {RundownError} RD-804 if an active delegation already exists on the substep
- * @throws {RundownError} RD-805 if substep specified but step has no substeps
+ * @returns Discriminated union: see {@link CreateDelegationResult}
  */
 export function createDelegation(
   options: DelegateOptions,
   steps: readonly ResolvedStep[],
-): DelegateResult {
+): CreateDelegationResult {
   const { state, stepId, childRunbookPath, extraVars, ancestors, frameKey } = options;
 
   // 1. Parse step ID
   const parsed = parseStepIdFromString(stepId);
   if (!parsed) {
-    throw Errors.delegationStepNotFound(stepId);
+    return {
+      status: 'step_not_found',
+      step: stepId,
+      error: Errors.delegationStepNotFound(stepId),
+    };
   }
 
   // 2. Find step in parsed runbook
   const step = steps.find((s) => s.name === parsed.step);
   if (!step) {
-    throw Errors.delegationStepNotFound(parsed.step);
+    return {
+      status: 'step_not_found',
+      step: parsed.step,
+      error: Errors.delegationStepNotFound(parsed.step),
+    };
   }
 
   // 3. If step has substeps and no substep specified, require it
   if (resolvedStepHasSubsteps(step) && !parsed.substep) {
-    throw Errors.delegationSubstepRequired(
-      parsed.step,
-      step.substeps.map((ss) => ss.id),
-    );
+    const substeps = step.substeps.map((ss) => ss.id);
+    return {
+      status: 'substep_required',
+      step: parsed.step,
+      substeps,
+      error: Errors.delegationSubstepRequired(parsed.step, substeps),
+    };
   }
 
   // 3b. If substep specified, validate it exists in the step
   if (parsed.substep) {
     if (!resolvedStepHasSubsteps(step)) {
-      throw Errors.delegationSubstepNotFound(parsed.substep, parsed.step, []);
+      return {
+        status: 'substep_not_found',
+        substep: parsed.substep,
+        step: parsed.step,
+        available: [],
+        error: Errors.delegationSubstepNotFound(parsed.substep, parsed.step, []),
+      };
     }
     const validIds = step.substeps.map((ss) => ss.id);
     if (!validIds.includes(parsed.substep)) {
-      throw Errors.delegationSubstepNotFound(parsed.substep, parsed.step, validIds);
+      return {
+        status: 'substep_not_found',
+        substep: parsed.substep,
+        step: parsed.step,
+        available: validIds,
+        error: Errors.delegationSubstepNotFound(parsed.substep, parsed.step, validIds),
+      };
     }
   }
 
   // 3c. Three-level step ID (step.iteration.substep) requires a FOR-capable step
   if (typeof parsed.at === 'number' && step.kind !== 'for' && step.kind !== 'prompted-for') {
-    throw Errors.delegationStepNotFound(stepId);
+    return {
+      status: 'step_not_found',
+      step: stepId,
+      error: Errors.delegationStepNotFound(stepId),
+    };
   }
 
   // 4. Verify step is at frontier
   if (state.step !== parsed.step) {
-    throw Errors.delegationStepNotCurrent(parsed.step, state.step);
+    return {
+      status: 'step_not_current',
+      step: parsed.step,
+      current: state.step,
+      error: Errors.delegationStepNotCurrent(parsed.step, state.step),
+    };
   }
 
   // 5. Determine the substep ID for delegation attachment
@@ -235,7 +267,11 @@ export function createDelegation(
 
   const existingDelegation = targetSubstep?.delegation;
   if (existingDelegation?.cancelledAt === null && existingDelegation.childRunId === null) {
-    throw Errors.delegationAlreadyExists(stepId);
+    return {
+      status: 'delegation_exists',
+      step: stepId,
+      error: Errors.delegationAlreadyExists(stepId),
+    };
   }
 
   // 7. Generate token and hash
@@ -277,7 +313,7 @@ export function createDelegation(
   }
 
   return {
-    status: 'created' as const,
+    status: 'created',
     token,
     tokenHash,
     delegation,
@@ -481,24 +517,19 @@ export function retryDelegation(
       ? `${state.step}.${String(frameIteration)}.${substepId}`
       : `${state.step}.${substepId}`
     : state.step;
-  let createResult: DelegateResult;
-  try {
-    createResult = createDelegation(
-      {
-        state: stateAfterAbort,
-        stepId: stepIdForCreate,
-        childRunbookPath: existingDelegation.childRunbookPath,
-        ...(mergedExtraVars ? { extraVars: mergedExtraVars } : {}),
-        ancestors: [],
-        frameKey,
-      },
-      steps,
-    );
-  } catch (err) {
-    if (err instanceof RundownError) {
-      return { status: 'error', error: err };
-    }
-    throw err;
+  const createResult: CreateDelegationResult = createDelegation(
+    {
+      state: stateAfterAbort,
+      stepId: stepIdForCreate,
+      childRunbookPath: existingDelegation.childRunbookPath,
+      ...(mergedExtraVars ? { extraVars: mergedExtraVars } : {}),
+      ancestors: [],
+      frameKey,
+    },
+    steps,
+  );
+  if (createResult.status !== 'created') {
+    return { status: 'error', error: createResult.error };
   }
 
   return {

@@ -3,6 +3,7 @@ import {
   RunbookStateManager,
   SessionService,
   createDelegation,
+  type CreateDelegationResult,
   retryDelegation,
   DelegationScanService,
   DELEGATION_TOKEN_PREFIX,
@@ -195,7 +196,7 @@ export function registerDelegateCommand(program: Command): void {
               ? buildFrameKey(state.step, explicitIteration)
               : (state.activeFrameKey ?? deriveActiveFrame(state).frameKey);
 
-          // Create delegation (pure function — validates and returns token)
+          // Create delegation (pure function — returns discriminated union)
           const result = createDelegation(
             {
               state,
@@ -207,6 +208,25 @@ export function registerDelegateCommand(program: Command): void {
             },
             steps,
           );
+
+          switch (result.status) {
+            case 'step_not_found':
+            case 'step_not_current':
+            case 'substep_required':
+            case 'substep_not_found':
+            case 'delegation_exists':
+              // Rethrow so withErrorHandling's toRundownError -> stderr envelope
+              // fires with the same code and message as the pre-refactor throw.
+              throw result.error;
+            case 'created':
+              break;
+            default: {
+              const _exhaustive: never = result;
+              throw new Error(
+                `Unhandled createDelegation status: ${(_exhaustive as CreateDelegationResult).status}`,
+              );
+            }
+          }
 
           // Persist updated substep states
           await manager.update(state.id, {
