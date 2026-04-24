@@ -22,7 +22,7 @@ import {
   type ForLoopConfig,
   type EventType,
 } from './for-loop-test-helpers.js';
-import type { Step, Substep } from '../../src/runbook/types.js';
+import type { ResolvedStep, Substep } from '../../src/runbook/types.js';
 
 // ---------------------------------------------------------------------------
 // Custom step builder for non-uniform substep configs
@@ -50,7 +50,7 @@ interface CustomForOpts {
   };
 }
 
-function buildCustomSteps(opts: CustomForOpts): Step[] {
+function buildCustomSteps(opts: CustomForOpts): ResolvedStep[] {
   const getAggregation = (
     aggMode: 'ALL' | 'ANY' | 'none',
   ): { strategy: 'ALL' | 'ANY' } | undefined => {
@@ -64,7 +64,7 @@ function buildCustomSteps(opts: CustomForOpts): Step[] {
     transitions: makeTransitions(sub.passAction, sub.failAction, sub.failRetry ?? 0),
   }));
 
-  const forStep: Step = {
+  const forStep: ResolvedStep = {
     kind: 'for',
     name: '1',
     description: 'FOR loop step',
@@ -86,7 +86,7 @@ function buildCustomSteps(opts: CustomForOpts): Step[] {
     substeps,
   };
 
-  const terminalStep: Step = {
+  const terminalStep: ResolvedStep = {
     kind: 'base',
     name: '2',
     description: 'Terminal',
