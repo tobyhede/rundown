@@ -4,7 +4,6 @@ import type { Step, Substep } from '../../src/runbook/types.js';
 import {
   makeBaseStep,
   makeCommandStep,
-  makeResolvedStepWithSubsteps,
   makeSubstep,
   makeParsedSubstep,
 } from '../helpers/step-factories.js';
