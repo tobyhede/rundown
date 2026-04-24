@@ -89,6 +89,7 @@ jsonl
 killall
 landlock
 landrun
+lastaction
 lcov
 lockfile
 materialise
