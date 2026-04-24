@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 import { RunbookActorService } from '../../src/runbook/actor-service.js';
 import type { AnyActorRef } from '../../src/runbook/actor-service.js';
-import type { Step, Runbook, ResolvedStep, SubstepState } from '../../src/runbook/types.js';
+import type { ResolvedRunbook, ResolvedStep, SubstepState } from '../../src/runbook/types.js';
+import { makeBaseStep } from '../helpers/step-factories.js';
 import { createJsonArrayStream } from '../../src/runbook/types.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type { RunbookContext } from '../../src/runbook/compiler.js';
@@ -32,7 +33,7 @@ async function createLifecycleHarness(markdown: string): Promise<LifecycleHarnes
   const mockRunbookDef = {
     title: 'Lifecycle Test',
     description: 'Lifecycle test runbook',
-    steps: steps as unknown as Step[],
+    steps,
   };
   const state = await manager.create('lifecycle-test.md', mockRunbookDef, {
     runbookPath: 'lifecycle-test.md',
@@ -49,18 +50,17 @@ describe('RunbookActorService', () => {
   let testDir: string;
   let manager: RunbookStateManager;
   let actorService: RunbookActorService;
-  const mockSteps: Step[] = [
-    {
-      kind: 'base',
+  const mockSteps: ResolvedStep[] = [
+    makeBaseStep({
       name: '1',
       description: 'Initial step',
       transitions: {
         pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
         fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
       },
-    },
+    }),
   ];
-  const mockRunbook: Runbook = {
+  const mockRunbook: ResolvedRunbook = {
     title: 'Test Runbook',
     description: 'A test',
     steps: mockSteps,
@@ -109,10 +109,10 @@ describe('RunbookActorService', () => {
         context: { variables: {}, retryCount: 0 },
       });
 
-      const steps: Step[] = [
+      const steps: ResolvedStep[] = [
         ...mockSteps,
-        { kind: 'base', name: '2', description: 'S2', transitions: mockSteps[0].transitions },
-        { kind: 'base', name: '3', description: 'S3', transitions: mockSteps[0].transitions },
+        makeBaseStep({ name: '2', description: 'S2', transitions: mockSteps[0].transitions }),
+        makeBaseStep({ name: '3', description: 'S3', transitions: mockSteps[0].transitions }),
       ];
 
       const { state: updated } = await actorService.updateFromActor(state.id, actor, steps);
@@ -331,14 +331,13 @@ describe('RunbookActorService', () => {
         },
       });
 
-      const steps: Step[] = [
+      const steps: ResolvedStep[] = [
         ...mockSteps,
-        {
-          kind: 'base',
+        makeBaseStep({
           name: '2',
           description: 'After loop',
           transitions: mockSteps[0].transitions,
-        },
+        }),
       ];
 
       const { state: updated } = await actorService.updateFromActor(state.id, actor, steps);
@@ -501,7 +500,7 @@ describe('RunbookActorService', () => {
 
       const actor = await actorService.createActor(state.id, mockSteps);
       expect(actor).not.toBeNull();
-      const snapshot = actor!.getPersistedSnapshot() as {
+      const snapshot = actor!.getPersistedSnapshot() as unknown as {
         context: { frontmatterOutputs: unknown };
       };
       expect(snapshot.context.frontmatterOutputs).toEqual([{ name: 'SomeVar' }]);
@@ -514,7 +513,7 @@ describe('RunbookActorService', () => {
       });
 
       const actor = await actorService.createActor(state.id, mockSteps);
-      const snapshot = actor!.getPersistedSnapshot() as {
+      const snapshot = actor!.getPersistedSnapshot() as unknown as {
         context: { frontmatterOutputs: unknown };
       };
       expect(snapshot.context.frontmatterOutputs).toEqual([]);
@@ -544,7 +543,7 @@ describe('RunbookActorService', () => {
       });
 
       const actor = await actorService.createActor(state.id, mockSteps);
-      const snapshot = actor!.getPersistedSnapshot() as {
+      const snapshot = actor!.getPersistedSnapshot() as unknown as {
         context: { templateVars: Record<string, unknown> };
       };
       expect(snapshot.context.templateVars).toMatchObject({
@@ -575,7 +574,7 @@ describe('RunbookActorService', () => {
 
       const actor = await actorService.createActor(state.id, mockSteps);
       expect(actor).not.toBeNull();
-      const snapshot = actor!.getPersistedSnapshot() as {
+      const snapshot = actor!.getPersistedSnapshot() as unknown as {
         context: { templateVars: Record<string, unknown> };
       };
 
