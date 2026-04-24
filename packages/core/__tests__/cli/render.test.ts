@@ -1,6 +1,13 @@
 import { describe, it, expect } from '@jest/globals';
 import { buildDisplayStepModel, renderStepForCLI } from '../../src/cli/render.js';
 import type { Step, Substep } from '../../src/runbook/types.js';
+import {
+  makeBaseStep,
+  makeCommandStep,
+  makeResolvedStepWithSubsteps,
+  makeSubstep,
+  makeParsedSubstep,
+} from '../helpers/step-factories.js';
 
 function renderForTest(
   item: Step | Substep,
@@ -12,13 +19,12 @@ function renderForTest(
 
 describe('renderStepForCLI', () => {
   it('renders step with heading and prompt (command shown via printCommandExec)', () => {
-    const step: Step = {
-      kind: 'command',
+    const step = makeCommandStep({
       name: '1',
       description: 'Install dependencies',
       prompt: 'Run npm install to set up project.',
       command: { code: 'npm install' },
-    };
+    });
 
     const result = renderForTest(step);
 
@@ -30,12 +36,11 @@ describe('renderStepForCLI', () => {
   });
 
   it('renders step without command', () => {
-    const step: Step = {
-      kind: 'base',
+    const step = makeBaseStep({
       name: '2',
       description: 'Review changes',
       prompt: 'Review the diff and approve.',
-    };
+    });
 
     const result = renderForTest(step);
 
@@ -45,12 +50,11 @@ describe('renderStepForCLI', () => {
   });
 
   it('renders step without prompts (heading only)', () => {
-    const step: Step = {
-      kind: 'command',
+    const step = makeCommandStep({
       name: '3',
       description: 'Run build',
       command: { code: 'npm run build' },
-    };
+    });
 
     const result = renderForTest(step);
 
@@ -68,7 +72,7 @@ describe('renderStepForCLI', () => {
         pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
         fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
       },
-      substeps: [{ id: '1', description: 'Substep' }],
+      substeps: [makeParsedSubstep({ id: '1', description: 'Substep' })],
     };
 
     const result = renderForTest(step);
@@ -81,12 +85,11 @@ describe('renderStepForCLI', () => {
 
 describe('step rendering with instance number', () => {
   it('renders step with instance number in heading', () => {
-    const step: Step = {
-      kind: 'base',
+    const step = makeBaseStep({
       name: '1',
       description: 'Process Item',
       prompt: 'Process item.',
-    };
+    });
 
     const result = renderForTest(step, '1');
 
@@ -95,12 +98,11 @@ describe('step rendering with instance number', () => {
   });
 
   it('renders step with prompt unchanged', () => {
-    const step: Step = {
-      kind: 'base',
+    const step = makeBaseStep({
       name: '1',
       description: 'First step',
       prompt: 'Do something.',
-    };
+    });
 
     const result = renderForTest(step);
 
@@ -108,13 +110,12 @@ describe('step rendering with instance number', () => {
   });
 
   it('does not render command in step output (command shown via printCommandExec)', () => {
-    const step: Step = {
-      kind: 'command',
+    const step = makeCommandStep({
       name: '1',
       description: 'Process',
       prompt: 'Process the batch.',
       command: { code: 'process-batch' },
-    };
+    });
 
     const result = renderForTest(step, '2');
 
@@ -129,11 +130,11 @@ describe('step rendering with instance number', () => {
 
 describe('substep rendering', () => {
   it('renders substep with H3 heading and instance.substep format', () => {
-    const substep: Substep = {
+    const substep = makeSubstep({
       id: '1',
       description: 'Process Item',
       prompt: 'Process next item.',
-    };
+    });
 
     const result = renderForTest(substep, '1');
 
@@ -142,11 +143,11 @@ describe('substep rendering', () => {
   });
 
   it('renders substep with different id', () => {
-    const substep: Substep = {
+    const substep = makeSubstep({
       id: '2',
       description: 'Process Item',
       prompt: 'Processing item.',
-    };
+    });
 
     const result = renderForTest(substep, '3');
 
@@ -155,11 +156,11 @@ describe('substep rendering', () => {
   });
 
   it('renders static substep with correct heading', () => {
-    const substep: Substep = {
+    const substep = makeSubstep({
       id: '1',
       description: 'First Substep',
       prompt: 'Do the first thing.',
-    };
+    });
 
     const result = renderForTest(substep, '2');
 
@@ -167,10 +168,10 @@ describe('substep rendering', () => {
   });
 
   it('renders substep with empty description as heading-only ID', () => {
-    const substep: Substep = {
+    const substep = makeSubstep({
       id: '1',
       description: '',
-    };
+    });
 
     const result = renderForTest(substep, '2');
 
@@ -179,11 +180,11 @@ describe('substep rendering', () => {
   });
 
   it('does not render substep command in output (shown via printCommandExec)', () => {
-    const substep: Substep = {
+    const substep = makeSubstep({
       id: '1',
       description: 'Process Item',
       command: { code: 'process-batch' },
-    };
+    });
 
     const result = renderForTest(substep, '2');
 
@@ -195,12 +196,11 @@ describe('substep rendering', () => {
   });
 
   it('renders command as code block when showCommand is true', () => {
-    const step: Step = {
-      kind: 'command',
+    const step = makeCommandStep({
       name: '1',
       description: 'Run tests',
       command: { code: 'npm test', lang: 'bash' } as any,
-    };
+    });
 
     const result = renderForTest(step, undefined, true);
 
@@ -208,12 +208,11 @@ describe('substep rendering', () => {
   });
 
   it('renders command with different language tag when showCommand is true', () => {
-    const step: Step = {
-      kind: 'command',
+    const step = makeCommandStep({
       name: '1',
       description: 'Run python script',
       command: { code: 'print("hello")', lang: 'python' } as any,
-    };
+    });
 
     const result = renderForTest(step, undefined, true);
 
