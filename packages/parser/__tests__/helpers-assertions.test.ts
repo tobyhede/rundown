@@ -28,7 +28,9 @@ describe('assertStepWithCommand', () => {
         fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
       },
     };
-    expect(() => assertStepWithCommand(step)).toThrow(/expected kind 'command', got 'base'/);
+    expect(() => {
+      assertStepWithCommand(step);
+    }).toThrow(/expected kind 'command', got 'base'/);
   });
 });
 
@@ -77,9 +79,9 @@ describe('assertStepHasSubsteps', () => {
       command: { code: 'x' },
       transitions: baseTransitions,
     };
-    expect(() => assertStepHasSubsteps(step)).toThrow(
-      /expected kind 'substeps' or 'for', got 'command'/,
-    );
+    expect(() => {
+      assertStepHasSubsteps(step);
+    }).toThrow(/expected kind 'substeps' or 'for', got 'command'/);
   });
 
   it('throws when step has kind "base"', () => {
@@ -89,9 +91,9 @@ describe('assertStepHasSubsteps', () => {
       description: '',
       transitions: baseTransitions,
     };
-    expect(() => assertStepHasSubsteps(step)).toThrow(
-      /expected kind 'substeps' or 'for', got 'base'/,
-    );
+    expect(() => {
+      assertStepHasSubsteps(step);
+    }).toThrow(/expected kind 'substeps' or 'for', got 'base'/);
   });
 });
 
@@ -117,6 +119,8 @@ describe('assertStepWithFor', () => {
       substeps: [],
       transitions: baseTransitions,
     };
-    expect(() => assertStepWithFor(step)).toThrow(/expected kind 'for', got 'substeps'/);
+    expect(() => {
+      assertStepWithFor(step);
+    }).toThrow(/expected kind 'for', got 'substeps'/);
   });
 });

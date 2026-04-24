@@ -428,22 +428,22 @@ More work.
     const steps = parseRunbook(markdown);
     const step = steps[0];
     assertStepHasSubsteps(step);
-    expect(step.substeps[0].transitions?.pass).toEqual({
+    expect(step.substeps[0].transitions.pass).toEqual({
       kind: 'pass',
       retry: 0,
       action: { type: 'CONTINUE' },
     });
-    expect(step.substeps[0].transitions?.fail).toEqual({
+    expect(step.substeps[0].transitions.fail).toEqual({
       kind: 'fail',
       retry: 0,
       action: { type: 'STOP', message: 'BLOCKED' },
     });
-    expect(step.substeps[1].transitions?.pass).toEqual({
+    expect(step.substeps[1].transitions.pass).toEqual({
       kind: 'pass',
       retry: 0,
       action: { type: 'COMPLETE' },
     });
-    expect(step.substeps[1].transitions?.fail).toEqual({
+    expect(step.substeps[1].transitions.fail).toEqual({
       kind: 'fail',
       retry: 0,
       action: { type: 'GOTO', target: { step: '1', substep: '1' } },
@@ -462,12 +462,12 @@ Do work.
     const steps = parseRunbook(markdown);
     const step = steps[0];
     assertStepHasSubsteps(step);
-    expect(step.substeps[0].transitions?.pass).toEqual({
+    expect(step.substeps[0].transitions.pass).toEqual({
       kind: 'pass',
       retry: 0,
       action: { type: 'CONTINUE' },
     });
-    expect(step.substeps[0].transitions?.fail).toEqual({
+    expect(step.substeps[0].transitions.fail).toEqual({
       kind: 'fail',
       retry: 0,
       action: { type: 'STOP' },
@@ -506,22 +506,22 @@ Do check two.
     // Substeps should have context-aware defaults (DEFER/DEFER under aggregation)
     const step0 = steps[0];
     assertStepHasSubsteps(step0);
-    expect(step0.substeps[0].transitions?.pass).toEqual({
+    expect(step0.substeps[0].transitions.pass).toEqual({
       kind: 'pass',
       retry: 0,
       action: { type: 'DEFER' },
     });
-    expect(step0.substeps[0].transitions?.fail).toEqual({
+    expect(step0.substeps[0].transitions.fail).toEqual({
       kind: 'fail',
       retry: 0,
       action: { type: 'DEFER' },
     });
-    expect(step0.substeps[1].transitions?.pass).toEqual({
+    expect(step0.substeps[1].transitions.pass).toEqual({
       kind: 'pass',
       retry: 0,
       action: { type: 'DEFER' },
     });
-    expect(step0.substeps[1].transitions?.fail).toEqual({
+    expect(step0.substeps[1].transitions.fail).toEqual({
       kind: 'fail',
       retry: 0,
       action: { type: 'DEFER' },
@@ -550,18 +550,18 @@ Do the check.
     // FOR clause transitions should also be set
     const step0 = steps[0];
     assertStepWithFor(step0);
-    expect(step0.forClause.transitions?.fail).toEqual({
+    expect(step0.forClause.transitions!.fail).toEqual({
       kind: 'fail',
       retry: 0,
       action: { type: 'CONTINUE' },
     });
     // Substeps should have context-aware defaults (DEFER/DEFER for runbooks)
-    expect(step0.substeps[0].transitions?.pass).toEqual({
+    expect(step0.substeps[0].transitions.pass).toEqual({
       kind: 'pass',
       retry: 0,
       action: { type: 'DEFER' },
     });
-    expect(step0.substeps[0].transitions?.fail).toEqual({
+    expect(step0.substeps[0].transitions.fail).toEqual({
       kind: 'fail',
       retry: 0,
       action: { type: 'DEFER' },
@@ -585,22 +585,22 @@ Do check two.
     // Substeps get CONTINUE/STOP defaults (no aggregation context)
     const step0 = steps[0];
     assertStepHasSubsteps(step0);
-    expect(step0.substeps[0].transitions?.pass).toEqual({
+    expect(step0.substeps[0].transitions.pass).toEqual({
       kind: 'pass',
       retry: 0,
       action: { type: 'CONTINUE' },
     });
-    expect(step0.substeps[0].transitions?.fail).toEqual({
+    expect(step0.substeps[0].transitions.fail).toEqual({
       kind: 'fail',
       retry: 0,
       action: { type: 'STOP' },
     });
-    expect(step0.substeps[1].transitions?.pass).toEqual({
+    expect(step0.substeps[1].transitions.pass).toEqual({
       kind: 'pass',
       retry: 0,
       action: { type: 'CONTINUE' },
     });
-    expect(step0.substeps[1].transitions?.fail).toEqual({
+    expect(step0.substeps[1].transitions.fail).toEqual({
       kind: 'fail',
       retry: 0,
       action: { type: 'STOP' },
@@ -626,23 +626,23 @@ Do check.
     // Substep 1: explicit transitions preserved (DEFER/STOP, not overridden)
     const step0 = steps[0];
     assertStepHasSubsteps(step0);
-    expect(step0.substeps[0].transitions?.pass).toEqual({
+    expect(step0.substeps[0].transitions.pass).toEqual({
       kind: 'pass',
       retry: 0,
       action: { type: 'DEFER' },
     });
-    expect(step0.substeps[0].transitions?.fail).toEqual({
+    expect(step0.substeps[0].transitions.fail).toEqual({
       kind: 'fail',
       retry: 0,
       action: { type: 'STOP' },
     });
     // Substep 2: no explicit transitions → gets default DEFER/DEFER under aggregation
-    expect(step0.substeps[1].transitions?.pass).toEqual({
+    expect(step0.substeps[1].transitions.pass).toEqual({
       kind: 'pass',
       retry: 0,
       action: { type: 'DEFER' },
     });
-    expect(step0.substeps[1].transitions?.fail).toEqual({
+    expect(step0.substeps[1].transitions.fail).toEqual({
       kind: 'fail',
       retry: 0,
       action: { type: 'DEFER' },
@@ -665,7 +665,7 @@ describe('substep GOTO validation', () => {
     const steps = parseRunbook(markdown);
     const step = steps[0];
     assertStepHasSubsteps(step);
-    expect(step.substeps[0].transitions?.fail).toEqual({
+    expect(step.substeps[0].transitions.fail).toEqual({
       kind: 'fail',
       retry: 0,
       action: { type: 'GOTO', target: { step: '1', substep: '2' } },
@@ -1162,12 +1162,12 @@ echo check
       assertStepWithFor(step);
       expect(step.forClause.transitions).toBeDefined();
       expect(step.forClause.aggregation?.strategy).toBe('ALL');
-      expect(step.forClause.transitions?.pass).toEqual({
+      expect(step.forClause.transitions!.pass).toEqual({
         kind: 'pass',
         retry: 0,
         action: { type: 'CONTINUE' },
       });
-      expect(step.forClause.transitions?.fail).toEqual({
+      expect(step.forClause.transitions!.fail).toEqual({
         kind: 'fail',
         retry: 0,
         action: { type: 'BREAK' },
@@ -1237,12 +1237,12 @@ echo check
       assertStepWithFor(step);
       expect(step.forClause.transitions).toBeDefined();
       expect(step.forClause.aggregation?.strategy).toBe('ANY');
-      expect(step.forClause.transitions?.pass).toEqual({
+      expect(step.forClause.transitions!.pass).toEqual({
         kind: 'pass',
         retry: 0,
         action: { type: 'CONTINUE' },
       });
-      expect(step.forClause.transitions?.fail).toEqual({
+      expect(step.forClause.transitions!.fail).toEqual({
         kind: 'fail',
         retry: 0,
         action: { type: 'BREAK' },
@@ -1270,8 +1270,8 @@ FAIL: STOP
       const sub = step.substeps[0];
       // Substeps always have transitions (context-aware defaults CONTINUE/STOP)
       expect(sub.transitions).toBeDefined();
-      expect(sub.transitions?.pass.action.type).toBe('CONTINUE');
-      expect(sub.transitions?.fail.action.type).toBe('STOP');
+      expect(sub.transitions.pass.action.type).toBe('CONTINUE');
+      expect(sub.transitions.fail.action.type).toBe('STOP');
       expect(sub.prompt).toContain('Prompt text here.');
       expect(sub.prompt).toContain('PASS: CONTINUE');
     });
@@ -2022,8 +2022,8 @@ Do substep work.
     // Paragraph-style transitions are not parsed as transitions — they become prompt text
     // Substeps always have transitions (context-aware defaults CONTINUE/STOP)
     expect(sub.transitions).toBeDefined();
-    expect(sub.transitions?.pass.action.type).toBe('CONTINUE');
-    expect(sub.transitions?.fail.action.type).toBe('STOP');
+    expect(sub.transitions.pass.action.type).toBe('CONTINUE');
+    expect(sub.transitions.fail.action.type).toBe('STOP');
     expect(sub.prompt).toContain('PASS: CONTINUE');
     expect(sub.prompt).toContain('Do substep work.');
   });
@@ -2150,8 +2150,8 @@ Do second.
     const step = steps[0];
     assertStepHasSubsteps(step);
     expect(step.substeps).toHaveLength(2);
-    expect(step.substeps[0].transitions?.pass.action).toEqual({ type: 'CONTINUE' });
-    expect(step.substeps[1].transitions?.pass.action).toEqual({ type: 'COMPLETE' });
+    expect(step.substeps[0].transitions.pass.action).toEqual({ type: 'CONTINUE' });
+    expect(step.substeps[1].transitions.pass.action).toEqual({ type: 'COMPLETE' });
   });
 
   it('handles step with only transitions and no other content', () => {
@@ -2185,7 +2185,7 @@ Do iteration.
     const step = steps[0];
     assertStepWithFor(step);
     expect(step.forClause).toEqual({ variable: 'i', start: 1, end: 3 });
-    expect(step.substeps[0].transitions?.pass.action).toEqual({ type: 'NEXT' });
+    expect(step.substeps[0].transitions.pass.action).toEqual({ type: 'NEXT' });
   });
 
   it('H3 header with unparsable format is ignored when only content', () => {
