@@ -1,7 +1,10 @@
 import { jest, expect, describe, it, beforeEach } from '@jest/globals';
 import type { HookInput } from '../../src/shared/index.js';
+import type { handleDelegationDispatch } from '../../src/workflow/hooks/delegation-dispatch.js';
 
-const mockHandleDelegationDispatch = jest.fn();
+const mockHandleDelegationDispatch = jest.fn() as jest.MockedFunction<
+  typeof handleDelegationDispatch
+>;
 
 jest.unstable_mockModule('../../src/workflow/hooks/delegation-dispatch.js', () => ({
   handleDelegationDispatch: mockHandleDelegationDispatch,

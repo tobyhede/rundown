@@ -1,8 +1,9 @@
 // packages/claude-code-plugin/__tests__/gates/on-subagent-stop.test.ts
 import { jest, expect, describe, it, beforeEach } from '@jest/globals';
 import type { HookInput } from '../../src/shared/index.js';
+import type { handleSubagentStop } from '../../src/workflow/hooks/subagent-stop.js';
 
-const mockHandleSubagentStop = jest.fn();
+const mockHandleSubagentStop = jest.fn() as jest.MockedFunction<typeof handleSubagentStop>;
 
 jest.unstable_mockModule('../../src/workflow/hooks/subagent-stop.js', () => ({
   handleSubagentStop: mockHandleSubagentStop,

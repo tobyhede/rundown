@@ -14,17 +14,17 @@ import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { setExecSync } from '../../src/workflow/hooks/rundown.js';
-import { runCli, createMockHookInput, createMockExecSync } from '../helpers/test-utils.js';
+import { runCli, createMockHookInput } from '../helpers/test-utils.js';
+import { mockExecFileSync } from '../helpers/execfile-mock.js';
 
 // Mock Session to control delegation_active_token
-const mockGet = jest.fn();
-const mockSet = jest.fn();
+import { createSessionMock, setGet } from '../helpers/session-mock.js';
+
+const session = createSessionMock();
+const mockSet = session.set;
 
 jest.unstable_mockModule('../../src/session.js', () => ({
-  Session: jest.fn().mockImplementation(() => ({
-    get: mockGet,
-    set: mockSet,
-  })),
+  Session: jest.fn().mockImplementation(() => session),
 }));
 
 const { handleSubagentStop } = await import('../../src/workflow/hooks/subagent-stop.js');
@@ -89,15 +89,18 @@ describe('subagent-stop contract tests', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    // Reset the WeakMap-backed session state — jest.clearAllMocks only clears
+    // call history, so metadata from a prior test would otherwise leak in.
+    setGet(session, 'metadata', {});
     mockSet.mockResolvedValue(undefined);
-    setExecSync(jest.fn() as never);
+    setExecSync(mockExecFileSync(''));
 
     tempDir = mkdtempSync(join(tmpdir(), 'rd-subagent-stop-contract-'));
     mkdirSync(join(tempDir, '.claude', 'rundown', 'runs'), { recursive: true });
   });
 
   afterEach(() => {
-    setExecSync(jest.fn() as never);
+    setExecSync(mockExecFileSync(''));
     rmSync(tempDir, { recursive: true, force: true });
   });
 
@@ -110,12 +113,12 @@ describe('subagent-stop contract tests', () => {
   async function captureStatusAndHandle(
     token: string,
   ): Promise<{ context?: string; violation?: string }> {
-    mockGet.mockResolvedValue({ delegation_active_token: token });
+    setGet(session, 'metadata', { delegation_active_token: token });
 
     const statusResult = runCli('status', tempDir);
     expect(statusResult.exitCode).toBe(0);
 
-    setExecSync(createMockExecSync(statusResult.stdout) as never);
+    setExecSync(mockExecFileSync(statusResult.stdout));
 
     const input = createMockHookInput('SubagentStop', { cwd: tempDir });
     return handleSubagentStop(input);

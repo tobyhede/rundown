@@ -33,6 +33,7 @@
   ],
   "scripts": {
     "build": "tsc && node scripts/validate-runbooks.js",
+    "check:types": "tsc --noEmit -p tsconfig.test.json",
     "validate:runbooks": "node scripts/validate-runbooks.js",
     "test": "jest",
     "test:unit": "jest --maxWorkers=2 --testPathIgnorePatterns='(integration|\\.properties\\.test\\.ts$|perf/)'",

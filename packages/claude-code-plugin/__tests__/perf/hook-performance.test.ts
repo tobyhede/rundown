@@ -19,7 +19,9 @@ import {
   createTempTestDir,
   writeTestConfig,
 } from '../helpers/test-utils.js';
+import { execFileSync as originalExecFileSync } from 'node:child_process';
 import { setExecSync } from '../../src/workflow/hooks/rundown.js';
+import { mockExecFileSync } from '../helpers/execfile-mock.js';
 import type { GateConfig, HookConfig } from '../../src/shared/index.js';
 
 /**
@@ -46,6 +48,10 @@ describe('Hook Performance Budget', () => {
   });
 
   afterEach(async () => {
+    // Belt-and-braces: restore the real execFileSync so no mock installed
+    // inside a test leaks into the next one. Individual tests may also
+    // restore in their own `finally` blocks for early-failure safety.
+    setExecSync(originalExecFileSync);
     await testDir.cleanup();
   });
 
@@ -139,7 +145,7 @@ describe('Hook Performance Budget', () => {
         file: 'parent.runbook.md',
         delegations: [],
       });
-      setExecSync((() => statusJson) as never);
+      setExecSync(mockExecFileSync(statusJson));
 
       try {
         const input = createMockHookInput('SubagentStop', {
@@ -157,8 +163,8 @@ describe('Hook Performance Budget', () => {
         const { durationMs } = await measureExecutionTime(() => dispatch(input));
         expect(durationMs).toBeLessThan(HOOK_BUDGET_MS);
       } finally {
-        // Reset to a no-op to avoid leaking the mock
-        setExecSync((() => '') as never);
+        // Restore the real execFileSync so subsequent tests don't inherit a mock.
+        setExecSync(originalExecFileSync);
       }
     });
 
