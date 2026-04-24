@@ -47,6 +47,7 @@ To ensure clarity and consistency across all pattern examples, we follow a holis
 2. Use descriptive filename: `feature-variant.runbook.md`
 3. Add scenarios following the naming taxonomy above
 4. Include `result: COMPLETE` or `result: STOP` in scenario metadata (or use `expect:` block for step-level assertions)
+5. Rebuild the CLI (`npm run build -w packages/cli`) before running any cross-referenced runbook through `rd scenario run` — the scenario runner reads from `packages/cli/dist/runbooks/`, which is refreshed by the post-build `scripts/copy-runbooks.js` hook. Skipping this produces `RD-805 Child runbook not found` at delegation time.
 
 ## Path Assembly with `rdpath`
 
