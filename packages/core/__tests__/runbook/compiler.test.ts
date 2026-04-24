@@ -9999,7 +9999,7 @@ echo "processing"
         },
       };
 
-      const actor = createActor(machine, { snapshot: persisted as any });
+      const actor = createActor(machine, { snapshot: persisted });
       actor.start();
       return { actor, frameKey };
     }
@@ -10134,7 +10134,7 @@ echo "processing"
         },
       };
 
-      const actor = createActor(machine, { snapshot: persisted as any });
+      const actor = createActor(machine, { snapshot: persisted });
       actor.start();
       return { actor, frameKey };
     }
@@ -10240,7 +10240,7 @@ echo "processing"
         },
       };
 
-      const actor = createActor(machine, { snapshot: persisted as any });
+      const actor = createActor(machine, { snapshot: persisted });
       actor.start();
 
       // FAIL closes ALL aggregation with [fail] → retry branch fires →
@@ -10330,7 +10330,7 @@ echo "processing"
         },
       };
 
-      const actor = createActor(machine, { snapshot: persisted as any });
+      const actor = createActor(machine, { snapshot: persisted });
       actor.start();
       actor.send({ type: 'PASS' });
 
@@ -10420,7 +10420,7 @@ echo "processing"
         },
       };
 
-      const actor = createActor(machine, { snapshot: persisted as any });
+      const actor = createActor(machine, { snapshot: persisted });
       actor.start();
 
       // Final FAIL closes the aggregation → ALL fails → retry fires → hook runs.
@@ -10585,7 +10585,7 @@ echo "processing"
         },
       };
 
-      const actor = createActor(machine, { snapshot: persisted as any });
+      const actor = createActor(machine, { snapshot: persisted });
       actor.start();
 
       // FAIL the single substep → deferredResults=[fail] → ALL aggregation fails →
