@@ -8,6 +8,7 @@ import {
 } from '../../src/runbook/types.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import { brandStoredOutputsForTest } from '../helpers/effective-vars.js';
+import { makeSubstep } from '../helpers/step-factories.js';
 
 describe('SubstepState type', () => {
   it('has required fields', () => {
@@ -72,20 +73,20 @@ describe('GOTO action type', () => {
 
 describe('Substep interface', () => {
   it('supports command field', () => {
-    const substep: Substep = {
+    const substep: Substep = makeSubstep({
       id: '1',
       description: 'Test substep',
       command: { code: 'npm test' },
-    };
+    });
     expect(substep.command?.code).toBe('npm test');
   });
 
   it('supports prompt string', () => {
-    const substep: Substep = {
+    const substep: Substep = makeSubstep({
       id: '1',
       description: 'Test substep',
       prompt: 'Do the thing',
-    };
+    });
     expect(substep.prompt).toBe('Do the thing');
   });
 

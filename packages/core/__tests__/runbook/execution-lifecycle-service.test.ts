@@ -6,10 +6,11 @@ import { RunbookStateManager } from '../../src/runbook/state.js';
 import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type { Runbook, Step } from '../../src/runbook/types.js';
+import { makeBaseStep } from '../helpers/step-factories.js';
 
 const mockSteps: Step[] = [
-  { kind: 'base', name: '1', description: 'Step 1' },
-  { kind: 'base', name: '2', description: 'Step 2' },
+  makeBaseStep({ name: '1', description: 'Step 1' }),
+  makeBaseStep({ name: '2', description: 'Step 2' }),
 ];
 const mockRunbook: Runbook = {
   title: 'Test',

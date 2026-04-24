@@ -18,7 +18,7 @@ function buildLinearBaseSteps(numSteps: number): StepInput[] {
   return Array.from({ length: numSteps }, (_, i) => ({
     name: String(i + 1),
     description: `Step ${String(i + 1)}`,
-    transitions: makeTransitions('ALL', i === numSteps - 1 ? 'COMPLETE' : 'CONTINUE', 'STOP'),
+    transitions: makeTransitions(i === numSteps - 1 ? 'COMPLETE' : 'CONTINUE', 'STOP'),
   }));
 }
 

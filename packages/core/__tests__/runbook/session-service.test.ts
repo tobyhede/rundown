@@ -5,18 +5,13 @@ import { join } from 'node:path';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 import { SessionService } from '../../src/runbook/session-service.js';
 import type { Step, Runbook } from '../../src/runbook/types.js';
+import { makeBaseStep } from '../helpers/step-factories.js';
 
 describe('SessionService', () => {
   let testDir: string;
   let manager: RunbookStateManager;
   let sessionService: SessionService;
-  const mockSteps: Step[] = [
-    {
-      kind: 'base',
-      name: '1',
-      description: 'Initial step',
-    },
-  ];
+  const mockSteps: Step[] = [makeBaseStep({ name: '1', description: 'Initial step' })];
   const mockRunbook: Runbook = {
     title: 'Test Runbook',
     description: 'A test',
