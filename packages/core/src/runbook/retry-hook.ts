@@ -96,6 +96,18 @@ export interface RetryHookError {
 export type RetryHookResult = RetryHookSuccess | RetryHookError;
 
 /**
+ * Narrow view of RunbookState used by the retry hook — only fields that
+ * `retryDelegation` and its composition actually read.
+ *
+ * Kept module-local: this is not a public contract, it is a shape-shim
+ * to avoid a full RunbookState construction inside an assign callback.
+ */
+type WorkingRetryState = Pick<
+  RunbookState,
+  'step' | 'substepStates' | 'templateVars' | 'forStack' | 'activeFrameKey' | 'variables'
+>;
+
+/**
  * Run the retry hook over a parent step's delegated substeps.
  *
  * Inspects `context.substepStates` for the active frame; for each substep with
@@ -167,10 +179,7 @@ export function runRetryHook(
   // delegation path the value is only spread into contextSnapshot.vars — the
   // actual runtime values originate from `flattenTemplateVars` at hydration
   // and are always TemplateVarValue-compatible.
-  let working: Pick<
-    RunbookState,
-    'step' | 'substepStates' | 'templateVars' | 'forStack' | 'activeFrameKey' | 'variables'
-  > = {
+  let working: WorkingRetryState = {
     step: parentStep.name,
     substepStates,
     templateVars: brandInitialTemplateVars(asTemplateVars(context.templateVars)),
