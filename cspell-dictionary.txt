@@ -39,6 +39,7 @@ ancvar
 args
 artefacts
 autobuild
+autoissue
 bashisms
 behaviour
 biome
@@ -46,6 +47,7 @@ biomejs
 callsites
 categorises
 centralise
+Centralised
 changeset
 changesets
 cipherpowers
@@ -89,10 +91,13 @@ landlock
 landrun
 lcov
 lockfile
+materialise
 materialised
+materialising
 mdast
 microstep
 minimatch
+Misordered
 mjs
 monorepo
 msg
@@ -183,6 +188,7 @@ tsdoc
 turboshovel
 typename
 ultrathink
+unclaimable
 unist
 unknowncommand
 unrepresentable

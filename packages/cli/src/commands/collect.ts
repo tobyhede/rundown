@@ -105,7 +105,7 @@ interface CollectOptions {
  * @returns Resolved step name + frame key to use for aggregation, or null when
  *          the CLI-provided `--step`/`--index` is invalid (in which case an
  *          error has already been emitted via `output`).
- * @throws Re-throws non-{@link IndexOptionError} errors raised by
+ * @throws {Error} Re-throws non-{@link IndexOptionError} errors raised by
  *         {@link resolveIndexOption}; {@link IndexOptionError} is reported via
  *         `output` and surfaced as a null return.
  */
