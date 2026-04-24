@@ -86,9 +86,7 @@ export function registerDelegateCommand(program: Command): void {
 
           const depError = validateIndexRequiresStep(options.index, options.step);
           if (depError) {
-            output.error(depError, 'INVALID_SYNTAX');
-            output.flush();
-            process.exit(1);
+            failRetry(output, depError, 'INVALID_SYNTAX');
           }
 
           const cwd = getCwd();
@@ -174,9 +172,7 @@ export function registerDelegateCommand(program: Command): void {
             explicitIteration = resolveIndexOption(options.index, parsedTarget?.at);
           } catch (error) {
             if (error instanceof IndexOptionError) {
-              output.error(error.message, error.code);
-              output.flush();
-              process.exit(1);
+              failRetry(output, error.message, error.code);
             }
             throw error;
           }
@@ -186,12 +182,11 @@ export function registerDelegateCommand(program: Command): void {
             const targetStepName = parsedTarget?.step ?? state.step;
             const targetStep = steps.find((s) => s.name === targetStepName);
             if (targetStep && targetStep.kind !== 'for' && targetStep.kind !== 'prompted-for') {
-              output.error(
+              failRetry(
+                output,
                 `--index requires step "${targetStepName}" to be a FOR step, but it is "${targetStep.kind}"`,
                 'INVALID_INDEX',
               );
-              output.flush();
-              process.exit(1);
             }
           }
 
@@ -279,6 +274,10 @@ interface ResolvedTarget {
  * Emit a CLI error via OutputEmitter, flush pending output, and exit with
  * status 1. Annotated `: never` so TypeScript narrows callers after a call
  * (e.g. `if (!x) failRetry(...); /* x is non-null here *\/`).
+ *
+ * Used by both the `--retry` resolution path and the fresh-issue
+ * delegation path. The name is historical (introduced for retry); the
+ * function itself is the canonical failure path for the delegate command.
  *
  * @param output - OutputEmitter used to surface the error message.
  * @param message - Human-readable error text.
