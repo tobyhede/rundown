@@ -247,9 +247,19 @@ export function runRetryHook(
       };
     }
 
-    // not_found / not_current: skip this substep (defensive; shouldn't occur
-    // on the retry path since we filtered on `delegation` present and frameKey
-    // matches context).
+    // not_found / not_current: the substep state and delegation-service view
+    // have diverged. The loop filtered on `ss.delegation` being present and
+    // `activeFrameKey` matching, so reaching either status here means the
+    // delegation-service disagrees with what we just observed — silently
+    // skipping would consume the retry transition without re-issuing a token.
+    // Rollback via RD-903 so the caller routes through RETRY_ERROR and the
+    // machine reaches STOPPED cleanly.
+    return {
+      status: 'error',
+      code: 'RD-903',
+      message: `Retry hook aborted: retryDelegation returned "${result.status}" for substep "${substep.id}" but substep state recorded an active delegation — state and delegation-service view have diverged.`,
+      substepStates,
+    };
   }
 
   return { status: 'success', frontier, substepStates: working.substepStates ?? [] };
