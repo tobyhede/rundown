@@ -9935,13 +9935,11 @@ echo "processing"
             description: 'Parent with delegate substeps',
             transitions: parentTransitions,
             aggregation: { strategy: 'ALL' },
-            substeps: ids.map(
-              (id): StepWithSubsteps['substeps'][number] => ({
-                id,
-                description: `Sub ${id}`,
-                transitions: substepDefer,
-              }),
-            ),
+            substeps: ids.map((id): StepWithSubsteps['substeps'][number] => ({
+              id,
+              description: `Sub ${id}`,
+              transitions: substepDefer,
+            })),
           },
           { name: '2', description: 'Next', transitions: DEFAULT_TRANSITIONS },
         ]);
@@ -9952,10 +9950,15 @@ echo "processing"
       const seededStates = seedDelegations(fullSteps, args.seedIds);
 
       // Apply result markers (pass/fail) to the seeded delegations per args.results.
+      // Skip the active substep (the one the dispatched event is supposed to close
+      // aggregation for): pre-marking it 'done' would mask any regression where
+      // the live PASS/FAIL path stops persisting that outcome.
       const frameKey = buildFrameKey('1');
+      const lastSeedSubstep = args.seedIds[args.seedIds.length - 1];
       const preparedSubsteps: SubstepState[] = seededStates.map((ss) => {
         const result = args.results[ss.id];
         if (result === undefined) return ss;
+        if (ss.id === lastSeedSubstep && ss.frameKey === frameKey) return ss;
         return { ...ss, status: 'done' as const, result } as SubstepState;
       });
 
@@ -10452,9 +10455,14 @@ echo "processing"
       expect(post3?.result).toBeUndefined();
 
       // 1.2 has no delegation — it's skipped by the hook. Its state is
-      // preserved as-is; the cursor-re-entry machinery handles it separately.
+      // preserved byte-for-byte from the prepared snapshot; the cursor-re-entry
+      // machinery handles it separately. A regression that touched non-delegated
+      // substeps would flip status or clear result here.
+      const pre2 = preparedSubsteps.find((ss) => ss.id === '2');
       const post2 = ctx.substepStates?.find((ss) => ss.id === '2');
       expect(post2?.delegation).toBeUndefined();
+      expect(post2?.status).toBe(pre2?.status);
+      expect(post2?.result).toBe(pre2?.result);
 
       actor.stop();
     });
@@ -10540,15 +10548,10 @@ echo "processing"
       const iter1Seeded = seedIterationDelegation(steps, '1', 1);
       const iter2Seeded = seedIterationDelegation(steps, '1', 2);
 
-      // Iteration 1: marked done+fail (eligible for retry hook).
-      // Iteration 2: untouched (status:'pending', no result yet) — must remain byte-equal.
-      const iter1Done: SubstepState = {
-        ...iter1Seeded,
-        status: 'done' as const,
-        result: 'fail' as const,
-      };
-
-      const preparedSubsteps: SubstepState[] = [iter1Done, iter2Seeded];
+      // Iteration 1: leave pending — the dispatched FAIL below is what closes
+      // aggregation; pre-marking would mask any regression where the live PASS/FAIL
+      // path stops persisting that outcome. Iteration 2: untouched, must remain byte-equal.
+      const preparedSubsteps: SubstepState[] = [iter1Seeded, iter2Seeded];
 
       const machine = compileRunbookToMachine(steps);
       const tmp = createActor(machine);
@@ -10619,11 +10622,15 @@ echo "processing"
       expect((ctx as { retryHookError?: unknown }).retryHookError).toBeUndefined();
 
       // Iteration 2's substep state must be byte-for-byte unchanged: same
-      // delegation object with the original tokenHash and createdAt.
+      // delegation object with the original tokenHash and createdAt; status and
+      // result preserved so a regression that resets non-target iteration frames
+      // would fail this assertion.
       const post2 = ctx.substepStates?.find((ss) => ss.id === '1' && ss.frameKey === iter2FrameKey);
       expect(post2?.delegation?.tokenHash).toBe(iter2Seeded.delegation?.tokenHash);
       expect(post2?.delegation?.createdAt).toBe(iter2Seeded.delegation?.createdAt);
       expect(post2?.delegation?.cancelledAt).toBe(iter2Seeded.delegation?.cancelledAt);
+      expect(post2?.status).toBe(iter2Seeded.status);
+      expect(post2?.result).toBe(iter2Seeded.result);
 
       // Iteration 1's delegation must have a fresh tokenHash (different from seeded).
       const post1 = ctx.substepStates?.find((ss) => ss.id === '1' && ss.frameKey === iter1FrameKey);
