@@ -298,6 +298,16 @@ function failRetry(output: OutputEmitter, message: string, code: string): never 
  * tested via runCliInProcess integration tests, so inline branches avoid
  * creating a test-only export surface with no caller benefit.
  *
+ * Deferred unit tests: the original plan called for ~17 unit tests on this
+ * function and `executeRetry`. Skipped because the CLI package has no
+ * unit-with-mocks precedent — adding one requires `@internal` exports
+ * solely for tests. Current coverage is via `delegate.test.ts` retry-section
+ * integration tests (token / step / step+index / inferred / ambiguity /
+ * off-frontier / no-active / var inheritance / var override / non-failed /
+ * non-FOR / FOR-iteration). Revisit the unit-test plan when any other CLI
+ * command adopts `jest.unstable_mockModule` — at that point the precedent
+ * exists and the export-surface cost vanishes.
+ *
  * @param args - Retry options
  * @returns Resolved target (state, substepId, frameKey, stepLabel, overrides)
  */
