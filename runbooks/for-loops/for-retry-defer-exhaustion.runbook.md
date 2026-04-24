@@ -29,6 +29,9 @@ scenarios:
           action: RETRY
           result: FAIL
         - from: "1.2.1"
+          action: RETRY
+          result: FAIL
+        - from: "1.2.1"
           action: STOP
           result: FAIL
           aggregated: true
