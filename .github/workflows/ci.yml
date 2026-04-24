@@ -113,6 +113,12 @@ jobs:
       - name: Type-checked lint (ESLint)
         run: npm run check:lint:typed
 
+      - name: Type check (parser)
+        run: npm run check:types:parser
+
+      - name: Type check (core)
+        run: npm run check:types:core
+
   test:
     runs-on: ubuntu-latest
     needs: setup-build
