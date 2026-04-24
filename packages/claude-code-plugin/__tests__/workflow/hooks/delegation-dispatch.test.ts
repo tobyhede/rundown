@@ -8,7 +8,6 @@ import { mockExecFileSync, mockExecFileSyncError } from '../../helpers/execfile-
 import { createSessionMock, setGet } from '../../helpers/session-mock.js';
 
 const session = createSessionMock();
-const mockGet = session.get;
 const mockSet = session.set;
 
 jest.unstable_mockModule('../../../src/session.js', () => ({
