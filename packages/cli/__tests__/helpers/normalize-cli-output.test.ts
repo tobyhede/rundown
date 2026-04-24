@@ -103,9 +103,25 @@ describe('normalizeCliOutput', () => {
     expect(normalizeCliOutput(input, workspace)).toBe('"expiresAt": <epochMs>');
   });
 
+  it('replaces updatedAt epoch ms field values with placeholder', () => {
+    const input = '"updatedAt": 1745000003000';
+    expect(normalizeCliOutput(input, workspace)).toBe('"updatedAt": <epochMs>');
+  });
+
+  it('replaces lastHeartbeat epoch ms field values with placeholder', () => {
+    const input = '"lastHeartbeat": 1745000004000';
+    expect(normalizeCliOutput(input, workspace)).toBe('"lastHeartbeat": <epochMs>');
+  });
+
   it('replaces durationMs and took numeric fields with <ms>', () => {
     const input = '"durationMs": 1234, "took": 56';
     expect(normalizeCliOutput(input, workspace)).toBe('"durationMs": <ms>, "took": <ms>');
+  });
+
+  it('replaces PID banners with <pid>', () => {
+    expect(normalizeCliOutput('pid=1234', workspace)).toBe('pid=<pid>');
+    expect(normalizeCliOutput('PID 4321', workspace)).toBe('PID <pid>');
+    expect(normalizeCliOutput('(pid 42)', workspace)).toBe('(pid <pid>)');
   });
 
   it('replaces tmpdir (outside workspace) with <tmpdir>', async () => {
