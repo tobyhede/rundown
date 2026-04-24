@@ -618,6 +618,7 @@ function makeStepDelegationSchema(projectRoot: string): z.ZodTypeAny {
     childRunId: z.string().nullable(),
     createdAt: z.string(),
     cancelledAt: z.string().nullable(),
+    extraVars: z.record(z.string(), TemplateVarValueSchema).optional(),
   });
 }
 
