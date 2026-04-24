@@ -6,6 +6,6 @@
     "isolatedModules": true,
     "types": ["node", "jest"]
   },
-  "include": ["src/**/*", "__tests__/**/*"],
+  "include": ["__tests__/**/*"],
   "exclude": ["node_modules", "dist"]
 }
