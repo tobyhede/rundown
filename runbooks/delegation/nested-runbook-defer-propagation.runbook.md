@@ -17,10 +17,33 @@ scenarios:
     expect:
       result: COMPLETE
       steps:
-        - from: "1.1"
+        # Grandchild aggregation (emitted first, inside child's 1.1 claim)
+        - runbook: nested-runbook-defer-propagation-grandchild.runbook.md
+          from: "1.1"
           action: DEFER
           result: PASS
-        - from: "1.2"
+        - runbook: nested-runbook-defer-propagation-grandchild.runbook.md
+          from: "1.2"
+          action: COMPLETE
+          result: PASS
+          aggregated: true
+        # Child aggregation (after child resumes with 1.2 local)
+        - runbook: nested-runbook-defer-propagation-child.runbook.md
+          from: "1.1"
+          action: DEFER
+          result: PASS
+        - runbook: nested-runbook-defer-propagation-child.runbook.md
+          from: "1.2"
+          action: COMPLETE
+          result: PASS
+          aggregated: true
+        # Root aggregation (after root resumes with 1.2 local)
+        - runbook: /nested-runbook-defer-propagation.runbook.md
+          from: "1.1"
+          action: DEFER
+          result: PASS
+        - runbook: /nested-runbook-defer-propagation.runbook.md
+          from: "1.2"
           action: COMPLETE
           result: PASS
           aggregated: true
