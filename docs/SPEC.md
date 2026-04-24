@@ -424,6 +424,9 @@ Flow:
 11. **Single Directives**: At most one OUTPUTS directive per step or substep.
 12. **Reserved Names in Directives**: OUTPUTS variable names must not be reserved names (case-insensitive).
 13. **No INPUTS Directive**: The `- INPUTS` step directive has been removed. Use the frontmatter `inputs:` field to declare default variable values; variables are injected via `--input` flags at invocation time.
+14. **DELEGATE Ordering**: The `- DELEGATE` annotation must appear after `- FOR` (when present) and before transitions, prompt, and body. Misordered DELEGATE is a parse error. (See §4.3.)
+15. **DELEGATE Requires Runbook Target**: Every substep marked `delegate: true` must declare at least one runbook target. A bare DELEGATE substep (no runbook bullet) is rejected at parse time. Step-level DELEGATE propagates to all substeps and the same target requirement applies to every propagated child.
+16. **RETRY on DELEGATE is Result-Agnostic**: `rd delegate --retry` succeeds regardless of the substep's prior result. Retry re-issues a fresh token by cancelling the current delegation and re-creating one with a new token; the retry hook propagates the canonical FOR-iteration location through `contextSnapshot.at`.
 
 ## 9. Compatibility
 
