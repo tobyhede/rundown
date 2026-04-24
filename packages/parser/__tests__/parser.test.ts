@@ -1013,8 +1013,10 @@ npm test
 - FAIL STOP`;
       const steps = parseRunbook(md);
       expect(steps).toHaveLength(1);
-      expect(steps[0].substeps?.[0].transitions.pass.action).toEqual({ type: 'CONTINUE' });
-      expect(steps[0].substeps?.[0].transitions.fail.action).toEqual({ type: 'STOP' });
+      const step = steps[0];
+      assertStepHasSubsteps(step);
+      expect(step.substeps[0].transitions.pass.action).toEqual({ type: 'CONTINUE' });
+      expect(step.substeps[0].transitions.fail.action).toEqual({ type: 'STOP' });
     });
 
     it('rejects transitions after runbook → code block → runbook sequence in substep', () => {
