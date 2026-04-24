@@ -96,9 +96,18 @@ interface CollectOptions {
  * aggregation always operates at step scope). `--index` overrides the iteration
  * in the derived frame key.
  *
+ * @param state - Persisted runbook state used to derive the active frame when no
+ *                `--step` is supplied.
+ * @param options - CLI flags forwarded from the Commander action handler
+ *                  (`--step`, `--index`).
+ * @param output - Output emitter used to report invalid `--step`/`--index` values
+ *                 to the caller before returning null.
  * @returns Resolved step name + frame key to use for aggregation, or null when
  *          the CLI-provided `--step`/`--index` is invalid (in which case an
  *          error has already been emitted via `output`).
+ * @throws Re-throws non-{@link IndexOptionError} errors raised by
+ *         {@link resolveIndexOption}; {@link IndexOptionError} is reported via
+ *         `output` and surfaced as a null return.
  */
 function resolveCollectScope(
   state: TransitionContext['state'],
