@@ -15,6 +15,11 @@ import type {
 import { createDelegation } from '../../src/runbook/delegation-service.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import { createRunbook } from './fixtures.js';
+import {
+  brandFlattenedTemplateVarsForTest,
+  brandInitialTemplateVarsForTest,
+  brandStoredOutputsForTest,
+} from '../helpers/effective-vars.js';
 
 describe('runbook compiler', () => {
   /** Input type: Resolved step variants without the `kind` discriminant. */
@@ -132,7 +137,7 @@ describe('runbook compiler', () => {
 ## 2. Done
 - PASS COMPLETE
 `).runbook.steps,
-      ];
+      ] as unknown as ResolvedStep[];
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);
@@ -8654,10 +8659,10 @@ echo "processing"
 
       expect(actor.getSnapshot().context.variables).toEqual({});
 
-      actor.send({ type: 'SET_VARIABLES', vars: { PlanPath: 'plan.json', count: 3 } });
+      actor.send({ type: 'SET_VARIABLES', vars: { PlanPath: 'plan.json', count: '3' } });
 
       const snapshot = actor.getSnapshot();
-      expect(snapshot.context.variables).toEqual({ PlanPath: 'plan.json', count: 3 });
+      expect(snapshot.context.variables).toEqual({ PlanPath: 'plan.json', count: '3' });
       // Step should not have changed
       expect(snapshot.value).toMatch(/step::1/);
     });
@@ -8937,7 +8942,9 @@ echo "processing"
   - SubResult "partial-value"
 `);
 
-      const machine = compileRunbookToMachine(steps, { templateVars: {} });
+      const machine = compileRunbookToMachine(steps, {
+        templateVars: brandFlattenedTemplateVarsForTest(),
+      });
       const actor = createActor(machine);
       actor.start();
       actor.send({ type: 'FAIL' });
@@ -8969,7 +8976,9 @@ echo "processing"
 - FAIL BREAK
 `);
 
-      const machine = compileRunbookToMachine(steps, { templateVars: {} });
+      const machine = compileRunbookToMachine(steps, {
+        templateVars: brandFlattenedTemplateVarsForTest(),
+      });
       const actor = createActor(machine);
       actor.start();
       actor.send({ type: 'FAIL' });
@@ -9006,7 +9015,9 @@ echo "processing"
 - FAIL STOP
 `);
 
-      const machine = compileRunbookToMachine(steps, { templateVars: {} });
+      const machine = compileRunbookToMachine(steps, {
+        templateVars: brandFlattenedTemplateVarsForTest(),
+      });
       const actor = createActor(machine);
       actor.start();
       actor.send({ type: 'PASS' });
@@ -9039,7 +9050,9 @@ echo "processing"
 - FAIL CONTINUE
 `);
 
-      const machine = compileRunbookToMachine(steps, { templateVars: {} });
+      const machine = compileRunbookToMachine(steps, {
+        templateVars: brandFlattenedTemplateVarsForTest(),
+      });
       const actor = createActor(machine);
       actor.start();
       actor.send({ type: 'FAIL' });
@@ -9072,7 +9085,9 @@ echo "processing"
 - PASS CONTINUE
 - FAIL CONTINUE
 `);
-      const machine = compileRunbookToMachine(steps, { templateVars: {} });
+      const machine = compileRunbookToMachine(steps, {
+        templateVars: brandFlattenedTemplateVarsForTest(),
+      });
       const actor = createActor(machine);
       actor.start();
       actor.send({ type: 'FAIL' }); // substep 1.1, iteration 1, fires BREAK
@@ -9103,7 +9118,9 @@ echo "processing"
 - PASS NEXT
 - FAIL STOP
 `);
-      const machine = compileRunbookToMachine(steps, { templateVars: {} });
+      const machine = compileRunbookToMachine(steps, {
+        templateVars: brandFlattenedTemplateVarsForTest(),
+      });
       const actor = createActor(machine);
       actor.start();
       actor.send({ type: 'PASS' }); // iteration 1 → NEXT → loop-back
@@ -9881,13 +9898,13 @@ echo "processing"
         step: '1',
         stepName: 'Parent',
         retryCount: 0,
-        variables: {},
+        variables: brandStoredOutputsForTest({}),
         steps: [{ id: '1', status: 'running' }],
         startedAt: '2026-02-27T10:00:00.000Z',
         updatedAt: '2026-02-27T10:00:00.000Z',
         substepStates: substepIds.map((id) => ({ id, frameKey, status: 'pending' as const })),
-        templateVars: {},
-      } as RunbookState;
+        templateVars: brandInitialTemplateVarsForTest({}),
+      };
 
       for (const substepId of substepIds) {
         const result = createDelegation(
@@ -10487,13 +10504,13 @@ echo "processing"
         step: '1',
         stepName: 'Parent',
         retryCount: 0,
-        variables: {},
+        variables: brandStoredOutputsForTest({}),
         steps: [{ id: '1', status: 'running' }],
         startedAt: '2026-02-27T10:00:00.000Z',
         updatedAt: '2026-02-27T10:00:00.000Z',
         substepStates: [{ id: substepId, frameKey, status: 'pending' as const }],
-        templateVars: {},
-      } as RunbookState;
+        templateVars: brandInitialTemplateVarsForTest({}),
+      };
 
       const result = createDelegation(
         {
