@@ -415,7 +415,14 @@ describe('delegate command', () => {
       await setupDelegation();
 
       const first = await runCliInProcess(
-        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1', '--var', 'environment=staging'],
+        [
+          'delegate',
+          'runbooks/child.runbook.md',
+          '--step',
+          '1.1',
+          '--input',
+          'environment=staging',
+        ],
         workspace,
       );
       expect(first.exitCode).toBe(0);
@@ -431,17 +438,24 @@ describe('delegate command', () => {
       expect(extraVars).toEqual({ environment: 'staging' });
     });
 
-    it('overrides inherited vars when --var is passed', async () => {
+    it('overrides inherited vars when --input is passed', async () => {
       await setupDelegation();
 
       const first = await runCliInProcess(
-        ['delegate', 'runbooks/child.runbook.md', '--step', '1.1', '--var', 'environment=staging'],
+        [
+          'delegate',
+          'runbooks/child.runbook.md',
+          '--step',
+          '1.1',
+          '--input',
+          'environment=staging',
+        ],
         workspace,
       );
       expect(first.exitCode).toBe(0);
 
       const retry = await runCliInProcess(
-        ['delegate', '--retry', '--step', '1.1', '--var', 'environment=production'],
+        ['delegate', '--retry', '--step', '1.1', '--input', 'environment=production'],
         workspace,
       );
       expect(retry.exitCode).toBe(0);

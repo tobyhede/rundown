@@ -809,7 +809,7 @@ describe('DELEGATE re-entry and retry', () => {
   // Spec §8.1 Test 4 — Manual-delegation retry (non-annotated step).
   //
   // Step does NOT have `- DELEGATE`. Orchestrator manually issues a token via
-  // `rd delegate --step 1.1 --var env=staging`. Subagent claims + fails.
+  // `rd delegate --step 1.1 --input env=staging`. Subagent claims + fails.
   // The retry hook (provenance-agnostic) treats the manually-issued delegation
   // identically: new token surfaced on re-entry frontier, extraVars inherited.
   // ---------------------------------------------------------------------------
@@ -856,9 +856,9 @@ describe('DELEGATE re-entry and retry', () => {
     const firstFrontier = findFrontierInEvents(parseConcatenatedJson(start.stdout));
     expect(firstFrontier).toBeUndefined();
 
-    // Manual delegation with --var override.
+    // Manual delegation with --input override.
     const manual = await runCliInProcess(
-      ['delegate', '--step', '1.1', '--var', 'env=staging'],
+      ['delegate', '--step', '1.1', '--input', 'env=staging'],
       workspace,
     );
     expect(manual.exitCode).toBe(0);
