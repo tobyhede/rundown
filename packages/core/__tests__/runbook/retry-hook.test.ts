@@ -121,20 +121,28 @@ describe('runRetryHook try/catch around retryDelegation', () => {
 
     const steps: ResolvedStep[] = [parentStep as unknown as ResolvedStep];
 
+    const fixtureDelegation: StepDelegation = {
+      tokenHash: 'hash_test',
+      childRunbookPath: 'child-1.md',
+      childRunId: null,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      cancelledAt: null,
+      contextSnapshot: {
+        vars: {},
+        ancestors: [],
+        step: '1',
+        substep: '1',
+        at: '1.1',
+      },
+    };
     const originalSubstepStates: readonly SubstepState[] = [
       {
         id: '1',
         frameKey,
-        status: 'done' as const,
-        result: 'fail' as const,
-        delegation: {
-          token: 'rdtk_test_token',
-          tokenHash: 'hash_test',
-          childRunbookPath: 'child-1.md',
-          status: 'pending' as const,
-          mintedAt: '2026-01-01T00:00:00.000Z',
-        },
-      } as unknown as SubstepState,
+        status: 'done',
+        result: 'fail',
+        delegation: fixtureDelegation,
+      },
     ];
 
     const context: RunbookContext = {
