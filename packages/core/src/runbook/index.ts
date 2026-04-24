@@ -51,7 +51,6 @@ export {
   abortDelegation,
   retryDelegation,
   type DelegateOptions,
-  type DelegateResult, // deprecated alias — remove after Task 4
   type CreateDelegationResult,
   type AbortDelegationOptions,
   type AbortDelegationResult,

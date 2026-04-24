@@ -1059,9 +1059,10 @@ describe('retryDelegation', () => {
     expect(result.status).toBe('not_current');
   });
 
-  it('returns { status: "error" } when createDelegation throws (wraps the RundownError)', () => {
-    // Force createDelegation to throw by pointing state.step at a step that exists
-    // but removing the substep from the steps array on retry.
+  it('returns { status: "error" } when createDelegation surfaces a RundownError variant', () => {
+    // Force createDelegation to surface an error variant by pointing state.step
+    // at a step that exists but removing the substep from the steps array on
+    // retry.
     const baseState = makeState();
     const initial = createDelegation(
       {
@@ -1075,7 +1076,7 @@ describe('retryDelegation', () => {
     );
     const stateWithDelegation = { ...baseState, substepStates: initial.updatedSubstepStates };
 
-    // Steps no longer contain substep "1" — createDelegation will throw.
+    // Steps no longer contain substep "1" — createDelegation returns substep_not_found.
     const trimmedSteps = makeSteps('1', ['2']);
 
     const result = retryDelegation(

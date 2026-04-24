@@ -151,20 +151,6 @@ export type CreateDelegationResult =
   | CreateDelegationExistsResult;
 
 /**
- * @deprecated INTERNAL REFACTOR PLUMBING ONLY. Not a public API, not intended
- * for external consumption, and will be removed in Task 4 of this plan.
- *
- * This alias exists solely to keep `retryDelegation`'s local variable
- * declaration type-compiling through the multi-step refactor. It is NOT a
- * bridging mechanism for downstream callers.
- *
- * External consumers (if any are discovered by the pre-Task-4 audit of
- * `packages/mcp/` and `packages/claude-code-plugin/`) should migrate
- * directly to `CreateDelegationResult` — do not depend on this alias.
- */
-export type DelegateResult = CreateDelegationCreatedResult;
-
-/**
  * Create a delegation for a substep (or bare step) of the current runbook.
  *
  * Pure function, Result-based, **never throws**. The caller persists the
@@ -427,30 +413,18 @@ export type RetryDelegationResult =
  * Atomically cancel an existing delegation (force-style) and mint a replacement
  * using the same `childRunbookPath` and inherited (or overridden) `extraVars`.
  *
- * Pure function, Result-based for expected outcomes. The caller persists the
- * returned `updatedSubstepStates` via `manager.update`. Preconditions are
- * validated up-front; if any fails the function returns a discriminated error
- * variant and state is unchanged.
+ * Pure function, Result-based, **never throws**. Preconditions and inner
+ * `createDelegation` variants are translated into the four outcomes below.
+ * The caller persists the returned `updatedSubstepStates` via `manager.update`;
+ * state is unchanged on any non-retried variant.
  *
- * This diverges from `abortDelegation`'s mixed throw/return shape deliberately:
- * `retryDelegation` runs inside XState `assign` callbacks where throws conflict
- * with actor atomicity for expected outcomes. The `error` variant wraps
- * `createDelegation`'s `RundownError` so callers can distinguish validation
- * failures (missing child runbook, substep renamed, racing delegation) from
- * normal flow. Non-`RundownError` exceptions from `createDelegation` are
- * rethrown: those indicate a bug where actor atomicity is already in question,
- * so preserving the panic is preferable to silently swallowing it. A future
- * refactor of `createDelegation` to a Result-based shape would eliminate the
- * non-`RundownError` rethrow path and make `retryDelegation` genuinely
- * throw-free.
+ * This is the canonical shape for delegation primitives consumed by XState
+ * `assign` callbacks. `abortDelegation` and `createDelegation` also return
+ * discriminated unions; the three primitives compose without try/catch.
  *
  * @param options - Retry options
  * @param steps - Parsed steps from the active runbook
  * @returns Discriminated union: `retried` | `not_found` | `not_current` | `error`
- * @throws {Error} Non-`RundownError` exceptions raised by `createDelegation`
- *   are rethrown. This indicates a bug in `createDelegation` rather than a
- *   normal validation outcome; expected domain failures return the `error`
- *   variant instead.
  */
 export function retryDelegation(
   options: RetryDelegationOptions,
@@ -497,8 +471,9 @@ export function retryDelegation(
       ? { ...state, substepStates: abortResult.updatedSubstepStates }
       : state;
 
-  // 5. Mint a fresh delegation. createDelegation can throw RundownError; catch
-  //    and wrap as the `error` variant so the state-machine caller can discriminate.
+  // 5. Mint a fresh delegation. createDelegation returns a Result variant;
+  //    translate any non-created outcome into this function's `error` variant
+  //    so the state-machine caller has a single uniform shape to discriminate.
   //    Bare-step delegations are stored with substepState.id === step.name
   //    (see createDelegation step 5: `parsed.substep ?? parsed.step`), so the
   //    reconstructed stepId must NOT append the substep segment in that case.
