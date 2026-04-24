@@ -575,7 +575,10 @@ describe('collect command', () => {
     it('errors on an invalid --step value', async () => {
       await setupReadyToCollect(['pass', 'pass']);
 
-      const result = await runCliInProcess(['collect', '--step', 'not-a-step', '--text'], workspace);
+      const result = await runCliInProcess(
+        ['collect', '--step', 'not-a-step', '--text'],
+        workspace,
+      );
 
       expect(result.exitCode).not.toBe(0);
       expect(result.stdout + result.stderr).toMatch(/invalid --step value/i);
