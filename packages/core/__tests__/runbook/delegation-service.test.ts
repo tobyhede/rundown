@@ -44,9 +44,8 @@ describe('Result types', () => {
         },
         updatedSubstepStates: [],
       };
-      if (result.status === 'created') {
-        expect(result.token).toBe('dlg_test');
-      }
+      expect(result.status).toBe('created');
+      expect(result.token).toBe('dlg_test');
     });
   });
 
