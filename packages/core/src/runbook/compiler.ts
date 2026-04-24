@@ -979,7 +979,7 @@ function buildParentStateConfig(
             // `aggregated: true` marks this RETRY as aggregation-driven (spec §3.5).
             lastAction: { type: 'RETRY' as const, aggregated: true },
             parentRetryCount: context.parentRetryCount + 1,
-            // Counter contract on parent-aggregation retry (see docs/RUNDOWN.md §Retry Counters):
+            // Counter contract on parent-aggregation retry (see docs/RUNDOWN.md §Retry Counters under "rundown fail"):
             //   parentRetryCount — machine-invariant counter used by the retry-budget guards
             //     above (`context.parentRetryCount < transition.retry`). Must be incremented
             //     here or the guard never exhausts. RESET the sibling `iterationRetryCount`
@@ -1101,7 +1101,7 @@ function buildParentStateConfig(
             }
             return {
               iterationRetryCount: context.iterationRetryCount + 1,
-              // Counter contract on FOR-iteration retry (see docs/RUNDOWN.md §Retry Counters):
+              // Counter contract on FOR-iteration retry (see docs/RUNDOWN.md §Retry Counters under "rundown fail"):
               //   iterationRetryCount — machine-invariant counter used by the iteration
               //     retry-budget guard above. Must be incremented here or the guard never
               //     exhausts. Leave `parentRetryCount` UNTOUCHED: a nested iteration retry
