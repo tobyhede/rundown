@@ -109,9 +109,12 @@ describe('retrySingleSubstep', () => {
   });
 
   it('returns { status: "skipped" } when the substep state has no delegation record', () => {
-    const frameKey = buildFrameKey('1');
-    const ss: SubstepState = { id: '1', frameKey, status: 'pending' };
-    const { working, substep, parentName, steps } = makeInputs({ substepStates: [ss] });
+    // Use the factory's frameKey to avoid double-construction. We still need
+    // to materialize the SubstepState first because makeInputs accepts it as
+    // an override; pull frameKey from the factory return on the next line.
+    const dummyKey = buildFrameKey('1');
+    const ss: SubstepState = { id: '1', frameKey: dummyKey, status: 'pending' };
+    const { working, substep, frameKey, parentName, steps } = makeInputs({ substepStates: [ss] });
 
     const outcome = retrySingleSubstep(working, substep, frameKey, parentName, steps);
 
@@ -179,7 +182,7 @@ describe('retrySingleSubstep', () => {
       expect(outcome.message).toBe('programming bug');
     }
     // Rollback invariant: error variant must NOT carry substepStates
-    expect((outcome as Record<string, unknown>).substepStates).toBeUndefined();
+    expect(Object.hasOwn(outcome, 'substepStates')).toBe(false);
   });
 
   it('error variant from RD-903 on not_found does NOT carry substepStates', () => {
@@ -196,7 +199,7 @@ describe('retrySingleSubstep', () => {
       expect(outcome.message).toMatch(/not_found/);
     }
     // Rollback invariant: error variant must NOT carry substepStates
-    expect((outcome as Record<string, unknown>).substepStates).toBeUndefined();
+    expect(Object.hasOwn(outcome, 'substepStates')).toBe(false);
   });
 
   it('error variant from RD-903 on not_current does NOT carry substepStates', () => {
@@ -212,9 +215,10 @@ describe('retrySingleSubstep', () => {
     expect(outcome.status).toBe('error');
     if (outcome.status === 'error') {
       expect(outcome.code).toBe('RD-903');
+      expect(outcome.message).toMatch(/not_current/);
     }
     // Rollback invariant: error variant must NOT carry substepStates
-    expect((outcome as Record<string, unknown>).substepStates).toBeUndefined();
+    expect(Object.hasOwn(outcome, 'substepStates')).toBe(false);
   });
 
   it('error variant from RD-904 on missing contextSnapshot.at does NOT carry substepStates', () => {
@@ -249,7 +253,7 @@ describe('retrySingleSubstep', () => {
       expect(outcome.message).toMatch(/contextSnapshot\.at/);
     }
     // Rollback invariant: error variant must NOT carry substepStates
-    expect((outcome as Record<string, unknown>).substepStates).toBeUndefined();
+    expect(Object.hasOwn(outcome, 'substepStates')).toBe(false);
   });
 
   it('error variant from retryDelegation result.status error propagates code + message', () => {
@@ -267,7 +271,7 @@ describe('retrySingleSubstep', () => {
       expect(outcome.message).toBe('inner failure');
     }
     // Rollback invariant: error variant must NOT carry substepStates
-    expect((outcome as Record<string, unknown>).substepStates).toBeUndefined();
+    expect(Object.hasOwn(outcome, 'substepStates')).toBe(false);
   });
 
   it('does not mutate the input working state', () => {
