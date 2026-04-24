@@ -67,6 +67,7 @@ function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
   };
 }
 
+// Steps are forwarded opaquely to the mocked sendAndSync; loop variable name is irrelevant here.
 const steps: ResolvedStep[] = [makeResolvedStepWithFor()];
 
 const TEST_PROJECT_ROOT = '/tmp/test-root';
