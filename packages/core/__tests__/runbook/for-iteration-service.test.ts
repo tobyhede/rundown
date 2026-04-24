@@ -1,9 +1,10 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import type { RunbookState, ForContext, Step } from '../../src/runbook/types.js';
+import type { RunbookState, ForContext, ResolvedStep } from '../../src/runbook/types.js';
 import {
   brandInitialTemplateVarsForTest,
   brandStoredOutputsForTest,
 } from '../helpers/effective-vars.js';
+import { makeResolvedStepWithFor } from '../helpers/step-factories.js';
 
 // Capture the real ForResolutionError before the mock is installed.
 // jest.unstable_mockModule does NOT hoist, so this top-level await executes
@@ -66,7 +67,7 @@ function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
   };
 }
 
-const steps: Step[] = [] as unknown as Step[];
+const steps: ResolvedStep[] = [makeResolvedStepWithFor()];
 
 const TEST_PROJECT_ROOT = '/tmp/test-root';
 
@@ -155,7 +156,7 @@ describe('ForIterationService', () => {
         end: 3,
         variable: 'item',
         implicit: false,
-        source: { kind: 'array', items: ['a', 'b', 'c'] },
+        source: { kind: 'variable', name: 'items' },
         currentValue: 'a',
       };
       const state = makeState({ forStack: [fc] });
@@ -176,7 +177,7 @@ describe('ForIterationService', () => {
         end: 3,
         variable: 'item',
         implicit: false,
-        source: { kind: 'array', items: ['a', 'b', 'c'] },
+        source: { kind: 'variable', name: 'items' },
       };
       const state = makeState({ forStack: [fc] });
       const updatedState = makeState({ forStack: [{ ...fc, currentValue: 'b' }] });
@@ -204,7 +205,7 @@ describe('ForIterationService', () => {
         end: 10,
         variable: 'item',
         implicit: false,
-        source: { kind: 'array', items: ['a', 'b', 'c'] },
+        source: { kind: 'variable', name: 'items' },
       };
       const state = makeState({ forStack: [fc] });
       const exitState = makeState({ step: '2' });
@@ -250,7 +251,7 @@ describe('ForIterationService', () => {
         end: 10,
         variable: 'item',
         implicit: false,
-        source: { kind: 'array', items: ['a', 'b', 'c'] },
+        source: { kind: 'variable', name: 'items' },
       };
       const state = makeState({ forStack: [fc] });
 
@@ -278,7 +279,7 @@ describe('ForIterationService', () => {
         end: 10,
         variable: 'item',
         implicit: false,
-        source: { kind: 'array', items: ['a', 'b', 'c'] },
+        source: { kind: 'variable', name: 'items' },
       };
       const state = makeState({ forStack: [fc] });
       const cappedState = makeState({ forStack: [{ ...fc, end: 4 }] });
