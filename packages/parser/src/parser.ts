@@ -1101,6 +1101,23 @@ function finalizeStep(
     );
   }
 
+  // Step-level DELEGATE propagates to every substep. finalizePendingSubstep's
+  // per-substep runbook-target guard only fires when `ps.hasSeenDelegate` is
+  // set on the substep itself — propagation happens later, here, so an H3
+  // substep without `.runbook.md` can slip through for step-level DELEGATE
+  // unless we re-check at propagation time.
+  if (step.hasSeenDelegate) {
+    const missingRunbookTarget = step.substeps.find((sub) => !sub.runbooks?.length);
+    if (missingRunbookTarget) {
+      throw new RunbookSyntaxError(
+        `Step "${step.name}": DELEGATE cannot propagate to substep ` +
+          `"${step.name}.${missingRunbookTarget.id}" because it has no runbook target ` +
+          `(add a "- <name>.runbook.md" entry, or remove step-level DELEGATE and ` +
+          `annotate only the substeps that have runbook targets).`,
+      );
+    }
+  }
+
   // Resolve substep defaults and propagate step-level DELEGATE flag
   const resolvedSubsteps = propagateDelegateToSubsteps(resolveSubstepDefaults(step.substeps));
 
