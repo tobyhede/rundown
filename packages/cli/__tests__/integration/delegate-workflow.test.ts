@@ -7,6 +7,8 @@ import {
   runCliInProcess,
   getActiveState,
   readRunbookState,
+  readSession,
+  writeSession,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 
@@ -618,7 +620,10 @@ describe('DELEGATE re-entry and retry', () => {
     r = await runCliInProcess(`claim ${tokenA2}`, workspace);
     expect(r.exitCode).toBe(0);
     const failResult = await runCliInProcess(['fail'], workspace);
-    // RETRY is non-terminal — parent re-enters, so `rd fail` on child exits 0.
+    // `rd fail` exits 1 because the child runbook's own FAIL STOP fires before
+    // the parent's RETRY decision can influence the child's exit code. The
+    // parent's re-entry is orchestration that happens after the child terminates.
+    expect(failResult.exitCode).toBe(1);
 
     // Find all step_entered events with a delegateFrontier in the fail stdout.
     // The re-entry event is emitted after STEP_TRANSITIONED{RETRY}.
@@ -666,6 +671,9 @@ describe('DELEGATE re-entry and retry', () => {
     r = await runCliInProcess(`claim ${tokenA2}`, workspace);
     expect(r.exitCode).toBe(0);
     const failResult = await runCliInProcess(['fail'], workspace);
+    // Child FAIL STOP terminates the child run before parent RETRY orchestration
+    // touches the exit code; pin exit 1.
+    expect(failResult.exitCode).toBe(1);
 
     // Sanity: the re-entry frontier has 2 fresh tokens (uniform re-delegation).
     const allFrontiers = findAllFrontiersInEvents(parseConcatenatedJson(failResult.stdout));
@@ -778,6 +786,8 @@ describe('DELEGATE re-entry and retry', () => {
     r = await runCliInProcess(`claim ${token2!}`, workspace);
     expect(r.exitCode).toBe(0);
     const failResult = await runCliInProcess(['fail'], workspace);
+    // Child FAIL STOP terminates the child; parent RETRY happens afterward.
+    expect(failResult.exitCode).toBe(1);
 
     // Find the re-entry frontier. The last step_entered with a delegateFrontier
     // carries the re-issued tokens.
@@ -869,6 +879,8 @@ describe('DELEGATE re-entry and retry', () => {
     const r = await runCliInProcess(`claim ${tokenA}`, workspace);
     expect(r.exitCode).toBe(0);
     const failResult = await runCliInProcess(['fail'], workspace);
+    // Child FAIL STOP terminates the child; parent RETRY happens afterward.
+    expect(failResult.exitCode).toBe(1);
 
     // Re-entry frontier must be present (retry hook ran), with new token.
     const allFrontiers = findAllFrontiersInEvents(parseConcatenatedJson(failResult.stdout));
@@ -954,7 +966,6 @@ describe('DELEGATE re-entry and retry', () => {
       const { parentRunId, priorDelegation } = await setupClaimed();
       // Pop child so parent becomes active. `rd pop` requires a stash, so
       // instead we manually rewrite the session to place parent at the top.
-      const { writeSession, readSession } = await import('../helpers/test-utils.js');
       const session = await readSession(workspace);
       await writeSession(workspace, {
         stashed: session.stashed,
@@ -982,7 +993,6 @@ describe('DELEGATE re-entry and retry', () => {
     // parent at session top (same as form 2).
     {
       const { parentRunId, priorDelegation } = await setupClaimed();
-      const { writeSession, readSession } = await import('../helpers/test-utils.js');
       const session = await readSession(workspace);
       await writeSession(workspace, {
         stashed: session.stashed,
@@ -1034,6 +1044,8 @@ describe('DELEGATE re-entry and retry', () => {
     r = await runCliInProcess(`claim ${tokenA2}`, workspace);
     expect(r.exitCode).toBe(0);
     const firstFail = await runCliInProcess(['fail'], workspace);
+    // Child FAIL STOP terminates the child; parent RETRY happens afterward.
+    expect(firstFail.exitCode).toBe(1);
 
     // Verify the first retry fired: transition RETRY and a fresh token on
     // the re-entry frontier.
@@ -1265,11 +1277,17 @@ describe('DELEGATE re-entry and retry', () => {
     const r = await runCliInProcess(`claim ${iter1TokenA}`, workspace);
     expect(r.exitCode).toBe(0);
     const fail1 = await runCliInProcess(['fail'], workspace);
+    // Child FAIL STOP terminates the child; parent iteration RETRY orchestrates after.
+    expect(fail1.exitCode).toBe(1);
 
-    // Extract iteration 1's retry token from the re-entry frontier.
+    // Extract iteration 1's retry token from the re-entry frontier. Tighten to
+    // exactly one entry: a regression that emits frontier rows for sibling
+    // iterations would silently pick `[0]` and the id check below could pass
+    // on the wrong iteration. Per-iteration scoping is the invariant under test.
     const fr1 = findAllFrontiersInEvents(parseConcatenatedJson(fail1.stdout));
-    expect(fr1.length).toBeGreaterThanOrEqual(1);
-    const iter1TokenB = fr1[fr1.length - 1][0].token;
+    expect(fr1).toHaveLength(1);
+    expect(fr1[0]).toHaveLength(1);
+    const iter1TokenB = fr1[0][0].token;
 
     // Core invariant: retry within an iteration produces a fresh token.
     // Same iteration frame, but distinct token — the iteration-retry hook
@@ -1280,7 +1298,7 @@ describe('DELEGATE re-entry and retry', () => {
     // Frontier entry must scope to substep 1.1 in iteration 1 (the only
     // DELEGATE substep in this iteration). `contextSnapshot.at` carries the
     // canonical three-level `${step}.${iteration}.${substep}` for FOR retries.
-    expect(fr1[fr1.length - 1][0].id).toBe('1.1.1');
+    expect(fr1[0][0].id).toBe('1.1.1');
 
     // STEP_TRANSITIONED with action=RETRY marks the iteration-retry transition.
     // Verify the retry is scoped to iteration 1 (forIndex=1) — this confirms
