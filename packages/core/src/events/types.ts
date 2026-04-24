@@ -142,7 +142,11 @@ export interface RunbookCompletedPayload {
 export interface RunbookStoppedPayload {
   readonly message?: string;
   readonly position: StepPosition;
-  readonly reason?: 'policy_denied' | 'fail_transition' | 'user_abort';
+  readonly reason?:
+    | 'policy_denied'
+    | 'fail_transition'
+    | 'user_abort'
+    | 'delegation_resolution_failed';
 }
 
 /** Payload emitted when an error occurs during execution (ERROR_OCCURRED event). */
