@@ -16,7 +16,7 @@ import {
   makeBaseStep,
   makeResolvedStepWithSubsteps,
   makeResolvedStepWithFor,
-  makeResolvedPromptedForStep,
+  makeResolvedStepWithPromptedFor,
   makeSubstep,
   makeStepDelegation,
 } from '../helpers/step-factories.js';
@@ -77,7 +77,7 @@ function makePromptedForSteps(
   substepIds: string[] = ['1', '2'],
 ): readonly ResolvedStep[] {
   return [
-    makeResolvedPromptedForStep({
+    makeResolvedStepWithPromptedFor({
       name: stepName,
       description: 'Prompted-FOR step',
       substeps: substepIds.map((id) => makeSubstep({ id, description: `Substep ${id}` })),

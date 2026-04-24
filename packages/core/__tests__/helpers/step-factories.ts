@@ -152,7 +152,7 @@ export function makeResolvedStepWithFor(
  * @remarks Default `name` is `'1'`. When composing multiple steps in a test, pass distinct names
  * to avoid conflicts in name-keyed lookups.
  */
-export function makeResolvedPromptedForStep(
+export function makeResolvedStepWithPromptedFor(
   partial: Partial<ResolvedStepWithPromptedFor> = {},
 ): ResolvedStepWithPromptedFor {
   return {
