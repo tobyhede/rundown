@@ -139,6 +139,8 @@ describe('createDelegation', () => {
 
     const result = createDelegation(options, steps);
 
+    expect(result.status).toBe('created');
+    if (result.status !== 'created') return;
     expect(result.token).toBeDefined();
     expect(result.tokenHash).toBeDefined();
     expect(result.delegation).toBeDefined();
@@ -153,6 +155,8 @@ describe('createDelegation', () => {
       steps,
     );
 
+    expect(result.status).toBe('created');
+    if (result.status !== 'created') return;
     expect(result.token.startsWith(TOKEN_PREFIX)).toBe(true);
     expect(result.token.length).toBe(37);
   });
@@ -165,6 +169,8 @@ describe('createDelegation', () => {
       steps,
     );
 
+    expect(result.status).toBe('created');
+    if (result.status !== 'created') return;
     expect(result.tokenHash).toBe(hashDelegationToken(result.token));
   });
 
@@ -176,6 +182,8 @@ describe('createDelegation', () => {
       steps,
     );
 
+    expect(result.status).toBe('created');
+    if (result.status !== 'created') return;
     expect(result.delegation.childRunbookPath).toBe('child.md');
     expect(result.delegation.childRunId).toBeNull();
     expect(result.delegation.cancelledAt).toBeNull();
@@ -183,46 +191,58 @@ describe('createDelegation', () => {
     expect(result.delegation.createdAt).toBeDefined();
   });
 
-  it('throws DELEGATION_STEP_NOT_FOUND for missing step', () => {
+  it('returns { status: "step_not_found" } for missing step', () => {
     const state = makeState();
     const steps = makeSteps();
 
-    expect(() =>
-      createDelegation(
-        { state, stepId: '99.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
-        steps,
-      ),
-    ).toThrow(/step not found/i);
+    const result = createDelegation(
+      { state, stepId: '99.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+      steps,
+    );
+
+    expect(result.status).toBe('step_not_found');
+    if (result.status !== 'step_not_found') return;
+    expect(result.step).toBe('99');
+    expect(result.error.code).toBe('RD-801');
+    expect(result.error.message).toMatch(/step not found/i);
   });
 
-  it('throws DELEGATION_SUBSTEP_REQUIRED when bare step ID given for step with substeps', () => {
+  it('returns { status: "substep_required" } when bare step ID given for step with substeps', () => {
     const state = makeState();
     const steps = makeSteps();
 
-    expect(() =>
-      createDelegation(
-        { state, stepId: '1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
-        steps,
-      ),
-    ).toThrow(/substep.*required/i);
+    const result = createDelegation(
+      { state, stepId: '1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+      steps,
+    );
+
+    expect(result.status).toBe('substep_required');
+    if (result.status !== 'substep_required') return;
+    expect(result.step).toBe('1');
+    expect(result.substeps).toEqual(['1', '2']);
+    expect(result.error.code).toBe('RD-803');
   });
 
-  it('throws DELEGATION_STEP_NOT_CURRENT when step is not at frontier', () => {
+  it('returns { status: "step_not_current" } when step is not at frontier', () => {
     const state = makeState({ step: '2' });
     const steps: readonly ResolvedStep[] = [
       ...makeSteps('1'),
       makeBaseStep({ name: '2', description: 'Step 2' }),
     ];
 
-    expect(() =>
-      createDelegation(
-        { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
-        steps,
-      ),
-    ).toThrow(/not at execution frontier/i);
+    const result = createDelegation(
+      { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+      steps,
+    );
+
+    expect(result.status).toBe('step_not_current');
+    if (result.status !== 'step_not_current') return;
+    expect(result.step).toBe('1');
+    expect(result.current).toBe('2');
+    expect(result.error.code).toBe('RD-802');
   });
 
-  it('throws DELEGATION_ALREADY_EXISTS for duplicate active delegation', () => {
+  it('returns { status: "delegation_exists" } for duplicate active delegation', () => {
     const existingDelegation = makeStepDelegation({
       tokenHash: `sha256:${'a'.repeat(64)}`,
       childRunbookPath: 'other-child.md',
@@ -240,12 +260,16 @@ describe('createDelegation', () => {
     });
     const steps = makeSteps();
 
-    expect(() =>
-      createDelegation(
-        { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
-        steps,
-      ),
-    ).toThrow(/active delegation exists/i);
+    const result = createDelegation(
+      { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+      steps,
+    );
+
+    expect(result.status).toBe('delegation_exists');
+    if (result.status !== 'delegation_exists') return;
+    expect(result.step).toBe('1.1');
+    expect(result.error.code).toBe('RD-804');
+    expect(result.error.message).toMatch(/active delegation exists/i);
   });
 
   it('allows re-delegation when previous delegation has childRunId set', () => {
@@ -266,6 +290,9 @@ describe('createDelegation', () => {
       { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
       steps,
     );
+
+    expect(result.status).toBe('created');
+    if (result.status !== 'created') return;
 
     expect(result.token).toBeDefined();
     const updated = result.updatedSubstepStates.find((ss) => ss.id === '1');
@@ -297,6 +324,9 @@ describe('createDelegation', () => {
       steps,
     );
 
+    expect(result.status).toBe('created');
+    if (result.status !== 'created') return;
+
     expect(result.token).toBeDefined();
     // The updated substep should have the new delegation
     const updated = result.updatedSubstepStates.find((ss) => ss.id === '1');
@@ -313,6 +343,9 @@ describe('createDelegation', () => {
       { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
       steps,
     );
+
+    expect(result.status).toBe('created');
+    if (result.status !== 'created') return;
 
     expect(result.delegation.contextSnapshot.vars).toEqual({
       env: 'prod',
@@ -343,6 +376,9 @@ describe('createDelegation', () => {
       steps,
     );
 
+    expect(result.status).toBe('created');
+    if (result.status !== 'created') return;
+
     expect(result.delegation.contextSnapshot.ancestors).toHaveLength(1);
     expect(result.delegation.contextSnapshot.ancestors[0].runId).toBe('grandparent-1');
   });
@@ -363,6 +399,9 @@ describe('createDelegation', () => {
       steps,
     );
 
+    expect(result.status).toBe('created');
+    if (result.status !== 'created') return;
+
     expect(result.delegation.contextSnapshot.vars).toEqual({
       env: 'override',
       version: '3.0',
@@ -381,6 +420,9 @@ describe('createDelegation', () => {
       { state, stepId: '1.2', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
       steps,
     );
+
+    expect(result.status).toBe('created');
+    if (result.status !== 'created') return;
 
     // Substep 1 should be untouched
     const ss1 = result.updatedSubstepStates.find((ss) => ss.id === '1');
@@ -413,6 +455,9 @@ describe('createDelegation', () => {
       steps,
     );
 
+    expect(result.status).toBe('created');
+    if (result.status !== 'created') return;
+
     expect(result.delegation.contextSnapshot.step).toBe('1');
     expect(result.delegation.contextSnapshot.substep).toBe('2');
     expect(result.delegation.contextSnapshot.at).toBe('1.3.2');
@@ -430,6 +475,9 @@ describe('createDelegation', () => {
       steps,
     );
 
+    expect(result.status).toBe('created');
+    if (result.status !== 'created') return;
+
     // snapshot should reflect the delegation target (substep 2), not cursor (substep 1)
     expect(result.delegation.contextSnapshot.substep).toBe('2');
     expect(result.delegation.contextSnapshot.at).toBe('1.2');
@@ -442,6 +490,9 @@ describe('createDelegation', () => {
       { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
       steps,
     );
+
+    expect(result.status).toBe('created');
+    if (result.status !== 'created') return;
 
     expect(result.delegation.contextSnapshot.step).toBe('1');
     expect(result.delegation.contextSnapshot.index).toBeUndefined();
@@ -457,6 +508,9 @@ describe('createDelegation', () => {
       steps,
     );
 
+    expect(result.status).toBe('created');
+    if (result.status !== 'created') return;
+
     expect(result.token).toBeDefined();
     // Should create a synthetic substep state entry
     expect(result.updatedSubstepStates).toHaveLength(1);
@@ -464,42 +518,72 @@ describe('createDelegation', () => {
     expect(result.updatedSubstepStates[0].delegation).toBeDefined();
   });
 
-  it('throws for invalid step ID format (non-numeric)', () => {
+  it('returns { status: "step_not_found" } for invalid step ID format (non-numeric)', () => {
     const state = makeState();
     const steps = makeSteps();
 
-    expect(() =>
-      createDelegation(
-        { state, stepId: 'invalid', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
-        steps,
-      ),
-    ).toThrow(/step not found/i);
+    const result = createDelegation(
+      { state, stepId: 'invalid', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+      steps,
+    );
+
+    expect(result.status).toBe('step_not_found');
+    if (result.status !== 'step_not_found') return;
+    expect(result.step).toBe('invalid');
+    expect(result.error.code).toBe('RD-801');
   });
 
-  it('throws for three-level step ID on non-FOR step (kind: substeps)', () => {
+  it('returns { status: "step_not_found" } for three-level step ID on non-FOR step (kind: substeps)', () => {
     const state = makeState();
     const steps = makeSteps(); // kind: 'substeps'
 
-    expect(() =>
-      createDelegation(
-        { state, stepId: '1.2.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1', 2) },
-        steps,
-      ),
-    ).toThrow(/step not found/i);
+    // Parses as step=1, at=2, substep=1. Substep '1' is valid, so 3b passes.
+    // Branch 3c fires because kind !== 'for' and kind !== 'prompted-for'.
+    const result = createDelegation(
+      { state, stepId: '1.2.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1', 2) },
+      steps,
+    );
+
+    expect(result.status).toBe('step_not_found');
+    if (result.status !== 'step_not_found') return;
+    expect(result.step).toBe('1.2.1');
+    expect(result.error.code).toBe('RD-801');
   });
 
-  it('throws for three-level step ID when substep does not exist (e.g., 1.2.3)', () => {
+  it('returns { status: "substep_not_found" } for three-level step ID when substep does not exist (e.g., 1.2.3)', () => {
     const state = makeState();
     const steps = makeSteps();
 
-    // Parses as step=1, at=2, substep=3 — throws because substep '3' is not in the step.
-    // Note: 3c (non-FOR/prompted-for step) would also reject this, but 3b fires first.
-    expect(() =>
-      createDelegation(
-        { state, stepId: '1.2.3', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
-        steps,
-      ),
-    ).toThrow(/step not found/i);
+    // Parses as step=1, at=2, substep=3. Branch 3b fires because '3' is not in ['1','2'].
+    const result = createDelegation(
+      { state, stepId: '1.2.3', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+      steps,
+    );
+
+    expect(result.status).toBe('substep_not_found');
+    if (result.status !== 'substep_not_found') return;
+    expect(result.substep).toBe('3');
+    expect(result.step).toBe('1');
+    expect(result.available).toEqual(['1', '2']);
+    expect(result.error.code).toBe('RD-806');
+  });
+
+  it('returns { status: "substep_not_found" } when substep specified but step has no substeps', () => {
+    const state = makeState();
+    const steps = makeSimpleSteps(); // kind: 'base', no substeps
+
+    // Parses as step=1, substep=1. Branch 3b fires because step has no substeps at all.
+    const result = createDelegation(
+      { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+      steps,
+    );
+
+    expect(result.status).toBe('substep_not_found');
+    if (result.status !== 'substep_not_found') return;
+    expect(result.substep).toBe('1');
+    expect(result.step).toBe('1');
+    expect(result.available).toEqual([]);
+    expect(result.error.code).toBe('RD-806');
   });
 
   it('allows three-level step ID on prompted-for step', () => {
@@ -511,6 +595,8 @@ describe('createDelegation', () => {
       { state, stepId: '1.2.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1', 2) },
       steps,
     );
+    expect(delegation.status).toBe('created');
+    if (delegation.status !== 'created') return;
     expect(delegation).toBeDefined();
   });
 
@@ -521,6 +607,9 @@ describe('createDelegation', () => {
       { state, stepId: '1.2.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1', 2) },
       steps,
     );
+
+    expect(result.status).toBe('created');
+    if (result.status !== 'created') return;
 
     expect(result.delegation.contextSnapshot.at).toBe('1.2.1');
     expect(result.delegation.contextSnapshot.index).toBe(2);
@@ -546,6 +635,9 @@ describe('createDelegation', () => {
       steps,
     );
 
+    expect(result.status).toBe('created');
+    if (result.status !== 'created') return;
+
     // parsed.at=3 should override forStack iteration=5
     expect(result.delegation.contextSnapshot.at).toBe('1.3.1');
     expect(result.delegation.contextSnapshot.index).toBe(3);
@@ -558,6 +650,9 @@ describe('createDelegation', () => {
       { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
       steps,
     );
+
+    expect(result.status).toBe('created');
+    if (result.status !== 'created') return;
 
     expect(result.delegation.contextSnapshot.vars).toEqual({});
   });
@@ -580,6 +675,9 @@ describe('createDelegation', () => {
       { state, stepId: '1.1', childRunbookPath: 'new-child.md', frameKey: buildFrameKey('1') },
       steps,
     );
+
+    expect(result.status).toBe('created');
+    if (result.status !== 'created') return;
 
     expect(result.token).toBeDefined();
     const updated = result.updatedSubstepStates.find((ss) => ss.id === '1');
@@ -604,6 +702,9 @@ describe('createDelegation', () => {
       steps,
     );
 
+    expect(result.status).toBe('created');
+    if (result.status !== 'created') return;
+
     // extraVars should override templateVars
     expect(result.delegation.contextSnapshot.vars.env).toBe('production');
     expect(result.delegation.contextSnapshot.vars.region).toBe('us-west');
@@ -622,6 +723,9 @@ describe('createDelegation', () => {
       { state, stepId: '1.2', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
       steps,
     );
+
+    expect(result.status).toBe('created');
+    if (result.status !== 'created') return;
 
     const ss1 = result.updatedSubstepStates.find((ss) => ss.id === '1');
     expect(ss1?.status).toBe('running');
@@ -645,11 +749,17 @@ describe('createDelegation', () => {
       steps,
     );
 
+    expect(result1.status).toBe('created');
+    if (result1.status !== 'created') return;
+
     // Create delegation on different substep
     const result2 = createDelegation(
       { state, stepId: '1.2', childRunbookPath: 'child2.md', frameKey: buildFrameKey('1') },
       steps,
     );
+
+    expect(result2.status).toBe('created');
+    if (result2.status !== 'created') return;
 
     expect(result1.token).not.toBe(result2.token);
     expect(result1.tokenHash).not.toBe(result2.tokenHash);
@@ -676,6 +786,9 @@ describe('createDelegation', () => {
       steps,
     );
 
+    expect(result.status).toBe('created');
+    if (result.status !== 'created') return;
+
     expect(result.delegation.contextSnapshot.index).toBe(5);
     expect(result.delegation.contextSnapshot.at).toBe('1.5.1');
   });
@@ -688,6 +801,9 @@ describe('createDelegation', () => {
       steps,
     );
 
+    expect(result.status).toBe('created');
+    if (result.status !== 'created') return;
+
     expect(result.delegation.contextSnapshot.index).toBeUndefined();
   });
 
@@ -698,6 +814,9 @@ describe('createDelegation', () => {
       { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
       steps,
     );
+
+    expect(result.status).toBe('created');
+    if (result.status !== 'created') return;
 
     // snapshot should reflect the delegation target substep, not the cursor
     expect(result.delegation.contextSnapshot.substep).toBe('1');
@@ -724,6 +843,9 @@ describe('createDelegation', () => {
       steps,
     );
 
+    expect(result.status).toBe('created');
+    if (result.status !== 'created') return;
+
     expect(result.delegation.contextSnapshot.ancestors).toHaveLength(1);
     expect(result.delegation.contextSnapshot.ancestors[0].vars).toEqual({});
   });
@@ -736,6 +858,9 @@ describe('createDelegation', () => {
       { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
       steps,
     );
+
+    expect(result.status).toBe('created');
+    if (result.status !== 'created') return;
     const after = new Date();
 
     const createdAt = new Date(result.delegation.createdAt);
@@ -756,6 +881,9 @@ describe('createDelegation', () => {
       { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1', 2) },
       steps,
     );
+
+    expect(result.status).toBe('created');
+    if (result.status !== 'created') return;
 
     const ss = result.updatedSubstepStates.find(
       (s) => s.id === '1' && s.frameKey === buildFrameKey('1', 2),
@@ -783,6 +911,9 @@ describe('createDelegation', () => {
       steps,
     );
 
+    expect(result.status).toBe('created');
+    if (result.status !== 'created') return;
+
     expect(result.token).toBeDefined();
     // Should append a new entry for iteration 2
     expect(result.updatedSubstepStates).toHaveLength(3);
@@ -800,6 +931,9 @@ describe('createDelegation', () => {
       { state, stepId: '1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1', 3) },
       steps,
     );
+
+    expect(result.status).toBe('created');
+    if (result.status !== 'created') return;
 
     expect(result.updatedSubstepStates).toHaveLength(1);
     expect(result.updatedSubstepStates[0].frameKey).toBe(buildFrameKey('1', 3));
@@ -819,6 +953,9 @@ describe('createDelegation', () => {
       steps,
     );
 
+    expect(result.status).toBe('created');
+    if (result.status !== 'created') return;
+
     expect(result.delegation.contextSnapshot.vars.items).toEqual(['a', 'b', 'c']);
   });
 
@@ -834,6 +971,9 @@ describe('createDelegation', () => {
       },
       steps,
     );
+
+    expect(result.status).toBe('created');
+    if (result.status !== 'created') return;
     expect(result.delegation.contextSnapshot).not.toHaveProperty('sources');
   });
 
@@ -851,6 +991,9 @@ describe('createDelegation', () => {
       },
       steps,
     );
+
+    expect(result.status).toBe('created');
+    if (result.status !== 'created') return;
     expect(result.delegation.extraVars).toEqual({ environment: 'staging', port: 3000 });
   });
 
@@ -868,6 +1011,9 @@ describe('createDelegation', () => {
       },
       steps,
     );
+
+    expect(result.status).toBe('created');
+    if (result.status !== 'created') return;
     expect(result.delegation.extraVars).toBeUndefined();
   });
 });
@@ -886,6 +1032,9 @@ describe('retryDelegation', () => {
       },
       steps,
     );
+
+    expect(initial.status).toBe('created');
+    if (initial.status !== 'created') return;
     const stateWithDelegation = { ...baseState, substepStates: initial.updatedSubstepStates };
 
     const result = retryDelegation(
@@ -921,6 +1070,9 @@ describe('retryDelegation', () => {
       },
       steps,
     );
+
+    expect(initial.status).toBe('created');
+    if (initial.status !== 'created') return;
     const stateWithDelegation = { ...baseState, substepStates: initial.updatedSubstepStates };
 
     const result = retryDelegation(
@@ -953,6 +1105,9 @@ describe('retryDelegation', () => {
       },
       steps,
     );
+
+    expect(initial.status).toBe('created');
+    if (initial.status !== 'created') return;
     const stateWithDelegation = { ...baseState, substepStates: initial.updatedSubstepStates };
 
     const result = retryDelegation(
@@ -986,6 +1141,9 @@ describe('retryDelegation', () => {
       },
       steps,
     );
+
+    expect(initial.status).toBe('created');
+    if (initial.status !== 'created') return;
     const claimedSubsteps = initial.updatedSubstepStates.map((ss) =>
       ss.id === '1' && ss.delegation
         ? {
@@ -1041,6 +1199,9 @@ describe('retryDelegation', () => {
       },
       makeSteps('1'),
     );
+
+    expect(initial.status).toBe('created');
+    if (initial.status !== 'created') return;
     const driftedState = {
       ...baseState,
       step: '2',
@@ -1074,6 +1235,9 @@ describe('retryDelegation', () => {
       },
       makeSteps('1', ['1', '2']),
     );
+
+    expect(initial.status).toBe('created');
+    if (initial.status !== 'created') return;
     const stateWithDelegation = { ...baseState, substepStates: initial.updatedSubstepStates };
 
     // Steps no longer contain substep "1" — createDelegation returns substep_not_found.
@@ -1108,6 +1272,9 @@ describe('retryDelegation', () => {
       },
       steps,
     );
+
+    expect(initial.status).toBe('created');
+    if (initial.status !== 'created') return;
     const stateWithDelegation = { ...baseState, substepStates: initial.updatedSubstepStates };
 
     const result = retryDelegation(
@@ -1151,6 +1318,9 @@ describe('retryDelegation', () => {
       },
       steps,
     );
+
+    expect(initial.status).toBe('created');
+    if (initial.status !== 'created') return;
     const stateWithDelegation = { ...baseState, substepStates: initial.updatedSubstepStates };
 
     const result = retryDelegation(
@@ -1184,6 +1354,9 @@ describe('retryDelegation', () => {
       },
       steps,
     );
+
+    expect(initial.status).toBe('created');
+    if (initial.status !== 'created') return;
     const aborted = abortDelegation({
       parentState: { ...baseState, substepStates: initial.updatedSubstepStates },
       substepId: '1',
@@ -1244,6 +1417,9 @@ describe('retryDelegation', () => {
       },
       steps,
     );
+
+    expect(initial.status).toBe('created');
+    if (initial.status !== 'created') return;
     expect(initial.delegation.contextSnapshot.at).toBe('1.2.1');
 
     const stateWithDelegation = { ...baseState, substepStates: initial.updatedSubstepStates };
@@ -1282,6 +1458,9 @@ describe('retryDelegation', () => {
       },
       steps,
     );
+
+    expect(initial.status).toBe('created');
+    if (initial.status !== 'created') return;
     // Strip the step field from the persisted snapshot to simulate older state.
     const staleSubstepStates = initial.updatedSubstepStates.map((ss) =>
       ss.id === '1' && ss.delegation
