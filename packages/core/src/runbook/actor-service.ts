@@ -67,6 +67,13 @@ type PersistedRunbookSnapshot = {
  *
  * Rehydration — run the snapshot through a throwaway actor to materialise it
  * into the XState envelope, then merge the RunbookState view on top.
+ *
+ * @param machine - Compiled runbook machine used to materialise the persisted
+ *                  snapshot into a full XState envelope.
+ * @param state - Persisted runbook state whose `snapshot`, `substepStates`, and
+ *                `activeFrameKey` fields drive the overlay.
+ * @returns A hydrated snapshot with the RunbookState view merged on top, or
+ *          `undefined` when `state.snapshot` is absent (initial bootstrap).
  */
 function hydrateSnapshot(
   machine: ReturnType<typeof compileRunbookToMachine>,
