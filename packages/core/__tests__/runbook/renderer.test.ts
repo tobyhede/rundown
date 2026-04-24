@@ -667,7 +667,7 @@ Do the check.
     expect(parsed2[0].kind).toBe('for');
     assertHasSubsteps(parsed2[0]);
     expect(parsed2[0].substeps).toHaveLength(1);
-    expect(parsed2[0].substeps?.[0].description).toBe('Check item');
+    expect(parsed2[0].substeps[0].description).toBe('Check item');
   });
 
   it('round-trips FOR with default transitions and shorthand substeps with prompt', () => {
@@ -747,8 +747,8 @@ Do check two.
     // Substeps survive round-trip
     assertHasSubsteps(parsed2[0]);
     expect(parsed2[0].substeps).toHaveLength(2);
-    expect(parsed2[0].substeps?.[0].description).toBe('First check');
-    expect(parsed2[0].substeps?.[1].description).toBe('Second check');
+    expect(parsed2[0].substeps[0].description).toBe('First check');
+    expect(parsed2[0].substeps[1].description).toBe('Second check');
   });
 });
 
