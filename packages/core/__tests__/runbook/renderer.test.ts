@@ -8,20 +8,9 @@ import {
   renderRunbook,
 } from '../../src/runbook/renderer/renderer.js';
 import { parseRunbook } from '../../src/runbook/index.js';
-import { parseRunbookDocument, stepHasSubsteps } from '@rundown-org/parser';
-import type { Step, Substep, Runbook, StepHavingSubsteps } from '../../src/runbook/types.js';
-
-/**
- * Asserts that a step has substeps, narrowing it to StepHavingSubsteps.
- *
- * @param step - The step to check
- * @throws If step is undefined or does not have substeps
- */
-function assertHasSubsteps(step: Step | undefined): asserts step is StepHavingSubsteps {
-  if (!step || !stepHasSubsteps(step)) {
-    throw new Error('Expected step to have substeps');
-  }
-}
+import { parseRunbookDocument } from '@rundown-org/parser';
+import type { Step, Substep, Runbook } from '../../src/runbook/types.js';
+import { assertHasSubsteps } from '../helpers/step-factories.js';
 
 const DEFAULT_TRANSITIONS = {
   pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },

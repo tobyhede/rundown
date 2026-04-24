@@ -1,15 +1,33 @@
+import { stepHasSubsteps } from '@rundown-org/parser';
 import type {
   BaseStep,
   ParsedSubstep,
   ResolvedStepWithSubsteps,
   ResolvedStepWithFor,
   ResolvedStepWithPromptedFor,
+  Step,
+  StepHavingSubsteps,
   StepWithCommand,
   Substep,
   Transitions,
 } from '@rundown-org/parser';
 import type { ContextSnapshot, StepDelegation } from '../../src/runbook/types.js';
 import { brandEffectiveVarsForTest } from './effective-vars.js';
+
+/**
+ * Assertion helper: narrows a `Step | undefined` to `StepHavingSubsteps`.
+ *
+ * Use in tests that need type-safe access to `.substeps` after parsing or
+ * rendering, without casting.
+ *
+ * @param step - The step to check; may be `undefined` (e.g. from array index)
+ * @throws If `step` is `undefined` or does not have substeps
+ */
+export function assertHasSubsteps(step: Step | undefined): asserts step is StepHavingSubsteps {
+  if (!step || !stepHasSubsteps(step)) {
+    throw new Error('Expected step to have substeps');
+  }
+}
 
 /**
  * Default pass/fail transitions: PASS CONTINUE, FAIL STOP.
