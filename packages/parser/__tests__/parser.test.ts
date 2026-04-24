@@ -329,10 +329,12 @@ echo "hello"
 \`\`\`
 `;
     const steps = parseRunbook(markdown);
-    // @ts-expect-error - testing new lang property
-    expect(steps[0].command?.lang).toBe('bash');
-    // @ts-expect-error - testing new lang property
-    expect(steps[1].command?.lang).toBe('shell');
+    const step0 = steps[0];
+    const step1 = steps[1];
+    assertStepWithCommand(step0);
+    assertStepWithCommand(step1);
+    expect(step0.command.lang).toBe('bash');
+    expect(step1.command.lang).toBe('shell');
   });
 });
 

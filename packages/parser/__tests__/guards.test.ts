@@ -49,6 +49,7 @@ const baseSubstepTransitions: Transitions = {
   fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
 };
 
+/** Default factory: returns `Substep` (resolved runbooks — `readonly string[]`). */
 const createSubstep = (overrides: Partial<Substep> = {}): Substep => ({
   id: '1',
   description: 'Test substep',
@@ -56,6 +57,10 @@ const createSubstep = (overrides: Partial<Substep> = {}): Substep => ({
   ...overrides,
 });
 
+/**
+ * Factory for tests that need unresolved runbook refs: returns `ParsedSubstep`
+ * (runbooks is `readonly RunbookEntry[]` where `RunbookEntry = string | RunbookRef`).
+ */
 const createParsedSubstep = (overrides: Partial<ParsedSubstep> = {}): ParsedSubstep => ({
   id: '1',
   description: 'Test substep',
