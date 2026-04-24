@@ -979,8 +979,17 @@ function buildParentStateConfig(
             // `aggregated: true` marks this RETRY as aggregation-driven (spec §3.5).
             lastAction: { type: 'RETRY' as const, aggregated: true },
             parentRetryCount: context.parentRetryCount + 1,
-            // Increment both counters: parentRetryCount tracks parent-level exhaustion,
-            // retryCount is exposed to the execution layer (actor-service) for visibility.
+            // Counter contract on parent-aggregation retry (see docs/RUNDOWN.md §Retry Counters):
+            //   parentRetryCount — machine-invariant counter used by the retry-budget guards
+            //     above (`context.parentRetryCount < transition.retry`). Must be incremented
+            //     here or the guard never exhausts. RESET the sibling `iterationRetryCount`
+            //     to 0 because re-entering the parent frame from the top invalidates any
+            //     in-progress FOR iteration's budget.
+            //   retryCount — user-visible counter surfaced to the execution layer
+            //     (actor-service) and to commands like `rd echo --result`. Always
+            //     incremented on any retry transition (both this site and the adjacent
+            //     FOR-iteration retry site below).
+            // Do NOT unify these counters: the parent-retry-budget guards would break.
             retryCount: context.retryCount + 1,
             retryMax: transition.retry,
             forStack: EMPTY_FOR_STACK,
@@ -1092,7 +1101,13 @@ function buildParentStateConfig(
             }
             return {
               iterationRetryCount: context.iterationRetryCount + 1,
-              // Increment retryCount so commands (e.g. rd echo --result) see the retry attempt
+              // Counter contract on FOR-iteration retry (see docs/RUNDOWN.md §Retry Counters):
+              //   iterationRetryCount — machine-invariant counter used by the iteration
+              //     retry-budget guard above. Must be incremented here or the guard never
+              //     exhausts. Leave `parentRetryCount` UNTOUCHED: a nested iteration retry
+              //     does not consume a parent-level retry attempt.
+              //   retryCount — always incremented; see the parent-aggregation retry site
+              //     above for the contract.
               retryCount: context.retryCount + 1,
               retryMax: transition.retry,
               // `aggregated: true` marks this RETRY as aggregation-driven (spec §3.5).
