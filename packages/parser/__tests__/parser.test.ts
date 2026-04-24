@@ -1704,11 +1704,13 @@ Review this checklist before continuing.
     const steps = parseRunbook(md);
     expect(steps[0].prompt).toContain('look at X');
     expect(steps[0].prompt).toContain('check for Y');
-    if (steps[0].kind === 'substeps') {
-      expect(steps[0].substeps).toHaveLength(1);
-      expect(steps[0].substeps[0].prompt).toBeUndefined();
-      expect(steps[0].substeps[0].runbooks).toEqual(['deploy.runbook.md']);
-    }
+    // Unconditional: a regression that absorbed `- deploy.runbook.md` into
+    // prompt text would silently pass with an `if (kind === 'substeps')` guard.
+    expect(steps[0].kind).toBe('substeps');
+    if (steps[0].kind !== 'substeps') return; // type-narrowing for the rest
+    expect(steps[0].substeps).toHaveLength(1);
+    expect(steps[0].substeps[0].prompt).toBeUndefined();
+    expect(steps[0].substeps[0].runbooks).toEqual(['deploy.runbook.md']);
   });
 
   it('canonicalizes FOR + step-level runbook list into runbook-list-derived substeps', () => {
@@ -3086,11 +3088,7 @@ Do work.
     // Use an explicit \u00A0 escape so editor/tool normalization cannot silently
     // turn this into a duplicate of the ASCII-space case above.
     const nbsp = '\u00A0';
-    const md =
-      '## 1 Step\n' +
-      '### 1.1 Sub\n' +
-      '- child.runbook.md\n' +
-      `- DELEGATE${nbsp}foo\n`;
+    const md = `## 1 Step\n### 1.1 Sub\n- child.runbook.md\n- DELEGATE${nbsp}foo\n`;
     expect(() => parseRunbookDocument(md)).toThrow(/DELEGATE.*no arguments/i);
   });
 
@@ -3215,9 +3213,7 @@ describe('DELEGATE annotation — step-level propagation', () => {
 echo hi
 \`\`\`
 `;
-    expect(() => parseRunbookDocument(md)).toThrow(
-      /DELEGATE cannot propagate to substep "1\.2"/,
-    );
+    expect(() => parseRunbookDocument(md)).toThrow(/DELEGATE cannot propagate to substep "1\.2"/);
   });
 
   it('propagates step-level DELEGATE to synthetic substeps from runbook list', () => {
