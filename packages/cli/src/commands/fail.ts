@@ -46,6 +46,13 @@ export function registerFailCommand(program: Command): void {
             return;
           }
 
+          // Exit-code contract: when this runbook is a delegated child whose
+          // terminal outcome is absorbed non-terminally by the parent (e.g. the
+          // parent's FAIL transition is RETRY), the orchestrated workflow is
+          // still progressing — `rd fail` exits 0 so scripted orchestrators
+          // can use exit codes as flow control. RETRY exhaustion that stops
+          // the parent (or any other parent-stop outcome) re-asserts exit 1.
+          // For non-delegated runs, the local lifecycle drives the exit code.
           let shouldExitWithError = false;
           try {
             const failConfig = createFailTransitionConfig();
@@ -56,7 +63,10 @@ export function registerFailCommand(program: Command): void {
             const result = await executeTransition(ctx, failConfig, explicitTarget);
             if (result === 'stopped') shouldExitWithError = true;
 
-            // Parent propagation — fires when child run reaches terminal state
+            // Parent propagation — fires when child run reaches terminal state.
+            // The propagation result supersedes the child's local-stop signal:
+            // 'handled' means the parent absorbed the outcome non-terminally,
+            // 'stopped' means the parent also terminated.
             const freshState = await ctx.manager.load(ctx.state.id);
             if (freshState && extractParentLinkage(freshState)) {
               const isTerminal =
@@ -69,7 +79,14 @@ export function registerFailCommand(program: Command): void {
                   cwd,
                   output,
                 );
-                if (propagationResult === 'stopped') shouldExitWithError = true;
+                if (propagationResult === 'handled') {
+                  // Parent RETRY/CONTINUE absorbs the child's stop.
+                  shouldExitWithError = false;
+                } else if (propagationResult === 'stopped') {
+                  // Parent also terminated (e.g. RETRY exhausted).
+                  shouldExitWithError = true;
+                }
+                // 'not-applicable' leaves the local signal unchanged.
               }
             }
           } finally {

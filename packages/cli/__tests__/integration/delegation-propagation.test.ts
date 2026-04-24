@@ -146,10 +146,12 @@ describe('Delegation propagation integration', () => {
       result = await runCliInProcess(`claim ${token} --text`, workspace);
       expect(result.exitCode).toBe(0);
 
-      // Fail the child step — propagates fail to parent substep 1.1
-      // DEFER model: parent advances to 1.2
+      // Fail the child step — propagates fail to parent substep 1.1.
+      // DEFER model: parent advances to 1.2 non-terminally, so the parent
+      // absorbs the child's STOP and `rd fail` exits 0 per the orchestration
+      // contract (SPEC §8 rule 17).
       result = await runCliInProcess('fail --text', workspace);
-      expect(result.exitCode).toBe(1);
+      expect(result.exitCode).toBe(0);
 
       // Parent is now at substep 1.2 — complete it to trigger aggregation
       // FAIL ANY (1.1 failed) → STOP
