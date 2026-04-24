@@ -143,10 +143,7 @@ export function inferAllDelegateSubsteps(
     // Keep a defensive throw so regressions surface here instead of pushing
     // an ill-formed entry into results.
     if (!hasRunbooks(substep)) {
-      throw Errors.delegationSubstepNoRunbook(
-        `${currentStep.name}.${substep.id}`,
-        state.step,
-      );
+      throw Errors.delegationSubstepNoRunbook(`${currentStep.name}.${substep.id}`, state.step);
     }
     if (hasActiveDelegation(substep.id, state.substepStates, activeFrameKey)) continue;
     if (isSubstepDone(substep.id, state.substepStates, activeFrameKey)) continue;
