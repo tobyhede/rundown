@@ -46,6 +46,12 @@ export function registerPassCommand(program: Command): void {
             return;
           }
 
+          // Exit-code contract (mirrors fail.ts): when this runbook is a
+          // delegated child whose terminal outcome is absorbed non-terminally
+          // by the parent, the orchestrated workflow is still progressing —
+          // `rd pass` exits 0. Exit 1 is reserved for cases where the
+          // workflow has actually halted (parent propagation also stopped,
+          // or no parent linkage and local lifecycle is `stopped`).
           let shouldExitWithError = false;
           try {
             const passConfig = createPassTransitionConfig();
@@ -56,7 +62,9 @@ export function registerPassCommand(program: Command): void {
             const result = await executeTransition(ctx, passConfig, explicitTarget);
             if (result === 'stopped') shouldExitWithError = true;
 
-            // Parent propagation — fires when child run reaches terminal state
+            // Parent propagation supersedes the local-stop signal:
+            // 'handled' → parent absorbed non-terminally; 'stopped' → parent
+            // also terminated; 'not-applicable' → keep the local signal.
             const freshState = await ctx.manager.load(ctx.state.id);
             if (freshState && extractParentLinkage(freshState)) {
               const isTerminal =
@@ -69,7 +77,11 @@ export function registerPassCommand(program: Command): void {
                   cwd,
                   output,
                 );
-                if (propagationResult === 'stopped') shouldExitWithError = true;
+                if (propagationResult === 'handled') {
+                  shouldExitWithError = false;
+                } else if (propagationResult === 'stopped') {
+                  shouldExitWithError = true;
+                }
               }
             }
           } finally {
