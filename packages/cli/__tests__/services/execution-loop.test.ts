@@ -901,15 +901,17 @@ describe('runExecutionLoop', () => {
         source: 'project',
       });
 
-    // createDelegation returns a token for each substep
+    // createDelegation returns a Result with status 'created' for each substep
     (core.createDelegation as any)
       .mockReturnValueOnce({
+        status: 'created',
         token: 'rdtk_aaaa1111',
         tokenHash: 'hash-a',
         delegation: {},
         updatedSubstepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: {} }],
       })
       .mockReturnValueOnce({
+        status: 'created',
         token: 'rdtk_bbbb2222',
         tokenHash: 'hash-b',
         delegation: {},
@@ -1061,6 +1063,7 @@ describe('runExecutionLoop', () => {
     });
 
     (core.createDelegation as any).mockReturnValue({
+      status: 'created',
       token: 'rdtk_autoissue',
       tokenHash: 'hash-auto',
       delegation: {},
