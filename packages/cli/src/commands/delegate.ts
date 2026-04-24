@@ -27,6 +27,22 @@ import { parseInputOption, parseInputJsonOption, collect } from '../helpers/opti
 import type { RunbookState, TemplateVarValue, FrameKey } from '@rundown-org/core';
 
 /**
+ * Options accepted by `rd delegate` (covers both fresh-issue and --retry flows).
+ *
+ * Centralised so the Commander action callback and the retry handler share a
+ * single declaration; previously the same shape was duplicated inline.
+ */
+interface DelegateActionOptions {
+  step?: string;
+  index?: string;
+  retry?: boolean;
+  input: string[];
+  inputJson?: string[];
+  inputFile?: string[];
+  text?: boolean;
+}
+
+/**
  * Registers the 'delegate' command for creating delegation tokens.
  *
  * Creates a delegation token for a substep, allowing a child agent to claim
@@ -63,181 +79,168 @@ export function registerDelegateCommand(program: Command): void {
         .helpGroup('Input options:'),
     )
     .option('--text', 'Output as human-readable text')
-    .action(
-      async (
-        runbookArg: string | undefined,
-        options: {
-          step?: string;
-          index?: string;
-          retry?: boolean;
-          input: string[];
-          inputJson?: string[];
-          inputFile?: string[];
-          text?: boolean;
-        },
-      ) => {
-        await withErrorHandling(
-          async () => {
-            const output = new OutputEmitter({ text: options.text });
+    .action(async (runbookArg: string | undefined, options: DelegateActionOptions) => {
+      await withErrorHandling(
+        async () => {
+          const output = new OutputEmitter({ text: options.text });
 
-            const depError = validateIndexRequiresStep(options.index, options.step);
-            if (depError) {
-              output.error(depError, 'INVALID_SYNTAX');
+          const depError = validateIndexRequiresStep(options.index, options.step);
+          if (depError) {
+            output.error(depError, 'INVALID_SYNTAX');
+            output.flush();
+            process.exit(1);
+          }
+
+          const cwd = getCwd();
+
+          const manager = new RunbookStateManager(cwd);
+          const sessionService = new SessionService(manager);
+
+          // --retry has its own resolution flow; handle it up front.
+          if (options.retry) {
+            await handleRetry({
+              runbookArg,
+              options,
+              manager,
+              sessionService,
+              cwd,
+              output,
+            });
+            output.flush();
+            return;
+          }
+
+          const state = await sessionService.getActive();
+
+          if (!state) {
+            output.noActiveRunbook('delegate');
+            output.flush();
+            return;
+          }
+
+          // Load parent steps from state (needed for inference and createDelegation)
+          const steps = getRunbookFromState(state, cwd);
+
+          // Resolve runbook and step — infer whichever is missing
+          let resolvedRunbook: string;
+          let resolvedStepId: string;
+
+          if (runbookArg && options.step) {
+            // Fully explicit (existing path)
+            resolvedRunbook = runbookArg;
+            resolvedStepId = options.step;
+          } else if (!runbookArg && options.step) {
+            // Step given, infer runbook from substep's runbooks field
+            resolvedRunbook = inferRunbookFromStep(state, steps, options.step);
+            resolvedStepId = options.step;
+          } else if (!runbookArg && !options.step) {
+            // Nothing given, infer both
+            const inferred = inferDelegationTarget(state, steps);
+            resolvedRunbook = inferred.runbookRef;
+            resolvedStepId = inferred.stepId;
+          } else {
+            // Runbook given, no step — infer step from first pending substep
+            const inferred = inferDelegationTarget(state, steps);
+            resolvedRunbook = runbookArg!;
+            resolvedStepId = inferred.stepId;
+          }
+
+          // Resolve child runbook path
+          const childResolved = await resolveRunbookFile(cwd, resolvedRunbook);
+          if (!childResolved) {
+            throw Errors.delegationRunbookNotFound(resolvedRunbook);
+          }
+          const childPath = childResolved.path;
+
+          // Parse extra vars through the standard normalization pipeline
+          const rawVars = await collectCliFlags(
+            { inputFile: options.inputFile, input: options.input, inputJson: options.inputJson },
+            cwd,
+          );
+
+          let extraVars: Record<string, TemplateVarValue> | undefined;
+          if (Object.keys(rawVars).length > 0) {
+            const routed = await routeExtraVars(rawVars, cwd);
+            for (const w of routed.warnings) {
+              output.warning(w);
+            }
+            extraVars = Object.keys(routed.vars).length > 0 ? routed.vars : undefined;
+          }
+
+          // Compute frame key — use explicit iteration from --index or three-level step ID
+          const parsedTarget = parseStepIdFromString(resolvedStepId);
+          let explicitIteration: number | undefined;
+          try {
+            explicitIteration = resolveIndexOption(options.index, parsedTarget?.at);
+          } catch (error) {
+            if (error instanceof IndexOptionError) {
+              output.error(error.message, error.code);
               output.flush();
               process.exit(1);
             }
+            throw error;
+          }
 
-            const cwd = getCwd();
-
-            const manager = new RunbookStateManager(cwd);
-            const sessionService = new SessionService(manager);
-
-            // --retry has its own resolution flow; handle it up front.
-            if (options.retry) {
-              await handleRetry({
-                runbookArg,
-                options,
-                manager,
-                sessionService,
-                cwd,
-                output,
-              });
+          // Validate --index requires a FOR step (three-level syntax validated in createDelegation)
+          if (explicitIteration !== undefined) {
+            const targetStepName = parsedTarget?.step ?? state.step;
+            const targetStep = steps.find((s) => s.name === targetStepName);
+            if (targetStep && targetStep.kind !== 'for' && targetStep.kind !== 'prompted-for') {
+              output.error(
+                `--index requires step "${targetStepName}" to be a FOR step, but it is "${targetStep.kind}"`,
+                'INVALID_INDEX',
+              );
               output.flush();
-              return;
+              process.exit(1);
             }
+          }
 
-            const state = await sessionService.getActive();
+          const activeFrameKey =
+            explicitIteration !== undefined
+              ? buildFrameKey(state.step, explicitIteration)
+              : (state.activeFrameKey ?? deriveActiveFrame(state).frameKey);
 
-            if (!state) {
-              output.noActiveRunbook('delegate');
-              output.flush();
-              return;
-            }
+          // Create delegation (pure function — validates and returns token)
+          const result = createDelegation(
+            {
+              state,
+              stepId: resolvedStepId,
+              childRunbookPath: childPath,
+              extraVars,
+              ancestors: [],
+              frameKey: activeFrameKey,
+            },
+            steps,
+          );
 
-            // Load parent steps from state (needed for inference and createDelegation)
-            const steps = getRunbookFromState(state, cwd);
+          // Persist updated substep states
+          await manager.update(state.id, {
+            substepStates: result.updatedSubstepStates,
+          });
 
-            // Resolve runbook and step — infer whichever is missing
-            let resolvedRunbook: string;
-            let resolvedStepId: string;
-
-            if (runbookArg && options.step) {
-              // Fully explicit (existing path)
-              resolvedRunbook = runbookArg;
-              resolvedStepId = options.step;
-            } else if (!runbookArg && options.step) {
-              // Step given, infer runbook from substep's runbooks field
-              resolvedRunbook = inferRunbookFromStep(state, steps, options.step);
-              resolvedStepId = options.step;
-            } else if (!runbookArg && !options.step) {
-              // Nothing given, infer both
-              const inferred = inferDelegationTarget(state, steps);
-              resolvedRunbook = inferred.runbookRef;
-              resolvedStepId = inferred.stepId;
-            } else {
-              // Runbook given, no step — infer step from first pending substep
-              const inferred = inferDelegationTarget(state, steps);
-              resolvedRunbook = runbookArg!;
-              resolvedStepId = inferred.stepId;
-            }
-
-            // Resolve child runbook path
-            const childResolved = await resolveRunbookFile(cwd, resolvedRunbook);
-            if (!childResolved) {
-              throw Errors.delegationRunbookNotFound(resolvedRunbook);
-            }
-            const childPath = childResolved.path;
-
-            // Parse extra vars through the standard normalization pipeline
-            const rawVars = await collectCliFlags(
-              { inputFile: options.inputFile, input: options.input, inputJson: options.inputJson },
-              cwd,
-            );
-
-            let extraVars: Record<string, TemplateVarValue> | undefined;
-            if (Object.keys(rawVars).length > 0) {
-              const routed = await routeExtraVars(rawVars, cwd);
-              for (const w of routed.warnings) {
-                output.warning(w);
-              }
-              extraVars = Object.keys(routed.vars).length > 0 ? routed.vars : undefined;
-            }
-
-            // Compute frame key — use explicit iteration from --index or three-level step ID
-            const parsedTarget = parseStepIdFromString(resolvedStepId);
-            let explicitIteration: number | undefined;
-            try {
-              explicitIteration = resolveIndexOption(options.index, parsedTarget?.at);
-            } catch (error) {
-              if (error instanceof IndexOptionError) {
-                output.error(error.message, error.code);
-                output.flush();
-                process.exit(1);
-              }
-              throw error;
-            }
-
-            // Validate --index requires a FOR step (three-level syntax validated in createDelegation)
-            if (explicitIteration !== undefined) {
-              const targetStepName = parsedTarget?.step ?? state.step;
-              const targetStep = steps.find((s) => s.name === targetStepName);
-              if (targetStep && targetStep.kind !== 'for' && targetStep.kind !== 'prompted-for') {
-                output.error(
-                  `--index requires step "${targetStepName}" to be a FOR step, but it is "${targetStep.kind}"`,
-                  'INVALID_INDEX',
-                );
-                output.flush();
-                process.exit(1);
-              }
-            }
-
-            const activeFrameKey =
-              explicitIteration !== undefined
-                ? buildFrameKey(state.step, explicitIteration)
-                : (state.activeFrameKey ?? deriveActiveFrame(state).frameKey);
-
-            // Create delegation (pure function — validates and returns token)
-            const result = createDelegation(
-              {
-                state,
-                stepId: resolvedStepId,
-                childRunbookPath: childPath,
-                extraVars,
-                ancestors: [],
-                frameKey: activeFrameKey,
-              },
-              steps,
-            );
-
-            // Persist updated substep states
-            await manager.update(state.id, {
-              substepStates: result.updatedSubstepStates,
+          // Output
+          if (!options.text) {
+            output.json({
+              kind: 'delegate',
+              action: 'delegated',
+              step: resolvedStepId,
+              runbook: resolvedRunbook,
+              token: result.token,
+              token_hash: result.tokenHash,
+              parent_run_id: state.id,
             });
+          } else {
+            output.message(`DELEGATED  step ${resolvedStepId} -> ${resolvedRunbook}`);
+            output.message(`Token:     ${result.token}`);
+            output.message('');
+            output.message(`RD_CLAIM_TOKEN=${result.token}`);
+          }
 
-            // Output
-            if (!options.text) {
-              output.json({
-                kind: 'delegate',
-                action: 'delegated',
-                step: resolvedStepId,
-                runbook: resolvedRunbook,
-                token: result.token,
-                token_hash: result.tokenHash,
-                parent_run_id: state.id,
-              });
-            } else {
-              output.message(`DELEGATED  step ${resolvedStepId} -> ${resolvedRunbook}`);
-              output.message(`Token:     ${result.token}`);
-              output.message('');
-              output.message(`RD_CLAIM_TOKEN=${result.token}`);
-            }
-
-            output.flush();
-          },
-          { text: options.text },
-        );
-      },
-    );
+          output.flush();
+        },
+        { text: options.text },
+      );
+    });
 }
 
 /**
@@ -245,15 +248,7 @@ export function registerDelegateCommand(program: Command): void {
  */
 interface RetryHandlerOptions {
   runbookArg: string | undefined;
-  options: {
-    step?: string;
-    index?: string;
-    retry?: boolean;
-    input: string[];
-    inputJson?: string[];
-    inputFile?: string[];
-    text?: boolean;
-  };
+  options: DelegateActionOptions;
   manager: RunbookStateManager;
   sessionService: SessionService;
   cwd: string;
