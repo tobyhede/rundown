@@ -115,12 +115,20 @@ describe('abortDelegation', () => {
     }
   });
 
-  it('throws RD-801 for missing substep', () => {
+  it('returns { status: "not_found" } for missing substep', () => {
     const state = makeState([{ id: '1', frameKey: buildFrameKey('1'), status: 'pending' }]);
 
-    expect(() =>
-      abortDelegation({ parentState: state, substepId: '99', frameKey: buildFrameKey('1') }),
-    ).toThrow(/step not found/i);
+    const result = abortDelegation({
+      parentState: state,
+      substepId: '99',
+      frameKey: buildFrameKey('1'),
+    });
+
+    expect(result.status).toBe('not_found');
+    if (result.status !== 'not_found') return;
+    expect(result.substepId).toBe('99');
+    expect(result.error.code).toBe('RD-801');
+    expect(result.error.message).toMatch(/step not found/i);
   });
 
   it('only cancels delegation in the targeted frame (cross-frame isolation)', () => {
@@ -154,11 +162,18 @@ describe('abortDelegation', () => {
     }
   });
 
-  it('throws RD-801 for substep without delegation', () => {
+  it('returns { status: "not_found" } for substep without delegation', () => {
     const state = makeState([{ id: '1', frameKey: buildFrameKey('1'), status: 'pending' }]);
 
-    expect(() =>
-      abortDelegation({ parentState: state, substepId: '1', frameKey: buildFrameKey('1') }),
-    ).toThrow(/step not found/i);
+    const result = abortDelegation({
+      parentState: state,
+      substepId: '1',
+      frameKey: buildFrameKey('1'),
+    });
+
+    expect(result.status).toBe('not_found');
+    if (result.status !== 'not_found') return;
+    expect(result.substepId).toBe('1');
+    expect(result.error.code).toBe('RD-801');
   });
 });
