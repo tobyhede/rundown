@@ -3,7 +3,11 @@ import { z } from 'zod';
 import type { FrameKey } from './runbook/targeting.js';
 import { createJsonArrayStream } from './runbook/types.js';
 import type { JsonValue, TemplateVarValue } from './runbook/types.js';
-import { brandInitialTemplateVars, brandStoredOutputs } from './runbook/effective-vars.js';
+import {
+  brandEffectiveVars,
+  brandInitialTemplateVars,
+  brandStoredOutputs,
+} from './runbook/effective-vars.js';
 import { getErrorMessage } from './errors.js';
 
 /** Zod schema that parses strings and brands them as {@link FrameKey}. */
@@ -570,7 +574,13 @@ function makeAncestorSnapshotSchema(projectRoot: string): z.ZodTypeAny {
 function makeContextSnapshotSchema(projectRoot: string): z.ZodTypeAny {
   return z
     .object({
-      vars: z.record(z.string(), makeTemplateVarValueSchema(projectRoot)),
+      // Brand at the parse seam so disk-loaded ContextSnapshot.vars re-enters
+      // the process through a sanctioned producer, matching how
+      // makeRunbookStateSchema handles templateVars / variables. The brand is
+      // purely nominal — identity-preserving, zero runtime cost.
+      vars: z
+        .record(z.string(), makeTemplateVarValueSchema(projectRoot))
+        .transform((v) => brandEffectiveVars(v)),
       ancestors: z.array(makeAncestorSnapshotSchema(projectRoot)).readonly(),
       step: z.string().optional(),
       substep: z.string().optional(),

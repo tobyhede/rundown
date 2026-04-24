@@ -184,3 +184,29 @@ export type StoredOutputs = Readonly<Record<string, string>> & {
 export function brandStoredOutputs(vars: Readonly<Record<string, string>>): StoredOutputs {
   return vars as StoredOutputs;
 }
+
+/**
+ * Sole producer of an {@link EffectiveVars} brand applied to data that has
+ * already been merged elsewhere — typically the Zod parse seam for
+ * {@link ContextSnapshot.vars}, which stores a pre-merged effective view
+ * on disk.
+ *
+ * Complements {@link mergeEffectiveVars} (which merges AND brands). Use this
+ * only at boundaries where the merge has already occurred: the value was
+ * produced by {@link mergeEffectiveVars} in an earlier process run and is
+ * now re-entering from disk. Applying it in {@link makeContextSnapshotSchema}
+ * ensures the parse seam re-mints the brand on every state load, mirroring
+ * how {@link brandInitialTemplateVars} / {@link brandStoredOutputs} are
+ * applied to the top-level {@link RunbookState} fields.
+ *
+ * Identity-preserving — the brand is type-only.
+ *
+ * @template V - Value type of the merged record (inferred)
+ * @param vars - Plain merged-record shape
+ * @returns The same object, branded.
+ */
+export function brandEffectiveVars<V extends TemplateVarValue | OutputValue = TemplateVarValue>(
+  vars: Readonly<Record<string, V>>,
+): EffectiveVars<V> {
+  return vars as EffectiveVars<V>;
+}

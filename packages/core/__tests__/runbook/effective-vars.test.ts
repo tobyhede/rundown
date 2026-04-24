@@ -1,8 +1,10 @@
 import { describe, it, expect } from '@jest/globals';
 import {
+  brandEffectiveVars,
   brandInitialTemplateVars,
   brandStoredOutputs,
   mergeEffectiveVars,
+  type EffectiveVars,
   type InitialTemplateVars,
   type StoredOutputs,
 } from '../../src/runbook/effective-vars.js';
@@ -48,6 +50,26 @@ describe('brandStoredOutputs', () => {
   });
 });
 
+describe('brandEffectiveVars', () => {
+  it('returns the same reference (zero runtime cost)', () => {
+    const input: Readonly<Record<string, TemplateVarValue>> = { a: '1', b: 2 };
+    const out = brandEffectiveVars(input);
+    expect(out).toBe(input);
+  });
+
+  it('produces a value assignable to EffectiveVars', () => {
+    const branded: EffectiveVars = brandEffectiveVars({ a: '1' });
+    // Type-level assertion proven by the variable annotation above.
+    expect(Object.keys(branded)).toEqual(['a']);
+  });
+
+  it('produces a value still assignable to Record<string, TemplateVarValue> for read-only consumers', () => {
+    const branded = brandEffectiveVars({ a: '1' });
+    const asPlain: Readonly<Record<string, TemplateVarValue>> = branded;
+    expect(asPlain.a).toBe('1');
+  });
+});
+
 describe('mergeEffectiveVars accepts the new brands', () => {
   it('merges branded sources without further casting', () => {
     const tv = brandInitialTemplateVars({ a: 'tv', b: 'tv' });
@@ -62,6 +84,7 @@ describe('brand symbol exposure', () => {
     const mod = await import('../../src/runbook/effective-vars.js');
     expect(Object.keys(mod)).toEqual(
       expect.arrayContaining([
+        'brandEffectiveVars',
         'brandInitialTemplateVars',
         'brandStoredOutputs',
         'mergeEffectiveVars',
@@ -76,6 +99,7 @@ describe('brand symbol exposure', () => {
     // writes `export const initialTemplateVarsBrand = Symbol()` (which would
     // leak the brand and let outside callers mint branded values), this test
     // catches it.
+    expect(Object.keys(mod)).not.toContain('effectiveVarsBrand');
     expect(Object.keys(mod)).not.toContain('initialTemplateVarsBrand');
     expect(Object.keys(mod)).not.toContain('storedOutputsBrand');
   });

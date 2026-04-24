@@ -88,6 +88,7 @@ export {
   mergeEffectiveVars,
   brandInitialTemplateVars,
   brandStoredOutputs,
+  brandEffectiveVars,
   type EffectiveVars,
   type InitialTemplateVars,
   type StoredOutputs,
