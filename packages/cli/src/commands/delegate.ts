@@ -256,6 +256,27 @@ interface RetryHandlerOptions {
 }
 
 /**
+ * Result of resolving a `rd delegate --retry` invocation to a concrete target.
+ *
+ * Produced by `resolveRetryTarget` (forthcoming in Task 7) and consumed by
+ * `executeRetry`. The split separates target resolution (parse arguments, load
+ * state, locate substep) from retry execution (invoke retryDelegation, persist,
+ * emit output).
+ *
+ * `overrides` lives here because `--var*` parsing is shared across all
+ * resolution branches and must happen before retryDelegation is invoked.
+ */
+interface ResolvedTarget {
+  state: RunbookState;
+  substepId: string;
+  frameKey: FrameKey;
+  /** For error messages and output. May be `step` or `step.substep` or `contextSnapshot.at`. */
+  stepLabel: string;
+  /** Parsed `--var*` overrides. */
+  overrides: Record<string, TemplateVarValue> | undefined;
+}
+
+/**
  * Handle the `rd delegate --retry` flow.
  *
  * Supports five resolution paths:
