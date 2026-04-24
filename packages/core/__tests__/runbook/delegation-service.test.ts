@@ -4,8 +4,14 @@ import {
   createDelegation,
   retryDelegation,
 } from '../../src/runbook/delegation-service.js';
-import type { DelegateOptions } from '../../src/runbook/delegation-service.js';
+import type {
+  AbortDelegationResult,
+  CreateDelegationResult,
+  DelegateOptions,
+} from '../../src/runbook/delegation-service.js';
+import { Errors } from '../../src/errors/factory.js';
 import { hashDelegationToken, TOKEN_PREFIX } from '../../src/runbook/delegation-token.js';
+import { brandEffectiveVars } from '../../src/runbook/effective-vars.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type { RunbookState, ResolvedStep, AncestorSnapshot } from '../../src/runbook/types.js';
 import {
@@ -20,6 +26,41 @@ import {
   makeSubstep,
   makeStepDelegation,
 } from '../helpers/step-factories.js';
+
+describe('Result types', () => {
+  describe('CreateDelegationResult type', () => {
+    it('narrows to the created variant on status match', () => {
+      const result: CreateDelegationResult = {
+        status: 'created',
+        token: 'dlg_test',
+        tokenHash: 'sha256:x',
+        delegation: {
+          tokenHash: 'sha256:x',
+          childRunbookPath: 'child.md',
+          contextSnapshot: { vars: brandEffectiveVars({}), ancestors: [] },
+          childRunId: null,
+          createdAt: '2026-04-23T00:00:00.000Z',
+          cancelledAt: null,
+        },
+        updatedSubstepStates: [],
+      };
+      if (result.status === 'created') {
+        expect(result.token).toBe('dlg_test');
+      }
+    });
+  });
+
+  describe('AbortDelegationResult type', () => {
+    it('narrows to the not_found variant', () => {
+      const result: AbortDelegationResult = {
+        status: 'not_found',
+        substepId: '1.1',
+        error: Errors.delegationStepNotFound('1.1'),
+      };
+      expect(result.status).toBe('not_found');
+    });
+  });
+});
 
 /** Helper: create minimal RunbookState for testing. */
 function makeState(overrides: Partial<RunbookState> = {}): RunbookState {

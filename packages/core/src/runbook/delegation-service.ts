@@ -46,13 +46,23 @@ interface AbortDelegationNeedsForceResult {
   readonly childRunId: string;
 }
 
+/** No delegation exists on the targeted substep (or substep not found). */
+interface AbortDelegationNotFoundResult {
+  readonly status: 'not_found';
+  /** Substep ID the caller attempted to abort. */
+  readonly substepId: string;
+  /** Wrapped RundownError (RD-801) for callers that re-surface the message. */
+  readonly error: RundownError;
+}
+
 /**
  * Possible outcomes when attempting to abort a delegation.
  */
 export type AbortDelegationResult =
   | AbortDelegationCancelledResult
   | AbortDelegationAlreadyCancelledResult
-  | AbortDelegationNeedsForceResult;
+  | AbortDelegationNeedsForceResult
+  | AbortDelegationNotFoundResult;
 
 /**
  * Options for creating a delegation.
@@ -72,10 +82,9 @@ export interface DelegateOptions {
   readonly frameKey: FrameKey;
 }
 
-/**
- * Result of creating a delegation.
- */
-export interface DelegateResult {
+/** Success variant: delegation created; caller must persist updatedSubstepStates. */
+export interface CreateDelegationCreatedResult {
+  readonly status: 'created';
   /** Plain-text token (to be given to the child agent). */
   readonly token: string;
   /** SHA-256 hash of the token (stored in state). */
@@ -85,6 +94,75 @@ export interface DelegateResult {
   /** Updated substep states array (caller persists this). */
   readonly updatedSubstepStates: readonly SubstepState[];
 }
+
+/** Step ID did not parse, or parsed step is missing from the resolved steps. */
+export interface CreateDelegationStepNotFoundResult {
+  readonly status: 'step_not_found';
+  readonly step: string;
+  readonly error: RundownError;
+}
+
+/** state.step !== parsed.step (step has advanced past the target). */
+export interface CreateDelegationStepNotCurrentResult {
+  readonly status: 'step_not_current';
+  readonly step: string;
+  readonly current: string;
+  readonly error: RundownError;
+}
+
+/** Step has substeps but caller passed a bare step ID (no substep segment). */
+export interface CreateDelegationSubstepRequiredResult {
+  readonly status: 'substep_required';
+  readonly step: string;
+  readonly substeps: readonly string[];
+  readonly error: RundownError;
+}
+
+/** Substep segment given but no matching substep on the target step. */
+export interface CreateDelegationSubstepNotFoundResult {
+  readonly status: 'substep_not_found';
+  readonly substep: string;
+  readonly step: string;
+  readonly available: readonly string[];
+  readonly error: RundownError;
+}
+
+/** An active (uncancelled, unclaimed) delegation already exists on the substep. */
+export interface CreateDelegationExistsResult {
+  readonly status: 'delegation_exists';
+  readonly step: string;
+  readonly error: RundownError;
+}
+
+/**
+ * Outcome of attempting to create a delegation.
+ *
+ * Discriminated on `status`. The `created` variant holds the token and
+ * updated state; each error variant holds the same `RundownError` the
+ * previous throw-based API raised, plus variant-specific context fields
+ * for callers that branch structurally.
+ */
+export type CreateDelegationResult =
+  | CreateDelegationCreatedResult
+  | CreateDelegationStepNotFoundResult
+  | CreateDelegationStepNotCurrentResult
+  | CreateDelegationSubstepRequiredResult
+  | CreateDelegationSubstepNotFoundResult
+  | CreateDelegationExistsResult;
+
+/**
+ * @deprecated INTERNAL REFACTOR PLUMBING ONLY. Not a public API, not intended
+ * for external consumption, and will be removed in Task 4 of this plan.
+ *
+ * This alias exists solely to keep `retryDelegation`'s local variable
+ * declaration type-compiling through the multi-step refactor. It is NOT a
+ * bridging mechanism for downstream callers.
+ *
+ * External consumers (if any are discovered by the pre-Task-4 audit of
+ * `packages/mcp/` and `packages/claude-code-plugin/`) should migrate
+ * directly to `CreateDelegationResult` — do not depend on this alias.
+ */
+export type DelegateResult = CreateDelegationCreatedResult;
 
 /**
  * Create a delegation for a substep (or bare step) of the current runbook.
@@ -199,6 +277,7 @@ export function createDelegation(
   }
 
   return {
+    status: 'created' as const,
     token,
     tokenHash,
     delegation,
