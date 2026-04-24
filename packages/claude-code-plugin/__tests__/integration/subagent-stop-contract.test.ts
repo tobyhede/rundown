@@ -89,6 +89,9 @@ describe('subagent-stop contract tests', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    // Reset the WeakMap-backed session state — jest.clearAllMocks only clears
+    // call history, so metadata from a prior test would otherwise leak in.
+    setGet(session, 'metadata', {});
     mockSet.mockResolvedValue(undefined);
     setExecSync(mockExecFileSync(''));
 

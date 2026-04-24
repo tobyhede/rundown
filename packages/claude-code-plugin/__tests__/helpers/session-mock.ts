@@ -18,16 +18,20 @@ export interface SessionMock {
 
 /**
  * Per-mock state map. `createSessionMock` seeds it; `setGet` mutates it;
- * the `get` mock implementation reads from it on each call.
+ * both `get` and `set` mocks read/write it on each call.
  */
 const stateByMock = new WeakMap<SessionMock, Map<keyof SessionState, unknown>>();
 
 /**
  * Create a typed pair of Session get/set mocks backed by per-mock state.
  *
- * The returned `get` mock reads from an internal `Map` on each call. Use
- * `setGet(mock, key, value)` to set values post-creation; multiple calls
- * layer (each configures one key without dropping others).
+ * Semantics (see `get`/`set` for details):
+ * - `get(key)` throws if `key` was never seeded via `initialState`, `setGet`,
+ *   or a prior `set`. This is deliberate: the real `Session#get` returns
+ *   strongly-typed values, and silently returning `undefined` from a mock
+ *   launders the type system. Tests must seed keys they read.
+ * - `set(key, value)` persists into the internal state map so a subsequent
+ *   `get(key)` returns the value. Mirrors `Session#set` in `src/session.ts`.
  *
  * @param initialState - Optional map of keys to initial values.
  * @returns A SessionMock with typed `get` and `set` jest mocks.
@@ -42,11 +46,16 @@ export function createSessionMock(initialState: Partial<SessionState> = {}): Ses
   // `as unknown as` double-cast is the canonical escape hatch — isolated here
   // so call sites and `setGet` stay cast-free.
   const get = jest.fn(async <K extends keyof SessionState>(key: K) => {
+    if (!state.has(key)) {
+      throw new Error(
+        `SessionMock: key '${String(key)}' not configured — call setGet(mock, '${String(key)}', …) or seed via createSessionMock({ ${String(key)}: … }) first`,
+      );
+    }
     return state.get(key) as SessionState[K];
   }) as unknown as SessionGetMock;
 
-  const set = jest.fn(async () => {
-    /* no-op */
+  const set = jest.fn(async <K extends keyof SessionState>(key: K, value: SessionState[K]) => {
+    state.set(key, value);
   }) as unknown as SessionSetMock;
 
   const mock: SessionMock = { get, set };
@@ -64,7 +73,8 @@ export function createSessionMock(initialState: Partial<SessionState> = {}): Ses
  * @param mock - SessionMock created by `createSessionMock`.
  * @param key - The `SessionState` key to configure.
  * @param value - The value to return; type-constrained to `SessionState[K]`.
- * @throws {Error} If the mock was not produced by `createSessionMock`.
+ * @throws {Error} If the mock was not produced by `createSessionMock`
+ *   (foreign mock) or the mock's state has already been garbage-collected.
  */
 export function setGet<K extends keyof SessionState>(
   mock: SessionMock,
@@ -73,7 +83,9 @@ export function setGet<K extends keyof SessionState>(
 ): void {
   const state = stateByMock.get(mock);
   if (!state) {
-    throw new Error('setGet called on a SessionMock not produced by createSessionMock');
+    throw new Error(
+      'setGet: mock not registered (either foreign mock or already garbage-collected)',
+    );
   }
   state.set(key, value);
 }
