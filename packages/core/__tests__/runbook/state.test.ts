@@ -8,19 +8,14 @@ import { SessionService } from '../../src/runbook/session-service.js';
 import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type { Step, Runbook } from '../../src/runbook/types.js';
+import { makeBaseStep, makeSubstep } from '../helpers/step-factories.js';
 
 describe('RunbookStateManager', () => {
   let testDir: string;
   let manager: RunbookStateManager;
   let lifecycleService: ExecutionLifecycleService;
   let sessionService: SessionService;
-  const mockSteps: Step[] = [
-    {
-      kind: 'base',
-      name: '1',
-      description: 'Initial step',
-    },
-  ];
+  const mockSteps: Step[] = [makeBaseStep({ name: '1', description: 'Initial step' })];
   const mockRunbook: Runbook = {
     title: 'Test Runbook',
     description: 'A test',
@@ -89,8 +84,8 @@ describe('RunbookStateManager', () => {
   describe('RunbookStateManager substep initialization', () => {
     it('initializes substepStates when step has static substeps', async () => {
       const substeps = [
-        { id: '1', description: 'First reviewer', prompts: [] },
-        { id: '2', description: 'Second reviewer', prompts: [] },
+        makeSubstep({ id: '1', description: 'First reviewer' }),
+        makeSubstep({ id: '2', description: 'Second reviewer' }),
       ];
 
       const state = await manager.create('test.runbook.md', mockRunbook, {
@@ -110,8 +105,8 @@ describe('RunbookStateManager', () => {
 
     it('initializes substepStates with frameKey', async () => {
       const substeps = [
-        { id: '1', description: 'First', prompts: [] },
-        { id: '2', description: 'Second', prompts: [] },
+        makeSubstep({ id: '1', description: 'First' }),
+        makeSubstep({ id: '2', description: 'Second' }),
       ];
 
       const state = await manager.create('test.runbook.md', mockRunbook, {
@@ -130,7 +125,7 @@ describe('RunbookStateManager', () => {
     });
 
     it('preserves entries from other frames when frameKey is provided', async () => {
-      const substeps = [{ id: '1', description: 'First', prompts: [] }];
+      const substeps = [makeSubstep({ id: '1', description: 'First' })];
 
       const state = await manager.create('test.runbook.md', mockRunbook, {
         runbookPath: 'test.runbook.md',
@@ -158,7 +153,7 @@ describe('RunbookStateManager', () => {
     });
 
     it('replaces entries from same frame on re-initialization', async () => {
-      const substeps = [{ id: '1', description: 'First', prompts: [] }];
+      const substeps = [makeSubstep({ id: '1', description: 'First' })];
 
       const state = await manager.create('test.runbook.md', mockRunbook, {
         runbookPath: 'test.runbook.md',
