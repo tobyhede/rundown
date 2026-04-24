@@ -3083,11 +3083,14 @@ Do work.
 
   it('throws RunbookSyntaxError when DELEGATE is followed by a non-ascii whitespace and args', () => {
     // U+00A0 NO-BREAK SPACE — \s matches it; the legacy space/tab check does not.
-    const md = `## 1 Step
-### 1.1 Sub
-- child.runbook.md
-- DELEGATE foo
-`;
+    // Use an explicit \u00A0 escape so editor/tool normalization cannot silently
+    // turn this into a duplicate of the ASCII-space case above.
+    const nbsp = '\u00A0';
+    const md =
+      '## 1 Step\n' +
+      '### 1.1 Sub\n' +
+      '- child.runbook.md\n' +
+      `- DELEGATE${nbsp}foo\n`;
     expect(() => parseRunbookDocument(md)).toThrow(/DELEGATE.*no arguments/i);
   });
 
