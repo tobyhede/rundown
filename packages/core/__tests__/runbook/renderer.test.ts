@@ -118,6 +118,19 @@ describe('renderSubstep', () => {
     };
     expect(renderSubstep(substep, '1')).toBe('### 1.1 With child runbook\n\n- task.runbook.md');
   });
+
+  it('renders DELEGATE annotation before runbook bullets', () => {
+    const substep = {
+      id: '1',
+      description: 'Delegated child',
+      runbooks: ['task.runbook.md'],
+      delegate: true as const,
+      transitions: DEFAULT_TRANSITIONS,
+    } as Substep;
+    expect(renderSubstep(substep, '1')).toBe(
+      '### 1.1 Delegated child\n\n- DELEGATE\n- task.runbook.md',
+    );
+  });
 });
 
 describe('renderStep', () => {
@@ -532,6 +545,53 @@ echo hello
       ['review-technical-accuracy.runbook.md'],
       ['review-structural-integrity.runbook.md'],
     ]);
+  });
+
+  it('round-trips DELEGATE annotation on H3 substep', () => {
+    const original = `## 1. Dispatch reviewers
+
+### 1.1 First reviewer
+
+- DELEGATE
+- review.runbook.md
+
+## 2. Synthesize`;
+
+    const parsed1 = parseRunbook(original);
+    expect((parsed1[0] as any).substeps?.[0].delegate).toBe(true);
+
+    const rendered = parsed1.map(renderStep).join('\n\n');
+    expect(rendered).toContain('- DELEGATE');
+
+    const parsed2 = parseRunbook(rendered);
+    expect((parsed2[0] as any).substeps?.[0].delegate).toBe(true);
+    expect((parsed2[0] as any).substeps?.[0].runbooks).toEqual(['review.runbook.md']);
+  });
+
+  it('round-trips DELEGATE annotation on runbook-list shorthand substep', () => {
+    const original = `## 1. Dispatch reviewers
+
+- review-a.runbook.md
+  - DELEGATE
+- review-b.runbook.md
+  - DELEGATE
+
+## 2. Synthesize`;
+
+    const parsed1 = parseRunbook(original);
+    const substeps1 = (parsed1[0] as any).substeps;
+    expect(substeps1).toHaveLength(2);
+    expect(substeps1[0].delegate).toBe(true);
+    expect(substeps1[1].delegate).toBe(true);
+
+    const rendered = parsed1.map(renderStep).join('\n\n');
+    expect(rendered.match(/- DELEGATE/g)).toHaveLength(2);
+
+    const parsed2 = parseRunbook(rendered);
+    const substeps2 = (parsed2[0] as any).substeps;
+    expect(substeps2).toHaveLength(2);
+    expect(substeps2[0].delegate).toBe(true);
+    expect(substeps2[1].delegate).toBe(true);
   });
 
   it('round-trips FOR without forClause transitions', () => {
