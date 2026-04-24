@@ -328,10 +328,12 @@ async function handleRetry(args: RetryHandlerOptions): Promise<void> {
     targetState = sr.parentState;
     targetSubstepId = sr.substepId ?? sr.stepId;
     targetFrameKey = sr.frameKey;
-    // Use the delegation's own contextSnapshot to distinguish substep vs bare-step:
-    // contextSnapshot.substep is set iff the delegation was created on a substep.
-    const snapshotSubstep = sr.delegation.contextSnapshot.substep;
-    targetStepLabel = snapshotSubstep ? `${sr.stepId}.${snapshotSubstep}` : sr.stepId;
+    // Prefer canonical contextSnapshot.at (produced by deriveExecutionAt) so
+    // FOR-iteration retries surface as e.g. "1.2.1" rather than "1.1". Defensive
+    // fallback handles legacy snapshots that predate the `at` field.
+    const snapshot = sr.delegation.contextSnapshot;
+    targetStepLabel =
+      snapshot.at ?? (snapshot.substep ? `${sr.stepId}.${snapshot.substep}` : sr.stepId);
   } else if (options.step) {
     const stateOrNull = await sessionService.getActive();
     if (!stateOrNull) {
