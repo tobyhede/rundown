@@ -84,3 +84,12 @@ export {
   type OutputCursor,
   type OutputVars,
 } from './output-evaluator.js';
+export {
+  mergeEffectiveVars,
+  brandInitialTemplateVars,
+  brandStoredOutputs,
+  brandEffectiveVars,
+  type EffectiveVars,
+  type InitialTemplateVars,
+  type StoredOutputs,
+} from './effective-vars.js';

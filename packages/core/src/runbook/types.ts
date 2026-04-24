@@ -1,5 +1,6 @@
 // src/runbook/types.ts
 import type { OutputDeclaration } from '@rundown-org/parser';
+import type { EffectiveVars, InitialTemplateVars, StoredOutputs } from './effective-vars.js';
 import type { FrameKey } from './targeting.js';
 
 // Re-export parser types needed by core package consumers
@@ -406,7 +407,17 @@ export interface StepDelegation {
 
 /** Snapshot of execution context at delegation time. */
 export interface ContextSnapshot {
-  readonly vars: Readonly<Record<string, TemplateVarValue>>;
+  /**
+   * Fully-merged effective variable space at delegation time.
+   *
+   * Branded as {@link EffectiveVars} so the only way to populate this field is
+   * through `mergeEffectiveVars` (the sole producer). Hand-rolled records or
+   * partial spreads (e.g. `state.templateVars` alone) cannot satisfy the
+   * brand — the type system rejects them at compile time. This is what
+   * prevents the regression class fixed in commit `19067f6f`, where
+   * `buildContextSnapshot` silently dropped `state.variables`.
+   */
+  readonly vars: EffectiveVars;
   readonly ancestors: readonly AncestorSnapshot[];
   /** Current step identifier at delegation time (e.g., "1"). */
   readonly step?: string;
@@ -655,7 +666,16 @@ export interface RunbookState {
   readonly substep?: string;
   readonly stepName: string; // Human-readable description
   readonly retryCount: number;
-  readonly variables: Record<string, string>;
+  /**
+   * Accumulated step OUTPUTS only (branded `StoredOutputs`). This field does
+   * NOT contain template variable inputs — those live on `templateVars` (set
+   * separately by callers). To obtain the effective template space (inputs
+   * overlaid by outputs), merge with `templateVars` via `mergeEffectiveVars`
+   * (see `packages/core/src/runbook/effective-vars.ts`). Keeping the two
+   * sources distinct preserves the brand contract and lets callers see which
+   * variables were declared up-front versus produced during execution.
+   */
+  readonly variables: StoredOutputs;
   readonly steps: readonly StepState[];
 
   // Orchestration fields
@@ -695,7 +715,7 @@ export interface RunbookState {
   readonly runbookSrc?: string;
 
   /** Template variables used for AST-level substitution, frozen at run time */
-  readonly templateVars?: Readonly<Record<string, TemplateVarValue>>;
+  readonly templateVars?: InitialTemplateVars;
 
   /**
    * Frontmatter `outputs:` declarations parsed from the runbook source at startup.

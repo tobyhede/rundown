@@ -1,5 +1,9 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import type { RunbookState, ForContext, Step } from '../../src/runbook/types.js';
+import {
+  brandInitialTemplateVarsForTest,
+  brandStoredOutputsForTest,
+} from '../helpers/effective-vars.js';
 
 // Capture the real ForResolutionError before the mock is installed.
 // jest.unstable_mockModule does NOT hoist, so this top-level await executes
@@ -54,7 +58,7 @@ function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
     step: '1',
     stepName: 'Step 1',
     retryCount: 0,
-    variables: {},
+    variables: brandStoredOutputsForTest({}),
     steps: [],
     startedAt: '2026-01-01T00:00:00Z',
     updatedAt: '2026-01-01T00:00:00Z',
@@ -312,9 +316,9 @@ describe('ForIterationService', () => {
       const stream = createJsonArrayStream('/etc/passwd');
       const state = makeState({
         forStack: [fc],
-        templateVars: {
+        templateVars: brandInitialTemplateVarsForTest({
           items: stream,
-        },
+        }),
       });
 
       mockManager.load.mockResolvedValue(state);

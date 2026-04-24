@@ -205,7 +205,12 @@ export class JSONRenderer implements OutputRenderer {
       // If only list events were emitted, output raw array
       if (this.isListOnly && this.listItems !== null) {
         this.writer.writeJson(this.listItems, pretty);
-      } else {
+      } else if (!this.isJsonlMode || Object.keys(this.output).length > 0) {
+        // In JSONL mode, events stream directly via writer.writeLine. Action /
+        // detail events still accumulate into `this.output`, so flush it when
+        // it has content (e.g. the `rd claim` claimed-action object). Skip it
+        // only when JSONL streamed everything and the accumulator is empty —
+        // otherwise every streamed run would append a stray `{}`.
         this.writer.writeJson(this.output, pretty);
       }
       this.output = {};

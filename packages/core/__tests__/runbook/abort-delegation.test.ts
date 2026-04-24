@@ -2,6 +2,7 @@ import { describe, it, expect } from '@jest/globals';
 import { abortDelegation } from '../../src/runbook/delegation-service.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type { RunbookState, StepDelegation, SubstepState } from '../../src/runbook/types.js';
+import { brandStoredOutputsForTest } from '../helpers/effective-vars.js';
 
 /** Helper: create a delegation object. */
 function makeDelegation(overrides: Partial<StepDelegation> = {}): StepDelegation {
@@ -25,7 +26,7 @@ function makeState(substepStates: SubstepState[]): RunbookState {
     step: '1',
     stepName: 'Main step',
     retryCount: 0,
-    variables: {},
+    variables: brandStoredOutputsForTest({}),
     steps: [{ id: '1', status: 'running' }],
     startedAt: '2026-02-27T10:00:00.000Z',
     updatedAt: '2026-02-27T10:00:00.000Z',

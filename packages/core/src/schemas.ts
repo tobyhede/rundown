@@ -3,6 +3,11 @@ import { z } from 'zod';
 import type { FrameKey } from './runbook/targeting.js';
 import { createJsonArrayStream } from './runbook/types.js';
 import type { JsonValue, TemplateVarValue } from './runbook/types.js';
+import {
+  brandEffectiveVars,
+  brandInitialTemplateVars,
+  brandStoredOutputs,
+} from './runbook/effective-vars.js';
 import { getErrorMessage } from './errors.js';
 
 /** Zod schema that parses strings and brands them as {@link FrameKey}. */
@@ -328,7 +333,22 @@ const ForStackEntrySchema = z.object({
 });
 
 /**
- * Runbook State Schema - Runtime Validation for Persisted RunbookState
+ * Runbook State Schema - Runtime Validation for Persisted RunbookState.
+ *
+ * Produces an UNBRANDED shape: `variables` and `templateVars` come back as
+ * plain `Record<string, …>` rather than the `StoredOutputs` /
+ * `InitialTemplateVars` brands required by `RunbookState`. This schema is
+ * only safe for callers that do not need brand identity (e.g. shape checks
+ * in tests, generic validation surfaces).
+ *
+ * Load-path callers that hand the parsed value to `RunbookStateManager`,
+ * `mergeEffectiveVars`, or any other code typed against the brands MUST
+ * use {@link makeRunbookStateSchema} instead — it applies
+ * `brandInitialTemplateVars` and `brandStoredOutputs` at the parse seam so
+ * the resulting object satisfies `ValidatedRunbookState`.
+ *
+ * @see makeRunbookStateSchema for the branded variant.
+ * @see ValidatedRunbookState for the post-parse brand contract.
  */
 export const RunbookStateSchema = z
   .object({
@@ -554,7 +574,13 @@ function makeAncestorSnapshotSchema(projectRoot: string): z.ZodTypeAny {
 function makeContextSnapshotSchema(projectRoot: string): z.ZodTypeAny {
   return z
     .object({
-      vars: z.record(z.string(), makeTemplateVarValueSchema(projectRoot)),
+      // Brand at the parse seam so disk-loaded ContextSnapshot.vars re-enters
+      // the process through a sanctioned producer, matching how
+      // makeRunbookStateSchema handles templateVars / variables. The brand is
+      // purely nominal — identity-preserving, zero runtime cost.
+      vars: z
+        .record(z.string(), makeTemplateVarValueSchema(projectRoot))
+        .transform((v) => brandEffectiveVars(v)),
       ancestors: z.array(makeAncestorSnapshotSchema(projectRoot)).readonly(),
       step: z.string().optional(),
       substep: z.string().optional(),
@@ -635,7 +661,14 @@ export function makeRunbookStateSchema(projectRoot: string): z.ZodTypeAny {
   const VarsSchema = z.record(z.string(), makeTemplateVarValueSchema(projectRoot));
   const SubstepStateSchemaValidated = makeSubstepStateSchema(projectRoot);
   return RunbookStateSchema.extend({
-    templateVars: VarsSchema.optional(),
+    // Brand at the parse seam: every persisted state that re-enters the
+    // process via `state.load` flows through this schema, so applying
+    // the brand here covers the entire load path. The matching write
+    // path is in `RunbookStateManager.create` / `update` (state.ts).
+    templateVars: VarsSchema.optional().transform((v) =>
+      v === undefined ? undefined : brandInitialTemplateVars(v),
+    ),
+    variables: z.record(z.string(), z.string()).transform((v) => brandStoredOutputs(v)),
     substepStates: z.array(SubstepStateSchemaValidated).optional(),
   });
 }

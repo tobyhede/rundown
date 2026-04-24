@@ -16,6 +16,16 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
       `${step}${iteration != null ? `.${String(iteration)}` : ''}${substep ? `.${substep}` : ''}`,
   ),
   countNumberedSteps: jest.fn().mockReturnValue(5),
+  mergeEffectiveVars: jest.fn(
+    (
+      state: { templateVars?: Record<string, unknown>; variables?: Record<string, string> },
+      extraVars?: Record<string, unknown>,
+    ) => ({
+      ...(state.templateVars ?? {}),
+      ...(state.variables ?? {}),
+      ...(extraVars ?? {}),
+    }),
+  ),
   ...mockErrorHelpers,
 }));
 
@@ -387,6 +397,31 @@ describe('vars field', () => {
     expect(result.vars).toEqual({
       environment: 'staging',
       PlanPath: '/work/plan.json',
+    });
+  });
+});
+
+describe('mergeEffectiveVars mock contract', () => {
+  // Direct gate against mock drift: the mock must match production's
+  // (state, extraVars?) signature with precedence templateVars < variables < extraVars.
+  // See packages/core/src/runbook/effective-vars.ts:mergeEffectiveVars.
+  it('applies precedence extraVars > variables > templateVars', () => {
+    const state = {
+      templateVars: { key: 'from-templateVars', tOnly: 't' },
+      variables: { key: 'from-variables', vOnly: 'v' },
+    };
+    const extraVars = { key: 'from-extraVars', eOnly: 'e' };
+    const merged = (
+      core.mergeEffectiveVars as unknown as (
+        s: typeof state,
+        e?: typeof extraVars,
+      ) => Record<string, unknown>
+    )(state, extraVars);
+    expect(merged).toEqual({
+      key: 'from-extraVars',
+      tOnly: 't',
+      vOnly: 'v',
+      eOnly: 'e',
     });
   });
 });

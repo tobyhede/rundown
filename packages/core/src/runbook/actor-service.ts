@@ -75,6 +75,11 @@ export class RunbookActorService {
    * resume as on initial start.
    *
    * @remarks
+   * The `state.templateVars` source is branded as {@link InitialTemplateVars} —
+   * the seeded input space, never the OUTPUTS accumulator ({@link StoredOutputs}).
+   * Step OUTPUTS reach the compiler via the snapshot envelope (XState context
+   * `variables`), not through this seed.
+   *
    * **Invariant (load-bearing):** `snapshot.context.templateVars` must never
    * contain `JsonArrayStream` values. {@link flattenTemplateVars} is the
    * enforcement point — it strips any `isJsonArrayStream(value) === true`

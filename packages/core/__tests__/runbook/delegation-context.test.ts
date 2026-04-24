@@ -1,14 +1,37 @@
 import { describe, it, expect } from '@jest/globals';
 import {
+  buildContextSnapshot,
   reconstituteContextVars,
   MAX_ANCESTOR_DEPTH,
 } from '../../src/runbook/delegation-context.js';
-import type { ContextSnapshot, AncestorSnapshot } from '../../src/runbook/types.js';
+import { mergeEffectiveVars } from '../../src/runbook/effective-vars.js';
+import type { AncestorSnapshot, ContextSnapshot, RunbookState } from '../../src/runbook/types.js';
+import {
+  brandInitialTemplateVarsForTest,
+  brandStoredOutputsForTest,
+} from '../helpers/effective-vars.js';
+
+/** Helper: create minimal RunbookState for buildContextSnapshot tests. */
+function makeMinimalState(overrides: Partial<RunbookState> = {}): RunbookState {
+  return {
+    id: 'run-1',
+    runbook: 'parent.md',
+    runbookPath: 'parent.md',
+    step: '1',
+    stepName: 'Main step',
+    retryCount: 0,
+    variables: brandStoredOutputsForTest({}),
+    steps: [{ id: '1', status: 'running' }],
+    startedAt: '2026-04-22T10:00:00.000Z',
+    updatedAt: '2026-04-22T10:00:00.000Z',
+    ...overrides,
+  } as RunbookState;
+}
 
 describe('reconstituteContextVars', () => {
   it('produces parent vars from snapshot.vars', () => {
     const snapshot: ContextSnapshot = {
-      vars: { env: 'staging', version: '1.0' },
+      vars: mergeEffectiveVars({ templateVars: { env: 'staging', version: '1.0' } }),
       ancestors: [],
     };
 
@@ -22,11 +45,13 @@ describe('reconstituteContextVars', () => {
 
   it('excludes context.* keys from source vars', () => {
     const snapshot: ContextSnapshot = {
-      vars: {
-        env: 'staging',
-        'context.parent.vars.old': 'should-be-excluded',
-        'context.ancestors.0.vars.old': 'should-be-excluded',
-      },
+      vars: mergeEffectiveVars({
+        templateVars: {
+          env: 'staging',
+          'context.parent.vars.old': 'should-be-excluded',
+          'context.ancestors.0.vars.old': 'should-be-excluded',
+        },
+      }),
       ancestors: [],
     };
 
@@ -46,7 +71,7 @@ describe('reconstituteContextVars', () => {
       vars: { region: 'us-east' },
     };
     const snapshot: ContextSnapshot = {
-      vars: { env: 'staging' },
+      vars: mergeEffectiveVars({ templateVars: { env: 'staging' } }),
       ancestors: [grandparent],
     };
 
@@ -79,7 +104,7 @@ describe('reconstituteContextVars', () => {
       vars: { ggp_var: 'ggp_value' },
     };
     const snapshot: ContextSnapshot = {
-      vars: { parent_var: 'parent_value' },
+      vars: mergeEffectiveVars({ templateVars: { parent_var: 'parent_value' } }),
       ancestors: [grandparent, greatGrandparent],
     };
 
@@ -106,7 +131,7 @@ describe('reconstituteContextVars', () => {
 
   it('handles empty ancestors array', () => {
     const snapshot: ContextSnapshot = {
-      vars: { env: 'prod' },
+      vars: mergeEffectiveVars({ templateVars: { env: 'prod' } }),
       ancestors: [],
     };
 
@@ -123,7 +148,7 @@ describe('reconstituteContextVars', () => {
 
   it('emits parent structural fields when present in snapshot', () => {
     const snapshot: ContextSnapshot = {
-      vars: { env: 'staging' },
+      vars: mergeEffectiveVars({ templateVars: { env: 'staging' } }),
       ancestors: [],
       step: '2',
       substep: '1',
@@ -145,7 +170,7 @@ describe('reconstituteContextVars', () => {
 
   it('omits parent structural fields when absent (backward compat)', () => {
     const snapshot: ContextSnapshot = {
-      vars: { env: 'staging' },
+      vars: mergeEffectiveVars({ templateVars: { env: 'staging' } }),
       ancestors: [],
     };
 
@@ -168,7 +193,7 @@ describe('reconstituteContextVars', () => {
       index: 2,
     };
     const snapshot: ContextSnapshot = {
-      vars: {},
+      vars: mergeEffectiveVars({ templateVars: {} }),
       ancestors: [ancestor],
     };
 
@@ -192,7 +217,7 @@ describe('reconstituteContextVars', () => {
       vars: {},
     };
     const snapshot: ContextSnapshot = {
-      vars: {},
+      vars: mergeEffectiveVars({ templateVars: {} }),
       ancestors: [ancestor],
     };
 
@@ -217,7 +242,7 @@ describe('reconstituteContextVars', () => {
     }
 
     const snapshot: ContextSnapshot = {
-      vars: {},
+      vars: mergeEffectiveVars({ templateVars: {} }),
       ancestors,
     };
 
@@ -239,7 +264,7 @@ describe('reconstituteContextVars', () => {
     }
 
     const snapshot: ContextSnapshot = {
-      vars: {},
+      vars: mergeEffectiveVars({ templateVars: {} }),
       ancestors,
     };
 
@@ -261,7 +286,7 @@ describe('reconstituteContextVars', () => {
     }
 
     const snapshot: ContextSnapshot = {
-      vars: { level: 'parent' },
+      vars: mergeEffectiveVars({ templateVars: { level: 'parent' } }),
       ancestors,
     };
 
@@ -283,11 +308,13 @@ describe('reconstituteContextVars', () => {
 
   it('handles vars with special characters in keys', () => {
     const snapshot: ContextSnapshot = {
-      vars: {
-        'key-with-dashes': 'value1',
-        'key.with.dots': 'value2',
-        key_with_underscores: 'value3',
-      },
+      vars: mergeEffectiveVars({
+        templateVars: {
+          'key-with-dashes': 'value1',
+          'key.with.dots': 'value2',
+          key_with_underscores: 'value3',
+        },
+      }),
       ancestors: [],
     };
 
@@ -300,7 +327,7 @@ describe('reconstituteContextVars', () => {
 
   it('handles vars with empty string values', () => {
     const snapshot: ContextSnapshot = {
-      vars: { emptyVar: '', normalVar: 'value' },
+      vars: mergeEffectiveVars({ templateVars: { emptyVar: '', normalVar: 'value' } }),
       ancestors: [],
     };
 
@@ -319,7 +346,7 @@ describe('reconstituteContextVars', () => {
       vars: {},
     };
     const snapshot: ContextSnapshot = {
-      vars: {},
+      vars: mergeEffectiveVars({ templateVars: {} }),
       ancestors: [ancestor],
     };
 
@@ -333,7 +360,7 @@ describe('reconstituteContextVars', () => {
 
   it('handles snapshot with only structural fields (no vars)', () => {
     const snapshot: ContextSnapshot = {
-      vars: {},
+      vars: mergeEffectiveVars({ templateVars: {} }),
       ancestors: [],
       step: '3',
       substep: '2',
@@ -353,7 +380,7 @@ describe('reconstituteContextVars', () => {
 
   it('does not mutate input snapshot', () => {
     const snapshot: ContextSnapshot = {
-      vars: { env: 'staging' },
+      vars: mergeEffectiveVars({ templateVars: { env: 'staging' } }),
       ancestors: [
         {
           runId: 'anc',
@@ -377,7 +404,7 @@ describe('reconstituteContextVars', () => {
 
   it('handles numeric string values in vars', () => {
     const snapshot: ContextSnapshot = {
-      vars: { port: '8080', count: '42' },
+      vars: mergeEffectiveVars({ templateVars: { port: '8080', count: '42' } }),
       ancestors: [],
     };
 
@@ -389,7 +416,7 @@ describe('reconstituteContextVars', () => {
 
   it('index is properly stringified when present', () => {
     const snapshot: ContextSnapshot = {
-      vars: {},
+      vars: mergeEffectiveVars({ templateVars: {} }),
       ancestors: [],
       step: '1',
       index: 0, // Zero is valid
@@ -403,12 +430,14 @@ describe('reconstituteContextVars', () => {
 
   it('handles snapshot with deeply nested context.* keys to exclude', () => {
     const snapshot: ContextSnapshot = {
-      vars: {
-        normalVar: 'value',
-        'context.parent.vars.old': 'should-exclude',
-        'context.ancestors.0.step': 'should-exclude',
-        'context.something.else': 'should-exclude',
-      },
+      vars: mergeEffectiveVars({
+        templateVars: {
+          normalVar: 'value',
+          'context.parent.vars.old': 'should-exclude',
+          'context.ancestors.0.step': 'should-exclude',
+          'context.something.else': 'should-exclude',
+        },
+      }),
       ancestors: [],
     };
 
@@ -425,7 +454,7 @@ describe('reconstituteContextVars', () => {
 
   it('preserves JsonObject values in parent vars', () => {
     const snapshot: ContextSnapshot = {
-      vars: { config: { host: 'localhost', port: 3000 } },
+      vars: mergeEffectiveVars({ templateVars: { config: { host: 'localhost', port: 3000 } } }),
       ancestors: [],
     };
 
@@ -444,7 +473,7 @@ describe('reconstituteContextVars', () => {
       vars: { db: { host: 'db.example.com', port: 5432 } },
     };
     const snapshot: ContextSnapshot = {
-      vars: { env: 'prod' },
+      vars: mergeEffectiveVars({ templateVars: { env: 'prod' } }),
       ancestors: [ancestor],
     };
 
@@ -459,12 +488,59 @@ describe('reconstituteContextVars', () => {
 
   it('preserves number values in parent vars', () => {
     const snapshot: ContextSnapshot = {
-      vars: { port: 8080 },
+      vars: mergeEffectiveVars({ templateVars: { port: 8080 } }),
       ancestors: [],
     };
 
     const result = reconstituteContextVars(snapshot);
 
     expect(result['context.parent.vars.port']).toBe(8080);
+  });
+});
+
+describe('buildContextSnapshot', () => {
+  it('merges state.variables (step OUTPUTS) into snapshot.vars', () => {
+    const state = makeMinimalState({
+      templateVars: brandInitialTemplateVarsForTest({ Other: 'kept' }),
+      variables: brandStoredOutputsForTest({ Message: 'hello from outputs' }),
+    });
+    const snap = buildContextSnapshot(state);
+    expect(snap.vars.Message).toBe('hello from outputs');
+    expect(snap.vars.Other).toBe('kept');
+  });
+
+  it('state.variables takes precedence over state.templateVars on key conflict', () => {
+    const state = makeMinimalState({
+      templateVars: brandInitialTemplateVarsForTest({ X: 'template-default' }),
+      variables: brandStoredOutputsForTest({ X: 'output-overlay' }),
+    });
+    const snap = buildContextSnapshot(state);
+    expect(snap.vars.X).toBe('output-overlay');
+  });
+
+  it('extraVars take precedence over both templateVars and variables', () => {
+    const state = makeMinimalState({
+      templateVars: brandInitialTemplateVarsForTest({ X: 'tv' }),
+      variables: brandStoredOutputsForTest({ X: 'sv' }),
+    });
+    const snap = buildContextSnapshot(state, undefined, [], { extraVars: { X: 'ev' } });
+    expect(snap.vars.X).toBe('ev');
+  });
+
+  it('handles state with no variables field (only templateVars)', () => {
+    const state = makeMinimalState({
+      templateVars: brandInitialTemplateVarsForTest({ Only: 'one' }),
+      variables: brandStoredOutputsForTest({}),
+    });
+    const snap = buildContextSnapshot(state);
+    expect(snap.vars.Only).toBe('one');
+  });
+
+  it('handles state with no templateVars field (only variables)', () => {
+    const state = makeMinimalState({
+      variables: brandStoredOutputsForTest({ Just: 'outputs' }),
+    });
+    const snap = buildContextSnapshot(state);
+    expect(snap.vars.Just).toBe('outputs');
   });
 });

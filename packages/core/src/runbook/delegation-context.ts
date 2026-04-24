@@ -1,3 +1,4 @@
+import { mergeEffectiveVars } from './effective-vars.js';
 import type { AncestorSnapshot, ContextSnapshot, RunbookState, TemplateVarValue } from './types.js';
 import { getActiveForContext, deriveExecutionAt } from './targeting.js';
 
@@ -116,8 +117,15 @@ export function reconstituteContextVars(
 /**
  * Build a context snapshot from live runbook state.
  *
- * Captures the current execution position and template variables,
- * suitable for passing to {@link reconstituteContextVars}.
+ * Captures the current execution position and effective variable space.
+ * The merge of `state.templateVars`, `state.variables`, and the optional
+ * caller-supplied `extraVars` is delegated to {@link mergeEffectiveVars}
+ * (the sole producer of {@link ContextSnapshot.vars}'s branded
+ * `EffectiveVars` type). Routing through that producer keeps delegation
+ * snapshots in lock-step with the merge order used by
+ * `buildExecutionFrame` in `output-evaluator.ts` for OUTPUTS evaluation
+ * — and prevents the bug class fixed in commit `19067f6f`, where this
+ * function silently dropped `state.variables`.
  *
  * @param state - Current runbook state
  * @param substep - Target substep identifier (e.g., "1")
@@ -136,8 +144,7 @@ export function buildContextSnapshot(
     iterationOverride?: number;
   },
 ): ContextSnapshot {
-  const baseVars = { ...(state.templateVars ?? {}) };
-  const vars = options?.extraVars ? { ...baseVars, ...options.extraVars } : baseVars;
+  const vars = mergeEffectiveVars(state, options?.extraVars);
   const activeFor = getActiveForContext(state.forStack, state.step);
   const iteration = options?.iterationOverride ?? activeFor?.iteration;
   const at = deriveExecutionAt(state.step, substep, iteration);
@@ -156,10 +163,16 @@ export function buildContextSnapshot(
  * Extract parent user-level variables from a context snapshot.
  *
  * Filters out `context.*` namespace keys and `RunId` (which is per-execution),
- * returning only user-defined variables suitable for child inheritance.
+ * returning the remaining user-addressable variables suitable for child
+ * inheritance. Since `buildContextSnapshot` folds `state.variables` into
+ * `snapshot.vars` via `mergeEffectiveVars`, the returned set intentionally
+ * includes step OUTPUTS (which live in `state.variables`) as well as the
+ * caller-provided `state.templateVars`. Do not re-filter `state.variables`
+ * back out — their visibility to children is the entire point of the OUTPUTS
+ * flow (SPEC §7).
  *
  * @param snapshot - The context snapshot to extract user variables from
- * @returns User-defined variables (excludes context.* and RunId)
+ * @returns User-defined variables including step OUTPUTS (excludes context.* and RunId)
  */
 export function extractInheritedUserVars(
   snapshot: ContextSnapshot,

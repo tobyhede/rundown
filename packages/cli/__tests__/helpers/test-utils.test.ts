@@ -1,5 +1,11 @@
+import { readdir } from 'node:fs/promises';
 import { describe, it, expect } from '@jest/globals';
-import { createRunbook } from './test-utils.js';
+import {
+  createRunbook,
+  createTestWorkspace,
+  runCliInProcess,
+  stripExitArtefact,
+} from './test-utils.js';
 
 describe('createRunbook', () => {
   describe('basic rendering', () => {
@@ -366,5 +372,123 @@ describe('createRunbook', () => {
         ],
       });
     });
+  });
+});
+
+describe('createTestWorkspace fixtureDir option', () => {
+  it('copies only the named subdirectory into all three runbook destinations', async () => {
+    const workspace = await createTestWorkspace({ fixtureDir: 'snapshots' });
+    try {
+      const destinations = [
+        workspace.runbooksDir(),
+        workspace.pluginRunbooksDir(),
+        workspace.rootRunbooksDir(),
+      ];
+      for (const dir of destinations) {
+        const files = await readdir(dir);
+        // Only files from fixtures/snapshots/ should appear — not fixtures/simple.runbook.md etc.
+        expect(files).toContain('snapshot-simple-complete.runbook.md');
+        expect(files).not.toContain('simple.runbook.md');
+        expect(files).not.toContain('with-commands.runbook.md');
+      }
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  it('copies all fixtures into all three destinations when fixtureDir is not passed (backwards compatible)', async () => {
+    const workspace = await createTestWorkspace();
+    try {
+      const destinations = [
+        workspace.runbooksDir(),
+        workspace.pluginRunbooksDir(),
+        workspace.rootRunbooksDir(),
+      ];
+      for (const dir of destinations) {
+        const files = await readdir(dir);
+        expect(files).toContain('simple.runbook.md');
+      }
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+});
+
+describe('runCliInProcess', () => {
+  it('does not leak ExitSignal artefacts into captured output when a command aborts with process.exit', async () => {
+    const workspace = await createTestWorkspace({ fixtureDir: 'snapshots' });
+    try {
+      const result = await runCliInProcess(['run', 'snapshot-simple-stop.runbook.md'], workspace);
+
+      expect(result.exitCode).not.toBe(0);
+      // The harness intercepts process.exit() by throwing an ExitSignal, which
+      // the production withErrorHandling wrapper then serialises. That is test
+      // plumbing, not real CLI output — it must not appear in either buffer.
+      expect(result.stdout).not.toContain('process.exit(');
+      expect(result.stdout).not.toContain('"code": "UNKNOWN_ERROR"');
+      const combined = `${result.stdout}\n${result.stderr}`;
+      expect(combined).not.toContain('process.exit(');
+      expect(combined).not.toContain('"code": "UNKNOWN_ERROR"');
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  it('sets exitIntercepted=true when the CLI triggers process.exit', async () => {
+    const workspace = await createTestWorkspace({ fixtureDir: 'snapshots' });
+    try {
+      const result = await runCliInProcess(['run', 'snapshot-simple-stop.runbook.md'], workspace);
+      // Observes the interception seam directly — proves the flag fires inside
+      // the process.exit override, not just via the outer ExitSignal catch.
+      expect(result.exitIntercepted).toBe(true);
+      expect(result.exitCode).not.toBe(0);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  it('sets exitIntercepted=false when the CLI completes without calling process.exit', async () => {
+    const workspace = await createTestWorkspace({ fixtureDir: 'snapshots' });
+    try {
+      const result = await runCliInProcess(['run', 'snapshot-multi-step.runbook.md'], workspace);
+      expect(result.exitCode).toBe(0);
+      expect(result.exitIntercepted).toBe(false);
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+});
+
+describe('stripExitArtefact', () => {
+  const ARTEFACT = '{ "error": "process.exit(1)", "kind": "error", "code": "UNKNOWN_ERROR" }';
+
+  it('returns an empty buffer unchanged', () => {
+    expect(stripExitArtefact('')).toBe('');
+  });
+
+  it('strips an artefact at the start of the buffer (no leading newline)', () => {
+    // Regression gate for the (?<=\n) lookbehind bug — pre-fix this leaves
+    // the artefact in the buffer because there is no preceding newline.
+    expect(stripExitArtefact(ARTEFACT)).toBe('');
+  });
+
+  it('strips an artefact preceded by a newline and preserves the newline', () => {
+    expect(stripExitArtefact(`prior line\n${ARTEFACT}`)).toBe('prior line\n');
+  });
+
+  it('does NOT strip an artefact that is not at end-of-buffer', () => {
+    const input = `prior\n${ARTEFACT}\nmore output`;
+    expect(stripExitArtefact(input)).toBe(input);
+  });
+
+  it('strips a bare "process.exit(N)" tail from stderr', () => {
+    expect(stripExitArtefact('some stderr process.exit(1)')).toBe('some stderr');
+  });
+
+  it('is idempotent', () => {
+    const input = `prior\n${ARTEFACT}`;
+    const once = stripExitArtefact(input);
+    const twice = stripExitArtefact(once);
+    expect(twice).toBe(once);
   });
 });

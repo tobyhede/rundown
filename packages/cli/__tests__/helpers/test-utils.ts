@@ -1,4 +1,5 @@
 import { mkdir, mkdtemp, rm, cp, readFile, writeFile, readdir, symlink } from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -35,7 +36,12 @@ export interface TestWorkspace {
   runbookPath: (name: string) => string;
   statePath: () => string;
   sessionPath: () => string;
+  /** Project-local runbook destination (`.rundown/runbooks/`). */
   runbooksDir: () => string;
+  /** Plugin runbook destination (`$CLAUDE_PLUGIN_ROOT/runbooks/`). */
+  pluginRunbooksDir: () => string;
+  /** Root-level runbook destination (`<cwd>/runbooks/`). */
+  rootRunbooksDir: () => string;
   locksDir: () => string;
   binPath: () => string;
 }
@@ -44,13 +50,25 @@ export interface CliResult {
   stdout: string;
   stderr: string;
   exitCode: number;
+  /**
+   * True when the CLI triggered `process.exit` during this run and the
+   * test harness intercepted it via the override in `runCliInProcess`.
+   * Observes the interception seam itself — distinct from `exitCode !== 0`,
+   * which can also occur when a command returns a non-zero code without
+   * calling `process.exit`.
+   */
+  exitIntercepted?: boolean;
 }
 
 /**
  * Creates isolated temp directory with fixtures and .rundown structure.
  * Also creates a symlink to the CLI in node_modules/.bin for rd commands.
+ *
+ * @param opts - Optional configuration
+ * @param opts.fixtureDir - Copy only this named subdirectory of fixtures/ into runbook destinations.
+ *   When omitted, the full fixtures/ directory is copied (backwards-compatible default).
  */
-export async function createTestWorkspace(): Promise<TestWorkspace> {
+export async function createTestWorkspace(opts?: { fixtureDir?: string }): Promise<TestWorkspace> {
   const tempDir = await mkdtemp(join(tmpdir(), 'rd-test-'));
   const projectRunbooksDir = runbooksDir(tempDir);
   const pluginDir = join(tempDir, 'plugin');
@@ -74,11 +92,12 @@ export async function createTestWorkspace(): Promise<TestWorkspace> {
   await symlink(cliPath, join(binDir, 'rd'));
   await symlink(cliPath, join(binDir, 'rundown'));
 
-  // Copy fixtures to temp dir
-  const fixturesDir = join(__dirname, '..', 'fixtures');
-  await cp(fixturesDir, projectRunbooksDir, { recursive: true });
-  await cp(fixturesDir, pluginRunbooksDir, { recursive: true });
-  await cp(fixturesDir, rootRunbooksDir, { recursive: true });
+  // Copy fixtures (or a named subdirectory) to temp dir
+  const fixturesRoot = join(__dirname, '..', 'fixtures');
+  const fixturesSource = opts?.fixtureDir ? join(fixturesRoot, opts.fixtureDir) : fixturesRoot;
+  await cp(fixturesSource, projectRunbooksDir, { recursive: true });
+  await cp(fixturesSource, pluginRunbooksDir, { recursive: true });
+  await cp(fixturesSource, rootRunbooksDir, { recursive: true });
 
   return {
     cwd: tempDir,
@@ -87,6 +106,8 @@ export async function createTestWorkspace(): Promise<TestWorkspace> {
     statePath: () => runsDir(tempDir),
     sessionPath: () => _sessionPath(tempDir),
     runbooksDir: () => runbooksDir(tempDir),
+    pluginRunbooksDir: () => pluginRunbooksDir,
+    rootRunbooksDir: () => rootRunbooksDir,
     locksDir: () => locksDir(tempDir),
     binPath: () => binDir,
   };
@@ -139,6 +160,34 @@ class ExitSignal extends Error {
 }
 
 /**
+ * Strip in-process `ExitSignal` artefacts from a captured buffer.
+ *
+ * The harness intercepts `process.exit()` by throwing an `ExitSignal`. When
+ * production `withErrorHandling` catches that sentinel, it routes it through
+ * `toRundownError` and emits a JSON UNKNOWN_ERROR block whose `error` field
+ * reads "process.exit(N)". A real subprocess never sees this — `process.exit()`
+ * simply terminates. This function removes the artefact (and any bare
+ * `process.exit(N)` tail) so test snapshots match real subprocess output.
+ *
+ * Idempotent: stripping an already-clean buffer is a no-op.
+ *
+ * @param buf - Captured stdout or stderr buffer.
+ * @returns The buffer with end-of-buffer artefacts removed.
+ */
+export function stripExitArtefact(buf: string): string {
+  // The leading `(^|\n)` (preserved via $1) covers both an artefact at buffer
+  // start AND one preceded by a newline that terminated a legitimate line.
+  // The previous `(?<=\n)` lookbehind missed the buffer-start case.
+  const artefactPattern =
+    /(^|\n)\{\s*"error":\s*"process\.exit\(\d+\)",\s*"kind":\s*"error",\s*"code":\s*"UNKNOWN_ERROR"\s*\}\s*$/;
+  let out = buf.replace(artefactPattern, '$1');
+  // `getErrorMessage(err)` on ExitSignal also produces a bare "process.exit(N)"
+  // tail that may be appended elsewhere; swallow that too at end-of-buffer.
+  out = out.replace(/\s*process\.exit\(\d+\)\s*$/, '');
+  return out;
+}
+
+/**
  * Run CLI in-process via Commander for fast test execution (~1-5ms vs ~200-500ms subprocess).
  *
  * Uses `process.chdir()` to set the working directory, ensuring all code paths
@@ -173,6 +222,10 @@ export async function runCliInProcess(
   let stdoutBuf = '';
   let stderrBuf = '';
   let exitCode = 0;
+  // Wrapped in a holder object: the writer is the process.exit override
+  // below, and TS flow analysis can't see through the callback. Without
+  // the indirection, the post-try `if` looks unreachable to eslint.
+  const exit = { signalled: false };
 
   try {
     // Reset global state before each invocation
@@ -232,8 +285,11 @@ export async function runCliInProcess(
       stdoutBuf += `${args.map(String).join(' ')}\n`;
     };
 
-    // Intercept process.exit
+    // Intercept process.exit. Set the cleanup flag at interception so the
+    // artefact stripper still runs even if a downstream caller swallows the
+    // ExitSignal before it surfaces to the outer catch.
     process.exit = ((code?: number) => {
+      exit.signalled = true;
       throw new ExitSignal(code ?? 0);
     }) as never;
 
@@ -248,6 +304,8 @@ export async function runCliInProcess(
   } catch (err: unknown) {
     if (err instanceof ExitSignal) {
       exitCode = err.code;
+      // exit.signalled is set at interception (in the process.exit override)
+      // so it stays true even if a downstream caller swallows the signal.
     } else if (err instanceof CommanderError) {
       exitCode = err.exitCode;
     } else {
@@ -281,7 +339,15 @@ export async function runCliInProcess(
     setWriter(new ConsoleWriter());
   }
 
-  return { stdout: stdoutBuf, stderr: stderrBuf, exitCode };
+  if (exit.signalled) {
+    // Strip ExitSignal artefacts from whichever buffer captured them
+    // (console.error routes to stderr, but the writer's pipeline can surface
+    // them in stdout depending on mode). See stripExitArtefact for details.
+    stdoutBuf = stripExitArtefact(stdoutBuf);
+    stderrBuf = stripExitArtefact(stderrBuf);
+  }
+
+  return { stdout: stdoutBuf, stderr: stderrBuf, exitCode, exitIntercepted: exit.signalled };
 }
 
 /**
@@ -865,4 +931,128 @@ export function buildSubstep(overrides: Partial<Substep> = {}): Substep {
     },
     ...overrides,
   };
+}
+
+/**
+ * Normalise CLI output for snapshot testing.
+ *
+ * Rewrites volatile values (paths, tokens, UUIDs, run IDs, timestamps,
+ * epoch ms, durations, PIDs) to stable placeholders so snapshots stay
+ * byte-stable across runs and machines.
+ *
+ * Applied in order:
+ *   1.  workspace.cwd and its realpath resolution → `<workdir>`
+ *   2.  os.tmpdir() and its realpath → `<tmpdir>`
+ *   3.  Delegation tokens (`rdtk_` + alnum, including truncated `rdtk_XXX...YYYY`) → `<token>`
+ *   4.  SHA-256 hex digests (e.g. delegation token_hash field) → `<tokenHash>`
+ *   5.  Full UUIDs → `<uuid>`
+ *   6.  Runbook state IDs of the form `wf-YYYY-MM-DD-xxxxxx` (base-36 suffix) → `<runbookId>`
+ *   7.  Numeric `"startedAt"` / `"completedAt"` / `"expiresAt"` / etc. epoch ms field values → `<epochMs>`
+ *   8.  `"durationMs"` / `"took"` numeric field values → `<ms>`
+ *   9.  Any 8-char lowercase hex string at word boundaries → `<hex8>` (see note)
+ *   10. ISO 8601 timestamps → `<timestamp>`
+ *   11. PID banners → `<pid>`
+ *
+ * Rule 9 note: the 8-hex rule is the catch-all for built-in template variables
+ * `{{RunId}}` and `{{ContextId}}` (both `randomBytes(4).toString('hex')`, see
+ * `packages/cli/src/services/variable-discovery.ts`). It is deliberately
+ * aggressive and will ALSO mask git short SHAs, step-frame hashes, and any
+ * 8-hex token that happens to appear in user prompt text. Rules 7 and 8
+ * (field-scoped epoch ms and duration) run BEFORE this rule so pure-digit
+ * 8-char values in known fields aren't stolen by the generic hex8 pattern.
+ * When reviewing a snapshot diff, confirm each `<hex8>` substitution is
+ * legitimate — anything unexpected masked by this rule is a signal, not noise.
+ *
+ * @param output - Raw CLI stdout (JSON/NDJSON or rendered text)
+ * @param workspace - TestWorkspace whose cwd is rewritten to `<workdir>`
+ * @returns Normalised output safe to compare with `toMatchSnapshot()`
+ */
+export function normalizeCliOutput(output: string, workspace: TestWorkspace): string {
+  let text = output;
+
+  // 1. workspace.cwd (and its realpath resolution, e.g. /var/folders/… ↔ /private/var/folders/…)
+  const cwd = workspace.cwd;
+  let cwdReal = cwd;
+  try {
+    cwdReal = realpathSync(cwd);
+  } catch {
+    // workspace may already be cleaned up by the time we normalise; that's fine
+  }
+  // On macOS, /var/… is a symlink to /private/var/…. When the workspace
+  // directory doesn't exist on disk, realpathSync throws and we fall back to
+  // the original path. To cover both forms we add the /private-prefixed
+  // variant explicitly, giving us up to 3 distinct candidates (deduplicated).
+  const cwdPrivate = cwd.startsWith('/private') ? cwd : `/private${cwd}`;
+  // Replace the longer form first so the shorter one can't shadow it.
+  const cwdCandidates = Array.from(new Set([cwdReal, cwdPrivate, cwd])).sort(
+    (a, b) => b.length - a.length,
+  );
+  for (const candidate of cwdCandidates) {
+    text = text.split(candidate).join('<workdir>');
+  }
+
+  // 2. os.tmpdir() resolution and its realpath (only matters for paths
+  // outside the workspace — workspace paths are already rewritten above).
+  const tmp = tmpdir();
+  let tmpReal = tmp;
+  try {
+    tmpReal = realpathSync(tmp);
+  } catch {
+    // ignore
+  }
+  const tmpCandidates = Array.from(new Set([tmpReal, tmp])).sort((a, b) => b.length - a.length);
+  for (const candidate of tmpCandidates) {
+    text = text.split(candidate).join('<tmpdir>');
+  }
+
+  // 3. Delegation tokens (TOKEN_PREFIX from packages/core/src/runbook/delegation-token.ts)
+  //    Truncated form first (`rdtk_XXX...YYYY`) so the suffix doesn't survive
+  //    after the prefix has been replaced by the broader rule below.
+  text = text.replace(/rdtk_[A-Za-z0-9]+\.{3}[A-Za-z0-9]+/g, '<token>');
+  text = text.replace(/rdtk_[A-Za-z0-9]+/g, '<token>');
+
+  // 4. SHA-256 hex digests (e.g. delegation token_hash field)
+  text = text.replace(/sha256:[0-9a-f]{64}/g, '<tokenHash>');
+
+  // 5. Full UUIDs (8-4-4-4-12 hex)
+  text = text.replace(
+    /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
+    '<uuid>',
+  );
+
+  // 6. Runbook state IDs of the form `wf-YYYY-MM-DD-xxxxxx` (base-36 suffix, 1-6 chars)
+  text = text.replace(/\bwf-\d{4}-\d{2}-\d{2}-[a-z0-9]{1,6}\b/g, '<runbookId>');
+
+  // 7. Numeric epoch ms for known fields (field-scoped so we don't eat arbitrary numbers).
+  //    Runs BEFORE rule 9 so an 8-digit epoch ms value isn't stolen by the
+  //    generic `\b[0-9a-f]{8}\b` pattern (digits are a subset of hex).
+  for (const field of ['startedAt', 'completedAt', 'updatedAt', 'expiresAt', 'lastHeartbeat']) {
+    text = text.replace(new RegExp(`"${field}":\\s*\\d+`, 'g'), `"${field}": <epochMs>`);
+  }
+
+  // 8. Duration fields. Runs BEFORE rule 9 for the same reason — durations
+  //    of ~10,000,000ms (2.8h) and above are 8+ digits and would otherwise
+  //    match the hex8 catch-all and be masked as <hex8> instead of <ms>.
+  text = text.replace(/"durationMs":\s*\d+/g, '"durationMs": <ms>');
+  text = text.replace(/"took":\s*\d+/g, '"took": <ms>');
+
+  // 9. Any 8-char lowercase hex at word boundaries — the catch-all for
+  //    {{RunId}} and {{ContextId}} template variables (both 4 random bytes
+  //    rendered as hex, see variable-discovery.ts). Deliberately aggressive:
+  //    also masks git short SHAs, step-frame hashes, and 8-hex tokens in
+  //    user prompt text. Rules 5, 6, 7, and 8 run first so UUIDs, wf-* ids,
+  //    field-scoped epoch ms, and duration values are preserved. Review
+  //    each `<hex8>` substitution in snapshot diffs.
+  text = text.replace(/\b[0-9a-f]{8}\b/g, '<hex8>');
+
+  // 10. ISO 8601 timestamps (with or without fractional seconds, Z or ±HH:MM)
+  text = text.replace(
+    /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})/g,
+    '<timestamp>',
+  );
+
+  // 11. PID banners — match `pid=1234`, `PID 1234`, or `(pid 1234)` shapes
+  text = text.replace(/\b([Pp][Ii][Dd][=:\s]+)\d+/g, '$1<pid>');
+
+  return text;
 }

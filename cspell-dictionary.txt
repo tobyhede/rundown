@@ -34,8 +34,10 @@ TOCTOU
 Turborepo
 agentic
 aindex
+alnum
 ancvar
 args
+artefacts
 autobuild
 bashisms
 behaviour
@@ -106,6 +108,10 @@ nocase
 nodenext
 nodenv
 noninteractive
+normalise
+normaliser
+Normalise
+Normalised
 notavar
 nums
 opts
@@ -144,6 +150,7 @@ rustc
 sandboxing
 sarif
 selfref
+serialises
 serializable
 shellquote
 specialised
