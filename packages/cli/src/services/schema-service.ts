@@ -57,7 +57,6 @@ export function getCommandSchema(commandName: string): object | null {
   if (schema === undefined) return null;
 
   return zodToJsonSchema(schema, {
-    $refStrategy: 'none',
     name: `${commandName.replace(/\s+/g, '-')}Response`,
   });
 }
