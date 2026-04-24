@@ -112,7 +112,7 @@ export type WorkingRetryState = Pick<
 >;
 
 /**
- * Per-substep step of the retry hook. Side-effect free: returns a
+ * Per-substep iteration of the retry hook. Side-effect free: returns a
  * discriminated union describing the outcome. The caller composes multiple
  * calls to build the final {@link RetryHookResult}.
  *
@@ -348,6 +348,16 @@ export function runRetryHook(
           message: outcome.message,
           substepStates,
         };
+      default: {
+        // Compile-time exhaustiveness: a new outcome.status variant in
+        // retrySingleSubstep must add an arm above or this assignment
+        // fails type-check. Intentionally no runtime throw — the hook's
+        // JSDoc contract guarantees this function never throws, and the
+        // TypeScript `never` assignment already gates new variants at
+        // build time.
+        const _exhaustive: never = outcome;
+        void _exhaustive;
+      }
     }
   }
 
