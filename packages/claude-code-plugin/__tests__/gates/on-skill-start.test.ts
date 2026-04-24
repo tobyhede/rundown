@@ -1,10 +1,11 @@
 // packages/claude-code-plugin/__tests__/gates/on-skill-start.test.ts
 import { jest, expect, describe, it, beforeEach, afterEach } from '@jest/globals';
+import type { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import type { HookInput } from '../../src/shared/index.js';
 
 const mockRundown = jest.fn();
-const mockReadFileSync = jest.fn<(filePath: string, encoding?: string) => string>();
+const mockReadFileSync = jest.fn() as jest.MockedFunction<typeof readFileSync>;
 
 jest.unstable_mockModule('../../src/workflow/hooks/rundown.js', () => ({
   rundown: mockRundown,
@@ -25,7 +26,9 @@ const { parseRunbookFromFrontmatter } = await import('../../src/shared/frontmatt
  */
 function mockReadForSkill(skillName: string, content: string): void {
   const target = path.join('skills', skillName, 'SKILL.md');
-  mockReadFileSync.mockImplementation((filePath: string) => {
+  // Single-overload cast: readFileSync's four overloads don't unify under
+  // mockImplementation; narrow to the `(path: string) => string` shape we use.
+  mockReadFileSync.mockImplementation(((filePath: string) => {
     if (filePath.includes(target)) {
       return content;
     }
@@ -34,7 +37,7 @@ function mockReadForSkill(skillName: string, content: string): void {
     ) as NodeJS.ErrnoException;
     err.code = 'ENOENT';
     throw err;
-  });
+  }) as typeof readFileSync);
 }
 
 describe('on-skill-start gate', () => {
