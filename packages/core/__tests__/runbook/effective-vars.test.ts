@@ -77,6 +77,14 @@ describe('mergeEffectiveVars accepts the new brands', () => {
     const merged = mergeEffectiveVars({ templateVars: tv, variables: sv });
     expect(merged).toEqual({ a: 'tv', b: 'sv', c: 'sv' });
   });
+
+  it('applies full precedence templateVars < variables < extraVars', () => {
+    const tv = brandInitialTemplateVars({ a: 'tv', b: 'tv', c: 'tv' });
+    const sv = brandStoredOutputs({ b: 'sv', c: 'sv' });
+    const extra: Readonly<Record<string, TemplateVarValue>> = { c: 'extra', d: 'extra' };
+    const merged = mergeEffectiveVars({ templateVars: tv, variables: sv }, extra);
+    expect(merged).toEqual({ a: 'tv', b: 'sv', c: 'extra', d: 'extra' });
+  });
 });
 
 describe('brand symbol exposure', () => {
