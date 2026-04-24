@@ -26,18 +26,54 @@ export function mockExecFileSync(output: string): ExecFileSyncMock {
 }
 
 /**
- * Create a typed execFileSync mock that throws an Error with optional stderr.
+ * Clear an existing ExecFileSyncMock's call history in place.
  *
- * @param error - Error message and optional stderr buffer source string.
+ * Prefer this over `setExecSync(mockExecFileSync(''))` when the same mock
+ * instance should be reused across tests — avoids re-allocating jest.fn and
+ * keeps `jest.clearAllMocks()`/`restoreAllMocks()` expectations intact for
+ * callers that stash the mock at module scope.
+ *
+ * @param mock - Mock previously produced by `mockExecFileSync` or `mockExecFileSyncError`.
+ */
+export function resetExecSync(mock: ExecFileSyncMock): void {
+  mock.mockClear();
+}
+
+/**
+ * Create a typed execFileSync mock that throws a realistic `ExecFileException`.
+ *
+ * All optional fields (stderr/stdout/status/signal) are populated on the
+ * thrown Error so production code branches that read
+ * `err.status`/`err.stdout`/`err.signal` see truthful values rather than
+ * `undefined`.
+ *
+ * @param error - Error message and optional Node-process-style fields.
  * @returns Mock that throws on every call.
  */
 export function mockExecFileSyncError(error: {
   message: string;
   stderr?: string;
+  stdout?: string;
+  status?: number | null;
+  signal?: NodeJS.Signals | null;
 }): ExecFileSyncMock {
-  const err = new Error(error.message) as Error & { stderr?: Buffer };
+  const err = new Error(error.message) as Error & {
+    stderr?: Buffer;
+    stdout?: Buffer;
+    status?: number | null;
+    signal?: NodeJS.Signals | null;
+  };
   if (error.stderr !== undefined) {
     err.stderr = Buffer.from(error.stderr);
+  }
+  if (error.stdout !== undefined) {
+    err.stdout = Buffer.from(error.stdout);
+  }
+  if (error.status !== undefined) {
+    err.status = error.status;
+  }
+  if (error.signal !== undefined) {
+    err.signal = error.signal;
   }
   // Same double-cast rationale as mockExecFileSync above.
   return jest.fn(() => {
