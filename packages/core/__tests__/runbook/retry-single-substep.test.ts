@@ -1,5 +1,4 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import type { DelegateFrontierEntry } from '../../src/events/types.js';
 import type {
   ResolvedStep,
   Substep,
