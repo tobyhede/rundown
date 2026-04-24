@@ -324,12 +324,12 @@ export function createDelegation(
 /**
  * Abort a delegation on a substep.
  *
- * Pure function — no I/O, no persistence. The caller is responsible for
- * persisting the returned `updatedSubstepStates` into the runbook state.
+ * Pure function, Result-based, **never throws**. The caller persists the
+ * returned `updatedSubstepStates` into the runbook state (only on the
+ * `cancelled` variant).
  *
  * @param options - Abort delegation options
- * @returns Abort result indicating outcome
- * @throws {RundownError} RD-801 if substep not found or has no delegation
+ * @returns Discriminated union: `cancelled` | `already_cancelled` | `needs_force` | `not_found`
  */
 export function abortDelegation(options: AbortDelegationOptions): AbortDelegationResult {
   const { parentState, substepId, force, frameKey } = options;
@@ -339,7 +339,11 @@ export function abortDelegation(options: AbortDelegationOptions): AbortDelegatio
   const targetSubstep = findSubstepState(existingStates, substepId, frameKey);
 
   if (!targetSubstep?.delegation) {
-    throw Errors.delegationStepNotFound(substepId);
+    return {
+      status: 'not_found',
+      substepId,
+      error: Errors.delegationStepNotFound(substepId),
+    };
   }
 
   const delegation = targetSubstep.delegation;
