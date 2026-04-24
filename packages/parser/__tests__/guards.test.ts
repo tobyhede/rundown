@@ -22,12 +22,14 @@ import {
 import type {
   Step,
   ParsedSubstep,
+  Substep,
   ForClause,
   ResolvedStep,
   FullSourceWindow,
   WindowedSourceWindow,
   SourceWindow,
 } from '../src/ast.js';
+import type { Transitions } from '../src/schemas.js';
 
 const createStep = (overrides: Record<string, unknown> = {}): Step => {
   const obj: Record<string, unknown> = { name: '1', description: 'Test step', ...overrides };
@@ -42,9 +44,27 @@ const createStep = (overrides: Record<string, unknown> = {}): Step => {
   return { ...obj, kind } as Step;
 };
 
-const createSubstep = (overrides: Partial<ParsedSubstep> = {}): ParsedSubstep => ({
+const baseSubstepTransitions: Transitions = {
+  pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+  fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+};
+
+/** Default factory: returns `Substep` (resolved runbooks — `readonly string[]`). */
+const createSubstep = (overrides: Partial<Substep> = {}): Substep => ({
   id: '1',
   description: 'Test substep',
+  transitions: baseSubstepTransitions,
+  ...overrides,
+});
+
+/**
+ * Factory for tests that need unresolved runbook refs: returns `ParsedSubstep`
+ * (runbooks is `readonly RunbookEntry[]` where `RunbookEntry = string | RunbookRef`).
+ */
+const createParsedSubstep = (overrides: Partial<ParsedSubstep> = {}): ParsedSubstep => ({
+  id: '1',
+  description: 'Test substep',
+  transitions: baseSubstepTransitions,
   ...overrides,
 });
 
@@ -256,7 +276,11 @@ describe('hasForClause', () => {
       if (hasForClause(step)) {
         // TypeScript should know step.forClause is ForClause, not undefined
         expect(step.forClause.start).toBe(1);
-        expect(step.forClause.end).toBe(5);
+        if ('end' in step.forClause) {
+          expect(step.forClause.end).toBe(5);
+        } else {
+          throw new Error('expected numeric or windowed for clause with end');
+        }
         expect(step.forClause.variable).toBe('batch');
       }
     });
@@ -403,7 +427,11 @@ describe('isStepWithFor', () => {
     });
     if (isStepWithFor(step)) {
       expect(step.forClause.start).toBe(1);
-      expect(step.forClause.end).toBe(3);
+      if ('end' in step.forClause) {
+        expect(step.forClause.end).toBe(3);
+      } else {
+        throw new Error('expected numeric or windowed for clause with end');
+      }
     }
   });
 });
@@ -604,12 +632,12 @@ describe('isRunbookRef', () => {
 
 describe('hasUnresolvedRunbooks', () => {
   it('returns true when substep has RunbookRef entries', () => {
-    const substep = createSubstep({ runbooks: [{ ref: 'Target' }] });
+    const substep = createParsedSubstep({ runbooks: [{ ref: 'Target' }] });
     expect(hasUnresolvedRunbooks(substep)).toBe(true);
   });
 
   it('returns true with mixed literal and RunbookRef entries', () => {
-    const substep = createSubstep({
+    const substep = createParsedSubstep({
       runbooks: ['setup.runbook.md', { ref: 'Target' }],
     });
     expect(hasUnresolvedRunbooks(substep)).toBe(true);

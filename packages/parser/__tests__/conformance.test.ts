@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseRunbookDocument, RunbookSyntaxError } from '../src/index.js';
-import type { Step } from '../src/ast.js';
+import type { Step, ParsedSubstep } from '../src/ast.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -30,11 +30,11 @@ function getFilesRecursively(dir: string): string[] {
 }
 
 /** Check if any step (or substep) has a GOTO transition */
-function hasGotoTransition(steps: readonly Step[]): boolean {
-  return steps.some((s) => {
+function hasGotoTransition(units: readonly (Step | ParsedSubstep)[]): boolean {
+  return units.some((s) => {
     const { pass, fail } = s.transitions;
     if (pass.action.type === 'GOTO' || fail.action.type === 'GOTO') return true;
-    if (s.kind === 'substeps' || s.kind === 'for') {
+    if ('kind' in s && (s.kind === 'substeps' || s.kind === 'for')) {
       return hasGotoTransition(s.substeps);
     }
     return false;
@@ -42,11 +42,11 @@ function hasGotoTransition(steps: readonly Step[]): boolean {
 }
 
 /** Check if any step (or substep) has a retry > 0 */
-function hasRetry(steps: readonly Step[]): boolean {
-  return steps.some((s) => {
+function hasRetry(units: readonly (Step | ParsedSubstep)[]): boolean {
+  return units.some((s) => {
     const { pass, fail } = s.transitions;
     if (pass.retry > 0 || fail.retry > 0) return true;
-    if (s.kind === 'substeps' || s.kind === 'for') {
+    if ('kind' in s && (s.kind === 'substeps' || s.kind === 'for')) {
       return hasRetry(s.substeps);
     }
     return false;
@@ -54,8 +54,8 @@ function hasRetry(steps: readonly Step[]): boolean {
 }
 
 /** Check if any step (or substep) has non-default transitions */
-function hasTransitions(steps: readonly Step[]): boolean {
-  return steps.some((s) => {
+function hasTransitions(units: readonly (Step | ParsedSubstep)[]): boolean {
+  return units.some((s) => {
     // Check for non-default transitions (not just PASS CONTINUE / FAIL STOP)
     const hasNonDefault =
       s.transitions.pass.action.type !== 'CONTINUE' ||
@@ -63,7 +63,7 @@ function hasTransitions(steps: readonly Step[]): boolean {
       s.transitions.pass.retry > 0 ||
       s.transitions.fail.retry > 0;
     if (hasNonDefault) return true;
-    if (s.kind === 'substeps' || s.kind === 'for') {
+    if ('kind' in s && (s.kind === 'substeps' || s.kind === 'for')) {
       return hasTransitions(s.substeps);
     }
     return false;

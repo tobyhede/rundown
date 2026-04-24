@@ -5,6 +5,7 @@ import {
   formatLineNum,
   RunbookSyntaxError,
 } from '../src/index.js';
+import { assertStepHasSubsteps, assertStepWithCommand, assertStepWithFor } from './helpers.js';
 
 describe('Step-level runbooks', () => {
   it('parses runbook list in substep', () => {
@@ -17,8 +18,10 @@ describe('Step-level runbooks', () => {
  - task-details.runbook.md
 `;
     const steps = parseRunbook(markdown);
-    expect(steps[0].substeps).toHaveLength(1);
-    expect(steps[0].substeps![0].runbooks).toEqual(['task-details.runbook.md']);
+    const step = steps[0];
+    assertStepHasSubsteps(step);
+    expect(step.substeps).toHaveLength(1);
+    expect(step.substeps[0].runbooks).toEqual(['task-details.runbook.md']);
   });
 
   it('rejects step with both runbooks and substeps', () => {
@@ -46,11 +49,10 @@ Do work.
  - runbook-b.runbook.md
 `;
     const steps = parseRunbook(markdown);
-    expect(steps[0].substeps).toHaveLength(1);
-    expect(steps[0].substeps?.[0].runbooks).toEqual([
-      'runbook-a.runbook.md',
-      'runbook-b.runbook.md',
-    ]);
+    const step = steps[0];
+    assertStepHasSubsteps(step);
+    expect(step.substeps).toHaveLength(1);
+    expect(step.substeps[0].runbooks).toEqual(['runbook-a.runbook.md', 'runbook-b.runbook.md']);
   });
 });
 
@@ -69,8 +71,10 @@ describe('parseRunbook with substep runbooks', () => {
 `;
 
     const steps = parseRunbook(markdown);
-    expect(steps[0].substeps).toHaveLength(1);
-    expect(steps[0].substeps?.[0].runbooks).toEqual(['review.runbook.md', 'security.runbook.md']);
+    const step = steps[0];
+    assertStepHasSubsteps(step);
+    expect(step.substeps).toHaveLength(1);
+    expect(step.substeps[0].runbooks).toEqual(['review.runbook.md', 'security.runbook.md']);
   });
 });
 
@@ -91,11 +95,13 @@ Do analysis work.
 - child.runbook.md
 `;
     const steps = parseRunbook(markdown);
-    expect(steps[0].substeps).toHaveLength(2);
-    expect(steps[0].substeps![0].prompt).toBe('Do analysis work.');
-    expect(steps[0].substeps![0].runbooks).toBeUndefined();
-    expect(steps[0].substeps![1].prompt).toBeUndefined();
-    expect(steps[0].substeps![1].runbooks).toEqual(['child.runbook.md']);
+    const step = steps[0];
+    assertStepHasSubsteps(step);
+    expect(step.substeps).toHaveLength(2);
+    expect(step.substeps[0].prompt).toBe('Do analysis work.');
+    expect(step.substeps[0].runbooks).toBeUndefined();
+    expect(step.substeps[1].prompt).toBeUndefined();
+    expect(step.substeps[1].runbooks).toEqual(['child.runbook.md']);
   });
 
   it('parses template variable reference in H3 runbook list path', () => {
@@ -108,7 +114,9 @@ Do analysis work.
 - {{ PlanPath }}
 `;
     const steps = parseRunbook(markdown);
-    const substep = steps[0].substeps![0];
+    const step = steps[0];
+    assertStepHasSubsteps(step);
+    const substep = step.substeps[0];
     expect(substep.runbooks).toEqual([{ ref: 'PlanPath' }]);
   });
 
@@ -122,7 +130,9 @@ Do analysis work.
 - review-plan.runbook.md
 `;
     const steps = parseRunbook(markdown);
-    const substep = steps[0].substeps![0];
+    const step = steps[0];
+    assertStepHasSubsteps(step);
+    const substep = step.substeps[0];
     expect(substep.id).toBe('1');
     expect(substep.description).toBe('Review plan');
     expect(substep.runbooks).toEqual(['review-plan.runbook.md']);
@@ -141,8 +151,10 @@ Do analysis work.
 - review-plan.runbook.md
 `;
     const steps = parseRunbook(markdown);
-    expect(steps[0].substeps).toHaveLength(2);
-    const [sub1, sub2] = steps[0].substeps!;
+    const step = steps[0];
+    assertStepHasSubsteps(step);
+    expect(step.substeps).toHaveLength(2);
+    const [sub1, sub2] = step.substeps;
     expect(sub1.description).toBe('Write plan');
     expect(sub1.runbooks).toEqual(['write-plan.runbook.md']);
     expect(sub1.prompt).toBeUndefined();
@@ -183,8 +195,12 @@ pwd
 \`\`\`
 `;
     const steps = parseRunbook(markdown);
-    expect(steps[0].command?.code).toBe('ls');
-    expect(steps[1].command?.code).toBe('pwd');
+    const step0 = steps[0];
+    assertStepWithCommand(step0);
+    expect(step0.command.code).toBe('ls');
+    const step1 = steps[1];
+    assertStepWithCommand(step1);
+    expect(step1.command.code).toBe('pwd');
   });
 
   it('treats prompt tag as rd prompt command', () => {
@@ -195,7 +211,9 @@ Please look at this example.
 `;
     const steps = parseRunbook(markdown);
     // prompt blocks become rd prompt commands
-    expect(steps[0].command).toEqual({
+    const step = steps[0];
+    assertStepWithCommand(step);
+    expect(step.command).toEqual({
       code: "rd prompt 'Please look at this example.'",
       lang: 'prompt',
     });
@@ -209,7 +227,9 @@ Please look at this example.
 \`\`\`
 `;
     const steps = parseRunbook(markdown);
-    expect(steps[0].command).toEqual({
+    const step = steps[0];
+    assertStepWithCommand(step);
+    expect(step.command).toEqual({
       code: 'rd prompt \'{"key": "value"}\'',
       lang: 'prompt',
     });
@@ -222,7 +242,9 @@ key: value
 \`\`\`
 `;
     const steps = parseRunbook(markdown);
-    expect(steps[0].command).toEqual({
+    const step = steps[0];
+    assertStepWithCommand(step);
+    expect(step.command).toEqual({
       code: "rd prompt 'key: value'",
       lang: 'prompt',
     });
@@ -249,7 +271,9 @@ npm run example --flag value
 `;
     const steps = parseRunbook(md);
     // prompt block becomes command, text before it becomes prompt
-    expect(steps[0].command).toEqual({
+    const step = steps[0];
+    assertStepWithCommand(step);
+    expect(step.command).toEqual({
       code: "rd prompt 'npm run example --flag value'",
       lang: 'prompt',
     });
@@ -264,7 +288,9 @@ echo 'hello world'
 \`\`\`
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].command).toEqual({
+    const step = steps[0];
+    assertStepWithCommand(step);
+    expect(step.command).toEqual({
       code: "rd prompt 'echo '\\''hello world'\\'''",
       lang: 'prompt',
     });
@@ -282,7 +308,9 @@ npm run build
 \`\`\`
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].command).toEqual({
+    const step = steps[0];
+    assertStepWithCommand(step);
+    expect(step.command).toEqual({
       code: 'npm run build',
       lang: 'bash',
     });
@@ -301,10 +329,12 @@ echo "hello"
 \`\`\`
 `;
     const steps = parseRunbook(markdown);
-    // @ts-expect-error - testing new lang property
-    expect(steps[0].command?.lang).toBe('bash');
-    // @ts-expect-error - testing new lang property
-    expect(steps[1].command?.lang).toBe('shell');
+    const step0 = steps[0];
+    const step1 = steps[1];
+    assertStepWithCommand(step0);
+    assertStepWithCommand(step1);
+    expect(step0.command.lang).toBe('bash');
+    expect(step1.command.lang).toBe('shell');
   });
 });
 
@@ -375,7 +405,9 @@ describe('substep with prompts', () => {
 This is the implicit prompt text.
 `;
     const steps = parseRunbook(markdown);
-    expect(steps[0].substeps?.[0].prompt).toBe('This is the implicit prompt text.');
+    const step = steps[0];
+    assertStepHasSubsteps(step);
+    expect(step.substeps[0].prompt).toBe('This is the implicit prompt text.');
   });
 });
 
@@ -396,22 +428,24 @@ Do work.
 More work.
 `;
     const steps = parseRunbook(markdown);
-    expect(steps[0].substeps?.[0].transitions?.pass).toEqual({
+    const step = steps[0];
+    assertStepHasSubsteps(step);
+    expect(step.substeps[0].transitions.pass).toEqual({
       kind: 'pass',
       retry: 0,
       action: { type: 'CONTINUE' },
     });
-    expect(steps[0].substeps?.[0].transitions?.fail).toEqual({
+    expect(step.substeps[0].transitions.fail).toEqual({
       kind: 'fail',
       retry: 0,
       action: { type: 'STOP', message: 'BLOCKED' },
     });
-    expect(steps[0].substeps?.[1].transitions?.pass).toEqual({
+    expect(step.substeps[1].transitions.pass).toEqual({
       kind: 'pass',
       retry: 0,
       action: { type: 'COMPLETE' },
     });
-    expect(steps[0].substeps?.[1].transitions?.fail).toEqual({
+    expect(step.substeps[1].transitions.fail).toEqual({
       kind: 'fail',
       retry: 0,
       action: { type: 'GOTO', target: { step: '1', substep: '1' } },
@@ -428,12 +462,14 @@ More work.
 Do work.
 `;
     const steps = parseRunbook(markdown);
-    expect(steps[0].substeps?.[0].transitions?.pass).toEqual({
+    const step = steps[0];
+    assertStepHasSubsteps(step);
+    expect(step.substeps[0].transitions.pass).toEqual({
       kind: 'pass',
       retry: 0,
       action: { type: 'CONTINUE' },
     });
-    expect(steps[0].substeps?.[0].transitions?.fail).toEqual({
+    expect(step.substeps[0].transitions.fail).toEqual({
       kind: 'fail',
       retry: 0,
       action: { type: 'STOP' },
@@ -470,22 +506,24 @@ Do check two.
     });
     expect(steps[0].aggregation?.strategy).toBe('ALL');
     // Substeps should have context-aware defaults (DEFER/DEFER under aggregation)
-    expect(steps[0].substeps?.[0].transitions?.pass).toEqual({
+    const step0 = steps[0];
+    assertStepHasSubsteps(step0);
+    expect(step0.substeps[0].transitions.pass).toEqual({
       kind: 'pass',
       retry: 0,
       action: { type: 'DEFER' },
     });
-    expect(steps[0].substeps?.[0].transitions?.fail).toEqual({
+    expect(step0.substeps[0].transitions.fail).toEqual({
       kind: 'fail',
       retry: 0,
       action: { type: 'DEFER' },
     });
-    expect(steps[0].substeps?.[1].transitions?.pass).toEqual({
+    expect(step0.substeps[1].transitions.pass).toEqual({
       kind: 'pass',
       retry: 0,
       action: { type: 'DEFER' },
     });
-    expect(steps[0].substeps?.[1].transitions?.fail).toEqual({
+    expect(step0.substeps[1].transitions.fail).toEqual({
       kind: 'fail',
       retry: 0,
       action: { type: 'DEFER' },
@@ -512,18 +550,20 @@ Do the check.
       action: { type: 'COMPLETE' },
     });
     // FOR clause transitions should also be set
-    expect(steps[0].forClause?.transitions?.fail).toEqual({
+    const step0 = steps[0];
+    assertStepWithFor(step0);
+    expect(step0.forClause.transitions!.fail).toEqual({
       kind: 'fail',
       retry: 0,
       action: { type: 'CONTINUE' },
     });
     // Substeps should have context-aware defaults (DEFER/DEFER for runbooks)
-    expect(steps[0].substeps?.[0].transitions?.pass).toEqual({
+    expect(step0.substeps[0].transitions.pass).toEqual({
       kind: 'pass',
       retry: 0,
       action: { type: 'DEFER' },
     });
-    expect(steps[0].substeps?.[0].transitions?.fail).toEqual({
+    expect(step0.substeps[0].transitions.fail).toEqual({
       kind: 'fail',
       retry: 0,
       action: { type: 'DEFER' },
@@ -545,22 +585,24 @@ Do check two.
     // No aggregation on parent step
     expect(steps[0].aggregation).toBeUndefined();
     // Substeps get CONTINUE/STOP defaults (no aggregation context)
-    expect(steps[0].substeps?.[0].transitions?.pass).toEqual({
+    const step0 = steps[0];
+    assertStepHasSubsteps(step0);
+    expect(step0.substeps[0].transitions.pass).toEqual({
       kind: 'pass',
       retry: 0,
       action: { type: 'CONTINUE' },
     });
-    expect(steps[0].substeps?.[0].transitions?.fail).toEqual({
+    expect(step0.substeps[0].transitions.fail).toEqual({
       kind: 'fail',
       retry: 0,
       action: { type: 'STOP' },
     });
-    expect(steps[0].substeps?.[1].transitions?.pass).toEqual({
+    expect(step0.substeps[1].transitions.pass).toEqual({
       kind: 'pass',
       retry: 0,
       action: { type: 'CONTINUE' },
     });
-    expect(steps[0].substeps?.[1].transitions?.fail).toEqual({
+    expect(step0.substeps[1].transitions.fail).toEqual({
       kind: 'fail',
       retry: 0,
       action: { type: 'STOP' },
@@ -584,23 +626,25 @@ Do check.
     const steps = parseRunbook(markdown);
     expect(steps[0].aggregation?.strategy).toBe('ALL');
     // Substep 1: explicit transitions preserved (DEFER/STOP, not overridden)
-    expect(steps[0].substeps?.[0].transitions?.pass).toEqual({
+    const step0 = steps[0];
+    assertStepHasSubsteps(step0);
+    expect(step0.substeps[0].transitions.pass).toEqual({
       kind: 'pass',
       retry: 0,
       action: { type: 'DEFER' },
     });
-    expect(steps[0].substeps?.[0].transitions?.fail).toEqual({
+    expect(step0.substeps[0].transitions.fail).toEqual({
       kind: 'fail',
       retry: 0,
       action: { type: 'STOP' },
     });
     // Substep 2: no explicit transitions → gets default DEFER/DEFER under aggregation
-    expect(steps[0].substeps?.[1].transitions?.pass).toEqual({
+    expect(step0.substeps[1].transitions.pass).toEqual({
       kind: 'pass',
       retry: 0,
       action: { type: 'DEFER' },
     });
-    expect(steps[0].substeps?.[1].transitions?.fail).toEqual({
+    expect(step0.substeps[1].transitions.fail).toEqual({
       kind: 'fail',
       retry: 0,
       action: { type: 'DEFER' },
@@ -621,7 +665,9 @@ describe('substep GOTO validation', () => {
 - FAIL STOP
 `;
     const steps = parseRunbook(markdown);
-    expect(steps[0].substeps?.[0].transitions?.fail).toEqual({
+    const step = steps[0];
+    assertStepHasSubsteps(step);
+    expect(step.substeps[0].transitions.fail).toEqual({
       kind: 'fail',
       retry: 0,
       action: { type: 'GOTO', target: { step: '1', substep: '2' } },
@@ -656,8 +702,10 @@ npm run lint
 \`\`\`
 `;
     const steps = parseRunbook(markdown);
-    expect(steps[0].substeps).toHaveLength(1);
-    expect(steps[0].substeps?.[0].command?.code).toBe('npm run lint');
+    const step = steps[0];
+    assertStepHasSubsteps(step);
+    expect(step.substeps).toHaveLength(1);
+    expect(step.substeps[0].command?.code).toBe('npm run lint');
   });
 
   it('rejects multiple code blocks in substep', () => {
@@ -690,7 +738,7 @@ Multiple lines here.
 `;
     const steps = parseRunbook(markdown);
     expect(steps[0].prompt).toBe('This is the prompt text.\nMultiple lines here.');
-    expect((steps[0] as any).prompts).toBeUndefined();
+    expect('prompts' in steps[0]).toBe(false);
   });
 });
 
@@ -722,7 +770,9 @@ npm test
 `;
     const steps = parseRunbook(markdown);
     expect(steps[0].prompt).toBe('This prompt appears before the code block.');
-    expect(steps[0].command?.code).toBe('npm test');
+    const step = steps[0];
+    assertStepWithCommand(step);
+    expect(step.command.code).toBe('npm test');
   });
 
   it('throws error when text appears after code block in substep', () => {
@@ -814,11 +864,13 @@ Handle cleanup`;
 ### 1.Cleanup Handle cleanup`;
 
     const steps = parseRunbook(md);
-    expect(steps[0].substeps).toHaveLength(2);
-    expect(steps[0].substeps?.[0]).toMatchObject({
+    const step = steps[0];
+    assertStepHasSubsteps(step);
+    expect(step.substeps).toHaveLength(2);
+    expect(step.substeps[0]).toMatchObject({
       id: '1',
     });
-    expect(steps[0].substeps?.[1]).toMatchObject({
+    expect(step.substeps[1]).toMatchObject({
       id: 'Cleanup',
     });
   });
@@ -1026,7 +1078,9 @@ npm test
 - task.runbook.md
 `;
       const steps = parseRunbook(md);
-      expect(steps[0].substeps?.[0].runbooks).toEqual(['task.runbook.md']);
+      const step = steps[0];
+      assertStepHasSubsteps(step);
+      expect(step.substeps[0].runbooks).toEqual(['task.runbook.md']);
     });
 
     it('rejects list items after content in step', () => {
@@ -1060,8 +1114,10 @@ echo batch
 - PASS COMPLETE
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].forClause).toEqual({ variable: 'batch', start: 1, end: 3 });
-    expect(steps[0].substeps).toHaveLength(1);
+    const step = steps[0];
+    assertStepWithFor(step);
+    expect(step.forClause).toEqual({ variable: 'batch', start: 1, end: 3 });
+    expect(step.substeps).toHaveLength(1);
   });
 
   it('parses unresolved FOR clause with template variable from full markdown', () => {
@@ -1079,14 +1135,16 @@ echo batch
 - PASS COMPLETE
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].forClause).toEqual({
+    const step = steps[0];
+    assertStepWithFor(step);
+    expect(step.forClause).toEqual({
       unresolved: true,
       variable: 'batch',
       start: 1,
       end: { ref: 'Max' },
     });
-    expect(steps[0].kind).toBe('for');
-    expect(steps[0].substeps).toHaveLength(1);
+    expect(step.kind).toBe('for');
+    expect(step.substeps).toHaveLength(1);
   });
 
   describe('FOR clause nested transitions', () => {
@@ -1102,15 +1160,16 @@ echo check
 \`\`\`
 `;
       const steps = parseRunbook(markdown);
-      expect(steps[0].forClause).toBeDefined();
-      expect(steps[0].forClause?.transitions).toBeDefined();
-      expect(steps[0].forClause?.aggregation?.strategy).toBe('ALL');
-      expect(steps[0].forClause?.transitions?.pass).toEqual({
+      const step = steps[0];
+      assertStepWithFor(step);
+      expect(step.forClause.transitions).toBeDefined();
+      expect(step.forClause.aggregation?.strategy).toBe('ALL');
+      expect(step.forClause.transitions!.pass).toEqual({
         kind: 'pass',
         retry: 0,
         action: { type: 'CONTINUE' },
       });
-      expect(steps[0].forClause?.transitions?.fail).toEqual({
+      expect(step.forClause.transitions!.fail).toEqual({
         kind: 'fail',
         retry: 0,
         action: { type: 'BREAK' },
@@ -1127,9 +1186,10 @@ echo check
 \`\`\`
 `;
       const steps = parseRunbook(markdown);
-      expect(steps[0].forClause).toBeDefined();
+      const step = steps[0];
+      assertStepWithFor(step);
       // Without nested transitions, forClause transitions should be undefined
-      expect(steps[0].forClause?.transitions).toBeUndefined();
+      expect(step.forClause.transitions).toBeUndefined();
     });
 
     it('throws error on invalid nested bullet under FOR', () => {
@@ -1175,15 +1235,16 @@ echo check
 \`\`\`
 `;
       const steps = parseRunbook(markdown);
-      expect(steps[0].forClause).toBeDefined();
-      expect(steps[0].forClause?.transitions).toBeDefined();
-      expect(steps[0].forClause?.aggregation?.strategy).toBe('ANY');
-      expect(steps[0].forClause?.transitions?.pass).toEqual({
+      const step = steps[0];
+      assertStepWithFor(step);
+      expect(step.forClause.transitions).toBeDefined();
+      expect(step.forClause.aggregation?.strategy).toBe('ANY');
+      expect(step.forClause.transitions!.pass).toEqual({
         kind: 'pass',
         retry: 0,
         action: { type: 'CONTINUE' },
       });
-      expect(steps[0].forClause?.transitions?.fail).toEqual({
+      expect(step.forClause.transitions!.fail).toEqual({
         kind: 'fail',
         retry: 0,
         action: { type: 'BREAK' },
@@ -1206,13 +1267,15 @@ FAIL: STOP
 `;
       // Paragraph-style transitions are now treated as prompt text
       const steps = parseRunbook(md);
-      const sub = steps[0].substeps?.[0];
+      const step = steps[0];
+      assertStepHasSubsteps(step);
+      const sub = step.substeps[0];
       // Substeps always have transitions (context-aware defaults CONTINUE/STOP)
-      expect(sub?.transitions).toBeDefined();
-      expect(sub?.transitions?.pass.action.type).toBe('CONTINUE');
-      expect(sub?.transitions?.fail.action.type).toBe('STOP');
-      expect(sub?.prompt).toContain('Prompt text here.');
-      expect(sub?.prompt).toContain('PASS: CONTINUE');
+      expect(sub.transitions).toBeDefined();
+      expect(sub.transitions.pass.action.type).toBe('CONTINUE');
+      expect(sub.transitions.fail.action.type).toBe('STOP');
+      expect(sub.prompt).toContain('Prompt text here.');
+      expect(sub.prompt).toContain('PASS: CONTINUE');
     });
 
     it('rejects paragraph text after code block in substep', () => {
@@ -1481,9 +1544,11 @@ Review the following items.
 - task.runbook.md
 `;
     const steps = parseRunbook(md);
-    const sub = steps[0].substeps?.[0];
-    expect(sub?.prompt).toBe('Review the following items.');
-    expect(sub?.runbooks).toEqual(['task.runbook.md']);
+    const step = steps[0];
+    assertStepHasSubsteps(step);
+    const sub = step.substeps[0];
+    expect(sub.prompt).toBe('Review the following items.');
+    expect(sub.runbooks).toEqual(['task.runbook.md']);
   });
 
   it('returns empty prompt when substep has only runbook references', () => {
@@ -1497,9 +1562,11 @@ Review the following items.
 - beta.runbook.md
 `;
     const steps = parseRunbook(md);
-    const sub = steps[0].substeps?.[0];
-    expect(sub?.prompt).toBeUndefined();
-    expect(sub?.runbooks).toEqual(['alpha.runbook.md', 'beta.runbook.md']);
+    const step = steps[0];
+    assertStepHasSubsteps(step);
+    const sub = step.substeps[0];
+    expect(sub.prompt).toBeUndefined();
+    expect(sub.runbooks).toEqual(['alpha.runbook.md', 'beta.runbook.md']);
   });
 
   it('preserves prompt text alongside runbook refs in substep', () => {
@@ -1515,9 +1582,11 @@ Review the tasks carefully.
 - deploy.runbook.md
 `;
     const steps = parseRunbook(md);
-    const sub = steps[0].substeps?.[0];
-    expect(sub?.prompt).toContain('Review the tasks carefully.');
-    expect(sub?.runbooks).toEqual(['setup.runbook.md', 'deploy.runbook.md']);
+    const step = steps[0];
+    assertStepHasSubsteps(step);
+    const sub = step.substeps[0];
+    expect(sub.prompt).toContain('Review the tasks carefully.');
+    expect(sub.runbooks).toEqual(['setup.runbook.md', 'deploy.runbook.md']);
   });
 
   it('canonicalizes step-level runbook refs into runbook-list-derived substeps', () => {
@@ -1529,15 +1598,17 @@ Review the tasks carefully.
 - verify.runbook.md
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].prompt).toBeUndefined();
-    expect(steps[0].substepsDerivedFromRunbookList).toBe(true);
-    expect(steps[0].substeps).toHaveLength(2);
-    expect(steps[0].substeps?.[0]).toMatchObject({
+    const step = steps[0];
+    assertStepHasSubsteps(step);
+    expect(step.prompt).toBeUndefined();
+    expect(step.substepsDerivedFromRunbookList).toBe(true);
+    expect(step.substeps).toHaveLength(2);
+    expect(step.substeps[0]).toMatchObject({
       id: '1',
       description: '',
       runbooks: ['deploy.runbook.md'],
     });
-    expect(steps[0].substeps?.[1]).toMatchObject({
+    expect(step.substeps[1]).toMatchObject({
       id: '2',
       description: '',
       runbooks: ['verify.runbook.md'],
@@ -1554,8 +1625,10 @@ Review this checklist.
 - deploy.runbook.md
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].prompt).toBeUndefined();
-    expect(steps[0].substeps?.[0]).toMatchObject({
+    const step = steps[0];
+    assertStepHasSubsteps(step);
+    expect(step.prompt).toBeUndefined();
+    expect(step.substeps[0]).toMatchObject({
       id: '1',
       description: '',
       prompt: 'Review this checklist.',
@@ -1578,16 +1651,18 @@ Review this checklist.
 - PASS COMPLETE
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].forClause).toEqual({ variable: 'pass', start: 1, end: 2 });
-    expect(steps[0].substepsDerivedFromRunbookList).toBe(true);
-    expect(steps[0].substeps).toHaveLength(4);
-    expect(steps[0].substeps?.map((s) => s.runbooks)).toEqual([
+    const step = steps[0];
+    assertStepWithFor(step);
+    expect(step.forClause).toEqual({ variable: 'pass', start: 1, end: 2 });
+    expect(step.substepsDerivedFromRunbookList).toBe(true);
+    expect(step.substeps).toHaveLength(4);
+    expect(step.substeps.map((s) => s.runbooks)).toEqual([
       ['review-technical-accuracy.runbook.md'],
       ['review-structural-integrity.runbook.md'],
       ['review-build-runtime.runbook.md'],
       ['review-risk-safety.runbook.md'],
     ]);
-    expect(steps[0].transitions.fail.action).toEqual({
+    expect(step.transitions.fail.action).toEqual({
       type: 'GOTO',
       target: { step: 'Synthesize' },
     });
@@ -1635,7 +1710,7 @@ describe('regex boundaries and runbook patterns', () => {
 `;
     const steps = parseRunbook(md);
     // "task.runbook.md extra text" should NOT be parsed as a runbook ref
-    expect(steps[0].substeps).toBeUndefined();
+    expect('substeps' in steps[0]).toBe(false);
   });
 
   it('does not match bare .runbook.md without a filename prefix', () => {
@@ -1648,7 +1723,7 @@ describe('regex boundaries and runbook patterns', () => {
     const steps = parseRunbook(md);
     // ".runbook.md" alone has no prefix — \S+ in the regex must capture at
     // least one char before the ".runbook.md" suffix, so this cannot match.
-    expect(steps[0].substeps).toBeUndefined();
+    expect('substeps' in steps[0]).toBe(false);
   });
 
   it('matches simple runbook ref', () => {
@@ -1659,7 +1734,9 @@ describe('regex boundaries and runbook patterns', () => {
 - simple.runbook.md
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].substeps?.[0].runbooks).toEqual(['simple.runbook.md']);
+    const step = steps[0];
+    assertStepHasSubsteps(step);
+    expect(step.substeps[0].runbooks).toEqual(['simple.runbook.md']);
   });
 
   it('matches path-like runbook ref', () => {
@@ -1670,7 +1747,9 @@ describe('regex boundaries and runbook patterns', () => {
 - path/to/complex-name.runbook.md
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].substeps?.[0].runbooks).toEqual(['path/to/complex-name.runbook.md']);
+    const step = steps[0];
+    assertStepHasSubsteps(step);
+    expect(step.substeps[0].runbooks).toEqual(['path/to/complex-name.runbook.md']);
   });
 
   it('does not treat .runbook.md.txt as a runbook ref', () => {
@@ -1681,7 +1760,7 @@ describe('regex boundaries and runbook patterns', () => {
 - task.runbook.md.txt
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].substeps).toBeUndefined();
+    expect('substeps' in steps[0]).toBe(false);
   });
 });
 
@@ -1835,7 +1914,7 @@ This is implicit prompt text.
 Do the work.
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].substeps).toBeUndefined();
+    expect('substeps' in steps[0]).toBe(false);
   });
 
   it('returns substeps array when step has substeps', () => {
@@ -1847,8 +1926,10 @@ Do the work.
 Do work.
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].substeps).toHaveLength(1);
-    expect(steps[0].substeps![0].id).toBe('1');
+    const step = steps[0];
+    assertStepHasSubsteps(step);
+    expect(step.substeps).toHaveLength(1);
+    expect(step.substeps[0].id).toBe('1');
   });
 
   it('does not synthesize substeps when step has no runbook refs', () => {
@@ -1858,7 +1939,7 @@ Do work.
 Just text.
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].substeps).toBeUndefined();
+    expect('substeps' in steps[0]).toBe(false);
   });
 });
 
@@ -1878,11 +1959,13 @@ Check the items.
 - setup.runbook.md
 `;
     const steps = parseRunbook(md);
-    const sub = steps[0].substeps?.[0];
+    const step = steps[0];
+    assertStepHasSubsteps(step);
+    const sub = step.substeps[0];
     // Prompt should contain the text but NOT the runbook line
-    expect(sub?.prompt).toContain('Check the items.');
-    expect(sub?.prompt).not.toContain('setup.runbook.md');
-    expect(sub?.runbooks).toEqual(['setup.runbook.md']);
+    expect(sub.prompt).toContain('Check the items.');
+    expect(sub.prompt).not.toContain('setup.runbook.md');
+    expect(sub.runbooks).toEqual(['setup.runbook.md']);
   });
 
   it('trims whitespace from filtered content', () => {
@@ -1896,9 +1979,11 @@ Single line of text.
 - task.runbook.md
 `;
     const steps = parseRunbook(md);
-    const sub = steps[0].substeps?.[0];
+    const step = steps[0];
+    assertStepHasSubsteps(step);
+    const sub = step.substeps[0];
     // Prompt should be trimmed
-    expect(sub?.prompt).toBe('Single line of text.');
+    expect(sub.prompt).toBe('Single line of text.');
   });
 });
 
@@ -1933,14 +2018,16 @@ FAIL: STOP
 Do substep work.
 `;
     const steps = parseRunbook(md);
-    const sub = steps[0].substeps?.[0];
+    const step = steps[0];
+    assertStepHasSubsteps(step);
+    const sub = step.substeps[0];
     // Paragraph-style transitions are not parsed as transitions — they become prompt text
     // Substeps always have transitions (context-aware defaults CONTINUE/STOP)
-    expect(sub?.transitions).toBeDefined();
-    expect(sub?.transitions?.pass.action.type).toBe('CONTINUE');
-    expect(sub?.transitions?.fail.action.type).toBe('STOP');
-    expect(sub?.prompt).toContain('PASS: CONTINUE');
-    expect(sub?.prompt).toContain('Do substep work.');
+    expect(sub.transitions).toBeDefined();
+    expect(sub.transitions.pass.action.type).toBe('CONTINUE');
+    expect(sub.transitions.fail.action.type).toBe('STOP');
+    expect(sub.prompt).toContain('PASS: CONTINUE');
+    expect(sub.prompt).toContain('Do substep work.');
   });
 });
 
@@ -1957,7 +2044,7 @@ echo outside
 `;
     const { runbook: doc } = parseRunbookDocument(md);
     expect(doc.steps).toHaveLength(1);
-    expect(doc.steps[0].command).toBeUndefined();
+    expect('command' in doc.steps[0]).toBe(false);
   });
 
   it('parses markdown with no steps and returns diagnostics', () => {
@@ -2022,9 +2109,11 @@ echo hello
 Do other work.
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].substeps).toHaveLength(2);
-    expect(steps[0].substeps![0].command?.code).toBe('echo hello');
-    expect(steps[0].substeps![1].prompt).toBe('Do other work.');
+    const step = steps[0];
+    assertStepHasSubsteps(step);
+    expect(step.substeps).toHaveLength(2);
+    expect(step.substeps[0].command?.code).toBe('echo hello');
+    expect(step.substeps[1].prompt).toBe('Do other work.');
   });
 
   it('preserves prompt text across multiple paragraphs in step', () => {
@@ -2060,9 +2149,11 @@ Do first.
 Do second.
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].substeps).toHaveLength(2);
-    expect(steps[0].substeps![0].transitions?.pass.action).toEqual({ type: 'CONTINUE' });
-    expect(steps[0].substeps![1].transitions?.pass.action).toEqual({ type: 'COMPLETE' });
+    const step = steps[0];
+    assertStepHasSubsteps(step);
+    expect(step.substeps).toHaveLength(2);
+    expect(step.substeps[0].transitions.pass.action).toEqual({ type: 'CONTINUE' });
+    expect(step.substeps[1].transitions.pass.action).toEqual({ type: 'COMPLETE' });
   });
 
   it('handles step with only transitions and no other content', () => {
@@ -2075,8 +2166,8 @@ Do second.
 `;
     const steps = parseRunbook(md);
     expect(steps[0].prompt).toBeUndefined();
-    expect(steps[0].command).toBeUndefined();
-    expect(steps[0].substeps).toBeUndefined();
+    expect('command' in steps[0]).toBe(false);
+    expect('substeps' in steps[0]).toBe(false);
     expect(steps[0].transitions.pass.action).toEqual({ type: 'CONTINUE' });
   });
 
@@ -2093,8 +2184,10 @@ Do second.
 Do iteration.
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].forClause).toEqual({ variable: 'i', start: 1, end: 3 });
-    expect(steps[0].substeps![0].transitions?.pass.action).toEqual({ type: 'NEXT' });
+    const step = steps[0];
+    assertStepWithFor(step);
+    expect(step.forClause).toEqual({ variable: 'i', start: 1, end: 3 });
+    expect(step.substeps[0].transitions.pass.action).toEqual({ type: 'NEXT' });
   });
 
   it('H3 header with unparsable format is ignored when only content', () => {
@@ -2105,7 +2198,7 @@ Do iteration.
 ### @random notes
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].substeps).toBeUndefined();
+    expect('substeps' in steps[0]).toBe(false);
   });
 
   it('list items in preamble are not processed as step content', () => {
@@ -2133,9 +2226,10 @@ rd prompt 'Hello world'
 \`\`\`
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].command).toBeDefined();
-    expect(steps[0].command!.lang).toBe('prompt');
-    expect(steps[0].command!.code).toContain('rd prompt');
+    const step = steps[0];
+    assertStepWithCommand(step);
+    expect(step.command.lang).toBe('prompt');
+    expect(step.command.code).toContain('rd prompt');
   });
 });
 
@@ -2148,8 +2242,10 @@ describe('C2: substep short form', () => {
 Do something.
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].substeps).toHaveLength(1);
-    expect(steps[0].substeps![0].id).toBe('1');
+    const step = steps[0];
+    assertStepHasSubsteps(step);
+    expect(step.substeps).toHaveLength(1);
+    expect(step.substeps[0].id).toBe('1');
   });
 
   it('parses bare numeric substep with description', () => {
@@ -2160,9 +2256,11 @@ Do something.
 Review the code carefully.
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].substeps).toHaveLength(1);
-    expect(steps[0].substeps![0].id).toBe('2');
-    expect(steps[0].substeps![0].description).toBe('Review code');
+    const step = steps[0];
+    assertStepHasSubsteps(step);
+    expect(step.substeps).toHaveLength(1);
+    expect(step.substeps[0].id).toBe('2');
+    expect(step.substeps[0].description).toBe('Review code');
   });
 
   it('parses bare numeric substep under named parent step', () => {
@@ -2177,12 +2275,14 @@ Set up the environment.
 Apply configuration.
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].name).toBe('Setup');
-    expect(steps[0].substeps).toHaveLength(2);
-    expect(steps[0].substeps![0].id).toBe('1');
-    expect(steps[0].substeps![0].description).toBe('Initialize');
-    expect(steps[0].substeps![1].id).toBe('2');
-    expect(steps[0].substeps![1].description).toBe('Configure');
+    const step = steps[0];
+    assertStepHasSubsteps(step);
+    expect(step.name).toBe('Setup');
+    expect(step.substeps).toHaveLength(2);
+    expect(step.substeps[0].id).toBe('1');
+    expect(step.substeps[0].description).toBe('Initialize');
+    expect(step.substeps[1].id).toBe('2');
+    expect(step.substeps[1].description).toBe('Configure');
   });
 });
 
@@ -2238,8 +2338,10 @@ Some content.
 Some content.
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].substeps).toHaveLength(1);
-    expect(steps[0].substeps?.[0].id).toBe('Cleanup');
+    const step = steps[0];
+    assertStepHasSubsteps(step);
+    expect(step.substeps).toHaveLength(1);
+    expect(step.substeps[0].id).toBe('Cleanup');
   });
 });
 
@@ -2252,8 +2354,10 @@ describe('bare named substep parsing', () => {
 Handle errors.
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].substeps).toHaveLength(1);
-    expect(steps[0].substeps?.[0].id).toBe('ErrorHandler');
+    const step = steps[0];
+    assertStepHasSubsteps(step);
+    expect(step.substeps).toHaveLength(1);
+    expect(step.substeps[0].id).toBe('ErrorHandler');
   });
 
   it('parses mixed bare numeric and bare named substeps', () => {
@@ -2268,9 +2372,11 @@ First task.
 Clean up.
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].substeps).toHaveLength(2);
-    expect(steps[0].substeps?.[0].id).toBe('1');
-    expect(steps[0].substeps?.[1].id).toBe('Cleanup');
+    const step = steps[0];
+    assertStepHasSubsteps(step);
+    expect(step.substeps).toHaveLength(2);
+    expect(step.substeps[0].id).toBe('1');
+    expect(step.substeps[1].id).toBe('Cleanup');
   });
 
   it('bare named substep has no stepRef (positional assignment)', () => {
@@ -2279,10 +2385,12 @@ Clean up.
 ### ErrorHandler
 `;
     const steps = parseRunbook(md);
+    const step = steps[0];
+    assertStepHasSubsteps(step);
     // Bare named substeps don't have stepRef in the parsed header
     // (they are positionally assigned to parent H2)
-    expect(steps[0].substeps).toHaveLength(1);
-    expect(steps[0].substeps?.[0].id).toBe('ErrorHandler');
+    expect(step.substeps).toHaveLength(1);
+    expect(step.substeps[0].id).toBe('ErrorHandler');
   });
 
   it('rejects runbook with invalid FOR dotdot syntax', () => {
@@ -2307,11 +2415,13 @@ echo "check"
 \`\`\`
 `;
     const steps = parseRunbook(md);
-    const substep = steps[0].substeps?.[0];
+    const step = steps[0];
+    assertStepHasSubsteps(step);
+    const substep = step.substeps[0];
     expect(substep).toBeDefined();
-    expect(substep!.transitions).toBeDefined();
-    expect(substep!.transitions!.pass.action).toEqual({ type: 'DEFER' });
-    expect(substep!.transitions!.fail.action).toEqual({ type: 'DEFER' });
+    expect(substep.transitions).toBeDefined();
+    expect(substep.transitions.pass.action).toEqual({ type: 'DEFER' });
+    expect(substep.transitions.fail.action).toEqual({ type: 'DEFER' });
   });
 
   it('standalone DEFER under FOR clause produces iteration-level DEFER transitions', () => {
@@ -2569,11 +2679,13 @@ echo hello
 echo iteration
 \`\`\``;
     const steps = parseRunbook(md);
-    expect(steps[0].kind).toBe('for');
-    if (steps[0].kind === 'for') {
-      expect(steps[0].forClause.start).toBe(1);
-      expect(steps[0].forClause.end).toBe(3);
+    const step = steps[0];
+    assertStepWithFor(step);
+    expect(step.forClause.start).toBe(1);
+    if (!('end' in step.forClause)) {
+      throw new Error('expected forClause with end bound');
     }
+    expect(step.forClause.end).toBe(3);
   });
 
   it('assigns DEFER transitions to substeps with runbook refs', () => {
@@ -2788,7 +2900,9 @@ echo "go"
 \`\`\`
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].substeps?.[0].prompt).toBe('Prompt line one\nPrompt line two');
+    const step = steps[0];
+    assertStepHasSubsteps(step);
+    expect(step.substeps[0].prompt).toBe('Prompt line one\nPrompt line two');
   });
 
   it('accumulates prompt text into step (no substeps)', () => {
@@ -2815,8 +2929,10 @@ describe('RunbookRef in runbook lists', () => {
  - {{ TargetRunbook }}
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].substeps).toHaveLength(1);
-    expect(steps[0].substeps![0].runbooks).toEqual([{ ref: 'TargetRunbook' }]);
+    const step = steps[0];
+    assertStepHasSubsteps(step);
+    expect(step.substeps).toHaveLength(1);
+    expect(step.substeps[0].runbooks).toEqual([{ ref: 'TargetRunbook' }]);
   });
 
   it('captures mixed literal and template entries in substep', () => {
@@ -2828,7 +2944,9 @@ describe('RunbookRef in runbook lists', () => {
  - {{ DynamicRunbook }}
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].substeps![0].runbooks).toEqual(['setup.runbook.md', { ref: 'DynamicRunbook' }]);
+    const step = steps[0];
+    assertStepHasSubsteps(step);
+    expect(step.substeps[0].runbooks).toEqual(['setup.runbook.md', { ref: 'DynamicRunbook' }]);
   });
 
   it('does not include template variable in prompt text', () => {
@@ -2840,8 +2958,10 @@ Some prompt text
  - {{ TargetRunbook }}
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].substeps![0].prompt).toBe('Some prompt text');
-    expect(steps[0].substeps![0].runbooks).toEqual([{ ref: 'TargetRunbook' }]);
+    const step = steps[0];
+    assertStepHasSubsteps(step);
+    expect(step.substeps[0].prompt).toBe('Some prompt text');
+    expect(step.substeps[0].runbooks).toEqual([{ ref: 'TargetRunbook' }]);
   });
 
   it('canonicalizes step-level template variable to synthetic substep', () => {
@@ -2852,10 +2972,12 @@ Some prompt text
 - {{ TargetRunbook }}
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].kind).toBe('substeps');
-    expect(steps[0].substepsDerivedFromRunbookList).toBe(true);
-    expect(steps[0].substeps).toHaveLength(1);
-    expect(steps[0].substeps![0].runbooks).toEqual([{ ref: 'TargetRunbook' }]);
+    const step = steps[0];
+    assertStepHasSubsteps(step);
+    expect(step.kind).toBe('substeps');
+    expect(step.substepsDerivedFromRunbookList).toBe(true);
+    expect(step.substeps).toHaveLength(1);
+    expect(step.substeps[0].runbooks).toEqual([{ ref: 'TargetRunbook' }]);
   });
 
   it('captures dotted path in RunbookRef', () => {
@@ -2865,6 +2987,8 @@ Some prompt text
  - {{ config.target }}
 `;
     const steps = parseRunbook(md);
-    expect(steps[0].substeps![0].runbooks).toEqual([{ ref: 'config.target' }]);
+    const step = steps[0];
+    assertStepHasSubsteps(step);
+    expect(step.substeps[0].runbooks).toEqual([{ ref: 'config.target' }]);
   });
 });
