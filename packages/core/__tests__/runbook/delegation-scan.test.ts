@@ -11,7 +11,7 @@ import {
 } from '../../src/runbook/delegation-token.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type { RunbookState, StepDelegation, DelegationLinkage } from '../../src/runbook/types.js';
-import { brandStoredOutputsForTest } from '../helpers/effective-vars.js';
+import { brandStoredOutputsForTest, brandEffectiveVarsForTest } from '../helpers/effective-vars.js';
 
 describe('DelegationScanService', () => {
   let tmpDir: string;
@@ -59,7 +59,7 @@ describe('DelegationScanService', () => {
     return {
       tokenHash: hashDelegationToken(token),
       childRunbookPath: 'child.md',
-      contextSnapshot: { vars: { env: 'staging' }, ancestors: [] },
+      contextSnapshot: { vars: brandEffectiveVarsForTest({ env: 'staging' }), ancestors: [] },
       childRunId: null,
       createdAt: '2026-02-27T10:00:00.000Z',
       cancelledAt: null,
@@ -118,7 +118,7 @@ describe('DelegationScanService', () => {
       const token = generateDelegationToken();
       const delegation = {
         ...makeDelegation(token),
-        contextSnapshot: { vars: {}, ancestors: [], step: '1' },
+        contextSnapshot: { vars: brandEffectiveVarsForTest({}), ancestors: [], step: '1' },
       };
 
       const state = makeState('run-parent', {
@@ -137,7 +137,7 @@ describe('DelegationScanService', () => {
       const token = generateDelegationToken();
       const delegation = {
         ...makeDelegation(token),
-        contextSnapshot: { vars: {}, ancestors: [] },
+        contextSnapshot: { vars: brandEffectiveVarsForTest({}), ancestors: [] },
       };
 
       const state = makeState('run-parent', {
@@ -343,7 +343,7 @@ describe('DelegationScanService', () => {
       const token = generateDelegationToken();
       const delegation = {
         ...makeDelegation(token),
-        contextSnapshot: { vars: {}, ancestors: [], step: '3' },
+        contextSnapshot: { vars: brandEffectiveVarsForTest({}), ancestors: [], step: '3' },
       };
 
       const state = makeState('run-context-step', {

@@ -8,6 +8,7 @@ import type {
 } from '../../src/runbook/types.js';
 import type { RunbookContext } from '../../src/runbook/compiler.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
+import { brandEffectiveVarsForTest } from '../helpers/effective-vars.js';
 
 // Mock delegation-service so we can force `retryDelegation` to throw a
 // non-RundownError. The try/catch inside `runRetryHook` must convert that
@@ -128,7 +129,7 @@ describe('runRetryHook try/catch around retryDelegation', () => {
       createdAt: '2026-01-01T00:00:00.000Z',
       cancelledAt: null,
       contextSnapshot: {
-        vars: {},
+        vars: brandEffectiveVarsForTest({}),
         ancestors: [],
         step: '1',
         substep: '1',
@@ -221,7 +222,7 @@ describe('runRetryHook try/catch around retryDelegation', () => {
       createdAt: '2026-01-01T00:00:00.000Z',
       cancelledAt: null,
       contextSnapshot: {
-        vars: {},
+        vars: brandEffectiveVarsForTest({}),
         ancestors: [],
         step: '1',
         substep: '1',
@@ -327,7 +328,7 @@ describe('runRetryHook try/catch around retryDelegation', () => {
       createdAt: '2026-01-01T00:00:00.000Z',
       cancelledAt: null,
       contextSnapshot: {
-        vars: {},
+        vars: brandEffectiveVarsForTest({}),
         ancestors: [],
         step: '1',
         substep: '1',
@@ -385,7 +386,7 @@ describe('runRetryHook try/catch around retryDelegation', () => {
       createdAt: '2026-01-01T00:00:00.000Z',
       cancelledAt: null,
       contextSnapshot: {
-        vars: {},
+        vars: brandEffectiveVarsForTest({}),
         ancestors: [],
         step: '1',
         substep: '1',
