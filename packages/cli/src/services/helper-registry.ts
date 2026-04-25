@@ -173,3 +173,27 @@ export function getHelperRegistry(): HelperRegistry {
 export function resetHelperRegistry(): void {
   _helperRegistry = new Map();
 }
+
+/**
+ * Detect variable names that collide with registered helper names.
+ *
+ * Called at startup after both variable resolution and registry loading complete.
+ * Helper wins at resolution time; users must use `{{ ./VarName }}` to access a
+ * shadowed variable.
+ *
+ * @param registry - Built helper registry
+ * @param variables - Resolved template variable map
+ * @returns Array of names that appear in both the registry and the variable map
+ */
+export function detectHelperCollisions(
+  registry: HelperRegistry,
+  variables: Readonly<Record<string, unknown>>,
+): string[] {
+  const collisions: string[] = [];
+  for (const name of registry.keys()) {
+    if (Object.hasOwn(variables, name)) {
+      collisions.push(name);
+    }
+  }
+  return collisions;
+}

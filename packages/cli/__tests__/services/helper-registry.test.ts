@@ -8,6 +8,7 @@ import {
   setHelperRegistry,
   getHelperRegistry,
   resetHelperRegistry,
+  detectHelperCollisions,
   type HelperRegistry,
 } from '../../src/services/helper-registry.js';
 
@@ -117,6 +118,27 @@ describe('loadHelperModules', () => {
     expect(registry.size).toBe(0);
     expect(warnSpy).not.toHaveBeenCalled();
     warnSpy.mockRestore();
+  });
+});
+
+describe('detectHelperCollisions', () => {
+  it('returns colliding names when variable names match helper names', () => {
+    const registry: HelperRegistry = new Map([
+      ['upper', (v: string) => v.toUpperCase()],
+      ['slug', (v: string) => v],
+    ]);
+    const variables = { upper: 'some value', other: 'fine' };
+    expect(detectHelperCollisions(registry, variables)).toEqual(['upper']);
+  });
+
+  it('returns empty array when no collisions', () => {
+    const registry: HelperRegistry = new Map([['upper', (v: string) => v.toUpperCase()]]);
+    const variables = { name: 'Alice' };
+    expect(detectHelperCollisions(registry, variables)).toEqual([]);
+  });
+
+  it('returns empty array when registry is empty', () => {
+    expect(detectHelperCollisions(new Map(), { name: 'Alice' })).toEqual([]);
   });
 });
 
