@@ -175,5 +175,6 @@ describe('abortDelegation', () => {
     if (result.status !== 'not_found') return;
     expect(result.substepId).toBe('1');
     expect(result.error.code).toBe('RD-801');
+    expect(result.error.message).toMatch(/step not found/i);
   });
 });
