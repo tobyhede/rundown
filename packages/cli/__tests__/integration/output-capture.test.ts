@@ -48,6 +48,9 @@ describe('output capture — file-backed naked OUTPUTS at step level', () => {
     await workspace.cleanup();
   });
 
+  // `printf`/`echo` are not in the default policy allow list and the default
+  // mode is `prompted` — `--allow-all` bypasses policy so the shell can write
+  // to $RD_OUTPUTS_*.
   it('captures the shell-written value and exposes it to the next step', async () => {
     const result = runCli('run capture.runbook.md --allow-all', workspace);
     expect(result.exitCode).toBe(0);
@@ -91,6 +94,9 @@ describe('output capture — best-effort behaviour', () => {
     await workspace.cleanup();
   });
 
+  // `printf`/`echo` are not in the default policy allow list and the default
+  // mode is `prompted` — `--allow-all` bypasses policy so the shell can write
+  // to $RD_OUTPUTS_*.
   it('omits an output the shell never wrote (empty file)', async () => {
     const RUNBOOK = `---
 name: empty-capture
@@ -168,6 +174,8 @@ printf 'https://example.test' > "$RD_OUTPUTS_DeployUrl"
   });
 
   it('creates a per-substep directory when the OUTPUTS lives on a substep', async () => {
+    // Parent uses PASS ALL aggregation, so substep must DEFER to participate
+    // (PASS CONTINUE would prevent aggregation from accumulating a result).
     const RUNBOOK = `---
 name: substep-capture
 ---
