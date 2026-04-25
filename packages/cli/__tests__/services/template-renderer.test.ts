@@ -1884,6 +1884,20 @@ describe('substituteText with HelperRegistry', () => {
     expect(substituteText('{{ unknown name }}', { name: 'foo' })).toBe('{{ unknown name }}');
   });
 
+  it('preserves literal when helper throws', () => {
+    setHelperRegistry(
+      new Map([
+        [
+          'thrower',
+          (_v: string) => {
+            throw new Error('boom');
+          },
+        ],
+      ]),
+    );
+    expect(substituteText('{{ thrower name }}', { name: 'x' })).toBe('{{ thrower name }}');
+  });
+
   it('{{ ./VarName }} bypasses helper registry and resolves variable directly', () => {
     expect(substituteText('{{ ./upper }}', { upper: 'plain value' })).toBe('plain value');
   });
