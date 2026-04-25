@@ -10,6 +10,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { types } from 'node:util';
+import { pathToFileURL } from 'node:url';
 
 /**
  * Map of helper name to synchronous transformation function.
@@ -112,7 +113,7 @@ export async function loadHelperModules(
     let mod: Record<string, unknown>;
     try {
       // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-      mod = await import(canonical);
+      mod = await import(pathToFileURL(canonical).href);
     } catch (err) {
       console.warn(`Warning: Failed to load helper module "${rawPath}": ${String(err)}`);
       continue;
