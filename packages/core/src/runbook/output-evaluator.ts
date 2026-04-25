@@ -66,9 +66,51 @@ export interface OutputCursor {
   readonly substepId?: string;
 }
 
+/** Module-level helper registry, installed at CLI startup before any machine runs. */
+let _helperRegistry: ReadonlyMap<string, (value: string) => string> = new Map();
+
+/**
+ * Install the global helper registry for OUTPUTS expression evaluation.
+ *
+ * Must be called before any runbook machine executes. Mirrors `setColorEnabled`
+ * in `colors.ts` — module-level state that bridges the CLI startup path into
+ * the core evaluation functions called from XState machine actions.
+ *
+ * @param registry - Loaded helper registry
+ */
+export function setHelperRegistry(registry: ReadonlyMap<string, (value: string) => string>): void {
+  _helperRegistry = registry;
+}
+
+/**
+ * Get the installed helper registry.
+ *
+ * @returns Current helper registry (empty map if not yet installed)
+ */
+export function getHelperRegistry(): ReadonlyMap<string, (value: string) => string> {
+  return _helperRegistry;
+}
+
+/**
+ * Reset the helper registry to empty (for testing only).
+ */
+export function resetHelperRegistry(): void {
+  _helperRegistry = new Map();
+}
+
 const TEMPLATE_PATH_REGEX =
   /{{\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)\s*}}/g;
 const PATH_HELPER_REGEX = /^\{\{\s*path\s+"([^"]+)"(?:\s+ctx=(\S.*?\S|\S))?\s*\}\}$/;
+
+/** Matches `{{ ./VarName }}` — explicit variable lookup escape hatch. */
+const EXPLICIT_VAR_REGEX = /^\{\{\s*\.\//;
+
+/** Matches `{{ helperName varRef }}` — helper call with variable reference. Group 1: helperName, Group 2: varRef path. */
+const HELPER_VAR_CALL_REGEX =
+  /^\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s+([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)\s*\}\}$/;
+
+/** Matches `{{ helperName "literal" }}` — helper call with string literal. Group 1: helperName, Group 2: literal value. */
+const HELPER_LITERAL_CALL_REGEX = /^\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s+"([^"]*)"\s*\}\}$/;
 
 function resolveDottedPath(obj: unknown, path: string): unknown {
   const segments = path.split('.');
@@ -136,6 +178,50 @@ function hasUnresolvedTemplateReferences(text: string, variables: OutputVars): b
 }
 
 /**
+ * Attempt to dispatch a helper call expression.
+ *
+ * @param trimmed - Trimmed expression string
+ * @param variables - Variable frame for argument resolution
+ * @returns Helper result string, null if no match or helper not found, undefined if helper threw
+ */
+function tryDispatchHelper(trimmed: string, variables: OutputVars): string | null | undefined {
+  const varCallMatch = HELPER_VAR_CALL_REGEX.exec(trimmed);
+  if (varCallMatch) {
+    const [, helperName, varPath] = varCallMatch;
+    const helper = _helperRegistry.get(helperName);
+    if (!helper) return null;
+    const argValue = resolveOutputPath(varPath, variables) ?? '';
+    try {
+      return helper(argValue);
+    } catch (err) {
+      void logger.warn('evaluateOutputExpression: helper threw at call time', {
+        helper: helperName,
+        error: String(err),
+      });
+      return undefined;
+    }
+  }
+
+  const litCallMatch = HELPER_LITERAL_CALL_REGEX.exec(trimmed);
+  if (litCallMatch) {
+    const [, helperName, literal] = litCallMatch;
+    const helper = _helperRegistry.get(helperName);
+    if (!helper) return null;
+    try {
+      return helper(literal);
+    } catch (err) {
+      void logger.warn('evaluateOutputExpression: helper threw at call time', {
+        helper: helperName,
+        error: String(err),
+      });
+      return undefined;
+    }
+  }
+
+  return null;
+}
+
+/**
  * Evaluate a single OUTPUTS expression against the supplied variable frame.
  *
  * Supports four forms: `{{ path "file.json" }}` helper, `"quoted literal"` (may
@@ -186,6 +272,26 @@ export function evaluateOutputExpression(expr: string, variables: OutputVars): s
     return assembleArtifactPath(workPath, contextId, filename);
   }
 
+  // 2. Explicit variable lookup: {{ ./VarName }} — bypasses helper registry
+  if (EXPLICIT_VAR_REGEX.test(trimmed)) {
+    const varName = trimmed
+      .replace(/^\{\{\s*\.\//, '')
+      .replace(/\s*\}\}$/, '')
+      .trim();
+    const resolved = resolveOutputPath(varName, variables);
+    if (resolved !== undefined) return resolved;
+    throw new Error(
+      `evaluateOutputExpression: explicit variable lookup "{{ ./${varName} }}" not found in output frame`,
+    );
+  }
+
+  // 3. Helper call dispatch
+  const helperResult = tryDispatchHelper(trimmed, variables);
+  if (helperResult !== null) {
+    return helperResult ?? trimmed; // undefined = helper threw, return literal as best-effort
+  }
+
+  // 4. Existing forms follow (quoted literal, template reference, bare identifier)
   const quotedMatch = /^"([^"]*)"$/.exec(trimmed);
   if (quotedMatch) {
     const inner = quotedMatch[1];

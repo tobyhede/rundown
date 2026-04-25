@@ -1,4 +1,4 @@
-import { describe, it, expect } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import type { OutputDeclaration } from '@rundown-org/parser';
 import { createJsonArrayStream } from '../../src/runbook/types.js';
 import type { ForContext, TemplateVarValue } from '../../src/runbook/types.js';
@@ -8,6 +8,8 @@ import {
   evaluateOutputExpression,
   evaluateStepOutputDeclarations,
   flattenTemplateVars,
+  setHelperRegistry,
+  resetHelperRegistry,
 } from '../../src/runbook/output-evaluator.js';
 
 describe('evaluateOutputExpression', () => {
@@ -424,5 +426,72 @@ describe('buildExecutionFrame', () => {
     expect(frame['context.current.step']).toBe('');
     expect(frame.PlanPath).toBe('/tmp/plan.md');
     expect(frame.Stored).toBe('kept');
+  });
+});
+
+describe('evaluateOutputExpression with HelperRegistry', () => {
+  beforeEach(() => {
+    setHelperRegistry(
+      new Map([
+        ['upper', (v: string) => v.toUpperCase()],
+        ['slug', (v: string) => v.toLowerCase().replace(/\s+/g, '-')],
+      ]),
+    );
+  });
+
+  afterEach(() => {
+    resetHelperRegistry();
+  });
+
+  it('calls a registered helper with a variable reference argument', () => {
+    expect(evaluateOutputExpression('{{ upper Title }}', { Title: 'hello world' })).toBe(
+      'HELLO WORLD',
+    );
+  });
+
+  it('calls a registered helper with a string literal argument', () => {
+    expect(evaluateOutputExpression('{{ slug "My Project Name" }}', {})).toBe('my-project-name');
+  });
+
+  it('leaves the expression as literal when helper name not in registry', () => {
+    expect(evaluateOutputExpression('{{ unknown Title }}', { Title: 'foo' })).toBe(
+      '{{ unknown Title }}',
+    );
+  });
+
+  it('leaves literal when helper throws at call time', () => {
+    setHelperRegistry(
+      new Map([
+        [
+          'boom',
+          (_v: string) => {
+            throw new Error('helper error');
+          },
+        ],
+      ]),
+    );
+    const result = evaluateOutputExpression('{{ boom Title }}', { Title: 'val' });
+    expect(result).toBe('{{ boom Title }}');
+  });
+
+  it('resolves {{ ./VarName }} as explicit variable lookup bypassing helpers', () => {
+    expect(evaluateOutputExpression('{{ ./upper }}', { upper: 'the variable value' })).toBe(
+      'the variable value',
+    );
+  });
+
+  it('throws when {{ ./VarName }} references an undefined variable', () => {
+    expect(() => evaluateOutputExpression('{{ ./missing }}', {})).toThrow(
+      /explicit variable lookup/,
+    );
+  });
+
+  it('path built-in still takes priority over user helpers', () => {
+    expect(
+      evaluateOutputExpression('{{ path "plan.json" }}', {
+        WorkPath: '.rundown/work/demo',
+        ContextId: 'ctx-abc',
+      }),
+    ).toMatch(/plan\.json$/);
   });
 });
