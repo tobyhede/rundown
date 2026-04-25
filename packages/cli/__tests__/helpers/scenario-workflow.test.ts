@@ -1,4 +1,10 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import type { Scenario, Scenarios } from '../../src/schemas/scenarios.js';
+import type {
+  CapturedTransition,
+  CommandSequenceResult,
+} from '../../src/helpers/command-sequence.js';
+import { mockFn } from './typed-mocks.js';
 
 // Mock resolve-runbook
 jest.unstable_mockModule('../../src/helpers/resolve-runbook', () => ({
@@ -13,32 +19,59 @@ jest.unstable_mockModule('@rundown-org/parser', () => ({
 }));
 
 // Mock scenarios schema — include all exports used by scenario-runbook
-jest.unstable_mockModule('../../src/schemas/scenarios', () => ({
-  parseScenarios: jest.fn(),
-  getEffectiveResult: jest.fn<any>().mockImplementation((s: any) => s.result ?? s.expect?.result),
-}));
+jest.unstable_mockModule('../../src/schemas/scenarios', () => {
+  const getEffectiveResultMock =
+    mockFn<
+      (s: { result?: 'COMPLETE' | 'STOP'; expect?: { result?: 'COMPLETE' | 'STOP' } }) =>
+        | 'COMPLETE'
+        | 'STOP'
+    >();
+  getEffectiveResultMock.mockImplementation((s) => {
+    const r = s.result ?? s.expect?.result;
+    if (r === undefined) {
+      throw new Error('Neither result nor expect.result is defined');
+    }
+    return r;
+  });
+  return {
+    parseScenarios: jest.fn(),
+    getEffectiveResult: getEffectiveResultMock,
+  };
+});
 
 // Mock node:fs/promises
 const actualFsPromises = await import('node:fs/promises');
-jest.unstable_mockModule('node:fs/promises', () => ({
-  ...actualFsPromises,
-  readFile: jest.fn(),
-  rm: jest.fn<any>().mockResolvedValue(undefined),
-}));
+jest.unstable_mockModule('node:fs/promises', () => {
+  const rmMock = mockFn<typeof actualFsPromises.rm>();
+  rmMock.mockResolvedValue(undefined);
+  return {
+    ...actualFsPromises,
+    readFile: jest.fn(),
+    rm: rmMock,
+  };
+});
 
 // Mock node:fs (sync functions used by executeScenario)
 const actualFs = await import('node:fs');
-jest.unstable_mockModule('node:fs', () => ({
-  ...actualFs,
-  mkdtempSync: jest.fn<any>().mockReturnValue('/tmp/rd-scenario-test'),
-  mkdirSync: jest.fn(),
-  copyFileSync: jest.fn(),
-}));
+jest.unstable_mockModule('node:fs', () => {
+  const mkdtempSyncMock = mockFn<typeof actualFs.mkdtempSync>();
+  mkdtempSyncMock.mockReturnValue('/tmp/rd-scenario-test');
+  return {
+    ...actualFs,
+    mkdtempSync: mkdtempSyncMock,
+    mkdirSync: jest.fn(),
+    copyFileSync: jest.fn(),
+  };
+});
 
 // Mock shell-quote
-jest.unstable_mockModule('shell-quote', () => ({
-  parse: jest.fn<any>().mockImplementation((str: string) => str.split(/\s+/)),
-}));
+jest.unstable_mockModule('shell-quote', () => {
+  const parseMock = mockFn<(str: string) => Array<string | { op: string }>>();
+  parseMock.mockImplementation((str) => str.split(/\s+/));
+  return {
+    parse: parseMock,
+  };
+});
 
 // Mock command-sequence (pass through extract helpers so extractReferencedRunbooks/input-file copying works)
 const actualCommandSequence = await import('../../src/helpers/command-sequence.js');
@@ -66,7 +99,28 @@ const {
   executeScenario,
 } = await import('../../src/helpers/scenario-workflow.js');
 
-// Types are inferred from mocked modules; use `any` casts where needed
+// `readFile` is heavily overloaded; the production call site uses
+// `readFile(path, 'utf-8')` which returns Promise<string>. `jest.mocked()`
+// collapses to the first overload (Buffer-returning). Tests cast through
+// `unknown` to land on the string overload's return value.
+function setReadFileResolved(value: string): void {
+  (
+    jest.mocked(readFile) as unknown as {
+      mockResolvedValue: (v: string) => void;
+    }
+  ).mockResolvedValue(value);
+}
+
+// `extractFrontmatter` returns a `RunbookFrontmatter | null`. Tests want to
+// inject malformed/partial values; cast through `unknown`.
+type ExtractedFrontmatter = ReturnType<typeof extractFrontmatter>;
+function setExtractFrontmatter(frontmatter: unknown, content: string): void {
+  jest.mocked(extractFrontmatter).mockReturnValue({
+    frontmatter: frontmatter as ExtractedFrontmatter['frontmatter'],
+    content,
+    diagnostics: [],
+  });
+}
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -74,7 +128,7 @@ beforeEach(() => {
 
 describe('loadScenarios', () => {
   it('returns error when file not found', async () => {
-    (resolveRunbookFile as jest.Mock<any>).mockResolvedValue(null);
+    jest.mocked(resolveRunbookFile).mockResolvedValue(null);
 
     const result = await loadScenarios('missing.md', '/test');
 
@@ -85,15 +139,12 @@ describe('loadScenarios', () => {
   });
 
   it('returns error when no frontmatter', async () => {
-    (resolveRunbookFile as jest.Mock<any>).mockResolvedValue({
+    jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/test/runbook.md',
       source: 'project',
     });
-    (readFile as jest.MockedFunction<typeof readFile>).mockResolvedValue('# No frontmatter' as any);
-    (extractFrontmatter as jest.Mock<any>).mockReturnValue({
-      frontmatter: null,
-      content: '# No frontmatter',
-    });
+    setReadFileResolved('# No frontmatter');
+    setExtractFrontmatter(null, '# No frontmatter');
 
     const result = await loadScenarios('runbook.md', '/test');
 
@@ -105,18 +156,13 @@ describe('loadScenarios', () => {
   });
 
   it('returns error with validation details', async () => {
-    (resolveRunbookFile as jest.Mock<any>).mockResolvedValue({
+    jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/test/runbook.md',
       source: 'project',
     });
-    (readFile as jest.MockedFunction<typeof readFile>).mockResolvedValue(
-      '---\nscenarios: bad\n---' as any,
-    );
-    (extractFrontmatter as jest.Mock<any>).mockReturnValue({
-      frontmatter: { scenarios: 'bad' },
-      content: '',
-    });
-    (parseScenarios as jest.Mock<any>).mockReturnValue({
+    setReadFileResolved('---\nscenarios: bad\n---');
+    setExtractFrontmatter({ scenarios: 'bad' }, '');
+    jest.mocked(parseScenarios).mockReturnValue({
       scenarios: null,
       errors: ['Field "commands" is required'],
     });
@@ -130,18 +176,13 @@ describe('loadScenarios', () => {
   });
 
   it('returns error when no scenarios defined', async () => {
-    (resolveRunbookFile as jest.Mock<any>).mockResolvedValue({
+    jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/test/runbook.md',
       source: 'project',
     });
-    (readFile as jest.MockedFunction<typeof readFile>).mockResolvedValue(
-      '---\nname: test\n---' as any,
-    );
-    (extractFrontmatter as jest.Mock<any>).mockReturnValue({
-      frontmatter: { name: 'test' },
-      content: '',
-    });
-    (parseScenarios as jest.Mock<any>).mockReturnValue({ scenarios: null, errors: [] });
+    setReadFileResolved('---\nname: test\n---');
+    setExtractFrontmatter({ name: 'test' }, '');
+    jest.mocked(parseScenarios).mockReturnValue({ scenarios: null, errors: [] });
 
     const result = await loadScenarios('runbook.md', '/test');
 
@@ -152,7 +193,7 @@ describe('loadScenarios', () => {
   });
 
   it('returns loaded runbook on success', async () => {
-    const scenarios: any = {
+    const scenarios: Scenarios = {
       happy: {
         result: 'COMPLETE',
         commands: ['rd run test.md', 'rd pass'],
@@ -160,18 +201,13 @@ describe('loadScenarios', () => {
       },
     };
 
-    (resolveRunbookFile as jest.Mock<any>).mockResolvedValue({
+    jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/test/runbook.md',
       source: 'project',
     });
-    (readFile as jest.MockedFunction<typeof readFile>).mockResolvedValue(
-      '---\nname: my-runbook\n---' as any,
-    );
-    (extractFrontmatter as jest.Mock<any>).mockReturnValue({
-      frontmatter: { name: 'my-runbook', scenarios },
-      content: '',
-    });
-    (parseScenarios as jest.Mock<any>).mockReturnValue({ scenarios, errors: [] });
+    setReadFileResolved('---\nname: my-runbook\n---');
+    setExtractFrontmatter({ name: 'my-runbook', scenarios }, '');
+    jest.mocked(parseScenarios).mockReturnValue({ scenarios, errors: [] });
 
     const result = await loadScenarios('runbook.md', '/test');
 
@@ -184,19 +220,17 @@ describe('loadScenarios', () => {
   });
 
   it('uses file as name when frontmatter has no name', async () => {
-    const scenarios: any = {
+    const scenarios: Scenarios = {
       test: { result: 'COMPLETE', commands: ['rd run x.md'] },
     };
 
-    (resolveRunbookFile as jest.Mock<any>).mockResolvedValue({
+    jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/test/runbook.md',
       source: 'project',
     });
-    (readFile as jest.MockedFunction<typeof readFile>).mockResolvedValue(
-      '---\nscenarios:\n---' as any,
-    );
-    (extractFrontmatter as jest.Mock<any>).mockReturnValue({ frontmatter: {}, content: '' });
-    (parseScenarios as jest.Mock<any>).mockReturnValue({ scenarios, errors: [] });
+    setReadFileResolved('---\nscenarios:\n---');
+    setExtractFrontmatter({}, '');
+    jest.mocked(parseScenarios).mockReturnValue({ scenarios, errors: [] });
 
     const result = await loadScenarios('runbook.md', '/test');
 
@@ -209,7 +243,7 @@ describe('loadScenarios', () => {
 
 describe('buildScenarioListRows', () => {
   it('maps scenarios to row objects', () => {
-    const scenarios: any = {
+    const scenarios: Scenarios = {
       happy: { result: 'COMPLETE', commands: ['rd run x.md'], description: 'Happy path' },
       sad: { result: 'STOP', commands: ['rd run x.md'] },
     };
@@ -232,13 +266,13 @@ describe('buildScenarioListRows', () => {
   });
 
   it('joins tags with commas', () => {
-    const scenarios = {
+    const scenarios: Scenarios = {
       tagged: {
         result: 'COMPLETE',
         commands: ['rd run x.md'],
         tags: ['smoke', 'regression'],
       },
-    } as any;
+    };
 
     const rows = buildScenarioListRows(scenarios);
 
@@ -248,7 +282,7 @@ describe('buildScenarioListRows', () => {
 
 describe('buildScenarioDetail', () => {
   it('returns null for missing scenario', () => {
-    const scenarios: any = {
+    const scenarios: Scenarios = {
       exists: { result: 'COMPLETE', commands: ['rd run x.md'] },
     };
 
@@ -256,7 +290,7 @@ describe('buildScenarioDetail', () => {
   });
 
   it('returns detail for existing scenario', () => {
-    const scenarios: any = {
+    const scenarios: Scenarios = {
       happy: { result: 'COMPLETE', commands: ['rd run x.md', 'rd pass'], description: 'Works' },
     };
 
@@ -272,13 +306,13 @@ describe('buildScenarioDetail', () => {
   });
 
   it('includes tags when present', () => {
-    const scenarios = {
+    const scenarios: Scenarios = {
       tagged: {
         result: 'COMPLETE',
         commands: ['rd run x.md'],
         tags: ['smoke'],
       },
-    } as any;
+    };
 
     const detail = buildScenarioDetail('tagged', scenarios);
 
@@ -286,13 +320,13 @@ describe('buildScenarioDetail', () => {
   });
 
   it('includes expect block when present', () => {
-    const scenarios = {
+    const scenarios: Scenarios = {
       rich: {
         result: 'COMPLETE',
         commands: ['rd run x.md', 'rd pass'],
         expect: { result: 'COMPLETE' },
       },
-    } as any;
+    };
 
     const detail = buildScenarioDetail('rich', scenarios);
 
@@ -302,7 +336,7 @@ describe('buildScenarioDetail', () => {
 
 describe('extractReferencedRunbooks', () => {
   it('extracts runbook filenames from commands', () => {
-    const scenario: any = {
+    const scenario: Scenario = {
       result: 'COMPLETE',
       commands: ['rd run main.runbook.md', 'rd pass'],
     };
@@ -311,7 +345,7 @@ describe('extractReferencedRunbooks', () => {
   });
 
   it('deduplicates references', () => {
-    const scenario: any = {
+    const scenario: Scenario = {
       result: 'COMPLETE',
       commands: ['rd run main.runbook.md', 'rd run main.runbook.md'],
     };
@@ -320,7 +354,7 @@ describe('extractReferencedRunbooks', () => {
   });
 
   it('extracts multiple unique references', () => {
-    const scenario: any = {
+    const scenario: Scenario = {
       result: 'COMPLETE',
       commands: ['rd run main.runbook.md', 'rd delegate child.runbook.md --step 2'],
     };
@@ -332,7 +366,7 @@ describe('extractReferencedRunbooks', () => {
   });
 
   it('returns empty array when no runbook references', () => {
-    const scenario: any = {
+    const scenario: Scenario = {
       result: 'COMPLETE',
       commands: ['rd pass', 'rd fail'],
     };
@@ -341,7 +375,7 @@ describe('extractReferencedRunbooks', () => {
   });
 
   it('strips double quotes from runbook filenames', () => {
-    const scenario: any = {
+    const scenario: Scenario = {
       result: 'COMPLETE',
       commands: ['rd run --prompted "child.runbook.md"'],
     };
@@ -350,7 +384,7 @@ describe('extractReferencedRunbooks', () => {
   });
 
   it('strips single quotes from runbook filenames', () => {
-    const scenario: any = {
+    const scenario: Scenario = {
       result: 'COMPLETE',
       commands: ["rd run --prompted 'child.runbook.md'"],
     };
@@ -359,7 +393,7 @@ describe('extractReferencedRunbooks', () => {
   });
 
   it('extracts paths with slashes', () => {
-    const scenario: any = {
+    const scenario: Scenario = {
       result: 'COMPLETE',
       commands: ['rd delegate delegation/child.runbook.md --step 1'],
     };
@@ -368,7 +402,7 @@ describe('extractReferencedRunbooks', () => {
   });
 
   it('extracts filenames with hyphens', () => {
-    const scenario: any = {
+    const scenario: Scenario = {
       result: 'COMPLETE',
       commands: ['rd run my-cool-thing.runbook.md'],
     };
@@ -378,19 +412,21 @@ describe('extractReferencedRunbooks', () => {
 });
 
 describe('executeScenario', () => {
+  // OutputEmitter shape required by executeScenario; only `message` and `flush`
+  // are exercised in these paths so we cast via `unknown` to the real type.
   const mockOutput = {
     message: jest.fn(),
     flush: jest.fn(),
-  } as any;
+  } as unknown as import('../../src/services/output-emitter.js').OutputEmitter;
 
-  function makeLoadedRunbook(scenarioOverrides: Record<string, any> = {}) {
+  function makeLoadedRunbook(scenarioOverrides: Partial<Scenario> = {}) {
     return {
       filePath: '/test/patterns/my.runbook.md',
       name: 'my-runbook',
       description: 'Test runbook',
       scenarios: {
         happy: {
-          result: 'COMPLETE',
+          result: 'COMPLETE' as const,
           commands: ['rd run my.runbook.md', 'rd pass'],
           ...scenarioOverrides,
         },
@@ -398,15 +434,22 @@ describe('executeScenario', () => {
     };
   }
 
-  it('returns passed when terminalResult matches expected', async () => {
-    jest.mocked(executeCommandSequence).mockResolvedValue({
+  function makeSequenceResult(
+    overrides: Partial<CommandSequenceResult> = {},
+  ): CommandSequenceResult {
+    return {
       terminalResult: 'COMPLETE',
       transitions: [],
       capturedTokens: [],
-    });
+      ...overrides,
+    };
+  }
+
+  it('returns passed when terminalResult matches expected', async () => {
+    jest.mocked(executeCommandSequence).mockResolvedValue(makeSequenceResult());
 
     const result = await executeScenario(
-      makeLoadedRunbook() as any,
+      makeLoadedRunbook(),
       'happy',
       true,
       mockOutput,
@@ -419,14 +462,12 @@ describe('executeScenario', () => {
   });
 
   it('returns failed when terminalResult does not match expected', async () => {
-    jest.mocked(executeCommandSequence).mockResolvedValue({
-      terminalResult: 'STOP',
-      transitions: [],
-      capturedTokens: [],
-    });
+    jest
+      .mocked(executeCommandSequence)
+      .mockResolvedValue(makeSequenceResult({ terminalResult: 'STOP' }));
 
     const result = await executeScenario(
-      makeLoadedRunbook() as any,
+      makeLoadedRunbook(),
       'happy',
       true,
       mockOutput,
@@ -439,11 +480,17 @@ describe('executeScenario', () => {
   });
 
   it('evaluates step assertions when expect.steps present', async () => {
-    jest.mocked(executeCommandSequence).mockResolvedValue({
-      terminalResult: 'COMPLETE',
-      transitions: [{ action: 'CONTINUE', from: '1', at: '2', result: 'PASS' }],
-      capturedTokens: [],
-    });
+    const transition: CapturedTransition = {
+      action: 'CONTINUE',
+      from: '1',
+      at: '2',
+      result: 'PASS',
+    };
+    jest.mocked(executeCommandSequence).mockResolvedValue(
+      makeSequenceResult({
+        transitions: [transition],
+      }),
+    );
     jest.mocked(matchStepAssertions).mockReturnValue([
       {
         assertion: { at: '2', action: 'CONTINUE' },
@@ -456,13 +503,7 @@ describe('executeScenario', () => {
       expect: { result: 'COMPLETE', steps: [{ at: '2', action: 'CONTINUE' }] },
     });
 
-    const result = await executeScenario(
-      loaded as any,
-      'happy',
-      true,
-      mockOutput,
-      '/cli/dist/cli.js',
-    );
+    const result = await executeScenario(loaded, 'happy', true, mockOutput, '/cli/dist/cli.js');
 
     expect(result.passed).toBe(true);
     expect(result.stepAssertions).toBeDefined();
@@ -470,11 +511,7 @@ describe('executeScenario', () => {
   });
 
   it('fails when step assertion does not match', async () => {
-    jest.mocked(executeCommandSequence).mockResolvedValue({
-      terminalResult: 'COMPLETE',
-      transitions: [],
-      capturedTokens: [],
-    });
+    jest.mocked(executeCommandSequence).mockResolvedValue(makeSequenceResult());
     jest
       .mocked(matchStepAssertions)
       .mockReturnValue([{ assertion: { at: '3', action: 'COMPLETE' }, matched: false }]);
@@ -483,32 +520,16 @@ describe('executeScenario', () => {
       expect: { result: 'COMPLETE', steps: [{ at: '3', action: 'COMPLETE' }] },
     });
 
-    const result = await executeScenario(
-      loaded as any,
-      'happy',
-      true,
-      mockOutput,
-      '/cli/dist/cli.js',
-    );
+    const result = await executeScenario(loaded, 'happy', true, mockOutput, '/cli/dist/cli.js');
 
     expect(result.passed).toBe(false);
     expect(result.stepAssertions![0].matched).toBe(false);
   });
 
   it('passes executeCommandSequence correct options', async () => {
-    jest.mocked(executeCommandSequence).mockResolvedValue({
-      terminalResult: 'COMPLETE',
-      transitions: [],
-      capturedTokens: [],
-    });
+    jest.mocked(executeCommandSequence).mockResolvedValue(makeSequenceResult());
 
-    await executeScenario(
-      makeLoadedRunbook() as any,
-      'happy',
-      true,
-      mockOutput,
-      '/cli/dist/cli.js',
-    );
+    await executeScenario(makeLoadedRunbook(), 'happy', true, mockOutput, '/cli/dist/cli.js');
 
     expect(executeCommandSequence).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -520,19 +541,9 @@ describe('executeScenario', () => {
   });
 
   it('cleans up temp directory after execution', async () => {
-    jest.mocked(executeCommandSequence).mockResolvedValue({
-      terminalResult: 'COMPLETE',
-      transitions: [],
-      capturedTokens: [],
-    });
+    jest.mocked(executeCommandSequence).mockResolvedValue(makeSequenceResult());
 
-    await executeScenario(
-      makeLoadedRunbook() as any,
-      'happy',
-      true,
-      mockOutput,
-      '/cli/dist/cli.js',
-    );
+    await executeScenario(makeLoadedRunbook(), 'happy', true, mockOutput, '/cli/dist/cli.js');
 
     expect(rm).toHaveBeenCalledWith('/tmp/rd-scenario-test', {
       recursive: true,
@@ -542,7 +553,7 @@ describe('executeScenario', () => {
 
   it('throws informative error when referenced child runbook is missing', async () => {
     const enoentError = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
-    jest.mocked(copyFileSync).mockImplementation((src: any) => {
+    jest.mocked(copyFileSync).mockImplementation((src) => {
       // Succeed for main runbook, throw ENOENT for child
       if (String(src).includes('child.runbook.md')) {
         throw enoentError;
@@ -554,21 +565,17 @@ describe('executeScenario', () => {
     });
 
     await expect(
-      executeScenario(loaded as any, 'happy', true, mockOutput, '/cli/dist/cli.js'),
+      executeScenario(loaded, 'happy', true, mockOutput, '/cli/dist/cli.js'),
     ).rejects.toThrow(/Referenced runbook not found: child\.runbook\.md/);
 
     await expect(
-      executeScenario(loaded as any, 'happy', true, mockOutput, '/cli/dist/cli.js'),
+      executeScenario(loaded, 'happy', true, mockOutput, '/cli/dist/cli.js'),
     ).rejects.toThrow(/searched in:/);
   });
 
   describe('input-file path traversal guard', () => {
     beforeEach(() => {
-      jest.mocked(executeCommandSequence).mockResolvedValue({
-        terminalResult: 'COMPLETE',
-        transitions: [],
-        capturedTokens: [],
-      });
+      jest.mocked(executeCommandSequence).mockResolvedValue(makeSequenceResult());
     });
 
     it('rejects absolute --input-file paths', async () => {
@@ -578,14 +585,14 @@ describe('executeScenario', () => {
         description: 'Test',
         scenarios: {
           s: {
-            result: 'COMPLETE',
+            result: 'COMPLETE' as const,
             commands: ['rd run my.runbook.md --input-file /etc/passwd'],
           },
         },
       };
 
       await expect(
-        executeScenario(loaded as any, 's', true, mockOutput, '/cli/dist/cli.js'),
+        executeScenario(loaded, 's', true, mockOutput, '/cli/dist/cli.js'),
       ).rejects.toThrow(/Unsafe input-file path in scenario/);
     });
 
@@ -596,14 +603,14 @@ describe('executeScenario', () => {
         description: 'Test',
         scenarios: {
           s: {
-            result: 'COMPLETE',
+            result: 'COMPLETE' as const,
             commands: ['rd run my.runbook.md --input-file=../outside/data.yaml'],
           },
         },
       };
 
       await expect(
-        executeScenario(loaded as any, 's', true, mockOutput, '/cli/dist/cli.js'),
+        executeScenario(loaded, 's', true, mockOutput, '/cli/dist/cli.js'),
       ).rejects.toThrow(/Unsafe input-file path in scenario/);
     });
   });
