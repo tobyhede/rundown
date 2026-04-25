@@ -23,7 +23,11 @@ import { registerDelegateCommand } from './commands/delegate.js';
 import { registerClaimCommand } from './commands/claim.js';
 import { registerAbortCommand } from './commands/abort.js';
 import { registerCollectCommand } from './commands/collect.js';
-import { PolicyConfigTrustRequiredError, setColorEnabled } from '@rundown-org/core';
+import {
+  PolicyConfigTrustRequiredError,
+  setColorEnabled,
+  setHelperRegistry as setCoreHelperRegistry,
+} from '@rundown-org/core';
 import {
   initializePolicyContext,
   parsePolicyCliOptions,
@@ -159,6 +163,7 @@ export function createProgram(): Command {
     if (allHelperPaths.length > 0) {
       const registry = await loadHelperModules(allHelperPaths, cwd, cwd);
       setHelperRegistry(registry);
+      setCoreHelperRegistry(registry); // syncs into core's output-evaluator module singleton
     }
   });
 
