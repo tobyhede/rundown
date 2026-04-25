@@ -1,4 +1,6 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import type { RunPipelineContext } from '../../src/helpers/runbook-pipeline.js';
+import { brandFrameKeyForTest } from './brand-helpers.js';
 import { mockErrorHelpers } from './mock-error-helpers.js';
 import { mockFn } from './typed-mocks.js';
 
@@ -19,7 +21,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   deriveActiveFrame: jest
     .fn()
     .mockReturnValue({ step: '1', substep: undefined, iteration: undefined, frameKey: '1|' }),
-  getActiveForContext: jest.fn<any>().mockReturnValue(null),
+  getActiveForContext: mockFn<() => unknown>().mockReturnValue(null),
   buildFrameKey: jest.fn(
     (step: string, iteration?: number) =>
       `${step}|${iteration !== undefined ? String(iteration) : ''}`,
@@ -42,8 +44,8 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   PolicyEvaluator: jest.fn(),
   PolicyPrompter: jest.fn(),
   loadPolicy: jest.fn(),
-  DelegationScanService: jest.fn<any>().mockImplementation(() => ({
-    findByToken: jest.fn<any>().mockResolvedValue(null),
+  DelegationScanService: mockFn<() => { findByToken: jest.Mock }>().mockImplementation(() => ({
+    findByToken: mockFn<() => Promise<unknown>>().mockResolvedValue(null),
   })),
   DelegationLock: jest.fn(),
   DelegationLockTimeoutError: class DelegationLockTimeoutError extends Error {
@@ -64,9 +66,9 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
       this.lockFile = lockFile;
     }
   },
-  reconstituteContextVars: jest.fn<any>().mockReturnValue({}),
-  extractInheritedUserVars: jest.fn<any>().mockReturnValue({}),
-  hashDelegationToken: jest.fn<any>().mockReturnValue('sha256:mock'),
+  reconstituteContextVars: mockFn<() => Record<string, unknown>>().mockReturnValue({}),
+  extractInheritedUserVars: mockFn<() => Record<string, unknown>>().mockReturnValue({}),
+  hashDelegationToken: mockFn<() => string>().mockReturnValue('sha256:mock'),
   truncateDelegationToken: jest.fn((token: string) => {
     const prefix = 'rdtk_';
     const body = token.startsWith(prefix) ? token.slice(prefix.length) : token;
@@ -90,7 +92,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
 jest.unstable_mockModule('@rundown-org/parser', () => ({
   parseRunbookDocument: jest.fn(),
   isSourced: jest.fn(),
-  isResolvedForClause: jest.fn<any>().mockReturnValue(true),
+  isResolvedForClause: mockFn<() => boolean>().mockReturnValue(true),
   stepHasSubsteps: (step: { kind: string }) => step.kind === 'substeps' || step.kind === 'for',
   resolvedStepHasSubsteps: (step: { kind: string }) =>
     step.kind === 'substeps' || step.kind === 'for' || step.kind === 'prompted-for',
@@ -103,13 +105,16 @@ jest.unstable_mockModule('../../src/helpers/resolve-runbook', () => ({
 
 // Mock execution service
 jest.unstable_mockModule('../../src/services/execution', () => ({
-  buildStepVariables: jest.fn<any>().mockReturnValue({ Step: '1.1' }),
-  runExecutionLoop: jest.fn<any>().mockResolvedValue('done'),
+  buildStepVariables: mockFn<() => Record<string, unknown>>().mockReturnValue({ Step: '1.1' }),
+  runExecutionLoop:
+    mockFn<
+      (...args: unknown[]) => Promise<'done' | 'stopped' | 'waiting'>
+    >().mockResolvedValue('done'),
 }));
 
 // Mock execution-emitter
 jest.unstable_mockModule('../../src/helpers/execution-emitter', () => ({
-  createBridgedEmitter: jest.fn<any>().mockReturnValue({ emit: jest.fn() }),
+  createBridgedEmitter: mockFn<() => { emit: jest.Mock }>().mockReturnValue({ emit: jest.fn() }),
 }));
 
 // Mock variable-discovery
@@ -138,23 +143,25 @@ jest.unstable_mockModule('../../src/services/template-renderer', () => ({
   substituteRunbookVariables: jest.fn((runbook: unknown) => runbook),
   resolveForBounds: jest.fn((runbook: unknown) => ({ runbook, warnings: [] })),
   expandLoopVariables: jest.fn((text: string) => text),
-  warnUnresolvedRunbookVariables: jest.fn<any>().mockReturnValue([]),
-  collectUnresolvedRunbookVariables: jest.fn<any>().mockReturnValue(new Set()),
+  warnUnresolvedRunbookVariables: mockFn<() => string[]>().mockReturnValue([]),
+  collectUnresolvedRunbookVariables: mockFn<() => Set<string>>().mockReturnValue(new Set()),
 }));
 
 // Mock validate-frontmatter-vars
 jest.unstable_mockModule('../../src/helpers/validate-frontmatter-vars', () => ({
-  validateFrontmatterVars: jest.fn<any>().mockReturnValue([]),
-  validateRequiredVars: jest.fn<any>().mockReturnValue([]),
-  validateOutputsDeclarations: jest.fn<any>().mockReturnValue([]),
+  validateFrontmatterVars: mockFn<() => string[]>().mockReturnValue([]),
+  validateRequiredVars: mockFn<() => string[]>().mockReturnValue([]),
+  validateOutputsDeclarations: mockFn<() => string[]>().mockReturnValue([]),
 }));
 
 // Mock node:fs/promises
 const actualFsPromises = await import('node:fs/promises');
 jest.unstable_mockModule('node:fs/promises', () => ({
   ...actualFsPromises,
-  readFile: jest.fn<any>().mockResolvedValue('# Test\n\n## 1. Step\n- PASS CONTINUE'),
-  mkdir: jest.fn<any>().mockResolvedValue(undefined),
+  readFile: mockFn<() => Promise<string>>().mockResolvedValue(
+    '# Test\n\n## 1. Step\n- PASS CONTINUE',
+  ),
+  mkdir: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
 }));
 
 // Import after mocking
@@ -171,8 +178,14 @@ const { createBridgedEmitter } = await import('../../src/helpers/execution-emitt
 const { runExecutionLoop } = await import('../../src/services/execution.js');
 const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
 
-/** Create a minimal RunPipelineContext with mock OutputEmitter. */
-function makeCtx(overrides: Record<string, unknown> = {}): any {
+/**
+ * Create a minimal RunPipelineContext with mock OutputEmitter.
+ *
+ * Returns a structurally-compatible test double cast through `unknown` —
+ * production `RunPipelineContext` requires full service classes; tests
+ * only stub the methods exercised by the code under test.
+ */
+function makeCtx(overrides: Record<string, unknown> = {}): RunPipelineContext {
   return {
     output: {
       error: jest.fn(),
@@ -183,7 +196,7 @@ function makeCtx(overrides: Record<string, unknown> = {}): any {
     },
     manager: {
       load: jest.fn(),
-      list: jest.fn<any>().mockResolvedValue([]),
+      list: mockFn<() => Promise<unknown[]>>().mockResolvedValue([]),
       create: jest.fn(),
       update: jest.fn(),
     },
@@ -192,28 +205,31 @@ function makeCtx(overrides: Record<string, unknown> = {}): any {
     lifecycleService: {},
     cwd: '/tmp/test',
     ...overrides,
-  };
+  } as unknown as RunPipelineContext;
 }
 
 beforeEach(() => {
   jest.resetAllMocks();
   // Restore defaults after reset
-  (core.hashDelegationToken as jest.Mock<any>).mockReturnValue('sha256:mock');
-  (core.truncateDelegationToken as jest.Mock<any>).mockImplementation((token: string) => {
+  jest.mocked(core.hashDelegationToken).mockReturnValue('sha256:mock');
+  jest.mocked(core.truncateDelegationToken).mockImplementation((token: string) => {
     const prefix = 'rdtk_';
     const body = token.startsWith(prefix) ? token.slice(prefix.length) : token;
     if (body.length <= 7) return token;
     return `${prefix}${body.slice(0, 3)}...${body.slice(-4)}`;
   });
-  (core.DelegationScanService as jest.Mock<any>).mockImplementation(() => ({
-    findByToken: jest.fn<any>().mockResolvedValue(null),
-  }));
-  (core.reconstituteContextVars as jest.Mock<any>).mockReturnValue({});
-  (core.deriveActiveFrame as jest.Mock<any>).mockReturnValue({
+  // Partial mock: production code only consults `findByToken` here.
+  jest.mocked(core.DelegationScanService).mockImplementation(
+    () =>
+      ({
+        findByToken: mockFn<() => Promise<unknown>>().mockResolvedValue(null),
+      }) as unknown as jest.MockedObject<InstanceType<typeof core.DelegationScanService>>,
+  );
+  jest.mocked(core.reconstituteContextVars).mockReturnValue({});
+  jest.mocked(core.deriveActiveFrame).mockReturnValue({
     step: '1',
-    substep: undefined,
     iteration: undefined,
-    frameKey: '1|',
+    frameKey: brandFrameKeyForTest('1'),
   });
 });
 
