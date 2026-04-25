@@ -1038,16 +1038,16 @@ describe('startRunbook', () => {
 describe('claimAndLaunch', () => {
   it('returns error when token format is invalid', async () => {
     const ctx = {
-      output: {} as any,
-      manager: {} as any,
-      actorService: {} as any,
-      sessionService: {} as any,
-      lifecycleService: {} as any,
+      output: {} as unknown as OutputEmitter,
+      manager: {} as unknown as RunbookStateManager,
+      actorService: {} as unknown as RunbookActorService,
+      sessionService: {} as unknown as SessionService,
+      lifecycleService: {} as unknown as ExecutionLifecycleService,
       cwd: '/test',
-    };
+    } satisfies RunPipelineContext;
 
     const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
-    const result = await claimAndLaunch(ctx as any, 'bad-token', {});
+    const result = await claimAndLaunch(ctx, 'bad-token', {});
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -1058,7 +1058,7 @@ describe('claimAndLaunch', () => {
 
   it('returns error when token not found', async () => {
     const mockScanner = {
-      findByToken: jest.fn<any>().mockResolvedValue(null),
+      findByToken: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(null),
     };
     jest
       .mocked(core.DelegationScanService)
@@ -1067,17 +1067,17 @@ describe('claimAndLaunch', () => {
       );
 
     const ctx = {
-      output: {} as any,
-      manager: {} as any,
-      actorService: {} as any,
-      sessionService: {} as any,
-      lifecycleService: {} as any,
+      output: {} as unknown as OutputEmitter,
+      manager: {} as unknown as RunbookStateManager,
+      actorService: {} as unknown as RunbookActorService,
+      sessionService: {} as unknown as SessionService,
+      lifecycleService: {} as unknown as ExecutionLifecycleService,
       cwd: '/test',
-    };
+    } satisfies RunPipelineContext;
 
     const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
     // cspell:disable-next-line
-    const result = await claimAndLaunch(ctx as any, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -1106,9 +1106,12 @@ describe('claimAndLaunch', () => {
     });
 
     const mockScanner = {
-      findByToken: jest
-        .fn<any>()
-        .mockResolvedValue({ parentState, stepId: '1', substepId: '1', delegation }),
+      findByToken: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
+        parentState,
+        stepId: '1',
+        substepId: '1',
+        delegation,
+      }),
     };
     jest
       .mocked(core.DelegationScanService)
@@ -1117,7 +1120,7 @@ describe('claimAndLaunch', () => {
       );
 
     const mockManager = {
-      load: jest.fn<any>().mockResolvedValue(parentState),
+      load: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(parentState),
     };
     jest
       .mocked(core.RunbookStateManager)
@@ -1125,24 +1128,26 @@ describe('claimAndLaunch', () => {
         () => mockManager as unknown as jest.MockedObject<RunbookStateManager>,
       );
 
-    const mockLock = jest.fn<any>().mockImplementation(() => ({
-      acquire: jest.fn<any>().mockResolvedValue(undefined),
-      release: jest.fn<any>().mockResolvedValue(undefined),
-    }));
-    jest.mocked(core.DelegationLock).mockImplementation(mockLock);
+    jest.mocked(core.DelegationLock).mockImplementation(
+      () =>
+        ({
+          acquire: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
+          release: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
+        }) as unknown as jest.MockedObject<DelegationLock>,
+    );
 
     const ctx = {
-      output: {} as any,
-      manager: mockManager,
-      actorService: {} as any,
-      sessionService: {} as any,
-      lifecycleService: {} as any,
+      output: {} as unknown as OutputEmitter,
+      manager: mockManager as unknown as RunbookStateManager,
+      actorService: {} as unknown as RunbookActorService,
+      sessionService: {} as unknown as SessionService,
+      lifecycleService: {} as unknown as ExecutionLifecycleService,
       cwd: '/test',
-    };
+    } satisfies RunPipelineContext;
 
     const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
     // cspell:disable-next-line
-    const result = await claimAndLaunch(ctx as any, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
 
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -1172,9 +1177,12 @@ describe('claimAndLaunch', () => {
     });
 
     const mockScanner = {
-      findByToken: jest
-        .fn<any>()
-        .mockResolvedValue({ parentState, stepId: '1', substepId: '1', delegation }),
+      findByToken: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
+        parentState,
+        stepId: '1',
+        substepId: '1',
+        delegation,
+      }),
     };
     jest
       .mocked(core.DelegationScanService)
@@ -1183,7 +1191,7 @@ describe('claimAndLaunch', () => {
       );
 
     const mockManager = {
-      load: jest.fn<any>().mockResolvedValue(parentState),
+      load: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(parentState),
     };
     jest
       .mocked(core.RunbookStateManager)
@@ -1191,24 +1199,26 @@ describe('claimAndLaunch', () => {
         () => mockManager as unknown as jest.MockedObject<RunbookStateManager>,
       );
 
-    const mockLock = jest.fn<any>().mockImplementation(() => ({
-      acquire: jest.fn<any>().mockResolvedValue(undefined),
-      release: jest.fn<any>().mockResolvedValue(undefined),
-    }));
-    jest.mocked(core.DelegationLock).mockImplementation(mockLock);
+    jest.mocked(core.DelegationLock).mockImplementation(
+      () =>
+        ({
+          acquire: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
+          release: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
+        }) as unknown as jest.MockedObject<DelegationLock>,
+    );
 
     const ctx = {
-      output: {} as any,
-      manager: mockManager,
-      actorService: {} as any,
-      sessionService: {} as any,
-      lifecycleService: {} as any,
+      output: {} as unknown as OutputEmitter,
+      manager: mockManager as unknown as RunbookStateManager,
+      actorService: {} as unknown as RunbookActorService,
+      sessionService: {} as unknown as SessionService,
+      lifecycleService: {} as unknown as ExecutionLifecycleService,
       cwd: '/test',
-    };
+    } satisfies RunPipelineContext;
 
     const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
     // cspell:disable-next-line
-    const result = await claimAndLaunch(ctx as any, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
