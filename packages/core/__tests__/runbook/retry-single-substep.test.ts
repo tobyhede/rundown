@@ -9,6 +9,7 @@ import type {
 import type { RetryWorkingState } from '../../src/runbook/retry-hook.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import { Errors } from '../../src/errors/factory.js';
+import { brandEffectiveVarsForTest } from '../helpers/effective-vars.js';
 
 // Same mock pattern as retry-hook.test.ts — control retryDelegation return values.
 jest.unstable_mockModule('../../src/runbook/delegation-service.js', () => ({
@@ -65,7 +66,7 @@ function makeInputs(overrides?: { substepStates?: readonly SubstepState[] }): {
     createdAt: '2026-01-01T00:00:00.000Z',
     cancelledAt: null,
     contextSnapshot: {
-      vars: {},
+      vars: brandEffectiveVarsForTest({}),
       ancestors: [],
       step: '1',
       substep: '1',
@@ -133,7 +134,7 @@ describe('retrySingleSubstep', () => {
       createdAt: '2026-01-01T00:00:00.000Z',
       cancelledAt: null,
       contextSnapshot: {
-        vars: {},
+        vars: brandEffectiveVarsForTest({}),
         ancestors: [],
         step: '1',
         substep: '1',
@@ -174,6 +175,7 @@ describe('retrySingleSubstep', () => {
     const inner = Errors.delegationStepNotFound('1');
     mockedRetryDelegation.mockImplementation(() => ({
       status: 'not_found' as const,
+      substepId: '1',
       error: inner,
     }));
 
@@ -218,7 +220,7 @@ describe('retrySingleSubstep', () => {
       createdAt: '2026-01-01T00:00:00.000Z',
       cancelledAt: null,
       contextSnapshot: {
-        vars: {},
+        vars: brandEffectiveVarsForTest({}),
         ancestors: [],
         step: '1',
         substep: '1',
@@ -246,17 +248,18 @@ describe('retrySingleSubstep', () => {
 
   it('error variant from retryDelegation result.status error propagates code + message', () => {
     const { working, substep, frameKey, parentName, steps } = makeInputs();
+    const inner = Errors.unknown('inner failure');
     mockedRetryDelegation.mockImplementation(() => ({
       status: 'error' as const,
-      error: { code: 'RD-XYZ', message: 'inner failure' },
+      error: inner,
     }));
 
     const outcome = retrySingleSubstep(working, substep, frameKey, parentName, steps);
 
     expect(outcome.status).toBe('error');
     if (outcome.status === 'error') {
-      expect(outcome.code).toBe('RD-XYZ');
-      expect(outcome.message).toBe('inner failure');
+      expect(outcome.code).toBe(inner.code);
+      expect(outcome.message).toBe(inner.message);
     }
     // Rollback invariant: error variant must NOT carry substepStates
     expect(Object.hasOwn(outcome, 'substepStates')).toBe(false);
@@ -273,7 +276,7 @@ describe('retrySingleSubstep', () => {
       createdAt: '2026-01-01T00:00:00.000Z',
       cancelledAt: null,
       contextSnapshot: {
-        vars: {},
+        vars: brandEffectiveVarsForTest({}),
         ancestors: [],
         step: '1',
         substep: '1',

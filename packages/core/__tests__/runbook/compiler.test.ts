@@ -9914,6 +9914,9 @@ echo "processing"
           },
           steps,
         );
+        if (result.status !== 'created') {
+          throw new Error(`Failed to seed delegation for substep ${substepId}: ${result.status}`);
+        }
         state = { ...state, substepStates: result.updatedSubstepStates };
       }
 
@@ -10520,6 +10523,9 @@ echo "processing"
         steps,
       );
 
+      if (result.status !== 'created') {
+        throw new Error(`Failed to seed delegation for ${substepId}@${frameKey}: ${result.status}`);
+      }
       const ss = result.updatedSubstepStates.find(
         (s) => s.id === substepId && s.frameKey === frameKey,
       );

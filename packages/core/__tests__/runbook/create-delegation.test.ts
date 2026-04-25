@@ -4,7 +4,10 @@ import type { DelegateOptions } from '../../src/runbook/delegation-service.js';
 import { hashDelegationToken, TOKEN_PREFIX } from '../../src/runbook/delegation-token.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type { ResolvedStep, AncestorSnapshot } from '../../src/runbook/types.js';
-import { brandInitialTemplateVarsForTest } from '../helpers/effective-vars.js';
+import {
+  brandEffectiveVarsForTest,
+  brandInitialTemplateVarsForTest,
+} from '../helpers/effective-vars.js';
 import {
   DEFAULT_TRANSITIONS,
   makeForSteps,
@@ -143,7 +146,7 @@ describe('createDelegation', () => {
     const existingDelegation = {
       tokenHash: `sha256:${'a'.repeat(64)}`,
       childRunbookPath: 'other-child.md',
-      contextSnapshot: { vars: {}, ancestors: [] },
+      contextSnapshot: { vars: brandEffectiveVarsForTest({}), ancestors: [] },
       childRunId: null,
       createdAt: '2026-02-27T10:00:00.000Z',
       cancelledAt: null,
@@ -177,7 +180,7 @@ describe('createDelegation', () => {
     const claimedDelegation = {
       tokenHash: `sha256:${'a'.repeat(64)}`,
       childRunbookPath: 'other-child.md',
-      contextSnapshot: { vars: {}, ancestors: [] },
+      contextSnapshot: { vars: brandEffectiveVarsForTest({}), ancestors: [] },
       childRunId: 'run_123',
       createdAt: '2026-02-27T10:00:00.000Z',
       cancelledAt: null,
@@ -208,7 +211,7 @@ describe('createDelegation', () => {
     const cancelledDelegation = {
       tokenHash: `sha256:${'a'.repeat(64)}`,
       childRunbookPath: 'other-child.md',
-      contextSnapshot: { vars: {}, ancestors: [] },
+      contextSnapshot: { vars: brandEffectiveVarsForTest({}), ancestors: [] },
       childRunId: null,
       createdAt: '2026-02-27T10:00:00.000Z',
       cancelledAt: '2026-02-27T11:00:00.000Z',
@@ -572,7 +575,7 @@ describe('createDelegation', () => {
     const completedDelegation = {
       tokenHash: `sha256:${'a'.repeat(64)}`,
       childRunbookPath: 'old-child.md',
-      contextSnapshot: { vars: {}, ancestors: [] },
+      contextSnapshot: { vars: brandEffectiveVarsForTest({}), ancestors: [] },
       childRunId: 'completed-run-123',
       createdAt: '2026-02-27T10:00:00.000Z',
       cancelledAt: null,
@@ -810,7 +813,7 @@ describe('createDelegation', () => {
     const delegation1 = {
       tokenHash: `sha256:${'a'.repeat(64)}`,
       childRunbookPath: 'child.md',
-      contextSnapshot: { vars: {}, ancestors: [] },
+      contextSnapshot: { vars: brandEffectiveVarsForTest({}), ancestors: [] },
       childRunId: null,
       createdAt: '2026-02-27T10:00:00.000Z',
       cancelledAt: null,
