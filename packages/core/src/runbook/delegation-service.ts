@@ -162,9 +162,15 @@ export type CreateDelegationResult =
 /**
  * Create a delegation for a substep (or bare step) of the current runbook.
  *
- * Pure function, Result-based, **never throws**. The caller persists the
- * returned `updatedSubstepStates` via `manager.update` after branching on
- * the `status` discriminant. State is unchanged on any error variant.
+ * Deterministic validation and state update; no I/O; **never throws**.
+ * Mints a fresh token and `createdAt` timestamp on the `created` variant,
+ * so this is not referentially transparent across calls — repeated calls
+ * with identical inputs produce Result values that differ on token and
+ * timestamp fields.
+ *
+ * The caller persists the returned `updatedSubstepStates` via
+ * `manager.update` after branching on the `status` discriminant. State is
+ * unchanged on any error variant.
  *
  * Runs inside XState `assign` callbacks (via the auto-issuance loop in
  * `execution.ts`) so uncontrolled throws would corrupt actor state or
@@ -319,12 +325,14 @@ export function createDelegation(
 /**
  * Abort a delegation on a substep.
  *
- * Pure function, Result-based, **never throws**. The caller persists the
+ * Deterministic validation and state update; no I/O; **never throws**.
+ * Mints a `cancelledAt` timestamp on the `cancelled` variant, so this is
+ * not referentially transparent across calls. The caller persists the
  * returned `updatedSubstepStates` into the runbook state (only on the
  * `cancelled` variant).
  *
  * @param options - Abort delegation options
- * @returns Discriminated union: `cancelled` | `already_cancelled` | `needs_force` | `not_found`
+ * @returns Discriminated union: see {@link AbortDelegationResult}
  */
 export function abortDelegation(options: AbortDelegationOptions): AbortDelegationResult {
   const { parentState, substepId, force, frameKey } = options;
@@ -433,10 +441,17 @@ export type RetryDelegationResult =
  * Atomically cancel an existing delegation (force-style) and mint a replacement
  * using the same `childRunbookPath` and inherited (or overridden) `extraVars`.
  *
- * Pure function, Result-based, **never throws**. Preconditions and inner
- * `createDelegation` variants are translated into the four outcomes below.
- * The caller persists the returned `updatedSubstepStates` via `manager.update`;
- * state is unchanged on any non-retried variant.
+ * Deterministic validation and state update; no I/O; **never throws**.
+ * Mints a fresh token, `createdAt`, and `cancelledAt` timestamp on the
+ * `retried` variant, so this is not referentially transparent across calls.
+ * Preconditions and inner `createDelegation` variants are translated into
+ * the four outcomes in {@link RetryDelegationResult}; the `error` variant
+ * wraps the `RundownError` produced by the inner `createDelegation`
+ * (e.g. path unresolvable, substep removed) so callers have a single
+ * uniform shape to discriminate on.
+ *
+ * The caller persists the returned `updatedSubstepStates` via
+ * `manager.update`; state is unchanged on any non-retried variant.
  *
  * This is the canonical shape for delegation primitives consumed by XState
  * `assign` callbacks. `abortDelegation` and `createDelegation` also return
@@ -444,7 +459,7 @@ export type RetryDelegationResult =
  *
  * @param options - Retry options
  * @param steps - Parsed steps from the active runbook
- * @returns Discriminated union: `retried` | `not_found` | `not_current` | `error`
+ * @returns Discriminated union: see {@link RetryDelegationResult}
  */
 export function retryDelegation(
   options: RetryDelegationOptions,
