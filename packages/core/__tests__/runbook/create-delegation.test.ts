@@ -108,6 +108,7 @@ describe('createDelegation', () => {
     expect(result.step).toBe('1');
     expect(result.available).toEqual(['1', '2']);
     expect(result.error.code).toBe('RD-803');
+    expect(result.error.message).toMatch(/substep id required/i);
   });
 
   it('returns { status: "step_not_current" } when step is not at frontier', () => {
@@ -127,6 +128,7 @@ describe('createDelegation', () => {
     expect(result.step).toBe('1');
     expect(result.current).toBe('2');
     expect(result.error.code).toBe('RD-802');
+    expect(result.error.message).toMatch(/not at execution frontier/i);
   });
 
   it('returns { status: "delegation_exists" } for duplicate active delegation', () => {
@@ -428,6 +430,7 @@ describe('createDelegation', () => {
     if (result.status !== 'step_not_found') return;
     expect(result.step).toBe('invalid');
     expect(result.error.code).toBe('RD-801');
+    expect(result.error.message).toMatch(/step not found/i);
   });
 
   it('returns { status: "step_not_found" } for three-level step ID on non-FOR step (kind: substeps)', () => {
@@ -445,6 +448,7 @@ describe('createDelegation', () => {
     if (result.status !== 'step_not_found') return;
     expect(result.step).toBe('1.2.1');
     expect(result.error.code).toBe('RD-801');
+    expect(result.error.message).toMatch(/step not found/i);
   });
 
   it('returns { status: "substep_not_found" } for three-level step ID when substep does not exist (e.g., 1.2.3)', () => {
@@ -463,6 +467,7 @@ describe('createDelegation', () => {
     expect(result.step).toBe('1');
     expect(result.available).toEqual(['1', '2']);
     expect(result.error.code).toBe('RD-806');
+    expect(result.error.message).toMatch(/substep not found/i);
   });
 
   it('returns { status: "substep_not_found" } when substep specified but step has no substeps', () => {
@@ -481,6 +486,7 @@ describe('createDelegation', () => {
     expect(result.step).toBe('1');
     expect(result.available).toEqual([]);
     expect(result.error.code).toBe('RD-806');
+    expect(result.error.message).toMatch(/substep not found/i);
   });
 
   it('allows three-level step ID on prompted-for step', () => {
