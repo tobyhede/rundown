@@ -1087,7 +1087,7 @@ export function buildMetadata(state: RunbookState): RunbookMetadata {
  * @param command - The shell command to execute
  * @param cwd - Working directory for execution
  * @param runbookPath - Optional runbook file path for override matching
- * @param rdInjected - Optional extra environment variables injected by Rundown (e.g. RD_WORK_PATH)
+ * @param rdInjected - Optional rundown-injected env vars (`RD_OUTPUTS_*`, `RD_WORK_PATH`, etc.) merged into the child process environment
  * @returns Execution result
  */
 export async function executeCommandWithPolicyCheck(

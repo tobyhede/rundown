@@ -190,9 +190,7 @@ export function buildOutputChannelEnv(
  * @param args - Project root + run id + scope + naked declarations
  * @returns The injectable env map and the list of successfully-prepared channels (each carrying its name and absolute path)
  */
-export async function prepareOutputChannels(
-  args: PrepareOutputChannelsArgs,
-): Promise<{
+export async function prepareOutputChannels(args: PrepareOutputChannelsArgs): Promise<{
   readonly env: Record<string, string>;
   readonly prepared: readonly PreparedChannel[];
 }> {
