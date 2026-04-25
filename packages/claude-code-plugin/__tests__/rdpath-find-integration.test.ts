@@ -22,10 +22,13 @@ describe('rdpath find integration', () => {
 
   const runRdpath = (
     args: string[],
-    env?: Record<string, string>,
+    env?: Record<string, string | undefined>,
   ): Promise<{ stdout: string; stderr: string; exitCode: number }> => {
     return new Promise((resolve, reject) => {
-      const spawnEnv = env ? { ...process.env, ...env } : process.env;
+      const merged = env ? { ...process.env, ...env } : process.env;
+      const spawnEnv = Object.fromEntries(
+        Object.entries(merged).filter((entry): entry is [string, string] => entry[1] !== undefined),
+      );
       const proc = spawn('node', ['dist/rdpath.js', ...args], {
         cwd: packageDir,
         env: spawnEnv,
@@ -183,7 +186,10 @@ describe('rdpath find integration', () => {
     });
 
     it('exits with error when --dir and RD_WORK_PATH are both absent', async () => {
-      const result = await runRdpath(['find', '*.md']);
+      const result = await runRdpath(['find', '*.md'], {
+        RD_WORK_PATH: undefined,
+        RD_CONTEXT_ID: undefined,
+      });
 
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain('RD_WORK_PATH');

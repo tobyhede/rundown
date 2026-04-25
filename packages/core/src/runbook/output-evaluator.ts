@@ -100,14 +100,14 @@ export function resetHelperRegistry(): void {
 
 const TEMPLATE_PATH_REGEX =
   /{{\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)\s*}}/g;
-const PATH_HELPER_REGEX = /^\{\{\s*path\s+"([^"]+)"(?:\s+ctx=(\S.*?\S|\S))?\s*\}\}$/;
+const PATH_HELPER_REGEX = /^\{\{\s*path\s+"([^"]+)"(?:\s+ctx=(\{\{[^}]*\}\}|[^\s}]+))?\s*\}\}$/;
 
 /** Matches `{{ ./VarName }}` — explicit variable lookup escape hatch. */
 const EXPLICIT_VAR_REGEX = /^\{\{\s*\.\//;
 
 /** Matches `{{ helperName varRef }}` — helper call with variable reference. Group 1: helperName, Group 2: varRef path. */
 const HELPER_VAR_CALL_REGEX =
-  /^\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s+([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)\s*\}\}$/;
+  /^\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s+([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)\s*\}\}$/;
 
 /** Matches `{{ helperName "literal" }}` — helper call with string literal. Group 1: helperName, Group 2: literal value. */
 const HELPER_LITERAL_CALL_REGEX = /^\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s+"([^"]*)"\s*\}\}$/;
@@ -224,9 +224,17 @@ function tryDispatchHelper(trimmed: string, variables: OutputVars): string | nul
 /**
  * Evaluate a single OUTPUTS expression against the supplied variable frame.
  *
- * Supports four forms: `{{ path "file.json" }}` helper, `"quoted literal"` (may
- * contain `{{ template }}` references that are expanded at evaluation time),
- * `{{ template }}` reference, and bare `Identifier`.
+ * Supported forms (evaluated in order):
+ * 1. `{{ path "file.json" }}` — built-in path helper (optional `ctx=` suffix)
+ * 2. `{{ ./VarName }}` — explicit variable lookup; throws if not found in frame
+ * 3. `{{ helperName varRef }}` — registered helper called with a variable value
+ * 4. `{{ helperName "literal" }}` — registered helper called with a string literal
+ * 5. `"quoted literal"` — may contain `{{ template }}` references expanded inline
+ * 6. `{{ template }}` — template reference expanded against the variable frame
+ * 7. `bare_Identifier` — direct variable lookup; throws if not found in frame
+ *
+ * For forms 3–4, if the helper throws the expression returns the original literal
+ * text (best-effort; the error is logged as a warning).
  *
  * @param expr - Raw expression text from the runbook source
  * @param variables - Variable frame used to resolve references
@@ -275,10 +283,12 @@ export function evaluateOutputExpression(expr: string, variables: OutputVars): s
 
   // 2. Explicit variable lookup: {{ ./VarName }} — bypasses helper registry
   if (EXPLICIT_VAR_REGEX.test(trimmed)) {
-    const varName = trimmed
-      .replace(/^\{\{\s*\.\//, '')
-      .replace(/\s*\}\}$/, '')
-      .trim();
+    const prefixEnd = trimmed.indexOf('./') + 2;
+    const closingStart = trimmed.lastIndexOf('}}');
+    const varName =
+      closingStart > prefixEnd
+        ? trimmed.slice(prefixEnd, closingStart).trim()
+        : trimmed.slice(prefixEnd).trim();
     const resolved = resolveOutputPath(varName, variables);
     if (resolved !== undefined) return resolved;
     throw new Error(

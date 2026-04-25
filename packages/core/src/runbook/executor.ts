@@ -57,9 +57,14 @@ export interface PolicyExecutionOptions {
  *
  * @param command - The shell command to execute
  * @param cwd - Working directory for execution
+ * @param rdInjected - Optional Rundown-injected env vars (e.g. RD_WORK_PATH) merged after PATH
  * @returns Promise resolving to ExecutionResult with success status and exit code
  */
-export function executeCommand(command: string, cwd: string): Promise<ExecutionResult> {
+export function executeCommand(
+  command: string,
+  cwd: string,
+  rdInjected?: Record<string, string>,
+): Promise<ExecutionResult> {
   return new Promise((resolve) => {
     // Build PATH that includes node_modules/.bin for local package binaries
     const binPath = path.join(cwd, 'node_modules', '.bin');
@@ -71,6 +76,7 @@ export function executeCommand(command: string, cwd: string): Promise<ExecutionR
     const env = {
       ...process.env,
       PATH: enhancedPath,
+      ...rdInjected,
     };
 
     const shell = isWindows ? 'cmd' : 'sh';
@@ -149,7 +155,7 @@ export async function executeCommandWithPolicy(
 
   // If no evaluator, execute without policy checks
   if (!evaluator) {
-    return executeCommand(command, cwd);
+    return executeCommand(command, cwd, rdInjected);
   }
 
   // Check command policy

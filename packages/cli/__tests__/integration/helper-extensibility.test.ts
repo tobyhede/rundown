@@ -161,5 +161,8 @@ describe('Helper extensibility — end-to-end (no helper registered)', () => {
     expect(stepEntered!.prompt).toContain('{{ upper Name }}');
     // The uppercased value must not appear
     expect(stepEntered!.prompt).not.toContain('WORLD');
+    // No warnings should be emitted for an unregistered helper-shaped placeholder
+    const warningEvents = events.filter((e) => e.type === 'message' && e.level === 'warning');
+    expect(warningEvents).toHaveLength(0);
   });
 });

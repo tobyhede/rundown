@@ -986,7 +986,7 @@ export async function executeCommandWithPolicyCheck(
 ): Promise<ExecutionResult> {
   // Check if policy enforcement is active
   if (!isPolicyEnforced()) {
-    return executeCommand(command, cwd);
+    return executeCommand(command, cwd, rdInjected);
   }
 
   // Get evaluator and set runbook path for override matching

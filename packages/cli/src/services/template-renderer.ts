@@ -90,7 +90,7 @@ const EXPLICIT_VAR_TEMPLATE_REGEX =
  * in `helper-registry.ts`; otherwise a same-named user helper will take priority.
  */
 const HELPER_CALL_TEMPLATE_REGEX =
-  /\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s+(?:([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)|"([^"]*)")\s*\}\}/g;
+  /\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s+(?:([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)|"([^"]*)")\s*\}\}/g;
 
 /**
  * Resolve a dotted path in an object using own-property traversal.
@@ -698,7 +698,8 @@ function resolveHelperCall(helperName: string, argValue: string, original: strin
   if (!helper) return original;
   try {
     return helper(argValue);
-  } catch {
+  } catch (err) {
+    console.warn(`Warning: helper "${helperName}" threw at call time: ${String(err)}`);
     return original;
   }
 }

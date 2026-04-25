@@ -68,11 +68,16 @@ export async function validateHelperPath(
     try {
       canonicalDir = await fs.realpath(dir);
     } catch {
-      // If even the directory doesn't exist, try canonicalizing cwd instead.
-      try {
-        canonicalDir = await fs.realpath(cwd);
-      } catch {
-        // use dir as-is
+      // For relative source paths, try to resolve cwd to canonicalize symlinks
+      // (e.g. macOS /tmp → /private/tmp) without remapping the basename.
+      // For absolute source paths we do NOT fall back to cwd: an absolute path
+      // whose directory doesn't exist should fail the traversal guard as-is.
+      if (!path.isAbsolute(rawPath)) {
+        try {
+          canonicalDir = await fs.realpath(cwd);
+        } catch {
+          // use dir as-is
+        }
       }
     }
     canonical = path.join(canonicalDir, path.basename(resolved));
@@ -136,9 +141,33 @@ export async function loadHelperModules(
         continue;
       }
 
+      if (/^class[\s{]/.test(Function.prototype.toString.call(value))) {
+        console.warn(
+          `Warning: Helper export "${name}" in "${rawPath}" is a class — only synchronous functions are supported. Skipping.`,
+        );
+        continue;
+      }
+
       if (types.isAsyncFunction(value)) {
         console.warn(
           `Warning: Helper export "${name}" in "${rawPath}" is an async function — only synchronous helpers are supported. Skipping.`,
+        );
+        continue;
+      }
+
+      // Probe for sync functions that return a Promise (not caught by isAsyncFunction).
+      // Helpers must be synchronous string transformers.
+      const probeResult = (() => {
+        try {
+          return (value as (v: string) => unknown)('');
+        } catch {
+          return undefined;
+        }
+      })();
+      if (probeResult instanceof Promise) {
+        probeResult.catch(() => {});
+        console.warn(
+          `Warning: Helper export "${name}" in "${rawPath}" returns a Promise — only synchronous helpers are supported. Skipping.`,
         );
         continue;
       }

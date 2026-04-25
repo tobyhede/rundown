@@ -17,8 +17,8 @@ program
   .name('rdpath')
   .description('Assemble artifact paths with optional context scoping')
   .enablePositionalOptions()
-  .option('--dir [path]', 'Base directory (defaults to $RD_WORK_PATH)')
-  .option('--ctx [id]', 'Context scope (defaults to $RD_CONTEXT_ID)');
+  .option('--dir <path>', 'Base directory (defaults to $RD_WORK_PATH)')
+  .option('--ctx <id>', 'Context scope (defaults to $RD_CONTEXT_ID)');
 
 const pathCmd = new Command('path')
   .description('Assemble an artifact path')

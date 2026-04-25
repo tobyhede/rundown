@@ -102,6 +102,11 @@ describe('policy context service', () => {
         const parsed = parsePolicyCliOptions({});
         expect(parsed.helpers).toBeUndefined();
       });
+
+      it('passes through a string array directly', async () => {
+        const parsed = parsePolicyCliOptions({ helpers: ['a.js', 'b.js'] });
+        expect(parsed.helpers).toEqual(['a.js', 'b.js']);
+      });
     });
   });
 
