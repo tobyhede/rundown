@@ -83,7 +83,46 @@ const { findStepOrThrow, drainResolvedCompletions } = await import(
 const { executeTransition, createPassTransitionConfig } = await import(
   '../../src/helpers/transitions.js'
 );
-function makeCtx(stateOverrides: Record<string, unknown> = {}): any {
+import type { TransitionContext } from '../../src/helpers/transitions.js';
+
+/**
+ * Test ctx type — exposes only the fields executeTransition uses, with each
+ * service method typed as a jest.Mock so test assertions can read .mock.calls.
+ * Cast through unknown to TransitionContext at the makeCtx boundary so call
+ * sites pass the ctx directly to executeTransition without per-test casts.
+ */
+type TestCtx = Omit<
+  TransitionContext,
+  'output' | 'manager' | 'actorService' | 'lifecycleService' | 'actor' | 'steps'
+> & {
+  output: {
+    action: jest.Mock;
+    flush: jest.Mock;
+    status: jest.Mock;
+    warning: jest.Mock;
+  };
+  manager: {
+    update: jest.Mock<(...args: unknown[]) => Promise<unknown>>;
+    load: jest.Mock<(...args: unknown[]) => Promise<unknown>>;
+  };
+  actorService: {
+    updateFromActor: jest.Mock<
+      (...args: unknown[]) => Promise<{ state: Record<string, unknown>; snapshot: unknown }>
+    >;
+  };
+  lifecycleService: {
+    ensureActiveEntry: jest.Mock<(...args: unknown[]) => Promise<unknown>>;
+    getResolvedCompletion: jest.Mock<
+      (id: string, key: string) => Promise<ResolvedCompletion | null>
+    >;
+    upsertResolvedCompletion: jest.Mock<(...args: unknown[]) => Promise<void>>;
+  };
+  // Loosely-typed step fixtures — the kernel only consumes the union shape at runtime.
+  steps: ReadonlyArray<Record<string, unknown>>;
+  actor: { send: jest.Mock; stop: jest.Mock };
+};
+
+function makeCtx(stateOverrides: Record<string, unknown> = {}): TestCtx {
   const state = {
     id: 'run-1',
     step: '1',
@@ -93,22 +132,36 @@ function makeCtx(stateOverrides: Record<string, unknown> = {}): any {
     ...stateOverrides,
   };
   return {
-    output: { action: jest.fn(), flush: jest.fn(), status: jest.fn(), warning: jest.fn() },
+    output: {
+      action: mockFn<(...args: unknown[]) => void>(),
+      flush: mockFn<() => void>(),
+      status: mockFn<(...args: unknown[]) => void>(),
+      warning: mockFn<(...args: unknown[]) => void>(),
+    },
     manager: {
-      update: jest.fn<any>().mockResolvedValue(undefined),
-      load: jest.fn<any>().mockResolvedValue(null),
+      update: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(undefined),
+      load: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(null),
     },
     actorService: {
-      updateFromActor: jest.fn<any>().mockResolvedValue({
+      updateFromActor: mockFn<
+        (...args: unknown[]) => Promise<{ state: Record<string, unknown>; snapshot: unknown }>
+      >().mockResolvedValue({
         state: { ...state },
         snapshot: {},
       }),
     },
     sessionService: {},
     lifecycleService: {
-      ensureActiveEntry: jest.fn<any>().mockResolvedValue({ state, entryId: 1 }),
-      getResolvedCompletion: jest.fn<any>().mockResolvedValue(null),
-      upsertResolvedCompletion: jest.fn<any>().mockResolvedValue(undefined),
+      ensureActiveEntry: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
+        state,
+        entryId: 1,
+      }),
+      getResolvedCompletion: mockFn<
+        (id: string, key: string) => Promise<ResolvedCompletion | null>
+      >().mockResolvedValue(null),
+      upsertResolvedCompletion: mockFn<
+        (...args: unknown[]) => Promise<void>
+      >().mockResolvedValue(undefined),
     },
     state,
     steps: [
@@ -118,9 +171,21 @@ function makeCtx(stateOverrides: Record<string, unknown> = {}): any {
         substeps: [{ id: '1' }, { id: '2' }],
       },
     ],
-    actor: { send: jest.fn(), stop: jest.fn() },
+    actor: {
+      send: mockFn<(...args: unknown[]) => void>(),
+      stop: mockFn<() => void>(),
+    },
     cwd: '/test',
-  };
+  } as unknown as TestCtx;
+}
+
+/**
+ * Cast helper at the executeTransition call boundary. The TestCtx is
+ * intentionally partial (sessionService is empty, actor is simplified, etc.)
+ * because executeTransition only consumes the fields we mock.
+ */
+function asCtx(ctx: TestCtx): TransitionContext {
+  return ctx as unknown as TransitionContext;
 }
 
 beforeEach(() => {
@@ -152,7 +217,7 @@ describe('executeTransition with ExplicitTarget', () => {
     ).mockReturnValue(false);
 
     const config = createPassTransitionConfig();
-    await expect(executeTransition(ctx, config, { stepId: '1.1' })).rejects.toThrow(
+    await expect(executeTransition(asCtx(ctx), config, { stepId: '1.1' })).rejects.toThrow(
       '--step requires the runbook to be at a substep',
     );
   });
@@ -161,7 +226,7 @@ describe('executeTransition with ExplicitTarget', () => {
     const ctx = makeCtx();
     const config = createPassTransitionConfig();
 
-    await executeTransition(ctx, config, { stepId: '1.1' });
+    await executeTransition(asCtx(ctx), config, { stepId: '1.1' });
 
     // Verify parseStepIdFromString was called with the explicit step ID
     expect(core.parseStepIdFromString).toHaveBeenCalledWith('1.1');
@@ -183,7 +248,7 @@ describe('executeTransition with ExplicitTarget', () => {
     (core.parseStepIdFromString as jest.Mock<any>).mockReturnValue({ step: '1', substep: '1' });
     const config = createPassTransitionConfig();
 
-    await executeTransition(ctx, config, { stepId: '1.1', index: '3' });
+    await executeTransition(asCtx(ctx), config, { stepId: '1.1', index: '3' });
 
     // buildFrameKey should have been called with iteration=3
     expect(core.buildFrameKey).toHaveBeenCalledWith('1', 3);
@@ -194,7 +259,7 @@ describe('executeTransition with ExplicitTarget', () => {
     (core.parseStepIdFromString as jest.Mock<any>).mockReturnValue(null);
     const config = createPassTransitionConfig();
 
-    await expect(executeTransition(ctx, config, { stepId: 'invalid!!!' })).rejects.toThrow(
+    await expect(executeTransition(asCtx(ctx), config, { stepId: 'invalid!!!' })).rejects.toThrow(
       'Invalid step target: invalid!!!',
     );
   });
@@ -205,7 +270,7 @@ describe('executeTransition with ExplicitTarget', () => {
     (core.parseStepIdFromString as jest.Mock<any>).mockReturnValue({ step: '2', substep: '1' });
     const config = createPassTransitionConfig();
 
-    await expect(executeTransition(ctx, config, { stepId: '2.1' })).rejects.toThrow(
+    await expect(executeTransition(asCtx(ctx), config, { stepId: '2.1' })).rejects.toThrow(
       'targets step "2" but the active step is "1"',
     );
   });
@@ -219,7 +284,7 @@ describe('executeTransition with ExplicitTarget', () => {
     });
     const config = createPassTransitionConfig();
 
-    await expect(executeTransition(ctx, config, { stepId: '1.1', index: '3' })).rejects.toThrow(
+    await expect(executeTransition(asCtx(ctx), config, { stepId: '1.1', index: '3' })).rejects.toThrow(
       'conflicts with AT',
     );
   });
@@ -230,7 +295,7 @@ describe('executeTransition with ExplicitTarget', () => {
     (core.parseStepIdFromString as jest.Mock<any>).mockReturnValue({ step: '1', substep: '2' });
     const config = createPassTransitionConfig();
 
-    await executeTransition(ctx, config, { stepId: '1.2' });
+    await executeTransition(asCtx(ctx), config, { stepId: '1.2' });
 
     // buildCompletionKey should use '2' (from explicit target), not '1' (from activeState)
     const completionKeyCall = (core.buildCompletionKey as jest.Mock<any>).mock.calls[0];
@@ -241,7 +306,7 @@ describe('executeTransition with ExplicitTarget', () => {
     const ctx = makeCtx({ substep: '1' });
     const config = createPassTransitionConfig();
 
-    await executeTransition(ctx, config); // No explicit target
+    await executeTransition(asCtx(ctx), config); // No explicit target
 
     // buildCompletionKey should use activeState.substep ('1')
     const completionKeyCall = (core.buildCompletionKey as jest.Mock<any>).mock.calls[0];
@@ -254,7 +319,7 @@ describe('executeTransition with ExplicitTarget', () => {
     (core.parseStepIdFromString as jest.Mock<any>).mockReturnValue({ step: '1', substep: '99' });
     const config = createPassTransitionConfig();
 
-    await expect(executeTransition(ctx, config, { stepId: '1.99' })).rejects.toThrow(
+    await expect(executeTransition(asCtx(ctx), config, { stepId: '1.99' })).rejects.toThrow(
       'substep "99" does not exist',
     );
   });
@@ -272,7 +337,7 @@ describe('executeTransition with ExplicitTarget', () => {
     (core.parseStepIdFromString as jest.Mock<any>).mockReturnValue({ step: '1', substep: '1' });
     const config = createPassTransitionConfig();
 
-    await expect(executeTransition(ctx, config, { stepId: '1.1', index: '6' })).rejects.toThrow(
+    await expect(executeTransition(asCtx(ctx), config, { stepId: '1.1', index: '6' })).rejects.toThrow(
       'exceeds FOR end 5',
     );
   });
@@ -291,7 +356,7 @@ describe('executeTransition with ExplicitTarget', () => {
     (core.parseStepIdFromString as jest.Mock<any>).mockReturnValue({ step: '1', substep: '1' });
     const config = createPassTransitionConfig();
 
-    await expect(executeTransition(ctx, config, { stepId: '1.1', index: '2' })).rejects.toThrow(
+    await expect(executeTransition(asCtx(ctx), config, { stepId: '1.1', index: '2' })).rejects.toThrow(
       'below FOR start 3',
     );
   });
@@ -310,7 +375,7 @@ describe('executeTransition with ExplicitTarget', () => {
     const config = createPassTransitionConfig();
 
     // Should not throw
-    await executeTransition(ctx, config, { stepId: '1.1', index: '3' });
+    await executeTransition(asCtx(ctx), config, { stepId: '1.1', index: '3' });
 
     expect(ctx.lifecycleService.upsertResolvedCompletion).toHaveBeenCalled();
   });
@@ -329,7 +394,7 @@ describe('executeTransition with ExplicitTarget', () => {
     const config = createPassTransitionConfig();
 
     // Index 999 should succeed since FullSourceWindow has no end bound
-    await executeTransition(ctx, config, { stepId: '1.1', index: '999' });
+    await executeTransition(asCtx(ctx), config, { stepId: '1.1', index: '999' });
 
     expect(ctx.lifecycleService.upsertResolvedCompletion).toHaveBeenCalled();
   });
@@ -342,7 +407,7 @@ describe('executeTransition with ExplicitTarget', () => {
     (core.parseStepIdFromString as jest.Mock<any>).mockReturnValue({ step: '1', substep: '1' });
     const config = createPassTransitionConfig();
 
-    await expect(executeTransition(ctx, config, { stepId: '1.1', index: '3' })).rejects.toThrow(
+    await expect(executeTransition(asCtx(ctx), config, { stepId: '1.1', index: '3' })).rejects.toThrow(
       '--index requires step "1" to be a FOR or PROMPTED-FOR step',
     );
   });
@@ -362,7 +427,7 @@ describe('executeTransition with ExplicitTarget', () => {
     // buildFrameKey mock returns '1[3]' for iteration 3, which differs from activeFrameKey '1|'
     const config = createPassTransitionConfig();
 
-    await executeTransition(ctx, config, { stepId: '1.1', index: '3' });
+    await executeTransition(asCtx(ctx), config, { stepId: '1.1', index: '3' });
 
     // buildCompletionKey should have been called with entry=0 (sentinel)
     const completionKeyCalls = (core.buildCompletionKey as jest.Mock<any>).mock.calls;
@@ -378,7 +443,7 @@ describe('executeTransition with ExplicitTarget', () => {
     // buildFrameKey('1', undefined) returns '1' which matches activeFrameKey
     const config = createPassTransitionConfig();
 
-    await executeTransition(ctx, config, { stepId: '1.2' });
+    await executeTransition(asCtx(ctx), config, { stepId: '1.2' });
 
     // buildCompletionKey should have been called with entry=2 (activeEntry)
     const completionKeyCalls = (core.buildCompletionKey as jest.Mock<any>).mock.calls;
@@ -392,7 +457,7 @@ describe('executeTransition with ExplicitTarget', () => {
     (core.parseStepIdFromString as jest.Mock<any>).mockReturnValue({ step: '1' });
     const config = createPassTransitionConfig();
 
-    await expect(executeTransition(ctx, config, { stepId: '1' })).rejects.toThrow(
+    await expect(executeTransition(asCtx(ctx), config, { stepId: '1' })).rejects.toThrow(
       'must include a substep',
     );
   });
@@ -419,7 +484,7 @@ describe('executeTransition with ExplicitTarget', () => {
     (core.parseStepIdFromString as jest.Mock<any>).mockReturnValue({ step: '1', substep: '1' });
     const config = createPassTransitionConfig();
 
-    await executeTransition(ctx, config, { stepId: '1.1' }); // No --index
+    await executeTransition(asCtx(ctx), config, { stepId: '1.1' }); // No --index
 
     // buildFrameKey should use iteration 3 (not undefined)
     expect(core.buildFrameKey).toHaveBeenCalledWith('1', 3);
@@ -443,7 +508,7 @@ describe('executeTransition with ExplicitTarget', () => {
     const config = createPassTransitionConfig();
 
     // Should NOT throw — prompted-for accepts --index without bounds validation
-    await executeTransition(ctx, config, { stepId: '1.1', index: '3' });
+    await executeTransition(asCtx(ctx), config, { stepId: '1.1', index: '3' });
 
     expect(core.buildFrameKey).toHaveBeenCalledWith('1', 3);
     expect(ctx.lifecycleService.upsertResolvedCompletion).toHaveBeenCalled();
@@ -466,7 +531,7 @@ describe('executeTransition with ExplicitTarget', () => {
     (core.parseStepIdFromString as jest.Mock<any>).mockReturnValue({ step: '1', substep: '1' });
     const config = createPassTransitionConfig();
 
-    await executeTransition(ctx, config, { stepId: '1.1' }); // No --index
+    await executeTransition(asCtx(ctx), config, { stepId: '1.1' }); // No --index
 
     expect(core.buildFrameKey).toHaveBeenCalledWith('1', 3);
   });
@@ -489,7 +554,7 @@ describe('executeTransition with ExplicitTarget', () => {
     });
     const config = createPassTransitionConfig();
 
-    await expect(executeTransition(ctx, config, { stepId: '1.1' })).rejects.toThrow(
+    await expect(executeTransition(asCtx(ctx), config, { stepId: '1.1' })).rejects.toThrow(
       'template AT expression',
     );
   });
@@ -510,13 +575,13 @@ describe('executeTransition with ExplicitTarget', () => {
       async (_id: string, key: string) => {
         // Return match for the cross-check (sentinel) key, miss for the exact key
         const sentinelCall = builtKeys.find((k) => k.entry === 0);
-        if (sentinelCall?.key === key) return { result: 'pass' };
+        if (sentinelCall?.key === key) return { result: 'pass' } as unknown as ResolvedCompletion;
         return null;
       },
     );
     const config = createPassTransitionConfig();
 
-    await executeTransition(ctx, config, { stepId: '1.1' });
+    await executeTransition(asCtx(ctx), config, { stepId: '1.1' });
 
     // Should NOT write a new completion (sentinel already covers it)
     expect(ctx.lifecycleService.upsertResolvedCompletion).not.toHaveBeenCalled();
@@ -559,13 +624,13 @@ describe('executeTransition with ExplicitTarget', () => {
       async (_id: string, key: string) => {
         // Primary key (sentinel) misses; cross-check (exact entry=4) hits
         const crossCall = builtKeys.find((k) => k.entry === 4);
-        if (crossCall?.key === key) return { result: 'pass' };
+        if (crossCall?.key === key) return { result: 'pass' } as unknown as ResolvedCompletion;
         return null;
       },
     );
     const config = createPassTransitionConfig();
 
-    await executeTransition(ctx, config, { stepId: '1.1', index: '3' });
+    await executeTransition(asCtx(ctx), config, { stepId: '1.1', index: '3' });
 
     // Sentinel write should NOT be suppressed — cross-check is skipped for sentinel entries
     // because the drain needs the sentinel as a bridge (it can't look up arbitrary frameEntries)
@@ -585,7 +650,7 @@ describe('executeTransition with ExplicitTarget', () => {
     (core.parseStepIdFromString as jest.Mock<any>).mockReturnValue({ step: '1', substep: '1' });
     const config = createPassTransitionConfig();
 
-    await executeTransition(ctx, config, { stepId: '1.1', index: '3' });
+    await executeTransition(asCtx(ctx), config, { stepId: '1.1', index: '3' });
 
     expect(drainResolvedCompletions).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -621,13 +686,13 @@ describe('executeTransition with ExplicitTarget', () => {
     ctx.lifecycleService.getResolvedCompletion.mockImplementation(
       async (_id: string, key: string) => {
         // Only the exact-entry key (entry=4) hits — sentinel (entry=0) misses
-        if (key.includes(':4:')) return { result: 'pass' };
+        if (key.includes(':4:')) return { result: 'pass' } as unknown as ResolvedCompletion;
         return null;
       },
     );
     const config = createPassTransitionConfig();
 
-    await executeTransition(ctx, config, { stepId: '1.1', index: '3' });
+    await executeTransition(asCtx(ctx), config, { stepId: '1.1', index: '3' });
 
     // Sentinel MUST still be written — the drain needs it since it uses activeEntry, not frameEntries
     expect(ctx.lifecycleService.upsertResolvedCompletion).toHaveBeenCalled();
@@ -652,13 +717,13 @@ describe('executeTransition with ExplicitTarget', () => {
     // Cross-check for exact entry 4 finds an existing completion
     ctx.lifecycleService.getResolvedCompletion.mockImplementation(
       async (_id: string, key: string) => {
-        if (key.includes(':4:')) return { result: 'pass' };
+        if (key.includes(':4:')) return { result: 'pass' } as unknown as ResolvedCompletion;
         return null;
       },
     );
     const config = createPassTransitionConfig();
 
-    await executeTransition(ctx, config, { stepId: '1.1', index: '3' });
+    await executeTransition(asCtx(ctx), config, { stepId: '1.1', index: '3' });
 
     // Drain should be called with frameKeyOverride so it can consume the sentinel
     expect(drainResolvedCompletions).toHaveBeenCalledWith(
@@ -672,7 +737,7 @@ describe('executeTransition with ExplicitTarget', () => {
     const ctx = makeCtx({ substep: '1' });
     const config = createPassTransitionConfig();
 
-    await executeTransition(ctx, config); // No explicit target
+    await executeTransition(asCtx(ctx), config); // No explicit target
 
     expect(drainResolvedCompletions).toHaveBeenCalled();
     const drainCall = (drainResolvedCompletions as jest.Mock<any>).mock.calls[0][0] as {
@@ -742,7 +807,7 @@ describe('step-level PASS transition no longer triggers CLI-side OUTPUTS evaluat
     const ctx = makeStepLevelCtx({ ContextId: 'ctx-abc', WorkPath: '.rundown/work' });
     const config = createPassTransitionConfig();
 
-    await executeTransition(ctx, config);
+    await executeTransition(asCtx(ctx), config);
 
     // Verify the machine-owned path was exercised: the PASS transition drives
     // the actor (where storeStepOutputs now lives), so actor.send must fire.
