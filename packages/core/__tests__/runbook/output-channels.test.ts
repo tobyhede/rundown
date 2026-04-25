@@ -1,10 +1,14 @@
 import { describe, it, expect } from '@jest/globals';
 import * as path from 'node:path';
+import { promises as fs } from 'node:fs';
+import * as os from 'node:os';
 import {
   partitionOutputDeclarations,
   outputsDirForRun,
   outputChannelPath,
   buildOutputChannelEnv,
+  prepareOutputChannels,
+  readCapturedOutputs,
   type OutputScope,
 } from '../../src/runbook/output-channels.js';
 
@@ -151,5 +155,146 @@ describe('buildOutputChannelEnv', () => {
   it('returns an empty record when no naked outputs are declared', () => {
     const env = buildOutputChannelEnv('/repo', 'wf-x', { stepId: '1' }, []);
     expect(env).toEqual({});
+  });
+});
+
+describe('prepareOutputChannels', () => {
+  it('creates one zero-byte file per naked output and returns absolute env paths', async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'rd-outputs-'));
+    try {
+      const result = await prepareOutputChannels({
+        cwd,
+        runId: 'wf-test-1',
+        scope: { stepId: '1' },
+        naked: [{ name: 'DeployUrl' }, { name: 'Version' }],
+      });
+      expect(Object.keys(result.env).sort()).toEqual([
+        'RD_OUTPUTS_DeployUrl',
+        'RD_OUTPUTS_Version',
+      ]);
+      for (const p of result.createdPaths) {
+        const stat = await fs.stat(p);
+        expect(stat.isFile()).toBe(true);
+        expect(stat.size).toBe(0);
+      }
+    } finally {
+      await fs.rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('truncates an existing channel file to zero bytes', async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'rd-outputs-'));
+    try {
+      const channelPath = path.join(
+        cwd,
+        '.rundown',
+        'runs',
+        'wf-test-2',
+        'outputs',
+        '1',
+        'Version',
+      );
+      await fs.mkdir(path.dirname(channelPath), { recursive: true });
+      await fs.writeFile(channelPath, 'stale-value\n');
+      await prepareOutputChannels({
+        cwd,
+        runId: 'wf-test-2',
+        scope: { stepId: '1' },
+        naked: [{ name: 'Version' }],
+      });
+      const after = await fs.readFile(channelPath, 'utf-8');
+      expect(after).toBe('');
+    } finally {
+      await fs.rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('skips an entry with an invalid name and continues with the rest', async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'rd-outputs-'));
+    try {
+      const result = await prepareOutputChannels({
+        cwd,
+        runId: 'wf-test-3',
+        scope: { stepId: '1' },
+        // 'step' is reserved → should be dropped; 'Version' should still be created
+        naked: [{ name: 'step' }, { name: 'Version' }],
+      });
+      expect(Object.keys(result.env)).toEqual(['RD_OUTPUTS_Version']);
+      expect(result.createdPaths).toHaveLength(1);
+    } finally {
+      await fs.rm(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('readCapturedOutputs', () => {
+  it('reads UTF-8 content and trims trailing whitespace + newlines', async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'rd-outputs-'));
+    try {
+      const prepared = await prepareOutputChannels({
+        cwd,
+        runId: 'wf-test-4',
+        scope: { stepId: '1' },
+        naked: [{ name: 'A' }, { name: 'B' }],
+      });
+      await fs.writeFile(prepared.createdPaths[0], 'value-a\n');
+      await fs.writeFile(prepared.createdPaths[1], 'value-b   \n\n');
+      const captured = await readCapturedOutputs(prepared.createdPaths, [
+        { name: 'A' },
+        { name: 'B' },
+      ]);
+      expect(captured).toEqual({ A: 'value-a', B: 'value-b' });
+    } finally {
+      await fs.rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('omits empty files (post-trim) with a warning', async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'rd-outputs-'));
+    try {
+      const prepared = await prepareOutputChannels({
+        cwd,
+        runId: 'wf-test-5',
+        scope: { stepId: '1' },
+        naked: [{ name: 'Empty' }, { name: 'Filled' }],
+      });
+      await fs.writeFile(prepared.createdPaths[0], '   \n');
+      await fs.writeFile(prepared.createdPaths[1], 'kept');
+      const captured = await readCapturedOutputs(prepared.createdPaths, [
+        { name: 'Empty' },
+        { name: 'Filled' },
+      ]);
+      expect(captured).toEqual({ Filled: 'kept' });
+    } finally {
+      await fs.rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('omits files containing a NUL byte (treated as non-UTF-8)', async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'rd-outputs-'));
+    try {
+      const prepared = await prepareOutputChannels({
+        cwd,
+        runId: 'wf-test-6',
+        scope: { stepId: '1' },
+        naked: [{ name: 'Bin' }],
+      });
+      await fs.writeFile(prepared.createdPaths[0], Buffer.from([0x68, 0x00, 0x69]));
+      const captured = await readCapturedOutputs(prepared.createdPaths, [{ name: 'Bin' }]);
+      expect(captured).toEqual({});
+    } finally {
+      await fs.rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('omits files that are missing on disk', async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'rd-outputs-'));
+    try {
+      const ghostPath = path.join(cwd, '.rundown', 'runs', 'wf-test-7', 'outputs', '1', 'Ghost');
+      const captured = await readCapturedOutputs([ghostPath], [{ name: 'Ghost' }]);
+      expect(captured).toEqual({});
+    } finally {
+      await fs.rm(cwd, { recursive: true, force: true });
+    }
   });
 });
