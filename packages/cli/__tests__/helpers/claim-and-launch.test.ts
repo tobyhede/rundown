@@ -1,5 +1,6 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { mockErrorHelpers } from './mock-error-helpers.js';
+import { mockFn } from './typed-mocks.js';
 
 // Capture the real isJsonArrayStream before the mock is registered.
 // jest.unstable_mockModule does NOT hoist (unlike jest.mock), so this top-level
@@ -264,14 +265,27 @@ describe('claimAndLaunch', () => {
 
     // Mock lock acquisition failure with a real DelegationLockTimeoutError
     // (the production code now branches on `instanceof`, not on the message string).
-    const mockAcquire = jest
-      .fn<any>()
-      .mockRejectedValue(new (core as any).DelegationLockTimeoutError('run-1', '/tmp/test.lock'));
-    const mockRelease = jest.fn<any>().mockResolvedValue(undefined);
-    (core.DelegationLock as jest.Mock<any>).mockImplementation(() => ({
-      acquire: mockAcquire,
-      release: mockRelease,
-    }));
+    const mockAcquire = mockFn<() => Promise<void>>();
+    // `core` is the mocked module; the constructor is the mock-installed
+    // class, not the real export. Cast through unknown to surface the
+    // runtime constructor signature.
+    mockAcquire.mockRejectedValue(
+      new (
+        core as unknown as {
+          DelegationLockTimeoutError: new (id: string, lock: string) => Error;
+        }
+      ).DelegationLockTimeoutError('run-1', '/tmp/test.lock'),
+    );
+    const mockRelease = mockFn<() => Promise<void>>();
+    mockRelease.mockResolvedValue(undefined);
+    // Partial mock is intentional: tests only exercise acquire/release;
+    // cwd/lockDir/lockPath fields aren't read by the code under test.
+    jest.mocked(core.DelegationLock).mockImplementation(
+      () =>
+        ({ acquire: mockAcquire, release: mockRelease }) as unknown as jest.MockedObject<
+          InstanceType<typeof core.DelegationLock>
+        >,
+    );
 
     // cspell:disable-next-line
     const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
