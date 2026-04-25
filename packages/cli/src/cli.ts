@@ -24,7 +24,12 @@ import { registerClaimCommand } from './commands/claim.js';
 import { registerAbortCommand } from './commands/abort.js';
 import { registerCollectCommand } from './commands/collect.js';
 import { PolicyConfigTrustRequiredError, setColorEnabled } from '@rundown-org/core';
-import { initializePolicyContext, parsePolicyCliOptions } from './services/policy-context.js';
+import {
+  initializePolicyContext,
+  parsePolicyCliOptions,
+  getPolicyContext,
+} from './services/policy-context.js';
+import { loadHelperModules, setHelperRegistry } from './services/helper-registry.js';
 import { outputCommandSchema } from './services/schema-service.js';
 
 import { fileURLToPath } from 'node:url';
@@ -134,13 +139,27 @@ export function createProgram(): Command {
       new Option('--sandbox-strict', 'Fail if sandbox is unavailable (strict mode)').helpGroup(
         'Policy options:',
       ),
+    )
+    .addOption(
+      new Option(
+        '--helpers <paths>',
+        'Helper module paths to load (comma-separated, relative to project root)',
+      ).helpGroup('Policy options:'),
     );
 
   // Initialize policy before subcommands
   program.hook('preSubcommand', async (thisCommand) => {
     const opts = thisCommand.opts();
     const policyOpts = parsePolicyCliOptions(opts);
-    await initializePolicyContext(policyOpts, process.cwd());
+    const cwd = process.cwd();
+    await initializePolicyContext(policyOpts, cwd);
+    const configHelpers = getPolicyContext().policy.helpers ?? [];
+    const cliHelpers = policyOpts.helpers ?? [];
+    const allHelperPaths = [...configHelpers, ...cliHelpers];
+    if (allHelperPaths.length > 0) {
+      const registry = await loadHelperModules(allHelperPaths, cwd, cwd);
+      setHelperRegistry(registry);
+    }
   });
 
   program.hook('preAction', (thisCommand) => {

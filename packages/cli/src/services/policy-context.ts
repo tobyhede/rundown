@@ -47,6 +47,8 @@ export interface PolicyCliOptions {
   sandboxStrict?: boolean;
   /** Disable sandbox enforcement (--no-sandbox) */
   noSandbox?: boolean;
+  /** Helper module paths from --helpers flag (comma-separated, resolved at startup) */
+  helpers?: string[];
 }
 
 /**
@@ -223,6 +225,13 @@ export function parsePolicyCliOptions(opts: Record<string, unknown>): PolicyCliO
     sandbox: typeof opts.sandbox === 'boolean' ? opts.sandbox : undefined,
     sandboxStrict: opts.sandboxStrict === true,
     noSandbox: opts.noSandbox === true,
+    helpers:
+      typeof opts['helpers'] === 'string'
+        ? opts['helpers']
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : undefined,
   };
 }
 
