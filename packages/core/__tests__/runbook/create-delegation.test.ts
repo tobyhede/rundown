@@ -45,7 +45,9 @@ describe('createDelegation', () => {
     expect(result.status).toBe('created');
     if (result.status !== 'created') return;
     expect(result.token.startsWith(TOKEN_PREFIX)).toBe(true);
-    expect(result.token.length).toBe(37);
+    // Body is 32 base32 chars: 20 random bytes × 8 bits / 5 bits-per-char
+    // = 32 chars exactly (no padding). See delegation-token.ts encodeBase32.
+    expect(result.token.length).toBe(TOKEN_PREFIX.length + 32);
   });
 
   it('returns hash that matches token', () => {
