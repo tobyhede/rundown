@@ -24,6 +24,7 @@ import type { OutputVars } from './output-evaluator.js';
 import { retryDelegation, type RetryDelegationResult } from './delegation-service.js';
 import { findSubstepState, type FrameKey } from './targeting.js';
 import { brandInitialTemplateVars, brandStoredOutputs } from './effective-vars.js';
+import { Errors } from '../errors/factory.js';
 import { logger } from '../logger.js';
 
 /**
@@ -315,6 +316,31 @@ export function runRetryHook(
     activeFrameKey,
     variables: brandStoredOutputs(context.variables),
   };
+
+  // Stale-substep guard: an active-frame delegation references a substep id
+  // that the resolved parent step no longer declares. The per-substep loop
+  // below walks parentStep.substeps only, so the orphan would be silently
+  // missed and the retry transition would be consumed without re-issuing
+  // any token. Surface as a typed error (RD-905) so the operator can
+  // detect schema drift and restart cleanly. Per the project's "never
+  // migrate persisted state" principle, the only safe recovery is to
+  // complete or stop the running runbook and start fresh.
+  const declaredSubstepIds = new Set(parentStep.substeps.map((substep) => substep.id));
+  const orphanActiveDelegation = substepStates.find(
+    (ss) =>
+      ss.frameKey === activeFrameKey &&
+      ss.delegation !== undefined &&
+      !declaredSubstepIds.has(ss.id),
+  );
+  if (orphanActiveDelegation !== undefined) {
+    const error = Errors.retryHookStaleSubstep(orphanActiveDelegation.id, parentStep.name);
+    return {
+      status: 'error',
+      code: error.code,
+      message: error.message,
+      substepStates,
+    };
+  }
 
   for (const substep of parentStep.substeps) {
     const outcome = retrySingleSubstep(working, substep, activeFrameKey, parentStep.name, steps);

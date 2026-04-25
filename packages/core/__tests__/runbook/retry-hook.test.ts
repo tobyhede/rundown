@@ -353,6 +353,89 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
     expect(mockedRetryDelegation).not.toHaveBeenCalled();
   });
 
+  it('rolls back with RD-905 when an active-frame delegation targets an undeclared substep', () => {
+    // Schema-drift scenario: persisted state holds an active-frame
+    // delegation whose `id` (here: "99") is NOT declared on the current
+    // parentStep.substeps. The per-substep loop walks parentStep.substeps
+    // only, so the orphan would be silently missed and runRetryHook would
+    // fall through to its post-loop success guard, consuming the retry
+    // transition without re-issuing any token. The pre-loop guard surfaces
+    // this as a typed error so the operator can detect the drift.
+    const activeFrameKey = buildFrameKey('1');
+    const substepTransitions = {
+      pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+      fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
+    };
+    const parentTransitions = {
+      pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+      fail: { kind: 'fail' as const, retry: 1, action: { type: 'STOP' as const } },
+    };
+    const parentStep: ResolvedStepHavingSubsteps = {
+      kind: 'substeps',
+      name: '1',
+      description: 'Parent',
+      transitions: parentTransitions,
+      aggregation: { strategy: 'ALL' as const },
+      substeps: [
+        {
+          kind: 'base',
+          id: '1',
+          description: 'Sub 1',
+          transitions: substepTransitions,
+        },
+      ],
+    } as unknown as ResolvedStepHavingSubsteps;
+    const steps: ResolvedStep[] = [parentStep as unknown as ResolvedStep];
+
+    const orphanDelegation: StepDelegation = {
+      tokenHash: 'hash_orphan',
+      childRunbookPath: 'child-99.md',
+      childRunId: null,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      cancelledAt: null,
+      contextSnapshot: {
+        vars: brandEffectiveVarsForTest({}),
+        ancestors: [],
+        step: '1',
+        substep: '99',
+        at: '1.99',
+      },
+    };
+    const originalSubstepStates: readonly SubstepState[] = [
+      {
+        id: '99',
+        frameKey: activeFrameKey,
+        status: 'done',
+        result: 'fail',
+        delegation: orphanDelegation,
+      },
+    ];
+    const context: RunbookContext = {
+      retryCount: 0,
+      parentRetryCount: 0,
+      iterationRetryCount: 0,
+      variables: {},
+      forStack: [],
+      substepCompletedCount: 0,
+      templateVars: {},
+      frontmatterOutputs: [],
+      finalVars: {},
+      lifecycle: 'running' as const,
+      substepStates: originalSubstepStates,
+      activeFrameKey,
+    } as unknown as RunbookContext;
+
+    const result = runRetryHook(context, parentStep, steps);
+
+    expect(result.status).toBe('error');
+    if (result.status === 'error') {
+      expect(result.code).toBe('RD-905');
+      expect(result.substepStates).toBe(originalSubstepStates);
+    }
+    // retryDelegation must NOT be called — the guard fires before the loop.
+    expect(mockedRetryDelegation).not.toHaveBeenCalled();
+  });
+
   it('rolls back with RD-904 when fresh delegation has no canonical contextSnapshot.at', () => {
     // Hard-fail rather than silently degrade: deriveExecutionAt always populates
     // `at` for fresh delegations through the current path. A missing value here

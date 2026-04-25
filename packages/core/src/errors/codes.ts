@@ -354,6 +354,18 @@ export const ErrorCodes = {
       `rather than silently emitting a degraded id.`,
     docSlug: 'retry-hook-missing-canonical-at',
   },
+  RETRY_HOOK_STALE_SUBSTEP: {
+    code: 'RD-905',
+    category: ErrorCategory.EXECUTION,
+    title: 'Retry hook references undeclared substep',
+    description:
+      `An active-frame delegation in persisted state targets a substep that the ` +
+      `resolved runbook no longer declares on the parent step. The per-substep ` +
+      `loop walks parentStep.substeps only, so silently skipping the orphan would ` +
+      `consume the retry transition without re-issuing any token. Resolve by ` +
+      `completing or stopping the running runbook and starting a fresh run.`,
+    docSlug: 'retry-hook-stale-substep',
+  },
 
   // Generic
   UNKNOWN_ERROR: {
