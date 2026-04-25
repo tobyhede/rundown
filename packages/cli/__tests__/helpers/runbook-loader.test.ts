@@ -1,6 +1,7 @@
 import { describe, it, expect } from '@jest/globals';
 import { getRunbookFromState } from '../../src/helpers/runbook-loader.js';
 import type { RunbookState } from '@rundown-org/core';
+import { brandInitialTemplateVarsForTest } from './brand-helpers.js';
 
 describe('getRunbookFromState', () => {
   it('should parse from runbookSrc when available', () => {
@@ -57,7 +58,7 @@ Deploy to {{ env }}.
       id: 'template-id',
       runbook: 'template.runbook.md',
       runbookSrc,
-      templateVars: { env: 'staging' },
+      templateVars: brandInitialTemplateVarsForTest({ env: 'staging' }),
     };
 
     const steps = getRunbookFromState(state as RunbookState, '/unused');

@@ -127,7 +127,7 @@ jest.unstable_mockModule('../../src/services/variable-discovery', () => ({
     }
   },
   resolveVariables: jest
-    .fn()
+    .fn<any>()
     .mockResolvedValue({ vars: {}, sources: {}, warnings: [], providedKeys: new Set() }),
   RUNTIME_RESERVED_VARIABLES: new Set(['Date', 'DateTime', 'Year', 'Month', 'Day', 'WorkPath']),
 }));
@@ -676,6 +676,7 @@ describe('claimAndLaunch', () => {
 
     // Should validate format - scanner may return null or validation may catch it
     expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected failure');
     expect([core.ErrorCodes.INVALID_TOKEN.code, core.ErrorCodes.TOKEN_NOT_FOUND.code]).toContain(
       result.code,
     );

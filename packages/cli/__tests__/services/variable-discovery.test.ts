@@ -18,6 +18,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { isJsonArrayStream, resolveForValue, RUNDOWN_DIR, WORK_DIR } from '@rundown-org/core';
 import type { ForContext } from '@rundown-org/core';
+import { brandInitialTemplateVarsForTest } from '../helpers/brand-helpers.js';
 
 describe('parseVarFlag', () => {
   it('should parse key=value format', () => {
@@ -126,7 +127,7 @@ describe('getBuiltinVariables', () => {
   });
 
   it('should include sanitized branch in WorkPath when in git repo', () => {
-    setExecFileSyncImpl((() => 'feature/my-branch\n') as typeof nodeExecFileSync);
+    setExecFileSyncImpl((() => 'feature/my-branch\n') as unknown as typeof nodeExecFileSync);
 
     const builtins = getBuiltinVariables();
     expect(builtins.WorkPath).toBe(`${WORK_DIR}/feature-my-branch`);
@@ -136,7 +137,7 @@ describe('getBuiltinVariables', () => {
   it('should fall back to WORK_DIR when not in git', () => {
     setExecFileSyncImpl((() => {
       throw new Error('not a git repo');
-    }) as typeof nodeExecFileSync);
+    }) as unknown as typeof nodeExecFileSync);
 
     const builtins = getBuiltinVariables();
     expect(builtins.WorkPath).toBe(WORK_DIR);
@@ -144,7 +145,7 @@ describe('getBuiltinVariables', () => {
   });
 
   it('should fall back to WORK_DIR on detached HEAD', () => {
-    setExecFileSyncImpl((() => 'HEAD\n') as typeof nodeExecFileSync);
+    setExecFileSyncImpl((() => 'HEAD\n') as unknown as typeof nodeExecFileSync);
 
     const builtins = getBuiltinVariables();
     expect(builtins.WorkPath).toBe(WORK_DIR);
@@ -1128,7 +1129,9 @@ describe('resolveVariables', () => {
         source: { kind: 'variable', name: 'items' },
       };
       // Must reject with the type-mismatch error, never reach file-read dispatch
-      await expect(resolveForValue(forCtx, result.vars)).rejects.toMatchObject({
+      await expect(
+        resolveForValue(forCtx, brandInitialTemplateVarsForTest(result.vars)),
+      ).rejects.toMatchObject({
         code: 'type-mismatch',
       });
     });

@@ -44,7 +44,7 @@ const { runExecutionLoop } = await import('../../src/services/execution.js');
 const { validateGotoTarget, executeGoto } = await import('../../src/helpers/goto-workflow.js');
 
 function makeStep(overrides: Record<string, unknown> = {}): any {
-  const obj = {
+  const obj: Record<string, unknown> = {
     name: '1',
     description: 'Test Step',
     transitions: {
@@ -381,7 +381,7 @@ describe('executeGoto', () => {
       sendAndSync: jest.fn<any>().mockResolvedValue({ state: { step: '2' } }),
     };
     const mockOutput = { action: jest.fn(), flush: jest.fn() };
-    runExecutionLoop.mockResolvedValue('done');
+    (runExecutionLoop as jest.Mock<any>).mockResolvedValue('done');
 
     const ctx = {
       output: mockOutput as any,
@@ -411,7 +411,7 @@ describe('executeGoto', () => {
       sendAndSync: jest.fn<any>().mockResolvedValue({ state: { step: '2' } }),
     };
     const mockOutput = { action: jest.fn(), flush: jest.fn() };
-    runExecutionLoop.mockResolvedValue('stopped');
+    (runExecutionLoop as jest.Mock<any>).mockResolvedValue('stopped');
 
     const ctx = {
       output: mockOutput as any,

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { buildFrameKey, buildCompletionKey } from '@rundown-org/core';
+import { buildFrameKey, buildCompletionKey, type FrameKey } from '@rundown-org/core';
 import {
   createTestWorkspace,
   createRunbook,
@@ -74,7 +74,7 @@ async function markSubstepsResolved(
   const statePath = join(workspace.statePath(), `${runbookId}.json`);
   const raw = JSON.parse(await readFile(statePath, 'utf-8')) as MutableRunbookState;
 
-  const frameKey = raw.activeFrameKey ?? buildFrameKey(raw.step);
+  const frameKey = (raw.activeFrameKey ?? buildFrameKey(raw.step)) as FrameKey;
   const entry = raw.activeEntry ?? 1;
 
   const substepStates: SubstepState[] = results.map((result, i) => ({

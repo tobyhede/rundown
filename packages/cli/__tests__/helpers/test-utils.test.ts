@@ -242,7 +242,7 @@ describe('createRunbook', () => {
         steps: [
           {
             title: 'Process items',
-            for: { source: 'items' },
+            for: { variable: 'i', source: 'items' },
             pass: 'CONTINUE',
             substeps: [{ title: 'Handle' }],
           },
@@ -270,7 +270,7 @@ describe('createRunbook', () => {
         steps: [
           {
             title: 'Process items',
-            for: { start: 2, end: 4, source: 'items' },
+            for: { variable: 'i', start: 2, end: 4, source: 'items' },
             pass: 'CONTINUE',
             substeps: [{ title: 'Handle' }],
           },

@@ -514,7 +514,7 @@ describe('TextRenderer', () => {
         ],
       };
 
-      renderer.render(event);
+      renderer.render(event as ListOutput);
 
       const output = writer.lines.join('\n');
       expect(output).toContain('NAME');
@@ -534,7 +534,7 @@ describe('TextRenderer', () => {
         emptyMessage: 'No items found.',
       };
 
-      renderer.render(event);
+      renderer.render(event as ListOutput);
 
       expect(writer.lines).toContain('No items found.');
     });
@@ -549,7 +549,7 @@ describe('TextRenderer', () => {
         columns: [{ header: 'Name', key: 'name' }],
       };
 
-      renderer.render(event);
+      renderer.render(event as ListOutput);
 
       expect(writer.lines).toHaveLength(0);
     });

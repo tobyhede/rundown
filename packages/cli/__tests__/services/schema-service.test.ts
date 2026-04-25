@@ -80,7 +80,7 @@ describe('schema-service', () => {
 
   describe('outputCommandSchema', () => {
     it('should return true for valid command', () => {
-      const consoleSpy = jest.spyOn(console, 'log').mockImplementation();
+      const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => undefined);
 
       const result = outputCommandSchema('status');
 
@@ -93,7 +93,7 @@ describe('schema-service', () => {
     });
 
     it('should return false for unknown command', () => {
-      const consoleSpy = jest.spyOn(console, 'error').mockImplementation();
+      const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
 
       const result = outputCommandSchema('unknown-command');
 

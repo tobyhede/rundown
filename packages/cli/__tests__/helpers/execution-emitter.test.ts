@@ -1,6 +1,7 @@
 import { describe, it, expect, jest } from '@jest/globals';
 import { ExecutionEventEmitter, type RunbookState } from '@rundown-org/core';
 import type { OutputEmitter } from '../../src/services/output-emitter.js';
+import { brandStoredOutputsForTest } from './brand-helpers.js';
 
 const { createBridgedEmitter } = await import('../../src/helpers/execution-emitter.js');
 
@@ -13,7 +14,7 @@ describe('createBridgedEmitter', () => {
       step: '1',
       stepName: 'Step 1',
       retryCount: 0,
-      variables: {},
+      variables: brandStoredOutputsForTest(),
       steps: [],
       startedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -49,7 +50,11 @@ describe('createBridgedEmitter', () => {
     });
 
     expect(executionEventFn).toHaveBeenCalledTimes(1);
-    const event = executionEventFn.mock.calls[0]?.[0];
+    const event = executionEventFn.mock.calls[0]?.[0] as {
+      type: string;
+      runbookId: string;
+      runbook: { name?: string; path?: string };
+    };
     expect(event.type).toBe('RUNBOOK_STARTED');
     expect(event.runbookId).toBe('wf-test');
   });
@@ -65,7 +70,11 @@ describe('createBridgedEmitter', () => {
       statePath: '.rundown/runs/wf-test.json',
     });
 
-    const event = executionEventFn.mock.calls[0]?.[0];
+    const event = executionEventFn.mock.calls[0]?.[0] as {
+      type: string;
+      runbookId: string;
+      runbook: { name?: string; path?: string };
+    };
     expect(event.runbook).toEqual({ name: 'my-book', path: 'path/to/my-book.md' });
   });
 });

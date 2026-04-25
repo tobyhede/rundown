@@ -568,7 +568,9 @@ describe('executeTransition with ExplicitTarget', () => {
       }),
     );
     // The override should be the cursor's frameKey (built from step + index)
-    const drainCall = (drainResolvedCompletions as jest.Mock<any>).mock.calls[0][0];
+    const drainCall = (drainResolvedCompletions as jest.Mock<any>).mock.calls[0][0] as {
+      frameKeyOverride?: unknown;
+    };
     expect(drainCall.frameKeyOverride).toBe(core.buildFrameKey('1', 3));
   });
 
@@ -648,7 +650,9 @@ describe('executeTransition with ExplicitTarget', () => {
     await executeTransition(ctx, config); // No explicit target
 
     expect(drainResolvedCompletions).toHaveBeenCalled();
-    const drainCall = (drainResolvedCompletions as jest.Mock<any>).mock.calls[0][0];
+    const drainCall = (drainResolvedCompletions as jest.Mock<any>).mock.calls[0][0] as {
+      frameKeyOverride?: unknown;
+    };
     expect(drainCall.frameKeyOverride).toBeUndefined();
   });
 });
