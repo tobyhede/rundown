@@ -106,7 +106,7 @@ export type RetryHookResult = RetryHookSuccess | RetryHookError;
  *
  * @internal
  */
-export type WorkingRetryState = Pick<
+export type RetryWorkingState = Pick<
   RunbookState,
   'step' | 'substepStates' | 'templateVars' | 'forStack' | 'activeFrameKey' | 'variables'
 >;
@@ -155,13 +155,13 @@ export type WorkingRetryState = Pick<
  *   (rollback discipline: caller supplies its original snapshot).
  */
 export function retrySingleSubstep(
-  working: WorkingRetryState,
+  working: RetryWorkingState,
   substep: Substep,
   activeFrameKey: FrameKey,
   _parentName: string,
   steps: readonly ResolvedStep[],
 ):
-  | { status: 'retried'; working: WorkingRetryState; frontierEntry: DelegateFrontierEntry }
+  | { status: 'retried'; working: RetryWorkingState; frontierEntry: DelegateFrontierEntry }
   | { status: 'skipped' }
   | { status: 'error'; code: string; message: string } {
   const ss = findSubstepState(working.substepStates ?? [], substep.id, activeFrameKey);
@@ -318,7 +318,7 @@ export function runRetryHook(
   // delegation path the value is only spread into contextSnapshot.vars — the
   // actual runtime values originate from `flattenTemplateVars` at hydration
   // and are always TemplateVarValue-compatible.
-  let working: WorkingRetryState = {
+  let working: RetryWorkingState = {
     step: parentStep.name,
     substepStates,
     templateVars: brandInitialTemplateVars(asTemplateVars(context.templateVars)),

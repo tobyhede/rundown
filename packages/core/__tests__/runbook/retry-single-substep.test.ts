@@ -5,8 +5,8 @@ import type {
   SubstepState,
   StepDelegation,
 } from '../../src/runbook/types.js';
-// TDD red state: WorkingRetryState WILL FAIL to import until Task 4 exports it.
-import type { WorkingRetryState } from '../../src/runbook/retry-hook.js';
+// TDD red state: RetryWorkingState WILL FAIL to import until Task 4 exports it.
+import type { RetryWorkingState } from '../../src/runbook/retry-hook.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 
 // Same mock pattern as retry-hook.test.ts — control retryDelegation return values.
@@ -21,7 +21,7 @@ const { retrySingleSubstep } = await import('../../src/runbook/retry-hook.js');
 const mockedRetryDelegation = retryDelegation as jest.MockedFunction<typeof retryDelegation>;
 
 function makeInputs(overrides?: { substepStates?: readonly SubstepState[] }): {
-  working: WorkingRetryState;
+  working: RetryWorkingState;
   substep: Substep;
   frameKey: ReturnType<typeof buildFrameKey>;
   parentName: string;
@@ -82,14 +82,14 @@ function makeInputs(overrides?: { substepStates?: readonly SubstepState[] }): {
     },
   ];
 
-  const working: WorkingRetryState = {
+  const working: RetryWorkingState = {
     step: parentName,
     substepStates: originalSubstepStates,
     templateVars: {},
     forStack: [],
     activeFrameKey: frameKey,
     variables: {},
-  } as unknown as WorkingRetryState;
+  } as unknown as RetryWorkingState;
 
   return { working, substep, frameKey, parentName, steps, originalSubstepStates };
 }
@@ -276,7 +276,7 @@ describe('retrySingleSubstep', () => {
 
   it('does not mutate the input working state', () => {
     const { working, substep, frameKey, parentName, steps, originalSubstepStates } = makeInputs();
-    const snapshot = JSON.parse(JSON.stringify(working)) as WorkingRetryState;
+    const snapshot = JSON.parse(JSON.stringify(working)) as RetryWorkingState;
 
     const newDelegation: StepDelegation = {
       tokenHash: 'hash_new',
