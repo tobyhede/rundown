@@ -61,7 +61,7 @@ describe('Helper extensibility — end-to-end (helper registered via .rundownrc)
     await workspace.cleanup();
   });
 
-  it('resolve reports no unresolved variables when helper transforms the placeholder', () => {
+  it('resolve reports no unresolved variables when helper transforms the placeholder', async () => {
     const result = runCli('resolve demo.runbook.md --input Name=world', workspace);
 
     expect(result.exitCode).toBe(0);
@@ -74,7 +74,7 @@ describe('Helper extensibility — end-to-end (helper registered via .rundownrc)
     expect(unresolved ?? []).toHaveLength(0);
   });
 
-  it('run --prompted renders {{ upper Name }} as WORLD in the step_entered prompt', () => {
+  it('run --prompted renders {{ upper Name }} as WORLD in the step_entered prompt', async () => {
     const result = runCli('run --prompted demo.runbook.md --input Name=world', workspace);
 
     expect(result.exitCode).toBe(0);
@@ -104,7 +104,7 @@ describe('Helper extensibility — end-to-end (no helper registered)', () => {
     await workspace.cleanup();
   });
 
-  it('run --prompted preserves {{ upper Name }} verbatim in the step_entered prompt', () => {
+  it('run --prompted preserves {{ upper Name }} verbatim in the step_entered prompt', async () => {
     const result = runCli('run --prompted demo.runbook.md --input Name=world', workspace);
 
     expect(result.exitCode).toBe(0);
