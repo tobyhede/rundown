@@ -519,10 +519,31 @@ export function retryDelegation(
     force: true,
     frameKey,
   });
-  const stateAfterAbort: RunbookState =
-    abortResult.status === 'cancelled'
-      ? { ...state, substepStates: abortResult.updatedSubstepStates }
-      : state;
+  let stateAfterAbort: RunbookState;
+  switch (abortResult.status) {
+    case 'cancelled':
+      stateAfterAbort = { ...state, substepStates: abortResult.updatedSubstepStates };
+      break;
+    case 'already_cancelled':
+      // Idempotent: state already reflects the cancellation.
+      stateAfterAbort = state;
+      break;
+    case 'needs_force':
+    case 'not_found': {
+      // Unreachable in the current call graph: `force=true` rules out
+      // `needs_force`, and the delegation existence is verified above
+      // (rules out `not_found`). Surface as `error` so a future invariant
+      // break does not silently proceed with stale state. `not_found`
+      // carries `error`; `needs_force` does not, so synthesize one.
+      const error =
+        'error' in abortResult ? abortResult.error : Errors.delegationStepNotFound(substepId);
+      return { status: 'error', error };
+    }
+    default: {
+      const _exhaustive: never = abortResult;
+      return _exhaustive;
+    }
+  }
 
   // 5. Mint a fresh delegation. createDelegation returns a Result variant;
   //    translate any non-created outcome into this function's `error` variant
