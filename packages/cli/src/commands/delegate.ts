@@ -86,9 +86,7 @@ export function registerDelegateCommand(program: Command): void {
 
           const depError = validateIndexRequiresStep(options.index, options.step);
           if (depError) {
-            output.error(depError, 'INVALID_SYNTAX');
-            output.flush();
-            process.exit(1);
+            failRetry(output, depError, 'INVALID_SYNTAX');
           }
 
           const cwd = getCwd();
@@ -174,9 +172,7 @@ export function registerDelegateCommand(program: Command): void {
             explicitIteration = resolveIndexOption(options.index, parsedTarget?.at);
           } catch (error) {
             if (error instanceof IndexOptionError) {
-              output.error(error.message, error.code);
-              output.flush();
-              process.exit(1);
+              failRetry(output, error.message, error.code);
             }
             throw error;
           }
@@ -186,12 +182,11 @@ export function registerDelegateCommand(program: Command): void {
             const targetStepName = parsedTarget?.step ?? state.step;
             const targetStep = steps.find((s) => s.name === targetStepName);
             if (targetStep && targetStep.kind !== 'for' && targetStep.kind !== 'prompted-for') {
-              output.error(
+              failRetry(
+                output,
                 `--index requires step "${targetStepName}" to be a FOR step, but it is "${targetStep.kind}"`,
                 'INVALID_INDEX',
               );
-              output.flush();
-              process.exit(1);
             }
           }
 
@@ -256,40 +251,84 @@ interface RetryHandlerOptions {
 }
 
 /**
- * Handle the `rd delegate --retry` flow.
+ * Result of resolving a `rd delegate --retry` invocation to a concrete target.
  *
- * Supports five resolution paths:
- * 1. Token positional (`rd delegate --retry <token>`)
- * 2. `--step <id>` (active-frame substep)
- * 3. `--step <id> --index <n>` (FOR iteration)
- * 4. Inferred (no token, no `--step` — from active substep)
- * 5. Invalid: token + `--step` both provided → ambiguity error
+ * Produced by `resolveRetryTarget` and consumed by `executeRetry`. The split
+ * separates target resolution (parse arguments, load state, locate substep)
+ * from retry execution (invoke retryDelegation, persist, emit output).
  *
- * Result-agnostic per spec §4.3 (RETRY on DELEGATE) — succeeds regardless of substep result.
+ * `overrides` lives here because `--var*` parsing is shared across all
+ * resolution branches and must happen before retryDelegation is invoked.
+ */
+interface ResolvedTarget {
+  state: RunbookState;
+  substepId: string;
+  frameKey: FrameKey;
+  /** For error messages and output. May be `step` or `step.substep` or `contextSnapshot.at`. */
+  stepLabel: string;
+  /** Parsed `--var*` overrides. */
+  overrides: Record<string, TemplateVarValue> | undefined;
+}
+
+/**
+ * Emit a CLI error via OutputEmitter, flush pending output, and exit with
+ * status 1. Annotated `: never` so TypeScript narrows callers after a call
+ * (e.g. `if (!x) failRetry(...); /* x is non-null here *\/`).
+ *
+ * Used by both the `--retry` resolution path and the fresh-issue
+ * delegation path. The name is historical (introduced for retry); the
+ * function itself is the canonical failure path for the delegate command.
+ *
+ * @param output - OutputEmitter used to surface the error message.
+ * @param message - Human-readable error text.
+ * @param code - Stable error code (e.g. `INVALID_SYNTAX`, `TOKEN_NOT_FOUND`).
+ */
+function failRetry(output: OutputEmitter, message: string, code: string): never {
+  output.error(message, code);
+  output.flush();
+  process.exit(1);
+}
+
+/**
+ * Resolve a `rd delegate --retry` invocation to a concrete ResolvedTarget.
+ *
+ * Performs argument parsing, ambiguity checks, overrides normalization, and
+ * the three branch resolutions (token / --step [--index] / inferred). Per
+ * plan design decision #4, per-branch helpers are NOT extracted — the CLI is
+ * tested via runCliInProcess integration tests, so inline branches avoid
+ * creating a test-only export surface with no caller benefit.
+ *
+ * Deferred unit tests: the original plan called for ~17 unit tests on this
+ * function and `executeRetry`. Skipped because the CLI package has no
+ * unit-with-mocks precedent — adding one requires `@internal` exports
+ * solely for tests. Current coverage is via `delegate.test.ts` retry-section
+ * integration tests (token / step / step+index / inferred / ambiguity /
+ * off-frontier / no-active / var inheritance / var override / non-failed /
+ * non-FOR / FOR-iteration). Revisit the unit-test plan when any other CLI
+ * command adopts `jest.unstable_mockModule` — at that point the precedent
+ * exists and the export-surface cost vanishes.
  *
  * @param args - Retry options
+ * @returns Resolved target (state, substepId, frameKey, stepLabel, overrides)
  */
-async function handleRetry(args: RetryHandlerOptions): Promise<void> {
+async function resolveRetryTarget(args: RetryHandlerOptions): Promise<ResolvedTarget> {
   const { runbookArg, options, manager, sessionService, cwd, output } = args;
-
-  // Helper: emit error, flush, exit — matches the existing exit-with-context pattern.
-  const fail = (message: string, code: string): never => {
-    output.error(message, code);
-    output.flush();
-    process.exit(1);
-  };
 
   // 1. Detect token-positional form vs runbook-arg form.
   const tokenArg = runbookArg?.startsWith(DELEGATION_TOKEN_PREFIX) ? runbookArg : undefined;
 
   // 2. Ambiguity check: token + --step together is an error.
   if (tokenArg && options.step) {
-    fail('specify either a token or --step, not both', 'INVALID_SYNTAX');
+    failRetry(output, 'specify either a token or --step, not both', 'INVALID_SYNTAX');
   }
 
   // 3. Reject non-token positional runbook arg (no meaning for --retry).
   if (runbookArg && !tokenArg) {
-    fail(`--retry does not accept a runbook positional; got "${runbookArg}"`, 'INVALID_SYNTAX');
+    failRetry(
+      output,
+      `--retry does not accept a runbook positional; got "${runbookArg}"`,
+      'INVALID_SYNTAX',
+    );
   }
 
   // 4. Parse extraVars overrides using the shared normalization pipeline.
@@ -306,46 +345,47 @@ async function handleRetry(args: RetryHandlerOptions): Promise<void> {
     overrides = Object.keys(routed.vars).length > 0 ? routed.vars : undefined;
   }
 
-  // 5. Resolve target (state, substepId, frameKey, label).
-  let targetState: RunbookState;
-  let targetSubstepId: string;
-  let targetFrameKey: FrameKey;
-  let targetStepLabel: string;
-
+  // 5. Resolve target (state, substepId, frameKey, label). Three branches
+  // kept inline per plan design decision #4: unit tests do not naturally
+  // target per-branch helpers in this codebase (delegate is tested via
+  // integration runCliInProcess), so inline branches preserve simpler
+  // call shape without a test-only export surface.
   if (tokenArg) {
     const scanner = new DelegationScanService(manager);
     const scanResult = await scanner.findByToken(tokenArg);
     if (!scanResult) {
-      fail(`token ${tokenArg} not found`, 'TOKEN_NOT_FOUND');
+      failRetry(output, `token ${tokenArg} not found`, 'TOKEN_NOT_FOUND');
     }
-    // fail() aborts — the non-null assertion below reflects that.
-    const sr = scanResult!;
-    targetState = sr.parentState;
-    targetSubstepId = sr.substepId ?? sr.stepId;
-    targetFrameKey = sr.frameKey;
-    // Prefer canonical contextSnapshot.at (produced by deriveExecutionAt) so
-    // FOR-iteration retries surface as e.g. "1.2.1" rather than "1.1". Defensive
-    // fallback handles legacy snapshots that predate the `at` field.
-    const snapshot = sr.delegation.contextSnapshot;
-    targetStepLabel =
-      snapshot.at ?? (snapshot.substep ? `${sr.stepId}.${snapshot.substep}` : sr.stepId);
-  } else if (options.step) {
-    const stateOrNull = await sessionService.getActive();
-    if (!stateOrNull) {
-      fail('--retry requires an active runbook', 'NO_ACTIVE_RUNBOOK');
+    const snapshot = scanResult.delegation.contextSnapshot;
+    return {
+      state: scanResult.parentState,
+      substepId: scanResult.substepId ?? scanResult.stepId,
+      frameKey: scanResult.frameKey,
+      // Prefer canonical contextSnapshot.at (produced by deriveExecutionAt) so
+      // FOR-iteration retries surface as e.g. "1.2.1" rather than "1.1". Defensive
+      // fallback handles legacy snapshots that predate the `at` field.
+      stepLabel:
+        snapshot.at ??
+        (snapshot.substep ? `${scanResult.stepId}.${snapshot.substep}` : scanResult.stepId),
+      overrides,
+    };
+  }
+
+  if (options.step) {
+    const state = await sessionService.getActive();
+    if (!state) {
+      failRetry(output, '--retry requires an active runbook', 'NO_ACTIVE_RUNBOOK');
     }
-    const state = stateOrNull!;
     const parsed = parseStepIdFromString(options.step);
     if (!parsed) {
-      fail(`invalid --step value "${options.step}"`, 'INVALID_STEP');
+      failRetry(output, `invalid --step value "${options.step}"`, 'INVALID_STEP');
     }
-    const parsedOk = parsed!;
     let explicitIteration: number | undefined;
     try {
-      explicitIteration = resolveIndexOption(options.index, parsedOk.at);
+      explicitIteration = resolveIndexOption(options.index, parsed.at);
     } catch (error) {
       if (error instanceof IndexOptionError) {
-        fail(error.message, error.code);
+        failRetry(output, error.message, error.code);
       }
       throw error;
     }
@@ -354,84 +394,109 @@ async function handleRetry(args: RetryHandlerOptions): Promise<void> {
     // "no delegation found" from retryDelegation, which obscures the real issue.
     if (explicitIteration !== undefined) {
       const stepsForValidation = getRunbookFromState(state, cwd);
-      const targetStep = stepsForValidation.find((s) => s.name === parsedOk.step);
+      const targetStep = stepsForValidation.find((s) => s.name === parsed.step);
       if (targetStep && targetStep.kind !== 'for' && targetStep.kind !== 'prompted-for') {
-        fail(
-          `--index requires step "${parsedOk.step}" to be a FOR step, but it is "${targetStep.kind}"`,
+        failRetry(
+          output,
+          `--index requires step "${parsed.step}" to be a FOR step, but it is "${targetStep.kind}"`,
           'INVALID_INDEX',
         );
       }
     }
-    targetState = state;
-    targetSubstepId = parsedOk.substep ?? parsedOk.step;
     // For --step form, scope the frame to the given step. If an iteration is
     // explicit, build frameKey(step, iteration). Otherwise, if the active
     // frame matches the requested step, reuse its iteration; else fall back
     // to a non-iteration frame for that step (matching how createDelegation
     // scopes lookup for a step-form caller).
+    let frameKey: FrameKey;
     if (explicitIteration !== undefined) {
-      targetFrameKey = buildFrameKey(parsedOk.step, explicitIteration);
+      frameKey = buildFrameKey(parsed.step, explicitIteration);
     } else {
       const active = deriveActiveFrame(state);
-      targetFrameKey =
-        active.step === parsedOk.step
+      frameKey =
+        active.step === parsed.step
           ? (state.activeFrameKey ?? active.frameKey)
-          : buildFrameKey(parsedOk.step);
+          : buildFrameKey(parsed.step);
     }
-    targetStepLabel = options.step;
-  } else {
-    // Inferred form: derive from active substep.
-    const state = await sessionService.getActive();
-    if (!state) {
-      fail('--retry requires a token, --step <id>, or an active substep', 'INVALID_SYNTAX');
-    }
-    const activeState = state!;
-    if (!activeState.substep) {
-      fail('--retry requires a token, --step <id>, or an active substep', 'INVALID_SYNTAX');
-    }
-    const activeSubstep = activeState.substep!;
-    targetState = activeState;
-    targetSubstepId = activeSubstep;
-    targetFrameKey = activeState.activeFrameKey ?? deriveActiveFrame(activeState).frameKey;
-    targetStepLabel = `${activeState.step}.${activeSubstep}`;
+    return {
+      state,
+      substepId: parsed.substep ?? parsed.step,
+      frameKey,
+      stepLabel: options.step,
+      overrides,
+    };
   }
 
+  // Inferred form: derive from active substep.
+  const state = await sessionService.getActive();
+  if (!state) {
+    failRetry(
+      output,
+      '--retry requires a token, --step <id>, or an active substep',
+      'INVALID_SYNTAX',
+    );
+  }
+  if (!state.substep) {
+    failRetry(
+      output,
+      '--retry requires a token, --step <id>, or an active substep',
+      'INVALID_SYNTAX',
+    );
+  }
+  return {
+    state,
+    substepId: state.substep,
+    frameKey: state.activeFrameKey ?? deriveActiveFrame(state).frameKey,
+    stepLabel: `${state.step}.${state.substep}`,
+    overrides,
+  };
+}
+
+/**
+ * Execute a resolved retry target: invoke retryDelegation, persist state, emit output.
+ *
+ * JSON and text output shapes are byte-identical with the pre-split handler.
+ *
+ * @param target - Resolved target from resolveRetryTarget
+ * @param args - Original retry options (for manager, output, cwd, options.text)
+ */
+async function executeRetry(target: ResolvedTarget, args: RetryHandlerOptions): Promise<void> {
+  const { manager, output, cwd, options } = args;
+
   // 6. Load steps from target state.
-  const targetSteps = getRunbookFromState(targetState, cwd);
+  const targetSteps = getRunbookFromState(target.state, cwd);
 
   // 7. Invoke retryDelegation primitive.
   const result = retryDelegation(
     {
-      state: targetState,
-      substepId: targetSubstepId,
-      frameKey: targetFrameKey,
-      ...(overrides ? { overrides } : {}),
+      state: target.state,
+      substepId: target.substepId,
+      frameKey: target.frameKey,
+      ...(target.overrides ? { overrides: target.overrides } : {}),
     },
     targetSteps,
   );
 
   switch (result.status) {
-    case 'not_found': {
-      fail(`no delegation found for step ${targetStepLabel}`, 'TOKEN_NOT_FOUND');
-      return;
-    }
-    case 'not_current': {
-      fail(
-        `step ${targetStepLabel} is not at the execution frontier (current: ${result.currentStep})`,
+    case 'not_found':
+      failRetry(output, `no delegation found for step ${target.stepLabel}`, 'TOKEN_NOT_FOUND');
+      break;
+    case 'not_current':
+      failRetry(
+        output,
+        `step ${target.stepLabel} is not at the execution frontier (current: ${result.currentStep})`,
         'STEP_NOT_CURRENT',
       );
-      return;
-    }
-    case 'error': {
-      fail(result.error.message, result.error.code);
-      return;
-    }
+      break;
+    case 'error':
+      failRetry(output, result.error.message, result.error.code);
+      break;
     case 'retried':
       break;
   }
 
   // 8. Persist updated substepStates.
-  await manager.update(targetState.id, {
+  await manager.update(target.state.id, {
     substepStates: result.updatedSubstepStates,
   });
 
@@ -440,16 +505,35 @@ async function handleRetry(args: RetryHandlerOptions): Promise<void> {
     output.json({
       kind: 'delegate',
       action: 'retried',
-      step: targetStepLabel,
+      step: target.stepLabel,
       runbook: result.delegation.childRunbookPath,
       token: result.token,
       token_hash: result.tokenHash,
-      parent_run_id: targetState.id,
+      parent_run_id: target.state.id,
     });
   } else {
-    output.message(`RETRIED    step ${targetStepLabel} -> ${result.delegation.childRunbookPath}`);
+    output.message(`RETRIED    step ${target.stepLabel} -> ${result.delegation.childRunbookPath}`);
     output.message(`Token:     ${result.token}`);
     output.message('');
     output.message(`RD_CLAIM_TOKEN=${result.token}`);
   }
+}
+
+/**
+ * Handle the `rd delegate --retry` flow.
+ *
+ * Supports five resolution paths:
+ * 1. Token positional (`rd delegate --retry <token>`)
+ * 2. `--step <id>` (active-frame substep)
+ * 3. `--step <id> --index <n>` (FOR iteration)
+ * 4. Inferred (no token, no `--step` — from active substep)
+ * 5. Invalid: token + `--step` both provided → ambiguity error
+ *
+ * Result-agnostic per spec §4.3 (RETRY on DELEGATE) — succeeds regardless of substep result.
+ *
+ * @param args - Retry options
+ */
+async function handleRetry(args: RetryHandlerOptions): Promise<void> {
+  const target = await resolveRetryTarget(args);
+  await executeRetry(target, args);
 }

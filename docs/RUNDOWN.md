@@ -766,6 +766,20 @@ For RETRY transitions:
 - If `retryCount < max`: increment count, stay in step
 - If exhausted: execute fallback action (default: STOP)
 
+#### Retry Counters
+
+Three counters track retry attempts. They are not interchangeable — unifying them breaks the retry-budget guards.
+
+| Counter | Site A writes (parent-aggregation retry) | Site B writes (FOR-iteration retry) | Consumer | Purpose |
+|---------|-------------------------------------------|--------------------------------------|----------|---------|
+| `parentRetryCount` | increments by 1 | unchanged | parent retry-budget guard (`parentRetryCount < transition.retry`) | machine-invariant counter for the parent's `RETRY` budget |
+| `iterationRetryCount` | resets to 0 | increments by 1 | FOR-iteration retry-budget guard | machine-invariant counter for the iteration's `RETRY` budget; reset on parent re-entry because re-entering the parent invalidates any in-progress iteration's budget |
+| `retryCount` | increments by 1 | increments by 1 | actor-service / `rd echo --result` / state output | user-visible counter — surfaces total retry attempts regardless of layer |
+
+**Why the split:** `parentRetryCount` and `iterationRetryCount` are budget guards — they must increment at exactly one site each so the corresponding guard exhausts predictably. `retryCount` is observability — every retry transition (at either site) advances it. Unifying machine-invariant counters with the user-visible counter would either prevent the parent budget from exhausting (if Site B did not increment) or double-count parent retries (if `parentRetryCount` were also bumped at Site B).
+
+See `packages/core/src/runbook/compiler.ts` for the two assign sites.
+
 #### `rundown goto <step>` - Jump to Step
 
 Navigate directly to a step.
