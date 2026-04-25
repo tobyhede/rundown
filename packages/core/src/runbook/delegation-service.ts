@@ -405,7 +405,7 @@ export interface RetryDelegationNotFoundResult {
 }
 
 /** State's current step is not the step that owns the delegation. */
-interface RetryDelegationNotCurrentResult {
+export interface RetryDelegationNotCurrentResult {
   readonly status: 'not_current';
   /** Step that owns the delegation. */
   readonly ownerStep: string;
@@ -414,13 +414,13 @@ interface RetryDelegationNotCurrentResult {
 }
 
 /** createDelegation raised a RundownError (path unresolvable, substep removed, etc.). */
-interface RetryDelegationErrorResult {
+export interface RetryDelegationErrorResult {
   readonly status: 'error';
   readonly error: RundownError;
 }
 
 /** Retry succeeded: old delegation cancelled, new one issued. */
-interface RetryDelegationRetriedResult {
+export interface RetryDelegationRetriedResult {
   readonly status: 'retried';
   readonly token: string;
   readonly tokenHash: string;
