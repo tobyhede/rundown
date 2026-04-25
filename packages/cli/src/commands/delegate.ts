@@ -3,7 +3,6 @@ import {
   RunbookStateManager,
   SessionService,
   createDelegation,
-  type CreateDelegationResult,
   retryDelegation,
   DelegationScanService,
   DELEGATION_TOKEN_PREFIX,
@@ -25,12 +24,7 @@ import {
 } from '../helpers/index-option.js';
 import { collectCliFlags, routeExtraVars } from '../services/variable-discovery.js';
 import { parseInputOption, parseInputJsonOption, collect } from '../helpers/option-utils.js';
-import type {
-  RunbookState,
-  TemplateVarValue,
-  FrameKey,
-  RetryDelegationResult,
-} from '@rundown-org/core';
+import type { RunbookState, TemplateVarValue, FrameKey } from '@rundown-org/core';
 
 /**
  * Options accepted by `rd delegate` (covers both fresh-issue and --retry flows).
@@ -227,9 +221,7 @@ export function registerDelegateCommand(program: Command): void {
               break;
             default: {
               const _exhaustive: never = result;
-              throw new Error(
-                `Unhandled createDelegation status: ${(_exhaustive as CreateDelegationResult).status}`,
-              );
+              return _exhaustive;
             }
           }
 
@@ -520,9 +512,6 @@ async function executeRetry(target: ResolvedTarget, args: RetryHandlerOptions): 
       break;
     default: {
       const _exhaustive: never = result;
-      throw new Error(
-        `Unhandled retryDelegation status: ${(_exhaustive as RetryDelegationResult).status}`,
-      );
     }
   }
 

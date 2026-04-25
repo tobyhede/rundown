@@ -40,7 +40,6 @@ import {
   ForResolutionError,
   RUNS_DIR,
   createDelegation,
-  type CreateDelegationResult,
   Errors,
   isError,
   type DelegateFrontierEntry,
@@ -760,9 +759,7 @@ export async function runExecutionLoop(
                     break;
                   default: {
                     const _exhaustive: never = result;
-                    throw new Error(
-                      `Unhandled createDelegation status in fan-out: ${(_exhaustive as CreateDelegationResult).status}`,
-                    );
+                    return _exhaustive;
                   }
                 }
               }

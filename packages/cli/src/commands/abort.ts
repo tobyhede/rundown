@@ -14,7 +14,6 @@ import {
   buildCompletionKey,
   buildResolvedCompletion,
   deriveActiveFrame,
-  type AbortDelegationResult,
   type RunbookState,
 } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
@@ -258,9 +257,7 @@ export function registerAbortCommand(program: Command): void {
                 break;
               default: {
                 const _exhaustive: never = abortResult;
-                throw new Error(
-                  `Unhandled abortDelegation status: ${(_exhaustive as AbortDelegationResult).status}`,
-                );
+                return _exhaustive;
               }
             }
 
