@@ -66,7 +66,7 @@ function makeInputs(overrides?: { substepStates?: readonly SubstepState[] }): {
     createdAt: '2026-01-01T00:00:00.000Z',
     cancelledAt: null,
     contextSnapshot: {
-      vars: brandEffectiveVarsForTest({}),
+      vars: brandEffectiveVarsForTest(),
       ancestors: [],
       step: '1',
       substep: '1',
@@ -134,7 +134,7 @@ describe('retrySingleSubstep', () => {
       createdAt: '2026-01-01T00:00:00.000Z',
       cancelledAt: null,
       contextSnapshot: {
-        vars: brandEffectiveVarsForTest({}),
+        vars: brandEffectiveVarsForTest(),
         ancestors: [],
         step: '1',
         substep: '1',
@@ -220,7 +220,7 @@ describe('retrySingleSubstep', () => {
       createdAt: '2026-01-01T00:00:00.000Z',
       cancelledAt: null,
       contextSnapshot: {
-        vars: brandEffectiveVarsForTest({}),
+        vars: brandEffectiveVarsForTest(),
         ancestors: [],
         step: '1',
         substep: '1',
@@ -248,18 +248,23 @@ describe('retrySingleSubstep', () => {
 
   it('error variant from retryDelegation result.status error propagates code + message', () => {
     const { working, substep, frameKey, parentName, steps } = makeInputs();
-    const inner = Errors.unknown('inner failure');
     mockedRetryDelegation.mockImplementation(() => ({
       status: 'error' as const,
-      error: inner,
+      // The mock substitutes a structurally-compatible RundownError shape — only
+      // `code` and `message` are read by `retrySingleSubstep`.
+      error: { code: 'RD-XYZ', message: 'inner failure' } as unknown as ReturnType<
+        typeof retryDelegation
+      > extends { error: infer E }
+        ? E
+        : never,
     }));
 
     const outcome = retrySingleSubstep(working, substep, frameKey, parentName, steps);
 
     expect(outcome.status).toBe('error');
     if (outcome.status === 'error') {
-      expect(outcome.code).toBe(inner.code);
-      expect(outcome.message).toBe(inner.message);
+      expect(outcome.code).toBe('RD-XYZ');
+      expect(outcome.message).toBe('inner failure');
     }
     // Rollback invariant: error variant must NOT carry substepStates
     expect(Object.hasOwn(outcome, 'substepStates')).toBe(false);
@@ -276,7 +281,7 @@ describe('retrySingleSubstep', () => {
       createdAt: '2026-01-01T00:00:00.000Z',
       cancelledAt: null,
       contextSnapshot: {
-        vars: brandEffectiveVarsForTest({}),
+        vars: brandEffectiveVarsForTest(),
         ancestors: [],
         step: '1',
         substep: '1',
