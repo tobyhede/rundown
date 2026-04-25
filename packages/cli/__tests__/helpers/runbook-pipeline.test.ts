@@ -8,10 +8,7 @@ import type {
   DelegationLock,
 } from '@rundown-org/core';
 import type { OutputEmitter } from '../../src/services/output-emitter.js';
-import type {
-  PreparedRunbook,
-  RunPipelineContext,
-} from '../../src/helpers/runbook-pipeline.js';
+import type { PreparedRunbook, RunPipelineContext } from '../../src/helpers/runbook-pipeline.js';
 import { mockErrorHelpers } from './mock-error-helpers.js';
 import { mockFn } from './typed-mocks.js';
 
@@ -76,7 +73,9 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
       this.lockFile = lockFile;
     }
   },
-  reconstituteContextVars: mockFn<(...args: unknown[]) => Record<string, unknown>>().mockReturnValue({}),
+  reconstituteContextVars: mockFn<
+    (...args: unknown[]) => Record<string, unknown>
+  >().mockReturnValue({}),
   extractInheritedUserVars: jest.fn(),
   hashDelegationToken: mockFn<(token: string) => string>().mockReturnValue('sha256:mock'),
   truncateDelegationToken: jest.fn((token: string) => {
@@ -160,9 +159,9 @@ jest.unstable_mockModule('../../src/services/template-renderer', () => ({
   resolveForBounds: jest.fn((runbook: unknown) => ({ runbook, warnings: [] })),
   expandLoopVariables: jest.fn((text: string) => text),
   warnUnresolvedRunbookVariables: mockFn<(...args: unknown[]) => string[]>().mockReturnValue([]),
-  collectUnresolvedRunbookVariables: mockFn<
-    (...args: unknown[]) => Set<string>
-  >().mockReturnValue(new Set()),
+  collectUnresolvedRunbookVariables: mockFn<(...args: unknown[]) => Set<string>>().mockReturnValue(
+    new Set(),
+  ),
 }));
 
 // Mock validate-frontmatter-vars
@@ -208,10 +207,7 @@ const { setHelperRegistry, resetHelperRegistry } = await import(
   '../../src/services/helper-registry'
 );
 
-function makeState(
-  id: string,
-  overrides: Record<string, unknown> = {},
-): Record<string, unknown> {
+function makeState(id: string, overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     id,
     runbook: 'test.md',
@@ -260,9 +256,7 @@ function mockParseResult(
   } as unknown as ReturnType<typeof parser.parseRunbookDocument>;
 }
 
-function makeLifecycle(
-  overrides: Record<string, unknown> = {},
-): Record<string, unknown> {
+function makeLifecycle(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   type LifecycleState = Record<string, unknown> & {
     step?: unknown;
     activeEntry?: unknown;
@@ -298,21 +292,23 @@ beforeEach(() => {
         `${step}${iteration != null ? `.${String(iteration)}` : ''}${substep ? `.${substep}` : ''}`,
     );
   jest.mocked(core.getActiveForContext).mockReturnValue(undefined);
-  jest.mocked(createBridgedEmitter).mockReturnValue({ emit: jest.fn() } as unknown as ReturnType<
-    typeof createBridgedEmitter
-  >);
+  jest
+    .mocked(createBridgedEmitter)
+    .mockReturnValue({ emit: jest.fn() } as unknown as ReturnType<typeof createBridgedEmitter>);
   jest.mocked(resolveVariables).mockResolvedValue({
     vars: {},
     sources: {},
     warnings: [],
     providedKeys: new Set(),
   } as unknown as Awaited<ReturnType<typeof resolveVariables>>);
-  jest.mocked(buildStepVariables).mockReturnValue({ Step: '1.1' } as unknown as ReturnType<
-    typeof buildStepVariables
-  >);
+  jest
+    .mocked(buildStepVariables)
+    .mockReturnValue({ Step: '1.1' } as unknown as ReturnType<typeof buildStepVariables>);
   jest
     .mocked(substituteRunbookVariables)
-    .mockImplementation((runbook: unknown) => runbook as ReturnType<typeof substituteRunbookVariables>);
+    .mockImplementation(
+      (runbook: unknown) => runbook as ReturnType<typeof substituteRunbookVariables>,
+    );
   jest.mocked(resolveForBounds).mockImplementation(
     (runbook: unknown) =>
       ({
@@ -664,9 +660,11 @@ describe('prepareRunbook', () => {
       }),
     );
     // validateRequiredVars returns an error diagnostic for the invalid identifier
-    jest.mocked(validateRequiredVars).mockReturnValue([
-      { severity: 'error', message: 'Required variable "123bad" is not a valid identifier' },
-    ]);
+    jest
+      .mocked(validateRequiredVars)
+      .mockReturnValue([
+        { severity: 'error', message: 'Required variable "123bad" is not a valid identifier' },
+      ]);
 
     const result = await prepareRunbook('bad-req.md', {}, '/test');
 
@@ -794,9 +792,11 @@ describe('prepareRunbook', () => {
       path: '/test/good.md',
       source: 'project',
     });
-    jest.mocked(resolveVariables).mockRejectedValue(
-      new FileSourcePolicyError('items', '/test/.env', 'Path blocked by policy'),
-    );
+    jest
+      .mocked(resolveVariables)
+      .mockRejectedValue(
+        new FileSourcePolicyError('items', '/test/.env', 'Path blocked by policy'),
+      );
 
     const result = await prepareRunbook('good.md', {}, '/test');
 
@@ -889,12 +889,10 @@ describe('startRunbook', () => {
       substeps: undefined,
     });
     const mockUpdate = mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined);
-    const mockInitState = mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(
-      undefined,
-    );
-    const mockPushRunbook = mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(
-      undefined,
-    );
+    const mockInitState =
+      mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined);
+    const mockPushRunbook =
+      mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined);
     const mockOutput = { flush: jest.fn() };
 
     jest.mocked(runExecutionLoop).mockResolvedValue('done');
@@ -904,9 +902,8 @@ describe('startRunbook', () => {
       manager: {
         create: mockCreate,
         update: mockUpdate,
-        initializeSubsteps: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(
-          undefined,
-        ),
+        initializeSubsteps:
+          mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
       } as unknown as RunbookStateManager,
       actorService: { initializeState: mockInitState } as unknown as RunbookActorService,
       sessionService: { pushRunbook: mockPushRunbook } as unknown as SessionService,
@@ -955,14 +952,12 @@ describe('startRunbook', () => {
       manager: {
         create: mockCreate,
         update: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
-        initializeSubsteps: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(
-          undefined,
-        ),
+        initializeSubsteps:
+          mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
       } as unknown as RunbookStateManager,
       actorService: {
-        initializeState: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(
-          undefined,
-        ),
+        initializeState:
+          mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
       } as unknown as RunbookActorService,
       sessionService: {
         pushRunbook: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
@@ -990,9 +985,8 @@ describe('startRunbook', () => {
   });
 
   it('initializes substeps when first step has substeps', async () => {
-    const mockInitSubsteps = mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(
-      undefined,
-    );
+    const mockInitSubsteps =
+      mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined);
     const mockUpdate = mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined);
     const mockCreate = mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
       id: 'sub-id',
@@ -1016,9 +1010,8 @@ describe('startRunbook', () => {
         initializeSubsteps: mockInitSubsteps,
       } as unknown as RunbookStateManager,
       actorService: {
-        initializeState: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(
-          undefined,
-        ),
+        initializeState:
+          mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
       } as unknown as RunbookActorService,
       sessionService: {
         pushRunbook: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
@@ -1071,9 +1064,7 @@ describe('claimAndLaunch', () => {
     };
     jest
       .mocked(core.DelegationScanService)
-      .mockImplementation(
-        () => mockScanner as unknown as jest.MockedObject<DelegationScanService>,
-      );
+      .mockImplementation(() => mockScanner as unknown as jest.MockedObject<DelegationScanService>);
 
     const ctx = {
       output: {} as unknown as OutputEmitter,
@@ -1124,18 +1115,14 @@ describe('claimAndLaunch', () => {
     };
     jest
       .mocked(core.DelegationScanService)
-      .mockImplementation(
-        () => mockScanner as unknown as jest.MockedObject<DelegationScanService>,
-      );
+      .mockImplementation(() => mockScanner as unknown as jest.MockedObject<DelegationScanService>);
 
     const mockManager = {
       load: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(parentState),
     };
     jest
       .mocked(core.RunbookStateManager)
-      .mockImplementation(
-        () => mockManager as unknown as jest.MockedObject<RunbookStateManager>,
-      );
+      .mockImplementation(() => mockManager as unknown as jest.MockedObject<RunbookStateManager>);
 
     jest.mocked(core.DelegationLock).mockImplementation(
       () =>
@@ -1195,18 +1182,14 @@ describe('claimAndLaunch', () => {
     };
     jest
       .mocked(core.DelegationScanService)
-      .mockImplementation(
-        () => mockScanner as unknown as jest.MockedObject<DelegationScanService>,
-      );
+      .mockImplementation(() => mockScanner as unknown as jest.MockedObject<DelegationScanService>);
 
     const mockManager = {
       load: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(parentState),
     };
     jest
       .mocked(core.RunbookStateManager)
-      .mockImplementation(
-        () => mockManager as unknown as jest.MockedObject<RunbookStateManager>,
-      );
+      .mockImplementation(() => mockManager as unknown as jest.MockedObject<RunbookStateManager>);
 
     jest.mocked(core.DelegationLock).mockImplementation(
       () =>
@@ -1271,15 +1254,12 @@ describe('claimAndLaunch', () => {
         substepId: '1',
         delegation,
       }),
-      findOrphanedChild: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(
-        orphanState,
-      ),
+      findOrphanedChild:
+        mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(orphanState),
     };
     jest
       .mocked(core.DelegationScanService)
-      .mockImplementation(
-        () => mockScanner as unknown as jest.MockedObject<DelegationScanService>,
-      );
+      .mockImplementation(() => mockScanner as unknown as jest.MockedObject<DelegationScanService>);
 
     const mockManager = {
       load: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(parentState),
@@ -1287,9 +1267,7 @@ describe('claimAndLaunch', () => {
     };
     jest
       .mocked(core.RunbookStateManager)
-      .mockImplementation(
-        () => mockManager as unknown as jest.MockedObject<RunbookStateManager>,
-      );
+      .mockImplementation(() => mockManager as unknown as jest.MockedObject<RunbookStateManager>);
 
     jest.mocked(core.DelegationLock).mockImplementation(
       () =>
@@ -1347,15 +1325,11 @@ describe('claimAndLaunch', () => {
         substepId: '1',
         delegation,
       }),
-      findOrphanedChild: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(
-        null,
-      ),
+      findOrphanedChild: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(null),
     };
     jest
       .mocked(core.DelegationScanService)
-      .mockImplementation(
-        () => mockScanner as unknown as jest.MockedObject<DelegationScanService>,
-      );
+      .mockImplementation(() => mockScanner as unknown as jest.MockedObject<DelegationScanService>);
 
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/test/child.md',
@@ -1374,15 +1348,12 @@ describe('claimAndLaunch', () => {
       load: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(parentState),
       create: mockCreate,
       update: mockUpdate,
-      initializeSubsteps: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(
-        undefined,
-      ),
+      initializeSubsteps:
+        mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
     };
     jest
       .mocked(core.RunbookStateManager)
-      .mockImplementation(
-        () => mockManager as unknown as jest.MockedObject<RunbookStateManager>,
-      );
+      .mockImplementation(() => mockManager as unknown as jest.MockedObject<RunbookStateManager>);
 
     jest.mocked(core.DelegationLock).mockImplementation(
       () =>
@@ -1398,9 +1369,8 @@ describe('claimAndLaunch', () => {
       output: { status: jest.fn(), flush: jest.fn() } as unknown as OutputEmitter,
       manager: mockManager as unknown as RunbookStateManager,
       actorService: {
-        initializeState: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(
-          undefined,
-        ),
+        initializeState:
+          mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
       } as unknown as RunbookActorService,
       sessionService: {
         pushRunbook: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
@@ -1467,15 +1437,11 @@ describe('claimAndLaunch', () => {
         substepId: '1',
         delegation,
       }),
-      findOrphanedChild: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(
-        null,
-      ),
+      findOrphanedChild: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(null),
     };
     jest
       .mocked(core.DelegationScanService)
-      .mockImplementation(
-        () => mockScanner as unknown as jest.MockedObject<DelegationScanService>,
-      );
+      .mockImplementation(() => mockScanner as unknown as jest.MockedObject<DelegationScanService>);
 
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/test/child.md',
@@ -1495,15 +1461,12 @@ describe('claimAndLaunch', () => {
         title: 'Child',
       }),
       update: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
-      initializeSubsteps: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(
-        undefined,
-      ),
+      initializeSubsteps:
+        mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
     };
     jest
       .mocked(core.RunbookStateManager)
-      .mockImplementation(
-        () => mockManager as unknown as jest.MockedObject<RunbookStateManager>,
-      );
+      .mockImplementation(() => mockManager as unknown as jest.MockedObject<RunbookStateManager>);
 
     jest.mocked(core.DelegationLock).mockImplementation(
       () =>
@@ -1519,9 +1482,8 @@ describe('claimAndLaunch', () => {
       output: { status: jest.fn(), flush: jest.fn() } as unknown as OutputEmitter,
       manager: mockManager as unknown as RunbookStateManager,
       actorService: {
-        initializeState: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(
-          undefined,
-        ),
+        initializeState:
+          mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
       } as unknown as RunbookActorService,
       sessionService: {
         pushRunbook: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
@@ -1591,15 +1553,11 @@ describe('claimAndLaunch', () => {
         substepId: '1',
         delegation,
       }),
-      findOrphanedChild: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(
-        null,
-      ),
+      findOrphanedChild: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(null),
     };
     jest
       .mocked(core.DelegationScanService)
-      .mockImplementation(
-        () => mockScanner as unknown as jest.MockedObject<DelegationScanService>,
-      );
+      .mockImplementation(() => mockScanner as unknown as jest.MockedObject<DelegationScanService>);
 
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/test/child.md',
@@ -1629,15 +1587,12 @@ describe('claimAndLaunch', () => {
         title: 'Child',
       }),
       update: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
-      initializeSubsteps: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(
-        undefined,
-      ),
+      initializeSubsteps:
+        mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
     };
     jest
       .mocked(core.RunbookStateManager)
-      .mockImplementation(
-        () => mockManager as unknown as jest.MockedObject<RunbookStateManager>,
-      );
+      .mockImplementation(() => mockManager as unknown as jest.MockedObject<RunbookStateManager>);
 
     jest.mocked(core.DelegationLock).mockImplementation(
       () =>
@@ -1653,9 +1608,8 @@ describe('claimAndLaunch', () => {
       output: { status: jest.fn(), flush: jest.fn() } as unknown as OutputEmitter,
       manager: mockManager as unknown as RunbookStateManager,
       actorService: {
-        initializeState: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(
-          undefined,
-        ),
+        initializeState:
+          mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
       } as unknown as RunbookActorService,
       sessionService: {
         pushRunbook: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
@@ -1710,15 +1664,11 @@ describe('claimAndLaunch', () => {
         substepId: '1',
         delegation,
       }),
-      findOrphanedChild: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(
-        null,
-      ),
+      findOrphanedChild: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(null),
     };
     jest
       .mocked(core.DelegationScanService)
-      .mockImplementation(
-        () => mockScanner as unknown as jest.MockedObject<DelegationScanService>,
-      );
+      .mockImplementation(() => mockScanner as unknown as jest.MockedObject<DelegationScanService>);
 
     jest.mocked(resolveRunbookFile).mockResolvedValue(null); // File not found
 
@@ -1727,9 +1677,7 @@ describe('claimAndLaunch', () => {
     };
     jest
       .mocked(core.RunbookStateManager)
-      .mockImplementation(
-        () => mockManager as unknown as jest.MockedObject<RunbookStateManager>,
-      );
+      .mockImplementation(() => mockManager as unknown as jest.MockedObject<RunbookStateManager>);
     jest.mocked(core.reconstituteContextVars).mockReturnValue({});
 
     jest.mocked(core.DelegationLock).mockImplementation(
@@ -1788,15 +1736,11 @@ describe('claimAndLaunch', () => {
         substepId: '1',
         delegation,
       }),
-      findOrphanedChild: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(
-        null,
-      ),
+      findOrphanedChild: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(null),
     };
     jest
       .mocked(core.DelegationScanService)
-      .mockImplementation(
-        () => mockScanner as unknown as jest.MockedObject<DelegationScanService>,
-      );
+      .mockImplementation(() => mockScanner as unknown as jest.MockedObject<DelegationScanService>);
 
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/test/child.md',
@@ -1814,15 +1758,12 @@ describe('claimAndLaunch', () => {
       load: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(parentState),
       create: mockCreate,
       update: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
-      initializeSubsteps: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(
-        undefined,
-      ),
+      initializeSubsteps:
+        mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
     };
     jest
       .mocked(core.RunbookStateManager)
-      .mockImplementation(
-        () => mockManager as unknown as jest.MockedObject<RunbookStateManager>,
-      );
+      .mockImplementation(() => mockManager as unknown as jest.MockedObject<RunbookStateManager>);
 
     jest.mocked(core.DelegationLock).mockImplementation(
       () =>
@@ -1838,9 +1779,8 @@ describe('claimAndLaunch', () => {
       output: { status: jest.fn(), flush: jest.fn() } as unknown as OutputEmitter,
       manager: mockManager as unknown as RunbookStateManager,
       actorService: {
-        initializeState: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(
-          undefined,
-        ),
+        initializeState:
+          mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
       } as unknown as RunbookActorService,
       sessionService: {
         pushRunbook: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),

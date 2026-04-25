@@ -17,20 +17,22 @@ type LifecycleStateLike = {
 const mockActorService = {
   sendAndSync:
     mockFn<(id: string, steps: unknown, event: unknown) => Promise<Record<string, unknown>>>(),
-  getContextSnapshot: mockFn<(id: string, steps: unknown) => Promise<Record<string, unknown> | null>>(),
+  getContextSnapshot:
+    mockFn<(id: string, steps: unknown) => Promise<Record<string, unknown> | null>>(),
 };
 
 const mockSessionService = {
   popRunbook: mockFn<(id: string) => Promise<void>>(),
 };
 
-const ensureActiveEntryFn = mockFn<
-  (
-    id: string,
-    prev: unknown,
-    state: LifecycleStateLike | null | undefined,
-  ) => Promise<{ state: LifecycleStateLike; frameKey: string; entry: number }>
->();
+const ensureActiveEntryFn =
+  mockFn<
+    (
+      id: string,
+      prev: unknown,
+      state: LifecycleStateLike | null | undefined,
+    ) => Promise<{ state: LifecycleStateLike; frameKey: string; entry: number }>
+  >();
 ensureActiveEntryFn.mockImplementation(async (_id, _prev, state) => ({
   state: {
     ...(state ?? {}),
@@ -331,8 +333,7 @@ const asManager = (m: MockManagerLike): RunbookStateManagerType =>
   m as unknown as RunbookStateManagerType;
 const asEmitter = (e: MockEmitterLike): ExecutionEventEmitterType =>
   e as unknown as ExecutionEventEmitterType;
-const asSteps = (s: readonly LooseStep[]): ResolvedStepType[] =>
-  s as unknown as ResolvedStepType[];
+const asSteps = (s: readonly LooseStep[]): ResolvedStepType[] => s as unknown as ResolvedStepType[];
 
 describe('runExecutionLoop', () => {
   let mockManager: MockManagerLike;
@@ -449,7 +450,14 @@ describe('runExecutionLoop', () => {
       status: 'running',
     });
 
-    const result = await runExecutionLoop(asManager(mockManager), runbookId, asSteps(steps), '/tmp', true, asEmitter(mockEmitter));
+    const result = await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(steps),
+      '/tmp',
+      true,
+      asEmitter(mockEmitter),
+    );
 
     expect(result).toBe('waiting');
     expect(mockEmitter.emit).toHaveBeenCalledWith(
@@ -1047,7 +1055,8 @@ describe('runExecutionLoop', () => {
     ]);
 
     // resolveRunbookFile resolves to a path
-    jest.mocked(resolveRunbook.resolveRunbookFile)
+    jest
+      .mocked(resolveRunbook.resolveRunbookFile)
       .mockResolvedValueOnce({
         path: '/project/.rundown/runbooks/child-a.runbook.md',
         source: 'project',
@@ -1062,7 +1071,8 @@ describe('runExecutionLoop', () => {
     // the real types brand `frameKey` and require populated `StepDelegation`
     // fields, but the CLI under test only forwards these untouched.
     type CreateDelegationReturn = ReturnType<typeof core.createDelegation>;
-    jest.mocked(core.createDelegation)
+    jest
+      .mocked(core.createDelegation)
       .mockReturnValueOnce({
         status: 'created',
         token: 'rdtk_aaaa1111',
@@ -1087,17 +1097,24 @@ describe('runExecutionLoop', () => {
       mockManager.update = updateFn;
     }
 
-    await runExecutionLoop(asManager(mockManager), runbookId, asSteps(delegateSteps), '/tmp', false, asEmitter(mockEmitter));
+    await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(delegateSteps),
+      '/tmp',
+      false,
+      asEmitter(mockEmitter),
+    );
 
     // STEP_ENTERED should have been emitted with delegateFrontier
-    const stepEnteredCall = mockEmitter.emit.mock.calls.find(
-      (call) => call[0] === 'STEP_ENTERED',
-    );
+    const stepEnteredCall = mockEmitter.emit.mock.calls.find((call) => call[0] === 'STEP_ENTERED');
     expect(stepEnteredCall).toBeDefined();
     // STEP_ENTERED payload shape is the test contract — mockEmitter.emit's
     // `payload?: unknown` parameter is intentionally permissive, so this
     // narrows to the fields the test actually asserts on.
-    const payload = stepEnteredCall![1] as { delegateFrontier?: { id: string; runbook: string; token: string }[] };
+    const payload = stepEnteredCall![1] as {
+      delegateFrontier?: { id: string; runbook: string; token: string }[];
+    };
 
     expect(payload.delegateFrontier).toBeDefined();
     expect(payload.delegateFrontier).toHaveLength(2);
@@ -1172,12 +1189,17 @@ describe('runExecutionLoop', () => {
       mockManager.update = updateFn;
     }
 
-    await runExecutionLoop(asManager(mockManager), runbookId, asSteps(delegateSteps), '/tmp', false, asEmitter(mockEmitter));
+    await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(delegateSteps),
+      '/tmp',
+      false,
+      asEmitter(mockEmitter),
+    );
 
     // STEP_ENTERED payload should carry the pre-issued frontier
-    const stepEnteredCall = mockEmitter.emit.mock.calls.find(
-      (call) => call[0] === 'STEP_ENTERED',
-    );
+    const stepEnteredCall = mockEmitter.emit.mock.calls.find((call) => call[0] === 'STEP_ENTERED');
     expect(stepEnteredCall).toBeDefined();
     const payload = stepEnteredCall![1] as { delegateFrontier?: unknown };
 
@@ -1224,9 +1246,9 @@ describe('runExecutionLoop', () => {
     // Snapshot with no pendingDelegateFrontier
     mockActorService.getContextSnapshot.mockResolvedValue({});
 
-    jest.mocked(delegateInference.inferAllDelegateSubsteps).mockReturnValue([
-      { runbookRef: 'child-a.runbook.md', stepId: '1.1' },
-    ]);
+    jest
+      .mocked(delegateInference.inferAllDelegateSubsteps)
+      .mockReturnValue([{ runbookRef: 'child-a.runbook.md', stepId: '1.1' }]);
 
     jest.mocked(resolveRunbook.resolveRunbookFile).mockResolvedValue({
       path: '/project/.rundown/runbooks/child-a.runbook.md',
@@ -1247,16 +1269,21 @@ describe('runExecutionLoop', () => {
       mockManager.update = updateFn;
     }
 
-    await runExecutionLoop(asManager(mockManager), runbookId, asSteps(delegateSteps), '/tmp', false, asEmitter(mockEmitter));
+    await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(delegateSteps),
+      '/tmp',
+      false,
+      asEmitter(mockEmitter),
+    );
 
     // Auto-issuance was invoked
     expect(delegateInference.inferAllDelegateSubsteps).toHaveBeenCalled();
     expect(core.createDelegation).toHaveBeenCalled();
 
     // STEP_ENTERED received the auto-issued frontier
-    const stepEnteredCall = mockEmitter.emit.mock.calls.find(
-      (call) => call[0] === 'STEP_ENTERED',
-    );
+    const stepEnteredCall = mockEmitter.emit.mock.calls.find((call) => call[0] === 'STEP_ENTERED');
     expect(stepEnteredCall).toBeDefined();
     const payload = stepEnteredCall![1] as {
       delegateFrontier?: { id: string; runbook: string; token: string }[];
@@ -1306,7 +1333,9 @@ describe('executeCommandWithPolicyCheck', () => {
     const mockEvaluator = { setRunbookPath: jest.fn() };
     jest
       .mocked(policyContext.getPolicyEvaluator)
-      .mockReturnValue(mockEvaluator as unknown as ReturnType<typeof policyContext.getPolicyEvaluator>);
+      .mockReturnValue(
+        mockEvaluator as unknown as ReturnType<typeof policyContext.getPolicyEvaluator>,
+      );
     // PolicyPrompter is a structural object; the test only stores a sentinel
     // string and asserts identity through the call chain.
     jest

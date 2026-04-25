@@ -54,7 +54,8 @@ jest.unstable_mockModule('../../src/services/execution', () => {
   formatActionForDisplay.mockReturnValue('CONTINUE');
   return {
     getStepRetryMax,
-    buildMetadata: mockFn<(state: RunbookState) => { file?: string; state?: string; prompted?: boolean }>(),
+    buildMetadata:
+      mockFn<(state: RunbookState) => { file?: string; state?: string; prompted?: boolean }>(),
     formatActionForDisplay,
     extractRetryDisplayCount: jest.fn((_: unknown, retryCount: number) => retryCount),
   };

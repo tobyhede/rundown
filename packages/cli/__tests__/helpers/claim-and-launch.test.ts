@@ -108,9 +108,9 @@ jest.unstable_mockModule('../../src/helpers/resolve-runbook', () => ({
 jest.unstable_mockModule('../../src/services/execution', () => ({
   buildStepVariables: mockFn<() => Record<string, unknown>>().mockReturnValue({ Step: '1.1' }),
   runExecutionLoop:
-    mockFn<
-      (...args: unknown[]) => Promise<'done' | 'stopped' | 'waiting'>
-    >().mockResolvedValue('done'),
+    mockFn<(...args: unknown[]) => Promise<'done' | 'stopped' | 'waiting'>>().mockResolvedValue(
+      'done',
+    ),
 }));
 
 // Mock execution-emitter
@@ -242,12 +242,14 @@ function mockDelegationLock(
   acquire: jest.Mock<(...args: unknown[]) => Promise<void>>,
   release: jest.Mock<(...args: unknown[]) => Promise<void>>,
 ): void {
-  jest.mocked(core.DelegationLock).mockImplementation(
-    () =>
-      ({ acquire, release }) as unknown as jest.MockedObject<
-        InstanceType<typeof core.DelegationLock>
-      >,
-  );
+  jest
+    .mocked(core.DelegationLock)
+    .mockImplementation(
+      () =>
+        ({ acquire, release }) as unknown as jest.MockedObject<
+          InstanceType<typeof core.DelegationLock>
+        >,
+    );
 }
 
 /** Convenience: build a default acquire/release pair that always succeeds. */
@@ -809,8 +811,7 @@ describe('claimAndLaunch', () => {
     jest
       .mocked(resolveForBounds)
       .mockImplementation(
-        (runbook) =>
-          ({ runbook, warnings: [] }) as unknown as ReturnType<typeof resolveForBounds>,
+        (runbook) => ({ runbook, warnings: [] }) as unknown as ReturnType<typeof resolveForBounds>,
       );
     jest.mocked(substituteRunbookVariables).mockImplementation((runbook) => runbook);
     jest.mocked(collectUnresolvedRunbookVariables).mockReturnValue(new Set());
@@ -821,8 +822,7 @@ describe('claimAndLaunch', () => {
       .mockReturnValue({ emit: jest.fn() } as unknown as ReturnType<typeof createBridgedEmitter>);
     jest.mocked(runExecutionLoop).mockResolvedValue('waiting');
 
-    const mockCreate =
-      mockFn<(...args: unknown[]) => Promise<{ id: string; title: string }>>();
+    const mockCreate = mockFn<(...args: unknown[]) => Promise<{ id: string; title: string }>>();
     mockCreate.mockResolvedValue({
       id: 'new-child-id',
       title: 'Child',
@@ -933,8 +933,7 @@ describe('claimAndLaunch', () => {
     jest
       .mocked(resolveForBounds)
       .mockImplementation(
-        (runbook) =>
-          ({ runbook, warnings: [] }) as unknown as ReturnType<typeof resolveForBounds>,
+        (runbook) => ({ runbook, warnings: [] }) as unknown as ReturnType<typeof resolveForBounds>,
       );
     jest.mocked(substituteRunbookVariables).mockImplementation((runbook) => runbook);
     jest.mocked(collectUnresolvedRunbookVariables).mockReturnValue(new Set());
@@ -947,9 +946,8 @@ describe('claimAndLaunch', () => {
         load: mockFn<() => Promise<RunbookState>>().mockResolvedValue(
           parentState as unknown as RunbookState,
         ),
-        create: mockFn<(...args: unknown[]) => Promise<RunbookState>>().mockRejectedValue(
-          initError,
-        ),
+        create:
+          mockFn<(...args: unknown[]) => Promise<RunbookState>>().mockRejectedValue(initError),
         update: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
         list: mockFn<() => Promise<unknown[]>>().mockResolvedValue([]),
         initializeSubsteps: mockFn<() => Promise<void>>().mockResolvedValue(undefined),

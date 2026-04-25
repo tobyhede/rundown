@@ -1,10 +1,5 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import type {
-  ResolvedStep,
-  Substep,
-  ForClause,
-  Transitions,
-} from '@rundown-org/parser';
+import type { ResolvedStep, Substep, ForClause, Transitions } from '@rundown-org/parser';
 import type {
   ActorSyncResult,
   RunbookActorService,
@@ -42,9 +37,9 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
 // Mock execution service
 jest.unstable_mockModule('../../src/services/execution', () => ({
   runExecutionLoop:
-    mockFn<
-      (...args: unknown[]) => Promise<'done' | 'stopped' | 'waiting'>
-    >().mockResolvedValue('done'),
+    mockFn<(...args: unknown[]) => Promise<'done' | 'stopped' | 'waiting'>>().mockResolvedValue(
+      'done',
+    ),
 }));
 
 // Mock runbook-loader
@@ -130,9 +125,9 @@ function makeNumericFor(start: number, end: number, variable = 'x'): ForClause {
 beforeEach(() => {
   jest.resetAllMocks();
   // Re-establish default mock implementations after reset
-  jest.mocked(core.stepIdToString).mockImplementation(
-    (id) => (id.substep ? `${id.step}.${id.substep}` : id.step),
-  );
+  jest
+    .mocked(core.stepIdToString)
+    .mockImplementation((id) => (id.substep ? `${id.step}.${id.substep}` : id.step));
   jest.mocked(core.buildStepPosition).mockImplementation(
     (current, total, substep) =>
       ({
@@ -141,10 +136,12 @@ beforeEach(() => {
         ...(substep ? { substep } : {}),
       }) as StepPosition,
   );
-  jest.mocked(core.derivePositionAt).mockImplementation(
-    (pos) =>
-      `${pos.current}${pos.for?.index != null ? `.${String(pos.for.index)}` : ''}${pos.substep ? `.${pos.substep}` : ''}`,
-  );
+  jest
+    .mocked(core.derivePositionAt)
+    .mockImplementation(
+      (pos) =>
+        `${pos.current}${pos.for?.index != null ? `.${String(pos.for.index)}` : ''}${pos.substep ? `.${pos.substep}` : ''}`,
+    );
   jest.mocked(core.countNumberedSteps).mockReturnValue(3);
   jest.mocked(runExecutionLoop).mockResolvedValue('done');
 });

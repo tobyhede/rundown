@@ -1,12 +1,7 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { mockErrorHelpers } from './mock-error-helpers.js';
 import { mockFn } from './typed-mocks.js';
-import type {
-  ActionType,
-  FrameKey,
-  ResolvedCompletion,
-  RunbookState,
-} from '@rundown-org/core';
+import type { ActionType, FrameKey, ResolvedCompletion, RunbookState } from '@rundown-org/core';
 import type { ResolvedStep, StepId } from '@rundown-org/parser';
 
 // Mock @rundown-org/core
@@ -22,21 +17,24 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   ),
   parseStepIdFromString: mockFn<(input: string) => StepId | null>(),
   SENTINEL_ENTRY: 0,
-  buildCompletionKey: mockFn<(frameKey: FrameKey, entry: number, substep?: string) => string>()
-    .mockImplementation(
-      (frameKey, entry, substep) => `${String(frameKey)}:${String(entry)}:${substep ?? ''}`,
-    ),
+  buildCompletionKey: mockFn<
+    (frameKey: FrameKey, entry: number, substep?: string) => string
+  >().mockImplementation(
+    (frameKey, entry, substep) => `${String(frameKey)}:${String(entry)}:${substep ?? ''}`,
+  ),
   buildFrameKey: mockFn<(step: string, iteration?: number) => FrameKey>().mockImplementation(
     (step, iteration) =>
       (iteration !== undefined ? `${step}[${String(iteration)}]` : step) as FrameKey,
   ),
-  buildResolvedCompletion: mockFn<(fields: unknown) => Partial<ResolvedCompletion>>()
-    .mockReturnValue({ result: 'pass' }),
-  deriveExecutionAt: mockFn<(step: string, substep?: string, iteration?: number) => string>()
-    .mockImplementation(
-      (step, substep, iteration) =>
-        `${step}${iteration !== undefined ? `[${String(iteration)}]` : ''}${substep ? `.${substep}` : ''}`,
-    ),
+  buildResolvedCompletion: mockFn<
+    (fields: unknown) => Partial<ResolvedCompletion>
+  >().mockReturnValue({ result: 'pass' }),
+  deriveExecutionAt: mockFn<
+    (step: string, substep?: string, iteration?: number) => string
+  >().mockImplementation(
+    (step, substep, iteration) =>
+      `${step}${iteration !== undefined ? `[${String(iteration)}]` : ''}${substep ? `.${substep}` : ''}`,
+  ),
   deriveActiveFrame: mockFn<
     (state: RunbookState) => { step: string; iteration?: number; frameKey: FrameKey }
   >().mockReturnValue({ step: '1', iteration: undefined, frameKey: '1' as FrameKey }),
@@ -156,12 +154,12 @@ function makeCtx(stateOverrides: Record<string, unknown> = {}): TestCtx {
         state,
         entryId: 1,
       }),
-      getResolvedCompletion: mockFn<
-        (id: string, key: string) => Promise<ResolvedCompletion | null>
-      >().mockResolvedValue(null),
-      upsertResolvedCompletion: mockFn<
-        (...args: unknown[]) => Promise<void>
-      >().mockResolvedValue(undefined),
+      getResolvedCompletion:
+        mockFn<(id: string, key: string) => Promise<ResolvedCompletion | null>>().mockResolvedValue(
+          null,
+        ),
+      upsertResolvedCompletion:
+        mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
     },
     state,
     steps: [
@@ -220,10 +218,12 @@ beforeEach(() => {
   // Default: parseStepIdFromString returns valid parse
   jest.mocked(core.parseStepIdFromString).mockReturnValue({ step: '1', substep: '1' });
   // Reset buildCompletionKey
-  jest.mocked(core.buildCompletionKey).mockImplementation(
-    (frameKey: string, entry: number, substep?: string) =>
-      `${frameKey}:${String(entry)}:${substep ?? ''}`,
-  );
+  jest
+    .mocked(core.buildCompletionKey)
+    .mockImplementation(
+      (frameKey: string, entry: number, substep?: string) =>
+        `${frameKey}:${String(entry)}:${substep ?? ''}`,
+    );
 });
 
 describe('executeTransition with ExplicitTarget', () => {
@@ -302,9 +302,9 @@ describe('executeTransition with ExplicitTarget', () => {
     });
     const config = createPassTransitionConfig();
 
-    await expect(executeTransition(asCtx(ctx), config, { stepId: '1.1', index: '3' })).rejects.toThrow(
-      'conflicts with AT',
-    );
+    await expect(
+      executeTransition(asCtx(ctx), config, { stepId: '1.1', index: '3' }),
+    ).rejects.toThrow('conflicts with AT');
   });
 
   it('uses cursor.substep (not activeState.substep) for completion key', async () => {
@@ -355,9 +355,9 @@ describe('executeTransition with ExplicitTarget', () => {
     jest.mocked(core.parseStepIdFromString).mockReturnValue({ step: '1', substep: '1' });
     const config = createPassTransitionConfig();
 
-    await expect(executeTransition(asCtx(ctx), config, { stepId: '1.1', index: '6' })).rejects.toThrow(
-      'exceeds FOR end 5',
-    );
+    await expect(
+      executeTransition(asCtx(ctx), config, { stepId: '1.1', index: '6' }),
+    ).rejects.toThrow('exceeds FOR end 5');
   });
 
   it('throws when --index targets iteration below FOR start', async () => {
@@ -374,9 +374,9 @@ describe('executeTransition with ExplicitTarget', () => {
     jest.mocked(core.parseStepIdFromString).mockReturnValue({ step: '1', substep: '1' });
     const config = createPassTransitionConfig();
 
-    await expect(executeTransition(asCtx(ctx), config, { stepId: '1.1', index: '2' })).rejects.toThrow(
-      'below FOR start 3',
-    );
+    await expect(
+      executeTransition(asCtx(ctx), config, { stepId: '1.1', index: '2' }),
+    ).rejects.toThrow('below FOR start 3');
   });
 
   it('allows --index within FOR bounds', async () => {
@@ -425,9 +425,9 @@ describe('executeTransition with ExplicitTarget', () => {
     jest.mocked(core.parseStepIdFromString).mockReturnValue({ step: '1', substep: '1' });
     const config = createPassTransitionConfig();
 
-    await expect(executeTransition(asCtx(ctx), config, { stepId: '1.1', index: '3' })).rejects.toThrow(
-      '--index requires step "1" to be a FOR or PROMPTED-FOR step',
-    );
+    await expect(
+      executeTransition(asCtx(ctx), config, { stepId: '1.1', index: '3' }),
+    ).rejects.toThrow('--index requires step "1" to be a FOR or PROMPTED-FOR step');
   });
 
   it('uses entry=0 sentinel when targeting non-active frame', async () => {
@@ -582,13 +582,13 @@ describe('executeTransition with ExplicitTarget', () => {
     jest.mocked(core.parseStepIdFromString).mockReturnValue({ step: '1', substep: '1' });
     // Track which keys were built so we can identify the cross-check key
     const builtKeys: Array<{ frameKey: string; entry: number; substep?: string; key: string }> = [];
-    jest.mocked(core.buildCompletionKey).mockImplementation(
-      (frameKey: string, entry: number, substep?: string) => {
+    jest
+      .mocked(core.buildCompletionKey)
+      .mockImplementation((frameKey: string, entry: number, substep?: string) => {
         const key = `${frameKey}:${String(entry)}:${substep ?? ''}`;
         builtKeys.push({ frameKey, entry, substep, key });
         return key;
-      },
-    );
+      });
     ctx.lifecycleService.getResolvedCompletion.mockImplementation(
       async (_id: string, key: string) => {
         // Return match for the cross-check (sentinel) key, miss for the exact key
@@ -631,13 +631,13 @@ describe('executeTransition with ExplicitTarget', () => {
     ctx.steps = [forStep];
     jest.mocked(core.parseStepIdFromString).mockReturnValue({ step: '1', substep: '1' });
     const builtKeys: Array<{ frameKey: string; entry: number; substep?: string; key: string }> = [];
-    jest.mocked(core.buildCompletionKey).mockImplementation(
-      (frameKey: string, entry: number, substep?: string) => {
+    jest
+      .mocked(core.buildCompletionKey)
+      .mockImplementation((frameKey: string, entry: number, substep?: string) => {
         const key = `${frameKey}:${String(entry)}:${substep ?? ''}`;
         builtKeys.push({ frameKey, entry, substep, key });
         return key;
-      },
-    );
+      });
     ctx.lifecycleService.getResolvedCompletion.mockImplementation(
       async (_id: string, key: string) => {
         // Primary key (sentinel) misses; cross-check (exact entry=4) hits
@@ -801,12 +801,12 @@ describe('step-level PASS transition no longer triggers CLI-side OUTPUTS evaluat
           state,
           entryId: 1,
         }),
-        getResolvedCompletion: mockFn<
-          (id: string, key: string) => Promise<ResolvedCompletion | null>
-        >().mockResolvedValue(null),
-        upsertResolvedCompletion: mockFn<
-          (...args: unknown[]) => Promise<void>
-        >().mockResolvedValue(undefined),
+        getResolvedCompletion:
+          mockFn<
+            (id: string, key: string) => Promise<ResolvedCompletion | null>
+          >().mockResolvedValue(null),
+        upsertResolvedCompletion:
+          mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
       },
       state,
       steps: [{ name: '1', kind: 'base' }],

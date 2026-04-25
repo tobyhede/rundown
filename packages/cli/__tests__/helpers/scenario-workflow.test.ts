@@ -22,9 +22,10 @@ jest.unstable_mockModule('@rundown-org/parser', () => ({
 jest.unstable_mockModule('../../src/schemas/scenarios', () => {
   const getEffectiveResultMock =
     mockFn<
-      (s: { result?: 'COMPLETE' | 'STOP'; expect?: { result?: 'COMPLETE' | 'STOP' } }) =>
-        | 'COMPLETE'
-        | 'STOP'
+      (s: {
+        result?: 'COMPLETE' | 'STOP';
+        expect?: { result?: 'COMPLETE' | 'STOP' };
+      }) => 'COMPLETE' | 'STOP'
     >();
   getEffectiveResultMock.mockImplementation((s) => {
     const r = s.result ?? s.expect?.result;
