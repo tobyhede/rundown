@@ -17,7 +17,13 @@ import { types } from 'node:util';
  */
 export type HelperRegistry = ReadonlyMap<string, (value: string) => string>;
 
-/** Reserved helper name — cannot be overridden by user helpers. */
+/**
+ * Reserved helper names — cannot be overridden by user helpers.
+ *
+ * Coupled to `HELPER_CALL_TEMPLATE_REGEX` in `template-renderer.ts`: any
+ * future built-in that uses `{{ name arg }}` syntax in template bodies must be
+ * added here, or a same-named user helper will intercept calls to it.
+ */
 const RESERVED_HELPER_NAMES = new Set(['path']);
 
 /**

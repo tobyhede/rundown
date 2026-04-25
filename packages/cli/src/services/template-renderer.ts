@@ -84,6 +84,10 @@ const EXPLICIT_VAR_TEMPLATE_REGEX =
 /**
  * Matches `{{ helperName varRef }}` or `{{ helperName "literal" }}`.
  * Group 1: helperName, Group 2: varRef (or undefined), Group 3: literal (or undefined).
+ *
+ * Intercepts any two-token `{{ identifier arg }}` expression in pass 2. Future
+ * template built-ins that use this syntax must be added to `RESERVED_HELPER_NAMES`
+ * in `helper-registry.ts`; otherwise a same-named user helper will take priority.
  */
 const HELPER_CALL_TEMPLATE_REGEX =
   /\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s+(?:([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)|"([^"]*)")\s*\}\}/g;
@@ -718,6 +722,12 @@ export function shellEscapeValue(value: string): string {
  * 1. `{{ ./VarName }}` — explicit variable lookup, bypasses helper registry
  * 2. `{{ helperName varRef }}` or `{{ helperName "literal" }}` — helper call
  * 3. `{{ identifier }}` — standard variable substitution
+ *
+ * Pass isolation: each pass operates on the full result string produced by the
+ * previous pass. A variable value that itself contains `{{ helperName arg }}`
+ * syntax will be processed by pass 2 after being substituted by pass 1. This is
+ * benign in practice — variable values rarely contain helper call syntax — but
+ * callers should be aware that variable values are not isolated from later passes.
  *
  * @param text - Input text containing placeholders
  * @param variables - Variable map for substitution

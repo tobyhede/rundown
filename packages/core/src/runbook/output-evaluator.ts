@@ -235,6 +235,7 @@ function tryDispatchHelper(trimmed: string, variables: OutputVars): string | nul
  * @throws {Error} If the `path` helper is used without `ctx=` and `ContextId` is missing from `variables`
  * @throws {Error} If `ctx=` expands to a value that is not a valid ContextId identifier
  * @throws {Error} Propagated from {@link assembleArtifactPath} (e.g. invalid `WorkPath` / `contextId`)
+ * @throws {Error} If an explicit variable lookup `{{ ./VarName }}` references a variable not in the output frame
  * @throws {Error} If the template reference has unresolved variables after expansion
  * @throws {Error} If a bare identifier is not defined in the output frame
  */

@@ -90,6 +90,50 @@ describe('Helper extensibility — end-to-end (helper registered via .rundownrc)
   });
 });
 
+describe('Helper extensibility — collision warning when variable name matches helper name', () => {
+  let workspace: TestWorkspace;
+
+  beforeEach(async () => {
+    workspace = await createTestWorkspace();
+
+    const helperDir = join(workspace.cwd, '.rundown', 'helpers');
+    await mkdir(helperDir, { recursive: true });
+    await writeFile(join(helperDir, 'fmt.mjs'), HELPER_MODULE_CONTENT);
+    await writeFile(
+      join(workspace.cwd, '.rundownrc'),
+      JSON.stringify({ helpers: ['.rundown/helpers/fmt.mjs'] }, null, 2),
+    );
+    await writeFile(join(workspace.cwd, 'demo.runbook.md'), HELPER_RUNBOOK);
+  });
+
+  afterEach(async () => {
+    await workspace.cleanup();
+  });
+
+  it('resolve emits a collision warning when a variable shares a name with a registered helper', async () => {
+    // Passing --input upper=... creates a variable named "upper", which collides with the helper
+    const result = runCli(
+      'resolve demo.runbook.md --input Name=world --input upper=custom',
+      workspace,
+    );
+
+    expect(result.exitCode).toBe(0);
+
+    const parsed = JSON.parse(result.stdout) as Record<string, unknown>;
+    const warnings = parsed.warnings as Array<Record<string, unknown>> | undefined;
+
+    expect(warnings).toBeDefined();
+    const collisionWarning = warnings?.find(
+      (w) =>
+        typeof w.message === 'string' &&
+        w.message.includes('"upper"') &&
+        w.message.includes('shadowed by a registered helper'),
+    );
+    expect(collisionWarning).toBeDefined();
+    expect(collisionWarning!.message).toContain('{{ ./upper }}');
+  });
+});
+
 describe('Helper extensibility — end-to-end (no helper registered)', () => {
   let workspace: TestWorkspace;
 
