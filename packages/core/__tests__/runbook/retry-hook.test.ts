@@ -226,10 +226,11 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
 
   it('rolls back with the inner RundownError code/message when retryDelegation returns not_found after delegation observed', () => {
     const { context, parentStep, steps, originalSubstepStates } = buildInputs();
+    const inner = Errors.delegationStepNotFound('1');
     mockedRetryDelegation.mockImplementation(() => ({
       status: 'not_found' as const,
       substepId: '1',
-      error: Errors.delegationStepNotFound('1'),
+      error: inner,
     }));
 
     const result = runRetryHook(context, parentStep, steps);
@@ -237,8 +238,8 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
     expect(result.status).toBe('error');
     if (result.status === 'error') {
       // Hook surfaces the inner RundownError code/message verbatim.
-      expect(result.code).toBe('RD-801');
-      expect(result.message).toMatch(/step not found/i);
+      expect(result.code).toBe(inner.code);
+      expect(result.message).toBe(inner.message);
       expect(result.substepStates).toBe(originalSubstepStates);
     }
   });

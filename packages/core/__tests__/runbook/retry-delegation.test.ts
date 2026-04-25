@@ -6,10 +6,9 @@ import {
 } from '../../src/runbook/delegation-service.js';
 import { TOKEN_PREFIX } from '../../src/runbook/delegation-token.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
-import type { ResolvedStep } from '../../src/runbook/types.js';
 import {
-  DEFAULT_TRANSITIONS,
   makeForSteps,
+  makeMultiStepSteps,
   makeSimpleSteps,
   makeState,
   makeSteps,
@@ -181,15 +180,7 @@ describe('retryDelegation', () => {
 
   it('returns { status: "not_current" } when the step is not at the execution frontier', () => {
     const baseState = makeState({ step: '2' });
-    const multiStepSteps: readonly ResolvedStep[] = [
-      ...makeSteps('1'),
-      {
-        kind: 'base',
-        name: '2',
-        description: 'Other step',
-        transitions: DEFAULT_TRANSITIONS,
-      },
-    ];
+    const multiStepSteps = makeMultiStepSteps();
     // Seed a delegation on step 1's substep, then attempt retry when state.step === '2'.
     const initial = createDelegation(
       {
@@ -447,6 +438,10 @@ describe('retryDelegation', () => {
 
     expect(result.status).toBe('retried');
     if (result.status !== 'retried') return;
+    // Belt-and-braces: `index` and `substep` are duplicate consistency
+    // checks of the canonical `at` snapshot — pinning all three guards
+    // against silent drift between the canonical form and the legacy
+    // structured fields.
     expect(result.delegation.contextSnapshot.at).toBe('1.2.1');
     expect(result.delegation.contextSnapshot.index).toBe(2);
     expect(result.delegation.contextSnapshot.substep).toBe('1');

@@ -161,6 +161,34 @@ export function makeForSteps(
   return steps as readonly ResolvedStep[];
 }
 
+/**
+ * Helper: create a parser-result step list with a single substepped step
+ * and one bare-step sibling (used to exercise off-frontier retries where
+ * `state.step !== owner.step` for the persisted delegation).
+ */
+export function makeMultiStepSteps(
+  substepStepName = '1',
+  bareStepName = '2',
+  substepIds: string[] = ['1', '2'],
+): readonly ResolvedStep[] {
+  const steps: TestStep[] = [
+    {
+      kind: 'substeps',
+      name: substepStepName,
+      description: 'Test step',
+      transitions: DEFAULT_TRANSITIONS,
+      substeps: substepIds.map(makeTestSubstep),
+    },
+    {
+      kind: 'base',
+      name: bareStepName,
+      description: 'Other step',
+      transitions: DEFAULT_TRANSITIONS,
+    },
+  ];
+  return steps as readonly ResolvedStep[];
+}
+
 /** Helper: create prompted-for steps with substeps (supports three-level step IDs). */
 export function makePromptedForSteps(
   stepName = '1',
