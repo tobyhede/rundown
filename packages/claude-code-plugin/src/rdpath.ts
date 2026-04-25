@@ -17,14 +17,21 @@ program
   .name('rdpath')
   .description('Assemble artifact paths with optional context scoping')
   .enablePositionalOptions()
-  .requiredOption('--dir <path>', 'Base directory')
-  .option('--ctx <id>', 'Context scope (creates .rd-<id>/ subdirectory)');
+  .option('--dir [path]', 'Base directory (defaults to $RD_WORK_PATH)')
+  .option('--ctx [id]', 'Context scope (defaults to $RD_CONTEXT_ID)');
 
 const pathCmd = new Command('path')
   .description('Assemble an artifact path')
   .option('--file <name>', 'Filename to date-prefix (YYYY-MM-DD)')
   .action((options: { file?: string }) => {
-    const { dir, ctx } = program.opts<{ dir: string; ctx?: string }>();
+    const opts = program.opts<{ dir?: string; ctx?: string }>();
+    const dir = opts.dir ?? process.env.RD_WORK_PATH;
+    const ctx = opts.ctx ?? process.env.RD_CONTEXT_ID;
+    if (!dir) {
+      process.stderr.write('error: --dir is required (or set $RD_WORK_PATH)\n');
+      process.exitCode = 1;
+      return;
+    }
     try {
       process.stdout.write(`${assemblePath({ dir, ctx, file: options.file })}\n`);
     } catch (error) {
@@ -43,7 +50,14 @@ const findCmd = new Command('find')
   .argument('<pattern>', 'Glob pattern to match files against')
   .option('--allow-empty', 'Exit 0 when zero files match (default: exit 1 on empty)')
   .action(async (pattern: string, options: { allowEmpty?: boolean }) => {
-    const { dir, ctx } = program.opts<{ dir: string; ctx?: string }>();
+    const opts = program.opts<{ dir?: string; ctx?: string }>();
+    const dir = opts.dir ?? process.env.RD_WORK_PATH;
+    const ctx = opts.ctx ?? process.env.RD_CONTEXT_ID;
+    if (!dir) {
+      process.stderr.write('error: --dir is required (or set $RD_WORK_PATH)\n');
+      process.exitCode = 1;
+      return;
+    }
     try {
       const results = await findFiles({ dir, ctx }, pattern);
       for (const result of results) {
