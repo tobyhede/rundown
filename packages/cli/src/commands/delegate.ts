@@ -476,6 +476,7 @@ async function resolveRetryTarget(args: RetryHandlerOptions): Promise<ResolvedTa
  *
  * @param target - Resolved target from resolveRetryTarget
  * @param args - Original retry options (for manager, output, cwd, options.text)
+ * @returns Promise that resolves when the retry is persisted and emitted.
  */
 async function executeRetry(target: ResolvedTarget, args: RetryHandlerOptions): Promise<void> {
   const { manager, output, cwd, options } = args;
@@ -508,12 +509,13 @@ async function executeRetry(target: ResolvedTarget, args: RetryHandlerOptions): 
     case 'retried':
       break;
     default: {
-      // No return: handleRetry's signature is Promise<void>, so a
-      // value-bearing return would trigger jsdoc/require-returns.
-      // Bare assertion matches the transition-handler.ts / output-evaluator.ts
-      // precedent. The other three CLI delegation-result switches return
-      // _exhaustive because their surrounding control flow expects a value.
+      // Short-circuit so the persistence block below cannot execute on
+      // an unexpected variant. `never` is assignable to Promise<void>'s
+      // resolved value, so this compiles even though handleRetry is
+      // declared as Promise<void>. Matches the create-path sibling at
+      // line ~223 and the abort.ts / execution.ts patterns.
       const _exhaustive: never = result;
+      return _exhaustive;
     }
   }
 
