@@ -46,7 +46,16 @@ export interface AbortDelegationNeedsForceResult {
   readonly childRunId: string;
 }
 
-/** No delegation exists on the targeted substep (or substep not found). */
+/**
+ * No delegation exists on the targeted substep.
+ *
+ * Wraps `Errors.delegationStepNotFound` (RD-801). Note: the same code is
+ * also produced by `createDelegation` for parse/step-missing failures —
+ * RD-801 is overloaded to cover both "step ID does not resolve" and
+ * "no active delegation on the substep". Callers branching on
+ * `error.code === 'RD-801'` should disambiguate via `status` (this
+ * variant is reached only on the abort/retry primitives).
+ */
 export interface AbortDelegationNotFoundResult {
   readonly status: 'not_found';
   /** Substep ID the caller attempted to abort. */
@@ -392,15 +401,22 @@ export interface RetryDelegationOptions {
  * Substep had no delegation to retry.
  *
  * Mirrors {@link AbortDelegationNotFoundResult} — both variants carry a
- * pre-formatted `RundownError` so callers can choose between structured
- * code (e.g. CLI envelope) and formatted message without re-synthesizing
- * either.
+ * pre-formatted `RundownError` (RD-801) so callers can choose between
+ * structured code (e.g. CLI envelope) and formatted message without
+ * re-synthesizing either.
+ *
+ * Note: RD-801 is also produced by `createDelegation` for parse /
+ * step-missing failures. The code is overloaded across the three
+ * primitives to cover both "step ID does not resolve" and "no active
+ * delegation on the substep". Callers branching on
+ * `error.code === 'RD-801'` should disambiguate via `status` (this
+ * variant is reached only on the retry primitive).
  */
 export interface RetryDelegationNotFoundResult {
   readonly status: 'not_found';
   /** Substep ID the caller attempted to retry. */
   readonly substepId: string;
-  /** Wrapped RundownError for callers that re-surface the message. */
+  /** Wrapped RundownError (RD-801) for callers that re-surface the message. */
   readonly error: RundownError;
 }
 
