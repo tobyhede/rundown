@@ -397,7 +397,8 @@ describe('handleParentCompletion', () => {
 
     wireMocks(manager, lifecycleService);
 
-    (drainResolvedCompletions as jest.Mock<any>).mockResolvedValue({
+    jest.mocked(drainResolvedCompletions).mockResolvedValue({
+      unresolved: 0,
       status: 'continue',
       applied: 0,
       state: parentState,
@@ -471,7 +472,8 @@ describe('handleParentCompletion', () => {
 
     wireMocks(manager, lifecycleService);
 
-    (drainResolvedCompletions as jest.Mock<any>).mockResolvedValue({
+    jest.mocked(drainResolvedCompletions).mockResolvedValue({
+      unresolved: 0,
       status: 'continue',
       applied: 0,
       state: parentState,
@@ -505,7 +507,8 @@ describe('handleParentCompletion', () => {
 
     wireMocks(manager, lifecycleService);
 
-    (drainResolvedCompletions as jest.Mock<any>).mockResolvedValue({
+    jest.mocked(drainResolvedCompletions).mockResolvedValue({
+      unresolved: 0,
       status: 'continue',
       applied: 1,
       state: parentState,
@@ -536,7 +539,8 @@ describe('handleParentCompletion', () => {
 
     wireMocks(manager, lifecycleService);
 
-    (drainResolvedCompletions as jest.Mock<any>).mockResolvedValue({
+    jest.mocked(drainResolvedCompletions).mockResolvedValue({
+      unresolved: 0,
       status: 'continue',
       applied: 1,
       state: parentState,
@@ -569,10 +573,10 @@ describe('handleParentCompletion', () => {
 
     wireMocks(manager, lifecycleService);
 
-    (drainResolvedCompletions as jest.Mock<any>).mockResolvedValue({
+    jest.mocked(drainResolvedCompletions).mockResolvedValue({
+      unresolved: 0,
       status: 'stopped',
       applied: 1,
-      state: parentState,
     });
 
     const result = await handleParentCompletion(childState, 'fail', '/test', output);
@@ -606,10 +610,10 @@ describe('handleParentCompletion', () => {
 
     wireMocks(manager, lifecycleService);
 
-    (drainResolvedCompletions as jest.Mock<any>).mockResolvedValue({
+    jest.mocked(drainResolvedCompletions).mockResolvedValue({
+      unresolved: 0,
       status: 'done',
       applied: 1,
-      state: parentState,
     });
 
     await handleParentCompletion(childState, 'pass', '/test', output);
@@ -648,7 +652,8 @@ describe('handleParentCompletion', () => {
 
     wireMocks(manager, lifecycleService);
 
-    (drainResolvedCompletions as jest.Mock<any>).mockResolvedValue({
+    jest.mocked(drainResolvedCompletions).mockResolvedValue({
+      unresolved: 0,
       status: 'continue',
       applied: 0,
       state: parentState,
@@ -681,10 +686,10 @@ describe('handleParentCompletion', () => {
 
     wireMocks(manager, lifecycleService);
 
-    (drainResolvedCompletions as jest.Mock<any>).mockResolvedValue({
+    jest.mocked(drainResolvedCompletions).mockResolvedValue({
+      unresolved: 0,
       status: 'done',
       applied: 1,
-      state: parentState,
     });
 
     await handleParentCompletion(childState, 'pass', '/test', output);
@@ -709,10 +714,10 @@ describe('handleParentCompletion', () => {
 
     wireMocks(manager, lifecycleService);
 
-    (drainResolvedCompletions as jest.Mock<any>).mockResolvedValue({
+    jest.mocked(drainResolvedCompletions).mockResolvedValue({
+      unresolved: 0,
       status: 'stopped',
       applied: 1,
-      state: parentState,
     });
 
     await handleParentCompletion(childState, 'fail', '/test', output);
@@ -737,7 +742,8 @@ describe('handleParentCompletion', () => {
 
     wireMocks(manager, lifecycleService);
 
-    (drainResolvedCompletions as jest.Mock<any>).mockResolvedValue({
+    jest.mocked(drainResolvedCompletions).mockResolvedValue({
+      unresolved: 0,
       status: 'continue',
       applied: 0,
       state: parentState,
@@ -764,7 +770,8 @@ describe('handleParentCompletion', () => {
 
     wireMocks(manager, lifecycleService);
 
-    (drainResolvedCompletions as jest.Mock<any>).mockResolvedValue({
+    jest.mocked(drainResolvedCompletions).mockResolvedValue({
+      unresolved: 0,
       status: 'continue',
       applied: 0,
       state: parentState,
@@ -790,7 +797,8 @@ describe('handleParentCompletion', () => {
 
     wireMocks(manager, lifecycleService);
 
-    (drainResolvedCompletions as jest.Mock<any>).mockResolvedValue({
+    jest.mocked(drainResolvedCompletions).mockResolvedValue({
+      unresolved: 0,
       status: 'continue',
       applied: 0,
       state: parentState,
@@ -820,7 +828,8 @@ describe('handleParentCompletion', () => {
 
     wireMocks(manager, lifecycleService);
 
-    (drainResolvedCompletions as jest.Mock<any>).mockResolvedValue({
+    jest.mocked(drainResolvedCompletions).mockResolvedValue({
+      unresolved: 0,
       status: 'continue',
       applied: 0,
       state: parentState,
@@ -852,7 +861,8 @@ describe('handleParentCompletion', () => {
 
     wireMocks(manager, lifecycleService);
 
-    (drainResolvedCompletions as jest.Mock<any>).mockResolvedValue({
+    jest.mocked(drainResolvedCompletions).mockResolvedValue({
+      unresolved: 0,
       status: 'continue',
       applied: 0,
       state: parentState,
@@ -901,7 +911,8 @@ describe('handleParentCompletion', () => {
       popRunbook: jest.fn<any>().mockResolvedValue(null),
     }));
 
-    (drainResolvedCompletions as jest.Mock<any>).mockResolvedValue({
+    jest.mocked(drainResolvedCompletions).mockResolvedValue({
+      unresolved: 0,
       status: 'continue',
       applied: 0,
       state: parentState,
@@ -927,7 +938,8 @@ describe('handleParentCompletion', () => {
 
     wireMocks(manager, lifecycleService);
 
-    (drainResolvedCompletions as jest.Mock<any>).mockResolvedValue({
+    jest.mocked(drainResolvedCompletions).mockResolvedValue({
+      unresolved: 0,
       status: 'continue',
       applied: 0,
       state: parentState,
@@ -988,7 +1000,8 @@ describe('inline linkage path', () => {
 
     wireMocks(manager, lifecycleService);
 
-    (drainResolvedCompletions as jest.Mock<any>).mockResolvedValue({
+    jest.mocked(drainResolvedCompletions).mockResolvedValue({
+      unresolved: 0,
       status: 'continue',
       applied: 0,
       state: parentState,
