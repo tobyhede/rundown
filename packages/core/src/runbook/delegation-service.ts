@@ -404,13 +404,22 @@ export interface RetryDelegationNotFoundResult {
   readonly error: RundownError;
 }
 
-/** State's current step is not the step that owns the delegation. */
+/**
+ * State's current step is not the step that owns the delegation.
+ *
+ * Mirrors {@link CreateDelegationStepNotCurrentResult} — both variants
+ * carry a pre-formatted `RundownError` so callers can choose between the
+ * structured code (e.g. CLI envelope) and the formatted message without
+ * re-synthesizing either.
+ */
 export interface RetryDelegationNotCurrentResult {
   readonly status: 'not_current';
   /** Step that owns the delegation. */
   readonly ownerStep: string;
   /** State's current step. */
   readonly currentStep: string;
+  /** Wrapped RundownError (RD-802) for callers that re-surface the message. */
+  readonly error: RundownError;
 }
 
 /** createDelegation raised a RundownError (path unresolvable, substep removed, etc.). */
@@ -489,7 +498,12 @@ export function retryDelegation(
     return { status: 'error', error: Errors.delegationSnapshotStale(substepId, state.step) };
   }
   if (state.step !== ownerStep) {
-    return { status: 'not_current', ownerStep, currentStep: state.step };
+    return {
+      status: 'not_current',
+      ownerStep,
+      currentStep: state.step,
+      error: Errors.delegationStepNotCurrent(ownerStep, state.step),
+    };
   }
 
   // 3. Compose inherited + override extraVars.

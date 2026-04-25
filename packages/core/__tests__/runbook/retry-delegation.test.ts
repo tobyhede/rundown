@@ -214,6 +214,12 @@ describe('retryDelegation', () => {
     );
 
     expect(result.status).toBe('not_current');
+    if (result.status !== 'not_current') return;
+    expect(result.ownerStep).toBe('1');
+    expect(result.currentStep).toBe('2');
+    // Mirrors CreateDelegationStepNotCurrentResult — `error` is RD-802.
+    expect(result.error).toBeDefined();
+    expect(result.error.code).toBe('RD-802');
   });
 
   it('returns { status: "error" } when createDelegation surfaces a RundownError variant', () => {

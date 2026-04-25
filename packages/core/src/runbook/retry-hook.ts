@@ -133,9 +133,9 @@ export type RetryWorkingState = Pick<
  *   updated `working` (with the retried substep reset to
  *   `{ status: 'pending', result: undefined }`) and a frontier entry.
  * - `error` — surface codes:
- *   - `RD-903` from `retryDelegation` returning `not_found` / `not_current`
- *     after the substep state reported an active delegation — state and
- *     delegation-service views have diverged.
+ *   - Wrapped `RundownError` from `retryDelegation` returning
+ *     `not_found` / `not_current` (e.g. RD-801 / RD-802) propagated
+ *     verbatim — state and delegation-service views have diverged.
  *   - `RD-904` from a fresh retried delegation missing
  *     `contextSnapshot.at` (frontier id would lose FOR-iteration context).
  *   - Otherwise the code + message from `result.error` are propagated.
@@ -225,11 +225,13 @@ export function retrySingleSubstep(
   // not_found / not_current: the delegation-service view and the substep
   // state have diverged. The caller already filtered on `ss.delegation`
   // being present and `activeFrameKey` matching, so silent skip would
-  // consume the retry transition without re-issuing a token.
+  // consume the retry transition without re-issuing a token. Both variants
+  // now carry a `RundownError` (parallel to CreateDelegation), so the hook
+  // surfaces the structured code/message verbatim and rolls back.
   return {
     status: 'error',
-    code: 'RD-903',
-    message: `Retry hook aborted: retryDelegation returned "${result.status}" for substep "${substep.id}" but substep state recorded an active delegation — state and delegation-service view have diverged.`,
+    code: result.error.code,
+    message: result.error.message,
   };
 }
 

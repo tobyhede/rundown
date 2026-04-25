@@ -204,24 +204,22 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
     }
   });
 
-  it('rolls back with RD-903 when retryDelegation returns not_current after delegation observed', () => {
-    // The loop filters on `ss.delegation` being present and `activeFrameKey`
-    // matching the context. Reaching `not_current` or `not_found` here means
-    // the substep state and the delegation-service view have diverged — silent
-    // skip would consume the retry transition without re-issuing a token.
+  it('rolls back with the inner RundownError code/message when retryDelegation returns not_current after delegation observed', () => {
     const { context, parentStep, steps, originalSubstepStates } = buildInputs();
+    const inner = Errors.delegationStepNotCurrent('2', '1');
     mockedRetryDelegation.mockImplementation(() => ({
       status: 'not_current' as const,
       ownerStep: '2',
       currentStep: '1',
+      error: inner,
     }));
 
     const result = runRetryHook(context, parentStep, steps);
 
     expect(result.status).toBe('error');
     if (result.status === 'error') {
-      expect(result.code).toBe('RD-903');
-      expect(result.message).toMatch(/not_current.*substep "1"/);
+      expect(result.code).toBe(inner.code);
+      expect(result.message).toBe(inner.message);
       expect(result.substepStates).toBe(originalSubstepStates);
     }
   });
@@ -238,8 +236,9 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
 
     expect(result.status).toBe('error');
     if (result.status === 'error') {
-      expect(result.code).toBe('RD-903');
-      expect(result.message).toMatch(/not_found/);
+      // Hook surfaces the inner RundownError code/message verbatim.
+      expect(result.code).toBe('RD-801');
+      expect(result.message).toMatch(/step not found/i);
       expect(result.substepStates).toBe(originalSubstepStates);
     }
   });
