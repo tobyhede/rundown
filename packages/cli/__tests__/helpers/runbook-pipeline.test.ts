@@ -208,7 +208,10 @@ const { setHelperRegistry, resetHelperRegistry } = await import(
   '../../src/services/helper-registry'
 );
 
-function makeState(id: string, overrides: Record<string, unknown> = {}): any {
+function makeState(
+  id: string,
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
   return {
     id,
     runbook: 'test.md',
@@ -225,7 +228,7 @@ function makeState(id: string, overrides: Record<string, unknown> = {}): any {
   };
 }
 
-function makeStep(overrides: Record<string, unknown> = {}): any {
+function makeStep(overrides: Record<string, unknown> = {}): unknown {
   const obj: Record<string, unknown> = {
     name: '1',
     description: 'Test Step',
@@ -243,37 +246,43 @@ function makeStep(overrides: Record<string, unknown> = {}): any {
         : obj.command !== undefined
           ? 'command'
           : 'base';
-  return { ...obj, kind } as any;
+  return { ...obj, kind };
 }
 
-function mockParseResult(overrides: Record<string, unknown> = {}): any {
+function mockParseResult(
+  overrides: Record<string, unknown> = {},
+): ReturnType<typeof parser.parseRunbookDocument> {
   return {
     runbook: { steps: [makeStep()] },
     frontmatter: null,
     diagnostics: [],
     ...overrides,
-  };
+  } as unknown as ReturnType<typeof parser.parseRunbookDocument>;
 }
 
-function makeLifecycle(overrides: Record<string, unknown> = {}): any {
+function makeLifecycle(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  type LifecycleState = Record<string, unknown> & {
+    step?: unknown;
+    activeEntry?: unknown;
+    activeFrameKey?: unknown;
+  };
   return {
-    ensureActiveEntry: jest
-      .fn<any>()
-      .mockImplementation(async (_id: string, _prev: unknown, state: any) => ({
-        state: {
-          ...(state ?? {}),
-          activeEntry: state?.activeEntry ?? 1,
-          activeFrameKey: state?.activeFrameKey ?? `${String(state?.step ?? '1')}|`,
-        },
-        frameKey: state?.activeFrameKey ?? `${String(state?.step ?? '1')}|`,
-        entry: state?.activeEntry ?? 1,
-      })),
-    buildTargetFrameKey: jest
-      .fn<any>()
-      .mockImplementation(
-        (step: string, iteration?: number) =>
-          `${step}|${iteration != null ? String(iteration) : ''}`,
-      ),
+    ensureActiveEntry: mockFn<
+      (id: string, prev: unknown, state: LifecycleState | undefined) => Promise<unknown>
+    >().mockImplementation(async (_id, _prev, state) => ({
+      state: {
+        ...(state ?? {}),
+        activeEntry: state?.activeEntry ?? 1,
+        activeFrameKey: state?.activeFrameKey ?? `${String(state?.step ?? '1')}|`,
+      },
+      frameKey: state?.activeFrameKey ?? `${String(state?.step ?? '1')}|`,
+      entry: state?.activeEntry ?? 1,
+    })),
+    buildTargetFrameKey: mockFn<(step: string, iteration?: number) => string>().mockImplementation(
+      (step, iteration) => `${step}|${iteration != null ? String(iteration) : ''}`,
+    ),
     ...overrides,
   };
 }
