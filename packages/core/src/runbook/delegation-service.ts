@@ -28,26 +28,26 @@ export interface AbortDelegationOptions {
 }
 
 /** Delegation was cancelled; caller must persist updated substep states. */
-interface AbortDelegationCancelledResult {
+export interface AbortDelegationCancelledResult {
   readonly status: 'cancelled';
   /** Updated parent substep states containing the cancelled delegation timestamp. */
   readonly updatedSubstepStates: readonly SubstepState[];
 }
 
 /** Delegation was already cancelled; no state change required. */
-interface AbortDelegationAlreadyCancelledResult {
+export interface AbortDelegationAlreadyCancelledResult {
   readonly status: 'already_cancelled';
 }
 
 /** Delegation is claimed by a child run and requires `force` to cancel. */
-interface AbortDelegationNeedsForceResult {
+export interface AbortDelegationNeedsForceResult {
   readonly status: 'needs_force';
   /** Child run currently holding the claimed delegation. */
   readonly childRunId: string;
 }
 
 /** No delegation exists on the targeted substep (or substep not found). */
-interface AbortDelegationNotFoundResult {
+export interface AbortDelegationNotFoundResult {
   readonly status: 'not_found';
   /** Substep ID the caller attempted to abort. */
   readonly substepId: string;
@@ -114,7 +114,8 @@ export interface CreateDelegationStepNotCurrentResult {
 export interface CreateDelegationSubstepRequiredResult {
   readonly status: 'substep_required';
   readonly step: string;
-  readonly substeps: readonly string[];
+  /** Substep IDs available to target on this step. */
+  readonly available: readonly string[];
   readonly error: RundownError;
 }
 
@@ -201,12 +202,12 @@ export function createDelegation(
 
   // 3. If step has substeps and no substep specified, require it
   if (resolvedStepHasSubsteps(step) && !parsed.substep) {
-    const substeps = step.substeps.map((ss) => ss.id);
+    const available = step.substeps.map((ss) => ss.id);
     return {
       status: 'substep_required',
       step: parsed.step,
-      substeps,
-      error: Errors.delegationSubstepRequired(parsed.step, substeps),
+      available,
+      error: Errors.delegationSubstepRequired(parsed.step, available),
     };
   }
 
@@ -379,9 +380,20 @@ export interface RetryDelegationOptions {
   readonly overrides?: Readonly<Record<string, TemplateVarValue>>;
 }
 
-/** Substep had no delegation to retry. */
-interface RetryDelegationNotFoundResult {
+/**
+ * Substep had no delegation to retry.
+ *
+ * Mirrors {@link AbortDelegationNotFoundResult} — both variants carry a
+ * pre-formatted `RundownError` so callers can choose between structured
+ * code (e.g. CLI envelope) and formatted message without re-synthesizing
+ * either.
+ */
+export interface RetryDelegationNotFoundResult {
   readonly status: 'not_found';
+  /** Substep ID the caller attempted to retry. */
+  readonly substepId: string;
+  /** Wrapped RundownError for callers that re-surface the message. */
+  readonly error: RundownError;
 }
 
 /** State's current step is not the step that owns the delegation. */
@@ -445,7 +457,11 @@ export function retryDelegation(
   const targetSubstep = findSubstepState(existingStates, substepId, frameKey);
   const existingDelegation = targetSubstep?.delegation;
   if (!existingDelegation) {
-    return { status: 'not_found' };
+    return {
+      status: 'not_found',
+      substepId,
+      error: Errors.delegationStepNotFound(substepId),
+    };
   }
 
   // 2. Verify step is at the execution frontier.

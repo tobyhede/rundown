@@ -218,7 +218,7 @@ describe('createDelegation', () => {
     expect(result.status).toBe('substep_required');
     if (result.status !== 'substep_required') return;
     expect(result.step).toBe('1');
-    expect(result.substeps).toEqual(['1', '2']);
+    expect(result.available).toEqual(['1', '2']);
     expect(result.error.code).toBe('RD-803');
   });
 

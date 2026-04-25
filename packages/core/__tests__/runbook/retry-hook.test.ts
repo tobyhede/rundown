@@ -230,6 +230,8 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
     const { context, parentStep, steps, originalSubstepStates } = buildInputs();
     mockedRetryDelegation.mockImplementation(() => ({
       status: 'not_found' as const,
+      substepId: '1',
+      error: Errors.delegationStepNotFound('1'),
     }));
 
     const result = runRetryHook(context, parentStep, steps);
