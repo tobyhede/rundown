@@ -1,4 +1,7 @@
+import base from '../../jest.config.base.js';
+
 export default {
+  ...base,
   testEnvironment: 'node',
   testTimeout: 10000,
   roots: ['<rootDir>/__tests__'],

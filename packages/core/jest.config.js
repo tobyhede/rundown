@@ -1,4 +1,7 @@
+import base from '../../jest.config.base.js';
+
 export default {
+  ...base,
   preset: 'ts-jest',
   testEnvironment: 'node',
   roots: ['<rootDir>/__tests__'],
