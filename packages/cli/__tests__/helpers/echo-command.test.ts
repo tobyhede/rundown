@@ -5,7 +5,7 @@ import { mockErrorHelpers } from './mock-error-helpers.js';
 const mockGetActive = jest.fn();
 jest.unstable_mockModule('@rundown-org/core', () => ({
   RunbookStateManager: jest.fn(),
-  SessionService: jest.fn().mockImplementation(() => ({
+  SessionService: jest.fn<any>().mockImplementation(() => ({
     getActive: mockGetActive,
   })),
   ...mockErrorHelpers,

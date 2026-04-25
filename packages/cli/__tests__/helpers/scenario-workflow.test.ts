@@ -15,7 +15,7 @@ jest.unstable_mockModule('@rundown-org/parser', () => ({
 // Mock scenarios schema — include all exports used by scenario-runbook
 jest.unstable_mockModule('../../src/schemas/scenarios', () => ({
   parseScenarios: jest.fn(),
-  getEffectiveResult: jest.fn().mockImplementation((s: any) => s.result ?? s.expect?.result),
+  getEffectiveResult: jest.fn<any>().mockImplementation((s: any) => s.result ?? s.expect?.result),
 }));
 
 // Mock node:fs/promises
@@ -23,21 +23,21 @@ const actualFsPromises = await import('node:fs/promises');
 jest.unstable_mockModule('node:fs/promises', () => ({
   ...actualFsPromises,
   readFile: jest.fn(),
-  rm: jest.fn().mockResolvedValue(undefined),
+  rm: jest.fn<any>().mockResolvedValue(undefined),
 }));
 
 // Mock node:fs (sync functions used by executeScenario)
 const actualFs = await import('node:fs');
 jest.unstable_mockModule('node:fs', () => ({
   ...actualFs,
-  mkdtempSync: jest.fn().mockReturnValue('/tmp/rd-scenario-test'),
+  mkdtempSync: jest.fn<any>().mockReturnValue('/tmp/rd-scenario-test'),
   mkdirSync: jest.fn(),
   copyFileSync: jest.fn(),
 }));
 
 // Mock shell-quote
 jest.unstable_mockModule('shell-quote', () => ({
-  parse: jest.fn().mockImplementation((str: string) => str.split(/\s+/)),
+  parse: jest.fn<any>().mockImplementation((str: string) => str.split(/\s+/)),
 }));
 
 // Mock command-sequence (pass through extract helpers so extractReferencedRunbooks/input-file copying works)

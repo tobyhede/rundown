@@ -15,7 +15,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     (step: string, substep?: string, iteration?: number) =>
       `${step}${iteration != null ? `.${String(iteration)}` : ''}${substep ? `.${substep}` : ''}`,
   ),
-  countNumberedSteps: jest.fn().mockReturnValue(5),
+  countNumberedSteps: jest.fn<any>().mockReturnValue(5),
   mergeEffectiveVars: jest.fn(
     (
       state: { templateVars?: Record<string, unknown>; variables?: Record<string, string> },
@@ -38,9 +38,9 @@ jest.unstable_mockModule('../../src/helpers/runbook-loader', () => ({
 
 // Mock execution service
 jest.unstable_mockModule('../../src/services/execution', () => ({
-  getStepRetryMax: jest.fn().mockReturnValue(0),
+  getStepRetryMax: jest.fn<any>().mockReturnValue(0),
   buildMetadata: jest.fn(),
-  formatActionForDisplay: jest.fn().mockReturnValue('CONTINUE'),
+  formatActionForDisplay: jest.fn<any>().mockReturnValue('CONTINUE'),
   extractRetryDisplayCount: jest.fn((_: unknown, retryCount: number) => retryCount),
 }));
 
@@ -346,14 +346,14 @@ describe('parentLinkage projection', () => {
 
 describe('vars field', () => {
   beforeEach(() => {
-    (getRunbookFromState as jest.Mock).mockReturnValue([]);
-    (core.countNumberedSteps as jest.Mock).mockReturnValue(0);
-    (buildMetadata as jest.Mock).mockReturnValue({
+    (getRunbookFromState as jest.Mock<any>).mockReturnValue([]);
+    (core.countNumberedSteps as jest.Mock<any>).mockReturnValue(0);
+    (buildMetadata as jest.Mock<any>).mockReturnValue({
       file: 'test.runbook.md',
       state: '.rundown/runs/test-id.json',
     });
-    (getStepRetryMax as jest.Mock).mockReturnValue(0);
-    (formatActionForDisplay as jest.Mock).mockReturnValue('CONTINUE');
+    (getStepRetryMax as jest.Mock<any>).mockReturnValue(0);
+    (formatActionForDisplay as jest.Mock<any>).mockReturnValue('CONTINUE');
   });
 
   it('merges templateVars (scalars) and state.variables, state.variables wins on collision', () => {

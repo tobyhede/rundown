@@ -3,18 +3,18 @@ import { mockErrorHelpers } from '../helpers/mock-error-helpers.js';
 
 // Mock dependencies
 const mockActorService = {
-  sendAndSync: jest.fn(),
-  getContextSnapshot: jest.fn(),
+  sendAndSync: jest.fn<any>(),
+  getContextSnapshot: jest.fn<any>(),
 };
 
 const mockSessionService = {
-  popRunbook: jest.fn(),
+  popRunbook: jest.fn<any>(),
 };
 
 const mockLifecycleService = {
   setLastResult: jest.fn(),
   ensureActiveEntry: jest
-    .fn()
+    .fn<any>()
     .mockImplementation(async (_id: string, _prev: unknown, state: any) => ({
       state: {
         ...(state ?? {}),
@@ -24,8 +24,8 @@ const mockLifecycleService = {
       frameKey: `${String(state?.step ?? '1')}|`,
       entry: state?.activeEntry ?? 1,
     })),
-  listResolvedCompletions: jest.fn().mockResolvedValue([]),
-  consumeResolvedCompletion: jest.fn().mockResolvedValue(null),
+  listResolvedCompletions: jest.fn<any>().mockResolvedValue([]),
+  consumeResolvedCompletion: jest.fn<any>().mockResolvedValue(null),
 };
 
 // Capture the real isJsonArrayStream before the mock is registered.
@@ -91,7 +91,7 @@ jest.unstable_mockModule('@rundown-org/core', () => {
       if (lastAction.type === 'STOP') return 'STOP';
       return 'CONTINUE';
     }),
-    countNumberedSteps: jest.fn().mockReturnValue(2),
+    countNumberedSteps: jest.fn<any>().mockReturnValue(2),
     extractDisplayCommand: jest.fn((cmd) => cmd),
     createFileProvider: jest.fn(),
     computeFileSnapshot: jest.fn(),
@@ -116,11 +116,11 @@ jest.unstable_mockModule('@rundown-org/core', () => {
       frameKey: `${String(state?.step ?? '1')}|`,
       step: state?.step ?? '1',
     })),
-    RunbookActorService: jest.fn().mockImplementation(() => mockActorService),
-    SessionService: jest.fn().mockImplementation(() => mockSessionService),
-    ExecutionLifecycleService: jest.fn().mockImplementation(() => mockLifecycleService),
-    ForIterationService: jest.fn().mockImplementation(() => ({
-      prepareIteration: jest.fn().mockResolvedValue({ status: 'no-resolution-needed' }),
+    RunbookActorService: jest.fn<any>().mockImplementation(() => mockActorService),
+    SessionService: jest.fn<any>().mockImplementation(() => mockSessionService),
+    ExecutionLifecycleService: jest.fn<any>().mockImplementation(() => mockLifecycleService),
+    ForIterationService: jest.fn<any>().mockImplementation(() => ({
+      prepareIteration: jest.fn<any>().mockResolvedValue({ status: 'no-resolution-needed' }),
     })),
     isRunbookComplete: jest.fn((s: any) => s?.status === 'done' && s?.value === 'COMPLETE'),
     isRunbookStopped: jest.fn((s: any) => s?.status === 'done' && s?.value === 'STOPPED'),
@@ -129,14 +129,14 @@ jest.unstable_mockModule('@rundown-org/core', () => {
       return asTerminalSnapshot(snapshot) ?? { status: 'active', value: undefined };
     }),
     logger: {
-      debug: jest.fn().mockResolvedValue(undefined),
-      info: jest.fn().mockResolvedValue(undefined),
-      warn: jest.fn().mockResolvedValue(undefined),
-      error: jest.fn().mockResolvedValue(undefined),
-      always: jest.fn().mockResolvedValue(undefined),
-      event: jest.fn().mockResolvedValue(undefined),
-      getLogFilePath: jest.fn().mockReturnValue('/tmp/rundown-test.log'),
-      getLogDir: jest.fn().mockReturnValue('/tmp'),
+      debug: jest.fn<any>().mockResolvedValue(undefined),
+      info: jest.fn<any>().mockResolvedValue(undefined),
+      warn: jest.fn<any>().mockResolvedValue(undefined),
+      error: jest.fn<any>().mockResolvedValue(undefined),
+      always: jest.fn<any>().mockResolvedValue(undefined),
+      event: jest.fn<any>().mockResolvedValue(undefined),
+      getLogFilePath: jest.fn<any>().mockReturnValue('/tmp/rundown-test.log'),
+      getLogDir: jest.fn<any>().mockReturnValue('/tmp'),
     },
     isJsonArray: jest.fn((v: unknown) => Array.isArray(v)),
     isJsonArrayStream: jest.fn(realIsJsonArrayStream),
@@ -190,23 +190,23 @@ jest.unstable_mockModule('@rundown-org/core', () => {
 });
 
 jest.unstable_mockModule('../../src/helpers/delegate-inference', () => ({
-  inferAllDelegateSubsteps: jest.fn().mockReturnValue([]),
+  inferAllDelegateSubsteps: jest.fn<any>().mockReturnValue([]),
 }));
 
 jest.unstable_mockModule('../../src/helpers/resolve-runbook', () => ({
-  resolveRunbookFile: jest.fn().mockResolvedValue(null),
+  resolveRunbookFile: jest.fn<any>().mockResolvedValue(null),
 }));
 
 jest.unstable_mockModule('../../src/services/internal-commands', () => ({
-  isInternalRdCommand: jest.fn().mockReturnValue(false),
+  isInternalRdCommand: jest.fn<any>().mockReturnValue(false),
   executeRdCommandInternal: jest.fn(),
 }));
 
 jest.unstable_mockModule('../../src/services/policy-context', () => ({
   getPolicyEvaluator: jest.fn(),
   getPolicyPrompter: jest.fn(),
-  isPolicyEnforced: jest.fn().mockReturnValue(false),
-  getSandboxOptions: jest.fn().mockReturnValue({ sandbox: true, sandboxStrict: false }),
+  isPolicyEnforced: jest.fn<any>().mockReturnValue(false),
+  getSandboxOptions: jest.fn<any>().mockReturnValue({ sandbox: true, sandboxStrict: false }),
 }));
 
 // Import after mocking
@@ -250,11 +250,11 @@ describe('runExecutionLoop', () => {
 
     // Restore default ForIterationService mock (tests may override)
     (core.ForIterationService as any).mockImplementation(() => ({
-      prepareIteration: jest.fn().mockResolvedValue({ status: 'no-resolution-needed' }),
+      prepareIteration: jest.fn<any>().mockResolvedValue({ status: 'no-resolution-needed' }),
     }));
 
-    policyContext.isPolicyEnforced.mockReturnValue(false);
-    policyContext.getSandboxOptions.mockReturnValue({ sandbox: true, sandboxStrict: false });
+    (policyContext.isPolicyEnforced as jest.Mock<any>).mockReturnValue(false);
+    (policyContext.getSandboxOptions as jest.Mock<any>).mockReturnValue({ sandbox: true, sandboxStrict: false });
     (core.executeCommand as any).mockReset();
     (core.executeCommandWithPolicy as any).mockReset();
 
@@ -393,7 +393,7 @@ describe('runExecutionLoop', () => {
 
   it('handles policy denial', async () => {
     mockManager.load.mockResolvedValue({ id: runbookId, step: '1', status: 'running' });
-    policyContext.isPolicyEnforced.mockReturnValue(true);
+    (policyContext.isPolicyEnforced as jest.Mock<any>).mockReturnValue(true);
 
     (core.executeCommandWithPolicy as any).mockResolvedValue({
       success: false,
@@ -424,7 +424,7 @@ describe('runExecutionLoop', () => {
 
     (core.ForIterationService as any).mockImplementation(() => ({
       prepareIteration: jest
-        .fn()
+        .fn<any>()
         .mockRejectedValue(
           new RealForResolutionError(
             'JsonArrayStream path "/etc/passwd" escapes project root "/project"',
@@ -902,13 +902,13 @@ describe('runExecutionLoop', () => {
     });
 
     // inferAllDelegateSubsteps returns two targets
-    delegateInference.inferAllDelegateSubsteps.mockReturnValue([
+    (delegateInference.inferAllDelegateSubsteps as jest.Mock<any>).mockReturnValue([
       { runbookRef: 'child-a.runbook.md', stepId: '1.1' },
       { runbookRef: 'child-b.runbook.md', stepId: '1.2' },
     ]);
 
     // resolveRunbookFile resolves to a path
-    resolveRunbook.resolveRunbookFile
+    (resolveRunbook.resolveRunbookFile as jest.Mock<any>)
       .mockResolvedValueOnce({
         path: '/project/.rundown/runbooks/child-a.runbook.md',
         source: 'project',
@@ -938,7 +938,7 @@ describe('runExecutionLoop', () => {
         ],
       });
 
-    mockManager.update = jest.fn().mockResolvedValue(undefined);
+    mockManager.update = jest.fn<any>().mockResolvedValue(undefined);
 
     await runExecutionLoop(mockManager, runbookId, delegateSteps, '/tmp', false, mockEmitter);
 
@@ -1016,7 +1016,7 @@ describe('runExecutionLoop', () => {
       pendingDelegateFrontier: preIssued,
     });
 
-    mockManager.update = jest.fn().mockResolvedValue(undefined);
+    mockManager.update = jest.fn<any>().mockResolvedValue(undefined);
 
     await runExecutionLoop(mockManager, runbookId, delegateSteps, '/tmp', false, mockEmitter);
 
@@ -1070,11 +1070,11 @@ describe('runExecutionLoop', () => {
     // Snapshot with no pendingDelegateFrontier
     mockActorService.getContextSnapshot.mockResolvedValue({});
 
-    delegateInference.inferAllDelegateSubsteps.mockReturnValue([
+    (delegateInference.inferAllDelegateSubsteps as jest.Mock<any>).mockReturnValue([
       { runbookRef: 'child-a.runbook.md', stepId: '1.1' },
     ]);
 
-    resolveRunbook.resolveRunbookFile.mockResolvedValue({
+    (resolveRunbook.resolveRunbookFile as jest.Mock<any>).mockResolvedValue({
       path: '/project/.rundown/runbooks/child-a.runbook.md',
       source: 'project',
     });
@@ -1087,7 +1087,7 @@ describe('runExecutionLoop', () => {
       updatedSubstepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: {} }],
     });
 
-    mockManager.update = jest.fn().mockResolvedValue(undefined);
+    mockManager.update = jest.fn<any>().mockResolvedValue(undefined);
 
     await runExecutionLoop(mockManager, runbookId, delegateSteps, '/tmp', false, mockEmitter);
 
@@ -1125,7 +1125,7 @@ describe('executeCommandWithPolicyCheck', () => {
   });
 
   it('calls executeCommand directly if policy is not enforced', async () => {
-    policyContext.isPolicyEnforced.mockReturnValue(false);
+    (policyContext.isPolicyEnforced as jest.Mock<any>).mockReturnValue(false);
     (core.executeCommand as any).mockResolvedValue({ success: true });
 
     await executeCommandWithPolicyCheck(command, cwd);
@@ -1135,11 +1135,11 @@ describe('executeCommandWithPolicyCheck', () => {
   });
 
   it('calls executeCommandWithPolicy if policy is enforced', async () => {
-    policyContext.isPolicyEnforced.mockReturnValue(true);
+    (policyContext.isPolicyEnforced as jest.Mock<any>).mockReturnValue(true);
     const mockEvaluator = { setRunbookPath: jest.fn() };
-    policyContext.getPolicyEvaluator.mockReturnValue(mockEvaluator);
-    policyContext.getPolicyPrompter.mockReturnValue('prompter');
-    policyContext.getSandboxOptions.mockReturnValue({ sandbox: true, sandboxStrict: true });
+    (policyContext.getPolicyEvaluator as jest.Mock<any>).mockReturnValue(mockEvaluator);
+    (policyContext.getPolicyPrompter as jest.Mock<any>).mockReturnValue('prompter');
+    (policyContext.getSandboxOptions as jest.Mock<any>).mockReturnValue({ sandbox: true, sandboxStrict: true });
     (core.executeCommandWithPolicy as any).mockResolvedValue({ success: true });
 
     await executeCommandWithPolicyCheck(command, cwd, 'test.md');

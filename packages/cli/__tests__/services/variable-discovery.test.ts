@@ -850,7 +850,7 @@ describe('resolveVariables', () => {
       await expect(
         resolveVariables({ input: [`data=file:${file}`] }, tmpDir, {
           evaluator: {
-            checkPath: jest.fn().mockReturnValue({
+            checkPath: jest.fn<any>().mockReturnValue({
               allowed: false,
               requiresPrompt: false,
               reason: 'Path blocked by policy',
@@ -864,14 +864,14 @@ describe('resolveVariables', () => {
       const file = path.join(tmpDir, 'prompted.jsonl');
       await fs.writeFile(file, '{"ok":true}\n');
       const evaluator = {
-        checkPath: jest.fn().mockReturnValue({
+        checkPath: jest.fn<any>().mockReturnValue({
           allowed: false,
           requiresPrompt: true,
           reason: 'Prompt before read',
         }),
       };
       const prompter = {
-        requestPermission: jest.fn().mockResolvedValue({ granted: true, persist: false }),
+        requestPermission: jest.fn<any>().mockResolvedValue({ granted: true, persist: false }),
       };
 
       const result = await resolveVariables({ input: [`data=file:${file}`] }, tmpDir, {
@@ -898,7 +898,7 @@ describe('resolveVariables', () => {
       await expect(
         resolveVariables({ input: [`data=file:${file}`] }, tmpDir, {
           evaluator: {
-            checkPath: jest.fn().mockReturnValue({
+            checkPath: jest.fn<any>().mockReturnValue({
               allowed: false,
               requiresPrompt: true,
               reason: 'Prompt before read',

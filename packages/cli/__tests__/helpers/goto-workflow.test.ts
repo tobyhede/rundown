@@ -19,23 +19,23 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     (pos: { current: string; substep?: string; for?: { index: number } }) =>
       `${pos.current}${pos.for?.index != null ? `.${String(pos.for.index)}` : ''}${pos.substep ? `.${pos.substep}` : ''}`,
   ),
-  countNumberedSteps: jest.fn().mockReturnValue(3),
+  countNumberedSteps: jest.fn<any>().mockReturnValue(3),
   ...mockErrorHelpers,
 }));
 
 // Mock execution service
 jest.unstable_mockModule('../../src/services/execution', () => ({
-  runExecutionLoop: jest.fn().mockResolvedValue('done'),
+  runExecutionLoop: jest.fn<any>().mockResolvedValue('done'),
 }));
 
 // Mock runbook-loader
 jest.unstable_mockModule('../../src/helpers/runbook-loader', () => ({
-  getRunbookFromState: jest.fn().mockReturnValue([]),
+  getRunbookFromState: jest.fn<any>().mockReturnValue([]),
 }));
 
 // Mock execution-emitter
 jest.unstable_mockModule('../../src/helpers/execution-emitter', () => ({
-  createBridgedEmitter: jest.fn().mockReturnValue({}),
+  createBridgedEmitter: jest.fn<any>().mockReturnValue({}),
 }));
 
 // Import after mocking
@@ -67,22 +67,22 @@ function makeStep(overrides: Record<string, unknown> = {}): any {
 beforeEach(() => {
   jest.resetAllMocks();
   // Re-establish default mock implementations after reset
-  (core.stepIdToString as jest.Mock).mockImplementation((id: { step: string; substep?: string }) =>
+  (core.stepIdToString as jest.Mock<any>).mockImplementation((id: { step: string; substep?: string }) =>
     id.substep ? `${id.step}.${id.substep}` : id.step,
   );
-  (core.buildStepPosition as jest.Mock).mockImplementation(
+  (core.buildStepPosition as jest.Mock<any>).mockImplementation(
     (current: string, total: number, substep?: string) => ({
       current,
       total,
       ...(substep ? { substep } : {}),
     }),
   );
-  (core.derivePositionAt as jest.Mock).mockImplementation(
+  (core.derivePositionAt as jest.Mock<any>).mockImplementation(
     (pos: { current: string; substep?: string; for?: { index: number } }) =>
       `${pos.current}${pos.for?.index != null ? `.${String(pos.for.index)}` : ''}${pos.substep ? `.${pos.substep}` : ''}`,
   );
-  (core.countNumberedSteps as jest.Mock).mockReturnValue(3);
-  (runExecutionLoop as jest.Mock).mockResolvedValue('done');
+  (core.countNumberedSteps as jest.Mock<any>).mockReturnValue(3);
+  (runExecutionLoop as jest.Mock<any>).mockResolvedValue('done');
 });
 
 describe('validateGotoTarget', () => {
@@ -400,7 +400,7 @@ describe('executeGoto', () => {
       expect(result.loopResult).toBe('done');
     }
     expect(mockOutput.action).toHaveBeenCalled();
-    const updateArg = (mockManager.update as jest.Mock).mock.calls[0][1];
+    const updateArg = (mockManager.update as jest.Mock<any>).mock.calls[0][1];
     expect(updateArg).toHaveProperty('lastResult', undefined);
     expect(updateArg).toHaveProperty('lastAction', { type: 'GOTO', target: '2' });
   });

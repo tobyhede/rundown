@@ -35,7 +35,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     },
   ),
   logger: {
-    warn: jest.fn().mockReturnValue(Promise.resolve()),
+    warn: jest.fn<any>().mockReturnValue(Promise.resolve()),
     info: jest.fn(),
     debug: jest.fn(),
     error: jest.fn(),
@@ -45,7 +45,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
 
 // Mock runbook-loader
 jest.unstable_mockModule('../../src/helpers/runbook-loader', () => ({
-  getRunbookFromState: jest.fn().mockReturnValue([
+  getRunbookFromState: jest.fn<any>().mockReturnValue([
     {
       name: '1',
       description: 'Test step',
@@ -62,18 +62,18 @@ jest.unstable_mockModule('../../src/services/execution', () => ({
 
 // Mock execution-emitter
 jest.unstable_mockModule('../../src/helpers/execution-emitter', () => ({
-  createBridgedEmitter: jest.fn().mockReturnValue({
+  createBridgedEmitter: jest.fn<any>().mockReturnValue({
     emit: jest.fn(),
   }),
 }));
 
 // Mock transitions
 jest.unstable_mockModule('../../src/helpers/transitions', () => ({
-  createPassTransitionConfig: jest.fn().mockReturnValue({
+  createPassTransitionConfig: jest.fn<any>().mockReturnValue({
     policy: 'pass',
     computeActionResult: jest.fn(),
   }),
-  createFailTransitionConfig: jest.fn().mockReturnValue({
+  createFailTransitionConfig: jest.fn<any>().mockReturnValue({
     policy: 'fail',
     computeActionResult: jest.fn(),
   }),
