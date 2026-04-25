@@ -9,6 +9,7 @@ import type {
 import type { RunbookContext } from '../../src/runbook/compiler.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import { brandEffectiveVarsForTest } from '../helpers/effective-vars.js';
+import { Errors } from '../../src/errors/factory.js';
 
 // Mock delegation-service so we can drive `retryDelegation` to specific
 // Result variants — `retried`, `not_current`, `not_found`, `error` — and
@@ -237,6 +238,28 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
     if (result.status === 'error') {
       expect(result.code).toBe('RD-903');
       expect(result.message).toMatch(/not_found/);
+      expect(result.substepStates).toBe(originalSubstepStates);
+    }
+  });
+
+  it('propagates retryDelegation error variant as RetryHookError with verbatim code/message', () => {
+    // The two tests deleted in 63bf886e (RD-901 try/catch removal) incidentally
+    // exercised this propagation arm: when retryDelegation returns
+    // `{ status: 'error', error }`, runRetryHook must surface the inner
+    // RundownError's code and message verbatim and roll back substepStates.
+    const { context, parentStep, steps, originalSubstepStates } = buildInputs();
+    const inner = Errors.delegationRunbookNotFound('child-1.md');
+    mockedRetryDelegation.mockImplementation(() => ({
+      status: 'error' as const,
+      error: inner,
+    }));
+
+    const result = runRetryHook(context, parentStep, steps);
+
+    expect(result.status).toBe('error');
+    if (result.status === 'error') {
+      expect(result.code).toBe(inner.code);
+      expect(result.message).toBe(inner.message);
       expect(result.substepStates).toBe(originalSubstepStates);
     }
   });
