@@ -226,8 +226,8 @@ export function parsePolicyCliOptions(opts: Record<string, unknown>): PolicyCliO
     sandboxStrict: opts.sandboxStrict === true,
     noSandbox: opts.noSandbox === true,
     helpers:
-      typeof opts['helpers'] === 'string'
-        ? opts['helpers']
+      typeof opts.helpers === 'string'
+        ? opts.helpers
             .split(',')
             .map((s) => s.trim())
             .filter(Boolean)

@@ -45,6 +45,7 @@ behaviour
 biome
 biomejs
 callsites
+canonicalises
 categorises
 centralise
 Centralised
