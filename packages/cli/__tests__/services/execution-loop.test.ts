@@ -87,6 +87,7 @@ jest.unstable_mockModule('@rundown-org/core', () => {
     printRunbookStoppedAtStep: jest.fn(),
     printPolicyDenied: jest.fn(),
     executeCommand: jest.fn(),
+    executeCommandWithEnv: jest.fn().mockResolvedValue({ success: true, exitCode: 0 }),
     executeCommandWithPolicy: jest.fn(),
     evaluatePassCondition: jest.fn(),
     evaluateFailCondition: jest.fn(),

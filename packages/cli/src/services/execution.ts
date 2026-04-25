@@ -27,6 +27,7 @@ import {
   type RunbookState,
   type ExecutionResult,
   executeCommand,
+  executeCommandWithEnv,
   executeCommandWithPolicy,
   countNumberedSteps,
   extractDisplayCommand,
@@ -1097,7 +1098,14 @@ export async function executeCommandWithPolicyCheck(
 ): Promise<ExecutionResult> {
   // Check if policy enforcement is active
   if (!isPolicyEnforced()) {
-    return executeCommand(command, cwd, rdInjected);
+    // When policy is bypassed (--allow-all / trust mode), still inject
+    // rundown-specific env vars (RD_OUTPUTS_*, RD_WORK_PATH, etc.) so
+    // file-backed OUTPUTS channels are visible to the subprocess.
+    if (rdInjected && Object.keys(rdInjected).length > 0) {
+      const env = { ...process.env, ...rdInjected } as Record<string, string>;
+      return executeCommandWithEnv(command, cwd, env);
+    }
+    return executeCommand(command, cwd);
   }
 
   // Get evaluator and set runbook path for override matching
