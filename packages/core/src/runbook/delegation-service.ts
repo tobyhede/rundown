@@ -562,13 +562,27 @@ export function retryDelegation(
       // (rules out `not_found`). Surface as `error` so a future invariant
       // break does not silently proceed with stale state. `not_found`
       // carries `error`; `needs_force` does not, so synthesize one.
+      // For `needs_force`, the only honest synthesis is "snapshot stale":
+      // the variant is reached *because* the delegation exists and is
+      // claimed, so RD-801 ("step not found") would be semantically wrong.
       const error =
-        'error' in abortResult ? abortResult.error : Errors.delegationStepNotFound(substepId);
+        'error' in abortResult
+          ? abortResult.error
+          : Errors.delegationSnapshotStale(substepId, state.step);
       return { status: 'error', error };
     }
     default: {
+      // Compile-time exhaustiveness guard — catches a future variant
+      // addition without one of the cases above being updated. Returning
+      // `_exhaustive` would surface as `undefined` at runtime and break
+      // the "never throws / always returns a typed Result" contract, so
+      // synthesize an `error` Result instead.
       const _exhaustive: never = abortResult;
-      return _exhaustive;
+      void _exhaustive;
+      return {
+        status: 'error',
+        error: Errors.delegationSnapshotStale(substepId, state.step),
+      };
     }
   }
 
