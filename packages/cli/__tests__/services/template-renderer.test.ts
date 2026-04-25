@@ -24,6 +24,13 @@ import {
 } from '../../src/services/template-renderer.js';
 import { setHelperRegistry, resetHelperRegistry } from '../../src/services/helper-registry.js';
 import { resetHelperInvokeWarnings } from '@rundown-org/core';
+import type { StepVariables } from '../../src/services/execution-vars.js';
+import {
+  assertResolvedStepHasSubsteps,
+  assertResolvedStepWithFor,
+  assertStepWithCommand,
+  parseResolvedRunbook,
+} from '../helpers/parse-helpers.js';
 
 describe('expandLoopVariables', () => {
   it('should expand named loop variable', () => {
@@ -194,52 +201,55 @@ describe('substituteText', () => {
 describe('substituteRunbookVariables', () => {
   it('should substitute description without escaping', () => {
     const rawMarkdown = '# Test\n\n## 1. Deploy {{environment}}\n\nDeploy to {{environment}}.';
-    const { runbook } = parseRunbookDocument(rawMarkdown);
+    const runbook = parseResolvedRunbook(rawMarkdown);
     const result = substituteRunbookVariables(runbook, { environment: 'staging & prod' });
     expect(result.steps[0].description).toBe('Deploy staging & prod');
   });
 
   it('should substitute prompt without escaping', () => {
     const rawMarkdown = '# Test\n\n## 1. Check\n\n> Is {{service}} running?\n';
-    const { runbook } = parseRunbookDocument(rawMarkdown);
+    const runbook = parseResolvedRunbook(rawMarkdown);
     const result = substituteRunbookVariables(runbook, { service: 'my service' });
     expect(result.steps[0].prompt).toContain('my service');
   });
 
   it('should shell-escape command.code values', () => {
     const rawMarkdown = '# Test\n\n## 1. Deploy\n\n```bash\ngit checkout {{BRANCH}}\n```';
-    const { runbook } = parseRunbookDocument(rawMarkdown);
+    const runbook = parseResolvedRunbook(rawMarkdown);
     const result = substituteRunbookVariables(runbook, { BRANCH: 'main; rm -rf /' });
-    expect(result.steps[0].command).toBeDefined();
-    expect(result.steps[0].command!.code).toBe("git checkout 'main; rm -rf /'");
+    const step = result.steps[0];
+    assertStepWithCommand(step);
+    expect(step.command.code).toBe("git checkout 'main; rm -rf /'");
   });
 
   it('should pass through safe values unquoted in commands', () => {
     const rawMarkdown = '# Test\n\n## 1. Deploy\n\n```bash\ngit checkout {{BRANCH}}\n```';
-    const { runbook } = parseRunbookDocument(rawMarkdown);
+    const runbook = parseResolvedRunbook(rawMarkdown);
     const result = substituteRunbookVariables(runbook, { BRANCH: 'main' });
-    expect(result.steps[0].command).toBeDefined();
-    expect(result.steps[0].command!.code).toBe('git checkout main');
+    const step = result.steps[0];
+    assertStepWithCommand(step);
+    expect(step.command.code).toBe('git checkout main');
   });
 
   it('should preserve undefined variables', () => {
     const rawMarkdown = '# Test\n\n## 1. Deploy\n\n```bash\ngit checkout {{BRANCH}}\n```';
-    const { runbook } = parseRunbookDocument(rawMarkdown);
+    const runbook = parseResolvedRunbook(rawMarkdown);
     const result = substituteRunbookVariables(runbook, {});
-    expect(result.steps[0].command).toBeDefined();
-    expect(result.steps[0].command!.code).toBe('git checkout {{BRANCH}}');
+    const step = result.steps[0];
+    assertStepWithCommand(step);
+    expect(step.command.code).toBe('git checkout {{BRANCH}}');
   });
 
   it('should substitute runbook title', () => {
     const rawMarkdown = '# {{project}} Runbook\n\n## 1. Start\n\nGo.';
-    const { runbook } = parseRunbookDocument(rawMarkdown);
+    const runbook = parseResolvedRunbook(rawMarkdown);
     const result = substituteRunbookVariables(runbook, { project: 'MyApp' });
     expect(result.title).toBe('MyApp Runbook');
   });
 
   it('should substitute runbook description', () => {
     const rawMarkdown = '# Test\n\nDeploy {{app}} to production.\n\n## 1. Start\n\nGo.';
-    const { runbook } = parseRunbookDocument(rawMarkdown);
+    const runbook = parseResolvedRunbook(rawMarkdown);
     const result = substituteRunbookVariables(runbook, { app: 'MyApp' });
     expect(result.description).toContain('MyApp');
   });
@@ -257,40 +267,47 @@ describe('substituteRunbookVariables', () => {
       '```',
       '',
     ].join('\n');
-    const { runbook } = parseRunbookDocument(rawMarkdown);
+    const runbook = parseResolvedRunbook(rawMarkdown);
     const result = substituteRunbookVariables(runbook, {
       service: 'web server',
       url: 'http://example.com/path?q=1&x=2',
     });
-    expect(result.steps[0].substeps?.[0].description).toBe('Check web server');
+    const parent = result.steps[0];
+    assertResolvedStepHasSubsteps(parent);
+    const sub = parent.substeps[0];
+    expect(sub.description).toBe('Check web server');
     // URL contains special chars (? and &) so gets quoted
-    expect(result.steps[0].substeps?.[0].command?.code).toContain(
-      "'http://example.com/path?q=1&x=2'",
-    );
+    expect(sub.command?.code).toContain("'http://example.com/path?q=1&x=2'");
   });
 
   it('prevents shell injection via variable substitution', () => {
     const rawMarkdown = '# Test\n\n## 1. Deploy\n\n```bash\ngit checkout {{BRANCH}}\n```';
-    const { runbook } = parseRunbookDocument(rawMarkdown);
+    const runbook = parseResolvedRunbook(rawMarkdown);
     const result = substituteRunbookVariables(runbook, { BRANCH: 'main; rm -rf /' });
+    const step = result.steps[0];
+    assertStepWithCommand(step);
     // The injected command should be safely quoted
-    expect(result.steps[0].command?.code).toBe("git checkout 'main; rm -rf /'");
+    expect(step.command.code).toBe("git checkout 'main; rm -rf /'");
     // Should NOT contain the unescaped injection
-    expect(result.steps[0].command?.code).not.toBe('git checkout main; rm -rf /');
+    expect(step.command.code).not.toBe('git checkout main; rm -rf /');
   });
 
   it('prevents backtick injection', () => {
     const rawMarkdown = '# Test\n\n## 1. Deploy\n\n```bash\necho {{MSG}}\n```';
-    const { runbook } = parseRunbookDocument(rawMarkdown);
+    const runbook = parseResolvedRunbook(rawMarkdown);
     const result = substituteRunbookVariables(runbook, { MSG: '`whoami`' });
-    expect(result.steps[0].command?.code).toBe("echo '`whoami`'");
+    const step = result.steps[0];
+    assertStepWithCommand(step);
+    expect(step.command.code).toBe("echo '`whoami`'");
   });
 
   it('prevents dollar-sign injection', () => {
     const rawMarkdown = '# Test\n\n## 1. Deploy\n\n```bash\necho {{MSG}}\n```';
-    const { runbook } = parseRunbookDocument(rawMarkdown);
+    const runbook = parseResolvedRunbook(rawMarkdown);
     const result = substituteRunbookVariables(runbook, { MSG: '$(cat /etc/passwd)' });
-    expect(result.steps[0].command?.code).toBe("echo '$(cat /etc/passwd)'");
+    const step = result.steps[0];
+    assertStepWithCommand(step);
+    expect(step.command.code).toBe("echo '$(cat /etc/passwd)'");
   });
 });
 
@@ -319,7 +336,7 @@ describe('expandLoopVariablesForCommand', () => {
 
   // Task 4: JSONL object semantics tests
   it('resolves nested object fields via dotted path', () => {
-    const variables: Record<string, unknown> = {
+    const variables: StepVariables = {
       item: { name: 'server-a', region: 'us-west' },
       Index: '1',
     };
@@ -327,14 +344,14 @@ describe('expandLoopVariablesForCommand', () => {
   });
 
   it('resolves deep dotted paths in objects', () => {
-    const variables: Record<string, unknown> = {
+    const variables: StepVariables = {
       item: { meta: { region: 'us-west', tier: 'prod' } },
     };
     expect(expandLoopVariables('{{item.meta.region}}', variables)).toBe('us-west');
   });
 
   it('renders object as compact JSON string', () => {
-    const variables: Record<string, unknown> = {
+    const variables: StepVariables = {
       item: { host: 'server-a', count: 1 },
     };
     expect(expandLoopVariables('Config: {{item}}', variables)).toContain('{');
@@ -342,21 +359,21 @@ describe('expandLoopVariablesForCommand', () => {
   });
 
   it('renders null as JSON string "null"', () => {
-    const variables: Record<string, unknown> = {
+    const variables: StepVariables = {
       value: null,
     };
     expect(expandLoopVariables('Result: {{value}}', variables)).toBe('Result: null');
   });
 
   it('renders number as JSON string', () => {
-    const variables: Record<string, unknown> = {
+    const variables: StepVariables = {
       count: 42,
     };
     expect(expandLoopVariables('Count: {{count}}', variables)).toBe('Count: 42');
   });
 
   it('renders boolean as JSON string', () => {
-    const variables: Record<string, unknown> = {
+    const variables: StepVariables = {
       enabled: true,
       active: false,
     };
@@ -366,14 +383,14 @@ describe('expandLoopVariablesForCommand', () => {
   });
 
   it('renders string as-is without extra quoting', () => {
-    const variables: Record<string, unknown> = {
+    const variables: StepVariables = {
       msg: 'hello',
     };
     expect(expandLoopVariables('Message: {{msg}}', variables)).toBe('Message: hello');
   });
 
   it('preserves placeholder for missing dotted paths', () => {
-    const variables: Record<string, unknown> = {
+    const variables: StepVariables = {
       item: { name: 'server-a' },
     };
     expect(expandLoopVariables('Region: {{item.nonexistent}}', variables)).toBe(
@@ -382,21 +399,21 @@ describe('expandLoopVariablesForCommand', () => {
   });
 
   it('resolves falsy leaf values correctly (zero)', () => {
-    const variables: Record<string, unknown> = {
+    const variables: StepVariables = {
       config: { count: 0 },
     };
     expect(expandLoopVariables('Count: {{config.count}}', variables)).toBe('Count: 0');
   });
 
   it('resolves falsy leaf values correctly (false)', () => {
-    const variables: Record<string, unknown> = {
+    const variables: StepVariables = {
       config: { active: false },
     };
     expect(expandLoopVariables('Active: {{config.active}}', variables)).toBe('Active: false');
   });
 
   it('resolves falsy leaf values correctly (empty string)', () => {
-    const variables: Record<string, unknown> = {
+    const variables: StepVariables = {
       config: { label: '' },
     };
     expect(expandLoopVariables('Label: "{{config.label}}"', variables)).toBe('Label: ""');
@@ -404,14 +421,14 @@ describe('expandLoopVariablesForCommand', () => {
 
   it('does not traverse prototype chain', () => {
     const obj: any = { name: 'test' };
-    const variables: Record<string, unknown> = {
+    const variables: StepVariables = {
       item: obj,
     };
     expect(expandLoopVariables('{{item.constructor}}', variables)).toBe('{{item.constructor}}');
   });
 
   it('shell-escapes serialized JSON in command context', () => {
-    const variables: Record<string, unknown> = {
+    const variables: StepVariables = {
       config: { cmd: 'rm -rf /' },
     };
     expect(expandLoopVariablesForCommand('process {{config}}', variables)).toContain('rm -rf');
@@ -419,7 +436,7 @@ describe('expandLoopVariablesForCommand', () => {
   });
 
   it('continues to work with string variables unchanged', () => {
-    const variables: Record<string, unknown> = {
+    const variables: StepVariables = {
       Step: '3.1',
       Index: '2',
       server: 'alpha',
@@ -430,21 +447,21 @@ describe('expandLoopVariablesForCommand', () => {
   });
 
   it('handles nullish path segment gracefully', () => {
-    const variables: Record<string, unknown> = {
+    const variables: StepVariables = {
       item: { meta: null },
     };
     expect(expandLoopVariables('{{item.meta.region}}', variables)).toBe('{{item.meta.region}}');
   });
 
   it('handles undefined path segment gracefully', () => {
-    const variables: Record<string, unknown> = {
+    const variables: StepVariables = {
       item: { meta: { nested: { value: 42 } } },
     };
     expect(expandLoopVariables('{{item.missing.value}}', variables)).toBe('{{item.missing.value}}');
   });
 
   it('renders array as JSON string', () => {
-    const variables: Record<string, unknown> = {
+    const variables: StepVariables = {
       items: [1, 2, 3],
     };
     const result = expandLoopVariables('Items: {{items}}', variables);
@@ -458,7 +475,7 @@ describe('expandLoopVariablesForCommand', () => {
   });
 
   it('prefers exact flattened key over dotted traversal for same placeholder', () => {
-    const variables: Record<string, unknown> = {
+    const variables: StepVariables = {
       context: { parent: { index: '2' } },
       'context.parent.index': '7',
     };
@@ -467,7 +484,7 @@ describe('expandLoopVariablesForCommand', () => {
 
   // Progressive prefix matching: flattened dotted keys with object values
   it('resolves dotted path through flattened key holding an object', () => {
-    const variables: Record<string, unknown> = {
+    const variables: StepVariables = {
       'context.vars.config': { host: 'localhost', port: 5432 },
     };
     expect(expandLoopVariables('Host: {{context.vars.config.host}}', variables)).toBe(
@@ -476,7 +493,7 @@ describe('expandLoopVariablesForCommand', () => {
   });
 
   it('resolves deep path through flattened key holding nested object', () => {
-    const variables: Record<string, unknown> = {
+    const variables: StepVariables = {
       'context.vars.config': { db: { host: 'pg.local', port: 5432 } },
     };
     expect(expandLoopVariables('DB: {{context.vars.config.db.host}}', variables)).toBe(
@@ -485,7 +502,7 @@ describe('expandLoopVariablesForCommand', () => {
   });
 
   it('resolves context.parent.vars through flattened key', () => {
-    const variables: Record<string, unknown> = {
+    const variables: StepVariables = {
       'context.parent.vars.config': { host: 'parent-host' },
     };
     expect(expandLoopVariables('Parent: {{context.parent.vars.config.host}}', variables)).toBe(
@@ -494,7 +511,7 @@ describe('expandLoopVariablesForCommand', () => {
   });
 
   it('prefers exact key over progressive prefix match', () => {
-    const variables: Record<string, unknown> = {
+    const variables: StepVariables = {
       'context.vars.config.host': 'exact-match',
       'context.vars.config': { host: 'from-object' },
     };
@@ -502,14 +519,14 @@ describe('expandLoopVariablesForCommand', () => {
   });
 
   it('renders flattened object key as JSON when no remainder path', () => {
-    const variables: Record<string, unknown> = {
+    const variables: StepVariables = {
       'context.vars.config': { host: 'localhost' },
     };
     expect(expandLoopVariables('{{context.vars.config}}', variables)).toBe('{"host":"localhost"}');
   });
 
   it('preserves placeholder when flattened key value lacks the remainder path', () => {
-    const variables: Record<string, unknown> = {
+    const variables: StepVariables = {
       'context.vars.config': { host: 'localhost' },
     };
     expect(expandLoopVariables('{{context.vars.config.missing}}', variables)).toBe(
@@ -546,14 +563,14 @@ describe('collectUnresolvedVariables', () => {
 describe('warnUnresolvedRunbookVariables', () => {
   it('should warn for unresolved variables in description', () => {
     const rawMarkdown = '# Test\n\n## 1. Deploy\n\nDeploy to {{environment}}.';
-    const { runbook } = parseRunbookDocument(rawMarkdown);
+    const runbook = parseResolvedRunbook(rawMarkdown);
     const warnings = warnUnresolvedRunbookVariables(runbook);
     expect(warnings).toContain('Undefined variable "{{environment}}" preserved as literal text');
   });
 
   it('should warn for unresolved variables in command code', () => {
     const rawMarkdown = '# Test\n\n## 1. Deploy\n\n```bash\ngit checkout {{BRANCH}}\n```';
-    const { runbook } = parseRunbookDocument(rawMarkdown);
+    const runbook = parseResolvedRunbook(rawMarkdown);
     const warnings = warnUnresolvedRunbookVariables(runbook);
     expect(warnings).toContain('Undefined variable "{{BRANCH}}" preserved as literal text');
   });
@@ -561,14 +578,14 @@ describe('warnUnresolvedRunbookVariables', () => {
   it('should deduplicate warnings for same variable', () => {
     const rawMarkdown =
       '# Test\n\n## 1. Deploy {{env}}\n\nDeploy to {{env}}.\n\n## 2. Verify {{env}}\n\nCheck {{env}}.';
-    const { runbook } = parseRunbookDocument(rawMarkdown);
+    const runbook = parseResolvedRunbook(rawMarkdown);
     const warnings = warnUnresolvedRunbookVariables(runbook);
     expect(warnings).toHaveLength(1);
   });
 
   it('should not warn when all variables are resolved', () => {
     const rawMarkdown = '# Test\n\n## 1. Deploy\n\nDeploy to {{environment}}.';
-    const { runbook } = parseRunbookDocument(rawMarkdown);
+    const runbook = parseResolvedRunbook(rawMarkdown);
     const substituted = substituteRunbookVariables(runbook, { environment: 'staging' });
     const warnings = warnUnresolvedRunbookVariables(substituted);
     expect(warnings).toHaveLength(0);
@@ -576,14 +593,14 @@ describe('warnUnresolvedRunbookVariables', () => {
 
   it('should warn for unresolved variables in title', () => {
     const rawMarkdown = '# {{project}} Runbook\n\n## 1. Start\n\nGo.';
-    const { runbook } = parseRunbookDocument(rawMarkdown);
+    const runbook = parseResolvedRunbook(rawMarkdown);
     const warnings = warnUnresolvedRunbookVariables(runbook);
     expect(warnings).toContain('Undefined variable "{{project}}" preserved as literal text');
   });
 
   it('should warn for unresolved variables in prompt', () => {
     const rawMarkdown = '# Test\n\n## 1. Check\n\n> Is {{service}} running?\n';
-    const { runbook } = parseRunbookDocument(rawMarkdown);
+    const runbook = parseResolvedRunbook(rawMarkdown);
     const warnings = warnUnresolvedRunbookVariables(runbook);
     expect(warnings).toContain('Undefined variable "{{service}}" preserved as literal text');
   });
@@ -598,7 +615,7 @@ describe('warnUnresolvedRunbookVariables', () => {
       '',
       '- deploy-{{region}}.runbook.md',
     ].join('\n');
-    const { runbook } = parseRunbookDocument(rawMarkdown);
+    const runbook = parseResolvedRunbook(rawMarkdown);
     const warnings = warnUnresolvedRunbookVariables(runbook);
     expect(warnings).toContain('Undefined variable "{{region}}" preserved as literal text');
   });
@@ -614,7 +631,7 @@ describe('warnUnresolvedRunbookVariables', () => {
       '',
       'Handle {{item}}.',
     ].join('\n');
-    const { runbook } = parseRunbookDocument(rawMarkdown);
+    const runbook = parseResolvedRunbook(rawMarkdown);
     const warnings = warnUnresolvedRunbookVariables(runbook);
     expect(warnings).toHaveLength(0);
   });
@@ -634,7 +651,7 @@ describe('warnUnresolvedRunbookVariables', () => {
       '',
       'Handle {{item}}.',
     ].join('\n');
-    const { runbook } = parseRunbookDocument(rawMarkdown);
+    const runbook = parseResolvedRunbook(rawMarkdown);
     const warnings = warnUnresolvedRunbookVariables(runbook);
     expect(warnings).toHaveLength(1);
     expect(warnings).toContain('Undefined variable "{{item}}" preserved as literal text');
@@ -655,7 +672,7 @@ describe('warnUnresolvedRunbookVariables', () => {
       '',
       'Iteration {{Index}}.',
     ].join('\n');
-    const { runbook } = parseRunbookDocument(rawMarkdown);
+    const runbook = parseResolvedRunbook(rawMarkdown);
     const warnings = warnUnresolvedRunbookVariables(runbook);
     expect(warnings).toHaveLength(1);
     expect(warnings).toContain('Undefined variable "{{Index}}" preserved as literal text');
@@ -672,7 +689,7 @@ describe('warnUnresolvedRunbookVariables', () => {
       '',
       'Handle {{item}}.',
     ].join('\n');
-    const { runbook } = parseRunbookDocument(rawMarkdown);
+    const runbook = parseResolvedRunbook(rawMarkdown);
     const warnings = warnUnresolvedRunbookVariables(runbook);
     expect(warnings).toHaveLength(1);
     expect(warnings).toContain('Undefined variable "{{item}}" preserved as literal text');
@@ -696,7 +713,7 @@ describe('warnUnresolvedRunbookVariables', () => {
       '',
       'Check {{server}} in {{env}}.',
     ].join('\n');
-    const { runbook } = parseRunbookDocument(rawMarkdown);
+    const runbook = parseResolvedRunbook(rawMarkdown);
     const warnings = warnUnresolvedRunbookVariables(runbook);
     expect(warnings).toHaveLength(1);
     expect(warnings).toContain('Undefined variable "{{server}}" preserved as literal text');
@@ -713,7 +730,7 @@ describe('warnUnresolvedRunbookVariables', () => {
       '',
       'Name: {{item.name}}, Region: {{item.region}}.',
     ].join('\n');
-    const { runbook } = parseRunbookDocument(rawMarkdown);
+    const runbook = parseResolvedRunbook(rawMarkdown);
     const warnings = warnUnresolvedRunbookVariables(runbook);
     expect(warnings).toHaveLength(0);
   });
@@ -782,7 +799,7 @@ describe('warnUnresolvedRunbookVariables', () => {
       '',
       'The message is: {{Message}}',
     ].join('\n');
-    const { runbook } = parseRunbookDocument(rawMarkdown);
+    const runbook = parseResolvedRunbook(rawMarkdown);
     const warnings = warnUnresolvedRunbookVariables(runbook);
     expect(warnings).toHaveLength(0);
   });
@@ -799,7 +816,7 @@ describe('warnUnresolvedRunbookVariables', () => {
       '',
       'Env: {{environment}} Msg: {{Message}}',
     ].join('\n');
-    const { runbook } = parseRunbookDocument(rawMarkdown);
+    const runbook = parseResolvedRunbook(rawMarkdown);
     const warnings = warnUnresolvedRunbookVariables(runbook);
     expect(warnings).toHaveLength(1);
     expect(warnings).toContain('Undefined variable "{{environment}}" preserved as literal text');
@@ -819,7 +836,7 @@ describe('warnUnresolvedRunbookVariables', () => {
       '',
       'Release {{Tag}}.',
     ].join('\n');
-    const { runbook } = parseRunbookDocument(rawMarkdown);
+    const runbook = parseResolvedRunbook(rawMarkdown);
     const warnings = warnUnresolvedRunbookVariables(runbook);
     expect(warnings).toHaveLength(0);
   });
@@ -836,7 +853,7 @@ describe('warnUnresolvedRunbookVariables', () => {
       '',
       'Release {{Version}}.',
     ].join('\n');
-    const { runbook } = parseRunbookDocument(rawMarkdown);
+    const runbook = parseResolvedRunbook(rawMarkdown);
     const warnings = warnUnresolvedRunbookVariables(runbook);
     expect(warnings).toHaveLength(1);
     expect(warnings).toContain('Undefined variable "{{Version}}" preserved as literal text');
@@ -889,7 +906,9 @@ describe('resolveForBounds', () => {
     const resolved: ParsedForClause = { variable: 'item', start: 1, end: 10 };
     const runbook = makeRunbook([makeForStep(resolved)]);
     const { runbook: result } = resolveForBounds(runbook, {});
-    expect(result.steps[0].forClause).toEqual(resolved);
+    const step = result.steps[0];
+    assertResolvedStepWithFor(step);
+    expect(step.forClause).toEqual(resolved);
   });
 
   it('resolves single BoundRef (end)', () => {
@@ -901,7 +920,9 @@ describe('resolveForBounds', () => {
     };
     const runbook = makeRunbook([makeForStep(unresolved)]);
     const { runbook: result } = resolveForBounds(runbook, { Max: '5' });
-    expect(result.steps[0].forClause).toEqual({ variable: 'batch', start: 1, end: 5 });
+    const step = result.steps[0];
+    assertResolvedStepWithFor(step);
+    expect(step.forClause).toEqual({ variable: 'batch', start: 1, end: 5 });
   });
 
   it('resolves both bounds as BoundRef', () => {
@@ -913,7 +934,9 @@ describe('resolveForBounds', () => {
     };
     const runbook = makeRunbook([makeForStep(unresolved)]);
     const { runbook: result } = resolveForBounds(runbook, { Min: '2', Max: '8' });
-    expect(result.steps[0].forClause).toEqual({ variable: 'item', start: 2, end: 8 });
+    const step = result.steps[0];
+    assertResolvedStepWithFor(step);
+    expect(step.forClause).toEqual({ variable: 'item', start: 2, end: 8 });
   });
 
   it('resolves windowed source with BoundRef', () => {
@@ -926,7 +949,9 @@ describe('resolveForBounds', () => {
     };
     const runbook = makeRunbook([makeForStep(unresolved)]);
     const { runbook: result } = resolveForBounds(runbook, { N: '5' });
-    expect(result.steps[0].forClause).toEqual({ variable: 'x', start: 1, end: 5, source: 'items' });
+    const step = result.steps[0];
+    assertResolvedStepWithFor(step);
+    expect(step.forClause).toEqual({ variable: 'x', start: 1, end: 5, source: 'items' });
   });
 
   it('falls back to prompted FOR for undefined variable', () => {
@@ -997,8 +1022,8 @@ describe('resolveForBounds', () => {
 
   it('preserves transitions on resolved clause', () => {
     const transitions: Transitions = {
-      pass: { action: 'continue' as const, retry: 0 },
-      fail: { action: 'stop' as const, retry: 0 },
+      pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+      fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
     };
     const unresolved: ParsedForClause = {
       unresolved: true as const,
@@ -1009,7 +1034,9 @@ describe('resolveForBounds', () => {
     };
     const runbook = makeRunbook([makeForStep(unresolved)]);
     const { runbook: result } = resolveForBounds(runbook, { N: '3' });
-    expect(result.steps[0].forClause).toEqual({
+    const step = result.steps[0];
+    assertResolvedStepWithFor(step);
+    expect(step.forClause).toEqual({
       variable: 'item',
       start: 1,
       end: 3,
@@ -1025,7 +1052,9 @@ describe('resolveForBounds', () => {
     };
     const runbook = makeRunbook([makeForStep(unresolved)]);
     const { runbook: result } = resolveForBounds(runbook, { Count: '5' });
-    expect(result.steps[0].forClause).toEqual({ start: 1, end: 5 });
+    const step = result.steps[0];
+    assertResolvedStepWithFor(step);
+    expect(step.forClause).toEqual({ start: 1, end: 5 });
   });
 
   it('throws for leading-zero value', () => {
@@ -1060,7 +1089,9 @@ describe('resolveForBounds', () => {
     };
     const runbook = makeRunbook([makeForStep(unresolved)]);
     const { runbook: result } = resolveForBounds(runbook, { Begin: '3', End: '7' });
-    expect(result.steps[0].forClause).toEqual({
+    const step = result.steps[0];
+    assertResolvedStepWithFor(step);
+    expect(step.forClause).toEqual({
       variable: 'item',
       start: 3,
       end: 7,
@@ -1263,6 +1294,7 @@ describe('resolveForBounds', () => {
         kind: 'for',
         name,
         description: 'Loop step',
+        transitions: DEFAULT_TRANSITIONS,
         forClause,
         substeps,
       };
@@ -1284,7 +1316,6 @@ describe('resolveForBounds', () => {
         name: '2',
         description: 'Jump back',
         transitions: {
-          aggregation: 'none' as const,
           pass: {
             kind: 'pass' as const,
             retry: 0,
@@ -1313,7 +1344,6 @@ describe('resolveForBounds', () => {
           id: '1',
           description: 'Sub',
           transitions: {
-            aggregation: 'none' as const,
             pass: { kind: 'pass' as const, retry: 0, action: { type: 'NEXT' as const } },
             fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
           },
@@ -1339,7 +1369,6 @@ describe('resolveForBounds', () => {
           id: '1',
           description: 'Sub',
           transitions: {
-            aggregation: 'none' as const,
             pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
             fail: { kind: 'fail' as const, retry: 0, action: { type: 'BREAK' as const } },
           },
@@ -1368,7 +1397,6 @@ describe('resolveForBounds', () => {
         name: '2',
         description: 'Jump back',
         transitions: {
-          aggregation: 'none' as const,
           pass: {
             kind: 'pass' as const,
             retry: 0,
@@ -1401,7 +1429,6 @@ describe('resolveForBounds', () => {
         start: 1,
         end: 5,
         transitions: {
-          aggregation: 'none' as const,
           pass: {
             kind: 'pass' as const,
             retry: 0,
@@ -1432,7 +1459,6 @@ describe('resolveForBounds', () => {
           id: '1',
           description: 'Sub with NEXT',
           transitions: {
-            aggregation: 'none' as const,
             pass: { kind: 'pass' as const, retry: 0, action: { type: 'NEXT' as const } },
             fail: { kind: 'fail' as const, retry: 0, action: { type: 'BREAK' as const } },
           },
@@ -1457,7 +1483,6 @@ describe('resolveForBounds', () => {
           id: '1',
           description: 'Sub',
           transitions: {
-            aggregation: 'none' as const,
             pass: { kind: 'pass' as const, retry: 0, action: { type: 'NEXT' as const } },
             fail: { kind: 'fail' as const, retry: 0, action: { type: 'BREAK' as const } },
           },
@@ -1495,7 +1520,8 @@ describe('resolveForBounds', () => {
       expect(warnings).toEqual([]);
       const resolved = result.steps[0];
       expect(resolved.kind).toBe('substeps');
-      expect((resolved as { substeps: { runbooks?: string[] }[] }).substeps[0].runbooks).toEqual([
+      assertResolvedStepHasSubsteps(resolved);
+      expect(resolved.substeps[0].runbooks).toEqual([
         'deploy.runbook.md',
       ]);
     });
@@ -1518,9 +1544,9 @@ describe('resolveForBounds', () => {
       const runbook = makeRunbook([step]);
       const { runbook: result, warnings } = resolveForBounds(runbook, {});
       expect(warnings).toEqual([]);
-      expect(
-        (result.steps[0] as { substeps: { runbooks?: string[] }[] }).substeps[0].runbooks,
-      ).toEqual(['{{ Missing }}']);
+      const resolved = result.steps[0];
+      assertResolvedStepHasSubsteps(resolved);
+      expect(resolved.substeps[0].runbooks).toEqual(['{{ Missing }}']);
     });
 
     it('resolves RunbookRef to any value (no suffix validation)', () => {
@@ -1543,9 +1569,9 @@ describe('resolveForBounds', () => {
         Target: 'rundown:write-plan',
       });
       expect(warnings).toEqual([]);
-      expect(
-        (result.steps[0] as { substeps: { runbooks?: string[] }[] }).substeps[0].runbooks,
-      ).toEqual(['rundown:write-plan']);
+      const resolved = result.steps[0];
+      assertResolvedStepHasSubsteps(resolved);
+      expect(resolved.substeps[0].runbooks).toEqual(['rundown:write-plan']);
     });
 
     it('passes through literal string runbook paths unchanged', () => {
@@ -1566,9 +1592,9 @@ describe('resolveForBounds', () => {
       const runbook = makeRunbook([step]);
       const { runbook: result, warnings } = resolveForBounds(runbook, {});
       expect(warnings).toEqual([]);
-      expect(
-        (result.steps[0] as { substeps: { runbooks?: string[] }[] }).substeps[0].runbooks,
-      ).toEqual(['deploy.runbook.md']);
+      const resolved = result.steps[0];
+      assertResolvedStepHasSubsteps(resolved);
+      expect(resolved.substeps[0].runbooks).toEqual(['deploy.runbook.md']);
     });
 
     it('resolves RunbookRef in FOR step substeps', () => {
@@ -1594,7 +1620,8 @@ describe('resolveForBounds', () => {
       expect(warnings).toEqual([]);
       const resolved = result.steps[0];
       expect(resolved.kind).toBe('for');
-      expect((resolved as { substeps: { runbooks?: string[] }[] }).substeps[0].runbooks).toEqual([
+      assertResolvedStepHasSubsteps(resolved);
+      expect(resolved.substeps[0].runbooks).toEqual([
         'deploy.runbook.md',
       ]);
     });
@@ -1619,9 +1646,9 @@ describe('resolveForBounds', () => {
         Target: 'deploy.runbook.md',
       });
       expect(warnings).toEqual([]);
-      expect(
-        (result.steps[0] as { substeps: { runbooks?: string[] }[] }).substeps[0].runbooks,
-      ).toEqual(['setup.runbook.md', 'deploy.runbook.md', 'cleanup.runbook.md']);
+      const resolved = result.steps[0];
+      assertResolvedStepHasSubsteps(resolved);
+      expect(resolved.substeps[0].runbooks).toEqual(['setup.runbook.md', 'deploy.runbook.md', 'cleanup.runbook.md']);
     });
 
     it('preserves FOR-scoped RunbookRef as placeholder text', () => {
@@ -1647,7 +1674,8 @@ describe('resolveForBounds', () => {
       const resolved = result.steps[0];
       expect(resolved.kind).toBe('for');
       // Preserved as placeholder text for runtime expansion
-      expect((resolved as { substeps: { runbooks?: string[] }[] }).substeps[0].runbooks).toEqual([
+      assertResolvedStepHasSubsteps(resolved);
+      expect(resolved.substeps[0].runbooks).toEqual([
         '{{ server.runbook }}',
       ]);
     });
@@ -1671,9 +1699,9 @@ describe('resolveForBounds', () => {
       const runbook = makeRunbook([step]);
       const { runbook: result, warnings } = resolveForBounds(runbook, {});
       expect(warnings).toEqual([]);
-      expect(
-        (result.steps[0] as { substeps: { runbooks?: string[] }[] }).substeps[0].runbooks,
-      ).toEqual(['{{ Unknown }}']);
+      const resolved = result.steps[0];
+      assertResolvedStepHasSubsteps(resolved);
+      expect(resolved.substeps[0].runbooks).toEqual(['{{ Unknown }}']);
     });
 
     it('preserves FOR-scoped ref even when outer-scope variable exists', () => {
@@ -1699,9 +1727,9 @@ describe('resolveForBounds', () => {
       });
       expect(warnings).toEqual([]);
       // Preserved for runtime, not resolved to outer value
-      expect(
-        (result.steps[0] as { substeps: { runbooks?: string[] }[] }).substeps[0].runbooks,
-      ).toEqual(['{{ server.runbook }}']);
+      const resolved = result.steps[0];
+      assertResolvedStepHasSubsteps(resolved);
+      expect(resolved.substeps[0].runbooks).toEqual(['{{ server.runbook }}']);
     });
 
     it('resolves RunbookRef with numeric path segments', () => {
@@ -1724,9 +1752,9 @@ describe('resolveForBounds', () => {
         context: { ancestors: [{ runbook: 'parent.runbook.md' }] },
       });
       expect(warnings).toEqual([]);
-      expect(
-        (result.steps[0] as { substeps: { runbooks?: string[] }[] }).substeps[0].runbooks,
-      ).toEqual(['parent.runbook.md']);
+      const resolved = result.steps[0];
+      assertResolvedStepHasSubsteps(resolved);
+      expect(resolved.substeps[0].runbooks).toEqual(['parent.runbook.md']);
     });
   });
 });
