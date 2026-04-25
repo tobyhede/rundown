@@ -1,5 +1,6 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { mockErrorHelpers } from './mock-error-helpers.js';
+import { mockFn } from './typed-mocks.js';
 
 // Capture the real isJsonArrayStream before the mock is registered.
 // jest.unstable_mockModule does NOT hoist (unlike jest.mock), so this top-level
@@ -18,7 +19,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   deriveActiveFrame: jest
     .fn()
     .mockReturnValue({ step: '1', substep: undefined, iteration: undefined, frameKey: '1' }),
-  getActiveForContext: jest.fn<any>().mockReturnValue(null),
+  getActiveForContext: mockFn<(...args: unknown[]) => unknown>().mockReturnValue(null),
   buildFrameKey: jest.fn(
     (step: string, iteration?: number) =>
       `${step}|${iteration !== undefined ? String(iteration) : ''}`,
@@ -62,9 +63,9 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
       this.lockFile = lockFile;
     }
   },
-  reconstituteContextVars: jest.fn<any>().mockReturnValue({}),
+  reconstituteContextVars: mockFn<(...args: unknown[]) => Record<string, unknown>>().mockReturnValue({}),
   extractInheritedUserVars: jest.fn(),
-  hashDelegationToken: jest.fn<any>().mockReturnValue('sha256:mock'),
+  hashDelegationToken: mockFn<(token: string) => string>().mockReturnValue('sha256:mock'),
   truncateDelegationToken: jest.fn((token: string) => {
     const prefix = 'rdtk_';
     const body = token.startsWith(prefix) ? token.slice(prefix.length) : token;
@@ -100,13 +101,15 @@ jest.unstable_mockModule('../../src/helpers/resolve-runbook', () => ({
 
 // Mock execution service
 jest.unstable_mockModule('../../src/services/execution', () => ({
-  buildStepVariables: jest.fn<any>().mockReturnValue({ Step: '1.1' }),
-  runExecutionLoop: jest.fn<any>().mockResolvedValue('done'),
+  buildStepVariables: mockFn<(...args: unknown[]) => Record<string, unknown>>().mockReturnValue({
+    Step: '1.1',
+  }),
+  runExecutionLoop: mockFn<(...args: unknown[]) => Promise<string>>().mockResolvedValue('done'),
 }));
 
 // Mock execution-emitter
 jest.unstable_mockModule('../../src/helpers/execution-emitter', () => ({
-  createBridgedEmitter: jest.fn<any>().mockReturnValue({
+  createBridgedEmitter: mockFn<(...args: unknown[]) => { emit: jest.Mock }>().mockReturnValue({
     emit: jest.fn(),
   }),
 }));
@@ -126,11 +129,16 @@ jest.unstable_mockModule('../../src/services/variable-discovery', () => ({
       this.reason = reason;
     }
   },
-  resolveVariables: jest
-    .fn<any>()
-    .mockResolvedValue({ vars: {}, warnings: [], providedKeys: new Set() }),
+  resolveVariables: mockFn<
+    (...args: unknown[]) => Promise<{
+      vars: Record<string, unknown>;
+      warnings: string[];
+      providedKeys: Set<string>;
+      sources?: Record<string, unknown>;
+    }>
+  >().mockResolvedValue({ vars: {}, warnings: [], providedKeys: new Set() }),
   RUNTIME_RESERVED_VARIABLES: new Set(['step', 'index', 'context']),
-  isRuntimeReservedVariable: jest.fn<any>().mockReturnValue(false),
+  isRuntimeReservedVariable: mockFn<(name: string) => boolean>().mockReturnValue(false),
 }));
 
 // Mock template-renderer
@@ -138,22 +146,26 @@ jest.unstable_mockModule('../../src/services/template-renderer', () => ({
   substituteRunbookVariables: jest.fn((runbook: unknown) => runbook),
   resolveForBounds: jest.fn((runbook: unknown) => ({ runbook, warnings: [] })),
   expandLoopVariables: jest.fn((text: string) => text),
-  warnUnresolvedRunbookVariables: jest.fn<any>().mockReturnValue([]),
-  collectUnresolvedRunbookVariables: jest.fn<any>().mockReturnValue(new Set()),
+  warnUnresolvedRunbookVariables: mockFn<(...args: unknown[]) => string[]>().mockReturnValue([]),
+  collectUnresolvedRunbookVariables: mockFn<
+    (...args: unknown[]) => Set<string>
+  >().mockReturnValue(new Set()),
 }));
 
 // Mock validate-frontmatter-vars
 jest.unstable_mockModule('../../src/helpers/validate-frontmatter-vars', () => ({
-  validateFrontmatterVars: jest.fn<any>().mockReturnValue([]),
-  validateRequiredVars: jest.fn<any>().mockReturnValue([]),
-  validateOutputsDeclarations: jest.fn<any>().mockReturnValue([]),
+  validateFrontmatterVars: mockFn<(...args: unknown[]) => unknown[]>().mockReturnValue([]),
+  validateRequiredVars: mockFn<(...args: unknown[]) => unknown[]>().mockReturnValue([]),
+  validateOutputsDeclarations: mockFn<(...args: unknown[]) => unknown[]>().mockReturnValue([]),
 }));
 
 // Mock node:fs/promises
 const actualFsPromises = await import('node:fs/promises');
 jest.unstable_mockModule('node:fs/promises', () => ({
   ...actualFsPromises,
-  readFile: jest.fn<any>().mockResolvedValue('# Test\n\n## 1. Step\n- PASS CONTINUE'),
+  readFile: mockFn<(...args: unknown[]) => Promise<string>>().mockResolvedValue(
+    '# Test\n\n## 1. Step\n- PASS CONTINUE',
+  ),
 }));
 
 // Import after mocking
