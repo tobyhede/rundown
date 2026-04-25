@@ -298,8 +298,10 @@ export async function runCliInProcess(
     program.exitOverride();
     await program.parseAsync(argArray, { from: 'user' });
 
-    // Capture exitCode set via process.exitCode (used by pass/fail commands)
-    exitCode = process.exitCode ?? 0;
+    // Capture exitCode set via process.exitCode (used by pass/fail commands).
+    // process.exitCode is typed `string | number | undefined` (Node accepts a
+    // string alias like "SUCCESS"); coerce to number for our test API.
+    exitCode = Number(process.exitCode ?? 0);
     process.exitCode = undefined;
   } catch (err: unknown) {
     if (err instanceof ExitSignal) {
@@ -572,19 +574,39 @@ export function parseJsonOutput(stdout: string): Record<string, unknown>[] {
 }
 
 /**
+ * Permissive shape of a JSON event line emitted by the CLI's JSON renderer.
+ *
+ * Real events conform to one of the discriminants in
+ * `@rundown-org/core`'s output union, but the CLI's JSON output
+ * intentionally flattens / renames fields per renderer. Tests only need
+ * stable access to the discriminator (`type`) plus a small set of
+ * commonly-asserted fields. Unknown fields fall back to `unknown` via
+ * the index signature so tests can still inspect them via narrowing.
+ */
+export interface JsonOutputEvent {
+  readonly type: string;
+  readonly seq?: number;
+  readonly command?: string;
+  readonly description?: string;
+  readonly prompt?: string;
+  readonly [k: string]: unknown;
+}
+
+/**
  * Parse JSON events from CLI JSON output (the default format).
  *
  * Splits stdout by newline, keeps only lines starting with `{`, and
- * parses each as JSON.
+ * parses each as JSON. The return type is intentionally permissive:
+ * see {@link JsonOutputEvent}.
  *
  * @param stdout - Raw stdout string from CLI execution
  * @returns Array of parsed JSON event objects
  */
-export function parseJsonEvents(stdout: string): unknown[] {
+export function parseJsonEvents(stdout: string): JsonOutputEvent[] {
   return stdout
     .split('\n')
     .filter((line) => line.startsWith('{'))
-    .map((line) => JSON.parse(line) as unknown);
+    .map((line) => JSON.parse(line) as JsonOutputEvent);
 }
 
 /**

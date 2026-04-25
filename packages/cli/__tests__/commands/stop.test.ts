@@ -38,7 +38,7 @@ describe('stop command', () => {
 
     it('persists stopped state with STOP action metadata', async () => {
       const stateBefore = await getActiveState(workspace);
-      const runId = stateBefore!.id;
+      const runId = stateBefore!.id as string;
 
       await runCliInProcess('stop --text', workspace);
 
