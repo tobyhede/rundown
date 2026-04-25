@@ -268,50 +268,58 @@ function makeLifecycle(overrides: Record<string, unknown> = {}): any {
 beforeEach(() => {
   jest.resetAllMocks();
   // Re-establish default mock implementations after reset
-  (runExecutionLoop as jest.Mock<any>).mockResolvedValue('done');
-  (core.deriveExecutionAt as jest.Mock<any>).mockImplementation(
-    (step: string, substep?: string, iteration?: number) =>
-      `${step}${iteration != null ? `.${String(iteration)}` : ''}${substep ? `.${substep}` : ''}`,
-  );
-  (core.getActiveForContext as jest.Mock<any>).mockReturnValue(null);
-  (createBridgedEmitter as jest.Mock<any>).mockReturnValue({ emit: jest.fn() });
-  (resolveVariables as jest.Mock<any>).mockResolvedValue({
+  jest.mocked(runExecutionLoop).mockResolvedValue('done');
+  jest
+    .mocked(core.deriveExecutionAt)
+    .mockImplementation(
+      (step: string, substep?: string, iteration?: number) =>
+        `${step}${iteration != null ? `.${String(iteration)}` : ''}${substep ? `.${substep}` : ''}`,
+    );
+  jest.mocked(core.getActiveForContext).mockReturnValue(undefined);
+  jest.mocked(createBridgedEmitter).mockReturnValue({ emit: jest.fn() } as unknown as ReturnType<
+    typeof createBridgedEmitter
+  >);
+  jest.mocked(resolveVariables).mockResolvedValue({
     vars: {},
     sources: {},
     warnings: [],
     providedKeys: new Set(),
-  });
-  (buildStepVariables as jest.Mock<any>).mockReturnValue({ Step: '1.1' });
-  (substituteRunbookVariables as jest.Mock<any>).mockImplementation((runbook: unknown) => runbook);
-  (resolveForBounds as jest.Mock<any>).mockImplementation((runbook: unknown) => ({
-    runbook,
-    warnings: [],
-  }));
-  (expandLoopVariables as jest.Mock<any>).mockImplementation((text: string) => text);
-  (warnUnresolvedRunbookVariables as jest.Mock<any>).mockReturnValue([]);
-  (collectUnresolvedRunbookVariables as jest.Mock<any>).mockReturnValue(new Set());
-  (validateFrontmatterVars as jest.Mock<any>).mockReturnValue([]);
-  (validateRequiredVars as jest.Mock<any>).mockReturnValue([]);
-  (validateOutputsDeclarations as jest.Mock<any>).mockReturnValue([]);
-  (fsPromises.readFile as jest.Mock<any>).mockResolvedValue(
-    '# Test\n\n## 1. Step\n- PASS CONTINUE',
+  } as unknown as Awaited<ReturnType<typeof resolveVariables>>);
+  jest.mocked(buildStepVariables).mockReturnValue({ Step: '1.1' } as unknown as ReturnType<
+    typeof buildStepVariables
+  >);
+  jest
+    .mocked(substituteRunbookVariables)
+    .mockImplementation((runbook: unknown) => runbook as ReturnType<typeof substituteRunbookVariables>);
+  jest.mocked(resolveForBounds).mockImplementation(
+    (runbook: unknown) =>
+      ({
+        runbook,
+        warnings: [],
+      }) as unknown as ReturnType<typeof resolveForBounds>,
   );
+  jest.mocked(expandLoopVariables).mockImplementation((text: string) => text);
+  jest.mocked(warnUnresolvedRunbookVariables).mockReturnValue([]);
+  jest.mocked(collectUnresolvedRunbookVariables).mockReturnValue(new Set());
+  jest.mocked(validateFrontmatterVars).mockReturnValue([]);
+  jest.mocked(validateRequiredVars).mockReturnValue([]);
+  jest.mocked(validateOutputsDeclarations).mockReturnValue([]);
+  // readFile is overloaded; jest.mocked picks the Buffer-returning overload, but we need to
+  // resolve a string. Cast through unknown to a typed mock returning string.
   (
-    parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
-  ).mockReturnValue(mockParseResult());
-  (core.hashDelegationToken as jest.Mock<any>).mockReturnValue('sha256:mock');
-  (core.reconstituteContextVars as jest.Mock<any>).mockReturnValue({});
-  (core.extractInheritedUserVars as jest.Mock<any>).mockReturnValue({});
-  (core.deriveActiveFrame as jest.Mock<any>).mockReturnValue({
+    jest.mocked(fsPromises.readFile) as unknown as jest.Mock<() => Promise<string>>
+  ).mockResolvedValue('# Test\n\n## 1. Step\n- PASS CONTINUE');
+  jest.mocked(parser.parseRunbookDocument).mockReturnValue(mockParseResult());
+  jest.mocked(core.hashDelegationToken).mockReturnValue('sha256:mock');
+  jest.mocked(core.reconstituteContextVars).mockReturnValue({});
+  jest.mocked(core.extractInheritedUserVars).mockReturnValue({});
+  jest.mocked(core.deriveActiveFrame).mockReturnValue({
     step: '1',
-    substep: undefined,
     iteration: undefined,
-    frameKey: '1',
+    frameKey: '1' as unknown as ReturnType<typeof core.deriveActiveFrame>['frameKey'],
   });
-  (core.isJsonArray as unknown as jest.Mock<any>).mockImplementation((v: unknown) =>
-    Array.isArray(v),
-  );
-  (core.isJsonArrayStream as unknown as jest.Mock<any>).mockImplementation(realIsJsonArrayStream);
+  jest.mocked(core.isJsonArray).mockImplementation((v: unknown) => Array.isArray(v));
+  jest.mocked(core.isJsonArrayStream).mockImplementation(realIsJsonArrayStream);
 });
 
 // validateSources was removed in the unified variable model refactoring.
