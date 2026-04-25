@@ -64,6 +64,7 @@ import {
   validateRequiredVars,
   validateOutputsDeclarations,
 } from './validate-frontmatter-vars.js';
+import { getHelperRegistry, detectHelperCollisions } from '../services/helper-registry.js';
 
 /**
  * Input options from CLI flags.
@@ -507,6 +508,13 @@ export async function prepareRunbook(
     };
   }
   const templateVars = buildTemplateVars(mergedVariables, options);
+
+  const helperCollisions = detectHelperCollisions(getHelperRegistry(), templateVars);
+  for (const name of helperCollisions) {
+    allWarnings.push(
+      `Variable "${name}" is shadowed by a registered helper. Use {{ ./${name} }} to access the variable.`,
+    );
+  }
 
   // Bail early if there are structural errors — don't pass a broken AST to transform passes
   // This must run before the missing-required check so that malformed `required` entries
