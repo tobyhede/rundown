@@ -842,7 +842,7 @@ describe('createDelegation', () => {
     expect(iter2?.delegation?.childRunId).toBeNull();
   });
 
-  it('appends new entry for synthetic step when frameKey is provided', () => {
+  it('creates synthetic substep entry with provided frameKey', () => {
     const state = makeState({ substepStates: undefined });
     const steps = makeSimpleSteps();
     const result = createDelegation(
