@@ -53,28 +53,24 @@ export async function validateHelperPath(
   try {
     canonical = await fs.realpath(resolved);
   } catch {
-    // File doesn't exist — validate using a canonicalized resolved path.
-    if (path.isAbsolute(rawPath)) {
-      // Absolute path that doesn't exist — let import fail naturally.
-      return resolved;
-    }
-    // For relative paths, canonicalize cwd first so the comparison is valid
-    // even on macOS where /var is a symlink to /private/var.
-    let canonicalCwd = cwd;
+    // File doesn't exist — canonicalize the nearest existing ancestor so the
+    // comparison is valid even on macOS where /var is a symlink to /private/var.
+    const dir = path.dirname(resolved);
+    let canonicalDir = dir;
     try {
-      canonicalCwd = await fs.realpath(cwd);
+      canonicalDir = await fs.realpath(dir);
     } catch {
-      // use as-is
+      // If even the directory doesn't exist, try canonicalizing cwd instead.
+      try {
+        canonicalDir = await fs.realpath(cwd);
+      } catch {
+        // use dir as-is
+      }
     }
-    const canonicalResolved = path.resolve(canonicalCwd, rawPath);
-    const rel = path.relative(canonicalRoot, canonicalResolved);
-    if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
-      console.warn(`Warning: Helper path "${rawPath}" escapes project directory — skipping.`);
-      return null;
-    }
-    return canonicalResolved;
+    canonical = path.join(canonicalDir, path.basename(resolved));
   }
 
+  // Apply traversal guard uniformly — covers both existing and non-existing files.
   const rel = path.relative(canonicalRoot, canonical);
   if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
     console.warn(`Warning: Helper path "${rawPath}" escapes project directory — skipping.`);
