@@ -496,18 +496,15 @@ async function executeRetry(target: ResolvedTarget, args: RetryHandlerOptions): 
 
   switch (result.status) {
     case 'not_found':
-      failRetry(output, `no delegation found for step ${target.stepLabel}`, 'TOKEN_NOT_FOUND');
-      break;
     case 'not_current':
-      failRetry(
-        output,
-        `step ${target.stepLabel} is not at the execution frontier (current: ${result.currentStep})`,
-        'STEP_NOT_CURRENT',
-      );
-      break;
     case 'error':
-      failRetry(output, result.error.message, result.error.code);
-      break;
+      // Rethrow so withErrorHandling's toRundownError -> stderr envelope
+      // fires with the inner RundownError's code (RD-801 / RD-802 / inner
+      // createDelegation code) and message, matching the create CLI path's
+      // `throw result.error` pattern. M3 widened all three variants to
+      // carry `error: RundownError`, so the dispatch collapses to a single
+      // arm.
+      throw result.error;
     case 'retried':
       break;
     default: {

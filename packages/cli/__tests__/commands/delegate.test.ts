@@ -342,7 +342,10 @@ describe('delegate command', () => {
       const retry = await runCliInProcess(['delegate', '--retry', '--step', '1.1'], workspace);
 
       expect(retry.exitCode).not.toBe(0);
-      expect(retry.stdout + retry.stderr).toMatch(/no delegation found for step/);
+      // Retry CLI now propagates the inner RundownError verbatim through
+      // withErrorHandling — RD-801 is "Step not found", produced by
+      // retryDelegation's not_found variant via Errors.delegationStepNotFound.
+      expect(retry.stdout + retry.stderr).toMatch(/RD-801/);
     });
 
     it('errors when token is unknown', async () => {
@@ -408,7 +411,11 @@ describe('delegate command', () => {
       const retry = await runCliInProcess(['delegate', '--retry', '--step', '1.1'], workspace);
 
       expect(retry.exitCode).not.toBe(0);
-      expect(retry.stdout + retry.stderr).toMatch(/is not at the execution frontier/);
+      // Retry CLI now propagates the inner RundownError verbatim through
+      // withErrorHandling — RD-802 is "Step not at execution frontier",
+      // produced by retryDelegation's not_current variant via
+      // Errors.delegationStepNotCurrent.
+      expect(retry.stdout + retry.stderr).toMatch(/RD-802/);
     });
 
     it('inherits extraVars from the prior delegation', async () => {
