@@ -22,10 +22,13 @@ describe('rdpath find integration', () => {
 
   const runRdpath = (
     args: string[],
+    env?: Record<string, string>,
   ): Promise<{ stdout: string; stderr: string; exitCode: number }> => {
     return new Promise((resolve, reject) => {
+      const spawnEnv = env ? { ...process.env, ...env } : process.env;
       const proc = spawn('node', ['dist/rdpath.js', ...args], {
         cwd: packageDir,
+        env: spawnEnv,
       });
 
       let stdout = '';
@@ -131,6 +134,59 @@ describe('rdpath find integration', () => {
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout.trim()).toBe(path.join('.work', '.rd-abc123'));
+    });
+  });
+
+  describe('env var fallback (RD_WORK_PATH, RD_CONTEXT_ID)', () => {
+    it('uses RD_WORK_PATH when --dir is omitted', async () => {
+      await fs.writeFile(path.join(testDir, '2026-03-17-test.md'), '');
+
+      const result = await runRdpath(['find', '*.md'], { RD_WORK_PATH: testDir });
+
+      expect(result.exitCode).toBe(0);
+      const lines = result.stdout.trim().split('\n');
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain('test.md');
+    });
+
+    it('uses RD_CONTEXT_ID when --ctx is omitted', async () => {
+      const ctxDir = path.join(testDir, '.rd-env-ctx');
+      await fs.mkdir(ctxDir);
+      await fs.writeFile(path.join(ctxDir, 'found.md'), '');
+
+      const result = await runRdpath(['find', '*.md'], {
+        RD_WORK_PATH: testDir,
+        RD_CONTEXT_ID: 'env-ctx',
+      });
+
+      expect(result.exitCode).toBe(0);
+      const lines = result.stdout.trim().split('\n');
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain('.rd-env-ctx');
+    });
+
+    it('prefers --dir flag over RD_WORK_PATH env var', async () => {
+      const altDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rdpath-alt-'));
+      try {
+        await fs.writeFile(path.join(altDir, 'alt.md'), '');
+
+        const result = await runRdpath(['find', '*.md', '--dir', altDir], {
+          RD_WORK_PATH: testDir,
+        });
+
+        expect(result.exitCode).toBe(0);
+        const lines = result.stdout.trim().split('\n');
+        expect(lines[0]).toContain('alt.md');
+      } finally {
+        await fs.rm(altDir, { recursive: true, force: true });
+      }
+    });
+
+    it('exits with error when --dir and RD_WORK_PATH are both absent', async () => {
+      const result = await runRdpath(['find', '*.md']);
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain('RD_WORK_PATH');
     });
   });
 });
