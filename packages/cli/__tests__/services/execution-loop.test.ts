@@ -511,7 +511,7 @@ describe('runExecutionLoop', () => {
           lastAction: {
             type: 'RETRY_ERROR' as const,
             code: 'RD-902',
-            message: 'hook failed: createDelegation threw',
+            message: 'hook failed: createDelegation returned step_not_found',
           },
           lifecycle: 'stopped',
         },
@@ -534,7 +534,7 @@ describe('runExecutionLoop', () => {
       'ERROR_OCCURRED',
       expect.objectContaining({
         code: 'RD-902',
-        message: 'hook failed: createDelegation threw',
+        message: 'hook failed: createDelegation returned step_not_found',
       }),
     );
 
