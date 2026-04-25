@@ -16,6 +16,18 @@ export interface NakedOutput {
 }
 
 /**
+ * A single output channel that was successfully pre-created.
+ *
+ * Used as the input to {@link readCapturedOutputs}. The pairing of `name` to
+ * `path` is established by {@link prepareOutputChannels}, removing the need
+ * for the caller to track parallel arrays.
+ */
+export interface PreparedChannel {
+  readonly name: string;
+  readonly path: string;
+}
+
+/**
  * Scope at which a captured output is collected.
  *
  * `substepId` and `iteration` are independent optional path tiers and compose
@@ -176,13 +188,16 @@ export function buildOutputChannelEnv(
  * couldn't actually back with a file.
  *
  * @param args - Project root + run id + scope + naked declarations
- * @returns The injectable env map and the absolute paths that were created
+ * @returns The injectable env map and the list of successfully-prepared channels (each carrying its name and absolute path)
  */
 export async function prepareOutputChannels(
   args: PrepareOutputChannelsArgs,
-): Promise<{ readonly env: Record<string, string>; readonly createdPaths: readonly string[] }> {
+): Promise<{
+  readonly env: Record<string, string>;
+  readonly prepared: readonly PreparedChannel[];
+}> {
   const env: Record<string, string> = {};
-  const createdPaths: string[] = [];
+  const prepared: PreparedChannel[] = [];
   for (const entry of args.naked) {
     let filePath: string;
     try {
@@ -199,7 +214,7 @@ export async function prepareOutputChannels(
       // Truncate to zero bytes so re-runs do not see stale content.
       await fs.writeFile(filePath, '');
       env[`RD_OUTPUTS_${entry.name}`] = filePath;
-      createdPaths.push(filePath);
+      prepared.push({ name: entry.name, path: filePath });
     } catch (err) {
       void logger.warn('prepareOutputChannels: failed to create channel file, skipping', {
         name: entry.name,
@@ -208,7 +223,7 @@ export async function prepareOutputChannels(
       });
     }
   }
-  return { env, createdPaths };
+  return { env, prepared };
 }
 
 /**
@@ -219,25 +234,15 @@ export async function prepareOutputChannels(
  * from the result. The caller decides what to do with the returned record;
  * the spec mandates merging into `context.variables` via `SET_VARIABLES`.
  *
- * @param createdPaths - Absolute paths returned by `prepareOutputChannels`
- * @param naked - The naked declarations whose names map 1:1 to `createdPaths`
+ * @param prepared - Channels returned by `prepareOutputChannels`, each carrying its name and absolute path
  * @returns Record `{ <VarName>: <trimmedValue> }` for every successful read
  */
 export async function readCapturedOutputs(
-  createdPaths: readonly string[],
-  naked: readonly NakedOutput[],
+  prepared: readonly PreparedChannel[],
 ): Promise<Record<string, string>> {
-  if (createdPaths.length !== naked.length) {
-    // prepareOutputChannels guarantees pairwise correspondence; a mismatch
-    // means a caller composed paths and naked from different sources.
-    throw new Error(
-      `readCapturedOutputs: paths length (${createdPaths.length}) does not match naked length (${naked.length})`,
-    );
-  }
   const captured: Record<string, string> = {};
-  for (let i = 0; i < createdPaths.length; i++) {
-    const filePath = createdPaths[i];
-    const name = naked[i].name;
+  for (const channel of prepared) {
+    const { name, path: filePath } = channel;
     let raw: string;
     try {
       raw = await fs.readFile(filePath, 'utf-8');

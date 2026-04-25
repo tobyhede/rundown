@@ -172,11 +172,26 @@ describe('prepareOutputChannels', () => {
         'RD_OUTPUTS_DeployUrl',
         'RD_OUTPUTS_Version',
       ]);
-      for (const p of result.createdPaths) {
+      for (const p of result.prepared.map((c) => c.path)) {
         const stat = await fs.stat(p);
         expect(stat.isFile()).toBe(true);
         expect(stat.size).toBe(0);
       }
+    } finally {
+      await fs.rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('prepared channels carry the correct name for each entry', async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'rd-outputs-'));
+    try {
+      const result = await prepareOutputChannels({
+        cwd,
+        runId: 'wf-test-1b',
+        scope: { stepId: '1' },
+        naked: [{ name: 'DeployUrl' }, { name: 'Version' }],
+      });
+      expect(result.prepared.map((c) => c.name)).toEqual(['DeployUrl', 'Version']);
     } finally {
       await fs.rm(cwd, { recursive: true, force: true });
     }
@@ -220,7 +235,7 @@ describe('prepareOutputChannels', () => {
         naked: [{ name: 'step' }, { name: 'Version' }],
       });
       expect(Object.keys(result.env)).toEqual(['RD_OUTPUTS_Version']);
-      expect(result.createdPaths).toHaveLength(1);
+      expect(result.prepared).toHaveLength(1);
     } finally {
       await fs.rm(cwd, { recursive: true, force: true });
     }
@@ -237,12 +252,9 @@ describe('readCapturedOutputs', () => {
         scope: { stepId: '1' },
         naked: [{ name: 'A' }, { name: 'B' }],
       });
-      await fs.writeFile(prepared.createdPaths[0], 'value-a\n');
-      await fs.writeFile(prepared.createdPaths[1], 'value-b   \n\n');
-      const captured = await readCapturedOutputs(prepared.createdPaths, [
-        { name: 'A' },
-        { name: 'B' },
-      ]);
+      await fs.writeFile(prepared.prepared[0].path, 'value-a\n');
+      await fs.writeFile(prepared.prepared[1].path, 'value-b   \n\n');
+      const captured = await readCapturedOutputs(prepared.prepared);
       expect(captured).toEqual({ A: 'value-a', B: 'value-b' });
     } finally {
       await fs.rm(cwd, { recursive: true, force: true });
@@ -258,12 +270,9 @@ describe('readCapturedOutputs', () => {
         scope: { stepId: '1' },
         naked: [{ name: 'Empty' }, { name: 'Filled' }],
       });
-      await fs.writeFile(prepared.createdPaths[0], '   \n');
-      await fs.writeFile(prepared.createdPaths[1], 'kept');
-      const captured = await readCapturedOutputs(prepared.createdPaths, [
-        { name: 'Empty' },
-        { name: 'Filled' },
-      ]);
+      await fs.writeFile(prepared.prepared[0].path, '   \n');
+      await fs.writeFile(prepared.prepared[1].path, 'kept');
+      const captured = await readCapturedOutputs(prepared.prepared);
       expect(captured).toEqual({ Filled: 'kept' });
     } finally {
       await fs.rm(cwd, { recursive: true, force: true });
@@ -279,8 +288,8 @@ describe('readCapturedOutputs', () => {
         scope: { stepId: '1' },
         naked: [{ name: 'Bin' }],
       });
-      await fs.writeFile(prepared.createdPaths[0], Buffer.from([0x68, 0x00, 0x69]));
-      const captured = await readCapturedOutputs(prepared.createdPaths, [{ name: 'Bin' }]);
+      await fs.writeFile(prepared.prepared[0].path, Buffer.from([0x68, 0x00, 0x69]));
+      const captured = await readCapturedOutputs(prepared.prepared);
       expect(captured).toEqual({});
     } finally {
       await fs.rm(cwd, { recursive: true, force: true });
@@ -291,7 +300,7 @@ describe('readCapturedOutputs', () => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'rd-outputs-'));
     try {
       const ghostPath = path.join(cwd, '.rundown', 'runs', 'wf-test-7', 'outputs', '1', 'Ghost');
-      const captured = await readCapturedOutputs([ghostPath], [{ name: 'Ghost' }]);
+      const captured = await readCapturedOutputs([{ name: 'Ghost', path: ghostPath }]);
       expect(captured).toEqual({});
     } finally {
       await fs.rm(cwd, { recursive: true, force: true });

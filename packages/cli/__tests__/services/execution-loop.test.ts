@@ -253,7 +253,7 @@ jest.unstable_mockModule('@rundown-org/core', () => {
     ),
     resetHelperInvokeWarnings: jest.fn(),
     partitionOutputDeclarations: jest.fn().mockReturnValue({ naked: [], expression: [] }),
-    prepareOutputChannels: jest.fn().mockResolvedValue({ env: {}, createdPaths: [] }),
+    prepareOutputChannels: jest.fn().mockResolvedValue({ env: {}, prepared: [] }),
     readCapturedOutputs: jest.fn().mockResolvedValue({}),
   };
 });

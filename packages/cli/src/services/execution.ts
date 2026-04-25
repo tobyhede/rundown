@@ -47,6 +47,7 @@ import {
   prepareOutputChannels,
   readCapturedOutputs,
   type OutputScope,
+  type PreparedChannel,
 } from '@rundown-org/core';
 import {
   isSourced,
@@ -888,26 +889,21 @@ export async function runExecutionLoop(
     const expandedCommandCode = expandLoopVariablesForCommand(command.code, stepVars);
 
     // --- Output capture: pre-spawn ---------------------------------------
-    const unitOutputs = extractUnitOutputs(
-      currentStep,
-      isSubstep,
-      isSubstep ? itemToRender.id : undefined,
-    );
+    const substepId = isSubstep ? itemToRender.id : undefined;
+    const unitOutputs = extractUnitOutputs(currentStep, isSubstep, substepId);
     const { naked: nakedOutputs } = partitionOutputDeclarations(unitOutputs);
-    const outputScope = deriveOutputScope(
-      currentState,
-      isSubstep,
-      isSubstep ? itemToRender.id : undefined,
-    );
-    const channels =
-      nakedOutputs.length > 0
-        ? await prepareOutputChannels({
-            cwd,
-            runId: currentState.id,
-            scope: outputScope,
-            naked: nakedOutputs,
-          })
-        : { env: {} as Record<string, string>, createdPaths: [] as readonly string[] };
+    let channels: { env: Record<string, string>; prepared: readonly PreparedChannel[] };
+    if (nakedOutputs.length > 0) {
+      const outputScope = deriveOutputScope(currentState, isSubstep, substepId);
+      channels = await prepareOutputChannels({
+        cwd,
+        runId: currentState.id,
+        scope: outputScope,
+        naked: nakedOutputs,
+      });
+    } else {
+      channels = { env: {}, prepared: [] };
+    }
     // --------------------------------------------------------------------
 
     // Build rundown-injected environment variables (RD_WORK_PATH, RD_RUN_ID, etc.)
@@ -963,9 +959,9 @@ export async function runExecutionLoop(
       sandboxed: execResult.sandboxed,
     });
 
-    // --- Output capture: post-spawn --------------------------------------
-    if (channels.createdPaths.length > 0) {
-      const captured = await readCapturedOutputs(channels.createdPaths, nakedOutputs);
+    // --- Output capture: post-spawn ---------------------------------------
+    if (!execResult.policyDenied && channels.prepared.length > 0) {
+      const captured = await readCapturedOutputs(channels.prepared);
       if (Object.keys(captured).length > 0) {
         const setSync = await actorService.sendAndSync(runbookId, steps, {
           type: 'SET_VARIABLES',

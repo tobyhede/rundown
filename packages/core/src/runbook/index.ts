@@ -126,4 +126,5 @@ export {
   type NakedOutput,
   type OutputScope,
   type PrepareOutputChannelsArgs,
+  type PreparedChannel,
 } from './output-channels.js';
