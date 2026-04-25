@@ -25,7 +25,12 @@ import {
 } from '../helpers/index-option.js';
 import { collectCliFlags, routeExtraVars } from '../services/variable-discovery.js';
 import { parseInputOption, parseInputJsonOption, collect } from '../helpers/option-utils.js';
-import type { RunbookState, TemplateVarValue, FrameKey } from '@rundown-org/core';
+import type {
+  RunbookState,
+  TemplateVarValue,
+  FrameKey,
+  RetryDelegationResult,
+} from '@rundown-org/core';
 
 /**
  * Options accepted by `rd delegate` (covers both fresh-issue and --retry flows).
@@ -513,6 +518,12 @@ async function executeRetry(target: ResolvedTarget, args: RetryHandlerOptions): 
       break;
     case 'retried':
       break;
+    default: {
+      const _exhaustive: never = result;
+      throw new Error(
+        `Unhandled retryDelegation status: ${(_exhaustive as RetryDelegationResult).status}`,
+      );
+    }
   }
 
   // 8. Persist updated substepStates.
