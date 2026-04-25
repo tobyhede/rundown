@@ -144,4 +144,25 @@ describe('Rundown Conformance (Fixture Driven)', () => {
       expect(errors.length).toBeGreaterThan(0);
     });
   });
+
+  describe('Conformance — step-level naked OUTPUTS', () => {
+    it('accepts the design-spec example (DeployUrl + Version naked)', () => {
+      const md = `## 1. Deploy
+- OUTPUTS
+  - DeployUrl
+  - Version
+- PASS CONTINUE
+- FAIL STOP
+
+\`\`\`sh
+./deploy.sh --env staging
+echo -n "$(./get-version.sh)" > $RD_OUTPUTS_Version
+\`\`\`
+`;
+      const { runbook, diagnostics } = parseRunbookDocument(md);
+      const errors = diagnostics.filter((d) => d.severity === 'error');
+      expect(errors).toEqual([]);
+      expect(runbook.steps[0].outputs).toEqual([{ name: 'DeployUrl' }, { name: 'Version' }]);
+    });
+  });
 });
