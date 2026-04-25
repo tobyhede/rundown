@@ -819,9 +819,9 @@ export async function runExecutionLoop(
 
     // Build rundown-injected environment variables (RD_WORK_PATH, RD_RUN_ID, etc.)
     const rdInjected: Record<string, string> = {};
-    if (stepVars.WorkPath !== undefined) rdInjected.RD_WORK_PATH = String(stepVars.WorkPath);
-    if (stepVars.ContextId !== undefined) rdInjected.RD_CONTEXT_ID = String(stepVars.ContextId);
-    if (stepVars.RunId !== undefined) rdInjected.RD_RUN_ID = String(stepVars.RunId);
+    if (typeof stepVars.WorkPath === 'string') rdInjected.RD_WORK_PATH = stepVars.WorkPath;
+    if (typeof stepVars.ContextId === 'string') rdInjected.RD_CONTEXT_ID = stepVars.ContextId;
+    if (typeof stepVars.RunId === 'string') rdInjected.RD_RUN_ID = stepVars.RunId;
 
     // Execute command
     // For rd commands, try internal execution first (avoids nested spawn issues in WebContainer)
@@ -975,6 +975,7 @@ export function buildMetadata(state: RunbookState): RunbookMetadata {
  * @param command - The shell command to execute
  * @param cwd - Working directory for execution
  * @param runbookPath - Optional runbook file path for override matching
+ * @param rdInjected - Optional extra environment variables injected by Rundown (e.g. RD_WORK_PATH)
  * @returns Execution result
  */
 export async function executeCommandWithPolicyCheck(
