@@ -9,6 +9,7 @@
 
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import { types } from 'node:util';
 
 /**
  * Map of helper name to synchronous transformation function.
@@ -128,8 +129,7 @@ export async function loadHelperModules(
         continue;
       }
 
-      // Detect async functions: constructor name is 'AsyncFunction'
-      if (value.constructor?.name === 'AsyncFunction') {
+      if (types.isAsyncFunction(value)) {
         console.warn(
           `Warning: Helper export "${name}" in "${rawPath}" is an async function — only synchronous helpers are supported. Skipping.`,
         );
