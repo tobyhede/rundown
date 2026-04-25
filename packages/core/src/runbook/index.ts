@@ -116,3 +116,13 @@ export {
   type InitialTemplateVars,
   type StoredOutputs,
 } from './effective-vars.js';
+export {
+  partitionOutputDeclarations,
+  outputsDirForRun,
+  outputChannelPath,
+  buildOutputChannelEnv,
+  prepareOutputChannels,
+  readCapturedOutputs,
+  type NakedOutput,
+  type OutputScope,
+} from './output-channels.js';
