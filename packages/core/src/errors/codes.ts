@@ -331,18 +331,6 @@ export const ErrorCodes = {
       `tampering, or missing frame setup in a new feature path).`,
     docSlug: 'retry-hook-no-frame',
   },
-  RETRY_HOOK_INCONSISTENT_STATE: {
-    code: 'RD-903',
-    category: ErrorCategory.EXECUTION,
-    title: 'Retry hook saw an inconsistent delegation state',
-    description:
-      `retryDelegation reported not_found/not_current for a substep that the ` +
-      `retry hook had already confirmed had a delegation. This indicates the ` +
-      `substep state and the delegation-service view of the same entry have ` +
-      `diverged — rollback is the safe action rather than silently skipping ` +
-      `the substep and consuming the retry transition.`,
-    docSlug: 'retry-hook-inconsistent-state',
-  },
   RETRY_HOOK_MISSING_CANONICAL_AT: {
     code: 'RD-904',
     category: ErrorCategory.EXECUTION,
