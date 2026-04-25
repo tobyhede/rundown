@@ -1,4 +1,15 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import type {
+  RunbookActorService,
+  RunbookStateManager,
+  SessionService,
+  ExecutionLifecycleService,
+} from '@rundown-org/core';
+import type { OutputEmitter } from '../../src/services/output-emitter.js';
+import type {
+  PreparedRunbook,
+  RunPipelineContext,
+} from '../../src/helpers/runbook-pipeline.js';
 import { mockErrorHelpers } from './mock-error-helpers.js';
 import { mockFn } from './typed-mocks.js';
 
@@ -861,40 +872,46 @@ describe('prepareRunbook', () => {
 
 describe('startRunbook', () => {
   it('creates state and runs execution loop', async () => {
-    const mockCreate = jest.fn<any>().mockResolvedValue({
+    const mockCreate = mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
       id: 'new-id',
       title: 'Test',
       substeps: undefined,
     });
-    const mockUpdate = jest.fn<any>().mockResolvedValue(undefined);
-    const mockInitState = jest.fn<any>().mockResolvedValue(undefined);
-    const mockPushRunbook = jest.fn<any>().mockResolvedValue(undefined);
+    const mockUpdate = mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined);
+    const mockInitState = mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(
+      undefined,
+    );
+    const mockPushRunbook = mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(
+      undefined,
+    );
     const mockOutput = { flush: jest.fn() };
 
     jest.mocked(runExecutionLoop).mockResolvedValue('done');
 
     const ctx = {
-      output: mockOutput as any,
+      output: mockOutput as unknown as OutputEmitter,
       manager: {
         create: mockCreate,
         update: mockUpdate,
-        initializeSubsteps: jest.fn<any>().mockResolvedValue(undefined),
-      } as any,
-      actorService: { initializeState: mockInitState } as any,
-      sessionService: { pushRunbook: mockPushRunbook } as any,
-      lifecycleService: makeLifecycle(),
+        initializeSubsteps: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(
+          undefined,
+        ),
+      } as unknown as RunbookStateManager,
+      actorService: { initializeState: mockInitState } as unknown as RunbookActorService,
+      sessionService: { pushRunbook: mockPushRunbook } as unknown as SessionService,
+      lifecycleService: makeLifecycle() as unknown as ExecutionLifecycleService,
       cwd: '/test',
-    };
+    } satisfies RunPipelineContext;
 
     const prepared = {
       filePath: '/test/runbook.md',
       rawContent: '# Test',
-      runbook: { steps: [makeStep()] } as any,
+      runbook: { steps: [makeStep()] },
       mergedVariables: {},
       sources: {},
-    };
+    } as unknown as PreparedRunbook;
 
-    const result = await startRunbook(ctx as any, prepared as any, { file: 'runbook.md' });
+    const result = await startRunbook(ctx, prepared, { file: 'runbook.md' });
 
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -915,34 +932,44 @@ describe('startRunbook', () => {
 
   it('seeds frontmatterOutputs from prepared.frontmatter.outputs to manager.create', async () => {
     const outputDecls = [{ name: 'Result' }, { name: 'Status' }];
-    const mockCreate = jest
-      .fn<any>()
-      .mockResolvedValue({ id: 'x', title: 'T', substeps: undefined });
+    const mockCreate = mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
+      id: 'x',
+      title: 'T',
+      substeps: undefined,
+    });
     jest.mocked(runExecutionLoop).mockResolvedValue('done');
 
     const ctx = {
-      output: { flush: jest.fn() } as any,
+      output: { flush: jest.fn() } as unknown as OutputEmitter,
       manager: {
         create: mockCreate,
-        update: jest.fn<any>().mockResolvedValue(undefined),
-        initializeSubsteps: jest.fn<any>().mockResolvedValue(undefined),
-      } as any,
-      actorService: { initializeState: jest.fn<any>().mockResolvedValue(undefined) } as any,
-      sessionService: { pushRunbook: jest.fn<any>().mockResolvedValue(undefined) } as any,
-      lifecycleService: makeLifecycle(),
+        update: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
+        initializeSubsteps: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(
+          undefined,
+        ),
+      } as unknown as RunbookStateManager,
+      actorService: {
+        initializeState: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(
+          undefined,
+        ),
+      } as unknown as RunbookActorService,
+      sessionService: {
+        pushRunbook: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
+      } as unknown as SessionService,
+      lifecycleService: makeLifecycle() as unknown as ExecutionLifecycleService,
       cwd: '/test',
-    };
+    } satisfies RunPipelineContext;
 
     const prepared = {
       filePath: '/test/runbook.md',
       rawContent: '# Test',
-      runbook: { steps: [makeStep()] } as any,
+      runbook: { steps: [makeStep()] },
       mergedVariables: {},
       sources: {},
       frontmatter: { outputs: outputDecls },
-    };
+    } as unknown as PreparedRunbook;
 
-    await startRunbook(ctx as any, prepared as any, { file: 'runbook.md' });
+    await startRunbook(ctx, prepared, { file: 'runbook.md' });
 
     expect(mockCreate).toHaveBeenCalledWith(
       'runbook.md',
@@ -952,45 +979,53 @@ describe('startRunbook', () => {
   });
 
   it('initializes substeps when first step has substeps', async () => {
-    const mockInitSubsteps = jest.fn<any>().mockResolvedValue(undefined);
-    const mockUpdate = jest.fn<any>().mockResolvedValue(undefined);
-    const mockCreate = jest.fn<any>().mockResolvedValue({
+    const mockInitSubsteps = mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(
+      undefined,
+    );
+    const mockUpdate = mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined);
+    const mockCreate = mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
       id: 'sub-id',
       title: 'Sub Test',
     });
 
     jest.mocked(runExecutionLoop).mockResolvedValue('done');
 
-    const mockLoad = jest.fn<any>().mockResolvedValue({
+    const mockLoad = mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
       id: 'sub-id',
       step: '1',
       activeFrameKey: '1|',
     });
 
     const ctx = {
-      output: { flush: jest.fn() } as any,
+      output: { flush: jest.fn() } as unknown as OutputEmitter,
       manager: {
         create: mockCreate,
         update: mockUpdate,
         load: mockLoad,
         initializeSubsteps: mockInitSubsteps,
-      } as any,
-      actorService: { initializeState: jest.fn<any>().mockResolvedValue(undefined) } as any,
-      sessionService: { pushRunbook: jest.fn<any>().mockResolvedValue(undefined) } as any,
-      lifecycleService: makeLifecycle(),
+      } as unknown as RunbookStateManager,
+      actorService: {
+        initializeState: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(
+          undefined,
+        ),
+      } as unknown as RunbookActorService,
+      sessionService: {
+        pushRunbook: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
+      } as unknown as SessionService,
+      lifecycleService: makeLifecycle() as unknown as ExecutionLifecycleService,
       cwd: '/test',
-    };
+    } satisfies RunPipelineContext;
 
     const substeps = [{ id: 'a' }, { id: 'b' }];
     const prepared = {
       filePath: '/test/runbook.md',
       rawContent: '# Test',
-      runbook: { steps: [makeStep({ substeps })] } as any,
+      runbook: { steps: [makeStep({ substeps })] },
       mergedVariables: {},
       sources: {},
-    };
+    } as unknown as PreparedRunbook;
 
-    const result = await startRunbook(ctx as any, prepared as any, { file: 'runbook.md' });
+    const result = await startRunbook(ctx, prepared, { file: 'runbook.md' });
 
     expect(result.ok).toBe(true);
     expect(mockInitSubsteps).toHaveBeenCalledWith('sub-id', substeps, '1|');
