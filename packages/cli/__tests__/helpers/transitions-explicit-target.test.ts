@@ -1,5 +1,5 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import { mockErrorHelpers } from './mock-error-helpers';
+import { mockErrorHelpers } from './mock-error-helpers.js';
 
 // Mock @rundown-org/core
 jest.unstable_mockModule('@rundown-org/core', () => ({
@@ -58,9 +58,9 @@ jest.unstable_mockModule('../../src/helpers/transition-orchestrator', () => ({
 
 const core = await import('@rundown-org/core');
 const { resolvedStepHasSubsteps } = await import('@rundown-org/parser');
-const { findStepOrThrow, drainResolvedCompletions } = await import('../../src/services/execution');
+const { findStepOrThrow, drainResolvedCompletions } = await import('../../src/services/execution.js');
 const { executeTransition, createPassTransitionConfig } = await import(
-  '../../src/helpers/transitions'
+  '../../src/helpers/transitions.js'
 );
 function makeCtx(stateOverrides: Record<string, unknown> = {}): any {
   const state = {

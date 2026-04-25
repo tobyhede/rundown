@@ -1,5 +1,5 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import { mockErrorHelpers } from '../helpers/mock-error-helpers';
+import { mockErrorHelpers } from '../helpers/mock-error-helpers.js';
 
 // Mock dependencies
 const mockActorService = {
@@ -211,11 +211,11 @@ jest.unstable_mockModule('../../src/services/policy-context', () => ({
 
 // Import after mocking
 const core = await import('@rundown-org/core');
-const policyContext = await import('../../src/services/policy-context');
-const delegateInference = await import('../../src/helpers/delegate-inference');
-const resolveRunbook = await import('../../src/helpers/resolve-runbook');
+const policyContext = await import('../../src/services/policy-context.js');
+const delegateInference = await import('../../src/helpers/delegate-inference.js');
+const resolveRunbook = await import('../../src/helpers/resolve-runbook.js');
 const { runExecutionLoop, executeCommandWithPolicyCheck } = await import(
-  '../../src/services/execution'
+  '../../src/services/execution.js'
 );
 
 describe('runExecutionLoop', () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import { mockErrorHelpers } from './mock-error-helpers';
+import { mockErrorHelpers } from './mock-error-helpers.js';
 
 // Mock @rundown-org/core
 jest.unstable_mockModule('@rundown-org/core', () => ({
@@ -46,12 +46,12 @@ jest.unstable_mockModule('../../src/services/execution', () => ({
 
 // Import after mocking
 const core = await import('@rundown-org/core');
-const { getRunbookFromState } = await import('../../src/helpers/runbook-loader');
+const { getRunbookFromState } = await import('../../src/helpers/runbook-loader.js');
 const { getStepRetryMax, buildMetadata, formatActionForDisplay } = await import(
-  '../../src/services/execution'
+  '../../src/services/execution.js'
 );
 const { buildInactiveStatus, buildStashedStatus, buildActiveStatus } = await import(
-  '../../src/helpers/status-builder'
+  '../../src/helpers/status-builder.js'
 );
 
 function makeState(overrides: Partial<RunbookState> = {}): any {

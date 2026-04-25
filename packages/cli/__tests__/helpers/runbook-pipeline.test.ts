@@ -159,11 +159,11 @@ jest.unstable_mockModule('node:fs/promises', () => ({
 // Import after mocking
 const core = await import('@rundown-org/core');
 const parser = await import('@rundown-org/parser');
-const { resolveRunbookFile } = await import('../../src/helpers/resolve-runbook');
-const { runExecutionLoop, buildStepVariables } = await import('../../src/services/execution');
-const { createBridgedEmitter } = await import('../../src/helpers/execution-emitter');
+const { resolveRunbookFile } = await import('../../src/helpers/resolve-runbook.js');
+const { runExecutionLoop, buildStepVariables } = await import('../../src/services/execution.js');
+const { createBridgedEmitter } = await import('../../src/helpers/execution-emitter.js');
 const { FileSourcePolicyError, resolveVariables } = await import(
-  '../../src/services/variable-discovery'
+  '../../src/services/variable-discovery.js'
 );
 const {
   substituteRunbookVariables,
@@ -171,13 +171,13 @@ const {
   expandLoopVariables,
   warnUnresolvedRunbookVariables,
   collectUnresolvedRunbookVariables,
-} = await import('../../src/services/template-renderer');
+} = await import('../../src/services/template-renderer.js');
 const { validateFrontmatterVars, validateRequiredVars, validateOutputsDeclarations } = await import(
-  '../../src/helpers/validate-frontmatter-vars'
+  '../../src/helpers/validate-frontmatter-vars.js'
 );
 const fsPromises = await import('node:fs/promises');
 const { prepareRunbook, startRunbook, buildContextVars, buildTemplateVars } = await import(
-  '../../src/helpers/runbook-pipeline'
+  '../../src/helpers/runbook-pipeline.js'
 );
 const { setHelperRegistry, resetHelperRegistry } = await import(
   '../../src/services/helper-registry'
@@ -943,7 +943,7 @@ describe('claimAndLaunch', () => {
       cwd: '/test',
     };
 
-    const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline');
+    const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
     const result = await claimAndLaunch(ctx as any, 'bad-token', {});
 
     expect(result.ok).toBe(false);
@@ -968,7 +968,7 @@ describe('claimAndLaunch', () => {
       cwd: '/test',
     };
 
-    const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline');
+    const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
     // cspell:disable-next-line
     const result = await claimAndLaunch(ctx as any, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
 
@@ -1025,7 +1025,7 @@ describe('claimAndLaunch', () => {
       cwd: '/test',
     };
 
-    const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline');
+    const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
     // cspell:disable-next-line
     const result = await claimAndLaunch(ctx as any, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
 
@@ -1083,7 +1083,7 @@ describe('claimAndLaunch', () => {
       cwd: '/test',
     };
 
-    const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline');
+    const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
     // cspell:disable-next-line
     const result = await claimAndLaunch(ctx as any, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
 
@@ -1151,7 +1151,7 @@ describe('claimAndLaunch', () => {
       cwd: '/test',
     };
 
-    const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline');
+    const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
     // cspell:disable-next-line
     const result = await claimAndLaunch(ctx as any, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
 
@@ -1228,7 +1228,7 @@ describe('claimAndLaunch', () => {
       cwd: '/test',
     };
 
-    const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline');
+    const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
     // cspell:disable-next-line
     const result = await claimAndLaunch(ctx as any, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
 
@@ -1330,7 +1330,7 @@ describe('claimAndLaunch', () => {
       Region: 'us-west',
     });
 
-    const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline');
+    const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
     // cspell:disable-next-line
     const result = await claimAndLaunch(ctx as any, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
 
@@ -1433,7 +1433,7 @@ describe('claimAndLaunch', () => {
       cwd: '/test',
     };
 
-    const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline');
+    const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
     // cspell:disable-next-line
     const result = await claimAndLaunch(ctx as any, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
 
@@ -1503,7 +1503,7 @@ describe('claimAndLaunch', () => {
       cwd: '/test',
     };
 
-    const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline');
+    const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
     // cspell:disable-next-line
     const result = await claimAndLaunch(ctx as any, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
 
@@ -1579,7 +1579,7 @@ describe('claimAndLaunch', () => {
       cwd: '/test',
     };
 
-    const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline');
+    const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
     // cspell:disable-next-line
     await claimAndLaunch(ctx as any, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
 

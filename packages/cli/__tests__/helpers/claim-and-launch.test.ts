@@ -1,5 +1,5 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import { mockErrorHelpers } from './mock-error-helpers';
+import { mockErrorHelpers } from './mock-error-helpers.js';
 
 // Capture the real isJsonArrayStream before the mock is registered.
 // jest.unstable_mockModule does NOT hoist (unlike jest.mock), so this top-level
@@ -159,16 +159,16 @@ jest.unstable_mockModule('node:fs/promises', () => ({
 // Import after mocking
 const core = await import('@rundown-org/core');
 const parser = await import('@rundown-org/parser');
-const { resolveRunbookFile } = await import('../../src/helpers/resolve-runbook');
-const { resolveVariables } = await import('../../src/services/variable-discovery');
+const { resolveRunbookFile } = await import('../../src/helpers/resolve-runbook.js');
+const { resolveVariables } = await import('../../src/services/variable-discovery.js');
 const { substituteRunbookVariables, resolveForBounds, collectUnresolvedRunbookVariables } =
-  await import('../../src/services/template-renderer');
+  await import('../../src/services/template-renderer.js');
 const { validateFrontmatterVars, validateRequiredVars, validateOutputsDeclarations } = await import(
-  '../../src/helpers/validate-frontmatter-vars'
+  '../../src/helpers/validate-frontmatter-vars.js'
 );
-const { createBridgedEmitter } = await import('../../src/helpers/execution-emitter');
-const { runExecutionLoop } = await import('../../src/services/execution');
-const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline');
+const { createBridgedEmitter } = await import('../../src/helpers/execution-emitter.js');
+const { runExecutionLoop } = await import('../../src/services/execution.js');
+const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
 
 /** Create a minimal RunPipelineContext with mock OutputEmitter. */
 function makeCtx(overrides: Record<string, unknown> = {}): any {

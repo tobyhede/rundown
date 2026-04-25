@@ -1,5 +1,5 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import { mockErrorHelpers } from './mock-error-helpers';
+import { mockErrorHelpers } from './mock-error-helpers.js';
 import type { RunbookState, DelegationLinkage } from '@rundown-org/core';
 
 // Mock @rundown-org/core
@@ -80,14 +80,14 @@ jest.unstable_mockModule('../../src/helpers/transitions', () => ({
 
 // Import after mocking
 const core = await import('@rundown-org/core');
-const { getRunbookFromState } = await import('../../src/helpers/runbook-loader');
-const { drainResolvedCompletions, runExecutionLoop } = await import('../../src/services/execution');
-const { createBridgedEmitter } = await import('../../src/helpers/execution-emitter');
+const { getRunbookFromState } = await import('../../src/helpers/runbook-loader.js');
+const { drainResolvedCompletions, runExecutionLoop } = await import('../../src/services/execution.js');
+const { createBridgedEmitter } = await import('../../src/helpers/execution-emitter.js');
 const { createPassTransitionConfig, createFailTransitionConfig } = await import(
-  '../../src/helpers/transitions'
+  '../../src/helpers/transitions.js'
 );
 const { handleParentCompletion, extractParentLinkage } = await import(
-  '../../src/helpers/delegation-completion'
+  '../../src/helpers/delegation-completion.js'
 );
 
 function makeState(id: string, overrides: Partial<RunbookState> = {}): RunbookState {

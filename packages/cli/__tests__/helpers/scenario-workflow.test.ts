@@ -41,7 +41,7 @@ jest.unstable_mockModule('shell-quote', () => ({
 }));
 
 // Mock command-sequence (pass through extract helpers so extractReferencedRunbooks/input-file copying works)
-const actualCommandSequence = await import('../../src/helpers/command-sequence');
+const actualCommandSequence = await import('../../src/helpers/command-sequence.js');
 jest.unstable_mockModule('../../src/helpers/command-sequence', () => ({
   executeCommandSequence: jest.fn(),
   matchStepAssertions: jest.fn(),
@@ -50,13 +50,13 @@ jest.unstable_mockModule('../../src/helpers/command-sequence', () => ({
 }));
 
 // Import after mocking
-const { resolveRunbookFile } = await import('../../src/helpers/resolve-runbook');
+const { resolveRunbookFile } = await import('../../src/helpers/resolve-runbook.js');
 const { extractFrontmatter } = await import('@rundown-org/parser');
-const { parseScenarios } = await import('../../src/schemas/scenarios');
+const { parseScenarios } = await import('../../src/schemas/scenarios.js');
 const { readFile, rm } = await import('node:fs/promises');
 const { copyFileSync } = await import('node:fs');
 const { executeCommandSequence, matchStepAssertions } = await import(
-  '../../src/helpers/command-sequence'
+  '../../src/helpers/command-sequence.js'
 );
 const {
   loadScenarios,
@@ -64,7 +64,7 @@ const {
   buildScenarioDetail,
   extractReferencedRunbooks,
   executeScenario,
-} = await import('../../src/helpers/scenario-workflow');
+} = await import('../../src/helpers/scenario-workflow.js');
 
 // Types are inferred from mocked modules; use `any` casts where needed
 

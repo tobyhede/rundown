@@ -1,5 +1,5 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import { mockErrorHelpers } from './mock-error-helpers';
+import { mockErrorHelpers } from './mock-error-helpers.js';
 
 // Mock @rundown-org/core
 jest.unstable_mockModule('@rundown-org/core', () => ({
@@ -40,8 +40,8 @@ jest.unstable_mockModule('../../src/helpers/execution-emitter', () => ({
 
 // Import after mocking
 const core = await import('@rundown-org/core');
-const { runExecutionLoop } = await import('../../src/services/execution');
-const { validateGotoTarget, executeGoto } = await import('../../src/helpers/goto-workflow');
+const { runExecutionLoop } = await import('../../src/services/execution.js');
+const { validateGotoTarget, executeGoto } = await import('../../src/helpers/goto-workflow.js');
 
 function makeStep(overrides: Record<string, unknown> = {}): any {
   const obj = {
