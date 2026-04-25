@@ -18,7 +18,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   deriveActiveFrame: jest
     .fn()
     .mockReturnValue({ step: '1', substep: undefined, iteration: undefined, frameKey: '1' }),
-  getActiveForContext: jest.fn().mockReturnValue(null),
+  getActiveForContext: jest.fn<any>().mockReturnValue(null),
   buildFrameKey: jest.fn(
     (step: string, iteration?: number) =>
       `${step}|${iteration !== undefined ? String(iteration) : ''}`,
@@ -62,9 +62,9 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
       this.lockFile = lockFile;
     }
   },
-  reconstituteContextVars: jest.fn().mockReturnValue({}),
+  reconstituteContextVars: jest.fn<any>().mockReturnValue({}),
   extractInheritedUserVars: jest.fn(),
-  hashDelegationToken: jest.fn().mockReturnValue('sha256:mock'),
+  hashDelegationToken: jest.fn<any>().mockReturnValue('sha256:mock'),
   truncateDelegationToken: jest.fn((token: string) => {
     const prefix = 'rdtk_';
     const body = token.startsWith(prefix) ? token.slice(prefix.length) : token;
@@ -100,13 +100,13 @@ jest.unstable_mockModule('../../src/helpers/resolve-runbook', () => ({
 
 // Mock execution service
 jest.unstable_mockModule('../../src/services/execution', () => ({
-  buildStepVariables: jest.fn().mockReturnValue({ Step: '1.1' }),
-  runExecutionLoop: jest.fn().mockResolvedValue('done'),
+  buildStepVariables: jest.fn<any>().mockReturnValue({ Step: '1.1' }),
+  runExecutionLoop: jest.fn<any>().mockResolvedValue('done'),
 }));
 
 // Mock execution-emitter
 jest.unstable_mockModule('../../src/helpers/execution-emitter', () => ({
-  createBridgedEmitter: jest.fn().mockReturnValue({
+  createBridgedEmitter: jest.fn<any>().mockReturnValue({
     emit: jest.fn(),
   }),
 }));
@@ -127,10 +127,10 @@ jest.unstable_mockModule('../../src/services/variable-discovery', () => ({
     }
   },
   resolveVariables: jest
-    .fn()
+    .fn<any>()
     .mockResolvedValue({ vars: {}, warnings: [], providedKeys: new Set() }),
   RUNTIME_RESERVED_VARIABLES: new Set(['step', 'index', 'context']),
-  isRuntimeReservedVariable: jest.fn().mockReturnValue(false),
+  isRuntimeReservedVariable: jest.fn<any>().mockReturnValue(false),
 }));
 
 // Mock template-renderer
@@ -138,22 +138,22 @@ jest.unstable_mockModule('../../src/services/template-renderer', () => ({
   substituteRunbookVariables: jest.fn((runbook: unknown) => runbook),
   resolveForBounds: jest.fn((runbook: unknown) => ({ runbook, warnings: [] })),
   expandLoopVariables: jest.fn((text: string) => text),
-  warnUnresolvedRunbookVariables: jest.fn().mockReturnValue([]),
-  collectUnresolvedRunbookVariables: jest.fn().mockReturnValue(new Set()),
+  warnUnresolvedRunbookVariables: jest.fn<any>().mockReturnValue([]),
+  collectUnresolvedRunbookVariables: jest.fn<any>().mockReturnValue(new Set()),
 }));
 
 // Mock validate-frontmatter-vars
 jest.unstable_mockModule('../../src/helpers/validate-frontmatter-vars', () => ({
-  validateFrontmatterVars: jest.fn().mockReturnValue([]),
-  validateRequiredVars: jest.fn().mockReturnValue([]),
-  validateOutputsDeclarations: jest.fn().mockReturnValue([]),
+  validateFrontmatterVars: jest.fn<any>().mockReturnValue([]),
+  validateRequiredVars: jest.fn<any>().mockReturnValue([]),
+  validateOutputsDeclarations: jest.fn<any>().mockReturnValue([]),
 }));
 
 // Mock node:fs/promises
 const actualFsPromises = await import('node:fs/promises');
 jest.unstable_mockModule('node:fs/promises', () => ({
   ...actualFsPromises,
-  readFile: jest.fn().mockResolvedValue('# Test\n\n## 1. Step\n- PASS CONTINUE'),
+  readFile: jest.fn<any>().mockResolvedValue('# Test\n\n## 1. Step\n- PASS CONTINUE'),
 }));
 
 // Import after mocking
@@ -201,7 +201,7 @@ function makeState(id: string, overrides: Record<string, unknown> = {}): any {
 }
 
 function makeStep(overrides: Record<string, unknown> = {}): any {
-  const obj = {
+  const obj: Record<string, unknown> = {
     name: '1',
     description: 'Test Step',
     transitions: {
@@ -256,46 +256,46 @@ function makeLifecycle(overrides: Record<string, unknown> = {}): any {
 beforeEach(() => {
   jest.resetAllMocks();
   // Re-establish default mock implementations after reset
-  (runExecutionLoop as jest.Mock).mockResolvedValue('done');
-  (core.deriveExecutionAt as jest.Mock).mockImplementation(
+  (runExecutionLoop as jest.Mock<any>).mockResolvedValue('done');
+  (core.deriveExecutionAt as jest.Mock<any>).mockImplementation(
     (step: string, substep?: string, iteration?: number) =>
       `${step}${iteration != null ? `.${String(iteration)}` : ''}${substep ? `.${substep}` : ''}`,
   );
-  (core.getActiveForContext as jest.Mock).mockReturnValue(null);
-  (createBridgedEmitter as jest.Mock).mockReturnValue({ emit: jest.fn() });
-  (resolveVariables as jest.Mock).mockResolvedValue({
+  (core.getActiveForContext as jest.Mock<any>).mockReturnValue(null);
+  (createBridgedEmitter as jest.Mock<any>).mockReturnValue({ emit: jest.fn() });
+  (resolveVariables as jest.Mock<any>).mockResolvedValue({
     vars: {},
     sources: {},
     warnings: [],
     providedKeys: new Set(),
   });
-  (buildStepVariables as jest.Mock).mockReturnValue({ Step: '1.1' });
-  (substituteRunbookVariables as jest.Mock).mockImplementation((runbook: unknown) => runbook);
-  (resolveForBounds as jest.Mock).mockImplementation((runbook: unknown) => ({
+  (buildStepVariables as jest.Mock<any>).mockReturnValue({ Step: '1.1' });
+  (substituteRunbookVariables as jest.Mock<any>).mockImplementation((runbook: unknown) => runbook);
+  (resolveForBounds as jest.Mock<any>).mockImplementation((runbook: unknown) => ({
     runbook,
     warnings: [],
   }));
-  (expandLoopVariables as jest.Mock).mockImplementation((text: string) => text);
-  (warnUnresolvedRunbookVariables as jest.Mock).mockReturnValue([]);
-  (collectUnresolvedRunbookVariables as jest.Mock).mockReturnValue(new Set());
-  (validateFrontmatterVars as jest.Mock).mockReturnValue([]);
-  (validateRequiredVars as jest.Mock).mockReturnValue([]);
-  (validateOutputsDeclarations as jest.Mock).mockReturnValue([]);
-  (fsPromises.readFile as jest.Mock).mockResolvedValue('# Test\n\n## 1. Step\n- PASS CONTINUE');
+  (expandLoopVariables as jest.Mock<any>).mockImplementation((text: string) => text);
+  (warnUnresolvedRunbookVariables as jest.Mock<any>).mockReturnValue([]);
+  (collectUnresolvedRunbookVariables as jest.Mock<any>).mockReturnValue(new Set());
+  (validateFrontmatterVars as jest.Mock<any>).mockReturnValue([]);
+  (validateRequiredVars as jest.Mock<any>).mockReturnValue([]);
+  (validateOutputsDeclarations as jest.Mock<any>).mockReturnValue([]);
+  (fsPromises.readFile as jest.Mock<any>).mockResolvedValue('# Test\n\n## 1. Step\n- PASS CONTINUE');
   (
     parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
   ).mockReturnValue(mockParseResult());
-  (core.hashDelegationToken as jest.Mock).mockReturnValue('sha256:mock');
-  (core.reconstituteContextVars as jest.Mock).mockReturnValue({});
-  (core.extractInheritedUserVars as jest.Mock).mockReturnValue({});
-  (core.deriveActiveFrame as jest.Mock).mockReturnValue({
+  (core.hashDelegationToken as jest.Mock<any>).mockReturnValue('sha256:mock');
+  (core.reconstituteContextVars as jest.Mock<any>).mockReturnValue({});
+  (core.extractInheritedUserVars as jest.Mock<any>).mockReturnValue({});
+  (core.deriveActiveFrame as jest.Mock<any>).mockReturnValue({
     step: '1',
     substep: undefined,
     iteration: undefined,
     frameKey: '1',
   });
-  (core.isJsonArray as jest.Mock).mockImplementation((v: unknown) => Array.isArray(v));
-  (core.isJsonArrayStream as jest.Mock).mockImplementation(realIsJsonArrayStream);
+  (core.isJsonArray as unknown as jest.Mock<any>).mockImplementation((v: unknown) => Array.isArray(v));
+  (core.isJsonArrayStream as unknown as jest.Mock<any>).mockImplementation(realIsJsonArrayStream);
 });
 
 // validateSources was removed in the unified variable model refactoring.
@@ -303,7 +303,7 @@ beforeEach(() => {
 
 describe('prepareRunbook', () => {
   it('returns error when file not found', async () => {
-    resolveRunbookFile.mockResolvedValue(null);
+    (resolveRunbookFile as jest.Mock<any>).mockResolvedValue(null);
 
     const result = await prepareRunbook('missing.md', {}, '/test');
 
@@ -314,7 +314,7 @@ describe('prepareRunbook', () => {
   });
 
   it('returns error when runbook has no steps', async () => {
-    resolveRunbookFile.mockResolvedValue({ path: '/test/empty.md', source: 'project' });
+    (resolveRunbookFile as jest.Mock<any>).mockResolvedValue({ path: '/test/empty.md', source: 'project' });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue(mockParseResult({ runbook: { steps: [] } }));
@@ -329,7 +329,7 @@ describe('prepareRunbook', () => {
   });
 
   it('returns prepared runbook on success', async () => {
-    resolveRunbookFile.mockResolvedValue({ path: '/test/good.md', source: 'project' });
+    (resolveRunbookFile as jest.Mock<any>).mockResolvedValue({ path: '/test/good.md', source: 'project' });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue(mockParseResult());
@@ -344,11 +344,11 @@ describe('prepareRunbook', () => {
   });
 
   it('adds context.vars aliases to merged template variables', async () => {
-    resolveRunbookFile.mockResolvedValue({ path: '/test/good.md', source: 'project' });
+    (resolveRunbookFile as jest.Mock<any>).mockResolvedValue({ path: '/test/good.md', source: 'project' });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue(mockParseResult());
-    (resolveVariables as jest.Mock).mockResolvedValue({
+    (resolveVariables as jest.Mock<any>).mockResolvedValue({
       vars: { region: 'us-west' },
       sources: {},
       warnings: [],
@@ -368,11 +368,11 @@ describe('prepareRunbook', () => {
   });
 
   it('adds context.vars.* aliases for inherited user vars', async () => {
-    resolveRunbookFile.mockResolvedValue({ path: '/test/child.md', source: 'project' });
+    (resolveRunbookFile as jest.Mock<any>).mockResolvedValue({ path: '/test/child.md', source: 'project' });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue(mockParseResult());
-    (resolveVariables as jest.Mock).mockResolvedValue({
+    (resolveVariables as jest.Mock<any>).mockResolvedValue({
       vars: {},
       sources: {},
       warnings: [],
@@ -394,11 +394,11 @@ describe('prepareRunbook', () => {
   });
 
   it('child vars override inherited in context.vars.* aliases', async () => {
-    resolveRunbookFile.mockResolvedValue({ path: '/test/child.md', source: 'project' });
+    (resolveRunbookFile as jest.Mock<any>).mockResolvedValue({ path: '/test/child.md', source: 'project' });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue(mockParseResult());
-    (resolveVariables as jest.Mock).mockResolvedValue({
+    (resolveVariables as jest.Mock<any>).mockResolvedValue({
       vars: { Region: 'eu-central' },
       sources: {},
       warnings: [],
@@ -420,7 +420,7 @@ describe('prepareRunbook', () => {
   });
 
   it('passes parser frontmatter inputs into variable resolution', async () => {
-    resolveRunbookFile.mockResolvedValue({ path: '/test/good.md', source: 'project' });
+    (resolveRunbookFile as jest.Mock<any>).mockResolvedValue({ path: '/test/good.md', source: 'project' });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue(
@@ -441,7 +441,7 @@ describe('prepareRunbook', () => {
   });
 
   it('returns VALIDATION_ERROR when frontmatter inputs use reserved names', async () => {
-    resolveRunbookFile.mockResolvedValue({ path: '/test/reserved.md', source: 'project' });
+    (resolveRunbookFile as jest.Mock<any>).mockResolvedValue({ path: '/test/reserved.md', source: 'project' });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue(
@@ -449,7 +449,7 @@ describe('prepareRunbook', () => {
         frontmatter: { inputs: { context: '' } },
       }),
     );
-    (validateFrontmatterVars as jest.Mock).mockReturnValue([
+    (validateFrontmatterVars as jest.Mock<any>).mockReturnValue([
       {
         severity: 'error',
         message:
@@ -514,7 +514,7 @@ describe('prepareRunbook', () => {
   });
 
   it('returns MISSING_REQUIRED_VARS when required var is not provided', async () => {
-    resolveRunbookFile.mockResolvedValue({ path: '/test/needs-var.md', source: 'project' });
+    (resolveRunbookFile as jest.Mock<any>).mockResolvedValue({ path: '/test/needs-var.md', source: 'project' });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue(
@@ -534,7 +534,7 @@ describe('prepareRunbook', () => {
   });
 
   it('succeeds when required var is provided via CLI', async () => {
-    resolveRunbookFile.mockResolvedValue({ path: '/test/needs-var.md', source: 'project' });
+    (resolveRunbookFile as jest.Mock<any>).mockResolvedValue({ path: '/test/needs-var.md', source: 'project' });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue(
@@ -542,7 +542,7 @@ describe('prepareRunbook', () => {
         frontmatter: { required: ['PlanPath'] },
       }),
     );
-    (resolveVariables as jest.Mock).mockResolvedValue({
+    (resolveVariables as jest.Mock<any>).mockResolvedValue({
       vars: { PlanPath: '/some/path' },
       sources: {},
       warnings: [],
@@ -555,7 +555,7 @@ describe('prepareRunbook', () => {
   });
 
   it('fails when required var exists only as builtin', async () => {
-    resolveRunbookFile.mockResolvedValue({ path: '/test/needs-date.md', source: 'project' });
+    (resolveRunbookFile as jest.Mock<any>).mockResolvedValue({ path: '/test/needs-date.md', source: 'project' });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue(
@@ -564,7 +564,7 @@ describe('prepareRunbook', () => {
       }),
     );
     // Date is in vars (builtin) but NOT in providedKeys (external layers)
-    (resolveVariables as jest.Mock).mockResolvedValue({
+    (resolveVariables as jest.Mock<any>).mockResolvedValue({
       vars: { Date: '2026-01-01' },
       sources: {},
       warnings: [],
@@ -581,7 +581,7 @@ describe('prepareRunbook', () => {
   });
 
   it('returns VALIDATION_ERROR (not MISSING_REQUIRED_VARS) for invalid identifier in required', async () => {
-    resolveRunbookFile.mockResolvedValue({ path: '/test/bad-req.md', source: 'project' });
+    (resolveRunbookFile as jest.Mock<any>).mockResolvedValue({ path: '/test/bad-req.md', source: 'project' });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue(
@@ -590,7 +590,7 @@ describe('prepareRunbook', () => {
       }),
     );
     // validateRequiredVars returns an error diagnostic for the invalid identifier
-    (validateRequiredVars as jest.Mock).mockReturnValue([
+    (validateRequiredVars as jest.Mock<any>).mockReturnValue([
       { severity: 'error', message: 'Required variable "123bad" is not a valid identifier' },
     ]);
 
@@ -604,7 +604,7 @@ describe('prepareRunbook', () => {
   });
 
   it('returns VALIDATION_ERROR (not MISSING_REQUIRED_VARS) for reserved name in required', async () => {
-    resolveRunbookFile.mockResolvedValue({ path: '/test/reserved-req.md', source: 'project' });
+    (resolveRunbookFile as jest.Mock<any>).mockResolvedValue({ path: '/test/reserved-req.md', source: 'project' });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue(
@@ -613,7 +613,7 @@ describe('prepareRunbook', () => {
       }),
     );
     // validateRequiredVars returns an error diagnostic for the reserved name
-    (validateRequiredVars as jest.Mock).mockReturnValue([
+    (validateRequiredVars as jest.Mock<any>).mockReturnValue([
       {
         severity: 'error',
         message:
@@ -631,7 +631,7 @@ describe('prepareRunbook', () => {
   });
 
   it('returns error when validateSources throws', async () => {
-    resolveRunbookFile.mockResolvedValue({ path: '/test/sourced.md', source: 'project' });
+    (resolveRunbookFile as jest.Mock<any>).mockResolvedValue({ path: '/test/sourced.md', source: 'project' });
     (parser.isSourced as jest.MockedFunction<typeof parser.isSourced>).mockReturnValue(true);
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
@@ -653,7 +653,7 @@ describe('prepareRunbook', () => {
   });
 
   it('returns VALIDATION_ERROR when parser diagnostics contain errors', async () => {
-    resolveRunbookFile.mockResolvedValue({ path: '/test/bad-for.md', source: 'project' });
+    (resolveRunbookFile as jest.Mock<any>).mockResolvedValue({ path: '/test/bad-for.md', source: 'project' });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue(
@@ -674,7 +674,7 @@ describe('prepareRunbook', () => {
   });
 
   it('returns PrepareFailure when resolveForBounds throws for invalid value', async () => {
-    resolveRunbookFile.mockResolvedValue({ path: '/test/for-bounds.md', source: 'project' });
+    (resolveRunbookFile as jest.Mock<any>).mockResolvedValue({ path: '/test/for-bounds.md', source: 'project' });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue(
@@ -689,7 +689,7 @@ describe('prepareRunbook', () => {
         },
       }),
     );
-    (resolveForBounds as jest.Mock).mockImplementation(() => {
+    (resolveForBounds as jest.Mock<any>).mockImplementation(() => {
       throw new Error(
         'FOR end bound "{{Max}}" in step "1" resolved to "hello" — must be a positive integer',
       );
@@ -704,8 +704,8 @@ describe('prepareRunbook', () => {
   });
 
   it('returns POLICY_DENIED when file-backed variable resolution is blocked by policy', async () => {
-    resolveRunbookFile.mockResolvedValue({ path: '/test/good.md', source: 'project' });
-    (resolveVariables as jest.Mock).mockRejectedValue(
+    (resolveRunbookFile as jest.Mock<any>).mockResolvedValue({ path: '/test/good.md', source: 'project' });
+    (resolveVariables as jest.Mock<any>).mockRejectedValue(
       new FileSourcePolicyError('items', '/test/.env', 'Path blocked by policy'),
     );
 
@@ -725,7 +725,7 @@ describe('prepareRunbook', () => {
   });
 
   it('injects CLAUDE_PLUGIN_ROOT when runbook resolves from plugin source', async () => {
-    resolveRunbookFile.mockResolvedValue({
+    (resolveRunbookFile as jest.Mock<any>).mockResolvedValue({
       path: '/home/user/.claude/extensions/rundown-plugin/runbooks/write-plan.runbook.md',
       source: 'plugin' as const,
     });
@@ -746,7 +746,7 @@ describe('prepareRunbook', () => {
   });
 
   it('does not inject CLAUDE_PLUGIN_ROOT when runbook resolves from project source', async () => {
-    resolveRunbookFile.mockResolvedValue({
+    (resolveRunbookFile as jest.Mock<any>).mockResolvedValue({
       path: '/test/.rundown/runbooks/my-runbook.runbook.md',
       source: 'project' as const,
     });
@@ -766,14 +766,14 @@ describe('prepareRunbook', () => {
   });
 
   it('allows --input to override CLAUDE_PLUGIN_ROOT', async () => {
-    resolveRunbookFile.mockResolvedValue({
+    (resolveRunbookFile as jest.Mock<any>).mockResolvedValue({
       path: '/home/user/.claude/extensions/rundown-plugin/runbooks/write-plan.runbook.md',
       source: 'plugin' as const,
     });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue(mockParseResult());
-    (resolveVariables as jest.Mock).mockResolvedValue({
+    (resolveVariables as jest.Mock<any>).mockResolvedValue({
       vars: { CLAUDE_PLUGIN_ROOT: '/custom/override' },
       sources: {},
       warnings: [],
@@ -805,7 +805,7 @@ describe('startRunbook', () => {
     const mockPushRunbook = jest.fn<any>().mockResolvedValue(undefined);
     const mockOutput = { flush: jest.fn() };
 
-    runExecutionLoop.mockResolvedValue('done');
+    (runExecutionLoop as jest.Mock<any>).mockResolvedValue('done');
 
     const ctx = {
       output: mockOutput as any,
@@ -828,7 +828,7 @@ describe('startRunbook', () => {
       sources: {},
     };
 
-    const result = await startRunbook(ctx as any, prepared, { file: 'runbook.md' });
+    const result = await startRunbook(ctx as any, prepared as any, { file: 'runbook.md' });
 
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -852,7 +852,7 @@ describe('startRunbook', () => {
     const mockCreate = jest
       .fn<any>()
       .mockResolvedValue({ id: 'x', title: 'T', substeps: undefined });
-    runExecutionLoop.mockResolvedValue('done');
+    (runExecutionLoop as jest.Mock<any>).mockResolvedValue('done');
 
     const ctx = {
       output: { flush: jest.fn() } as any,
@@ -893,7 +893,7 @@ describe('startRunbook', () => {
       title: 'Sub Test',
     });
 
-    runExecutionLoop.mockResolvedValue('done');
+    (runExecutionLoop as jest.Mock<any>).mockResolvedValue('done');
 
     const mockLoad = jest.fn<any>().mockResolvedValue({
       id: 'sub-id',
@@ -924,7 +924,7 @@ describe('startRunbook', () => {
       sources: {},
     };
 
-    const result = await startRunbook(ctx as any, prepared, { file: 'runbook.md' });
+    const result = await startRunbook(ctx as any, prepared as any, { file: 'runbook.md' });
 
     expect(result.ok).toBe(true);
     expect(mockInitSubsteps).toHaveBeenCalledWith('sub-id', substeps, '1|');
@@ -957,7 +957,7 @@ describe('claimAndLaunch', () => {
     const mockScanner = {
       findByToken: jest.fn<any>().mockResolvedValue(null),
     };
-    (core.DelegationScanService as jest.Mock).mockImplementation(() => mockScanner);
+    (core.DelegationScanService as jest.Mock<any>).mockImplementation(() => mockScanner);
 
     const ctx = {
       output: {} as any,
@@ -1003,18 +1003,18 @@ describe('claimAndLaunch', () => {
         .fn<any>()
         .mockResolvedValue({ parentState, stepId: '1', substepId: '1', delegation }),
     };
-    (core.DelegationScanService as jest.Mock).mockImplementation(() => mockScanner);
+    (core.DelegationScanService as jest.Mock<any>).mockImplementation(() => mockScanner);
 
     const mockManager = {
       load: jest.fn<any>().mockResolvedValue(parentState),
     };
-    (core.RunbookStateManager as jest.Mock).mockImplementation(() => mockManager);
+    (core.RunbookStateManager as unknown as jest.Mock<any>).mockImplementation(() => mockManager);
 
-    const mockLock = jest.fn().mockImplementation(() => ({
+    const mockLock = jest.fn<any>().mockImplementation(() => ({
       acquire: jest.fn<any>().mockResolvedValue(undefined),
       release: jest.fn<any>().mockResolvedValue(undefined),
     }));
-    (core.DelegationLock as jest.Mock).mockImplementation(mockLock);
+    (core.DelegationLock as jest.Mock<any>).mockImplementation(mockLock);
 
     const ctx = {
       output: {} as any,
@@ -1061,18 +1061,18 @@ describe('claimAndLaunch', () => {
         .fn<any>()
         .mockResolvedValue({ parentState, stepId: '1', substepId: '1', delegation }),
     };
-    (core.DelegationScanService as jest.Mock).mockImplementation(() => mockScanner);
+    (core.DelegationScanService as jest.Mock<any>).mockImplementation(() => mockScanner);
 
     const mockManager = {
       load: jest.fn<any>().mockResolvedValue(parentState),
     };
-    (core.RunbookStateManager as jest.Mock).mockImplementation(() => mockManager);
+    (core.RunbookStateManager as unknown as jest.Mock<any>).mockImplementation(() => mockManager);
 
-    const mockLock = jest.fn().mockImplementation(() => ({
+    const mockLock = jest.fn<any>().mockImplementation(() => ({
       acquire: jest.fn<any>().mockResolvedValue(undefined),
       release: jest.fn<any>().mockResolvedValue(undefined),
     }));
-    (core.DelegationLock as jest.Mock).mockImplementation(mockLock);
+    (core.DelegationLock as jest.Mock<any>).mockImplementation(mockLock);
 
     const ctx = {
       output: {} as any,
@@ -1128,19 +1128,19 @@ describe('claimAndLaunch', () => {
         .mockResolvedValue({ parentState, stepId: '1', substepId: '1', delegation }),
       findOrphanedChild: jest.fn<any>().mockResolvedValue(orphanState),
     };
-    (core.DelegationScanService as jest.Mock).mockImplementation(() => mockScanner);
+    (core.DelegationScanService as jest.Mock<any>).mockImplementation(() => mockScanner);
 
     const mockManager = {
       load: jest.fn<any>().mockResolvedValue(parentState),
       update: jest.fn<any>().mockResolvedValue(undefined),
     };
-    (core.RunbookStateManager as jest.Mock).mockImplementation(() => mockManager);
+    (core.RunbookStateManager as unknown as jest.Mock<any>).mockImplementation(() => mockManager);
 
-    const mockLock = jest.fn().mockImplementation(() => ({
+    const mockLock = jest.fn<any>().mockImplementation(() => ({
       acquire: jest.fn<any>().mockResolvedValue(undefined),
       release: jest.fn<any>().mockResolvedValue(undefined),
     }));
-    (core.DelegationLock as jest.Mock).mockImplementation(mockLock);
+    (core.DelegationLock as jest.Mock<any>).mockImplementation(mockLock);
 
     const ctx = {
       output: {} as any,
@@ -1189,13 +1189,13 @@ describe('claimAndLaunch', () => {
         .mockResolvedValue({ parentState, stepId: '1', substepId: '1', delegation }),
       findOrphanedChild: jest.fn<any>().mockResolvedValue(null),
     };
-    (core.DelegationScanService as jest.Mock).mockImplementation(() => mockScanner);
+    (core.DelegationScanService as jest.Mock<any>).mockImplementation(() => mockScanner);
 
-    resolveRunbookFile.mockResolvedValue({ path: '/test/child.md', source: 'project' });
+    (resolveRunbookFile as jest.Mock<any>).mockResolvedValue({ path: '/test/child.md', source: 'project' });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue(mockParseResult());
-    (core.reconstituteContextVars as jest.Mock).mockReturnValue({});
+    (core.reconstituteContextVars as jest.Mock<any>).mockReturnValue({});
 
     const mockCreate = jest.fn<any>().mockResolvedValue({
       id: 'new-child-id',
@@ -1209,15 +1209,15 @@ describe('claimAndLaunch', () => {
       update: mockUpdate,
       initializeSubsteps: jest.fn<any>().mockResolvedValue(undefined),
     };
-    (core.RunbookStateManager as jest.Mock).mockImplementation(() => mockManager);
+    (core.RunbookStateManager as unknown as jest.Mock<any>).mockImplementation(() => mockManager);
 
-    const mockLock = jest.fn().mockImplementation(() => ({
+    const mockLock = jest.fn<any>().mockImplementation(() => ({
       acquire: jest.fn<any>().mockResolvedValue(undefined),
       release: jest.fn<any>().mockResolvedValue(undefined),
     }));
-    (core.DelegationLock as jest.Mock).mockImplementation(mockLock);
+    (core.DelegationLock as jest.Mock<any>).mockImplementation(mockLock);
 
-    runExecutionLoop.mockResolvedValue('waiting');
+    (runExecutionLoop as jest.Mock<any>).mockResolvedValue('waiting');
 
     const ctx = {
       output: { status: jest.fn(), flush: jest.fn() } as any,
@@ -1285,13 +1285,13 @@ describe('claimAndLaunch', () => {
         .mockResolvedValue({ parentState, stepId: '1', substepId: '1', delegation }),
       findOrphanedChild: jest.fn<any>().mockResolvedValue(null),
     };
-    (core.DelegationScanService as jest.Mock).mockImplementation(() => mockScanner);
+    (core.DelegationScanService as jest.Mock<any>).mockImplementation(() => mockScanner);
 
-    resolveRunbookFile.mockResolvedValue({ path: '/test/child.md', source: 'project' });
+    (resolveRunbookFile as jest.Mock<any>).mockResolvedValue({ path: '/test/child.md', source: 'project' });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue(mockParseResult());
-    (resolveVariables as jest.Mock).mockResolvedValue({
+    (resolveVariables as jest.Mock<any>).mockResolvedValue({
       vars: { RunId: 'child-run', ContextId: 'ctx-parent', Region: 'us-west' },
       sources: {},
       warnings: [],
@@ -1307,14 +1307,14 @@ describe('claimAndLaunch', () => {
       update: jest.fn<any>().mockResolvedValue(undefined),
       initializeSubsteps: jest.fn<any>().mockResolvedValue(undefined),
     };
-    (core.RunbookStateManager as jest.Mock).mockImplementation(() => mockManager);
+    (core.RunbookStateManager as unknown as jest.Mock<any>).mockImplementation(() => mockManager);
 
-    (core.DelegationLock as jest.Mock).mockImplementation(() => ({
+    (core.DelegationLock as jest.Mock<any>).mockImplementation(() => ({
       acquire: jest.fn<any>().mockResolvedValue(undefined),
       release: jest.fn<any>().mockResolvedValue(undefined),
     }));
 
-    runExecutionLoop.mockResolvedValue('waiting');
+    (runExecutionLoop as jest.Mock<any>).mockResolvedValue('waiting');
 
     const ctx = {
       output: { status: jest.fn(), flush: jest.fn() } as any,
@@ -1325,7 +1325,7 @@ describe('claimAndLaunch', () => {
       cwd: '/test',
     };
 
-    (core.extractInheritedUserVars as jest.Mock).mockReturnValue({
+    (core.extractInheritedUserVars as jest.Mock<any>).mockReturnValue({
       ContextId: 'ctx-parent',
       Region: 'us-west',
     });
@@ -1335,7 +1335,9 @@ describe('claimAndLaunch', () => {
     const result = await claimAndLaunch(ctx as any, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
 
     expect(result.ok).toBe(true);
-    const resolveCall = (resolveVariables as jest.Mock).mock.calls.at(-1);
+    const resolveCall = (resolveVariables as jest.Mock<any>).mock.calls.at(-1) as
+      | [{ inheritedVars: Record<string, unknown> }, ...unknown[]]
+      | undefined;
     expect(resolveCall).toBeDefined();
     expect(resolveCall?.[0]).toEqual(
       expect.objectContaining({
@@ -1383,18 +1385,18 @@ describe('claimAndLaunch', () => {
         .mockResolvedValue({ parentState, stepId: '1', substepId: '1', delegation }),
       findOrphanedChild: jest.fn<any>().mockResolvedValue(null),
     };
-    (core.DelegationScanService as jest.Mock).mockImplementation(() => mockScanner);
+    (core.DelegationScanService as jest.Mock<any>).mockImplementation(() => mockScanner);
 
-    resolveRunbookFile.mockResolvedValue({ path: '/test/child.md', source: 'project' });
+    (resolveRunbookFile as jest.Mock<any>).mockResolvedValue({ path: '/test/child.md', source: 'project' });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue(mockParseResult());
-    (core.extractInheritedUserVars as jest.Mock).mockReturnValue({
+    (core.extractInheritedUserVars as jest.Mock<any>).mockReturnValue({
       ContextId: 'ctx-parent',
       Region: 'us-west',
       Tag: 'from-parent',
     });
-    (resolveVariables as jest.Mock).mockResolvedValue({
+    (resolveVariables as jest.Mock<any>).mockResolvedValue({
       vars: {
         RunId: 'child-run',
         ContextId: 'ctx-parent',
@@ -1415,14 +1417,14 @@ describe('claimAndLaunch', () => {
       update: jest.fn<any>().mockResolvedValue(undefined),
       initializeSubsteps: jest.fn<any>().mockResolvedValue(undefined),
     };
-    (core.RunbookStateManager as jest.Mock).mockImplementation(() => mockManager);
+    (core.RunbookStateManager as unknown as jest.Mock<any>).mockImplementation(() => mockManager);
 
-    (core.DelegationLock as jest.Mock).mockImplementation(() => ({
+    (core.DelegationLock as jest.Mock<any>).mockImplementation(() => ({
       acquire: jest.fn<any>().mockResolvedValue(undefined),
       release: jest.fn<any>().mockResolvedValue(undefined),
     }));
 
-    runExecutionLoop.mockResolvedValue('waiting');
+    (runExecutionLoop as jest.Mock<any>).mockResolvedValue('waiting');
 
     const ctx = {
       output: { status: jest.fn(), flush: jest.fn() } as any,
@@ -1439,7 +1441,7 @@ describe('claimAndLaunch', () => {
 
     expect(result.ok).toBe(true);
     // Inherited vars are passed into resolveVariables untouched
-    const resolveCall = (resolveVariables as jest.Mock).mock.calls.at(-1);
+    const resolveCall = (resolveVariables as jest.Mock<any>).mock.calls.at(-1);
     expect(resolveCall?.[0]).toEqual(
       expect.objectContaining({
         inheritedVars: {
@@ -1478,21 +1480,21 @@ describe('claimAndLaunch', () => {
         .mockResolvedValue({ parentState, stepId: '1', substepId: '1', delegation }),
       findOrphanedChild: jest.fn<any>().mockResolvedValue(null),
     };
-    (core.DelegationScanService as jest.Mock).mockImplementation(() => mockScanner);
+    (core.DelegationScanService as jest.Mock<any>).mockImplementation(() => mockScanner);
 
-    resolveRunbookFile.mockResolvedValue(null); // File not found
+    (resolveRunbookFile as jest.Mock<any>).mockResolvedValue(null); // File not found
 
     const mockManager = {
       load: jest.fn<any>().mockResolvedValue(parentState),
     };
-    (core.RunbookStateManager as jest.Mock).mockImplementation(() => mockManager);
-    (core.reconstituteContextVars as jest.Mock).mockReturnValue({});
+    (core.RunbookStateManager as unknown as jest.Mock<any>).mockImplementation(() => mockManager);
+    (core.reconstituteContextVars as jest.Mock<any>).mockReturnValue({});
 
-    const mockLock = jest.fn().mockImplementation(() => ({
+    const mockLock = jest.fn<any>().mockImplementation(() => ({
       acquire: jest.fn<any>().mockResolvedValue(undefined),
       release: jest.fn<any>().mockResolvedValue(undefined),
     }));
-    (core.DelegationLock as jest.Mock).mockImplementation(mockLock);
+    (core.DelegationLock as jest.Mock<any>).mockImplementation(mockLock);
 
     const ctx = {
       output: {} as any,
@@ -1541,13 +1543,13 @@ describe('claimAndLaunch', () => {
         .mockResolvedValue({ parentState, stepId: '1', substepId: '1', delegation }),
       findOrphanedChild: jest.fn<any>().mockResolvedValue(null),
     };
-    (core.DelegationScanService as jest.Mock).mockImplementation(() => mockScanner);
+    (core.DelegationScanService as jest.Mock<any>).mockImplementation(() => mockScanner);
 
-    resolveRunbookFile.mockResolvedValue({ path: '/test/child.md', source: 'project' });
+    (resolveRunbookFile as jest.Mock<any>).mockResolvedValue({ path: '/test/child.md', source: 'project' });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue(mockParseResult());
-    (core.reconstituteContextVars as jest.Mock).mockReturnValue({});
+    (core.reconstituteContextVars as jest.Mock<any>).mockReturnValue({});
 
     const mockCreate = jest.fn<any>().mockResolvedValue({
       id: 'child-id',
@@ -1560,15 +1562,15 @@ describe('claimAndLaunch', () => {
       update: jest.fn<any>().mockResolvedValue(undefined),
       initializeSubsteps: jest.fn<any>().mockResolvedValue(undefined),
     };
-    (core.RunbookStateManager as jest.Mock).mockImplementation(() => mockManager);
+    (core.RunbookStateManager as unknown as jest.Mock<any>).mockImplementation(() => mockManager);
 
-    const mockLock = jest.fn().mockImplementation(() => ({
+    const mockLock = jest.fn<any>().mockImplementation(() => ({
       acquire: jest.fn<any>().mockResolvedValue(undefined),
       release: jest.fn<any>().mockResolvedValue(undefined),
     }));
-    (core.DelegationLock as jest.Mock).mockImplementation(mockLock);
+    (core.DelegationLock as jest.Mock<any>).mockImplementation(mockLock);
 
-    runExecutionLoop.mockResolvedValue('waiting');
+    (runExecutionLoop as jest.Mock<any>).mockResolvedValue('waiting');
 
     const ctx = {
       output: { status: jest.fn(), flush: jest.fn() } as any,
