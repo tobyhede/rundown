@@ -7,11 +7,19 @@ import {
 import type { DelegateOptions } from '../../src/runbook/delegation-service.js';
 import { hashDelegationToken, TOKEN_PREFIX } from '../../src/runbook/delegation-token.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
-import type { RunbookState, Step, AncestorSnapshot } from '../../src/runbook/types.js';
+import type { RunbookState, ResolvedStep, AncestorSnapshot } from '../../src/runbook/types.js';
 import {
   brandInitialTemplateVarsForTest,
   brandStoredOutputsForTest,
 } from '../helpers/effective-vars.js';
+import {
+  makeBaseStep,
+  makeResolvedStepWithSubsteps,
+  makeResolvedStepWithFor,
+  makeResolvedStepWithPromptedFor,
+  makeSubstep,
+  makeStepDelegation,
+} from '../helpers/step-factories.js';
 
 /** Helper: create minimal RunbookState for testing. */
 function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
@@ -35,61 +43,46 @@ function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
   } as RunbookState;
 }
 
-/** Helper: create minimal Step[] for testing. */
-function makeSteps(stepName = '1', substepIds: string[] = ['1', '2']): readonly Step[] {
+/** Helper: create minimal ResolvedStep[] for testing. */
+function makeSteps(stepName = '1', substepIds: string[] = ['1', '2']): readonly ResolvedStep[] {
   return [
-    {
-      kind: 'substeps',
+    makeResolvedStepWithSubsteps({
       name: stepName,
       description: 'Test step',
-      substeps: substepIds.map((id) => ({
-        id,
-        description: `Substep ${id}`,
-      })),
-    },
-  ] as readonly Step[];
+      substeps: substepIds.map((id) => makeSubstep({ id, description: `Substep ${id}` })),
+    }),
+  ];
 }
 
 /** Helper: create steps without substeps. */
-function makeSimpleSteps(stepName = '1'): readonly Step[] {
-  return [
-    {
-      kind: 'base',
-      name: stepName,
-      description: 'Simple step',
-    },
-  ] as readonly Step[];
+function makeSimpleSteps(stepName = '1'): readonly ResolvedStep[] {
+  return [makeBaseStep({ name: stepName, description: 'Simple step' })];
 }
 
 /** Helper: create FOR steps with substeps (supports three-level step IDs). */
-function makeForSteps(stepName = '1', substepIds: string[] = ['1', '2']): readonly Step[] {
+function makeForSteps(stepName = '1', substepIds: string[] = ['1', '2']): readonly ResolvedStep[] {
   return [
-    {
-      kind: 'for',
+    makeResolvedStepWithFor({
       name: stepName,
       description: 'FOR step',
       forClause: { variable: 'i', start: 1, end: 10 },
-      substeps: substepIds.map((id) => ({
-        id,
-        description: `Substep ${id}`,
-      })),
-    },
-  ] as readonly Step[];
+      substeps: substepIds.map((id) => makeSubstep({ id, description: `Substep ${id}` })),
+    }),
+  ];
 }
 
 /** Helper: create prompted-for steps with substeps (supports three-level step IDs). */
-function makePromptedForSteps(stepName = '1', substepIds: string[] = ['1', '2']): readonly Step[] {
+function makePromptedForSteps(
+  stepName = '1',
+  substepIds: string[] = ['1', '2'],
+): readonly ResolvedStep[] {
   return [
-    {
-      kind: 'prompted-for',
+    makeResolvedStepWithPromptedFor({
       name: stepName,
       description: 'Prompted-FOR step',
-      substeps: substepIds.map((id) => ({
-        id,
-        description: `Substep ${id}`,
-      })),
-    },
-  ] as readonly Step[];
+      substeps: substepIds.map((id) => makeSubstep({ id, description: `Substep ${id}` })),
+    }),
+  ];
 }
 
 describe('createDelegation', () => {
@@ -175,10 +168,10 @@ describe('createDelegation', () => {
 
   it('throws DELEGATION_STEP_NOT_CURRENT when step is not at frontier', () => {
     const state = makeState({ step: '2' });
-    const steps = [
+    const steps: readonly ResolvedStep[] = [
       ...makeSteps('1'),
-      { kind: 'base' as const, name: '2', description: 'Step 2' },
-    ] as readonly Step[];
+      makeBaseStep({ name: '2', description: 'Step 2' }),
+    ];
 
     expect(() =>
       createDelegation(
@@ -189,14 +182,10 @@ describe('createDelegation', () => {
   });
 
   it('throws DELEGATION_ALREADY_EXISTS for duplicate active delegation', () => {
-    const existingDelegation = {
+    const existingDelegation = makeStepDelegation({
       tokenHash: `sha256:${'a'.repeat(64)}`,
       childRunbookPath: 'other-child.md',
-      contextSnapshot: { vars: {}, ancestors: [] },
-      childRunId: null,
-      createdAt: '2026-02-27T10:00:00.000Z',
-      cancelledAt: null,
-    };
+    });
     const state = makeState({
       substepStates: [
         {
@@ -219,14 +208,11 @@ describe('createDelegation', () => {
   });
 
   it('allows re-delegation when previous delegation has childRunId set', () => {
-    const claimedDelegation = {
+    const claimedDelegation = makeStepDelegation({
       tokenHash: `sha256:${'a'.repeat(64)}`,
       childRunbookPath: 'other-child.md',
-      contextSnapshot: { vars: {}, ancestors: [] },
       childRunId: 'run_123',
-      createdAt: '2026-02-27T10:00:00.000Z',
-      cancelledAt: null,
-    };
+    });
     const state = makeState({
       substepStates: [
         { id: '1', frameKey: buildFrameKey('1'), status: 'pending', delegation: claimedDelegation },
@@ -247,14 +233,11 @@ describe('createDelegation', () => {
   });
 
   it('allows re-delegation when previous delegation is cancelled', () => {
-    const cancelledDelegation = {
+    const cancelledDelegation = makeStepDelegation({
       tokenHash: `sha256:${'a'.repeat(64)}`,
       childRunbookPath: 'other-child.md',
-      contextSnapshot: { vars: {}, ancestors: [] },
-      childRunId: null,
-      createdAt: '2026-02-27T10:00:00.000Z',
       cancelledAt: '2026-02-27T11:00:00.000Z',
-    };
+    });
     const state = makeState({
       substepStates: [
         {
@@ -539,14 +522,11 @@ describe('createDelegation', () => {
   });
 
   it('allows re-delegation after child run completes (childRunId set)', () => {
-    const completedDelegation = {
+    const completedDelegation = makeStepDelegation({
       tokenHash: `sha256:${'a'.repeat(64)}`,
       childRunbookPath: 'old-child.md',
-      contextSnapshot: { vars: {}, ancestors: [] },
       childRunId: 'completed-run-123',
-      createdAt: '2026-02-27T10:00:00.000Z',
-      cancelledAt: null,
-    };
+    });
     const state = makeState({
       substepStates: [
         { id: '1', frameKey: buildFrameKey('1'), status: 'done', delegation: completedDelegation },
@@ -744,14 +724,10 @@ describe('createDelegation', () => {
   });
 
   it('allows delegation on iteration 2 when iteration 1 has active delegation', () => {
-    const delegation1 = {
+    const delegation1 = makeStepDelegation({
       tokenHash: `sha256:${'a'.repeat(64)}`,
       childRunbookPath: 'child.md',
-      contextSnapshot: { vars: {}, ancestors: [] },
-      childRunId: null,
-      createdAt: '2026-02-27T10:00:00.000Z',
-      cancelledAt: null,
-    };
+    });
     const state = makeState({
       substepStates: [
         { id: '1', frameKey: buildFrameKey('1', 1), status: 'pending', delegation: delegation1 },
@@ -1009,9 +985,9 @@ describe('retryDelegation', () => {
 
   it('returns { status: "not_current" } when the step is not at the execution frontier', () => {
     const baseState = makeState({ step: '2' });
-    const multiStepSteps: readonly Step[] = [
+    const multiStepSteps: readonly ResolvedStep[] = [
       ...makeSteps('1'),
-      { kind: 'base', name: '2', description: 'Other step' } as Step,
+      makeBaseStep({ name: '2', description: 'Other step' }),
     ];
     // Seed a delegation on step 1's substep, then attempt retry when state.step === '2'.
     const initial = createDelegation(

@@ -8,6 +8,7 @@ import {
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type { Step } from '../../src/runbook/types.js';
 import type { SubstepState } from '../../src/runbook/types.js';
+import { makeBaseStep } from '../helpers/step-factories.js';
 
 describe('GOTO NEXT action handling', () => {
   it('evaluatePassCondition returns goto for GOTO NEXT action', () => {
@@ -154,10 +155,9 @@ describe('evaluateSubstepAggregation', () => {
 
 describe('evaluateFailCondition', () => {
   it('returns message for COMPLETE action with message', () => {
-    const step: any = {
+    const step = makeBaseStep({
       name: '1',
       description: 'Test',
-
       transitions: {
         pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
         fail: {
@@ -166,7 +166,7 @@ describe('evaluateFailCondition', () => {
           action: { type: 'COMPLETE', message: 'Failed gracefully' },
         },
       },
-    };
+    });
     const result = evaluateFailCondition(step, 0);
     expect(result.action).toBe('complete');
     expect(result.message).toBe('Failed gracefully');
@@ -175,15 +175,10 @@ describe('evaluateFailCondition', () => {
 
 describe('evaluateFailCondition edge cases', () => {
   it('returns stopped for default FAIL transition', () => {
-    const step = {
-      kind: 'base' as const,
+    const step = makeBaseStep({
       name: '1',
       description: 'Test step',
-      transitions: {
-        pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' as const } },
-        fail: { kind: 'fail', retry: 0, action: { type: 'STOP' as const } },
-      },
-    };
+    });
 
     const result = evaluateFailCondition(step, 0);
     expect(result.action).toBe('stopped');
@@ -192,30 +187,24 @@ describe('evaluateFailCondition edge cases', () => {
 
 describe('evaluatePassCondition edge cases', () => {
   it('returns continue for default PASS transition', () => {
-    const step = {
-      kind: 'base' as const,
+    const step = makeBaseStep({
       name: '1',
       description: 'Test step',
-      transitions: {
-        pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' as const } },
-        fail: { kind: 'fail', retry: 0, action: { type: 'STOP' as const } },
-      },
-    };
+    });
 
     const result = evaluatePassCondition(step);
     expect(result.action).toBe('continue');
   });
 
   it('returns stopped for STOP action with message', () => {
-    const step: any = {
+    const step = makeBaseStep({
       name: '1',
       description: 'Test',
-
       transitions: {
         pass: { kind: 'pass', retry: 0, action: { type: 'STOP', message: 'Halted on pass' } },
         fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
       },
-    };
+    });
 
     const result = evaluatePassCondition(step);
     expect(result.action).toBe('stopped');

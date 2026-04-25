@@ -371,7 +371,7 @@ describe('targeting helpers', () => {
           iteration: 1,
           start: 1,
           implicit: false,
-          source: { kind: 'file', path: '/data.txt', format: 'text', snapshot: null },
+          source: { kind: 'variable', name: 'data' },
         },
       ];
       const position = buildStepPosition('1', 3, undefined, forStack);

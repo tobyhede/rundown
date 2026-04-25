@@ -353,7 +353,7 @@ describe('buildExecutionFrame', () => {
         end: 2,
         variable: '',
         implicit: true,
-        source: { kind: 'range', start: 1, end: 2 },
+        source: { kind: 'range' },
       },
     ];
 
@@ -396,7 +396,7 @@ describe('buildExecutionFrame', () => {
         end: 5,
         variable: 'n',
         implicit: false,
-        source: { kind: 'range', start: 1, end: 5 },
+        source: { kind: 'range' },
       },
     ];
 

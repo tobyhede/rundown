@@ -1,6 +1,7 @@
 import { resolveForValue } from '../../src/runbook/source-resolver.js';
 import { createJsonArrayStream } from '../../src/runbook/types.js';
 import type { ForContext, JsonArrayStream, TemplateVarValue } from '../../src/runbook/types.js';
+import { brandInitialTemplateVarsForTest } from '../helpers/effective-vars.js';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -45,7 +46,7 @@ describe('resolveForValue', () => {
         items: ['alpha', 'beta', 'gamma'],
       };
 
-      const result = await resolveForValue(fc, vars);
+      const result = await resolveForValue(fc, brandInitialTemplateVarsForTest(vars));
 
       expect(result.kind).toBe('resolved');
       if (result.kind === 'resolved') {
@@ -62,7 +63,7 @@ describe('resolveForValue', () => {
         items: ['alpha', 'beta', 'gamma'],
       };
 
-      const result = await resolveForValue(fc, vars);
+      const result = await resolveForValue(fc, brandInitialTemplateVarsForTest(vars));
 
       expect(result.kind).toBe('exhausted');
       if (result.kind === 'exhausted') {
@@ -79,7 +80,7 @@ describe('resolveForValue', () => {
         ],
       };
 
-      const result = await resolveForValue(fc, vars);
+      const result = await resolveForValue(fc, brandInitialTemplateVarsForTest(vars));
 
       expect(result.kind).toBe('resolved');
       if (result.kind === 'resolved') {
@@ -90,14 +91,18 @@ describe('resolveForValue', () => {
     it('throws for undefined variable', async () => {
       const fc = makeContext(1);
 
-      await expect(resolveForValue(fc, {})).rejects.toThrow(/not defined/);
+      await expect(resolveForValue(fc, brandInitialTemplateVarsForTest({}))).rejects.toThrow(
+        /not defined/,
+      );
     });
 
     it('throws for non-iterable variable type', async () => {
       const fc = makeContext(1);
       const vars: Record<string, TemplateVarValue> = { items: 'not-an-array' };
 
-      await expect(resolveForValue(fc, vars)).rejects.toThrow(/Type error/);
+      await expect(resolveForValue(fc, brandInitialTemplateVarsForTest(vars))).rejects.toThrow(
+        /Type error/,
+      );
     });
   });
 
@@ -126,7 +131,7 @@ describe('resolveForValue', () => {
       const stream: JsonArrayStream = createJsonArrayStream(file);
       const vars: Record<string, TemplateVarValue> = { data: stream };
 
-      const result = await resolveForValue(makeContext(1), vars);
+      const result = await resolveForValue(makeContext(1), brandInitialTemplateVarsForTest(vars));
 
       expect(result.kind).toBe('resolved');
       if (result.kind === 'resolved') {
@@ -143,7 +148,7 @@ describe('resolveForValue', () => {
         data: createJsonArrayStream(file),
       };
 
-      const result = await resolveForValue(makeContext(1), vars);
+      const result = await resolveForValue(makeContext(1), brandInitialTemplateVarsForTest(vars));
 
       expect(result.kind).toBe('exhausted');
       if (result.kind === 'exhausted') {
@@ -158,7 +163,7 @@ describe('resolveForValue', () => {
         data: createJsonArrayStream(file),
       };
 
-      const result = await resolveForValue(makeContext(1), vars);
+      const result = await resolveForValue(makeContext(1), brandInitialTemplateVarsForTest(vars));
 
       expect(result.kind).toBe('resolved');
       if (result.kind === 'resolved') {
@@ -173,7 +178,7 @@ describe('resolveForValue', () => {
         data: createJsonArrayStream(file),
       };
 
-      const result = await resolveForValue(makeContext(2), vars);
+      const result = await resolveForValue(makeContext(2), brandInitialTemplateVarsForTest(vars));
 
       expect(result.kind).toBe('resolved');
       if (result.kind === 'resolved') {
@@ -188,7 +193,10 @@ describe('resolveForValue', () => {
         data: createJsonArrayStream(file),
       };
 
-      const err = await resolveForValue(makeContext(2), vars).catch((e: unknown) => e);
+      const err = await resolveForValue(
+        makeContext(2),
+        brandInitialTemplateVarsForTest(vars),
+      ).catch((e: unknown) => e);
       expect(Error.isError(err)).toBe(true);
       const message = (err as Error).message;
       expect(message).toContain(file);
@@ -203,7 +211,7 @@ describe('resolveForValue', () => {
         data: createJsonArrayStream(file),
       };
 
-      const result = await resolveForValue(makeContext(1), vars);
+      const result = await resolveForValue(makeContext(1), brandInitialTemplateVarsForTest(vars));
 
       expect(result.kind).toBe('resolved');
       if (result.kind === 'resolved') {
@@ -242,7 +250,9 @@ describe('resolveForValue', () => {
         data: createJsonArrayStream(outsideFile),
       };
 
-      await expect(resolveForValue(makeContext(), vars, projectRoot)).rejects.toMatchObject({
+      await expect(
+        resolveForValue(makeContext(), brandInitialTemplateVarsForTest(vars), projectRoot),
+      ).rejects.toMatchObject({
         code: 'policy-violation',
       });
     });
@@ -254,7 +264,11 @@ describe('resolveForValue', () => {
         data: createJsonArrayStream(file),
       };
 
-      const result = await resolveForValue(makeContext(), vars, projectRoot);
+      const result = await resolveForValue(
+        makeContext(),
+        brandInitialTemplateVarsForTest(vars),
+        projectRoot,
+      );
       expect(result.kind).toBe('resolved');
     });
 
@@ -273,7 +287,9 @@ describe('resolveForValue', () => {
         data: createJsonArrayStream(siblingFile),
       };
 
-      await expect(resolveForValue(makeContext(), vars, projectRoot)).rejects.toMatchObject({
+      await expect(
+        resolveForValue(makeContext(), brandInitialTemplateVarsForTest(vars), projectRoot),
+      ).rejects.toMatchObject({
         code: 'policy-violation',
       });
     });
@@ -283,7 +299,7 @@ describe('resolveForValue', () => {
         data: createJsonArrayStream(outsideFile),
       };
 
-      const result = await resolveForValue(makeContext(), vars);
+      const result = await resolveForValue(makeContext(), brandInitialTemplateVarsForTest(vars));
       expect(result.kind).toBe('resolved');
     });
   });

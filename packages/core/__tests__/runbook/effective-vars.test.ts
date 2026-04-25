@@ -129,8 +129,8 @@ describe('resolveForValue brand contract (compile-time)', () => {
   });
 
   it('rejects StoredOutputs at compile time', () => {
-    // The brand contract is enforced at the type level: the
-    // @ts-expect-error directive below fails the typecheck if
+    // The brand contract is enforced at the type level: the directive
+    // (@ts-expect-error) below fails the typecheck if
     // StoredOutputs ever becomes assignable to InitialTemplateVars.
     // Verified by `npm run check:lint:typed`.
     const sv = brandStoredOutputs({ items: 'not-an-array' });

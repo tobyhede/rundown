@@ -1,12 +1,12 @@
 import { describe, it, expect } from '@jest/globals';
 import { createActor } from 'xstate';
 import { compileRunbookToMachine } from '../../src/runbook/compiler.js';
-import type { Step } from '../../src/runbook/types.js';
+import type { ResolvedStep } from '../../src/runbook/types.js';
 
 describe('GOTO to self (implicit retry)', () => {
   it('should increment retryCount when GOTO targets current step by numeric name', () => {
     // Tests non-dynamic step that uses GOTO to itself by step number
-    const steps: Step[] = [
+    const steps: ResolvedStep[] = [
       {
         kind: 'base',
         name: '1',
@@ -34,7 +34,7 @@ describe('GOTO to self (implicit retry)', () => {
   });
 
   it('should reset retryCount when GOTO targets different step', () => {
-    const steps: Step[] = [
+    const steps: ResolvedStep[] = [
       {
         kind: 'base',
         name: '1',
@@ -73,7 +73,7 @@ describe('GOTO to self (implicit retry)', () => {
   it('should increment retryCount when GOTO targets same step and substep', () => {
     // Step-level transitions mirror parser DEFAULT_TRANSITIONS (PASS CONTINUE,
     // FAIL STOP). Substep-level transitions drive the actual behavior here.
-    const steps: Step[] = [
+    const steps: ResolvedStep[] = [
       {
         kind: 'substeps',
         name: '1',
@@ -128,7 +128,7 @@ describe('GOTO to self (implicit retry)', () => {
   it('should reset retryCount when GOTO targets same step but different substep', () => {
     // Step-level transitions mirror parser DEFAULT_TRANSITIONS (PASS CONTINUE,
     // FAIL STOP). Substep-level transitions drive the actual behavior here.
-    const steps: Step[] = [
+    const steps: ResolvedStep[] = [
       {
         kind: 'substeps',
         name: '1',

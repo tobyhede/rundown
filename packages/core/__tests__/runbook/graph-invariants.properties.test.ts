@@ -42,7 +42,7 @@ function buildStepsFromShapes(shapes: StepShape[]): StepInput[] {
       return {
         name,
         description: `Step ${name}`,
-        transitions: makeTransitions('ALL', passAction, 'STOP'),
+        transitions: makeTransitions(passAction, 'STOP'),
       };
     }
 
@@ -59,9 +59,9 @@ function buildStepsFromShapes(shapes: StepShape[]): StepInput[] {
         forClause: {
           start: 1,
           end: shape.iterations,
-          transitions: makeTransitions('ALL', 'DEFER', 'DEFER'),
+          transitions: makeTransitions('DEFER', 'DEFER'),
         },
-        transitions: makeTransitions('ALL', passAction, 'STOP'),
+        transitions: makeTransitions(passAction, 'STOP'),
         substeps,
       };
     }
@@ -70,7 +70,7 @@ function buildStepsFromShapes(shapes: StepShape[]): StepInput[] {
     return {
       name,
       description: `Step ${name} with substeps`,
-      transitions: makeTransitions('ALL', passAction, 'STOP'),
+      transitions: makeTransitions(passAction, 'STOP'),
       substeps,
     };
   });
