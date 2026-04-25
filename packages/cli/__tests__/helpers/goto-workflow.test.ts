@@ -67,8 +67,8 @@ function makeStep(overrides: Record<string, unknown> = {}): any {
 beforeEach(() => {
   jest.resetAllMocks();
   // Re-establish default mock implementations after reset
-  (core.stepIdToString as jest.Mock<any>).mockImplementation((id: { step: string; substep?: string }) =>
-    id.substep ? `${id.step}.${id.substep}` : id.step,
+  (core.stepIdToString as jest.Mock<any>).mockImplementation(
+    (id: { step: string; substep?: string }) => (id.substep ? `${id.step}.${id.substep}` : id.step),
   );
   (core.buildStepPosition as jest.Mock<any>).mockImplementation(
     (current: string, total: number, substep?: string) => ({

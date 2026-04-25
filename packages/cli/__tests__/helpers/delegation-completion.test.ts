@@ -82,7 +82,9 @@ jest.unstable_mockModule('../../src/helpers/transitions', () => ({
 // Import after mocking
 const core = await import('@rundown-org/core');
 const { getRunbookFromState } = await import('../../src/helpers/runbook-loader.js');
-const { drainResolvedCompletions, runExecutionLoop } = await import('../../src/services/execution.js');
+const { drainResolvedCompletions, runExecutionLoop } = await import(
+  '../../src/services/execution.js'
+);
 const { createBridgedEmitter } = await import('../../src/helpers/execution-emitter.js');
 const { createPassTransitionConfig, createFailTransitionConfig } = await import(
   '../../src/helpers/transitions.js'

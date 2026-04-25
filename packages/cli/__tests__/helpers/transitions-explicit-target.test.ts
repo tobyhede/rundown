@@ -24,7 +24,9 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     (step: string, substep?: string, iteration?: number) =>
       `${step}${iteration !== undefined ? `[${String(iteration)}]` : ''}${substep ? `.${substep}` : ''}`,
   ),
-  deriveActiveFrame: jest.fn<any>().mockReturnValue({ step: '1', iteration: undefined, frameKey: '1' }),
+  deriveActiveFrame: jest
+    .fn<any>()
+    .mockReturnValue({ step: '1', iteration: undefined, frameKey: '1' }),
   logger: { warn: jest.fn<any>().mockReturnValue(undefined) },
   ...mockErrorHelpers,
 }));
@@ -58,7 +60,9 @@ jest.unstable_mockModule('../../src/helpers/transition-orchestrator', () => ({
 
 const core = await import('@rundown-org/core');
 const { resolvedStepHasSubsteps } = await import('@rundown-org/parser');
-const { findStepOrThrow, drainResolvedCompletions } = await import('../../src/services/execution.js');
+const { findStepOrThrow, drainResolvedCompletions } = await import(
+  '../../src/services/execution.js'
+);
 const { executeTransition, createPassTransitionConfig } = await import(
   '../../src/helpers/transitions.js'
 );
@@ -191,7 +195,11 @@ describe('executeTransition with ExplicitTarget', () => {
 
   it('throws IndexOptionError on conflicting --index and AT', async () => {
     const ctx = makeCtx();
-    (core.parseStepIdFromString as jest.Mock<any>).mockReturnValue({ step: '1', substep: '1', at: 5 });
+    (core.parseStepIdFromString as jest.Mock<any>).mockReturnValue({
+      step: '1',
+      substep: '1',
+      at: 5,
+    });
     const config = createPassTransitionConfig();
 
     await expect(executeTransition(ctx, config, { stepId: '1.1', index: '3' })).rejects.toThrow(

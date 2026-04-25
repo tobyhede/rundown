@@ -106,7 +106,12 @@ describe('inferDelegationTarget', () => {
     ];
     const steps: ResolvedStep[] = [makeStepWithSubsteps('1', substeps)];
     const substepStates: SubstepState[] = [
-      { id: '1', frameKey: brandFrameKeyForTest('1'), status: 'pending', delegation: makeActiveDelegation() },
+      {
+        id: '1',
+        frameKey: brandFrameKeyForTest('1'),
+        status: 'pending',
+        delegation: makeActiveDelegation(),
+      },
       { id: '2', frameKey: brandFrameKeyForTest('1'), status: 'pending' },
     ];
     const state = makeState({ step: '1', substepStates });
@@ -152,7 +157,12 @@ describe('inferDelegationTarget', () => {
     ];
     const steps: ResolvedStep[] = [makeStepWithSubsteps('1', substeps)];
     const substepStates: SubstepState[] = [
-      { id: '1', frameKey: brandFrameKeyForTest('1'), status: 'pending', delegation: makeActiveDelegation() },
+      {
+        id: '1',
+        frameKey: brandFrameKeyForTest('1'),
+        status: 'pending',
+        delegation: makeActiveDelegation(),
+      },
     ];
     const state = makeState({ step: '1', substepStates });
 
@@ -204,7 +214,12 @@ describe('inferDelegationTarget', () => {
     ];
     const steps: ResolvedStep[] = [makeStepWithSubsteps('1', substeps)];
     const substepStates: SubstepState[] = [
-      { id: '1', frameKey: brandFrameKeyForTest('1', 1), status: 'pending', delegation: makeActiveDelegation() },
+      {
+        id: '1',
+        frameKey: brandFrameKeyForTest('1', 1),
+        status: 'pending',
+        delegation: makeActiveDelegation(),
+      },
       { id: '1', frameKey: brandFrameKeyForTest('1', 2), status: 'pending' },
     ];
     const state = makeState({
@@ -253,7 +268,12 @@ describe('inferAllDelegateSubsteps', () => {
     ];
     const steps: ResolvedStep[] = [makeStepWithSubsteps('1', substeps)];
     const substepStates: SubstepState[] = [
-      { id: '1', frameKey: brandFrameKeyForTest('1'), status: 'pending', delegation: makeActiveDelegation() },
+      {
+        id: '1',
+        frameKey: brandFrameKeyForTest('1'),
+        status: 'pending',
+        delegation: makeActiveDelegation(),
+      },
     ];
     const state = makeState({ step: '1', substepStates });
 

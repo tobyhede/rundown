@@ -1521,9 +1521,7 @@ describe('resolveForBounds', () => {
       const resolved = result.steps[0];
       expect(resolved.kind).toBe('substeps');
       assertResolvedStepHasSubsteps(resolved);
-      expect(resolved.substeps[0].runbooks).toEqual([
-        'deploy.runbook.md',
-      ]);
+      expect(resolved.substeps[0].runbooks).toEqual(['deploy.runbook.md']);
     });
 
     it('preserves undefined RunbookRef as literal text', () => {
@@ -1621,9 +1619,7 @@ describe('resolveForBounds', () => {
       const resolved = result.steps[0];
       expect(resolved.kind).toBe('for');
       assertResolvedStepHasSubsteps(resolved);
-      expect(resolved.substeps[0].runbooks).toEqual([
-        'deploy.runbook.md',
-      ]);
+      expect(resolved.substeps[0].runbooks).toEqual(['deploy.runbook.md']);
     });
 
     it('handles mixed literal and RunbookRef entries', () => {
@@ -1648,7 +1644,11 @@ describe('resolveForBounds', () => {
       expect(warnings).toEqual([]);
       const resolved = result.steps[0];
       assertResolvedStepHasSubsteps(resolved);
-      expect(resolved.substeps[0].runbooks).toEqual(['setup.runbook.md', 'deploy.runbook.md', 'cleanup.runbook.md']);
+      expect(resolved.substeps[0].runbooks).toEqual([
+        'setup.runbook.md',
+        'deploy.runbook.md',
+        'cleanup.runbook.md',
+      ]);
     });
 
     it('preserves FOR-scoped RunbookRef as placeholder text', () => {
@@ -1675,9 +1675,7 @@ describe('resolveForBounds', () => {
       expect(resolved.kind).toBe('for');
       // Preserved as placeholder text for runtime expansion
       assertResolvedStepHasSubsteps(resolved);
-      expect(resolved.substeps[0].runbooks).toEqual([
-        '{{ server.runbook }}',
-      ]);
+      expect(resolved.substeps[0].runbooks).toEqual(['{{ server.runbook }}']);
     });
 
     it('preserves non-FOR-scoped undefined ref as literal text inside FOR step', () => {

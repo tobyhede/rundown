@@ -85,9 +85,15 @@ describe('loadScenarios', () => {
   });
 
   it('returns error when no frontmatter', async () => {
-    (resolveRunbookFile as jest.Mock<any>).mockResolvedValue({ path: '/test/runbook.md', source: 'project' });
+    (resolveRunbookFile as jest.Mock<any>).mockResolvedValue({
+      path: '/test/runbook.md',
+      source: 'project',
+    });
     (readFile as jest.MockedFunction<typeof readFile>).mockResolvedValue('# No frontmatter' as any);
-    (extractFrontmatter as jest.Mock<any>).mockReturnValue({ frontmatter: null, content: '# No frontmatter' });
+    (extractFrontmatter as jest.Mock<any>).mockReturnValue({
+      frontmatter: null,
+      content: '# No frontmatter',
+    });
 
     const result = await loadScenarios('runbook.md', '/test');
 
@@ -99,12 +105,21 @@ describe('loadScenarios', () => {
   });
 
   it('returns error with validation details', async () => {
-    (resolveRunbookFile as jest.Mock<any>).mockResolvedValue({ path: '/test/runbook.md', source: 'project' });
+    (resolveRunbookFile as jest.Mock<any>).mockResolvedValue({
+      path: '/test/runbook.md',
+      source: 'project',
+    });
     (readFile as jest.MockedFunction<typeof readFile>).mockResolvedValue(
       '---\nscenarios: bad\n---' as any,
     );
-    (extractFrontmatter as jest.Mock<any>).mockReturnValue({ frontmatter: { scenarios: 'bad' }, content: '' });
-    (parseScenarios as jest.Mock<any>).mockReturnValue({ scenarios: null, errors: ['Field "commands" is required'] });
+    (extractFrontmatter as jest.Mock<any>).mockReturnValue({
+      frontmatter: { scenarios: 'bad' },
+      content: '',
+    });
+    (parseScenarios as jest.Mock<any>).mockReturnValue({
+      scenarios: null,
+      errors: ['Field "commands" is required'],
+    });
 
     const result = await loadScenarios('runbook.md', '/test');
 
@@ -115,11 +130,17 @@ describe('loadScenarios', () => {
   });
 
   it('returns error when no scenarios defined', async () => {
-    (resolveRunbookFile as jest.Mock<any>).mockResolvedValue({ path: '/test/runbook.md', source: 'project' });
+    (resolveRunbookFile as jest.Mock<any>).mockResolvedValue({
+      path: '/test/runbook.md',
+      source: 'project',
+    });
     (readFile as jest.MockedFunction<typeof readFile>).mockResolvedValue(
       '---\nname: test\n---' as any,
     );
-    (extractFrontmatter as jest.Mock<any>).mockReturnValue({ frontmatter: { name: 'test' }, content: '' });
+    (extractFrontmatter as jest.Mock<any>).mockReturnValue({
+      frontmatter: { name: 'test' },
+      content: '',
+    });
     (parseScenarios as jest.Mock<any>).mockReturnValue({ scenarios: null, errors: [] });
 
     const result = await loadScenarios('runbook.md', '/test');
@@ -139,7 +160,10 @@ describe('loadScenarios', () => {
       },
     };
 
-    (resolveRunbookFile as jest.Mock<any>).mockResolvedValue({ path: '/test/runbook.md', source: 'project' });
+    (resolveRunbookFile as jest.Mock<any>).mockResolvedValue({
+      path: '/test/runbook.md',
+      source: 'project',
+    });
     (readFile as jest.MockedFunction<typeof readFile>).mockResolvedValue(
       '---\nname: my-runbook\n---' as any,
     );
@@ -164,7 +188,10 @@ describe('loadScenarios', () => {
       test: { result: 'COMPLETE', commands: ['rd run x.md'] },
     };
 
-    (resolveRunbookFile as jest.Mock<any>).mockResolvedValue({ path: '/test/runbook.md', source: 'project' });
+    (resolveRunbookFile as jest.Mock<any>).mockResolvedValue({
+      path: '/test/runbook.md',
+      source: 'project',
+    });
     (readFile as jest.MockedFunction<typeof readFile>).mockResolvedValue(
       '---\nscenarios:\n---' as any,
     );

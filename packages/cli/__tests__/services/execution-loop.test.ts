@@ -254,7 +254,10 @@ describe('runExecutionLoop', () => {
     }));
 
     (policyContext.isPolicyEnforced as jest.Mock<any>).mockReturnValue(false);
-    (policyContext.getSandboxOptions as jest.Mock<any>).mockReturnValue({ sandbox: true, sandboxStrict: false });
+    (policyContext.getSandboxOptions as jest.Mock<any>).mockReturnValue({
+      sandbox: true,
+      sandboxStrict: false,
+    });
     (core.executeCommand as any).mockReset();
     (core.executeCommandWithPolicy as any).mockReset();
 
@@ -1139,7 +1142,10 @@ describe('executeCommandWithPolicyCheck', () => {
     const mockEvaluator = { setRunbookPath: jest.fn() };
     (policyContext.getPolicyEvaluator as jest.Mock<any>).mockReturnValue(mockEvaluator);
     (policyContext.getPolicyPrompter as jest.Mock<any>).mockReturnValue('prompter');
-    (policyContext.getSandboxOptions as jest.Mock<any>).mockReturnValue({ sandbox: true, sandboxStrict: true });
+    (policyContext.getSandboxOptions as jest.Mock<any>).mockReturnValue({
+      sandbox: true,
+      sandboxStrict: true,
+    });
     (core.executeCommandWithPolicy as any).mockResolvedValue({ success: true });
 
     await executeCommandWithPolicyCheck(command, cwd, 'test.md');

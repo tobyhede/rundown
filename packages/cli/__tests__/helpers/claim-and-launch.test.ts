@@ -766,7 +766,9 @@ describe('claimAndLaunch', () => {
       runbook,
       warnings: [],
     }));
-    (substituteRunbookVariables as jest.Mock<any>).mockImplementation((runbook: unknown) => runbook);
+    (substituteRunbookVariables as jest.Mock<any>).mockImplementation(
+      (runbook: unknown) => runbook,
+    );
     (collectUnresolvedRunbookVariables as jest.Mock<any>).mockReturnValue(new Set());
     (createBridgedEmitter as jest.Mock<any>).mockReturnValue({ emit: jest.fn() });
     (runExecutionLoop as jest.Mock<any>).mockResolvedValue('waiting');
@@ -875,7 +877,9 @@ describe('claimAndLaunch', () => {
       runbook,
       warnings: [],
     }));
-    (substituteRunbookVariables as jest.Mock<any>).mockImplementation((runbook: unknown) => runbook);
+    (substituteRunbookVariables as jest.Mock<any>).mockImplementation(
+      (runbook: unknown) => runbook,
+    );
     (collectUnresolvedRunbookVariables as jest.Mock<any>).mockReturnValue(new Set());
 
     // Critical: manager.create throws — exercises the new launchRunbook
