@@ -1,5 +1,10 @@
 import { describe, it, expect } from '@jest/globals';
-import { parseOutputDeclaration, parseRunbookDocument, RunbookSyntaxError } from '../src/index.js';
+import {
+  parseOutputDeclaration,
+  parseRunbookDocument,
+  parseStepOutputDeclaration,
+  RunbookSyntaxError,
+} from '../src/index.js';
 
 // Regex-escape a dynamic segment before interpolating it into a `RegExp`
 // constructor — avoids the static-analysis ReDoS warning and is defensive
@@ -369,5 +374,87 @@ describe('parseRunbookDocument OUTPUTS directive — reserved-name guard', () =>
   - context {{ path "x.json" }}
 `;
     expect(() => parseRunbookDocument(md)).toThrow(RunbookSyntaxError);
+  });
+});
+
+describe('parseStepOutputDeclaration', () => {
+  it('accepts naked form (name only) and returns { name }', () => {
+    expect(parseStepOutputDeclaration('Version')).toEqual({ name: 'Version' });
+  });
+
+  it('rejects an invalid identifier in naked form', () => {
+    expect(parseStepOutputDeclaration('123bad')).toBeNull();
+  });
+
+  it('preserves expression-form parsing', () => {
+    expect(parseStepOutputDeclaration('PlanPath {{ path "plan.json" }}')).toEqual({
+      name: 'PlanPath',
+      value: '{{ path "plan.json" }}',
+    });
+  });
+
+  it('returns null for empty / whitespace-only input', () => {
+    expect(parseStepOutputDeclaration('')).toBeNull();
+    expect(parseStepOutputDeclaration('   ')).toBeNull();
+  });
+});
+
+describe('parseRunbookDocument step OUTPUTS naked form', () => {
+  it('accepts a naked OUTPUTS entry on a step', () => {
+    const md = `## 1. Capture
+- OUTPUTS
+  - Version
+- PASS CONTINUE
+- FAIL STOP
+`;
+    const { runbook, diagnostics } = parseRunbookDocument(md);
+    const errors = diagnostics.filter((d) => d.severity === 'error');
+    expect(errors).toEqual([]);
+    expect(runbook.steps[0].outputs).toEqual([{ name: 'Version' }]);
+  });
+
+  it('accepts a naked OUTPUTS entry on a substep', () => {
+    const md = `## 1. Parent
+### 1.1 Child
+- OUTPUTS
+  - DeployUrl
+- PASS CONTINUE
+- FAIL STOP
+`;
+    const { runbook, diagnostics } = parseRunbookDocument(md);
+    const errors = diagnostics.filter((d) => d.severity === 'error');
+    expect(errors).toEqual([]);
+    const step = runbook.steps[0];
+    expect('substeps' in step ? step.substeps[0].outputs : undefined).toEqual([
+      { name: 'DeployUrl' },
+    ]);
+  });
+
+  it('accepts mixed naked + expression entries in a single OUTPUTS block', () => {
+    const md = `## 1. Capture
+- OUTPUTS
+  - DeployUrl
+  - Tag "{{ RunId }}-staging"
+- PASS CONTINUE
+- FAIL STOP
+`;
+    const { runbook, diagnostics } = parseRunbookDocument(md);
+    const errors = diagnostics.filter((d) => d.severity === 'error');
+    expect(errors).toEqual([]);
+    expect(runbook.steps[0].outputs).toEqual([
+      { name: 'DeployUrl' },
+      { name: 'Tag', value: '"{{ RunId }}-staging"' },
+    ]);
+  });
+
+  it('still rejects reserved names in naked form', () => {
+    const md = `## 1. Capture
+- OUTPUTS
+  - step
+- PASS CONTINUE
+- FAIL STOP
+`;
+    expect(() => parseRunbookDocument(md)).toThrow(RunbookSyntaxError);
+    expect(() => parseRunbookDocument(md)).toThrow(/reserved variable name/);
   });
 });
