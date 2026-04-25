@@ -1,5 +1,9 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { mockErrorHelpers } from './mock-error-helpers.js';
+import {
+  brandInitialTemplateVarsForTest,
+  brandStoredOutputsForTest,
+} from './brand-helpers.js';
 
 // Mock @rundown-org/core
 jest.unstable_mockModule('@rundown-org/core', () => ({
@@ -98,8 +102,8 @@ describe('buildStashedStatus', () => {
     const state = makeState({ step: '2', substep: undefined });
     const steps = [makeStep({ name: '1' }), makeStep({ name: '2' })];
 
-    getRunbookFromState.mockReturnValue(steps);
-    buildMetadata.mockReturnValue({
+    (getRunbookFromState as jest.Mock<any>).mockReturnValue(steps);
+    (buildMetadata as jest.Mock<any>).mockReturnValue({
       file: 'test.runbook.md',
       state: '.rundown/runs/test-id.json',
     });
@@ -119,8 +123,8 @@ describe('buildStashedStatus', () => {
     const state = makeState({ step: '2', substep: '1' });
     const steps = [makeStep({ name: '1' }), makeStep({ name: '2' })];
 
-    getRunbookFromState.mockReturnValue(steps);
-    buildMetadata.mockReturnValue({
+    (getRunbookFromState as jest.Mock<any>).mockReturnValue(steps);
+    (buildMetadata as jest.Mock<any>).mockReturnValue({
       file: 'test.runbook.md',
       state: '.rundown/runs/test-id.json',
     });
@@ -137,8 +141,8 @@ describe('buildStashedStatus', () => {
     const state = makeState({ prompted: true });
     const steps = [makeStep()];
 
-    getRunbookFromState.mockReturnValue(steps);
-    buildMetadata.mockReturnValue({
+    (getRunbookFromState as jest.Mock<any>).mockReturnValue(steps);
+    (buildMetadata as jest.Mock<any>).mockReturnValue({
       file: 'test.runbook.md',
       state: '.rundown/runs/test-id.json',
       prompted: true,
@@ -158,8 +162,8 @@ describe('buildActiveStatus', () => {
     const state = makeState({ step: '1' });
     const steps = [makeStep({ name: '1', description: 'First Step' })];
 
-    getRunbookFromState.mockReturnValue(steps);
-    buildMetadata.mockReturnValue({
+    (getRunbookFromState as jest.Mock<any>).mockReturnValue(steps);
+    (buildMetadata as jest.Mock<any>).mockReturnValue({
       file: 'test.runbook.md',
       state: '.rundown/runs/test-id.json',
     });
@@ -179,8 +183,8 @@ describe('buildActiveStatus', () => {
     const state = makeState();
     const steps = [makeStep()];
 
-    getRunbookFromState.mockReturnValue(steps);
-    buildMetadata.mockReturnValue({
+    (getRunbookFromState as jest.Mock<any>).mockReturnValue(steps);
+    (buildMetadata as jest.Mock<any>).mockReturnValue({
       file: 'test.runbook.md',
       state: '.rundown/runs/test-id.json',
     });
@@ -201,16 +205,16 @@ describe('buildActiveStatus', () => {
     });
     const steps = [makeStep({ name: '1' })];
 
-    getRunbookFromState.mockReturnValue(steps);
-    buildMetadata.mockReturnValue({
+    (getRunbookFromState as jest.Mock<any>).mockReturnValue(steps);
+    (buildMetadata as jest.Mock<any>).mockReturnValue({
       file: 'test.runbook.md',
       state: '.rundown/runs/test-id.json',
     });
     (
       core.countNumberedSteps as jest.MockedFunction<typeof core.countNumberedSteps>
     ).mockReturnValue(1);
-    getStepRetryMax.mockReturnValue(3);
-    formatActionForDisplay.mockReturnValue('RETRY (1/3)');
+    (getStepRetryMax as jest.Mock<any>).mockReturnValue(3);
+    (formatActionForDisplay as jest.Mock<any>).mockReturnValue('RETRY (1/3)');
 
     const result = buildActiveStatus(state, '/test');
 
@@ -226,16 +230,16 @@ describe('buildActiveStatus', () => {
     });
     const steps = [makeStep({ name: '1' })];
 
-    getRunbookFromState.mockReturnValue(steps);
-    buildMetadata.mockReturnValue({
+    (getRunbookFromState as jest.Mock<any>).mockReturnValue(steps);
+    (buildMetadata as jest.Mock<any>).mockReturnValue({
       file: 'test.runbook.md',
       state: '.rundown/runs/test-id.json',
     });
     (
       core.countNumberedSteps as jest.MockedFunction<typeof core.countNumberedSteps>
     ).mockReturnValue(1);
-    getStepRetryMax.mockReturnValue(0);
-    formatActionForDisplay.mockReturnValue('CONTINUE');
+    (getStepRetryMax as jest.Mock<any>).mockReturnValue(0);
+    (formatActionForDisplay as jest.Mock<any>).mockReturnValue('CONTINUE');
 
     const result = buildActiveStatus(state, '/test');
 
@@ -246,8 +250,8 @@ describe('buildActiveStatus', () => {
     const state = makeState({ step: 'nonexistent' });
     const steps = [makeStep({ name: '1' })];
 
-    getRunbookFromState.mockReturnValue(steps);
-    buildMetadata.mockReturnValue({
+    (getRunbookFromState as jest.Mock<any>).mockReturnValue(steps);
+    (buildMetadata as jest.Mock<any>).mockReturnValue({
       file: 'test.runbook.md',
       state: '.rundown/runs/test-id.json',
     });
@@ -264,8 +268,8 @@ describe('buildActiveStatus', () => {
 describe('parentLinkage projection', () => {
   beforeEach(() => {
     const steps = [makeStep({ name: '1', description: 'First Step' })];
-    getRunbookFromState.mockReturnValue(steps);
-    buildMetadata.mockReturnValue({
+    (getRunbookFromState as jest.Mock<any>).mockReturnValue(steps);
+    (buildMetadata as jest.Mock<any>).mockReturnValue({
       file: 'test.runbook.md',
       state: '.rundown/runs/test-id.json',
     });
@@ -358,8 +362,11 @@ describe('vars field', () => {
 
   it('merges templateVars (scalars) and state.variables, state.variables wins on collision', () => {
     const state = makeState({
-      templateVars: { environment: 'staging', port: 3000 },
-      variables: { environment: 'production', PlanPath: '/work/plan.json' },
+      templateVars: brandInitialTemplateVarsForTest({ environment: 'staging', port: 3000 }),
+      variables: brandStoredOutputsForTest({
+        environment: 'production',
+        PlanPath: '/work/plan.json',
+      }),
     });
     const result = buildActiveStatus(state, '/project');
     expect(result.vars).toEqual({
@@ -371,11 +378,13 @@ describe('vars field', () => {
 
   it('excludes non-scalar templateVars (arrays, objects)', () => {
     const state = makeState({
-      templateVars: {
+      templateVars: brandInitialTemplateVarsForTest({
+        // `kind`-shaped sentinel masquerades as a JsonObject; runtime
+        // filter drops it from the rendered vars map.
         items: { kind: 'json-array', value: ['a', 'b'] },
         name: 'test',
-      },
-      variables: {},
+      }),
+      variables: brandStoredOutputsForTest(),
     });
     const result = buildActiveStatus(state, '/project');
     expect(result.vars).toEqual({ name: 'test' });
@@ -383,15 +392,18 @@ describe('vars field', () => {
   });
 
   it('returns undefined vars when both templateVars and variables are empty', () => {
-    const state = makeState({ templateVars: {}, variables: {} });
+    const state = makeState({
+      templateVars: brandInitialTemplateVarsForTest(),
+      variables: brandStoredOutputsForTest(),
+    });
     const result = buildActiveStatus(state, '/project');
     expect(result.vars).toBeUndefined();
   });
 
   it('buildStashedStatus also includes vars field', () => {
     const state = makeState({
-      templateVars: { environment: 'staging' },
-      variables: { PlanPath: '/work/plan.json' },
+      templateVars: brandInitialTemplateVarsForTest({ environment: 'staging' }),
+      variables: brandStoredOutputsForTest({ PlanPath: '/work/plan.json' }),
     });
     const result = buildStashedStatus(state, '/project');
     expect(result.vars).toEqual({
