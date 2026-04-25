@@ -162,9 +162,9 @@ export function makeForSteps(
 }
 
 /**
- * Helper: create a parser-result step list with a single substepped step
- * and one bare-step sibling (used to exercise off-frontier retries where
- * `state.step !== owner.step` for the persisted delegation).
+ * Helper: create a parser-result step list with a single step that has
+ * substeps and one bare-step sibling (used to exercise off-frontier
+ * retries where `state.step !== owner.step` for the persisted delegation).
  */
 export function makeMultiStepSteps(
   substepStepName = '1',
