@@ -58,7 +58,7 @@ export function assertResolvedRunbook(runbook: Runbook): ResolvedRunbook {
 export function assertStepWithCommand(
   step: ResolvedStep | undefined,
 ): asserts step is StepWithCommand {
-  if (!step || step.kind !== 'command') {
+  if (step?.kind !== 'command') {
     throw new Error(`Expected ResolvedStep kind 'command', got '${step?.kind ?? 'undefined'}'`);
   }
 }
@@ -89,7 +89,7 @@ export function assertResolvedStepHasSubsteps(
 export function assertResolvedStepWithFor(
   step: ResolvedStep | undefined,
 ): asserts step is ResolvedStepWithFor {
-  if (!step || step.kind !== 'for') {
+  if (step?.kind !== 'for') {
     throw new Error(`Expected ResolvedStep kind 'for', got '${step?.kind ?? 'undefined'}'`);
   }
 }
