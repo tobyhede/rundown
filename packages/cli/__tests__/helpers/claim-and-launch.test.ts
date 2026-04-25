@@ -1,4 +1,5 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import type { RunbookState } from '@rundown-org/core';
 import type { RunPipelineContext } from '../../src/helpers/runbook-pipeline.js';
 import { brandFrameKeyForTest } from './brand-helpers.js';
 import { mockErrorHelpers } from './mock-error-helpers.js';
@@ -208,6 +209,56 @@ function makeCtx(overrides: Record<string, unknown> = {}): RunPipelineContext {
   } as unknown as RunPipelineContext;
 }
 
+/**
+ * Configure `core.DelegationScanService` so that `findByToken` resolves to
+ * `result` and (optionally) `findOrphanedChild` resolves to `orphan`.
+ *
+ * Partial mock is intentional: tests only exercise these two methods.
+ * The cast through unknown surfaces the constructor's instance shape
+ * without forcing every internal field onto the literal.
+ */
+function mockScanService(result: unknown, orphan?: unknown): void {
+  jest.mocked(core.DelegationScanService).mockImplementation(
+    () =>
+      ({
+        findByToken: mockFn<() => Promise<unknown>>().mockResolvedValue(result),
+        findOrphanedChild: mockFn<() => Promise<unknown>>().mockResolvedValue(orphan ?? null),
+      }) as unknown as jest.MockedObject<InstanceType<typeof core.DelegationScanService>>,
+  );
+}
+
+/**
+ * Configure `core.DelegationLock` with the given acquire/release mocks.
+ *
+ * Partial mock is intentional: production code only invokes `acquire` and
+ * `release`. The cast surfaces the full instance shape without forcing
+ * `cwd` / `lockDir` / `lockPath` fields onto the literal.
+ */
+function mockDelegationLock(
+  acquire: jest.Mock<() => Promise<void>>,
+  release: jest.Mock<() => Promise<void>>,
+): void {
+  jest.mocked(core.DelegationLock).mockImplementation(
+    () =>
+      ({ acquire, release }) as unknown as jest.MockedObject<
+        InstanceType<typeof core.DelegationLock>
+      >,
+  );
+}
+
+/** Convenience: build a default acquire/release pair that always succeeds. */
+function mockHappyDelegationLock(): {
+  acquire: jest.Mock<() => Promise<void>>;
+  release: jest.Mock<() => Promise<void>>;
+} {
+  const acquire = mockFn<() => Promise<void>>();
+  acquire.mockResolvedValue(undefined);
+  const release = mockFn<() => Promise<void>>();
+  release.mockResolvedValue(undefined);
+  mockDelegationLock(acquire, release);
+  return { acquire, release };
+}
+
 beforeEach(() => {
   jest.resetAllMocks();
   // Restore defaults after reset
@@ -251,10 +302,7 @@ describe('claimAndLaunch', () => {
     const ctx = makeCtx();
 
     // Mock scan returning null
-    const mockFindByToken = jest.fn<any>().mockResolvedValue(null);
-    (core.DelegationScanService as jest.Mock<any>).mockImplementation(() => ({
-      findByToken: mockFindByToken,
-    }));
+    mockScanService(null);
 
     // cspell:disable-next-line
     const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
@@ -269,15 +317,12 @@ describe('claimAndLaunch', () => {
     const ctx = makeCtx();
 
     // Mock scan returning a result
-    const mockFindByToken = jest.fn<any>().mockResolvedValue({
+    mockScanService({
       parentState: { id: 'run-1', substepStates: [] },
       stepId: '1',
       substepId: '1',
       delegation: { tokenHash: 'sha256:mock', childRunbookPath: 'child.md' },
     });
-    (core.DelegationScanService as jest.Mock<any>).mockImplementation(() => ({
-      findByToken: mockFindByToken,
-    }));
 
     // Mock lock acquisition failure with a real DelegationLockTimeoutError
     // (the production code now branches on `instanceof`, not on the message string).
@@ -294,14 +339,7 @@ describe('claimAndLaunch', () => {
     );
     const mockRelease = mockFn<() => Promise<void>>();
     mockRelease.mockResolvedValue(undefined);
-    // Partial mock is intentional: tests only exercise acquire/release;
-    // cwd/lockDir/lockPath fields aren't read by the code under test.
-    jest.mocked(core.DelegationLock).mockImplementation(
-      () =>
-        ({ acquire: mockAcquire, release: mockRelease }) as unknown as jest.MockedObject<
-          InstanceType<typeof core.DelegationLock>
-        >,
-    );
+    mockDelegationLock(mockAcquire, mockRelease);
 
     // cspell:disable-next-line
     const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
@@ -335,24 +373,22 @@ describe('claimAndLaunch', () => {
     };
 
     // Mock scan
-    (core.DelegationScanService as jest.Mock<any>).mockImplementation(() => ({
-      findByToken: jest.fn<any>().mockResolvedValue({
+    mockScanService(
+      {
         parentState,
         stepId: '1',
         substepId: '1',
         delegation: parentState.substepStates[0].delegation,
-      }),
-      findOrphanedChild: jest.fn<any>().mockResolvedValue(null),
-    }));
+      },
+      null,
+    );
 
     // Mock lock
-    (core.DelegationLock as jest.Mock<any>).mockImplementation(() => ({
-      acquire: jest.fn<any>().mockResolvedValue(undefined),
-      release: jest.fn<any>().mockResolvedValue(undefined),
-    }));
+    mockHappyDelegationLock();
 
     // Mock manager.load returning fresh state with cancelled delegation
-    (ctx.manager.load as jest.Mock<any>).mockResolvedValue(parentState);
+    // (cast through unknown: tests use minimal fixtures rather than full RunbookState)
+    jest.mocked(ctx.manager.load).mockResolvedValue(parentState as unknown as RunbookState);
 
     // cspell:disable-next-line
     const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
@@ -387,23 +423,18 @@ describe('claimAndLaunch', () => {
     };
 
     // Mock scan
-    (core.DelegationScanService as jest.Mock<any>).mockImplementation(() => ({
-      findByToken: jest.fn<any>().mockResolvedValue({
-        parentState,
-        stepId: '1',
-        substepId: '1',
-        delegation: parentState.substepStates[0].delegation,
-      }),
-    }));
+    mockScanService({
+      parentState,
+      stepId: '1',
+      substepId: '1',
+      delegation: parentState.substepStates[0].delegation,
+    });
 
     // Mock lock
-    (core.DelegationLock as jest.Mock<any>).mockImplementation(() => ({
-      acquire: jest.fn<any>().mockResolvedValue(undefined),
-      release: jest.fn<any>().mockResolvedValue(undefined),
-    }));
+    mockHappyDelegationLock();
 
     // Mock manager.load returning fresh state with already-claimed delegation
-    (ctx.manager.load as jest.Mock<any>).mockResolvedValue(parentState);
+    jest.mocked(ctx.manager.load).mockResolvedValue(parentState as unknown as RunbookState);
 
     // cspell:disable-next-line
     const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
@@ -443,24 +474,21 @@ describe('claimAndLaunch', () => {
     };
 
     // Mock scan — findByToken returns parent, findOrphanedChild returns orphan
-    (core.DelegationScanService as jest.Mock<any>).mockImplementation(() => ({
-      findByToken: jest.fn<any>().mockResolvedValue({
+    mockScanService(
+      {
         parentState,
         stepId: '1',
         substepId: '1',
         delegation: parentState.substepStates[0].delegation,
-      }),
-      findOrphanedChild: jest.fn<any>().mockResolvedValue(orphanState),
-    }));
+      },
+      orphanState,
+    );
 
     // Mock lock
-    (core.DelegationLock as jest.Mock<any>).mockImplementation(() => ({
-      acquire: jest.fn<any>().mockResolvedValue(undefined),
-      release: jest.fn<any>().mockResolvedValue(undefined),
-    }));
+    mockHappyDelegationLock();
 
     // Mock manager.load returning fresh state with unclaimed delegation
-    (ctx.manager.load as jest.Mock<any>).mockResolvedValue(parentState);
+    jest.mocked(ctx.manager.load).mockResolvedValue(parentState as unknown as RunbookState);
 
     // cspell:disable-next-line
     const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
@@ -489,24 +517,20 @@ describe('claimAndLaunch', () => {
     const ctx = makeCtx();
 
     // Mock scan returning a result
-    const mockFindByToken = jest.fn<any>().mockResolvedValue({
+    mockScanService({
       parentState: { id: 'run-1', substepStates: [] },
       stepId: '1',
       substepId: '1',
       delegation: { tokenHash: 'sha256:mock', childRunbookPath: 'child.md' },
     });
-    (core.DelegationScanService as jest.Mock<any>).mockImplementation(() => ({
-      findByToken: mockFindByToken,
-    }));
 
     // Mock lock throwing a non-timeout error (e.g. permission denied)
     const permissionError = new Error('EACCES: permission denied');
-    const mockAcquire = jest.fn<any>().mockRejectedValue(permissionError);
-    const mockRelease = jest.fn<any>().mockResolvedValue(undefined);
-    (core.DelegationLock as jest.Mock<any>).mockImplementation(() => ({
-      acquire: mockAcquire,
-      release: mockRelease,
-    }));
+    const mockAcquire = mockFn<() => Promise<void>>();
+    mockAcquire.mockRejectedValue(permissionError);
+    const mockRelease = mockFn<() => Promise<void>>();
+    mockRelease.mockResolvedValue(undefined);
+    mockDelegationLock(mockAcquire, mockRelease);
 
     // cspell:disable-next-line
     await expect(claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {})).rejects.toThrow(
@@ -536,23 +560,18 @@ describe('claimAndLaunch', () => {
     };
 
     // Mock scan
-    (core.DelegationScanService as jest.Mock<any>).mockImplementation(() => ({
-      findByToken: jest.fn<any>().mockResolvedValue({
-        parentState,
-        stepId: '1',
-        substepId: '1',
-        delegation: parentState.substepStates[0].delegation,
-      }),
-    }));
+    mockScanService({
+      parentState,
+      stepId: '1',
+      substepId: '1',
+      delegation: parentState.substepStates[0].delegation,
+    });
 
     // Mock lock
-    (core.DelegationLock as jest.Mock<any>).mockImplementation(() => ({
-      acquire: jest.fn<any>().mockResolvedValue(undefined),
-      release: jest.fn<any>().mockResolvedValue(undefined),
-    }));
+    mockHappyDelegationLock();
 
     // Mock manager.load returning null (state was deleted)
-    (ctx.manager.load as jest.Mock<any>).mockResolvedValue(null);
+    jest.mocked(ctx.manager.load).mockResolvedValue(null);
 
     // cspell:disable-next-line
     const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
@@ -586,27 +605,22 @@ describe('claimAndLaunch', () => {
     };
 
     // Mock scan
-    (core.DelegationScanService as jest.Mock<any>).mockImplementation(() => ({
-      findByToken: jest.fn<any>().mockResolvedValue({
-        parentState,
-        stepId: '1',
-        substepId: '1',
-        delegation: parentState.substepStates[0].delegation,
-      }),
-    }));
+    mockScanService({
+      parentState,
+      stepId: '1',
+      substepId: '1',
+      delegation: parentState.substepStates[0].delegation,
+    });
 
     // Mock lock
-    (core.DelegationLock as jest.Mock<any>).mockImplementation(() => ({
-      acquire: jest.fn<any>().mockResolvedValue(undefined),
-      release: jest.fn<any>().mockResolvedValue(undefined),
-    }));
+    mockHappyDelegationLock();
 
     // Mock manager.load returning state without delegation
-    (ctx.manager.load as jest.Mock<any>).mockResolvedValue({
+    jest.mocked(ctx.manager.load).mockResolvedValue({
       id: 'run-1',
       variables: {},
       substepStates: [{ id: '1', status: 'pending' }],
-    });
+    } as unknown as RunbookState);
 
     // cspell:disable-next-line
     const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
@@ -640,23 +654,18 @@ describe('claimAndLaunch', () => {
     };
 
     // Mock scan returning original hash
-    (core.DelegationScanService as jest.Mock<any>).mockImplementation(() => ({
-      findByToken: jest.fn<any>().mockResolvedValue({
-        parentState,
-        stepId: '1',
-        substepId: '1',
-        delegation: parentState.substepStates[0].delegation,
-      }),
-    }));
+    mockScanService({
+      parentState,
+      stepId: '1',
+      substepId: '1',
+      delegation: parentState.substepStates[0].delegation,
+    });
 
     // Mock lock
-    (core.DelegationLock as jest.Mock<any>).mockImplementation(() => ({
-      acquire: jest.fn<any>().mockResolvedValue(undefined),
-      release: jest.fn<any>().mockResolvedValue(undefined),
-    }));
+    mockHappyDelegationLock();
 
     // Mock manager.load returning state with different hash
-    (ctx.manager.load as jest.Mock<any>).mockResolvedValue({
+    jest.mocked(ctx.manager.load).mockResolvedValue({
       id: 'run-1',
       variables: {},
       substepStates: [
@@ -673,10 +682,10 @@ describe('claimAndLaunch', () => {
           },
         },
       ],
-    });
+    } as unknown as RunbookState);
 
     // hashDelegationToken should return the original mock hash
-    (core.hashDelegationToken as jest.Mock<any>).mockReturnValue('sha256:original');
+    jest.mocked(core.hashDelegationToken).mockReturnValue('sha256:original');
 
     // cspell:disable-next-line
     const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
