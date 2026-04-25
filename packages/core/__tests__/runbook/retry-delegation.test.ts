@@ -6,7 +6,7 @@ import {
 } from '../../src/runbook/delegation-service.js';
 import { TOKEN_PREFIX } from '../../src/runbook/delegation-token.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
-import type { Step } from '../../src/runbook/types.js';
+import type { ResolvedStep } from '../../src/runbook/types.js';
 import {
   makeForSteps,
   makeSimpleSteps,
@@ -180,9 +180,9 @@ describe('retryDelegation', () => {
 
   it('returns { status: "not_current" } when the step is not at the execution frontier', () => {
     const baseState = makeState({ step: '2' });
-    const multiStepSteps: readonly Step[] = [
+    const multiStepSteps: readonly ResolvedStep[] = [
       ...makeSteps('1'),
-      { kind: 'base', name: '2', description: 'Other step' } as Step,
+      { kind: 'base', name: '2', description: 'Other step' } as ResolvedStep,
     ];
     // Seed a delegation on step 1's substep, then attempt retry when state.step === '2'.
     const initial = createDelegation(

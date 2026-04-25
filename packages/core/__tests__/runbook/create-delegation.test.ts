@@ -3,7 +3,7 @@ import { createDelegation } from '../../src/runbook/delegation-service.js';
 import type { DelegateOptions } from '../../src/runbook/delegation-service.js';
 import { hashDelegationToken, TOKEN_PREFIX } from '../../src/runbook/delegation-token.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
-import type { Step, AncestorSnapshot } from '../../src/runbook/types.js';
+import type { ResolvedStep, AncestorSnapshot } from '../../src/runbook/types.js';
 import { brandInitialTemplateVarsForTest } from '../helpers/effective-vars.js';
 import {
   makeForSteps,
@@ -118,7 +118,7 @@ describe('createDelegation', () => {
     const steps = [
       ...makeSteps('1'),
       { kind: 'base' as const, name: '2', description: 'Step 2' },
-    ] as readonly Step[];
+    ] as readonly ResolvedStep[];
 
     const result = createDelegation(
       { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
