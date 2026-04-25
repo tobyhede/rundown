@@ -43,8 +43,17 @@ import {
   Errors,
   isError,
   type DelegateFrontierEntry,
+  partitionOutputDeclarations,
+  prepareOutputChannels,
+  readCapturedOutputs,
+  type OutputScope,
 } from '@rundown-org/core';
-import { isSourced, resolvedStepHasSubsteps, type ForClause } from '@rundown-org/parser';
+import {
+  isSourced,
+  resolvedStepHasSubsteps,
+  type ForClause,
+  type OutputDeclaration,
+} from '@rundown-org/parser';
 import { isInternalRdCommand, executeRdCommandInternal } from './internal-commands.js';
 import type { StepVariables } from './execution-vars.js';
 import { inferAllDelegateSubsteps } from '../helpers/delegate-inference.js';
@@ -189,6 +198,66 @@ export function findStepOrThrow(steps: ResolvedStep[], stepName: string): Resolv
   const step = steps.find((s) => s.name === stepName);
   if (!step) throw new Error(`Step '${stepName}' not found — possible state corruption`);
   return step;
+}
+
+/**
+ * Derive the output-channel scope for the unit currently being executed.
+ *
+ * `substepId` and `iteration` are independent optional path tiers and compose
+ * when both apply — a naked OUTPUTS on a substep inside a FOR loop produces
+ * `{ stepId, substepId, iteration }`, which `outputChannelPath` renders as
+ * `<stepId>/<substepId>/<iteration>/<VarName>`.
+ *
+ * Tier population:
+ * - substep tier: set from `substepId` whenever `isSubstep` is true
+ * - iteration tier: set from `top.iteration` whenever the top FOR frame is
+ *   non-implicit and its `stepId` matches `currentState.step`
+ *
+ * Implicit FOR frames contribute no iteration tier — implicit frames have no
+ * user-visible counter to segment the path with.
+ *
+ * @param currentState - The runbook state at the moment of execution
+ * @param isSubstep - Whether the current execution unit is a substep
+ * @param substepId - The substep id when isSubstep is true
+ * @returns OutputScope suitable for `outputChannelPath` / `prepareOutputChannels`
+ */
+function deriveOutputScope(
+  currentState: RunbookState,
+  isSubstep: boolean,
+  substepId?: string,
+): OutputScope {
+  const stepId = currentState.step;
+  const scope: { stepId: string; substepId?: string; iteration?: number } = { stepId };
+  if (isSubstep && substepId !== undefined) {
+    scope.substepId = substepId;
+  }
+  const top = currentState.forStack?.at(-1);
+  if (top && !top.implicit && top.stepId === stepId) {
+    scope.iteration = top.iteration;
+  }
+  return scope;
+}
+
+/**
+ * Extract the OUTPUTS declarations attached to the execution unit currently
+ * being run. For a substep, return the substep's OUTPUTS; for a step-level
+ * command, return the parent step's OUTPUTS.
+ *
+ * @param currentStep - The resolved parent step
+ * @param isSubstep - Whether a substep is being executed
+ * @param substepId - The substep id when isSubstep is true
+ * @returns Output declarations or empty array
+ */
+function extractUnitOutputs(
+  currentStep: ResolvedStep,
+  isSubstep: boolean,
+  substepId?: string,
+): readonly OutputDeclaration[] {
+  if (isSubstep && substepId !== undefined && resolvedStepHasSubsteps(currentStep)) {
+    const sub = currentStep.substeps.find((s) => s.id === substepId);
+    return sub?.outputs ?? [];
+  }
+  return currentStep.outputs ?? [];
 }
 
 interface ApplyResultTransitionArgs {
@@ -818,10 +887,33 @@ export async function runExecutionLoop(
     // Expand command code for execution (after guard — command is guaranteed)
     const expandedCommandCode = expandLoopVariablesForCommand(command.code, stepVars);
 
+    // --- Output capture: pre-spawn ---------------------------------------
+    const unitOutputs = extractUnitOutputs(
+      currentStep,
+      isSubstep,
+      isSubstep ? itemToRender.id : undefined,
+    );
+    const { naked: nakedOutputs } = partitionOutputDeclarations(unitOutputs);
+    const outputScope = deriveOutputScope(
+      currentState,
+      isSubstep,
+      isSubstep ? itemToRender.id : undefined,
+    );
+    const channels =
+      nakedOutputs.length > 0
+        ? await prepareOutputChannels({
+            cwd,
+            runId: currentState.id,
+            scope: outputScope,
+            naked: nakedOutputs,
+          })
+        : { env: {} as Record<string, string>, createdPaths: [] as readonly string[] };
+    // --------------------------------------------------------------------
+
     // Build rundown-injected environment variables (RD_WORK_PATH, RD_RUN_ID, etc.)
     // Keys come from BUILTIN_VARIABLES so a rename in variable-discovery.ts
     // surfaces here as a typecheck error instead of silently breaking injection.
-    const rdInjected: Record<string, string> = {};
+    const rdInjected: Record<string, string> = { ...channels.env };
     const workPath = stepVars[BUILTIN_VARIABLES.WorkPath];
     const contextId = stepVars[BUILTIN_VARIABLES.ContextId];
     const runId = stepVars[BUILTIN_VARIABLES.RunId];
@@ -829,10 +921,7 @@ export async function runExecutionLoop(
     if (typeof contextId === 'string') rdInjected.RD_CONTEXT_ID = contextId;
     if (typeof runId === 'string') rdInjected.RD_RUN_ID = runId;
 
-    // Execute command
-    // For rd commands, try internal execution first (avoids nested spawn issues in WebContainer)
-    // Use display command (with rd echo wrapper stripped) for cleaner output
-    // Fall back to original command if extractDisplayCommand returns empty (e.g., "rd echo --result pass")
+    // Execute command (unchanged — still routed via internal vs spawn)
     const extracted = extractDisplayCommand(expandedCommandCode);
     const displayCommand = extracted || expandedCommandCode;
     emitter.emit('COMMAND_STARTED', {
@@ -847,7 +936,6 @@ export async function runExecutionLoop(
       if (internalResult !== null) {
         execResult = internalResult;
       } else {
-        // Fallback to spawn if internal execution not supported for this subcommand
         execResult = await executeCommandWithPolicyCheck(
           expandedCommandCode,
           cwd,
@@ -864,7 +952,7 @@ export async function runExecutionLoop(
       );
     }
 
-    // Emit COMMAND_COMPLETED event
+    // Emit COMMAND_COMPLETED event (unchanged)
     emitter.emit('COMMAND_COMPLETED', {
       command: expandedCommandCode,
       success: execResult.success,
@@ -874,6 +962,27 @@ export async function runExecutionLoop(
       denialReason: execResult.denialReason,
       sandboxed: execResult.sandboxed,
     });
+
+    // --- Output capture: post-spawn --------------------------------------
+    if (channels.createdPaths.length > 0) {
+      const captured = await readCapturedOutputs(channels.createdPaths, nakedOutputs);
+      if (Object.keys(captured).length > 0) {
+        const setSync = await actorService.sendAndSync(runbookId, steps, {
+          type: 'SET_VARIABLES',
+          vars: captured,
+        });
+        if (setSync) {
+          currentState = setSync.state;
+        } else {
+          void logger.warn('output-capture: SET_VARIABLES sync returned null', {
+            runbookId,
+            stepId: currentState.step,
+            captured: Object.keys(captured),
+          });
+        }
+      }
+    }
+    // --------------------------------------------------------------------
 
     // Handle policy denial
     if (execResult.policyDenied) {
