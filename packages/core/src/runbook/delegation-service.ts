@@ -439,18 +439,19 @@ export interface RetryDelegationNotCurrentResult {
 }
 
 /**
- * Delegation failed. Carries the wrapped `RundownError` produced by the
- * inner `createDelegation` (path unresolvable, substep removed, etc.) so
- * callers have a single uniform shape to discriminate on across the three
- * delegation primitives.
+ * `createDelegation` returned a non-`created` Result variant (path
+ * unresolvable, substep removed, etc.); its `error` is propagated
+ * verbatim into this `error` variant.
  *
  * Mirrors {@link CreateDelegationStepNotFoundResult} et al. — every
- * non-success Result variant carries an `error: RundownError`.
+ * non-success Result variant carries an `error: RundownError`, so callers
+ * have a single uniform shape to discriminate on across the three
+ * delegation primitives.
  */
 export interface RetryDelegationErrorResult {
   /** Discriminant: literal `'error'`. */
   readonly status: 'error';
-  /** Wrapped RundownError describing why the inner `createDelegation` failed. */
+  /** Wrapped RundownError describing why delegation failed. */
   readonly error: RundownError;
 }
 
