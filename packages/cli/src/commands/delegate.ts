@@ -195,7 +195,7 @@ export function registerDelegateCommand(program: Command): void {
               ? buildFrameKey(state.step, explicitIteration)
               : (state.activeFrameKey ?? deriveActiveFrame(state).frameKey);
 
-          // Create delegation (pure function — validates and returns token)
+          // Create delegation (pure function — returns discriminated union)
           const result = createDelegation(
             {
               state,
@@ -207,6 +207,23 @@ export function registerDelegateCommand(program: Command): void {
             },
             steps,
           );
+
+          switch (result.status) {
+            case 'step_not_found':
+            case 'step_not_current':
+            case 'substep_required':
+            case 'substep_not_found':
+            case 'delegation_exists':
+              // Rethrow so withErrorHandling's toRundownError -> stderr envelope
+              // fires with the same code and message as the pre-refactor throw.
+              throw result.error;
+            case 'created':
+              break;
+            default: {
+              const _exhaustive: never = result;
+              return _exhaustive;
+            }
+          }
 
           // Persist updated substep states
           await manager.update(state.id, {
@@ -459,6 +476,7 @@ async function resolveRetryTarget(args: RetryHandlerOptions): Promise<ResolvedTa
  *
  * @param target - Resolved target from resolveRetryTarget
  * @param args - Original retry options (for manager, output, cwd, options.text)
+ * @returns Promise that resolves when the retry is persisted and emitted.
  */
 async function executeRetry(target: ResolvedTarget, args: RetryHandlerOptions): Promise<void> {
   const { manager, output, cwd, options } = args;
@@ -479,20 +497,26 @@ async function executeRetry(target: ResolvedTarget, args: RetryHandlerOptions): 
 
   switch (result.status) {
     case 'not_found':
-      failRetry(output, `no delegation found for step ${target.stepLabel}`, 'TOKEN_NOT_FOUND');
-      break;
     case 'not_current':
-      failRetry(
-        output,
-        `step ${target.stepLabel} is not at the execution frontier (current: ${result.currentStep})`,
-        'STEP_NOT_CURRENT',
-      );
-      break;
     case 'error':
-      failRetry(output, result.error.message, result.error.code);
-      break;
+      // Rethrow so withErrorHandling's toRundownError -> stderr envelope
+      // fires with the inner RundownError's code (RD-801 / RD-802 / inner
+      // createDelegation code) and message, matching the create CLI path's
+      // `throw result.error` pattern. M3 widened all three variants to
+      // carry `error: RundownError`, so the dispatch collapses to a single
+      // arm.
+      throw result.error;
     case 'retried':
       break;
+    default: {
+      // Short-circuit so the persistence block below cannot execute on
+      // an unexpected variant. `never` is assignable to Promise<void>'s
+      // resolved value, so this compiles even though handleRetry is
+      // declared as Promise<void>. Matches the create-path sibling at
+      // line ~223 and the abort.ts / execution.ts patterns.
+      const _exhaustive: never = result;
+      return _exhaustive;
+    }
   }
 
   // 8. Persist updated substepStates.

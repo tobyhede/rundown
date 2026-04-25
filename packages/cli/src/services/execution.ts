@@ -224,8 +224,9 @@ const EXECUTION_TERMINAL_POLICY: TransitionOrchestrationPolicy = {
  * failure signal.
  *
  * The retry hook writes a `RetryErrorLastAction` onto `context.lastAction`
- * when `createDelegation` throws during a parent-level retry (or an
- * invariant is violated). The priority-0 always-entry in the compiler then
+ * when `createDelegation` surfaces an error variant during a parent-level
+ * retry (or an invariant is violated). The priority-0 always-entry in the
+ * compiler then
  * routes the machine to STOPPED. This helper narrows the opaque snapshot
  * envelope into the error record so the CLI can emit `ERROR_OCCURRED`
  * before the terminal RUNBOOK_STOPPED event.
@@ -734,21 +735,43 @@ export async function runExecutionLoop(
                   steps,
                 );
 
-                threadedState = { ...threadedState, substepStates: result.updatedSubstepStates };
-                fanOut.push({
-                  id: target.stepId,
-                  runbook: target.runbookRef,
-                  token: result.token,
-                });
+                switch (result.status) {
+                  case 'step_not_found':
+                  case 'step_not_current':
+                  case 'substep_required':
+                  case 'substep_not_found':
+                  case 'delegation_exists':
+                    // All-or-nothing fan-out: reject the whole batch and re-throw so
+                    // the outer catch block transitions the runbook to stopped with
+                    // the same RUNBOOK_STOPPED envelope as pre-refactor.
+                    // threadedState is local; no partial persistence.
+                    throw result.error;
+                  case 'created':
+                    threadedState = {
+                      ...threadedState,
+                      substepStates: result.updatedSubstepStates,
+                    };
+                    fanOut.push({
+                      id: target.stepId,
+                      runbook: target.runbookRef,
+                      token: result.token,
+                    });
+                    break;
+                  default: {
+                    const _exhaustive: never = result;
+                    return _exhaustive;
+                  }
+                }
               }
 
               // Persist all tokens in one write
               await manager.update(runbookId, { substepStates: threadedState.substepStates });
               delegateFrontier = fanOut;
             } catch (err) {
-              // Persist any partial fan-out work, then transition the runbook to
-              // stopped. An uncaught throw here would strand the runbook on a
-              // DELEGATE step waiting for tokens that will never be issued.
+              // All-or-nothing fan-out (see inner rethrow comment above):
+              // nothing is persisted for this fan-out on error. Transition the
+              // runbook to stopped so it does not strand on a DELEGATE step
+              // waiting for tokens that will never be issued.
               const message = isError(err) ? err.message : String(err);
               await manager.update(runbookId, { lifecycle: 'stopped' });
               emitter.emit('RUNBOOK_STOPPED', {

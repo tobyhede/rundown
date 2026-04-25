@@ -31,8 +31,11 @@ const mockLifecycleService = {
 // Capture the real isJsonArrayStream before the mock is registered.
 // jest.unstable_mockModule does NOT hoist (unlike jest.mock), so this top-level
 // await executes first and always captures the real branded implementation.
-const { isJsonArrayStream: realIsJsonArrayStream, ForResolutionError: RealForResolutionError } =
-  await import('@rundown-org/core');
+const {
+  isJsonArrayStream: realIsJsonArrayStream,
+  ForResolutionError: RealForResolutionError,
+  Errors: RealErrors,
+} = await import('@rundown-org/core');
 
 jest.unstable_mockModule('@rundown-org/core', () => {
   const asTerminalSnapshot = jest.fn((snapshot: unknown) => {
@@ -166,9 +169,7 @@ jest.unstable_mockModule('@rundown-org/core', () => {
     ...mockErrorHelpers,
     RUNS_DIR: '.rundown/runs',
     createDelegation: jest.fn(),
-    Errors: {
-      delegationRunbookNotFound: jest.fn((ref: string) => new Error(`Runbook not found: ${ref}`)),
-    },
+    Errors: RealErrors,
   };
 });
 
@@ -509,8 +510,8 @@ describe('runExecutionLoop', () => {
         context: {
           lastAction: {
             type: 'RETRY_ERROR' as const,
-            code: 'RD-901',
-            message: 'hook failed: createDelegation threw',
+            code: 'RD-902',
+            message: 'hook failed: createDelegation returned step_not_found',
           },
           lifecycle: 'stopped',
         },
@@ -532,8 +533,8 @@ describe('runExecutionLoop', () => {
     expect(mockEmitter.emit).toHaveBeenCalledWith(
       'ERROR_OCCURRED',
       expect.objectContaining({
-        code: 'RD-901',
-        message: 'hook failed: createDelegation threw',
+        code: 'RD-902',
+        message: 'hook failed: createDelegation returned step_not_found',
       }),
     );
 
@@ -901,15 +902,17 @@ describe('runExecutionLoop', () => {
         source: 'project',
       });
 
-    // createDelegation returns a token for each substep
+    // createDelegation returns a Result with status 'created' for each substep
     (core.createDelegation as any)
       .mockReturnValueOnce({
+        status: 'created',
         token: 'rdtk_aaaa1111',
         tokenHash: 'hash-a',
         delegation: {},
         updatedSubstepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: {} }],
       })
       .mockReturnValueOnce({
+        status: 'created',
         token: 'rdtk_bbbb2222',
         tokenHash: 'hash-b',
         delegation: {},
@@ -1061,6 +1064,7 @@ describe('runExecutionLoop', () => {
     });
 
     (core.createDelegation as any).mockReturnValue({
+      status: 'created',
       token: 'rdtk_autoissue',
       tokenHash: 'hash-auto',
       delegation: {},

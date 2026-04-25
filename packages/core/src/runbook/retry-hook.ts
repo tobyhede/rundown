@@ -24,8 +24,8 @@ import type { OutputVars } from './output-evaluator.js';
 import { retryDelegation, type RetryDelegationResult } from './delegation-service.js';
 import { findSubstepState, type FrameKey } from './targeting.js';
 import { brandInitialTemplateVars, brandStoredOutputs } from './effective-vars.js';
+import { Errors } from '../errors/factory.js';
 import { logger } from '../logger.js';
-import { getErrorMessage } from '../errors.js';
 
 /**
  * Narrow `OutputVars` (context-side map, `JsonValue` entries — permits
@@ -76,9 +76,14 @@ export interface RetryHookSuccess {
 /**
  * Discriminated error variant of {@link RetryHookResult}.
  *
- * Wraps the `RundownError` raised by `createDelegation` inside `retryDelegation`.
- * Returned with the *original* substepStates so the caller can publish a
- * rollback-clean assignment (no partial writes).
+ * Surfaces a retry-hook failure as a structured record: either the
+ * `RundownError` returned by `retryDelegation`'s `error` variant (itself a
+ * translation of an inner `createDelegation` variant), or a retry-hook
+ * invariant violation (RD-902 `RETRY_HOOK_NO_FRAME`,
+ * RD-904 `RETRY_HOOK_MISSING_CANONICAL_AT`,
+ * RD-905 `RETRY_HOOK_STALE_SUBSTEP`). Returned with the *original*
+ * `substepStates` so the caller can publish a rollback-clean assignment
+ * (no partial writes).
  */
 export interface RetryHookError {
   readonly status: 'error';
@@ -131,11 +136,9 @@ export type RetryWorkingState = Pick<
  *   updated `working` (with the retried substep reset to
  *   `{ status: 'pending', result: undefined }`) and a frontier entry.
  * - `error` — surface codes:
- *   - `RD-901` from a non-Result throw escaping `retryDelegation`
- *     (actor-atomicity insurance).
- *   - `RD-903` from `retryDelegation` returning `not_found` / `not_current`
- *     after the substep state reported an active delegation — state and
- *     delegation-service views have diverged.
+ *   - Wrapped `RundownError` from `retryDelegation` returning
+ *     `not_found` / `not_current` (e.g. RD-801 / RD-802) propagated
+ *     verbatim — state and delegation-service views have diverged.
  *   - `RD-904` from a fresh retried delegation missing
  *     `contextSnapshot.at` (frontier id would lose FOR-iteration context).
  *   - Otherwise the code + message from `result.error` are propagated.
@@ -172,27 +175,14 @@ export function retrySingleSubstep(
   // skipped here — the cursor-re-entry machinery handles their re-execution.
   if (!ss.delegation) return { status: 'skipped' };
 
-  let result: RetryDelegationResult;
-  try {
-    result = retryDelegation(
-      {
-        state: working as RunbookState,
-        substepId: substep.id,
-        frameKey: activeFrameKey,
-      },
-      steps,
-    );
-  } catch (err) {
-    // RD-901: preserve actor atomicity. An uncaught throw from
-    // retryDelegation (e.g. a programming-bug TypeError escaping from
-    // createDelegation) would escape the XState `assign` callback and
-    // leave the actor indeterminate. Caller attaches rollback substepStates.
-    return {
-      status: 'error',
-      code: 'RD-901',
-      message: getErrorMessage(err),
-    };
-  }
+  const result: RetryDelegationResult = retryDelegation(
+    {
+      state: working as RunbookState,
+      substepId: substep.id,
+      frameKey: activeFrameKey,
+    },
+    steps,
+  );
 
   if (result.status === 'retried') {
     // Reset the retried substep's state: status -> 'pending', prior result
@@ -238,11 +228,13 @@ export function retrySingleSubstep(
   // not_found / not_current: the delegation-service view and the substep
   // state have diverged. The caller already filtered on `ss.delegation`
   // being present and `activeFrameKey` matching, so silent skip would
-  // consume the retry transition without re-issuing a token.
+  // consume the retry transition without re-issuing a token. Both variants
+  // now carry a `RundownError` (parallel to CreateDelegation), so the hook
+  // surfaces the structured code/message verbatim and rolls back.
   return {
     status: 'error',
-    code: 'RD-903',
-    message: `Retry hook aborted: retryDelegation returned "${result.status}" for substep "${substep.id}" but substep state recorded an active delegation — state and delegation-service view have diverged.`,
+    code: result.error.code,
+    message: result.error.message,
   };
 }
 
@@ -326,6 +318,31 @@ export function runRetryHook(
     activeFrameKey,
     variables: brandStoredOutputs(context.variables),
   };
+
+  // Stale-substep guard: an active-frame delegation references a substep id
+  // that the resolved parent step no longer declares. The per-substep loop
+  // below walks parentStep.substeps only, so the orphan would be silently
+  // missed and the retry transition would be consumed without re-issuing
+  // any token. Surface as a typed error (RD-905) so the operator can
+  // detect schema drift and restart cleanly. Per the project's "never
+  // migrate persisted state" principle, the only safe recovery is to
+  // complete or stop the running runbook and start fresh.
+  const declaredSubstepIds = new Set(parentStep.substeps.map((substep) => substep.id));
+  const orphanActiveDelegation = substepStates.find(
+    (ss) =>
+      ss.frameKey === activeFrameKey &&
+      ss.delegation !== undefined &&
+      !declaredSubstepIds.has(ss.id),
+  );
+  if (orphanActiveDelegation !== undefined) {
+    const error = Errors.retryHookStaleSubstep(orphanActiveDelegation.id, parentStep.name);
+    return {
+      status: 'error',
+      code: error.code,
+      message: error.message,
+      substepStates,
+    };
+  }
 
   for (const substep of parentStep.substeps) {
     const outcome = retrySingleSubstep(working, substep, activeFrameKey, parentStep.name, steps);

@@ -229,27 +229,36 @@ export function registerAbortCommand(program: Command): void {
               frameKey: scanFrameKey,
             });
 
-            // 7. Handle early-exit results (already_cancelled, needs_force)
-            if (abortResult.status === 'already_cancelled') {
-              if (!options.text) {
-                output.json({
-                  kind: 'abort',
-                  action: 'abort',
-                  status: 'already_cancelled',
-                  token: hint,
-                  substep: targetSubstepId,
-                  runbook: childRunbookPath,
-                  parentRunId: freshParent.id,
-                });
-              } else {
-                output.message(`Already cancelled: ${hint}`, 'info');
+            // 7. Handle all four variants exhaustively
+            switch (abortResult.status) {
+              case 'not_found':
+                // Rethrow so withErrorHandling surfaces the RD-801 envelope —
+                // preserves the pre-refactor CLI wire format.
+                throw abortResult.error;
+              case 'already_cancelled':
+                if (!options.text) {
+                  output.json({
+                    kind: 'abort',
+                    action: 'abort',
+                    status: 'already_cancelled',
+                    token: hint,
+                    substep: targetSubstepId,
+                    runbook: childRunbookPath,
+                    parentRunId: freshParent.id,
+                  });
+                } else {
+                  output.message(`Already cancelled: ${hint}`, 'info');
+                }
+                output.flush();
+                return;
+              case 'needs_force':
+                throw Errors.delegationAlreadyClaimed(targetSubstepId, abortResult.childRunId);
+              case 'cancelled':
+                break;
+              default: {
+                const _exhaustive: never = abortResult;
+                return _exhaustive;
               }
-              output.flush();
-              return;
-            }
-
-            if (abortResult.status === 'needs_force') {
-              throw Errors.delegationAlreadyClaimed(targetSubstepId, abortResult.childRunId);
             }
 
             // 8. Persist updated parent state

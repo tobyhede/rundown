@@ -312,6 +312,17 @@ export const ErrorCodes = {
       `This indicates the delegation was created by an older schema and cannot be safely re-issued.`,
     docSlug: 'delegation-snapshot-stale',
   },
+  DELEGATION_OWNER_LOST_SUBSTEPS: {
+    code: 'RD-818',
+    category: ErrorCategory.DELEGATION,
+    title: 'Delegation owner step lost substeps',
+    description:
+      `A persisted delegation references a substep, but the resolved runbook no longer ` +
+      `declares substeps on the owner step. Silently retargeting the replacement token ` +
+      `onto the bare step would corrupt the persisted entry. Resolve by completing or ` +
+      `stopping the running runbook and starting a fresh run.`,
+    docSlug: 'delegation-owner-lost-substeps',
+  },
 
   // Retry hook (9xx) — sub-range of ErrorCategory.EXECUTION reserved for
   // retry-hook lifecycle failures (delegation re-issuance, frame-key invariants,
@@ -319,18 +330,6 @@ export const ErrorCodes = {
   // category because consumers route on the structured RETRY_ERROR LastAction
   // variant, not on category. New 9xx codes must stay scoped to retry-hook
   // semantics — file unrelated runtime failures under 5xx EXECUTION.
-  RETRY_HOOK_ERROR: {
-    code: 'RD-901',
-    category: ErrorCategory.EXECUTION,
-    title: 'Retry hook caught an unexpected exception',
-    description:
-      `The retry hook caught a non-RundownError exception (typically a ` +
-      `programming bug in createDelegation or a downstream primitive). The ` +
-      `retry was rolled back and the runbook transitioned to stopped. If this ` +
-      `reproduces, it indicates a code defect — file an issue with the runbook ` +
-      `and step shape that triggered it.`,
-    docSlug: 'retry-hook-error',
-  },
   RETRY_HOOK_NO_FRAME: {
     code: 'RD-902',
     category: ErrorCategory.EXECUTION,
@@ -343,18 +342,6 @@ export const ErrorCodes = {
       `tampering, or missing frame setup in a new feature path).`,
     docSlug: 'retry-hook-no-frame',
   },
-  RETRY_HOOK_INCONSISTENT_STATE: {
-    code: 'RD-903',
-    category: ErrorCategory.EXECUTION,
-    title: 'Retry hook saw an inconsistent delegation state',
-    description:
-      `retryDelegation reported not_found/not_current for a substep that the ` +
-      `retry hook had already confirmed had a delegation. This indicates the ` +
-      `substep state and the delegation-service view of the same entry have ` +
-      `diverged — rollback is the safe action rather than silently skipping ` +
-      `the substep and consuming the retry transition.`,
-    docSlug: 'retry-hook-inconsistent-state',
-  },
   RETRY_HOOK_MISSING_CANONICAL_AT: {
     code: 'RD-904',
     category: ErrorCategory.EXECUTION,
@@ -366,6 +353,18 @@ export const ErrorCodes = {
       `to point at the wrong execution location. Rollback is the safe action ` +
       `rather than silently emitting a degraded id.`,
     docSlug: 'retry-hook-missing-canonical-at',
+  },
+  RETRY_HOOK_STALE_SUBSTEP: {
+    code: 'RD-905',
+    category: ErrorCategory.EXECUTION,
+    title: 'Retry hook references undeclared substep',
+    description:
+      `An active-frame delegation in persisted state targets a substep that the ` +
+      `resolved runbook no longer declares on the parent step. The per-substep ` +
+      `loop walks parentStep.substeps only, so silently skipping the orphan would ` +
+      `consume the retry transition without re-issuing any token. Resolve by ` +
+      `completing or stopping the running runbook and starting a fresh run.`,
+    docSlug: 'retry-hook-stale-substep',
   },
 
   // Generic

@@ -9914,6 +9914,9 @@ echo "processing"
           },
           steps,
         );
+        if (result.status !== 'created') {
+          throw new Error(`Failed to seed delegation for substep ${substepId}: ${result.status}`);
+        }
         state = { ...state, substepStates: result.updatedSubstepStates };
       }
 
@@ -10144,7 +10147,7 @@ echo "processing"
           ...baseSnap.context,
           activeFrameKey: frameKey,
           substep: undefined,
-          lastAction: { type: 'RETRY_ERROR' as const, code: 'RD-901', message: 'hook failed' },
+          lastAction: { type: 'RETRY_ERROR' as const, code: 'RD-902', message: 'hook failed' },
           parentRetryCount: 0,
           retryCount: 0,
           pendingDelegateFrontier: undefined,
@@ -10520,6 +10523,9 @@ echo "processing"
         steps,
       );
 
+      if (result.status !== 'created') {
+        throw new Error(`Failed to seed delegation for ${substepId}@${frameKey}: ${result.status}`);
+      }
       const ss = result.updatedSubstepStates.find(
         (s) => s.id === substepId && s.frameKey === frameKey,
       );

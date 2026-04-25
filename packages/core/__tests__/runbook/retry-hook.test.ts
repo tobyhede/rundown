@@ -9,10 +9,11 @@ import type {
 import type { RunbookContext } from '../../src/runbook/compiler.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import { brandEffectiveVarsForTest } from '../helpers/effective-vars.js';
+import { Errors } from '../../src/errors/factory.js';
 
-// Mock delegation-service so we can force `retryDelegation` to throw a
-// non-RundownError. The try/catch inside `runRetryHook` must convert that
-// into a RETRY_ERROR routing variant with code RD-901.
+// Mock delegation-service so we can drive `retryDelegation` to specific
+// Result variants — `retried`, `not_current`, `not_found`, `error` — and
+// verify `runRetryHook`'s routing decisions for each.
 jest.unstable_mockModule('../../src/runbook/delegation-service.js', () => ({
   retryDelegation: jest.fn(),
   // Re-export any other bindings the module graph under test imports.
@@ -77,7 +78,7 @@ describe('RetryHookResult exports', () => {
   });
 });
 
-describe('runRetryHook try/catch around retryDelegation', () => {
+describe('runRetryHook routing on retryDelegation Result variants', () => {
   beforeEach(() => {
     mockedRetryDelegation.mockReset();
   });
@@ -164,50 +165,6 @@ describe('runRetryHook try/catch around retryDelegation', () => {
     return { context, parentStep, steps, originalSubstepStates };
   }
 
-  it('wraps a non-RundownError from retryDelegation as RD-901 RETRY_ERROR', () => {
-    // When retryDelegation rethrows a programming-bug exception (e.g. TypeError
-    // escaping from createDelegation), runRetryHook must convert it to the
-    // RETRY_ERROR routing path. Without the try/catch the exception escapes the
-    // XState assign callback and corrupts actor atomicity.
-    const bug = new TypeError('simulated programming bug in createDelegation');
-    mockedRetryDelegation.mockImplementation(() => {
-      throw bug;
-    });
-
-    const { context, parentStep, steps, originalSubstepStates } = buildInputs();
-    const result = runRetryHook(context, parentStep, steps);
-
-    expect(result.status).toBe('error');
-    if (result.status === 'error') {
-      expect(result.code).toBe('RD-901');
-      expect(result.message).toBe('simulated programming bug in createDelegation');
-      // Rollback discipline: original substepStates are returned, never a
-      // partially-mutated variant.
-      expect(result.substepStates).toBe(originalSubstepStates);
-    }
-  });
-
-  it('wraps a thrown non-Error value from retryDelegation as RD-901 with stringified message', () => {
-    // Defensive coverage: JS allows `throw 'string'` and similar. The hook
-    // must stringify gracefully rather than crash on .message access. We
-    // construct the non-Error throw via an indirect value so the lint rule
-    // that forbids `throw <literal>` does not fire for a legitimate test
-    // of the defensive path.
-    const nonError: unknown = 'bare string throw';
-    mockedRetryDelegation.mockImplementation(() => {
-      throw nonError;
-    });
-
-    const { context, parentStep, steps } = buildInputs();
-    const result = runRetryHook(context, parentStep, steps);
-
-    expect(result.status).toBe('error');
-    if (result.status === 'error') {
-      expect(result.code).toBe('RD-901');
-      expect(result.message).toBe('bare string throw');
-    }
-  });
-
   it('uses the canonical contextSnapshot.at when pushing a FOR-iteration frontier entry', () => {
     // Regression: the pre-fix code built the frontier id from
     // `${parentStep.name}.${substep.id}` — e.g. "1.1" — which erased the
@@ -247,40 +204,64 @@ describe('runRetryHook try/catch around retryDelegation', () => {
     }
   });
 
-  it('rolls back with RD-903 when retryDelegation returns not_current after delegation observed', () => {
-    // The loop filters on `ss.delegation` being present and `activeFrameKey`
-    // matching the context. Reaching `not_current` or `not_found` here means
-    // the substep state and the delegation-service view have diverged — silent
-    // skip would consume the retry transition without re-issuing a token.
+  it('rolls back with the inner RundownError code/message when retryDelegation returns not_current after delegation observed', () => {
     const { context, parentStep, steps, originalSubstepStates } = buildInputs();
+    const inner = Errors.delegationStepNotCurrent('2', '1');
     mockedRetryDelegation.mockImplementation(() => ({
       status: 'not_current' as const,
       ownerStep: '2',
       currentStep: '1',
+      error: inner,
     }));
 
     const result = runRetryHook(context, parentStep, steps);
 
     expect(result.status).toBe('error');
     if (result.status === 'error') {
-      expect(result.code).toBe('RD-903');
-      expect(result.message).toMatch(/not_current.*substep "1"/);
+      expect(result.code).toBe(inner.code);
+      expect(result.message).toBe(inner.message);
       expect(result.substepStates).toBe(originalSubstepStates);
     }
   });
 
-  it('rolls back with RD-903 when retryDelegation returns not_found after delegation observed', () => {
+  it('rolls back with the inner RundownError code/message when retryDelegation returns not_found after delegation observed', () => {
     const { context, parentStep, steps, originalSubstepStates } = buildInputs();
+    const inner = Errors.delegationStepNotFound('1');
     mockedRetryDelegation.mockImplementation(() => ({
       status: 'not_found' as const,
+      substepId: '1',
+      error: inner,
     }));
 
     const result = runRetryHook(context, parentStep, steps);
 
     expect(result.status).toBe('error');
     if (result.status === 'error') {
-      expect(result.code).toBe('RD-903');
-      expect(result.message).toMatch(/not_found/);
+      // Hook surfaces the inner RundownError code/message verbatim.
+      expect(result.code).toBe(inner.code);
+      expect(result.message).toBe(inner.message);
+      expect(result.substepStates).toBe(originalSubstepStates);
+    }
+  });
+
+  it('propagates retryDelegation error variant as RetryHookError with verbatim code/message', () => {
+    // The two tests deleted in 63bf886e (RD-901 try/catch removal) incidentally
+    // exercised this propagation arm: when retryDelegation returns
+    // `{ status: 'error', error }`, runRetryHook must surface the inner
+    // RundownError's code and message verbatim and roll back substepStates.
+    const { context, parentStep, steps, originalSubstepStates } = buildInputs();
+    const inner = Errors.delegationRunbookNotFound('child-1.md');
+    mockedRetryDelegation.mockImplementation(() => ({
+      status: 'error' as const,
+      error: inner,
+    }));
+
+    const result = runRetryHook(context, parentStep, steps);
+
+    expect(result.status).toBe('error');
+    if (result.status === 'error') {
+      expect(result.code).toBe(inner.code);
+      expect(result.message).toBe(inner.message);
       expect(result.substepStates).toBe(originalSubstepStates);
     }
   });
@@ -370,6 +351,89 @@ describe('runRetryHook try/catch around retryDelegation', () => {
     }
     // retryDelegation must NOT be called — the stale-frame substep never
     // matches findSubstepState(..., activeFrameKey), so the loop skips it.
+    expect(mockedRetryDelegation).not.toHaveBeenCalled();
+  });
+
+  it('rolls back with RD-905 when an active-frame delegation targets an undeclared substep', () => {
+    // Schema-drift scenario: persisted state holds an active-frame
+    // delegation whose `id` (here: "99") is NOT declared on the current
+    // parentStep.substeps. The per-substep loop walks parentStep.substeps
+    // only, so the orphan would be silently missed and runRetryHook would
+    // fall through to its post-loop success guard, consuming the retry
+    // transition without re-issuing any token. The pre-loop guard surfaces
+    // this as a typed error so the operator can detect the drift.
+    const activeFrameKey = buildFrameKey('1');
+    const substepTransitions = {
+      pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
+      fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
+    };
+    const parentTransitions = {
+      pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+      fail: { kind: 'fail' as const, retry: 1, action: { type: 'STOP' as const } },
+    };
+    const parentStep: ResolvedStepHavingSubsteps = {
+      kind: 'substeps',
+      name: '1',
+      description: 'Parent',
+      transitions: parentTransitions,
+      aggregation: { strategy: 'ALL' as const },
+      substeps: [
+        {
+          kind: 'base',
+          id: '1',
+          description: 'Sub 1',
+          transitions: substepTransitions,
+        },
+      ],
+    } as unknown as ResolvedStepHavingSubsteps;
+    const steps: ResolvedStep[] = [parentStep as unknown as ResolvedStep];
+
+    const orphanDelegation: StepDelegation = {
+      tokenHash: 'hash_orphan',
+      childRunbookPath: 'child-99.md',
+      childRunId: null,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      cancelledAt: null,
+      contextSnapshot: {
+        vars: brandEffectiveVarsForTest({}),
+        ancestors: [],
+        step: '1',
+        substep: '99',
+        at: '1.99',
+      },
+    };
+    const originalSubstepStates: readonly SubstepState[] = [
+      {
+        id: '99',
+        frameKey: activeFrameKey,
+        status: 'done',
+        result: 'fail',
+        delegation: orphanDelegation,
+      },
+    ];
+    const context: RunbookContext = {
+      retryCount: 0,
+      parentRetryCount: 0,
+      iterationRetryCount: 0,
+      variables: {},
+      forStack: [],
+      substepCompletedCount: 0,
+      templateVars: {},
+      frontmatterOutputs: [],
+      finalVars: {},
+      lifecycle: 'running' as const,
+      substepStates: originalSubstepStates,
+      activeFrameKey,
+    } as unknown as RunbookContext;
+
+    const result = runRetryHook(context, parentStep, steps);
+
+    expect(result.status).toBe('error');
+    if (result.status === 'error') {
+      expect(result.code).toBe('RD-905');
+      expect(result.substepStates).toBe(originalSubstepStates);
+    }
+    // retryDelegation must NOT be called — the guard fires before the loop.
     expect(mockedRetryDelegation).not.toHaveBeenCalled();
   });
 
