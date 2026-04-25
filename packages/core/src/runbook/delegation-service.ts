@@ -455,12 +455,27 @@ export interface RetryDelegationErrorResult {
   readonly error: RundownError;
 }
 
-/** Retry succeeded: old delegation cancelled, new one issued. */
+/**
+ * Retry succeeded: the existing delegation has been force-cancelled and a
+ * fresh one minted under a new token. The contract mirrors
+ * {@link CreateDelegationCreatedResult} — every field a caller needs to
+ * persist or surface to the operator is here.
+ */
 export interface RetryDelegationRetriedResult {
   readonly status: 'retried';
+  /** Plain-text token (to be given to the child agent). */
   readonly token: string;
+  /** SHA-256 hash of the token (stored in state). */
   readonly tokenHash: string;
+  /** The full delegation metadata for the freshly-issued attempt. */
   readonly delegation: StepDelegation;
+  /**
+   * Full substep-state array reflecting the post-retry world. Callers must
+   * persist this verbatim via `manager.update`; it is not a delta or a
+   * partial update — it is the cumulative state with the cancelled
+   * delegation flag set on the prior entry and the new delegation token
+   * recorded on the targeted substep.
+   */
   readonly updatedSubstepStates: readonly SubstepState[];
 }
 
