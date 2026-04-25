@@ -52,7 +52,7 @@ export function brandStoredOutputsForTest(vars: Readonly<Record<string, string>>
  * at the actor-boundary seam; tests only need to hand the brand to fixture
  * builders.
  *
- * @param vars - Plain effective-var record to brand.
+ * @param vars - Optional plain effective-var record to brand; defaults to empty.
  * @returns The same record typed as `EffectiveVars`.
  */
 export function brandEffectiveVarsForTest(

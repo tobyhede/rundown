@@ -83,59 +83,61 @@ export function makeParsedSubstep(partial: Partial<ParsedSubstep> = {}): ParsedS
 /**
  * Build a `BaseStep` (prompt-only / empty step).
  *
- * @param partial - Overrides for any BaseStep field.
+ * @param partial - Overrides for any BaseStep field except `kind` (set internally).
  * @returns A valid `BaseStep` with required fields filled.
  * @remarks Default `name` is `'1'`. When composing multiple steps in a test, pass distinct names
  * to avoid conflicts in name-keyed lookups.
  */
-export function makeBaseStep(partial: Partial<BaseStep> = {}): BaseStep {
+export function makeBaseStep(partial: Omit<Partial<BaseStep>, 'kind'> = {}): BaseStep {
   return {
-    kind: 'base',
     name: '1',
     description: 'Step',
     transitions: makeTransitions(),
     ...partial,
-  } as BaseStep;
+    kind: 'base',
+  };
 }
 
 /**
  * Build a `StepWithCommand` (step with an executable command).
  *
- * @param partial - Overrides for any StepWithCommand field.
+ * @param partial - Overrides for any StepWithCommand field except `kind` (set internally).
  * @returns A valid `StepWithCommand` with required fields filled.
  * @remarks Default `name` is `'1'`. When composing multiple steps in a test, pass distinct names
  * to avoid conflicts in name-keyed lookups.
  */
-export function makeCommandStep(partial: Partial<StepWithCommand> = {}): StepWithCommand {
+export function makeCommandStep(
+  partial: Omit<Partial<StepWithCommand>, 'kind'> = {},
+): StepWithCommand {
   return {
-    kind: 'command',
     name: '1',
     description: 'Command step',
     transitions: makeTransitions(),
     command: { code: 'true' },
     ...partial,
-  } as StepWithCommand;
+    kind: 'command',
+  };
 }
 
 /**
  * Build a `ResolvedStepWithSubsteps` with zero or more substeps.
  *
- * @param partial - Overrides for any ResolvedStepWithSubsteps field.
+ * @param partial - Overrides for any ResolvedStepWithSubsteps field except `kind` (set internally).
  * @returns A valid `ResolvedStepWithSubsteps` with required fields filled.
  * @remarks Default `name` is `'1'`. When composing multiple steps in a test, pass distinct names
  * to avoid conflicts in name-keyed lookups.
  */
 export function makeResolvedStepWithSubsteps(
-  partial: Partial<ResolvedStepWithSubsteps> = {},
+  partial: Omit<Partial<ResolvedStepWithSubsteps>, 'kind'> = {},
 ): ResolvedStepWithSubsteps {
   return {
-    kind: 'substeps',
     name: '1',
     description: 'Step with substeps',
     transitions: makeTransitions(),
     substeps: [],
     ...partial,
-  } as ResolvedStepWithSubsteps;
+    kind: 'substeps',
+  };
 }
 
 /**
@@ -143,44 +145,44 @@ export function makeResolvedStepWithSubsteps(
  *
  * Default forClause is a numeric range `{ variable: 'i', start: 1, end: 10 }`.
  *
- * @param partial - Overrides for any ResolvedStepWithFor field.
+ * @param partial - Overrides for any ResolvedStepWithFor field except `kind` (set internally).
  * @returns A valid `ResolvedStepWithFor` with required fields filled.
  * @remarks Default `name` is `'1'`. When composing multiple steps in a test, pass distinct names
  * to avoid conflicts in name-keyed lookups.
  */
 export function makeResolvedStepWithFor(
-  partial: Partial<ResolvedStepWithFor> = {},
+  partial: Omit<Partial<ResolvedStepWithFor>, 'kind'> = {},
 ): ResolvedStepWithFor {
   return {
-    kind: 'for',
     name: '1',
     description: 'FOR step',
     transitions: makeTransitions(),
     forClause: { variable: 'i', start: 1, end: 10 },
     substeps: [],
     ...partial,
-  } as ResolvedStepWithFor;
+    kind: 'for',
+  };
 }
 
 /**
  * Build a `ResolvedStepWithPromptedFor` (FOR demoted to prompt-only).
  *
- * @param partial - Overrides for any ResolvedStepWithPromptedFor field.
+ * @param partial - Overrides for any ResolvedStepWithPromptedFor field except `kind` (set internally).
  * @returns A valid `ResolvedStepWithPromptedFor` with required fields filled.
  * @remarks Default `name` is `'1'`. When composing multiple steps in a test, pass distinct names
  * to avoid conflicts in name-keyed lookups.
  */
 export function makeResolvedStepWithPromptedFor(
-  partial: Partial<ResolvedStepWithPromptedFor> = {},
+  partial: Omit<Partial<ResolvedStepWithPromptedFor>, 'kind'> = {},
 ): ResolvedStepWithPromptedFor {
   return {
-    kind: 'prompted-for',
     name: '1',
     description: 'Prompted-FOR step',
     transitions: makeTransitions(),
     substeps: [],
     ...partial,
-  } as ResolvedStepWithPromptedFor;
+    kind: 'prompted-for',
+  };
 }
 
 /**
@@ -194,7 +196,7 @@ export function makeContextSnapshot(partial: Partial<ContextSnapshot> = {}): Con
     vars: brandEffectiveVarsForTest({}),
     ancestors: [],
     ...partial,
-  } as ContextSnapshot;
+  };
 }
 
 /**
@@ -205,7 +207,7 @@ export function makeContextSnapshot(partial: Partial<ContextSnapshot> = {}): Con
  */
 export function makeStepDelegation(partial: Partial<StepDelegation> = {}): StepDelegation {
   return {
-    tokenHash: 'hash-1',
+    tokenHash: `sha256:${'a'.repeat(64)}`,
     childRunbookPath: 'child.md',
     contextSnapshot: makeContextSnapshot(),
     childRunId: null,

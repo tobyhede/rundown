@@ -1,6 +1,5 @@
 import { describe, it, expect } from '@jest/globals';
 import { createActor } from 'xstate';
-import { parseRunbookDocument } from '@rundown-org/parser';
 import { compileRunbookToMachine, MAX_FILE_ITERATIONS } from '../../src/runbook/compiler.js';
 import type { RunbookContext } from '../../src/runbook/compiler.js';
 import type {
@@ -127,8 +126,7 @@ describe('runbook compiler', () => {
     });
 
     it('explicit H3 runbook substeps with runbooks DEFER and parent FAIL-routes on deferred fail', () => {
-      const steps = [
-        ...parseRunbookDocument(`## 1. Review package
+      const steps = createRunbook(`## 1. Review package
 ### 1.1 Review pass
 - review-pass.runbook.md
 ### 1.2 Review fail
@@ -136,8 +134,7 @@ describe('runbook compiler', () => {
 
 ## 2. Done
 - PASS COMPLETE
-`).runbook.steps,
-      ] as unknown as ResolvedStep[];
+`);
 
       const machine = compileRunbookToMachine(steps);
       const actor = createActor(machine);

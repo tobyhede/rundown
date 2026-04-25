@@ -155,10 +155,9 @@ describe('evaluateSubstepAggregation', () => {
 
 describe('evaluateFailCondition', () => {
   it('returns message for COMPLETE action with message', () => {
-    const step: any = {
+    const step = makeBaseStep({
       name: '1',
       description: 'Test',
-
       transitions: {
         pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
         fail: {
@@ -167,7 +166,7 @@ describe('evaluateFailCondition', () => {
           action: { type: 'COMPLETE', message: 'Failed gracefully' },
         },
       },
-    };
+    });
     const result = evaluateFailCondition(step, 0);
     expect(result.action).toBe('complete');
     expect(result.message).toBe('Failed gracefully');
@@ -198,15 +197,14 @@ describe('evaluatePassCondition edge cases', () => {
   });
 
   it('returns stopped for STOP action with message', () => {
-    const step: any = {
+    const step = makeBaseStep({
       name: '1',
       description: 'Test',
-
       transitions: {
         pass: { kind: 'pass', retry: 0, action: { type: 'STOP', message: 'Halted on pass' } },
         fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
       },
-    };
+    });
 
     const result = evaluatePassCondition(step);
     expect(result.action).toBe('stopped');

@@ -198,7 +198,7 @@ describe('substep rendering', () => {
     const step = makeCommandStep({
       name: '1',
       description: 'Run tests',
-      command: { code: 'npm test', lang: 'bash' } as any,
+      command: { code: 'npm test', lang: 'bash' },
     });
 
     const result = renderForTest(step, undefined, true);
@@ -210,7 +210,7 @@ describe('substep rendering', () => {
     const step = makeCommandStep({
       name: '1',
       description: 'Run python script',
-      command: { code: 'print("hello")', lang: 'python' } as any,
+      command: { code: 'print("hello")', lang: 'python' },
     });
 
     const result = renderForTest(step, undefined, true);
