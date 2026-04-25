@@ -25,7 +25,6 @@ import { retryDelegation, type RetryDelegationResult } from './delegation-servic
 import { findSubstepState, type FrameKey } from './targeting.js';
 import { brandInitialTemplateVars, brandStoredOutputs } from './effective-vars.js';
 import { logger } from '../logger.js';
-import { getErrorMessage } from '../errors.js';
 
 /**
  * Narrow `OutputVars` (context-side map, `JsonValue` entries — permits
@@ -131,8 +130,6 @@ export type RetryWorkingState = Pick<
  *   updated `working` (with the retried substep reset to
  *   `{ status: 'pending', result: undefined }`) and a frontier entry.
  * - `error` — surface codes:
- *   - `RD-901` from a non-Result throw escaping `retryDelegation`
- *     (actor-atomicity insurance).
  *   - `RD-903` from `retryDelegation` returning `not_found` / `not_current`
  *     after the substep state reported an active delegation — state and
  *     delegation-service views have diverged.
@@ -172,27 +169,14 @@ export function retrySingleSubstep(
   // skipped here — the cursor-re-entry machinery handles their re-execution.
   if (!ss.delegation) return { status: 'skipped' };
 
-  let result: RetryDelegationResult;
-  try {
-    result = retryDelegation(
-      {
-        state: working as RunbookState,
-        substepId: substep.id,
-        frameKey: activeFrameKey,
-      },
-      steps,
-    );
-  } catch (err) {
-    // RD-901: preserve actor atomicity. An uncaught throw from
-    // retryDelegation (e.g. a programming-bug TypeError escaping from
-    // createDelegation) would escape the XState `assign` callback and
-    // leave the actor indeterminate. Caller attaches rollback substepStates.
-    return {
-      status: 'error',
-      code: 'RD-901',
-      message: getErrorMessage(err),
-    };
-  }
+  const result: RetryDelegationResult = retryDelegation(
+    {
+      state: working as RunbookState,
+      substepId: substep.id,
+      frameKey: activeFrameKey,
+    },
+    steps,
+  );
 
   if (result.status === 'retried') {
     // Reset the retried substep's state: status -> 'pending', prior result

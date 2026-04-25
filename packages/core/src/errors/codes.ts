@@ -319,18 +319,6 @@ export const ErrorCodes = {
   // category because consumers route on the structured RETRY_ERROR LastAction
   // variant, not on category. New 9xx codes must stay scoped to retry-hook
   // semantics — file unrelated runtime failures under 5xx EXECUTION.
-  RETRY_HOOK_ERROR: {
-    code: 'RD-901',
-    category: ErrorCategory.EXECUTION,
-    title: 'Retry hook caught an unexpected exception',
-    description:
-      `The retry hook caught a non-RundownError exception (typically a ` +
-      `programming bug in createDelegation or a downstream primitive). The ` +
-      `retry was rolled back and the runbook transitioned to stopped. If this ` +
-      `reproduces, it indicates a code defect — file an issue with the runbook ` +
-      `and step shape that triggered it.`,
-    docSlug: 'retry-hook-error',
-  },
   RETRY_HOOK_NO_FRAME: {
     code: 'RD-902',
     category: ErrorCategory.EXECUTION,

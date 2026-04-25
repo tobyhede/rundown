@@ -10144,7 +10144,7 @@ echo "processing"
           ...baseSnap.context,
           activeFrameKey: frameKey,
           substep: undefined,
-          lastAction: { type: 'RETRY_ERROR' as const, code: 'RD-901', message: 'hook failed' },
+          lastAction: { type: 'RETRY_ERROR' as const, code: 'RD-902', message: 'hook failed' },
           parentRetryCount: 0,
           retryCount: 0,
           pendingDelegateFrontier: undefined,

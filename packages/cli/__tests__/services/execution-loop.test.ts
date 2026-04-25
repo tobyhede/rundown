@@ -509,7 +509,7 @@ describe('runExecutionLoop', () => {
         context: {
           lastAction: {
             type: 'RETRY_ERROR' as const,
-            code: 'RD-901',
+            code: 'RD-902',
             message: 'hook failed: createDelegation threw',
           },
           lifecycle: 'stopped',
@@ -532,7 +532,7 @@ describe('runExecutionLoop', () => {
     expect(mockEmitter.emit).toHaveBeenCalledWith(
       'ERROR_OCCURRED',
       expect.objectContaining({
-        code: 'RD-901',
+        code: 'RD-902',
         message: 'hook failed: createDelegation threw',
       }),
     );

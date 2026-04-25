@@ -10,9 +10,9 @@ import type { RunbookContext } from '../../src/runbook/compiler.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import { brandEffectiveVarsForTest } from '../helpers/effective-vars.js';
 
-// Mock delegation-service so we can force `retryDelegation` to throw a
-// non-RundownError. The try/catch inside `runRetryHook` must convert that
-// into a RETRY_ERROR routing variant with code RD-901.
+// Mock delegation-service so we can drive `retryDelegation` to specific
+// Result variants — `retried`, `not_current`, `not_found`, `error` — and
+// verify `runRetryHook`'s routing decisions for each.
 jest.unstable_mockModule('../../src/runbook/delegation-service.js', () => ({
   retryDelegation: jest.fn(),
   // Re-export any other bindings the module graph under test imports.
@@ -77,7 +77,7 @@ describe('RetryHookResult exports', () => {
   });
 });
 
-describe('runRetryHook try/catch around retryDelegation', () => {
+describe('runRetryHook routing on retryDelegation Result variants', () => {
   beforeEach(() => {
     mockedRetryDelegation.mockReset();
   });
@@ -163,50 +163,6 @@ describe('runRetryHook try/catch around retryDelegation', () => {
 
     return { context, parentStep, steps, originalSubstepStates };
   }
-
-  it('wraps a non-RundownError from retryDelegation as RD-901 RETRY_ERROR', () => {
-    // When retryDelegation rethrows a programming-bug exception (e.g. TypeError
-    // escaping from createDelegation), runRetryHook must convert it to the
-    // RETRY_ERROR routing path. Without the try/catch the exception escapes the
-    // XState assign callback and corrupts actor atomicity.
-    const bug = new TypeError('simulated programming bug in createDelegation');
-    mockedRetryDelegation.mockImplementation(() => {
-      throw bug;
-    });
-
-    const { context, parentStep, steps, originalSubstepStates } = buildInputs();
-    const result = runRetryHook(context, parentStep, steps);
-
-    expect(result.status).toBe('error');
-    if (result.status === 'error') {
-      expect(result.code).toBe('RD-901');
-      expect(result.message).toBe('simulated programming bug in createDelegation');
-      // Rollback discipline: original substepStates are returned, never a
-      // partially-mutated variant.
-      expect(result.substepStates).toBe(originalSubstepStates);
-    }
-  });
-
-  it('wraps a thrown non-Error value from retryDelegation as RD-901 with stringified message', () => {
-    // Defensive coverage: JS allows `throw 'string'` and similar. The hook
-    // must stringify gracefully rather than crash on .message access. We
-    // construct the non-Error throw via an indirect value so the lint rule
-    // that forbids `throw <literal>` does not fire for a legitimate test
-    // of the defensive path.
-    const nonError: unknown = 'bare string throw';
-    mockedRetryDelegation.mockImplementation(() => {
-      throw nonError;
-    });
-
-    const { context, parentStep, steps } = buildInputs();
-    const result = runRetryHook(context, parentStep, steps);
-
-    expect(result.status).toBe('error');
-    if (result.status === 'error') {
-      expect(result.code).toBe('RD-901');
-      expect(result.message).toBe('bare string throw');
-    }
-  });
 
   it('uses the canonical contextSnapshot.at when pushing a FOR-iteration frontier entry', () => {
     // Regression: the pre-fix code built the frontier id from
