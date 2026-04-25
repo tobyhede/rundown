@@ -576,4 +576,37 @@ describe('RunbookStateManager', () => {
       expect(loaded?.templateVars?.items).toEqual(['a', 'b']);
     });
   });
+
+  describe('RunbookStateManager.delete — output capture cleanup', () => {
+    it('removes the per-run outputs directory alongside the state JSON', async () => {
+      const state = await manager.create('demo.runbook.md', mockRunbook, {
+        runbookPath: '/abs/demo.runbook.md',
+      });
+      // Simulate captured output files written during a run
+      const outDir = join(testDir, '.rundown', 'runs', state.id, 'outputs', '1');
+      await (await import('node:fs/promises')).mkdir(outDir, { recursive: true });
+      await (await import('node:fs/promises')).writeFile(join(outDir, 'Version'), 'v1.2.3');
+
+      await manager.delete(state.id);
+
+      // Both the state file and the outputs dir should be gone
+      const { stat: fsStat } = await import('node:fs/promises');
+      await expect(
+        fsStat(join(testDir, '.rundown', 'runs', `${state.id}.json`)),
+      ).rejects.toMatchObject({
+        code: 'ENOENT',
+      });
+      await expect(fsStat(join(testDir, '.rundown', 'runs', state.id))).rejects.toMatchObject({
+        code: 'ENOENT',
+      });
+    });
+
+    it('is a no-op when the outputs directory does not exist', async () => {
+      const state = await manager.create('demo.runbook.md', mockRunbook, {
+        runbookPath: '/abs/demo.runbook.md',
+      });
+      // No outputs dir created — delete must still succeed
+      await expect(manager.delete(state.id)).resolves.toBeUndefined();
+    });
+  });
 });
