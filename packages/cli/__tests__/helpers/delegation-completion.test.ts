@@ -364,7 +364,7 @@ describe('handleParentCompletion', () => {
         parentRunId: 'parent-run-id',
         parentStepId: '1',
         parentStep: '1',
-        parentFrameKey: brandFrameKeyForTest('1') as any,
+        parentFrameKey: brandFrameKeyForTest('1'),
         parentEntry: 1,
       },
     });
@@ -837,10 +837,8 @@ describe('handleParentCompletion', () => {
 
     await handleParentCompletion(childState, 'pass', '/test', output);
 
-    const drainCall = (drainResolvedCompletions as jest.Mock<any>).mock.calls[0][0] as {
-      frameKeyOverride?: unknown;
-    };
-    expect(drainCall.frameKeyOverride).toBeUndefined();
+    const drainCall = jest.mocked(drainResolvedCompletions).mock.calls[0]?.[0];
+    expect(drainCall?.frameKeyOverride).toBeUndefined();
   });
 
   it('forwards child finalVars to parent actor via SET_VARIABLES before drain', async () => {
@@ -895,21 +893,30 @@ describe('handleParentCompletion', () => {
     const output = makeOutput();
 
     // Override the actor mock so sendAndSync throws for this test
-    const MockActor = core.RunbookActorService as jest.MockedClass<typeof core.RunbookActorService>;
+    const MockActor = core.RunbookActorService as unknown as jest.Mock<
+      () => RunbookActorServiceType
+    >;
     MockActor.mockImplementation(
       () =>
         ({
-          sendAndSync: jest.fn<any>().mockRejectedValue(new Error('machine rejected event')),
-        }) as any,
+          sendAndSync: mockFn<
+            (...args: unknown[]) => Promise<unknown>
+          >().mockRejectedValue(new Error('machine rejected event')),
+        }) as unknown as RunbookActorServiceType,
     );
 
-    (core.RunbookStateManager as unknown as jest.Mock<any>).mockImplementation(() => manager);
-    (core.ExecutionLifecycleService as unknown as jest.Mock<any>).mockImplementation(() =>
-      makeLifecycleService(),
+    (core.RunbookStateManager as unknown as jest.Mock<() => RunbookStateManagerType>)
+      .mockImplementation(() => manager as unknown as RunbookStateManagerType);
+    (core.ExecutionLifecycleService as unknown as jest.Mock<() => ExecutionLifecycleServiceType>)
+      .mockImplementation(
+        () => makeLifecycleService() as unknown as ExecutionLifecycleServiceType,
+      );
+    (core.SessionService as unknown as jest.Mock<() => SessionServiceType>).mockImplementation(
+      () =>
+        ({
+          popRunbook: mockFn<() => Promise<string | null>>().mockResolvedValue(null),
+        }) as unknown as SessionServiceType,
     );
-    (core.SessionService as unknown as jest.Mock<any>).mockImplementation(() => ({
-      popRunbook: jest.fn<any>().mockResolvedValue(null),
-    }));
 
     jest.mocked(drainResolvedCompletions).mockResolvedValue({
       unresolved: 0,
@@ -965,7 +972,7 @@ describe('inline linkage path', () => {
         parentRunId: 'parent-run',
         parentStepId: '1',
         parentStep: '1',
-        parentFrameKey: brandFrameKeyForTest('1') as any,
+        parentFrameKey: brandFrameKeyForTest('1'),
         parentEntry: 1,
       },
     });
@@ -981,7 +988,7 @@ describe('inline linkage path', () => {
         parentRunId: 'parent-run-id',
         parentStepId: '1',
         parentStep: '1',
-        parentFrameKey: brandFrameKeyForTest('1') as any,
+        parentFrameKey: brandFrameKeyForTest('1'),
         parentEntry: 1,
       },
     });
