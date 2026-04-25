@@ -130,6 +130,14 @@ export interface CreateDelegationSubstepNotFoundResult {
 /** An active (uncancelled, unclaimed) delegation already exists on the substep. */
 export interface CreateDelegationExistsResult {
   readonly status: 'delegation_exists';
+  /**
+   * Caller-input `stepId` verbatim (e.g. `"1.1"` for a substep), not the
+   * parsed step segment. This differs from {@link CreateDelegationStepNotFoundResult.step},
+   * which holds the parsed step segment (e.g. `"99"` from input `"99.1"`).
+   * The verbatim form is deliberate: the paired `error` is
+   * `RD-804 delegationAlreadyExists(stepId)`, whose message echoes what the
+   * operator typed.
+   */
   readonly step: string;
   readonly error: RundownError;
 }
