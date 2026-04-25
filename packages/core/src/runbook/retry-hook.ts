@@ -75,9 +75,12 @@ export interface RetryHookSuccess {
 /**
  * Discriminated error variant of {@link RetryHookResult}.
  *
- * Wraps the `RundownError` raised by `createDelegation` inside `retryDelegation`.
- * Returned with the *original* substepStates so the caller can publish a
- * rollback-clean assignment (no partial writes).
+ * Surfaces a retry-hook failure as a structured record: either the
+ * `RundownError` returned by `retryDelegation`'s `error` variant (itself a
+ * translation of an inner `createDelegation` variant), or a retry-hook
+ * invariant violation (RD-902/903/904). Returned with the *original*
+ * `substepStates` so the caller can publish a rollback-clean assignment
+ * (no partial writes).
  */
 export interface RetryHookError {
   readonly status: 'error';

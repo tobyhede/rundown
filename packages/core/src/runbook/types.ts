@@ -347,8 +347,10 @@ type LastActionBase = {
  *
  * Distinct from `STOP`: STOP is a pure domain action (authored STOP
  * transitions, `rd stop`). `RETRY_ERROR` is a machine-internal-failure
- * signal — the retry could not complete because `createDelegation` threw or
- * an invariant (e.g. missing active frame) was violated.
+ * signal — the retry could not complete because `retryDelegation`
+ * returned `{ status: 'error' }` (propagated from an inner
+ * `createDelegation` variant) or an invariant (e.g. missing active
+ * frame) was violated.
  *
  * @see parseActionType in `packages/core/src/runbook/transition-kernel.ts`
  *   — maps this variant to the `'RETRY_ERROR'` ActionType. The CLI layer

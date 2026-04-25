@@ -5,8 +5,9 @@ import type { LastAction, Step, ResolvedStep } from './types.js';
  * Action type derived from structured LastAction.
  *
  * `RETRY_ERROR` is a machine-internal-failure signal emitted when the retry
- * hook cannot complete (e.g. `createDelegation` throws, invariant
- * violation). It is distinct from `STOP` (a pure domain action from
+ * hook cannot complete — `retryDelegation` returned `{ status: 'error' }`,
+ * or a retry-hook invariant (missing active frame, missing canonical at)
+ * was violated. It is distinct from `STOP` (a pure domain action from
  * authored STOP transitions or `rd stop`): the CLI orchestrator emits
  * `ERROR_OCCURRED` before the terminal RUNBOOK_STOPPED event.
  */
