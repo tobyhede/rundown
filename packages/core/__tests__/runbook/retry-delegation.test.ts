@@ -257,8 +257,12 @@ describe('retryDelegation', () => {
     expect(result.status).toBe('error');
     if (result.status !== 'error') return;
     expect(result.error).toBeDefined();
-    // The wrapped RundownError surfaces the underlying code for callers.
-    expect(result.error.code).toMatch(/^RD-\d+/);
+    // Inner createDelegation path: trimming substep '1' from the available
+    // list at trimmedSteps causes the substep-validation block to fire
+    // `Errors.delegationSubstepNotFound` (RD-806). Pinning the code makes
+    // a future change to the inner failure path produce a hard test
+    // failure rather than silently passing under the regex.
+    expect(result.error.code).toBe('RD-806');
   });
 
   it('successfully retries a bare-step delegation (step without substeps)', () => {
