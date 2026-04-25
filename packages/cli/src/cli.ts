@@ -163,7 +163,10 @@ export function createProgram(): Command {
     if (allHelperPaths.length > 0) {
       const registry = await loadHelperModules(allHelperPaths, cwd, cwd);
       setHelperRegistry(registry);
-      setCoreHelperRegistry(registry); // syncs into core's output-evaluator module singleton
+      // XState machine context must be JSON-serializable, so helpers cannot live in
+      // machine context. The core package uses a module-level singleton set here;
+      // the CLI-side singleton (above) serves template-renderer calls outside the machine.
+      setCoreHelperRegistry(registry);
     }
   });
 
