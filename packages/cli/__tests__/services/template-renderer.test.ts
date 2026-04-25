@@ -420,7 +420,7 @@ describe('expandLoopVariablesForCommand', () => {
   });
 
   it('does not traverse prototype chain', () => {
-    const obj: any = { name: 'test' };
+    const obj: Record<string, string> = { name: 'test' };
     const variables: StepVariables = {
       item: obj,
     };
