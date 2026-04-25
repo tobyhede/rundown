@@ -2,7 +2,7 @@ import * as path from 'node:path';
 import { promises as fs } from 'node:fs';
 import type { OutputDeclaration } from '@rundown-org/parser';
 import { isReservedTemplateName, NAMED_IDENTIFIER_PATTERN } from '@rundown-org/parser';
-import { RUNDOWN_DIR } from '../paths.js';
+import { RUNDOWN_DIR, assertSafeId } from '../paths.js';
 import { logger } from '../logger.js';
 
 /**
@@ -35,18 +35,18 @@ export interface OutputScope {
   readonly iteration?: number;
 }
 
-const SAFE_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
-
-function assertSafeRunId(value: string): void {
-  if (!value || value === '.' || value === '..' || !SAFE_ID_PATTERN.test(value)) {
-    throw new Error(`Invalid runId: ${JSON.stringify(value)}`);
-  }
-}
-
-function assertSafeStepSegment(value: string, field: 'stepId' | 'substepId'): void {
-  if (!value || value === '.' || value === '..' || !SAFE_ID_PATTERN.test(value)) {
-    throw new Error(`Invalid ${field}: ${JSON.stringify(value)}`);
-  }
+/**
+ * Arguments for {@link prepareOutputChannels}.
+ */
+export interface PrepareOutputChannelsArgs {
+  /** Project root directory. */
+  readonly cwd: string;
+  /** Validated run identifier (matches the `assertSafeId` rules in `paths.ts`). */
+  readonly runId: string;
+  /** Step + optional substep + optional iteration tiers. */
+  readonly scope: OutputScope;
+  /** Naked OUTPUTS entries from {@link partitionOutputDeclarations}. */
+  readonly naked: readonly NakedOutput[];
 }
 
 function assertSafeOutputName(value: string): void {
@@ -93,7 +93,7 @@ export function partitionOutputDeclarations(outputs: readonly OutputDeclaration[
  * @throws {Error} when `runId` is empty, `..`, or contains unsafe characters
  */
 export function outputsDirForRun(cwd: string, runId: string): string {
-  assertSafeRunId(runId);
+  assertSafeId(runId, 'runId');
   return path.join(cwd, RUNDOWN_DIR, 'runs', runId, 'outputs');
 }
 
@@ -120,11 +120,11 @@ export function outputChannelPath(
   varName: string,
 ): string {
   assertSafeOutputName(varName);
-  assertSafeStepSegment(scope.stepId, 'stepId');
+  assertSafeId(scope.stepId, 'stepId');
   const base = outputsDirForRun(cwd, runId);
   const segments: string[] = [base, scope.stepId];
   if (scope.substepId !== undefined) {
-    assertSafeStepSegment(scope.substepId, 'substepId');
+    assertSafeId(scope.substepId, 'substepId');
     segments.push(scope.substepId);
   }
   if (scope.iteration !== undefined) {
@@ -148,6 +148,8 @@ export function outputChannelPath(
  * @param scope - Step + optional substep + optional iteration tiers
  * @param naked - Naked OUTPUTS entries from `partitionOutputDeclarations`
  * @returns Record suitable for merging into the rundown-injected env
+ * @throws {Error} when a naked entry fails safety validation (propagated from
+ *         {@link outputChannelPath})
  */
 export function buildOutputChannelEnv(
   cwd: string,
@@ -176,12 +178,9 @@ export function buildOutputChannelEnv(
  * @param args - Project root + run id + scope + naked declarations
  * @returns The injectable env map and the absolute paths that were created
  */
-export async function prepareOutputChannels(args: {
-  readonly cwd: string;
-  readonly runId: string;
-  readonly scope: OutputScope;
-  readonly naked: readonly NakedOutput[];
-}): Promise<{ readonly env: Record<string, string>; readonly createdPaths: readonly string[] }> {
+export async function prepareOutputChannels(
+  args: PrepareOutputChannelsArgs,
+): Promise<{ readonly env: Record<string, string>; readonly createdPaths: readonly string[] }> {
   const env: Record<string, string> = {};
   const createdPaths: string[] = [];
   for (const entry of args.naked) {

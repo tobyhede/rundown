@@ -24,6 +24,24 @@ describe('partitionOutputDeclarations', () => {
     expect(result.naked).toEqual([]);
     expect(result.expression).toEqual([]);
   });
+
+  it('returns all entries as naked when no expressions are present', () => {
+    const result = partitionOutputDeclarations([{ name: 'Foo' }, { name: 'Bar' }]);
+    expect(result.naked).toEqual([{ name: 'Foo' }, { name: 'Bar' }]);
+    expect(result.expression).toEqual([]);
+  });
+
+  it('returns all entries as expression when no naked entries are present', () => {
+    const result = partitionOutputDeclarations([
+      { name: 'Foo', value: '"literal"' },
+      { name: 'Bar', value: '"{{ RunId }}"' },
+    ]);
+    expect(result.naked).toEqual([]);
+    expect(result.expression).toEqual([
+      { name: 'Foo', value: '"literal"' },
+      { name: 'Bar', value: '"{{ RunId }}"' },
+    ]);
+  });
 });
 
 describe('outputsDirForRun', () => {
@@ -81,6 +99,26 @@ describe('outputChannelPath', () => {
   it('rejects a reserved name (case-insensitive)', () => {
     const scope: OutputScope = { stepId: '1' };
     expect(() => outputChannelPath(cwd, runId, scope, 'Step')).toThrow(/reserved/);
+  });
+
+  it('rejects an unsafe stepId', () => {
+    expect(() => outputChannelPath(cwd, runId, { stepId: '..' }, 'Var')).toThrow(/Invalid stepId/);
+    expect(() => outputChannelPath(cwd, runId, { stepId: 'a/b' }, 'Var')).toThrow(/Invalid stepId/);
+  });
+
+  it('rejects an unsafe substepId', () => {
+    expect(() =>
+      outputChannelPath(cwd, runId, { stepId: '1', substepId: '../escape' }, 'Var'),
+    ).toThrow(/Invalid substepId/);
+  });
+
+  it('rejects iteration <= 0', () => {
+    expect(() => outputChannelPath(cwd, runId, { stepId: '1', iteration: 0 }, 'Var')).toThrow(
+      /Invalid iteration/,
+    );
+    expect(() => outputChannelPath(cwd, runId, { stepId: '1', iteration: -1 }, 'Var')).toThrow(
+      /Invalid iteration/,
+    );
   });
 });
 

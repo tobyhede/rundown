@@ -125,4 +125,5 @@ export {
   readCapturedOutputs,
   type NakedOutput,
   type OutputScope,
+  type PrepareOutputChannelsArgs,
 } from './output-channels.js';
