@@ -771,9 +771,10 @@ export async function runExecutionLoop(
               await manager.update(runbookId, { substepStates: threadedState.substepStates });
               delegateFrontier = fanOut;
             } catch (err) {
-              // Persist any partial fan-out work, then transition the runbook to
-              // stopped. An uncaught throw here would strand the runbook on a
-              // DELEGATE step waiting for tokens that will never be issued.
+              // All-or-nothing fan-out (see inner rethrow comment above):
+              // nothing is persisted for this fan-out on error. Transition the
+              // runbook to stopped so it does not strand on a DELEGATE step
+              // waiting for tokens that will never be issued.
               const message = isError(err) ? err.message : String(err);
               await manager.update(runbookId, { lifecycle: 'stopped' });
               emitter.emit('RUNBOOK_STOPPED', {
