@@ -39,7 +39,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   deriveActiveFrame: mockFn<
     (state: RunbookState) => { frameKey: FrameKey; step: string; iteration?: number }
   >().mockImplementation((state) => ({
-    frameKey: (state.activeFrameKey ?? `${String(state.step)}|`) as FrameKey,
+    frameKey: (state.activeFrameKey ?? `${state.step}|`) as FrameKey,
     step: state.step,
     iteration: undefined,
   })),
@@ -274,7 +274,7 @@ beforeEach(() => {
       (fields) => ({ completedAt: '2026-02-27T10:00:00.000Z', ...fields }) as ResolvedCompletion,
     );
   jest.mocked(core.deriveActiveFrame).mockImplementation((state) => ({
-    frameKey: (state.activeFrameKey ?? `${String(state.step)}|`) as FrameKey,
+    frameKey: (state.activeFrameKey ?? `${state.step}|`) as FrameKey,
     step: state.step,
     iteration: undefined,
   }));
@@ -841,7 +841,7 @@ describe('handleParentCompletion', () => {
     await handleParentCompletion(childState, 'pass', '/test', output);
 
     const drainCall = jest.mocked(drainResolvedCompletions).mock.calls[0]?.[0];
-    expect(drainCall?.frameKeyOverride).toBeUndefined();
+    expect(drainCall.frameKeyOverride).toBeUndefined();
   });
 
   it('forwards child finalVars to parent actor via SET_VARIABLES before drain', async () => {

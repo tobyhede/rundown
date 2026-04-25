@@ -4,6 +4,7 @@ import type {
   CapturedTransition,
   CommandSequenceResult,
 } from '../../src/helpers/command-sequence.js';
+import type { OutputEmitter } from '../../src/services/output-emitter.js';
 import { mockFn } from './typed-mocks.js';
 
 // Mock resolve-runbook
@@ -418,7 +419,7 @@ describe('executeScenario', () => {
   const mockOutput = {
     message: jest.fn(),
     flush: jest.fn(),
-  } as unknown as import('../../src/services/output-emitter.js').OutputEmitter;
+  } as unknown as OutputEmitter;
 
   function makeLoadedRunbook(scenarioOverrides: Partial<Scenario> = {}) {
     return {

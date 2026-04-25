@@ -13,11 +13,11 @@ describe('mockFn', () => {
   });
 
   it('mirrors an existing function signature via typeof', () => {
-    function add(a: number, b: number): number {
+    function _add(a: number, b: number): number {
       return a + b;
     }
 
-    const mockAdd = mockFn<typeof add>();
+    const mockAdd = mockFn<typeof _add>();
     mockAdd.mockReturnValue(42);
 
     expect(mockAdd(1, 2)).toBe(42);

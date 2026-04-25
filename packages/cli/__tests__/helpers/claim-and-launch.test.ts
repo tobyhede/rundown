@@ -394,7 +394,7 @@ describe('claimAndLaunch', () => {
 
     // Mock manager.load returning fresh state with cancelled delegation
     // (cast through unknown: tests use minimal fixtures rather than full RunbookState)
-    jest.mocked(ctx.manager.load).mockResolvedValue(parentState as unknown as RunbookState);
+    jest.mocked(ctx.manager).load.mockResolvedValue(parentState as unknown as RunbookState);
 
     // cspell:disable-next-line
     const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
@@ -440,7 +440,7 @@ describe('claimAndLaunch', () => {
     mockHappyDelegationLock();
 
     // Mock manager.load returning fresh state with already-claimed delegation
-    jest.mocked(ctx.manager.load).mockResolvedValue(parentState as unknown as RunbookState);
+    jest.mocked(ctx.manager).load.mockResolvedValue(parentState as unknown as RunbookState);
 
     // cspell:disable-next-line
     const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
@@ -494,7 +494,7 @@ describe('claimAndLaunch', () => {
     mockHappyDelegationLock();
 
     // Mock manager.load returning fresh state with unclaimed delegation
-    jest.mocked(ctx.manager.load).mockResolvedValue(parentState as unknown as RunbookState);
+    jest.mocked(ctx.manager).load.mockResolvedValue(parentState as unknown as RunbookState);
 
     // cspell:disable-next-line
     const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
@@ -506,7 +506,8 @@ describe('claimAndLaunch', () => {
     }
 
     // Verify update wrote the orphan's childRunId onto the parent delegation
-    expect(ctx.manager.update).toHaveBeenCalledWith(
+    const { update: updateMock } = ctx.manager as unknown as { update: jest.Mock };
+    expect(updateMock).toHaveBeenCalledWith(
       'run-1',
       expect.objectContaining({
         substepStates: expect.arrayContaining([
@@ -577,7 +578,7 @@ describe('claimAndLaunch', () => {
     mockHappyDelegationLock();
 
     // Mock manager.load returning null (state was deleted)
-    jest.mocked(ctx.manager.load).mockResolvedValue(null);
+    jest.mocked(ctx.manager).load.mockResolvedValue(null);
 
     // cspell:disable-next-line
     const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
@@ -622,7 +623,7 @@ describe('claimAndLaunch', () => {
     mockHappyDelegationLock();
 
     // Mock manager.load returning state without delegation
-    jest.mocked(ctx.manager.load).mockResolvedValue({
+    jest.mocked(ctx.manager).load.mockResolvedValue({
       id: 'run-1',
       variables: {},
       substepStates: [{ id: '1', status: 'pending' }],
@@ -671,7 +672,7 @@ describe('claimAndLaunch', () => {
     mockHappyDelegationLock();
 
     // Mock manager.load returning state with different hash
-    jest.mocked(ctx.manager.load).mockResolvedValue({
+    jest.mocked(ctx.manager).load.mockResolvedValue({
       id: 'run-1',
       variables: {},
       substepStates: [
@@ -732,9 +733,9 @@ describe('claimAndLaunch', () => {
     const result = await claimAndLaunch(ctx, 'invalid-very-long-token-string-here', {});
 
     expect(result.ok).toBe(false);
-    if (!result.ok && result.details?.token) {
+    if (!result.ok && typeof result.details?.token === 'string') {
       // Should contain ellipsis for truncation
-      expect(String(result.details.token)).toMatch(/\.\.\./);
+      expect(result.details.token).toMatch(/\.\.\./);
     }
   });
 

@@ -258,7 +258,7 @@ function mockParseResult(
 
 function makeLifecycle(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   type LifecycleState = Record<string, unknown> & {
-    step?: unknown;
+    step?: string;
     activeEntry?: unknown;
     activeFrameKey?: unknown;
   };
@@ -269,9 +269,9 @@ function makeLifecycle(overrides: Record<string, unknown> = {}): Record<string, 
       state: {
         ...(state ?? {}),
         activeEntry: state?.activeEntry ?? 1,
-        activeFrameKey: state?.activeFrameKey ?? `${String(state?.step ?? '1')}|`,
+        activeFrameKey: state?.activeFrameKey ?? `${state?.step ?? '1'}|`,
       },
-      frameKey: state?.activeFrameKey ?? `${String(state?.step ?? '1')}|`,
+      frameKey: state?.activeFrameKey ?? `${state?.step ?? '1'}|`,
       entry: state?.activeEntry ?? 1,
     })),
     buildTargetFrameKey: mockFn<(step: string, iteration?: number) => string>().mockImplementation(

@@ -9,6 +9,7 @@ import type {
   StepId,
   StepPosition,
 } from '@rundown-org/core';
+import type { OutputEmitter } from '../../src/services/output-emitter.js';
 import { mockErrorHelpers } from './mock-error-helpers.js';
 import { mockFn } from './typed-mocks.js';
 
@@ -392,7 +393,7 @@ describe('executeGoto', () => {
       output: {
         action: jest.fn(),
         flush: jest.fn(),
-      } as unknown as import('../../src/services/output-emitter.js').OutputEmitter,
+      } as unknown as OutputEmitter,
       manager: { update } as unknown as RunbookStateManager,
       actorService: { sendAndSync } as unknown as RunbookActorService,
       sessionService: {} as SessionService,
@@ -420,11 +421,12 @@ describe('executeGoto', () => {
     sendAndSync.mockResolvedValue(syncResult);
     jest.mocked(runExecutionLoop).mockResolvedValue('done');
 
+    const action = jest.fn();
     const ctx = {
       output: {
-        action: jest.fn(),
+        action,
         flush: jest.fn(),
-      } as unknown as import('../../src/services/output-emitter.js').OutputEmitter,
+      } as unknown as OutputEmitter,
       manager: { update } as unknown as RunbookStateManager,
       actorService: { sendAndSync } as unknown as RunbookActorService,
       sessionService: {} as SessionService,
@@ -440,7 +442,7 @@ describe('executeGoto', () => {
     if (result.ok) {
       expect(result.loopResult).toBe('done');
     }
-    expect(ctx.output.action).toHaveBeenCalled();
+    expect(action).toHaveBeenCalled();
     const updateArg = update.mock.calls[0][1];
     expect(updateArg).toHaveProperty('lastResult', undefined);
     expect(updateArg).toHaveProperty('lastAction', { type: 'GOTO', target: '2' });
@@ -461,7 +463,7 @@ describe('executeGoto', () => {
       output: {
         action: jest.fn(),
         flush: jest.fn(),
-      } as unknown as import('../../src/services/output-emitter.js').OutputEmitter,
+      } as unknown as OutputEmitter,
       manager: { update } as unknown as RunbookStateManager,
       actorService: { sendAndSync } as unknown as RunbookActorService,
       sessionService: {} as SessionService,

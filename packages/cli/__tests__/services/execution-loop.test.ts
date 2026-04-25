@@ -1,4 +1,6 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import type { ExecutionEventEmitter, RunbookStateManager } from '@rundown-org/core';
+import type { ResolvedStep } from '@rundown-org/parser';
 import { mockErrorHelpers } from '../helpers/mock-error-helpers.js';
 import { mockFn } from '../helpers/typed-mocks.js';
 
@@ -37,14 +39,14 @@ ensureActiveEntryFn.mockImplementation(async (_id, _prev, state) => ({
   state: {
     ...(state ?? {}),
     activeEntry: state?.activeEntry ?? 1,
-    activeFrameKey: `${String(state?.step ?? '1')}|`,
+    activeFrameKey: `${state?.step ?? '1'}|`,
   },
-  frameKey: `${String(state?.step ?? '1')}|`,
+  frameKey: `${state?.step ?? '1'}|`,
   entry: state?.activeEntry ?? 1,
 }));
 const listResolvedCompletionsFn = mockFn<(id: string) => Promise<unknown[]>>();
 listResolvedCompletionsFn.mockResolvedValue([]);
-const consumeResolvedCompletionFn = mockFn<(id: string) => Promise<unknown | null>>();
+const consumeResolvedCompletionFn = mockFn<(id: string) => Promise<unknown>>();
 consumeResolvedCompletionFn.mockResolvedValue(null);
 
 const mockLifecycleService = {
@@ -299,9 +301,9 @@ const { runExecutionLoop, executeCommandWithPolicyCheck } = await import(
 );
 
 // Production types — used solely for the `as unknown as` casts below.
-type RunbookStateManagerType = import('@rundown-org/core').RunbookStateManager;
-type ExecutionEventEmitterType = import('@rundown-org/core').ExecutionEventEmitter;
-type ResolvedStepType = import('@rundown-org/parser').ResolvedStep;
+type RunbookStateManagerType = RunbookStateManager;
+type ExecutionEventEmitterType = ExecutionEventEmitter;
+type ResolvedStepType = ResolvedStep;
 
 // Permissive shapes used in tests to seed the loop. Real types live in core
 // (RunbookStateManager, ExecutionEventEmitter, ResolvedStep) but the tests
