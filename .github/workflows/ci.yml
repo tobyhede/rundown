@@ -119,6 +119,9 @@ jobs:
       - name: Type check (core)
         run: npm run check:types:core
 
+      - name: Type check (cli)
+        run: npm run check:types:cli
+
   test:
     runs-on: ubuntu-latest
     needs: setup-build
