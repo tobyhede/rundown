@@ -490,4 +490,70 @@ describe('retryDelegation', () => {
     if (result.status !== 'error') return;
     expect(result.error.code).toBe('RD-817');
   });
+
+  it('retries a bare-step delegation under a FOR loop with implicit iteration recovery', () => {
+    // ownerHasSubsteps=false branch in retryDelegation's stepIdForCreate
+    // reconstruction: when the bare step lives inside a FOR-iterating frame,
+    // stepIdForCreate falls back to the 1-level `state.step` and the FOR
+    // iteration is recovered implicitly via forStack inside
+    // `buildContextSnapshot` (see `delegation-context.ts` getActiveForContext).
+    // This pins the implicit-recovery path so a regression that drops it
+    // (e.g. by switching to an explicit-only `${step}.${iteration}` form)
+    // produces a hard failure rather than a silent FOR-iteration drop.
+    const baseState = makeState({
+      forStack: [
+        {
+          stepId: '1',
+          iteration: 2,
+          start: 1,
+          end: 5,
+          implicit: false,
+          source: { kind: 'range' as const },
+        },
+      ],
+      // Bare step: substepStates is empty/undefined; the delegation will be
+      // recorded under id === step.name === '1' per createDelegation step 5.
+      substepStates: undefined,
+    });
+    const steps = makeSimpleSteps();
+
+    const initial = createDelegation(
+      {
+        state: baseState,
+        stepId: '1',
+        childRunbookPath: 'child.md',
+        ancestors: [],
+        frameKey: buildFrameKey('1', 2),
+      },
+      steps,
+    );
+
+    expect(initial.status).toBe('created');
+    if (initial.status !== 'created') return;
+    // Initial delegation records the FOR iteration index in the snapshot.
+    expect(initial.delegation.contextSnapshot.index).toBe(2);
+
+    const stateWithDelegation = { ...baseState, substepStates: initial.updatedSubstepStates };
+
+    const result = retryDelegation(
+      {
+        state: stateWithDelegation,
+        substepId: '1',
+        frameKey: buildFrameKey('1', 2),
+      },
+      steps,
+    );
+
+    expect(result.status).toBe('retried');
+    if (result.status !== 'retried') return;
+    // Implicit iteration recovery preserves the FOR iteration on the re-issued
+    // delegation — same iteration as the parent frame.
+    expect(result.delegation.contextSnapshot.index).toBe(2);
+    expect(result.tokenHash).not.toBe(initial.tokenHash);
+    const replaced = result.updatedSubstepStates.find(
+      (ss) => ss.id === '1' && ss.frameKey === buildFrameKey('1', 2),
+    );
+    expect(replaced?.delegation?.tokenHash).toBe(result.tokenHash);
+    expect(replaced?.delegation?.cancelledAt).toBeNull();
+  });
 });
