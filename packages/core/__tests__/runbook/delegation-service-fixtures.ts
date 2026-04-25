@@ -13,7 +13,7 @@ import {
  * read this field, so a minimal CONTINUE/CONTINUE pair is used to
  * satisfy the type without imposing fixture-side branching logic.
  */
-const DEFAULT_TRANSITIONS: Transitions = {
+export const DEFAULT_TRANSITIONS: Transitions = {
   pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
   fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
 };

@@ -224,7 +224,7 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
     }
   });
 
-  it('rolls back with RD-903 when retryDelegation returns not_found after delegation observed', () => {
+  it('rolls back with the inner RundownError code/message when retryDelegation returns not_found after delegation observed', () => {
     const { context, parentStep, steps, originalSubstepStates } = buildInputs();
     mockedRetryDelegation.mockImplementation(() => ({
       status: 'not_found' as const,

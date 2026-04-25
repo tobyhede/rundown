@@ -6,6 +6,7 @@ import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type { ResolvedStep, AncestorSnapshot } from '../../src/runbook/types.js';
 import { brandInitialTemplateVarsForTest } from '../helpers/effective-vars.js';
 import {
+  DEFAULT_TRANSITIONS,
   makeForSteps,
   makePromptedForSteps,
   makeSimpleSteps,
@@ -115,10 +116,15 @@ describe('createDelegation', () => {
 
   it('returns { status: "step_not_current" } when step is not at frontier', () => {
     const state = makeState({ step: '2' });
-    const steps = [
+    const steps: readonly ResolvedStep[] = [
       ...makeSteps('1'),
-      { kind: 'base' as const, name: '2', description: 'Step 2' },
-    ] as readonly ResolvedStep[];
+      {
+        kind: 'base',
+        name: '2',
+        description: 'Step 2',
+        transitions: DEFAULT_TRANSITIONS,
+      },
+    ];
 
     const result = createDelegation(
       { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
