@@ -103,12 +103,12 @@ describe('evaluateStepOutputDeclarations', () => {
     expect(evaluateStepOutputDeclarations([], {})).toEqual({});
   });
 
-  it('skips naked-form step outputs and leaves the value out of the result', () => {
-    const outputs: OutputDeclaration[] = [{ name: 'Literal', value: '"value"' }, { name: 'Naked' }];
-
-    expect(evaluateStepOutputDeclarations(outputs, {})).toEqual({
-      Literal: 'value',
-    });
+  it('silently ignores naked entries (file-backed at executor)', () => {
+    const result = evaluateStepOutputDeclarations(
+      [{ name: 'Version' }, { name: 'Tag', value: '"v1"' }],
+      {},
+    );
+    expect(result).toEqual({ Tag: 'v1' });
   });
 
   it('omits entries whose template reference is unresolved (variable absent from frame)', () => {
