@@ -676,7 +676,7 @@ describe('executeTransition with ExplicitTarget', () => {
       }),
     );
     // The override should be the cursor's frameKey (built from step + index)
-    const drainCall = (drainResolvedCompletions as jest.Mock<any>).mock.calls[0][0] as {
+    const drainCall = jest.mocked(drainResolvedCompletions).mock.calls[0]?.[0] as {
       frameKeyOverride?: unknown;
     };
     expect(drainCall.frameKeyOverride).toBe(core.buildFrameKey('1', 3));
@@ -758,7 +758,7 @@ describe('executeTransition with ExplicitTarget', () => {
     await executeTransition(asCtx(ctx), config); // No explicit target
 
     expect(drainResolvedCompletions).toHaveBeenCalled();
-    const drainCall = (drainResolvedCompletions as jest.Mock<any>).mock.calls[0][0] as {
+    const drainCall = jest.mocked(drainResolvedCompletions).mock.calls[0]?.[0] as {
       frameKeyOverride?: unknown;
     };
     expect(drainCall.frameKeyOverride).toBeUndefined();
@@ -768,7 +768,7 @@ describe('executeTransition with ExplicitTarget', () => {
 describe('step-level PASS transition no longer triggers CLI-side OUTPUTS evaluation', () => {
   // Helper that creates a step-level (non-substep) ctx: substep is undefined so
   // executeTransition exercises the actor.send path (machine-owned storeStepOutputs).
-  function makeStepLevelCtx(templateVars?: Record<string, unknown>): any {
+  function makeStepLevelCtx(templateVars?: Record<string, unknown>): TestCtx {
     const state = {
       id: 'run-1',
       step: '1',
@@ -777,28 +777,45 @@ describe('step-level PASS transition no longer triggers CLI-side OUTPUTS evaluat
       activeFrameKey: '1',
     };
     return {
-      output: { action: jest.fn(), flush: jest.fn(), status: jest.fn(), warning: jest.fn() },
+      output: {
+        action: mockFn<(...args: unknown[]) => void>(),
+        flush: mockFn<() => void>(),
+        status: mockFn<(...args: unknown[]) => void>(),
+        warning: mockFn<(...args: unknown[]) => void>(),
+      },
       manager: {
-        update: jest.fn<any>().mockResolvedValue(undefined),
-        load: jest.fn<any>().mockResolvedValue(null),
+        update: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(undefined),
+        load: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(null),
       },
       actorService: {
-        updateFromActor: jest.fn<any>().mockResolvedValue({
+        updateFromActor: mockFn<
+          (...args: unknown[]) => Promise<{ state: Record<string, unknown>; snapshot: unknown }>
+        >().mockResolvedValue({
           state: { ...state, templateVars },
           snapshot: {},
         }),
       },
       sessionService: {},
       lifecycleService: {
-        ensureActiveEntry: jest.fn<any>().mockResolvedValue({ state, entryId: 1 }),
-        getResolvedCompletion: jest.fn<any>().mockResolvedValue(null),
-        upsertResolvedCompletion: jest.fn<any>().mockResolvedValue(undefined),
+        ensureActiveEntry: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
+          state,
+          entryId: 1,
+        }),
+        getResolvedCompletion: mockFn<
+          (id: string, key: string) => Promise<ResolvedCompletion | null>
+        >().mockResolvedValue(null),
+        upsertResolvedCompletion: mockFn<
+          (...args: unknown[]) => Promise<void>
+        >().mockResolvedValue(undefined),
       },
       state,
       steps: [{ name: '1', kind: 'base' }],
-      actor: { send: jest.fn(), stop: jest.fn() },
+      actor: {
+        send: mockFn<(...args: unknown[]) => void>(),
+        stop: mockFn<() => void>(),
+      },
       cwd: '/test',
-    };
+    } as unknown as TestCtx;
   }
 
   beforeEach(() => {
