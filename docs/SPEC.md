@@ -342,6 +342,10 @@ Static variables (`Date`, `DateTime`, `Year`, `Month`, `Day`, `Branch`, `WorkPat
 
 Plugin variables sit in the precedence chain just below CLI flags and can be overridden via `--input`.
 
+### 6.2 Shell Environment
+
+The built-in variables `WorkPath`, `ContextId`, and `RunId` are injected into each shell block's subprocess environment as `RD_WORK_PATH`, `RD_CONTEXT_ID`, and `RD_RUN_ID` respectively. These are injected after policy environment filtering using rundown-wins semantics (they are always present and cannot be blocked by user-supplied environment variables). The `RD_` prefix is reserved for rundown-injected environment variables; see also `RD_OUTPUTS_*` for file-backed output channels (§8).
+
 ## 7. Context Passing (OUTPUTS)
 
 Steps and substeps may declare OUTPUTS directives for passing data between steps and across delegation boundaries.
