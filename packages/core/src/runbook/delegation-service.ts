@@ -438,9 +438,19 @@ export interface RetryDelegationNotCurrentResult {
   readonly error: RundownError;
 }
 
-/** createDelegation raised a RundownError (path unresolvable, substep removed, etc.). */
+/**
+ * Delegation failed. Carries the wrapped `RundownError` produced by the
+ * inner `createDelegation` (path unresolvable, substep removed, etc.) so
+ * callers have a single uniform shape to discriminate on across the three
+ * delegation primitives.
+ *
+ * Mirrors {@link CreateDelegationStepNotFoundResult} et al. — every
+ * non-success Result variant carries an `error: RundownError`.
+ */
 export interface RetryDelegationErrorResult {
+  /** Discriminant: literal `'error'`. */
   readonly status: 'error';
+  /** Wrapped RundownError describing why the inner `createDelegation` failed. */
   readonly error: RundownError;
 }
 

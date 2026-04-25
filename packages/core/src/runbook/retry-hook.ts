@@ -79,7 +79,9 @@ export interface RetryHookSuccess {
  * Surfaces a retry-hook failure as a structured record: either the
  * `RundownError` returned by `retryDelegation`'s `error` variant (itself a
  * translation of an inner `createDelegation` variant), or a retry-hook
- * invariant violation (RD-902/903/904). Returned with the *original*
+ * invariant violation (RD-902 `RETRY_HOOK_NO_FRAME`,
+ * RD-904 `RETRY_HOOK_MISSING_CANONICAL_AT`,
+ * RD-905 `RETRY_HOOK_STALE_SUBSTEP`). Returned with the *original*
  * `substepStates` so the caller can publish a rollback-clean assignment
  * (no partial writes).
  */
