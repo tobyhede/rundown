@@ -8,8 +8,14 @@ import type {
   DelegationLinkage,
   SubstepState,
   ResolvedCompletion,
+  RunbookStateManager as RunbookStateManagerType,
+  RunbookActorService as RunbookActorServiceType,
+  SessionService as SessionServiceType,
+  ExecutionLifecycleService as ExecutionLifecycleServiceType,
+  DelegationLock as DelegationLockType,
 } from '@rundown-org/core';
 import type { ResolvedStep } from '@rundown-org/parser';
+import type { OutputEmitter } from '../../src/services/output-emitter.js';
 
 // Mock @rundown-org/core
 jest.unstable_mockModule('@rundown-org/core', () => ({
@@ -152,64 +158,104 @@ function makeDelegationLinkage(overrides: Partial<DelegationLinkage> = {}): Dele
   };
 }
 
-function makeOutput(): any {
+interface MockOutput {
+  flush: jest.Mock<() => void>;
+  status: jest.Mock<(action: string, message?: string, data?: Record<string, unknown>) => void>;
+  error: jest.Mock<(message: string) => void>;
+  warning: jest.Mock<(text: string) => void>;
+}
+
+function makeOutput(): MockOutput & OutputEmitter {
+  // Cast through unknown — the OutputEmitter has many more methods, but
+  // delegation-completion only consumes flush/status/error/warning.
   return {
-    flush: jest.fn(),
-    status: jest.fn(),
-    error: jest.fn(),
-    warning: jest.fn(),
+    flush: mockFn<() => void>(),
+    status: mockFn<
+      (action: string, message?: string, data?: Record<string, unknown>) => void
+    >(),
+    error: mockFn<(message: string) => void>(),
+    warning: mockFn<(text: string) => void>(),
+  } as unknown as MockOutput & OutputEmitter;
+}
+
+interface MockManager {
+  load: jest.Mock<(id: string) => Promise<RunbookState | null>>;
+  update: jest.Mock<(...args: unknown[]) => Promise<unknown>>;
+}
+
+function makeManager(states: Map<string, RunbookState | null>): MockManager {
+  return {
+    load: mockFn<(id: string) => Promise<RunbookState | null>>().mockImplementation(
+      async (id) => states.get(id) ?? null,
+    ),
+    update: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(undefined),
   };
 }
 
-function makeManager(states: Map<string, RunbookState | null>): any {
-  return {
-    load: jest.fn<any>().mockImplementation(async (id: string) => states.get(id) ?? null),
-    update: jest.fn<any>().mockResolvedValue(undefined),
-  };
+interface MockLock {
+  acquire: jest.Mock<(parentRunId: string) => Promise<void>>;
+  release: jest.Mock<(parentRunId: string) => Promise<void>>;
 }
 
-function makeLock(): any {
-  const MockLock = core.DelegationLock as jest.MockedClass<typeof core.DelegationLock>;
-  const lockInstance = {
-    acquire: jest.fn<any>().mockResolvedValue(undefined),
-    release: jest.fn<any>().mockResolvedValue(undefined),
+function makeLock(): MockLock {
+  const MockLockClass = core.DelegationLock as unknown as jest.Mock<() => DelegationLockType>;
+  const lockInstance: MockLock = {
+    acquire: mockFn<(parentRunId: string) => Promise<void>>().mockResolvedValue(undefined),
+    release: mockFn<(parentRunId: string) => Promise<void>>().mockResolvedValue(undefined),
   };
-  MockLock.mockImplementation(() => lockInstance as any);
+  MockLockClass.mockImplementation(() => lockInstance as unknown as DelegationLockType);
   return lockInstance;
 }
 
-function makeLifecycleService(resolvedCompletions: Map<string, any> = new Map()): any {
+interface MockLifecycleService {
+  getResolvedCompletion: jest.Mock<
+    (runId: string, key: string) => Promise<ResolvedCompletion | null>
+  >;
+  upsertResolvedCompletion: jest.Mock<
+    (runId: string, key: string, completion: ResolvedCompletion) => Promise<void>
+  >;
+}
+
+function makeLifecycleService(
+  resolvedCompletions: Map<string, ResolvedCompletion> = new Map(),
+): MockLifecycleService {
   return {
-    getResolvedCompletion: jest
-      .fn<any>()
-      .mockImplementation(
-        async (_runId: string, key: string) => resolvedCompletions.get(key) ?? null,
-      ),
-    upsertResolvedCompletion: jest.fn<any>().mockResolvedValue(undefined),
+    getResolvedCompletion: mockFn<
+      (runId: string, key: string) => Promise<ResolvedCompletion | null>
+    >().mockImplementation(async (_runId, key) => resolvedCompletions.get(key) ?? null),
+    upsertResolvedCompletion: mockFn<
+      (runId: string, key: string, completion: ResolvedCompletion) => Promise<void>
+    >().mockResolvedValue(undefined),
   };
 }
 
-function wireMocks(manager: any, lifecycleService: any): void {
-  const MockManager = core.RunbookStateManager as jest.MockedClass<typeof core.RunbookStateManager>;
-  const MockLifecycle = core.ExecutionLifecycleService as jest.MockedClass<
-    typeof core.ExecutionLifecycleService
+function wireMocks(manager: MockManager, lifecycleService: MockLifecycleService): void {
+  const MockManagerClass = core.RunbookStateManager as unknown as jest.Mock<
+    () => RunbookStateManagerType
   >;
-  const MockActor = core.RunbookActorService as jest.MockedClass<typeof core.RunbookActorService>;
-  const MockSession = core.SessionService as jest.MockedClass<typeof core.SessionService>;
+  const MockLifecycle = core.ExecutionLifecycleService as unknown as jest.Mock<
+    () => ExecutionLifecycleServiceType
+  >;
+  const MockActor = core.RunbookActorService as unknown as jest.Mock<
+    () => RunbookActorServiceType
+  >;
+  const MockSession = core.SessionService as unknown as jest.Mock<() => SessionServiceType>;
 
-  MockManager.mockImplementation(() => manager);
-  MockLifecycle.mockImplementation(() => lifecycleService);
+  MockManagerClass.mockImplementation(() => manager as unknown as RunbookStateManagerType);
+  MockLifecycle.mockImplementation(
+    () => lifecycleService as unknown as ExecutionLifecycleServiceType,
+  );
   MockActor.mockImplementation(
     () =>
       ({
-        sendAndSync: jest.fn<any>().mockResolvedValue(null),
-      }) as any,
+        sendAndSync: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(null),
+      }) as unknown as RunbookActorServiceType,
   );
   MockSession.mockImplementation(
     () =>
       ({
-        popRunbook: jest.fn<any>().mockResolvedValue(null),
-      }) as any,
+        popRunbook: mockFn<() => Promise<string | null>>().mockResolvedValue(null),
+      }) as unknown as SessionServiceType,
   );
 }
 
@@ -491,7 +537,7 @@ describe('handleParentCompletion', () => {
     await handleParentCompletion(childState, 'pass', '/test', output);
 
     expect(runExecutionLoop).toHaveBeenCalledWith(
-      manager,
+      manager as unknown as RunbookStateManagerType,
       'parent-run-id',
       expect.any(Array),
       '/test',
