@@ -817,6 +817,12 @@ export async function runExecutionLoop(
     // Expand command code for execution (after guard — command is guaranteed)
     const expandedCommandCode = expandLoopVariablesForCommand(command.code, stepVars);
 
+    // Build rundown-injected environment variables (RD_WORK_PATH, RD_RUN_ID, etc.)
+    const rdInjected: Record<string, string> = {};
+    if (stepVars.WorkPath !== undefined) rdInjected.RD_WORK_PATH = String(stepVars.WorkPath);
+    if (stepVars.ContextId !== undefined) rdInjected.RD_CONTEXT_ID = String(stepVars.ContextId);
+    if (stepVars.RunId !== undefined) rdInjected.RD_RUN_ID = String(stepVars.RunId);
+
     // Execute command
     // For rd commands, try internal execution first (avoids nested spawn issues in WebContainer)
     // Use display command (with rd echo wrapper stripped) for cleaner output
@@ -840,6 +846,7 @@ export async function runExecutionLoop(
           expandedCommandCode,
           cwd,
           currentState.runbookPath,
+          rdInjected,
         );
       }
     } else {
@@ -847,6 +854,7 @@ export async function runExecutionLoop(
         expandedCommandCode,
         cwd,
         currentState.runbookPath,
+        rdInjected,
       );
     }
 
@@ -973,6 +981,7 @@ export async function executeCommandWithPolicyCheck(
   command: string,
   cwd: string,
   runbookPath?: string,
+  rdInjected?: Record<string, string>,
 ): Promise<ExecutionResult> {
   // Check if policy enforcement is active
   if (!isPolicyEnforced()) {
@@ -992,6 +1001,7 @@ export async function executeCommandWithPolicyCheck(
   return executeCommandWithPolicy(command, cwd, {
     evaluator,
     prompter: getPolicyPrompter(),
+    rdInjected,
     sandbox: sandboxOpts.sandbox,
     sandboxStrict: sandboxOpts.sandboxStrict,
   });

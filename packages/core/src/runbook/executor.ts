@@ -32,6 +32,8 @@ export interface PolicyExecutionOptions {
   prompter?: PolicyPrompter;
   /** Custom environment variables (will be filtered by policy) */
   env?: Record<string, string>;
+  /** Rundown-injected variables (e.g. RD_WORK_PATH, RD_RUN_ID); always present, bypass policy filter */
+  rdInjected?: Record<string, string>;
   /** Enable OS-level sandbox for file access enforcement (default: true on supported platforms) */
   sandbox?: boolean;
   /** Fail if sandbox is unavailable (default: false, falls back to unsandboxed) */
@@ -143,7 +145,7 @@ export async function executeCommandWithPolicy(
   cwd: string,
   options: PolicyExecutionOptions = {},
 ): Promise<ExecutionResult> {
-  const { evaluator, prompter, env, sandbox = true, sandboxStrict = false } = options;
+  const { evaluator, prompter, env, rdInjected, sandbox = true, sandboxStrict = false } = options;
 
   // If no evaluator, execute without policy checks
   if (!evaluator) {
@@ -183,6 +185,10 @@ export async function executeCommandWithPolicy(
   const baseEnv = { ...process.env, ...env } as Record<string, string>;
   const filteredEnv = evaluator.filterEnvironment(baseEnv);
 
+  // Inject rundown-specific vars (RD_WORK_PATH, RD_RUN_ID, etc.) after policy filtering
+  // These are rundown-wins: they cannot be blocked by user-supplied environment variables
+  const finalEnv = { ...filteredEnv, ...rdInjected } as Record<string, string>;
+
   // Execute with sandbox if enabled
   if (sandbox) {
     const sandboxAvailable = await isSandboxAvailable();
@@ -194,7 +200,7 @@ export async function executeCommandWithPolicy(
         tmpDir: evaluator.getTmpDir(),
         allowUnsandboxed: !sandboxStrict,
       });
-      sandboxOptions.env = filteredEnv;
+      sandboxOptions.env = finalEnv;
 
       const result = await executeWithSandbox(command, sandboxOptions);
       return {
@@ -223,7 +229,7 @@ export async function executeCommandWithPolicy(
   }
 
   // Execute without sandbox
-  const result = await executeCommandWithEnv(command, cwd, filteredEnv);
+  const result = await executeCommandWithEnv(command, cwd, finalEnv);
   return {
     ...result,
     sandboxed: false,
