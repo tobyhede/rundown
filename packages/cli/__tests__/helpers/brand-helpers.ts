@@ -1,0 +1,47 @@
+// __tests__/helpers/brand-helpers.ts
+// Test-only producers for branded core types (FrameKey, EffectiveVars).
+//
+// Mirrors the precedent in `core/__tests__/helpers/effective-vars.ts`:
+// production code goes through `buildFrameKey` / `mergeEffectiveVars` /
+// `brandEffectiveVars`. Tests need ergonomic constructors that route
+// through the same brand seam so the brand contract stays in one place.
+
+import {
+  brandEffectiveVars,
+  buildFrameKey,
+  type EffectiveVars,
+  type FrameKey,
+  type TemplateVarValue,
+} from '@rundown-org/core';
+
+/**
+ * Test-only producer of {@link FrameKey}.
+ *
+ * Delegates to the production `buildFrameKey`. Use for fixture
+ * construction wherever a `FrameKey` is required (e.g. `parentFrameKey`
+ * on `DelegationLinkage`, `targetFrameKey` on completion records).
+ *
+ * @param step - Step identifier (e.g. `"1"`, `"ErrorHandler"`)
+ * @param iteration - Optional FOR loop iteration number
+ * @returns Branded `FrameKey` (`"<step>|<iteration-or-empty>"`)
+ */
+export function brandFrameKeyForTest(step: string, iteration?: number): FrameKey {
+  return buildFrameKey(step, iteration);
+}
+
+/**
+ * Test-only producer of {@link EffectiveVars} for fixture construction.
+ *
+ * Delegates to the production `brandEffectiveVars` so the brand contract
+ * stays in one place. Use when a call site requires `EffectiveVars` but
+ * the specific values aren't the subject of the test (e.g.
+ * `vars: brandEffectiveVarsForTest()` on a `ContextSnapshot`).
+ *
+ * @param vars - Optional plain effective-var record to brand; defaults to empty
+ * @returns Branded `EffectiveVars`
+ */
+export function brandEffectiveVarsForTest(
+  vars: Readonly<Record<string, TemplateVarValue>> = {},
+): EffectiveVars {
+  return brandEffectiveVars(vars);
+}

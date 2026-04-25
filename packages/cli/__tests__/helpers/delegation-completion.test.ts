@@ -1,5 +1,6 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { mockErrorHelpers } from './mock-error-helpers.js';
+import { brandEffectiveVarsForTest, brandFrameKeyForTest } from './brand-helpers.js';
 import type { RunbookState, DelegationLinkage } from '@rundown-org/core';
 
 // Mock @rundown-org/core
@@ -114,7 +115,7 @@ function makeDelegationLinkage(overrides: Partial<DelegationLinkage> = {}): Dele
     parentStepId: '1',
     tokenHash: 'sha256:abc123',
     parentStep: '1',
-    parentFrameKey: '1|',
+    parentFrameKey: brandFrameKeyForTest('1'),
     parentEntry: 1,
     ...overrides,
   };
@@ -176,7 +177,7 @@ function wireMocks(manager: any, lifecycleService: any): void {
   MockSession.mockImplementation(
     () =>
       ({
-        popRunbook: jest.fn().mockResolvedValue(null),
+        popRunbook: jest.fn<any>().mockResolvedValue(null),
       }) as any,
   );
 }
@@ -184,39 +185,39 @@ function wireMocks(manager: any, lifecycleService: any): void {
 beforeEach(() => {
   jest.resetAllMocks();
   // Re-establish default mock implementations
-  (core.buildCompletionKey as jest.Mock).mockImplementation(
+  (core.buildCompletionKey as jest.Mock<any>).mockImplementation(
     (frameKey: string, entry: number, substepId: string) =>
       `${frameKey}|${String(entry)}|${substepId}`,
   );
-  (core.buildResolvedCompletion as jest.Mock).mockImplementation((data: any) => data);
-  (core.deriveActiveFrame as jest.Mock).mockImplementation((state: any) => ({
+  (core.buildResolvedCompletion as jest.Mock<any>).mockImplementation((data: any) => data);
+  (core.deriveActiveFrame as jest.Mock<any>).mockImplementation((state: any) => ({
     frameKey: state.activeFrameKey ?? `${String(state.step)}|`,
     step: state.step,
     iteration: state.activeForContext?.iteration,
   }));
-  (core.findSubstepState as jest.Mock).mockImplementation(
+  (core.findSubstepState as jest.Mock<any>).mockImplementation(
     (substepStates: any[], substepId: string, frameKey: string) =>
       substepStates.find((ss: any) => ss.id === substepId && ss.frameKey === frameKey),
   );
-  (getRunbookFromState as jest.Mock).mockReturnValue([
+  (getRunbookFromState as jest.Mock<any>).mockReturnValue([
     {
       name: '1',
       description: 'Test step',
       transitions: { pass: { action: 'continue' as const, retry: 0 } },
     },
   ]);
-  (createBridgedEmitter as jest.Mock).mockReturnValue({ emit: jest.fn() });
-  (drainResolvedCompletions as jest.Mock).mockResolvedValue({
+  (createBridgedEmitter as jest.Mock<any>).mockReturnValue({ emit: jest.fn() });
+  (drainResolvedCompletions as jest.Mock<any>).mockResolvedValue({
     status: 'continue',
     applied: 1,
     state: makeState('parent-run-id'),
   });
-  (runExecutionLoop as jest.Mock).mockResolvedValue('waiting');
-  (createPassTransitionConfig as jest.Mock).mockReturnValue({
+  (runExecutionLoop as jest.Mock<any>).mockResolvedValue('waiting');
+  (createPassTransitionConfig as jest.Mock<any>).mockReturnValue({
     policy: 'pass',
     computeActionResult: jest.fn(),
   });
-  (createFailTransitionConfig as jest.Mock).mockReturnValue({
+  (createFailTransitionConfig as jest.Mock<any>).mockReturnValue({
     policy: 'fail',
     computeActionResult: jest.fn(),
   });
@@ -236,7 +237,7 @@ describe('handleParentCompletion', () => {
     const delegation = makeDelegationLinkage();
     const childState = makeState('child-run-id', { parentLinkage: delegation });
     const parentState = makeState('parent-run-id', {
-      substepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: null }],
+      substepStates: [{ id: '1', frameKey: brandFrameKeyForTest('1'), status: 'pending' }],
     });
 
     const states = new Map([[parentState.id, parentState]]);
@@ -278,23 +279,23 @@ describe('handleParentCompletion', () => {
         parentRunId: 'parent-run-id',
         parentStepId: '1',
         parentStep: '1',
-        parentFrameKey: '1|' as any,
+        parentFrameKey: brandFrameKeyForTest('1') as any,
         parentEntry: 1,
       },
     });
     const parentState = makeState('parent-run-id', {
       step: '1',
       activeEntry: 1,
-      activeFrameKey: '1|',
+      activeFrameKey: brandFrameKeyForTest('1'),
       substepStates: [
         {
           id: '1',
-          frameKey: '1|',
+          frameKey: brandFrameKeyForTest('1'),
           status: 'pending',
           delegation: {
             tokenHash: 'sha256:old-token',
             childRunbookPath: 'old-child.md',
-            contextSnapshot: { vars: {}, ancestors: [] },
+            contextSnapshot: { vars: brandEffectiveVarsForTest(), ancestors: [] },
             childRunId: 'old-child-run-id',
             createdAt: '2026-01-01T00:00:00.000Z',
             cancelledAt: '2026-01-01T00:00:00.000Z',
@@ -311,7 +312,7 @@ describe('handleParentCompletion', () => {
 
     wireMocks(manager, lifecycleService);
 
-    (drainResolvedCompletions as jest.Mock).mockResolvedValue({
+    (drainResolvedCompletions as jest.Mock<any>).mockResolvedValue({
       status: 'continue',
       applied: 0,
       state: parentState,
@@ -339,12 +340,12 @@ describe('handleParentCompletion', () => {
       substepStates: [
         {
           id: '1',
-          frameKey: '1|',
+          frameKey: brandFrameKeyForTest('1'),
           status: 'pending',
           delegation: {
             tokenHash: 'sha256:abc123',
             childRunbookPath: 'child.md',
-            contextSnapshot: { vars: {}, ancestors: [] },
+            contextSnapshot: { vars: brandEffectiveVarsForTest(), ancestors: [] },
             childRunId: 'child-run-id',
             createdAt: '2026-02-27T10:00:00.000Z',
             cancelledAt: '2026-02-27T10:05:00.000Z',
@@ -373,8 +374,8 @@ describe('handleParentCompletion', () => {
     const parentState = makeState('parent-run-id', {
       step: '1',
       activeEntry: 1,
-      activeFrameKey: '1|',
-      substepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: null }],
+      activeFrameKey: brandFrameKeyForTest('1'),
+      substepStates: [{ id: '1', frameKey: brandFrameKeyForTest('1'), status: 'pending' }],
     });
 
     const states = new Map([[parentState.id, parentState]]);
@@ -385,7 +386,7 @@ describe('handleParentCompletion', () => {
 
     wireMocks(manager, lifecycleService);
 
-    (drainResolvedCompletions as jest.Mock).mockResolvedValue({
+    (drainResolvedCompletions as jest.Mock<any>).mockResolvedValue({
       status: 'continue',
       applied: 0,
       state: parentState,
@@ -408,7 +409,7 @@ describe('handleParentCompletion', () => {
     const delegation = makeDelegationLinkage();
     const childState = makeState('child-run-id', { parentLinkage: delegation });
     const parentState = makeState('parent-run-id', {
-      substepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: null }],
+      substepStates: [{ id: '1', frameKey: brandFrameKeyForTest('1'), status: 'pending' }],
     });
 
     const states = new Map([[parentState.id, parentState]]);
@@ -419,7 +420,7 @@ describe('handleParentCompletion', () => {
 
     wireMocks(manager, lifecycleService);
 
-    (drainResolvedCompletions as jest.Mock).mockResolvedValue({
+    (drainResolvedCompletions as jest.Mock<any>).mockResolvedValue({
       status: 'continue',
       applied: 1,
       state: parentState,
@@ -439,7 +440,7 @@ describe('handleParentCompletion', () => {
     const delegation = makeDelegationLinkage();
     const childState = makeState('child-run-id', { parentLinkage: delegation });
     const parentState = makeState('parent-run-id', {
-      substepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: null }],
+      substepStates: [{ id: '1', frameKey: brandFrameKeyForTest('1'), status: 'pending' }],
     });
 
     const states = new Map([[parentState.id, parentState]]);
@@ -450,7 +451,7 @@ describe('handleParentCompletion', () => {
 
     wireMocks(manager, lifecycleService);
 
-    (drainResolvedCompletions as jest.Mock).mockResolvedValue({
+    (drainResolvedCompletions as jest.Mock<any>).mockResolvedValue({
       status: 'continue',
       applied: 1,
       state: parentState,
@@ -472,7 +473,7 @@ describe('handleParentCompletion', () => {
     const delegation = makeDelegationLinkage();
     const childState = makeState('child-run-id', { parentLinkage: delegation });
     const parentState = makeState('parent-run-id', {
-      substepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: null }],
+      substepStates: [{ id: '1', frameKey: brandFrameKeyForTest('1'), status: 'pending' }],
     });
 
     const states = new Map([[parentState.id, parentState]]);
@@ -483,7 +484,7 @@ describe('handleParentCompletion', () => {
 
     wireMocks(manager, lifecycleService);
 
-    (drainResolvedCompletions as jest.Mock).mockResolvedValue({
+    (drainResolvedCompletions as jest.Mock<any>).mockResolvedValue({
       status: 'stopped',
       applied: 1,
       state: parentState,
@@ -502,11 +503,11 @@ describe('handleParentCompletion', () => {
       parentStepId: '2',
     });
     const parentState = makeState('parent-run-id', {
-      substepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: null }],
+      substepStates: [{ id: '1', frameKey: brandFrameKeyForTest('1'), status: 'pending' }],
       parentLinkage: grandparentDelegation,
     });
     const grandparentState = makeState('grandparent-run-id', {
-      substepStates: [{ id: '2', frameKey: '1|', status: 'pending', delegation: null }],
+      substepStates: [{ id: '2', frameKey: brandFrameKeyForTest('1'), status: 'pending' }],
     });
 
     const states = new Map([
@@ -520,7 +521,7 @@ describe('handleParentCompletion', () => {
 
     wireMocks(manager, lifecycleService);
 
-    (drainResolvedCompletions as jest.Mock).mockResolvedValue({
+    (drainResolvedCompletions as jest.Mock<any>).mockResolvedValue({
       status: 'done',
       applied: 1,
       state: parentState,
@@ -551,7 +552,7 @@ describe('handleParentCompletion', () => {
     const delegation = makeDelegationLinkage();
     const childState = makeState('child-run-id', { parentLinkage: delegation });
     const parentState = makeState('parent-run-id', {
-      substepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: null }],
+      substepStates: [{ id: '1', frameKey: brandFrameKeyForTest('1'), status: 'pending' }],
     });
 
     const states = new Map([[parentState.id, parentState]]);
@@ -562,7 +563,7 @@ describe('handleParentCompletion', () => {
 
     wireMocks(manager, lifecycleService);
 
-    (drainResolvedCompletions as jest.Mock).mockResolvedValue({
+    (drainResolvedCompletions as jest.Mock<any>).mockResolvedValue({
       status: 'continue',
       applied: 0,
       state: parentState,
@@ -584,7 +585,7 @@ describe('handleParentCompletion', () => {
     const delegation = makeDelegationLinkage();
     const childState = makeState('child-run-id', { parentLinkage: delegation });
     const parentState = makeState('parent-run-id', {
-      substepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: null }],
+      substepStates: [{ id: '1', frameKey: brandFrameKeyForTest('1'), status: 'pending' }],
     });
 
     const states = new Map([[parentState.id, parentState]]);
@@ -595,7 +596,7 @@ describe('handleParentCompletion', () => {
 
     wireMocks(manager, lifecycleService);
 
-    (drainResolvedCompletions as jest.Mock).mockResolvedValue({
+    (drainResolvedCompletions as jest.Mock<any>).mockResolvedValue({
       status: 'done',
       applied: 1,
       state: parentState,
@@ -604,7 +605,7 @@ describe('handleParentCompletion', () => {
     await handleParentCompletion(childState, 'pass', '/test', output);
 
     const MockSession = core.SessionService as jest.MockedClass<typeof core.SessionService>;
-    const sessionInstance = MockSession.mock.results[0]?.value;
+    const sessionInstance = MockSession.mock.results[0]?.value as { popRunbook: jest.Mock<any> };
     expect(sessionInstance.popRunbook).toHaveBeenCalled();
   });
 
@@ -612,7 +613,7 @@ describe('handleParentCompletion', () => {
     const delegation = makeDelegationLinkage();
     const childState = makeState('child-run-id', { parentLinkage: delegation });
     const parentState = makeState('parent-run-id', {
-      substepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: null }],
+      substepStates: [{ id: '1', frameKey: brandFrameKeyForTest('1'), status: 'pending' }],
     });
 
     const states = new Map([[parentState.id, parentState]]);
@@ -623,7 +624,7 @@ describe('handleParentCompletion', () => {
 
     wireMocks(manager, lifecycleService);
 
-    (drainResolvedCompletions as jest.Mock).mockResolvedValue({
+    (drainResolvedCompletions as jest.Mock<any>).mockResolvedValue({
       status: 'stopped',
       applied: 1,
       state: parentState,
@@ -632,7 +633,7 @@ describe('handleParentCompletion', () => {
     await handleParentCompletion(childState, 'fail', '/test', output);
 
     const MockSession = core.SessionService as jest.MockedClass<typeof core.SessionService>;
-    const sessionInstance = MockSession.mock.results[0]?.value;
+    const sessionInstance = MockSession.mock.results[0]?.value as { popRunbook: jest.Mock<any> };
     expect(sessionInstance.popRunbook).toHaveBeenCalled();
   });
 
@@ -640,7 +641,7 @@ describe('handleParentCompletion', () => {
     const delegation = makeDelegationLinkage();
     const childState = makeState('child-run-id', { parentLinkage: delegation });
     const parentState = makeState('parent-run-id', {
-      substepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: null }],
+      substepStates: [{ id: '1', frameKey: brandFrameKeyForTest('1'), status: 'pending' }],
     });
 
     const states = new Map([[parentState.id, parentState]]);
@@ -651,7 +652,7 @@ describe('handleParentCompletion', () => {
 
     wireMocks(manager, lifecycleService);
 
-    (drainResolvedCompletions as jest.Mock).mockResolvedValue({
+    (drainResolvedCompletions as jest.Mock<any>).mockResolvedValue({
       status: 'continue',
       applied: 0,
       state: parentState,
@@ -667,7 +668,7 @@ describe('handleParentCompletion', () => {
     const delegation = makeDelegationLinkage();
     const childState = makeState('child-run-id', { parentLinkage: delegation });
     const parentState = makeState('parent-run-id', {
-      substepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: null }],
+      substepStates: [{ id: '1', frameKey: brandFrameKeyForTest('1'), status: 'pending' }],
     });
 
     const states = new Map([[parentState.id, parentState]]);
@@ -678,7 +679,7 @@ describe('handleParentCompletion', () => {
 
     wireMocks(manager, lifecycleService);
 
-    (drainResolvedCompletions as jest.Mock).mockResolvedValue({
+    (drainResolvedCompletions as jest.Mock<any>).mockResolvedValue({
       status: 'continue',
       applied: 0,
       state: parentState,
@@ -690,10 +691,10 @@ describe('handleParentCompletion', () => {
   });
 
   it('passes parentFrameKey as frameKeyOverride to drain', async () => {
-    const delegation = makeDelegationLinkage({ parentFrameKey: '1|3' as any });
+    const delegation = makeDelegationLinkage({ parentFrameKey: brandFrameKeyForTest('1', 3) });
     const childState = makeState('child-run-id', { parentLinkage: delegation });
     const parentState = makeState('parent-run-id', {
-      substepStates: [{ id: '1', frameKey: '1|3', status: 'pending', delegation: null }],
+      substepStates: [{ id: '1', frameKey: brandFrameKeyForTest('1', 3), status: 'pending' }],
     });
 
     const states = new Map([[parentState.id, parentState]]);
@@ -704,7 +705,7 @@ describe('handleParentCompletion', () => {
 
     wireMocks(manager, lifecycleService);
 
-    (drainResolvedCompletions as jest.Mock).mockResolvedValue({
+    (drainResolvedCompletions as jest.Mock<any>).mockResolvedValue({
       status: 'continue',
       applied: 0,
       state: parentState,
@@ -723,7 +724,7 @@ describe('handleParentCompletion', () => {
     const delegation = makeDelegationLinkage({ parentFrameKey: undefined });
     const childState = makeState('child-run-id', { parentLinkage: delegation });
     const parentState = makeState('parent-run-id', {
-      substepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: null }],
+      substepStates: [{ id: '1', frameKey: brandFrameKeyForTest('1'), status: 'pending' }],
     });
 
     const states = new Map([[parentState.id, parentState]]);
@@ -734,7 +735,7 @@ describe('handleParentCompletion', () => {
 
     wireMocks(manager, lifecycleService);
 
-    (drainResolvedCompletions as jest.Mock).mockResolvedValue({
+    (drainResolvedCompletions as jest.Mock<any>).mockResolvedValue({
       status: 'continue',
       applied: 0,
       state: parentState,
@@ -742,7 +743,9 @@ describe('handleParentCompletion', () => {
 
     await handleParentCompletion(childState, 'pass', '/test', output);
 
-    const drainCall = (drainResolvedCompletions as jest.Mock).mock.calls[0][0];
+    const drainCall = (drainResolvedCompletions as jest.Mock<any>).mock.calls[0][0] as {
+      frameKeyOverride?: unknown;
+    };
     expect(drainCall.frameKeyOverride).toBeUndefined();
   });
 
@@ -753,7 +756,7 @@ describe('handleParentCompletion', () => {
       finalVars: { PlanPath: '/work/plan.json', version: '2.1' },
     });
     const parentState = makeState('parent-run-id', {
-      substepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: null }],
+      substepStates: [{ id: '1', frameKey: brandFrameKeyForTest('1'), status: 'pending' }],
     });
 
     const states = new Map([[parentState.id, parentState]]);
@@ -764,7 +767,7 @@ describe('handleParentCompletion', () => {
 
     wireMocks(manager, lifecycleService);
 
-    (drainResolvedCompletions as jest.Mock).mockResolvedValue({
+    (drainResolvedCompletions as jest.Mock<any>).mockResolvedValue({
       status: 'continue',
       applied: 0,
       state: parentState,
@@ -773,7 +776,7 @@ describe('handleParentCompletion', () => {
     await handleParentCompletion(childState, 'pass', '/test', output);
 
     const MockActor = core.RunbookActorService as jest.MockedClass<typeof core.RunbookActorService>;
-    const actorInstance = MockActor.mock.results[0]?.value;
+    const actorInstance = MockActor.mock.results[0]?.value as { sendAndSync: jest.Mock<any> };
     expect(actorInstance.sendAndSync).toHaveBeenCalledWith('parent-run-id', expect.any(Array), {
       type: 'SET_VARIABLES',
       vars: { PlanPath: '/work/plan.json', version: '2.1' },
@@ -787,7 +790,7 @@ describe('handleParentCompletion', () => {
       finalVars: { PlanPath: '/work/plan.json' },
     });
     const parentState = makeState('parent-run-id', {
-      substepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: null }],
+      substepStates: [{ id: '1', frameKey: brandFrameKeyForTest('1'), status: 'pending' }],
     });
 
     const states = new Map([[parentState.id, parentState]]);
@@ -805,13 +808,15 @@ describe('handleParentCompletion', () => {
         }) as any,
     );
 
-    (core.RunbookStateManager as jest.Mock).mockImplementation(() => manager);
-    (core.ExecutionLifecycleService as jest.Mock).mockImplementation(() => makeLifecycleService());
-    (core.SessionService as jest.Mock).mockImplementation(() => ({
-      popRunbook: jest.fn().mockResolvedValue(null),
+    (core.RunbookStateManager as unknown as jest.Mock<any>).mockImplementation(() => manager);
+    (core.ExecutionLifecycleService as unknown as jest.Mock<any>).mockImplementation(() =>
+      makeLifecycleService(),
+    );
+    (core.SessionService as unknown as jest.Mock<any>).mockImplementation(() => ({
+      popRunbook: jest.fn<any>().mockResolvedValue(null),
     }));
 
-    (drainResolvedCompletions as jest.Mock).mockResolvedValue({
+    (drainResolvedCompletions as jest.Mock<any>).mockResolvedValue({
       status: 'continue',
       applied: 0,
       state: parentState,
@@ -826,7 +831,7 @@ describe('handleParentCompletion', () => {
     const delegation = makeDelegationLinkage();
     const childState = makeState('child-run-id', { parentLinkage: delegation });
     const parentState = makeState('parent-run-id', {
-      substepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: null }],
+      substepStates: [{ id: '1', frameKey: brandFrameKeyForTest('1'), status: 'pending' }],
     });
 
     const states = new Map([[parentState.id, parentState]]);
@@ -837,7 +842,7 @@ describe('handleParentCompletion', () => {
 
     wireMocks(manager, lifecycleService);
 
-    (drainResolvedCompletions as jest.Mock).mockResolvedValue({
+    (drainResolvedCompletions as jest.Mock<any>).mockResolvedValue({
       status: 'continue',
       applied: 0,
       state: parentState,
@@ -846,7 +851,7 @@ describe('handleParentCompletion', () => {
     await handleParentCompletion(childState, 'pass', '/test', output);
 
     const MockActor = core.RunbookActorService as jest.MockedClass<typeof core.RunbookActorService>;
-    const actorInstance = MockActor.mock.results[0]?.value;
+    const actorInstance = MockActor.mock.results[0]?.value as { sendAndSync: jest.Mock<any> };
     expect(actorInstance.sendAndSync).not.toHaveBeenCalledWith(
       expect.anything(),
       expect.anything(),
@@ -863,7 +868,7 @@ describe('inline linkage path', () => {
         parentRunId: 'parent-run',
         parentStepId: '1',
         parentStep: '1',
-        parentFrameKey: '1|' as any,
+        parentFrameKey: brandFrameKeyForTest('1') as any,
         parentEntry: 1,
       },
     });
@@ -879,15 +884,15 @@ describe('inline linkage path', () => {
         parentRunId: 'parent-run-id',
         parentStepId: '1',
         parentStep: '1',
-        parentFrameKey: '1|' as any,
+        parentFrameKey: brandFrameKeyForTest('1') as any,
         parentEntry: 1,
       },
     });
     const parentState = makeState('parent-run-id', {
       step: '1',
       activeEntry: 1,
-      activeFrameKey: '1|',
-      substepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: null }],
+      activeFrameKey: brandFrameKeyForTest('1'),
+      substepStates: [{ id: '1', frameKey: brandFrameKeyForTest('1'), status: 'pending' }],
     });
 
     const states = new Map([[parentState.id, parentState]]);
@@ -898,7 +903,7 @@ describe('inline linkage path', () => {
 
     wireMocks(manager, lifecycleService);
 
-    (drainResolvedCompletions as jest.Mock).mockResolvedValue({
+    (drainResolvedCompletions as jest.Mock<any>).mockResolvedValue({
       status: 'continue',
       applied: 0,
       state: parentState,
