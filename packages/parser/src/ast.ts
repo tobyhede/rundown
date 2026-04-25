@@ -257,8 +257,10 @@ export interface OutputDeclaration {
   readonly name: string;
   /**
    * Raw value expression — template variable, `{{ path "file" }}`, or quoted literal.
-   * Absent for the naked form used in frontmatter OUTPUTS (`PlanPath` with no expression),
-   * which resolves the value from context template vars by name at completion time.
+   * Absent for the naked form. Semantics depend on context:
+   * - Frontmatter OUTPUTS: resolves the value from context template vars by name at completion time.
+   * - Step / substep OUTPUTS: activates a file-backed channel — the executor pre-creates a file and
+   *   exports its path as `RD_OUTPUTS_<VarName>` for the spawned shell.
    */
   readonly value?: string;
 }
