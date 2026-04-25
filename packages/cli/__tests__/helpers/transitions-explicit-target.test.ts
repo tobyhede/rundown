@@ -1,5 +1,13 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { mockErrorHelpers } from './mock-error-helpers.js';
+import { mockFn } from './typed-mocks.js';
+import type {
+  ActionType,
+  FrameKey,
+  ResolvedCompletion,
+  RunbookState,
+} from '@rundown-org/core';
+import type { ResolvedStep, StepId } from '@rundown-org/parser';
 
 // Mock @rundown-org/core
 jest.unstable_mockModule('@rundown-org/core', () => ({
@@ -7,55 +15,64 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   RunbookActorService: jest.fn(),
   SessionService: jest.fn(),
   ExecutionLifecycleService: jest.fn(),
-  extractLastAction: jest.fn<any>().mockReturnValue(undefined),
-  formatTransitionAction: jest.fn<any>().mockReturnValue('CONTINUE'),
-  parseActionType: jest.fn<any>().mockReturnValue('CONTINUE'),
-  parseStepIdFromString: jest.fn(),
+  extractLastAction: mockFn<(snapshot: unknown) => unknown>().mockReturnValue(undefined),
+  formatTransitionAction: mockFn<(action: ActionType) => string>().mockReturnValue('CONTINUE'),
+  parseActionType: mockFn<(action: unknown) => ActionType>().mockReturnValue(
+    'CONTINUE' as ActionType,
+  ),
+  parseStepIdFromString: mockFn<(input: string) => StepId | null>(),
   SENTINEL_ENTRY: 0,
-  buildCompletionKey: jest.fn(
-    (frameKey: string, entry: number, substep?: string) =>
-      `${frameKey}:${String(entry)}:${substep ?? ''}`,
+  buildCompletionKey: mockFn<(frameKey: FrameKey, entry: number, substep?: string) => string>()
+    .mockImplementation(
+      (frameKey, entry, substep) => `${String(frameKey)}:${String(entry)}:${substep ?? ''}`,
+    ),
+  buildFrameKey: mockFn<(step: string, iteration?: number) => FrameKey>().mockImplementation(
+    (step, iteration) =>
+      (iteration !== undefined ? `${step}[${String(iteration)}]` : step) as FrameKey,
   ),
-  buildFrameKey: jest.fn((step: string, iteration?: number) =>
-    iteration !== undefined ? `${step}[${String(iteration)}]` : step,
-  ),
-  buildResolvedCompletion: jest.fn<any>().mockReturnValue({ result: 'pass' }),
-  deriveExecutionAt: jest.fn(
-    (step: string, substep?: string, iteration?: number) =>
-      `${step}${iteration !== undefined ? `[${String(iteration)}]` : ''}${substep ? `.${substep}` : ''}`,
-  ),
-  deriveActiveFrame: jest
-    .fn<any>()
-    .mockReturnValue({ step: '1', iteration: undefined, frameKey: '1' }),
-  logger: { warn: jest.fn<any>().mockReturnValue(undefined) },
+  buildResolvedCompletion: mockFn<(fields: unknown) => Partial<ResolvedCompletion>>()
+    .mockReturnValue({ result: 'pass' }),
+  deriveExecutionAt: mockFn<(step: string, substep?: string, iteration?: number) => string>()
+    .mockImplementation(
+      (step, substep, iteration) =>
+        `${step}${iteration !== undefined ? `[${String(iteration)}]` : ''}${substep ? `.${substep}` : ''}`,
+    ),
+  deriveActiveFrame: mockFn<
+    (state: RunbookState) => { step: string; iteration?: number; frameKey: FrameKey }
+  >().mockReturnValue({ step: '1', iteration: undefined, frameKey: '1' as FrameKey }),
+  logger: { warn: mockFn<(...args: unknown[]) => void>() },
   ...mockErrorHelpers,
 }));
 
 // Mock @rundown-org/parser
 jest.unstable_mockModule('@rundown-org/parser', () => ({
-  resolvedStepHasSubsteps: jest.fn(),
+  resolvedStepHasSubsteps: mockFn<(step: ResolvedStep) => boolean>(),
 }));
 
 // Mock runbook-loader
 jest.unstable_mockModule('../../src/helpers/runbook-loader', () => ({
-  getRunbookFromState: jest.fn<any>().mockReturnValue([]),
+  getRunbookFromState: mockFn<() => readonly ResolvedStep[]>().mockReturnValue([]),
 }));
 
 // Mock execution service
 jest.unstable_mockModule('../../src/services/execution', () => ({
-  drainResolvedCompletions: jest.fn<any>().mockResolvedValue({ status: 'done', applied: 0 }),
-  findStepOrThrow: jest.fn(),
-  runExecutionLoop: jest.fn<any>().mockResolvedValue('done'),
+  drainResolvedCompletions: mockFn<
+    (...args: unknown[]) => Promise<{ status: string; applied: number; unresolved?: number }>
+  >().mockResolvedValue({ status: 'done', applied: 0 }),
+  findStepOrThrow: mockFn<(steps: readonly ResolvedStep[], stepName: string) => ResolvedStep>(),
+  runExecutionLoop: mockFn<(...args: unknown[]) => Promise<string>>().mockResolvedValue('done'),
 }));
 
 // Mock execution-emitter
 jest.unstable_mockModule('../../src/helpers/execution-emitter', () => ({
-  createBridgedEmitter: jest.fn<any>().mockReturnValue({}),
+  createBridgedEmitter: mockFn<() => Record<string, unknown>>().mockReturnValue({}),
 }));
 
 // Mock transition-orchestrator
 jest.unstable_mockModule('../../src/helpers/transition-orchestrator', () => ({
-  orchestrateTransition: jest.fn<any>().mockResolvedValue({ status: 'done' }),
+  orchestrateTransition: mockFn<
+    (...args: unknown[]) => Promise<{ status: string }>
+  >().mockResolvedValue({ status: 'done' }),
 }));
 
 const core = await import('@rundown-org/core');
