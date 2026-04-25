@@ -312,6 +312,17 @@ export const ErrorCodes = {
       `This indicates the delegation was created by an older schema and cannot be safely re-issued.`,
     docSlug: 'delegation-snapshot-stale',
   },
+  DELEGATION_OWNER_LOST_SUBSTEPS: {
+    code: 'RD-818',
+    category: ErrorCategory.DELEGATION,
+    title: 'Delegation owner step lost substeps',
+    description:
+      `A persisted delegation references a substep, but the resolved runbook no longer ` +
+      `declares substeps on the owner step. Silently retargeting the replacement token ` +
+      `onto the bare step would corrupt the persisted entry. Resolve by completing or ` +
+      `stopping the running runbook and starting a fresh run.`,
+    docSlug: 'delegation-owner-lost-substeps',
+  },
 
   // Retry hook (9xx) — sub-range of ErrorCategory.EXECUTION reserved for
   // retry-hook lifecycle failures (delegation re-issuance, frame-key invariants,

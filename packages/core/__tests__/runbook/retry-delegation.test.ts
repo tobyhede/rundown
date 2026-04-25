@@ -566,4 +566,44 @@ describe('retryDelegation', () => {
     expect(replaced?.delegation?.tokenHash).toBe(result.tokenHash);
     expect(replaced?.delegation?.cancelledAt).toBeNull();
   });
+
+  it('returns { status: "error" } with RD-818 when retried owner step has lost its substeps', () => {
+    // Schema-drift scenario: a persisted delegation originally targeted
+    // substep `1.1`. The runbook is later edited so step `1` no longer
+    // declares any substeps. Without the RD-818 guard, retryDelegation
+    // would silently fall back to a bare-step `stepIdForCreate` and
+    // overwrite the wrong persisted entry. Surface as a typed error so
+    // the operator can detect the drift and restart cleanly.
+    const baseState = makeState();
+    const seedSteps = makeSteps('1', ['1', '2']);
+    const initial = createDelegation(
+      {
+        state: baseState,
+        stepId: '1.1',
+        childRunbookPath: 'child.md',
+        ancestors: [],
+        frameKey: buildFrameKey('1'),
+      },
+      seedSteps,
+    );
+    expect(initial.status).toBe('created');
+    if (initial.status !== 'created') return;
+    const stateWithDelegation = { ...baseState, substepStates: initial.updatedSubstepStates };
+
+    // Edit: step '1' loses its substeps (now a bare step).
+    const editedSteps = makeSimpleSteps();
+
+    const result = retryDelegation(
+      {
+        state: stateWithDelegation,
+        substepId: '1',
+        frameKey: buildFrameKey('1'),
+      },
+      editedSteps,
+    );
+
+    expect(result.status).toBe('error');
+    if (result.status !== 'error') return;
+    expect(result.error.code).toBe('RD-818');
+  });
 });

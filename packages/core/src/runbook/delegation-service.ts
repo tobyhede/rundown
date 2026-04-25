@@ -571,6 +571,21 @@ export function retryDelegation(
   const ownerStepDefinition = steps.find((s) => s.name === state.step);
   const ownerHasSubsteps =
     ownerStepDefinition !== undefined && resolvedStepHasSubsteps(ownerStepDefinition);
+  // Stale-state guard: the persisted delegation was created with a substep
+  // target (`contextSnapshot.substep` is set), but the resolved runbook
+  // now says the owner step has no substeps. Silently falling through to
+  // the bare-step `stepIdForCreate` branch below would re-issue the
+  // replacement token under the wrong persisted entry. Surface as error
+  // so the operator can detect schema drift and restart cleanly. Per the
+  // project's "never migrate persisted state" principle, the only safe
+  // recovery is to complete or stop the running runbook and start fresh.
+  const persistedSubstep = existingDelegation.contextSnapshot.substep;
+  if (ownerStepDefinition !== undefined && !ownerHasSubsteps && persistedSubstep !== undefined) {
+    return {
+      status: 'error',
+      error: Errors.delegationOwnerLostSubsteps(substepId, state.step),
+    };
+  }
   // Extract the FOR iteration from the frame key (format: "step|iteration",
   // see buildFrameKey). A FOR-scoped retry must pass a three-level
   // "${step}.${iteration}.${substep}" ID so parseStepIdFromString sets
