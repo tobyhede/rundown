@@ -170,7 +170,7 @@ describe('rdpath find integration', () => {
       try {
         await fs.writeFile(path.join(altDir, 'alt.md'), '');
 
-        const result = await runRdpath(['find', '*.md', '--dir', altDir], {
+        const result = await runRdpath(['--dir', altDir, 'find', '*.md'], {
           RD_WORK_PATH: testDir,
         });
 
