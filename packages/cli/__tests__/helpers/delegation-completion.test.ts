@@ -28,8 +28,11 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     .mockImplementation(
       (frameKey, entry, substepId) => `${String(frameKey)}|${String(entry)}|${substepId ?? ''}`,
     ),
-  buildResolvedCompletion: mockFn<(data: ResolvedCompletion) => ResolvedCompletion>()
-    .mockImplementation((data) => data),
+  buildResolvedCompletion: mockFn<
+    (fields: Omit<ResolvedCompletion, 'completedAt'> & { completedAt?: string }) => ResolvedCompletion
+  >().mockImplementation(
+    (fields) => ({ completedAt: '2026-02-27T10:00:00.000Z', ...fields }) as ResolvedCompletion,
+  ),
   deriveActiveFrame: mockFn<
     (state: RunbookState) => { frameKey: FrameKey; step: string; iteration?: number }
   >().mockImplementation((state) => ({
@@ -262,42 +265,47 @@ function wireMocks(manager: MockManager, lifecycleService: MockLifecycleService)
 beforeEach(() => {
   jest.resetAllMocks();
   // Re-establish default mock implementations
-  (core.buildCompletionKey as jest.Mock<any>).mockImplementation(
-    (frameKey: string, entry: number, substepId: string) =>
-      `${frameKey}|${String(entry)}|${substepId}`,
+  jest.mocked(core.buildCompletionKey).mockImplementation(
+    (frameKey, entry, substepId) =>
+      `${String(frameKey)}|${String(entry)}|${substepId ?? ''}`,
   );
-  (core.buildResolvedCompletion as jest.Mock<any>).mockImplementation((data: any) => data);
-  (core.deriveActiveFrame as jest.Mock<any>).mockImplementation((state: any) => ({
-    frameKey: state.activeFrameKey ?? `${String(state.step)}|`,
+  jest.mocked(core.buildResolvedCompletion).mockImplementation(
+    (fields) => ({ completedAt: '2026-02-27T10:00:00.000Z', ...fields }) as ResolvedCompletion,
+  );
+  jest.mocked(core.deriveActiveFrame).mockImplementation((state) => ({
+    frameKey: (state.activeFrameKey ?? `${String(state.step)}|`) as FrameKey,
     step: state.step,
-    iteration: state.activeForContext?.iteration,
+    iteration: undefined,
   }));
-  (core.findSubstepState as jest.Mock<any>).mockImplementation(
-    (substepStates: any[], substepId: string, frameKey: string) =>
-      substepStates.find((ss: any) => ss.id === substepId && ss.frameKey === frameKey),
+  jest.mocked(core.findSubstepState).mockImplementation((substepStates, substepId, frameKey) =>
+    substepStates.find((ss) => ss.id === substepId && ss.frameKey === frameKey),
   );
-  (getRunbookFromState as jest.Mock<any>).mockReturnValue([
+  jest.mocked(getRunbookFromState).mockReturnValue([
     {
       name: '1',
       description: 'Test step',
       transitions: { pass: { action: 'continue' as const, retry: 0 } },
-    },
+    } as unknown as ResolvedStep,
   ]);
-  (createBridgedEmitter as jest.Mock<any>).mockReturnValue({ emit: jest.fn() });
-  (drainResolvedCompletions as jest.Mock<any>).mockResolvedValue({
+  jest.mocked(createBridgedEmitter).mockReturnValue({ emit: jest.fn() } as unknown as ReturnType<
+    typeof createBridgedEmitter
+  >);
+  jest.mocked(drainResolvedCompletions).mockResolvedValue({
     status: 'continue',
     applied: 1,
     state: makeState('parent-run-id'),
-  });
-  (runExecutionLoop as jest.Mock<any>).mockResolvedValue('waiting');
-  (createPassTransitionConfig as jest.Mock<any>).mockReturnValue({
+  } as unknown as Awaited<ReturnType<typeof drainResolvedCompletions>>);
+  jest.mocked(runExecutionLoop).mockResolvedValue(
+    'waiting' as unknown as Awaited<ReturnType<typeof runExecutionLoop>>,
+  );
+  jest.mocked(createPassTransitionConfig).mockReturnValue({
     policy: 'pass',
     computeActionResult: jest.fn(),
-  });
-  (createFailTransitionConfig as jest.Mock<any>).mockReturnValue({
+  } as unknown as ReturnType<typeof createPassTransitionConfig>);
+  jest.mocked(createFailTransitionConfig).mockReturnValue({
     policy: 'fail',
     computeActionResult: jest.fn(),
-  });
+  } as unknown as ReturnType<typeof createFailTransitionConfig>);
 });
 
 describe('handleParentCompletion', () => {
