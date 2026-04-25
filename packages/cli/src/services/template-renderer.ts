@@ -76,10 +76,10 @@ const TEMPLATE_PATH_REGEX =
 
 /**
  * Matches `{{ ./VarName }}` — explicit variable lookup, bypasses helper registry.
- * Capture group 1: identifier after `./`.
+ * Capture group 1: full dotted path after `./` (identifier or numeric segments).
  */
 const EXPLICIT_VAR_TEMPLATE_REGEX =
-  /\{\{\s*\.\/(([a-zA-Z_][a-zA-Z0-9_]*)(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)\s*\}\}/g;
+  /\{\{\s*\.\/((?:[a-zA-Z_][a-zA-Z0-9_]*)(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)\s*\}\}/g;
 
 /**
  * Matches `{{ helperName varRef }}` or `{{ helperName "literal" }}`.
@@ -728,6 +728,8 @@ export function shellEscapeValue(value: string): string {
  * syntax will be processed by pass 2 after being substituted by pass 1. This is
  * benign in practice — variable values rarely contain helper call syntax — but
  * callers should be aware that variable values are not isolated from later passes.
+ * Similarly, a value returned by a helper that contains `{{ VarName }}` syntax
+ * will be processed by pass 3.
  *
  * @param text - Input text containing placeholders
  * @param variables - Variable map for substitution
