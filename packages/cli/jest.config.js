@@ -1,4 +1,7 @@
+import base from '../../jest.config.base.js';
+
 export default {
+  ...base,
   testEnvironment: 'node',
   roots: ['<rootDir>/__tests__'],
   testMatch: ['**/*.test.ts'],
