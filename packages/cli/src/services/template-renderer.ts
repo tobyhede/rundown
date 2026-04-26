@@ -36,8 +36,9 @@ import {
   stepIdToString,
   RunbookSyntaxError,
 } from '@rundown-org/parser';
-import { isJsonArrayStream, type TemplateVarValue } from '@rundown-org/core';
+import { invokeHelperSafely, isJsonArrayStream, type TemplateVarValue } from '@rundown-org/core';
 import type { StepVariables } from './execution-vars.js';
+import { getHelperRegistry } from './helper-registry.js';
 
 /**
  * Mapped type that requires all keys of T to be present in object literals,
@@ -72,6 +73,24 @@ function buildResolvedForStep(
  */
 const TEMPLATE_PATH_REGEX =
   /{{\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)\s*}}/g;
+
+/**
+ * Matches `{{ ./VarName }}` — explicit variable lookup, bypasses helper registry.
+ * Capture group 1: full dotted path after `./` (identifier or numeric segments).
+ */
+const EXPLICIT_VAR_TEMPLATE_REGEX =
+  /\{\{\s*\.\/((?:[a-zA-Z_][a-zA-Z0-9_]*)(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)\s*\}\}/g;
+
+/**
+ * Matches `{{ helperName varRef }}` or `{{ helperName "literal" }}`.
+ * Group 1: helperName, Group 2: varRef (or undefined), Group 3: literal (or undefined).
+ *
+ * Intercepts any two-token `{{ identifier arg }}` expression in pass 2. Future
+ * template built-ins that use this syntax must be added to `RESERVED_HELPER_NAMES`
+ * in `helper-registry.ts`; otherwise a same-named user helper will take priority.
+ */
+const HELPER_CALL_TEMPLATE_REGEX =
+  /\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s+(?:([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)|"([^"]*)")\s*\}\}/g;
 
 /**
  * Resolve a dotted path in an object using own-property traversal.
@@ -181,14 +200,15 @@ function resolveTemplatePath(path: string, variables: Record<string, unknown>): 
  * Unresolved placeholders are preserved literally so callers can surface
  * downstream resolution errors with original source text.
  *
+ * Delegates to `substituteText` so helper calls and `./VarName` syntax
+ * are also supported in loop/runtime variable contexts.
+ *
  * @param text - Input text that may contain placeholders
  * @param variables - Runtime/template variables for substitution (typed `StepVariables` at the call boundary)
  * @returns Expanded text with unresolved placeholders preserved
  */
 export function expandLoopVariables(text: string, variables: Readonly<StepVariables>): string {
-  return text.replace(TEMPLATE_PATH_REGEX, (match, path: string) => {
-    return resolveTemplatePath(path, variables) ?? match;
-  });
+  return substituteText(text, variables);
 }
 
 // ─── FOR clause bound resolution ─────────────────────────────────────────────
@@ -662,6 +682,28 @@ export function resolveForBounds(
 const SAFE_SHELL_VALUE = /^(?!-)(?!.*\.\.)[a-zA-Z0-9_./-]+$/;
 
 /**
+ * Attempt to dispatch a helper call using the current HelperRegistry.
+ *
+ * Returns the helper result on success, or the original match string when
+ * the helper is not found, throws, or returns a non-string / Promise value.
+ * Validation of the helper return value is delegated to
+ * {@link invokeHelperSafely} so the same semantics apply to the OUTPUTS
+ * evaluator in core.
+ *
+ * @param helperName - Name of the helper to look up
+ * @param argValue - Argument string to pass to the helper
+ * @param original - Original match text to return on miss or validation failure
+ * @returns Helper result or original match
+ */
+function resolveHelperCall(helperName: string, argValue: string, original: string): string {
+  const registry = getHelperRegistry();
+  const helper = registry.get(helperName);
+  if (!helper) return original;
+  const result = invokeHelperSafely(helperName, helper, argValue);
+  return result ?? original;
+}
+
+/**
  * Shell-escape a variable value for safe interpolation into shell commands.
  *
  * @param value - Raw value before shell interpolation
@@ -676,6 +718,19 @@ export function shellEscapeValue(value: string): string {
 /**
  * Substitute placeholders in text with optional escaping.
  *
+ * Supports three placeholder forms (processed in order):
+ * 1. `{{ ./VarName }}` — explicit variable lookup, bypasses helper registry
+ * 2. `{{ helperName varRef }}` or `{{ helperName "literal" }}` — helper call
+ * 3. `{{ identifier }}` — standard variable substitution
+ *
+ * Pass isolation: each pass operates on the full result string produced by the
+ * previous pass. A variable value that itself contains `{{ helperName arg }}`
+ * syntax will be processed by pass 2 after being substituted by pass 1. This is
+ * benign in practice — variable values rarely contain helper call syntax — but
+ * callers should be aware that variable values are not isolated from later passes.
+ * Similarly, a value returned by a helper that contains `{{ VarName }}` syntax
+ * will be processed by pass 3.
+ *
  * @param text - Input text containing placeholders
  * @param variables - Variable map for substitution
  * @param escapeFn - Optional escape function for resolved values
@@ -686,11 +741,43 @@ export function substituteText(
   variables: Record<string, unknown>,
   escapeFn?: (value: string) => string,
 ): string {
-  return text.replace(TEMPLATE_PATH_REGEX, (match, path: string) => {
+  // Pass 1: {{ ./VarName }} explicit variable lookup, bypasses helper registry
+  let result = text.replace(EXPLICIT_VAR_TEMPLATE_REGEX, (match, varPath: string) => {
+    const value = resolveTemplatePath(varPath, variables);
+    if (value === undefined) return match;
+    return escapeFn ? escapeFn(value) : value;
+  });
+
+  // Pass 2: {{ helperName varRef }} or {{ helperName "literal" }}
+  result = result.replace(
+    HELPER_CALL_TEMPLATE_REGEX,
+    (match, helperName: string, varRef: string | undefined, literal: string | undefined) => {
+      let argValue: string;
+      if (varRef !== undefined) {
+        const resolved = resolveTemplatePath(varRef, variables);
+        // Preserve the original placeholder when the variable arg is unresolved.
+        // Mirrors Pass 3 below and the `./VarName` branch in Pass 1: silently
+        // substituting `''` would corrupt downstream output (see "No silent
+        // mapping" principle in CLAUDE.md).
+        if (resolved === undefined) return match;
+        argValue = resolved;
+      } else {
+        argValue = literal ?? '';
+      }
+      const raw = resolveHelperCall(helperName, argValue, match);
+      if (raw === match) return match;
+      return escapeFn ? escapeFn(raw) : raw;
+    },
+  );
+
+  // Pass 3: {{ identifier }} standard variable substitution
+  result = result.replace(TEMPLATE_PATH_REGEX, (match, path: string) => {
     const value = resolveTemplatePath(path, variables);
     if (value === undefined) return match;
     return escapeFn ? escapeFn(value) : value;
   });
+
+  return result;
 }
 
 /**
@@ -1005,6 +1092,9 @@ export function warnUnresolvedRunbookVariables(runbook: ResolvedRunbook): string
 /**
  * Expand loop variables in command code with shell escaping.
  *
+ * Delegates to `substituteText` with shell escaping so helper calls and
+ * `./VarName` syntax are also supported in command contexts.
+ *
  * @param text - Command text containing placeholders
  * @param variables - Runtime/template variable map (typed `StepVariables` at the call boundary)
  * @returns Command text with resolved placeholders shell-escaped
@@ -1013,8 +1103,5 @@ export function expandLoopVariablesForCommand(
   text: string,
   variables: Readonly<StepVariables>,
 ): string {
-  return text.replace(TEMPLATE_PATH_REGEX, (match, path: string) => {
-    const resolved = resolveTemplatePath(path, variables);
-    return resolved !== undefined ? shellEscapeValue(resolved) : match;
-  });
+  return substituteText(text, variables, shellEscapeValue);
 }

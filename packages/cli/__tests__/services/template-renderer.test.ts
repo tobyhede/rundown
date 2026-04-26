@@ -1,4 +1,4 @@
-import { describe, it, expect } from '@jest/globals';
+import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import { parseRunbookDocument } from '@rundown-org/core';
 import type {
   Runbook,
@@ -22,6 +22,8 @@ import {
   collectUnresolvedVariables,
   warnUnresolvedRunbookVariables,
 } from '../../src/services/template-renderer.js';
+import { setHelperRegistry, resetHelperRegistry } from '../../src/services/helper-registry.js';
+import { resetHelperInvokeWarnings } from '@rundown-org/core';
 
 describe('expandLoopVariables', () => {
   it('should expand named loop variable', () => {
@@ -1848,5 +1850,163 @@ describe('DELEGATE field propagation through resolution', () => {
     if (step.kind !== 'substeps') return;
     expect(step.substeps[0].delegate).toBe(true);
     expect(step.substeps[1].delegate).toBeUndefined();
+  });
+});
+
+describe('substituteText with HelperRegistry', () => {
+  beforeEach(() => {
+    setHelperRegistry(
+      new Map([
+        ['upper', (v: string) => v.toUpperCase()],
+        ['slug', (v: string) => v.toLowerCase().replace(/\s+/g, '-')],
+      ]),
+    );
+  });
+
+  afterEach(() => {
+    resetHelperRegistry();
+  });
+
+  it('calls helper with variable reference argument', () => {
+    expect(substituteText('{{ upper name }}', { name: 'hello world' })).toBe('HELLO WORLD');
+  });
+
+  it('calls helper with string literal argument', () => {
+    expect(substituteText('{{ upper "hello world" }}', {})).toBe('HELLO WORLD');
+  });
+
+  it('calls helper with dotted variable path argument', () => {
+    expect(substituteText('{{ slug item.title }}', { item: { title: 'Hello World' } })).toBe(
+      'hello-world',
+    );
+  });
+
+  it('preserves unknown helper as literal text', () => {
+    expect(substituteText('{{ unknown name }}', { name: 'foo' })).toBe('{{ unknown name }}');
+  });
+
+  it('preserves literal when helper throws', () => {
+    setHelperRegistry(
+      new Map([
+        [
+          'thrower',
+          (_v: string) => {
+            throw new Error('boom');
+          },
+        ],
+      ]),
+    );
+    expect(substituteText('{{ thrower name }}', { name: 'x' })).toBe('{{ thrower name }}');
+  });
+
+  it('{{ ./VarName }} bypasses helper registry and resolves variable directly', () => {
+    expect(substituteText('{{ ./upper }}', { upper: 'plain value' })).toBe('plain value');
+  });
+
+  it('{{ ./VarName }} preserves literal when variable not defined', () => {
+    expect(substituteText('{{ ./missing }}', {})).toBe('{{ ./missing }}');
+  });
+
+  it('applies escapeFn to helper result', () => {
+    const escapeFn = (v: string) => `[${v}]`;
+    expect(substituteText('{{ upper name }}', { name: 'hello' }, escapeFn)).toBe('[HELLO]');
+  });
+
+  it('applies escapeFn to ./VarName result', () => {
+    const escapeFn = (v: string) => `[${v}]`;
+    expect(substituteText('{{ ./name }}', { name: 'hello' }, escapeFn)).toBe('[hello]');
+  });
+
+  // Helper-arg path preserves the original placeholder when the variable
+  // referenced as the argument is not defined in the frame. Mirrors the
+  // `{{ ./VarName }}` and bare `{{ identifier }}` paths: silently passing
+  // `''` into the helper would corrupt downstream output and hide the
+  // missing-variable bug at the call site (see "No silent mapping" in CLAUDE.md).
+  it('preserves placeholder when helper variable argument is undefined', () => {
+    expect(substituteText('{{ upper missing }}', {})).toBe('{{ upper missing }}');
+  });
+
+  it('preserves placeholder when only one of multiple helper args is undefined', () => {
+    expect(substituteText('{{ upper name }} - {{ upper missing }}', { name: 'hi' })).toBe(
+      'HI - {{ upper missing }}',
+    );
+  });
+
+  it('passes plain {{ name }} through normal substitution unaffected', () => {
+    expect(substituteText('{{ name }}', { name: 'world' })).toBe('world');
+  });
+
+  it('helper call in command context applies shell escaping to result', () => {
+    setHelperRegistry(new Map([['loud', (v: string) => `${v} world; rm -rf /`]]));
+    // substituteText with shellEscapeValue as escapeFn (mimics command path)
+    expect(substituteText('echo {{ loud name }}', { name: 'hello' }, shellEscapeValue)).toBe(
+      "echo 'hello world; rm -rf /'",
+    );
+  });
+
+  it('expandLoopVariables dispatches helper calls', () => {
+    expect(expandLoopVariables('{{ upper batch }}', { batch: 'hello' })).toBe('HELLO');
+  });
+
+  it('expandLoopVariablesForCommand dispatches helper calls with shell escaping', () => {
+    setHelperRegistry(new Map([['loud', (v: string) => `${v} world; rm -rf /`]]));
+    expect(expandLoopVariablesForCommand('echo {{ loud batch }}', { batch: 'hello' })).toBe(
+      "echo 'hello world; rm -rf /'",
+    );
+  });
+});
+
+describe('substituteText call-time helper validation', () => {
+  // Mirrors the OUTPUTS evaluator coverage in `output-evaluator.test.ts`:
+  // pre-PR-235, the registry probed each helper at load time. After Item 10,
+  // sync-but-Promise-returning helpers and helpers that return non-strings
+  // are caught at the call site by `invokeHelperSafely` instead. The renderer
+  // surfaces validation failures the same way it surfaces a thrown helper:
+  // the original `{{ ... }}` match text is preserved.
+
+  let warnSpy: jest.SpiedFunction<typeof console.warn>;
+
+  beforeEach(() => {
+    resetHelperInvokeWarnings();
+    warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    resetHelperRegistry();
+    warnSpy.mockRestore();
+  });
+
+  it('preserves literal when a helper returns a Promise and warns once', () => {
+    setHelperRegistry(
+      new Map([
+        ['asyncReturn', ((v: string) => Promise.resolve(v)) as unknown as (v: string) => string],
+      ]),
+    );
+    expect(substituteText('{{ asyncReturn name }}', { name: 'val' })).toBe(
+      '{{ asyncReturn name }}',
+    );
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Promise'));
+  });
+
+  it('preserves literal when a helper returns a non-string and warns once', () => {
+    setHelperRegistry(
+      new Map([['weird', ((_v: string) => ({ x: 1 })) as unknown as (v: string) => string]]),
+    );
+    expect(substituteText('{{ weird name }}', { name: 'val' })).toBe('{{ weird name }}');
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    // typeof {} === 'object'
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('object'));
+  });
+
+  it('emits at most one warning across multiple invocations in a single render', () => {
+    setHelperRegistry(
+      new Map([
+        ['asyncReturn', ((v: string) => Promise.resolve(v)) as unknown as (v: string) => string],
+      ]),
+    );
+    // Two `{{ asyncReturn ... }}` calls in one substitution pass — only one warning.
+    substituteText('{{ asyncReturn name }} {{ asyncReturn "literal" }}', { name: 'val' });
+    expect(warnSpy).toHaveBeenCalledTimes(1);
   });
 });

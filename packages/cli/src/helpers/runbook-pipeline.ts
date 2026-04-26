@@ -64,6 +64,7 @@ import {
   validateRequiredVars,
   validateOutputsDeclarations,
 } from './validate-frontmatter-vars.js';
+import { getHelperRegistry, detectHelperCollisions } from '../services/helper-registry.js';
 
 /**
  * Input options from CLI flags.
@@ -524,6 +525,16 @@ export async function prepareRunbook(
       diagnostics,
       warnings: allWarnings.length > 0 ? allWarnings : undefined,
     };
+  }
+
+  // Helper-collision detection runs only after structural validation passes.
+  // Surfacing "Variable shadowed by helper" warnings on a runbook with parse/frontmatter
+  // errors would be noise the user can't act on yet.
+  const helperCollisions = detectHelperCollisions(getHelperRegistry(), templateVars);
+  for (const name of helperCollisions) {
+    allWarnings.push(
+      `Variable "${name}" is shadowed by a registered helper. Use {{ ./${name} }} to access the variable.`,
+    );
   }
 
   // Inherit OUTPUTS from the child's resolved ContextId.

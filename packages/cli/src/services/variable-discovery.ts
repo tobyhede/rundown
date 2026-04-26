@@ -270,6 +270,26 @@ function computeWorkPath(branch: string | null): string {
 }
 
 /**
+ * Canonical names of rundown built-in template variables.
+ *
+ * Single source of truth for the keys produced by {@link getBuiltinVariables}.
+ * Consumers (e.g. shell-env injection in `execution.ts`) should reference these
+ * constants rather than hardcoding string literals so a rename here surfaces
+ * as a typecheck error at every call site.
+ */
+export const BUILTIN_VARIABLES = {
+  Date: 'Date',
+  DateTime: 'DateTime',
+  Year: 'Year',
+  Month: 'Month',
+  Day: 'Day',
+  Branch: 'Branch',
+  WorkPath: 'WorkPath',
+  RunId: 'RunId',
+  ContextId: 'ContextId',
+} as const;
+
+/**
  * Returns built-in default template variables.
  *
  * These have the lowest precedence and can be overridden by any other source
@@ -281,15 +301,15 @@ export function getBuiltinVariables(): Record<string, string> {
   const now = new Date();
   const branch = detectGitBranch();
   return {
-    Date: now.toISOString().slice(0, 10), // YYYY-MM-DD (UTC)
-    DateTime: now.toISOString(), // Full ISO timestamp (UTC)
-    Year: String(now.getUTCFullYear()), // YYYY (UTC)
-    Month: String(now.getUTCMonth() + 1).padStart(2, '0'), // MM (01-12, UTC)
-    Day: String(now.getUTCDate()).padStart(2, '0'), // DD (01-31, UTC)
-    Branch: branch ?? '', // Raw git branch name (empty when not in git)
-    WorkPath: computeWorkPath(branch), // Branch-isolated artifact directory
-    RunId: randomBytes(4).toString('hex'), // 8-char hex
-    ContextId: randomBytes(4).toString('hex'), // 8-char hex
+    [BUILTIN_VARIABLES.Date]: now.toISOString().slice(0, 10), // YYYY-MM-DD (UTC)
+    [BUILTIN_VARIABLES.DateTime]: now.toISOString(), // Full ISO timestamp (UTC)
+    [BUILTIN_VARIABLES.Year]: String(now.getUTCFullYear()), // YYYY (UTC)
+    [BUILTIN_VARIABLES.Month]: String(now.getUTCMonth() + 1).padStart(2, '0'), // MM (01-12, UTC)
+    [BUILTIN_VARIABLES.Day]: String(now.getUTCDate()).padStart(2, '0'), // DD (01-31, UTC)
+    [BUILTIN_VARIABLES.Branch]: branch ?? '', // Raw git branch name (empty when not in git)
+    [BUILTIN_VARIABLES.WorkPath]: computeWorkPath(branch), // Branch-isolated artifact directory
+    [BUILTIN_VARIABLES.RunId]: randomBytes(4).toString('hex'), // 8-char hex
+    [BUILTIN_VARIABLES.ContextId]: randomBytes(4).toString('hex'), // 8-char hex
   };
 }
 

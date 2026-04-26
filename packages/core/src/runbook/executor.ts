@@ -32,6 +32,8 @@ export interface PolicyExecutionOptions {
   prompter?: PolicyPrompter;
   /** Custom environment variables (will be filtered by policy) */
   env?: Record<string, string>;
+  /** Rundown-injected variables (e.g. RD_WORK_PATH, RD_RUN_ID); always present, bypass policy filter */
+  rdInjected?: Record<string, string>;
   /** Enable OS-level sandbox for file access enforcement (default: true on supported platforms) */
   sandbox?: boolean;
   /** Fail if sandbox is unavailable (default: false, falls back to unsandboxed) */
@@ -55,9 +57,14 @@ export interface PolicyExecutionOptions {
  *
  * @param command - The shell command to execute
  * @param cwd - Working directory for execution
+ * @param rdInjected - Optional Rundown-injected env vars (e.g. RD_WORK_PATH) merged after PATH
  * @returns Promise resolving to ExecutionResult with success status and exit code
  */
-export function executeCommand(command: string, cwd: string): Promise<ExecutionResult> {
+export function executeCommand(
+  command: string,
+  cwd: string,
+  rdInjected?: Record<string, string>,
+): Promise<ExecutionResult> {
   return new Promise((resolve) => {
     // Build PATH that includes node_modules/.bin for local package binaries
     const binPath = path.join(cwd, 'node_modules', '.bin');
@@ -69,6 +76,7 @@ export function executeCommand(command: string, cwd: string): Promise<ExecutionR
     const env = {
       ...process.env,
       PATH: enhancedPath,
+      ...rdInjected,
     };
 
     const shell = isWindows ? 'cmd' : 'sh';
@@ -143,11 +151,11 @@ export async function executeCommandWithPolicy(
   cwd: string,
   options: PolicyExecutionOptions = {},
 ): Promise<ExecutionResult> {
-  const { evaluator, prompter, env, sandbox = true, sandboxStrict = false } = options;
+  const { evaluator, prompter, env, rdInjected, sandbox = true, sandboxStrict = false } = options;
 
   // If no evaluator, execute without policy checks
   if (!evaluator) {
-    return executeCommand(command, cwd);
+    return executeCommand(command, cwd, rdInjected);
   }
 
   // Check command policy
@@ -183,6 +191,10 @@ export async function executeCommandWithPolicy(
   const baseEnv = { ...process.env, ...env } as Record<string, string>;
   const filteredEnv = evaluator.filterEnvironment(baseEnv);
 
+  // Inject rundown-specific vars (RD_WORK_PATH, RD_RUN_ID, etc.) after policy filtering
+  // These are rundown-wins: they cannot be blocked by user-supplied environment variables
+  const finalEnv = { ...filteredEnv, ...rdInjected } as Record<string, string>;
+
   // Execute with sandbox if enabled
   if (sandbox) {
     const sandboxAvailable = await isSandboxAvailable();
@@ -194,7 +206,7 @@ export async function executeCommandWithPolicy(
         tmpDir: evaluator.getTmpDir(),
         allowUnsandboxed: !sandboxStrict,
       });
-      sandboxOptions.env = filteredEnv;
+      sandboxOptions.env = finalEnv;
 
       const result = await executeWithSandbox(command, sandboxOptions);
       return {
@@ -223,7 +235,7 @@ export async function executeCommandWithPolicy(
   }
 
   // Execute without sandbox
-  const result = await executeCommandWithEnv(command, cwd, filteredEnv);
+  const result = await executeCommandWithEnv(command, cwd, finalEnv);
   return {
     ...result,
     sandboxed: false,

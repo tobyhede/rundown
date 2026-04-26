@@ -56,6 +56,7 @@ import {
   getSandboxOptions,
 } from './policy-context.js';
 import { expandLoopVariables, expandLoopVariablesForCommand } from './template-renderer.js';
+import { BUILTIN_VARIABLES } from './variable-discovery.js';
 import {
   orchestrateTransition,
   transitionSinkFromEmitter,
@@ -817,6 +818,17 @@ export async function runExecutionLoop(
     // Expand command code for execution (after guard — command is guaranteed)
     const expandedCommandCode = expandLoopVariablesForCommand(command.code, stepVars);
 
+    // Build rundown-injected environment variables (RD_WORK_PATH, RD_RUN_ID, etc.)
+    // Keys come from BUILTIN_VARIABLES so a rename in variable-discovery.ts
+    // surfaces here as a typecheck error instead of silently breaking injection.
+    const rdInjected: Record<string, string> = {};
+    const workPath = stepVars[BUILTIN_VARIABLES.WorkPath];
+    const contextId = stepVars[BUILTIN_VARIABLES.ContextId];
+    const runId = stepVars[BUILTIN_VARIABLES.RunId];
+    if (typeof workPath === 'string') rdInjected.RD_WORK_PATH = workPath;
+    if (typeof contextId === 'string') rdInjected.RD_CONTEXT_ID = contextId;
+    if (typeof runId === 'string') rdInjected.RD_RUN_ID = runId;
+
     // Execute command
     // For rd commands, try internal execution first (avoids nested spawn issues in WebContainer)
     // Use display command (with rd echo wrapper stripped) for cleaner output
@@ -840,6 +852,7 @@ export async function runExecutionLoop(
           expandedCommandCode,
           cwd,
           currentState.runbookPath,
+          rdInjected,
         );
       }
     } else {
@@ -847,6 +860,7 @@ export async function runExecutionLoop(
         expandedCommandCode,
         cwd,
         currentState.runbookPath,
+        rdInjected,
       );
     }
 
@@ -967,16 +981,18 @@ export function buildMetadata(state: RunbookState): RunbookMetadata {
  * @param command - The shell command to execute
  * @param cwd - Working directory for execution
  * @param runbookPath - Optional runbook file path for override matching
+ * @param rdInjected - Optional extra environment variables injected by Rundown (e.g. RD_WORK_PATH)
  * @returns Execution result
  */
 export async function executeCommandWithPolicyCheck(
   command: string,
   cwd: string,
   runbookPath?: string,
+  rdInjected?: Record<string, string>,
 ): Promise<ExecutionResult> {
   // Check if policy enforcement is active
   if (!isPolicyEnforced()) {
-    return executeCommand(command, cwd);
+    return executeCommand(command, cwd, rdInjected);
   }
 
   // Get evaluator and set runbook path for override matching
@@ -992,6 +1008,7 @@ export async function executeCommandWithPolicyCheck(
   return executeCommandWithPolicy(command, cwd, {
     evaluator,
     prompter: getPolicyPrompter(),
+    rdInjected,
     sandbox: sandboxOpts.sandbox,
     sandboxStrict: sandboxOpts.sandboxStrict,
   });

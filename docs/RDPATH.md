@@ -5,13 +5,15 @@
 ## Usage
 
 ```bash
-rdpath --dir <path>                           # Assemble base path (default subcommand)
-rdpath --dir <path> --ctx <id>                # With context scope (.rd-<id>/)
-rdpath --dir <path> --file <name>             # With date-prefixed filename
-rdpath --dir <path> --ctx <id> --file <name>  # Combined context + filename
-rdpath --dir <path> find <pattern>            # Find files matching glob pattern
-rdpath --dir <path> --ctx <id> find <pattern> # Find within context scope
+rdpath [--dir <path>]                         # Assemble base path (default subcommand)
+rdpath [--dir <path>] --ctx <id>              # With context scope (.rd-<id>/)
+rdpath [--dir <path>] --file <name>           # With date-prefixed filename
+rdpath [--dir <path>] --ctx <id> --file <name> # Combined context + filename
+rdpath [--dir <path>] find <pattern>          # Find files matching glob pattern
+rdpath [--dir <path>] --ctx <id> find <pattern> # Find within context scope
 ```
+
+**Environment variable fallback:** `--dir` is optional when `rdpath` is invoked from inside a runbook step. If omitted, `rdpath` reads the base directory from `$RD_WORK_PATH` (injected automatically by `rundown` for each shell block); if neither `--dir` nor `$RD_WORK_PATH` is set, `rdpath` writes `error: --dir is required (or set $RD_WORK_PATH)` to stderr and exits with code `1`. `--ctx` similarly falls back to `$RD_CONTEXT_ID`, but is fully optional — when neither is set the path is assembled without a context segment.
 
 ### Examples
 
@@ -61,9 +63,11 @@ Assembles an artifact path from `--dir`, optional `--ctx`, and optional `--file`
 
 | Option | Required | Description |
 |--------|----------|-------------|
-| `--dir <path>` | Yes | Base directory |
-| `--ctx <id>` | No | Context scope — appends `.rd-<id>/` subdirectory |
+| `--dir <path>` | No¹ | Base directory (defaults to `$RD_WORK_PATH` when inside a runbook step) |
+| `--ctx <id>` | No | Context scope — appends `.rd-<id>/` subdirectory (defaults to `$RD_CONTEXT_ID` when inside a runbook step) |
 | `--file <name>` | No | Filename — prepends today's date (`YYYY-MM-DD-<name>`) |
+
+¹ `--dir` is required unless `$RD_WORK_PATH` is set (which rundown sets automatically for shell blocks).
 
 Output is the assembled path, written to stdout with a trailing newline.
 
@@ -73,10 +77,12 @@ Discovers files matching a glob pattern within an artifact directory.
 
 | Option/Argument | Required | Description |
 |-----------------|----------|-------------|
-| `--dir <path>` | Yes | Base directory to search |
-| `--ctx <id>` | No | Context scope — searches within `.rd-<id>/` subdirectory |
+| `--dir <path>` | No¹ | Base directory to search (defaults to `$RD_WORK_PATH` when inside a runbook step) |
+| `--ctx <id>` | No | Context scope — searches within `.rd-<id>/` subdirectory (defaults to `$RD_CONTEXT_ID` when inside a runbook step) |
 | `--allow-empty` | No | Exit 0 when zero files match (default: exit 1 on empty) |
 | `<pattern>` | Yes | Glob pattern (relative to target directory) |
+
+¹ `--dir` is required unless `$RD_WORK_PATH` is set (which rundown sets automatically for shell blocks).
 
 Output is one matching file path per line, sorted lexicographically. Only regular files are returned — directories matching the pattern are excluded.
 

@@ -76,6 +76,38 @@ describe('policy context service', () => {
       const parsed = parsePolicyCliOptions(opts as any);
       expect(parsed.allowRun).toBeUndefined();
     });
+
+    describe('helpers option', () => {
+      it('parses a single path', () => {
+        const parsed = parsePolicyCliOptions({ helpers: 'a.js' });
+        expect(parsed.helpers).toEqual(['a.js']);
+      });
+
+      it('parses comma-separated paths', () => {
+        const parsed = parsePolicyCliOptions({ helpers: 'a.js,b.js' });
+        expect(parsed.helpers).toEqual(['a.js', 'b.js']);
+      });
+
+      it('trims whitespace around entries', () => {
+        const parsed = parsePolicyCliOptions({ helpers: ' a.js , b.js ' });
+        expect(parsed.helpers).toEqual(['a.js', 'b.js']);
+      });
+
+      it('filters empty entries from doubled commas', () => {
+        const parsed = parsePolicyCliOptions({ helpers: 'a.js,,b.js' });
+        expect(parsed.helpers).toEqual(['a.js', 'b.js']);
+      });
+
+      it('returns undefined when helpers is absent', () => {
+        const parsed = parsePolicyCliOptions({});
+        expect(parsed.helpers).toBeUndefined();
+      });
+
+      it('passes through a string array directly', () => {
+        const parsed = parsePolicyCliOptions({ helpers: ['a.js', 'b.js'] });
+        expect(parsed.helpers).toEqual(['a.js', 'b.js']);
+      });
+    });
   });
 
   describe('getPolicyContext', () => {
