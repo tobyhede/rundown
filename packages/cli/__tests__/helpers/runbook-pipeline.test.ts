@@ -204,7 +204,7 @@ const { prepareRunbook, startRunbook, buildContextVars, buildTemplateVars } = aw
   '../../src/helpers/runbook-pipeline.js'
 );
 const { setHelperRegistry, resetHelperRegistry } = await import(
-  '../../src/services/helper-registry'
+  '../../src/services/helper-registry.js'
 );
 
 function makeState(id: string, overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -528,7 +528,10 @@ describe('prepareRunbook', () => {
   });
 
   it('omits helper-collision warnings when bailing on early VALIDATION_ERROR', async () => {
-    resolveRunbookFile.mockResolvedValue({ path: '/test/reserved.md', source: 'project' });
+    jest.mocked(resolveRunbookFile).mockResolvedValue({
+      path: '/test/reserved.md',
+      source: 'project',
+    });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue(
@@ -536,7 +539,7 @@ describe('prepareRunbook', () => {
         frontmatter: { inputs: { context: '' } },
       }),
     );
-    (validateFrontmatterVars as jest.Mock).mockReturnValue([
+    jest.mocked(validateFrontmatterVars).mockReturnValue([
       {
         severity: 'error',
         message:
@@ -544,12 +547,12 @@ describe('prepareRunbook', () => {
       },
     ]);
     // Provide a variable named `Region` that collides with a registered helper.
-    (resolveVariables as jest.Mock).mockResolvedValue({
+    jest.mocked(resolveVariables).mockResolvedValue({
       vars: { Region: 'us-west' },
       sources: {},
       warnings: [],
       providedKeys: new Set(['Region']),
-    });
+    } as unknown as Awaited<ReturnType<typeof resolveVariables>>);
     // Register a helper whose name matches the resolved variable above so that
     // detectHelperCollisions would surface a "shadowed" warning if it were run.
     setHelperRegistry(new Map([['Region', (v: string) => v.toUpperCase()]]));
