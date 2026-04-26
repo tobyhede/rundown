@@ -6,6 +6,8 @@ import type {
   ExecutionLifecycleService,
   DelegationScanService,
   DelegationLock,
+  RunbookState,
+  OutputWriter,
 } from '@rundown-org/core';
 import type {
   ParsedForClause,
@@ -210,6 +212,7 @@ const fsPromises = await import('node:fs/promises');
 const { prepareRunbook, startRunbook, buildContextVars, buildTemplateVars } = await import(
   '../../src/helpers/runbook-pipeline.js'
 );
+const { OutputEmitter: RealOutputEmitter } = await import('../../src/services/output-emitter.js');
 const { setHelperRegistry, resetHelperRegistry } = await import(
   '../../src/services/helper-registry.js'
 );
@@ -930,41 +933,66 @@ describe('prepareRunbook', () => {
 
 describe('startRunbook', () => {
   it('creates state and runs execution loop', async () => {
-    const mockCreate = mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
-      id: 'new-id',
-      title: 'Test',
-      substeps: undefined,
-    });
-    const mockUpdate = mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined);
+    const createdState = makeState('new-id') as unknown as RunbookState;
+    const mockCreate = mockFn<RunbookStateManager['create']>().mockResolvedValue(createdState);
+    const mockUpdate = mockFn<RunbookStateManager['update']>().mockResolvedValue(createdState);
+    const mockLoad = mockFn<RunbookStateManager['load']>().mockResolvedValue(createdState);
+    const mockInitializeSubsteps =
+      mockFn<RunbookStateManager['initializeSubsteps']>().mockResolvedValue(undefined);
     const mockInitState =
-      mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined);
-    const mockPushRunbook =
-      mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined);
-    const mockOutput = { flush: jest.fn() };
+      mockFn<RunbookActorService['initializeState']>().mockResolvedValue(createdState);
+    const mockPushRunbook = mockFn<SessionService['pushRunbook']>().mockResolvedValue(undefined);
+    const mockEnsureActiveEntry = mockFn<
+      ExecutionLifecycleService['ensureActiveEntry']
+    >().mockResolvedValue({
+      state: createdState,
+      frameKey: '1|' as ReturnType<typeof core.buildFrameKey>,
+      entry: 1,
+    });
+    const writer: OutputWriter = {
+      write: jest.fn(),
+      writeLine: jest.fn(),
+      writeLines: jest.fn(),
+      writeError: jest.fn(),
+      writeJson: jest.fn(),
+    };
+    const mockOutput = new RealOutputEmitter({ writer });
+    jest.spyOn(mockOutput, 'flush').mockImplementation(() => undefined);
 
     jest.mocked(runExecutionLoop).mockResolvedValue('done');
 
+    const manager = new core.RunbookStateManager('/test');
+    manager.create = mockCreate;
+    manager.update = mockUpdate;
+    manager.load = mockLoad;
+    manager.initializeSubsteps = mockInitializeSubsteps;
+
+    const actorService = new core.RunbookActorService(manager);
+    actorService.initializeState = mockInitState;
+
+    const sessionService = new core.SessionService(manager);
+    sessionService.pushRunbook = mockPushRunbook;
+
+    const lifecycleService = new core.ExecutionLifecycleService(manager);
+    lifecycleService.ensureActiveEntry = mockEnsureActiveEntry;
+
     const ctx = {
-      output: mockOutput as unknown as OutputEmitter,
-      manager: {
-        create: mockCreate,
-        update: mockUpdate,
-        initializeSubsteps:
-          mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
-      } as unknown as RunbookStateManager,
-      actorService: { initializeState: mockInitState } as unknown as RunbookActorService,
-      sessionService: { pushRunbook: mockPushRunbook } as unknown as SessionService,
-      lifecycleService: makeLifecycle() as unknown as ExecutionLifecycleService,
+      output: mockOutput,
+      manager,
+      actorService,
+      sessionService,
+      lifecycleService,
       cwd: '/test',
     } satisfies RunPipelineContext;
 
-    const prepared = {
+    const prepared: PreparedRunbook = {
       filePath: '/test/runbook.md',
       rawContent: '# Test',
-      runbook: { steps: [makeStep()] },
+      runbook: { steps: [makeStep() as PreparedRunbook['runbook']['steps'][number]] },
       mergedVariables: {},
-      sources: {},
-    } as unknown as PreparedRunbook;
+      stats: { steps: 1, substeps: 0 },
+      frontmatter: null,
+    };
 
     const result = await startRunbook(ctx, prepared, { file: 'runbook.md' });
 

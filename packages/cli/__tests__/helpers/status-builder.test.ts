@@ -5,6 +5,7 @@ import { mockFn } from './typed-mocks.js';
 
 import type * as CoreModule from '@rundown-org/core';
 import type { BaseStep, ResolvedStep } from '@rundown-org/parser';
+import type * as ExecutionModule from '../../src/services/execution.js';
 
 // Mock @rundown-org/core
 jest.unstable_mockModule('@rundown-org/core', () => {
@@ -47,17 +48,18 @@ jest.unstable_mockModule('../../src/helpers/runbook-loader', () => ({
 
 // Mock execution service
 jest.unstable_mockModule('../../src/services/execution', () => {
-  const getStepRetryMax = mockFn<(step: unknown) => number>();
+  const getStepRetryMax = mockFn<typeof ExecutionModule.getStepRetryMax>();
   getStepRetryMax.mockReturnValue(0);
-  const formatActionForDisplay =
-    mockFn<(action: unknown, retryCount: number, retryMax: number) => string>();
+  const formatActionForDisplay = mockFn<typeof ExecutionModule.formatActionForDisplay>();
   formatActionForDisplay.mockReturnValue('CONTINUE');
+  const extractRetryDisplayCount = mockFn<typeof ExecutionModule.extractRetryDisplayCount>();
+  extractRetryDisplayCount.mockImplementation((_, retryCount) => retryCount);
   return {
     getStepRetryMax,
     buildMetadata:
       mockFn<(state: RunbookState) => { file?: string; state?: string; prompted?: boolean }>(),
     formatActionForDisplay,
-    extractRetryDisplayCount: jest.fn((_: unknown, retryCount: number) => retryCount),
+    extractRetryDisplayCount,
   };
 });
 

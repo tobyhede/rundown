@@ -229,7 +229,7 @@ beforeEach(() => {
   jest
     .mocked(core.buildCompletionKey)
     .mockImplementation(
-      (frameKey: string, entry: number, substep?: string) =>
+      (frameKey: FrameKey, entry: number, substep?: string) =>
         `${frameKey}:${String(entry)}:${substep ?? ''}`,
     );
 });
