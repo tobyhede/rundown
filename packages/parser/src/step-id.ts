@@ -1,61 +1,7 @@
 import type { StepId } from './schemas.js';
-
-/**
- * Reserved words that cannot be used as named step or substep identifiers.
- *
- * These keywords have special meaning in the Rundown runbook syntax:
- * - Flow control: NEXT, CONTINUE, DEFER, COMPLETE, STOP, GOTO, RETRY
- * - FOR loop: FOR, IN, TO, AT, BREAK
- * - Conditionals: PASS, FAIL, YES, NO
- * - Aggregation: ALL, ANY
- * - Delegation: DELEGATE
- *
- * Using these as step names would create parsing ambiguity.
- */
-export const RESERVED_WORDS = new Set([
-  'NEXT',
-  'CONTINUE',
-  'COMPLETE',
-  'STOP',
-  'GOTO',
-  'RETRY',
-  'PASS',
-  'FAIL',
-  'YES',
-  'NO',
-  'ALL',
-  'ANY',
-  'BREAK',
-  'DEFER',
-  'FOR',
-  'IN',
-  'TO',
-  'AT',
-  'DELEGATE',
-]);
-
-/**
- * Check if a string is a reserved word.
- *
- * @param word - The string to check against reserved words
- * @returns True if the word is reserved and cannot be used as an identifier
- */
-export function isReservedWord(word: string): boolean {
-  return RESERVED_WORDS.has(word);
-}
-
-/**
- * Valid identifier pattern for named steps and substeps.
- *
- * Matches identifiers that start with a letter or underscore,
- * followed by zero or more letters, digits, or underscores.
- * Examples: "ErrorHandler", "cleanup_task", "_internal", "Step1"
- */
-export const NAMED_IDENTIFIER_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
-
-function isCanonicalPositiveInteger(value: string): boolean {
-  return /^[1-9]\d*$/.test(value);
-}
+import { isCanonicalPositiveInteger } from './helpers.js';
+export { RESERVED_WORDS, isReservedWord, NAMED_IDENTIFIER_PATTERN } from './identifiers.js';
+import { isReservedWord, NAMED_IDENTIFIER_PATTERN } from './identifiers.js';
 
 /**
  * Options for controlling step ID parsing behavior.

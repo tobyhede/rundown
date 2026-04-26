@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { isReservedWord, NAMED_IDENTIFIER_PATTERN } from './step-id.js';
+import { isReservedWord, NAMED_IDENTIFIER_PATTERN } from './identifiers.js';
 
 /**
  * Maximum valid step number.

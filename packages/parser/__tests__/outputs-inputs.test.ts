@@ -120,6 +120,17 @@ describe('parseRunbookDocument with OUTPUTS directive', () => {
     ]);
   });
 
+  it('attaches naked parsed outputs to step when OUTPUTS directive is present', () => {
+    const md = `## 1. Write plan
+- PASS CONTINUE
+- FAIL STOP
+- OUTPUTS
+  - PlanPath
+`;
+    const { runbook } = parseRunbookDocument(md);
+    expect(runbook.steps[0].outputs).toEqual([{ name: 'PlanPath' }]);
+  });
+
   it('leaves outputs undefined when no OUTPUTS directive is present', () => {
     const md = `## 1. Simple step
 - PASS CONTINUE
@@ -174,6 +185,21 @@ describe('parseRunbookDocument with OUTPUTS directive', () => {
     expect(step.substeps[0].outputs).toEqual([
       { name: 'ChildPath', value: '{{ path "child.json" }}' },
     ]);
+  });
+
+  it('attaches naked parsed outputs to a substep when OUTPUTS directive is present', () => {
+    const md = `## 1. Parent step
+### 1.1 Child substep
+- OUTPUTS
+  - ChildPath
+`;
+    const { runbook } = parseRunbookDocument(md);
+    const step = runbook.steps[0];
+    expect(step.kind).toBe('substeps');
+    if (step.kind !== 'substeps') {
+      throw new Error('expected substeps step');
+    }
+    expect(step.substeps[0].outputs).toEqual([{ name: 'ChildPath' }]);
   });
 
   it('throws RunbookSyntaxError when OUTPUTS block contains duplicate names', () => {
