@@ -17,6 +17,7 @@ import {
   runbooksDir,
   locksDir,
 } from '@rundown-org/core';
+import type { RunbookState } from '@rundown-org/core';
 import { NAMED_IDENTIFIER_PATTERN, isReservedWord } from '@rundown-org/parser';
 import type { ResolvedStep, Substep } from '@rundown-org/parser';
 
@@ -298,8 +299,10 @@ export async function runCliInProcess(
     program.exitOverride();
     await program.parseAsync(argArray, { from: 'user' });
 
-    // Capture exitCode set via process.exitCode (used by pass/fail commands)
-    exitCode = process.exitCode ?? 0;
+    // Capture exitCode set via process.exitCode (used by pass/fail commands).
+    // process.exitCode is typed `string | number | undefined` (Node accepts a
+    // string alias like "SUCCESS"); coerce to number for our test API.
+    exitCode = Number(process.exitCode ?? 0);
     process.exitCode = undefined;
   } catch (err: unknown) {
     if (err instanceof ExitSignal) {
@@ -437,16 +440,42 @@ export async function listRunbookStates(workspace: TestWorkspace): Promise<strin
   }
 }
 
+function isRunbookState(value: unknown): value is RunbookState {
+  if (typeof value !== 'object' || value === null) return false;
+  const state = value as {
+    id?: unknown;
+    runbook?: unknown;
+    runbookPath?: unknown;
+    step?: unknown;
+    stepName?: unknown;
+    retryCount?: unknown;
+    variables?: unknown;
+    steps?: unknown;
+  };
+  return (
+    typeof state.id === 'string' &&
+    typeof state.runbook === 'string' &&
+    typeof state.runbookPath === 'string' &&
+    typeof state.step === 'string' &&
+    typeof state.stepName === 'string' &&
+    typeof state.retryCount === 'number' &&
+    typeof state.variables === 'object' &&
+    state.variables !== null &&
+    Array.isArray(state.steps)
+  );
+}
+
 /**
  * Read a specific runbook state by ID.
  */
 export async function readRunbookState(
   workspace: TestWorkspace,
   id: string,
-): Promise<Record<string, unknown> | null> {
+): Promise<RunbookState | null> {
   try {
     const content = await readFile(join(workspace.statePath(), `${id}.json`), 'utf-8');
-    return JSON.parse(content);
+    const parsed = JSON.parse(content) as unknown;
+    return isRunbookState(parsed) ? parsed : null;
   } catch {
     return null;
   }
@@ -455,9 +484,7 @@ export async function readRunbookState(
 /**
  * Get the active runbook state.
  */
-export async function getActiveState(
-  workspace: TestWorkspace,
-): Promise<Record<string, unknown> | null> {
+export async function getActiveState(workspace: TestWorkspace): Promise<RunbookState | null> {
   const session = await readSession(workspace);
   if (!session.active) return null;
   return readRunbookState(workspace, session.active);
@@ -470,7 +497,7 @@ export async function getActiveState(
 export async function getAgentActiveState(
   workspace: TestWorkspace,
   agentId: string,
-): Promise<Record<string, unknown> | null> {
+): Promise<RunbookState | null> {
   const session = await readSession(workspace);
   const stack = session.stacks[agentId] ?? [];
   const topId = stack[stack.length - 1];
@@ -483,10 +510,10 @@ export async function getAgentActiveState(
  *
  * Alias for getAllRunbookStates — prefer getAllRunbookStates in new tests.
  */
-export async function getAllStates(workspace: TestWorkspace): Promise<Record<string, unknown>[]> {
+export async function getAllStates(workspace: TestWorkspace): Promise<RunbookState[]> {
   try {
     const files = await readdir(workspace.statePath());
-    const states: Record<string, unknown>[] = [];
+    const states: RunbookState[] = [];
 
     for (const file of files) {
       if (file.endsWith('.json')) {
@@ -510,12 +537,10 @@ export async function getAllStates(workspace: TestWorkspace): Promise<Record<str
  * Returns an array of parsed state objects. OUTPUTS directives write to
  * `state.variables` via SET_VARIABLES events (no file I/O side-channel).
  */
-export async function getAllRunbookStates(
-  workspace: TestWorkspace,
-): Promise<Record<string, unknown>[]> {
+export async function getAllRunbookStates(workspace: TestWorkspace): Promise<RunbookState[]> {
   try {
     const files = await readdir(workspace.statePath());
-    const states: Record<string, unknown>[] = [];
+    const states: RunbookState[] = [];
 
     for (const file of files) {
       if (file.endsWith('.json')) {
@@ -538,7 +563,7 @@ export async function getAllRunbookStates(
  */
 export async function getActiveRunbookState(
   workspace: TestWorkspace,
-): Promise<Record<string, unknown> | null> {
+): Promise<RunbookState | null> {
   return getActiveState(workspace);
 }
 
@@ -572,19 +597,57 @@ export function parseJsonOutput(stdout: string): Record<string, unknown>[] {
 }
 
 /**
+ * Permissive shape of a JSON event line emitted by the CLI's JSON renderer.
+ *
+ * Real events conform to one of the discriminants in
+ * `@rundown-org/core`'s output union, but the CLI's JSON output
+ * intentionally flattens / renames fields per renderer. Tests only need
+ * stable access to the discriminator (`type`) plus a small set of
+ * commonly-asserted fields. Unknown fields fall back to `unknown` via
+ * the index signature so tests can still inspect them via narrowing.
+ */
+export interface JsonOutputEvent {
+  readonly type: string;
+  readonly seq?: number;
+  readonly command?: string;
+  readonly description?: string;
+  readonly prompt?: string;
+  readonly [k: string]: unknown;
+}
+
+function isJsonOutputEvent(value: unknown): value is JsonOutputEvent {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as { type?: unknown }).type === 'string'
+  );
+}
+
+/**
  * Parse JSON events from CLI JSON output (the default format).
  *
  * Splits stdout by newline, keeps only lines starting with `{`, and
- * parses each as JSON.
+ * parses each as JSON. The return type is intentionally permissive:
+ * see {@link JsonOutputEvent}.
  *
  * @param stdout - Raw stdout string from CLI execution
  * @returns Array of parsed JSON event objects
  */
-export function parseJsonEvents(stdout: string): unknown[] {
-  return stdout
-    .split('\n')
-    .filter((line) => line.startsWith('{'))
-    .map((line) => JSON.parse(line) as unknown);
+export function parseJsonEvents(stdout: string): JsonOutputEvent[] {
+  const events: JsonOutputEvent[] = [];
+  for (const rawLine of stdout.split('\n')) {
+    const line = rawLine.trim();
+    if (!line.startsWith('{')) continue;
+    try {
+      const parsed = JSON.parse(line) as unknown;
+      if (isJsonOutputEvent(parsed)) {
+        events.push(parsed);
+      }
+    } catch {
+      // Ignore non-JSON diagnostic lines mixed into command output.
+    }
+  }
+  return events;
 }
 
 /**

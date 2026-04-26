@@ -328,7 +328,8 @@ describe('abort command - unit tests', () => {
       // Get parent state
       const parentState = await getActiveState(workspace);
       expect(parentState).not.toBeNull();
-      expect(parentState!.step).toBe('1');
+      if (!parentState) throw new Error('Expected parent run state to exist');
+      expect(parentState.step).toBe('1');
 
       // Force abort - should propagate fail to parent
       result = await runCliInProcess(`abort ${token} --force --text`, workspace);
@@ -338,7 +339,7 @@ describe('abort command - unit tests', () => {
       // Check that parent is no longer active (was stopped)
       const afterAbortState = await getActiveState(workspace);
       // The parent should have been stopped or advanced
-      expect(afterAbortState === null || afterAbortState.id !== parentState!.id).toBe(true);
+      expect(afterAbortState?.id).not.toBe(parentState.id);
     });
   });
 

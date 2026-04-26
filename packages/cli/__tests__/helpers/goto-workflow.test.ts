@@ -1,5 +1,17 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import { mockErrorHelpers } from './mock-error-helpers';
+import type { ResolvedStep, Substep, ForClause, Transitions } from '@rundown-org/parser';
+import type {
+  ActorSyncResult,
+  RunbookActorService,
+  RunbookState,
+  RunbookStateManager,
+  SessionService,
+  StepId,
+  StepPosition,
+} from '@rundown-org/core';
+import type { OutputEmitter } from '../../src/services/output-emitter.js';
+import { mockErrorHelpers } from './mock-error-helpers.js';
+import { mockFn } from './typed-mocks.js';
 
 // Mock @rundown-org/core
 jest.unstable_mockModule('@rundown-org/core', () => ({
@@ -19,77 +31,125 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     (pos: { current: string; substep?: string; for?: { index: number } }) =>
       `${pos.current}${pos.for?.index != null ? `.${String(pos.for.index)}` : ''}${pos.substep ? `.${pos.substep}` : ''}`,
   ),
-  countNumberedSteps: jest.fn().mockReturnValue(3),
+  countNumberedSteps: mockFn<(steps: readonly { name: string }[]) => number>().mockReturnValue(3),
   ...mockErrorHelpers,
 }));
 
 // Mock execution service
 jest.unstable_mockModule('../../src/services/execution', () => ({
-  runExecutionLoop: jest.fn().mockResolvedValue('done'),
+  runExecutionLoop:
+    mockFn<(...args: unknown[]) => Promise<'done' | 'stopped' | 'waiting'>>().mockResolvedValue(
+      'done',
+    ),
 }));
 
 // Mock runbook-loader
 jest.unstable_mockModule('../../src/helpers/runbook-loader', () => ({
-  getRunbookFromState: jest.fn().mockReturnValue([]),
+  getRunbookFromState: mockFn<() => readonly ResolvedStep[]>().mockReturnValue([]),
 }));
 
 // Mock execution-emitter
 jest.unstable_mockModule('../../src/helpers/execution-emitter', () => ({
-  createBridgedEmitter: jest.fn().mockReturnValue({}),
+  createBridgedEmitter: mockFn<() => Record<string, unknown>>().mockReturnValue({}),
 }));
 
 // Import after mocking
 const core = await import('@rundown-org/core');
-const { runExecutionLoop } = await import('../../src/services/execution');
-const { validateGotoTarget, executeGoto } = await import('../../src/helpers/goto-workflow');
+const { runExecutionLoop } = await import('../../src/services/execution.js');
+const { validateGotoTarget, executeGoto } = await import('../../src/helpers/goto-workflow.js');
 
-function makeStep(overrides: Record<string, unknown> = {}): any {
-  const obj = {
-    name: '1',
-    description: 'Test Step',
-    transitions: {
-      pass: { action: 'continue' as const, retry: 0 },
-      fail: { action: 'continue' as const, retry: 0 },
-    },
-    ...overrides,
+const DEFAULT_TRANSITIONS: Transitions = {
+  pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+  fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+};
+
+interface MakeStepOverrides {
+  name?: string;
+  description?: string;
+  transitions?: Transitions;
+  substeps?: readonly Substep[];
+  forClause?: ForClause;
+  command?: { code: string; lang?: string };
+  kind?: ResolvedStep['kind'];
+}
+
+function makeStep(overrides: MakeStepOverrides = {}): ResolvedStep {
+  const base = {
+    name: overrides.name ?? '1',
+    description: overrides.description ?? 'Test Step',
+    transitions: overrides.transitions ?? DEFAULT_TRANSITIONS,
   };
-  const kind =
-    obj.forClause !== undefined
-      ? 'for'
-      : Array.isArray(obj.substeps) && (obj.substeps as unknown[]).length > 0
-        ? 'substeps'
-        : obj.command !== undefined
-          ? 'command'
-          : 'base';
-  return { ...obj, kind } as any;
+  const explicitKind = overrides.kind;
+  if (explicitKind === 'prompted-for' && overrides.substeps) {
+    return {
+      kind: 'prompted-for',
+      ...base,
+      substeps: overrides.substeps,
+    };
+  }
+  if (overrides.forClause !== undefined) {
+    return {
+      kind: 'for',
+      ...base,
+      forClause: overrides.forClause,
+      substeps: overrides.substeps ?? [],
+    };
+  }
+  if (Array.isArray(overrides.substeps) && overrides.substeps.length > 0) {
+    return {
+      kind: 'substeps',
+      ...base,
+      substeps: overrides.substeps,
+    };
+  }
+  if (overrides.command !== undefined) {
+    return {
+      kind: 'command',
+      ...base,
+      command: overrides.command,
+    };
+  }
+  return {
+    kind: 'base',
+    ...base,
+  };
+}
+
+function makeSubstep(id: string, description: string): Substep {
+  return { id, description, transitions: DEFAULT_TRANSITIONS };
+}
+
+function makeNumericFor(start: number, end: number, variable = 'x'): ForClause {
+  return { variable, start, end };
 }
 
 beforeEach(() => {
   jest.resetAllMocks();
   // Re-establish default mock implementations after reset
-  (core.stepIdToString as jest.Mock).mockImplementation((id: { step: string; substep?: string }) =>
-    id.substep ? `${id.step}.${id.substep}` : id.step,
+  jest
+    .mocked(core.stepIdToString)
+    .mockImplementation((id) => (id.substep ? `${id.step}.${id.substep}` : id.step));
+  jest.mocked(core.buildStepPosition).mockImplementation(
+    (current, total, substep) =>
+      ({
+        current,
+        total,
+        ...(substep ? { substep } : {}),
+      }) as StepPosition,
   );
-  (core.buildStepPosition as jest.Mock).mockImplementation(
-    (current: string, total: number, substep?: string) => ({
-      current,
-      total,
-      ...(substep ? { substep } : {}),
-    }),
-  );
-  (core.derivePositionAt as jest.Mock).mockImplementation(
-    (pos: { current: string; substep?: string; for?: { index: number } }) =>
-      `${pos.current}${pos.for?.index != null ? `.${String(pos.for.index)}` : ''}${pos.substep ? `.${pos.substep}` : ''}`,
-  );
-  (core.countNumberedSteps as jest.Mock).mockReturnValue(3);
-  (runExecutionLoop as jest.Mock).mockResolvedValue('done');
+  jest
+    .mocked(core.derivePositionAt)
+    .mockImplementation(
+      (pos) =>
+        `${pos.current}${pos.for?.index != null ? `.${String(pos.for.index)}` : ''}${pos.substep ? `.${pos.substep}` : ''}`,
+    );
+  jest.mocked(core.countNumberedSteps).mockReturnValue(3);
+  jest.mocked(runExecutionLoop).mockResolvedValue('done');
 });
 
 describe('validateGotoTarget', () => {
   it('rejects invalid format', () => {
-    (
-      core.parseStepIdFromString as jest.MockedFunction<typeof core.parseStepIdFromString>
-    ).mockReturnValue(null);
+    jest.mocked(core.parseStepIdFromString).mockReturnValue(null);
 
     const result = validateGotoTarget('abc', [makeStep()]);
 
@@ -101,9 +161,7 @@ describe('validateGotoTarget', () => {
   });
 
   it('rejects missing step', () => {
-    (
-      core.parseStepIdFromString as jest.MockedFunction<typeof core.parseStepIdFromString>
-    ).mockReturnValue({ step: '99' });
+    jest.mocked(core.parseStepIdFromString).mockReturnValue({ step: '99' });
 
     const steps = [makeStep({ name: '1' }), makeStep({ name: '2' })];
     const result = validateGotoTarget('99', steps);
@@ -116,9 +174,7 @@ describe('validateGotoTarget', () => {
   });
 
   it('rejects AT on non-FOR step', () => {
-    (
-      core.parseStepIdFromString as jest.MockedFunction<typeof core.parseStepIdFromString>
-    ).mockReturnValue({ step: '1', at: 3 });
+    jest.mocked(core.parseStepIdFromString).mockReturnValue({ step: '1', at: 3 });
 
     const steps = [makeStep({ name: '1' })]; // No forClause
     const result = validateGotoTarget('1', steps);
@@ -130,20 +186,16 @@ describe('validateGotoTarget', () => {
   });
 
   it('accepts AT on FOR step', () => {
-    (
-      core.parseStepIdFromString as jest.MockedFunction<typeof core.parseStepIdFromString>
-    ).mockReturnValue({ step: '1', at: 3 });
+    jest.mocked(core.parseStepIdFromString).mockReturnValue({ step: '1', at: 3 });
 
-    const steps = [makeStep({ name: '1', forClause: { variable: 'x', start: 1, end: 5 } as any })];
+    const steps = [makeStep({ name: '1', forClause: makeNumericFor(1, 5) })];
     const result = validateGotoTarget('1', steps);
 
     expect(result.ok).toBe(true);
   });
 
   it('rejects substep on step without substeps', () => {
-    (
-      core.parseStepIdFromString as jest.MockedFunction<typeof core.parseStepIdFromString>
-    ).mockReturnValue({ step: '1', substep: '2' });
+    jest.mocked(core.parseStepIdFromString).mockReturnValue({ step: '1', substep: '2' });
 
     const steps = [makeStep({ name: '1' })]; // No substeps
     const result = validateGotoTarget('1.2', steps);
@@ -155,17 +207,12 @@ describe('validateGotoTarget', () => {
   });
 
   it('rejects nonexistent substep', () => {
-    (
-      core.parseStepIdFromString as jest.MockedFunction<typeof core.parseStepIdFromString>
-    ).mockReturnValue({ step: '1', substep: '3' });
+    jest.mocked(core.parseStepIdFromString).mockReturnValue({ step: '1', substep: '3' });
 
     const steps = [
       makeStep({
         name: '1',
-        substeps: [
-          { id: '1', description: 'Sub 1' },
-          { id: '2', description: 'Sub 2' },
-        ] as any,
+        substeps: [makeSubstep('1', 'Sub 1'), makeSubstep('2', 'Sub 2')],
       }),
     ];
     const result = validateGotoTarget('1.3', steps);
@@ -178,18 +225,13 @@ describe('validateGotoTarget', () => {
   });
 
   it('accepts substep target on prompted-for step', () => {
-    (
-      core.parseStepIdFromString as jest.MockedFunction<typeof core.parseStepIdFromString>
-    ).mockReturnValue({ step: '1', substep: '1' });
+    jest.mocked(core.parseStepIdFromString).mockReturnValue({ step: '1', substep: '1' });
 
     const steps = [
       makeStep({
         name: '1',
         kind: 'prompted-for',
-        substeps: [
-          { id: '1', description: 'Sub 1' },
-          { id: '2', description: 'Sub 2' },
-        ] as any,
+        substeps: [makeSubstep('1', 'Sub 1'), makeSubstep('2', 'Sub 2')],
       }),
     ];
     const result = validateGotoTarget('1.1', steps);
@@ -201,15 +243,13 @@ describe('validateGotoTarget', () => {
   });
 
   it('rejects AT on prompted-for step', () => {
-    (
-      core.parseStepIdFromString as jest.MockedFunction<typeof core.parseStepIdFromString>
-    ).mockReturnValue({ step: '1', at: 3 });
+    jest.mocked(core.parseStepIdFromString).mockReturnValue({ step: '1', at: 3 });
 
     const steps = [
       makeStep({
         name: '1',
         kind: 'prompted-for',
-        substeps: [{ id: '1', description: 'Sub 1' }] as any,
+        substeps: [makeSubstep('1', 'Sub 1')],
       }),
     ];
     const result = validateGotoTarget('1', steps);
@@ -221,9 +261,7 @@ describe('validateGotoTarget', () => {
   });
 
   it('accepts valid step', () => {
-    (
-      core.parseStepIdFromString as jest.MockedFunction<typeof core.parseStepIdFromString>
-    ).mockReturnValue({ step: '2' });
+    jest.mocked(core.parseStepIdFromString).mockReturnValue({ step: '2' });
 
     const steps = [makeStep({ name: '1' }), makeStep({ name: '2' })];
     const result = validateGotoTarget('2', steps);
@@ -235,9 +273,7 @@ describe('validateGotoTarget', () => {
   });
 
   it('accepts self-referencing GOTO as valid target', () => {
-    (
-      core.parseStepIdFromString as jest.MockedFunction<typeof core.parseStepIdFromString>
-    ).mockReturnValue({ step: '1' });
+    jest.mocked(core.parseStepIdFromString).mockReturnValue({ step: '1' });
 
     const steps = [makeStep({ name: '1' }), makeStep({ name: '2' })];
     const result = validateGotoTarget('1', steps);
@@ -249,17 +285,12 @@ describe('validateGotoTarget', () => {
   });
 
   it('accepts valid substep', () => {
-    (
-      core.parseStepIdFromString as jest.MockedFunction<typeof core.parseStepIdFromString>
-    ).mockReturnValue({ step: '1', substep: '2' });
+    jest.mocked(core.parseStepIdFromString).mockReturnValue({ step: '1', substep: '2' });
 
     const steps = [
       makeStep({
         name: '1',
-        substeps: [
-          { id: '1', description: 'Sub 1' },
-          { id: '2', description: 'Sub 2' },
-        ] as any,
+        substeps: [makeSubstep('1', 'Sub 1'), makeSubstep('2', 'Sub 2')],
       }),
     ];
     const result = validateGotoTarget('1.2', steps);
@@ -272,13 +303,9 @@ describe('validateGotoTarget', () => {
 
   describe('--index option', () => {
     it('sets target.at from --index on FOR step', () => {
-      (
-        core.parseStepIdFromString as jest.MockedFunction<typeof core.parseStepIdFromString>
-      ).mockReturnValue({ step: '1' });
+      jest.mocked(core.parseStepIdFromString).mockReturnValue({ step: '1' });
 
-      const steps = [
-        makeStep({ name: '1', forClause: { variable: 'x', start: 1, end: 5 } as any }),
-      ];
+      const steps = [makeStep({ name: '1', forClause: makeNumericFor(1, 5) })];
       const result = validateGotoTarget('1', steps, '3');
 
       expect(result.ok).toBe(true);
@@ -288,9 +315,7 @@ describe('validateGotoTarget', () => {
     });
 
     it('rejects --index on non-FOR step', () => {
-      (
-        core.parseStepIdFromString as jest.MockedFunction<typeof core.parseStepIdFromString>
-      ).mockReturnValue({ step: '1' });
+      jest.mocked(core.parseStepIdFromString).mockReturnValue({ step: '1' });
 
       const steps = [makeStep({ name: '1' })]; // No forClause
       const result = validateGotoTarget('1', steps, '3');
@@ -302,13 +327,9 @@ describe('validateGotoTarget', () => {
     });
 
     it('rejects conflicting --index and AT', () => {
-      (
-        core.parseStepIdFromString as jest.MockedFunction<typeof core.parseStepIdFromString>
-      ).mockReturnValue({ step: '1', at: 5 });
+      jest.mocked(core.parseStepIdFromString).mockReturnValue({ step: '1', at: 5 });
 
-      const steps = [
-        makeStep({ name: '1', forClause: { variable: 'x', start: 1, end: 10 } as any }),
-      ];
+      const steps = [makeStep({ name: '1', forClause: makeNumericFor(1, 10) })];
       const result = validateGotoTarget('1 AT 5', steps, '3');
 
       expect(result.ok).toBe(false);
@@ -318,13 +339,9 @@ describe('validateGotoTarget', () => {
     });
 
     it('accepts matching --index and AT (idempotent)', () => {
-      (
-        core.parseStepIdFromString as jest.MockedFunction<typeof core.parseStepIdFromString>
-      ).mockReturnValue({ step: '1', at: 3 });
+      jest.mocked(core.parseStepIdFromString).mockReturnValue({ step: '1', at: 3 });
 
-      const steps = [
-        makeStep({ name: '1', forClause: { variable: 'x', start: 1, end: 5 } as any }),
-      ];
+      const steps = [makeStep({ name: '1', forClause: makeNumericFor(1, 5) })];
       const result = validateGotoTarget('1 AT 3', steps, '3');
 
       expect(result.ok).toBe(true);
@@ -334,13 +351,9 @@ describe('validateGotoTarget', () => {
     });
 
     it('rejects invalid --index value', () => {
-      (
-        core.parseStepIdFromString as jest.MockedFunction<typeof core.parseStepIdFromString>
-      ).mockReturnValue({ step: '1' });
+      jest.mocked(core.parseStepIdFromString).mockReturnValue({ step: '1' });
 
-      const steps = [
-        makeStep({ name: '1', forClause: { variable: 'x', start: 1, end: 5 } as any }),
-      ];
+      const steps = [makeStep({ name: '1', forClause: makeNumericFor(1, 5) })];
       const result = validateGotoTarget('1', steps, 'abc');
 
       expect(result.ok).toBe(false);
@@ -352,17 +365,39 @@ describe('validateGotoTarget', () => {
 });
 
 describe('executeGoto', () => {
+  // Build a state for the goto context. Includes the minimum required RunbookState
+  // fields; tests exercise only the specific fields each path consults.
+  function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
+    return {
+      id: 'test-id',
+      runbook: 'test.md',
+      runbookPath: 'test.md',
+      step: '1',
+      stepName: 'Step 1',
+      retryCount: 0,
+      variables: {} as RunbookState['variables'],
+      steps: [],
+      startedAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      prompted: false,
+      ...overrides,
+    } as RunbookState;
+  }
+
   it('returns error when sendAndSync fails', async () => {
-    const mockManager = { update: jest.fn() };
-    const mockActorService = { sendAndSync: jest.fn<any>().mockResolvedValue(null) };
-    const mockOutput = { action: jest.fn(), flush: jest.fn() };
+    const update = mockFn<RunbookStateManager['update']>();
+    const sendAndSync = mockFn<RunbookActorService['sendAndSync']>();
+    sendAndSync.mockResolvedValue(null);
 
     const ctx = {
-      output: mockOutput as any,
-      manager: mockManager as any,
-      actorService: mockActorService as any,
-      sessionService: {} as any,
-      state: { id: 'test-id', step: '1', prompted: false } as any,
+      output: {
+        action: jest.fn(),
+        flush: jest.fn(),
+      } as unknown as OutputEmitter,
+      manager: { update } as unknown as RunbookStateManager,
+      actorService: { sendAndSync } as unknown as RunbookActorService,
+      sessionService: {} as SessionService,
+      state: makeState(),
       steps: [makeStep()],
       cwd: '/test',
     };
@@ -376,49 +411,63 @@ describe('executeGoto', () => {
   });
 
   it('returns ok with loop result on success', async () => {
-    const mockManager = { update: jest.fn<any>().mockResolvedValue(undefined) };
-    const mockActorService = {
-      sendAndSync: jest.fn<any>().mockResolvedValue({ state: { step: '2' } }),
+    const update = mockFn<RunbookStateManager['update']>();
+    update.mockImplementation(async (_id, _patch) => makeState({ step: '2' }));
+    const sendAndSync = mockFn<RunbookActorService['sendAndSync']>();
+    const syncResult: ActorSyncResult = {
+      state: makeState({ step: '2' }),
+      snapshot: {},
     };
-    const mockOutput = { action: jest.fn(), flush: jest.fn() };
-    runExecutionLoop.mockResolvedValue('done');
+    sendAndSync.mockResolvedValue(syncResult);
+    jest.mocked(runExecutionLoop).mockResolvedValue('done');
 
+    const action = jest.fn();
     const ctx = {
-      output: mockOutput as any,
-      manager: mockManager as any,
-      actorService: mockActorService as any,
-      sessionService: {} as any,
-      state: { id: 'test-id', step: '1', prompted: false } as any,
+      output: {
+        action,
+        flush: jest.fn(),
+      } as unknown as OutputEmitter,
+      manager: { update } as unknown as RunbookStateManager,
+      actorService: { sendAndSync } as unknown as RunbookActorService,
+      sessionService: {} as SessionService,
+      state: makeState(),
       steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
       cwd: '/test',
     };
 
-    const result = await executeGoto(ctx, { step: '2' });
+    const target: StepId = { step: '2' };
+    const result = await executeGoto(ctx, target);
 
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.loopResult).toBe('done');
     }
-    expect(mockOutput.action).toHaveBeenCalled();
-    const updateArg = (mockManager.update as jest.Mock).mock.calls[0][1];
+    expect(action).toHaveBeenCalled();
+    const updateArg = update.mock.calls[0][1];
     expect(updateArg).toHaveProperty('lastResult', undefined);
     expect(updateArg).toHaveProperty('lastAction', { type: 'GOTO', target: '2' });
   });
 
   it('returns stopped when execution loop stops', async () => {
-    const mockManager = { update: jest.fn<any>().mockResolvedValue(undefined) };
-    const mockActorService = {
-      sendAndSync: jest.fn<any>().mockResolvedValue({ state: { step: '2' } }),
+    const update = mockFn<RunbookStateManager['update']>();
+    update.mockImplementation(async (_id, _patch) => makeState({ step: '2' }));
+    const sendAndSync = mockFn<RunbookActorService['sendAndSync']>();
+    const syncResult: ActorSyncResult = {
+      state: makeState({ step: '2' }),
+      snapshot: {},
     };
-    const mockOutput = { action: jest.fn(), flush: jest.fn() };
-    runExecutionLoop.mockResolvedValue('stopped');
+    sendAndSync.mockResolvedValue(syncResult);
+    jest.mocked(runExecutionLoop).mockResolvedValue('stopped');
 
     const ctx = {
-      output: mockOutput as any,
-      manager: mockManager as any,
-      actorService: mockActorService as any,
-      sessionService: {} as any,
-      state: { id: 'test-id', step: '1', prompted: false } as any,
+      output: {
+        action: jest.fn(),
+        flush: jest.fn(),
+      } as unknown as OutputEmitter,
+      manager: { update } as unknown as RunbookStateManager,
+      actorService: { sendAndSync } as unknown as RunbookActorService,
+      sessionService: {} as SessionService,
+      state: makeState(),
       steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
       cwd: '/test',
     };

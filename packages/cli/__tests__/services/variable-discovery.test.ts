@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import {
   discoverVariables,
   FileSourcePolicyError,
@@ -17,7 +17,16 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { isJsonArrayStream, resolveForValue, RUNDOWN_DIR, WORK_DIR } from '@rundown-org/core';
-import type { ForContext } from '@rundown-org/core';
+import type { ForContext, PolicyEvaluator, PolicyPrompter } from '@rundown-org/core';
+import { brandInitialTemplateVarsForTest } from '../helpers/brand-helpers.js';
+import { mockFn } from '../helpers/typed-mocks.js';
+
+// Narrowed mock surfaces: `resolveVariables` only invokes `checkPath` on
+// the evaluator and `requestPermission` on the prompter for these tests.
+// Casting via `unknown` keeps argument-type checking on the captured
+// methods without forcing the test to construct a fully-fledged class.
+type CheckPathFn = PolicyEvaluator['checkPath'];
+type RequestPermissionFn = PolicyPrompter['requestPermission'];
 
 describe('parseVarFlag', () => {
   it('should parse key=value format', () => {
@@ -126,7 +135,7 @@ describe('getBuiltinVariables', () => {
   });
 
   it('should include sanitized branch in WorkPath when in git repo', () => {
-    setExecFileSyncImpl((() => 'feature/my-branch\n') as typeof nodeExecFileSync);
+    setExecFileSyncImpl((() => 'feature/my-branch\n') as unknown as typeof nodeExecFileSync);
 
     const builtins = getBuiltinVariables();
     expect(builtins.WorkPath).toBe(`${WORK_DIR}/feature-my-branch`);
@@ -136,7 +145,7 @@ describe('getBuiltinVariables', () => {
   it('should fall back to WORK_DIR when not in git', () => {
     setExecFileSyncImpl((() => {
       throw new Error('not a git repo');
-    }) as typeof nodeExecFileSync);
+    }) as unknown as typeof nodeExecFileSync);
 
     const builtins = getBuiltinVariables();
     expect(builtins.WorkPath).toBe(WORK_DIR);
@@ -144,7 +153,7 @@ describe('getBuiltinVariables', () => {
   });
 
   it('should fall back to WORK_DIR on detached HEAD', () => {
-    setExecFileSyncImpl((() => 'HEAD\n') as typeof nodeExecFileSync);
+    setExecFileSyncImpl((() => 'HEAD\n') as unknown as typeof nodeExecFileSync);
 
     const builtins = getBuiltinVariables();
     expect(builtins.WorkPath).toBe(WORK_DIR);
@@ -847,15 +856,15 @@ describe('resolveVariables', () => {
       const file = path.join(tmpDir, '.env');
       await fs.writeFile(file, 'SECRET=value\n');
 
+      const checkPath = mockFn<CheckPathFn>();
+      checkPath.mockReturnValue({
+        allowed: false,
+        requiresPrompt: false,
+        reason: 'Path blocked by policy',
+      });
       await expect(
         resolveVariables({ input: [`data=file:${file}`] }, tmpDir, {
-          evaluator: {
-            checkPath: jest.fn().mockReturnValue({
-              allowed: false,
-              requiresPrompt: false,
-              reason: 'Path blocked by policy',
-            }),
-          } as any,
+          evaluator: { checkPath } as unknown as PolicyEvaluator,
         }),
       ).rejects.toBeInstanceOf(FileSourcePolicyError);
     });
@@ -863,20 +872,20 @@ describe('resolveVariables', () => {
     it('prompts for file-backed sources when policy requires confirmation', async () => {
       const file = path.join(tmpDir, 'prompted.jsonl');
       await fs.writeFile(file, '{"ok":true}\n');
-      const evaluator = {
-        checkPath: jest.fn().mockReturnValue({
-          allowed: false,
-          requiresPrompt: true,
-          reason: 'Prompt before read',
-        }),
-      };
-      const prompter = {
-        requestPermission: jest.fn().mockResolvedValue({ granted: true, persist: false }),
-      };
+      const checkPath = mockFn<CheckPathFn>();
+      checkPath.mockReturnValue({
+        allowed: false,
+        requiresPrompt: true,
+        reason: 'Prompt before read',
+      });
+      const evaluator = { checkPath };
+      const requestPermission = mockFn<RequestPermissionFn>();
+      requestPermission.mockResolvedValue({ granted: true, persist: false });
+      const prompter = { requestPermission };
 
       const result = await resolveVariables({ input: [`data=file:${file}`] }, tmpDir, {
-        evaluator: evaluator as any,
-        prompter: prompter as any,
+        evaluator: evaluator as unknown as PolicyEvaluator,
+        prompter: prompter as unknown as PolicyPrompter,
       });
 
       expect(prompter.requestPermission).toHaveBeenCalledWith(
@@ -895,15 +904,15 @@ describe('resolveVariables', () => {
       const file = path.join(tmpDir, 'prompted-no-ui.txt');
       await fs.writeFile(file, 'ok\n');
 
+      const checkPath = mockFn<CheckPathFn>();
+      checkPath.mockReturnValue({
+        allowed: false,
+        requiresPrompt: true,
+        reason: 'Prompt before read',
+      });
       await expect(
         resolveVariables({ input: [`data=file:${file}`] }, tmpDir, {
-          evaluator: {
-            checkPath: jest.fn().mockReturnValue({
-              allowed: false,
-              requiresPrompt: true,
-              reason: 'Prompt before read',
-            }),
-          } as any,
+          evaluator: { checkPath } as unknown as PolicyEvaluator,
         }),
       ).rejects.toThrow('Prompt before read');
     });
@@ -1128,7 +1137,9 @@ describe('resolveVariables', () => {
         source: { kind: 'variable', name: 'items' },
       };
       // Must reject with the type-mismatch error, never reach file-read dispatch
-      await expect(resolveForValue(forCtx, result.vars)).rejects.toMatchObject({
+      await expect(
+        resolveForValue(forCtx, brandInitialTemplateVarsForTest(result.vars)),
+      ).rejects.toMatchObject({
         code: 'type-mismatch',
       });
     });

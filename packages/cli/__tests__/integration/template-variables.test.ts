@@ -6,19 +6,9 @@ import {
   createTestWorkspace,
   runCli,
   createRunbook,
+  parseJsonEvents as parseJsonlEvents,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
-
-/**
- * Parse JSONL output from `run`, filtering out non-JSON lines (command output).
- */
-function parseJsonlEvents(stdout: string): Record<string, unknown>[] {
-  return stdout
-    .trim()
-    .split('\n')
-    .filter((line) => line.startsWith('{'))
-    .map((line) => JSON.parse(line) as Record<string, unknown>);
-}
 
 describe('Template Variables Integration', () => {
   let workspace: TestWorkspace;
@@ -55,8 +45,8 @@ describe('Template Variables Integration', () => {
       const commandStartedEvent = events.find((e) => e.type === 'command_started');
 
       expect(commandStartedEvent).toBeDefined();
-      expect(commandStartedEvent.command).toBe('rd echo from-flag');
-      expect(commandStartedEvent.command).not.toContain('from-file');
+      expect(commandStartedEvent!.command).toBe('rd echo from-flag');
+      expect(commandStartedEvent!.command).not.toContain('from-file');
     });
 
     it('--input with empty value overrides --input-file', async () => {
@@ -73,8 +63,8 @@ describe('Template Variables Integration', () => {
 
       expect(commandStartedEvent).toBeDefined();
       // Empty value is shell-escaped to '' (single-quoted empty string)
-      expect(commandStartedEvent.command).toBe("rd echo ''");
-      expect(commandStartedEvent.command).not.toContain('from-file');
+      expect(commandStartedEvent!.command).toBe("rd echo ''");
+      expect(commandStartedEvent!.command).not.toContain('from-file');
     });
 
     it('--input-file overrides auto-discovered config', async () => {
@@ -94,8 +84,8 @@ describe('Template Variables Integration', () => {
       const commandStartedEvent = events.find((e) => e.type === 'command_started');
 
       expect(commandStartedEvent).toBeDefined();
-      expect(commandStartedEvent.command).toBe('rd echo explicit');
-      expect(commandStartedEvent.command).not.toContain('auto-discovered');
+      expect(commandStartedEvent!.command).toBe('rd echo explicit');
+      expect(commandStartedEvent!.command).not.toContain('auto-discovered');
     });
 
     it('uses auto-discovered config when no flags provided', async () => {
@@ -111,7 +101,7 @@ describe('Template Variables Integration', () => {
       const commandStartedEvent = events.find((e) => e.type === 'command_started');
 
       expect(commandStartedEvent).toBeDefined();
-      expect(commandStartedEvent.command).toBe('rd echo auto-discovered');
+      expect(commandStartedEvent!.command).toBe('rd echo auto-discovered');
     });
   });
 
@@ -132,7 +122,7 @@ describe('Template Variables Integration', () => {
       const commandStartedEvent = events.find((e) => e.type === 'command_started');
 
       expect(commandStartedEvent).toBeDefined();
-      expect(commandStartedEvent.command).toBe('rd echo from-frontmatter');
+      expect(commandStartedEvent!.command).toBe('rd echo from-frontmatter');
     });
 
     it('--input overrides frontmatter vars', async () => {
@@ -151,7 +141,7 @@ describe('Template Variables Integration', () => {
       const commandStartedEvent = events.find((e) => e.type === 'command_started');
 
       expect(commandStartedEvent).toBeDefined();
-      expect(commandStartedEvent.command).toBe('rd echo from-flag');
+      expect(commandStartedEvent!.command).toBe('rd echo from-flag');
     });
 
     it('--input-file overrides frontmatter vars', async () => {
@@ -171,7 +161,7 @@ describe('Template Variables Integration', () => {
       const commandStartedEvent = events.find((e) => e.type === 'command_started');
 
       expect(commandStartedEvent).toBeDefined();
-      expect(commandStartedEvent.command).toBe('rd echo from-file');
+      expect(commandStartedEvent!.command).toBe('rd echo from-file');
     });
 
     it('config.yaml overrides frontmatter vars', async () => {
@@ -194,7 +184,7 @@ describe('Template Variables Integration', () => {
       const commandStartedEvent = events.find((e) => e.type === 'command_started');
 
       expect(commandStartedEvent).toBeDefined();
-      expect(commandStartedEvent.command).toBe('rd echo from-config');
+      expect(commandStartedEvent!.command).toBe('rd echo from-config');
     });
 
     it('frontmatter vars work with multiple variables', async () => {
@@ -215,7 +205,7 @@ describe('Template Variables Integration', () => {
       const commandStartedEvent = events.find((e) => e.type === 'command_started');
 
       expect(commandStartedEvent).toBeDefined();
-      expect(commandStartedEvent.command).toBe('rd echo "Hello World 42"');
+      expect(commandStartedEvent!.command).toBe('rd echo "Hello World 42"');
     });
 
     it('--input partially overrides frontmatter vars (other vars use defaults)', async () => {
@@ -241,7 +231,7 @@ describe('Template Variables Integration', () => {
 
       expect(commandStartedEvent).toBeDefined();
       // greeting overridden to "Hi", count stays at frontmatter default "42"
-      expect(commandStartedEvent.command).toBe('rd echo "Hi, count is 42"');
+      expect(commandStartedEvent!.command).toBe('rd echo "Hi, count is 42"');
     });
 
     it('frontmatter vars work in child runbooks', async () => {
@@ -281,7 +271,7 @@ describe('Template Variables Integration', () => {
       const events = parseJsonlEvents(result.stdout);
       const commandStartedEvent = events.find((e) => e.type === 'command_started');
       expect(commandStartedEvent).toBeDefined();
-      expect(commandStartedEvent.command).toBe('rd echo 42');
+      expect(commandStartedEvent!.command).toBe('rd echo 42');
     });
 
     it('boolean value stringified in template', async () => {
@@ -296,7 +286,7 @@ describe('Template Variables Integration', () => {
       const events = parseJsonlEvents(result.stdout);
       const commandStartedEvent = events.find((e) => e.type === 'command_started');
       expect(commandStartedEvent).toBeDefined();
-      expect(commandStartedEvent.command).toBe('rd echo true');
+      expect(commandStartedEvent!.command).toBe('rd echo true');
     });
 
     it('null value stringified in template', async () => {
@@ -311,7 +301,7 @@ describe('Template Variables Integration', () => {
       const events = parseJsonlEvents(result.stdout);
       const commandStartedEvent = events.find((e) => e.type === 'command_started');
       expect(commandStartedEvent).toBeDefined();
-      expect(commandStartedEvent.command).toBe('rd echo null');
+      expect(commandStartedEvent!.command).toBe('rd echo null');
     });
 
     it('object with dotted field access in template', async () => {
@@ -340,8 +330,8 @@ rd echo host={{config.host}} port={{config.port}}
       const events = parseJsonlEvents(result.stdout);
       const commandStartedEvent = events.find((e) => e.type === 'command_started');
       expect(commandStartedEvent).toBeDefined();
-      expect(commandStartedEvent.command).toContain('host=localhost');
-      expect(commandStartedEvent.command).toContain('port=3000');
+      expect(commandStartedEvent!.command).toContain('host=localhost');
+      expect(commandStartedEvent!.command).toContain('port=3000');
     });
 
     it('object renders as serialized JSON when used directly', async () => {
@@ -360,7 +350,7 @@ rd echo host={{config.host}} port={{config.port}}
       const commandStartedEvent = events.find((e) => e.type === 'command_started');
       expect(commandStartedEvent).toBeDefined();
       // Object is JSON-stringified and shell-escaped
-      expect(commandStartedEvent.command).toContain('"host":"localhost"');
+      expect(commandStartedEvent!.command).toContain('"host":"localhost"');
     });
 
     it('--input-json overrides --input for same key', async () => {
@@ -378,7 +368,7 @@ rd echo host={{config.host}} port={{config.port}}
       const events = parseJsonlEvents(result.stdout);
       const commandStartedEvent = events.find((e) => e.type === 'command_started');
       expect(commandStartedEvent).toBeDefined();
-      expect(commandStartedEvent.command).toBe('rd echo 99');
+      expect(commandStartedEvent!.command).toBe('rd echo 99');
     });
 
     it('--input-json overrides --input-file for same key', async () => {
@@ -397,7 +387,7 @@ rd echo host={{config.host}} port={{config.port}}
       const events = parseJsonlEvents(result.stdout);
       const commandStartedEvent = events.find((e) => e.type === 'command_started');
       expect(commandStartedEvent).toBeDefined();
-      expect(commandStartedEvent.command).toBe('rd echo 99');
+      expect(commandStartedEvent!.command).toBe('rd echo 99');
     });
 
     it('multiple --input-json flags', async () => {
@@ -423,8 +413,8 @@ rd echo a={{a}} b={{b}}
       const events = parseJsonlEvents(result.stdout);
       const commandStartedEvent = events.find((e) => e.type === 'command_started');
       expect(commandStartedEvent).toBeDefined();
-      expect(commandStartedEvent.command).toContain('a=1');
-      expect(commandStartedEvent.command).toContain('b=2');
+      expect(commandStartedEvent!.command).toContain('a=1');
+      expect(commandStartedEvent!.command).toContain('b=2');
     });
   });
 
@@ -444,7 +434,7 @@ rd echo a={{a}} b={{b}}
       const commandStartedEvent = events.find((e) => e.type === 'command_started');
 
       expect(commandStartedEvent).toBeDefined();
-      expect(commandStartedEvent.command).toBe('rd echo "{{undefined_var}}"');
+      expect(commandStartedEvent!.command).toBe('rd echo "{{undefined_var}}"');
     });
   });
 

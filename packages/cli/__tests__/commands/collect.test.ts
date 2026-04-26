@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { buildFrameKey, buildCompletionKey } from '@rundown-org/core';
+import { buildFrameKey, buildCompletionKey, type FrameKey } from '@rundown-org/core';
 import {
   createTestWorkspace,
   createRunbook,
@@ -74,7 +74,7 @@ async function markSubstepsResolved(
   const statePath = join(workspace.statePath(), `${runbookId}.json`);
   const raw = JSON.parse(await readFile(statePath, 'utf-8')) as MutableRunbookState;
 
-  const frameKey = raw.activeFrameKey ?? buildFrameKey(raw.step);
+  const frameKey = (raw.activeFrameKey ?? buildFrameKey(raw.step)) as FrameKey;
   const entry = raw.activeEntry ?? 1;
 
   const substepStates: SubstepState[] = results.map((result, i) => ({
@@ -183,7 +183,7 @@ describe('collect command', () => {
 
     const state = await getActiveState(workspace);
     expect(state).not.toBeNull();
-    const runbookId = state!.id as string;
+    const runbookId = state!.id;
 
     // Mark substeps resolved without going through rd claim / rd pass.
     await markSubstepsResolved(workspace, runbookId, results);
@@ -376,7 +376,7 @@ describe('collect command', () => {
 
       const parentState = await getActiveState(workspace);
       expect(parentState).not.toBeNull();
-      const parentRunId = parentState!.id as string;
+      const parentRunId = parentState!.id;
 
       type FrontierEntry = { id: string; runbook: string; token: string };
       type StepEnteredEvent = {
@@ -511,7 +511,7 @@ describe('collect command', () => {
       expect(startResult.exitCode).toBe(0);
 
       const state = await getActiveState(workspace);
-      const runbookId = state!.id as string;
+      const runbookId = state!.id;
 
       // Mark only substep 1 done — leave substep 2 pending.
       const statePath = join(workspace.statePath(), `${runbookId}.json`);

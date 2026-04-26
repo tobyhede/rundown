@@ -207,7 +207,7 @@ describe('StepAssertionSchema', () => {
 
 describe('getEffectiveResult', () => {
   it('returns result when present', () => {
-    const scenario = { result: 'COMPLETE', commands: ['rd pass'] } as any;
+    const scenario = { result: 'COMPLETE', commands: ['rd pass'] } as const;
     expect(getEffectiveResult(scenario)).toBe('COMPLETE');
   });
 
@@ -215,7 +215,7 @@ describe('getEffectiveResult', () => {
     const scenario = {
       commands: ['rd pass'],
       expect: { result: 'STOP' },
-    } as any;
+    } as const;
     expect(getEffectiveResult(scenario)).toBe('STOP');
   });
 
@@ -224,12 +224,12 @@ describe('getEffectiveResult', () => {
       commands: ['rd pass'],
       result: 'COMPLETE',
       expect: { result: 'COMPLETE' },
-    } as any;
+    } as const;
     expect(getEffectiveResult(scenario)).toBe('COMPLETE');
   });
 
   it('throws when neither result nor expect.result is present', () => {
-    const scenario = { commands: ['rd pass'], expect: {} } as any;
+    const scenario = { commands: ['rd pass'], expect: {} };
     expect(() => getEffectiveResult(scenario)).toThrow(
       'Neither result nor expect.result is defined',
     );

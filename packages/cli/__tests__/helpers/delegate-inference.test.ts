@@ -1,9 +1,9 @@
 import { describe, it, expect } from '@jest/globals';
 import type {
   ResolvedStep,
+  ResolvedStepWithFor,
+  ResolvedStepWithSubsteps,
   Substep,
-  StepWithSubsteps,
-  StepWithFor,
   Transitions,
 } from '@rundown-org/parser';
 import type { RunbookState, SubstepState, StepDelegation } from '@rundown-org/core';
@@ -12,6 +12,11 @@ import {
   inferRunbookFromStep,
   inferAllDelegateSubsteps,
 } from '../../src/helpers/delegate-inference.js';
+import {
+  brandEffectiveVarsForTest,
+  brandFrameKeyForTest,
+  brandStoredOutputsForTest,
+} from './brand-helpers.js';
 
 /** Canonical transitions pair used across fixtures to avoid `as any` casts. */
 const DEFAULT_TRANSITIONS: Transitions = {
@@ -25,7 +30,7 @@ function makeSubstep(overrides: Partial<Substep> & { id: string; description: st
 }
 
 /** Build a minimal step with substeps. */
-function makeStepWithSubsteps(name: string, substeps: Substep[]): StepWithSubsteps {
+function makeStepWithSubsteps(name: string, substeps: Substep[]): ResolvedStepWithSubsteps {
   return {
     kind: 'substeps' as const,
     name,
@@ -44,8 +49,10 @@ function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
     step: '1',
     stepName: 'Step 1',
     retryCount: 0,
-    variables: {},
+    variables: brandStoredOutputsForTest(),
     steps: [],
+    startedAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
     ...overrides,
   };
 }
@@ -55,7 +62,7 @@ function makeActiveDelegation(): StepDelegation {
   return {
     tokenHash: 'sha256:abc',
     childRunbookPath: 'child.runbook.md',
-    contextSnapshot: { vars: {}, ancestors: [] },
+    contextSnapshot: { vars: brandEffectiveVarsForTest(), ancestors: [] },
     childRunId: null,
     createdAt: new Date().toISOString(),
     cancelledAt: null,
@@ -67,7 +74,7 @@ function makeStepWithFor(
   name: string,
   substeps: Substep[],
   range: { start: number; end: number },
-): StepWithFor {
+): ResolvedStepWithFor {
   return {
     kind: 'for' as const,
     name,
@@ -99,8 +106,13 @@ describe('inferDelegationTarget', () => {
     ];
     const steps: ResolvedStep[] = [makeStepWithSubsteps('1', substeps)];
     const substepStates: SubstepState[] = [
-      { id: '1', frameKey: '1|', status: 'pending', delegation: makeActiveDelegation() },
-      { id: '2', frameKey: '1|', status: 'pending' },
+      {
+        id: '1',
+        frameKey: brandFrameKeyForTest('1'),
+        status: 'pending',
+        delegation: makeActiveDelegation(),
+      },
+      { id: '2', frameKey: brandFrameKeyForTest('1'), status: 'pending' },
     ];
     const state = makeState({ step: '1', substepStates });
 
@@ -116,8 +128,8 @@ describe('inferDelegationTarget', () => {
     ];
     const steps: ResolvedStep[] = [makeStepWithSubsteps('1', substeps)];
     const substepStates: SubstepState[] = [
-      { id: '1', frameKey: '1|', status: 'done', result: 'pass' },
-      { id: '2', frameKey: '1|', status: 'pending' },
+      { id: '1', frameKey: brandFrameKeyForTest('1'), status: 'done', result: 'pass' },
+      { id: '2', frameKey: brandFrameKeyForTest('1'), status: 'pending' },
     ];
     const state = makeState({ step: '1', substepStates });
 
@@ -145,7 +157,12 @@ describe('inferDelegationTarget', () => {
     ];
     const steps: ResolvedStep[] = [makeStepWithSubsteps('1', substeps)];
     const substepStates: SubstepState[] = [
-      { id: '1', frameKey: '1|', status: 'pending', delegation: makeActiveDelegation() },
+      {
+        id: '1',
+        frameKey: brandFrameKeyForTest('1'),
+        status: 'pending',
+        delegation: makeActiveDelegation(),
+      },
     ];
     const state = makeState({ step: '1', substepStates });
 
@@ -197,13 +214,18 @@ describe('inferDelegationTarget', () => {
     ];
     const steps: ResolvedStep[] = [makeStepWithSubsteps('1', substeps)];
     const substepStates: SubstepState[] = [
-      { id: '1', frameKey: '1|1', status: 'pending', delegation: makeActiveDelegation() },
-      { id: '1', frameKey: '1|2', status: 'pending' },
+      {
+        id: '1',
+        frameKey: brandFrameKeyForTest('1', 1),
+        status: 'pending',
+        delegation: makeActiveDelegation(),
+      },
+      { id: '1', frameKey: brandFrameKeyForTest('1', 2), status: 'pending' },
     ];
     const state = makeState({
       step: '1',
       substepStates,
-      activeFrameKey: '1|2',
+      activeFrameKey: brandFrameKeyForTest('1', 2),
       forStack: [
         {
           stepId: '1',
@@ -246,7 +268,12 @@ describe('inferAllDelegateSubsteps', () => {
     ];
     const steps: ResolvedStep[] = [makeStepWithSubsteps('1', substeps)];
     const substepStates: SubstepState[] = [
-      { id: '1', frameKey: '1|', status: 'pending', delegation: makeActiveDelegation() },
+      {
+        id: '1',
+        frameKey: brandFrameKeyForTest('1'),
+        status: 'pending',
+        delegation: makeActiveDelegation(),
+      },
     ];
     const state = makeState({ step: '1', substepStates });
 
@@ -263,7 +290,7 @@ describe('inferAllDelegateSubsteps', () => {
     ];
     const steps: ResolvedStep[] = [makeStepWithSubsteps('1', substeps)];
     const substepStates: SubstepState[] = [
-      { id: '1', frameKey: '1|', status: 'done', result: 'pass' },
+      { id: '1', frameKey: brandFrameKeyForTest('1'), status: 'done', result: 'pass' },
     ];
     const state = makeState({ step: '1', substepStates });
 
@@ -310,16 +337,16 @@ describe('inferAllDelegateSubsteps', () => {
       makeSubstep({ id: '1', description: 'A', runbooks: ['a.runbook.md'], delegate: true }),
       makeSubstep({ id: '2', description: 'B', runbooks: ['b.runbook.md'], delegate: true }),
     ];
-    const steps: Step[] = [makeStepWithFor('1', substeps, { start: 1, end: 3 })];
+    const steps: ResolvedStep[] = [makeStepWithFor('1', substeps, { start: 1, end: 3 })];
 
     // Iteration 1: substep 1 is done; substep 2 is pending
     const substepStatesIter1: SubstepState[] = [
-      { id: '1', frameKey: '1|1', status: 'done', result: 'pass' },
+      { id: '1', frameKey: brandFrameKeyForTest('1', 1), status: 'done', result: 'pass' },
     ];
     const stateIter1 = makeState({
       step: '1',
       substepStates: substepStatesIter1,
-      activeFrameKey: '1|1',
+      activeFrameKey: brandFrameKeyForTest('1', 1),
       forStack: [
         {
           stepId: '1',
@@ -340,7 +367,7 @@ describe('inferAllDelegateSubsteps', () => {
     const stateIter2 = makeState({
       step: '1',
       substepStates: [],
-      activeFrameKey: '1|2',
+      activeFrameKey: brandFrameKeyForTest('1', 2),
       forStack: [
         {
           stepId: '1',

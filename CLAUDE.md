@@ -316,6 +316,7 @@ npm run test:e2e:build                        # Docker: build E2E test image
 ## Testing Conventions
 
 - **Use `Error.isError()` instead of `instanceof Error`** in tests and production code. `instanceof` fails across ESM realm boundaries (e.g. Jest module sandboxing). Node 24+ provides `Error.isError()` (TC39). Centralized guards `isError()`, `isNodeError()`, `getErrorMessage()` are in `packages/core/src/errors.ts` (and `packages/claude-code-plugin/src/shared/errors.ts`). Keep `instanceof` only for same-realm custom error classes (e.g. `RunbookSyntaxError`, `RundownError`).
+- **Mock injected core services structurally in non-core tests.** Tests in `packages/core` may construct real core services because they own that behavior. Tests outside `packages/core` that mock `@rundown-org/core` should pass object-shaped service doubles for injected dependencies (for example `actorService: { initializeState } as unknown as RunbookActorService`) instead of calling `new core.RunbookActorService(...)` from a mocked module. Use explicit mock constructors only when production code constructs the service and constructor behavior is part of the test.
 
 ## TSDoc Standards
 

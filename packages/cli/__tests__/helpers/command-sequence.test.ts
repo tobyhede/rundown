@@ -7,6 +7,7 @@ import {
   extractRunbookReferences,
   extractInputFileReferences,
 } from '../../src/helpers/command-sequence.js';
+import type { StepAssertion } from '../../src/schemas/scenarios.js';
 
 describe('parseJsonLines', () => {
   it('extracts transition from step_transitioned event', () => {
@@ -247,7 +248,7 @@ describe('matchStepAssertions', () => {
       { action: 'CONTINUE', from: '1', at: '2', result: 'PASS' as const },
       { action: 'COMPLETE', from: '2', at: '2', result: 'PASS' as const },
     ];
-    const assertions = [{ at: '2', action: 'CONTINUE' }, { action: 'COMPLETE' }];
+    const assertions: StepAssertion[] = [{ at: '2', action: 'CONTINUE' }, { action: 'COMPLETE' }];
     const results = matchStepAssertions(assertions, events);
     expect(results).toHaveLength(2);
     expect(results.every((r) => r.matched)).toBe(true);
@@ -259,7 +260,7 @@ describe('matchStepAssertions', () => {
       { action: 'CONTINUE', from: '2', at: '3', result: 'PASS' as const },
       { action: 'COMPLETE', from: '3', at: '3', result: 'PASS' as const },
     ];
-    const assertions = [{ action: 'COMPLETE' }];
+    const assertions: StepAssertion[] = [{ action: 'COMPLETE' }];
     const results = matchStepAssertions(assertions, events);
     expect(results[0].matched).toBe(true);
     expect(results[0].matchedEvent?.at).toBe('3');
@@ -267,7 +268,7 @@ describe('matchStepAssertions', () => {
 
   it('returns unmatched when no event found', () => {
     const events = [{ action: 'CONTINUE', from: '1', at: '2', result: 'PASS' as const }];
-    const assertions = [{ action: 'STOP' }];
+    const assertions: StepAssertion[] = [{ action: 'STOP' }];
     const results = matchStepAssertions(assertions, events);
     expect(results[0].matched).toBe(false);
     expect(results[0].matchedEvent).toBeUndefined();
@@ -275,14 +276,14 @@ describe('matchStepAssertions', () => {
 
   it('matches with partial fields (only action)', () => {
     const events = [{ action: 'GOTO', from: '1', at: 'ErrorHandler', result: 'FAIL' as const }];
-    const assertions = [{ action: 'GOTO' }];
+    const assertions: StepAssertion[] = [{ action: 'GOTO' }];
     const results = matchStepAssertions(assertions, events);
     expect(results[0].matched).toBe(true);
   });
 
   it('matches with multiple fields on one assertion', () => {
     const events = [{ action: 'GOTO', from: '1', at: 'ErrorHandler', result: 'FAIL' as const }];
-    const assertions = [{ action: 'GOTO', at: 'ErrorHandler', result: 'FAIL' }];
+    const assertions: StepAssertion[] = [{ action: 'GOTO', at: 'ErrorHandler', result: 'FAIL' }];
     const results = matchStepAssertions(assertions, events);
     expect(results[0].matched).toBe(true);
   });
@@ -304,7 +305,7 @@ describe('matchStepAssertions', () => {
       { action: 'GOTO', at: 'ErrorHandler' },
     ];
     // Assertions in reverse order — GOTO first, CONTINUE second
-    const assertions = [
+    const assertions: StepAssertion[] = [
       { action: 'GOTO', at: 'ErrorHandler' },
       { action: 'CONTINUE', at: '2' },
     ];
@@ -410,7 +411,7 @@ describe('matchStepAssertions', () => {
         runbook: { path: '/abs/parent.runbook.md' },
       },
     ];
-    const assertions = [
+    const assertions: StepAssertion[] = [
       { runbook: 'child.runbook.md', from: '1', action: 'COMPLETE' as const },
       { runbook: 'parent.runbook.md', from: '1', action: 'COMPLETE' as const },
     ];

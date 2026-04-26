@@ -266,7 +266,7 @@ async function executeScenario(
   const expectedName = filename.split('/').pop()!;
 
   const matchingStates = states.filter((s) => {
-    const runbookPath = s.runbook as string;
+    const runbookPath = s.runbook;
     return runbookPath.endsWith(expectedName);
   });
 
@@ -288,7 +288,7 @@ async function executeScenario(
     const statesSummary = matchingStates
       .map((s) => {
         const lc = s.lifecycle;
-        return `ID=${String(s.id).slice(0, 8)}, lifecycle=${String(lc)}`;
+        return `ID=${s.id.slice(0, 8)}, lifecycle=${String(lc)}`;
       })
       .join('; ');
     throw new Error(

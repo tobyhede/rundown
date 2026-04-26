@@ -1,85 +1,105 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import { mockErrorHelpers } from './mock-error-helpers';
+import { mockErrorHelpers } from './mock-error-helpers.js';
+import { brandInitialTemplateVarsForTest, brandStoredOutputsForTest } from './brand-helpers.js';
+import { mockFn } from './typed-mocks.js';
+
+import type * as CoreModule from '@rundown-org/core';
+import type { BaseStep, ResolvedStep } from '@rundown-org/parser';
+import type * as ExecutionModule from '../../src/services/execution.js';
 
 // Mock @rundown-org/core
-jest.unstable_mockModule('@rundown-org/core', () => ({
-  stepIdToString: jest.fn((id: { step: string; substep?: string }) =>
-    id.substep ? `${id.step}.${id.substep}` : id.step,
-  ),
-  buildStepPosition: jest.fn((current: string, total: number, substep?: string) => ({
-    current,
-    total,
-    ...(substep ? { substep } : {}),
-  })),
-  deriveExecutionAt: jest.fn(
-    (step: string, substep?: string, iteration?: number) =>
-      `${step}${iteration != null ? `.${String(iteration)}` : ''}${substep ? `.${substep}` : ''}`,
-  ),
-  countNumberedSteps: jest.fn().mockReturnValue(5),
-  mergeEffectiveVars: jest.fn(
-    (
-      state: { templateVars?: Record<string, unknown>; variables?: Record<string, string> },
-      extraVars?: Record<string, unknown>,
-    ) => ({
-      ...(state.templateVars ?? {}),
-      ...(state.variables ?? {}),
-      ...(extraVars ?? {}),
-    }),
-  ),
-  ...mockErrorHelpers,
-}));
+jest.unstable_mockModule('@rundown-org/core', () => {
+  const countNumberedSteps = mockFn<typeof CoreModule.countNumberedSteps>();
+  countNumberedSteps.mockReturnValue(5);
+  return {
+    stepIdToString: jest.fn((id: { step: string; substep?: string }) =>
+      id.substep ? `${id.step}.${id.substep}` : id.step,
+    ),
+    buildStepPosition: jest.fn((current: string, total: number, substep?: string) => ({
+      current,
+      total,
+      ...(substep ? { substep } : {}),
+    })),
+    deriveExecutionAt: jest.fn(
+      (step: string, substep?: string, iteration?: number) =>
+        `${step}${iteration != null ? `.${String(iteration)}` : ''}${substep ? `.${substep}` : ''}`,
+    ),
+    countNumberedSteps,
+    mergeEffectiveVars: jest.fn(
+      (
+        state: { templateVars?: Record<string, unknown>; variables?: Record<string, string> },
+        extraVars?: Record<string, unknown>,
+      ) => ({
+        ...(state.templateVars ?? {}),
+        ...(state.variables ?? {}),
+        ...(extraVars ?? {}),
+      }),
+    ),
+    ...mockErrorHelpers,
+  };
+});
 
 import type { RunbookState } from '@rundown-org/core';
 
 // Mock runbook-loader
 jest.unstable_mockModule('../../src/helpers/runbook-loader', () => ({
-  getRunbookFromState: jest.fn(),
+  getRunbookFromState: mockFn<(state: RunbookState, cwd: string) => readonly ResolvedStep[]>(),
 }));
 
 // Mock execution service
-jest.unstable_mockModule('../../src/services/execution', () => ({
-  getStepRetryMax: jest.fn().mockReturnValue(0),
-  buildMetadata: jest.fn(),
-  formatActionForDisplay: jest.fn().mockReturnValue('CONTINUE'),
-  extractRetryDisplayCount: jest.fn((_: unknown, retryCount: number) => retryCount),
-}));
+jest.unstable_mockModule('../../src/services/execution', () => {
+  const getStepRetryMax = mockFn<typeof ExecutionModule.getStepRetryMax>();
+  getStepRetryMax.mockReturnValue(0);
+  const formatActionForDisplay = mockFn<typeof ExecutionModule.formatActionForDisplay>();
+  formatActionForDisplay.mockReturnValue('CONTINUE');
+  const extractRetryDisplayCount = mockFn<typeof ExecutionModule.extractRetryDisplayCount>();
+  extractRetryDisplayCount.mockImplementation((_, retryCount) => retryCount);
+  return {
+    getStepRetryMax,
+    buildMetadata:
+      mockFn<(state: RunbookState) => { file?: string; state?: string; prompted?: boolean }>(),
+    formatActionForDisplay,
+    extractRetryDisplayCount,
+  };
+});
 
 // Import after mocking
 const core = await import('@rundown-org/core');
-const { getRunbookFromState } = await import('../../src/helpers/runbook-loader');
+const { getRunbookFromState } = await import('../../src/helpers/runbook-loader.js');
 const { getStepRetryMax, buildMetadata, formatActionForDisplay } = await import(
-  '../../src/services/execution'
+  '../../src/services/execution.js'
 );
 const { buildInactiveStatus, buildStashedStatus, buildActiveStatus } = await import(
-  '../../src/helpers/status-builder'
+  '../../src/helpers/status-builder.js'
 );
 
-function makeState(overrides: Partial<RunbookState> = {}): any {
-  return {
+function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
+  const baseState: RunbookState = {
     id: 'test-id',
     runbook: 'test.runbook.md',
     runbookPath: 'test.runbook.md',
     step: '1',
     stepName: 'First Step',
     retryCount: 0,
-    variables: {},
+    variables: brandStoredOutputsForTest(),
     steps: [],
     startedAt: '2026-01-01T00:00:00Z',
     updatedAt: '2026-01-01T00:00:00Z',
-    ...overrides,
-  } as any;
+  };
+  return { ...baseState, ...overrides };
 }
 
-function makeStep(overrides: Partial<Record<string, unknown>> = {}): any {
-  return {
+function makeStep(overrides: Partial<Omit<BaseStep, 'kind'>> = {}): ResolvedStep {
+  const baseStep: BaseStep = {
+    kind: 'base',
     name: '1',
     description: 'First Step',
     transitions: {
-      pass: { action: 'continue' as const, retry: 0 },
-      fail: { action: 'continue' as const, retry: 0 },
+      pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+      fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
     },
-    ...overrides,
-  } as any;
+  };
+  return { ...baseStep, ...overrides };
 }
 
 beforeEach(() => {
@@ -98,14 +118,12 @@ describe('buildStashedStatus', () => {
     const state = makeState({ step: '2', substep: undefined });
     const steps = [makeStep({ name: '1' }), makeStep({ name: '2' })];
 
-    getRunbookFromState.mockReturnValue(steps);
-    buildMetadata.mockReturnValue({
+    jest.mocked(getRunbookFromState).mockReturnValue(steps);
+    jest.mocked(buildMetadata).mockReturnValue({
       file: 'test.runbook.md',
       state: '.rundown/runs/test-id.json',
     });
-    (
-      core.countNumberedSteps as jest.MockedFunction<typeof core.countNumberedSteps>
-    ).mockReturnValue(2);
+    jest.mocked(core.countNumberedSteps).mockReturnValue(2);
 
     const result = buildStashedStatus(state, '/test');
 
@@ -119,14 +137,12 @@ describe('buildStashedStatus', () => {
     const state = makeState({ step: '2', substep: '1' });
     const steps = [makeStep({ name: '1' }), makeStep({ name: '2' })];
 
-    getRunbookFromState.mockReturnValue(steps);
-    buildMetadata.mockReturnValue({
+    jest.mocked(getRunbookFromState).mockReturnValue(steps);
+    jest.mocked(buildMetadata).mockReturnValue({
       file: 'test.runbook.md',
       state: '.rundown/runs/test-id.json',
     });
-    (
-      core.countNumberedSteps as jest.MockedFunction<typeof core.countNumberedSteps>
-    ).mockReturnValue(2);
+    jest.mocked(core.countNumberedSteps).mockReturnValue(2);
 
     const result = buildStashedStatus(state, '/test');
 
@@ -137,15 +153,13 @@ describe('buildStashedStatus', () => {
     const state = makeState({ prompted: true });
     const steps = [makeStep()];
 
-    getRunbookFromState.mockReturnValue(steps);
-    buildMetadata.mockReturnValue({
+    jest.mocked(getRunbookFromState).mockReturnValue(steps);
+    jest.mocked(buildMetadata).mockReturnValue({
       file: 'test.runbook.md',
       state: '.rundown/runs/test-id.json',
       prompted: true,
     });
-    (
-      core.countNumberedSteps as jest.MockedFunction<typeof core.countNumberedSteps>
-    ).mockReturnValue(1);
+    jest.mocked(core.countNumberedSteps).mockReturnValue(1);
 
     const result = buildStashedStatus(state, '/test');
 
@@ -158,14 +172,12 @@ describe('buildActiveStatus', () => {
     const state = makeState({ step: '1' });
     const steps = [makeStep({ name: '1', description: 'First Step' })];
 
-    getRunbookFromState.mockReturnValue(steps);
-    buildMetadata.mockReturnValue({
+    jest.mocked(getRunbookFromState).mockReturnValue(steps);
+    jest.mocked(buildMetadata).mockReturnValue({
       file: 'test.runbook.md',
       state: '.rundown/runs/test-id.json',
     });
-    (
-      core.countNumberedSteps as jest.MockedFunction<typeof core.countNumberedSteps>
-    ).mockReturnValue(1);
+    jest.mocked(core.countNumberedSteps).mockReturnValue(1);
 
     const result = buildActiveStatus(state, '/test');
 
@@ -179,14 +191,12 @@ describe('buildActiveStatus', () => {
     const state = makeState();
     const steps = [makeStep()];
 
-    getRunbookFromState.mockReturnValue(steps);
-    buildMetadata.mockReturnValue({
+    jest.mocked(getRunbookFromState).mockReturnValue(steps);
+    jest.mocked(buildMetadata).mockReturnValue({
       file: 'test.runbook.md',
       state: '.rundown/runs/test-id.json',
     });
-    (
-      core.countNumberedSteps as jest.MockedFunction<typeof core.countNumberedSteps>
-    ).mockReturnValue(1);
+    jest.mocked(core.countNumberedSteps).mockReturnValue(1);
 
     const result = buildActiveStatus(state, '/test', 'stashed-id');
 
@@ -201,16 +211,14 @@ describe('buildActiveStatus', () => {
     });
     const steps = [makeStep({ name: '1' })];
 
-    getRunbookFromState.mockReturnValue(steps);
-    buildMetadata.mockReturnValue({
+    jest.mocked(getRunbookFromState).mockReturnValue(steps);
+    jest.mocked(buildMetadata).mockReturnValue({
       file: 'test.runbook.md',
       state: '.rundown/runs/test-id.json',
     });
-    (
-      core.countNumberedSteps as jest.MockedFunction<typeof core.countNumberedSteps>
-    ).mockReturnValue(1);
-    getStepRetryMax.mockReturnValue(3);
-    formatActionForDisplay.mockReturnValue('RETRY (1/3)');
+    jest.mocked(core.countNumberedSteps).mockReturnValue(1);
+    jest.mocked(getStepRetryMax).mockReturnValue(3);
+    jest.mocked(formatActionForDisplay).mockReturnValue('RETRY (1/3)');
 
     const result = buildActiveStatus(state, '/test');
 
@@ -226,16 +234,14 @@ describe('buildActiveStatus', () => {
     });
     const steps = [makeStep({ name: '1' })];
 
-    getRunbookFromState.mockReturnValue(steps);
-    buildMetadata.mockReturnValue({
+    jest.mocked(getRunbookFromState).mockReturnValue(steps);
+    jest.mocked(buildMetadata).mockReturnValue({
       file: 'test.runbook.md',
       state: '.rundown/runs/test-id.json',
     });
-    (
-      core.countNumberedSteps as jest.MockedFunction<typeof core.countNumberedSteps>
-    ).mockReturnValue(1);
-    getStepRetryMax.mockReturnValue(0);
-    formatActionForDisplay.mockReturnValue('CONTINUE');
+    jest.mocked(core.countNumberedSteps).mockReturnValue(1);
+    jest.mocked(getStepRetryMax).mockReturnValue(0);
+    jest.mocked(formatActionForDisplay).mockReturnValue('CONTINUE');
 
     const result = buildActiveStatus(state, '/test');
 
@@ -246,14 +252,12 @@ describe('buildActiveStatus', () => {
     const state = makeState({ step: 'nonexistent' });
     const steps = [makeStep({ name: '1' })];
 
-    getRunbookFromState.mockReturnValue(steps);
-    buildMetadata.mockReturnValue({
+    jest.mocked(getRunbookFromState).mockReturnValue(steps);
+    jest.mocked(buildMetadata).mockReturnValue({
       file: 'test.runbook.md',
       state: '.rundown/runs/test-id.json',
     });
-    (
-      core.countNumberedSteps as jest.MockedFunction<typeof core.countNumberedSteps>
-    ).mockReturnValue(1);
+    jest.mocked(core.countNumberedSteps).mockReturnValue(1);
 
     const result = buildActiveStatus(state, '/test');
 
@@ -264,14 +268,12 @@ describe('buildActiveStatus', () => {
 describe('parentLinkage projection', () => {
   beforeEach(() => {
     const steps = [makeStep({ name: '1', description: 'First Step' })];
-    getRunbookFromState.mockReturnValue(steps);
-    buildMetadata.mockReturnValue({
+    jest.mocked(getRunbookFromState).mockReturnValue(steps);
+    jest.mocked(buildMetadata).mockReturnValue({
       file: 'test.runbook.md',
       state: '.rundown/runs/test-id.json',
     });
-    (
-      core.countNumberedSteps as jest.MockedFunction<typeof core.countNumberedSteps>
-    ).mockReturnValue(1);
+    jest.mocked(core.countNumberedSteps).mockReturnValue(1);
   });
 
   it('surfaces delegation linkage with tokenHash in active status', () => {
@@ -346,20 +348,23 @@ describe('parentLinkage projection', () => {
 
 describe('vars field', () => {
   beforeEach(() => {
-    (getRunbookFromState as jest.Mock).mockReturnValue([]);
-    (core.countNumberedSteps as jest.Mock).mockReturnValue(0);
-    (buildMetadata as jest.Mock).mockReturnValue({
+    jest.mocked(getRunbookFromState).mockReturnValue([]);
+    jest.mocked(core.countNumberedSteps).mockReturnValue(0);
+    jest.mocked(buildMetadata).mockReturnValue({
       file: 'test.runbook.md',
       state: '.rundown/runs/test-id.json',
     });
-    (getStepRetryMax as jest.Mock).mockReturnValue(0);
-    (formatActionForDisplay as jest.Mock).mockReturnValue('CONTINUE');
+    jest.mocked(getStepRetryMax).mockReturnValue(0);
+    jest.mocked(formatActionForDisplay).mockReturnValue('CONTINUE');
   });
 
   it('merges templateVars (scalars) and state.variables, state.variables wins on collision', () => {
     const state = makeState({
-      templateVars: { environment: 'staging', port: 3000 },
-      variables: { environment: 'production', PlanPath: '/work/plan.json' },
+      templateVars: brandInitialTemplateVarsForTest({ environment: 'staging', port: 3000 }),
+      variables: brandStoredOutputsForTest({
+        environment: 'production',
+        PlanPath: '/work/plan.json',
+      }),
     });
     const result = buildActiveStatus(state, '/project');
     expect(result.vars).toEqual({
@@ -371,11 +376,13 @@ describe('vars field', () => {
 
   it('excludes non-scalar templateVars (arrays, objects)', () => {
     const state = makeState({
-      templateVars: {
+      templateVars: brandInitialTemplateVarsForTest({
+        // `kind`-shaped sentinel masquerades as a JsonObject; runtime
+        // filter drops it from the rendered vars map.
         items: { kind: 'json-array', value: ['a', 'b'] },
         name: 'test',
-      },
-      variables: {},
+      }),
+      variables: brandStoredOutputsForTest(),
     });
     const result = buildActiveStatus(state, '/project');
     expect(result.vars).toEqual({ name: 'test' });
@@ -383,15 +390,18 @@ describe('vars field', () => {
   });
 
   it('returns undefined vars when both templateVars and variables are empty', () => {
-    const state = makeState({ templateVars: {}, variables: {} });
+    const state = makeState({
+      templateVars: brandInitialTemplateVarsForTest(),
+      variables: brandStoredOutputsForTest(),
+    });
     const result = buildActiveStatus(state, '/project');
     expect(result.vars).toBeUndefined();
   });
 
   it('buildStashedStatus also includes vars field', () => {
     const state = makeState({
-      templateVars: { environment: 'staging' },
-      variables: { PlanPath: '/work/plan.json' },
+      templateVars: brandInitialTemplateVarsForTest({ environment: 'staging' }),
+      variables: brandStoredOutputsForTest({ PlanPath: '/work/plan.json' }),
     });
     const result = buildStashedStatus(state, '/project');
     expect(result.vars).toEqual({

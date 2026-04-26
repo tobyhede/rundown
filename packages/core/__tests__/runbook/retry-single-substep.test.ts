@@ -66,7 +66,7 @@ function makeInputs(overrides?: { substepStates?: readonly SubstepState[] }): {
     createdAt: '2026-01-01T00:00:00.000Z',
     cancelledAt: null,
     contextSnapshot: {
-      vars: brandEffectiveVarsForTest({}),
+      vars: brandEffectiveVarsForTest(),
       ancestors: [],
       step: '1',
       substep: '1',
@@ -134,7 +134,7 @@ describe('retrySingleSubstep', () => {
       createdAt: '2026-01-01T00:00:00.000Z',
       cancelledAt: null,
       contextSnapshot: {
-        vars: brandEffectiveVarsForTest({}),
+        vars: brandEffectiveVarsForTest(),
         ancestors: [],
         step: '1',
         substep: '1',
@@ -220,7 +220,7 @@ describe('retrySingleSubstep', () => {
       createdAt: '2026-01-01T00:00:00.000Z',
       cancelledAt: null,
       contextSnapshot: {
-        vars: brandEffectiveVarsForTest({}),
+        vars: brandEffectiveVarsForTest(),
         ancestors: [],
         step: '1',
         substep: '1',
@@ -276,7 +276,7 @@ describe('retrySingleSubstep', () => {
       createdAt: '2026-01-01T00:00:00.000Z',
       cancelledAt: null,
       contextSnapshot: {
-        vars: brandEffectiveVarsForTest({}),
+        vars: brandEffectiveVarsForTest(),
         ancestors: [],
         step: '1',
         substep: '1',

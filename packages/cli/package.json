@@ -14,6 +14,7 @@
   ],
   "scripts": {
     "build": "tsc && chmod +x dist/cli.js && node scripts/copy-runbooks.js",
+    "check:types": "tsc --noEmit -p tsconfig.test.json",
     "test": "jest",
     "test:unit": "jest --maxWorkers=2 --testPathIgnorePatterns='integration'",
     "test:integration": "jest --maxWorkers=2 --testPathPatterns='integration'",

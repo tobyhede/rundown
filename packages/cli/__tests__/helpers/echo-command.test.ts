@@ -1,13 +1,16 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import { mockErrorHelpers } from './mock-error-helpers';
+import { mockErrorHelpers } from './mock-error-helpers.js';
+import { mockFn } from './typed-mocks.js';
+
+import type { RunbookState, SessionService } from '@rundown-org/core';
 
 // Mock @rundown-org/core
-const mockGetActive = jest.fn();
+const mockGetActive = mockFn<SessionService['getActive']>();
+const mockSessionServiceCtor = mockFn<() => Pick<SessionService, 'getActive'>>();
+mockSessionServiceCtor.mockImplementation(() => ({ getActive: mockGetActive }));
 jest.unstable_mockModule('@rundown-org/core', () => ({
   RunbookStateManager: jest.fn(),
-  SessionService: jest.fn().mockImplementation(() => ({
-    getActive: mockGetActive,
-  })),
+  SessionService: mockSessionServiceCtor,
   ...mockErrorHelpers,
 }));
 
@@ -19,6 +22,11 @@ jest.unstable_mockModule('../../src/services/execution.js', () => ({
 const { executeEchoLogic, toExecutionResult, DEFAULT_RESULT_SEQUENCE } = await import(
   '../../src/helpers/echo-command.js'
 );
+
+// Test helper: production code reads `state.retryCount` only on this code
+// path; the cast through `unknown` admits the abbreviated fixture without
+// constructing every branded field on `RunbookState`.
+const asState = (value: { retryCount: number }): RunbookState => value as unknown as RunbookState;
 
 describe('toExecutionResult', () => {
   it('maps success=true to exitCode 0', () => {
@@ -52,7 +60,7 @@ describe('executeEchoLogic', () => {
   });
 
   it('returns error for invalid result in sequence', async () => {
-    mockGetActive.mockResolvedValue({ retryCount: 0 });
+    mockGetActive.mockResolvedValue(asState({ retryCount: 0 }));
     const result = await executeEchoLogic(['pass', 'invalid'], ['hello'], '/tmp');
     expect(result.success).toBe(false);
     expect(result.exitCode).toBe(1);
@@ -60,7 +68,7 @@ describe('executeEchoLogic', () => {
   });
 
   it('returns success for single pass', async () => {
-    mockGetActive.mockResolvedValue({ retryCount: 0 });
+    mockGetActive.mockResolvedValue(asState({ retryCount: 0 }));
     const result = await executeEchoLogic(['pass'], ['hello', 'world'], '/tmp');
     expect(result.success).toBe(true);
     expect(result.exitCode).toBe(0);
@@ -68,7 +76,7 @@ describe('executeEchoLogic', () => {
   });
 
   it('returns failure for single fail', async () => {
-    mockGetActive.mockResolvedValue({ retryCount: 0 });
+    mockGetActive.mockResolvedValue(asState({ retryCount: 0 }));
     const result = await executeEchoLogic(['fail'], ['hello'], '/tmp');
     expect(result.success).toBe(false);
     expect(result.exitCode).toBe(1);
@@ -76,21 +84,21 @@ describe('executeEchoLogic', () => {
   });
 
   it('selects result based on retry count', async () => {
-    mockGetActive.mockResolvedValue({ retryCount: 1 });
+    mockGetActive.mockResolvedValue(asState({ retryCount: 1 }));
     const result = await executeEchoLogic(['fail', 'pass'], ['test'], '/tmp');
     expect(result.success).toBe(true);
     expect(result.exitCode).toBe(0);
   });
 
   it('clamps index to sequence length', async () => {
-    mockGetActive.mockResolvedValue({ retryCount: 5 });
+    mockGetActive.mockResolvedValue(asState({ retryCount: 5 }));
     const result = await executeEchoLogic(['fail', 'pass'], ['test'], '/tmp');
     // retryCount=5, sequence length=2, index = min(5,1) = 1 → 'pass'
     expect(result.success).toBe(true);
   });
 
   it('uses default sequence when empty array provided', async () => {
-    mockGetActive.mockResolvedValue({ retryCount: 0 });
+    mockGetActive.mockResolvedValue(asState({ retryCount: 0 }));
     const result = await executeEchoLogic([], ['test'], '/tmp');
     // Default sequence is ['pass'], so should succeed
     expect(result.success).toBe(true);
@@ -98,7 +106,7 @@ describe('executeEchoLogic', () => {
   });
 
   it('normalizes uppercase result values', async () => {
-    mockGetActive.mockResolvedValue({ retryCount: 0 });
+    mockGetActive.mockResolvedValue(asState({ retryCount: 0 }));
     const result = await executeEchoLogic(['PASS'], ['test'], '/tmp');
     expect(result.success).toBe(true);
   });

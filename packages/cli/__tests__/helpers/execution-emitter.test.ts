@@ -1,8 +1,11 @@
 import { describe, it, expect, jest } from '@jest/globals';
 import { ExecutionEventEmitter, type RunbookState } from '@rundown-org/core';
 import type { OutputEmitter } from '../../src/services/output-emitter.js';
+import { brandStoredOutputsForTest } from './brand-helpers.js';
 
 const { createBridgedEmitter } = await import('../../src/helpers/execution-emitter.js');
+
+type ExecutionEvent = Parameters<OutputEmitter['executionEvent']>[0];
 
 describe('createBridgedEmitter', () => {
   function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
@@ -13,7 +16,7 @@ describe('createBridgedEmitter', () => {
       step: '1',
       stepName: 'Step 1',
       retryCount: 0,
-      variables: {},
+      variables: brandStoredOutputsForTest(),
       steps: [],
       startedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -23,9 +26,9 @@ describe('createBridgedEmitter', () => {
 
   function makeOutput(): {
     output: Pick<OutputEmitter, 'executionEvent'>;
-    executionEventFn: jest.Mock;
+    executionEventFn: jest.Mock<(event: ExecutionEvent) => void>;
   } {
-    const executionEventFn = jest.fn();
+    const executionEventFn = jest.fn<(event: ExecutionEvent) => void>();
     return {
       output: { executionEvent: executionEventFn } as Pick<OutputEmitter, 'executionEvent'>,
       executionEventFn,

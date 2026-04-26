@@ -59,7 +59,7 @@ describe('stop command', () => {
 
       // Simulate corruption: delete state file but leave session stack intact
       const stateDir = workspace.statePath();
-      const stateId = state!.id as string;
+      const stateId = state!.id;
       await unlink(join(stateDir, `${stateId}.json`));
 
       // Stop should clean up the orphaned stack entry
@@ -78,7 +78,7 @@ describe('stop command', () => {
 
       // Write invalid JSON to state file
       const stateDir = workspace.statePath();
-      const stateId = state!.id as string;
+      const stateId = state!.id;
       await writeFile(join(stateDir, `${stateId}.json`), '{invalid');
 
       const result = await runCliInProcess('stop --text', workspace);
@@ -92,7 +92,7 @@ describe('stop command', () => {
     it('cleans up stale state with legacy snapshot instead of propagating error', async () => {
       await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
       const state = await getActiveState(workspace);
-      const stateId = state!.id as string;
+      const stateId = state!.id;
       const stateDir = workspace.statePath();
 
       // Write a legacy snapshot state that triggers a stale-state error in load()
@@ -111,7 +111,7 @@ describe('stop command', () => {
     it('cleans up stale state with wrong schemaVersion instead of propagating error', async () => {
       await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
       const state = await getActiveState(workspace);
-      const stateId = state!.id as string;
+      const stateId = state!.id;
       const stateDir = workspace.statePath();
 
       // Write a state with the wrong schemaVersion to trigger StaleRunbookStateError
@@ -253,7 +253,7 @@ Run the child task.
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);
-      const parentRunId = parentState!.id as string;
+      const parentRunId = parentState!.id;
 
       result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
       expect(result.exitCode).toBe(0);
@@ -284,7 +284,7 @@ Run the child task.
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);
-      const parentRunId = parentState!.id as string;
+      const parentRunId = parentState!.id;
 
       result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
       const token = extractToken(result.stdout);
@@ -310,7 +310,7 @@ Run the child task.
 
       let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
       const parentState = await getActiveState(workspace);
-      const parentRunId = parentState!.id as string;
+      const parentRunId = parentState!.id;
 
       result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
       const delegateOutput = JSON.parse(result.stdout);
@@ -389,7 +389,7 @@ Approve the deployment.
       // Start grandparent
       let result = await runCliInProcess('run --prompted grandparent.runbook.md --text', workspace);
       const grandparentState = await getActiveState(workspace);
-      const grandparentRunId = grandparentState!.id as string;
+      const grandparentRunId = grandparentState!.id;
 
       // Delegate grandparent 1.1 to parent
       result = await runCliInProcess('delegate parent.runbook.md --step 1.1', workspace);
@@ -397,7 +397,7 @@ Approve the deployment.
       result = await runCliInProcess(`claim ${token1} --text`, workspace);
 
       const parentState = await getActiveState(workspace);
-      const parentRunId = parentState!.id as string;
+      const parentRunId = parentState!.id;
 
       // Delegate parent 1.1 to child
       result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);

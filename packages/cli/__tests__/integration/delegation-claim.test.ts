@@ -245,7 +245,7 @@ rd echo --result pass
       expect(parentState).not.toBeNull();
       expect(parentState!.step).toBe('1');
       expect(parentState!.substep).toBe('1');
-      const parentRunId = parentState!.id as string;
+      const parentRunId = parentState!.id;
 
       // Delegate substep 1.1
       result = runCli('delegate auto-child.runbook.md --step 1.1', workspace);
@@ -285,7 +285,7 @@ rd echo --result fail
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);
-      const parentRunId = parentState!.id as string;
+      const parentRunId = parentState!.id;
 
       // Delegate substep 1.1
       result = runCli('delegate fail-child.runbook.md --step 1.1', workspace);

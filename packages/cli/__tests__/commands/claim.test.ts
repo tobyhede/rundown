@@ -308,7 +308,7 @@ rd echo --result pass
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);
-      const parentRunId = parentState!.id as string;
+      const parentRunId = parentState!.id;
 
       // Delegate and claim
       result = await runCliInProcess('delegate auto-child.runbook.md --step 1.1', workspace);
@@ -340,7 +340,7 @@ rd echo --result fail
 
       let result = await runCliInProcess('run parent.runbook.md --text', workspace);
       const parentState = await getActiveState(workspace);
-      const parentRunId = parentState!.id as string;
+      const parentRunId = parentState!.id;
 
       result = await runCliInProcess('delegate fail-child.runbook.md --step 1.1', workspace);
       const token = extractToken(result.stdout);

@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { createTestWorkspace } from '../helpers/test-utils.js';
+import { createTestWorkspace, type TestWorkspace } from '../helpers/test-utils.js';
 import { writeFile, symlink, unlink } from 'node:fs/promises';
 import { lstatSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { resolveVariables } from '../../src/services/variable-discovery.js';
 
 describe('Security: Symlink Traversal', () => {
-  let workspace: any;
+  let workspace: TestWorkspace;
   let secretPath: string;
 
   beforeEach(async () => {

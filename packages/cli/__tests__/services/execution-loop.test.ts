@@ -1,31 +1,59 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import { mockErrorHelpers } from '../helpers/mock-error-helpers';
+import type { ExecutionEventEmitter, RunbookStateManager } from '@rundown-org/core';
+import type { ResolvedStep } from '@rundown-org/parser';
+import { mockErrorHelpers } from '../helpers/mock-error-helpers.js';
+import { mockFn } from '../helpers/typed-mocks.js';
+
+// Permissive runbook-state shape used by lifecycle / actor mocks. The real
+// runtime types include branded fields whose constructors are tied to the
+// state machine; tests only need to flow `step`, `activeEntry`, and
+// `activeFrameKey` through, so we narrow to a small structural surface.
+type LifecycleStateLike = {
+  step?: string;
+  activeEntry?: number;
+  activeFrameKey?: string;
+  [key: string]: unknown;
+};
 
 // Mock dependencies
 const mockActorService = {
-  sendAndSync: jest.fn(),
-  getContextSnapshot: jest.fn(),
+  sendAndSync:
+    mockFn<(id: string, steps: unknown, event: unknown) => Promise<Record<string, unknown>>>(),
+  getContextSnapshot:
+    mockFn<(id: string, steps: unknown) => Promise<Record<string, unknown> | null>>(),
 };
 
 const mockSessionService = {
-  popRunbook: jest.fn(),
+  popRunbook: mockFn<(id: string) => Promise<void>>(),
 };
+
+const ensureActiveEntryFn =
+  mockFn<
+    (
+      id: string,
+      prev: unknown,
+      state: LifecycleStateLike | null | undefined,
+    ) => Promise<{ state: LifecycleStateLike; frameKey: string; entry: number }>
+  >();
+ensureActiveEntryFn.mockImplementation(async (_id, _prev, state) => ({
+  state: {
+    ...(state ?? {}),
+    activeEntry: state?.activeEntry ?? 1,
+    activeFrameKey: `${state?.step ?? '1'}|`,
+  },
+  frameKey: `${state?.step ?? '1'}|`,
+  entry: state?.activeEntry ?? 1,
+}));
+const listResolvedCompletionsFn = mockFn<(id: string) => Promise<unknown[]>>();
+listResolvedCompletionsFn.mockResolvedValue([]);
+const consumeResolvedCompletionFn = mockFn<(id: string) => Promise<unknown>>();
+consumeResolvedCompletionFn.mockResolvedValue(null);
 
 const mockLifecycleService = {
   setLastResult: jest.fn(),
-  ensureActiveEntry: jest
-    .fn()
-    .mockImplementation(async (_id: string, _prev: unknown, state: any) => ({
-      state: {
-        ...(state ?? {}),
-        activeEntry: state?.activeEntry ?? 1,
-        activeFrameKey: `${String(state?.step ?? '1')}|`,
-      },
-      frameKey: `${String(state?.step ?? '1')}|`,
-      entry: state?.activeEntry ?? 1,
-    })),
-  listResolvedCompletions: jest.fn().mockResolvedValue([]),
-  consumeResolvedCompletion: jest.fn().mockResolvedValue(null),
+  ensureActiveEntry: ensureActiveEntryFn,
+  listResolvedCompletions: listResolvedCompletionsFn,
+  consumeResolvedCompletion: consumeResolvedCompletionFn,
 };
 
 // Capture the real isJsonArrayStream before the mock is registered.
@@ -91,7 +119,11 @@ jest.unstable_mockModule('@rundown-org/core', () => {
       if (lastAction.type === 'STOP') return 'STOP';
       return 'CONTINUE';
     }),
-    countNumberedSteps: jest.fn().mockReturnValue(2),
+    countNumberedSteps: (() => {
+      const fn = mockFn<(steps: unknown) => number>();
+      fn.mockReturnValue(2);
+      return fn;
+    })(),
     extractDisplayCommand: jest.fn((cmd) => cmd),
     createFileProvider: jest.fn(),
     computeFileSnapshot: jest.fn(),
@@ -116,12 +148,14 @@ jest.unstable_mockModule('@rundown-org/core', () => {
       frameKey: `${String(state?.step ?? '1')}|`,
       step: state?.step ?? '1',
     })),
-    RunbookActorService: jest.fn().mockImplementation(() => mockActorService),
-    SessionService: jest.fn().mockImplementation(() => mockSessionService),
-    ExecutionLifecycleService: jest.fn().mockImplementation(() => mockLifecycleService),
-    ForIterationService: jest.fn().mockImplementation(() => ({
-      prepareIteration: jest.fn().mockResolvedValue({ status: 'no-resolution-needed' }),
-    })),
+    RunbookActorService: jest.fn(() => mockActorService),
+    SessionService: jest.fn(() => mockSessionService),
+    ExecutionLifecycleService: jest.fn(() => mockLifecycleService),
+    ForIterationService: jest.fn(() => {
+      const prepareIteration = mockFn<(...args: unknown[]) => Promise<{ status: string }>>();
+      prepareIteration.mockResolvedValue({ status: 'no-resolution-needed' });
+      return { prepareIteration };
+    }),
     isRunbookComplete: jest.fn((s: any) => s?.status === 'done' && s?.value === 'COMPLETE'),
     isRunbookStopped: jest.fn((s: any) => s?.status === 'done' && s?.value === 'STOPPED'),
     asTerminalSnapshot,
@@ -129,14 +163,46 @@ jest.unstable_mockModule('@rundown-org/core', () => {
       return asTerminalSnapshot(snapshot) ?? { status: 'active', value: undefined };
     }),
     logger: {
-      debug: jest.fn().mockResolvedValue(undefined),
-      info: jest.fn().mockResolvedValue(undefined),
-      warn: jest.fn().mockResolvedValue(undefined),
-      error: jest.fn().mockResolvedValue(undefined),
-      always: jest.fn().mockResolvedValue(undefined),
-      event: jest.fn().mockResolvedValue(undefined),
-      getLogFilePath: jest.fn().mockReturnValue('/tmp/rundown-test.log'),
-      getLogDir: jest.fn().mockReturnValue('/tmp'),
+      debug: (() => {
+        const fn = mockFn<(...args: unknown[]) => Promise<void>>();
+        fn.mockResolvedValue(undefined);
+        return fn;
+      })(),
+      info: (() => {
+        const fn = mockFn<(...args: unknown[]) => Promise<void>>();
+        fn.mockResolvedValue(undefined);
+        return fn;
+      })(),
+      warn: (() => {
+        const fn = mockFn<(...args: unknown[]) => Promise<void>>();
+        fn.mockResolvedValue(undefined);
+        return fn;
+      })(),
+      error: (() => {
+        const fn = mockFn<(...args: unknown[]) => Promise<void>>();
+        fn.mockResolvedValue(undefined);
+        return fn;
+      })(),
+      always: (() => {
+        const fn = mockFn<(...args: unknown[]) => Promise<void>>();
+        fn.mockResolvedValue(undefined);
+        return fn;
+      })(),
+      event: (() => {
+        const fn = mockFn<(...args: unknown[]) => Promise<void>>();
+        fn.mockResolvedValue(undefined);
+        return fn;
+      })(),
+      getLogFilePath: (() => {
+        const fn = mockFn<() => string>();
+        fn.mockReturnValue('/tmp/rundown-test.log');
+        return fn;
+      })(),
+      getLogDir: (() => {
+        const fn = mockFn<() => string>();
+        fn.mockReturnValue('/tmp');
+        return fn;
+      })(),
     },
     isJsonArray: jest.fn((v: unknown) => Array.isArray(v)),
     isJsonArrayStream: jest.fn(realIsJsonArrayStream),
@@ -189,40 +255,93 @@ jest.unstable_mockModule('@rundown-org/core', () => {
   };
 });
 
-jest.unstable_mockModule('../../src/helpers/delegate-inference', () => ({
-  inferAllDelegateSubsteps: jest.fn().mockReturnValue([]),
-}));
+jest.unstable_mockModule('../../src/helpers/delegate-inference', () => {
+  const inferAllDelegateSubsteps =
+    mockFn<(...args: unknown[]) => { runbookRef: string; stepId: string }[]>();
+  inferAllDelegateSubsteps.mockReturnValue([]);
+  return { inferAllDelegateSubsteps };
+});
 
-jest.unstable_mockModule('../../src/helpers/resolve-runbook', () => ({
-  resolveRunbookFile: jest.fn().mockResolvedValue(null),
-}));
+jest.unstable_mockModule('../../src/helpers/resolve-runbook', () => {
+  const resolveRunbookFile =
+    mockFn<(...args: unknown[]) => Promise<{ path: string; source: string } | null>>();
+  resolveRunbookFile.mockResolvedValue(null);
+  return { resolveRunbookFile };
+});
 
-jest.unstable_mockModule('../../src/services/internal-commands', () => ({
-  isInternalRdCommand: jest.fn().mockReturnValue(false),
-  executeRdCommandInternal: jest.fn(),
-}));
+jest.unstable_mockModule('../../src/services/internal-commands', () => {
+  const isInternalRdCommand = mockFn<(command: string) => boolean>();
+  isInternalRdCommand.mockReturnValue(false);
+  return {
+    isInternalRdCommand,
+    executeRdCommandInternal: jest.fn(),
+  };
+});
 
-jest.unstable_mockModule('../../src/services/policy-context', () => ({
-  getPolicyEvaluator: jest.fn(),
-  getPolicyPrompter: jest.fn(),
-  isPolicyEnforced: jest.fn().mockReturnValue(false),
-  getSandboxOptions: jest.fn().mockReturnValue({ sandbox: true, sandboxStrict: false }),
-}));
+jest.unstable_mockModule('../../src/services/policy-context', () => {
+  const isPolicyEnforced = mockFn<() => boolean>();
+  isPolicyEnforced.mockReturnValue(false);
+  const getSandboxOptions = mockFn<() => { sandbox: boolean; sandboxStrict: boolean }>();
+  getSandboxOptions.mockReturnValue({ sandbox: true, sandboxStrict: false });
+  return {
+    getPolicyEvaluator: jest.fn(),
+    getPolicyPrompter: jest.fn(),
+    isPolicyEnforced,
+    getSandboxOptions,
+  };
+});
 
 // Import after mocking
 const core = await import('@rundown-org/core');
-const policyContext = await import('../../src/services/policy-context');
-const delegateInference = await import('../../src/helpers/delegate-inference');
-const resolveRunbook = await import('../../src/helpers/resolve-runbook');
+const policyContext = await import('../../src/services/policy-context.js');
+const delegateInference = await import('../../src/helpers/delegate-inference.js');
+const resolveRunbook = await import('../../src/helpers/resolve-runbook.js');
 const { runExecutionLoop, executeCommandWithPolicyCheck } = await import(
-  '../../src/services/execution'
+  '../../src/services/execution.js'
 );
 
+// Production types — used solely for the `as unknown as` casts below.
+type RunbookStateManagerType = RunbookStateManager;
+type ExecutionEventEmitterType = ExecutionEventEmitter;
+type ResolvedStepType = ResolvedStep;
+
+// Permissive shapes used in tests to seed the loop. Real types live in core
+// (RunbookStateManager, ExecutionEventEmitter, ResolvedStep) but the tests
+// only exercise narrow surfaces — typing those surfaces structurally keeps
+// the test in line with what `runExecutionLoop` actually inspects.
+type LoadFn = jest.Mock<(id: string) => Promise<Record<string, unknown> | null>>;
+type UpdateFn = jest.Mock<(id: string, patch: Record<string, unknown>) => Promise<void>>;
+type EmitFn = jest.Mock<(event: string, payload?: unknown) => void>;
+type MockManagerLike = {
+  load: LoadFn;
+  update: UpdateFn;
+};
+type MockEmitterLike = {
+  emit: EmitFn;
+};
+// `unknown` is the strongest type we can give the steps array without
+// hand-rolling every ResolvedStep variant — the loop receives them via
+// `as ResolvedStep[]` casts at call sites.
+type LooseStep = Record<string, unknown>;
+
+/**
+ * Narrow `as unknown as` cast for the mock manager. The runbook state
+ * manager has dozens of fields the loop never inspects on this code path;
+ * the mock only stubs `load` and `update`. Casting at the call site keeps
+ * this explicit at every invocation rather than smuggling it into the
+ * mock's own type. Same idea applies to the emitter and steps casts.
+ */
+const asManager = (m: MockManagerLike): RunbookStateManagerType =>
+  m as unknown as RunbookStateManagerType;
+const asEmitter = (e: MockEmitterLike): ExecutionEventEmitterType =>
+  e as unknown as ExecutionEventEmitterType;
+const asSteps = (s: readonly LooseStep[]): ResolvedStepType[] => s as unknown as ResolvedStepType[];
+
 describe('runExecutionLoop', () => {
-  let mockManager: any;
-  let mockEmitter: any;
+  let mockManager: MockManagerLike;
+  let mockEmitter: MockEmitterLike;
   const runbookId = 'test-run-123';
-  const steps: any[] = [
+  const steps: LooseStep[] = [
     {
       kind: 'command',
       name: '1',
@@ -248,20 +367,30 @@ describe('runExecutionLoop', () => {
   beforeEach(() => {
     jest.clearAllMocks();
 
-    // Restore default ForIterationService mock (tests may override)
-    (core.ForIterationService as any).mockImplementation(() => ({
-      prepareIteration: jest.fn().mockResolvedValue({ status: 'no-resolution-needed' }),
-    }));
+    // Restore default ForIterationService mock (tests may override).
+    // ForIterationService is a class (jest.Mock constructor) so we cast
+    // through `unknown` to a mock-instance type — `jest.mocked` infers
+    // the class signature here and refuses simple `mockImplementation`
+    // calls because of the constructor overloads.
+    (core.ForIterationService as unknown as jest.Mock).mockImplementation(() => {
+      const prepareIteration = mockFn<(...args: unknown[]) => Promise<{ status: string }>>();
+      prepareIteration.mockResolvedValue({ status: 'no-resolution-needed' });
+      return { prepareIteration };
+    });
 
-    policyContext.isPolicyEnforced.mockReturnValue(false);
-    policyContext.getSandboxOptions.mockReturnValue({ sandbox: true, sandboxStrict: false });
-    (core.executeCommand as any).mockReset();
-    (core.executeCommandWithPolicy as any).mockReset();
+    jest.mocked(policyContext.isPolicyEnforced).mockReturnValue(false);
+    jest.mocked(policyContext.getSandboxOptions).mockReturnValue({
+      sandbox: true,
+      sandboxStrict: false,
+    });
+    jest.mocked(core.executeCommand).mockReset();
+    jest.mocked(core.executeCommandWithPolicy).mockReset();
 
     mockManager = {
-      load: jest.fn(),
-      update: jest.fn(),
+      load: mockFn<(id: string) => Promise<Record<string, unknown> | null>>(),
+      update: mockFn<(id: string, patch: Record<string, unknown>) => Promise<void>>(),
     };
+    mockManager.update.mockResolvedValue(undefined);
 
     mockLifecycleService.ensureActiveEntry.mockReset();
     mockLifecycleService.ensureActiveEntry.mockImplementation(
@@ -285,23 +414,34 @@ describe('runExecutionLoop', () => {
     mockActorService.getContextSnapshot.mockResolvedValue(null);
 
     mockEmitter = {
-      emit: jest.fn(),
+      emit: mockFn<(event: string, payload?: unknown) => void>(),
     };
 
-    // Default evaluate behavior
-    (core.evaluatePassCondition as any).mockReturnValue({ message: 'Success' });
-    (core.evaluateFailCondition as any).mockReturnValue({ message: 'Failed' });
+    // Default evaluate behavior. ConditionResult requires `action`; the test
+    // bodies only check the `message` field so we cast through `unknown` to
+    // a partial — this asserts the test contract while still exercising the
+    // real return type at the call site.
+    jest
+      .mocked(core.evaluatePassCondition)
+      .mockReturnValue({ message: 'Success' } as unknown as ReturnType<
+        typeof core.evaluatePassCondition
+      >);
+    jest
+      .mocked(core.evaluateFailCondition)
+      .mockReturnValue({ message: 'Failed' } as unknown as ReturnType<
+        typeof core.evaluateFailCondition
+      >);
   });
 
   it('stops if state cannot be loaded', async () => {
     mockManager.load.mockResolvedValue(null);
     const result = await runExecutionLoop(
-      mockManager,
+      asManager(mockManager),
       runbookId,
-      steps,
+      asSteps(steps),
       '/tmp',
       false,
-      mockEmitter,
+      asEmitter(mockEmitter),
     );
     expect(result).toBe('stopped');
   });
@@ -313,7 +453,14 @@ describe('runExecutionLoop', () => {
       status: 'running',
     });
 
-    const result = await runExecutionLoop(mockManager, runbookId, steps, '/tmp', true, mockEmitter);
+    const result = await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(steps),
+      '/tmp',
+      true,
+      asEmitter(mockEmitter),
+    );
 
     expect(result).toBe('waiting');
     expect(mockEmitter.emit).toHaveBeenCalledWith(
@@ -341,12 +488,12 @@ describe('runExecutionLoop', () => {
     });
 
     const result = await runExecutionLoop(
-      mockManager,
+      asManager(mockManager),
       runbookId,
-      stepsNoCmd as any,
+      asSteps(stepsNoCmd),
       '/tmp',
       false,
-      mockEmitter,
+      asEmitter(mockEmitter),
     );
 
     expect(result).toBe('waiting');
@@ -357,7 +504,7 @@ describe('runExecutionLoop', () => {
       .mockResolvedValueOnce({ id: runbookId, step: '1', status: 'running' })
       .mockResolvedValueOnce({ id: runbookId, step: '2', status: 'running' });
 
-    (core.executeCommand as any).mockResolvedValue({ success: true, exitCode: 0 });
+    jest.mocked(core.executeCommand).mockResolvedValue({ success: true, exitCode: 0 });
 
     mockActorService.sendAndSync.mockResolvedValue({
       state: { id: runbookId, step: '2', status: 'running' },
@@ -379,12 +526,12 @@ describe('runExecutionLoop', () => {
     ];
 
     const result = await runExecutionLoop(
-      mockManager,
+      asManager(mockManager),
       runbookId,
-      testSteps,
+      asSteps(testSteps),
       '/tmp',
       false,
-      mockEmitter,
+      asEmitter(mockEmitter),
     );
 
     expect(result).toBe('waiting');
@@ -393,21 +540,23 @@ describe('runExecutionLoop', () => {
 
   it('handles policy denial', async () => {
     mockManager.load.mockResolvedValue({ id: runbookId, step: '1', status: 'running' });
-    policyContext.isPolicyEnforced.mockReturnValue(true);
+    jest.mocked(policyContext.isPolicyEnforced).mockReturnValue(true);
 
-    (core.executeCommandWithPolicy as any).mockResolvedValue({
+    // ExecutionResult requires `exitCode`; this fixture omits it because
+    // the policy-denied path short-circuits before exit-code inspection.
+    jest.mocked(core.executeCommandWithPolicy).mockResolvedValue({
       success: false,
       policyDenied: true,
       denialReason: 'Not allowed',
-    });
+    } as unknown as Awaited<ReturnType<typeof core.executeCommandWithPolicy>>);
 
     const result = await runExecutionLoop(
-      mockManager,
+      asManager(mockManager),
       runbookId,
-      steps,
+      asSteps(steps),
       '/tmp',
       false,
-      mockEmitter,
+      asEmitter(mockEmitter),
     );
 
     expect(result).toBe('stopped');
@@ -422,24 +571,24 @@ describe('runExecutionLoop', () => {
   it('stops with policy-denied when prepareIteration throws ForResolutionError policy-violation', async () => {
     mockManager.load.mockResolvedValue({ id: runbookId, step: '1', status: 'running' });
 
-    (core.ForIterationService as any).mockImplementation(() => ({
-      prepareIteration: jest
-        .fn()
-        .mockRejectedValue(
-          new RealForResolutionError(
-            'JsonArrayStream path "/etc/passwd" escapes project root "/project"',
-            'policy-violation',
-          ),
+    (core.ForIterationService as unknown as jest.Mock).mockImplementation(() => {
+      const prepareIteration = mockFn<(...args: unknown[]) => Promise<{ status: string }>>();
+      prepareIteration.mockRejectedValue(
+        new RealForResolutionError(
+          'JsonArrayStream path "/etc/passwd" escapes project root "/project"',
+          'policy-violation',
         ),
-    }));
+      );
+      return { prepareIteration };
+    });
 
     const result = await runExecutionLoop(
-      mockManager,
+      asManager(mockManager),
       runbookId,
-      steps,
+      asSteps(steps),
       '/tmp',
       false,
-      mockEmitter,
+      asEmitter(mockEmitter),
     );
 
     expect(result).toBe('stopped');
@@ -467,7 +616,7 @@ describe('runExecutionLoop', () => {
 
   it('completes the runbook', async () => {
     mockManager.load.mockResolvedValue({ id: runbookId, step: '1', status: 'running' });
-    (core.executeCommand as any).mockResolvedValue({ success: true, exitCode: 0 });
+    jest.mocked(core.executeCommand).mockResolvedValue({ success: true, exitCode: 0 });
 
     mockActorService.sendAndSync.mockResolvedValue({
       state: {
@@ -485,12 +634,12 @@ describe('runExecutionLoop', () => {
     });
 
     const result = await runExecutionLoop(
-      mockManager,
+      asManager(mockManager),
       runbookId,
-      steps,
+      asSteps(steps),
       '/tmp',
       false,
-      mockEmitter,
+      asEmitter(mockEmitter),
     );
 
     expect(result).toBe('done');
@@ -509,7 +658,7 @@ describe('runExecutionLoop', () => {
     // emit ERROR_OCCURRED with the hook error's code + message before the
     // terminal RUNBOOK_STOPPED event.
     mockManager.load.mockResolvedValue({ id: runbookId, step: '1', status: 'running' });
-    (core.executeCommand as any).mockResolvedValue({ success: false, exitCode: 1 });
+    jest.mocked(core.executeCommand).mockResolvedValue({ success: false, exitCode: 1 });
 
     mockActorService.sendAndSync.mockResolvedValue({
       state: {
@@ -535,12 +684,12 @@ describe('runExecutionLoop', () => {
     });
 
     const result = await runExecutionLoop(
-      mockManager,
+      asManager(mockManager),
       runbookId,
-      steps,
+      asSteps(steps),
       '/tmp',
       false,
-      mockEmitter,
+      asEmitter(mockEmitter),
     );
 
     expect(result).toBe('stopped');
@@ -570,9 +719,10 @@ describe('runExecutionLoop', () => {
     // ERROR_OCCURRED + RUNBOOK_STOPPED; leaking it through STEP_TRANSITIONED
     // would widen the public action enum beyond the scenario schema
     // (CONTINUE/DEFER/GOTO/STOP/COMPLETE/RETRY/BREAK/NEXT).
-    const stepTransitionedCalls = emitCalls.filter((c: any[]) => c[0] === 'STEP_TRANSITIONED');
+    const stepTransitionedCalls = emitCalls.filter((c) => c[0] === 'STEP_TRANSITIONED');
     for (const call of stepTransitionedCalls) {
-      expect(call[1]?.action).not.toBe('RETRY_ERROR');
+      const payload = call[1] as { action?: string } | undefined;
+      expect(payload?.action).not.toBe('RETRY_ERROR');
     }
   });
 
@@ -603,12 +753,12 @@ describe('runExecutionLoop', () => {
     });
 
     const result = await runExecutionLoop(
-      mockManager,
+      asManager(mockManager),
       runbookId,
-      promptedForSteps as any,
+      asSteps(promptedForSteps),
       '/tmp',
       false, // prompted=false — step itself gates execution
-      mockEmitter,
+      asEmitter(mockEmitter),
     );
 
     expect(result).toBe('waiting');
@@ -641,12 +791,12 @@ describe('runExecutionLoop', () => {
     });
 
     await runExecutionLoop(
-      mockManager,
+      asManager(mockManager),
       runbookId,
-      promptedForSteps as any,
+      asSteps(promptedForSteps),
       '/tmp',
       false,
-      mockEmitter,
+      asEmitter(mockEmitter),
     );
 
     expect(mockEmitter.emit).toHaveBeenCalledWith(
@@ -685,12 +835,12 @@ describe('runExecutionLoop', () => {
     });
 
     await runExecutionLoop(
-      mockManager,
+      asManager(mockManager),
       runbookId,
-      promptedForSteps as any,
+      asSteps(promptedForSteps),
       '/tmp',
       false,
-      mockEmitter,
+      asEmitter(mockEmitter),
     );
 
     expect(mockEmitter.emit).toHaveBeenCalledWith(
@@ -728,12 +878,12 @@ describe('runExecutionLoop', () => {
     });
 
     await runExecutionLoop(
-      mockManager,
+      asManager(mockManager),
       runbookId,
-      promptedForSteps as any,
+      asSteps(promptedForSteps),
       '/tmp',
       false,
-      mockEmitter,
+      asEmitter(mockEmitter),
     );
 
     // {{item}} should stay literal since no forClause drives variable injection
@@ -773,12 +923,12 @@ describe('runExecutionLoop', () => {
     });
 
     const result = await runExecutionLoop(
-      mockManager,
+      asManager(mockManager),
       runbookId,
-      forSteps as any,
+      asSteps(forSteps),
       '/tmp',
       true,
-      mockEmitter,
+      asEmitter(mockEmitter),
     );
 
     expect(result).toBe('waiting');
@@ -833,7 +983,7 @@ describe('runExecutionLoop', () => {
           templateVars: { ContextId: 'ctx-unit' },
         });
 
-      (core.executeCommand as any).mockResolvedValue({ success: true, exitCode: 0 });
+      jest.mocked(core.executeCommand).mockResolvedValue({ success: true, exitCode: 0 });
 
       // Non-terminal snapshot (active/CONTINUE) → orchestrateTransition takes the reload path
       mockActorService.sendAndSync.mockResolvedValue({
@@ -851,12 +1001,12 @@ describe('runExecutionLoop', () => {
       });
 
       const result = await runExecutionLoop(
-        mockManager,
+        asManager(mockManager),
         runbookId,
-        stepsWithOutputs,
+        asSteps(stepsWithOutputs),
         '/tmp',
         false,
-        mockEmitter,
+        asEmitter(mockEmitter),
       );
 
       // OUTPUTS evaluation lives in the state machine; this is a regression
@@ -902,13 +1052,14 @@ describe('runExecutionLoop', () => {
     });
 
     // inferAllDelegateSubsteps returns two targets
-    delegateInference.inferAllDelegateSubsteps.mockReturnValue([
+    jest.mocked(delegateInference.inferAllDelegateSubsteps).mockReturnValue([
       { runbookRef: 'child-a.runbook.md', stepId: '1.1' },
       { runbookRef: 'child-b.runbook.md', stepId: '1.2' },
     ]);
 
     // resolveRunbookFile resolves to a path
-    resolveRunbook.resolveRunbookFile
+    jest
+      .mocked(resolveRunbook.resolveRunbookFile)
       .mockResolvedValueOnce({
         path: '/project/.rundown/runbooks/child-a.runbook.md',
         source: 'project',
@@ -918,15 +1069,20 @@ describe('runExecutionLoop', () => {
         source: 'project',
       });
 
-    // createDelegation returns a Result with status 'created' for each substep
-    (core.createDelegation as any)
+    // createDelegation returns a token for each substep. The fixtures use
+    // string `frameKey` and empty `delegation` placeholders for brevity —
+    // the real types brand `frameKey` and require populated `StepDelegation`
+    // fields, but the CLI under test only forwards these untouched.
+    type CreateDelegationReturn = ReturnType<typeof core.createDelegation>;
+    jest
+      .mocked(core.createDelegation)
       .mockReturnValueOnce({
         status: 'created',
         token: 'rdtk_aaaa1111',
         tokenHash: 'hash-a',
         delegation: {},
         updatedSubstepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: {} }],
-      })
+      } as unknown as CreateDelegationReturn)
       .mockReturnValueOnce({
         status: 'created',
         token: 'rdtk_bbbb2222',
@@ -936,28 +1092,36 @@ describe('runExecutionLoop', () => {
           { id: '1', frameKey: '1|', status: 'pending', delegation: {} },
           { id: '2', frameKey: '1|', status: 'pending', delegation: {} },
         ],
-      });
+      } as unknown as CreateDelegationReturn);
 
-    mockManager.update = jest.fn().mockResolvedValue(undefined);
-
-    await runExecutionLoop(mockManager, runbookId, delegateSteps, '/tmp', false, mockEmitter);
+    await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(delegateSteps),
+      '/tmp',
+      false,
+      asEmitter(mockEmitter),
+    );
 
     // STEP_ENTERED should have been emitted with delegateFrontier
-    const stepEnteredCall = mockEmitter.emit.mock.calls.find(
-      (call: any[]) => call[0] === 'STEP_ENTERED',
-    );
+    const stepEnteredCall = mockEmitter.emit.mock.calls.find((call) => call[0] === 'STEP_ENTERED');
     expect(stepEnteredCall).toBeDefined();
-    const payload = stepEnteredCall[1];
+    // STEP_ENTERED payload shape is the test contract — mockEmitter.emit's
+    // `payload?: unknown` parameter is intentionally permissive, so this
+    // narrows to the fields the test actually asserts on.
+    const payload = stepEnteredCall![1] as {
+      delegateFrontier?: { id: string; runbook: string; token: string }[];
+    };
 
     expect(payload.delegateFrontier).toBeDefined();
     expect(payload.delegateFrontier).toHaveLength(2);
 
-    expect(payload.delegateFrontier[0]).toMatchObject({
+    expect(payload.delegateFrontier![0]).toMatchObject({
       id: '1.1',
       runbook: 'child-a.runbook.md',
       token: 'rdtk_aaaa1111',
     });
-    expect(payload.delegateFrontier[1]).toMatchObject({
+    expect(payload.delegateFrontier![1]).toMatchObject({
       id: '1.2',
       runbook: 'child-b.runbook.md',
       token: 'rdtk_bbbb2222',
@@ -1016,16 +1180,19 @@ describe('runExecutionLoop', () => {
       pendingDelegateFrontier: preIssued,
     });
 
-    mockManager.update = jest.fn().mockResolvedValue(undefined);
-
-    await runExecutionLoop(mockManager, runbookId, delegateSteps, '/tmp', false, mockEmitter);
+    await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(delegateSteps),
+      '/tmp',
+      false,
+      asEmitter(mockEmitter),
+    );
 
     // STEP_ENTERED payload should carry the pre-issued frontier
-    const stepEnteredCall = mockEmitter.emit.mock.calls.find(
-      (call: any[]) => call[0] === 'STEP_ENTERED',
-    );
+    const stepEnteredCall = mockEmitter.emit.mock.calls.find((call) => call[0] === 'STEP_ENTERED');
     expect(stepEnteredCall).toBeDefined();
-    const payload = stepEnteredCall[1];
+    const payload = stepEnteredCall![1] as { delegateFrontier?: unknown };
 
     expect(payload.delegateFrontier).toEqual(preIssued);
 
@@ -1070,48 +1237,54 @@ describe('runExecutionLoop', () => {
     // Snapshot with no pendingDelegateFrontier
     mockActorService.getContextSnapshot.mockResolvedValue({});
 
-    delegateInference.inferAllDelegateSubsteps.mockReturnValue([
-      { runbookRef: 'child-a.runbook.md', stepId: '1.1' },
-    ]);
+    jest
+      .mocked(delegateInference.inferAllDelegateSubsteps)
+      .mockReturnValue([{ runbookRef: 'child-a.runbook.md', stepId: '1.1' }]);
 
-    resolveRunbook.resolveRunbookFile.mockResolvedValue({
+    jest.mocked(resolveRunbook.resolveRunbookFile).mockResolvedValue({
       path: '/project/.rundown/runbooks/child-a.runbook.md',
       source: 'project',
     });
 
-    (core.createDelegation as any).mockReturnValue({
+    jest.mocked(core.createDelegation).mockReturnValue({
       status: 'created',
       token: 'rdtk_autoissue',
       tokenHash: 'hash-auto',
       delegation: {},
       updatedSubstepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: {} }],
-    });
+    } as unknown as ReturnType<typeof core.createDelegation>);
 
-    mockManager.update = jest.fn().mockResolvedValue(undefined);
-
-    await runExecutionLoop(mockManager, runbookId, delegateSteps, '/tmp', false, mockEmitter);
+    await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(delegateSteps),
+      '/tmp',
+      false,
+      asEmitter(mockEmitter),
+    );
 
     // Auto-issuance was invoked
     expect(delegateInference.inferAllDelegateSubsteps).toHaveBeenCalled();
     expect(core.createDelegation).toHaveBeenCalled();
 
     // STEP_ENTERED received the auto-issued frontier
-    const stepEnteredCall = mockEmitter.emit.mock.calls.find(
-      (call: any[]) => call[0] === 'STEP_ENTERED',
-    );
+    const stepEnteredCall = mockEmitter.emit.mock.calls.find((call) => call[0] === 'STEP_ENTERED');
     expect(stepEnteredCall).toBeDefined();
-    const payload = stepEnteredCall[1];
+    const payload = stepEnteredCall![1] as {
+      delegateFrontier?: { id: string; runbook: string; token: string }[];
+    };
     expect(payload.delegateFrontier).toHaveLength(1);
-    expect(payload.delegateFrontier[0]).toMatchObject({
+    expect(payload.delegateFrontier![0]).toMatchObject({
       id: '1.1',
       runbook: 'child-a.runbook.md',
       token: 'rdtk_autoissue',
     });
 
     // PENDING_FRONTIER_CONSUMED must NOT be sent when no frontier was consumed
-    const consumedCall = mockActorService.sendAndSync.mock.calls.find(
-      (call: any[]) => call[1] === delegateSteps && call[2]?.type === 'PENDING_FRONTIER_CONSUMED',
-    );
+    const consumedCall = mockActorService.sendAndSync.mock.calls.find((call) => {
+      const event = call[2] as { type?: string } | undefined;
+      return call[1] === delegateSteps && event?.type === 'PENDING_FRONTIER_CONSUMED';
+    });
     expect(consumedCall).toBeUndefined();
   });
 });
@@ -1125,8 +1298,12 @@ describe('executeCommandWithPolicyCheck', () => {
   });
 
   it('calls executeCommand directly if policy is not enforced', async () => {
-    policyContext.isPolicyEnforced.mockReturnValue(false);
-    (core.executeCommand as any).mockResolvedValue({ success: true });
+    jest.mocked(policyContext.isPolicyEnforced).mockReturnValue(false);
+    jest
+      .mocked(core.executeCommand)
+      .mockResolvedValue({ success: true } as unknown as Awaited<
+        ReturnType<typeof core.executeCommand>
+      >);
 
     await executeCommandWithPolicyCheck(command, cwd);
 
@@ -1135,12 +1312,29 @@ describe('executeCommandWithPolicyCheck', () => {
   });
 
   it('calls executeCommandWithPolicy if policy is enforced', async () => {
-    policyContext.isPolicyEnforced.mockReturnValue(true);
+    jest.mocked(policyContext.isPolicyEnforced).mockReturnValue(true);
+    // PolicyEvaluator has many methods; the production CLI only invokes
+    // setRunbookPath here so we cast through unknown to keep the partial.
     const mockEvaluator = { setRunbookPath: jest.fn() };
-    policyContext.getPolicyEvaluator.mockReturnValue(mockEvaluator);
-    policyContext.getPolicyPrompter.mockReturnValue('prompter');
-    policyContext.getSandboxOptions.mockReturnValue({ sandbox: true, sandboxStrict: true });
-    (core.executeCommandWithPolicy as any).mockResolvedValue({ success: true });
+    jest
+      .mocked(policyContext.getPolicyEvaluator)
+      .mockReturnValue(
+        mockEvaluator as unknown as ReturnType<typeof policyContext.getPolicyEvaluator>,
+      );
+    // PolicyPrompter is a structural object; the test only stores a sentinel
+    // string and asserts identity through the call chain.
+    jest
+      .mocked(policyContext.getPolicyPrompter)
+      .mockReturnValue('prompter' as unknown as ReturnType<typeof policyContext.getPolicyPrompter>);
+    jest.mocked(policyContext.getSandboxOptions).mockReturnValue({
+      sandbox: true,
+      sandboxStrict: true,
+    });
+    jest
+      .mocked(core.executeCommandWithPolicy)
+      .mockResolvedValue({ success: true } as unknown as Awaited<
+        ReturnType<typeof core.executeCommandWithPolicy>
+      >);
 
     await executeCommandWithPolicyCheck(command, cwd, 'test.md');
 

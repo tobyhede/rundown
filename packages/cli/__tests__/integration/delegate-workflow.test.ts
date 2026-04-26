@@ -231,7 +231,7 @@ describe('DELEGATE full workflow — rd run → auto-delegation → rd claim →
 
     const parentState = await getActiveState(workspace);
     expect(parentState).not.toBeNull();
-    const parentRunId = parentState!.id as string;
+    const parentRunId = parentState!.id;
 
     const runEvents = parseConcatenatedJson(startResult.stdout);
     const frontier = findFrontierInEvents(runEvents) ?? [];
@@ -592,7 +592,7 @@ describe('DELEGATE re-entry and retry', () => {
 
     const parentState = await getActiveState(workspace);
     expect(parentState).not.toBeNull();
-    const parentRunId = parentState!.id as string;
+    const parentRunId = parentState!.id;
 
     const frontier = findFrontierInEvents(parseConcatenatedJson(start.stdout)) ?? [];
     const token1 = frontier.find((f) => f.id === '1.1')?.token;
@@ -1596,7 +1596,7 @@ describe('DELEGATE with custom substep transitions', () => {
     expect(start.exitCode).toBe(0);
 
     const parentState0 = await getActiveState(workspace);
-    const parentRunId = parentState0!.id as string;
+    const parentRunId = parentState0!.id;
 
     const frontier = findFrontierInEvents(parseConcatenatedJson(start.stdout)) ?? [];
     const token1 = frontier.find((f) => f.id === '1.1')?.token;
@@ -1665,7 +1665,7 @@ describe('DELEGATE with custom substep transitions', () => {
     expect(start.exitCode).toBe(0);
 
     const parentState = await getActiveState(workspace);
-    const parentRunId = parentState!.id as string;
+    const parentRunId = parentState!.id;
 
     const frontier = findFrontierInEvents(parseConcatenatedJson(start.stdout)) ?? [];
     const token1 = frontier.find((f) => f.id === '1.1')?.token;
