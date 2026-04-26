@@ -7,7 +7,6 @@ import type {
   DelegationScanService,
   DelegationLock,
   RunbookState,
-  OutputWriter,
 } from '@rundown-org/core';
 import type {
   ParsedForClause,
@@ -212,7 +211,6 @@ const fsPromises = await import('node:fs/promises');
 const { prepareRunbook, startRunbook, buildContextVars, buildTemplateVars } = await import(
   '../../src/helpers/runbook-pipeline.js'
 );
-const { OutputEmitter: RealOutputEmitter } = await import('../../src/services/output-emitter.js');
 const { setHelperRegistry, resetHelperRegistry } = await import(
   '../../src/services/helper-registry.js'
 );
@@ -949,15 +947,7 @@ describe('startRunbook', () => {
       frameKey: '1|' as ReturnType<typeof core.buildFrameKey>,
       entry: 1,
     });
-    const writer: OutputWriter = {
-      write: jest.fn(),
-      writeLine: jest.fn(),
-      writeLines: jest.fn(),
-      writeError: jest.fn(),
-      writeJson: jest.fn(),
-    };
-    const mockOutput = new RealOutputEmitter({ writer });
-    jest.spyOn(mockOutput, 'flush').mockImplementation(() => undefined);
+    const mockOutput = { flush: jest.fn() } as unknown as OutputEmitter;
 
     jest.mocked(runExecutionLoop).mockResolvedValue('done');
 

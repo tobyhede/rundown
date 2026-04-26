@@ -84,7 +84,7 @@ describe('Delegation propagation integration', () => {
       // Get parent run ID
       const parentState = await getActiveState(workspace);
       expect(parentState).not.toBeNull();
-      const parentRunId = parentState!.id as string;
+      const parentRunId = parentState!.id;
 
       // Delegate substep 1.1 to child runbook
       result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
@@ -109,7 +109,7 @@ describe('Delegation propagation integration', () => {
       }
 
       // After child completes, it should have lifecycle = 'completed'
-      const childId = childState!.id as string;
+      const childId = childState!.id;
       const finalChildState = await readRunbookState(workspace, childId);
       expect(finalChildState).not.toBeNull();
       expect(finalChildState!.lifecycle).toBe('completed');
@@ -135,7 +135,7 @@ describe('Delegation propagation integration', () => {
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);
-      const parentRunId = parentState!.id as string;
+      const parentRunId = parentState!.id;
 
       // Delegate substep 1.1
       result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
@@ -173,7 +173,7 @@ describe('Delegation propagation integration', () => {
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);
-      const parentRunId = parentState!.id as string;
+      const parentRunId = parentState!.id;
 
       // Delegate substep 1.1
       result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
@@ -240,7 +240,7 @@ describe('Delegation propagation integration', () => {
       expect(result.exitCode).toBe(0);
 
       const grandparentState = await getActiveState(workspace);
-      const grandparentRunId = grandparentState!.id as string;
+      const grandparentRunId = grandparentState!.id;
 
       // Delegate grandparent 1.1 to parent runbook
       result = await runCliInProcess('delegate parent.runbook.md --step 1.1', workspace);
@@ -253,7 +253,7 @@ describe('Delegation propagation integration', () => {
       const parentState = await getActiveState(workspace);
       expect(parentState).not.toBeNull();
       expect(parentState!.parentLinkage).toBeDefined();
-      const parentRunId = parentState!.id as string;
+      const parentRunId = parentState!.id;
 
       // Delegate parent substep 1.1 to child runbook
       result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
@@ -300,7 +300,7 @@ describe('Delegation propagation integration', () => {
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);
-      const parentRunId = parentState!.id as string;
+      const parentRunId = parentState!.id;
 
       // Delegate BOTH substeps
       result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
@@ -343,7 +343,7 @@ describe('Delegation propagation integration', () => {
       expect(finalParent).not.toBeNull();
       // Parent should have moved to step 2 or completed
       // (PASS ALL: CONTINUE means it should advance to step 2)
-      const step = finalParent!.step as string;
+      const step = finalParent!.step;
       const lifecycle = finalParent!.lifecycle;
       // Either on step 2 or completed
       expect(step === '2' || lifecycle === 'completed').toBe(true);
@@ -378,7 +378,7 @@ describe('Delegation propagation integration', () => {
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);
-      const parentRunId = parentState!.id as string;
+      const parentRunId = parentState!.id;
 
       // Delegate all 3 substeps
       result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
@@ -518,7 +518,7 @@ describe('Delegation propagation integration', () => {
 
       const childState = await getActiveState(workspace);
       expect(childState).not.toBeNull();
-      const childRunId = childState!.id as string;
+      const childRunId = childState!.id;
 
       // Pass should work normally without propagation
       result = await runCliInProcess('pass --text', workspace);
@@ -539,7 +539,7 @@ describe('Delegation propagation integration', () => {
 
       const childState = await getActiveState(workspace);
       expect(childState).not.toBeNull();
-      const childRunId = childState!.id as string;
+      const childRunId = childState!.id;
 
       // Fail triggers STOP transition → exit code 1
       result = await runCliInProcess('fail --text', workspace);
