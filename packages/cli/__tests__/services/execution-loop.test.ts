@@ -1354,4 +1354,20 @@ describe('executeCommandWithPolicyCheck', () => {
       }),
     );
   });
+
+  it('calls executeCommandWithEnv when policy is not enforced but rdInjected is non-empty', async () => {
+    policyContext.isPolicyEnforced.mockReturnValue(false);
+    const rdInjected = { RD_OUTPUTS_Foo: '/tmp/foo' };
+    (core.executeCommandWithEnv as any).mockResolvedValue({ success: true, exitCode: 0 });
+
+    await executeCommandWithPolicyCheck(command, cwd, undefined, rdInjected);
+
+    expect(core.executeCommandWithEnv).toHaveBeenCalledWith(
+      command,
+      cwd,
+      expect.objectContaining({ RD_OUTPUTS_Foo: '/tmp/foo' }),
+    );
+    expect(core.executeCommand).not.toHaveBeenCalled();
+    expect(core.executeCommandWithPolicy).not.toHaveBeenCalled();
+  });
 });
