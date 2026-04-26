@@ -56,6 +56,7 @@ cjs
 codecov
 codeql
 coderabbit
+coderabbitai
 commonjs
 coreutils
 ctx

@@ -16,6 +16,7 @@
     "runbooks/**/*.md",
     "scripts/**",
     "*.md",
+    ".github/**/*.md",
     "*.ts",
     "*.js",
     "LICENSE"
