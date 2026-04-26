@@ -277,16 +277,7 @@ printf "%s" "{{ item }}" > "$RD_OUTPUTS_Inner"
     expect(await readFile(iter2, 'utf-8')).toBe('beta');
   });
 
-  // NOTE: The three-segment path <stepId>/<iteration>/<VarName> (iteration-only, no substep)
-  // documented in outputChannelPath is not reachable via a valid runbook. FOR steps require
-  // at least one substep (validated by the parser), and commands always execute inside
-  // substeps (isSubstep=true). The iteration tier is therefore always combined with the
-  // substep tier, producing the four-segment path. The unit test for outputChannelPath in
-  // packages/core/__tests__/runbook/output-channels.test.ts covers the three-segment scope
-  // directly. This integration test covers the closest achievable scenario: a FOR loop at
-  // step level with naked OUTPUTS on the substep (single substep), verifying that each
-  // iteration produces an isolated capture file at <stepId>/<substepId>/<iteration>/<VarName>.
-  it('creates per-iteration capture files for a single-substep FOR loop (adapts three-segment intent)', async () => {
+  it('creates per-iteration capture files for a single-substep FOR loop', async () => {
     const RUNBOOK = `---
 name: step-for-single-substep
 required:

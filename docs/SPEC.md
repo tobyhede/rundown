@@ -365,14 +365,13 @@ OUTPUTS declares values to inject into the runbook's live variable space after s
   (just the name) at step or substep level activates a file-backed output
   channel. Before the step's command spawns, Rundown creates an empty file
   whose path includes the active scope tiers in this order: step id, optional
-  substep id, optional FOR iteration index, then `<VarName>`. The four
+  substep id, optional FOR iteration index, then `<VarName>`. The three
   resulting paths are:
 
   | Scope | Path |
   |---|---|
   | Step | `.rundown/runs/<runId>/outputs/<stepId>/<VarName>` |
   | Substep | `.rundown/runs/<runId>/outputs/<stepId>/<substepId>/<VarName>` |
-  | FOR iteration (in step) | `.rundown/runs/<runId>/outputs/<stepId>/<iteration>/<VarName>` |
   | FOR iteration (in substep) | `.rundown/runs/<runId>/outputs/<stepId>/<substepId>/<iteration>/<VarName>` |
 
   Rundown injects `RD_OUTPUTS_<VarName>=<absolute-path>` into the command's

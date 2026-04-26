@@ -30,16 +30,14 @@ export interface PreparedChannel {
 /**
  * Scope at which a captured output is collected.
  *
- * `substepId` and `iteration` are independent optional path tiers and compose
- * when both are present. The path layout matches the spec:
- *
+ * Path tiers:
  * - `{ stepId }` → `<stepId>/<VarName>`
  * - `{ stepId, substepId }` → `<stepId>/<substepId>/<VarName>`
- * - `{ stepId, iteration }` → `<stepId>/<iteration>/<VarName>`
  * - `{ stepId, substepId, iteration }` → `<stepId>/<substepId>/<iteration>/<VarName>`
  *
- * The four-segment form is used when a substep with naked OUTPUTS sits inside
- * a FOR loop — the iteration index preserves the per-iteration audit trail.
+ * `iteration` is only set in conjunction with `substepId` — FOR loops
+ * always execute their commands inside substeps, so an iteration tier
+ * without a substep tier is not a producible scope.
  */
 export interface OutputScope {
   readonly stepId: string;
@@ -115,7 +113,6 @@ export function outputsDirForRun(cwd: string, runId: string): string {
  * Composes optional `substepId` and `iteration` tiers from the scope:
  * - bare step: `<outputsDir>/<stepId>/<varName>`
  * - substep only: `<outputsDir>/<stepId>/<substepId>/<varName>`
- * - iteration only: `<outputsDir>/<stepId>/<iteration>/<varName>`
  * - substep + iteration: `<outputsDir>/<stepId>/<substepId>/<iteration>/<varName>`
  *
  * @param cwd - Project root

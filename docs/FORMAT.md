@@ -103,13 +103,12 @@ or carry a value expression. Naked entries at step / substep level activate
 a file-backed channel: Rundown creates an empty file whose path is composed
 from the active scope tiers (step id, optional substep id, optional FOR
 iteration index) followed by `<VarName>` and exports its absolute path as
-`RD_OUTPUTS_<VarName>` to the spawned command. The four possible paths are:
+`RD_OUTPUTS_<VarName>` to the spawned command. The three possible paths are:
 
 | Scope | Path |
 |---|---|
 | Step | `.rundown/runs/<runId>/outputs/<stepId>/<VarName>` |
 | Substep | `.rundown/runs/<runId>/outputs/<stepId>/<substepId>/<VarName>` |
-| FOR iteration (in step) | `.rundown/runs/<runId>/outputs/<stepId>/<iteration>/<VarName>` |
 | FOR iteration (in substep) | `.rundown/runs/<runId>/outputs/<stepId>/<substepId>/<iteration>/<VarName>` |
 
 See [docs/SPEC.md §7.1](./SPEC.md#71-outputs). Expression-form output values

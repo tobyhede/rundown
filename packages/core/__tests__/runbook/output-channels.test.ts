@@ -80,13 +80,6 @@ describe('outputChannelPath', () => {
     );
   });
 
-  it('assembles a FOR-iteration-in-step path (iteration, no substep)', () => {
-    const scope: OutputScope = { stepId: '3', iteration: 2 };
-    expect(outputChannelPath(cwd, runId, scope, 'Tag')).toBe(
-      path.join(cwd, '.rundown', 'runs', runId, 'outputs', '3', '2', 'Tag'),
-    );
-  });
-
   it('assembles a FOR-iteration-in-substep path with all four segments', () => {
     const scope: OutputScope = { stepId: '3', substepId: '1', iteration: 2 };
     expect(outputChannelPath(cwd, runId, scope, 'Tag')).toBe(
