@@ -1311,7 +1311,8 @@ describe('executeCommandWithPolicyCheck', () => {
 
     await executeCommandWithPolicyCheck(command, cwd);
 
-    expect(core.executeCommand).toHaveBeenCalledWith(command, cwd, undefined);
+    expect(core.executeCommand).toHaveBeenCalledWith(command, cwd);
+    expect(core.executeCommandWithEnv).not.toHaveBeenCalled();
     expect(core.executeCommandWithPolicy).not.toHaveBeenCalled();
   });
 
