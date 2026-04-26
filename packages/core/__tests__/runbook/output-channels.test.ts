@@ -74,14 +74,14 @@ describe('outputChannelPath', () => {
   });
 
   it('assembles a substep-scoped path (substep, no iteration)', () => {
-    const scope: OutputScope = { stepId: '1', substepId: '2' };
+    const scope: OutputScope = { stepId: '1', substep: { id: '2' } };
     expect(outputChannelPath(cwd, runId, scope, 'DeployUrl')).toBe(
       path.join(cwd, '.rundown', 'runs', runId, 'outputs', '1', '2', 'DeployUrl'),
     );
   });
 
   it('assembles a FOR-iteration-in-substep path with all four segments', () => {
-    const scope: OutputScope = { stepId: '3', substepId: '1', iteration: 2 };
+    const scope: OutputScope = { stepId: '3', substep: { id: '1', iteration: 2 } };
     expect(outputChannelPath(cwd, runId, scope, 'Tag')).toBe(
       path.join(cwd, '.rundown', 'runs', runId, 'outputs', '3', '1', '2', 'Tag'),
     );
@@ -105,17 +105,17 @@ describe('outputChannelPath', () => {
 
   it('rejects an unsafe substepId', () => {
     expect(() =>
-      outputChannelPath(cwd, runId, { stepId: '1', substepId: '../escape' }, 'Var'),
+      outputChannelPath(cwd, runId, { stepId: '1', substep: { id: '../escape' } }, 'Var'),
     ).toThrow(/Invalid substepId/);
   });
 
-  it('rejects iteration <= 0', () => {
-    expect(() => outputChannelPath(cwd, runId, { stepId: '1', iteration: 0 }, 'Var')).toThrow(
-      /Invalid iteration/,
-    );
-    expect(() => outputChannelPath(cwd, runId, { stepId: '1', iteration: -1 }, 'Var')).toThrow(
-      /Invalid iteration/,
-    );
+  it('rejects iteration <= 0 (must be via substep tier — unrepresentable without substep)', () => {
+    expect(() =>
+      outputChannelPath(cwd, runId, { stepId: '1', substep: { id: '2', iteration: 0 } }, 'Var'),
+    ).toThrow(/Invalid iteration/);
+    expect(() =>
+      outputChannelPath(cwd, runId, { stepId: '1', substep: { id: '2', iteration: -1 } }, 'Var'),
+    ).toThrow(/Invalid iteration/);
   });
 });
 
@@ -135,10 +135,10 @@ describe('buildOutputChannelEnv', () => {
     expect(path.isAbsolute(env.RD_OUTPUTS_Version)).toBe(true);
   });
 
-  it('routes scope substepId + iteration into a four-segment env value', () => {
+  it('routes scope substep + iteration into a four-segment env value', () => {
     const cwd = '/repo';
     const runId = 'wf-2026-04-25-abc123';
-    const scope: OutputScope = { stepId: '1', substepId: '2', iteration: 3 };
+    const scope: OutputScope = { stepId: '1', substep: { id: '2', iteration: 3 } };
     const env = buildOutputChannelEnv(cwd, runId, scope, [{ name: 'DeployUrl' }]);
     expect(env.RD_OUTPUTS_DeployUrl).toBe(
       path.join(cwd, '.rundown', 'runs', runId, 'outputs', '1', '2', '3', 'DeployUrl'),

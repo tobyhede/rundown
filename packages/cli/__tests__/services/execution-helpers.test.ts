@@ -98,7 +98,7 @@ describe('deriveOutputScope', () => {
       const state = makeState('1');
       const scope = deriveOutputScope(state, false, '2');
       expect(scope).toEqual({ stepId: '1' });
-      expect(scope).not.toHaveProperty('substepId');
+      expect(scope).not.toHaveProperty('substep');
     });
 
     it('uses state.step as stepId for named steps', () => {
@@ -109,22 +109,22 @@ describe('deriveOutputScope', () => {
   });
 
   describe('substep tier', () => {
-    it('includes substepId when isSubstep=true and substepId is provided', () => {
+    it('includes substep when isSubstep=true and substepId is provided', () => {
       const state = makeState('1');
       const scope = deriveOutputScope(state, true, '2');
-      expect(scope).toEqual({ stepId: '1', substepId: '2' });
+      expect(scope).toEqual({ stepId: '1', substep: { id: '2' } });
     });
 
-    it('omits substepId when isSubstep=true but substepId is undefined', () => {
+    it('omits substep when isSubstep=true but substepId is undefined', () => {
       const state = makeState('1');
       const scope = deriveOutputScope(state, true, undefined);
       expect(scope).toEqual({ stepId: '1' });
-      expect(scope).not.toHaveProperty('substepId');
+      expect(scope).not.toHaveProperty('substep');
     });
   });
 
   describe('iteration tier', () => {
-    it('includes iteration from top FOR frame when non-implicit and stepId matches', () => {
+    it('includes iteration nested inside substep when non-implicit FOR frame matches', () => {
       const forStack: readonly ForContext[] = [
         {
           stepId: '1',
@@ -137,7 +137,7 @@ describe('deriveOutputScope', () => {
       ];
       const state = makeState('1', forStack);
       const scope = deriveOutputScope(state, true, '2');
-      expect(scope).toEqual({ stepId: '1', substepId: '2', iteration: 3 });
+      expect(scope).toEqual({ stepId: '1', substep: { id: '2', iteration: 3 } });
     });
 
     it('omits iteration when the top FOR frame is implicit', () => {
@@ -153,8 +153,8 @@ describe('deriveOutputScope', () => {
       ];
       const state = makeState('1', forStack);
       const scope = deriveOutputScope(state, true, '2');
-      expect(scope).toEqual({ stepId: '1', substepId: '2' });
-      expect(scope).not.toHaveProperty('iteration');
+      expect(scope).toEqual({ stepId: '1', substep: { id: '2' } });
+      expect(scope.substep).not.toHaveProperty('iteration');
     });
 
     it('omits iteration when the top FOR frame is for a different step', () => {
@@ -170,14 +170,14 @@ describe('deriveOutputScope', () => {
       ];
       const state = makeState('1', forStack);
       const scope = deriveOutputScope(state, true, '2');
-      expect(scope).toEqual({ stepId: '1', substepId: '2' });
-      expect(scope).not.toHaveProperty('iteration');
+      expect(scope).toEqual({ stepId: '1', substep: { id: '2' } });
+      expect(scope.substep).not.toHaveProperty('iteration');
     });
 
-    it('omits iteration for step-level scope (isSubstep=false) even with a matching FOR frame', () => {
-      // FOR loops always execute inside substeps, so step-level scope never
-      // exposes an iteration tier in practice; but the helper's contract is
-      // determined by isSubstep — when false, substepId is also omitted.
+    it('omits substep and iteration when isSubstep=false even with a matching FOR frame', () => {
+      // FOR loops always execute inside substeps. With isSubstep=false, the
+      // helper returns only { stepId } — iteration is gated on the isSubstep
+      // precondition, making { stepId, iteration } unrepresentable at runtime.
       const forStack: readonly ForContext[] = [
         {
           stepId: '1',
@@ -190,13 +190,8 @@ describe('deriveOutputScope', () => {
       ];
       const state = makeState('1', forStack);
       const scope = deriveOutputScope(state, false);
-      // stepId is always present; iteration is included even for step-level scope
-      // when the FOR frame matches — the helper only gates on implicit and stepId match.
-      expect(scope.stepId).toBe('1');
-      expect(scope).not.toHaveProperty('substepId');
-      // iteration IS included (the helper does not gate on isSubstep for the
-      // iteration tier — it only gates the substep tier on isSubstep).
-      expect(scope.iteration).toBe(2);
+      expect(scope).toEqual({ stepId: '1' });
+      expect(scope).not.toHaveProperty('substep');
     });
 
     it('uses the last (top) frame when multiple frames are stacked', () => {
@@ -220,7 +215,7 @@ describe('deriveOutputScope', () => {
       ];
       const state = makeState('1', forStack);
       const scope = deriveOutputScope(state, true, '2');
-      expect(scope.iteration).toBe(5);
+      expect(scope.substep?.iteration).toBe(5);
     });
   });
 });

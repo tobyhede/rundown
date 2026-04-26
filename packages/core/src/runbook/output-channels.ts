@@ -30,19 +30,22 @@ export interface PreparedChannel {
 /**
  * Scope at which a captured output is collected.
  *
- * Path tiers:
+ * Three valid tier compositions:
  * - `{ stepId }` → `<stepId>/<VarName>`
- * - `{ stepId, substepId }` → `<stepId>/<substepId>/<VarName>`
- * - `{ stepId, substepId, iteration }` → `<stepId>/<substepId>/<iteration>/<VarName>`
+ * - `{ stepId, substep: { id } }` → `<stepId>/<substepId>/<VarName>`
+ * - `{ stepId, substep: { id, iteration } }` → `<stepId>/<substepId>/<iteration>/<VarName>`
  *
- * `iteration` is only set in conjunction with `substepId` — FOR loops
- * always execute their commands inside substeps, so an iteration tier
- * without a substep tier is not a producible scope.
+ * By construction, iteration cannot appear without a substep tier — the
+ * impossible `<stepId>/<iteration>/<VarName>` shape is unrepresentable.
+ * FOR loops always execute their commands inside substeps, so nesting
+ * `iteration` inside `substep` is the correct structural encoding.
  */
 export interface OutputScope {
   readonly stepId: string;
-  readonly substepId?: string;
-  readonly iteration?: number;
+  readonly substep?: {
+    readonly id: string;
+    readonly iteration?: number;
+  };
 }
 
 /**
@@ -110,14 +113,14 @@ export function outputsDirForRun(cwd: string, runId: string): string {
 /**
  * Assemble the absolute path of a single output channel file.
  *
- * Composes optional `substepId` and `iteration` tiers from the scope:
+ * Composes optional `substep` and `iteration` tiers from the scope:
  * - bare step: `<outputsDir>/<stepId>/<varName>`
  * - substep only: `<outputsDir>/<stepId>/<substepId>/<varName>`
  * - substep + iteration: `<outputsDir>/<stepId>/<substepId>/<iteration>/<varName>`
  *
  * @param cwd - Project root
  * @param runId - Validated run id
- * @param scope - Step + optional substep + optional iteration tiers
+ * @param scope - Step + optional substep (with optional iteration) tiers
  * @param varName - Output variable name (`NAMED_IDENTIFIER_PATTERN`, non-reserved)
  * @returns Absolute file path
  * @throws {Error} when any segment fails its safety / identifier validation
@@ -132,15 +135,15 @@ export function outputChannelPath(
   assertSafeId(scope.stepId, 'stepId');
   const base = outputsDirForRun(cwd, runId);
   const segments: string[] = [base, scope.stepId];
-  if (scope.substepId !== undefined) {
-    assertSafeId(scope.substepId, 'substepId');
-    segments.push(scope.substepId);
-  }
-  if (scope.iteration !== undefined) {
-    if (!Number.isInteger(scope.iteration) || scope.iteration <= 0) {
-      throw new Error(`Invalid iteration index: ${String(scope.iteration)}`);
+  if (scope.substep !== undefined) {
+    assertSafeId(scope.substep.id, 'substepId');
+    segments.push(scope.substep.id);
+    if (scope.substep.iteration !== undefined) {
+      if (!Number.isInteger(scope.substep.iteration) || scope.substep.iteration <= 0) {
+        throw new Error(`Invalid iteration index: ${String(scope.substep.iteration)}`);
+      }
+      segments.push(String(scope.substep.iteration));
     }
-    segments.push(String(scope.iteration));
   }
   segments.push(varName);
   return path.join(...segments);
@@ -154,7 +157,7 @@ export function outputChannelPath(
  *
  * @param cwd - Project root
  * @param runId - Validated run id
- * @param scope - Step + optional substep + optional iteration tiers
+ * @param scope - Step + optional substep (with optional iteration) tiers
  * @param naked - Naked OUTPUTS entries from `partitionOutputDeclarations`
  * @returns Record suitable for merging into the rundown-injected env
  * @throws {Error} when a naked entry fails safety validation (propagated from

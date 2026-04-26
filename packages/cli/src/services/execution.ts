@@ -205,15 +205,18 @@ export function findStepOrThrow(steps: ResolvedStep[], stepName: string): Resolv
 /**
  * Derive the output-channel scope for the unit currently being executed.
  *
- * `substepId` and `iteration` are independent optional path tiers and compose
- * when both apply — a naked OUTPUTS on a substep inside a FOR loop produces
- * `{ stepId, substepId, iteration }`, which `outputChannelPath` renders as
- * `<stepId>/<substepId>/<iteration>/<VarName>`.
+ * Produces one of three tier compositions:
+ * - `{ stepId }` — step-level (no substep, no iteration)
+ * - `{ stepId, substep: { id } }` — substep-level, no FOR loop
+ * - `{ stepId, substep: { id, iteration } }` — substep inside a FOR loop
  *
  * Tier population:
- * - substep tier: set from `substepId` whenever `isSubstep` is true
- * - iteration tier: set from `top.iteration` whenever the top FOR frame is
- *   non-implicit and its `stepId` matches `currentState.step`
+ * - substep tier: set from `substepId` when both `isSubstep` is true and
+ *   `substepId` is defined — the `isSubstep` guard is a belt-and-suspenders
+ *   check; the nested type makes iteration-without-substep unrepresentable
+ * - iteration tier: set from `top.iteration` when `isSubstep` is true AND
+ *   the top FOR frame is non-implicit and its `stepId` matches
+ *   `currentState.step`
  *
  * Implicit FOR frames contribute no iteration tier — implicit frames have no
  * user-visible counter to segment the path with.
@@ -229,15 +232,14 @@ export function deriveOutputScope(
   substepId?: string,
 ): OutputScope {
   const stepId = currentState.step;
-  const scope: { stepId: string; substepId?: string; iteration?: number } = { stepId };
-  if (isSubstep && substepId !== undefined) {
-    scope.substepId = substepId;
+  if (!isSubstep || substepId === undefined) {
+    return { stepId };
   }
   const top = currentState.forStack?.at(-1);
   if (top && !top.implicit && top.stepId === stepId) {
-    scope.iteration = top.iteration;
+    return { stepId, substep: { id: substepId, iteration: top.iteration } };
   }
-  return scope;
+  return { stepId, substep: { id: substepId } };
 }
 
 /**
