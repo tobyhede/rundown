@@ -223,7 +223,7 @@ export function findStepOrThrow(steps: ResolvedStep[], stepName: string): Resolv
  * @param substepId - The substep id when isSubstep is true
  * @returns OutputScope suitable for `outputChannelPath` / `prepareOutputChannels`
  */
-function deriveOutputScope(
+export function deriveOutputScope(
   currentState: RunbookState,
   isSubstep: boolean,
   substepId?: string,
@@ -250,7 +250,7 @@ function deriveOutputScope(
  * @param substepId - The substep id when isSubstep is true
  * @returns Output declarations or empty array
  */
-function extractUnitOutputs(
+export function extractUnitOutputs(
   currentStep: ResolvedStep,
   isSubstep: boolean,
   substepId?: string,
