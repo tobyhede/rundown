@@ -12,9 +12,17 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   ExecutionLifecycleService: jest.fn(),
   extractLastAction: mockFn<(snapshot: unknown) => unknown>().mockReturnValue(undefined),
   formatTransitionAction: mockFn<(action: ActionType) => string>().mockReturnValue('CONTINUE'),
-  parseActionType: mockFn<(action: unknown) => ActionType>().mockReturnValue(
-    'CONTINUE' as ActionType,
-  ),
+  parseActionType: mockFn<(action: unknown) => ActionType>().mockImplementation((action) => {
+    if (
+      typeof action === 'object' &&
+      action !== null &&
+      'type' in action &&
+      typeof (action as { type?: unknown }).type === 'string'
+    ) {
+      return (action as { type: ActionType }).type;
+    }
+    return 'CONTINUE' as ActionType;
+  }),
   parseStepIdFromString: mockFn<(input: string) => StepId | null>(),
   SENTINEL_ENTRY: 0,
   buildCompletionKey: mockFn<

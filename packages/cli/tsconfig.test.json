@@ -6,6 +6,7 @@
     "isolatedModules": true,
     "types": ["node", "jest"]
   },
-  "include": ["src/**/*", "__tests__/**/*"],
+  "include": ["src/**/*", "__tests__/**/*", "jest.setup.ts"],
+  // Base tsconfig excludes **/*.test.ts; redeclare exclude without that pattern so CLI tests stay type-checked.
   "exclude": ["node_modules", "dist"]
 }

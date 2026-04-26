@@ -1,6 +1,7 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import type { RunbookState } from '@rundown-org/core';
 import type { RunPipelineContext } from '../../src/helpers/runbook-pipeline.js';
+import type * as VariableDiscoveryModule from '../../src/services/variable-discovery.js';
 import { brandFrameKeyForTest } from './brand-helpers.js';
 import { mockErrorHelpers } from './mock-error-helpers.js';
 import { mockFn } from './typed-mocks.js';
@@ -133,9 +134,11 @@ jest.unstable_mockModule('../../src/services/variable-discovery', () => ({
       this.reason = reason;
     }
   },
-  resolveVariables: jest
-    .fn<any>()
-    .mockResolvedValue({ vars: {}, sources: {}, warnings: [], providedKeys: new Set() }),
+  resolveVariables: mockFn<typeof VariableDiscoveryModule.resolveVariables>().mockResolvedValue({
+    vars: {},
+    warnings: [],
+    providedKeys: new Set(),
+  }),
   RUNTIME_RESERVED_VARIABLES: new Set(['Date', 'DateTime', 'Year', 'Month', 'Day', 'WorkPath']),
 }));
 

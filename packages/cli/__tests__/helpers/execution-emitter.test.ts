@@ -5,6 +5,8 @@ import { brandStoredOutputsForTest } from './brand-helpers.js';
 
 const { createBridgedEmitter } = await import('../../src/helpers/execution-emitter.js');
 
+type ExecutionEvent = Parameters<OutputEmitter['executionEvent']>[0];
+
 describe('createBridgedEmitter', () => {
   function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
     return {
@@ -24,9 +26,9 @@ describe('createBridgedEmitter', () => {
 
   function makeOutput(): {
     output: Pick<OutputEmitter, 'executionEvent'>;
-    executionEventFn: jest.Mock;
+    executionEventFn: jest.Mock<(event: ExecutionEvent) => void>;
   } {
-    const executionEventFn = jest.fn();
+    const executionEventFn = jest.fn<(event: ExecutionEvent) => void>();
     return {
       output: { executionEvent: executionEventFn } as Pick<OutputEmitter, 'executionEvent'>,
       executionEventFn,
@@ -50,13 +52,9 @@ describe('createBridgedEmitter', () => {
     });
 
     expect(executionEventFn).toHaveBeenCalledTimes(1);
-    const event = executionEventFn.mock.calls[0]?.[0] as {
-      type: string;
-      runbookId: string;
-      runbook: { name?: string; path?: string };
-    };
-    expect(event.type).toBe('RUNBOOK_STARTED');
-    expect(event.runbookId).toBe('wf-test');
+    const event = executionEventFn.mock.calls[0]?.[0];
+    expect(event?.type).toBe('RUNBOOK_STARTED');
+    expect(event?.runbookId).toBe('wf-test');
   });
 
   it('uses runbook name and path from state', () => {
@@ -70,11 +68,7 @@ describe('createBridgedEmitter', () => {
       statePath: '.rundown/runs/wf-test.json',
     });
 
-    const event = executionEventFn.mock.calls[0]?.[0] as {
-      type: string;
-      runbookId: string;
-      runbook: { name?: string; path?: string };
-    };
-    expect(event.runbook).toEqual({ name: 'my-book', path: 'path/to/my-book.md' });
+    const event = executionEventFn.mock.calls[0]?.[0];
+    expect(event?.runbook).toEqual({ name: 'my-book', path: 'path/to/my-book.md' });
   });
 });

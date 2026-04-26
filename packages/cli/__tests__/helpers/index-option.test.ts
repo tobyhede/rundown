@@ -50,6 +50,7 @@ describe('resolveIndexOption', () => {
   });
 
   it('throws CONFLICTING_INDEX when --index and parsedAt differ', () => {
+    expect.assertions(2);
     try {
       resolveIndexOption('2', 5);
       throw new Error('should have thrown');
@@ -60,6 +61,7 @@ describe('resolveIndexOption', () => {
   });
 
   it('throws CONFLICTING_INDEX when --index conflicts with template AT', () => {
+    expect.assertions(2);
     try {
       resolveIndexOption('3', '{{ Index }}');
       throw new Error('should have thrown');
@@ -70,6 +72,7 @@ describe('resolveIndexOption', () => {
   });
 
   it('error has INVALID_SYNTAX code for bad input', () => {
+    expect.assertions(2);
     try {
       resolveIndexOption('bad-input', undefined);
       throw new Error('should have thrown');

@@ -50,6 +50,9 @@ interface TestRow {
   status: string;
 }
 
+const asListOutput = <T, U = T>(event: ListOutput<T, U>): ListOutput =>
+  event as unknown as ListOutput;
+
 /** Helper to build a StepPosition */
 function pos(current = '1', total = 3, substep?: string): StepPosition {
   return { current, total, substep };
@@ -502,7 +505,7 @@ describe('TextRenderer', () => {
       const writer = createMockWriter();
       const renderer = new TextRenderer({ writer });
 
-      const event: ListOutput<TestRow> = {
+      const event = {
         type: 'list',
         items: [
           { name: 'foo', status: 'active' },
@@ -512,9 +515,9 @@ describe('TextRenderer', () => {
           { header: 'Name', key: 'name' },
           { header: 'Status', key: 'status' },
         ],
-      };
+      } satisfies ListOutput<TestRow>;
 
-      renderer.render(event as ListOutput);
+      renderer.render(asListOutput(event));
 
       const output = writer.lines.join('\n');
       expect(output).toContain('NAME');
@@ -527,14 +530,14 @@ describe('TextRenderer', () => {
       const writer = createMockWriter();
       const renderer = new TextRenderer({ writer });
 
-      const event: ListOutput<TestRow> = {
+      const event = {
         type: 'list',
         items: [],
         columns: [{ header: 'Name', key: 'name' }],
         emptyMessage: 'No items found.',
-      };
+      } satisfies ListOutput<TestRow>;
 
-      renderer.render(event as ListOutput);
+      renderer.render(asListOutput(event));
 
       expect(writer.lines).toContain('No items found.');
     });
@@ -543,13 +546,13 @@ describe('TextRenderer', () => {
       const writer = createMockWriter();
       const renderer = new TextRenderer({ writer });
 
-      const event: ListOutput<TestRow> = {
+      const event = {
         type: 'list',
         items: [],
         columns: [{ header: 'Name', key: 'name' }],
-      };
+      } satisfies ListOutput<TestRow>;
 
-      renderer.render(event as ListOutput);
+      renderer.render(asListOutput(event));
 
       expect(writer.lines).toHaveLength(0);
     });

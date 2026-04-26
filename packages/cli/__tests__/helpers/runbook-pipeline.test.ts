@@ -7,6 +7,13 @@ import type {
   DelegationScanService,
   DelegationLock,
 } from '@rundown-org/core';
+import type {
+  ParsedForClause,
+  ParsedSubstep,
+  ParseResult,
+  Step,
+  Transitions,
+} from '@rundown-org/parser';
 import type { OutputEmitter } from '../../src/services/output-emitter.js';
 import type { PreparedRunbook, RunPipelineContext } from '../../src/helpers/runbook-pipeline.js';
 import { mockErrorHelpers } from './mock-error-helpers.js';
@@ -224,36 +231,68 @@ function makeState(id: string, overrides: Record<string, unknown> = {}): Record<
   };
 }
 
-function makeStep(overrides: Record<string, unknown> = {}): unknown {
-  const obj: Record<string, unknown> = {
-    name: '1',
-    description: 'Test Step',
-    transitions: {
-      pass: { action: 'continue' as const, retry: 0 },
-      fail: { action: 'continue' as const, retry: 0 },
-    },
+const DEFAULT_TRANSITIONS: Transitions = {
+  pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+  fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
+};
+
+type TestSubstepInput = Pick<ParsedSubstep, 'id'> & Partial<ParsedSubstep>;
+type TestStepInput = {
+  name?: string;
+  description?: string;
+  transitions?: Transitions;
+  forClause?: ParsedForClause;
+  substeps?: readonly TestSubstepInput[];
+};
+
+function makeSubstep(overrides: TestSubstepInput): ParsedSubstep {
+  return {
+    description: 'Test Substep',
+    transitions: DEFAULT_TRANSITIONS,
     ...overrides,
   };
-  const kind =
-    obj.forClause !== undefined
-      ? 'for'
-      : Array.isArray(obj.substeps) && (obj.substeps as unknown[]).length > 0
-        ? 'substeps'
-        : obj.command !== undefined
-          ? 'command'
-          : 'base';
-  return { ...obj, kind };
+}
+
+function makeStep(overrides: TestStepInput = {}): Step {
+  const {
+    name = '1',
+    description = 'Test Step',
+    transitions = DEFAULT_TRANSITIONS,
+    forClause,
+    substeps,
+  } = overrides;
+  const base = { name, description, transitions };
+
+  if (forClause) {
+    return {
+      ...base,
+      kind: 'for',
+      forClause,
+      substeps: (substeps ?? []).map(makeSubstep),
+    };
+  }
+
+  if (substeps && substeps.length > 0) {
+    return {
+      ...base,
+      kind: 'substeps',
+      substeps: substeps.map(makeSubstep),
+    };
+  }
+
+  return { ...base, kind: 'base' };
 }
 
 function mockParseResult(
-  overrides: Record<string, unknown> = {},
+  overrides: Partial<ParseResult> = {},
 ): ReturnType<typeof parser.parseRunbookDocument> {
-  return {
+  const result: ParseResult = {
     runbook: { steps: [makeStep()] },
     frontmatter: null,
     diagnostics: [],
     ...overrides,
-  } as unknown as ReturnType<typeof parser.parseRunbookDocument>;
+  };
+  return result;
 }
 
 function makeLifecycle(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -719,7 +758,12 @@ describe('prepareRunbook', () => {
     ).mockReturnValue(
       mockParseResult({
         runbook: {
-          steps: [makeStep({ forClause: { source: 'missing' }, substeps: [{ id: '1' }] })],
+          steps: [
+            makeStep({
+              forClause: { variable: 'item', start: 1, source: 'missing' },
+              substeps: [{ id: '1' }],
+            }),
+          ],
         },
       }),
     );
@@ -742,7 +786,7 @@ describe('prepareRunbook', () => {
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue(
       mockParseResult({
-        diagnostics: [{ severity: 'error', message: 'bad FOR clause', line: 1, column: 1 }],
+        diagnostics: [{ severity: 'error', message: 'bad FOR clause', line: 1 }],
       }),
     );
 

@@ -4,7 +4,7 @@ import { brandInitialTemplateVarsForTest, brandStoredOutputsForTest } from './br
 import { mockFn } from './typed-mocks.js';
 
 import type * as CoreModule from '@rundown-org/core';
-import type { ResolvedStep } from '@rundown-org/parser';
+import type { BaseStep, ResolvedStep } from '@rundown-org/parser';
 
 // Mock @rundown-org/core
 jest.unstable_mockModule('@rundown-org/core', () => {
@@ -72,38 +72,32 @@ const { buildInactiveStatus, buildStashedStatus, buildActiveStatus } = await imp
 );
 
 function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
-  // Test helper: the assembled object is a `Partial<RunbookState>` populated
-  // with the fields these tests exercise. The `unknown` cast escapes the
-  // strict structural check (we deliberately omit fields the helpers don't
-  // touch — e.g. `runId`, `state`, `effectiveVars` — from the fixture).
-  return {
+  const baseState: RunbookState = {
     id: 'test-id',
     runbook: 'test.runbook.md',
     runbookPath: 'test.runbook.md',
     step: '1',
     stepName: 'First Step',
     retryCount: 0,
-    variables: {},
+    variables: brandStoredOutputsForTest(),
     steps: [],
     startedAt: '2026-01-01T00:00:00Z',
     updatedAt: '2026-01-01T00:00:00Z',
-    ...overrides,
-  } as unknown as RunbookState;
+  };
+  return { ...baseState, ...overrides };
 }
 
-function makeStep(overrides: Partial<Record<string, unknown>> = {}): ResolvedStep {
-  // Test helper: produces a minimal command-shaped step. The cast via
-  // `unknown` escapes ResolvedStep's discriminated-union narrowing (we
-  // don't carry the full `kind` machinery in these fixtures).
-  return {
+function makeStep(overrides: Partial<Omit<BaseStep, 'kind'>> = {}): ResolvedStep {
+  const baseStep: BaseStep = {
+    kind: 'base',
     name: '1',
     description: 'First Step',
     transitions: {
-      pass: { action: 'continue' as const, retry: 0 },
-      fail: { action: 'continue' as const, retry: 0 },
+      pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+      fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
     },
-    ...overrides,
-  } as unknown as ResolvedStep;
+  };
+  return { ...baseStep, ...overrides };
 }
 
 beforeEach(() => {

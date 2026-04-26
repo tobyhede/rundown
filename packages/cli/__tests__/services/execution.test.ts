@@ -278,7 +278,7 @@ describe('execution service', () => {
         end: 3,
         variable: 'item',
         source: 'items',
-      } as unknown as ForClause;
+      } satisfies ForClause;
 
       const vars = buildStepVariables('1', '1', [], forClause, templateVars);
       expect(vars.item).toBe('a');
@@ -293,7 +293,7 @@ describe('execution service', () => {
         start: 1,
         variable: 'line',
         source: 'data',
-      } as unknown as ForClause;
+      } satisfies ForClause;
 
       const vars = buildStepVariables('1', '1', [], forClause, templateVars);
       expect(vars.line).toBe('');
@@ -348,7 +348,7 @@ describe('execution service', () => {
         end: 200,
         variable: 'item',
         source: 'items',
-      } as unknown as ForClause;
+      } satisfies ForClause;
 
       const vars = buildStepVariables('1', '1', [], forClause, templateVars);
       // Clamped to array length (3), matching compiler behavior
