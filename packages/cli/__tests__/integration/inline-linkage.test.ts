@@ -340,7 +340,9 @@ describe('Inline linkage integration (rd run --step)', () => {
 
       // Parent state should have a SubstepState for frameKey "1|2" marked done
       const updated = await readRunbookState(workspace, parentRunId);
-      const substepStates = updated!.substepStates ?? [];
+      expect(updated).not.toBeNull();
+      if (!updated) throw new Error('Expected parent run state to exist');
+      const substepStates = updated.substepStates ?? [];
       const targetEntry = substepStates.find((ss) => ss.id === '1' && ss.frameKey === '1|2');
       expect(targetEntry).toBeDefined();
       expect(targetEntry!.status).toBe('done');

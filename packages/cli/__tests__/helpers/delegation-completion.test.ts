@@ -19,6 +19,19 @@ import type { OutputEmitter } from '../../src/services/output-emitter.js';
 
 type SubstepStatePatch = Partial<Pick<SubstepState, 'status' | 'result' | 'delegation'>>;
 
+function upsertSubstepStateForTest(
+  substepStates: readonly SubstepState[],
+  substepId: string,
+  frameKey: FrameKey,
+  patch: SubstepStatePatch,
+): readonly SubstepState[] {
+  const existing = substepStates.find((ss) => ss.id === substepId && ss.frameKey === frameKey);
+  if (existing) {
+    return substepStates.map((ss) => (ss === existing ? { ...ss, ...patch } : ss));
+  }
+  return [...substepStates, { id: substepId, frameKey, status: 'pending', ...patch }];
+}
+
 // Mock @rundown-org/core
 jest.unstable_mockModule('@rundown-org/core', () => ({
   RunbookStateManager: jest.fn(),
@@ -54,23 +67,15 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   >().mockImplementation((substepStates, substepId, frameKey) =>
     substepStates.find((ss) => ss.id === substepId && ss.frameKey === frameKey),
   ),
-  upsertSubstepState: mockFn<
-    (
-      substepStates: readonly SubstepState[],
-      substepId: string,
-      frameKey: FrameKey,
-      patch: SubstepStatePatch,
-    ) => readonly SubstepState[]
-  >().mockImplementation((substepStates, substepId, frameKey, patch) => {
-    const existing = substepStates.find((ss) => ss.id === substepId && ss.frameKey === frameKey);
-    if (existing) {
-      return substepStates.map((ss) => (ss === existing ? { ...ss, ...patch } : ss));
-    }
-    return [
-      ...substepStates,
-      { id: substepId, frameKey, status: 'pending', ...patch } as SubstepState,
-    ];
-  }),
+  upsertSubstepState:
+    mockFn<
+      (
+        substepStates: readonly SubstepState[],
+        substepId: string,
+        frameKey: FrameKey,
+        patch: SubstepStatePatch,
+      ) => readonly SubstepState[]
+    >().mockImplementation(upsertSubstepStateForTest),
   logger: {
     warn: mockFn<(...args: unknown[]) => void>(),
     info: mockFn<(...args: unknown[]) => void>(),
@@ -289,6 +294,7 @@ beforeEach(() => {
     .mockImplementation((substepStates, substepId, frameKey) =>
       substepStates.find((ss) => ss.id === substepId && ss.frameKey === frameKey),
     );
+  jest.mocked(core.upsertSubstepState).mockImplementation(upsertSubstepStateForTest);
   jest.mocked(getRunbookFromState).mockReturnValue([
     {
       kind: 'base',
@@ -303,11 +309,13 @@ beforeEach(() => {
   jest
     .mocked(createBridgedEmitter)
     .mockReturnValue({ emit: jest.fn() } as unknown as ReturnType<typeof createBridgedEmitter>);
-  jest.mocked(drainResolvedCompletions).mockResolvedValue({
+  const defaultDrainResult: Awaited<ReturnType<typeof drainResolvedCompletions>> = {
+    unresolved: 0,
     status: 'continue',
     applied: 1,
     state: makeState('parent-run-id'),
-  } as unknown as Awaited<ReturnType<typeof drainResolvedCompletions>>);
+  };
+  jest.mocked(drainResolvedCompletions).mockResolvedValue(defaultDrainResult);
   jest
     .mocked(runExecutionLoop)
     .mockResolvedValue('waiting' as unknown as Awaited<ReturnType<typeof runExecutionLoop>>);

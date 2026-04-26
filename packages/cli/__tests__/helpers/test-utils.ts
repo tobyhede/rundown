@@ -440,6 +440,31 @@ export async function listRunbookStates(workspace: TestWorkspace): Promise<strin
   }
 }
 
+function isRunbookState(value: unknown): value is RunbookState {
+  if (typeof value !== 'object' || value === null) return false;
+  const state = value as {
+    id?: unknown;
+    runbook?: unknown;
+    runbookPath?: unknown;
+    step?: unknown;
+    stepName?: unknown;
+    retryCount?: unknown;
+    variables?: unknown;
+    steps?: unknown;
+  };
+  return (
+    typeof state.id === 'string' &&
+    typeof state.runbook === 'string' &&
+    typeof state.runbookPath === 'string' &&
+    typeof state.step === 'string' &&
+    typeof state.stepName === 'string' &&
+    typeof state.retryCount === 'number' &&
+    typeof state.variables === 'object' &&
+    state.variables !== null &&
+    Array.isArray(state.steps)
+  );
+}
+
 /**
  * Read a specific runbook state by ID.
  */
@@ -449,7 +474,8 @@ export async function readRunbookState(
 ): Promise<RunbookState | null> {
   try {
     const content = await readFile(join(workspace.statePath(), `${id}.json`), 'utf-8');
-    return JSON.parse(content) as RunbookState;
+    const parsed = JSON.parse(content) as unknown;
+    return isRunbookState(parsed) ? parsed : null;
   } catch {
     return null;
   }
@@ -589,6 +615,14 @@ export interface JsonOutputEvent {
   readonly [k: string]: unknown;
 }
 
+function isJsonOutputEvent(value: unknown): value is JsonOutputEvent {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as { type?: unknown }).type === 'string'
+  );
+}
+
 /**
  * Parse JSON events from CLI JSON output (the default format).
  *
@@ -600,10 +634,20 @@ export interface JsonOutputEvent {
  * @returns Array of parsed JSON event objects
  */
 export function parseJsonEvents(stdout: string): JsonOutputEvent[] {
-  return stdout
-    .split('\n')
-    .filter((line) => line.startsWith('{'))
-    .map((line) => JSON.parse(line) as JsonOutputEvent);
+  const events: JsonOutputEvent[] = [];
+  for (const rawLine of stdout.split('\n')) {
+    const line = rawLine.trim();
+    if (!line.startsWith('{')) continue;
+    try {
+      const parsed = JSON.parse(line) as unknown;
+      if (isJsonOutputEvent(parsed)) {
+        events.push(parsed);
+      }
+    } catch {
+      // Ignore non-JSON diagnostic lines mixed into command output.
+    }
+  }
+  return events;
 }
 
 /**
