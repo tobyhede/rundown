@@ -18,6 +18,7 @@ import type {
 import type { OutputEmitter } from '../../src/services/output-emitter.js';
 import type { PreparedRunbook, RunPipelineContext } from '../../src/helpers/runbook-pipeline.js';
 import { mockErrorHelpers } from './mock-error-helpers.js';
+import { makeRunPipelineContext } from './run-pipeline-context-helpers.js';
 import { mockFn } from './typed-mocks.js';
 
 // Capture the real isJsonArrayStream before the mock is registered.
@@ -947,33 +948,20 @@ describe('startRunbook', () => {
       frameKey: '1|' as ReturnType<typeof core.buildFrameKey>,
       entry: 1,
     });
-    const mockOutput = { flush: jest.fn() } as unknown as OutputEmitter;
 
     jest.mocked(runExecutionLoop).mockResolvedValue('done');
 
-    const manager = new core.RunbookStateManager('/test');
-    manager.create = mockCreate;
-    manager.update = mockUpdate;
-    manager.load = mockLoad;
-    manager.initializeSubsteps = mockInitializeSubsteps;
-
-    const actorService = new core.RunbookActorService(manager);
-    actorService.initializeState = mockInitState;
-
-    const sessionService = new core.SessionService(manager);
-    sessionService.pushRunbook = mockPushRunbook;
-
-    const lifecycleService = new core.ExecutionLifecycleService(manager);
-    lifecycleService.ensureActiveEntry = mockEnsureActiveEntry;
-
-    const ctx = {
-      output: mockOutput,
-      manager,
-      actorService,
-      sessionService,
-      lifecycleService,
-      cwd: '/test',
-    } satisfies RunPipelineContext;
+    const ctx = makeRunPipelineContext({
+      manager: {
+        create: mockCreate,
+        update: mockUpdate,
+        load: mockLoad,
+        initializeSubsteps: mockInitializeSubsteps,
+      },
+      actorService: { initializeState: mockInitState },
+      sessionService: { pushRunbook: mockPushRunbook },
+      lifecycleService: { ensureActiveEntry: mockEnsureActiveEntry },
+    });
 
     const prepared: PreparedRunbook = {
       filePath: '/test/runbook.md',
@@ -1097,7 +1085,11 @@ describe('startRunbook', () => {
     const result = await startRunbook(ctx, prepared, { file: 'runbook.md' });
 
     expect(result.ok).toBe(true);
-    expect(mockInitSubsteps).toHaveBeenCalledWith('sub-id', substeps, '1|');
+    const firstStep = prepared.runbook.steps[0];
+    if (firstStep.kind !== 'substeps') {
+      throw new Error(`Expected first step to have substeps, got ${firstStep.kind}`);
+    }
+    expect(mockInitSubsteps).toHaveBeenCalledWith('sub-id', firstStep.substeps, '1|');
     expect(mockUpdate).toHaveBeenCalledWith('sub-id', { substep: 'a' });
   });
 });
