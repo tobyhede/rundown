@@ -25,7 +25,15 @@ describe('rdpath find integration', () => {
     env?: Record<string, string | undefined>,
   ): Promise<{ stdout: string; stderr: string; exitCode: number }> => {
     return new Promise((resolve, reject) => {
-      const merged = env ? { ...process.env, ...env } : process.env;
+      // Strip rundown-injected vars from inherited host env so a developer or
+      // CI shell with RD_WORK_PATH / RD_CONTEXT_ID exported can't mask the
+      // assertions in this file. Callers reintroduce them via `env` when the
+      // test specifically needs them.
+      const sanitizedHost = { ...process.env };
+      delete sanitizedHost.RD_WORK_PATH;
+      delete sanitizedHost.RD_CONTEXT_ID;
+      delete sanitizedHost.RD_RUN_ID;
+      const merged = env ? { ...sanitizedHost, ...env } : sanitizedHost;
       const spawnEnv = Object.fromEntries(
         Object.entries(merged).filter((entry): entry is [string, string] => entry[1] !== undefined),
       );
@@ -144,7 +152,10 @@ describe('rdpath find integration', () => {
     it('uses RD_WORK_PATH when --dir is omitted', async () => {
       await fs.writeFile(path.join(testDir, '2026-03-17-test.md'), '');
 
-      const result = await runRdpath(['find', '*.md'], { RD_WORK_PATH: testDir });
+      const result = await runRdpath(['find', '*.md'], {
+        RD_WORK_PATH: testDir,
+        RD_CONTEXT_ID: undefined,
+      });
 
       expect(result.exitCode).toBe(0);
       const lines = result.stdout.trim().split('\n');
@@ -175,6 +186,7 @@ describe('rdpath find integration', () => {
 
         const result = await runRdpath(['--dir', altDir, 'find', '*.md'], {
           RD_WORK_PATH: testDir,
+          RD_CONTEXT_ID: undefined,
         });
 
         expect(result.exitCode).toBe(0);

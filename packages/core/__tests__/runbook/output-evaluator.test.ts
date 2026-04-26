@@ -486,6 +486,38 @@ describe('evaluateOutputExpression with HelperRegistry', () => {
     );
   });
 
+  // EXPLICIT_VAR_REGEX is anchored start-to-end with a capture group so the
+  // following malformed inputs do NOT match the explicit-var branch. They
+  // fall through to the generic template-reference branch and are returned
+  // verbatim — never silently truncated to the inner identifier.
+  it('does not silently truncate trailing text after {{ ./VarName }}', () => {
+    const result = evaluateOutputExpression('{{ ./Foo }} trailing text', { Foo: 'foo-value' });
+    expect(result).toBe('{{ ./Foo }} trailing text');
+    expect(result).not.toBe('foo-value');
+  });
+
+  it('does not mis-parse two adjacent {{ ./VarName }} expressions', () => {
+    // Pre-fix, lastIndexOf('}}') would walk past the inner closer and treat
+    // varName as 'Foo }}{{ ./Bar', then throw a misleading "not found" error.
+    // After anchoring, the input falls through to the generic template branch
+    // and is preserved verbatim.
+    const result = evaluateOutputExpression('{{ ./Foo }}{{ ./Bar }}', {
+      Foo: 'foo-value',
+      Bar: 'bar-value',
+    });
+    expect(result).toBe('{{ ./Foo }}{{ ./Bar }}');
+  });
+
+  it('does not pass identifiers with whitespace through to resolveOutputPath', () => {
+    const result = evaluateOutputExpression('{{ ./Foo with space }}', {});
+    expect(result).toBe('{{ ./Foo with space }}');
+  });
+
+  it('resolves {{ ./items.0 }} with numeric path segments via flattenTemplateVars', () => {
+    const vars = flattenTemplateVars({ items: ['alpha', 'beta', 'gamma'] });
+    expect(evaluateOutputExpression('{{ ./items.0 }}', vars)).toBe('alpha');
+  });
+
   it('path built-in still takes priority over user helpers', () => {
     expect(
       evaluateOutputExpression('{{ path "plan.json" }}', {

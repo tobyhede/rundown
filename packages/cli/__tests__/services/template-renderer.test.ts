@@ -1916,6 +1916,12 @@ describe('substituteText with HelperRegistry', () => {
     expect(substituteText('{{ ./name }}', { name: 'hello' }, escapeFn)).toBe('[hello]');
   });
 
+  // Helper-arg path treats undefined variables as '' rather than preserving the
+  // literal: helpers are an opt-in transformation contract — the helper is
+  // invoked and gets a chance to handle "missing" itself. Bare `{{ missing }}`
+  // preserves the literal because no transformation was requested. This
+  // asymmetry is intentional; do not align without considering registered
+  // helpers that legitimately handle empty-string input.
   it('helper with missing variable argument passes empty string to helper', () => {
     expect(substituteText('{{ upper missing }}', {})).toBe('');
   });

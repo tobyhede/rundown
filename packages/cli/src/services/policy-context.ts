@@ -47,7 +47,7 @@ export interface PolicyCliOptions {
   sandboxStrict?: boolean;
   /** Disable sandbox enforcement (--no-sandbox) */
   noSandbox?: boolean;
-  /** Helper module paths from --helpers flag (comma-separated, resolved at startup) */
+  /** Helper module paths from --helpers flag (comma-separated string or string[], resolved at startup). */
   helpers?: string[];
 }
 

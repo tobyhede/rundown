@@ -56,6 +56,7 @@ import {
   getSandboxOptions,
 } from './policy-context.js';
 import { expandLoopVariables, expandLoopVariablesForCommand } from './template-renderer.js';
+import { BUILTIN_VARIABLES } from './variable-discovery.js';
 import {
   orchestrateTransition,
   transitionSinkFromEmitter,
@@ -818,10 +819,15 @@ export async function runExecutionLoop(
     const expandedCommandCode = expandLoopVariablesForCommand(command.code, stepVars);
 
     // Build rundown-injected environment variables (RD_WORK_PATH, RD_RUN_ID, etc.)
+    // Keys come from BUILTIN_VARIABLES so a rename in variable-discovery.ts
+    // surfaces here as a typecheck error instead of silently breaking injection.
     const rdInjected: Record<string, string> = {};
-    if (typeof stepVars.WorkPath === 'string') rdInjected.RD_WORK_PATH = stepVars.WorkPath;
-    if (typeof stepVars.ContextId === 'string') rdInjected.RD_CONTEXT_ID = stepVars.ContextId;
-    if (typeof stepVars.RunId === 'string') rdInjected.RD_RUN_ID = stepVars.RunId;
+    const workPath = stepVars[BUILTIN_VARIABLES.WorkPath];
+    const contextId = stepVars[BUILTIN_VARIABLES.ContextId];
+    const runId = stepVars[BUILTIN_VARIABLES.RunId];
+    if (typeof workPath === 'string') rdInjected.RD_WORK_PATH = workPath;
+    if (typeof contextId === 'string') rdInjected.RD_CONTEXT_ID = contextId;
+    if (typeof runId === 'string') rdInjected.RD_RUN_ID = runId;
 
     // Execute command
     // For rd commands, try internal execution first (avoids nested spawn issues in WebContainer)

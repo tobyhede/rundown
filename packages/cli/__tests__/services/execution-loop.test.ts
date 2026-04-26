@@ -168,6 +168,10 @@ jest.unstable_mockModule('@rundown-org/core', () => {
     }),
     ...mockErrorHelpers,
     RUNS_DIR: '.rundown/runs',
+    WORK_DIR: '.rundown/work',
+    CONFIG_FILE: '.rundown/config.yaml',
+    isJsonValue: jest.fn((v: unknown) => v != null),
+    createJsonArrayStream: jest.fn(),
     createDelegation: jest.fn(),
     Errors: RealErrors,
   };

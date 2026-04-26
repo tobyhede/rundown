@@ -102,8 +102,24 @@ const TEMPLATE_PATH_REGEX =
   /{{\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)\s*}}/g;
 const PATH_HELPER_REGEX = /^\{\{\s*path\s+"([^"]+)"(?:\s+ctx=(\{\{[^}]*\}\}|[^\s}]+))?\s*\}\}$/;
 
-/** Matches `{{ ./VarName }}` — explicit variable lookup escape hatch. */
-const EXPLICIT_VAR_REGEX = /^\{\{\s*\.\//;
+/**
+ * Matches `{{ ./VarName }}` — explicit variable lookup escape hatch.
+ *
+ * Anchored start-to-end with a capture group so malformed inputs like
+ * `{{ ./Foo }} trailing text` or `{{ ./Foo }}{{ ./Bar }}` do not match (and
+ * therefore do not get silently truncated by a hand-rolled `indexOf`/
+ * `lastIndexOf` parser). Allows numeric segments to mirror
+ * `TEMPLATE_PATH_REGEX` so `{{ ./arr.0.name }}` resolves correctly.
+ *
+ * Group 1: the dotted identifier path (no surrounding whitespace or braces).
+ *
+ * The `\s*` segments are bounded between literal characters (`{{`, `./`,
+ * `}}`) and the identifier body uses bounded character classes with no
+ * nested unbounded quantifiers — same shape as `TEMPLATE_PATH_REGEX` and
+ * `HELPER_VAR_CALL_REGEX` and not vulnerable to polynomial backtracking.
+ */
+const EXPLICIT_VAR_REGEX =
+  /^\{\{\s*\.\/([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)\s*\}\}$/;
 
 /** Matches `{{ helperName varRef }}` — helper call with variable reference. Group 1: helperName, Group 2: varRef path. */
 const HELPER_VAR_CALL_REGEX =
@@ -282,13 +298,9 @@ export function evaluateOutputExpression(expr: string, variables: OutputVars): s
   }
 
   // 2. Explicit variable lookup: {{ ./VarName }} — bypasses helper registry
-  if (EXPLICIT_VAR_REGEX.test(trimmed)) {
-    const prefixEnd = trimmed.indexOf('./') + 2;
-    const closingStart = trimmed.lastIndexOf('}}');
-    const varName =
-      closingStart > prefixEnd
-        ? trimmed.slice(prefixEnd, closingStart).trim()
-        : trimmed.slice(prefixEnd).trim();
+  const explicitMatch = EXPLICIT_VAR_REGEX.exec(trimmed);
+  if (explicitMatch) {
+    const varName = explicitMatch[1];
     const resolved = resolveOutputPath(varName, variables);
     if (resolved !== undefined) return resolved;
     throw new Error(
