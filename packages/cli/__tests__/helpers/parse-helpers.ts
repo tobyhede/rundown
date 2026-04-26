@@ -17,7 +17,7 @@ import type {
  * Tests in `cli` consume `substituteRunbookVariables` and the renderer,
  * which expect `ResolvedRunbook` (no unresolved FOR bounds, no unresolved
  * runbook refs). `parseRunbookDocument` returns the broader `Runbook`
- * type. This helper centralises the narrowing — fixtures without FOR
+ * type. This helper centralizes the narrowing — fixtures without FOR
  * loops are structurally `ResolvedRunbook` already, so the assertion
  * succeeds and the cast is safe.
  *
