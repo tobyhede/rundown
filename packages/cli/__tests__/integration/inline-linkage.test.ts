@@ -97,13 +97,10 @@ describe('Inline linkage integration (rd run --step)', () => {
 
       const parentState = await getActiveState(workspace);
       expect(parentState).not.toBeNull();
-      const parentRunId = parentState!.id as string;
+      const parentRunId = parentState!.id;
 
       // Verify initial substepStates are all 'pending'
-      const initialSubsteps = (parentState!.substepStates ?? []) as Array<{
-        id: string;
-        status: string;
-      }>;
+      const initialSubsteps = parentState!.substepStates ?? [];
       expect(initialSubsteps.length).toBe(2);
       expect(initialSubsteps.every((ss) => ss.status === 'pending')).toBe(true);
 
@@ -116,11 +113,7 @@ describe('Inline linkage integration (rd run --step)', () => {
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
 
-      const substepStates = (updatedParent!.substepStates ?? []) as Array<{
-        id: string;
-        status: string;
-        result?: string;
-      }>;
+      const substepStates = updatedParent!.substepStates ?? [];
 
       const ss1 = substepStates.find((ss) => ss.id === '1');
       expect(ss1).toBeDefined();
@@ -169,10 +162,7 @@ describe('Inline linkage integration (rd run --step)', () => {
       const updatedParent = await readRunbookState(workspace, parentRunId);
       expect(updatedParent).not.toBeNull();
 
-      const substepStates = (updatedParent!.substepStates ?? []) as Array<{
-        id: string;
-        status: string;
-      }>;
+      const substepStates = updatedParent!.substepStates ?? [];
 
       const ss1 = substepStates.find((ss) => ss.id === '1');
       const ss2 = substepStates.find((ss) => ss.id === '2');
@@ -350,12 +340,7 @@ describe('Inline linkage integration (rd run --step)', () => {
 
       // Parent state should have a SubstepState for frameKey "1|2" marked done
       const updated = await readRunbookState(workspace, parentRunId);
-      const substepStates = (updated!.substepStates ?? []) as Array<{
-        id: string;
-        frameKey: string;
-        status: string;
-        result?: string;
-      }>;
+      const substepStates = updated!.substepStates ?? [];
       const targetEntry = substepStates.find((ss) => ss.id === '1' && ss.frameKey === '1|2');
       expect(targetEntry).toBeDefined();
       expect(targetEntry!.status).toBe('done');

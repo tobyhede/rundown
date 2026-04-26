@@ -17,6 +17,8 @@ import type {
 import type { ResolvedStep } from '@rundown-org/parser';
 import type { OutputEmitter } from '../../src/services/output-emitter.js';
 
+type SubstepStatePatch = Partial<Pick<SubstepState, 'status' | 'result' | 'delegation'>>;
+
 // Mock @rundown-org/core
 jest.unstable_mockModule('@rundown-org/core', () => ({
   RunbookStateManager: jest.fn(),
@@ -57,7 +59,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
       substepStates: readonly SubstepState[],
       substepId: string,
       frameKey: FrameKey,
-      patch: Partial<SubstepState>,
+      patch: SubstepStatePatch,
     ) => readonly SubstepState[]
   >().mockImplementation((substepStates, substepId, frameKey, patch) => {
     const existing = substepStates.find((ss) => ss.id === substepId && ss.frameKey === frameKey);
@@ -82,10 +84,14 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
 jest.unstable_mockModule('../../src/helpers/runbook-loader', () => ({
   getRunbookFromState: mockFn<() => readonly ResolvedStep[]>().mockReturnValue([
     {
+      kind: 'base',
       name: '1',
       description: 'Test step',
-      transitions: { pass: { action: 'continue' as const, retry: 0 } },
-    } as unknown as ResolvedStep,
+      transitions: {
+        pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+        fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+      },
+    },
   ]),
 }));
 
@@ -285,10 +291,14 @@ beforeEach(() => {
     );
   jest.mocked(getRunbookFromState).mockReturnValue([
     {
+      kind: 'base',
       name: '1',
       description: 'Test step',
-      transitions: { pass: { action: 'continue' as const, retry: 0 } },
-    } as unknown as ResolvedStep,
+      transitions: {
+        pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+        fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+      },
+    },
   ]);
   jest
     .mocked(createBridgedEmitter)

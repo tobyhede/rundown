@@ -17,6 +17,7 @@ import {
   runbooksDir,
   locksDir,
 } from '@rundown-org/core';
+import type { RunbookState } from '@rundown-org/core';
 import { NAMED_IDENTIFIER_PATTERN, isReservedWord } from '@rundown-org/parser';
 import type { ResolvedStep, Substep } from '@rundown-org/parser';
 
@@ -445,10 +446,10 @@ export async function listRunbookStates(workspace: TestWorkspace): Promise<strin
 export async function readRunbookState(
   workspace: TestWorkspace,
   id: string,
-): Promise<Record<string, unknown> | null> {
+): Promise<RunbookState | null> {
   try {
     const content = await readFile(join(workspace.statePath(), `${id}.json`), 'utf-8');
-    return JSON.parse(content);
+    return JSON.parse(content) as RunbookState;
   } catch {
     return null;
   }
@@ -457,9 +458,7 @@ export async function readRunbookState(
 /**
  * Get the active runbook state.
  */
-export async function getActiveState(
-  workspace: TestWorkspace,
-): Promise<Record<string, unknown> | null> {
+export async function getActiveState(workspace: TestWorkspace): Promise<RunbookState | null> {
   const session = await readSession(workspace);
   if (!session.active) return null;
   return readRunbookState(workspace, session.active);
@@ -472,7 +471,7 @@ export async function getActiveState(
 export async function getAgentActiveState(
   workspace: TestWorkspace,
   agentId: string,
-): Promise<Record<string, unknown> | null> {
+): Promise<RunbookState | null> {
   const session = await readSession(workspace);
   const stack = session.stacks[agentId] ?? [];
   const topId = stack[stack.length - 1];
@@ -485,10 +484,10 @@ export async function getAgentActiveState(
  *
  * Alias for getAllRunbookStates — prefer getAllRunbookStates in new tests.
  */
-export async function getAllStates(workspace: TestWorkspace): Promise<Record<string, unknown>[]> {
+export async function getAllStates(workspace: TestWorkspace): Promise<RunbookState[]> {
   try {
     const files = await readdir(workspace.statePath());
-    const states: Record<string, unknown>[] = [];
+    const states: RunbookState[] = [];
 
     for (const file of files) {
       if (file.endsWith('.json')) {
@@ -512,12 +511,10 @@ export async function getAllStates(workspace: TestWorkspace): Promise<Record<str
  * Returns an array of parsed state objects. OUTPUTS directives write to
  * `state.variables` via SET_VARIABLES events (no file I/O side-channel).
  */
-export async function getAllRunbookStates(
-  workspace: TestWorkspace,
-): Promise<Record<string, unknown>[]> {
+export async function getAllRunbookStates(workspace: TestWorkspace): Promise<RunbookState[]> {
   try {
     const files = await readdir(workspace.statePath());
-    const states: Record<string, unknown>[] = [];
+    const states: RunbookState[] = [];
 
     for (const file of files) {
       if (file.endsWith('.json')) {
@@ -540,7 +537,7 @@ export async function getAllRunbookStates(
  */
 export async function getActiveRunbookState(
   workspace: TestWorkspace,
-): Promise<Record<string, unknown> | null> {
+): Promise<RunbookState | null> {
   return getActiveState(workspace);
 }
 

@@ -53,8 +53,8 @@ describe('createBridgedEmitter', () => {
 
     expect(executionEventFn).toHaveBeenCalledTimes(1);
     const event = executionEventFn.mock.calls[0]?.[0];
-    expect(event?.type).toBe('RUNBOOK_STARTED');
-    expect(event?.runbookId).toBe('wf-test');
+    expect(event.type).toBe('RUNBOOK_STARTED');
+    expect(event.runbookId).toBe('wf-test');
   });
 
   it('uses runbook name and path from state', () => {
@@ -69,6 +69,6 @@ describe('createBridgedEmitter', () => {
     });
 
     const event = executionEventFn.mock.calls[0]?.[0];
-    expect(event?.runbook).toEqual({ name: 'my-book', path: 'path/to/my-book.md' });
+    expect(event.runbook).toEqual({ name: 'my-book', path: 'path/to/my-book.md' });
   });
 });

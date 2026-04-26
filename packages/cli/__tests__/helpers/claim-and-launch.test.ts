@@ -1,5 +1,5 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import type { RunbookState } from '@rundown-org/core';
+import type { RunbookState, StepDelegation, TokenScanResult } from '@rundown-org/core';
 import type { RunPipelineContext } from '../../src/helpers/runbook-pipeline.js';
 import type * as VariableDiscoveryModule from '../../src/services/variable-discovery.js';
 import { brandFrameKeyForTest } from './brand-helpers.js';
@@ -47,7 +47,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   PolicyPrompter: jest.fn(),
   loadPolicy: jest.fn(),
   DelegationScanService: mockFn<() => { findByToken: jest.Mock }>().mockImplementation(() => ({
-    findByToken: mockFn<() => Promise<unknown>>().mockResolvedValue(null),
+    findByToken: mockFn<() => Promise<TokenScanResult | null>>().mockResolvedValue(null),
   })),
   DelegationLock: jest.fn(),
   DelegationLockTimeoutError: class DelegationLockTimeoutError extends Error {
@@ -220,12 +220,40 @@ function makeCtx(overrides: Record<string, unknown> = {}): RunPipelineContext {
  * The cast through unknown surfaces the constructor's instance shape
  * without forcing every internal field onto the literal.
  */
-function mockScanService(result: unknown, orphan?: unknown): void {
+type DelegationScanServiceInstance = InstanceType<typeof core.DelegationScanService>;
+type FindByTokenResult = Awaited<ReturnType<DelegationScanServiceInstance['findByToken']>>;
+type FindOrphanedChildResult = Awaited<
+  ReturnType<DelegationScanServiceInstance['findOrphanedChild']>
+>;
+
+function scanResult(fields: {
+  parentState: unknown;
+  stepId: string;
+  substepId?: string;
+  delegation: unknown;
+  frameKey?: TokenScanResult['frameKey'];
+}): TokenScanResult {
+  const result: TokenScanResult = {
+    parentState: fields.parentState as RunbookState,
+    stepId: fields.stepId,
+    frameKey: fields.frameKey ?? brandFrameKeyForTest(fields.stepId),
+    delegation: fields.delegation as StepDelegation,
+  };
+  if (fields.substepId !== undefined) {
+    return { ...result, substepId: fields.substepId };
+  }
+  return result;
+}
+
+function mockScanService(result: FindByTokenResult, orphan?: FindOrphanedChildResult): void {
   jest.mocked(core.DelegationScanService).mockImplementation(
     () =>
       ({
-        findByToken: mockFn<() => Promise<unknown>>().mockResolvedValue(result),
-        findOrphanedChild: mockFn<() => Promise<unknown>>().mockResolvedValue(orphan ?? null),
+        findByToken:
+          mockFn<DelegationScanServiceInstance['findByToken']>().mockResolvedValue(result),
+        findOrphanedChild: mockFn<
+          DelegationScanServiceInstance['findOrphanedChild']
+        >().mockResolvedValue(orphan ?? null),
       }) as unknown as jest.MockedObject<InstanceType<typeof core.DelegationScanService>>,
   );
 }
@@ -282,7 +310,7 @@ beforeEach(() => {
   jest.mocked(core.DelegationScanService).mockImplementation(
     () =>
       ({
-        findByToken: mockFn<() => Promise<unknown>>().mockResolvedValue(null),
+        findByToken: mockFn<DelegationScanServiceInstance['findByToken']>().mockResolvedValue(null),
       }) as unknown as jest.MockedObject<InstanceType<typeof core.DelegationScanService>>,
   );
   jest.mocked(core.reconstituteContextVars).mockReturnValue({});
@@ -326,12 +354,14 @@ describe('claimAndLaunch', () => {
     const ctx = makeCtx();
 
     // Mock scan returning a result
-    mockScanService({
-      parentState: { id: 'run-1', substepStates: [] },
-      stepId: '1',
-      substepId: '1',
-      delegation: { tokenHash: 'sha256:mock', childRunbookPath: 'child.md' },
-    });
+    mockScanService(
+      scanResult({
+        parentState: { id: 'run-1', substepStates: [] },
+        stepId: '1',
+        substepId: '1',
+        delegation: { tokenHash: 'sha256:mock', childRunbookPath: 'child.md' },
+      }),
+    );
 
     // Mock lock acquisition failure with a real DelegationLockTimeoutError
     // (the production code now branches on `instanceof`, not on the message string).
@@ -383,12 +413,12 @@ describe('claimAndLaunch', () => {
 
     // Mock scan
     mockScanService(
-      {
+      scanResult({
         parentState,
         stepId: '1',
         substepId: '1',
         delegation: parentState.substepStates[0].delegation,
-      },
+      }),
       null,
     );
 
@@ -432,12 +462,14 @@ describe('claimAndLaunch', () => {
     };
 
     // Mock scan
-    mockScanService({
-      parentState,
-      stepId: '1',
-      substepId: '1',
-      delegation: parentState.substepStates[0].delegation,
-    });
+    mockScanService(
+      scanResult({
+        parentState,
+        stepId: '1',
+        substepId: '1',
+        delegation: parentState.substepStates[0].delegation,
+      }),
+    );
 
     // Mock lock
     mockHappyDelegationLock();
@@ -484,13 +516,13 @@ describe('claimAndLaunch', () => {
 
     // Mock scan — findByToken returns parent, findOrphanedChild returns orphan
     mockScanService(
-      {
+      scanResult({
         parentState,
         stepId: '1',
         substepId: '1',
         delegation: parentState.substepStates[0].delegation,
-      },
-      orphanState,
+      }),
+      orphanState as unknown as RunbookState,
     );
 
     // Mock lock
@@ -527,12 +559,14 @@ describe('claimAndLaunch', () => {
     const ctx = makeCtx();
 
     // Mock scan returning a result
-    mockScanService({
-      parentState: { id: 'run-1', substepStates: [] },
-      stepId: '1',
-      substepId: '1',
-      delegation: { tokenHash: 'sha256:mock', childRunbookPath: 'child.md' },
-    });
+    mockScanService(
+      scanResult({
+        parentState: { id: 'run-1', substepStates: [] },
+        stepId: '1',
+        substepId: '1',
+        delegation: { tokenHash: 'sha256:mock', childRunbookPath: 'child.md' },
+      }),
+    );
 
     // Mock lock throwing a non-timeout error (e.g. permission denied)
     const permissionError = new Error('EACCES: permission denied');
@@ -570,12 +604,14 @@ describe('claimAndLaunch', () => {
     };
 
     // Mock scan
-    mockScanService({
-      parentState,
-      stepId: '1',
-      substepId: '1',
-      delegation: parentState.substepStates[0].delegation,
-    });
+    mockScanService(
+      scanResult({
+        parentState,
+        stepId: '1',
+        substepId: '1',
+        delegation: parentState.substepStates[0].delegation,
+      }),
+    );
 
     // Mock lock
     mockHappyDelegationLock();
@@ -615,12 +651,14 @@ describe('claimAndLaunch', () => {
     };
 
     // Mock scan
-    mockScanService({
-      parentState,
-      stepId: '1',
-      substepId: '1',
-      delegation: parentState.substepStates[0].delegation,
-    });
+    mockScanService(
+      scanResult({
+        parentState,
+        stepId: '1',
+        substepId: '1',
+        delegation: parentState.substepStates[0].delegation,
+      }),
+    );
 
     // Mock lock
     mockHappyDelegationLock();
@@ -664,12 +702,14 @@ describe('claimAndLaunch', () => {
     };
 
     // Mock scan returning original hash
-    mockScanService({
-      parentState,
-      stepId: '1',
-      substepId: '1',
-      delegation: parentState.substepStates[0].delegation,
-    });
+    mockScanService(
+      scanResult({
+        parentState,
+        stepId: '1',
+        substepId: '1',
+        delegation: parentState.substepStates[0].delegation,
+      }),
+    );
 
     // Mock lock
     mockHappyDelegationLock();
@@ -767,12 +807,13 @@ describe('claimAndLaunch', () => {
 
     // Mock scan
     mockScanService(
-      {
+      scanResult({
         parentState,
         stepId: '1',
         substepId: '1',
         delegation: parentState.substepStates[0].delegation,
-      },
+        frameKey: brandFrameKeyForTest('1', 3),
+      }),
       null,
     );
 
@@ -905,12 +946,13 @@ describe('claimAndLaunch', () => {
     };
 
     mockScanService(
-      {
+      scanResult({
         parentState,
         stepId: '1',
         substepId: '1',
         delegation: parentState.substepStates[0].delegation,
-      },
+        frameKey: brandFrameKeyForTest('1', 0),
+      }),
       null,
     );
 

@@ -390,6 +390,7 @@ describe('runExecutionLoop', () => {
       load: mockFn<(id: string) => Promise<Record<string, unknown> | null>>(),
       update: mockFn<(id: string, patch: Record<string, unknown>) => Promise<void>>(),
     };
+    mockManager.update.mockResolvedValue(undefined);
 
     mockLifecycleService.ensureActiveEntry.mockReset();
     mockLifecycleService.ensureActiveEntry.mockImplementation(
@@ -1093,12 +1094,6 @@ describe('runExecutionLoop', () => {
         ],
       } as unknown as CreateDelegationReturn);
 
-    {
-      const updateFn = mockFn<(id: string, patch: Record<string, unknown>) => Promise<void>>();
-      updateFn.mockResolvedValue(undefined);
-      mockManager.update = updateFn;
-    }
-
     await runExecutionLoop(
       asManager(mockManager),
       runbookId,
@@ -1185,12 +1180,6 @@ describe('runExecutionLoop', () => {
       pendingDelegateFrontier: preIssued,
     });
 
-    {
-      const updateFn = mockFn<(id: string, patch: Record<string, unknown>) => Promise<void>>();
-      updateFn.mockResolvedValue(undefined);
-      mockManager.update = updateFn;
-    }
-
     await runExecutionLoop(
       asManager(mockManager),
       runbookId,
@@ -1264,12 +1253,6 @@ describe('runExecutionLoop', () => {
       delegation: {},
       updatedSubstepStates: [{ id: '1', frameKey: '1|', status: 'pending', delegation: {} }],
     } as unknown as ReturnType<typeof core.createDelegation>);
-
-    {
-      const updateFn = mockFn<(id: string, patch: Record<string, unknown>) => Promise<void>>();
-      updateFn.mockResolvedValue(undefined);
-      mockManager.update = updateFn;
-    }
 
     await runExecutionLoop(
       asManager(mockManager),

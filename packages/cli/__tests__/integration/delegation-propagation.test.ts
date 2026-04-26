@@ -99,7 +99,7 @@ describe('Delegation propagation integration', () => {
       const childState = await getActiveState(workspace);
       expect(childState).not.toBeNull();
       expect(childState!.parentLinkage).toBeDefined();
-      expect((childState!.parentLinkage as Record<string, unknown>).parentRunId).toBe(parentRunId);
+      expect(childState!.parentLinkage).toEqual(expect.objectContaining({ parentRunId }));
 
       // Pass the child step — propagates pass to parent substep 1.1
       // DEFER model: parent advances to 1.2

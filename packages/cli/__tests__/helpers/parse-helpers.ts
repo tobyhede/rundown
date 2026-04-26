@@ -53,6 +53,7 @@ export function assertResolvedRunbook(runbook: Runbook): ResolvedRunbook {
  * Used in tests where the test fixture deliberately produces a command
  * step, but `result.steps[0]` is typed as the wider `ResolvedStep` union.
  *
+ * @param step - Step to validate and narrow.
  * @throws If `step.kind !== 'command'`
  */
 export function assertStepWithCommand(
@@ -69,6 +70,7 @@ export function assertStepWithCommand(
  * Used in tests that need typed `.substeps` access without caring whether
  * the step is a FOR loop or a plain substeps step.
  *
+ * @param step - Step to validate and narrow.
  * @throws If `step` is `undefined` or its kind is not substep-bearing
  */
 export function assertResolvedStepHasSubsteps(
@@ -84,6 +86,7 @@ export function assertResolvedStepHasSubsteps(
 /**
  * Narrow `step` to `ResolvedStepWithFor` (resolved FOR clause with bounds).
  *
+ * @param step - Step to validate and narrow.
  * @throws If `step.kind !== 'for'`
  */
 export function assertResolvedStepWithFor(
