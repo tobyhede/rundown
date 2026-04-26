@@ -1,0 +1,42 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`OUTPUTS AST shape — snapshot locks the AST for naked-form OUTPUTS at step level 1`] = `
+[
+  {
+    "kind": "base",
+    "outputs": [
+      {
+        "name": "Version",
+      },
+      {
+        "name": "Tag",
+        "value": ""{{ RunId }}-staging"",
+      },
+    ],
+  },
+  {
+    "kind": "substeps",
+    "outputs": undefined,
+    "substepOutputs": [
+      {
+        "outputs": [
+          {
+            "name": "Inner",
+          },
+        ],
+      },
+    ],
+  },
+]
+`;
+
+exports[`OUTPUTS AST shape — snapshot locks the full step AST for a step bearing mixed naked + expression OUTPUTS 1`] = `
+[
+  {
+    "name": "DeployUrl",
+  },
+  {
+    "name": "Version",
+  },
+]
+`;
