@@ -344,4 +344,159 @@ printf "%s" "{{ item }}" > "$RD_OUTPUTS_Inner"
     expect(await readFile(iter1, 'utf-8')).toBe('alpha');
     expect(await readFile(iter2, 'utf-8')).toBe('beta');
   });
+
+  // Gap #2: Policy-denied command skips capture
+  it('does not capture when the command is blocked by policy', async () => {
+    const RUNBOOK = `---
+name: policy-denied-capture
+---
+# Policy Denied Capture
+
+## 1. Blocked write
+- OUTPUTS
+  - Blocked
+- PASS COMPLETE
+- FAIL STOP
+
+\`\`\`sh
+printf 'should-not-capture' > "$RD_OUTPUTS_Blocked"
+\`\`\`
+`;
+    await writeFile(join(workspace.cwd, 'denied.runbook.md'), RUNBOOK);
+    // --deny-all blocks the shell command execution, causing the step to fail → STOP.
+    // This is deterministic and avoids any interactive prompt.
+    const result = runCli('run denied.runbook.md --deny-all', workspace);
+    // The runbook should fail (policy denial → step fails → STOP)
+    expect(result.exitCode).not.toBe(0);
+    const states = await getAllRunbookStates(workspace);
+    const state = states[0] as { variables?: Record<string, unknown> };
+    // Variable was never set (no merge happened because the command was blocked)
+    expect(state.variables?.Blocked).toBeUndefined();
+  });
+
+  // Gap #3: FOR iteration that fails mid-sequence
+  it('preserves capture from iteration 1 when iteration 2 fails', async () => {
+    const RUNBOOK = `---
+name: for-fail-midway
+required:
+  - items
+---
+# FOR Fail Midway
+
+## 1. Parent
+- FOR item IN {{ items }}
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+### 1.1 Capture
+- OUTPUTS
+  - Inner
+- PASS DEFER
+- FAIL DEFER
+
+\`\`\`sh
+if [ "{{ item }}" = "good" ]; then
+  printf "good-value" > "$RD_OUTPUTS_Inner"
+else
+  exit 1
+fi
+\`\`\`
+`;
+    await writeFile(join(workspace.cwd, 'for-fail.runbook.md'), RUNBOOK);
+    const result = runCli(
+      `run for-fail.runbook.md --allow-all --input-json items=["good","bad"]`,
+      workspace,
+    );
+    // Runbook stops on iteration 2's failure
+    expect(result.exitCode).not.toBe(0);
+    const states = await getAllRunbookStates(workspace);
+    const state = states[0] as { id: string; variables?: Record<string, unknown> };
+    // Iteration 1's captured value should be in state (the SET_VARIABLES dispatch ran before
+    // iteration 2's failure).
+    // NOTE: If this assertion fails, check result.stdout/stderr — the actual behaviour may differ
+    // from expectation (e.g. SET_VARIABLES from iteration 1 may be rolled back on STOP).
+    expect(state.variables?.Inner).toBe('good-value');
+    // Iteration 1's channel file persisted
+    const iter1 = join(
+      workspace.cwd,
+      '.rundown',
+      'runs',
+      state.id,
+      'outputs',
+      '1',
+      '1',
+      '1',
+      'Inner',
+    );
+    const iter2 = join(
+      workspace.cwd,
+      '.rundown',
+      'runs',
+      state.id,
+      'outputs',
+      '1',
+      '1',
+      '2',
+      'Inner',
+    );
+    expect(await readFile(iter1, 'utf-8')).toBe('good-value');
+    // iter2 file may exist (pre-created empty) or may not (depending on whether
+    // prepareOutputChannels ran for iteration 2 before the abort)
+    try {
+      const iter2Content = await readFile(iter2, 'utf-8');
+      expect(iter2Content).toBe('');
+    } catch (err) {
+      // ENOENT is also acceptable — channel file may not have been created if iteration aborted early
+      expect((err as { code?: string }).code).toBe('ENOENT');
+    }
+  });
+
+  // Gap #5: Multiple naked OUTPUTS in one step (end-to-end)
+  it('captures multiple naked OUTPUTS from a single step', async () => {
+    const RUNBOOK = `---
+name: multi-naked-capture
+---
+# Multi Naked Capture
+
+## 1. Capture two values
+- OUTPUTS
+  - Version
+  - DeployUrl
+- PASS COMPLETE
+- FAIL STOP
+
+\`\`\`sh
+printf 'v1.2.3' > "$RD_OUTPUTS_Version"
+printf 'https://example.test/v1' > "$RD_OUTPUTS_DeployUrl"
+\`\`\`
+`;
+    await writeFile(join(workspace.cwd, 'multi.runbook.md'), RUNBOOK);
+    const result = runCli('run multi.runbook.md --allow-all', workspace);
+    expect(result.exitCode).toBe(0);
+    const states = await getAllRunbookStates(workspace);
+    const state = states[0] as { id: string; variables?: Record<string, unknown> };
+    expect(state.variables?.Version).toBe('v1.2.3');
+    expect(state.variables?.DeployUrl).toBe('https://example.test/v1');
+    // Both channel files persist on disk for audit
+    const versionPath = join(
+      workspace.cwd,
+      '.rundown',
+      'runs',
+      state.id,
+      'outputs',
+      '1',
+      'Version',
+    );
+    const deployPath = join(
+      workspace.cwd,
+      '.rundown',
+      'runs',
+      state.id,
+      'outputs',
+      '1',
+      'DeployUrl',
+    );
+    expect(await readFile(versionPath, 'utf-8')).toBe('v1.2.3');
+    expect(await readFile(deployPath, 'utf-8')).toBe('https://example.test/v1');
+  });
 });
