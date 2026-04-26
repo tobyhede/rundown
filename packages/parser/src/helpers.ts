@@ -141,6 +141,10 @@ export interface ParsedSubstepHeader {
 /** Characters to strip from trailing position of named step identifiers. */
 const TRAILING_SEPARATORS = new Set(['.', ':', '\u2014', '\u2192', ')', '-']);
 
+function isCanonicalPositiveInteger(value: string): boolean {
+  return /^[1-9]\d*$/.test(value);
+}
+
 /**
  * Strip common separators and whitespace from the beginning of text.
  *
@@ -199,6 +203,7 @@ export function extractStepHeader(text: string): ParsedStepHeader | null {
 
   if (numEnd > 0) {
     const numberStr = trimmed.slice(0, numEnd);
+    if (!isCanonicalPositiveInteger(numberStr)) return null;
     const number = parseInt(numberStr, 10);
     if (number <= 0 || number > MAX_STEP_NUMBER) return null;
 
@@ -221,7 +226,7 @@ export function extractStepHeader(text: string): ParsedStepHeader | null {
   if (isReservedWord(strippedName)) return null;
 
   const restWords = words.slice(1);
-  const description = restWords.length > 0 ? restWords.join(' ') : strippedName;
+  const description = restWords.length > 0 ? stripSeparator(restWords.join(' ')) : strippedName;
 
   return { name: strippedName, description };
 }
@@ -237,7 +242,7 @@ export function extractStepHeader(text: string): ParsedStepHeader | null {
  * @returns True if the string is a valid step reference, false otherwise
  */
 function isValidStepRef(s: string): boolean {
-  if (/^\d+$/.test(s)) return parseInt(s, 10) > 0;
+  if (/^\d+$/.test(s)) return isCanonicalPositiveInteger(s);
   if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(s)) return !isReservedWord(s);
   return false;
 }
@@ -253,7 +258,7 @@ function isValidStepRef(s: string): boolean {
  * @returns True if the string is a valid substep identifier, false otherwise
  */
 function isValidSubstepId(s: string): boolean {
-  if (/^\d+$/.test(s)) return parseInt(s, 10) > 0;
+  if (/^\d+$/.test(s)) return isCanonicalPositiveInteger(s);
   if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(s)) return !isReservedWord(s);
   return false;
 }
@@ -286,8 +291,7 @@ export function extractSubstepHeader(text: string): ParsedSubstepHeader | null {
 
   // Branch 1: Bare positive integer (e.g., "1", "2 Description", "1. Title", "3) Title")
   if (/^\d+$/.test(firstToken)) {
-    const num = parseInt(firstToken, 10);
-    if (num > 0) {
+    if (isCanonicalPositiveInteger(firstToken)) {
       const afterFirstToken = trimmed.slice(firstTokenRaw.length);
       const description = stripSeparator(afterFirstToken);
       return { id: firstToken, description };
@@ -303,7 +307,12 @@ export function extractSubstepHeader(text: string): ParsedSubstepHeader | null {
       if (!afterDot) return null;
 
       const spaceIndex = afterDot.indexOf(' ');
-      const substepId = spaceIndex === -1 ? afterDot : afterDot.slice(0, spaceIndex);
+      const substepIdRaw = spaceIndex === -1 ? afterDot : afterDot.slice(0, spaceIndex);
+      let substepIdEnd = substepIdRaw.length;
+      while (substepIdEnd > 0 && TRAILING_SEPARATORS.has(substepIdRaw[substepIdEnd - 1])) {
+        substepIdEnd--;
+      }
+      const substepId = substepIdRaw.slice(0, substepIdEnd);
       if (!isValidSubstepId(substepId)) return null;
 
       const remainder = spaceIndex !== -1 ? afterDot.slice(spaceIndex) : '';

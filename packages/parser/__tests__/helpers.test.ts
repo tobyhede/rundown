@@ -592,6 +592,13 @@ describe('extractStepHeader with named steps', () => {
         description: 'Rollback',
       });
     });
+
+    it('strips spaced em dash separator from named step description', () => {
+      expect(extractStepHeader('Rollback — clean up')).toEqual({
+        name: 'Rollback',
+        description: 'clean up',
+      });
+    });
   });
 });
 
@@ -1351,6 +1358,14 @@ describe('extractSubstepHeader edge cases', () => {
     expect(extractSubstepHeader('1.')).toEqual({
       id: '1',
       description: '',
+    });
+  });
+
+  it('treats trailing dot after qualified numeric substep as separator', () => {
+    expect(extractSubstepHeader('1.2. Restart service')).toEqual({
+      stepRef: '1',
+      id: '2',
+      description: 'Restart service',
     });
   });
 
@@ -2307,6 +2322,10 @@ describe('C2: substep short form (bare numeric)', () => {
     expect(extractSubstepHeader('0')).toBeNull();
   });
 
+  it('returns null for leading-zero numeric substep id', () => {
+    expect(extractSubstepHeader('01')).toBeNull();
+  });
+
   it('still parses dot form "1.1 Description"', () => {
     expect(extractSubstepHeader('1.1 Description')).toEqual({
       stepRef: '1',
@@ -2322,6 +2341,10 @@ describe('E3: bare numeric step headers', () => {
       name: '1',
       description: 'Step 1',
     });
+  });
+
+  it('rejects leading-zero numeric step headers', () => {
+    expect(extractStepHeader('01')).toBeNull();
   });
 
   it('parses "1." as step with default description', () => {
@@ -2562,10 +2585,13 @@ describe('extractSubstepHeader mutation killing', () => {
     expect(result).toEqual({ id: '1', description: '' });
   });
 
-  it('returns null for dot-qualified pattern not matching expected format', () => {
+  it('treats trailing dot after qualified named substep as separator', () => {
     const result = extractSubstepHeader('1.Cleanup. Description');
-    // This doesn't parse as expected pattern - returns null
-    expect(result).toBeNull();
+    expect(result).toEqual({
+      stepRef: '1',
+      id: 'Cleanup',
+      description: 'Description',
+    });
   });
 
   it('returns null for string starting with dot', () => {

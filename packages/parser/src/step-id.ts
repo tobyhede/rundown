@@ -53,6 +53,10 @@ export function isReservedWord(word: string): boolean {
  */
 export const NAMED_IDENTIFIER_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
+function isCanonicalPositiveInteger(value: string): boolean {
+  return /^[1-9]\d*$/.test(value);
+}
+
 /**
  * Options for controlling step ID parsing behavior.
  */
@@ -72,8 +76,7 @@ function isValidSubstepInStepId(substep: string): boolean {
     return false;
   }
   if (/^\d+$/.test(substep)) {
-    const substepNum = parseInt(substep, 10);
-    if (substepNum < 1) return false;
+    if (!isCanonicalPositiveInteger(substep)) return false;
   }
   return true;
 }
@@ -130,10 +133,10 @@ function parseThreeLevelNumeric(
   const substep = match[3];
 
   const stepNum = parseInt(stepStr, 10);
-  if (stepNum <= 0) return null;
+  if (!isCanonicalPositiveInteger(stepStr) || stepNum <= 0) return null;
 
   const iterationNum = parseInt(iterationStr, 10);
-  if (iterationNum < 1) return null;
+  if (!isCanonicalPositiveInteger(iterationStr) || iterationNum < 1) return null;
 
   if (substep && !isValidSubstepInStepId(substep)) return null;
 
@@ -164,7 +167,7 @@ function parseTwoLevelNumeric(
   const stepNum = parseInt(stepStr, 10);
 
   // Validate step number is positive
-  if (stepNum <= 0) return null;
+  if (!isCanonicalPositiveInteger(stepStr) || stepNum <= 0) return null;
 
   const substep = match[2];
 
