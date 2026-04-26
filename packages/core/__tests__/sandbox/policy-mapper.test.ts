@@ -192,6 +192,26 @@ describe('policyToSandboxOptions', () => {
     expect(options.allowUnsandboxed).toBe(true);
   });
 
+  it('adds Rundown-owned write grants to readWritePaths', () => {
+    const policy: PolicyConfig = {
+      ...DEFAULT_POLICY,
+      default: {
+        ...DEFAULT_POLICY.default,
+        read: { allow: [], deny: [] },
+        write: { allow: [], deny: [] },
+      },
+    };
+    const evaluator = new PolicyEvaluator(policy);
+
+    const options = policyToSandboxOptions(evaluator, {
+      cwd: '/repo',
+      repoRoot: '/repo',
+      extraReadWritePaths: ['/repo/.rundown/runs/run-1/outputs/1/Token'],
+    });
+
+    expect(options.readWritePaths).toContain('/repo/.rundown/runs/run-1/outputs/1/Token');
+  });
+
   it('deduplicates paths', () => {
     const policy: PolicyConfig = {
       ...DEFAULT_POLICY,

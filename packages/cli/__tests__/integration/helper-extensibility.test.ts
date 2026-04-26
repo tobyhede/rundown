@@ -61,8 +61,24 @@ describe('Helper extensibility — end-to-end (helper registered via .rundownrc)
     await workspace.cleanup();
   });
 
-  it('resolve reports no unresolved variables when helper transforms the placeholder', async () => {
-    const result = runCli('resolve demo.runbook.md --input Name=world', workspace);
+  it('run --prompted preserves helper placeholders from config unless JS policy is trusted', async () => {
+    const result = runCli('run --prompted demo.runbook.md --input Name=world', workspace);
+
+    expect(result.exitCode).toBe(0);
+
+    const events = parseJsonEvents(result.stdout) as Array<Record<string, unknown>>;
+    const stepEntered = events.find((e) => e.type === 'step_entered');
+
+    expect(stepEntered).toBeDefined();
+    expect(stepEntered!.prompt).toContain('{{ upper Name }}');
+    expect(stepEntered!.prompt).not.toContain('WORLD');
+  });
+
+  it('resolve reports no unresolved variables when trusted config helper transforms the placeholder', async () => {
+    const result = runCli(
+      'resolve demo.runbook.md --input Name=world --trust-js-policy',
+      workspace,
+    );
 
     expect(result.exitCode).toBe(0);
 
@@ -74,8 +90,11 @@ describe('Helper extensibility — end-to-end (helper registered via .rundownrc)
     expect(unresolved ?? []).toHaveLength(0);
   });
 
-  it('run --prompted renders {{ upper Name }} as WORLD in the step_entered prompt', async () => {
-    const result = runCli('run --prompted demo.runbook.md --input Name=world', workspace);
+  it('run --prompted renders {{ upper Name }} as WORLD with trusted config helper', async () => {
+    const result = runCli(
+      'run --prompted demo.runbook.md --input Name=world --trust-js-policy',
+      workspace,
+    );
 
     expect(result.exitCode).toBe(0);
 
@@ -113,7 +132,7 @@ describe('Helper extensibility — collision warning when variable name matches 
   it('resolve emits a collision warning when a variable shares a name with a registered helper', async () => {
     // Passing --input upper=... creates a variable named "upper", which collides with the helper
     const result = runCli(
-      'resolve demo.runbook.md --input Name=world --input upper=custom',
+      'resolve demo.runbook.md --input Name=world --input upper=custom --trust-js-policy',
       workspace,
     );
 
@@ -131,6 +150,39 @@ describe('Helper extensibility — collision warning when variable name matches 
     );
     expect(collisionWarning).toBeDefined();
     expect(collisionWarning!.message).toContain('{{ ./upper }}');
+  });
+});
+
+describe('Helper extensibility — end-to-end (helper registered via --helpers)', () => {
+  let workspace: TestWorkspace;
+
+  beforeEach(async () => {
+    workspace = await createTestWorkspace();
+
+    const helperDir = join(workspace.cwd, '.rundown', 'helpers');
+    await mkdir(helperDir, { recursive: true });
+    await writeFile(join(helperDir, 'fmt.mjs'), HELPER_MODULE_CONTENT);
+    await writeFile(join(workspace.cwd, 'demo.runbook.md'), HELPER_RUNBOOK);
+  });
+
+  afterEach(async () => {
+    await workspace.cleanup();
+  });
+
+  it('run --prompted renders helper output without --trust-js-policy for explicit --helpers', async () => {
+    const result = runCli(
+      'run --prompted demo.runbook.md --input Name=world --helpers .rundown/helpers/fmt.mjs',
+      workspace,
+    );
+
+    expect(result.exitCode).toBe(0);
+
+    const events = parseJsonEvents(result.stdout) as Array<Record<string, unknown>>;
+    const stepEntered = events.find((e) => e.type === 'step_entered');
+
+    expect(stepEntered).toBeDefined();
+    expect(stepEntered!.prompt).toContain('WORLD');
+    expect(stepEntered!.prompt).not.toContain('{{ upper Name }}');
   });
 });
 

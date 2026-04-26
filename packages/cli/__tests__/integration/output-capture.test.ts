@@ -173,6 +173,39 @@ printf 'https://example.test' > "$RD_OUTPUTS_DeployUrl"
     expect(state.variables?.Tag as string).toMatch(/-staging$/);
   });
 
+  it('does not publish captured outputs before a retry transition completes', async () => {
+    const RUNBOOK = `---
+name: retry-capture
+---
+# Retry Capture
+
+## 1. Capture during a failing attempt
+- OUTPUTS
+  - Token
+- PASS COMPLETE
+- FAIL RETRY 1 STOP
+
+\`\`\`sh
+if [ ! -f marker ]; then
+  printf 'stale' > "$RD_OUTPUTS_Token"
+  touch marker
+  exit 1
+fi
+
+if [ "{{ Token }}" = "stale" ]; then
+  exit 2
+fi
+\`\`\`
+`;
+    await writeFile(join(workspace.cwd, 'retry-capture.runbook.md'), RUNBOOK);
+    const result = runCli('run retry-capture.runbook.md --allow-all', workspace);
+    expect(result.exitCode).toBe(0);
+
+    const states = await getAllRunbookStates(workspace);
+    const state = states[0] as { variables?: Record<string, unknown> };
+    expect(state.variables?.Token).toBeUndefined();
+  });
+
   it('creates a per-substep directory when the OUTPUTS lives on a substep', async () => {
     // Parent uses PASS ALL aggregation, so substep must DEFER to participate
     // (PASS CONTINUE would prevent aggregation from accumulating a result).

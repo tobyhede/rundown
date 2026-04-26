@@ -264,6 +264,29 @@ export function extractUnitOutputs(
   return currentStep.outputs ?? [];
 }
 
+/**
+ * Determine whether the current PASS/FAIL result will be consumed by a retry
+ * transition before the authored exhausted action runs.
+ *
+ * File-backed OUTPUTS must follow expression OUTPUTS semantics: a retrying
+ * attempt does not publish outputs to `context.variables`. The state machine
+ * tracks the active retry budget in `retryCount` for command execution, so the
+ * CLI can avoid pre-transition `SET_VARIABLES` while a retry is still pending.
+ *
+ * @param item - The step or substep currently executing
+ * @param result - Command result that will be sent to the state machine
+ * @param state - Current persisted runbook state
+ * @returns True when the next transition is a retry, false otherwise
+ */
+function resultWillRetry(
+  item: Step | ResolvedStep | Substep,
+  result: 'pass' | 'fail',
+  state: RunbookState,
+): boolean {
+  const transition = item.transitions[result];
+  return transition.retry > 0 && state.retryCount < transition.retry;
+}
+
 interface ApplyResultTransitionArgs {
   manager: RunbookStateManager;
   actorService: RunbookActorService;
@@ -962,8 +985,11 @@ export async function runExecutionLoop(
       sandboxed: execResult.sandboxed,
     });
 
+    const lastResult = execResult.success ? 'pass' : 'fail';
+    const publishCapturedOutputs = !resultWillRetry(itemToRender, lastResult, currentState);
+
     // --- Output capture: post-spawn ---------------------------------------
-    if (!execResult.policyDenied && channels.prepared.length > 0) {
+    if (!execResult.policyDenied && publishCapturedOutputs && channels.prepared.length > 0) {
       const captured = await readCapturedOutputs(channels.prepared);
       if (Object.keys(captured).length > 0) {
         const setSync = await actorService.sendAndSync(runbookId, steps, {
@@ -1005,7 +1031,6 @@ export async function runExecutionLoop(
     }
 
     // Store result
-    const lastResult = execResult.success ? 'pass' : 'fail';
     await lifecycleService.setLastResult(runbookId, lastResult);
     const transitionResult = await applyResultTransition({
       manager,

@@ -31,6 +31,9 @@ export interface PolicyMapperOptions {
 
   /** Whether to allow execution without sandbox if unavailable */
   allowUnsandboxed?: boolean;
+
+  /** Additional Rundown-owned paths that must be writable regardless of user policy */
+  extraReadWritePaths?: readonly string[];
 }
 
 /**
@@ -240,12 +243,15 @@ export function policyToSandboxOptions(
   // Resolve read-only paths (from read.allow minus write.allow)
   const readAllowPaths = resolvePathPatterns(readRules.allow, repoRoot, tmpDir);
   const writeAllowPaths = resolvePathPatterns(writeRules.allow, repoRoot, tmpDir);
+  const extraReadWritePaths = (options.extraReadWritePaths ?? []).map((p) =>
+    path.isAbsolute(p) ? p : path.resolve(repoRoot, p),
+  );
 
   // Read-only: paths in read.allow but not in write.allow
   const readOnlyPaths = readAllowPaths.filter((p) => !writeAllowPaths.includes(p));
 
   // Read-write: paths in write.allow (implies read as well)
-  const readWritePaths = writeAllowPaths;
+  const readWritePaths = [...writeAllowPaths, ...extraReadWritePaths];
 
   const denyPatterns = [...readRules.deny, ...writeRules.deny].map((pattern) =>
     resolvePlaceholders(pattern, repoRoot, tmpDir),
@@ -287,9 +293,12 @@ export function policyConfigToSandboxOptions(
 
   const readAllowPaths = resolvePathPatterns(policy.default.read.allow, repoRoot, tmpDir);
   const writeAllowPaths = resolvePathPatterns(policy.default.write.allow, repoRoot, tmpDir);
+  const extraReadWritePaths = (options.extraReadWritePaths ?? []).map((p) =>
+    path.isAbsolute(p) ? p : path.resolve(repoRoot, p),
+  );
 
   const readOnlyPaths = readAllowPaths.filter((p) => !writeAllowPaths.includes(p));
-  const readWritePaths = writeAllowPaths;
+  const readWritePaths = [...writeAllowPaths, ...extraReadWritePaths];
 
   const denyPatterns = [...policy.default.read.deny, ...policy.default.write.deny].map((pattern) =>
     resolvePlaceholders(pattern, repoRoot, tmpDir),

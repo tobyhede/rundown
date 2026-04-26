@@ -255,12 +255,12 @@ rundown run [file] --policy ./policy.yaml # Custom policy file
 rundown run [file] --sandbox              # Enable OS-level sandbox (default)
 rundown run [file] --no-sandbox           # Disable sandbox (trust mode)
 rundown run [file] --sandbox-strict       # Fail if sandbox unavailable
-rundown run [file] --trust-js-policy      # Trust executable JS policy configs
+rundown run [file] --trust-js-policy      # Trust executable JS policy configs and config-declared helpers
 ```
 
 ## Policy Configuration
 
-Policy files are auto-discovered from: `.rundownrc`, `.rundownrc.json`, `.rundownrc.yaml`, `.rundownrc.yml`, `package.json` (rundown field). JavaScript config files (`.js`, `.cjs`, `.mjs`) are not auto-discovered — they require explicit `--policy <path>` with `--trust-js-policy`.
+Policy files are auto-discovered from: `.rundownrc`, `.rundownrc.json`, `.rundownrc.yaml`, `.rundownrc.yml`, `package.json` (rundown field). JavaScript config files (`.js`, `.cjs`, `.mjs`) are not auto-discovered — they require explicit `--policy <path>` with `--trust-js-policy`. Helper modules declared by policy config are skipped unless `--trust-js-policy` is set; `--helpers` remains an explicit CLI opt-in.
 
 See [docs/SECURITY.md](docs/SECURITY.md) for full security policy documentation.
 

@@ -159,7 +159,13 @@ export function createProgram(): Command {
     await initializePolicyContext(policyOpts, cwd);
     const configHelpers = getPolicyContext().policy.helpers ?? [];
     const cliHelpers = policyOpts.helpers ?? [];
-    const allHelperPaths = [...configHelpers, ...cliHelpers];
+    const trustedConfigHelpers = policyOpts.trustJsPolicy ? configHelpers : [];
+    if (configHelpers.length > 0 && !policyOpts.trustJsPolicy) {
+      console.warn(
+        'Warning: Policy-configured helper modules require --trust-js-policy and were skipped.',
+      );
+    }
+    const allHelperPaths = [...trustedConfigHelpers, ...cliHelpers];
     // Always reset both registries so in-process re-entry (tests, hosts that
     // boot the CLI multiple times) cannot leak helpers from a prior invocation.
     // When no helpers are configured, install an empty registry rather than

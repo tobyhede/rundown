@@ -359,7 +359,7 @@ env:
 | `--allow-all` | Bypass all policy checks (trust mode) |
 | `--deny-all` | Block all operations not explicitly allowed |
 | `--policy <file>` | Use a specific policy configuration file |
-| `--trust-js-policy` | Trust an explicitly selected executable JS policy file |
+| `--trust-js-policy` | Trust an explicitly selected executable JS policy file and helper modules declared by policy config |
 | `-y, --yes` | Skip confirmation prompts (auto-approve) |
 | `--non-interactive` | Non-interactive mode (auto-deny, CI-friendly) |
 | `--sandbox` | Enable OS-level sandbox (default on supported platforms) |
@@ -369,6 +369,8 @@ env:
 **Note:** If both `--allow-all` and `--deny-all` are specified, `--deny-all` takes precedence.
 
 **Note:** `--allow-all` implies `--no-sandbox` (trust mode bypasses all enforcement).
+
+**Note:** Helper modules declared by `.rundownrc`, `.rundownrc.json`, `.rundownrc.yaml`, `.rundownrc.yml`, or `package.json` are executable JavaScript and are skipped unless `--trust-js-policy` is set. Helper modules passed directly with `--helpers` are treated as explicit CLI opt-in.
 
 ### Precedence Order
 
