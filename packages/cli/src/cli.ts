@@ -160,14 +160,19 @@ export function createProgram(): Command {
     const configHelpers = getPolicyContext().policy.helpers ?? [];
     const cliHelpers = policyOpts.helpers ?? [];
     const allHelperPaths = [...configHelpers, ...cliHelpers];
-    if (allHelperPaths.length > 0) {
-      const registry = await loadHelperModules(allHelperPaths, cwd, cwd);
-      setHelperRegistry(registry);
-      // XState machine context must be JSON-serializable, so helpers cannot live in
-      // machine context. The core package uses a module-level singleton set here;
-      // the CLI-side singleton (above) serves template-renderer calls outside the machine.
-      setCoreHelperRegistry(registry);
-    }
+    // Always reset both registries so in-process re-entry (tests, hosts that
+    // boot the CLI multiple times) cannot leak helpers from a prior invocation.
+    // When no helpers are configured, install an empty registry rather than
+    // skipping the call.
+    const registry =
+      allHelperPaths.length > 0
+        ? await loadHelperModules(allHelperPaths, cwd, cwd)
+        : new Map<string, (value: string) => string>();
+    setHelperRegistry(registry);
+    // XState machine context must be JSON-serializable, so helpers cannot live in
+    // machine context. The core package uses a module-level singleton set here;
+    // the CLI-side singleton (above) serves template-renderer calls outside the machine.
+    setCoreHelperRegistry(registry);
   });
 
   program.hook('preAction', (thisCommand) => {

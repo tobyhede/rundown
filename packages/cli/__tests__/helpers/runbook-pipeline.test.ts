@@ -179,6 +179,9 @@ const fsPromises = await import('node:fs/promises');
 const { prepareRunbook, startRunbook, buildContextVars, buildTemplateVars } = await import(
   '../../src/helpers/runbook-pipeline'
 );
+const { setHelperRegistry, resetHelperRegistry } = await import(
+  '../../src/services/helper-registry'
+);
 
 function makeState(id: string, overrides: Record<string, unknown> = {}): any {
   return {
@@ -461,6 +464,52 @@ describe('prepareRunbook', () => {
     if (!result.ok) {
       expect(result.code).toBe('VALIDATION_ERROR');
       expect(result.error).toContain('reserved runtime variable name');
+    }
+  });
+
+  it('omits helper-collision warnings when bailing on early VALIDATION_ERROR', async () => {
+    resolveRunbookFile.mockResolvedValue({ path: '/test/reserved.md', source: 'project' });
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue(
+      mockParseResult({
+        frontmatter: { inputs: { context: '' } },
+      }),
+    );
+    (validateFrontmatterVars as jest.Mock).mockReturnValue([
+      {
+        severity: 'error',
+        message:
+          'Frontmatter input "context" uses reserved runtime variable name. Reserved names (case-insensitive): step, index, context',
+      },
+    ]);
+    // Provide a variable named `Region` that collides with a registered helper.
+    (resolveVariables as jest.Mock).mockResolvedValue({
+      vars: { Region: 'us-west' },
+      sources: {},
+      warnings: [],
+      providedKeys: new Set(['Region']),
+    });
+    // Register a helper whose name matches the resolved variable above so that
+    // detectHelperCollisions would surface a "shadowed" warning if it were run.
+    setHelperRegistry(new Map([['Region', (v: string) => v.toUpperCase()]]));
+
+    try {
+      const result = await prepareRunbook('reserved.md', {}, '/test');
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.code).toBe('VALIDATION_ERROR');
+        // The early-error bailout must NOT include helper-collision warnings,
+        // because the user can't act on them while structural errors exist.
+        const warnings = result.warnings ?? [];
+        const hasHelperWarning = warnings.some((w) =>
+          w.includes('shadowed by a registered helper'),
+        );
+        expect(hasHelperWarning).toBe(false);
+      }
+    } finally {
+      resetHelperRegistry();
     }
   });
 

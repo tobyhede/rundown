@@ -11,6 +11,12 @@ import {
   detectHelperCollisions,
   type HelperRegistry,
 } from '../../src/services/helper-registry.js';
+import {
+  setHelperRegistry as setCoreHelperRegistry,
+  getHelperRegistry as getCoreHelperRegistry,
+  resetHelperRegistry as resetCoreHelperRegistry,
+} from '@rundown-org/core';
+import { createTestWorkspace, runCliInProcess } from '../helpers/test-utils.js';
 
 describe('validateHelperPath', () => {
   let tmpDir: string;
@@ -98,6 +104,53 @@ describe('loadHelperModules', () => {
     warnSpy.mockRestore();
   });
 
+  it('skips a class export with a warning', async () => {
+    const helperFile = path.join(tmpDir, 'class.mjs');
+    await fs.writeFile(helperFile, 'export class Fmt { run(v) { return v; } }');
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const registry = await loadHelperModules([helperFile], tmpDir, tmpDir);
+    expect(registry.has('Fmt')).toBe(false);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('class'));
+    warnSpy.mockRestore();
+  });
+
+  it('registers sync functions that return a Promise (validated at call time, not load time)', async () => {
+    // Pre-PR-235 behavior probed each helper with `('')` at registration to
+    // catch sync-but-Promise-returning helpers. That probe ran user code at
+    // CLI startup and was removed. The "returns Promise" failure mode is now
+    // surfaced by `invokeHelperSafely` at the call site instead, so the
+    // registry no longer rejects this shape — it just registers it.
+    const helperFile = path.join(tmpDir, 'sync-promise.mjs');
+    await fs.writeFile(
+      helperFile,
+      'export function fmt(v) { return Promise.resolve(v.toUpperCase()); }',
+    );
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const registry = await loadHelperModules([helperFile], tmpDir, tmpDir);
+    expect(registry.has('fmt')).toBe(true);
+    // Critically: registration must NOT have invoked the helper.
+    expect(warnSpy).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  it('does not invoke helpers at registration time (no side effects)', async () => {
+    // Item 10 (PR #235): the load-time probe called the helper with '' to
+    // detect bad shapes, executing arbitrary user code during CLI startup.
+    // After the fix, registration must be a pure load — no invocation.
+    const sentinel = path.join(tmpDir, 'invoked.flag');
+    const helperFile = path.join(tmpDir, 'side-effect.mjs');
+    // The helper writes a sentinel file when invoked. After registration, the
+    // sentinel must not exist.
+    await fs.writeFile(
+      helperFile,
+      `import { writeFileSync } from 'node:fs';\n` +
+        `export function recorder(v) { writeFileSync(${JSON.stringify(sentinel)}, 'invoked'); return v.toUpperCase(); }`,
+    );
+    const registry = await loadHelperModules([helperFile], tmpDir, tmpDir);
+    expect(registry.has('recorder')).toBe(true);
+    await expect(fs.access(sentinel)).rejects.toThrow();
+  });
+
   it('skips a module that fails to load, continues with others', async () => {
     const goodFile = path.join(tmpDir, 'good.mjs');
     // This path is inside tmpDir but does not exist — will pass traversal check then fail at import.
@@ -165,5 +218,51 @@ describe('singleton accessor functions', () => {
     const registry = getHelperRegistry();
     expect(registry.size).toBe(0);
     expect(registry).not.toBe(myMap);
+  });
+});
+
+/**
+ * Regression test for PR #235 review item 8.
+ *
+ * `createProgram()`'s `preSubcommand` hook is the only place the helper
+ * registries get installed. Earlier code gated the install behind
+ * `if (allHelperPaths.length > 0)`, so a second in-process invocation with no
+ * helpers configured would inherit stale helpers from the first invocation —
+ * a real concern for tests and any host that boots the CLI more than once
+ * within a single process.
+ *
+ * The fix removes the gate: when no helpers are configured, both the CLI-side
+ * and core-side singletons are explicitly reset to an empty Map.
+ */
+describe('createProgram preSubcommand: helper registry reset on re-entry', () => {
+  let workspace: Awaited<ReturnType<typeof createTestWorkspace>>;
+
+  beforeEach(async () => {
+    workspace = await createTestWorkspace();
+  });
+
+  afterEach(async () => {
+    resetHelperRegistry();
+    resetCoreHelperRegistry();
+    await workspace.cleanup();
+  });
+
+  it('clears stale helpers when a subsequent createProgram invocation has no helpers configured', async () => {
+    // Simulate the residue from a prior CLI invocation that registered helpers.
+    const stale: HelperRegistry = new Map([['upper', (v: string) => v.toUpperCase()]]);
+    setHelperRegistry(stale);
+    setCoreHelperRegistry(stale);
+
+    expect(getHelperRegistry().size).toBe(1);
+    expect(getCoreHelperRegistry().size).toBe(1);
+
+    // Run any subcommand through the in-process CLI. The workspace has no
+    // .rundownrc and no --helpers flag, so the preSubcommand hook should
+    // install an empty registry — overwriting the stale one above.
+    const result = await runCliInProcess('status', workspace);
+    expect(result.exitCode).toBe(0);
+
+    expect(getHelperRegistry().size).toBe(0);
+    expect(getCoreHelperRegistry().size).toBe(0);
   });
 });

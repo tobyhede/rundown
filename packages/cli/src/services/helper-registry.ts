@@ -155,23 +155,12 @@ export async function loadHelperModules(
         continue;
       }
 
-      // Probe for sync functions that return a Promise (not caught by isAsyncFunction).
-      // Helpers must be synchronous string transformers.
-      const probeResult = (() => {
-        try {
-          return (value as (v: string) => unknown)('');
-        } catch {
-          return undefined;
-        }
-      })();
-      if (probeResult instanceof Promise) {
-        probeResult.catch(() => {});
-        console.warn(
-          `Warning: Helper export "${name}" in "${rawPath}" returns a Promise — only synchronous helpers are supported. Skipping.`,
-        );
-        continue;
-      }
-
+      // Sync functions that return a Promise (not caught by isAsyncFunction)
+      // and helpers that return non-string values are validated at call time
+      // by `invokeHelperSafely` in `@rundown-org/core`. Doing so here would
+      // require running user code during CLI startup with a synthetic empty
+      // string — a side-effect we deliberately defer until the helper is
+      // actually invoked.
       registry.set(name, value as (value: string) => string);
     }
   }

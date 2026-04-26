@@ -13,7 +13,7 @@ rdpath [--dir <path>] find <pattern>          # Find files matching glob pattern
 rdpath [--dir <path>] --ctx <id> find <pattern> # Find within context scope
 ```
 
-**Environment variable fallback:** `--dir` is optional when `rdpath` is invoked from inside a runbook step. If omitted, `rdpath` reads the base directory from `$RD_WORK_PATH` (injected automatically by `rundown` for each shell block). Similarly, `--ctx` falls back to `$RD_CONTEXT_ID`. An error is raised if neither the flag nor the corresponding environment variable is set.
+**Environment variable fallback:** `--dir` is optional when `rdpath` is invoked from inside a runbook step. If omitted, `rdpath` reads the base directory from `$RD_WORK_PATH` (injected automatically by `rundown` for each shell block); if neither `--dir` nor `$RD_WORK_PATH` is set, `rdpath` writes `error: --dir is required (or set $RD_WORK_PATH)` to stderr and exits with code `1`. `--ctx` similarly falls back to `$RD_CONTEXT_ID`, but is fully optional — when neither is set the path is assembled without a context segment.
 
 ### Examples
 

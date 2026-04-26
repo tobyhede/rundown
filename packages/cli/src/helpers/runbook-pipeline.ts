@@ -509,13 +509,6 @@ export async function prepareRunbook(
   }
   const templateVars = buildTemplateVars(mergedVariables, options);
 
-  const helperCollisions = detectHelperCollisions(getHelperRegistry(), templateVars);
-  for (const name of helperCollisions) {
-    allWarnings.push(
-      `Variable "${name}" is shadowed by a registered helper. Use {{ ./${name} }} to access the variable.`,
-    );
-  }
-
   // Bail early if there are structural errors — don't pass a broken AST to transform passes
   // This must run before the missing-required check so that malformed `required` entries
   // (invalid identifiers, reserved names, duplicates) surface as VALIDATION_ERROR
@@ -532,6 +525,16 @@ export async function prepareRunbook(
       diagnostics,
       warnings: allWarnings.length > 0 ? allWarnings : undefined,
     };
+  }
+
+  // Helper-collision detection runs only after structural validation passes.
+  // Surfacing "Variable shadowed by helper" warnings on a runbook with parse/frontmatter
+  // errors would be noise the user can't act on yet.
+  const helperCollisions = detectHelperCollisions(getHelperRegistry(), templateVars);
+  for (const name of helperCollisions) {
+    allWarnings.push(
+      `Variable "${name}" is shadowed by a registered helper. Use {{ ./${name} }} to access the variable.`,
+    );
   }
 
   // Inherit OUTPUTS from the child's resolved ContextId.

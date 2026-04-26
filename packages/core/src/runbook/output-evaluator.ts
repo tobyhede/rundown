@@ -4,6 +4,7 @@ import type { ForContext, JsonValue, TemplateVarValue } from './types.js';
 import { assertResolvedVariableForContext, isJsonArrayStream } from './types.js';
 import { deriveExecutionAt } from './targeting.js';
 import { assembleArtifactPath, VALID_CTX } from './artifact-paths.js';
+import { invokeHelperSafely } from './helper-invoke.js';
 import { logger } from '../logger.js';
 
 /**
@@ -199,6 +200,10 @@ function hasUnresolvedTemplateReferences(text: string, variables: OutputVars): b
  * @param trimmed - Trimmed expression string
  * @param variables - Variable frame for argument resolution
  * @returns Helper result string, null if no match or helper not found, undefined if helper threw
+ * @throws {Error} When a `{{ helperName varRef }}` form references a variable
+ *   not present in the output frame (caught by the outer try/catch in
+ *   `evaluateStepOutputDeclarations` / `evaluateFrontmatterOutputDeclarations`,
+ *   which warns and omits the output entry)
  */
 function tryDispatchHelper(trimmed: string, variables: OutputVars): string | null | undefined {
   const varCallMatch = HELPER_VAR_CALL_REGEX.exec(trimmed);
@@ -206,16 +211,18 @@ function tryDispatchHelper(trimmed: string, variables: OutputVars): string | nul
     const [, helperName, varPath] = varCallMatch;
     const helper = _helperRegistry.get(helperName);
     if (!helper) return null;
-    const argValue = resolveOutputPath(varPath, variables) ?? '';
-    try {
-      return helper(argValue);
-    } catch (err) {
-      void logger.warn('evaluateOutputExpression: helper threw at call time', {
-        helper: helperName,
-        error: String(err),
-      });
-      return undefined;
+    const argValue = resolveOutputPath(varPath, variables);
+    // Throw on unresolved arg rather than silently passing '' to the helper —
+    // the bare-identifier branch below throws for the same reason, and the
+    // outer try/catch in evaluateStepOutputDeclarations / evaluateFrontmatter-
+    // OutputDeclarations warns and skips the entry. Silently mapping undefined
+    // to '' violates the "No silent mapping" principle in CLAUDE.md.
+    if (argValue === undefined) {
+      throw new Error(
+        `tryDispatchHelper: helper "${helperName}" arg "${varPath}" is not defined in the output frame`,
+      );
     }
+    return invokeHelperSafely(helperName, helper, argValue);
   }
 
   const litCallMatch = HELPER_LITERAL_CALL_REGEX.exec(trimmed);
@@ -223,15 +230,7 @@ function tryDispatchHelper(trimmed: string, variables: OutputVars): string | nul
     const [, helperName, literal] = litCallMatch;
     const helper = _helperRegistry.get(helperName);
     if (!helper) return null;
-    try {
-      return helper(literal);
-    } catch (err) {
-      void logger.warn('evaluateOutputExpression: helper threw at call time', {
-        helper: helperName,
-        error: String(err),
-      });
-      return undefined;
-    }
+    return invokeHelperSafely(helperName, helper, literal);
   }
 
   return null;
@@ -260,6 +259,7 @@ function tryDispatchHelper(trimmed: string, variables: OutputVars): string | nul
  * @throws {Error} If `ctx=` expands to a value that is not a valid ContextId identifier
  * @throws {Error} Propagated from {@link assembleArtifactPath} (e.g. invalid `WorkPath` / `contextId`)
  * @throws {Error} If an explicit variable lookup `{{ ./VarName }}` references a variable not in the output frame
+ * @throws {Error} If a `{{ helperName varRef }}` form references a variable not in the output frame
  * @throws {Error} If the template reference has unresolved variables after expansion
  * @throws {Error} If a bare identifier is not defined in the output frame
  */

@@ -43,6 +43,7 @@ export {
   isResolvedVariableForContext,
   assertResolvedVariableForContext,
 } from './runbook/types.js';
+export { invokeHelperSafely, resetHelperInvokeWarnings } from './runbook/helper-invoke.js';
 
 // Events module (domain types for execution events)
 // Re-export RunbookRef explicitly from events to resolve the naming collision

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import type { OutputDeclaration } from '@rundown-org/parser';
 import { createJsonArrayStream } from '../../src/runbook/types.js';
 import type { ForContext, TemplateVarValue } from '../../src/runbook/types.js';
@@ -11,6 +11,7 @@ import {
   setHelperRegistry,
   resetHelperRegistry,
 } from '../../src/runbook/output-evaluator.js';
+import { resetHelperInvokeWarnings } from '../../src/runbook/helper-invoke.js';
 
 describe('evaluateOutputExpression', () => {
   it('supports path helper, quoted literal, template reference, and bare identifier forms', () => {
@@ -127,6 +128,28 @@ describe('evaluateStepOutputDeclarations', () => {
     expect(evaluateStepOutputDeclarations(outputs, {})).toEqual({
       Literal: 'kept',
     });
+  });
+
+  // Item 12 (PR #235): an `OUTPUTS` like `slug Title` that references a
+  // variable not in the output frame must throw inside `tryDispatchHelper`
+  // (not silently invoke the helper with `''`). The outer try/catch here
+  // warns and omits the entry — matching the bare-identifier path.
+  it('omits helper-call entries whose variable arg is not defined in the output frame', () => {
+    setHelperRegistry(new Map([['slug', (v: string) => v.toLowerCase().replace(/\s+/g, '-')]]));
+    try {
+      const outputs: OutputDeclaration[] = [
+        { name: 'Slug', value: '{{ slug Title }}' },
+        { name: 'Kept', value: '"kept"' },
+      ];
+
+      // Title is intentionally absent from the frame.
+      const result = evaluateStepOutputDeclarations(outputs, {});
+
+      expect(result).toEqual({ Kept: 'kept' });
+      expect(result).not.toHaveProperty('Slug');
+    } finally {
+      resetHelperRegistry();
+    }
   });
 });
 
@@ -525,5 +548,81 @@ describe('evaluateOutputExpression with HelperRegistry', () => {
         ContextId: 'ctx-abc',
       }),
     ).toMatch(/plan\.json$/);
+  });
+});
+
+describe('evaluateOutputExpression call-time helper validation', () => {
+  // Item 10 (PR #235): registration no longer probes helpers with `''`, so
+  // sync-but-Promise-returning helpers and helpers that return non-string
+  // values reach the dispatch site. The validator there warns once per
+  // helper name and skips the entry — matching the existing "helper threw"
+  // contract (`tryDispatchHelper` returns undefined → expression renders as
+  // its literal source text).
+
+  let warnSpy: jest.SpiedFunction<typeof console.warn>;
+
+  beforeEach(() => {
+    resetHelperInvokeWarnings();
+    warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    resetHelperRegistry();
+    warnSpy.mockRestore();
+  });
+
+  it('skips a helper that returns a Promise and warns once', () => {
+    setHelperRegistry(
+      new Map([
+        ['asyncReturn', ((v: string) => Promise.resolve(v)) as unknown as (v: string) => string],
+      ]),
+    );
+    const result = evaluateOutputExpression('{{ asyncReturn Title }}', { Title: 'val' });
+    // Failed helper → expression returns its literal text (best-effort path).
+    expect(result).toBe('{{ asyncReturn Title }}');
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Promise'));
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('asyncReturn'));
+  });
+
+  it('skips a helper that returns a number and warns once', () => {
+    setHelperRegistry(
+      new Map([['numberReturn', ((_v: string) => 42) as unknown as (v: string) => string]]),
+    );
+    const result = evaluateOutputExpression('{{ numberReturn Title }}', { Title: 'val' });
+    expect(result).toBe('{{ numberReturn Title }}');
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    // typeof 42 === 'number'
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('number'));
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('numberReturn'));
+  });
+
+  it('emits at most one warning across multiple invocations of the same misbehaving helper', () => {
+    setHelperRegistry(
+      new Map([
+        ['asyncReturn', ((v: string) => Promise.resolve(v)) as unknown as (v: string) => string],
+      ]),
+    );
+    evaluateOutputExpression('{{ asyncReturn Title }}', { Title: 'one' });
+    evaluateOutputExpression('{{ asyncReturn Title }}', { Title: 'two' });
+    evaluateOutputExpression('{{ asyncReturn "literal" }}', {});
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not surface unhandled rejections when a helper returns a rejecting Promise', async () => {
+    const rejecter = (_v: string): Promise<string> => Promise.reject(new Error('async boom'));
+    setHelperRegistry(new Map([['rejecter', rejecter as unknown as (v: string) => string]]));
+    const unhandledHandler = jest.fn();
+    process.on('unhandledRejection', unhandledHandler);
+    try {
+      evaluateOutputExpression('{{ rejecter Title }}', { Title: 'x' });
+      // Yield twice to flush microtasks — Node fires unhandledRejection on a
+      // microtask after the rejection settles, so a single tick isn't enough.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(unhandledHandler).not.toHaveBeenCalled();
+    } finally {
+      process.off('unhandledRejection', unhandledHandler);
+    }
   });
 });

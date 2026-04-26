@@ -36,7 +36,7 @@ import {
   stepIdToString,
   RunbookSyntaxError,
 } from '@rundown-org/parser';
-import { isJsonArrayStream, type TemplateVarValue } from '@rundown-org/core';
+import { invokeHelperSafely, isJsonArrayStream, type TemplateVarValue } from '@rundown-org/core';
 import type { StepVariables } from './execution-vars.js';
 import { getHelperRegistry } from './helper-registry.js';
 
@@ -685,23 +685,22 @@ const SAFE_SHELL_VALUE = /^(?!-)(?!.*\.\.)[a-zA-Z0-9_./-]+$/;
  * Attempt to dispatch a helper call using the current HelperRegistry.
  *
  * Returns the helper result on success, or the original match string when
- * the helper is not found or throws (best-effort, no propagation).
+ * the helper is not found, throws, or returns a non-string / Promise value.
+ * Validation of the helper return value is delegated to
+ * {@link invokeHelperSafely} so the same semantics apply to the OUTPUTS
+ * evaluator in core.
  *
  * @param helperName - Name of the helper to look up
  * @param argValue - Argument string to pass to the helper
- * @param original - Original match text to return on miss or error
+ * @param original - Original match text to return on miss or validation failure
  * @returns Helper result or original match
  */
 function resolveHelperCall(helperName: string, argValue: string, original: string): string {
   const registry = getHelperRegistry();
   const helper = registry.get(helperName);
   if (!helper) return original;
-  try {
-    return helper(argValue);
-  } catch (err) {
-    console.warn(`Warning: helper "${helperName}" threw at call time: ${String(err)}`);
-    return original;
-  }
+  const result = invokeHelperSafely(helperName, helper, argValue);
+  return result ?? original;
 }
 
 /**
@@ -753,8 +752,18 @@ export function substituteText(
   result = result.replace(
     HELPER_CALL_TEMPLATE_REGEX,
     (match, helperName: string, varRef: string | undefined, literal: string | undefined) => {
-      const argValue =
-        varRef !== undefined ? (resolveTemplatePath(varRef, variables) ?? '') : (literal ?? '');
+      let argValue: string;
+      if (varRef !== undefined) {
+        const resolved = resolveTemplatePath(varRef, variables);
+        // Preserve the original placeholder when the variable arg is unresolved.
+        // Mirrors Pass 3 below and the `./VarName` branch in Pass 1: silently
+        // substituting `''` would corrupt downstream output (see "No silent
+        // mapping" principle in CLAUDE.md).
+        if (resolved === undefined) return match;
+        argValue = resolved;
+      } else {
+        argValue = literal ?? '';
+      }
       const raw = resolveHelperCall(helperName, argValue, match);
       if (raw === match) return match;
       return escapeFn ? escapeFn(raw) : raw;

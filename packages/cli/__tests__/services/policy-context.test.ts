@@ -78,32 +78,32 @@ describe('policy context service', () => {
     });
 
     describe('helpers option', () => {
-      it('parses a single path', async () => {
+      it('parses a single path', () => {
         const parsed = parsePolicyCliOptions({ helpers: 'a.js' });
         expect(parsed.helpers).toEqual(['a.js']);
       });
 
-      it('parses comma-separated paths', async () => {
+      it('parses comma-separated paths', () => {
         const parsed = parsePolicyCliOptions({ helpers: 'a.js,b.js' });
         expect(parsed.helpers).toEqual(['a.js', 'b.js']);
       });
 
-      it('trims whitespace around entries', async () => {
+      it('trims whitespace around entries', () => {
         const parsed = parsePolicyCliOptions({ helpers: ' a.js , b.js ' });
         expect(parsed.helpers).toEqual(['a.js', 'b.js']);
       });
 
-      it('filters empty entries from doubled commas', async () => {
+      it('filters empty entries from doubled commas', () => {
         const parsed = parsePolicyCliOptions({ helpers: 'a.js,,b.js' });
         expect(parsed.helpers).toEqual(['a.js', 'b.js']);
       });
 
-      it('returns undefined when helpers is absent', async () => {
+      it('returns undefined when helpers is absent', () => {
         const parsed = parsePolicyCliOptions({});
         expect(parsed.helpers).toBeUndefined();
       });
 
-      it('passes through a string array directly', async () => {
+      it('passes through a string array directly', () => {
         const parsed = parsePolicyCliOptions({ helpers: ['a.js', 'b.js'] });
         expect(parsed.helpers).toEqual(['a.js', 'b.js']);
       });

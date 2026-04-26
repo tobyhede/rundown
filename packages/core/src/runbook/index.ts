@@ -106,6 +106,7 @@ export {
   type OutputCursor,
   type OutputVars,
 } from './output-evaluator.js';
+export { invokeHelperSafely, resetHelperInvokeWarnings } from './helper-invoke.js';
 export {
   mergeEffectiveVars,
   brandInitialTemplateVars,

@@ -174,6 +174,18 @@ jest.unstable_mockModule('@rundown-org/core', () => {
     createJsonArrayStream: jest.fn(),
     createDelegation: jest.fn(),
     Errors: RealErrors,
+    // Helper-call validator imported by template-renderer; the real impl is fine.
+    invokeHelperSafely: jest.fn(
+      (_name: string, helper: (v: string) => string, arg: string): string | undefined => {
+        try {
+          const r = helper(arg);
+          return typeof r === 'string' ? r : undefined;
+        } catch {
+          return undefined;
+        }
+      },
+    ),
+    resetHelperInvokeWarnings: jest.fn(),
   };
 });
 
