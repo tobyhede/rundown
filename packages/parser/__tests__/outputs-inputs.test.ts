@@ -397,6 +397,10 @@ describe('parseStepOutputDeclaration', () => {
     expect(parseStepOutputDeclaration('')).toBeNull();
     expect(parseStepOutputDeclaration('   ')).toBeNull();
   });
+
+  it('parses a reserved-name naked entry without rejecting (caller enforces reserved-name policy)', () => {
+    expect(parseStepOutputDeclaration('step')).toEqual({ name: 'step' });
+  });
 });
 
 describe('parseRunbookDocument step OUTPUTS naked form', () => {

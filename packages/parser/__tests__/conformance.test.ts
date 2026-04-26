@@ -165,4 +165,28 @@ echo -n "$(./get-version.sh)" > $RD_OUTPUTS_Version
       expect(runbook.steps[0].outputs).toEqual([{ name: 'DeployUrl' }, { name: 'Version' }]);
     });
   });
+
+  describe('Conformance — substep-level naked OUTPUTS', () => {
+    it('accepts naked OUTPUTS on a substep', () => {
+      const md = `## 1. Parent
+
+### 1.1 Capture
+- OUTPUTS
+  - Inner
+- PASS DEFER
+- FAIL DEFER
+
+\`\`\`sh
+printf 'inner-value' > $RD_OUTPUTS_Inner
+\`\`\`
+`;
+      const { runbook, diagnostics } = parseRunbookDocument(md);
+      const errors = diagnostics.filter((d) => d.severity === 'error');
+      expect(errors).toEqual([]);
+      const step = runbook.steps[0];
+      expect('substeps' in step ? step.substeps[0].outputs : undefined).toEqual([
+        { name: 'Inner' },
+      ]);
+    });
+  });
 });
