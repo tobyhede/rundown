@@ -4,6 +4,7 @@ description: Verify build commands, test commands, dependencies, and environment
 tags:
   - planning
   - review
+
 ---
 
 # Review Build and Runtime
@@ -16,6 +17,7 @@ Verify that build, test, and runtime concerns are addressed.
 
 Read the plan at `{{ PlanPath }}`.
 
+
 ## 2. Read the output schema
 - PASS CONTINUE
 - FAIL STOP
@@ -24,8 +26,9 @@ Read the plan at `{{ PlanPath }}`.
 {{ CLAUDE_PLUGIN_ROOT }}/schemas/review.schema.json
 ```
 
+
 ## 3. Are build and runtime concerns addressed?
-- PASS COMPLETE
+- PASS CONTINUE
 - FAIL CONTINUE
 
 - Build commands are correct for the project's build system and would produce expected outputs
@@ -34,21 +37,24 @@ Read the plan at `{{ PlanPath }}`.
 - Environment requirements (Node version, env vars, config files, credentials) are documented
 - Changes won't break CI/CD pipelines and any pipeline modifications are included
 
+
 ## 4. Write the review
 - PASS CONTINUE
 - FAIL STOP
 
 Write the review to the output path as JSON.
 Follow the review output schema.
+Ensure any validation issues have been resolved.
 
 ```bash
-rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file review-plan-{{ RunId }}.json
+rdpath --file review-plan-build-runtime-{{ RunId }}.json
 ```
+
 
 ## 5. Check Schema
 - PASS COMPLETE
 - FAIL GOTO 4
 
 ```bash
-rdx --check "$(rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file review-plan-{{ RunId }}.json)"
+rdx --check "$(rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file review-plan-build-runtime-{{ RunId }}.json)"
 ```

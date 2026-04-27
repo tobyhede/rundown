@@ -16,6 +16,7 @@ Assess risk, security, and safety concerns in the plan.
 
 Read the plan at `{{ PlanPath }}`.
 
+
 ## 2. Read the output schema
 - PASS CONTINUE
 - FAIL STOP
@@ -24,8 +25,9 @@ Read the plan at `{{ PlanPath }}`.
 {{ CLAUDE_PLUGIN_ROOT }}/schemas/review.schema.json
 ```
 
+
 ## 3. Is the plan safe and risk-free?
-- PASS COMPLETE
+- PASS CONTINUE
 - FAIL CONTINUE
 
 - Security concerns are assessed: input validation, authentication, authorization, data exposure, injection risks
@@ -44,15 +46,17 @@ Read the plan at `{{ PlanPath }}`.
 
 Write the review to the output path as JSON.
 Follow the review output schema.
+Ensure any validation issues have been resolved.
 
 ```bash
-rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file review-plan-{{ RunId }}.json
+rdpath --file review-plan-risk-safety-{{ RunId }}.json
 ```
+
 
 ## 5. Check Schema
 - PASS COMPLETE
 - FAIL GOTO 4
 
 ```bash
-rdx --check "$(rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file review-plan-{{ RunId }}.json)"
+rdx --check "$(rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file review-plan-risk-safety-{{ RunId }}.json)"
 ```

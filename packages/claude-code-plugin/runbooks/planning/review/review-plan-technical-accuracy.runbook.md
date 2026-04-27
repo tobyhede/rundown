@@ -16,6 +16,7 @@ Verify that all technical references in the plan are accurate.
 
 Read the plan at `{{ PlanPath }}`.
 
+
 ## 2. Read the output schema
 - PASS CONTINUE
 - FAIL STOP
@@ -24,8 +25,9 @@ Read the plan at `{{ PlanPath }}`.
 {{ CLAUDE_PLUGIN_ROOT }}/schemas/review.schema.json
 ```
 
+
 ## 3. Is the plan technically accurate?
-- PASS COMPLETE
+- PASS CONTINUE
 - FAIL CONTINUE
 
 - File paths referenced in the plan exist in the codebase (source and test files)
@@ -33,6 +35,7 @@ Read the plan at `{{ PlanPath }}`.
 - Import and module paths are valid and resolve correctly
 - Shell commands are syntactically valid and required tools are available
 - Proposed changes follow the project's established patterns and conventions
+
 
 ## 4. Write the review
 - PASS CONTINUE
@@ -42,7 +45,7 @@ Write the review to the output path as JSON.
 Follow the review output schema.
 
 ```bash
-rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file review-plan-{{ RunId }}.json
+rdpath --file review-plan-technical-accuracy-{{ RunId }}.json
 ```
 
 ## 5. Check Schema
@@ -50,5 +53,5 @@ rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file review-plan-{{ RunId }}
 - FAIL GOTO 4
 
 ```bash
-rdx --check "$(rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file review-plan-{{ RunId }}.json)"
+rdx --check "$(rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file review-plan-technical-accuracy-{{ RunId }}.json)"
 ```
