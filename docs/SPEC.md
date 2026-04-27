@@ -53,11 +53,11 @@ Reserved word matching is case-sensitive. `NEXT` is reserved; `Next` and `NextSt
 Named identifiers must match `/^[A-Za-z_][A-Za-z0-9_]*$/`.
 
 ### 2.2 Content Order
-Step content must appear in this strict order:
-1.  **OUTPUTS**: Context output declarations (optional). Must appear as a bullet item immediately after the step header.
-2.  **FOR Annotation**: Loop definition (optional). Must appear as a bullet item after directives.
-3.  **DELEGATE Annotation**: Delegation marker (optional). See [§4.3 DELEGATE](#43-delegate).
-4.  **Transitions**: Control flow rules (optional). Must appear as bullet items immediately after DELEGATE / FOR (or after directives if neither is present). Transitions must appear before any prompt text or body content.
+Step content must follow these ordering rules:
+1.  **Structural Bullets**: All structural bullets (`OUTPUTS`, `FOR`, `DELEGATE`, transitions) must appear before prompt text or body content.
+2.  **FOR before DELEGATE**: When both `FOR` and `DELEGATE` are present, `FOR` must precede `DELEGATE`.
+3.  **OUTPUTS Placement**: `OUTPUTS` directives may appear anywhere within the structural bullet block (before prompt/body content).
+4.  **Transitions**: Control flow rules (optional). Must appear as bullet items before any prompt text or body content.
 5.  **Prompt**: Text instructions.
 6.  **Body**: One of: Code Block or Substeps. A step-level runbook list is shorthand for implicit sequential substeps (`.1`, `.2`, ...).
 

@@ -3,7 +3,7 @@
  *
  * These keywords have special meaning in the Rundown runbook syntax.
  */
-export const RESERVED_WORDS = new Set([
+export const RESERVED_WORDS: ReadonlySet<string> = new Set([
   'NEXT',
   'CONTINUE',
   'COMPLETE',
