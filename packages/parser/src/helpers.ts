@@ -4,11 +4,6 @@ import {
   type ParseConditionalResult,
   type AggregationModifier,
 } from './types.js';
-import {
-  isCanonicalPositiveInteger,
-  isReservedWord,
-  NAMED_IDENTIFIER_PATTERN,
-} from './identifiers.js';
 import type {
   Action,
   AccumulatingAction,
@@ -20,7 +15,12 @@ import type {
   Transitions,
 } from './schemas.js';
 import { MAX_STEP_NUMBER, MAX_FOR_BOUND } from './schemas.js';
-import { parseStepIdFromString, stepIdToString } from './step-id.js';
+import {
+  parseStepIdFromString,
+  stepIdToString,
+  isReservedWord,
+  NAMED_IDENTIFIER_PATTERN,
+} from './step-id.js';
 import type { ParsedForClause, Bound, RunbookEntry, RunbookRef, OutputDeclaration } from './ast.js';
 import { isBoundRef } from './guards.js';
 import { TEMPLATE_VAR_PATH_PATTERN } from './schemas.js';
@@ -199,7 +199,6 @@ export function extractStepHeader(text: string): ParsedStepHeader | null {
 
   if (numEnd > 0) {
     const numberStr = trimmed.slice(0, numEnd);
-    if (!isCanonicalPositiveInteger(numberStr)) return null;
     const number = parseInt(numberStr, 10);
     if (number <= 0 || number > MAX_STEP_NUMBER) return null;
 
@@ -222,7 +221,7 @@ export function extractStepHeader(text: string): ParsedStepHeader | null {
   if (isReservedWord(strippedName)) return null;
 
   const restWords = words.slice(1);
-  const description = restWords.length > 0 ? stripSeparator(restWords.join(' ')) : strippedName;
+  const description = restWords.length > 0 ? restWords.join(' ') : strippedName;
 
   return { name: strippedName, description };
 }
@@ -238,7 +237,7 @@ export function extractStepHeader(text: string): ParsedStepHeader | null {
  * @returns True if the string is a valid step reference, false otherwise
  */
 function isValidStepRef(s: string): boolean {
-  if (/^\d+$/.test(s)) return isCanonicalPositiveInteger(s);
+  if (/^\d+$/.test(s)) return parseInt(s, 10) > 0;
   if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(s)) return !isReservedWord(s);
   return false;
 }
@@ -254,7 +253,7 @@ function isValidStepRef(s: string): boolean {
  * @returns True if the string is a valid substep identifier, false otherwise
  */
 function isValidSubstepId(s: string): boolean {
-  if (/^\d+$/.test(s)) return isCanonicalPositiveInteger(s);
+  if (/^\d+$/.test(s)) return parseInt(s, 10) > 0;
   if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(s)) return !isReservedWord(s);
   return false;
 }
@@ -287,7 +286,8 @@ export function extractSubstepHeader(text: string): ParsedSubstepHeader | null {
 
   // Branch 1: Bare positive integer (e.g., "1", "2 Description", "1. Title", "3) Title")
   if (/^\d+$/.test(firstToken)) {
-    if (isCanonicalPositiveInteger(firstToken)) {
+    const num = parseInt(firstToken, 10);
+    if (num > 0) {
       const afterFirstToken = trimmed.slice(firstTokenRaw.length);
       const description = stripSeparator(afterFirstToken);
       return { id: firstToken, description };
@@ -303,12 +303,7 @@ export function extractSubstepHeader(text: string): ParsedSubstepHeader | null {
       if (!afterDot) return null;
 
       const spaceIndex = afterDot.indexOf(' ');
-      const substepIdRaw = spaceIndex === -1 ? afterDot : afterDot.slice(0, spaceIndex);
-      let substepIdEnd = substepIdRaw.length;
-      while (substepIdEnd > 0 && TRAILING_SEPARATORS.has(substepIdRaw[substepIdEnd - 1])) {
-        substepIdEnd--;
-      }
-      const substepId = substepIdRaw.slice(0, substepIdEnd);
+      const substepId = spaceIndex === -1 ? afterDot : afterDot.slice(0, spaceIndex);
       if (!isValidSubstepId(substepId)) return null;
 
       const remainder = spaceIndex !== -1 ? afterDot.slice(spaceIndex) : '';
@@ -1132,8 +1127,6 @@ export function parseFrontmatterOutputDeclaration(text: string): OutputDeclarati
   // With-value form: delegate to existing step-level parser
   return parseOutputDeclaration(text);
 }
-
-export { isCanonicalPositiveInteger } from './identifiers.js';
 
 /**
  * Format an action as its canonical string representation.
