@@ -6,6 +6,7 @@ const actualChildProcess = await import('node:child_process');
 jest.unstable_mockModule('node:child_process', () => ({
   ...actualChildProcess,
   spawn: jest.fn(),
+  spawnSync: jest.fn(),
 }));
 
 // Mock fs
@@ -20,7 +21,7 @@ jest.unstable_mockModule('node:fs', () => ({
 
 // Import after mocking
 const { SeatbeltSandbox } = await import('../../src/sandbox/macos.js');
-const { spawn } = await import('node:child_process');
+const { spawn, spawnSync } = await import('node:child_process');
 const { existsSync, writeFileSync, unlinkSync } = await import('node:fs');
 
 describe('SeatbeltSandbox', () => {
@@ -66,6 +67,7 @@ describe('SeatbeltSandbox', () => {
     it('returns available when on darwin and sandbox-exec exists', async () => {
       Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
       (existsSync as jest.Mock).mockReturnValue(true);
+      (spawnSync as jest.Mock).mockReturnValue({ status: 0, error: undefined });
 
       const sandbox = new SeatbeltSandbox();
       const availability = await sandbox.getAvailability();
@@ -81,6 +83,7 @@ describe('SeatbeltSandbox', () => {
     it('caches availability result', async () => {
       Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
       (existsSync as jest.Mock).mockReturnValue(true);
+      (spawnSync as jest.Mock).mockReturnValue({ status: 0, error: undefined });
 
       const sandbox = new SeatbeltSandbox();
       await sandbox.getAvailability();
@@ -95,6 +98,7 @@ describe('SeatbeltSandbox', () => {
     it('returns true when available', async () => {
       Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
       (existsSync as jest.Mock).mockReturnValue(true);
+      (spawnSync as jest.Mock).mockReturnValue({ status: 0, error: undefined });
 
       const sandbox = new SeatbeltSandbox();
       const result = await sandbox.isAvailable();
