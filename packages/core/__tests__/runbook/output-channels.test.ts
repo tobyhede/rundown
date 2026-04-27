@@ -282,6 +282,38 @@ describe('prepareOutputChannels', () => {
     }
   });
 
+  it('skips symlinked channel targets when preparing files', async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'rd-outputs-'));
+    try {
+      const targetPath = path.join(cwd, 'target.txt');
+      const channelPath = path.join(
+        cwd,
+        '.rundown',
+        'runs',
+        'wf-test-8b',
+        'outputs',
+        '1',
+        'Symlinked',
+      );
+      await fs.mkdir(path.dirname(channelPath), { recursive: true });
+      await fs.writeFile(targetPath, 'linked-value');
+      await fs.symlink(targetPath, channelPath);
+
+      const result = await prepareOutputChannels({
+        cwd,
+        runId: 'wf-test-8b',
+        scope: { stepId: '1' },
+        naked: [{ name: 'Symlinked' }],
+      });
+
+      expect(result.env).toEqual({});
+      expect(result.prepared).toEqual([]);
+      expect(await fs.readFile(targetPath, 'utf-8')).toBe('linked-value');
+    } finally {
+      await fs.rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it('omits symlinked channel files during read-back', async () => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'rd-outputs-'));
     try {
@@ -370,6 +402,23 @@ describe('readCapturedOutputs', () => {
         naked: [{ name: 'Bin' }],
       });
       await fs.writeFile(prepared.prepared[0].path, Buffer.from([0x68, 0x00, 0x69]));
+      const captured = await readCapturedOutputs(prepared.prepared);
+      expect(captured).toEqual({});
+    } finally {
+      await fs.rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('omits files containing invalid UTF-8 byte sequences', async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'rd-outputs-'));
+    try {
+      const prepared = await prepareOutputChannels({
+        cwd,
+        runId: 'wf-test-6b',
+        scope: { stepId: '1' },
+        naked: [{ name: 'Invalid' }],
+      });
+      await fs.writeFile(prepared.prepared[0].path, Buffer.from([0xc3, 0x28]));
       const captured = await readCapturedOutputs(prepared.prepared);
       expect(captured).toEqual({});
     } finally {

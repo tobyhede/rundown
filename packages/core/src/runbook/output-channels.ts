@@ -203,6 +203,7 @@ export async function prepareOutputChannels(args: PrepareOutputChannelsArgs): Pr
 }> {
   const env: Record<string, string> = {};
   const prepared: PreparedChannel[] = [];
+  const noFollow = fsConstants.O_NOFOLLOW;
   for (const entry of args.naked) {
     let filePath: string;
     try {
@@ -216,13 +217,34 @@ export async function prepareOutputChannels(args: PrepareOutputChannelsArgs): Pr
     }
     try {
       await fs.mkdir(path.dirname(filePath), { recursive: true });
-      // Truncate to zero bytes so re-runs do not see stale content.
-      await fs.writeFile(filePath, '');
-      // Explicitly lock channel files down to owner-read/write only, regardless of umask.
-      await fs.chmod(filePath, 0o600);
+      const handle = await fs.open(
+        filePath,
+        fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | noFollow,
+        0o600,
+      );
+      try {
+        const stat = await handle.stat();
+        if (!stat.isFile()) {
+          void logger.warn('prepareOutputChannels: non-regular channel target, skipping', {
+            name: entry.name,
+            path: filePath,
+          });
+          continue;
+        }
+        await handle.chmod(0o600);
+      } finally {
+        await handle.close().catch(() => undefined);
+      }
       env[`RD_OUTPUTS_${entry.name}`] = filePath;
       prepared.push({ name: entry.name, path: filePath });
     } catch (err) {
+      if (isNodeError(err) && err.code === 'ELOOP') {
+        void logger.warn('prepareOutputChannels: symlinked channel file, skipping', {
+          name: entry.name,
+          path: filePath,
+        });
+        continue;
+      }
       void logger.warn('prepareOutputChannels: failed to create channel file, skipping', {
         name: entry.name,
         path: filePath,
@@ -262,7 +284,16 @@ export async function readCapturedOutputs(
         });
         continue;
       }
-      raw = await handle.readFile('utf-8');
+      const bytes = await handle.readFile();
+      try {
+        raw = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+      } catch {
+        void logger.warn('readCapturedOutputs: non-UTF-8 content, omitting', {
+          name,
+          path: filePath,
+        });
+        continue;
+      }
     } catch (err) {
       if (isNodeError(err) && err.code === 'ENOENT') {
         void logger.warn('readCapturedOutputs: channel file missing', { name, path: filePath });

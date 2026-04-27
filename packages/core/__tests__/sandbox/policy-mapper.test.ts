@@ -409,6 +409,8 @@ describe('policyToSandboxOptions', () => {
     try {
       const capturePath = join(repoRoot, 'output.txt');
       const actualFs = await import('node:fs');
+      // Reset modules and re-import so this test binds the mocked `node:fs` inside the fresh module.
+      // The outer mapper reference keeps the original import for the branch check.
       jest.resetModules();
       jest.unstable_mockModule('node:fs', () => ({
         ...actualFs,
@@ -448,6 +450,8 @@ describe('policyToSandboxOptions', () => {
     try {
       const capturePath = join(repoRoot, 'output.txt');
       const actualFs = await import('node:fs');
+      // Reset modules and re-import so this test binds the mocked `node:fs` inside the fresh module.
+      // The outer mapper reference keeps the original import for the branch check.
       jest.resetModules();
       jest.unstable_mockModule('node:fs', () => ({
         ...actualFs,

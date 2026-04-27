@@ -133,7 +133,7 @@ function normalizeExtraReadWritePath(candidate: string, repoRoot: string, cwd: s
   const absoluteCandidate = path.isAbsolute(candidate)
     ? candidate
     : path.resolve(repoRoot, candidate);
-  const canonicalCandidate = fs.realpathSync(absoluteCandidate);
+  const canonicalCandidate = resolveCanonicalPath(absoluteCandidate);
   const canonicalRoots = [...new Set([resolveCanonicalPath(repoRoot), resolveCanonicalPath(cwd)])];
   const trustedRoot = canonicalRoots.find((root) => isWithinRoot(canonicalCandidate, root));
 
