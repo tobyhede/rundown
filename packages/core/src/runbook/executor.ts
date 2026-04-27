@@ -41,6 +41,23 @@ export interface PolicyExecutionOptions {
 }
 
 /**
+ * Extract Rundown-owned file paths that must be writable inside the OS sandbox.
+ *
+ * These variables are injected after policy environment filtering and are not
+ * user grants. Without a matching sandbox grant, commands can see
+ * `RD_OUTPUTS_*` but still be blocked from writing the prepared channel file.
+ *
+ * @param rdInjected - Rundown-injected environment variables
+ * @returns Absolute or caller-provided paths that should be granted read/write
+ */
+function extractRundownSandboxWritePaths(rdInjected?: Record<string, string>): string[] {
+  if (!rdInjected) return [];
+  return Object.entries(rdInjected)
+    .filter(([key, value]) => key.startsWith('RD_OUTPUTS_') && value.length > 0)
+    .map(([, value]) => value);
+}
+
+/**
  * Execute a shell command with inherited stdio.
  *
  * Spawns a shell process to run the command, inheriting stdin/stdout/stderr
@@ -205,6 +222,7 @@ export async function executeCommandWithPolicy(
         repoRoot: evaluator.getRepoRoot(),
         tmpDir: evaluator.getTmpDir(),
         allowUnsandboxed: !sandboxStrict,
+        extraReadWritePaths: extractRundownSandboxWritePaths(rdInjected),
       });
       sandboxOptions.env = finalEnv;
 

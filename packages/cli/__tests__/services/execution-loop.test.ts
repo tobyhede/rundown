@@ -17,14 +17,16 @@ type LifecycleStateLike = {
 
 // Mock dependencies
 const mockActorService = {
-  sendAndSync:
-    mockFn<(id: string, steps: unknown, event: unknown) => Promise<Record<string, unknown>>>(),
-  getContextSnapshot:
-    mockFn<(id: string, steps: unknown) => Promise<Record<string, unknown> | null>>(),
+  sendAndSync: mockFn<
+    (id: string, steps: unknown, event: unknown) => Promise<Record<string, unknown>>
+  >() as any,
+  getContextSnapshot: mockFn<
+    (id: string, steps: unknown) => Promise<Record<string, unknown> | null>
+  >() as any,
 };
 
 const mockSessionService = {
-  popRunbook: mockFn<(id: string) => Promise<void>>(),
+  popRunbook: mockFn<(id: string) => Promise<void>>() as any,
 };
 
 const ensureActiveEntryFn =
@@ -50,7 +52,7 @@ const consumeResolvedCompletionFn = mockFn<(id: string) => Promise<unknown>>();
 consumeResolvedCompletionFn.mockResolvedValue(null);
 
 const mockLifecycleService = {
-  setLastResult: jest.fn(),
+  setLastResult: jest.fn() as any,
   ensureActiveEntry: ensureActiveEntryFn,
   listResolvedCompletions: listResolvedCompletionsFn,
   consumeResolvedCompletion: consumeResolvedCompletionFn,
@@ -87,6 +89,7 @@ jest.unstable_mockModule('@rundown-org/core', () => {
     printRunbookStoppedAtStep: jest.fn(),
     printPolicyDenied: jest.fn(),
     executeCommand: jest.fn(),
+    executeCommandWithEnv: (jest.fn() as any).mockResolvedValue({ success: true, exitCode: 0 }),
     executeCommandWithPolicy: jest.fn(),
     evaluatePassCondition: jest.fn(),
     evaluateFailCondition: jest.fn(),
@@ -152,7 +155,7 @@ jest.unstable_mockModule('@rundown-org/core', () => {
     SessionService: jest.fn(() => mockSessionService),
     ExecutionLifecycleService: jest.fn(() => mockLifecycleService),
     ForIterationService: jest.fn(() => {
-      const prepareIteration = mockFn<(...args: unknown[]) => Promise<{ status: string }>>();
+      const prepareIteration = mockFn<(...args: unknown[]) => Promise<{ status: string }>>() as any;
       prepareIteration.mockResolvedValue({ status: 'no-resolution-needed' });
       return { prepareIteration };
     }),
@@ -164,42 +167,42 @@ jest.unstable_mockModule('@rundown-org/core', () => {
     }),
     logger: {
       debug: (() => {
-        const fn = mockFn<(...args: unknown[]) => Promise<void>>();
+        const fn = mockFn<(...args: unknown[]) => Promise<void>>() as any;
         fn.mockResolvedValue(undefined);
         return fn;
       })(),
       info: (() => {
-        const fn = mockFn<(...args: unknown[]) => Promise<void>>();
+        const fn = mockFn<(...args: unknown[]) => Promise<void>>() as any;
         fn.mockResolvedValue(undefined);
         return fn;
       })(),
       warn: (() => {
-        const fn = mockFn<(...args: unknown[]) => Promise<void>>();
+        const fn = mockFn<(...args: unknown[]) => Promise<void>>() as any;
         fn.mockResolvedValue(undefined);
         return fn;
       })(),
       error: (() => {
-        const fn = mockFn<(...args: unknown[]) => Promise<void>>();
+        const fn = mockFn<(...args: unknown[]) => Promise<void>>() as any;
         fn.mockResolvedValue(undefined);
         return fn;
       })(),
       always: (() => {
-        const fn = mockFn<(...args: unknown[]) => Promise<void>>();
+        const fn = mockFn<(...args: unknown[]) => Promise<void>>() as any;
         fn.mockResolvedValue(undefined);
         return fn;
       })(),
       event: (() => {
-        const fn = mockFn<(...args: unknown[]) => Promise<void>>();
+        const fn = mockFn<(...args: unknown[]) => Promise<void>>() as any;
         fn.mockResolvedValue(undefined);
         return fn;
       })(),
       getLogFilePath: (() => {
-        const fn = mockFn<() => string>();
+        const fn = mockFn<() => string>() as any;
         fn.mockReturnValue('/tmp/rundown-test.log');
         return fn;
       })(),
       getLogDir: (() => {
-        const fn = mockFn<() => string>();
+        const fn = mockFn<() => string>() as any;
         fn.mockReturnValue('/tmp');
         return fn;
       })(),
@@ -252,44 +255,31 @@ jest.unstable_mockModule('@rundown-org/core', () => {
       },
     ),
     resetHelperInvokeWarnings: jest.fn(),
+    partitionOutputDeclarations: (jest.fn() as any).mockReturnValue({ naked: [], expression: [] }),
+    prepareOutputChannels: (jest.fn() as any).mockResolvedValue({ env: {}, prepared: [] }),
+    readCapturedOutputs: (jest.fn() as any).mockResolvedValue({}),
   };
 });
 
-jest.unstable_mockModule('../../src/helpers/delegate-inference', () => {
-  const inferAllDelegateSubsteps =
-    mockFn<(...args: unknown[]) => { runbookRef: string; stepId: string }[]>();
-  inferAllDelegateSubsteps.mockReturnValue([]);
-  return { inferAllDelegateSubsteps };
-});
+jest.unstable_mockModule('../../src/helpers/delegate-inference', () => ({
+  inferAllDelegateSubsteps: (jest.fn() as any).mockReturnValue([]),
+}));
 
-jest.unstable_mockModule('../../src/helpers/resolve-runbook', () => {
-  const resolveRunbookFile =
-    mockFn<(...args: unknown[]) => Promise<{ path: string; source: string } | null>>();
-  resolveRunbookFile.mockResolvedValue(null);
-  return { resolveRunbookFile };
-});
+jest.unstable_mockModule('../../src/helpers/resolve-runbook', () => ({
+  resolveRunbookFile: (jest.fn() as any).mockResolvedValue(null),
+}));
 
-jest.unstable_mockModule('../../src/services/internal-commands', () => {
-  const isInternalRdCommand = mockFn<(command: string) => boolean>();
-  isInternalRdCommand.mockReturnValue(false);
-  return {
-    isInternalRdCommand,
-    executeRdCommandInternal: jest.fn(),
-  };
-});
+jest.unstable_mockModule('../../src/services/internal-commands', () => ({
+  isInternalRdCommand: (jest.fn() as any).mockReturnValue(false),
+  executeRdCommandInternal: jest.fn(),
+}));
 
-jest.unstable_mockModule('../../src/services/policy-context', () => {
-  const isPolicyEnforced = mockFn<() => boolean>();
-  isPolicyEnforced.mockReturnValue(false);
-  const getSandboxOptions = mockFn<() => { sandbox: boolean; sandboxStrict: boolean }>();
-  getSandboxOptions.mockReturnValue({ sandbox: true, sandboxStrict: false });
-  return {
-    getPolicyEvaluator: jest.fn(),
-    getPolicyPrompter: jest.fn(),
-    isPolicyEnforced,
-    getSandboxOptions,
-  };
-});
+jest.unstable_mockModule('../../src/services/policy-context', () => ({
+  getPolicyEvaluator: jest.fn(),
+  getPolicyPrompter: jest.fn(),
+  isPolicyEnforced: (jest.fn() as any).mockReturnValue(false),
+  getSandboxOptions: (jest.fn() as any).mockReturnValue({ sandbox: true, sandboxStrict: false }),
+}));
 
 // Import after mocking
 const core = await import('@rundown-org/core');
@@ -299,6 +289,7 @@ const resolveRunbook = await import('../../src/helpers/resolve-runbook.js');
 const { runExecutionLoop, executeCommandWithPolicyCheck } = await import(
   '../../src/services/execution.js'
 );
+const mockedPolicyContext = jest.mocked(policyContext);
 
 // Production types — used solely for the `as unknown as` casts below.
 type RunbookStateManagerType = RunbookStateManager;
@@ -367,24 +358,15 @@ describe('runExecutionLoop', () => {
   beforeEach(() => {
     jest.clearAllMocks();
 
-    // Restore default ForIterationService mock (tests may override).
-    // ForIterationService is a class (jest.Mock constructor) so we cast
-    // through `unknown` to a mock-instance type — `jest.mocked` infers
-    // the class signature here and refuses simple `mockImplementation`
-    // calls because of the constructor overloads.
-    (core.ForIterationService as unknown as jest.Mock).mockImplementation(() => {
-      const prepareIteration = mockFn<(...args: unknown[]) => Promise<{ status: string }>>();
-      prepareIteration.mockResolvedValue({ status: 'no-resolution-needed' });
-      return { prepareIteration };
-    });
+    // Restore default ForIterationService mock (tests may override)
+    (core.ForIterationService as any).mockImplementation(() => ({
+      prepareIteration: jest.fn(async () => ({ status: 'no-resolution-needed' as const })) as any,
+    }));
 
-    jest.mocked(policyContext.isPolicyEnforced).mockReturnValue(false);
-    jest.mocked(policyContext.getSandboxOptions).mockReturnValue({
-      sandbox: true,
-      sandboxStrict: false,
-    });
-    jest.mocked(core.executeCommand).mockReset();
-    jest.mocked(core.executeCommandWithPolicy).mockReset();
+    mockedPolicyContext.isPolicyEnforced.mockReturnValue(false);
+    mockedPolicyContext.getSandboxOptions.mockReturnValue({ sandbox: true, sandboxStrict: false });
+    (core.executeCommand as any).mockReset();
+    (core.executeCommandWithPolicy as any).mockReset();
 
     mockManager = {
       load: mockFn<(id: string) => Promise<Record<string, unknown> | null>>(),
@@ -1281,7 +1263,7 @@ describe('runExecutionLoop', () => {
     });
 
     // PENDING_FRONTIER_CONSUMED must NOT be sent when no frontier was consumed
-    const consumedCall = mockActorService.sendAndSync.mock.calls.find((call) => {
+    const consumedCall = mockActorService.sendAndSync.mock.calls.find((call: unknown[]) => {
       const event = call[2] as { type?: string } | undefined;
       return call[1] === delegateSteps && event?.type === 'PENDING_FRONTIER_CONSUMED';
     });
@@ -1307,7 +1289,8 @@ describe('executeCommandWithPolicyCheck', () => {
 
     await executeCommandWithPolicyCheck(command, cwd);
 
-    expect(core.executeCommand).toHaveBeenCalledWith(command, cwd, undefined);
+    expect(core.executeCommand).toHaveBeenCalledWith(command, cwd);
+    expect(core.executeCommandWithEnv).not.toHaveBeenCalled();
     expect(core.executeCommandWithPolicy).not.toHaveBeenCalled();
   });
 
@@ -1349,5 +1332,21 @@ describe('executeCommandWithPolicyCheck', () => {
         sandboxStrict: true,
       }),
     );
+  });
+
+  it('calls executeCommandWithEnv when policy is not enforced but rdInjected is non-empty', async () => {
+    mockedPolicyContext.isPolicyEnforced.mockReturnValue(false);
+    const rdInjected = { RD_OUTPUTS_Foo: '/tmp/foo' };
+    (core.executeCommandWithEnv as any).mockResolvedValue({ success: true, exitCode: 0 });
+
+    await executeCommandWithPolicyCheck(command, cwd, undefined, rdInjected);
+
+    expect(core.executeCommandWithEnv).toHaveBeenCalledWith(
+      command,
+      cwd,
+      expect.objectContaining({ RD_OUTPUTS_Foo: '/tmp/foo' }),
+    );
+    expect(core.executeCommand).not.toHaveBeenCalled();
+    expect(core.executeCommandWithPolicy).not.toHaveBeenCalled();
   });
 });

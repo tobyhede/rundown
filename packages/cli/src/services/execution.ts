@@ -27,6 +27,7 @@ import {
   type RunbookState,
   type ExecutionResult,
   executeCommand,
+  executeCommandWithEnv,
   executeCommandWithPolicy,
   countNumberedSteps,
   extractDisplayCommand,
@@ -43,8 +44,18 @@ import {
   Errors,
   isError,
   type DelegateFrontierEntry,
+  partitionOutputDeclarations,
+  prepareOutputChannels,
+  readCapturedOutputs,
+  type OutputScope,
+  type PreparedChannel,
 } from '@rundown-org/core';
-import { isSourced, resolvedStepHasSubsteps, type ForClause } from '@rundown-org/parser';
+import {
+  isSourced,
+  resolvedStepHasSubsteps,
+  type ForClause,
+  type OutputDeclaration,
+} from '@rundown-org/parser';
 import { isInternalRdCommand, executeRdCommandInternal } from './internal-commands.js';
 import type { StepVariables } from './execution-vars.js';
 import { inferAllDelegateSubsteps } from '../helpers/delegate-inference.js';
@@ -189,6 +200,91 @@ export function findStepOrThrow(steps: ResolvedStep[], stepName: string): Resolv
   const step = steps.find((s) => s.name === stepName);
   if (!step) throw new Error(`Step '${stepName}' not found — possible state corruption`);
   return step;
+}
+
+/**
+ * Derive the output-channel scope for the unit currently being executed.
+ *
+ * Produces one of three tier compositions:
+ * - `{ stepId }` — step-level (no substep, no iteration)
+ * - `{ stepId, substep: { id } }` — substep-level, no FOR loop
+ * - `{ stepId, substep: { id, iteration } }` — substep inside a FOR loop
+ *
+ * Tier population:
+ * - substep tier: set from `substepId` when both `isSubstep` is true and
+ *   `substepId` is defined — the `isSubstep` guard is a belt-and-suspenders
+ *   check; the nested type makes iteration-without-substep unrepresentable
+ * - iteration tier: set from `top.iteration` when `isSubstep` is true AND
+ *   the top FOR frame is non-implicit and its `stepId` matches
+ *   `currentState.step`
+ *
+ * Implicit FOR frames contribute no iteration tier — implicit frames have no
+ * user-visible counter to segment the path with.
+ *
+ * @param currentState - The runbook state at the moment of execution
+ * @param isSubstep - Whether the current execution unit is a substep
+ * @param substepId - The substep id when isSubstep is true
+ * @returns OutputScope suitable for `outputChannelPath` / `prepareOutputChannels`
+ */
+export function deriveOutputScope(
+  currentState: RunbookState,
+  isSubstep: boolean,
+  substepId?: string,
+): OutputScope {
+  const stepId = currentState.step;
+  if (!isSubstep || substepId === undefined) {
+    return { stepId };
+  }
+  const top = currentState.forStack?.at(-1);
+  if (top && !top.implicit && top.stepId === stepId) {
+    return { stepId, substep: { id: substepId, iteration: top.iteration } };
+  }
+  return { stepId, substep: { id: substepId } };
+}
+
+/**
+ * Extract the OUTPUTS declarations attached to the execution unit currently
+ * being run. For a substep, return the substep's OUTPUTS; for a step-level
+ * command, return the parent step's OUTPUTS.
+ *
+ * @param currentStep - The resolved parent step
+ * @param isSubstep - Whether a substep is being executed
+ * @param substepId - The substep id when isSubstep is true
+ * @returns Output declarations or empty array
+ */
+export function extractUnitOutputs(
+  currentStep: ResolvedStep,
+  isSubstep: boolean,
+  substepId?: string,
+): readonly OutputDeclaration[] {
+  if (isSubstep && substepId !== undefined && resolvedStepHasSubsteps(currentStep)) {
+    const sub = currentStep.substeps.find((s) => s.id === substepId);
+    return sub?.outputs ?? [];
+  }
+  return currentStep.outputs ?? [];
+}
+
+/**
+ * Determine whether the current PASS/FAIL result will be consumed by a retry
+ * transition before the authored exhausted action runs.
+ *
+ * File-backed OUTPUTS must follow expression OUTPUTS semantics: a retrying
+ * attempt does not publish outputs to `context.variables`. The state machine
+ * tracks the active retry budget in `retryCount` for command execution, so the
+ * CLI can avoid pre-transition `SET_VARIABLES` while a retry is still pending.
+ *
+ * @param item - The step or substep currently executing
+ * @param result - Command result that will be sent to the state machine
+ * @param state - Current persisted runbook state
+ * @returns True when the next transition is a retry, false otherwise
+ */
+function resultWillRetry(
+  item: Step | ResolvedStep | Substep,
+  result: 'pass' | 'fail',
+  state: RunbookState,
+): boolean {
+  const transition = item.transitions[result];
+  return transition.retry > 0 && state.retryCount < transition.retry;
 }
 
 interface ApplyResultTransitionArgs {
@@ -818,10 +914,28 @@ export async function runExecutionLoop(
     // Expand command code for execution (after guard — command is guaranteed)
     const expandedCommandCode = expandLoopVariablesForCommand(command.code, stepVars);
 
+    // --- Output capture: pre-spawn ---------------------------------------
+    const substepId = isSubstep ? itemToRender.id : undefined;
+    const unitOutputs = extractUnitOutputs(currentStep, isSubstep, substepId);
+    const { naked: nakedOutputs } = partitionOutputDeclarations(unitOutputs);
+    let channels: { env: Record<string, string>; prepared: readonly PreparedChannel[] };
+    if (nakedOutputs.length > 0) {
+      const outputScope = deriveOutputScope(currentState, isSubstep, substepId);
+      channels = await prepareOutputChannels({
+        cwd,
+        runId: currentState.id,
+        scope: outputScope,
+        naked: nakedOutputs,
+      });
+    } else {
+      channels = { env: {}, prepared: [] };
+    }
+    // --------------------------------------------------------------------
+
     // Build rundown-injected environment variables (RD_WORK_PATH, RD_RUN_ID, etc.)
     // Keys come from BUILTIN_VARIABLES so a rename in variable-discovery.ts
     // surfaces here as a typecheck error instead of silently breaking injection.
-    const rdInjected: Record<string, string> = {};
+    const rdInjected: Record<string, string> = { ...channels.env };
     const workPath = stepVars[BUILTIN_VARIABLES.WorkPath];
     const contextId = stepVars[BUILTIN_VARIABLES.ContextId];
     const runId = stepVars[BUILTIN_VARIABLES.RunId];
@@ -829,10 +943,7 @@ export async function runExecutionLoop(
     if (typeof contextId === 'string') rdInjected.RD_CONTEXT_ID = contextId;
     if (typeof runId === 'string') rdInjected.RD_RUN_ID = runId;
 
-    // Execute command
-    // For rd commands, try internal execution first (avoids nested spawn issues in WebContainer)
-    // Use display command (with rd echo wrapper stripped) for cleaner output
-    // Fall back to original command if extractDisplayCommand returns empty (e.g., "rd echo --result pass")
+    // Execute command (unchanged — still routed via internal vs spawn)
     const extracted = extractDisplayCommand(expandedCommandCode);
     const displayCommand = extracted || expandedCommandCode;
     emitter.emit('COMMAND_STARTED', {
@@ -843,11 +954,10 @@ export async function runExecutionLoop(
     let execResult: ExecutionResult;
 
     if (isInternalRdCommand(expandedCommandCode)) {
-      const internalResult = await executeRdCommandInternal(expandedCommandCode, cwd);
+      const internalResult = await executeRdCommandInternal(expandedCommandCode, cwd, rdInjected);
       if (internalResult !== null) {
         execResult = internalResult;
       } else {
-        // Fallback to spawn if internal execution not supported for this subcommand
         execResult = await executeCommandWithPolicyCheck(
           expandedCommandCode,
           cwd,
@@ -864,7 +974,7 @@ export async function runExecutionLoop(
       );
     }
 
-    // Emit COMMAND_COMPLETED event
+    // Emit COMMAND_COMPLETED event (unchanged)
     emitter.emit('COMMAND_COMPLETED', {
       command: expandedCommandCode,
       success: execResult.success,
@@ -874,6 +984,30 @@ export async function runExecutionLoop(
       denialReason: execResult.denialReason,
       sandboxed: execResult.sandboxed,
     });
+
+    const lastResult = execResult.success ? 'pass' : 'fail';
+    const publishCapturedOutputs = !resultWillRetry(itemToRender, lastResult, currentState);
+
+    // --- Output capture: post-spawn ---------------------------------------
+    if (!execResult.policyDenied && publishCapturedOutputs && channels.prepared.length > 0) {
+      const captured = await readCapturedOutputs(channels.prepared);
+      if (Object.keys(captured).length > 0) {
+        const setSync = await actorService.sendAndSync(runbookId, steps, {
+          type: 'SET_VARIABLES',
+          vars: captured,
+        });
+        if (setSync) {
+          currentState = setSync.state;
+        } else {
+          void logger.warn('output-capture: SET_VARIABLES sync returned null', {
+            runbookId,
+            stepId: currentState.step,
+            captured: Object.keys(captured),
+          });
+        }
+      }
+    }
+    // --------------------------------------------------------------------
 
     // Handle policy denial
     if (execResult.policyDenied) {
@@ -897,7 +1031,6 @@ export async function runExecutionLoop(
     }
 
     // Store result
-    const lastResult = execResult.success ? 'pass' : 'fail';
     await lifecycleService.setLastResult(runbookId, lastResult);
     const transitionResult = await applyResultTransition({
       manager,
@@ -981,7 +1114,7 @@ export function buildMetadata(state: RunbookState): RunbookMetadata {
  * @param command - The shell command to execute
  * @param cwd - Working directory for execution
  * @param runbookPath - Optional runbook file path for override matching
- * @param rdInjected - Optional extra environment variables injected by Rundown (e.g. RD_WORK_PATH)
+ * @param rdInjected - Optional rundown-injected env vars (`RD_OUTPUTS_*`, `RD_WORK_PATH`, etc.) merged into the child process environment
  * @returns Execution result
  */
 export async function executeCommandWithPolicyCheck(
@@ -992,7 +1125,14 @@ export async function executeCommandWithPolicyCheck(
 ): Promise<ExecutionResult> {
   // Check if policy enforcement is active
   if (!isPolicyEnforced()) {
-    return executeCommand(command, cwd, rdInjected);
+    // When policy is bypassed (--allow-all / trust mode), still inject
+    // rundown-specific env vars (RD_OUTPUTS_*, RD_WORK_PATH, etc.) so
+    // file-backed OUTPUTS channels are visible to the subprocess.
+    if (rdInjected && Object.keys(rdInjected).length > 0) {
+      const env = { ...process.env, ...rdInjected } as Record<string, string>;
+      return executeCommandWithEnv(command, cwd, env);
+    }
+    return executeCommand(command, cwd);
   }
 
   // Get evaluator and set runbook path for override matching

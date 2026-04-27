@@ -627,12 +627,12 @@ See [SECURITY.md](./SECURITY.md) for full default policy details, including comm
 | `-y, --yes` | Auto-approve prompts |
 | `--non-interactive` | CI mode (auto-deny unlisted commands) |
 | `--policy <file>` | Use custom policy file |
-| `--trust-js-policy` | Trust an explicitly selected JS policy file |
+| `--trust-js-policy` | Trust an explicitly selected JS policy file and helper modules declared by policy config |
 | `--sandbox` | Enable OS-level filesystem sandbox |
 | `--no-sandbox` | Disable sandbox enforcement |
 | `--sandbox-strict` | Fail if sandbox is unavailable |
 
-Policy discovery is data-only by default: `.rundownrc`, `.rundownrc.json`, `.rundownrc.yaml`, `.rundownrc.yml`, or the `rundown` field in `package.json`. Executable `rundown.config.js/.cjs/.mjs` files are only loaded when passed via `--policy` together with `--trust-js-policy`.
+Policy discovery is data-only by default: `.rundownrc`, `.rundownrc.json`, `.rundownrc.yaml`, `.rundownrc.yml`, or the `rundown` field in `package.json`. Executable `rundown.config.js/.cjs/.mjs` files are only loaded when passed via `--policy` together with `--trust-js-policy`. Helper modules declared by policy config are also executable code and are skipped unless `--trust-js-policy` is set; `--helpers` remains an explicit CLI opt-in.
 
 ### Examples
 

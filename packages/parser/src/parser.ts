@@ -26,7 +26,7 @@ import {
   validateLoopControlUsage,
   validateDEFERUsage,
   parseForClause,
-  parseOutputDeclaration,
+  parseStepOutputDeclaration,
 } from './helpers.js';
 import { isReservedTemplateName } from './reserved.js';
 import { validateRunbook } from './validator.js';
@@ -677,10 +677,10 @@ function handleOutputsDirective(node: ListItem, ctx: ActiveStepContext): typeof 
       );
     }
     const text = extractText(paragraph as PhrasingContent | Heading | Paragraph | ListItem);
-    const decl = parseOutputDeclaration(text);
+    const decl = parseStepOutputDeclaration(text);
     if (!decl) {
       throw new RunbookSyntaxError(
-        `Invalid OUTPUTS declaration in ${targetLabel}${formatLineNum(item)}: "${text.trim()}" — expected "Name value" (e.g., "PlanPath {{ path \\"plan.json\\" }}")`,
+        `Invalid OUTPUTS declaration in ${targetLabel}${formatLineNum(item)}: "${text.trim()}" — expected a name (e.g., "Version") or "Name value" (e.g., "PlanPath {{ path \\"plan.json\\" }}")`,
       );
     }
     if (isReservedTemplateName(decl.name)) {

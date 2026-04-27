@@ -31,6 +31,9 @@ export interface PolicyMapperOptions {
 
   /** Whether to allow execution without sandbox if unavailable */
   allowUnsandboxed?: boolean;
+
+  /** Additional Rundown-owned paths that must be writable regardless of user policy */
+  extraReadWritePaths?: readonly string[];
 }
 
 /**
@@ -116,6 +119,71 @@ function extractBasePath(pattern: string): string {
 function isWithinRoot(candidate: string, root: string): boolean {
   const relative = path.relative(root, candidate);
   return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..');
+}
+
+function resolveCanonicalPath(value: string): string {
+  try {
+    return fs.realpathSync(value);
+  } catch {
+    return path.resolve(value);
+  }
+}
+
+function normalizeExtraReadWritePath(candidate: string, repoRoot: string, cwd: string): string {
+  const absoluteCandidate = path.isAbsolute(candidate)
+    ? candidate
+    : path.resolve(repoRoot, candidate);
+  const canonicalCandidate = resolveCanonicalPath(absoluteCandidate);
+  const canonicalRoots = [...new Set([resolveCanonicalPath(repoRoot), resolveCanonicalPath(cwd)])];
+  const trustedRoot = canonicalRoots.find((root) => isWithinRoot(canonicalCandidate, root));
+
+  if (trustedRoot === undefined) {
+    throw new Error(
+      `extraReadWritePaths entry "${candidate}" escapes trusted roots "${repoRoot}" and "${cwd}"`,
+    );
+  }
+
+  const candidateStat = fs.statSync(canonicalCandidate);
+  const trustedRootStat = fs.statSync(trustedRoot);
+  if (candidateStat.dev !== trustedRootStat.dev) {
+    throw new Error(
+      `extraReadWritePaths entry "${candidate}" is on a different device than trusted root "${trustedRoot}"`,
+    );
+  }
+
+  return canonicalCandidate;
+}
+
+function normalizeExtraReadWritePaths(
+  extraReadWritePaths: readonly string[] | undefined,
+  repoRoot: string,
+  cwd: string,
+): string[] {
+  const normalized: string[] = [];
+  for (const candidate of extraReadWritePaths ?? []) {
+    const canonicalCandidate = normalizeExtraReadWritePath(candidate, repoRoot, cwd);
+    if (!normalized.includes(canonicalCandidate)) {
+      normalized.push(canonicalCandidate);
+    }
+  }
+  return normalized;
+}
+
+function buildSandboxPathSets(
+  readAllowPaths: readonly string[],
+  writeAllowPaths: readonly string[],
+  extraReadWritePaths: readonly string[],
+): {
+  readOnlyPaths: string[];
+  readWritePaths: string[];
+} {
+  const readWriteSet = new Set<string>([...writeAllowPaths, ...extraReadWritePaths]);
+  const readOnlyPaths = readAllowPaths.filter((p) => !readWriteSet.has(p));
+  const readWritePaths = [...readWriteSet];
+  return {
+    readOnlyPaths: [...new Set(readOnlyPaths)],
+    readWritePaths,
+  };
 }
 
 function selectExpansionRoots(roots: string[], repoRoot: string, cwd: string): string[] {
@@ -240,19 +308,23 @@ export function policyToSandboxOptions(
   // Resolve read-only paths (from read.allow minus write.allow)
   const readAllowPaths = resolvePathPatterns(readRules.allow, repoRoot, tmpDir);
   const writeAllowPaths = resolvePathPatterns(writeRules.allow, repoRoot, tmpDir);
-
-  // Read-only: paths in read.allow but not in write.allow
-  const readOnlyPaths = readAllowPaths.filter((p) => !writeAllowPaths.includes(p));
-
-  // Read-write: paths in write.allow (implies read as well)
-  const readWritePaths = writeAllowPaths;
+  const extraReadWritePaths = normalizeExtraReadWritePaths(
+    options.extraReadWritePaths,
+    repoRoot,
+    options.cwd,
+  );
+  const { readOnlyPaths, readWritePaths } = buildSandboxPathSets(
+    readAllowPaths,
+    writeAllowPaths,
+    extraReadWritePaths,
+  );
 
   const denyPatterns = [...readRules.deny, ...writeRules.deny].map((pattern) =>
     resolvePlaceholders(pattern, repoRoot, tmpDir),
   );
   const denyPaths = collectConcreteDenyPaths(
     denyPatterns,
-    [...readAllowPaths, ...writeAllowPaths],
+    [...readAllowPaths, ...writeAllowPaths, ...extraReadWritePaths],
     repoRoot,
     options.cwd,
   );
@@ -260,8 +332,8 @@ export function policyToSandboxOptions(
   return {
     cwd: options.cwd,
     repoRoot,
-    readOnlyPaths: [...new Set(readOnlyPaths)],
-    readWritePaths: [...new Set(readWritePaths)],
+    readOnlyPaths,
+    readWritePaths,
     denyPatterns: [...new Set(denyPatterns)],
     denyPaths: [...new Set(denyPaths)],
     env: {},
@@ -287,16 +359,23 @@ export function policyConfigToSandboxOptions(
 
   const readAllowPaths = resolvePathPatterns(policy.default.read.allow, repoRoot, tmpDir);
   const writeAllowPaths = resolvePathPatterns(policy.default.write.allow, repoRoot, tmpDir);
-
-  const readOnlyPaths = readAllowPaths.filter((p) => !writeAllowPaths.includes(p));
-  const readWritePaths = writeAllowPaths;
+  const extraReadWritePaths = normalizeExtraReadWritePaths(
+    options.extraReadWritePaths,
+    repoRoot,
+    options.cwd,
+  );
+  const { readOnlyPaths, readWritePaths } = buildSandboxPathSets(
+    readAllowPaths,
+    writeAllowPaths,
+    extraReadWritePaths,
+  );
 
   const denyPatterns = [...policy.default.read.deny, ...policy.default.write.deny].map((pattern) =>
     resolvePlaceholders(pattern, repoRoot, tmpDir),
   );
   const denyPaths = collectConcreteDenyPaths(
     denyPatterns,
-    [...readAllowPaths, ...writeAllowPaths],
+    [...readAllowPaths, ...writeAllowPaths, ...extraReadWritePaths],
     repoRoot,
     options.cwd,
   );
@@ -304,8 +383,8 @@ export function policyConfigToSandboxOptions(
   return {
     cwd: options.cwd,
     repoRoot,
-    readOnlyPaths: [...new Set(readOnlyPaths)],
-    readWritePaths: [...new Set(readWritePaths)],
+    readOnlyPaths,
+    readWritePaths,
     denyPatterns: [...new Set(denyPatterns)],
     denyPaths: [...new Set(denyPaths)],
     env: {},

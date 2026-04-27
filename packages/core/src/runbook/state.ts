@@ -344,17 +344,31 @@ export class RunbookStateManager {
   }
 
   /**
-   * Delete a runbook state file from disk.
+   * Delete a runbook state file and its per-run outputs directory from disk.
    *
-   * Silently ignores errors if the file does not exist.
+   * Removes both `.rundown/runs/<id>.json` and the captured-output directory
+   * `.rundown/runs/<id>/` if it exists. Silently ignores errors when either
+   * path is absent — `delete` must be idempotent.
    *
    * @param id - The runbook state ID to delete
    */
   async delete(id: string): Promise<void> {
     try {
       await fs.unlink(this.statePath(id));
-    } catch {
-      /* intentionally ignored */
+    } catch (error) {
+      if (!isNodeError(error) || error.code !== 'ENOENT') {
+        throw error;
+      }
+    }
+    try {
+      // The per-run outputs directory shares the run id with the state file.
+      // Use rm -rf semantics so a non-empty directory is removed cleanly.
+      const runDir = this.statePath(id).replace(/\.json$/, '');
+      await fs.rm(runDir, { recursive: true, force: true });
+    } catch (error) {
+      if (!isNodeError(error) || error.code !== 'ENOENT') {
+        throw error;
+      }
     }
   }
 

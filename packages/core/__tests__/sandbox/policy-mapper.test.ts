@@ -1,4 +1,7 @@
-import { describe, it, expect } from '@jest/globals';
+import { describe, it, expect, jest } from '@jest/globals';
+import { join, dirname } from 'node:path';
+import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
+import type { Stats } from 'node:fs';
 import {
   policyToSandboxOptions,
   policyConfigToSandboxOptions,
@@ -192,6 +195,71 @@ describe('policyToSandboxOptions', () => {
     expect(options.allowUnsandboxed).toBe(true);
   });
 
+  it('adds Rundown-owned write grants to readWritePaths', async () => {
+    const repoRoot = await mkdtemp(join(process.cwd(), 'policy-mapper-'));
+    const capturePath = join(repoRoot, '.rundown', 'runs', 'run-1', 'outputs', '1', 'Token');
+    try {
+      await mkdir(dirname(capturePath), { recursive: true });
+      await writeFile(capturePath, 'token');
+
+      const policy: PolicyConfig = {
+        ...DEFAULT_POLICY,
+        default: {
+          ...DEFAULT_POLICY.default,
+          read: { allow: [], deny: [] },
+          write: { allow: [], deny: [] },
+        },
+      };
+      const evaluator = new PolicyEvaluator(policy);
+
+      const options = policyToSandboxOptions(evaluator, {
+        cwd: repoRoot,
+        repoRoot,
+        extraReadWritePaths: [capturePath],
+      });
+
+      expect(options.readWritePaths).toContain(capturePath);
+    } finally {
+      await rm(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('excludes extra read-write paths from readOnlyPaths', async () => {
+    const repoRoot = await mkdtemp(join(process.cwd(), 'policy-mapper-'));
+    try {
+      const capturePath = join(repoRoot, '.rundown', 'runs', 'run-1', 'outputs', '1', 'Token');
+      await mkdir(dirname(capturePath), { recursive: true });
+      await writeFile(capturePath, 'token');
+
+      const policy: PolicyConfig = {
+        ...DEFAULT_POLICY,
+        default: {
+          ...DEFAULT_POLICY.default,
+          read: {
+            allow: [capturePath],
+            deny: [],
+          },
+          write: {
+            allow: [],
+            deny: [],
+          },
+        },
+      };
+      const evaluator = new PolicyEvaluator(policy);
+
+      const options = policyToSandboxOptions(evaluator, {
+        cwd: repoRoot,
+        repoRoot,
+        extraReadWritePaths: [capturePath],
+      });
+
+      expect(options.readWritePaths).toContain(capturePath);
+      expect(options.readOnlyPaths).not.toContain(capturePath);
+    } finally {
+      await rm(repoRoot, { recursive: true, force: true });
+    }
+  });
+
   it('deduplicates paths', () => {
     const policy: PolicyConfig = {
       ...DEFAULT_POLICY,
@@ -281,6 +349,140 @@ describe('policyToSandboxOptions', () => {
     });
 
     expect(options.readOnlyPaths).toContain('/repo/granted');
+  });
+
+  it('rejects out-of-root extra read-write paths in policyToSandboxOptions', async () => {
+    const repoRoot = await mkdtemp(join(process.cwd(), 'policy-mapper-'));
+    const outsidePath = join(dirname(repoRoot), 'outside.txt');
+    try {
+      await writeFile(outsidePath, 'outside');
+      const policy: PolicyConfig = {
+        ...DEFAULT_POLICY,
+        default: {
+          ...DEFAULT_POLICY.default,
+          read: { allow: [], deny: [] },
+          write: { allow: [], deny: [] },
+        },
+      };
+      const options = {
+        cwd: repoRoot,
+        repoRoot,
+        extraReadWritePaths: [outsidePath],
+      };
+
+      const evaluator = new PolicyEvaluator(policy);
+      expect(() => policyToSandboxOptions(evaluator, options)).toThrow(/escapes trusted roots/);
+    } finally {
+      await rm(repoRoot, { recursive: true, force: true });
+      await rm(outsidePath, { force: true });
+    }
+  });
+
+  it('rejects out-of-root extra read-write paths in policyConfigToSandboxOptions', async () => {
+    const repoRoot = await mkdtemp(join(process.cwd(), 'policy-mapper-'));
+    const outsidePath = join(dirname(repoRoot), 'outside.txt');
+    try {
+      await writeFile(outsidePath, 'outside');
+      const policy: PolicyConfig = {
+        ...DEFAULT_POLICY,
+        default: {
+          ...DEFAULT_POLICY.default,
+          read: { allow: [], deny: [] },
+          write: { allow: [], deny: [] },
+        },
+      };
+      const options = {
+        cwd: repoRoot,
+        repoRoot,
+        extraReadWritePaths: [outsidePath],
+      };
+
+      expect(() => policyConfigToSandboxOptions(policy, options)).toThrow(/escapes trusted roots/);
+    } finally {
+      await rm(repoRoot, { recursive: true, force: true });
+      await rm(outsidePath, { force: true });
+    }
+  });
+
+  it('rejects wrong-device extra read-write paths in policyToSandboxOptions', async () => {
+    const repoRoot = await mkdtemp(join(process.cwd(), 'policy-mapper-'));
+    try {
+      const capturePath = join(repoRoot, 'output.txt');
+      const actualFs = await import('node:fs');
+      // Reset modules and re-import so this test binds the mocked `node:fs` inside the fresh module.
+      // The outer mapper reference keeps the original import for the branch check.
+      jest.resetModules();
+      jest.unstable_mockModule('node:fs', () => ({
+        ...actualFs,
+        realpathSync: jest.fn((value: string) => value),
+        statSync: jest.fn((value: string) => {
+          const dev = value.includes('output.txt') ? 2 : 1;
+          return { dev } as unknown as Stats;
+        }),
+      }));
+      const { policyToSandboxOptions: mockedPolicyToSandboxOptions } = await import(
+        '../../src/sandbox/policy-mapper.js'
+      );
+      const policy: PolicyConfig = {
+        ...DEFAULT_POLICY,
+        default: {
+          ...DEFAULT_POLICY.default,
+          read: { allow: [], deny: [] },
+          write: { allow: [], deny: [] },
+        },
+      };
+      const options = {
+        cwd: repoRoot,
+        repoRoot,
+        extraReadWritePaths: [capturePath],
+      };
+
+      const evaluator = new PolicyEvaluator(policy);
+      expect(() => mockedPolicyToSandboxOptions(evaluator, options)).toThrow(/different device/);
+    } finally {
+      await rm(repoRoot, { recursive: true, force: true });
+      jest.resetModules();
+    }
+  });
+
+  it('rejects wrong-device extra read-write paths in policyConfigToSandboxOptions', async () => {
+    const repoRoot = await mkdtemp(join(process.cwd(), 'policy-mapper-'));
+    try {
+      const capturePath = join(repoRoot, 'output.txt');
+      const actualFs = await import('node:fs');
+      // Reset modules and re-import so this test binds the mocked `node:fs` inside the fresh module.
+      // The outer mapper reference keeps the original import for the branch check.
+      jest.resetModules();
+      jest.unstable_mockModule('node:fs', () => ({
+        ...actualFs,
+        realpathSync: jest.fn((value: string) => value),
+        statSync: jest.fn((value: string) => {
+          const dev = value.includes('output.txt') ? 2 : 1;
+          return { dev } as unknown as Stats;
+        }),
+      }));
+      const { policyConfigToSandboxOptions: mockedPolicyConfigToSandboxOptions } = await import(
+        '../../src/sandbox/policy-mapper.js'
+      );
+      const policy: PolicyConfig = {
+        ...DEFAULT_POLICY,
+        default: {
+          ...DEFAULT_POLICY.default,
+          read: { allow: [], deny: [] },
+          write: { allow: [], deny: [] },
+        },
+      };
+      const options = {
+        cwd: repoRoot,
+        repoRoot,
+        extraReadWritePaths: [capturePath],
+      };
+
+      expect(() => mockedPolicyConfigToSandboxOptions(policy, options)).toThrow(/different device/);
+    } finally {
+      jest.resetModules();
+      await rm(repoRoot, { recursive: true, force: true });
+    }
   });
 });
 

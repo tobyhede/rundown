@@ -15,17 +15,22 @@ export const RUNDOWN_DIR = '.rundown';
  * inputs like `../outside` or absolute paths from escaping `.rundown/`
  * when joined via `path.join`.
  */
-const SAFE_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
+export const SAFE_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
 
 /**
  * Validate that a user-supplied id is safe to interpolate into a filename.
  *
+ * Rejects empty strings, `.`, `..`, and any value containing characters
+ * outside `[A-Za-z0-9._-]`. The `field` label appears verbatim in the error
+ * message so callers can produce domain-specific messages such as
+ * `Invalid runId: "..."` or `Invalid stepId: "..."`.
+ *
  * @param value - The id to validate
- * @param field - Field name used in the error message (for debuggability)
- * @throws {Error} If the id is empty, contains path separators, `..`, or any
- *         character outside the safe set
+ * @param field - Field label used in the error message (e.g. `'runId'`, `'stepId'`)
+ * @throws {Error} If the id is empty, equals `.` or `..`, contains path
+ *         separators, or any character outside the safe set
  */
-function assertSafeId(value: string, field: 'id' | 'runId'): void {
+export function assertSafeId(value: string, field: string): void {
   // Reject `.` and `..` explicitly: both match SAFE_ID_PATTERN but resolve to
   // parent/current directory under path.join, enabling traversal out of the
   // intended `.rundown/` subtree.

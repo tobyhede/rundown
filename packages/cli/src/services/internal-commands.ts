@@ -7,6 +7,7 @@
  */
 
 import type { ExecutionResult } from '@rundown-org/core';
+import { promises as fs } from 'node:fs';
 import { executeEchoLogic, toExecutionResult } from '../helpers/echo-command.js';
 
 /**
@@ -125,9 +126,14 @@ function executePromptInternal(args: string[]): ExecutionResult {
  *
  * @param args - Command arguments after 'echo'
  * @param cwd - Current working directory
+ * @param rdInjected - Rundown-injected env vars, including any `RD_OUTPUTS_*` file paths
  * @returns ExecutionResult with success/failure
  */
-async function executeEchoInternal(args: string[], cwd: string): Promise<ExecutionResult> {
+async function executeEchoInternal(
+  args: string[],
+  cwd: string,
+  rdInjected?: Record<string, string>,
+): Promise<ExecutionResult> {
   // Parse --result options from args
   const { results, remaining } = parseResultOptions(args);
 
@@ -138,12 +144,25 @@ async function executeEchoInternal(args: string[], cwd: string): Promise<Executi
 
   // Use shared echo logic
   const result = await executeEchoLogic(results, commandArgs, cwd);
+  const output = result.output;
+
+  if (output && rdInjected) {
+    try {
+      const outputPaths = Object.entries(rdInjected)
+        .filter(([key, value]) => key.startsWith('RD_OUTPUTS_') && value.length > 0)
+        .map(([, value]) => value);
+      await Promise.all(outputPaths.map((filePath) => fs.writeFile(filePath, output)));
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error));
+      return { success: false, exitCode: 1 };
+    }
+  }
 
   // Output error or result message
   if (result.error) {
     console.error(result.error);
-  } else if (result.output) {
-    console.log(result.output);
+  } else if (output) {
+    console.log(output);
   }
 
   return toExecutionResult(result);
@@ -158,6 +177,7 @@ async function executeEchoInternal(args: string[], cwd: string): Promise<Executi
  *
  * @param command - The full command string (e.g., "rd echo --result pass")
  * @param cwd - Current working directory
+ * @param rdInjected - Optional Rundown-injected env vars to pass through to handlers
  * @returns ExecutionResult if command was handled internally, or null if
  *          the command is not supported and should fall back to spawn
  *
@@ -175,12 +195,13 @@ async function executeEchoInternal(args: string[], cwd: string): Promise<Executi
 export async function executeRdCommandInternal(
   command: string,
   cwd: string,
+  rdInjected?: Record<string, string>,
 ): Promise<ExecutionResult | null> {
   const { subcommand, args } = parseRdCommand(command);
 
   switch (subcommand) {
     case 'echo':
-      return executeEchoInternal(args, cwd);
+      return executeEchoInternal(args, cwd, rdInjected);
 
     case 'prompt':
       return executePromptInternal(args);

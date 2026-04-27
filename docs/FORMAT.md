@@ -89,7 +89,7 @@ Substeps cannot contain nested substeps. See [SPEC.md §1.1](./SPEC.md) for the 
 ```ebnf
 outputs_directive ::= "- OUTPUTS" newline output_list
 output_list       ::= ( ws "- " output_entry newline )+
-output_entry      ::= variable_name ws output_value
+output_entry      ::= variable_name ( ws output_value )?
 output_value      ::= helper_call | template_variable | quoted_string | variable_name
 helper_call       ::= "{{" ws? variable_name ( ws argument )+ ws? "}}"
 argument          ::= quoted_string | variable_path
@@ -97,7 +97,24 @@ argument          ::= quoted_string | variable_path
 
 A step or substep may declare at most one OUTPUTS directive. Duplicate directives on the same target are rejected. The `- INPUTS` directive has been removed — use the frontmatter `inputs:` field to declare default variable values.
 
-OUTPUTS declares values to inject into the runbook's live variable space after step completion. Output values may be Handlebars helper calls (`{{ path "file.json" }}`), template variable references (`{{ VarName }}`), quoted literals (`"value"`), or bare variable references (`VarName`).
+OUTPUTS declares values to inject into the runbook's live variable space
+after step completion. An entry may be a **naked declaration** (name only)
+or carry a value expression. Naked entries at step / substep level activate
+a file-backed channel: Rundown creates an empty file whose path is composed
+from the active scope tiers (step id, optional substep id, optional FOR
+iteration index) followed by `<VarName>` and exports its absolute path as
+`RD_OUTPUTS_<VarName>` to the spawned command. The three possible paths are:
+
+| Scope | Path |
+|---|---|
+| Step | `.rundown/runs/<runId>/outputs/<stepId>/<VarName>` |
+| Substep | `.rundown/runs/<runId>/outputs/<stepId>/<substepId>/<VarName>` |
+| FOR iteration (in substep) | `.rundown/runs/<runId>/outputs/<stepId>/<substepId>/<iteration>/<VarName>` |
+
+See [docs/SPEC.md §7.1](./SPEC.md#71-outputs). Expression-form output values
+may be Handlebars helper calls (`{{ path "file.json" }}`), template variable
+references (`{{ VarName }}`), quoted literals (`"value"`), or bare variable
+references (`VarName`).
 
 Variable names in OUTPUTS must match `variable_name` and must not be [reserved variable names](#reserved-variable-names).
 

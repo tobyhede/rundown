@@ -363,12 +363,16 @@ export function evaluateOutputExpression(expr: string, variables: OutputVars): s
 }
 
 /**
- * Evaluate step-level OUTPUTS declarations, skipping naked entries and logging
- * (but not throwing on) individual expression failures.
+ * Evaluate step-level OUTPUTS declarations.
+ *
+ * Expression-form entries are evaluated against the provided variable frame.
+ * Naked-form entries (no `value`) are silently skipped — they declare a
+ * file-backed output channel handled by the executor, not the evaluator.
  *
  * @param outputs - Declarations parsed from the step's OUTPUTS block
  * @param vars - Variable frame for expression evaluation
- * @returns Map of output name to rendered value; failed or naked entries are omitted
+ * @returns Map of output name to rendered value; failed expression entries
+ *   are omitted with a warning, naked entries are omitted silently
  */
 export function evaluateStepOutputDeclarations(
   outputs: readonly OutputDeclaration[],
@@ -378,9 +382,8 @@ export function evaluateStepOutputDeclarations(
 
   for (const output of outputs) {
     if (output.value === undefined) {
-      void logger.warn('evaluateStepOutputDeclarations: naked form invalid at step level', {
-        name: output.name,
-      });
+      // Naked form is valid at step level — handled by the executor as a
+      // file-backed RD_OUTPUTS_<Name> channel. Skip silently here.
       continue;
     }
     try {

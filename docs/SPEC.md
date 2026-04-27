@@ -356,7 +356,30 @@ OUTPUTS declares values to inject into the runbook's live variable space after s
 
 * **Evaluation trigger**: OUTPUTS are evaluated by the XState machine on both PASS and FAIL transitions when the completing step or substep declares outputs.
 * **Storage**: Step-level outputs merge into the machine's live `context.variables`; terminal frontmatter outputs are written to `context.finalVars` and persisted to `RunbookState.finalVars`.
-* **Expressions**: Each output entry is evaluated against the step's resolved runtime frame. Supported forms: Handlebars expressions (`{{ path "file.json" }}`), quoted literals (`"value"` — may embed Handlebars templates, e.g. `"{{ Index }}"`), bare variable references (`VarName`).
+* **Expressions**: Each entry is evaluated against the step's resolved
+  runtime frame. Supported forms: naked file-backed channel (`VarName` only —
+  see "Naked form" below), Handlebars expressions (`{{ path "file.json" }}`),
+  quoted literals (`"value"` — may embed Handlebars templates, e.g.
+  `"{{ Index }}"`), and bare variable references (`VarName value`).
+* **Naked form (file-backed channel)**: An OUTPUTS entry with no expression
+  (just the name) at step or substep level activates a file-backed output
+  channel. Before the step's command spawns, Rundown creates an empty file
+  whose path includes the active scope tiers in this order: step id, optional
+  substep id, optional FOR iteration index, then `<VarName>`. The three
+  resulting paths are:
+
+  | Scope | Path |
+  |---|---|
+  | Step | `.rundown/runs/<runId>/outputs/<stepId>/<VarName>` |
+  | Substep | `.rundown/runs/<runId>/outputs/<stepId>/<substepId>/<VarName>` |
+  | FOR iteration (in substep) | `.rundown/runs/<runId>/outputs/<stepId>/<substepId>/<iteration>/<VarName>` |
+
+  Rundown injects `RD_OUTPUTS_<VarName>=<absolute-path>` into the command's
+  environment (after policy filtering, rundown-wins). When the command exits,
+  Rundown reads the file, trims trailing whitespace and newlines, and merges
+  the value into `context.variables` using the same precedence as
+  expression-form outputs. UTF-8 only; missing, empty, or non-UTF-8 content
+  is logged and omitted (best-effort, transition not rolled back).
 * **Best-effort**: OUTPUTS evaluation is non-fatal. Failed expressions are omitted from the stored result and logged; the step transition is not rolled back.
 * **Merge semantics**: Outputs merge into the existing live variable space — new keys are added, existing keys are overwritten.
 * **Status visibility**: The `rd status` command includes a `vars` field that exposes the current merged variable space (template vars + step outputs).
@@ -432,6 +455,19 @@ Flow:
 15. **DELEGATE Requires Runbook Target**: Every substep marked `delegate: true` must declare at least one runbook target. A bare DELEGATE substep (no runbook bullet) is rejected at parse time. Step-level DELEGATE propagates to all substeps and the same target requirement applies to every propagated child.
 16. **RETRY on DELEGATE is Result-Agnostic**: `rd delegate --retry` succeeds regardless of the substep's prior result. Retry re-issues a fresh token by cancelling the current delegation and re-creating one with a new token; the retry hook propagates the canonical FOR-iteration location through `contextSnapshot.at`.
 17. **Parent Orchestration Supersedes Child Lifecycle for Exit Codes**: When a delegated child runbook reaches a terminal lifecycle (e.g. `FAIL STOP` on the child) and a parent absorbs the outcome non-terminally (e.g. `FAIL RETRY`), the child's CLI invocation (`rd pass` / `rd fail`) exits 0. Exit 1 is reserved for cases where the orchestrated workflow has actually halted: no parent linkage exists and the local lifecycle is `stopped`, or the parent's propagation also resolves to `stopped` (e.g. RETRY exhaustion → `STOP` fallback). This lets scripted orchestrators use exit codes as flow control without mistaking an in-progress retry for a terminal failure.
+18. **File-Backed Naked OUTPUTS**: A naked OUTPUTS entry (name only) at step
+    or substep level activates a file-backed channel. `RD_OUTPUTS_<VarName>`
+    is injected only for naked-form entries; expression-form entries produce
+    no file and no env var.
+19. **Mixed OUTPUTS Forms**: A step or substep may mix naked and expression
+    OUTPUTS entries within a single OUTPUTS block.
+20. **`RD_OUTPUTS_*` is Rundown-Wins**: `RD_OUTPUTS_<VarName>` is always a
+    valid writable absolute path when the command starts. These env vars are
+    injected by Rundown after policy environment filtering and cannot be
+    blocked or overridden by user-supplied environment variables.
+21. **Captured Output Merge Precedence**: Captured naked outputs merge into
+    `context.variables` using the same precedence as expression-form
+    outputs — same-name keys overwrite existing values.
 
 ## 9. Compatibility
 
