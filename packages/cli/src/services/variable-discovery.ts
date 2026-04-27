@@ -691,14 +691,15 @@ function collectEnvBridgeVars(warnings?: string[]): Record<string, unknown> {
  *
  * ```
  * Layer 0: builtins        ← Date, Branch, WorkPath, RunId, ContextId (fresh)
- * Layer 1: inheritedVars   ← parent delegation vars (overrides builtins)
- * Layer 2: discovered      ← .rundown/config.yaml (auto-discovered)
+ * Layer 1: discovered      ← .rundown/config.yaml (auto-discovered)
+ * Layer 2: inheritedVars   ← parent delegation vars (overrides builtins/config)
  * Layer 3: envBridge       ← RD_INPUT_* environment variables
  * Layer 4: cliFlags        ← --input-file, --input, --input-json (highest precedence)
  * ```
  *
  * The inherited layer ensures that parent ContextId survives into child
- * runbooks during delegation, rather than being replaced by a fresh builtin.
+ * runbooks during delegation, rather than being replaced by a fresh builtin
+ * or shadowed by project-local config.
  *
  * @param options - Variable sources from CLI flags, input-file, and inherited vars
  * @param options.inputFile - Array of paths to YAML files containing variable definitions (repeatable)
@@ -722,11 +723,11 @@ async function collectRawLayers(
   // Layer 0: Built-ins (lowest)
   const builtins: Record<string, unknown> = getBuiltinVariables();
 
-  // Layer 1: Inherited vars from parent delegation (overrides builtins)
-  const inherited: Record<string, unknown> = options.inheritedVars ?? {};
-
-  // Layer 2: Auto-discovered config
+  // Layer 1: Auto-discovered config
   const discovered: Record<string, unknown> = await discoverRawVariables(cwd);
+
+  // Layer 2: Inherited vars from parent delegation (overrides builtins/config)
+  const inherited: Record<string, unknown> = options.inheritedVars ?? {};
 
   // Layer 3: Environment bridge (RD_INPUT_* env vars)
   const envBridge = collectEnvBridgeVars(warnings);
@@ -734,7 +735,7 @@ async function collectRawLayers(
   // Layer 4: CLI flags (--input-file, --input, --input-json merged)
   const cliFlags = await collectCliFlags(options, cwd);
 
-  return [builtins, inherited, discovered, envBridge, cliFlags];
+  return [builtins, discovered, inherited, envBridge, cliFlags];
 }
 
 /**
@@ -836,7 +837,7 @@ export async function resolveVariables(
 
   // External provider layer indices — excludes builtins (0).
   // Used to track which keys were actually accepted via routing for `required` var validation.
-  // Indices must match collectRawLayers ordering: 1=inherited, 2=config, 3=env, 4=CLI.
+  // Indices must match collectRawLayers ordering: 1=config, 2=inherited, 3=env, 4=CLI.
   const EXTERNAL_PROVIDER_INDICES = new Set([1, 2, 3, 4]);
   const providedKeys = new Set<string>();
 

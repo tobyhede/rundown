@@ -641,7 +641,7 @@ describe('resolveVariables', () => {
       expect(result.vars.ContextId).toBe('parent123');
     });
 
-    it('config overrides inherited vars', async () => {
+    it('inherited vars override discovered config', async () => {
       const configDir = path.join(tmpDir, RUNDOWN_DIR);
       await fs.mkdir(configDir, { recursive: true });
       await fs.writeFile(path.join(configDir, 'config.yaml'), 'myVar: config\n');
@@ -652,7 +652,21 @@ describe('resolveVariables', () => {
         },
         tmpDir,
       );
-      expect(result.vars.myVar).toBe('config');
+      expect(result.vars.myVar).toBe('inherited');
+    });
+
+    it('inherited ContextId survives discovered config override', async () => {
+      const configDir = path.join(tmpDir, RUNDOWN_DIR);
+      await fs.mkdir(configDir, { recursive: true });
+      await fs.writeFile(path.join(configDir, 'config.yaml'), 'ContextId: config123\n');
+
+      const result = await resolveVariables(
+        {
+          inheritedVars: { ContextId: 'parent123' },
+        },
+        tmpDir,
+      );
+      expect(result.vars.ContextId).toBe('parent123');
     });
 
     it('inherited ContextId survives when child has no override', async () => {

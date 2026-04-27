@@ -541,6 +541,22 @@ describe('required field', () => {
       ]),
     );
   });
+
+  it('rejects duplicate required names before subset validation', () => {
+    const md = `---\nname: test\ninputs:\n  - PlanPath\nrequired:\n  - PlanPath\n  - PlanPath\n---\n# Content`;
+    const { frontmatter, diagnostics } = extractFrontmatter(md);
+    expect(frontmatter?.required).toEqual(['PlanPath']);
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0].message).toMatch(/duplicate entry "PlanPath".*"required"/i);
+  });
+
+  it('rejects poisoned required identifiers', () => {
+    const md = `---\nname: test\nrequired:\n  - constructor\n---\n# Content`;
+    const { frontmatter, diagnostics } = extractFrontmatter(md);
+    expect(frontmatter?.required).toBeUndefined();
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0].message).toMatch(/constructor.*not a valid identifier/i);
+  });
 });
 
 describe('extractFrontmatter() — case-insensitive keys', () => {
@@ -609,6 +625,19 @@ inputs:
     expect(diagnostics).toHaveLength(1);
     expect(frontmatter?.inputs).toEqual(['environment']);
     expect(diagnostics[0].message).toContain('must be a string identifier');
+  });
+
+  it('rejects poisoned identifiers in inputs', () => {
+    const markdown = `---
+inputs:
+  - __proto__
+  - environment
+---
+# Test`;
+    const { frontmatter, diagnostics } = extractFrontmatter(markdown);
+    expect(frontmatter?.inputs).toEqual(['environment']);
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0].message).toMatch(/__proto__.*not a valid identifier/i);
   });
 
   it('treats vars: as unknown passthrough (not a known field)', () => {

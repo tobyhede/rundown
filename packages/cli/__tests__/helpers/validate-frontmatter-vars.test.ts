@@ -1,5 +1,58 @@
 import { describe, it, expect } from '@jest/globals';
-import { validateOutputsDeclarations } from '../../src/helpers/validate-frontmatter-vars.js';
+import {
+  validateFrontmatterVars,
+  validateRequiredVars,
+  validateOutputsDeclarations,
+} from '../../src/helpers/validate-frontmatter-vars.js';
+
+describe('validateFrontmatterVars', () => {
+  it('returns empty array for undefined vars', () => {
+    expect(validateFrontmatterVars(undefined)).toEqual([]);
+  });
+
+  it('returns empty array for non-reserved vars', () => {
+    expect(validateFrontmatterVars({ PlanPath: 'value', Region: 'us-west' })).toEqual([]);
+  });
+
+  it('returns error for reserved runtime names', () => {
+    const result = validateFrontmatterVars({ Step: '1', Context: 'ctx' });
+    expect(result).toHaveLength(2);
+    expect(result[0].severity).toBe('error');
+    expect(result[0].message).toContain('"Step"');
+    expect(result[1].message).toContain('"Context"');
+  });
+});
+
+describe('validateRequiredVars', () => {
+  it('returns empty array for undefined required list', () => {
+    expect(validateRequiredVars(undefined, undefined)).toEqual([]);
+  });
+
+  it('returns error for duplicate required names', () => {
+    const result = validateRequiredVars(['PlanPath', 'PlanPath'], undefined);
+    expect(result).toHaveLength(1);
+    expect(result[0].message).toContain('Duplicate entry "PlanPath"');
+  });
+
+  it('returns error for poisoned or invalid identifiers', () => {
+    const result = validateRequiredVars(['__proto__', 'bad-name'], undefined);
+    expect(result).toHaveLength(2);
+    expect(result[0].message).toContain('not a valid identifier');
+    expect(result[1].message).toContain('not a valid identifier');
+  });
+
+  it('returns error for reserved names and vars overlap', () => {
+    const result = validateRequiredVars(['Step', 'PlanPath'], { PlanPath: 'value' });
+    expect(result).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ message: expect.stringContaining('reserved runtime variable') }),
+        expect.objectContaining({
+          message: expect.stringContaining('cannot be both in "required" and "vars"'),
+        }),
+      ]),
+    );
+  });
+});
 
 describe('validateOutputsDeclarations', () => {
   it('returns empty array for undefined outputs', () => {

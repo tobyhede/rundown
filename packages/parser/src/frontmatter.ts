@@ -6,6 +6,17 @@ import type { OutputDeclaration } from './ast.js';
 import { parseFrontmatterOutputDeclaration } from './helpers.js';
 
 const IDENTIFIER_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+const POISONED_IDENTIFIER_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+/**
+ * Check whether a frontmatter identifier is syntactically valid and safe.
+ *
+ * @param name - Candidate identifier to validate
+ * @returns True when the identifier matches the allowed pattern and is not a poisoned key
+ */
+function isSafeIdentifier(name: string): boolean {
+  return IDENTIFIER_PATTERN.test(name) && !POISONED_IDENTIFIER_KEYS.has(name);
+}
 
 /**
  * Known frontmatter keys whose casing is normalized before Zod parsing.
@@ -232,7 +243,7 @@ function filterInputDeclarations(
       });
       return;
     }
-    if (!IDENTIFIER_PATTERN.test(entry)) {
+    if (!isSafeIdentifier(entry)) {
       diagnostics.push({
         severity: 'error',
         message: `Frontmatter "inputs[${String(index)}]" — "${entry}" is not a valid identifier`,
@@ -264,7 +275,7 @@ function filterInputDeclarations(
  * entries and emitting an error diagnostic for each invalid one. Returns
  * `undefined` if no valid entries remain (so downstream code sees the same
  * "field absent" signal as before). An explicitly-empty input is preserved
- * as `[]` (no diagnostics emitted).
+ * as `[]` (no diagnostics emitted). Duplicate entries are rejected.
  *
  * @param raw         - Raw array elements from the parsed frontmatter
  * @param field       - Field name (`required`) used in diagnostic messages
@@ -280,6 +291,7 @@ function filterIdentifierArray(
   if (raw.length === 0) return [];
 
   const kept: string[] = [];
+  const seen = new Set<string>();
   raw.forEach((entry, index) => {
     if (typeof entry !== 'string') {
       diagnostics.push({
@@ -288,7 +300,7 @@ function filterIdentifierArray(
       });
       return;
     }
-    if (!IDENTIFIER_PATTERN.test(entry)) {
+    if (!isSafeIdentifier(entry)) {
       diagnostics.push({
         severity: 'error',
         message: `Frontmatter "${field}[${String(index)}]" — "${entry}" is not a valid identifier`,
@@ -302,6 +314,14 @@ function filterIdentifierArray(
       });
       return;
     }
+    if (seen.has(entry)) {
+      diagnostics.push({
+        severity: 'error',
+        message: `Frontmatter "${field}[${String(index)}]" — duplicate entry "${entry}" in "${field}" — each variable should be listed once`,
+      });
+      return;
+    }
+    seen.add(entry);
     kept.push(entry);
   });
   return kept.length > 0 ? kept : undefined;

@@ -519,14 +519,14 @@ describe('prepareRunbook', () => {
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue(
       mockParseResult({
-        frontmatter: { inputs: ['Region'] },
+        frontmatter: { inputs: ['Region'] } as NonNullable<ParseResult['frontmatter']>,
       }),
     );
 
     await prepareRunbook('good.md', {}, '/test');
 
     const call = jest.mocked(resolveVariables).mock.calls[0];
-    expect(call?.[0]).not.toHaveProperty('frontmatterVars');
+    expect(call[0]).not.toHaveProperty('frontmatterVars');
   });
 
   it('returns VALIDATION_ERROR when required names are not declared in inputs', async () => {
@@ -538,7 +538,10 @@ describe('prepareRunbook', () => {
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue(
       mockParseResult({
-        frontmatter: { inputs: ['PlanPath'], required: ['Region'] },
+        frontmatter: {
+          inputs: ['PlanPath'],
+          required: ['Region'],
+        } as NonNullable<ParseResult['frontmatter']>,
         diagnostics: [
           {
             severity: 'error',
@@ -566,7 +569,7 @@ describe('prepareRunbook', () => {
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue(
       mockParseResult({
-        frontmatter: { inputs: ['context'] },
+        frontmatter: { inputs: ['context'] } as NonNullable<ParseResult['frontmatter']>,
         diagnostics: [
           {
             severity: 'error',
