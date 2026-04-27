@@ -354,6 +354,18 @@ describe('parseStepIdFromString reserved word substep checks mutation killing', 
   it('rejects multi-digit zero substep (named)', () => {
     expect(parseStepIdFromString('deploy.00')).toBeNull();
   });
+
+  it('rejects leading-zero numeric step target', () => {
+    expect(parseStepIdFromString('01')).toBeNull();
+  });
+
+  it('rejects leading-zero numeric step in substep target', () => {
+    expect(parseStepIdFromString('01.2')).toBeNull();
+  });
+
+  it('rejects leading-zero iteration in three-part shorthand', () => {
+    expect(parseStepIdFromString('1.02.3')).toBeNull();
+  });
 });
 
 describe('parseStepIdFromString two-part step ID mutation killing', () => {

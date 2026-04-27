@@ -1,57 +1,11 @@
 import type { StepId } from './schemas.js';
+import {
+  isCanonicalPositiveInteger,
+  isReservedWord,
+  NAMED_IDENTIFIER_PATTERN,
+} from './identifiers.js';
 
-/**
- * Reserved words that cannot be used as named step or substep identifiers.
- *
- * These keywords have special meaning in the Rundown runbook syntax:
- * - Flow control: NEXT, CONTINUE, DEFER, COMPLETE, STOP, GOTO, RETRY
- * - FOR loop: FOR, IN, TO, AT, BREAK
- * - Conditionals: PASS, FAIL, YES, NO
- * - Aggregation: ALL, ANY
- * - Delegation: DELEGATE
- *
- * Using these as step names would create parsing ambiguity.
- */
-export const RESERVED_WORDS = new Set([
-  'NEXT',
-  'CONTINUE',
-  'COMPLETE',
-  'STOP',
-  'GOTO',
-  'RETRY',
-  'PASS',
-  'FAIL',
-  'YES',
-  'NO',
-  'ALL',
-  'ANY',
-  'BREAK',
-  'DEFER',
-  'FOR',
-  'IN',
-  'TO',
-  'AT',
-  'DELEGATE',
-]);
-
-/**
- * Check if a string is a reserved word.
- *
- * @param word - The string to check against reserved words
- * @returns True if the word is reserved and cannot be used as an identifier
- */
-export function isReservedWord(word: string): boolean {
-  return RESERVED_WORDS.has(word);
-}
-
-/**
- * Valid identifier pattern for named steps and substeps.
- *
- * Matches identifiers that start with a letter or underscore,
- * followed by zero or more letters, digits, or underscores.
- * Examples: "ErrorHandler", "cleanup_task", "_internal", "Step1"
- */
-export const NAMED_IDENTIFIER_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+export { RESERVED_WORDS, isReservedWord, NAMED_IDENTIFIER_PATTERN } from './identifiers.js';
 
 /**
  * Options for controlling step ID parsing behavior.
@@ -72,8 +26,7 @@ function isValidSubstepInStepId(substep: string): boolean {
     return false;
   }
   if (/^\d+$/.test(substep)) {
-    const substepNum = parseInt(substep, 10);
-    if (substepNum < 1) return false;
+    if (!isCanonicalPositiveInteger(substep)) return false;
   }
   return true;
 }
@@ -130,10 +83,10 @@ function parseThreeLevelNumeric(
   const substep = match[3];
 
   const stepNum = parseInt(stepStr, 10);
-  if (stepNum <= 0) return null;
+  if (!isCanonicalPositiveInteger(stepStr) || stepNum <= 0) return null;
 
   const iterationNum = parseInt(iterationStr, 10);
-  if (iterationNum < 1) return null;
+  if (!isCanonicalPositiveInteger(iterationStr) || iterationNum < 1) return null;
 
   if (substep && !isValidSubstepInStepId(substep)) return null;
 
@@ -164,7 +117,7 @@ function parseTwoLevelNumeric(
   const stepNum = parseInt(stepStr, 10);
 
   // Validate step number is positive
-  if (stepNum <= 0) return null;
+  if (!isCanonicalPositiveInteger(stepStr) || stepNum <= 0) return null;
 
   const substep = match[2];
 

@@ -33,6 +33,7 @@ export {
   isLoopControlAction,
   isStepExitAction,
   isTerminalAction,
+  isCanonicalPositiveInteger,
   parseOutputDeclaration,
   parseStepOutputDeclaration,
   parseFrontmatterOutputDeclaration,

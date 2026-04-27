@@ -193,6 +193,32 @@ describe('StepIdSchema with named steps', () => {
     expect(StepIdSchema.safeParse({ step: 'ErrorHandler', substep: 'Recover' }).success).toBe(true);
   });
 
+  it('rejects leading-zero numeric step', () => {
+    expect(StepIdSchema.safeParse({ step: '01' }).success).toBe(false);
+  });
+
+  it('rejects leading-zero numeric substep', () => {
+    expect(StepIdSchema.safeParse({ step: 'ErrorHandler', substep: '01' }).success).toBe(false);
+  });
+
+  it('rejects leading-zero numeric qualifier step', () => {
+    expect(
+      StepIdSchema.safeParse({
+        step: 'NEXT',
+        qualifier: { step: '01' },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects leading-zero numeric qualifier substep', () => {
+    expect(
+      StepIdSchema.safeParse({
+        step: 'NEXT',
+        qualifier: { step: 'Cleanup', substep: '01' },
+      }).success,
+    ).toBe(false);
+  });
+
   it('rejects NEXT with substep', () => {
     expect(StepIdSchema.safeParse({ step: 'NEXT', substep: '1' }).success).toBe(false);
   });
@@ -265,6 +291,11 @@ describe('unified naming schemas', () => {
   it('StepNameSchema accepts numeric strings', () => {
     const result = StepIdSchema.safeParse({ step: '1' });
     expect(result.success).toBe(true);
+  });
+
+  it('StepNameSchema rejects leading-zero numeric strings', () => {
+    const result = StepNameSchema.safeParse('01');
+    expect(result.success).toBe(false);
   });
 
   it('StepNameSchema accepts identifiers', () => {
