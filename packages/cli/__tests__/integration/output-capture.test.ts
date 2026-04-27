@@ -3,6 +3,7 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { writeFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { isNodeError, isSandboxAvailable } from '@rundown-org/core';
 import {
   createTestWorkspace,
   runCli,
@@ -35,6 +36,16 @@ printf 'v1.2.3' > "$RD_OUTPUTS_Version"
 rd echo --result pass
 \`\`\`
 `;
+
+async function assertCapturedChannel(
+  workspace: TestWorkspace,
+  stateId: string,
+  channelName: string,
+  expectedValue: string,
+): Promise<void> {
+  const channelPath = join(workspace.cwd, '.rundown', 'runs', stateId, 'outputs', '1', channelName);
+  expect(await readFile(channelPath, 'utf-8')).toBe(expectedValue);
+}
 
 describe('output capture — file-backed naked OUTPUTS at step level', () => {
   let workspace: TestWorkspace;
@@ -132,7 +143,7 @@ rd echo --result pass
   });
 });
 
-describe('output capture — policy-enforced path', () => {
+describe('output capture — policy-enforced capture', () => {
   let workspace: TestWorkspace;
 
   beforeEach(async () => {
@@ -143,7 +154,7 @@ describe('output capture — policy-enforced path', () => {
     await workspace.cleanup();
   });
 
-  it('captures when the command is allowed by policy', async () => {
+  it('captures when policy allows the command without sandbox', async () => {
     const RUNBOOK = `---
 name: policy-enforced-capture
 ---
@@ -151,12 +162,12 @@ name: policy-enforced-capture
 
 ## 1. Capture
 - OUTPUTS
-  - Blocked
+  - Captured
 - PASS COMPLETE
 - FAIL STOP
 
 \`\`\`sh
-printf 'should-not-capture' > "$RD_OUTPUTS_Blocked"
+printf 'policy-captured' > "$RD_OUTPUTS_Captured"
 \`\`\`
 `;
     await writeFile(
@@ -176,18 +187,51 @@ printf 'should-not-capture' > "$RD_OUTPUTS_Blocked"
     const states = await getAllRunbookStates(workspace);
     expect(states).toHaveLength(1);
     const state = states[0] as { id: string; variables?: Record<string, unknown> };
-    expect(state.variables?.Blocked).toBe('should-not-capture');
+    expect(state.variables?.Captured).toBe('policy-captured');
 
-    const channelPath = join(
-      workspace.cwd,
-      '.rundown',
-      'runs',
-      state.id,
-      'outputs',
-      '1',
-      'Blocked',
+    await assertCapturedChannel(workspace, state.id, 'Captured', 'policy-captured');
+  });
+
+  it('captures when policy allows the command with sandbox enabled', async () => {
+    if (!(await isSandboxAvailable())) {
+      return;
+    }
+
+    const RUNBOOK = `---
+name: policy-enforced-capture
+---
+# Policy Enforced Capture
+
+## 1. Capture
+- OUTPUTS
+  - Captured
+- PASS COMPLETE
+- FAIL STOP
+
+\`\`\`sh
+printf 'policy-captured' > "$RD_OUTPUTS_Captured"
+\`\`\`
+`;
+    await writeFile(
+      join(workspace.cwd, '.rundownrc.yaml'),
+      `default:
+  mode: execute
+  run:
+    allow:
+      - printf
+`,
     );
-    expect(await readFile(channelPath, 'utf-8')).toBe('should-not-capture');
+    await writeFile(join(workspace.cwd, 'allowed.runbook.md'), RUNBOOK);
+
+    const result = runCli('run allowed.runbook.md', workspace);
+    expect(result.exitCode).toBe(0);
+
+    const states = await getAllRunbookStates(workspace);
+    expect(states).toHaveLength(1);
+    const state = states[0] as { id: string; variables?: Record<string, unknown> };
+    expect(state.variables?.Captured).toBe('policy-captured');
+
+    await assertCapturedChannel(workspace, state.id, 'Captured', 'policy-captured');
   });
 });
 
@@ -583,7 +627,11 @@ fi
       expect(iter2Content).toBe('');
     } catch (err) {
       // ENOENT is also acceptable — channel file may not have been created if iteration aborted early
-      expect((err as { code?: string }).code).toBe('ENOENT');
+      if (Error.isError(err) && isNodeError(err)) {
+        expect(err.code).toBe('ENOENT');
+      } else {
+        throw err;
+      }
     }
   });
 

@@ -175,6 +175,24 @@ describe('prepareOutputChannels', () => {
     }
   });
 
+  it('creates newly prepared channel files with owner-only permissions', async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'rd-outputs-'));
+    const originalUmask = process.umask(0);
+    try {
+      const result = await prepareOutputChannels({
+        cwd,
+        runId: 'wf-test-1c',
+        scope: { stepId: '1' },
+        naked: [{ name: 'Version' }],
+      });
+      const stat = await fs.stat(result.prepared[0].path);
+      expect(stat.mode & 0o777).toBe(0o600);
+    } finally {
+      process.umask(originalUmask);
+      await fs.rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it('prepared channels carry the correct name for each entry', async () => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'rd-outputs-'));
     try {
@@ -217,6 +235,36 @@ describe('prepareOutputChannels', () => {
     }
   });
 
+  it('tightens permissions again when reusing an existing channel file', async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'rd-outputs-'));
+    try {
+      const channelPath = path.join(
+        cwd,
+        '.rundown',
+        'runs',
+        'wf-test-2b',
+        'outputs',
+        '1',
+        'Version',
+      );
+      await fs.mkdir(path.dirname(channelPath), { recursive: true });
+      await fs.writeFile(channelPath, 'stale-value\n');
+      await fs.chmod(channelPath, 0o644);
+
+      await prepareOutputChannels({
+        cwd,
+        runId: 'wf-test-2b',
+        scope: { stepId: '1' },
+        naked: [{ name: 'Version' }],
+      });
+
+      const stat = await fs.stat(channelPath);
+      expect(stat.mode & 0o777).toBe(0o600);
+    } finally {
+      await fs.rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it('skips an entry with an invalid name and continues with the rest', async () => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'rd-outputs-'));
     try {
@@ -229,6 +277,46 @@ describe('prepareOutputChannels', () => {
       });
       expect(Object.keys(result.env)).toEqual(['RD_OUTPUTS_Version']);
       expect(result.prepared).toHaveLength(1);
+    } finally {
+      await fs.rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('omits symlinked channel files during readback', async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'rd-outputs-'));
+    try {
+      const prepared = await prepareOutputChannels({
+        cwd,
+        runId: 'wf-test-8',
+        scope: { stepId: '1' },
+        naked: [{ name: 'Symlinked' }],
+      });
+      const targetPath = path.join(cwd, 'target.txt');
+      await fs.writeFile(targetPath, 'linked-value');
+      await fs.rm(prepared.prepared[0].path);
+      await fs.symlink(targetPath, prepared.prepared[0].path);
+
+      const captured = await readCapturedOutputs(prepared.prepared);
+      expect(captured).toEqual({});
+    } finally {
+      await fs.rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('omits non-regular channel files during readback', async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'rd-outputs-'));
+    try {
+      const prepared = await prepareOutputChannels({
+        cwd,
+        runId: 'wf-test-9',
+        scope: { stepId: '1' },
+        naked: [{ name: 'Directory' }],
+      });
+      await fs.rm(prepared.prepared[0].path);
+      await fs.mkdir(prepared.prepared[0].path);
+
+      const captured = await readCapturedOutputs(prepared.prepared);
+      expect(captured).toEqual({});
     } finally {
       await fs.rm(cwd, { recursive: true, force: true });
     }

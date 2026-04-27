@@ -1,9 +1,10 @@
 import * as path from 'node:path';
-import { promises as fs } from 'node:fs';
+import { promises as fs, constants as fsConstants } from 'node:fs';
 import type { OutputDeclaration } from '@rundown-org/parser';
 import { isReservedTemplateName, NAMED_IDENTIFIER_PATTERN } from '@rundown-org/parser';
 import { RUNDOWN_DIR, assertSafeId } from '../paths.js';
 import { logger } from '../logger.js';
+import { isNodeError } from '../errors.js';
 
 /**
  * Naked OUTPUTS entry — the name-only form that activates a file-backed
@@ -217,6 +218,8 @@ export async function prepareOutputChannels(args: PrepareOutputChannelsArgs): Pr
       await fs.mkdir(path.dirname(filePath), { recursive: true });
       // Truncate to zero bytes so re-runs do not see stale content.
       await fs.writeFile(filePath, '');
+      // Explicitly lock channel files down to owner-read/write only, regardless of umask.
+      await fs.chmod(filePath, 0o600);
       env[`RD_OUTPUTS_${entry.name}`] = filePath;
       prepared.push({ name: entry.name, path: filePath });
     } catch (err) {
@@ -247,12 +250,21 @@ export async function readCapturedOutputs(
   const captured: Record<string, string> = {};
   for (const channel of prepared) {
     const { name, path: filePath } = channel;
-    let raw: string;
+    let handle: Awaited<ReturnType<typeof fs.open>> | undefined;
+    let raw: string | undefined;
     try {
-      raw = await fs.readFile(filePath, 'utf-8');
+      handle = await fs.open(filePath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+      const stat = await handle.stat();
+      if (!stat.isFile()) {
+        void logger.warn('readCapturedOutputs: non-regular channel file, omitting', {
+          name,
+          path: filePath,
+        });
+        continue;
+      }
+      raw = await handle.readFile('utf-8');
     } catch (err) {
-      const code = (err as { code?: string }).code;
-      if (code === 'ENOENT') {
+      if (isNodeError(err) && err.code === 'ENOENT') {
         void logger.warn('readCapturedOutputs: channel file missing', { name, path: filePath });
       } else {
         void logger.warn('readCapturedOutputs: read failed', {
@@ -262,6 +274,10 @@ export async function readCapturedOutputs(
         });
       }
       continue;
+    } finally {
+      if (handle !== undefined) {
+        await handle.close().catch(() => undefined);
+      }
     }
     if (raw.includes('\0')) {
       // NUL byte → treat as non-UTF-8 per spec
