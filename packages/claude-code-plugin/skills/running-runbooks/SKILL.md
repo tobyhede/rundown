@@ -10,10 +10,10 @@ Rundown executes markdown runbooks step-by-step. The CLI controls progress — y
 ## Quick Reference
 
 ```bash
-rd run <file>                    # Start a runbook
-rd run <file> --input k=v          # Start with variables
-rd run <file> --input-json k=json  # Start with JSON variable
-rd run <file> --input-file <path>  # Load variables from YAML
+rd run <file>                      # Start a runbook
+rd run <file> --input k=v          # Start with input
+rd run <file> --input-json k=json  # Start with JSON input
+rd run <file> --input-file <path>  # Load inputs from YAML
 
 rd pass                    # Mark step passed (aliases: yes, ok)
 rd fail                    # Mark step failed (alias: no)
@@ -58,11 +58,13 @@ rd fail --step 2.1 --index 3    # Fail substep 2.1 at iteration 3
 
 ## Nested Runbooks (Inline Linkage)
 
-When a step has a substep with a nested runbook reference, run the child using `--step`:
+**Inline linkage** is the default for runbook-list entries: no `- DELEGATE`, no token, the parent walks the child in-session. When a step has a substep with a nested runbook reference, run the child with `--step` pointing at the parent substep:
 
 ```bash
 rd run <child-runbook> --step 1.1
 ```
+
+If you instead want an out-of-process subagent to execute the child, add `- DELEGATE` and follow the [delegating-runbooks](../delegating-runbooks/SKILL.md) skill.
 
 The child:
 - Auto-starts and executes command steps
@@ -76,12 +78,11 @@ For FOR loop iterations, add `--index`:
 rd run <child-runbook> --step 1.1 --index 3
 ```
 
-## Context Passing (INPUTS / OUTPUTS)
+## Context Passing (OUTPUTS)
 
-Steps may declare INPUTS and OUTPUTS directives to pass data across execution.
+Steps and runbooks may declare OUTPUTS to flow data forward — between steps in the same run, and from a child runbook back to its parent.
 
-**OUTPUTS** — evaluated by the machine when the step transition completes (PASS or FAIL):
-
+**Step OUTPUTS** — evaluated on every step transition (independent of PASS/FAIL), merged into the run's live variable space:
 ```markdown
 ## 7. Output Path
 - OUTPUTS
@@ -89,34 +90,43 @@ Steps may declare INPUTS and OUTPUTS directives to pass data across execution.
 - PASS CONTINUE
 - FAIL STOP
 ```
+On the completing step's transition, `PlanPath` is added to `state.variables` and is visible to every later step in the same run via `{{ PlanPath }}`. Step OUTPUTS apply to both H2 steps and H3 substeps.
 
-After the transition, the key-value pairs are merged into the live runbook variable space. If the runbook then reaches `COMPLETE` or `STOPPED`, frontmatter `outputs:` are written to `state.finalVars`.
-
-**INPUTS** — declared in the runbook frontmatter to inject variables at runbook startup:
-
+**Frontmatter `OUTPUTS:`** — evaluated at terminal completion (`COMPLETE` or `STOPPED`), exported to the parent:
 ```yaml
 ---
-name: load-plan
-required:
+name: write-plan
+OUTPUTS:
   - PlanPath
-inputs:
-  PlanPath:
 ---
 ```
+At terminal completion, listed names are read from the merged variable space and written to `state.finalVars`. When the runbook completes as a child of a delegation, those `finalVars` are forwarded into the parent's `state.variables` via a `SET_VARIABLES` event — so the parent's later steps see `{{ PlanPath }}` automatically. No CLI plumbing required.
 
-The `inputs:` mapping form (`PlanPath:` with no value) is intentional: it means "no default — the caller must supply this variable". Variables listed under `required:` must not appear with a value in `inputs:`.
+**Receiving inputs** — declare what a runbook needs in frontmatter:
+```yaml
+---
+name: review-plan
+REQUIRED:
+  - PlanPath
+---
+```
+`REQUIRED:` causes a hard error at startup if the variable isn't supplied by any source (CLI `--input`, env `RD_INPUT_*`, parent forwarding, config, or frontmatter `INPUTS:` defaults). Inside the runbook, just reference `{{ PlanPath }}`.
 
-```markdown
-## 1. Load plan
-- PASS CONTINUE
-- FAIL STOP
-
-Read the plan from `{{ PlanPath }}`.
+The (optional) frontmatter `INPUTS:` field is a key→default map, **not** a list of names — use it to provide fallbacks:
+```yaml
+INPUTS:
+  environment: development
+  port: 3000
 ```
 
-Frontmatter `inputs:` provides default values that sit below CLI `--input`, `RD_INPUT_*`, and config in precedence — CLI always wins. When a parent delegates to a child, the parent's live variable space is forwarded as `--input` flags on the child's `rd claim` command, so the child sees the parent's OUTPUTS automatically. Use `required:` to fail fast when a variable must be supplied.
+### Frontmatter casing convention
 
-OUTPUTS apply to both H2 steps and H3 substeps. The step-level `- INPUTS` directive has been removed — use the frontmatter `inputs:` field instead.
+| Casing | Fields | Reason |
+|--------|--------|--------|
+| **UPPERCASE** | `INPUTS`, `OUTPUTS`, `REQUIRED` | Load-bearing runtime parameters; mirrors the step-level `- OUTPUTS`/`- FOR` directive style |
+| **lowercase** | `name`, `description`, `version`, `author`, `tags`, `skill` | Static metadata |
+
+The parser case-normalizes known keys, so both forms parse identically — the convention is purely for human readability.
 
 ## Claiming Delegated Work
 
@@ -137,9 +147,11 @@ rd claim <token> --input-file <path>
 
 For orchestrating delegation from the parent side, see [delegating-runbooks](../delegating-runbooks/SKILL.md).
 
-## Prompted Mode
+## Prompted
 
 With `--prompted`, command steps do NOT auto-execute — you see the command and manually advance. Use `--step 3` to jump (requires `--prompted`).
+
+Note: auto-execution is `default` behaviour and the typical usage.
 
 ## State Management
 

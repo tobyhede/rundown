@@ -17,10 +17,9 @@ Run multiple runbooks, reviewing and testing the end-to-end process.
 ```
 
 ## 2. Write Plan
+- DELEGATE
 - PASS ALL CONTINUE
 - FAIL ANY STOP
-
-Delegate a subagent to write a plan.
 
 - planning/write-plan.runbook.md
 
@@ -29,10 +28,7 @@ Delegate a subagent to write a plan.
 - PASS ALL CONTINUE
 - FAIL ANY STOP
 
-Delegate a subagent to review the plan.
-
 - planning/review-plan.runbook.md
-
 
 
 ## 4. Write the review of the end-to-end Rundown workflow
@@ -43,7 +39,7 @@ Write the review to the output path as JSON.
 Follow the review output schema.
 
 ```bash
-rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file review-end-to-end-{{ RunId }}.json
+rdpath --file end-to-end-test-review.json
 ```
 
 
@@ -52,6 +48,6 @@ rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file review-end-to-end-{{ Ru
 - FAIL GOTO 4
 
 ```bash
-rdx --check "$(rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file review-end-to-end-{{ RunId }}.json)"
+rdx --check "$(rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file end-to-end-test-review.json)"
 ```
 

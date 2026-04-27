@@ -4,6 +4,8 @@ description: Write detailed implementation plans using the Writing Plans skill
 skill: writing-plans
 tags:
   - planning
+OUTPUTS:
+  - PlanPath
 ---
 
 # Write Plan
@@ -66,17 +68,15 @@ Each task should produce self-contained changes that make sense independently.
 
 
 ## 7. Output Path
+- OUTPUTS
+  - PlanPath {{ path "plan.json" }}
 - PASS CONTINUE
 - FAIL STOP
 
-```bash
-rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file plan.json
-```
+{{ path "plan.json" }}
 
 
 ## 8. Write the plan
-- OUTPUTS
-  - PlanPath {{ path "plan.json" }}
 - PASS CONTINUE
 - FAIL STOP
 

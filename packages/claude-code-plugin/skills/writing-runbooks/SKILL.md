@@ -16,8 +16,12 @@ name: my-runbook
 description: What this runbook does
 tags:
   - category
-inputs:
+INPUTS:
   environment: staging
+REQUIRED:
+  - PlanPath
+OUTPUTS:
+  - ResultPath
 ---
 
 # Runbook Title
@@ -39,6 +43,15 @@ npm test
 
 All frontmatter fields are optional (open schema). Place project runbooks in `.rundown/runbooks/` for discovery (`rd ls --all`).
 
+### Frontmatter casing convention
+
+| Casing | Fields | Reason |
+|--------|--------|--------|
+| **UPPERCASE** | `INPUTS`, `OUTPUTS`, `REQUIRED` | Load-bearing runtime parameters; mirrors the step-level `- OUTPUTS`/`- FOR` directive style |
+| **lowercase** | `name`, `description`, `version`, `author`, `tags`, `skill` | Static metadata |
+
+The parser case-normalizes known keys, so both forms parse identically — the convention is purely for human readability.
+
 Validate with: `rd check <file>` and `rd resolve <file>`
 
 ## Steps
@@ -58,7 +71,7 @@ Separators between ID and title are flexible: `.`, `:`, `-`, `)`, space, em dash
 
 ````
 ## ID. Title
-- OUTPUTS             (optional, must be first)
+- OUTPUTS             (optional, must precede FOR / transitions)
   - Key value-expr
 - FOR clause          (optional, after OUTPUTS)
 - Transition rules    (optional, must precede body)
@@ -76,13 +89,13 @@ command
 | **Prompt** | Text instructions | Requires `rd pass` or `rd fail` |
 | **Display-only** | `bash prompt`, `prompt`, `json`, `yaml` blocks | Displayed, NOT executed |
 
-## Context Passing (OUTPUTS / inputs / outputs)
+## Context Passing (OUTPUTS)
 
-Steps and substeps may declare OUTPUTS directives to pass data between steps and across a delegation tree. OUTPUTS apply to both H2 steps and H3 substeps. The step-level `- INPUTS` directive has been removed — use the frontmatter `inputs:` field instead.
+Data flows forward through two coordinated mechanisms — between steps in the same run, and from a child runbook back to its parent in a delegation tree.
 
-### OUTPUTS
+### Step-level OUTPUTS
 
-Declares values to persist after step completion. Evaluated by the machine and merged into the live runbook variable space; FAIL does not suppress OUTPUTS.
+Declares values to publish into the run's live variable space after a step PASSes. Applies to both H2 steps and H3 substeps. FAIL skips OUTPUTS evaluation entirely.
 
 ```markdown
 ## 7. Output Path
@@ -92,45 +105,45 @@ Declares values to persist after step completion. Evaluated by the machine and m
 - FAIL STOP
 ```
 
+After PASS, `PlanPath` is added to `state.variables` and is available to every later step in the same run as `{{ PlanPath }}`.
+
 Output values may be:
-- **Helper call**: `{{ path "file.json" }}` (resolves to a context-scoped path)
-- **Template variable**: `{{ VarName }}`
-- **Quoted literal**: `"value"`
-- **Bare variable reference**: `VarName`
+- **Naked form (file-backed channel)**: `PlanPath` — pre-creates a file at `.rundown/runs/<runId>/outputs/<stepId>/<VarName>` and exports its absolute path as `RD_OUTPUTS_<VarName>` to the spawned shell. The command writes the value into that file; on exit, Rundown reads, trims, and merges it.
+- **Helper call**: `PlanPath {{ path "file.json" }}` (resolves to a context-scoped path)
+- **Template variable**: `PlanPath {{ VarName }}`
+- **Quoted literal**: `PlanPath "value"`
+- **Bare variable reference**: `PlanPath VarName`
 
-Evaluation is non-fatal — failed expressions are omitted and logged; the transition is not rolled back.
+### Frontmatter `OUTPUTS:` — exporting to the parent
 
-### Frontmatter `inputs:` field
-
-Declares default variable values injected at runbook startup (before any step runs):
-
-```yaml
----
-name: review-plan
-required:
-  - PlanPath
-inputs:
-  environment: staging
-  debug: true
----
-```
-
-`inputs:` is a key-value map. Defaults sit below CLI `--input`, `RD_INPUT_*`, and config in precedence — CLI always wins. When a parent delegates to a child, the parent's live variable space is forwarded as `--input` flags on the child's `rd claim` command, so child steps see parent OUTPUTS automatically.
-
-Use `required:` alongside `inputs:` when the runbook cannot proceed without the variable (causes a hard error if missing from all sources). Required variables must not appear in `inputs:`.
-
-### Frontmatter `outputs:` field
-
-Declares variables to publish on terminal machine transitions (`COMPLETE` or `STOPPED`). Evaluated values are written to `state.finalVars`, and when the runbook is a delegated child, those values are forwarded into the parent's live variable space via `SET_VARIABLES`.
+Declares which variables the runbook exports at terminal completion. The listed names are read from `state.variables`, written to `state.finalVars`, and forwarded into the parent delegation's variable space via `SET_VARIABLES`.
 
 ```yaml
 ---
 name: write-plan
-outputs:
+OUTPUTS:
   - PlanPath
-  - PlanSummary {{ path "summary.txt" }}
 ---
 ```
+
+Combine with a step-level OUTPUTS so the value lands in `state.variables` first, then exports at completion.
+
+### Frontmatter `REQUIRED:` and `INPUTS:` — declaring what a runbook needs
+
+```yaml
+---
+name: review-plan
+REQUIRED:
+  - PlanPath
+INPUTS:
+  environment: development
+---
+```
+
+- `REQUIRED:` is a list of variable names. Missing values trigger a hard error at startup.
+- `INPUTS:` is a key→default map (string / number / boolean), **not** a list. Use it to provide fallbacks when the caller doesn't supply a value. Don't put `REQUIRED:` keys in `INPUTS:` — they have no default by definition.
+
+Variable resolution precedence (highest → lowest): CLI `--input` / `--input-json` / `--input-file`, `RD_INPUT_*` env, project `.rundown/config.yaml`, parent-forwarded variables (from a parent runbook's `OUTPUTS:`), frontmatter `INPUTS:` defaults.
 
 ## Transitions
 
@@ -216,12 +229,12 @@ Process {{ item }}.
 
 ## Template Variables
 
-Use `{{ variableName }}` syntax. See [SPEC.md §6 Templating](../../../../docs/SPEC.md#6-templating) and [§6.1 Built-in Variables](../../../../docs/SPEC.md#61-built-in-variables) for the full reference.
+Use `{{ variableName }}` syntax. See [CLAUDE.md — Template Variables](../../../../CLAUDE.md#template-variables) for full reference.
 
 Key authoring notes:
 - Undefined variables preserved as literal `{{ variable }}` text
-- Frontmatter `inputs:` supports string, number, boolean (not arrays/files)
-- Data sources for FOR loops: use `.rundown/config.yaml` or `--input-file`
+- Frontmatter `INPUTS:` supports string, number, boolean defaults (not arrays / file refs)
+- Data sources for FOR loops: use `.rundown/config.yaml` or `--input-file` (arrays / `file:` values)
 
 ## Common Mistakes
 
@@ -230,8 +243,8 @@ Key authoring notes:
 | H4+ headings | Only H1 (title), H2 (steps), H3 (substeps) |
 | Command block + substeps in same step | Choose one — cannot mix |
 | OUTPUTS after transitions | Content order: OUTPUTS → FOR → transitions → body |
-| Instructions before transition rules | Content order: OUTPUTS, FOR clause, transitions, then body |
 | Reserved word as step ID | `PASS`, `FAIL`, `CONTINUE`, etc. are reserved |
+| `INPUTS:` written as a YAML sequence (`- VarName`) | `INPUTS:` is a key→default map (`VarName: default`). For a bare list of names the runbook needs, use `REQUIRED:`. |
 | Skipping `rd check` | Always validate: `rd check <file>` |
 
 ## Reference
@@ -239,5 +252,4 @@ Key authoring notes:
 - [Rundown specification](../../../../docs/SPEC.md)
 - [Format grammar (EBNF)](../../../../docs/FORMAT.md)
 - [Runbook patterns and examples](../../../../runbooks/README.md)
-- [Template variables](../../../../docs/SPEC.md#6-templating) — precedence, reserved keys, required variables
-- [Built-in variables](../../../../docs/SPEC.md#61-built-in-variables) — `Date`, `WorkPath`, `ContextId`, `Step`, `Index`, etc.
+- [Template variables](../../../../CLAUDE.md#template-variables)

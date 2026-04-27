@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://rundown.org/schemas/review.schema.json",
   "title": "Review",
-  "description": "Structured review items for plan and code reviews.",
+  "description": "Structured review items for plan and code reviews. A review document records that a review was performed. An empty items array records that the review found no issues.",
   "type": "object",
   "required": ["meta", "items"],
   "properties": {
@@ -17,6 +17,35 @@
     }
   },
   "additionalProperties": false,
+  "examples": [
+    {
+      "$schema": "https://rundown.org/schemas/review.schema.json",
+      "meta": {
+        "version": "2.0.0"
+      },
+      "items": []
+    },
+    {
+      "$schema": "https://rundown.org/schemas/review.schema.json",
+      "meta": {
+        "version": "2.0.0"
+      },
+      "items": [
+        {
+          "title": "Missing migration step",
+          "level": "error",
+          "description": "Plan modifies the persisted state schema but does not include a migration step.",
+          "references": [
+            {
+              "uri": "packages/core/src/state.ts",
+              "line": 42
+            }
+          ],
+          "recommendation": "Add a migration step before the deploy step, or document that running runbooks should be completed before upgrade."
+        }
+      ]
+    }
+  ],
   "$defs": {
     "SchemaUri": {
       "type": "string",
@@ -65,6 +94,7 @@
     },
     "Items": {
       "type": "array",
+      "description": "Review findings. An empty array indicates review found no issues.",
       "items": {
         "$ref": "#/$defs/Item"
       }

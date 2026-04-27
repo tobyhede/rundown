@@ -24,8 +24,9 @@ Read the plan at `{{ PlanPath }}`.
 {{ CLAUDE_PLUGIN_ROOT }}/schemas/review.schema.json
 ```
 
+
 ## 3. Is the plan structurally sound?
-- PASS COMPLETE
+- PASS CONTINUE
 - FAIL CONTINUE
 
 - Steps are ordered so that each step's prerequisites are met by prior steps
@@ -40,21 +41,24 @@ Read the plan at `{{ PlanPath }}`.
 - Critical steps identify what could go wrong and how the failure would manifest
 - Explicitly deferred work or known limitations are documented and tracked
 
+
 ## 4. Write the review
 - PASS CONTINUE
 - FAIL STOP
 
 Write the review to the output path as JSON.
 Follow the review output schema.
+Ensure any validation issues have been resolved.
 
 ```bash
-rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file review-plan-{{ RunId }}.json
+rdpath --file review-plan-structural-integrity-{{ RunId }}.json
 ```
+
 
 ## 5. Check Schema
 - PASS COMPLETE
 - FAIL GOTO 4
 
 ```bash
-rdx --check "$(rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file review-plan-{{ RunId }}.json)"
+rdx --check "$(rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file review-plan-structural-integrity-{{ RunId }}.json)"
 ```

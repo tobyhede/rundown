@@ -1,12 +1,17 @@
 ---
 name: review-plan
 description: Review and validate an implementation plan
-required:
-  - PlanPath
 tags:
   - planning
   - review
+REQUIRED:
+  - PlanPath
+INPUTS:
+  - PlanPath
+OUTPUTS:
+  - ReviewPlanPath
 ---
+
 
 # Review Implementation Plan
 
@@ -17,8 +22,6 @@ Review the plan at the provided path.
 - FAIL STOP
 
 Read the plan from `{{ PlanPath }}`.
-
-
 
 ## 2. Context and scope
 - PASS CONTINUE
@@ -34,11 +37,9 @@ Verify the plan includes:
 
 
 ## 3. Delegate subagents to review the plan
+- DELEGATE
 - PASS ALL CONTINUE
-- FAIL ANY CONTINUE
-
-Delegate 4x subagents to review the plan.
-Delegate subagents for Steps 3.1 - 3.4.
+- FAIL ANY STOP
 
 - review-plan-technical-accuracy.runbook.md
 - review-plan-structural-integrity.runbook.md
@@ -47,9 +48,8 @@ Delegate subagents for Steps 3.1 - 3.4.
 
 
 ## 4. Collate review findings
+- DELEGATE
 - PASS ALL COMPLETE
 - FAIL ANY STOP
-
-Delegate a subagent to collate the review findings.
 
 - review-plan-collate.runbook.md
