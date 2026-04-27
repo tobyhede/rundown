@@ -444,7 +444,7 @@ Flow:
 
 1.  **Strict Hierarchy**: H2 -> H3. No H4.
 2.  **Sequential IDs**: Numeric steps must be sequential (1, 2, 3...; gaps invalid). Named steps do not participate in sequential numbering.
-3.  **Strict Ordering**: OUTPUTS -> FOR -> Transitions -> Prompt -> Body.
+3.  **Strict Ordering**: OUTPUTS -> FOR -> DELEGATE -> Transitions -> Prompt -> Body.
 4.  **Exclusivity**: Only one body type (Code OR Substeps). Step-level runbook lists are shorthand for Substeps.
 5.  **Single Code Block**: Max one code block per step (executable or display-only).
 6.  **Loop Safety**: `NEXT` and `BREAK` are valid **only** in FOR substeps and FOR iteration-level transitions. Using them at step level outside any FOR loop is rejected by the validator.

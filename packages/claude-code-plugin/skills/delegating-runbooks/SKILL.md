@@ -11,7 +11,7 @@ If you want the parent to walk the child runbook inline instead of dispatching a
 
 ## Quick Reference
 
-```
+```bash
 rd delegate                                  # Infer substep and runbook from state
 rd delegate --step 2.1                       # Delegate specific substep
 rd delegate <runbook> --step 2.1             # Explicit runbook and substep
@@ -185,8 +185,8 @@ Read the plan from `{{ PlanPath }}`.
 When the parent delegates `write-plan` at step 2 and `review-plan` at step 3 (with the same `ContextId`), `PlanPath` flows through automatically — no `--input PlanPath=...` needed at the parent.
 
 **Key rules:**
-- Step OUTPUTS fire only on PASS; FAIL skips them. Values land in `state.variables`.
-- Frontmatter `OUTPUTS:` fire only at terminal completion (`COMPLETE`). Values land in `state.finalVars` and forward to the parent.
+- Step OUTPUTS are evaluated on every step transition, independent of PASS/FAIL. Values land in `state.variables`.
+- Frontmatter `OUTPUTS:` are evaluated at terminal completion (`COMPLETE` or `STOPPED`). Values land in `state.finalVars` and forward to the parent.
 - Frontmatter `INPUTS:` is a key→default map of fallback values, **not** a list of names — it sits at the bottom of the precedence stack.
 - Variable resolution precedence (highest → lowest): CLI `--input` / `--input-json` / `--input-file`, `RD_INPUT_*` env, project `.rundown/config.yaml`, parent-forwarded variables, frontmatter `INPUTS:` defaults.
 - `REQUIRED:` causes a hard error if the variable is missing from all sources.

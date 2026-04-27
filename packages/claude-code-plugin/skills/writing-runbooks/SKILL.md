@@ -229,7 +229,7 @@ Process {{ item }}.
 
 ## Template Variables
 
-Use `{{ variableName }}` syntax. See [CLAUDE.md — Template Variables](../../CLAUDE.md#template-variables) for full reference.
+Use `{{ variableName }}` syntax. See [CLAUDE.md — Template Variables](../../../../CLAUDE.md#template-variables) for full reference.
 
 Key authoring notes:
 - Undefined variables preserved as literal `{{ variable }}` text

@@ -82,7 +82,7 @@ rd run <child-runbook> --step 1.1 --index 3
 
 Steps and runbooks may declare OUTPUTS to flow data forward — between steps in the same run, and from a child runbook back to its parent.
 
-**Step OUTPUTS** — evaluated on PASS, merged into the run's live variable space:
+**Step OUTPUTS** — evaluated on every step transition (independent of PASS/FAIL), merged into the run's live variable space:
 ```markdown
 ## 7. Output Path
 - OUTPUTS
@@ -90,9 +90,9 @@ Steps and runbooks may declare OUTPUTS to flow data forward — between steps in
 - PASS CONTINUE
 - FAIL STOP
 ```
-After PASS, `PlanPath` is added to `state.variables` and is visible to every later step in the same run via `{{ PlanPath }}`. FAIL skips OUTPUTS evaluation. Step OUTPUTS apply to both H2 steps and H3 substeps.
+On the completing step's transition, `PlanPath` is added to `state.variables` and is visible to every later step in the same run via `{{ PlanPath }}`. Step OUTPUTS apply to both H2 steps and H3 substeps.
 
-**Frontmatter `OUTPUTS:`** — evaluated at terminal completion, exported to the parent:
+**Frontmatter `OUTPUTS:`** — evaluated at terminal completion (`COMPLETE` or `STOPPED`), exported to the parent:
 ```yaml
 ---
 name: write-plan
@@ -100,7 +100,7 @@ OUTPUTS:
   - PlanPath
 ---
 ```
-At `COMPLETE`, listed names are read from the merged variable space and written to `state.finalVars`. When the runbook completes as a child of a delegation, those `finalVars` are forwarded into the parent's `state.variables` via a `SET_VARIABLES` event — so the parent's later steps see `{{ PlanPath }}` automatically. No CLI plumbing required.
+At terminal completion, listed names are read from the merged variable space and written to `state.finalVars`. When the runbook completes as a child of a delegation, those `finalVars` are forwarded into the parent's `state.variables` via a `SET_VARIABLES` event — so the parent's later steps see `{{ PlanPath }}` automatically. No CLI plumbing required.
 
 **Receiving inputs** — declare what a runbook needs in frontmatter:
 ```yaml
