@@ -190,6 +190,33 @@ npm run fix:lint
 3. Rebuild the snapshot if you've modified package code.
 4. Submit a pull request with a clear description of your changes.
 
+### CodeRabbit Reviews
+
+CodeRabbit reviews eligible pull requests automatically when they target `main`; draft PRs and
+ignored titles/users are excluded by configuration. Treat CodeRabbit as an advisory reviewer;
+maintainers should rely on GitHub CI checks, any required branch-protection checks configured on
+GitHub, and local `npm run verify` before merge.
+
+Use these commands in PR comments when needed:
+
+```text
+@coderabbitai review
+@coderabbitai full review
+@coderabbitai pause
+@coderabbitai resume
+@coderabbitai autofix stacked pr
+@coderabbitai generate unit tests
+```
+
+- Use `@coderabbitai review` for an incremental review after small updates.
+- Use `@coderabbitai full review` after large rewrites, rebases, or when earlier feedback is stale.
+- Use `@coderabbitai pause` while pushing several work-in-progress commits, then
+  `@coderabbitai resume` when the PR is ready for review.
+- Prefer `@coderabbitai autofix stacked pr` over direct autofix commits so generated fixes can be
+  reviewed separately.
+- Use `@coderabbitai generate unit tests` for focused test scaffolding, then review and run the
+  generated tests before merging.
+
 ## Continuous Integration
 
 GitHub Actions runs on all pull requests and pushes to `main`:

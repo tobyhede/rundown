@@ -1,7 +1,8 @@
-# .coderabbit.yaml
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
 language: "en-US"
 tone_instructions: >-
-  Focus on type safety, state machine correctness, and design principles
+  Focus on type safety, state machine correctness, security policy correctness,
+  persisted state compatibility, CLI output stability, and design principles
   from CLAUDE.md. Be direct and specific. Flag action-type mapping violations.
 
 reviews:
@@ -13,67 +14,170 @@ reviews:
   changed_files_summary: true
   request_changes_workflow: false
   estimate_code_review_effort: true
+  review_details: true
 
   auto_review:
     enabled: true
+    auto_incremental_review: true
+    auto_pause_after_reviewed_commits: 5
     drafts: false
     ignore_title_keywords:
       - "WIP"
-    base_branches:
-      - main
+      - "[skip review]"
+      - "DO NOT MERGE"
+    ignore_usernames:
+      - "dependabot[bot]"
+      - "github-actions[bot]"
 
   path_filters:
-    - "**"
     - "!.worktrees/**"
     - "!.work/**"
     - "!.rundown/work/**"
-    - "!site/node_modules/**"
+    - "!**/node_modules/**"
     - "!site/.next/**"
     - "!**/*.snap"
+    - "!**/*.tsbuildinfo"
     - "!dist/**"
-    - "dist/runbooks/**"
     - "!coverage/**"
+    - "!**/reports/**"
 
   path_instructions:
     - path: "packages/parser/**/*.ts"
       instructions: |
         This is a Markdown runbook parser. Focus on:
-        - Correctness of AST generation from markdown
-        - Edge cases in frontmatter parsing (YAML)
-        - Proper handling of code blocks, step definitions, and transitions
-        - ParseResult validation diagnostics
-    - path: "packages/core/**/*.ts"
+        - Correctness of AST generation from Markdown.
+        - Edge cases in frontmatter parsing, YAML normalization, code blocks, H2/H3 step definitions, transitions, FOR clauses, and DELEGATE annotations.
+        - ParseResult validation diagnostics and whether changed syntax also updates docs/SPEC.md, docs/FORMAT.md, runbooks, and parser tests.
+        - Keeping RESULT, HANDLER, and ACTION concepts distinct.
+    - path: "packages/core/src/runbook/**/*.ts"
       instructions: |
-        This is the XState state machine compiler and runtime. Focus on:
-        - Type-driven dispatch: types and events should drive logic, not string checks
-        - No silent mapping: STOP, COMPLETE, BREAK must propagate as themselves
-        - No synthetic IDs: use XState native event system
-        - Guard functions must express domain conditions only
-        - Discriminated unions and type narrowing correctness
+        This is the XState runbook state machine compiler and runtime. Focus on:
+        - Type-driven dispatch: types and events should drive logic, not raw string checks.
+        - No silent mapping: STOP, COMPLETE, BREAK, DEFER, GOTO, NEXT, CONTINUE, and RETRY must preserve their distinct semantics.
+        - No synthetic IDs: use XState native event system and state graph structure.
+        - Guard functions must express domain conditions only.
+        - Persisted state compatibility: changes to RunbookState, snapshots, lifecycle, variables, delegation state, or schemaVersion must follow the no-migration rule from CLAUDE.md.
+    - path: "packages/core/src/policy/**/*.ts"
+      instructions: |
+        Security-sensitive policy code. Focus on:
+        - Command extraction correctness, including shell separators, pipes, substitutions, redirection, environment assignment, and quoting.
+        - Deny precedence, allow-list precision, environment variable filtering, and fail-closed behavior.
+        - No command, path, or environment capability should be widened without tests and docs/SECURITY.md updates.
+    - path: "packages/core/src/sandbox/**/*.ts"
+      instructions: |
+        Security-sensitive sandbox mapping code. Focus on:
+        - Path traversal, symlink containment, deny glob expansion, write boundary enforcement, and fallback behavior when sandboxing is unavailable.
+        - Preserving strict-mode behavior and avoiding silent trust-mode downgrades.
+        - Tests for deny precedence and concrete path expansion when policy behavior changes.
+    - path: "packages/core/src/output/**/*.ts"
+      instructions: |
+        Core JSON output schema source of truth. Focus on:
+        - Keeping Zod schemas, TypeScript output types, and CLI schema exports aligned.
+        - Preserving JSON output stability for CLI consumers.
+        - Requiring schema coverage tests when command outputs are added, renamed, or removed.
+    - path: "packages/core/src/cli/**/*.ts"
+      instructions: |
+        Core CLI rendering utilities. Focus on:
+        - JSON/text output consistency, table formatting, color handling, and no terminal-only assumptions in JSON output.
+        - Compatibility with packages/cli OutputEmitter conventions.
+        - Tests for user-facing rendering changes.
+    - path: "packages/core/src/schemas.ts"
+      instructions: |
+        Core schema exports. Focus on:
+        - Keeping public schema exports stable and synchronized with packages/core/src/output.
+        - Avoiding duplicate schema definitions that drift from the Zod source of truth.
     - path: "packages/cli/**/*.ts"
       instructions: |
         CLI package. Focus on:
-        - OutputEmitter usage for consistent output
-        - CLI output standards (UPPERCASE headers, 2-space separators)
-        - Proper error handling and user-facing messages
-        - Command option validation
-    - path: "**/__tests__/**/*.ts"
+        - OutputEmitter usage for new CLI commands.
+        - JSON output by default and --text for human-readable output.
+        - UPPERCASE table headers, 2-space column separators, left-aligned text, and right-aligned numbers.
+        - Proper error handling, command option validation, and user-facing messages.
+        - If command JSON output changes, verify schema mappings and tests in packages/cli/src/schemas, packages/core/src/output, and packages/cli/__tests__.
+    - path: "packages/cli/src/schemas/**/*.ts"
       instructions: |
-        Test files. Focus on:
-        - Use Error.isError() instead of instanceof Error (cross-ESM-realm issue; project targets Node 24+)
-        - Mock passthrough pattern (pass through real functions that don't need mocking)
-        - Test isolation and meaningful assertions
-        - Edge case coverage
+        CLI JSON output schema registry. Focus on:
+        - Keeping JSON_OUTPUT_COMMANDS and COMMAND_SCHEMAS aligned.
+        - Ensuring new commands with JSON output support --schema.
+        - Re-exporting schemas from @rundown-org/core instead of creating duplicate schema sources.
+        - Updating schema coverage tests when command outputs are added, renamed, or removed.
+    - path: "packages/mcp/**/*.ts"
+      instructions: |
+        MCP server package. Focus on:
+        - Tool argument validation, structured error responses, and no leakage of local filesystem paths or sensitive environment values.
+        - Consistency with docs/MCP.md.
+        - Meaningful tests when behavior becomes non-placeholder.
     - path: "packages/claude-code-plugin/**/*.ts"
       instructions: |
         Claude Code plugin for runbook orchestration. Focus on:
-        - MCP integration correctness
-        - Runbook discovery and namespace resolution
-        - State management across plugin lifecycle
+        - MCP integration correctness, runbook discovery, namespace resolution, state lifecycle, and hook behavior.
+        - Safe path handling for plugin root/data paths and generated files.
+        - Changes to Zod schemas must stay consistent with checked-in JSON schemas.
+    - path: "packages/claude-code-plugin/schemas/*.schema.json"
+      instructions: |
+        Checked-in JSON schemas must match their Zod source schemas in packages/claude-code-plugin/src.
+        Flag schema edits that do not include corresponding source schema changes or schema-generation verification.
+    - path: "packages/claude-code-plugin/runbooks/**/*.runbook.md"
+      instructions: |
+        Plugin runbooks. Focus on:
+        - Syntax conformance with docs/SPEC.md and docs/FORMAT.md.
+        - Correct use of required variables, OUTPUTS/INPUTS context passing, and delegation patterns.
+        - Running plugin runbook validation tests when plugin runbook behavior changes.
+    - path: "packages/claude-code-plugin/skills/**/*.md"
+      instructions: |
+        Plugin skill instructions. Focus on:
+        - Accuracy of tool names, command examples, and workflow sequencing.
+        - No stale references to removed runbooks, templates, or package commands.
+        - Clear handoff instructions when skills generate plans or delegate work.
+    - path: "packages/claude-code-plugin/templates/**/*.md"
+      instructions: |
+        Plugin templates. Focus on:
+        - Template variables match the plugin schemas and generated output contracts.
+        - Instructions are executable by agents without relying on hidden context.
+        - Changes stay synchronized with template validation tests.
+    - path: "site/**"
+      instructions: |
+        Documentation site and WebContainer UI. Focus on:
+        - User-visible accuracy for CLI commands, examples, and runbook behavior.
+        - Playwright coverage for changed interactive behavior.
+        - No references to unsupported Node versions or stale command names.
+    - path: "runbooks/**/*.runbook.md"
+      instructions: |
+        Root runbook fixtures and examples. Focus on:
+        - Syntax conformance with docs/SPEC.md and docs/FORMAT.md.
+        - Scenario frontmatter consistency where present.
+        - Whether parser/core tests or scenario-suite coverage should be updated for behavior changes.
+    - path: "docs/**/*.md"
+      instructions: |
+        Documentation changes. Focus on:
+        - Accuracy against current CLI behavior and public Rundown specification.
+        - Updating linked docs together when public syntax, output schema, policy behavior, or runbook discovery changes.
+        - Keeping examples executable and aligned with package scripts.
+    - path: ".github/workflows/**/*.yml"
+      instructions: |
+        GitHub Actions workflows. Focus on:
+        - Actions must be pinned by commit SHA with a version comment, e.g. actions/checkout@<sha> # v6.
+        - Do not replace SHA pins with version tags.
+        - Preserve CodeQL, OSV, test, lint, build, scenario, and Playwright coverage.
+        - Avoid making required checks path-filtered unless there is an always-present placeholder job.
+    - path: "**/__tests__/**/*.ts"
+      instructions: |
+        Test files. Focus on:
+        - Use Error.isError() instead of instanceof Error except for same-realm custom error classes.
+        - Mock passthrough pattern: pass through real functions that do not need mocking.
+        - Test isolation, meaningful assertions, edge cases, and regression coverage for changed behavior.
+        - Prefer targeted verification commands that match the package touched by the PR.
+    - path: "tests/**/*.ts"
+      instructions: |
+        Test files outside package __tests__ directories. Focus on:
+        - Use Error.isError() instead of instanceof Error except for same-realm custom error classes.
+        - Test isolation, meaningful assertions, edge cases, and regression coverage for changed behavior.
+        - E2E fixtures should reflect realistic project usage and should not weaken documented CLI or plugin workflows.
+        - Prefer targeted verification commands that match the area touched by the PR.
 
   tools:
     eslint:
-      enabled: false      # jsdoc plugin not in allowlist; type-checked rules disabled
+      enabled: false      # jsdoc plugin is handled by CI; type-checked rules require project build context
     biome:
       enabled: true       # Uses project biome.json
     markdownlint:
@@ -82,6 +186,9 @@ reviews:
       enabled: true
     actionlint:
       enabled: true
+    github-checks:
+      enabled: true
+      timeout_ms: 900000
     ast-grep:
       essential_rules: true
 
@@ -92,6 +199,31 @@ reviews:
       mode: "warning"
     docstrings:
       mode: "off"         # Handled by eslint-plugin-jsdoc in CI
+    custom_checks:
+      - name: "Persisted state compatibility"
+        mode: "warning"
+        instructions: |
+          Warn if files that define persisted runbook state, state snapshots, lifecycle fields, variable storage, delegation state, or schemaVersion behavior change and the PR also silently migrates existing .rundown/runs/ data.
+          Pass if the PR does not touch persisted state behavior.
+          Pass if the PR preserves compatibility or detects stale state and requires completion, stop, or prune before restart.
+      - name: "CLI schema coverage"
+        mode: "warning"
+        instructions: |
+          Warn if CLI JSON output, command names, or --schema behavior change without corresponding OutputEmitter usage, output schema mapping updates, and schema coverage tests.
+          Pass if the PR does not touch CLI output behavior.
+          Pass if schema source, CLI exports, and tests are updated together.
+      - name: "SHA-pinned workflow actions"
+        mode: "warning"
+        instructions: |
+          Warn if a GitHub Actions workflow uses an action version tag like @v4 without a commit SHA, removes a version comment, or weakens CodeQL, OSV, lint, build, test, scenario, or Playwright coverage without explanation.
+          Pass if workflows are not changed.
+          Pass if changed actions remain pinned by commit SHA with a version comment.
+      - name: "Security policy review"
+        mode: "warning"
+        instructions: |
+          Warn if policy, sandbox, command execution, file data sources, path resolution, or environment handling changes widen command, path, or environment capabilities without corresponding tests or docs/SECURITY.md updates.
+          Pass if the PR does not touch these areas.
+          Pass if the PR includes tests or documentation showing traversal, symlink escape, deny precedence, env leakage, shell parsing, and fail-closed behavior were preserved.
 
   finishing_touches:
     docstrings:
@@ -101,8 +233,29 @@ reviews:
     simplify:
       enabled: false
 
+code_generation:
+  docstrings:
+    path_instructions:
+      - path: "packages/**/*.ts"
+        instructions: |
+          Follow the TSDoc standards in CLAUDE.md. Exported functions need description, @param for every parameter, @returns for non-void returns, and @throws when exceptions are possible. Do not add docstrings to tests solely for coverage.
+  unit_tests:
+    path_instructions:
+      - path: "packages/parser/**/*.ts"
+        instructions: |
+          Generate Jest tests that cover valid syntax, invalid syntax, diagnostics, frontmatter edge cases, code blocks, transitions, FOR clauses, and DELEGATE annotations.
+      - path: "packages/core/**/*.ts"
+        instructions: |
+          Generate Jest tests that cover state transitions, result/handler/action separation, persisted-state stale detection, policy enforcement, sandbox edge cases, output schema stability, and error paths.
+      - path: "packages/cli/**/*.ts"
+        instructions: |
+          Generate Jest tests that verify JSON output, --text output, --schema output, command option validation, and user-facing errors. Prefer existing CLI test helpers and snapshots only when the repository already uses them for that behavior.
+      - path: "packages/claude-code-plugin/**/*.ts"
+        instructions: |
+          Generate Jest tests that cover runbook discovery, namespace resolution, hook behavior, plugin path handling, and schema validation.
+
 knowledge_base:
   learnings:
     scope: "local"
   code_guidelines:
-    enabled: true          # Auto-detects CLAUDE.md
+    enabled: true          # Auto-detects CLAUDE.md and AGENTS.md
