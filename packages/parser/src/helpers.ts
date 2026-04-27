@@ -4,6 +4,11 @@ import {
   type ParseConditionalResult,
   type AggregationModifier,
 } from './types.js';
+import {
+  isCanonicalPositiveInteger,
+  isReservedWord,
+  NAMED_IDENTIFIER_PATTERN,
+} from './identifiers.js';
 import type {
   Action,
   AccumulatingAction,
@@ -15,12 +20,7 @@ import type {
   Transitions,
 } from './schemas.js';
 import { MAX_STEP_NUMBER, MAX_FOR_BOUND } from './schemas.js';
-import {
-  parseStepIdFromString,
-  stepIdToString,
-  isReservedWord,
-  NAMED_IDENTIFIER_PATTERN,
-} from './step-id.js';
+import { parseStepIdFromString, stepIdToString } from './step-id.js';
 import type { ParsedForClause, Bound, RunbookEntry, RunbookRef, OutputDeclaration } from './ast.js';
 import { isBoundRef } from './guards.js';
 import { TEMPLATE_VAR_PATH_PATTERN } from './schemas.js';
@@ -140,10 +140,6 @@ export interface ParsedSubstepHeader {
 
 /** Characters to strip from trailing position of named step identifiers. */
 const TRAILING_SEPARATORS = new Set(['.', ':', '\u2014', '\u2192', ')', '-']);
-
-function isCanonicalPositiveInteger(value: string): boolean {
-  return /^[1-9]\d*$/.test(value);
-}
 
 /**
  * Strip common separators and whitespace from the beginning of text.
@@ -1136,6 +1132,8 @@ export function parseFrontmatterOutputDeclaration(text: string): OutputDeclarati
   // With-value form: delegate to existing step-level parser
   return parseOutputDeclaration(text);
 }
+
+export { isCanonicalPositiveInteger } from './identifiers.js';
 
 /**
  * Format an action as its canonical string representation.

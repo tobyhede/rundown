@@ -42,3 +42,15 @@ export function isReservedWord(word: string): boolean {
  * followed by zero or more letters, digits, or underscores.
  */
 export const NAMED_IDENTIFIER_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/**
+ * Check whether a string is a canonical positive integer.
+ *
+ * Canonical values have no leading zeroes and contain only decimal digits.
+ *
+ * @param value - The string to check
+ * @returns True if the string is a positive integer in canonical form
+ */
+export function isCanonicalPositiveInteger(value: string): boolean {
+  return /^[1-9]\d*$/.test(value);
+}

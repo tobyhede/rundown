@@ -1,5 +1,9 @@
 import { z } from 'zod';
-import { isReservedWord, NAMED_IDENTIFIER_PATTERN } from './identifiers.js';
+import {
+  isCanonicalPositiveInteger,
+  isReservedWord,
+  NAMED_IDENTIFIER_PATTERN,
+} from './identifiers.js';
 
 /**
  * Maximum valid step number.
@@ -169,7 +173,7 @@ export const StepNameSchema = z.string().refine(
   (s) => {
     if (/^\d+$/.test(s)) {
       const num = parseInt(s, 10);
-      return num > 0 && num <= MAX_STEP_NUMBER;
+      return isCanonicalPositiveInteger(s) && num <= MAX_STEP_NUMBER;
     }
     return NAMED_IDENTIFIER_PATTERN.test(s) && !isReservedWord(s);
   },
@@ -184,11 +188,26 @@ export const StepNameSchema = z.string().refine(
 export const StepIdSchema = z
   .object({
     step: z.union([z.literal('NEXT'), StepNameSchema]),
-    substep: z.string().optional(),
+    substep: z
+      .string()
+      .refine(
+        (s) =>
+          isCanonicalPositiveInteger(s) || (NAMED_IDENTIFIER_PATTERN.test(s) && !isReservedWord(s)),
+        { message: 'Substep must be a positive integer or valid identifier' },
+      )
+      .optional(),
     qualifier: z
       .object({
         step: StepNameSchema,
-        substep: z.string().optional(),
+        substep: z
+          .string()
+          .refine(
+            (s) =>
+              isCanonicalPositiveInteger(s) ||
+              (NAMED_IDENTIFIER_PATTERN.test(s) && !isReservedWord(s)),
+            { message: 'Substep must be a positive integer or valid identifier' },
+          )
+          .optional(),
       })
       .optional(),
     at: z.union([z.number().int().positive(), z.string().regex(TEMPLATE_VAR_PATTERN)]).optional(),

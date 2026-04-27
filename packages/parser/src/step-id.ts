@@ -1,7 +1,11 @@
 import type { StepId } from './schemas.js';
-import { isCanonicalPositiveInteger } from './helpers.js';
+import {
+  isCanonicalPositiveInteger,
+  isReservedWord,
+  NAMED_IDENTIFIER_PATTERN,
+} from './identifiers.js';
+
 export { RESERVED_WORDS, isReservedWord, NAMED_IDENTIFIER_PATTERN } from './identifiers.js';
-import { isReservedWord, NAMED_IDENTIFIER_PATTERN } from './identifiers.js';
 
 /**
  * Options for controlling step ID parsing behavior.
