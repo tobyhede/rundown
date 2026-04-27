@@ -780,7 +780,7 @@ export interface StepConfig {
 export interface CreateRunbookOptions {
   /** Runbook name (appears in frontmatter) */
   name?: string;
-  /** Template variables (appears in frontmatter inputs:) */
+  /** Template variable declarations (appears in frontmatter inputs:) */
   vars?: Record<string, string | number | boolean>;
   /** Runbook steps */
   steps: StepConfig[];
@@ -813,8 +813,8 @@ export function createRunbook(options: CreateRunbookOptions): string {
     if (name) lines.push(`name: ${name}`);
     if (vars && Object.keys(vars).length > 0) {
       lines.push('inputs:');
-      for (const [key, value] of Object.entries(vars)) {
-        lines.push(`  ${key}: ${String(value)}`);
+      for (const [key] of Object.entries(vars)) {
+        lines.push(`  - ${key}`);
       }
     }
     lines.push('---');

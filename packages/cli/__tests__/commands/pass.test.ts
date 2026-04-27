@@ -3,11 +3,12 @@ import { writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   createTestWorkspace,
+  findActionOutput,
   runCliInProcess,
   getActiveState,
+  readRunbookState,
   readSession,
   getAllStates,
-  findActionOutput,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 import { ActionResponseSchema } from '../helpers/schema-validator.js';
@@ -186,6 +187,143 @@ Do child work.
       const session3 = await readSession(workspace);
       expect(session3.active).toBe(parentId);
     });
+  });
+
+  describe('sibling fan-out isolation', () => {
+    interface FrontierEntry {
+      id: string;
+      runbook: string;
+      token: string;
+    }
+
+    function parseConcatenatedJson(raw: string): unknown[] {
+      const results: unknown[] = [];
+      let i = 0;
+      while (i < raw.length) {
+        while (i < raw.length && /\s/.test(raw[i])) i++;
+        if (i >= raw.length) break;
+        const start = i;
+        let depth = 0;
+        let inString = false;
+        let escaped = false;
+        for (; i < raw.length; i++) {
+          const ch = raw[i];
+          if (inString) {
+            if (escaped) {
+              escaped = false;
+            } else if (ch === '\\') {
+              escaped = true;
+            } else if (ch === '"') {
+              inString = false;
+            }
+          } else if (ch === '"') {
+            inString = true;
+          } else if (ch === '{' || ch === '[') {
+            depth++;
+          } else if (ch === '}' || ch === ']') {
+            depth--;
+            if (depth === 0) {
+              i++;
+              break;
+            }
+          }
+        }
+        const chunk = raw.slice(start, i);
+        try {
+          results.push(JSON.parse(chunk));
+        } catch {
+          // skip malformed chunk
+        }
+      }
+      return results;
+    }
+
+    function findFrontierInEvents(events: unknown[]): FrontierEntry[] | undefined {
+      for (const ev of events) {
+        if (Array.isArray(ev)) {
+          const nested = findFrontierInEvents(ev);
+          if (nested) return nested;
+        } else if (ev && typeof ev === 'object') {
+          const e = ev as { type?: string; delegateFrontier?: FrontierEntry[] };
+          if (e.type === 'step_entered' && e.delegateFrontier) {
+            return e.delegateFrontier;
+          }
+        }
+      }
+      return undefined;
+    }
+
+    it('does not let the later claimed sibling steal the first child pass', async () => {
+      const childRunbook = [
+        '# Child',
+        '',
+        '## 1. Work',
+        '',
+        '- PASS COMPLETE',
+        '- FAIL STOP',
+        '',
+        'Do child work.',
+        '',
+      ].join('\n');
+      const parentRunbook = [
+        '# Parent',
+        '',
+        '## 1. Fan out',
+        '',
+        '- DELEGATE',
+        '- PASS ALL CONTINUE',
+        '- FAIL ANY STOP',
+        '',
+        '### 1.1 First child',
+        '',
+        '- child.runbook.md',
+        '',
+        '### 1.2 Second child',
+        '',
+        '- child.runbook.md',
+        '',
+        '## 2. Done',
+        '',
+        '- PASS COMPLETE',
+        '',
+        'Finished.',
+        '',
+      ].join('\n');
+
+      await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
+      await writeFile(join(workspace.cwd, 'runbooks', 'child.runbook.md'), childRunbook);
+      await writeFile(join(workspace.cwd, 'runbooks', 'parent.runbook.md'), parentRunbook);
+      await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childRunbook);
+
+      const start = await runCliInProcess('run --prompted runbooks/parent.runbook.md', workspace);
+      expect(start.exitCode).toBe(0);
+      const frontier = findFrontierInEvents(parseConcatenatedJson(start.stdout)) ?? [];
+      expect(frontier).toHaveLength(2);
+      const token1 = frontier.find((entry) => entry.id === '1.1')?.token;
+      const token2 = frontier.find((entry) => entry.id === '1.2')?.token;
+      expect(token1).toBeDefined();
+      expect(token2).toBeDefined();
+
+      let result = await runCliInProcess(`claim ${token1!}`, workspace);
+      expect(result.exitCode).toBe(0);
+      const child1Id = String(findActionOutput(result.stdout)?.run_id);
+
+      result = await runCliInProcess(`claim ${token2!}`, workspace);
+      expect(result.exitCode).toBe(0);
+      const child2Id = String(findActionOutput(result.stdout)?.run_id);
+
+      const activeBefore = await getActiveState(workspace);
+      expect(activeBefore?.id).toBe(child2Id);
+
+      result = await runCliInProcess('pass --text', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const child1 = await readRunbookState(workspace, child1Id);
+      const child2 = await readRunbookState(workspace, child2Id);
+
+      expect(child1?.lifecycle).toBe('running');
+      expect(child2?.lifecycle).toBe('completed');
+    }, 30_000);
   });
 
   describe('runbook completion with stack', () => {

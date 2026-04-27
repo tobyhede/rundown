@@ -160,6 +160,9 @@ name: policy-enforced-capture
 ---
 # Policy Enforced Capture
 
+inputs:
+  - Captured
+
 ## 1. Capture
 - OUTPUTS
   - Captured
@@ -201,6 +204,9 @@ printf 'policy-captured' > "$RD_OUTPUTS_Captured"
 name: policy-enforced-capture
 ---
 # Policy Enforced Capture
+
+inputs:
+  - Captured
 
 ## 1. Capture
 - OUTPUTS
@@ -404,6 +410,8 @@ printf 'inner-value' > "$RD_OUTPUTS_Inner"
 name: substep-in-for-capture
 required:
   - items
+inputs:
+  - items
 ---
 # Substep In FOR Capture
 
@@ -463,6 +471,8 @@ printf "%s" "{{ item }}" > "$RD_OUTPUTS_Inner"
     const RUNBOOK = `---
 name: step-for-single-substep
 required:
+  - items
+inputs:
   - items
 ---
 # Step FOR Single Substep
@@ -559,6 +569,8 @@ printf 'should-not-capture' > "$RD_OUTPUTS_Blocked"
     const RUNBOOK = `---
 name: for-fail-midway
 required:
+  - items
+inputs:
   - items
 ---
 # FOR Fail Midway
