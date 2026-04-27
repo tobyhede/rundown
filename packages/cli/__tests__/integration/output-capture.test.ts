@@ -81,6 +81,114 @@ describe('output capture — file-backed naked OUTPUTS at step level', () => {
     const content = await readFile(channelPath, 'utf-8');
     expect(content).toBe('v1.2.3');
   });
+
+  it('captures output from intercepted rd echo commands', async () => {
+    const RUNBOOK = `---
+name: internal-rd-capture
+---
+# Internal rd Capture
+
+## 1. Capture
+- OUTPUTS
+  - Message
+- PASS CONTINUE
+- FAIL STOP
+
+\`\`\`sh
+rd echo internal-value
+\`\`\`
+
+## 2. Echo captured
+- OUTPUTS
+  - Echoed {{ Message }}
+- PASS COMPLETE
+- FAIL STOP
+
+\`\`\`sh
+rd echo --result pass
+\`\`\`
+`;
+    await writeFile(join(workspace.cwd, 'internal-rd.runbook.md'), RUNBOOK);
+
+    const result = runCli('run internal-rd.runbook.md', workspace);
+    expect(result.exitCode).toBe(0);
+
+    const states = await getAllRunbookStates(workspace);
+    expect(states).toHaveLength(1);
+    const state = states[0] as { id: string; variables?: Record<string, unknown> };
+    expect(state.variables?.Message).toBe('internal-value');
+    expect(state.variables?.Echoed).toBe('internal-value');
+
+    const channelPath = join(
+      workspace.cwd,
+      '.rundown',
+      'runs',
+      state.id,
+      'outputs',
+      '1',
+      'Message',
+    );
+    expect(await readFile(channelPath, 'utf-8')).toBe('internal-value');
+  });
+});
+
+describe('output capture — policy-enforced path', () => {
+  let workspace: TestWorkspace;
+
+  beforeEach(async () => {
+    workspace = await createTestWorkspace();
+  });
+
+  afterEach(async () => {
+    await workspace.cleanup();
+  });
+
+  it('captures when the command is allowed by policy', async () => {
+    const RUNBOOK = `---
+name: policy-enforced-capture
+---
+# Policy Enforced Capture
+
+## 1. Capture
+- OUTPUTS
+  - Blocked
+- PASS COMPLETE
+- FAIL STOP
+
+\`\`\`sh
+printf 'should-not-capture' > "$RD_OUTPUTS_Blocked"
+\`\`\`
+`;
+    await writeFile(
+      join(workspace.cwd, '.rundownrc.yaml'),
+      `default:
+  mode: execute
+  run:
+    allow:
+      - printf
+`,
+    );
+    await writeFile(join(workspace.cwd, 'allowed.runbook.md'), RUNBOOK);
+
+    const result = runCli('run allowed.runbook.md --no-sandbox', workspace);
+    expect(result.exitCode).toBe(0);
+
+    const states = await getAllRunbookStates(workspace);
+    expect(states).toHaveLength(1);
+    const state = states[0] as { id: string; variables?: Record<string, unknown> };
+    expect(state.variables?.Blocked).toBe('should-not-capture');
+
+    const channelPath = join(
+      workspace.cwd,
+      '.rundown',
+      'runs',
+      state.id,
+      'outputs',
+      '1',
+      'Blocked',
+    );
+    expect(await readFile(channelPath, 'utf-8')).toBe('should-not-capture');
+  });
 });
 
 describe('output capture — best-effort behaviour', () => {
@@ -244,8 +352,7 @@ printf 'inner-value' > "$RD_OUTPUTS_Inner"
       '1',
       'Inner',
     );
-    const fileStat = await stat(expected);
-    expect(fileStat.isFile()).toBe(true);
+    expect(await readFile(expected, 'utf-8')).toBe('inner-value');
   });
 
   it('creates a four-segment path when a substep with naked OUTPUTS is inside a FOR loop', async () => {
@@ -304,8 +411,6 @@ printf "%s" "{{ item }}" > "$RD_OUTPUTS_Inner"
       '2',
       'Inner',
     );
-    expect((await stat(iter1)).isFile()).toBe(true);
-    expect((await stat(iter2)).isFile()).toBe(true);
     expect(await readFile(iter1, 'utf-8')).toBe('alpha');
     expect(await readFile(iter2, 'utf-8')).toBe('beta');
   });
@@ -372,8 +477,6 @@ printf "%s" "{{ item }}" > "$RD_OUTPUTS_Inner"
       '2',
       'Inner',
     );
-    expect((await stat(iter1)).isFile()).toBe(true);
-    expect((await stat(iter2)).isFile()).toBe(true);
     expect(await readFile(iter1, 'utf-8')).toBe('alpha');
     expect(await readFile(iter2, 'utf-8')).toBe('beta');
   });

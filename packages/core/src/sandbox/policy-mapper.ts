@@ -258,7 +258,7 @@ export function policyToSandboxOptions(
   );
   const denyPaths = collectConcreteDenyPaths(
     denyPatterns,
-    [...readAllowPaths, ...writeAllowPaths],
+    [...readAllowPaths, ...writeAllowPaths, ...extraReadWritePaths],
     repoRoot,
     options.cwd,
   );
@@ -305,7 +305,7 @@ export function policyConfigToSandboxOptions(
   );
   const denyPaths = collectConcreteDenyPaths(
     denyPatterns,
-    [...readAllowPaths, ...writeAllowPaths],
+    [...readAllowPaths, ...writeAllowPaths, ...extraReadWritePaths],
     repoRoot,
     options.cwd,
   );

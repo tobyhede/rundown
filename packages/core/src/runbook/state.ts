@@ -355,16 +355,20 @@ export class RunbookStateManager {
   async delete(id: string): Promise<void> {
     try {
       await fs.unlink(this.statePath(id));
-    } catch {
-      /* intentionally ignored */
+    } catch (error) {
+      if (!isNodeError(error) || error.code !== 'ENOENT') {
+        throw error;
+      }
     }
     try {
       // The per-run outputs directory shares the run id with the state file.
       // Use rm -rf semantics so a non-empty directory is removed cleanly.
       const runDir = this.statePath(id).replace(/\.json$/, '');
       await fs.rm(runDir, { recursive: true, force: true });
-    } catch {
-      /* intentionally ignored */
+    } catch (error) {
+      if (!isNodeError(error) || error.code !== 'ENOENT') {
+        throw error;
+      }
     }
   }
 

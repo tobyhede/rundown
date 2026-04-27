@@ -954,7 +954,7 @@ export async function runExecutionLoop(
     let execResult: ExecutionResult;
 
     if (isInternalRdCommand(expandedCommandCode)) {
-      const internalResult = await executeRdCommandInternal(expandedCommandCode, cwd);
+      const internalResult = await executeRdCommandInternal(expandedCommandCode, cwd, rdInjected);
       if (internalResult !== null) {
         execResult = internalResult;
       } else {

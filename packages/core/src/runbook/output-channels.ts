@@ -23,7 +23,9 @@ export interface NakedOutput {
  * for the caller to track parallel arrays.
  */
 export interface PreparedChannel {
+  /** Stable output name, used to map the channel back to a runbook variable. */
   readonly name: string;
+  /** Absolute file path for the channel, e.g. `.rundown/runs/<id>/outputs/<step>/<VarName>`. */
   readonly path: string;
 }
 
@@ -41,9 +43,13 @@ export interface PreparedChannel {
  * `iteration` inside `substep` is the correct structural encoding.
  */
 export interface OutputScope {
+  /** Owning step identifier, such as `1` or `Cleanup`. */
   readonly stepId: string;
+  /** Optional nested substep scope. */
   readonly substep?: {
+    /** Substep identifier, such as `1` or `Validate`. */
     readonly id: string;
+    /** Optional FOR-loop iteration index for the nested substep. */
     readonly iteration?: number;
   };
 }

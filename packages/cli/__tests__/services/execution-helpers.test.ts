@@ -10,7 +10,7 @@
 import { describe, it, expect } from '@jest/globals';
 import { deriveOutputScope, extractUnitOutputs } from '../../src/services/execution.js';
 import type { RunbookState, ForContext } from '@rundown-org/core';
-import type { ResolvedStep, OutputDeclaration } from '@rundown-org/parser';
+import type { ResolvedStep, OutputDeclaration, Substep } from '@rundown-org/parser';
 
 // ---------------------------------------------------------------------------
 // Minimal RunbookState factory
@@ -41,7 +41,7 @@ function makeOutputDecl(name: string, value?: string): OutputDeclaration {
 }
 
 function makeCommandStep(name: string, outputs?: readonly OutputDeclaration[]): ResolvedStep {
-  return {
+  const step = {
     kind: 'command',
     name,
     description: `Step ${name}`,
@@ -51,7 +51,9 @@ function makeCommandStep(name: string, outputs?: readonly OutputDeclaration[]): 
       fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
     },
     ...(outputs !== undefined ? { outputs } : {}),
-  } as ResolvedStep;
+  } satisfies ResolvedStep;
+
+  return step;
 }
 
 function makeSubstepsStep(
@@ -59,7 +61,7 @@ function makeSubstepsStep(
   substeps: Array<{ id: string; outputs?: readonly OutputDeclaration[] }>,
   stepOutputs?: readonly OutputDeclaration[],
 ): ResolvedStep {
-  const resolvedSubsteps = substeps.map((sub) => ({
+  const resolvedSubsteps: readonly Substep[] = substeps.map((sub) => ({
     id: sub.id,
     description: `Substep ${sub.id}`,
     transitions: {
@@ -69,7 +71,7 @@ function makeSubstepsStep(
     ...(sub.outputs !== undefined ? { outputs: sub.outputs } : {}),
   }));
 
-  return {
+  const step = {
     kind: 'substeps',
     name,
     description: `Step ${name}`,
@@ -79,7 +81,9 @@ function makeSubstepsStep(
       fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
     },
     ...(stepOutputs !== undefined ? { outputs: stepOutputs } : {}),
-  } as unknown as ResolvedStep;
+  } satisfies ResolvedStep;
+
+  return step;
 }
 
 // ---------------------------------------------------------------------------
