@@ -1,7 +1,7 @@
 // packages/cli/__tests__/integration/output-capture.test.ts
 
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { writeFile, readFile, stat } from 'node:fs/promises';
+import { writeFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   createTestWorkspace,
