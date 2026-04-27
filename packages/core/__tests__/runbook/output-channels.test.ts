@@ -282,7 +282,7 @@ describe('prepareOutputChannels', () => {
     }
   });
 
-  it('omits symlinked channel files during readback', async () => {
+  it('omits symlinked channel files during read-back', async () => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'rd-outputs-'));
     try {
       const prepared = await prepareOutputChannels({
@@ -303,7 +303,7 @@ describe('prepareOutputChannels', () => {
     }
   });
 
-  it('omits non-regular channel files during readback', async () => {
+  it('omits non-regular channel files during read-back', async () => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'rd-outputs-'));
     try {
       const prepared = await prepareOutputChannels({
