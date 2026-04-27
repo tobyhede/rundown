@@ -119,6 +119,8 @@ Runbook list entries may use template variable references (`{{ VarName }}`) inst
 
 A runbook-list entry may carry a nested `- DELEGATE` bullet to mark that entry for delegation; see [§4.3 DELEGATE](#43-delegate).
 
+A runbook-list entry **without** a nested `- DELEGATE` bullet is *inline linkage*: the parent steps through the child runbook in the same process, and the child's terminal result auto-propagates back to the parent substep. Inline linkage and DELEGATE are the two execution boundaries for nested runbooks — inline keeps the walk in-session, DELEGATE dispatches it out-of-process via a token (see §4.3).
+
 ### 3.4 Runtime Target Identity
 Runtime dispatch/completion identity is canonicalized as:
 
@@ -181,6 +183,8 @@ GOTO targeting the containing step (self-reference) without an AT qualifier may 
 > **Internal:** The compiler resolves step-to-step advancement using `CONTINUE` actions mapped to concrete next-step state IDs at compile time. `NEXT` is rejected as a GOTO target by the parser.
 
 ### 4.3 DELEGATE
+
+Use `- DELEGATE` when the nested runbook should run **out-of-process** in a subagent. A runbook-list entry without `- DELEGATE` is inline linkage and runs in the same process — see [§3.2](#32-substeps).
 
 `- DELEGATE` is a structural bullet annotation that marks substeps for delegation. When a DELEGATE step is entered, the execution engine auto-issues a delegation token for each marked substep and surfaces them in the `STEP_ENTERED` event's `delegateFrontier` field (an array of `{id, runbook, token}`). Subagents claim each token with `rd claim`, resolve with `rd pass`/`rd fail`, and the final resolution triggers auto-aggregation of the parent step's transition.
 

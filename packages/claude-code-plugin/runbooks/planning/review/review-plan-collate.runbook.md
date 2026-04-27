@@ -5,7 +5,7 @@ tags:
   - planning
   - review
 OUTPUTS:
-  - PlanReview
+  - ReviewPlanPath
 ---
 
 # Collate Plan Reviews

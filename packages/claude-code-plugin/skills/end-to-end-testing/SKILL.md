@@ -29,7 +29,7 @@ The end-to-end runbook coordinates several other runbooks:
 - write plan (delegating to a subagent)
 - review plan (delegating the review tasks to multiple subagents)
 
-Once agents have completed these runbooks, write your reivew of the process.
+Once agents have completed these runbooks, write your review of the process.
 
 
 ## Task for Plan

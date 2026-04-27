@@ -7,6 +7,8 @@ description: Use when orchestrating multi-agent work through rundown delegation,
 
 Rundown delegation dispatches substeps to child agents. The parent delegates, a child claims the work, executes it, and reports back. The plugin automates token detection and claim injection.
 
+If you want the parent to walk the child runbook inline instead of dispatching a subagent, omit `- DELEGATE` — see the inline-linkage pattern in [running-runbooks](../running-runbooks/SKILL.md#nested-runbooks-inline-linkage).
+
 ## Quick Reference
 
 ```

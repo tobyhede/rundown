@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://rundown.org/schemas/review.schema.json",
   "title": "Review",
-  "description": "Structured review items for plan and code reviews. A review document records that a review was performed.An empty items array records that the review found no issues.",
+  "description": "Structured review items for plan and code reviews. A review document records that a review was performed. An empty items array records that the review found no issues.",
   "type": "object",
   "required": ["meta", "items"],
   "properties": {

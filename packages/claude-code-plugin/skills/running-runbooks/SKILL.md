@@ -58,11 +58,13 @@ rd fail --step 2.1 --index 3    # Fail substep 2.1 at iteration 3
 
 ## Nested Runbooks (Inline Linkage)
 
-When a step has a substep with a nested runbook reference, run the child using `--step`:
+**Inline linkage** is the default for runbook-list entries: no `- DELEGATE`, no token, the parent walks the child in-session. When a step has a substep with a nested runbook reference, run the child with `--step` pointing at the parent substep:
 
 ```bash
 rd run <child-runbook> --step 1.1
 ```
+
+If you instead want an out-of-process subagent to execute the child, add `- DELEGATE` and follow the [delegating-runbooks](../delegating-runbooks/SKILL.md) skill.
 
 The child:
 - Auto-starts and executes command steps
