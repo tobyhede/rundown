@@ -52,37 +52,40 @@ echo hello
     expect(output.variables).toHaveProperty('WorkPath');
   });
 
-  it('resolves valid runbook with frontmatter vars — shows resolved variables', async () => {
+  it('resolves declared inputs from CLI — shows resolved variables', async () => {
     const runbookPath = path.join(workspace.cwd, 'vars.runbook.md');
     fs.writeFileSync(
       runbookPath,
       `---
 name: test-runbook
 inputs:
-  environment: development
-  port: 3000
+  - environment
+  - port
 ---
 ## Step 1
 Server on port {{ port }} in {{ environment }} mode.
 `,
     );
 
-    const result = await runCliInProcess(`resolve ${runbookPath}`, workspace);
+    const result = await runCliInProcess(
+      `resolve ${runbookPath} --input environment=development --input port=3000`,
+      workspace,
+    );
     const output = JSON.parse(result.stdout);
 
     expect(output.valid).toBe(true);
     expect(output.variables).toHaveProperty('environment', 'development');
-    expect(output.variables).toHaveProperty('port', 3000);
+    expect(output.variables).toHaveProperty('port', '3000');
   });
 
-  it('resolves with --input flags — CLI vars override frontmatter', async () => {
+  it('resolves with --input flags for declared inputs', async () => {
     const runbookPath = path.join(workspace.cwd, 'override.runbook.md');
     fs.writeFileSync(
       runbookPath,
       `---
 name: test-runbook
 inputs:
-  environment: development
+  - environment
 ---
 ## Step 1
 Deploy to {{ environment }}.
@@ -129,14 +132,17 @@ Deploy to {{ missingVar }}.
       runbookPath,
       `---
 inputs:
-  environment: staging
+  - environment
 ---
 ## 3. Deploy
 Deploy to {{ environment }}.
 `,
     );
 
-    const result = await runCliInProcess(`resolve ${runbookPath}`, workspace);
+    const result = await runCliInProcess(
+      `resolve ${runbookPath} --input environment=staging`,
+      workspace,
+    );
     const output = JSON.parse(result.stdout);
 
     expect(output.valid).toBe(false);
@@ -267,20 +273,20 @@ echo {{ server }}
     expect(output.sources.servers.items).toBe(2);
   });
 
-  it('outputs valid JSON matching schema by default', async () => {
+  it('outputs valid JSON matching schema with declared inputs', async () => {
     const runbookPath = path.join(workspace.cwd, 'schema-test.runbook.md');
     fs.writeFileSync(
       runbookPath,
       `---
 inputs:
-  name: world
+  - name
 ---
 ## Step 1
 Hello {{ name }}.
 `,
     );
 
-    const result = await runCliInProcess(`resolve ${runbookPath}`, workspace);
+    const result = await runCliInProcess(`resolve ${runbookPath} --input name=world`, workspace);
     const output = JSON.parse(result.stdout);
 
     // Validate against Zod schema (single source of truth)
@@ -349,7 +355,7 @@ echo hello
       runbookPath,
       `---
 inputs:
-  greeting: hello
+  - greeting
 ---
 ## Step 1
 Say {{ greeting }} to {{ recipient }}.
@@ -454,13 +460,13 @@ echo hello
     }
   });
 
-  it('resolves FOR clause with template variable bounds', async () => {
+  it('resolves FOR clause with declared template variable bounds', async () => {
     const runbookPath = path.join(workspace.cwd, 'for-var-bounds.runbook.md');
     fs.writeFileSync(
       runbookPath,
       `---
 inputs:
-  Max: 5
+  - Max
 ---
 ## 1. Process batches
 - FOR batch IN 1 TO {{Max}}
@@ -476,7 +482,7 @@ echo batch
 `,
     );
 
-    const result = await runCliInProcess(`resolve ${runbookPath}`, workspace);
+    const result = await runCliInProcess(`resolve ${runbookPath} --input Max=5`, workspace);
     const output = JSON.parse(result.stdout);
 
     expect(output.valid).toBe(true);
@@ -490,14 +496,17 @@ echo batch
       runbookPath,
       `---
 inputs:
-  greeting: hello
+  - greeting
 ---
 ## Step 1
 Say {{ greeting }}.
 `,
     );
 
-    const result = await runCliInProcess(`resolve ${runbookPath} --text`, workspace);
+    const result = await runCliInProcess(
+      `resolve ${runbookPath} --input greeting=hello --text`,
+      workspace,
+    );
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain('PASS');
     expect(result.stdout).toContain('Variables:');
@@ -512,7 +521,7 @@ Say {{ greeting }}.
         `---
 name: meta
 inputs:
-  Target: ""
+  - Target
 ---
 ## 1. Execute
 - {{ Target }}

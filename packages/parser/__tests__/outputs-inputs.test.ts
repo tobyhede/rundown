@@ -325,7 +325,7 @@ describe('parseRunbookDocument - INPUTS step directive removal', () => {
   it('emits a parse error when - INPUTS directive appears in a step', () => {
     const markdown = `---
 inputs:
-  Message: hello
+  - Message
 ---
 # My Runbook
 

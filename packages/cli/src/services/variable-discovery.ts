@@ -692,20 +692,18 @@ function collectEnvBridgeVars(warnings?: string[]): Record<string, unknown> {
  * ```
  * Layer 0: builtins        ← Date, Branch, WorkPath, RunId, ContextId (fresh)
  * Layer 1: inheritedVars   ← parent delegation vars (overrides builtins)
- * Layer 2: frontmatter     ← runbook YAML frontmatter vars:
- * Layer 3: discovered      ← .rundown/config.yaml (auto-discovered)
- * Layer 4: envBridge        ← RD_INPUT_* environment variables
- * Layer 5: cliFlags        ← --input-file, --input, --input-json (highest precedence)
+ * Layer 2: discovered      ← .rundown/config.yaml (auto-discovered)
+ * Layer 3: envBridge       ← RD_INPUT_* environment variables
+ * Layer 4: cliFlags        ← --input-file, --input, --input-json (highest precedence)
  * ```
  *
  * The inherited layer ensures that parent ContextId survives into child
  * runbooks during delegation, rather than being replaced by a fresh builtin.
  *
- * @param options - Variable sources from CLI flags, input-file, frontmatter vars, and inherited vars
+ * @param options - Variable sources from CLI flags, input-file, and inherited vars
  * @param options.inputFile - Array of paths to YAML files containing variable definitions (repeatable)
  * @param options.input - Array of key=value flag strings from CLI
  * @param options.inputJson - Array of key=json flag strings from CLI for structured values
- * @param options.frontmatterVars - Pre-extracted frontmatter vars (from parser's validated RunbookFrontmatter)
  * @param options.inheritedVars - Variables inherited from parent delegation
  * @param cwd - Current working directory for resolving relative paths
  * @param warnings - Optional array to collect discovery warnings
@@ -716,7 +714,6 @@ async function collectRawLayers(
     inputFile?: string[];
     input?: string[];
     inputJson?: string[];
-    frontmatterVars?: Record<string, string | number | boolean>;
     inheritedVars?: Record<string, TemplateVarValue>;
   },
   cwd: string,
@@ -728,19 +725,16 @@ async function collectRawLayers(
   // Layer 1: Inherited vars from parent delegation (overrides builtins)
   const inherited: Record<string, unknown> = options.inheritedVars ?? {};
 
-  // Layer 2: Frontmatter vars — pre-extracted from parser's validated RunbookFrontmatter
-  const frontmatter: Record<string, unknown> = options.frontmatterVars ?? {};
-
-  // Layer 3: Auto-discovered config
+  // Layer 2: Auto-discovered config
   const discovered: Record<string, unknown> = await discoverRawVariables(cwd);
 
-  // Layer 4: Environment bridge (RD_INPUT_* env vars)
+  // Layer 3: Environment bridge (RD_INPUT_* env vars)
   const envBridge = collectEnvBridgeVars(warnings);
 
-  // Layer 5: CLI flags (--input-file, --input, --input-json merged)
+  // Layer 4: CLI flags (--input-file, --input, --input-json merged)
   const cliFlags = await collectCliFlags(options, cwd);
 
-  return [builtins, inherited, frontmatter, discovered, envBridge, cliFlags];
+  return [builtins, inherited, discovered, envBridge, cliFlags];
 }
 
 /**
@@ -797,12 +791,11 @@ async function enforceFileSourcePolicy(
  * Processes variable layers in precedence order (lowest to highest):
  * 1. Built-in defaults (Date, DateTime, Year, Month, Day, Branch, WorkPath, RunId, ContextId)
  * 1b. Inherited vars from parent delegation (overrides builtins)
- * 2. Frontmatter vars
- * 3. Auto-discovered .rundown/config.yaml
- * 3b. Environment bridge (RD_INPUT_* env vars)
- * 4. --input-file contents (repeatable, later overrides earlier)
- * 5. --input flags
- * 6. --input-json flags (highest precedence)
+ * 2. Auto-discovered .rundown/config.yaml
+ * 2b. Environment bridge (RD_INPUT_* env vars)
+ * 3. --input-file contents (repeatable, later overrides earlier)
+ * 4. --input flags
+ * 5. --input-json flags (highest precedence)
  *
  * Each variable value is routed into `vars` based on its type:
  * - String with `file:` prefix → JsonArrayStream (.jsonl) or JsonArray/JsonObject (.json)
@@ -811,11 +804,10 @@ async function enforceFileSourcePolicy(
  * - Number → preserved, not stringified
  * - Other scalar (boolean, null, plain string) → stringified
  *
- * @param options - Variable sources from CLI flags, input-file, frontmatter vars, and inherited vars
+ * @param options - Variable sources from CLI flags, input-file, and inherited vars
  * @param options.inputFile - Array of paths to YAML files containing variable definitions (repeatable)
  * @param options.input - Array of key=value flag strings from CLI
  * @param options.inputJson - Array of key=json flag strings from CLI for structured values
- * @param options.frontmatterVars - Pre-extracted frontmatter vars (from parser's validated RunbookFrontmatter)
  * @param options.inheritedVars - Variables inherited from parent delegation (overrides builtins)
  * @param cwd - Current working directory for resolving relative paths
  * @param security - Optional security context for file source policy enforcement
@@ -828,7 +820,6 @@ export async function resolveVariables(
     inputFile?: string[];
     input?: string[];
     inputJson?: string[];
-    frontmatterVars?: Record<string, string | number | boolean>;
     inheritedVars?: Record<string, TemplateVarValue>;
   },
   cwd: string,
@@ -843,10 +834,10 @@ export async function resolveVariables(
   // Collect raw inputs at each precedence level
   const layers = await collectRawLayers(options, cwd, warnings);
 
-  // External provider layer indices — excludes builtins (0) and frontmatter (2).
+  // External provider layer indices — excludes builtins (0).
   // Used to track which keys were actually accepted via routing for `required` var validation.
-  // Indices must match collectRawLayers ordering: 1=inherited, 3=config, 4=env, 5=CLI.
-  const EXTERNAL_PROVIDER_INDICES = new Set([1, 3, 4, 5]);
+  // Indices must match collectRawLayers ordering: 1=inherited, 2=config, 3=env, 4=CLI.
+  const EXTERNAL_PROVIDER_INDICES = new Set([1, 2, 3, 4]);
   const providedKeys = new Set<string>();
 
   // Process each layer in precedence order (lowest to highest)

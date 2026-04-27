@@ -219,7 +219,7 @@ describe('frontmatter outputs — rd status includes vars field', () => {
     const RUNBOOK = `---
 name: fm-status-vars-test
 inputs:
-  environment: staging
+  - environment
 ---
 # Status Vars Test
 
@@ -229,10 +229,10 @@ Waiting for manual pass.
     await writeFile(join(workspace.cwd, 'status-vars.runbook.md'), RUNBOOK);
 
     // Start runbook — pauses at step 1 (no command block).
-    const startResult = runCli('run status-vars.runbook.md', workspace);
+    const startResult = runCli('run status-vars.runbook.md --input environment=staging', workspace);
     expect(startResult.exitCode).toBe(0);
 
-    // Check that rd status includes vars field with frontmatter defaults.
+    // Check that rd status includes vars field with resolved inputs.
     const statusResult = runCli('status', workspace);
     expect(statusResult.exitCode).toBe(0);
 

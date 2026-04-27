@@ -478,31 +478,6 @@ describe('resolveVariables', () => {
     });
   });
 
-  describe('frontmatter vars', () => {
-    it('uses pre-extracted frontmatterVars', async () => {
-      const result = await resolveVariables(
-        { frontmatterVars: { greeting: 'Hello', count: 42 } },
-        tmpDir,
-      );
-      expect(result.vars.greeting).toBe('Hello');
-      expect(result.vars.count).toBe(42);
-    });
-
-    it('returns no frontmatter vars when frontmatterVars is undefined', async () => {
-      const result = await resolveVariables({}, tmpDir);
-      // Only built-in vars should be present
-      expect(result.vars.greeting).toBeUndefined();
-    });
-
-    it('CLI --input overrides frontmatter vars', async () => {
-      const result = await resolveVariables(
-        { frontmatterVars: { env: 'development' }, input: ['env=production'] },
-        tmpDir,
-      );
-      expect(result.vars.env).toBe('production');
-    });
-  });
-
   describe('reserved runtime keys', () => {
     it('rejects reserved keys with an error', async () => {
       await expect(resolveVariables({ input: ['Step=shadow'] }, tmpDir)).rejects.toThrow(
@@ -660,38 +635,30 @@ describe('resolveVariables', () => {
     });
   });
 
-  describe('frontmatter routing', () => {
-    // Frontmatter vars are typed Record<string, string | number | boolean> by the
-    // parser's Zod schema — arrays are intentionally excluded. Array routing is
-    // tested via config/var-file layers in the YAML array/multiline tests above.
-    it('routes frontmatter scalar to vars only', async () => {
-      const result = await resolveVariables({ frontmatterVars: { env: 'staging' } }, tmpDir);
-      expect(result.vars.env).toBe('staging');
-    });
-  });
-
   describe('inherited vars', () => {
     it('inherited vars override builtins', async () => {
       const result = await resolveVariables({ inheritedVars: { ContextId: 'parent123' } }, tmpDir);
       expect(result.vars.ContextId).toBe('parent123');
     });
 
-    it('frontmatter overrides inherited vars', async () => {
+    it('config overrides inherited vars', async () => {
+      const configDir = path.join(tmpDir, RUNDOWN_DIR);
+      await fs.mkdir(configDir, { recursive: true });
+      await fs.writeFile(path.join(configDir, 'config.yaml'), 'myVar: config\n');
+
       const result = await resolveVariables(
         {
           inheritedVars: { myVar: 'inherited' },
-          frontmatterVars: { myVar: 'frontmatter' },
         },
         tmpDir,
       );
-      expect(result.vars.myVar).toBe('frontmatter');
+      expect(result.vars.myVar).toBe('config');
     });
 
     it('inherited ContextId survives when child has no override', async () => {
       const result = await resolveVariables(
         {
           inheritedVars: { ContextId: 'parent123' },
-          frontmatterVars: { otherVar: 'value' },
         },
         tmpDir,
       );
@@ -750,14 +717,15 @@ describe('resolveVariables', () => {
       });
     });
 
-    it('input-file array overrides frontmatter scalar', async () => {
+    it('input-file array overrides discovered config scalar', async () => {
       const varFile = path.join(tmpDir, 'vars.yaml');
       await fs.writeFile(varFile, 'servers:\n  - a\n  - b\n');
 
-      const result = await resolveVariables(
-        { frontmatterVars: { servers: 'single' }, inputFile: [varFile] },
-        tmpDir,
-      );
+      const configDir = path.join(tmpDir, RUNDOWN_DIR);
+      await fs.mkdir(configDir, { recursive: true });
+      await fs.writeFile(path.join(configDir, 'config.yaml'), 'servers: single\n');
+
+      const result = await resolveVariables({ inputFile: [varFile] }, tmpDir);
       expect(result.vars.servers).toEqual(['a', 'b']);
     });
 

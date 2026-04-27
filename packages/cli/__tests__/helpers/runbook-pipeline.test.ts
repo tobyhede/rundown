@@ -175,8 +175,6 @@ jest.unstable_mockModule('../../src/services/template-renderer', () => ({
 
 // Mock validate-frontmatter-vars
 jest.unstable_mockModule('../../src/helpers/validate-frontmatter-vars', () => ({
-  validateFrontmatterVars: mockFn<(...args: unknown[]) => unknown[]>().mockReturnValue([]),
-  validateRequiredVars: mockFn<(...args: unknown[]) => unknown[]>().mockReturnValue([]),
   validateOutputsDeclarations: mockFn<(...args: unknown[]) => unknown[]>().mockReturnValue([]),
 }));
 
@@ -205,7 +203,7 @@ const {
   warnUnresolvedRunbookVariables,
   collectUnresolvedRunbookVariables,
 } = await import('../../src/services/template-renderer.js');
-const { validateFrontmatterVars, validateRequiredVars, validateOutputsDeclarations } = await import(
+const { validateOutputsDeclarations } = await import(
   '../../src/helpers/validate-frontmatter-vars.js'
 );
 const fsPromises = await import('node:fs/promises');
@@ -360,8 +358,6 @@ beforeEach(() => {
   jest.mocked(expandLoopVariables).mockImplementation((text: string) => text);
   jest.mocked(warnUnresolvedRunbookVariables).mockReturnValue([]);
   jest.mocked(collectUnresolvedRunbookVariables).mockReturnValue(new Set());
-  jest.mocked(validateFrontmatterVars).mockReturnValue([]);
-  jest.mocked(validateRequiredVars).mockReturnValue([]);
   jest.mocked(validateOutputsDeclarations).mockReturnValue([]);
   // readFile is overloaded; jest.mocked picks the Buffer-returning overload, but we need to
   // resolve a string. Cast through unknown to a typed mock returning string.
@@ -514,7 +510,7 @@ describe('prepareRunbook', () => {
     );
   });
 
-  it('passes parser frontmatter inputs into variable resolution', async () => {
+  it('does not pass frontmatter inputs into variable resolution', async () => {
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/test/good.md',
       source: 'project',
@@ -523,52 +519,45 @@ describe('prepareRunbook', () => {
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue(
       mockParseResult({
-        frontmatter: { inputs: { Region: '' } },
+        frontmatter: { inputs: ['Region'] },
       }),
     );
 
     await prepareRunbook('good.md', {}, '/test');
 
-    expect(resolveVariables).toHaveBeenCalledWith(
-      expect.objectContaining({
-        frontmatterVars: { Region: '' },
-      }),
-      '/test',
-      expect.anything(),
-    );
+    const call = jest.mocked(resolveVariables).mock.calls[0];
+    expect(call?.[0]).not.toHaveProperty('frontmatterVars');
   });
 
-  it('returns VALIDATION_ERROR when frontmatter inputs use reserved names', async () => {
+  it('returns VALIDATION_ERROR when required names are not declared in inputs', async () => {
     jest.mocked(resolveRunbookFile).mockResolvedValue({
-      path: '/test/reserved.md',
+      path: '/test/missing-input.md',
       source: 'project',
     });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue(
       mockParseResult({
-        frontmatter: { inputs: { context: '' } },
+        frontmatter: { inputs: ['PlanPath'], required: ['Region'] },
+        diagnostics: [
+          {
+            severity: 'error',
+            message: 'Frontmatter "required" variable "Region" must also be declared in "inputs"',
+          },
+        ],
       }),
     );
-    jest.mocked(validateFrontmatterVars).mockReturnValue([
-      {
-        severity: 'error',
-        message:
-          'Frontmatter input "context" uses reserved runtime variable name. Reserved names (case-insensitive): step, index, context',
-      },
-    ]);
 
-    const result = await prepareRunbook('reserved.md', {}, '/test');
+    const result = await prepareRunbook('missing-input.md', {}, '/test');
 
-    expect(validateFrontmatterVars).toHaveBeenCalledWith({ context: '' });
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.code).toBe('VALIDATION_ERROR');
-      expect(result.error).toContain('reserved runtime variable name');
+      expect(result.error).toContain('must also be declared in "inputs"');
     }
   });
 
-  it('omits helper-collision warnings when bailing on early VALIDATION_ERROR', async () => {
+  it('bails before helper-collision warnings when frontmatter validation fails', async () => {
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/test/reserved.md',
       source: 'project',
@@ -577,16 +566,17 @@ describe('prepareRunbook', () => {
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue(
       mockParseResult({
-        frontmatter: { inputs: { context: '' } },
+        frontmatter: { inputs: ['context'] },
+        diagnostics: [
+          {
+            severity: 'error',
+            message:
+              'Frontmatter "inputs[0]" — "context" is a reserved variable name (step, index, context — case-insensitive)',
+          },
+        ],
       }),
     );
-    jest.mocked(validateFrontmatterVars).mockReturnValue([
-      {
-        severity: 'error',
-        message:
-          'Frontmatter input "context" uses reserved runtime variable name. Reserved names (case-insensitive): step, index, context',
-      },
-    ]);
+    jest.mocked(validateOutputsDeclarations).mockReturnValue([]);
     // Provide a variable named `Region` that collides with a registered helper.
     jest.mocked(resolveVariables).mockResolvedValue({
       vars: { Region: 'us-west' },
@@ -604,8 +594,7 @@ describe('prepareRunbook', () => {
       expect(result.ok).toBe(false);
       if (!result.ok) {
         expect(result.code).toBe('VALIDATION_ERROR');
-        // The early-error bailout must NOT include helper-collision warnings,
-        // because the user can't act on them while structural errors exist.
+        expect(result.error).toContain('reserved variable name');
         const warnings = result.warnings ?? [];
         const hasHelperWarning = warnings.some((w) =>
           w.includes('shadowed by a registered helper'),
@@ -688,64 +677,6 @@ describe('prepareRunbook', () => {
     if (!result.ok) {
       expect(result.code).toBe('MISSING_REQUIRED_VARS');
       expect(result.details).toEqual(expect.objectContaining({ missing: ['Date'] }));
-    }
-  });
-
-  it('returns VALIDATION_ERROR (not MISSING_REQUIRED_VARS) for invalid identifier in required', async () => {
-    jest.mocked(resolveRunbookFile).mockResolvedValue({
-      path: '/test/bad-req.md',
-      source: 'project',
-    });
-    (
-      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
-    ).mockReturnValue(
-      mockParseResult({
-        frontmatter: { required: ['123bad'] },
-      }),
-    );
-    // validateRequiredVars returns an error diagnostic for the invalid identifier
-    jest
-      .mocked(validateRequiredVars)
-      .mockReturnValue([
-        { severity: 'error', message: 'Required variable "123bad" is not a valid identifier' },
-      ]);
-
-    const result = await prepareRunbook('bad-req.md', {}, '/test');
-
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.code).toBe('VALIDATION_ERROR');
-      expect(result.error).toContain('123bad');
-    }
-  });
-
-  it('returns VALIDATION_ERROR (not MISSING_REQUIRED_VARS) for reserved name in required', async () => {
-    jest.mocked(resolveRunbookFile).mockResolvedValue({
-      path: '/test/reserved-req.md',
-      source: 'project',
-    });
-    (
-      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
-    ).mockReturnValue(
-      mockParseResult({
-        frontmatter: { required: ['Step'] },
-      }),
-    );
-    // validateRequiredVars returns an error diagnostic for the reserved name
-    jest.mocked(validateRequiredVars).mockReturnValue([
-      {
-        severity: 'error',
-        message:
-          'Required variable "Step" uses reserved runtime variable name. Reserved names (case-insensitive): step, index, context',
-      },
-    ]);
-
-    const result = await prepareRunbook('reserved-req.md', {}, '/test');
-
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.code).toBe('VALIDATION_ERROR');
-      expect(result.error).toContain('Step');
     }
   });
 
