@@ -8,12 +8,22 @@ coverage/
 .rundown/runs/
 .rundown/session.json
 .rundown/locks/
+# Nested rundown/claude runtime state (e.g. inside test fixtures).
+# The patterns above are anchored to the repo root because they contain
+# slashes; the patterns below match at any depth via the leading `**/`.
+**/.rundown/work/
+**/.rundown/runs/
+**/.rundown/session.json
+**/.rundown/locks/
 .work/
 .worktree/
 .worktrees/
 .claude/settings.local.json
 .claude/session/
 .claude/rundown/
+**/.claude/settings.local.json
+**/.claude/session/
+**/.claude/rundown/
 .claude-docker/
 logs/
 docs/plans/
