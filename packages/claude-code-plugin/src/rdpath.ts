@@ -61,6 +61,10 @@ function isRecoverableActiveStateLookupError(error: unknown): boolean {
   }
 
   const message = error.message;
+  if (error.name === 'InvalidActiveStateError' || /invalid\s+id/i.test(message)) {
+    return true;
+  }
+
   if (
     message.includes('schema validation failed') ||
     message.includes('previous schema version') ||

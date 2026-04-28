@@ -449,7 +449,7 @@ Active step.
       expect(result.stderr).toBe('');
     });
 
-    it('propagates non-recoverable active-state lookup errors when RD_WORK_PATH is set', async () => {
+    it('skips invalid active-state lookup errors when RD_WORK_PATH is set', async () => {
       await setupActiveRunbookWithInvalidId(testDir);
 
       const result = await runRdpath(
@@ -461,8 +461,9 @@ Active step.
         testDir,
       );
 
-      expect(result.exitCode).toBe(1);
-      expect(result.stderr).toContain('Invalid id');
+      expect(result.exitCode).toBe(0);
+      expect(normalizeOutputPath(result.stdout)).toMatch(/^\.work\/\d{4}-\d{2}-\d{2}-plan\.json$/);
+      expect(result.stderr).not.toContain('Invalid id');
     });
   });
 });
