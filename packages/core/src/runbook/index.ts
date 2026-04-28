@@ -14,6 +14,7 @@ export * from './targeting.js';
 export * from './transition-kernel.js';
 export { RunbookStateManager, StaleRunbookStateError, type SessionData } from './state.js';
 export { SessionService } from './session-service.js';
+export { readActiveRunScope, type ActiveRunScope } from './session-reader.js';
 export { ExecutionLifecycleService } from './execution-lifecycle-service.js';
 export { compileRunbookToMachine, runbookSetup, MAX_FILE_ITERATIONS } from './compiler.js';
 export type { RunbookMachine } from './compiler.js';

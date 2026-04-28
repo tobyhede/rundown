@@ -66,6 +66,7 @@
     "node": ">=24.0.0"
   },
   "dependencies": {
+    "@rundown-org/core": "*",
     "@rundown-org/cli": "*",
     "commander": "^14.0.2",
     "js-yaml": "^4.1.1",
