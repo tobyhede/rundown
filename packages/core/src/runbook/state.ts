@@ -92,7 +92,7 @@ export class RunbookStateManager {
    * per process regardless of how many RunbookStateManager instances exist.
    */
   private static legacyWarningEmitted = false;
-  private readonly cwd: string;
+  private readonly _cwd: string;
 
   /**
    * Create a new RunbookStateManager.
@@ -100,7 +100,12 @@ export class RunbookStateManager {
    * @param cwd - The working directory (project root) for state file paths
    */
   constructor(cwd: string) {
-    this.cwd = cwd;
+    this._cwd = cwd;
+  }
+
+  /** Project root directory used for all state file paths. */
+  get cwd(): string {
+    return this._cwd;
   }
 
   private get stateDir(): string {

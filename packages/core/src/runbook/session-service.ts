@@ -11,12 +11,14 @@
  */
 
 import type { RunbookStateManager } from './state.js';
+import { SessionLock } from './session-lock.js';
 import {
   buildAgentOwnerKey,
   createAgentRunbookOwnership,
   type AgentOwnerIdentity,
   type AgentOwnerKey,
   type AgentRunbookOwnership,
+  type ClaimRunbookForOwnerResult,
   type OwnedRunbookResolution,
   type ReleaseRunbookResult,
 } from './agent-ownership.js';
@@ -30,12 +32,36 @@ import type { DelegationLinkage, RunbookState } from './types.js';
  * constructor-injection pattern as {@link RunbookActorService}.
  */
 export class SessionService {
+  private readonly lock: SessionLock;
+
   /**
    * Create a new SessionService.
    *
    * @param manager - State manager for raw session and state persistence
+   * @param lock - Optional pre-built session lock (defaults to one bound to `manager.cwd`)
    */
-  constructor(private readonly manager: RunbookStateManager) {}
+  constructor(
+    private readonly manager: RunbookStateManager,
+    lock?: SessionLock,
+  ) {
+    this.lock = lock ?? new SessionLock(manager.cwd);
+  }
+
+  /**
+   * Run a load-modify-save mutation under the workspace session lock.
+   *
+   * Read-only methods bypass the lock — the worst case is a slightly stale snapshot.
+   * Mutations must always go through this helper so concurrent CLI processes
+   * cannot lose interleaved writes to `.rundown/session.json`.
+   */
+  private async withLock<T>(fn: () => Promise<T>): Promise<T> {
+    await this.lock.acquire();
+    try {
+      return await fn();
+    } finally {
+      await this.lock.release();
+    }
+  }
 
   /**
    * Get the currently active runbook.
@@ -60,30 +86,46 @@ export class SessionService {
    * @param id - The runbook state ID to push
    */
   async pushRunbook(id: string): Promise<void> {
-    const session = await this.manager.loadSession();
-    session.defaultStack.push(id);
-    await this.manager.saveSession(session);
+    await this.withLock(async () => {
+      const session = await this.manager.loadSession();
+      session.defaultStack.push(id);
+      await this.manager.saveSession(session);
+    });
   }
 
   /**
    * Record that a caller owns a delegated child runbook.
    *
+   * Idempotent re-claim by the same identity refreshes the entry and returns `claimed`.
+   * A claim from a different identity against an existing entry for the same `childRunId`
+   * is rejected with `conflict` — a delegation may be owned by at most one caller.
+   *
    * @param identity - Caller identity that claimed the delegation
    * @param childRunId - Child run id created or reused by claim
    * @param linkage - Delegation linkage written to the child state
-   * @returns Persisted ownership record
+   * @returns Discriminated result indicating `claimed` (with new ownership) or `conflict` (with the existing owner record)
    */
   async claimRunbookForOwner(
     identity: AgentOwnerIdentity,
     childRunId: RunbookState['id'],
     linkage: DelegationLinkage,
-  ): Promise<ReturnType<typeof createAgentRunbookOwnership>> {
-    const session = await this.manager.loadSession();
-    const now = new Date().toISOString();
-    const ownership = createAgentRunbookOwnership(identity, childRunId, linkage, now);
-    session.ownedRunbooks[ownership.ownerKey] = ownership;
-    await this.manager.saveSession(session);
-    return ownership;
+  ): Promise<ClaimRunbookForOwnerResult> {
+    return this.withLock(async () => {
+      const session = await this.manager.loadSession();
+      const ownerKey = buildAgentOwnerKey(identity);
+
+      for (const [existingKey, existing] of Object.entries(session.ownedRunbooks)) {
+        if (existing.childRunId === childRunId && existingKey !== ownerKey) {
+          return { status: 'conflict', existing } satisfies ClaimRunbookForOwnerResult;
+        }
+      }
+
+      const now = new Date().toISOString();
+      const ownership = createAgentRunbookOwnership(identity, childRunId, linkage, now);
+      session.ownedRunbooks[ownership.ownerKey] = ownership;
+      await this.manager.saveSession(session);
+      return { status: 'claimed', ownership } satisfies ClaimRunbookForOwnerResult;
+    });
   }
 
   /**
@@ -120,6 +162,13 @@ export class SessionService {
    * @returns Structured release result
    */
   async releaseRunbook(runbookId: RunbookState['id']): Promise<ReleaseRunbookResult> {
+    return this.withLock(() => this.releaseRunbookLocked(runbookId));
+  }
+
+  /**
+   * Inner load-modify-save for releaseRunbook. Caller must hold the session lock.
+   */
+  private async releaseRunbookLocked(runbookId: RunbookState['id']): Promise<ReleaseRunbookResult> {
     const session = await this.manager.loadSession();
 
     const originalDefaultStackLength = session.defaultStack.length;
@@ -135,7 +184,7 @@ export class SessionService {
     }
 
     if (!removedFromDefaultStack && removedOwnerKeys.length === 0) {
-      return { status: 'not-found', runbookId };
+      return { status: 'not-found', runbookId } satisfies ReleaseRunbookResult;
     }
 
     await this.manager.saveSession(session);
@@ -145,7 +194,7 @@ export class SessionService {
       removedFromDefaultStack,
       removedOwnerKeys,
       nextDefaultRunbookId: session.defaultStack[session.defaultStack.length - 1] ?? null,
-    };
+    } satisfies ReleaseRunbookResult;
   }
 
   /**
@@ -157,11 +206,13 @@ export class SessionService {
    * @returns The new active runbook ID (parent), or null if the stack is empty
    */
   async popRunbook(): Promise<string | null> {
-    const session = await this.manager.loadSession();
-    const topId = session.defaultStack[session.defaultStack.length - 1];
-    if (!topId) return null;
-    const released = await this.releaseRunbook(topId);
-    return released.status === 'released' ? released.nextDefaultRunbookId : null;
+    return this.withLock(async () => {
+      const session = await this.manager.loadSession();
+      const topId = session.defaultStack[session.defaultStack.length - 1];
+      if (!topId) return null;
+      const released = await this.releaseRunbookLocked(topId);
+      return released.status === 'released' ? released.nextDefaultRunbookId : null;
+    });
   }
 
   /**
@@ -173,21 +224,23 @@ export class SessionService {
    * @returns The stashed runbook ID, or null if no runbook was active or a stash already exists
    */
   async stash(): Promise<string | null> {
-    const session = await this.manager.loadSession();
+    return this.withLock(async () => {
+      const session = await this.manager.loadSession();
 
-    // Refuse to overwrite an existing stash — caller must unstash first
-    if (session.stashedRunbookId) return null;
+      // Refuse to overwrite an existing stash — caller must unstash first
+      if (session.stashedRunbookId) return null;
 
-    const stack = session.defaultStack;
-    if (stack.length === 0) return null;
-    const activeId = stack.pop();
+      const stack = session.defaultStack;
+      if (stack.length === 0) return null;
+      const activeId = stack.pop();
 
-    if (!activeId) return null;
+      if (!activeId) return null;
 
-    session.stashedRunbookId = activeId;
-    await this.manager.saveSession(session);
+      session.stashedRunbookId = activeId;
+      await this.manager.saveSession(session);
 
-    return activeId;
+      return activeId;
+    });
   }
 
   /**
@@ -197,31 +250,33 @@ export class SessionService {
    * @returns The stashed runbook id, or null if no slot is available or the runbook was not targeted
    */
   async stashRunbook(runbookId: RunbookState['id']): Promise<string | null> {
-    const session = await this.manager.loadSession();
-    if (session.stashedRunbookId) return null;
+    return this.withLock(async () => {
+      const session = await this.manager.loadSession();
+      if (session.stashedRunbookId) return null;
 
-    const originalDefaultStackLength = session.defaultStack.length;
-    session.defaultStack = session.defaultStack.filter((id) => id !== runbookId);
-    const removedFromDefaultStack = session.defaultStack.length !== originalDefaultStackLength;
+      const originalDefaultStackLength = session.defaultStack.length;
+      session.defaultStack = session.defaultStack.filter((id) => id !== runbookId);
+      const removedFromDefaultStack = session.defaultStack.length !== originalDefaultStackLength;
 
-    let removedOwnership: AgentRunbookOwnership | undefined;
-    for (const [ownerKey, ownership] of Object.entries(session.ownedRunbooks)) {
-      if (ownership.childRunId === runbookId) {
-        delete session.ownedRunbooks[ownerKey];
-        removedOwnership = ownership;
+      let removedOwnership: AgentRunbookOwnership | undefined;
+      for (const [ownerKey, ownership] of Object.entries(session.ownedRunbooks)) {
+        if (ownership.childRunId === runbookId) {
+          delete session.ownedRunbooks[ownerKey];
+          removedOwnership = ownership;
+        }
       }
-    }
 
-    if (!removedFromDefaultStack && !removedOwnership) return null;
+      if (!removedFromDefaultStack && !removedOwnership) return null;
 
-    session.stashedRunbookId = runbookId;
-    if (removedOwnership) {
-      session.stashedRunbookOwnership = removedOwnership;
-    } else {
-      session.stashedRunbookOwnership = undefined;
-    }
-    await this.manager.saveSession(session);
-    return runbookId;
+      session.stashedRunbookId = runbookId;
+      if (removedOwnership) {
+        session.stashedRunbookOwnership = removedOwnership;
+      } else {
+        session.stashedRunbookOwnership = undefined;
+      }
+      await this.manager.saveSession(session);
+      return runbookId;
+    });
   }
 
   /**
@@ -235,25 +290,27 @@ export class SessionService {
     identity: AgentOwnerIdentity,
     linkage: DelegationLinkage,
   ): Promise<RunbookState | null> {
-    const session = await this.manager.loadSession();
-    const stashedId = session.stashedRunbookId;
-    if (!stashedId) return null;
+    return this.withLock(async () => {
+      const session = await this.manager.loadSession();
+      const stashedId = session.stashedRunbookId;
+      if (!stashedId) return null;
 
-    const state = await this.manager.load(stashedId);
-    if (!state) {
+      const state = await this.manager.load(stashedId);
+      if (!state) {
+        session.stashedRunbookId = undefined;
+        session.stashedRunbookOwnership = undefined;
+        await this.manager.saveSession(session);
+        return null;
+      }
+
+      const now = new Date().toISOString();
+      const ownership = createAgentRunbookOwnership(identity, stashedId, linkage, now);
       session.stashedRunbookId = undefined;
       session.stashedRunbookOwnership = undefined;
+      session.ownedRunbooks[ownership.ownerKey] = ownership;
       await this.manager.saveSession(session);
-      return null;
-    }
-
-    const now = new Date().toISOString();
-    const ownership = createAgentRunbookOwnership(identity, stashedId, linkage, now);
-    session.stashedRunbookId = undefined;
-    session.stashedRunbookOwnership = undefined;
-    session.ownedRunbooks[ownership.ownerKey] = ownership;
-    await this.manager.saveSession(session);
-    return state;
+      return state;
+    });
   }
 
   /**
@@ -265,26 +322,28 @@ export class SessionService {
    * @returns The restored runbook state, or null if nothing was stashed or runbook not found
    */
   async unstash(): Promise<RunbookState | null> {
-    const session = await this.manager.loadSession();
-    const stashedId = session.stashedRunbookId;
+    return this.withLock(async () => {
+      const session = await this.manager.loadSession();
+      const stashedId = session.stashedRunbookId;
 
-    if (!stashedId) return null;
+      if (!stashedId) return null;
 
-    const state = await this.manager.load(stashedId);
-    if (!state) {
+      const state = await this.manager.load(stashedId);
+      if (!state) {
+        session.stashedRunbookId = undefined;
+        session.stashedRunbookOwnership = undefined;
+        await this.manager.saveSession(session);
+        return null;
+      }
+
+      // Push back to stack
+      session.defaultStack.push(stashedId);
       session.stashedRunbookId = undefined;
       session.stashedRunbookOwnership = undefined;
       await this.manager.saveSession(session);
-      return null;
-    }
 
-    // Push back to stack
-    session.defaultStack.push(stashedId);
-    session.stashedRunbookId = undefined;
-    session.stashedRunbookOwnership = undefined;
-    await this.manager.saveSession(session);
-
-    return state;
+      return state;
+    });
   }
 
   /**

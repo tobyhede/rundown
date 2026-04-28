@@ -25,6 +25,7 @@ export {
   type AgentOwnerKey,
   type AgentRunbookOwnership,
   type OwnedRunbookResolution,
+  type ClaimRunbookForOwnerResult,
   type ReleaseRunbookResult,
 } from './agent-ownership.js';
 export { SessionService } from './session-service.js';
@@ -97,6 +98,7 @@ export {
   type DelegationTokenHash,
 } from './delegation-token.js';
 export { DelegationLock, DelegationLockTimeoutError } from './delegation-lock.js';
+export { SessionLock, SessionLockTimeoutError } from './session-lock.js';
 export { FileLockTimeoutError } from './file-lock.js';
 export { DelegationScanService, type TokenScanResult } from './delegation-scan.js';
 export {

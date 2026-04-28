@@ -205,6 +205,65 @@ describe('SessionService', () => {
       }
     });
 
+    it('returns claimed and updates the entry on idempotent re-claim by the same identity', async () => {
+      const parent = await manager.create('parent.md', mockRunbook, { runbookPath: 'parent.md' });
+      const child = await manager.create('child.md', mockRunbook, { runbookPath: 'child.md' });
+      await sessionService.pushRunbook(parent.id);
+
+      const linkage = {
+        kind: 'delegation' as const,
+        parentRunId: parent.id,
+        parentStepId: '1',
+        tokenHash: assertDelegationTokenHash(`sha256:${'d'.repeat(64)}`),
+      };
+      const first = await sessionService.claimRunbookForOwner(identity, child.id, linkage);
+      const second = await sessionService.claimRunbookForOwner(identity, child.id, linkage);
+
+      expect(first.status).toBe('claimed');
+      expect(second.status).toBe('claimed');
+      if (first.status === 'claimed' && second.status === 'claimed') {
+        expect(second.ownership.childRunId).toBe(child.id);
+        expect(second.ownership.claimedAt >= first.ownership.claimedAt).toBe(true);
+      }
+    });
+
+    it('rejects claims from a different agent against an existing ownership entry', async () => {
+      const parent = await manager.create('parent.md', mockRunbook, { runbookPath: 'parent.md' });
+      const child = await manager.create('child.md', mockRunbook, { runbookPath: 'child.md' });
+      await sessionService.pushRunbook(parent.id);
+
+      const linkage = {
+        kind: 'delegation' as const,
+        parentRunId: parent.id,
+        parentStepId: '1',
+        tokenHash: assertDelegationTokenHash(`sha256:${'e'.repeat(64)}`),
+      };
+      const claimed = await sessionService.claimRunbookForOwner(identity, child.id, linkage);
+      expect(claimed.status).toBe('claimed');
+
+      const intruder = {
+        kind: 'agent-session' as const,
+        agent_id: 'agent-b',
+        session_id: 'session-b',
+      };
+      const conflict = await sessionService.claimRunbookForOwner(intruder, child.id, linkage);
+
+      expect(conflict.status).toBe('conflict');
+      if (conflict.status === 'conflict') {
+        expect(conflict.existing.agent_id).toBe('agent-a');
+        expect(conflict.existing.childRunId).toBe(child.id);
+      }
+
+      // Intruder must not have been recorded as an owner.
+      expect((await sessionService.getActiveForOwner(intruder)).status).toBe('unowned');
+      // Original owner is unaffected.
+      const ownedByA = await sessionService.getActiveForOwner(identity);
+      expect(ownedByA.status).toBe('owned');
+      if (ownedByA.status === 'owned') {
+        expect(ownedByA.ownership.agent_id).toBe('agent-a');
+      }
+    });
+
     it('releaseRunbook clears owned children without popping the parent', async () => {
       const parent = await manager.create('parent.md', mockRunbook, { runbookPath: 'parent.md' });
       const child = await manager.create('child.md', mockRunbook, { runbookPath: 'child.md' });
@@ -263,6 +322,88 @@ describe('SessionService', () => {
       expect((await sessionService.getActive())?.id).toBe(sibling.id);
       await sessionService.popRunbook();
       expect((await sessionService.getActive())?.id).toBe(parent.id);
+    });
+  });
+
+  describe('concurrent session.json mutations', () => {
+    const linkageFor = (parentId: string, hashFill: string) => ({
+      kind: 'delegation' as const,
+      parentRunId: parentId,
+      parentStepId: '1',
+      tokenHash: assertDelegationTokenHash(`sha256:${hashFill.repeat(64)}`),
+    });
+
+    it('persists both ownership records when two distinct claims race', async () => {
+      const parent = await manager.create('parent.md', mockRunbook, { runbookPath: 'parent.md' });
+      const childA = await manager.create('childA.md', mockRunbook, { runbookPath: 'childA.md' });
+      const childB = await manager.create('childB.md', mockRunbook, { runbookPath: 'childB.md' });
+      await sessionService.pushRunbook(parent.id);
+
+      const agentA = {
+        kind: 'agent-session' as const,
+        agent_id: 'agent-a',
+        session_id: 'session-a',
+      };
+      const agentB = {
+        kind: 'agent-session' as const,
+        agent_id: 'agent-b',
+        session_id: 'session-b',
+      };
+
+      const [resultA, resultB] = await Promise.all([
+        sessionService.claimRunbookForOwner(agentA, childA.id, linkageFor(parent.id, '1')),
+        sessionService.claimRunbookForOwner(agentB, childB.id, linkageFor(parent.id, '2')),
+      ]);
+
+      expect(resultA.status).toBe('claimed');
+      expect(resultB.status).toBe('claimed');
+
+      // Both ownership records must persist — without serialization the second
+      // saveSession would clobber the first because they share a stale snapshot.
+      const ownedByA = await sessionService.getActiveForOwner(agentA);
+      const ownedByB = await sessionService.getActiveForOwner(agentB);
+      expect(ownedByA.status).toBe('owned');
+      expect(ownedByB.status).toBe('owned');
+      if (ownedByA.status === 'owned') {
+        expect(ownedByA.ownership.childRunId).toBe(childA.id);
+      }
+      if (ownedByB.status === 'owned') {
+        expect(ownedByB.ownership.childRunId).toBe(childB.id);
+      }
+    });
+
+    it('preserves both side effects when a stash and a claim race', async () => {
+      const parent = await manager.create('parent.md', mockRunbook, { runbookPath: 'parent.md' });
+      const stashable = await manager.create('stashable.md', mockRunbook, {
+        runbookPath: 'stashable.md',
+      });
+      const child = await manager.create('child.md', mockRunbook, { runbookPath: 'child.md' });
+
+      // parent on stack, stashable on top of it
+      await sessionService.pushRunbook(parent.id);
+      await sessionService.pushRunbook(stashable.id);
+
+      const agentA = {
+        kind: 'agent-session' as const,
+        agent_id: 'agent-a',
+        session_id: 'session-a',
+      };
+
+      const [stashedId, claimResult] = await Promise.all([
+        sessionService.stash(),
+        sessionService.claimRunbookForOwner(agentA, child.id, linkageFor(parent.id, 'a')),
+      ]);
+
+      expect(stashedId).toBe(stashable.id);
+      expect(claimResult.status).toBe('claimed');
+
+      // Both effects must be visible: stash slot holds stashable, ownership recorded for agentA.
+      expect(await sessionService.getStashedRunbookId()).toBe(stashable.id);
+      const ownedByA = await sessionService.getActiveForOwner(agentA);
+      expect(ownedByA.status).toBe('owned');
+      if (ownedByA.status === 'owned') {
+        expect(ownedByA.ownership.childRunId).toBe(child.id);
+      }
     });
   });
 });
