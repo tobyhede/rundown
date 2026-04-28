@@ -308,20 +308,18 @@ Do child work.
       expect(result.exitCode).toBe(0);
       const child1Output = findActionOutput(result.stdout);
       expect(child1Output).toBeDefined();
-      if (!child1Output) {
-        throw new Error('Expected claim output to include run metadata');
+      if (!child1Output || typeof child1Output.run_id !== 'string') {
+        throw new Error('Expected claim output to include run_id string');
       }
-      expect(typeof child1Output.run_id).toBe('string');
       const child1Id = child1Output.run_id;
 
       result = await runCliInProcess(`claim ${token2!}`, workspace);
       expect(result.exitCode).toBe(0);
       const child2Output = findActionOutput(result.stdout);
       expect(child2Output).toBeDefined();
-      if (!child2Output) {
-        throw new Error('Expected claim output to include run metadata');
+      if (!child2Output || typeof child2Output.run_id !== 'string') {
+        throw new Error('Expected claim output to include run_id string');
       }
-      expect(typeof child2Output.run_id).toBe('string');
       const child2Id = child2Output.run_id;
 
       const activeBefore = await getActiveState(workspace);
