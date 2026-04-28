@@ -166,6 +166,33 @@ describe('handleSubagentStop', () => {
       expect(mockSet).not.toHaveBeenCalled();
     });
 
+    it('falls back to legacy token metadata when identified payload has no per-agent entry', async () => {
+      setGet(session, 'metadata', {
+        delegation_active_token: VALID_TOKEN,
+        delegation_active_tokens: {
+          'other-agent': {
+            kind: 'delegation-active-token',
+            agent_id: 'other-agent',
+            tokenHash: OTHER_TOKEN_HASH,
+            createdAt: '2026-04-28T00:00:00.000Z',
+          },
+        },
+      });
+      const mockExec = createStatusMock({ active: false, stashed: false });
+      setExecSync(mockExec);
+
+      const input = createMockHookInput('SubagentStop', { agent_id: 'agent-without-token' });
+      const result = await handleSubagentStop(input);
+
+      expect(result).toEqual({});
+      expect(mockExec).toHaveBeenCalled();
+      expect(mockSet).toHaveBeenCalledWith('metadata', {
+        delegation_active_tokens: {
+          'other-agent': expect.objectContaining({ agent_id: 'other-agent' }),
+        },
+      });
+    });
+
     it('does not consume malformed per-agent token metadata', async () => {
       setGet(session, 'metadata', {
         delegation_active_tokens: {
@@ -216,27 +243,26 @@ describe('handleSubagentStop', () => {
       expect(mockSet).not.toHaveBeenCalled();
     });
 
-    it('does not consume token metadata with a mismatched token hash', async () => {
+    it('consumes per-agent metadata by tokenHash without requiring a raw token', async () => {
       setGet(session, 'metadata', {
         delegation_active_tokens: {
           'agent-1': {
             kind: 'delegation-active-token',
             agent_id: 'agent-1',
-            token: VALID_TOKEN,
-            tokenHash: OTHER_TOKEN_HASH,
+            tokenHash: VALID_TOKEN_HASH,
             createdAt: '2026-04-28T00:00:00.000Z',
           },
         },
       });
-      const mockExec = mockExecFileSync('{}');
+      const mockExec = createStatusMock({ active: false, stashed: false });
       setExecSync(mockExec);
 
       const input = createMockHookInput('SubagentStop', { agent_id: 'agent-1' });
       const result = await handleSubagentStop(input);
 
       expect(result).toEqual({});
-      expect(mockExec).not.toHaveBeenCalled();
-      expect(mockSet).not.toHaveBeenCalled();
+      expect(mockExec).toHaveBeenCalled();
+      expect(mockSet).toHaveBeenCalledWith('metadata', {});
     });
 
     it('clears token regardless of child runbook state', async () => {

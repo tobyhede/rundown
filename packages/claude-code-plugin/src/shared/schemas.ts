@@ -160,7 +160,6 @@ export const DelegationActiveTokenMetadataSchema = z.object({
   kind: z.literal('delegation-active-token'),
   agent_id: z.string().min(1),
   session_id: z.string().min(1).optional(),
-  token: z.string().min(1),
   tokenHash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
   createdAt: z.string().min(1),
 });

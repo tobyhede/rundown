@@ -43,6 +43,8 @@ export const CLIErrorCodes = {
   NO_STASHED_RUNBOOK: 'NO_STASHED_RUNBOOK',
   /** Caller-owned runbook is missing, terminal, or otherwise unavailable */
   OWNED_RUNBOOK_UNAVAILABLE: 'OWNED_RUNBOOK_UNAVAILABLE',
+  /** Caller identity environment variables are inconsistent or invalid */
+  INVALID_CALLER_IDENTITY: 'INVALID_CALLER_IDENTITY',
   /** Scenario not found */
   SCENARIO_NOT_FOUND: 'SCENARIO_NOT_FOUND',
   /** File system operation failed */
@@ -64,6 +66,7 @@ export const ErrorCodeSchema = z
     'ALREADY_STASHED',
     'NO_STASHED_RUNBOOK',
     'OWNED_RUNBOOK_UNAVAILABLE',
+    'INVALID_CALLER_IDENTITY',
     'SCENARIO_NOT_FOUND',
     'FILE_ERROR',
     'UNKNOWN_ERROR',

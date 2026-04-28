@@ -109,13 +109,13 @@ describe('handleDelegationDispatch', () => {
     expect(mockSet).toHaveBeenCalledWith('metadata', {
       existing_key: 'value',
       delegation_active_tokens: {
-        'agent-123': expect.objectContaining({
+        'agent-123': {
           kind: 'delegation-active-token',
           agent_id: 'agent-123',
           session_id: 'session-abc',
-          token: VALID_TOKEN,
           tokenHash: hashToken(VALID_TOKEN),
-        }),
+          createdAt: expect.any(String),
+        },
       },
     });
   });

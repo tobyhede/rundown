@@ -29,6 +29,9 @@ describe('SeatbeltSandbox', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    (writeFileSync as jest.Mock).mockImplementation(() => undefined);
+    (unlinkSync as jest.Mock).mockImplementation(() => undefined);
+    (spawnSync as jest.Mock).mockReturnValue({ status: 0, error: undefined });
   });
 
   afterEach(() => {
@@ -78,6 +81,15 @@ describe('SeatbeltSandbox', () => {
       expect(availability.supportsReadRestrictions).toBe(true);
       expect(availability.supportsWriteRestrictions).toBe(true);
       expect(availability.supportsDenyPaths).toBe(true);
+      expect(spawnSync).toHaveBeenCalledWith(
+        '/usr/bin/sandbox-exec',
+        ['-f', expect.stringContaining('.sb'), '/bin/true'],
+        expect.objectContaining({
+          stdio: 'ignore',
+          timeout: 5000,
+          killSignal: 'SIGKILL',
+        }),
+      );
     });
 
     it('returns unavailable when the probe profile cannot be written', async () => {
@@ -123,6 +135,7 @@ describe('SeatbeltSandbox', () => {
         expect.objectContaining({
           stdio: 'ignore',
           timeout: 5000,
+          killSignal: 'SIGKILL',
         }),
       );
       expect(availability).toEqual(
@@ -136,6 +149,7 @@ describe('SeatbeltSandbox', () => {
           reason: expect.stringContaining('probe timed out'),
         }),
       );
+      expect(unlinkSync).toHaveBeenCalled();
     });
 
     it('caches availability result', async () => {

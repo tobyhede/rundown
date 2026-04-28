@@ -179,6 +179,7 @@ jest.unstable_mockModule('../../src/services/template-renderer', () => ({
 
 // Mock validate-frontmatter-vars
 jest.unstable_mockModule('../../src/helpers/validate-frontmatter-vars', () => ({
+  validateFrontmatterVars: mockFn<(...args: unknown[]) => unknown[]>().mockReturnValue([]),
   validateOutputsDeclarations: mockFn<(...args: unknown[]) => unknown[]>().mockReturnValue([]),
 }));
 
@@ -207,7 +208,7 @@ const {
   warnUnresolvedRunbookVariables,
   collectUnresolvedRunbookVariables,
 } = await import('../../src/services/template-renderer.js');
-const { validateOutputsDeclarations } = await import(
+const { validateFrontmatterVars, validateOutputsDeclarations } = await import(
   '../../src/helpers/validate-frontmatter-vars.js'
 );
 const fsPromises = await import('node:fs/promises');
@@ -362,6 +363,7 @@ beforeEach(() => {
   jest.mocked(expandLoopVariables).mockImplementation((text: string) => text);
   jest.mocked(warnUnresolvedRunbookVariables).mockReturnValue([]);
   jest.mocked(collectUnresolvedRunbookVariables).mockReturnValue(new Set());
+  jest.mocked(validateFrontmatterVars).mockReturnValue([]);
   jest.mocked(validateOutputsDeclarations).mockReturnValue([]);
   // readFile is overloaded; jest.mocked picks the Buffer-returning overload, but we need to
   // resolve a string. Cast through unknown to a typed mock returning string.
@@ -610,6 +612,37 @@ describe('prepareRunbook', () => {
       }
     } finally {
       resetHelperRegistry();
+    }
+  });
+
+  it('includes frontmatter vars diagnostics in prepare errors', async () => {
+    jest.mocked(resolveRunbookFile).mockResolvedValue({
+      path: '/test/reserved-vars.md',
+      source: 'project',
+    });
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue(
+      mockParseResult({
+        frontmatter: {
+          vars: { Step: '1' },
+        } as NonNullable<ParseResult['frontmatter']>,
+      }),
+    );
+    jest.mocked(validateFrontmatterVars).mockReturnValue([
+      {
+        severity: 'error',
+        message: 'Frontmatter var "Step" uses reserved runtime variable name.',
+      },
+    ]);
+
+    const result = await prepareRunbook('reserved-vars.md', {}, '/test');
+
+    expect(validateFrontmatterVars).toHaveBeenCalledWith({ Step: '1' });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('VALIDATION_ERROR');
+      expect(result.error).toContain('Frontmatter var "Step"');
     }
   });
 

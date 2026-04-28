@@ -427,6 +427,37 @@ describe('SessionDataSchema ownership compatibility', () => {
       expect(message).toContain('ownedRunbooks.agent:agent-b:session:session-b.0.childRunId');
     }
   });
+
+  it('rejects a child runbook that is both default-active and owner-owned', () => {
+    const result = SessionDataSchema.safeParse({
+      defaultStack: ['parent', 'child'],
+      ownedRunbooks: {
+        'agent:agent-a:session:session-a': [ownershipFor({ childRunId: 'child' })],
+      },
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const message = result.error.issues.map((issue) => issue.message).join('\n');
+      expect(message).toContain('defaultStack.1');
+      expect(message).toContain('ownedRunbooks.agent:agent-a:session:session-a.0.childRunId');
+    }
+  });
+
+  it('rejects a child runbook that is both default-active and owner-stashed', () => {
+    const result = SessionDataSchema.safeParse({
+      defaultStack: ['parent', 'child'],
+      stashedRunbookId: 'child',
+      stashedRunbookOwnership: ownershipFor({ childRunId: 'child' }),
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const message = result.error.issues.map((issue) => issue.message).join('\n');
+      expect(message).toContain('defaultStack.1');
+      expect(message).toContain('stashedRunbookOwnership.childRunId');
+    }
+  });
 });
 
 describe('SubstepStateSchema backward compatibility', () => {

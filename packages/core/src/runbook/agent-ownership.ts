@@ -9,14 +9,19 @@ export type AgentOwnerKey = string & { readonly [agentOwnerKeyBrand]: true };
 
 /** Caller identity with both agent and session identifiers. */
 export interface AgentSessionOwnerIdentity {
+  /** Identity variant for callers scoped by both Claude Code agent and session. */
   readonly kind: 'agent-session';
+  /** Claude Code agent identifier supplied through `RD_AGENT_ID`. */
   readonly agent_id: string;
+  /** Claude Code session identifier supplied through `RD_SESSION_ID`. */
   readonly session_id: string;
 }
 
 /** Caller identity with only agent identifier available. */
 export interface AgentOnlyOwnerIdentity {
+  /** Identity variant for callers scoped only by Claude Code agent. */
   readonly kind: 'agent-only';
+  /** Claude Code agent identifier supplied through `RD_AGENT_ID`. */
   readonly agent_id: string;
 }
 
@@ -25,18 +30,31 @@ export type AgentOwnerIdentity = AgentSessionOwnerIdentity | AgentOnlyOwnerIdent
 
 /** Persisted ownership record stored in `.rundown/session.json`. */
 export interface AgentRunbookOwnership {
+  /** Record discriminant for ownership entries persisted in session state. */
   readonly kind: 'agent-owned-runbook';
+  /** Canonical owner map key derived from `agent_id` and optional `session_id`. */
   readonly ownerKey: AgentOwnerKey;
+  /** Claude Code agent that owns the delegated child runbook. */
   readonly agent_id: string;
+  /** Optional Claude Code session that further scopes the owning agent. */
   readonly session_id?: string;
+  /** Child runbook state id owned by this caller. */
   readonly childRunId: RunbookState['id'];
+  /** Hash of the delegation token that produced this owned child. */
   readonly tokenHash: DelegationTokenHash;
+  /** Parent runbook state id that delegated the child. */
   readonly parentRunId: ParentLinkageBase['parentRunId'];
+  /** Parent step or substep id where the delegation originated. */
   readonly parentStepId: ParentLinkageBase['parentStepId'];
+  /** Parent step name at delegation time. */
   readonly parentStep?: ParentLinkageBase['parentStep'];
+  /** Parent execution frame key used for completion propagation. */
   readonly parentFrameKey?: FrameKey;
+  /** Parent entry counter used for completion propagation. */
   readonly parentEntry?: number;
+  /** ISO timestamp when this ownership was first claimed. */
   readonly claimedAt: string;
+  /** ISO timestamp when this ownership record was last refreshed. */
   readonly updatedAt: string;
 }
 
@@ -49,19 +67,29 @@ export interface AgentRunbookOwnership {
  */
 export type OwnedRunbookResolution =
   | {
+      /** Resolution status when the caller owns an active child runbook. */
       readonly status: 'owned';
+      /** Caller identity used for the lookup. */
       readonly identity: AgentOwnerIdentity;
+      /** Ownership record for the active child. */
       readonly ownership: AgentRunbookOwnership;
+      /** Loaded runbook state for the owned child. */
       readonly state: RunbookState;
     }
   | {
+      /** Resolution status when the caller owns no runbook. */
       readonly status: 'unowned';
+      /** Caller identity used for the lookup. */
       readonly identity: AgentOwnerIdentity;
     }
   | {
+      /** Resolution status when an ownership record points at unusable state. */
       readonly status: 'stale';
+      /** Caller identity used for the lookup. */
       readonly identity: AgentOwnerIdentity;
+      /** Ownership record that could not be resolved to a running child. */
       readonly ownership: AgentRunbookOwnership;
+      /** Machine-readable reason the ownership record is stale. */
       readonly reason: 'missing-state' | 'not-running' | 'agent-mismatch';
     };
 
@@ -74,20 +102,37 @@ export type OwnedRunbookResolution =
  * may be owned by at most one caller.
  */
 export type ClaimRunbookForOwnerResult =
-  | { readonly status: 'claimed'; readonly ownership: AgentRunbookOwnership }
-  | { readonly status: 'conflict'; readonly existing: AgentRunbookOwnership };
+  | {
+      /** Claim status for a successful new or refreshed ownership entry. */
+      readonly status: 'claimed';
+      /** Ownership record written or refreshed for the caller. */
+      readonly ownership: AgentRunbookOwnership;
+    }
+  | {
+      /** Claim status when another owner already controls the child runbook. */
+      readonly status: 'conflict';
+      /** Existing ownership record that blocked the claim. */
+      readonly existing: AgentRunbookOwnership;
+    };
 
 /** Result of releasing a runbook from session targeting structures. */
 export type ReleaseRunbookResult =
   | {
+      /** Release status when at least one targeting structure contained the runbook. */
       readonly status: 'released';
+      /** Runbook id that was removed from session targeting. */
       readonly runbookId: RunbookState['id'];
+      /** Whether the runbook was removed from the anonymous/default stack. */
       readonly removedFromDefaultStack: boolean;
+      /** Owner keys whose stacks had this runbook removed. */
       readonly removedOwnerKeys: readonly AgentOwnerKey[];
+      /** New default-stack active runbook id after release, if any. */
       readonly nextDefaultRunbookId: RunbookState['id'] | null;
     }
   | {
+      /** Release status when the runbook was not present in session targeting. */
       readonly status: 'not-found';
+      /** Runbook id requested for release. */
       readonly runbookId: RunbookState['id'];
     };
 

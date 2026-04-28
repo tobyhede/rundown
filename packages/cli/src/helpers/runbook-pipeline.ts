@@ -60,7 +60,10 @@ import {
   collectUnresolvedRunbookVariables,
 } from '../services/template-renderer.js';
 import { getPolicyEvaluator, getPolicyPrompter } from '../services/policy-context.js';
-import { validateOutputsDeclarations } from './validate-frontmatter-vars.js';
+import {
+  validateFrontmatterVars,
+  validateOutputsDeclarations,
+} from './validate-frontmatter-vars.js';
 import { getHelperRegistry, detectHelperCollisions } from '../services/helper-registry.js';
 
 /**
@@ -376,9 +379,15 @@ export async function loadAndParseRunbook(file: string, cwd: string): Promise<Lo
     } = parseRunbookDocument(rawContent, path.basename(filePath));
 
     const fmOutputs = frontmatter?.outputs;
+    const fmVars =
+      frontmatter?.vars && typeof frontmatter.vars === 'object' && !Array.isArray(frontmatter.vars)
+        ? (frontmatter.vars as Record<string, string | number | boolean>)
+        : undefined;
+    const varsDiagnostics = validateFrontmatterVars(fmVars);
     const outputsDiagnostics = validateOutputsDeclarations(fmOutputs);
     const diagnostics: readonly ValidationDiagnostic[] = [
       ...parseDiagnostics,
+      ...varsDiagnostics,
       ...outputsDiagnostics,
     ];
 
@@ -692,6 +701,12 @@ async function launchRunbook(
           sessionActivation.linkage,
         );
         break;
+      default: {
+        const _exhaustive: never = sessionActivation;
+        throw new Error(
+          `Unhandled session activation kind: ${(_exhaustive as LaunchSessionActivation).kind}`,
+        );
+      }
     }
 
     if (resolvedStepHasSubsteps(runbook.steps[0]) && runbook.steps[0].substeps.length > 0) {

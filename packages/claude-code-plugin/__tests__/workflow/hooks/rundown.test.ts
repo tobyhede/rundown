@@ -90,6 +90,7 @@ describe('rundown', () => {
       expect.any(Array),
       expect.objectContaining({
         env: expect.objectContaining({
+          PATH: process.env.PATH,
           RD_AGENT_ID: 'agent-1',
           RD_SESSION_ID: 'session-a',
         }),

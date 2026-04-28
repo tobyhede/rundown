@@ -317,6 +317,31 @@ describe('SessionService', () => {
       }
     });
 
+    it('moves an existing owned child to the stack top when it is re-claimed', async () => {
+      const parent = await manager.create('parent.md', mockRunbook, { runbookPath: 'parent.md' });
+      const childA = await manager.create('child-a.md', mockRunbook, {
+        runbookPath: 'child-a.md',
+      });
+      const childB = await manager.create('child-b.md', mockRunbook, {
+        runbookPath: 'child-b.md',
+      });
+
+      await sessionService.claimRunbookForOwner(identity, childA.id, linkageFor(parent.id, '1'));
+      await sessionService.claimRunbookForOwner(identity, childB.id, linkageFor(parent.id, '2'));
+      await sessionService.claimRunbookForOwner(identity, childA.id, linkageFor(parent.id, '1'));
+
+      const active = await sessionService.getActiveForOwner(identity);
+      expect(active.status).toBe('owned');
+      if (active.status === 'owned') {
+        expect(active.state.id).toBe(childA.id);
+        expect(active.ownership.childRunId).toBe(childA.id);
+      }
+
+      const session = await manager.loadSession();
+      const ownerStack = Object.values(session.ownedRunbooks).flat();
+      expect(ownerStack.map((ownership) => ownership.childRunId)).toEqual([childB.id, childA.id]);
+    });
+
     it('returns unowned for an empty owned stack', async () => {
       const ownerKey = 'agent:agent-a:session:session-a';
       await manager.saveSession({ defaultStack: [], ownedRunbooks: { [ownerKey]: [] } });

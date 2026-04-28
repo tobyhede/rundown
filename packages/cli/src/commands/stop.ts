@@ -46,6 +46,8 @@ export function registerStopCommand(program: Command): void {
               case 'none':
                 break;
               case 'stale_owner':
+                await sessionService.releaseRunbook(active.ownership.childRunId);
+                break;
               case 'invalid_identity':
                 output.error(active.message, 'OWNED_RUNBOOK_UNAVAILABLE');
                 output.flush();

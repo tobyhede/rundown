@@ -11,6 +11,7 @@ import {
 } from '../helpers/test-utils.js';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { ErrorResponseSchema } from '@rundown-org/core';
 
 describe('claim command', () => {
   let workspace: TestWorkspace;
@@ -105,6 +106,7 @@ describe('claim command', () => {
 
       expect(result.exitCode).toBe(1);
       expect(result.stdout + result.stderr).toMatch(/INVALID_CALLER_IDENTITY|RD_SESSION_ID/i);
+      expect(ErrorResponseSchema.safeParse(JSON.parse(result.stdout)).success).toBe(true);
     });
 
     it('successfully claims valid delegation token', async () => {

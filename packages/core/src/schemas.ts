@@ -407,6 +407,10 @@ export const SessionDataSchema = z
       childRunIdLocations.set(childRunId, location);
     };
 
+    session.defaultStack.forEach((runbookId, index) => {
+      recordChildRunId(runbookId, `defaultStack.${String(index)}`, ['defaultStack', index]);
+    });
+
     for (const [ownerKey, ownershipStack] of Object.entries(session.ownedRunbooks)) {
       ownershipStack.forEach((ownership, index) => {
         if (ownerKey !== ownership.ownerKey) {

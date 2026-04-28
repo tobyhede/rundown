@@ -232,10 +232,24 @@ function hashToken(token: string): string {
 type ConsumedDelegationToken =
   | {
       readonly kind: 'consumed';
-      readonly token: string;
+      readonly tokenHash: string;
       readonly metadata: Record<string, unknown>;
     }
   | { readonly kind: 'none' };
+
+async function consumeLegacyDelegationToken(
+  session: Session,
+  meta: Record<string, unknown>,
+): Promise<ConsumedDelegationToken> {
+  const raw = meta.delegation_active_token;
+  const token = typeof raw === 'string' ? raw : undefined;
+  if (!token) {
+    return { kind: 'none' };
+  }
+  const { delegation_active_token: _removed, ...rest } = meta;
+  await session.set('metadata', rest);
+  return { kind: 'consumed', tokenHash: hashToken(token), metadata: rest };
+}
 
 async function consumeDelegationTokenForAgent(
   session: Session,
@@ -246,26 +260,23 @@ async function consumeDelegationTokenForAgent(
   if (input.agent_id) {
     const rawMap = meta.delegation_active_tokens;
     if (!rawMap || typeof rawMap !== 'object' || Array.isArray(rawMap)) {
-      return { kind: 'none' };
+      return consumeLegacyDelegationToken(session, meta);
     }
     const map = rawMap as Record<string, unknown>;
     const rawEntry = map[input.agent_id];
     if (!rawEntry || typeof rawEntry !== 'object' || Array.isArray(rawEntry)) {
-      return { kind: 'none' };
+      return consumeLegacyDelegationToken(session, meta);
     }
     const parsed = DelegationActiveTokenMetadataSchema.safeParse(rawEntry);
     if (!parsed.success) {
-      return { kind: 'none' };
+      return consumeLegacyDelegationToken(session, meta);
     }
     const entry = parsed.data;
     if (entry.agent_id !== input.agent_id) {
-      return { kind: 'none' };
+      return consumeLegacyDelegationToken(session, meta);
     }
     if (input.session_id && entry.session_id && entry.session_id !== input.session_id) {
-      return { kind: 'none' };
-    }
-    if (entry.tokenHash !== hashToken(entry.token)) {
-      return { kind: 'none' };
+      return consumeLegacyDelegationToken(session, meta);
     }
 
     const { [input.agent_id]: _removed, ...remaining } = map;
@@ -280,17 +291,10 @@ async function consumeDelegationTokenForAgent(
             Object.entries(meta).filter(([key]) => key !== 'delegation_active_tokens'),
           );
     await session.set('metadata', nextMeta);
-    return { kind: 'consumed', token: entry.token, metadata: nextMeta };
+    return { kind: 'consumed', tokenHash: entry.tokenHash, metadata: nextMeta };
   }
 
-  const raw = meta.delegation_active_token;
-  const token = typeof raw === 'string' ? raw : undefined;
-  if (!token) {
-    return { kind: 'none' };
-  }
-  const { delegation_active_token: _removed, ...rest } = meta;
-  await session.set('metadata', rest);
-  return { kind: 'consumed', token, metadata: rest };
+  return consumeLegacyDelegationToken(session, meta);
 }
 
 // ---------------------------------------------------------------------------
@@ -789,8 +793,9 @@ export async function handleSubagentStop(input: HookInput): Promise<SubagentStop
 
   // Query runbook state and classify the delegation outcome
   const status = queryRunbookStatusForHook(input);
-  const hash = hashToken(consumed.token);
-  const outcome: DelegationOutcome = status ? classifyOutcome(status, hash) : { kind: 'unknown' };
+  const outcome: DelegationOutcome = status
+    ? classifyOutcome(status, consumed.tokenHash)
+    : { kind: 'unknown' };
   const context = buildContextMessage(outcome);
 
   return context ? { context } : {};

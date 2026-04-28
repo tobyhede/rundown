@@ -145,12 +145,22 @@ describe('agent-owned delegated children', () => {
     result = await runCliInProcess(`claim ${token1}`, workspace, {
       env: { RD_AGENT_ID: 'status-agent-1', RD_SESSION_ID: 'status-session' },
     });
-    const child1Id = String(findActionOutput(result.stdout)?.run_id);
+    const child1Output = findActionOutput(result.stdout);
+    expect(typeof child1Output?.run_id).toBe('string');
+    if (typeof child1Output?.run_id !== 'string') {
+      throw new Error('Expected first claim output to include run_id');
+    }
+    const child1Id = child1Output.run_id;
 
     result = await runCliInProcess(`claim ${token2}`, workspace, {
       env: { RD_AGENT_ID: 'status-agent-2', RD_SESSION_ID: 'status-session' },
     });
-    const child2Id = String(findActionOutput(result.stdout)?.run_id);
+    const child2Output = findActionOutput(result.stdout);
+    expect(typeof child2Output?.run_id).toBe('string');
+    if (typeof child2Output?.run_id !== 'string') {
+      throw new Error('Expected second claim output to include run_id');
+    }
+    const child2Id = child2Output.run_id;
 
     let status = await runCliInProcess('status', workspace, {
       env: { RD_AGENT_ID: 'status-agent-1', RD_SESSION_ID: 'status-session' },

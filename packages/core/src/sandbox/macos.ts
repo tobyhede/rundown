@@ -313,6 +313,7 @@ export class SeatbeltSandbox implements SandboxImplementation {
       const probe = spawnSync('/usr/bin/sandbox-exec', ['-f', profilePath, '/bin/true'], {
         stdio: 'ignore',
         timeout: 5000,
+        killSignal: 'SIGKILL',
       });
       const available: boolean = probe.status === 0 && probe.error == null;
       this.availabilityCache = available
@@ -353,6 +354,7 @@ export class SeatbeltSandbox implements SandboxImplementation {
         // Ignore cleanup errors
       }
     }
+    return Promise.resolve(this.availabilityCache);
   }
 
   /**

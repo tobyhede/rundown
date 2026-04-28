@@ -687,6 +687,7 @@ describe('runExecutionLoop', () => {
       }),
     );
     expect(mockSessionService.releaseRunbook).toHaveBeenCalledWith('test-run-123');
+    expect(mockSessionService.popRunbook).not.toHaveBeenCalled();
   });
 
   it('emits ERROR_OCCURRED when the state machine stops with a RETRY_ERROR lastAction', async () => {

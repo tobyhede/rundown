@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { writeFile } from 'node:fs/promises';
+import { unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   createTestWorkspace,
@@ -134,6 +134,7 @@ describe('stash command', () => {
     result = await runCliInProcess('pop --text', workspace, agent);
     expect(result.exitCode).toBe(0);
     session = await readSession(workspace);
+    expect(session.stashed).toBeNull();
     expect(session.active).not.toBe(childRunId);
     expect(Object.values(session.ownedRunbooks).flat()).toContainEqual(
       expect.objectContaining({
@@ -142,6 +143,8 @@ describe('stash command', () => {
         childRunId,
       }),
     );
+    const ownerStatus = await runCliInProcess('status', workspace, agent);
+    expect(JSON.parse(ownerStatus.stdout).state).toContain(childRunId);
   });
 
   it('refuses cross-agent pop when stash is owned by a different agent', async () => {
@@ -196,6 +199,52 @@ describe('stash command', () => {
     // Rightful owner can still recover.
     result = await runCliInProcess('pop --text', workspace, agentA);
     expect(result.exitCode).toBe(0);
+    const sessionAfterOwnerPop = await readSession(workspace);
+    expect(sessionAfterOwnerPop.stashed).toBeNull();
+    const ownerStatus = await runCliInProcess('status', workspace, agentA);
+    expect(JSON.parse(ownerStatus.stdout).state).toContain(childRunId);
+  });
+
+  it('clears an owned stash when the stashed child state is missing', async () => {
+    const parent = createRunbook({
+      title: 'Parent',
+      steps: [
+        {
+          title: 'Review',
+          pass: 'CONTINUE',
+          substeps: [{ title: 'Code review', content: 'Do code review.' }],
+        },
+      ],
+    });
+    const child = createRunbook({
+      title: 'Child',
+      steps: [{ title: 'Execute', pass: 'COMPLETE', fail: 'STOP', content: 'Run child.' }],
+    });
+    await writeFile(join(workspace.cwd, 'parent.runbook.md'), parent);
+    await writeFile(join(workspace.cwd, 'child.runbook.md'), child);
+
+    let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+    expect(result.exitCode).toBe(0);
+    result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
+    expect(result.exitCode).toBe(0);
+    const token = JSON.parse(result.stdout).token as string;
+    const agent = { env: { RD_AGENT_ID: 'stale-pop-agent', RD_SESSION_ID: 'stale-pop' } };
+
+    result = await runCliInProcess(`claim ${token}`, workspace, agent);
+    expect(result.exitCode).toBe(0);
+    const childRunId = String(findActionOutput(result.stdout)?.run_id);
+
+    result = await runCliInProcess('stash --text', workspace, agent);
+    expect(result.exitCode).toBe(0);
+    await unlink(join(workspace.statePath(), `${childRunId}.json`));
+
+    result = await runCliInProcess('pop', workspace, agent);
+    expect(result.exitCode).toBe(1);
+    const session = await readSession(workspace);
+    expect(session.stashed).toBeNull();
+    expect(Object.values(session.ownedRunbooks).flat()).not.toContainEqual(
+      expect.objectContaining({ childRunId }),
+    );
   });
 });
 
@@ -339,7 +388,7 @@ rd echo "hello"
     expect(result.stderr).toContain('not found');
   });
 
-  it('fails closed when owned stash provenance exists without delegation linkage', async () => {
+  it('restores an owned stash using captured ownership provenance', async () => {
     const runbookId = 'wf-2025-01-28-owned01';
     const stateFile = join(workspace.statePath(), `${runbookId}.json`);
     const runbookSrc = [
@@ -396,15 +445,13 @@ rd echo "hello"
       env: { RD_AGENT_ID: 'stash-agent', RD_SESSION_ID: 'stash-session' },
     });
 
-    expect(result.exitCode).toBe(1);
-    expect(JSON.parse(result.stdout)).toEqual(
-      expect.objectContaining({
-        kind: 'error',
-        code: 'OWNED_RUNBOOK_UNAVAILABLE',
-      }),
-    );
+    expect(result.exitCode).toBe(0);
     const session = await readSession(workspace);
     expect(session.active).not.toBe(runbookId);
-    expect(session.stashed).toBe(runbookId);
+    expect(session.stashed).toBeNull();
+    const ownerStatus = await runCliInProcess('status', workspace, {
+      env: { RD_AGENT_ID: 'stash-agent', RD_SESSION_ID: 'stash-session' },
+    });
+    expect(JSON.parse(ownerStatus.stdout).state).toContain(runbookId);
   });
 });

@@ -150,8 +150,9 @@ export class SessionService {
         (ownership) => ownership.childRunId === childRunId,
       );
       if (existingIndex !== -1) {
-        const refreshed = { ...ownershipStack[existingIndex], updatedAt: now };
-        ownershipStack[existingIndex] = refreshed;
+        const existing = ownershipStack.splice(existingIndex, 1)[0];
+        const refreshed = { ...existing, updatedAt: now };
+        ownershipStack.push(refreshed);
         await this.manager.saveSession(session);
         return { status: 'claimed', ownership: refreshed } satisfies ClaimRunbookForOwnerResult;
       }

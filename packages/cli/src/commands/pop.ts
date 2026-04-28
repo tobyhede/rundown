@@ -7,6 +7,7 @@ import {
   SessionService,
   countNumberedSteps,
   type ActionBlockData,
+  type DelegationLinkage,
 } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { getStepRetryMax, buildMetadata, formatActionForDisplay } from '../services/execution.js';
@@ -69,27 +70,19 @@ export function registerPopCommand(program: Command): void {
                 process.exitCode = 1;
                 return;
               }
-              const stashedState = await manager.load(stashedId);
-              const linkage = stashedState?.parentLinkage;
-              if (linkage?.kind !== 'delegation') {
-                output.error(
-                  `Owned runbook ${stashedId} cannot be restored: stash has linkage kind '${linkage?.kind ?? 'none'}', expected 'delegation'.`,
-                  'OWNED_RUNBOOK_UNAVAILABLE',
-                );
-                output.flush();
-                process.exitCode = 1;
-                return;
-              }
-              const parentState = await manager.load(linkage.parentRunId);
-              if (!parentState) {
-                output.error(
-                  `Owned runbook ${stashedId} cannot be restored because parent ${linkage.parentRunId} is unavailable.`,
-                  'OWNED_RUNBOOK_UNAVAILABLE',
-                );
-                output.flush();
-                process.exitCode = 1;
-                return;
-              }
+              const linkage: DelegationLinkage = {
+                kind: 'delegation',
+                parentRunId: stashedOwnership.parentRunId,
+                parentStepId: stashedOwnership.parentStepId,
+                tokenHash: stashedOwnership.tokenHash,
+                ...(stashedOwnership.parentStep ? { parentStep: stashedOwnership.parentStep } : {}),
+                ...(stashedOwnership.parentFrameKey
+                  ? { parentFrameKey: stashedOwnership.parentFrameKey }
+                  : {}),
+                ...(stashedOwnership.parentEntry !== undefined
+                  ? { parentEntry: stashedOwnership.parentEntry }
+                  : {}),
+              };
               state = await sessionService.unstashForOwner(caller.identity, linkage);
             }
           } else {

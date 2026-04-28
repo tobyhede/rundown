@@ -219,6 +219,8 @@ Do work.
       await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
       await writeFile(join(workspace.cwd, 'runbooks', 'child-fail.runbook.md'), childRunbook);
       await writeFile(join(workspace.cwd, 'runbooks', 'parent-fail.runbook.md'), parentRunbook);
+      // Parent is started by explicit root path above; delegated child resolution uses
+      // project-local runbook discovery, so this second write is intentional.
       await writeFile(join(workspace.runbooksDir(), 'child-fail.runbook.md'), childRunbook);
 
       const start = await runCliInProcess(
