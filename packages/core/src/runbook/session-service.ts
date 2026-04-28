@@ -67,7 +67,7 @@ export class SessionService {
     }
   }
 
-  private getOwnershipStack(
+  private getOrCreateOwnershipStack(
     ownedRunbooks: Record<string, AgentRunbookOwnership[]>,
     ownerKey: AgentOwnerKey,
   ): AgentRunbookOwnership[] {
@@ -145,7 +145,7 @@ export class SessionService {
       }
 
       const now = new Date().toISOString();
-      const ownershipStack = this.getOwnershipStack(session.ownedRunbooks, ownerKey);
+      const ownershipStack = this.getOrCreateOwnershipStack(session.ownedRunbooks, ownerKey);
       const existingIndex = ownershipStack.findIndex(
         (ownership) => ownership.childRunId === childRunId,
       );
@@ -177,6 +177,8 @@ export class SessionService {
       return { status: 'unowned', identity };
     }
     const ownership = ownershipStack[ownershipStack.length - 1];
+    // Defense in depth: SessionDataSchema enforces ownerKey derivation, but
+    // return stale instead of trusting a corrupted in-memory caller.
     if (ownership.agent_id !== identity.agent_id) {
       return { status: 'stale', identity, ownership, reason: 'agent-mismatch' };
     }
@@ -309,6 +311,7 @@ export class SessionService {
           removedOwnership = ownershipStack[ownershipIndex];
           ownershipStack.splice(ownershipIndex, 1);
           session.ownedRunbooks[ownerKey] = ownershipStack;
+          break;
         }
       }
 
@@ -329,12 +332,12 @@ export class SessionService {
    * Restore a stashed delegated runbook as owned by the given caller.
    *
    * @param identity - Caller identity that should own the restored delegated runbook
-   * @param linkage - Delegation linkage from the stashed child state
+   * @param _linkage - Delegation linkage retained for API compatibility; captured stash ownership is authoritative
    * @returns The restored runbook state, or null if no stashed runbook exists
    */
   async unstashForOwner(
     identity: AgentOwnerIdentity,
-    linkage: DelegationLinkage,
+    _linkage: DelegationLinkage,
   ): Promise<RunbookState | null> {
     return this.withLock(async () => {
       const session = await this.manager.loadSession();
@@ -366,13 +369,19 @@ export class SessionService {
       }
 
       const now = new Date().toISOString();
-      const ownership =
-        stashedOwnership === undefined
-          ? createAgentRunbookOwnership(identity, stashedId, linkage, now)
-          : { ...stashedOwnership, updatedAt: now };
+      if (stashedOwnership === undefined) {
+        throw new Error(
+          'unstashForOwner: stashed runbook has no agent ownership; restore anonymously or claim a delegation token.',
+        );
+      }
+
+      const ownership = { ...stashedOwnership, updatedAt: now };
       session.stashedRunbookId = undefined;
       session.stashedRunbookOwnership = undefined;
-      const ownershipStack = this.getOwnershipStack(session.ownedRunbooks, ownership.ownerKey);
+      const ownershipStack = this.getOrCreateOwnershipStack(
+        session.ownedRunbooks,
+        ownership.ownerKey,
+      );
       ownershipStack.push(ownership);
       await this.manager.saveSession(session);
       return state;
