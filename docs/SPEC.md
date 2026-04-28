@@ -26,9 +26,9 @@ A Rundown document (`.runbook.md`) is a Markdown file with an optional YAML fron
 
 Frontmatter fields beyond `name`, `description`, `version`, `author`, `tags`, `inputs`, `outputs`, and `required` are preserved (open schema). This allows forward-compatible extensions and user-defined metadata.
 
-The `required` field declares variable names that must be provided by the caller (via CLI flags, config, environment, or delegation). Each entry must be a valid template variable identifier matching `/^[a-zA-Z_][a-zA-Z0-9_]*$/`. Required variables must not appear in `inputs` — they have no default. Missing required variables produce a hard error during resolution.
+The `required` field declares variable names that must be provided by the caller (via CLI flags, config, environment, or delegation). Each entry must be a valid template variable identifier matching `/^[a-zA-Z_][a-zA-Z0-9_]*$/`. Names listed in `required` must also be declared in `inputs`. Missing required variables produce a hard error during resolution.
 
-The `inputs` field declares default values for template variables. Each key must match the identifier pattern `/^[a-zA-Z_][a-zA-Z0-9_]*$/`. Entries must not also appear in `required`. Reserved runtime names (`step`, `index`, `context`, matched case-insensitively) are rejected. At runtime, declared defaults are overridden by higher-precedence sources (CLI flags, environment, config files). As the lowest-priority runtime layer, `inputs:` values also fill gaps from the context outputs store when a `ContextId` is available (see [§7 Context Passing](#7-context-passing-outputs)).
+The `inputs` field declares the names of template variables the runbook accepts. It is a list of identifiers; entries do not carry values. Each name must match the identifier pattern `/^[a-zA-Z_][a-zA-Z0-9_]*$/`. Reserved runtime names (`step`, `index`, `context`, matched case-insensitively) are rejected. Values for declared inputs are supplied at runtime via CLI flags, environment, config files, delegation inheritance, or context outputs (see [§7 Context Passing](#7-context-passing-outputs)).
 
 The frontmatter `description` field provides a summary for runbook discovery and listing (`rd ls --all`). The `Runbook.description` in the parsed AST is derived from preamble text between the H1 title and first H2 step. These are independent values.
 
@@ -303,16 +303,16 @@ Variables use Handlebars syntax: `{{variable}}`.
 *   **Parent variables**: `{{context.parent.vars.NAME}}` exposes the parent's resolved template variables. Only non-context keys propagate. Available via both chain (`context.parent.parent.vars.*`) and array (`context.ancestors.N.vars.*`) addressing.
 *   **Depth limit**: Parent context chain addressing is capped at 32 levels (enforced on the delegation ancestor chain depth). Exceeding this limit produces an error.
 *   **Path resolution**: Dotted paths are supported consistently (for example `{{context.parent.index}}`).
-*   **Required variables**: The frontmatter `required` field declares variables that must be provided by the caller via CLI flags, config, environment bridge, or delegation inheritance. Required variables must not appear in `inputs:`. Missing required variables produce a hard error (`MISSING_REQUIRED_VARS`) during resolution. Reserved runtime names are also rejected in `required`.
+*   **Required variables**: The frontmatter `required` field declares variables that must be provided by the caller via CLI flags, config, environment bridge, or delegation inheritance. Names listed in `required` must also appear in `inputs:`. Missing required variables produce a hard error (`MISSING_REQUIRED_VARS`) during resolution. Reserved runtime names are also rejected in `required`.
 * **Reserved keys**: Runtime keys `step`, `index`, and `context` are reserved (matching is case-insensitive — any case variant such as `STEP`, `Step`, `INDEX` is also reserved) and cannot be overridden by user variables. The CLI rejects these names in frontmatter `inputs:`, `required`, `--input` flags, `--input-file` contents, and `.rundown/config.yaml` with an error diagnostic. Reserved names in `RD_INPUT_*` environment variables are silently skipped with a warning.
 * **Precedence** (highest to lowest):
     1. CLI flags (`--input-file`, `--input`, `--input-json`) — highest priority
     2. `RD_INPUT_*` environment variables (prefix stripped)
-    3. `.rundown/config.yaml` (auto-discovered from cwd upward)
-    4. Frontmatter `inputs:` field
-    5. Inherited delegation variables (parent context)
-    6. Built-in defaults — see [§6.1 Built-in Variables](#61-built-in-variables).
-    7. INPUTS injected from the context outputs store — fill gaps only, never override an existing variable (including built-ins, which are always present). Silently skipped when `ContextId` is unset or the requested key is absent. See [§7 Context Passing](#7-context-passing-outputs).
+    3. Inherited delegation variables (parent context)
+    4. `.rundown/config.yaml` (auto-discovered from cwd upward)
+    5. Built-in defaults — see [§6.1 Built-in Variables](#61-built-in-variables).
+    6. INPUTS injected from the context outputs store — fill gaps only, never override an existing variable (including built-ins, which are always present). Silently skipped when `ContextId` is unset or the requested key is absent. See [§7 Context Passing](#7-context-passing-outputs).
+    Frontmatter `inputs:` only declares which names the runbook accepts; it is not a runtime value layer.
 
 ### 6.1 Built-in Variables
 
@@ -423,6 +423,8 @@ Child (`execute-plan.runbook.md`):
 ```markdown
 ---
 name: execute-plan
+inputs:
+  - PlanPath
 required:
   - PlanPath
 ---
@@ -437,7 +439,7 @@ Flow:
 
 1. Parent step 1 runs and its transition completes. The machine evaluates the step's `OUTPUTS`, resolves `PlanPath` via the `{{ path }}` helper (e.g. `.rundown/work/feature-my-work/.rd-a3b8c1d2/2026-02-04-plan.md`), and merges `{ PlanPath: "<resolved path>" }` into the live `context.variables`.
 2. Parent step 2 delegates to the child. The child inherits `ContextId=a3b8c1d2` via `--input`, and the plugin forwards the parent's live variable space (including `PlanPath`) as `--input` flags on the child's `rd claim` invocation.
-3. Child pipeline setup resolves variables: `--input PlanPath=...` satisfies `required: PlanPath`, and frontmatter `inputs:` defaults fill any gaps.
+3. Child pipeline setup resolves variables: `--input PlanPath=...` binds the value to the declared `inputs:` entry and satisfies `required: PlanPath`.
 4. Child step 1 renders `{{ PlanPath }}` as the forwarded value and executes.
 
 ## 8. Conformance
@@ -454,7 +456,7 @@ Flow:
 10. **FOR Iteration Action Set**: FOR-level nested transitions only allow `CONTINUE`, `DEFER`, `NEXT`, `BREAK`, `GOTO`, `STOP`, `COMPLETE` (plus RETRY wrappers).
 11. **Single Directives**: At most one OUTPUTS directive per step or substep.
 12. **Reserved Names in Directives**: OUTPUTS variable names must not be reserved names (case-insensitive).
-13. **No INPUTS Directive**: The `- INPUTS` step directive has been removed. Use the frontmatter `inputs:` field to declare default variable values; variables are injected via `--input` flags at invocation time.
+13. **No INPUTS Directive**: The `- INPUTS` step directive has been removed. Use the frontmatter `inputs:` field to declare the variable names the runbook accepts; values are supplied via `--input` flags or other runtime sources at invocation time.
 14. **DELEGATE Ordering**: The `- DELEGATE` annotation must appear after `- FOR` (when present) and before transitions, prompt, and body. Misordered DELEGATE is a parse error. (See §4.3.)
 15. **DELEGATE Requires Runbook Target**: Every substep marked `delegate: true` must declare at least one runbook target. A bare DELEGATE substep (no runbook bullet) is rejected at parse time. Step-level DELEGATE propagates to all substeps and the same target requirement applies to every propagated child.
 16. **RETRY on DELEGATE is Result-Agnostic**: `rd delegate --retry` succeeds regardless of the substep's prior result. Retry re-issues a fresh token by cancelling the current delegation and re-creating one with a new token; the retry hook propagates the canonical FOR-iteration location through `contextSnapshot.at`.
