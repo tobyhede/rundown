@@ -13,9 +13,18 @@ import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { createHash } from 'node:crypto';
 import { setExecSync } from '../../src/workflow/hooks/rundown.js';
 import { runCli, createMockHookInput } from '../helpers/test-utils.js';
 import { mockExecFileSync } from '../helpers/execfile-mock.js';
+
+/** Default agent_id baked into createMockHookInput('SubagentStop'). */
+const TEST_AGENT_ID = 'test-agent-123';
+
+/** SHA-256 hash of `token` in the `sha256:<hex>` format used by the hook. */
+function hashToken(token: string): string {
+  return `sha256:${createHash('sha256').update(token).digest('hex')}`;
+}
 
 // Mock Session to control delegation_active_token
 import { createSessionMock, setGet } from '../helpers/session-mock.js';
@@ -113,7 +122,21 @@ describe('subagent-stop contract tests', () => {
   async function captureStatusAndHandle(
     token: string,
   ): Promise<{ context?: string; violation?: string }> {
-    setGet(session, 'metadata', { delegation_active_token: token });
+    // Seed the per-agent token map (the production shape written by the
+    // delegation-dispatch hook). The legacy global key `delegation_active_token`
+    // is only consumed when the SubagentStop input has no `agent_id` — and
+    // createMockHookInput defaults agent_id to TEST_AGENT_ID.
+    setGet(session, 'metadata', {
+      delegation_active_tokens: {
+        [TEST_AGENT_ID]: {
+          kind: 'delegation-active-token',
+          agent_id: TEST_AGENT_ID,
+          token,
+          tokenHash: hashToken(token),
+          createdAt: new Date().toISOString(),
+        },
+      },
+    });
 
     const statusResult = runCli('status', tempDir);
     expect(statusResult.exitCode).toBe(0);
