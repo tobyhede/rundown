@@ -312,6 +312,43 @@ const EXECUTION_TERMINAL_POLICY: TransitionOrchestrationPolicy = {
   },
 };
 
+const EXECUTION_TERMINAL_NO_STACK_POLICY: TransitionOrchestrationPolicy = {
+  onComplete: {
+    popRunbook: false,
+  },
+  onStopped: {
+    popRunbook: false,
+  },
+};
+
+/**
+ * Session cleanup behavior to apply when an execution loop reaches a terminal state.
+ */
+export type ExecutionTerminalReleaseMode = 'stack-pop' | 'release-runbook';
+
+/**
+ * Optional behavior overrides for {@link runExecutionLoop}.
+ */
+export interface ExecutionLoopOptions {
+  /**
+   * Selects whether terminal cleanup pops the default active stack or releases
+   * the loop's own runbook id from all session targeting structures.
+   */
+  readonly terminalReleaseMode?: ExecutionTerminalReleaseMode;
+}
+
+async function applyExecutionTerminalRelease(
+  sessionService: SessionService,
+  runbookId: string,
+  mode: ExecutionTerminalReleaseMode,
+): Promise<void> {
+  if (mode === 'release-runbook') {
+    await sessionService.releaseRunbook(runbookId);
+    return;
+  }
+  await sessionService.popRunbook();
+}
+
 /**
  * Extract a RETRY_ERROR diagnostic from a persisted XState snapshot.
  *
@@ -588,6 +625,7 @@ export async function drainResolvedCompletions({
  * @param cwd - Current working directory for command execution
  * @param prompted - Whether to run in prompted mode (no auto-execution)
  * @param emitter - Event emitter for execution events
+ * @param options - Optional execution loop behavior overrides
  * @returns 'done' if completed, 'stopped' if stopped, 'waiting' if prompt-only step reached
  */
 export async function runExecutionLoop(
@@ -597,9 +635,16 @@ export async function runExecutionLoop(
   cwd: string,
   prompted: boolean,
   emitter: ExecutionEventEmitter,
+  options: ExecutionLoopOptions = {},
 ): Promise<'done' | 'stopped' | 'waiting'> {
   const state = await manager.load(runbookId);
   if (!state) return 'stopped';
+
+  const terminalReleaseMode = options.terminalReleaseMode ?? 'stack-pop';
+  const terminalPolicy =
+    terminalReleaseMode === 'release-runbook'
+      ? EXECUTION_TERMINAL_NO_STACK_POLICY
+      : EXECUTION_TERMINAL_POLICY;
 
   // Service for resolving FOR loop iteration values (array, file, range)
   const actorService = new RunbookActorService(manager);
@@ -652,7 +697,7 @@ export async function runExecutionLoop(
           reason: 'policy_denied',
           message: `FOR loop data source blocked by policy: ${err.message}`,
         });
-        await sessionService.popRunbook();
+        await applyExecutionTerminalRelease(sessionService, runbookId, terminalReleaseMode);
         return 'stopped';
       }
       throw err;
@@ -675,7 +720,7 @@ export async function runExecutionLoop(
             iterResult.state.forStack,
           ),
         });
-        await sessionService.popRunbook();
+        await applyExecutionTerminalRelease(sessionService, runbookId, terminalReleaseMode);
         return 'done';
       }
       if (iterResult.terminal === 'stopped') {
@@ -697,7 +742,7 @@ export async function runExecutionLoop(
           reason: 'fail_transition',
         });
 
-        await sessionService.popRunbook();
+        await applyExecutionTerminalRelease(sessionService, runbookId, terminalReleaseMode);
         return 'stopped';
       }
       // No terminal state — machine transitioned to next step after loop exit
@@ -730,10 +775,20 @@ export async function runExecutionLoop(
       runbookId,
       steps,
       currentState,
-      transitionPolicy: EXECUTION_TERMINAL_POLICY,
+      transitionPolicy: terminalPolicy,
     });
-    if (drainResult.status === 'done') return 'done';
-    if (drainResult.status === 'stopped') return 'stopped';
+    if (drainResult.status === 'done') {
+      if (terminalReleaseMode === 'release-runbook') {
+        await applyExecutionTerminalRelease(sessionService, runbookId, terminalReleaseMode);
+      }
+      return 'done';
+    }
+    if (drainResult.status === 'stopped') {
+      if (terminalReleaseMode === 'release-runbook') {
+        await applyExecutionTerminalRelease(sessionService, runbookId, terminalReleaseMode);
+      }
+      return 'stopped';
+    }
     if (drainResult.applied > 0) {
       currentState = drainResult.state;
       continue;
@@ -876,7 +931,7 @@ export async function runExecutionLoop(
                 position: stepPosition,
                 reason: 'delegation_resolution_failed',
               });
-              await sessionService.popRunbook();
+              await applyExecutionTerminalRelease(sessionService, runbookId, terminalReleaseMode);
               return 'stopped';
             }
           }
@@ -1026,7 +1081,7 @@ export async function runExecutionLoop(
         reason: 'policy_denied',
         message: `Command blocked by policy: ${execResult.denialReason ?? 'Permission denied'}`,
       });
-      await sessionService.popRunbook();
+      await applyExecutionTerminalRelease(sessionService, runbookId, terminalReleaseMode);
       return 'stopped';
     }
 
@@ -1043,11 +1098,21 @@ export async function runExecutionLoop(
       currentState,
       currentStep,
       result: lastResult,
-      transitionPolicy: EXECUTION_TERMINAL_POLICY,
+      transitionPolicy: terminalPolicy,
       command: displayCommand,
     });
-    if (transitionResult.status === 'done') return 'done';
-    if (transitionResult.status === 'stopped') return 'stopped';
+    if (transitionResult.status === 'done') {
+      if (terminalReleaseMode === 'release-runbook') {
+        await applyExecutionTerminalRelease(sessionService, runbookId, terminalReleaseMode);
+      }
+      return 'done';
+    }
+    if (transitionResult.status === 'stopped') {
+      if (terminalReleaseMode === 'release-runbook') {
+        await applyExecutionTerminalRelease(sessionService, runbookId, terminalReleaseMode);
+      }
+      return 'stopped';
+    }
     currentState = transitionResult.state;
   }
 }

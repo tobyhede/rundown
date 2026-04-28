@@ -79,7 +79,7 @@ async function propagateForceAbort(
 
   // If drain advanced to terminal, cascade propagation
   if (drained.status === 'done' || drained.status === 'stopped') {
-    await sessionService.popRunbook();
+    await sessionService.releaseRunbook(parentRunId);
     const cascadeParent = await manager.load(parentRunId);
     if (cascadeParent && extractParentLinkage(cascadeParent)) {
       const cascadeResult: 'pass' | 'fail' = drained.status === 'done' ? 'pass' : 'fail';
@@ -94,6 +94,7 @@ async function propagateForceAbort(
       cwd,
       !!drained.state.prompted,
       emitter,
+      { terminalReleaseMode: 'release-runbook' },
     );
 
     if (loopResult === 'stopped' || loopResult === 'done') {
@@ -275,10 +276,7 @@ export function registerAbortCommand(program: Command): void {
               if (childState) {
                 await manager.delete(childRunId);
                 const sessionService = new SessionService(manager);
-                const activeState = await sessionService.getActive();
-                if (activeState?.id === childRunId) {
-                  await sessionService.popRunbook();
-                }
+                await sessionService.releaseRunbook(childRunId);
               }
 
               // Record fail resolved completion on parent substep

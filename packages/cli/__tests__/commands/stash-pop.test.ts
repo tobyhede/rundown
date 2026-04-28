@@ -3,7 +3,9 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   createTestWorkspace,
+  createRunbook,
   runCliInProcess,
+  findActionOutput,
   readSession,
   getActiveState,
   writeSession,
@@ -82,6 +84,64 @@ describe('stash command', () => {
       error: 'A runbook is already stashed. Pop it first.',
       code: 'ALREADY_STASHED',
     });
+  });
+
+  it('keeps agent-owned delegated children out of anonymous pop', async () => {
+    const parent = createRunbook({
+      title: 'Parent',
+      steps: [
+        {
+          title: 'Review',
+          pass: 'CONTINUE',
+          substeps: [{ title: 'Code review', content: 'Do code review.' }],
+        },
+      ],
+    });
+    const child = createRunbook({
+      title: 'Child',
+      steps: [{ title: 'Execute', pass: 'COMPLETE', fail: 'STOP', content: 'Run child.' }],
+    });
+    await writeFile(join(workspace.cwd, 'parent.runbook.md'), parent);
+    await writeFile(join(workspace.cwd, 'child.runbook.md'), child);
+
+    let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+    expect(result.exitCode).toBe(0);
+    result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
+    expect(result.exitCode).toBe(0);
+    const token = JSON.parse(result.stdout).token as string;
+
+    const agent = { env: { RD_AGENT_ID: 'stash-agent', RD_SESSION_ID: 'stash-session' } };
+    result = await runCliInProcess(`claim ${token}`, workspace, agent);
+    expect(result.exitCode).toBe(0);
+    const childRunId = String(findActionOutput(result.stdout)?.run_id);
+
+    result = await runCliInProcess('stash --text', workspace, agent);
+    expect(result.exitCode).toBe(0);
+
+    result = await runCliInProcess('pop', workspace);
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toEqual(
+      expect.objectContaining({
+        kind: 'error',
+        code: 'OWNED_RUNBOOK_UNAVAILABLE',
+      }),
+    );
+
+    let session = await readSession(workspace);
+    expect(session.active).not.toBe(childRunId);
+    expect(session.stashed).toBe(childRunId);
+
+    result = await runCliInProcess('pop --text', workspace, agent);
+    expect(result.exitCode).toBe(0);
+    session = await readSession(workspace);
+    expect(session.active).not.toBe(childRunId);
+    expect(Object.values(session.ownedRunbooks)).toContainEqual(
+      expect.objectContaining({
+        agent_id: 'stash-agent',
+        session_id: 'stash-session',
+        childRunId,
+      }),
+    );
   });
 });
 
@@ -185,5 +245,74 @@ rd echo "hello"
     // Text mode should NOT be silent - should show error message on stderr
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain('not found');
+  });
+
+  it('fails closed when owned stash provenance exists without delegation linkage', async () => {
+    const runbookId = 'wf-2025-01-28-owned01';
+    const stateFile = join(workspace.statePath(), `${runbookId}.json`);
+    const runbookSrc = [
+      '# Test Runbook',
+      '',
+      '## 1. First step',
+      '- PASS COMPLETE',
+      '',
+      'Do work.',
+      '',
+    ].join('\n');
+    await writeFile(
+      stateFile,
+      JSON.stringify(
+        {
+          id: runbookId,
+          runbook: 'owned.runbook.md',
+          runbookPath: 'owned.runbook.md',
+          title: 'Test Runbook',
+          step: '1',
+          stepName: 'First step',
+          retryCount: 0,
+          variables: {},
+          steps: [],
+          startedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          runbookSrc,
+          lifecycle: 'running',
+          schemaVersion: 2,
+        },
+        null,
+        2,
+      ),
+    );
+
+    await writeSession(workspace, {
+      stashed: runbookId,
+      defaultStack: [],
+      stashedRunbookOwnership: {
+        kind: 'agent-owned-runbook',
+        ownerKey: 'agent:stash-agent:session:stash-session',
+        agent_id: 'stash-agent',
+        session_id: 'stash-session',
+        childRunId: runbookId,
+        tokenHash: `sha256:${'a'.repeat(64)}`,
+        parentRunId: 'missing-parent',
+        parentStepId: '1',
+        claimedAt: '2026-04-28T00:00:00.000Z',
+        updatedAt: '2026-04-28T00:00:00.000Z',
+      },
+    });
+
+    const result = await runCliInProcess('pop', workspace, {
+      env: { RD_AGENT_ID: 'stash-agent', RD_SESSION_ID: 'stash-session' },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toEqual(
+      expect.objectContaining({
+        kind: 'error',
+        code: 'OWNED_RUNBOOK_UNAVAILABLE',
+      }),
+    );
+    const session = await readSession(workspace);
+    expect(session.active).not.toBe(runbookId);
+    expect(session.stashed).toBe(runbookId);
   });
 });

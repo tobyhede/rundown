@@ -7,6 +7,7 @@ import {
   getActiveState,
   getAllStates,
   findActionOutput,
+  readRunbookState,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 import { ActionResponseSchema, ErrorResponseSchema } from '../helpers/schema-validator.js';
@@ -117,6 +118,136 @@ Do work.
       // Should now be on parent
       const statusResult = await runCliInProcess('status --text', workspace);
       expect(statusResult.stdout).toContain('parent-fail.md');
+    });
+  });
+
+  describe('sibling fan-out isolation', () => {
+    interface FrontierEntry {
+      id: string;
+      runbook: string;
+      token: string;
+    }
+
+    function parseConcatenatedJson(raw: string): unknown[] {
+      const results: unknown[] = [];
+      let i = 0;
+      while (i < raw.length) {
+        while (i < raw.length && /\s/.test(raw[i])) i++;
+        if (i >= raw.length) break;
+        const start = i;
+        let depth = 0;
+        let inString = false;
+        let escaped = false;
+        for (; i < raw.length; i++) {
+          const ch = raw[i];
+          if (inString) {
+            if (escaped) {
+              escaped = false;
+            } else if (ch === '\\') {
+              escaped = true;
+            } else if (ch === '"') {
+              inString = false;
+            }
+          } else if (ch === '"') {
+            inString = true;
+          } else if (ch === '{' || ch === '[') {
+            depth++;
+          } else if (ch === '}' || ch === ']') {
+            depth--;
+            if (depth === 0) {
+              i++;
+              break;
+            }
+          }
+        }
+        const chunk = raw.slice(start, i);
+        try {
+          results.push(JSON.parse(chunk));
+        } catch {
+          // skip malformed chunk
+        }
+      }
+      return results;
+    }
+
+    function findFrontierInEvents(events: unknown[]): FrontierEntry[] | undefined {
+      for (const ev of events) {
+        if (Array.isArray(ev)) {
+          const nested = findFrontierInEvents(ev);
+          if (nested) return nested;
+        } else if (ev && typeof ev === 'object') {
+          const e = ev as { type?: string; delegateFrontier?: FrontierEntry[] };
+          if (e.type === 'step_entered' && e.delegateFrontier) {
+            return e.delegateFrontier;
+          }
+        }
+      }
+      return undefined;
+    }
+
+    it('does not let a later claimed sibling steal the first child fail', async () => {
+      const childRunbook = [
+        '# Child',
+        '',
+        '## 1. Work',
+        '',
+        '- PASS COMPLETE',
+        '- FAIL STOP',
+        '',
+        'Do child work.',
+        '',
+      ].join('\n');
+      const parentRunbook = [
+        '# Parent',
+        '',
+        '## 1. Fan out',
+        '',
+        '- DELEGATE',
+        '- PASS ALL CONTINUE',
+        '- FAIL ANY STOP',
+        '',
+        '### 1.1 First child',
+        '',
+        '- child-fail.runbook.md',
+        '',
+        '### 1.2 Second child',
+        '',
+        '- child-fail.runbook.md',
+        '',
+      ].join('\n');
+
+      await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
+      await writeFile(join(workspace.cwd, 'runbooks', 'child-fail.runbook.md'), childRunbook);
+      await writeFile(join(workspace.cwd, 'runbooks', 'parent-fail.runbook.md'), parentRunbook);
+      await writeFile(join(workspace.runbooksDir(), 'child-fail.runbook.md'), childRunbook);
+
+      const start = await runCliInProcess(
+        'run --prompted runbooks/parent-fail.runbook.md',
+        workspace,
+      );
+      const frontier = findFrontierInEvents(parseConcatenatedJson(start.stdout)) ?? [];
+      const token1 = frontier.find((entry) => entry.id === '1.1')?.token;
+      const token2 = frontier.find((entry) => entry.id === '1.2')?.token;
+      expect(token1).toBeDefined();
+      expect(token2).toBeDefined();
+
+      const agent1 = { env: { RD_AGENT_ID: 'fail-agent-one', RD_SESSION_ID: 'fail-session' } };
+      const agent2 = { env: { RD_AGENT_ID: 'fail-agent-two', RD_SESSION_ID: 'fail-session' } };
+
+      let result = await runCliInProcess(`claim ${token1!}`, workspace, agent1);
+      const child1Id = String(findActionOutput(result.stdout)?.run_id);
+
+      result = await runCliInProcess(`claim ${token2!}`, workspace, agent2);
+      const child2Id = String(findActionOutput(result.stdout)?.run_id);
+
+      result = await runCliInProcess('fail --text', workspace, agent1);
+      expect(result.exitCode).toBe(0);
+
+      const child1 = await readRunbookState(workspace, child1Id);
+      const child2 = await readRunbookState(workspace, child2Id);
+
+      expect(child1?.lifecycle).toBe('stopped');
+      expect(child2?.lifecycle).toBe('running');
     });
   });
 

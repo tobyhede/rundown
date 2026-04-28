@@ -38,6 +38,17 @@ function createStatusMock(status: Record<string, unknown>): ExecFileSyncMock {
   return mockExecFileSync(JSON.stringify(status));
 }
 
+/** Legacy SubagentStop payloads predate `agent_id` and use global token metadata. */
+function createLegacySubagentStopInput(
+  overrides: Partial<Parameters<typeof createMockHookInput>[1]> = {},
+) {
+  return createMockHookInput('SubagentStop', {
+    agent_id: undefined,
+    session_id: undefined,
+    ...overrides,
+  });
+}
+
 describe('handleSubagentStop', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -61,7 +72,7 @@ describe('handleSubagentStop', () => {
   describe('no delegation token', () => {
     it('returns empty when no delegation_active_token in session', async () => {
       setGet(session, 'metadata', {});
-      const input = createMockHookInput('SubagentStop');
+      const input = createLegacySubagentStopInput();
       const result = await handleSubagentStop(input);
       expect(result).toEqual({});
     });
@@ -71,7 +82,7 @@ describe('handleSubagentStop', () => {
       const mockExec = mockExecFileSync('{}');
       setExecSync(mockExec);
 
-      const input = createMockHookInput('SubagentStop');
+      const input = createLegacySubagentStopInput();
       await handleSubagentStop(input);
 
       expect(mockExec).not.toHaveBeenCalled();
@@ -86,10 +97,146 @@ describe('handleSubagentStop', () => {
       });
       setExecSync(createStatusMock({ active: false, stashed: false }));
 
-      const input = createMockHookInput('SubagentStop');
+      const input = createLegacySubagentStopInput();
       await handleSubagentStop(input);
 
       expect(mockSet).toHaveBeenCalledWith('metadata', { other_key: 'preserved' });
+    });
+
+    it('consumes only the stopping agent token and preserves sibling token metadata', async () => {
+      const siblingToken = 'rdtk_BBCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+      setGet(session, 'metadata', {
+        delegation_active_tokens: {
+          'agent-1': {
+            kind: 'delegation-active-token',
+            agent_id: 'agent-1',
+            session_id: 'session-a',
+            token: VALID_TOKEN,
+            tokenHash: VALID_TOKEN_HASH,
+            createdAt: '2026-04-28T00:00:00.000Z',
+          },
+          'agent-2': {
+            kind: 'delegation-active-token',
+            agent_id: 'agent-2',
+            session_id: 'session-a',
+            token: siblingToken,
+            tokenHash: `sha256:${createHash('sha256').update(siblingToken).digest('hex')}`,
+            createdAt: '2026-04-28T00:00:00.000Z',
+          },
+        },
+      });
+      setExecSync(createStatusMock({ active: false, stashed: false }));
+
+      const input = createMockHookInput('SubagentStop', {
+        agent_id: 'agent-1',
+        session_id: 'session-a',
+      });
+      await handleSubagentStop(input);
+
+      expect(mockSet).toHaveBeenCalledWith('metadata', {
+        delegation_active_tokens: {
+          'agent-2': expect.objectContaining({
+            agent_id: 'agent-2',
+            token: siblingToken,
+          }),
+        },
+      });
+    });
+
+    it('returns empty when SubagentStop has an agent_id with no matching token', async () => {
+      setGet(session, 'metadata', {
+        delegation_active_tokens: {
+          'other-agent': {
+            kind: 'delegation-active-token',
+            agent_id: 'other-agent',
+            token: VALID_TOKEN,
+            tokenHash: VALID_TOKEN_HASH,
+            createdAt: '2026-04-28T00:00:00.000Z',
+          },
+        },
+      });
+      const mockExec = mockExecFileSync('{}');
+      setExecSync(mockExec);
+
+      const input = createMockHookInput('SubagentStop', { agent_id: 'agent-without-token' });
+      const result = await handleSubagentStop(input);
+
+      expect(result).toEqual({});
+      expect(mockExec).not.toHaveBeenCalled();
+      expect(mockSet).not.toHaveBeenCalled();
+    });
+
+    it('does not consume malformed per-agent token metadata', async () => {
+      setGet(session, 'metadata', {
+        delegation_active_tokens: {
+          'agent-1': {
+            kind: 'delegation-active-token',
+            agent_id: 'agent-2',
+            token: VALID_TOKEN,
+            tokenHash: VALID_TOKEN_HASH,
+            createdAt: '2026-04-28T00:00:00.000Z',
+          },
+        },
+      });
+      const mockExec = mockExecFileSync('{}');
+      setExecSync(mockExec);
+
+      const input = createMockHookInput('SubagentStop', { agent_id: 'agent-1' });
+      const result = await handleSubagentStop(input);
+
+      expect(result).toEqual({});
+      expect(mockExec).not.toHaveBeenCalled();
+      expect(mockSet).not.toHaveBeenCalled();
+    });
+
+    it('does not consume token metadata for a different session_id', async () => {
+      setGet(session, 'metadata', {
+        delegation_active_tokens: {
+          'agent-1': {
+            kind: 'delegation-active-token',
+            agent_id: 'agent-1',
+            session_id: 'session-a',
+            token: VALID_TOKEN,
+            tokenHash: VALID_TOKEN_HASH,
+            createdAt: '2026-04-28T00:00:00.000Z',
+          },
+        },
+      });
+      const mockExec = mockExecFileSync('{}');
+      setExecSync(mockExec);
+
+      const input = createMockHookInput('SubagentStop', {
+        agent_id: 'agent-1',
+        session_id: 'session-b',
+      });
+      const result = await handleSubagentStop(input);
+
+      expect(result).toEqual({});
+      expect(mockExec).not.toHaveBeenCalled();
+      expect(mockSet).not.toHaveBeenCalled();
+    });
+
+    it('does not consume token metadata with a mismatched token hash', async () => {
+      setGet(session, 'metadata', {
+        delegation_active_tokens: {
+          'agent-1': {
+            kind: 'delegation-active-token',
+            agent_id: 'agent-1',
+            token: VALID_TOKEN,
+            tokenHash: OTHER_TOKEN_HASH,
+            createdAt: '2026-04-28T00:00:00.000Z',
+          },
+        },
+      });
+      const mockExec = mockExecFileSync('{}');
+      setExecSync(mockExec);
+
+      const input = createMockHookInput('SubagentStop', { agent_id: 'agent-1' });
+      const result = await handleSubagentStop(input);
+
+      expect(result).toEqual({});
+      expect(mockExec).not.toHaveBeenCalled();
+      expect(mockSet).not.toHaveBeenCalled();
     });
 
     it('clears token regardless of child runbook state', async () => {
@@ -102,7 +249,7 @@ describe('handleSubagentStop', () => {
         }),
       );
 
-      const input = createMockHookInput('SubagentStop');
+      const input = createLegacySubagentStopInput();
       await handleSubagentStop(input);
 
       expect(mockSet).toHaveBeenCalledWith('metadata', {});
@@ -110,6 +257,56 @@ describe('handleSubagentStop', () => {
   });
 
   describe('child runbook claimed but idle (parentLinkage correlation)', () => {
+    it('queries status with hook identity for an owned child that is still running', async () => {
+      setGet(session, 'metadata', {
+        delegation_active_tokens: {
+          'agent-1': {
+            kind: 'delegation-active-token',
+            agent_id: 'agent-1',
+            session_id: 'session-a',
+            token: VALID_TOKEN,
+            tokenHash: VALID_TOKEN_HASH,
+            createdAt: '2026-04-28T00:00:00.000Z',
+          },
+        },
+      });
+      const mockExec = createStatusMock({
+        active: true,
+        stashed: false,
+        file: 'child.runbook.md',
+        position: { current: '1', total: 3 },
+        step: { name: '1. Starting step' },
+        parentLinkage: {
+          kind: 'delegation',
+          tokenHash: VALID_TOKEN_HASH,
+          parentRunId: 'parent-run-1',
+          parentStepId: '1.1',
+          parentStep: '1',
+        },
+      });
+      setExecSync(mockExec);
+
+      const input = createMockHookInput('SubagentStop', {
+        agent_id: 'agent-1',
+        session_id: 'session-a',
+      });
+      const result = await handleSubagentStop(input);
+
+      expect(mockExec).toHaveBeenCalledWith(
+        'node',
+        expect.arrayContaining([expect.stringContaining('cli'), 'status']),
+        expect.objectContaining({
+          env: expect.objectContaining({
+            RD_AGENT_ID: 'agent-1',
+            RD_SESSION_ID: 'session-a',
+          }),
+        }),
+      );
+      expect(result.context).toContain('Delegation Not Resolved');
+      expect(result.context).toContain('child.runbook.md');
+      expect(result.context).not.toContain('Delegation Step Complete');
+    });
+
     it('classifies claimed-idle via parentLinkage.tokenHash match', async () => {
       setGet(session, 'metadata', { delegation_active_token: VALID_TOKEN });
       setExecSync(
@@ -129,7 +326,7 @@ describe('handleSubagentStop', () => {
         }),
       );
 
-      const input = createMockHookInput('SubagentStop');
+      const input = createLegacySubagentStopInput();
       const result = await handleSubagentStop(input);
 
       expect(result.context).toContain('Delegation Not Resolved');
@@ -155,7 +352,7 @@ describe('handleSubagentStop', () => {
         }),
       );
 
-      const input = createMockHookInput('SubagentStop');
+      const input = createLegacySubagentStopInput();
       const result = await handleSubagentStop(input);
 
       expect(result.context).toContain('Delegation Step Complete');
@@ -181,7 +378,7 @@ describe('handleSubagentStop', () => {
         }),
       );
 
-      const input = createMockHookInput('SubagentStop');
+      const input = createLegacySubagentStopInput();
       const result = await handleSubagentStop(input);
 
       expect(result.context).toContain('Delegation Step Complete');
@@ -204,7 +401,7 @@ describe('handleSubagentStop', () => {
         }),
       );
 
-      const input = createMockHookInput('SubagentStop');
+      const input = createLegacySubagentStopInput();
       const result = await handleSubagentStop(input);
 
       expect(result.context).toContain('3 unresolved substeps requiring delegation');
@@ -223,7 +420,7 @@ describe('handleSubagentStop', () => {
         }),
       );
 
-      const input = createMockHookInput('SubagentStop');
+      const input = createLegacySubagentStopInput();
       const result = await handleSubagentStop(input);
 
       expect(result.context).toContain('Delegation Step Complete');
@@ -265,7 +462,7 @@ describe('handleSubagentStop', () => {
         }),
       );
 
-      const input = createMockHookInput('SubagentStop');
+      const input = createLegacySubagentStopInput();
       const result = await handleSubagentStop(input);
 
       expect(result.context).toContain('Delegation Completed');
@@ -304,7 +501,7 @@ describe('handleSubagentStop', () => {
         }),
       );
 
-      const input = createMockHookInput('SubagentStop');
+      const input = createLegacySubagentStopInput();
       const result = await handleSubagentStop(input);
 
       // Our delegation filtered out, sibling is cancelled — no pending siblings
@@ -316,7 +513,7 @@ describe('handleSubagentStop', () => {
       setGet(session, 'metadata', { delegation_active_token: VALID_TOKEN });
       setExecSync(createStatusMock({ active: false, stashed: false }));
 
-      const input = createMockHookInput('SubagentStop');
+      const input = createLegacySubagentStopInput();
       const result = await handleSubagentStop(input);
 
       expect(result).toEqual({});
@@ -336,7 +533,7 @@ describe('handleSubagentStop', () => {
         }),
       );
 
-      const input = createMockHookInput('SubagentStop');
+      const input = createLegacySubagentStopInput();
       const result = await handleSubagentStop(input);
 
       expect(result.context).toContain('Delegation Stashed');
@@ -367,7 +564,7 @@ describe('handleSubagentStop', () => {
         }),
       );
 
-      const input = createMockHookInput('SubagentStop');
+      const input = createLegacySubagentStopInput();
       const result = await handleSubagentStop(input);
 
       expect(result.context).toContain('Delegation Never Claimed');
@@ -382,7 +579,7 @@ describe('handleSubagentStop', () => {
       const mockExec = mockExecFileSyncError({ message: 'CLI error' });
       setExecSync(mockExec);
 
-      const input = createMockHookInput('SubagentStop');
+      const input = createLegacySubagentStopInput();
       const result = await handleSubagentStop(input);
 
       expect(result.context).toContain('Unable to verify child runbook state');
@@ -405,7 +602,7 @@ describe('handleSubagentStop', () => {
         }),
       );
 
-      const input = createMockHookInput('SubagentStop');
+      const input = createLegacySubagentStopInput();
       const result = await handleSubagentStop(input);
 
       expect(result.context).toContain('Delegation Step Complete');
@@ -425,7 +622,7 @@ describe('handleSubagentStop', () => {
         }),
       );
 
-      const input = createMockHookInput('SubagentStop');
+      const input = createLegacySubagentStopInput();
       const result = await handleSubagentStop(input);
 
       // Invalid step → undefined; position still renders.
@@ -437,7 +634,7 @@ describe('handleSubagentStop', () => {
       setGet(session, 'metadata', { delegation_active_token: VALID_TOKEN });
       setExecSync(mockExecFileSync('null'));
 
-      const input = createMockHookInput('SubagentStop');
+      const input = createLegacySubagentStopInput();
       // Should return a result object (unknown fallback), not throw.
       await expect(handleSubagentStop(input)).resolves.toEqual(
         expect.objectContaining({ context: expect.stringContaining('Unable to verify') }),
@@ -451,7 +648,7 @@ describe('handleSubagentStop', () => {
       // Child completed — should return empty regardless of message content
       setExecSync(createStatusMock({ active: false, stashed: false }));
 
-      const input = createMockHookInput('SubagentStop', {
+      const input = createLegacySubagentStopInput({
         last_assistant_message: 'STATUS: FAIL\nEverything broke',
       });
       const result = await handleSubagentStop(input);

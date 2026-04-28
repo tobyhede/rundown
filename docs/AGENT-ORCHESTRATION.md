@@ -103,7 +103,7 @@ Executable scenarios for all three forms live at [runbooks/delegation/delegate-k
 
 1. **Step entry** — the engine fires `STEP_ENTERED` with a `delegateFrontier` field: an array of `{id, runbook, token}` records, one per DELEGATE substep.
 2. **Dispatch** — the orchestrating agent dispatches a subagent per record, passing the token in the subagent's prompt. The plugin detects the token and injects claim instructions.
-3. **Claim** — each subagent runs `rd claim <token>`, which launches the child runbook with the inherited `ContextId` and any forwarded variables.
+3. **Claim** — each subagent runs `rd claim <token>`, which launches the child runbook with the inherited `ContextId` and any forwarded variables. The Claude plugin exports `RD_AGENT_ID` and `RD_SESSION_ID` in the subagent context; keep those variables set so subsequent plain `rd status`, `rd pass`, and `rd fail` target the child owned by that subagent.
 4. **Resolve** — the subagent completes the child runbook and calls `rd pass` / `rd fail`.
 5. **Aggregation** — when the final substep resolves, auto-aggregation fires on the parent step's transition (e.g., `PASS ALL CONTINUE`, `FAIL ANY STOP`).
 
@@ -162,6 +162,10 @@ Agent types support namespace prefixes using `namespace:name` syntax (e.g., `cip
 ## Delegation Completion
 
 Subagents complete delegated work using `rd pass` or `rd fail`, which updates the child runbook state directly. The parent agent observes results via `rd status`.
+
+Parallel delegated siblings are isolated by agent/session ownership. A subagent that claims token A owns the child created for token A, even if another subagent later claims token B in the same workspace. Plain `rd pass` and `rd fail` resolve the caller-owned child before consulting the default stack.
+
+The plugin tracks active delegation tokens per `agent_id` for `SubagentStop` handling. When one subagent stops, the hook consumes only that agent's token metadata and preserves sibling token metadata.
 
 When a subagent stops, the plugin checks the child runbook state via `rd status`:
 

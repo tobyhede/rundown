@@ -10,8 +10,17 @@
  * @module
  */
 
-import type { RunbookState } from './types.js';
 import type { RunbookStateManager } from './state.js';
+import {
+  buildAgentOwnerKey,
+  createAgentRunbookOwnership,
+  type AgentOwnerIdentity,
+  type AgentOwnerKey,
+  type AgentRunbookOwnership,
+  type OwnedRunbookResolution,
+  type ReleaseRunbookResult,
+} from './agent-ownership.js';
+import type { DelegationLinkage, RunbookState } from './types.js';
 
 /**
  * Manages runbook session stacks and stash operations.
@@ -57,6 +66,89 @@ export class SessionService {
   }
 
   /**
+   * Record that a caller owns a delegated child runbook.
+   *
+   * @param identity - Caller identity that claimed the delegation
+   * @param childRunId - Child run id created or reused by claim
+   * @param linkage - Delegation linkage written to the child state
+   * @returns Persisted ownership record
+   */
+  async claimRunbookForOwner(
+    identity: AgentOwnerIdentity,
+    childRunId: RunbookState['id'],
+    linkage: DelegationLinkage,
+  ): Promise<ReturnType<typeof createAgentRunbookOwnership>> {
+    const session = await this.manager.loadSession();
+    const now = new Date().toISOString();
+    const ownership = createAgentRunbookOwnership(identity, childRunId, linkage, now);
+    session.ownedRunbooks[ownership.ownerKey] = ownership;
+    await this.manager.saveSession(session);
+    return ownership;
+  }
+
+  /**
+   * Resolve the active runbook owned by a caller without falling back to the default stack.
+   *
+   * @param identity - Caller identity
+   * @returns Owned, unowned, or stale resolution result
+   */
+  async getActiveForOwner(identity: AgentOwnerIdentity): Promise<OwnedRunbookResolution> {
+    const session = await this.manager.loadSession();
+    const ownerKey = buildAgentOwnerKey(identity);
+    const ownership = Object.entries(session.ownedRunbooks).find(([key]) => key === ownerKey)?.[1];
+    if (!ownership) {
+      return { status: 'unowned', identity };
+    }
+    if (ownership.agent_id !== identity.agent_id) {
+      return { status: 'stale', identity, ownership, reason: 'agent-mismatch' };
+    }
+
+    const state = await this.manager.load(ownership.childRunId);
+    if (!state) {
+      return { status: 'stale', identity, ownership, reason: 'missing-state' };
+    }
+    if (state.lifecycle !== 'running') {
+      return { status: 'stale', identity, ownership, reason: 'not-running' };
+    }
+    return { status: 'owned', identity, ownership, state };
+  }
+
+  /**
+   * Release a runbook from all session targeting structures by id.
+   *
+   * @param runbookId - Runbook id to release
+   * @returns Structured release result
+   */
+  async releaseRunbook(runbookId: RunbookState['id']): Promise<ReleaseRunbookResult> {
+    const session = await this.manager.loadSession();
+
+    const originalDefaultStackLength = session.defaultStack.length;
+    session.defaultStack = session.defaultStack.filter((id) => id !== runbookId);
+    const removedFromDefaultStack = session.defaultStack.length !== originalDefaultStackLength;
+
+    const removedOwnerKeys: AgentOwnerKey[] = [];
+    for (const [ownerKey, ownership] of Object.entries(session.ownedRunbooks)) {
+      if (ownership.childRunId === runbookId) {
+        delete session.ownedRunbooks[ownerKey];
+        removedOwnerKeys.push(ownerKey as AgentOwnerKey);
+      }
+    }
+
+    if (!removedFromDefaultStack && removedOwnerKeys.length === 0) {
+      return { status: 'not-found', runbookId };
+    }
+
+    await this.manager.saveSession(session);
+    return {
+      status: 'released',
+      runbookId,
+      removedFromDefaultStack,
+      removedOwnerKeys,
+      nextDefaultRunbookId: session.defaultStack[session.defaultStack.length - 1] ?? null,
+    };
+  }
+
+  /**
    * Pop a runbook from the active runbook stack.
    *
    * Used when completing or stopping a runbook. Removes the top runbook
@@ -66,11 +158,10 @@ export class SessionService {
    */
   async popRunbook(): Promise<string | null> {
     const session = await this.manager.loadSession();
-    if (session.defaultStack.length === 0) return null;
-    session.defaultStack.pop();
-    const parentRunbook = session.defaultStack[session.defaultStack.length - 1] ?? null;
-    await this.manager.saveSession(session);
-    return parentRunbook;
+    const topId = session.defaultStack[session.defaultStack.length - 1];
+    if (!topId) return null;
+    const released = await this.releaseRunbook(topId);
+    return released.status === 'released' ? released.nextDefaultRunbookId : null;
   }
 
   /**
@@ -100,6 +191,72 @@ export class SessionService {
   }
 
   /**
+   * Stash a specific runbook id from any session targeting structure.
+   *
+   * @param runbookId - Runbook id to move into the single session stash slot
+   * @returns The stashed runbook id, or null if no slot is available or the runbook was not targeted
+   */
+  async stashRunbook(runbookId: RunbookState['id']): Promise<string | null> {
+    const session = await this.manager.loadSession();
+    if (session.stashedRunbookId) return null;
+
+    const originalDefaultStackLength = session.defaultStack.length;
+    session.defaultStack = session.defaultStack.filter((id) => id !== runbookId);
+    const removedFromDefaultStack = session.defaultStack.length !== originalDefaultStackLength;
+
+    let removedOwnership: AgentRunbookOwnership | undefined;
+    for (const [ownerKey, ownership] of Object.entries(session.ownedRunbooks)) {
+      if (ownership.childRunId === runbookId) {
+        delete session.ownedRunbooks[ownerKey];
+        removedOwnership = ownership;
+      }
+    }
+
+    if (!removedFromDefaultStack && !removedOwnership) return null;
+
+    session.stashedRunbookId = runbookId;
+    if (removedOwnership) {
+      session.stashedRunbookOwnership = removedOwnership;
+    } else {
+      session.stashedRunbookOwnership = undefined;
+    }
+    await this.manager.saveSession(session);
+    return runbookId;
+  }
+
+  /**
+   * Restore a stashed delegated runbook as owned by the given caller.
+   *
+   * @param identity - Caller identity that should own the restored delegated runbook
+   * @param linkage - Delegation linkage from the stashed child state
+   * @returns The restored runbook state, or null if no stashed runbook exists
+   */
+  async unstashForOwner(
+    identity: AgentOwnerIdentity,
+    linkage: DelegationLinkage,
+  ): Promise<RunbookState | null> {
+    const session = await this.manager.loadSession();
+    const stashedId = session.stashedRunbookId;
+    if (!stashedId) return null;
+
+    const state = await this.manager.load(stashedId);
+    if (!state) {
+      session.stashedRunbookId = undefined;
+      session.stashedRunbookOwnership = undefined;
+      await this.manager.saveSession(session);
+      return null;
+    }
+
+    const now = new Date().toISOString();
+    const ownership = createAgentRunbookOwnership(identity, stashedId, linkage, now);
+    session.stashedRunbookId = undefined;
+    session.stashedRunbookOwnership = undefined;
+    session.ownedRunbooks[ownership.ownerKey] = ownership;
+    await this.manager.saveSession(session);
+    return state;
+  }
+
+  /**
    * Unstash a previously stashed runbook to the active stack.
    *
    * Retrieves the stashed runbook ID and pushes it back onto the
@@ -116,6 +273,7 @@ export class SessionService {
     const state = await this.manager.load(stashedId);
     if (!state) {
       session.stashedRunbookId = undefined;
+      session.stashedRunbookOwnership = undefined;
       await this.manager.saveSession(session);
       return null;
     }
@@ -123,9 +281,20 @@ export class SessionService {
     // Push back to stack
     session.defaultStack.push(stashedId);
     session.stashedRunbookId = undefined;
+    session.stashedRunbookOwnership = undefined;
     await this.manager.saveSession(session);
 
     return state;
+  }
+
+  /**
+   * Get the ownership record captured with the currently stashed runbook, if any.
+   *
+   * @returns Captured stashed ownership, or null for legacy/default-stack stashes
+   */
+  async getStashedRunbookOwnership(): Promise<AgentRunbookOwnership | null> {
+    const session = await this.manager.loadSession();
+    return session.stashedRunbookOwnership ?? null;
   }
 
   /**

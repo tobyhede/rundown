@@ -13,6 +13,8 @@ import { buildMetadata } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { handleParentCompletion, extractParentLinkage } from '../helpers/delegation-completion.js';
+import { resolveCallerIdentity } from '../helpers/caller-identity.js';
+import { resolveActiveRunbook } from '../helpers/active-runbook-resolver.js';
 
 /**
  * Registers the 'stop' command for aborting runbooks.
@@ -35,7 +37,25 @@ export function registerStopCommand(program: Command): void {
           let state: RunbookState | null = null;
           let getActiveError: Error | undefined;
           try {
-            state = await sessionService.getActive();
+            const active = await resolveActiveRunbook(sessionService, resolveCallerIdentity());
+            switch (active.kind) {
+              case 'owned':
+              case 'default':
+                state = active.state;
+                break;
+              case 'none':
+                break;
+              case 'stale_owner':
+              case 'invalid_identity':
+                output.error(active.message, 'OWNED_RUNBOOK_UNAVAILABLE');
+                output.flush();
+                process.exitCode = 1;
+                return;
+              default: {
+                const _exhaustive: never = active;
+                return _exhaustive;
+              }
+            }
           } catch (error: unknown) {
             getActiveError = Error.isError(error) ? error : new Error(String(error));
           }
@@ -57,7 +77,7 @@ export function registerStopCommand(program: Command): void {
             if (orphanId) {
               // Corrupted or missing state — delete the broken file and pop the stack
               await manager.delete(orphanId);
-              await sessionService.popRunbook();
+              await sessionService.releaseRunbook(orphanId);
               output.stopped('Removed unusable runbook state from session');
               output.flush();
               return;
@@ -73,7 +93,7 @@ export function registerStopCommand(program: Command): void {
             lastResult: 'fail',
             lifecycle: 'stopped',
           });
-          await sessionService.popRunbook();
+          await sessionService.releaseRunbook(state.id);
 
           // Emit structured output - renderer decides format
           output.metadata(buildMetadata(state));

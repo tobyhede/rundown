@@ -13,7 +13,8 @@ import type {
   ParentLinkage,
   TemplateVarValue,
 } from './types.js';
-import { makeRunbookStateSchema } from '../schemas.js';
+import type { AgentRunbookOwnership } from './agent-ownership.js';
+import { makeRunbookStateSchema, SessionDataSchema } from '../schemas.js';
 import { isNodeError } from '../errors.js';
 import { logger } from '../logger.js';
 import { brandInitialTemplateVars, brandStoredOutputs } from './effective-vars.js';
@@ -56,10 +57,14 @@ function generateId(): string {
  * A single shared stash slot allows temporarily parking a runbook.
  */
 export interface SessionData {
-  /** Active runbook stack */
+  /** Active runbook stack for legacy/default targeting. */
   defaultStack: string[];
-  /** ID of a temporarily stashed runbook, if any */
+  /** ID of a temporarily stashed runbook, if any. */
   stashedRunbookId?: string;
+  /** Ownership record captured when an agent-owned runbook is stashed. */
+  stashedRunbookOwnership?: AgentRunbookOwnership;
+  /** Per-agent/session ownership of delegated child runbooks. */
+  ownedRunbooks: Record<string, AgentRunbookOwnership>;
 }
 
 interface CreateOptions {
@@ -416,7 +421,7 @@ export class RunbookStateManager {
     } catch (err: unknown) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
         await this.warnIfLegacyStateExists();
-        return { defaultStack: [] };
+        return { defaultStack: [], ownedRunbooks: {} };
       }
       throw err;
     }
@@ -429,20 +434,14 @@ export class RunbookStateManager {
       );
     }
 
-    const rawStack = Array.isArray(raw.defaultStack) ? raw.defaultStack : [];
-    const defaultStack = rawStack.filter((e): e is string => typeof e === 'string');
-    if (rawStack.length > 0 && defaultStack.length !== rawStack.length) {
+    const result = SessionDataSchema.safeParse(raw);
+    if (!result.success) {
       throw new Error(
-        'Session file contains invalid entries in defaultStack. Delete the session file and restart.',
+        'Session file contains invalid runbook targeting data. Delete .rundown/session.json and restart active runbooks.',
       );
     }
 
-    return {
-      defaultStack,
-      ...(typeof raw.stashedRunbookId === 'string'
-        ? { stashedRunbookId: raw.stashedRunbookId }
-        : {}),
-    };
+    return result.data;
   }
 
   /**

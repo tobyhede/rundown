@@ -140,9 +140,10 @@ function buildTransitionPositions(
 async function applyTerminalSideEffects(
   sessionService: SessionService,
   policy: TerminalSideEffectsPolicy,
+  runbookId: RunbookState['id'],
 ): Promise<void> {
   if (policy.popRunbook) {
-    await sessionService.popRunbook();
+    await sessionService.releaseRunbook(runbookId);
   }
 }
 
@@ -228,7 +229,7 @@ export async function orchestrateTransition(
       finalPosition: positions.to,
     });
 
-    await applyTerminalSideEffects(sessionService, policy.onComplete);
+    await applyTerminalSideEffects(sessionService, policy.onComplete, runbookId);
     return { status: 'done', action: actionType, from: fromStr, at: atStr, message };
   }
 
@@ -246,7 +247,7 @@ export async function orchestrateTransition(
       reason: 'fail_transition',
     });
 
-    await applyTerminalSideEffects(sessionService, policy.onStopped);
+    await applyTerminalSideEffects(sessionService, policy.onStopped, runbookId);
     return { status: 'stopped', action: actionType, from: fromStr, at: atStr, message };
   }
 

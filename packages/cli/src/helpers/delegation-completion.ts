@@ -225,7 +225,7 @@ export async function handleParentCompletion(
 
   // 8. Check if parent reached terminal state — cascade if it also has parent linkage
   if (drained.status === 'stopped') {
-    await sessionService.popRunbook();
+    await sessionService.releaseRunbook(parentRunId);
     const freshParent = await manager.load(parentRunId);
     if (freshParent && extractParentLinkage(freshParent)) {
       await handleParentCompletion(freshParent, 'fail', cwd, output, depth + 1);
@@ -235,7 +235,7 @@ export async function handleParentCompletion(
   }
 
   if (drained.status === 'done') {
-    await sessionService.popRunbook();
+    await sessionService.releaseRunbook(parentRunId);
     const freshParent = await manager.load(parentRunId);
     if (freshParent && extractParentLinkage(freshParent)) {
       return handleParentCompletion(freshParent, 'pass', cwd, output, depth + 1);
@@ -253,6 +253,7 @@ export async function handleParentCompletion(
       cwd,
       !!drained.state.prompted,
       emitter,
+      { terminalReleaseMode: 'release-runbook' },
     );
     output.flush();
 

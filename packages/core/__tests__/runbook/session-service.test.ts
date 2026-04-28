@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 import { SessionService } from '../../src/runbook/session-service.js';
+import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 import type { Step, Runbook } from '../../src/runbook/types.js';
 import { makeBaseStep } from '../helpers/step-factories.js';
 
@@ -150,6 +151,118 @@ describe('SessionService', () => {
       expect(await sessionService.getStashedRunbookId()).toBe(s1.id);
       // Second runbook remains on the stack (not popped)
       expect((await sessionService.getActive())?.id).toBe(s2.id);
+    });
+  });
+
+  describe('agent-owned runbook targeting', () => {
+    const identity = {
+      kind: 'agent-session' as const,
+      agent_id: 'agent-a',
+      session_id: 'session-a',
+    };
+
+    it('registers a delegated child for an owner without changing the default stack', async () => {
+      const parent = await manager.create('parent.md', mockRunbook, { runbookPath: 'parent.md' });
+      const child = await manager.create('child.md', mockRunbook, { runbookPath: 'child.md' });
+      await sessionService.pushRunbook(parent.id);
+
+      await sessionService.claimRunbookForOwner(identity, child.id, {
+        kind: 'delegation',
+        parentRunId: parent.id,
+        parentStepId: '1',
+        tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
+      });
+
+      expect((await sessionService.getActive())?.id).toBe(parent.id);
+
+      const owned = await sessionService.getActiveForOwner(identity);
+      expect(owned.status).toBe('owned');
+      if (owned.status === 'owned') {
+        expect(owned.state.id).toBe(child.id);
+        expect(owned.ownership.agent_id).toBe('agent-a');
+        expect(owned.ownership.childRunId).toBe(child.id);
+      }
+    });
+
+    it('returns stale for missing owned state and does not fall back to the default stack', async () => {
+      const parent = await manager.create('parent.md', mockRunbook, { runbookPath: 'parent.md' });
+      const child = await manager.create('child.md', mockRunbook, { runbookPath: 'child.md' });
+      await sessionService.pushRunbook(parent.id);
+      await sessionService.claimRunbookForOwner(identity, child.id, {
+        kind: 'delegation',
+        parentRunId: parent.id,
+        parentStepId: '1',
+        tokenHash: assertDelegationTokenHash(`sha256:${'b'.repeat(64)}`),
+      });
+
+      await manager.delete(child.id);
+
+      const owned = await sessionService.getActiveForOwner(identity);
+      expect(owned.status).toBe('stale');
+      if (owned.status === 'stale') {
+        expect(owned.reason).toBe('missing-state');
+        expect(owned.ownership.childRunId).toBe(child.id);
+      }
+    });
+
+    it('releaseRunbook clears owned children without popping the parent', async () => {
+      const parent = await manager.create('parent.md', mockRunbook, { runbookPath: 'parent.md' });
+      const child = await manager.create('child.md', mockRunbook, { runbookPath: 'child.md' });
+      await sessionService.pushRunbook(parent.id);
+      await sessionService.claimRunbookForOwner(identity, child.id, {
+        kind: 'delegation',
+        parentRunId: parent.id,
+        parentStepId: '1',
+        tokenHash: assertDelegationTokenHash(`sha256:${'c'.repeat(64)}`),
+      });
+
+      const released = await sessionService.releaseRunbook(child.id);
+      expect(released.status).toBe('released');
+      if (released.status === 'released') {
+        expect(released.removedFromDefaultStack).toBe(false);
+        expect(released.removedOwnerKeys).toHaveLength(1);
+        expect(released.nextDefaultRunbookId).toBe(parent.id);
+      }
+
+      expect((await sessionService.getActive())?.id).toBe(parent.id);
+      expect((await sessionService.getActiveForOwner(identity)).status).toBe('unowned');
+    });
+
+    it('releaseRunbook pops a default-stack child by id', async () => {
+      const parent = await manager.create('parent.md', mockRunbook, { runbookPath: 'parent.md' });
+      const child = await manager.create('child.md', mockRunbook, { runbookPath: 'child.md' });
+      await sessionService.pushRunbook(parent.id);
+      await sessionService.pushRunbook(child.id);
+
+      const released = await sessionService.releaseRunbook(child.id);
+      expect(released.status).toBe('released');
+      if (released.status === 'released') {
+        expect(released.removedFromDefaultStack).toBe(true);
+        expect(released.nextDefaultRunbookId).toBe(parent.id);
+      }
+      expect((await sessionService.getActive())?.id).toBe(parent.id);
+    });
+
+    it('releaseRunbook removes a non-top default-stack entry by id', async () => {
+      const parent = await manager.create('parent.md', mockRunbook, { runbookPath: 'parent.md' });
+      const child = await manager.create('child.md', mockRunbook, { runbookPath: 'child.md' });
+      const sibling = await manager.create('sibling.md', mockRunbook, {
+        runbookPath: 'sibling.md',
+      });
+      await sessionService.pushRunbook(parent.id);
+      await sessionService.pushRunbook(child.id);
+      await sessionService.pushRunbook(sibling.id);
+
+      const released = await sessionService.releaseRunbook(child.id);
+      expect(released.status).toBe('released');
+      if (released.status === 'released') {
+        expect(released.removedFromDefaultStack).toBe(true);
+        expect(released.nextDefaultRunbookId).toBe(sibling.id);
+      }
+
+      expect((await sessionService.getActive())?.id).toBe(sibling.id);
+      await sessionService.popRunbook();
+      expect((await sessionService.getActive())?.id).toBe(parent.id);
     });
   });
 });

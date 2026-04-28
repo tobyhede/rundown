@@ -13,6 +13,20 @@ export * from './step-utils.js';
 export * from './targeting.js';
 export * from './transition-kernel.js';
 export { RunbookStateManager, StaleRunbookStateError, type SessionData } from './state.js';
+export {
+  buildAgentOwnerKey,
+  createAgentRunbookOwnership,
+  isAgentRunbookOwnership,
+  type AgentOwnerIdentity,
+  type AgentSessionOwnerIdentity,
+  type AgentOnlyOwnerIdentity,
+  type AgentId,
+  type AgentSessionId,
+  type AgentOwnerKey,
+  type AgentRunbookOwnership,
+  type OwnedRunbookResolution,
+  type ReleaseRunbookResult,
+} from './agent-ownership.js';
 export { SessionService } from './session-service.js';
 export { readActiveRunScope, type ActiveRunScope } from './session-reader.js';
 export { ExecutionLifecycleService } from './execution-lifecycle-service.js';
@@ -73,10 +87,14 @@ export {
   type RetryDelegationErrorResult,
 } from './delegation-service.js';
 export {
+  DELEGATION_TOKEN_HASH_PATTERN,
+  assertDelegationTokenHash,
   generateDelegationToken,
   hashDelegationToken,
+  isDelegationTokenHash,
   truncateDelegationToken,
   TOKEN_PREFIX as DELEGATION_TOKEN_PREFIX,
+  type DelegationTokenHash,
 } from './delegation-token.js';
 export { DelegationLock, DelegationLockTimeoutError } from './delegation-lock.js';
 export { FileLockTimeoutError } from './file-lock.js';

@@ -6,6 +6,14 @@ export const TOKEN_PREFIX = 'rdtk_';
 /** RFC 4648 base32 alphabet. */
 const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 
+export declare const delegationTokenHashBrand: unique symbol;
+
+/** SHA-256 hash of a delegation token in persisted state format. */
+export type DelegationTokenHash = string & { readonly [delegationTokenHashBrand]: true };
+
+/** Canonical persisted delegation token hash pattern. */
+export const DELEGATION_TOKEN_HASH_PATTERN = /^sha256:[a-f0-9]{64}$/;
+
 /**
  * Encode a buffer as RFC 4648 base32 (no padding).
  *
@@ -72,6 +80,30 @@ export function truncateDelegationToken(token: string): string {
 }
 
 /**
+ * Check whether a value is a canonical persisted delegation token hash.
+ *
+ * @param value - Unknown value to inspect
+ * @returns True when the value is `sha256:` followed by 64 lowercase hex characters
+ */
+export function isDelegationTokenHash(value: unknown): value is DelegationTokenHash {
+  return typeof value === 'string' && DELEGATION_TOKEN_HASH_PATTERN.test(value);
+}
+
+/**
+ * Assert and brand a canonical persisted delegation token hash.
+ *
+ * @param value - String value to validate
+ * @returns Branded delegation token hash
+ * @throws {Error} When the value is not a canonical token hash
+ */
+export function assertDelegationTokenHash(value: string): DelegationTokenHash {
+  if (!isDelegationTokenHash(value)) {
+    throw new Error('Invalid delegation token hash: expected sha256:<64 lowercase hex characters>');
+  }
+  return value;
+}
+
+/**
  * Compute a SHA-256 hash of a delegation token.
  *
  * The hash is stored in state instead of the raw token to prevent
@@ -80,7 +112,7 @@ export function truncateDelegationToken(token: string): string {
  * @param token - The raw delegation token to hash
  * @returns Hash string in format `sha256:<64 hex chars>`
  */
-export function hashDelegationToken(token: string): string {
+export function hashDelegationToken(token: string): DelegationTokenHash {
   const digest = createHash('sha256').update(token).digest('hex');
-  return `sha256:${digest}`;
+  return assertDelegationTokenHash(`sha256:${digest}`);
 }

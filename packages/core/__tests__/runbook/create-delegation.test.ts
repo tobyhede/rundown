@@ -1,7 +1,11 @@
 import { describe, it, expect } from '@jest/globals';
 import { createDelegation } from '../../src/runbook/delegation-service.js';
 import type { DelegateOptions } from '../../src/runbook/delegation-service.js';
-import { hashDelegationToken, TOKEN_PREFIX } from '../../src/runbook/delegation-token.js';
+import {
+  assertDelegationTokenHash,
+  hashDelegationToken,
+  TOKEN_PREFIX,
+} from '../../src/runbook/delegation-token.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type { ResolvedStep, AncestorSnapshot } from '../../src/runbook/types.js';
 import {
@@ -144,7 +148,7 @@ describe('createDelegation', () => {
 
   it('returns { status: "delegation_exists" } for duplicate active delegation', () => {
     const existingDelegation = {
-      tokenHash: `sha256:${'a'.repeat(64)}`,
+      tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
       childRunbookPath: 'other-child.md',
       contextSnapshot: { vars: brandEffectiveVarsForTest({}), ancestors: [] },
       childRunId: null,
@@ -178,7 +182,7 @@ describe('createDelegation', () => {
 
   it('allows re-delegation when previous delegation has childRunId set', () => {
     const claimedDelegation = {
-      tokenHash: `sha256:${'a'.repeat(64)}`,
+      tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
       childRunbookPath: 'other-child.md',
       contextSnapshot: { vars: brandEffectiveVarsForTest({}), ancestors: [] },
       childRunId: 'run_123',
@@ -209,7 +213,7 @@ describe('createDelegation', () => {
 
   it('allows re-delegation when previous delegation is cancelled', () => {
     const cancelledDelegation = {
-      tokenHash: `sha256:${'a'.repeat(64)}`,
+      tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
       childRunbookPath: 'other-child.md',
       contextSnapshot: { vars: brandEffectiveVarsForTest({}), ancestors: [] },
       childRunId: null,
@@ -573,7 +577,7 @@ describe('createDelegation', () => {
 
   it('allows re-delegation after child run completes (childRunId set)', () => {
     const completedDelegation = {
-      tokenHash: `sha256:${'a'.repeat(64)}`,
+      tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
       childRunbookPath: 'old-child.md',
       contextSnapshot: { vars: brandEffectiveVarsForTest({}), ancestors: [] },
       childRunId: 'completed-run-123',
@@ -811,7 +815,7 @@ describe('createDelegation', () => {
 
   it('allows delegation on iteration 2 when iteration 1 has active delegation', () => {
     const delegation1 = {
-      tokenHash: `sha256:${'a'.repeat(64)}`,
+      tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
       childRunbookPath: 'child.md',
       contextSnapshot: { vars: brandEffectiveVarsForTest({}), ancestors: [] },
       childRunId: null,

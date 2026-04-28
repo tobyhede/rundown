@@ -51,12 +51,26 @@ export function registerCollectCommand(program: Command): void {
           const output = new OutputEmitter({ text: options.text });
           const cwd = getCwd();
 
-          const ctx = await buildTransitionContext(output, cwd);
-          if (!ctx) {
-            output.noActiveRunbook('collect');
-            output.flush();
-            return;
+          const contextResult = await buildTransitionContext(output, cwd);
+          switch (contextResult.kind) {
+            case 'ready':
+              break;
+            case 'none':
+              output.noActiveRunbook('collect');
+              output.flush();
+              return;
+            case 'stale_owner':
+            case 'invalid_identity':
+              output.error(contextResult.message, 'OWNED_RUNBOOK_UNAVAILABLE');
+              output.flush();
+              process.exitCode = 1;
+              return;
+            default: {
+              const _exhaustive: never = contextResult;
+              return _exhaustive;
+            }
           }
+          const ctx = contextResult.ctx;
 
           let shouldExitWithError = false;
           try {
@@ -279,6 +293,7 @@ async function runCollect(
       cwd,
       !!drained.state.prompted,
       emitter,
+      { terminalReleaseMode: ctx.terminalReleaseMode },
     );
     output.flush();
 

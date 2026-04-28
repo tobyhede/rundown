@@ -155,6 +155,28 @@ export type RunbookStepBody = z.infer<typeof RunbookStepBodySchema>;
 /** Validated parent linkage. */
 export type ParentLinkageBody = z.infer<typeof ParentLinkageSchema>;
 
+/** Plugin-local metadata for a delegation token assigned to a Claude Code agent. */
+export const DelegationActiveTokenMetadataSchema = z.object({
+  kind: z.literal('delegation-active-token'),
+  agent_id: z.string().min(1),
+  session_id: z.string().min(1).optional(),
+  token: z.string().min(1),
+  tokenHash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  createdAt: z.string().min(1),
+});
+
+/** Metadata map keyed by Claude Code `agent_id` for active delegation tokens. */
+export const DelegationActiveTokensMetadataSchema = z.record(
+  z.string(),
+  DelegationActiveTokenMetadataSchema,
+);
+
+/** Validated per-agent active delegation token metadata. */
+export type DelegationActiveTokenMetadata = z.infer<typeof DelegationActiveTokenMetadataSchema>;
+
+/** Validated map of active delegation token metadata keyed by agent id. */
+export type DelegationActiveTokensMetadata = z.infer<typeof DelegationActiveTokensMetadataSchema>;
+
 /**
  * Session State Schema - Runtime Validation for Persisted State
  */

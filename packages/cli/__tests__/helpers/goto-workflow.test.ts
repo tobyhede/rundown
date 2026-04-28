@@ -400,6 +400,7 @@ describe('executeGoto', () => {
       state: makeState(),
       steps: [makeStep()],
       cwd: '/test',
+      terminalReleaseMode: 'stack-pop' as const,
     };
 
     const result = await executeGoto(ctx, { step: '2' });
@@ -433,6 +434,7 @@ describe('executeGoto', () => {
       state: makeState(),
       steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
       cwd: '/test',
+      terminalReleaseMode: 'stack-pop' as const,
     };
 
     const target: StepId = { step: '2' };
@@ -470,6 +472,7 @@ describe('executeGoto', () => {
       state: makeState(),
       steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
       cwd: '/test',
+      terminalReleaseMode: 'stack-pop' as const,
     };
 
     const result = await executeGoto(ctx, { step: '2' });

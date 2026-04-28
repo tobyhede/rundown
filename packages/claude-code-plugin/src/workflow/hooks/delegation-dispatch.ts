@@ -136,7 +136,31 @@ export async function handleDelegationDispatch(
   // Store token in session metadata for SubagentStop abort correlation
   const session = new Session(input.cwd);
   const meta = await session.get('metadata');
-  await session.set('metadata', { ...meta, delegation_active_token: token });
+  const tokenHash = hashToken(token);
+  if (input.agent_id) {
+    const existing =
+      meta.delegation_active_tokens &&
+      typeof meta.delegation_active_tokens === 'object' &&
+      !Array.isArray(meta.delegation_active_tokens)
+        ? (meta.delegation_active_tokens as Record<string, unknown>)
+        : {};
+    await session.set('metadata', {
+      ...meta,
+      delegation_active_tokens: {
+        ...existing,
+        [input.agent_id]: {
+          kind: 'delegation-active-token',
+          agent_id: input.agent_id,
+          ...(input.session_id ? { session_id: input.session_id } : {}),
+          token,
+          tokenHash,
+          createdAt: new Date().toISOString(),
+        },
+      },
+    });
+  } else {
+    await session.set('metadata', { ...meta, delegation_active_token: token });
+  }
 
   // Best-effort: enrich with current delegation status and inject child --input flags
   let claimCommand = `rd claim ${token}`;
@@ -161,10 +185,7 @@ export async function handleDelegationDispatch(
         delegations?: Array<{ runbook: string; state: string; tokenHash: string }>;
       }
     ).delegations;
-    const detectedTokenHash = hashToken(token);
-    const pending = delegations?.find(
-      (d) => d.state === 'pending' && d.tokenHash === detectedTokenHash,
-    );
+    const pending = delegations?.find((d) => d.state === 'pending' && d.tokenHash === tokenHash);
     const childRunbookPath = pending?.runbook;
     if (childRunbookPath && parentVars) {
       const inputFlags = await buildChildInputFlags(childRunbookPath, parentVars, input.cwd);
@@ -180,9 +201,18 @@ export async function handleDelegationDispatch(
     'This task is a delegated substep. Claim the delegation token before starting work:',
     '',
     '```',
+    ...(input.agent_id
+      ? [
+          `export RD_AGENT_ID=${shellQuote(input.agent_id)}`,
+          ...(input.session_id ? [`export RD_SESSION_ID=${shellQuote(input.session_id)}`] : []),
+        ]
+      : []),
     claimCommand,
     '```',
     '',
+    ...(input.agent_id
+      ? ['Keep these environment variables set for `rd status`, `rd pass`, and `rd fail`.', '']
+      : []),
     ...statusLines,
     ...(statusLines.length > 0 ? [''] : []),
     'After completing the delegated work, use `rd pass` or `rd fail` to report the result.',

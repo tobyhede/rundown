@@ -304,7 +304,10 @@ Do child work.
       expect(token1).toBeDefined();
       expect(token2).toBeDefined();
 
-      let result = await runCliInProcess(`claim ${token1!}`, workspace);
+      const agent1 = { env: { RD_AGENT_ID: 'agent-one', RD_SESSION_ID: 'session-main' } };
+      const agent2 = { env: { RD_AGENT_ID: 'agent-two', RD_SESSION_ID: 'session-main' } };
+
+      let result = await runCliInProcess(`claim ${token1!}`, workspace, agent1);
       expect(result.exitCode).toBe(0);
       const child1Output = findActionOutput(result.stdout);
       expect(child1Output).toBeDefined();
@@ -313,7 +316,7 @@ Do child work.
       }
       const child1Id = child1Output.run_id;
 
-      result = await runCliInProcess(`claim ${token2!}`, workspace);
+      result = await runCliInProcess(`claim ${token2!}`, workspace, agent2);
       expect(result.exitCode).toBe(0);
       const child2Output = findActionOutput(result.stdout);
       expect(child2Output).toBeDefined();
@@ -322,17 +325,23 @@ Do child work.
       }
       const child2Id = child2Output.run_id;
 
-      const activeBefore = await getActiveState(workspace);
-      expect(activeBefore?.id).toBe(child2Id);
+      const anonymousActive = await getActiveState(workspace);
+      expect(anonymousActive?.runbook).toBe('runbooks/parent.runbook.md');
 
-      result = await runCliInProcess('pass --text', workspace);
+      let status = await runCliInProcess('status', workspace, agent1);
+      expect(JSON.parse(status.stdout).state).toContain(child1Id);
+
+      status = await runCliInProcess('status', workspace, agent2);
+      expect(JSON.parse(status.stdout).state).toContain(child2Id);
+
+      result = await runCliInProcess('pass --text', workspace, agent1);
       expect(result.exitCode).toBe(0);
 
       const child1 = await readRunbookState(workspace, child1Id);
       const child2 = await readRunbookState(workspace, child2Id);
 
-      expect(child1?.lifecycle).toBe('running');
-      expect(child2?.lifecycle).toBe('completed');
+      expect(child1?.lifecycle).toBe('completed');
+      expect(child2?.lifecycle).toBe('running');
     }, 30_000);
   });
 

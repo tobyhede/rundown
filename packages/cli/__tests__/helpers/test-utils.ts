@@ -23,6 +23,7 @@ import type { ResolvedStep, Substep } from '@rundown-org/parser';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+const NAMED_IDENTIFIER_PATTERN_DESCRIPTION = '^[A-Za-z_][A-Za-z0-9_]*$';
 
 /**
  * Get the absolute path to the CLI entry point.
@@ -189,6 +190,14 @@ export function stripExitArtefact(buf: string): string {
 }
 
 /**
+ * Options for in-process CLI test execution.
+ */
+export interface RunCliInProcessOptions {
+  /** Per-invocation environment overrides, restored after the command finishes. */
+  readonly env?: Readonly<Record<string, string | undefined>>;
+}
+
+/**
  * Run CLI in-process via Commander for fast test execution (~1-5ms vs ~200-500ms subprocess).
  *
  * Uses `process.chdir()` to set the working directory, ensuring all code paths
@@ -202,8 +211,14 @@ export function stripExitArtefact(buf: string): string {
 export async function runCliInProcess(
   args: string | string[],
   workspace: TestWorkspace,
+  options: RunCliInProcessOptions = {},
 ): Promise<CliResult> {
   const argArray = Array.isArray(args) ? args : args.split(' ').filter(Boolean);
+  const extraEnv = options.env ?? {};
+  const extraEnvKeys = Object.keys(extraEnv);
+  const origExtraEnv = Object.fromEntries(
+    extraEnvKeys.map((key) => [key, process.env[key]]),
+  ) as Record<string, string | undefined>;
   const binPath = workspace.binPath();
   const pluginDir = join(workspace.cwd, 'plugin');
 
@@ -242,6 +257,13 @@ export async function runCliInProcess(
     process.env.CLAUDE_PLUGIN_ROOT = pluginDir;
     process.env.PATH = `${binPath}:${origEnv.PATH ?? ''}`;
     delete process.env.FORCE_COLOR;
+    for (const [key, value] of Object.entries(extraEnv)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
 
     // Capture stdout/stderr via process.stdout/stderr.write
     // ConsoleWriter consistently uses these (not console.log/error)
@@ -335,6 +357,13 @@ export async function runCliInProcess(
         process.env[key] = origEnv[key];
       }
     }
+    for (const [key, value] of Object.entries(origExtraEnv)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
 
     // Reset globals again for clean state
     resetPolicyContext();
@@ -367,6 +396,7 @@ export async function readSession(workspace: TestWorkspace): Promise<{
   stashed: string | null;
   stacks: Record<string, string[]>;
   defaultStack: string[];
+  ownedRunbooks: Record<string, unknown>;
 }> {
   try {
     const content = await readFile(workspace.sessionPath(), 'utf-8');
@@ -374,6 +404,10 @@ export async function readSession(workspace: TestWorkspace): Promise<{
 
     const stacks = (session.stacks as Record<string, string[]> | undefined) ?? {};
     const defaultStack = (session.defaultStack as string[] | undefined) ?? [];
+    const ownedRunbooks =
+      session.ownedRunbooks && typeof session.ownedRunbooks === 'object'
+        ? (session.ownedRunbooks as Record<string, unknown>)
+        : {};
 
     // Active runbook is the top of the default stack
     const active = defaultStack.length > 0 ? (defaultStack[defaultStack.length - 1] ?? null) : null;
@@ -383,9 +417,10 @@ export async function readSession(workspace: TestWorkspace): Promise<{
       stashed: typeof session.stashedRunbookId === 'string' ? session.stashedRunbookId : null,
       stacks,
       defaultStack,
+      ownedRunbooks,
     };
   } catch {
-    return { active: null, stashed: null, stacks: {}, defaultStack: [] };
+    return { active: null, stashed: null, stacks: {}, defaultStack: [], ownedRunbooks: {} };
   }
 }
 
@@ -402,6 +437,7 @@ export async function writeSession(
   session: {
     active?: string | null;
     stashed?: string | null;
+    stashedRunbookOwnership?: Record<string, unknown>;
     stacks?: Record<string, string[]>;
     defaultStack?: string[];
   },
@@ -423,6 +459,9 @@ export async function writeSession(
 
   if (session.stashed !== undefined) {
     sessionData.stashedRunbookId = session.stashed;
+  }
+  if (session.stashedRunbookOwnership !== undefined) {
+    sessionData.stashedRunbookOwnership = session.stashedRunbookOwnership;
   }
 
   await writeFile(workspace.sessionPath(), JSON.stringify(sessionData, null, 2));
@@ -832,7 +871,7 @@ export function createRunbook(options: CreateRunbookOptions): string {
     if (step.id != null) {
       if (!NAMED_IDENTIFIER_PATTERN.test(step.id)) {
         throw new Error(
-          `StepConfig.id "${step.id}" is not a valid named identifier (must match ${NAMED_IDENTIFIER_PATTERN.source})`,
+          `StepConfig.id "${step.id}" is not a valid named identifier (must match ${NAMED_IDENTIFIER_PATTERN_DESCRIPTION})`,
         );
       }
       if (isReservedWord(step.id)) {

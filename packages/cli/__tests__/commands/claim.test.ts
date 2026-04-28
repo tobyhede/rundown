@@ -3,8 +3,10 @@ import {
   createTestWorkspace,
   createRunbook,
   runCliInProcess,
+  findActionOutput,
   getActiveState,
   readRunbookState,
+  readSession,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 import { writeFile } from 'node:fs/promises';
@@ -92,6 +94,19 @@ describe('claim command', () => {
       expect(result.stdout + result.stderr).toMatch(/not found|no active/i);
     });
 
+    it('rejects invalid caller identity before claiming', async () => {
+      const result = await runCliInProcess(
+        'claim rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH',
+        workspace,
+        {
+          env: { RD_AGENT_ID: undefined, RD_SESSION_ID: 'session-without-agent' },
+        },
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout + result.stderr).toMatch(/INVALID_CALLER_IDENTITY|RD_SESSION_ID/i);
+    });
+
     it('successfully claims valid delegation token', async () => {
       await writeParentRunbook();
       await writeChildRunbook();
@@ -108,6 +123,79 @@ describe('claim command', () => {
       // Claim should succeed
       result = await runCliInProcess(`claim ${token}`, workspace);
       expect(result.exitCode).toBe(0);
+    });
+
+    it('records identified caller ownership and leaves anonymous active runbook on the parent', async () => {
+      await writeParentRunbook();
+      await writeChildRunbook();
+
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      expect(result.exitCode).toBe(0);
+      const parentId = (await getActiveState(workspace))!.id;
+
+      result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
+      expect(result.exitCode).toBe(0);
+      const token = extractToken(result.stdout);
+
+      result = await runCliInProcess(`claim ${token}`, workspace, {
+        env: { RD_AGENT_ID: 'agent-claim-1', RD_SESSION_ID: 'session-claim' },
+      });
+      expect(result.exitCode).toBe(0);
+      const childRunId = String(findActionOutput(result.stdout)?.run_id);
+
+      const session = await readSession(workspace);
+      expect(session.defaultStack).toEqual([parentId]);
+      expect(Object.values(session.ownedRunbooks)).toContainEqual(
+        expect.objectContaining({
+          kind: 'agent-owned-runbook',
+          agent_id: 'agent-claim-1',
+          session_id: 'session-claim',
+          childRunId,
+          parentRunId: parentId,
+          tokenHash: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
+        }),
+      );
+
+      const anonymousActive = await getActiveState(workspace);
+      expect(anonymousActive?.id).toBe(parentId);
+    });
+
+    it('does not pop the parent when an identified child auto-completes', async () => {
+      await writeParentRunbook();
+      const child = createRunbook({
+        title: 'Auto Child',
+        steps: [
+          {
+            title: 'Execute',
+            pass: 'COMPLETE',
+            fail: 'STOP',
+            command: 'rd echo -r pass',
+          },
+        ],
+      });
+      await writeFile(join(workspace.cwd, 'child.runbook.md'), child);
+
+      let result = await runCliInProcess('run parent.runbook.md --text', workspace);
+      expect(result.exitCode).toBe(0);
+      const parentId = (await getActiveState(workspace))!.id;
+
+      result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
+      expect(result.exitCode).toBe(0);
+      const token = extractToken(result.stdout);
+
+      result = await runCliInProcess(`claim ${token}`, workspace, {
+        env: { RD_AGENT_ID: 'agent-claim-1', RD_SESSION_ID: 'session-claim' },
+      });
+      expect(result.exitCode).toBe(0);
+
+      const session = await readSession(workspace);
+      expect(session.defaultStack).toEqual([parentId]);
+      expect(Object.values(session.ownedRunbooks)).not.toContainEqual(
+        expect.objectContaining({ agent_id: 'agent-claim-1' }),
+      );
+
+      const anonymousActive = await getActiveState(workspace);
+      expect(anonymousActive?.id).toBe(parentId);
     });
   });
 

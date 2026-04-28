@@ -12,6 +12,7 @@ import { OutputEmitter } from '../services/output-emitter.js';
 import { parseInputOption, parseInputJsonOption, collect } from '../helpers/option-utils.js';
 import { claimAndLaunch, type RunPipelineContext } from '../helpers/runbook-pipeline.js';
 import { handleParentCompletion, extractParentLinkage } from '../helpers/delegation-completion.js';
+import { resolveCallerIdentity } from '../helpers/caller-identity.js';
 
 /**
  * Registers the 'claim' command for claiming delegation tokens.
@@ -77,7 +78,19 @@ export function registerClaimCommand(program: Command): void {
               input: options.input,
               inputJson: options.inputJson,
             };
-            const result = await claimAndLaunch(ctx, token, inputOpts);
+            const caller = resolveCallerIdentity();
+            if (caller.kind === 'invalid') {
+              output.error(caller.message, 'INVALID_CALLER_IDENTITY');
+              output.flush();
+              process.exit(1);
+            }
+
+            const result = await claimAndLaunch(
+              ctx,
+              token,
+              inputOpts,
+              caller.kind === 'identified' ? caller.identity : undefined,
+            );
 
             if (!result.ok) {
               throw Errors.unknown(result.error);

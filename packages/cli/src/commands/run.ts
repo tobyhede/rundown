@@ -239,12 +239,13 @@ export function registerRunCommand(program: Command): void {
 
             // If --step provided with --prompted and runbook is waiting, jump to the step
             if (options.step && options.prompted && result.loopResult === 'waiting') {
-              const gotoCtx = await buildGotoContext(output, cwd);
-              if (!gotoCtx) {
+              const gotoContextResult = await buildGotoContext(output, cwd, { kind: 'anonymous' });
+              if (gotoContextResult.kind !== 'ready') {
                 output.error('Failed to build goto context after start', 'ENGINE_INIT_FAILED');
                 output.flush();
                 process.exit(1);
               }
+              const gotoCtx = gotoContextResult.ctx;
 
               const validation = validateGotoTarget(options.step, gotoCtx.steps, options.index);
               if (!validation.ok) {

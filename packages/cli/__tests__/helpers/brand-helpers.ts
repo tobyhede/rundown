@@ -10,7 +10,9 @@ import {
   brandEffectiveVars,
   brandInitialTemplateVars,
   brandStoredOutputs,
+  assertDelegationTokenHash,
   buildFrameKey,
+  type DelegationTokenHash,
   type EffectiveVars,
   type FrameKey,
   type InitialTemplateVars,
@@ -31,6 +33,19 @@ import {
  */
 export function brandFrameKeyForTest(step: string, iteration?: number): FrameKey {
   return buildFrameKey(step, iteration);
+}
+
+/**
+ * Test-only producer of {@link DelegationTokenHash}.
+ *
+ * Delegates to the production assertion helper so test fixtures use the
+ * same canonical hash validation as production code.
+ *
+ * @param hash - Candidate persisted delegation token hash
+ * @returns Branded `DelegationTokenHash`
+ */
+export function brandDelegationTokenHashForTest(hash: string): DelegationTokenHash {
+  return assertDelegationTokenHash(hash);
 }
 
 /**

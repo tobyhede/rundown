@@ -1,10 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { writeFile, rm } from 'node:fs/promises';
+import { writeFile, rm, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   createTestWorkspace,
   runCliInProcess,
   readSession,
+  getActiveState,
+  findActionOutput,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 
@@ -84,6 +86,84 @@ describe('status command', () => {
     expect(output.active).toBe(false);
     expect(output.stashed).toBe(true);
     expect(output.file).toContain('simple.runbook.md');
+  });
+});
+
+describe('agent-owned delegated children', () => {
+  let workspace: TestWorkspace;
+
+  beforeEach(async () => {
+    workspace = await createTestWorkspace();
+  });
+
+  afterEach(async () => {
+    await workspace.cleanup();
+  });
+
+  it('resolves status to the caller-owned child before the default stack', async () => {
+    const parentRunbook = [
+      '# Parent',
+      '',
+      '## 1. Fan out',
+      '',
+      '- PASS ALL CONTINUE',
+      '- FAIL ANY STOP',
+      '',
+      '### 1.1 First child',
+      '',
+      'Do first child.',
+      '',
+      '### 1.2 Second child',
+      '',
+      'Do second child.',
+      '',
+    ].join('\n');
+    const childRunbook = [
+      '# Child',
+      '',
+      '## 1. Work',
+      '',
+      '- PASS COMPLETE',
+      '- FAIL STOP',
+      '',
+      'Do child work.',
+      '',
+    ].join('\n');
+
+    await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
+    await writeFile(join(workspace.cwd, 'runbooks', 'parent-status.md'), parentRunbook);
+    await writeFile(join(workspace.cwd, 'runbooks', 'child-status.md'), childRunbook);
+
+    await runCliInProcess('run --prompted runbooks/parent-status.md --text', workspace);
+    const parentId = (await getActiveState(workspace))!.id;
+
+    let result = await runCliInProcess('delegate runbooks/child-status.md --step 1.1', workspace);
+    const token1 = JSON.parse(result.stdout).token as string;
+    result = await runCliInProcess('delegate runbooks/child-status.md --step 1.2', workspace);
+    const token2 = JSON.parse(result.stdout).token as string;
+
+    result = await runCliInProcess(`claim ${token1}`, workspace, {
+      env: { RD_AGENT_ID: 'status-agent-1', RD_SESSION_ID: 'status-session' },
+    });
+    const child1Id = String(findActionOutput(result.stdout)?.run_id);
+
+    result = await runCliInProcess(`claim ${token2}`, workspace, {
+      env: { RD_AGENT_ID: 'status-agent-2', RD_SESSION_ID: 'status-session' },
+    });
+    const child2Id = String(findActionOutput(result.stdout)?.run_id);
+
+    let status = await runCliInProcess('status', workspace, {
+      env: { RD_AGENT_ID: 'status-agent-1', RD_SESSION_ID: 'status-session' },
+    });
+    expect(JSON.parse(status.stdout).state).toContain(child1Id);
+
+    status = await runCliInProcess('status', workspace, {
+      env: { RD_AGENT_ID: 'status-agent-2', RD_SESSION_ID: 'status-session' },
+    });
+    expect(JSON.parse(status.stdout).state).toContain(child2Id);
+
+    status = await runCliInProcess('status', workspace);
+    expect(JSON.parse(status.stdout).state).toContain(parentId);
   });
 });
 

@@ -22,6 +22,7 @@ import {
   type ResolvedRunbook,
   type DelegationLinkage,
   type ParentLinkage,
+  type AgentOwnerIdentity,
   RUNS_DIR,
   DelegationScanService,
   DelegationLock,
@@ -114,6 +115,14 @@ export interface PreparedRunbook {
 export type RunbookStartResult =
   | { ok: true; loopResult: 'done' | 'stopped' | 'waiting'; stateId: string }
   | { ok: false; error: string; code: string; details?: Record<string, unknown> };
+
+type LaunchSessionActivation =
+  | { readonly kind: 'default-stack' }
+  | {
+      readonly kind: 'agent-owned';
+      readonly identity: AgentOwnerIdentity;
+      readonly linkage: DelegationLinkage;
+    };
 
 /**
  * Result of claiming a delegation token and launching the child runbook.
@@ -624,6 +633,7 @@ export async function prepareRunbook(
  * @param options.runbookName - Name identifier for the runbook being launched
  * @param options.prompted - Whether to run in prompted mode (no auto-execution)
  * @param options.parentLinkage - Optional parent linkage for child runs (delegation or inline)
+ * @param options.sessionActivation - Session activation mode for the launched runbook
  * @param options.afterInit - Optional callback invoked after state initialization with the new state ID
  * @returns RunbookStartResult
  */
@@ -634,6 +644,7 @@ async function launchRunbook(
     runbookName: string;
     prompted: boolean;
     parentLinkage?: ParentLinkage;
+    sessionActivation?: LaunchSessionActivation;
     afterInit?: (stateId: string) => Promise<void>;
   },
 ): Promise<RunbookStartResult> {
@@ -669,7 +680,19 @@ async function launchRunbook(
       await options.afterInit(state.id);
     }
 
-    await sessionService.pushRunbook(state.id);
+    const sessionActivation = options.sessionActivation ?? { kind: 'default-stack' as const };
+    switch (sessionActivation.kind) {
+      case 'default-stack':
+        await sessionService.pushRunbook(state.id);
+        break;
+      case 'agent-owned':
+        await sessionService.claimRunbookForOwner(
+          sessionActivation.identity,
+          state.id,
+          sessionActivation.linkage,
+        );
+        break;
+    }
 
     if (resolvedStepHasSubsteps(runbook.steps[0]) && runbook.steps[0].substeps.length > 0) {
       const freshState = await manager.load(state.id);
@@ -706,6 +729,10 @@ async function launchRunbook(
     cwd,
     options.prompted,
     emitter,
+    {
+      terminalReleaseMode:
+        options.sessionActivation?.kind === 'agent-owned' ? 'release-runbook' : 'stack-pop',
+    },
   );
 
   return { ok: true, loopResult, stateId };
@@ -810,12 +837,14 @@ async function updateStepDelegationChildRunId(
  * @param ctx - Pipeline context
  * @param rawToken - The plain-text delegation token to claim
  * @param inputOpts - Input options from CLI flags
+ * @param ownerIdentity - Optional identified caller that owns the claimed child runbook
  * @returns ClaimResult with child run details or error
  */
 export async function claimAndLaunch(
   ctx: RunPipelineContext,
   rawToken: string,
   inputOpts: InputOptions,
+  ownerIdentity?: AgentOwnerIdentity,
 ): Promise<ClaimResult> {
   const { output, manager, cwd } = ctx;
   const truncatedToken = truncateDelegationToken(rawToken);
@@ -904,6 +933,28 @@ export async function claimAndLaunch(
 
     // 4b. Idempotent return if already claimed
     if (freshDelegation.childRunId) {
+      if (ownerIdentity) {
+        const delegationFrameKey = freshSubstep.frameKey;
+        const existingChild = await manager.load(freshDelegation.childRunId);
+        const existingLinkage =
+          existingChild?.parentLinkage?.kind === 'delegation'
+            ? existingChild.parentLinkage
+            : {
+                kind: 'delegation' as const,
+                parentRunId: freshParent.id,
+                parentStepId: substepId ?? stepId,
+                tokenHash,
+                parentStep: freshParent.step,
+                parentFrameKey: delegationFrameKey,
+                parentEntry: inferEntryFromState(freshParent, delegationFrameKey),
+              };
+        await ctx.sessionService.claimRunbookForOwner(
+          ownerIdentity,
+          freshDelegation.childRunId,
+          existingLinkage,
+        );
+      }
+
       return {
         ok: true,
         childRunId: freshDelegation.childRunId,
@@ -934,6 +985,13 @@ export async function claimAndLaunch(
         orphan.id,
         tokenHash,
       );
+      if (ownerIdentity && orphan.parentLinkage?.kind === 'delegation') {
+        await ctx.sessionService.claimRunbookForOwner(
+          ownerIdentity,
+          orphan.id,
+          orphan.parentLinkage,
+        );
+      }
       return {
         ok: true,
         childRunId: orphan.id,
@@ -993,6 +1051,9 @@ export async function claimAndLaunch(
       runbookName: freshDelegation.childRunbookPath,
       prompted: parentPrompted,
       parentLinkage: delegationLinkage,
+      sessionActivation: ownerIdentity
+        ? { kind: 'agent-owned', identity: ownerIdentity, linkage: delegationLinkage }
+        : { kind: 'default-stack' },
       afterInit: async (childStateId) => {
         // Set childRunId on parent delegation (tokenHash for precise matching)
         await updateStepDelegationChildRunId(

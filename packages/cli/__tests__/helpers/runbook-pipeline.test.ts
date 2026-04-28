@@ -20,11 +20,14 @@ import type { PreparedRunbook, RunPipelineContext } from '../../src/helpers/runb
 import { mockErrorHelpers } from './mock-error-helpers.js';
 import { makeRunPipelineContext } from './run-pipeline-context-helpers.js';
 import { mockFn } from './typed-mocks.js';
+import { brandDelegationTokenHashForTest } from './brand-helpers.js';
 
 // Capture the real isJsonArrayStream before the mock is registered.
 // jest.unstable_mockModule does NOT hoist (unlike jest.mock), so this top-level
 // await executes first and always captures the real branded implementation.
 const { isJsonArrayStream: realIsJsonArrayStream } = await import('@rundown-org/core');
+
+const MOCK_TOKEN_HASH = brandDelegationTokenHashForTest(`sha256:${'a'.repeat(64)}`);
 
 // Mock @rundown-org/core
 jest.unstable_mockModule('@rundown-org/core', () => ({
@@ -86,7 +89,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     (...args: unknown[]) => Record<string, unknown>
   >().mockReturnValue({}),
   extractInheritedUserVars: jest.fn(),
-  hashDelegationToken: mockFn<(token: string) => string>().mockReturnValue('sha256:mock'),
+  hashDelegationToken: mockFn<(token: string) => string>().mockReturnValue(MOCK_TOKEN_HASH),
   truncateDelegationToken: jest.fn((token: string) => {
     const prefix = 'rdtk_';
     const body = token.startsWith(prefix) ? token.slice(prefix.length) : token;
@@ -365,7 +368,7 @@ beforeEach(() => {
     jest.mocked(fsPromises.readFile) as unknown as jest.Mock<() => Promise<string>>
   ).mockResolvedValue('# Test\n\n## 1. Step\n- PASS CONTINUE');
   jest.mocked(parser.parseRunbookDocument).mockReturnValue(mockParseResult());
-  jest.mocked(core.hashDelegationToken).mockReturnValue('sha256:mock');
+  jest.mocked(core.hashDelegationToken).mockReturnValue(MOCK_TOKEN_HASH);
   jest.mocked(core.reconstituteContextVars).mockReturnValue({});
   jest.mocked(core.extractInheritedUserVars).mockReturnValue({});
   jest.mocked(core.deriveActiveFrame).mockReturnValue({
@@ -1078,7 +1081,7 @@ describe('claimAndLaunch', () => {
 
   it('returns idempotent result when token already claimed', async () => {
     const delegation = {
-      tokenHash: 'sha256:mock',
+      tokenHash: MOCK_TOKEN_HASH,
       childRunbookPath: 'child.md',
       contextSnapshot: { vars: {}, ancestors: [] },
       childRunId: 'existing-child-id',
@@ -1145,7 +1148,7 @@ describe('claimAndLaunch', () => {
 
   it('returns error when delegation was cancelled', async () => {
     const delegation = {
-      tokenHash: 'sha256:mock',
+      tokenHash: MOCK_TOKEN_HASH,
       childRunbookPath: 'child.md',
       contextSnapshot: { vars: {}, ancestors: [] },
       childRunId: null,
@@ -1210,7 +1213,7 @@ describe('claimAndLaunch', () => {
   });
 
   it('adopts orphaned child when found', async () => {
-    const tokenHash = 'sha256:mock';
+    const tokenHash = MOCK_TOKEN_HASH;
     const delegation = {
       tokenHash,
       childRunbookPath: 'child.md',
@@ -1289,7 +1292,7 @@ describe('claimAndLaunch', () => {
   });
 
   it('launches new child when no orphan exists', async () => {
-    const tokenHash = 'sha256:mock';
+    const tokenHash = MOCK_TOKEN_HASH;
     const delegation = {
       tokenHash,
       childRunbookPath: 'child.md',
@@ -1393,7 +1396,7 @@ describe('claimAndLaunch', () => {
   });
 
   it('preserves ContextId but does not inherit parent RunId into child vars', async () => {
-    const tokenHash = 'sha256:mock';
+    const tokenHash = MOCK_TOKEN_HASH;
     const delegation = {
       tokenHash,
       childRunbookPath: 'child.md',
@@ -1509,7 +1512,7 @@ describe('claimAndLaunch', () => {
   });
 
   it('passes published OUTPUTS into delegated child inherited vars', async () => {
-    const tokenHash = 'sha256:mock';
+    const tokenHash = MOCK_TOKEN_HASH;
     const delegation = {
       tokenHash,
       childRunbookPath: 'child.md',
@@ -1628,7 +1631,7 @@ describe('claimAndLaunch', () => {
   });
 
   it('returns error when child runbook file not found', async () => {
-    const tokenHash = 'sha256:mock';
+    const tokenHash = MOCK_TOKEN_HASH;
     const delegation = {
       tokenHash,
       childRunbookPath: 'missing.md',
@@ -1699,7 +1702,7 @@ describe('claimAndLaunch', () => {
   });
 
   it('inherits prompted flag from parent', async () => {
-    const tokenHash = 'sha256:mock';
+    const tokenHash = MOCK_TOKEN_HASH;
     const delegation = {
       tokenHash,
       childRunbookPath: 'child.md',

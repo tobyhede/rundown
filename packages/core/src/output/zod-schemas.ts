@@ -41,6 +41,8 @@ export const CLIErrorCodes = {
   ALREADY_STASHED: 'ALREADY_STASHED',
   /** No stashed runbook to restore */
   NO_STASHED_RUNBOOK: 'NO_STASHED_RUNBOOK',
+  /** Caller-owned runbook is missing, terminal, or otherwise unavailable */
+  OWNED_RUNBOOK_UNAVAILABLE: 'OWNED_RUNBOOK_UNAVAILABLE',
   /** Scenario not found */
   SCENARIO_NOT_FOUND: 'SCENARIO_NOT_FOUND',
   /** File system operation failed */
@@ -61,6 +63,7 @@ export const ErrorCodeSchema = z
     'VALIDATION_ERROR',
     'ALREADY_STASHED',
     'NO_STASHED_RUNBOOK',
+    'OWNED_RUNBOOK_UNAVAILABLE',
     'SCENARIO_NOT_FOUND',
     'FILE_ERROR',
     'UNKNOWN_ERROR',

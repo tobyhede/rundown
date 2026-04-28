@@ -39,6 +39,7 @@ import {
   drainResolvedCompletions,
   findStepOrThrow,
   runExecutionLoop,
+  type ExecutionTerminalReleaseMode,
 } from '../services/execution.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
@@ -47,6 +48,8 @@ import {
   type TransitionEventSink,
   type TransitionOrchestrationPolicy,
 } from './transition-orchestrator.js';
+import { resolveCallerIdentity } from './caller-identity.js';
+import { resolveActiveRunbook, type ActiveRunbookResolution } from './active-runbook-resolver.js';
 export type { ActionType } from '@rundown-org/core';
 
 /**
@@ -144,7 +147,14 @@ export interface TransitionContext {
   actor: AnyActorRef;
   /** Current working directory */
   cwd: string;
+  /** How terminal follow-on execution should release this runbook from session targeting. */
+  terminalReleaseMode: ExecutionTerminalReleaseMode;
 }
+
+/** Result of resolving the runbook target and building transition execution context. */
+export type BuildTransitionContextResult =
+  | { readonly kind: 'ready'; readonly ctx: TransitionContext }
+  | Extract<ActiveRunbookResolution, { kind: 'none' | 'stale_owner' | 'invalid_identity' }>;
 
 /**
  * Build full transition context from resolved state.
@@ -160,17 +170,30 @@ export interface TransitionContext {
 export async function buildTransitionContext(
   output: OutputEmitter,
   cwd: string,
-): Promise<TransitionContext | null> {
+): Promise<BuildTransitionContextResult> {
   const manager = new RunbookStateManager(cwd);
   const actorService = new RunbookActorService(manager);
   const sessionService = new SessionService(manager);
   const lifecycleService = new ExecutionLifecycleService(manager);
-  const state = await sessionService.getActive();
+  const active = await resolveActiveRunbook(sessionService, resolveCallerIdentity());
 
-  if (!state) {
-    return null;
+  switch (active.kind) {
+    case 'owned':
+    case 'default':
+      break;
+    case 'none':
+    case 'stale_owner':
+    case 'invalid_identity':
+      return active;
+    default: {
+      const _exhaustive: never = active;
+      return _exhaustive;
+    }
   }
 
+  const state = active.state;
+  const terminalReleaseMode: ExecutionTerminalReleaseMode =
+    active.kind === 'owned' ? 'release-runbook' : 'stack-pop';
   const readonlySteps = getRunbookFromState(state, cwd);
   const steps = [...readonlySteps]; // Convert to mutable array for TransitionContext
   const actor = await actorService.createActor(state.id, steps);
@@ -179,15 +202,19 @@ export async function buildTransitionContext(
   }
 
   return {
-    output,
-    manager,
-    actorService,
-    sessionService,
-    lifecycleService,
-    state,
-    steps,
-    actor,
-    cwd,
+    kind: 'ready',
+    ctx: {
+      output,
+      manager,
+      actorService,
+      sessionService,
+      lifecycleService,
+      state,
+      steps,
+      actor,
+      cwd,
+      terminalReleaseMode,
+    },
   };
 }
 
@@ -434,6 +461,7 @@ export async function executeTransition(
       cwd,
       !!drained.state.prompted,
       emitter,
+      { terminalReleaseMode: ctx.terminalReleaseMode },
     );
     output.flush();
     if (loopResult === 'stopped') {
@@ -522,6 +550,7 @@ export async function executeTransition(
     cwd,
     !!updatedState.prompted,
     emitter,
+    { terminalReleaseMode: ctx.terminalReleaseMode },
   );
 
   output.flush();
