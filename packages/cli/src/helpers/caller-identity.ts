@@ -20,6 +20,15 @@ function readTrimmed(env: EnvSource, key: string): string | undefined {
 /**
  * Resolve the current CLI caller identity from canonical agent environment variables.
  *
+ * @remarks
+ * **Threat model:** Agent identity is read from `RD_AGENT_ID` / `RD_SESSION_ID`
+ * environment variables. These are **not signed** and are spoofable by any
+ * process that can set its own environment. Agent ownership is therefore an
+ * **isolation-against-accident** mechanism, not an adversarial security
+ * boundary — it prevents two cooperating agents from clobbering each other's
+ * runbooks, but it does not protect against a malicious local process that
+ * exports forged identity values.
+ *
  * @param env - Environment source containing optional `RD_AGENT_ID` and `RD_SESSION_ID`
  * @returns Caller identity resolution, including validation failures
  */

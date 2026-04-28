@@ -159,6 +159,33 @@ Agent types support namespace prefixes using `namespace:name` syntax (e.g., `cip
 
 ---
 
+## Threat Model and Identity
+
+Agent ownership is an **isolation-against-accident** mechanism, not an adversarial security boundary.
+
+Caller identity is read from two environment variables exported by the Claude Code plugin's delegation-dispatch hook:
+
+- `RD_AGENT_ID` — the subagent's `agent_id`
+- `RD_SESSION_ID` — the dispatching session id
+
+CLI commands (`rd pass`, `rd fail`, `rd pop`, `rd stash`, `rd status`, etc.) derive the caller's `AgentOwnerIdentity` from these values and route to the runbook the caller owns. The session-service rejects cross-agent claims (RD-819) and refuses cross-agent stash restoration as defense in depth.
+
+What this provides:
+
+- **Sibling fan-out isolation.** Two subagents claiming different delegation tokens against the same parent each operate on their own child runbook. `rd pass` from agent A cannot accidentally complete agent B's child.
+- **Stash protection.** A runbook stashed by agent A cannot be restored by agent B; the stash remains intact for the rightful owner.
+- **Single-owner claim invariant.** A second `rd claim` against an already-owned token from a different identity is rejected with `RD-819 DELEGATION_OWNER_CONFLICT`.
+
+What this does **not** provide:
+
+- **No cryptographic identity.** Environment variables are unsigned. Any process that can set its own environment can present any `RD_AGENT_ID` / `RD_SESSION_ID`. A user shell that exports both can impersonate any agent.
+- **No authentication of the dispatching session.** The plugin trusts whatever values its host process exposes; the CLI trusts whatever the plugin set.
+- **No protection against a malicious local process.** All workspace state (`.rundown/`) is filesystem-readable by the user; an actor with shell access can edit `session.json` directly.
+
+The threat model assumes cooperating agents in a trusted local workspace. If you need adversarial isolation between agents, run them in separate workspaces or as separate operating-system users — not as cooperating processes against the same `.rundown/` directory.
+
+---
+
 ## Delegation Completion
 
 Subagents complete delegated work using `rd pass` or `rd fail`, which updates the child runbook state directly. The parent agent observes results via `rd status`.

@@ -133,7 +133,14 @@ export async function handleDelegationDispatch(
 
   const { token } = detection;
 
-  // Store token in session metadata for SubagentStop abort correlation
+  // Store token in session metadata for SubagentStop abort correlation.
+  //
+  // The plaintext `token` is stored alongside `tokenHash` so that the
+  // SubagentStop hook can recompute the hash and verify the metadata blob
+  // hasn't been tampered with (see consumeDelegationTokenForAgent in
+  // subagent-stop.ts). The hash alone would not allow this verification —
+  // it's an integrity check on the metadata, not a confidentiality measure.
+  // The metadata file is workspace-local and protected by filesystem perms.
   const session = new Session(input.cwd);
   const meta = await session.get('metadata');
   const tokenHash = hashToken(token);
