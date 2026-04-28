@@ -64,6 +64,8 @@ describe('rdpath find integration', () => {
     });
   };
 
+  const normalizeOutputPath = (value: string): string => value.trim().replaceAll('\\', '/');
+
   async function setupActiveRunbook(
     cwd: string,
     vars: { WorkPath: string; ContextId: string },
@@ -100,6 +102,14 @@ Active step.
     await fs.writeFile(
       path.join(runsDir, 'wf-stale-1.json'),
       JSON.stringify({ schemaVersion: 1 }, null, 2),
+    );
+  }
+
+  async function setupActiveRunbookWithInvalidId(cwd: string): Promise<void> {
+    await fs.mkdir(path.join(cwd, '.rundown'), { recursive: true });
+    await fs.writeFile(
+      path.join(cwd, '.rundown', 'session.json'),
+      JSON.stringify({ defaultStack: ['../outside'] }, null, 2),
     );
   }
 
@@ -281,7 +291,7 @@ Active step.
       );
 
       expect(result.exitCode).toBe(0);
-      expect(result.stdout.trim()).toMatch(
+      expect(normalizeOutputPath(result.stdout)).toMatch(
         /^\.rundown\/work\/\.rd-state-ctx\/\d{4}-\d{2}-\d{2}-plan\.json$/,
       );
     });
@@ -435,8 +445,24 @@ Active step.
       );
 
       expect(result.exitCode).toBe(0);
-      expect(result.stdout.trim()).toMatch(/^\.work\/\d{4}-\d{2}-\d{2}-plan\.json$/);
+      expect(normalizeOutputPath(result.stdout)).toMatch(/^\.work\/\d{4}-\d{2}-\d{2}-plan\.json$/);
       expect(result.stderr).toBe('');
+    });
+
+    it('propagates non-recoverable active-state lookup errors when RD_WORK_PATH is set', async () => {
+      await setupActiveRunbookWithInvalidId(testDir);
+
+      const result = await runRdpath(
+        ['--file', 'plan.json'],
+        {
+          RD_WORK_PATH: '.work',
+          RD_CONTEXT_ID: undefined,
+        },
+        testDir,
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain('Invalid id');
     });
   });
 });

@@ -11,7 +11,7 @@
 import { Command } from 'commander';
 import { readActiveRunScope } from '@rundown-org/core/session-reader';
 import { assemblePath, findFiles } from './rdpath-core.js';
-import { getErrorMessage } from './shared/errors.js';
+import { getErrorMessage, isNodeError } from './shared/errors.js';
 
 const program = new Command();
 program
@@ -53,6 +53,36 @@ async function resolveActiveStateScope(): Promise<ActiveStateScope> {
   return activeScope;
 }
 
+function isRecoverableActiveStateLookupError(error: unknown): boolean {
+  if (!Error.isError(error)) return false;
+
+  if (error.name === 'StaleRunbookStateError' || error instanceof SyntaxError) {
+    return true;
+  }
+
+  const message = error.message;
+  if (
+    message.includes('schema validation failed') ||
+    message.includes('previous schema version') ||
+    message.includes('Legacy per-agent session format detected') ||
+    message.includes('Session file contains invalid entries')
+  ) {
+    return true;
+  }
+
+  if (isNodeError(error)) {
+    const activeStateReadErrorCodes = new Set(['EACCES', 'EPERM', 'EISDIR', 'ENOTDIR']);
+    const errorPath = typeof error.path === 'string' ? error.path : '';
+    return (
+      typeof error.code === 'string' &&
+      activeStateReadErrorCodes.has(error.code) &&
+      errorPath.includes('.rundown')
+    );
+  }
+
+  return false;
+}
+
 /**
  * Resolve `--dir` / `--ctx` from the program-level options, falling back to
  * `RD_WORK_PATH` / `RD_CONTEXT_ID`, then the active runbook state. Writes the
@@ -79,7 +109,10 @@ async function resolveScope(): Promise<ResolvedScope | null> {
   } else if (flagOrEnvCtx === undefined) {
     try {
       activeScope = await resolveActiveStateScope();
-    } catch {
+    } catch (error) {
+      if (!isRecoverableActiveStateLookupError(error)) {
+        throw error;
+      }
       activeScope = {};
     }
   }
