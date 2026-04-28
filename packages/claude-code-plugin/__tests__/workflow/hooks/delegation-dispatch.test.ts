@@ -184,8 +184,8 @@ describe('handleDelegationDispatch', () => {
     const tokenHash = hashToken(VALID_TOKEN);
     const childRunbook = `---
 inputs:
-  PlanPath: ''
-  environment: staging
+  - PlanPath
+  - environment
 ---
 # Child Runbook
 
@@ -214,6 +214,38 @@ PASS COMPLETE
     expect(result.context).not.toContain('unrelated');
   });
 
+  it('falls back to plain rd claim when child frontmatter validation fails', async () => {
+    const tokenHash = hashToken(VALID_TOKEN);
+    const childRunbook = `---
+inputs:
+  PlanPath: /work/plan.json
+---
+# Child Runbook
+
+## 1. Step
+PASS COMPLETE
+`;
+    mockReadFile.mockResolvedValue(childRunbook);
+
+    const status = {
+      file: 'parent.md',
+      step: { name: '3' },
+      vars: { PlanPath: '/work/plan.json' },
+      delegations: [{ state: 'pending', runbook: 'child.runbook.md', tokenHash }],
+    };
+    setExecSync(mockExecFileSync(JSON.stringify(status)));
+
+    const input = createMockHookInput('PreToolUse', {
+      tool_name: 'Task',
+      tool_input: { prompt: `RD_CLAIM_TOKEN=${VALID_TOKEN}` },
+    });
+
+    const result = await handleDelegationDispatch(input);
+    expect(result.context).toContain(`rd claim ${VALID_TOKEN}`);
+    expect(result.context).not.toContain('--input');
+    expect(result.context).not.toContain('PlanPath=');
+  });
+
   it('does not inject --input flags when no delegation matches the detected token', async () => {
     const differentTokenHash = hashToken('rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ999999');
     const status = {
@@ -236,7 +268,7 @@ PASS COMPLETE
   });
 
   it('passes numeric parent var as --input-json flag', async () => {
-    const childRunbook = `---\ninputs:\n  port: 3000\n---\n# Child\n\n## 1. Step\n- PASS COMPLETE\n`;
+    const childRunbook = `---\ninputs:\n  - port\n---\n# Child\n\n## 1. Step\n- PASS COMPLETE\n`;
     mockReadFile.mockResolvedValue(childRunbook);
     const flags = await buildChildInputFlags('child.runbook.md', { port: 3000 }, '/test/project');
     expect(flags).toBe("--input-json port='3000'");
@@ -247,10 +279,10 @@ PASS COMPLETE
     const childRunbook = `---
 name: child
 inputs:
-  DollarVar: ''
-  BacktickVar: ''
-  QuoteVar: ''
-  SpaceVar: ''
+  - DollarVar
+  - BacktickVar
+  - QuoteVar
+  - SpaceVar
 ---
 # Child
 

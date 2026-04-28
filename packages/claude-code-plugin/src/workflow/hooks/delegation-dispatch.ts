@@ -56,9 +56,9 @@ export interface DelegationDispatchResult {
 /**
  * Build `--input key=value` flags for a child runbook from parent's live variable space.
  *
- * Reads the child runbook's frontmatter `inputs:` keys and, for each key that
- * exists in the parent's vars, produces a `--input key=value` flag. Non-fatal:
- * returns empty string on any error.
+ * Reads the child runbook's frontmatter `inputs:` declarations and, for each
+ * declared name that exists in the parent's vars, produces a `--input key=value`
+ * flag. Non-fatal: returns empty string on any error.
  *
  * @param childRunbookPath - Absolute or cwd-relative path to the child runbook
  * @param parentVars - Parent's live variable space from `rd status --json`
@@ -78,7 +78,7 @@ export async function buildChildInputFlags(
       : path.resolve(cwd, childRunbookPath);
     const src = await fs.readFile(resolved, 'utf-8');
     const { frontmatter } = parseRunbookDocument(src);
-    const inputKeys = Object.keys(frontmatter?.inputs ?? {});
+    const inputKeys = frontmatter?.inputs ?? [];
     // Shell-quote values so spaces and special characters are preserved when the
     // claim command string is executed by Claude Code's task/agent tool.
     // Non-string values (numbers, booleans, objects) are serialized as JSON and
@@ -152,7 +152,7 @@ export async function handleDelegationDispatch(
     if (file) statusLines.push(`Active runbook: ${file}`);
     if (step) statusLines.push(`Current step: ${step}`);
 
-    // Inject --input flags from child runbook's inputs: keys using parent's live vars.
+    // Inject --input flags from the child runbook's declared inputs using the parent's live vars.
     // Match the delegation entry by tokenHash to correctly identify the child runbook
     // when multiple delegations are pending simultaneously.
     const parentVars = (status as { vars?: Record<string, unknown> }).vars;

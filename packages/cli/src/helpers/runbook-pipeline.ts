@@ -59,11 +59,7 @@ import {
   collectUnresolvedRunbookVariables,
 } from '../services/template-renderer.js';
 import { getPolicyEvaluator, getPolicyPrompter } from '../services/policy-context.js';
-import {
-  validateFrontmatterVars,
-  validateRequiredVars,
-  validateOutputsDeclarations,
-} from './validate-frontmatter-vars.js';
+import { validateOutputsDeclarations } from './validate-frontmatter-vars.js';
 import { getHelperRegistry, detectHelperCollisions } from '../services/helper-registry.js';
 
 /**
@@ -370,15 +366,10 @@ export async function loadAndParseRunbook(file: string, cwd: string): Promise<Lo
       diagnostics: parseDiagnostics,
     } = parseRunbookDocument(rawContent, path.basename(filePath));
 
-    const varDiagnostics = validateFrontmatterVars(frontmatter?.inputs);
-    const fmRequired = frontmatter?.required;
     const fmOutputs = frontmatter?.outputs;
-    const requiredDiagnostics = validateRequiredVars(fmRequired, frontmatter?.inputs);
-    const outputsDiagnostics = validateOutputsDeclarations(fmOutputs, frontmatter?.inputs);
+    const outputsDiagnostics = validateOutputsDeclarations(fmOutputs);
     const diagnostics: readonly ValidationDiagnostic[] = [
       ...parseDiagnostics,
-      ...varDiagnostics,
-      ...requiredDiagnostics,
       ...outputsDiagnostics,
     ];
 
@@ -465,7 +456,6 @@ export async function prepareRunbook(
         inputFile: inputOpts.inputFile,
         input: inputOpts.input,
         inputJson: inputOpts.inputJson,
-        frontmatterVars: frontmatter?.inputs,
         inheritedVars: inheritedUserVars,
       },
       cwd,

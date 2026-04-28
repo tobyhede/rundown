@@ -153,8 +153,6 @@ jest.unstable_mockModule('../../src/services/template-renderer', () => ({
 
 // Mock validate-frontmatter-vars
 jest.unstable_mockModule('../../src/helpers/validate-frontmatter-vars', () => ({
-  validateFrontmatterVars: mockFn<() => string[]>().mockReturnValue([]),
-  validateRequiredVars: mockFn<() => string[]>().mockReturnValue([]),
   validateOutputsDeclarations: mockFn<() => string[]>().mockReturnValue([]),
 }));
 
@@ -175,7 +173,7 @@ const { resolveRunbookFile } = await import('../../src/helpers/resolve-runbook.j
 const { resolveVariables } = await import('../../src/services/variable-discovery.js');
 const { substituteRunbookVariables, resolveForBounds, collectUnresolvedRunbookVariables } =
   await import('../../src/services/template-renderer.js');
-const { validateFrontmatterVars, validateRequiredVars, validateOutputsDeclarations } = await import(
+const { validateOutputsDeclarations } = await import(
   '../../src/helpers/validate-frontmatter-vars.js'
 );
 const { createBridgedEmitter } = await import('../../src/helpers/execution-emitter.js');
@@ -839,8 +837,6 @@ describe('claimAndLaunch', () => {
       frontmatter: null,
       diagnostics: [],
     } as unknown as ReturnType<typeof parser.parseRunbookDocument>);
-    jest.mocked(validateFrontmatterVars).mockReturnValue([]);
-    jest.mocked(validateRequiredVars).mockReturnValue([]);
     jest.mocked(validateOutputsDeclarations).mockReturnValue([]);
     // Cast through unknown: ResolvedVariables uses a branded vars map
     // and tracks more fields than this fixture provides.
@@ -968,8 +964,6 @@ describe('claimAndLaunch', () => {
       frontmatter: null,
       diagnostics: [],
     } as unknown as ReturnType<typeof parser.parseRunbookDocument>);
-    jest.mocked(validateFrontmatterVars).mockReturnValue([]);
-    jest.mocked(validateRequiredVars).mockReturnValue([]);
     jest.mocked(validateOutputsDeclarations).mockReturnValue([]);
     jest.mocked(resolveVariables).mockResolvedValue({
       vars: {},

@@ -27,8 +27,9 @@ describe('createRunbook', () => {
       });
       expect(md).toContain('---');
       expect(md).toContain('name: my-runbook');
-      expect(md).toContain('  env: staging');
-      expect(md).toContain('  port: 3000');
+      expect(md).toContain('inputs:');
+      expect(md).toContain('  - env');
+      expect(md).toContain('  - port');
     });
 
     it('renders custom title', () => {
