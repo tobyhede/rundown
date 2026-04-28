@@ -388,7 +388,7 @@ export async function runCliInProcess(
  * Maps internal session fields to test-friendly names:
  * - `defaultStack` (top of default stack) → `active`
  * - `stashedRunbookId` (from RunbookStateManager) → `stashed`
- * - `stacks` (for multi-agent runbooks) → `stacks`
+ * - `stacks` (for legacy multi-agent runbooks) → `stacks`
  * - `defaultStack` (default stack for runbooks) → `defaultStack`
  */
 export async function readSession(workspace: TestWorkspace): Promise<{
@@ -396,7 +396,7 @@ export async function readSession(workspace: TestWorkspace): Promise<{
   stashed: string | null;
   stacks: Record<string, string[]>;
   defaultStack: string[];
-  ownedRunbooks: Record<string, unknown>;
+  ownedRunbooks: Record<string, unknown[]>;
 }> {
   try {
     const content = await readFile(workspace.sessionPath(), 'utf-8');
@@ -406,7 +406,7 @@ export async function readSession(workspace: TestWorkspace): Promise<{
     const defaultStack = (session.defaultStack as string[] | undefined) ?? [];
     const ownedRunbooks =
       session.ownedRunbooks && typeof session.ownedRunbooks === 'object'
-        ? (session.ownedRunbooks as Record<string, unknown>)
+        ? (session.ownedRunbooks as Record<string, unknown[]>)
         : {};
 
     // Active runbook is the top of the default stack
@@ -438,6 +438,7 @@ export async function writeSession(
     active?: string | null;
     stashed?: string | null;
     stashedRunbookOwnership?: Record<string, unknown>;
+    ownedRunbooks?: Record<string, unknown[]>;
     stacks?: Record<string, string[]>;
     defaultStack?: string[];
   },
@@ -462,6 +463,9 @@ export async function writeSession(
   }
   if (session.stashedRunbookOwnership !== undefined) {
     sessionData.stashedRunbookOwnership = session.stashedRunbookOwnership;
+  }
+  if (session.ownedRunbooks !== undefined) {
+    sessionData.ownedRunbooks = session.ownedRunbooks;
   }
 
   await writeFile(workspace.sessionPath(), JSON.stringify(sessionData, null, 2));

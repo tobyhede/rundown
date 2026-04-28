@@ -145,7 +145,7 @@ describe('claim command', () => {
 
       const session = await readSession(workspace);
       expect(session.defaultStack).toEqual([parentId]);
-      expect(Object.values(session.ownedRunbooks)).toContainEqual(
+      expect(Object.values(session.ownedRunbooks).flat()).toContainEqual(
         expect.objectContaining({
           kind: 'agent-owned-runbook',
           agent_id: 'agent-claim-1',
@@ -190,7 +190,7 @@ describe('claim command', () => {
 
       const session = await readSession(workspace);
       expect(session.defaultStack).toEqual([parentId]);
-      expect(Object.values(session.ownedRunbooks)).not.toContainEqual(
+      expect(Object.values(session.ownedRunbooks).flat()).not.toContainEqual(
         expect.objectContaining({ agent_id: 'agent-claim-1' }),
       );
 
@@ -541,6 +541,54 @@ rd echo --result fail
       expect(result2.exitCode).toBe(0);
       expect(result3.exitCode).toBe(0);
     }, 15_000);
+  });
+
+  describe('orchestrator multi-claim stack', () => {
+    it('shows the top child, advances only that child, then surfaces the next child', async () => {
+      await writeParentRunbook();
+      await writeChildRunbook();
+
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      expect(result.exitCode).toBe(0);
+
+      result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
+      const tokenA = extractToken(result.stdout);
+      result = await runCliInProcess('delegate child.runbook.md --step 1.2', workspace);
+      const tokenB = extractToken(result.stdout);
+
+      const orchestrator = {
+        env: { RD_AGENT_ID: 'orchestrator', RD_SESSION_ID: 'orchestrator-session' },
+      };
+      result = await runCliInProcess(`claim ${tokenA}`, workspace, orchestrator);
+      expect(result.exitCode).toBe(0);
+      const childAId = String(findActionOutput(result.stdout)?.run_id);
+
+      result = await runCliInProcess(`claim ${tokenB}`, workspace, orchestrator);
+      expect(result.exitCode).toBe(0);
+      const childBId = String(findActionOutput(result.stdout)?.run_id);
+
+      result = await runCliInProcess('status', workspace, orchestrator);
+      expect(JSON.parse(result.stdout).state).toContain(childBId);
+
+      result = await runCliInProcess('pass --text', workspace, orchestrator);
+      expect(result.exitCode).toBe(0);
+
+      const childB = await readRunbookState(workspace, childBId);
+      expect(childB?.lifecycle).toBe('completed');
+
+      result = await runCliInProcess('status', workspace, orchestrator);
+      const status = JSON.parse(result.stdout);
+      expect(status.state).toContain(childAId);
+      expect(status.state).not.toContain(childBId);
+
+      const session = await readSession(workspace);
+      expect(Object.values(session.ownedRunbooks).flat()).toContainEqual(
+        expect.objectContaining({ childRunId: childAId }),
+      );
+      expect(Object.values(session.ownedRunbooks).flat()).not.toContainEqual(
+        expect.objectContaining({ childRunId: childBId }),
+      );
+    });
   });
 
   describe('context inheritance', () => {

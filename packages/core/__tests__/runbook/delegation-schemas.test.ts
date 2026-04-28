@@ -319,6 +319,23 @@ describe('AgentRunbookOwnershipSchema', () => {
 });
 
 describe('SessionDataSchema ownership compatibility', () => {
+  const ownershipFor = (overrides: Record<string, unknown> = {}) => ({
+    kind: 'agent-owned-runbook',
+    ownerKey: 'agent:agent-a:session:session-a',
+    agent_id: 'agent-a',
+    session_id: 'session-a',
+    childRunId: 'wf-2026-04-28-child',
+    tokenHash: `sha256:${'d'.repeat(64)}`,
+    parentRunId: 'wf-2026-04-28-parent',
+    parentStepId: '1',
+    parentStep: '1',
+    parentFrameKey: '1|',
+    parentEntry: 1,
+    claimedAt: '2026-04-28T00:00:00.000Z',
+    updatedAt: '2026-04-28T00:00:01.000Z',
+    ...overrides,
+  });
+
   it('loads legacy sessions without ownedRunbooks', () => {
     const result = SessionDataSchema.safeParse({ defaultStack: ['parent'] });
     expect(result.success).toBe(true);
@@ -332,7 +349,7 @@ describe('SessionDataSchema ownership compatibility', () => {
     const result = SessionDataSchema.safeParse({
       defaultStack: ['parent'],
       ownedRunbooks: {
-        bad: { kind: 'agent-owned-runbook', childRunId: 42 },
+        bad: [{ kind: 'agent-owned-runbook', childRunId: 42 }],
       },
     });
     expect(result.success).toBe(false);
@@ -342,21 +359,7 @@ describe('SessionDataSchema ownership compatibility', () => {
     const result = SessionDataSchema.safeParse({
       defaultStack: ['parent'],
       ownedRunbooks: {
-        'agent:agent-b:session:session-a': {
-          kind: 'agent-owned-runbook',
-          ownerKey: 'agent:agent-a:session:session-a',
-          agent_id: 'agent-a',
-          session_id: 'session-a',
-          childRunId: 'wf-2026-04-28-child',
-          tokenHash: `sha256:${'d'.repeat(64)}`,
-          parentRunId: 'wf-2026-04-28-parent',
-          parentStepId: '1',
-          parentStep: '1',
-          parentFrameKey: '1|',
-          parentEntry: 1,
-          claimedAt: '2026-04-28T00:00:00.000Z',
-          updatedAt: '2026-04-28T00:00:01.000Z',
-        },
+        'agent:agent-b:session:session-a': [ownershipFor()],
       },
     });
     expect(result.success).toBe(false);
@@ -381,6 +384,48 @@ describe('SessionDataSchema ownership compatibility', () => {
     });
 
     expect(result.success).toBe(false);
+  });
+
+  it('rejects a session with the same childRunId in owned stack and stash', () => {
+    const result = SessionDataSchema.safeParse({
+      defaultStack: ['parent'],
+      stashedRunbookId: 'child',
+      stashedRunbookOwnership: ownershipFor({ childRunId: 'child' }),
+      ownedRunbooks: {
+        'agent:agent-a:session:session-a': [ownershipFor({ childRunId: 'child' })],
+      },
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const message = result.error.issues.map((issue) => issue.message).join('\n');
+      expect(message).toContain('ownedRunbooks.agent:agent-a:session:session-a.0.childRunId');
+      expect(message).toContain('stashedRunbookOwnership.childRunId');
+    }
+  });
+
+  it('rejects duplicate childRunId entries across owned stacks', () => {
+    const result = SessionDataSchema.safeParse({
+      defaultStack: ['parent'],
+      ownedRunbooks: {
+        'agent:agent-a:session:session-a': [ownershipFor({ childRunId: 'child' })],
+        'agent:agent-b:session:session-b': [
+          ownershipFor({
+            ownerKey: 'agent:agent-b:session:session-b',
+            agent_id: 'agent-b',
+            session_id: 'session-b',
+            childRunId: 'child',
+          }),
+        ],
+      },
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const message = result.error.issues.map((issue) => issue.message).join('\n');
+      expect(message).toContain('ownedRunbooks.agent:agent-a:session:session-a.0.childRunId');
+      expect(message).toContain('ownedRunbooks.agent:agent-b:session:session-b.0.childRunId');
+    }
   });
 });
 

@@ -63,8 +63,8 @@ export interface SessionData {
   stashedRunbookId?: string;
   /** Ownership record captured when an agent-owned runbook is stashed. */
   stashedRunbookOwnership?: AgentRunbookOwnership;
-  /** Per-agent/session ownership of delegated child runbooks. */
-  ownedRunbooks: Record<string, AgentRunbookOwnership>;
+  /** Per-agent/session ownership stack of delegated child runbooks. */
+  ownedRunbooks: Record<string, AgentRunbookOwnership[]>;
 }
 
 interface CreateOptions {

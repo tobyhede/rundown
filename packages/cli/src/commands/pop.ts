@@ -60,9 +60,18 @@ export function registerPopCommand(program: Command): void {
                 process.exitCode = 1;
                 return;
               }
+              if (!stashedOwnership) {
+                output.error(
+                  `Stashed runbook ${stashedId} has no agent ownership; restore as anonymous (unset RD_AGENT_ID) or claim a delegation token.`,
+                  'OWNED_RUNBOOK_UNAVAILABLE',
+                );
+                output.flush();
+                process.exitCode = 1;
+                return;
+              }
               const stashedState = await manager.load(stashedId);
               const linkage = stashedState?.parentLinkage;
-              if (stashedOwnership && linkage?.kind !== 'delegation') {
+              if (linkage?.kind !== 'delegation') {
                 output.error(
                   `Owned runbook ${stashedId} cannot be restored: stash has linkage kind '${linkage?.kind ?? 'none'}', expected 'delegation'.`,
                   'OWNED_RUNBOOK_UNAVAILABLE',
@@ -71,21 +80,17 @@ export function registerPopCommand(program: Command): void {
                 process.exitCode = 1;
                 return;
               }
-              if (stashedState && linkage?.kind === 'delegation') {
-                const parentState = await manager.load(linkage.parentRunId);
-                if (!parentState) {
-                  output.error(
-                    `Owned runbook ${stashedId} cannot be restored because parent ${linkage.parentRunId} is unavailable.`,
-                    'OWNED_RUNBOOK_UNAVAILABLE',
-                  );
-                  output.flush();
-                  process.exitCode = 1;
-                  return;
-                }
-                state = await sessionService.unstashForOwner(caller.identity, linkage);
-              } else {
-                state = await sessionService.unstash();
+              const parentState = await manager.load(linkage.parentRunId);
+              if (!parentState) {
+                output.error(
+                  `Owned runbook ${stashedId} cannot be restored because parent ${linkage.parentRunId} is unavailable.`,
+                  'OWNED_RUNBOOK_UNAVAILABLE',
+                );
+                output.flush();
+                process.exitCode = 1;
+                return;
               }
+              state = await sessionService.unstashForOwner(caller.identity, linkage);
             }
           } else {
             const stashedId = await sessionService.getStashedRunbookId();

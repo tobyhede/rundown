@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { writeFile, rm, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, rm, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   createTestWorkspace,
@@ -164,6 +164,130 @@ describe('agent-owned delegated children', () => {
 
     status = await runCliInProcess('status', workspace);
     expect(JSON.parse(status.stdout).state).toContain(parentId);
+  });
+
+  async function setupOwnedStash() {
+    const parentRunbook = [
+      '# Parent Secret',
+      '',
+      '## 1. Fan out',
+      '',
+      '- PASS ALL CONTINUE',
+      '- FAIL ANY STOP',
+      '',
+      '### 1.1 Child',
+      '',
+      'Do child.',
+      '',
+    ].join('\n');
+    const childRunbook = [
+      '# Child Secret',
+      '',
+      '## 1. Work',
+      '',
+      '- PASS COMPLETE',
+      '- FAIL STOP',
+      '',
+      'Do child work.',
+      '',
+    ].join('\n');
+
+    await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
+    await writeFile(join(workspace.cwd, 'runbooks', 'parent-secret.md'), parentRunbook);
+    await writeFile(join(workspace.cwd, 'runbooks', 'child-secret.md'), childRunbook);
+
+    await runCliInProcess('run --prompted runbooks/parent-secret.md --text', workspace);
+    const delegated = await runCliInProcess(
+      'delegate runbooks/child-secret.md --step 1.1',
+      workspace,
+    );
+    const token = JSON.parse(delegated.stdout).token as string;
+    const agentA = { env: { RD_AGENT_ID: 'agent-a', RD_SESSION_ID: 'shared-session' } };
+    const claimed = await runCliInProcess(`claim ${token}`, workspace, agentA);
+    const childRunId = String(findActionOutput(claimed.stdout)?.run_id);
+
+    const stateFile = join(workspace.statePath(), `${childRunId}.json`);
+    const state = JSON.parse(await readFile(stateFile, 'utf-8')) as Record<string, unknown>;
+    state.variables = { secretOutput: 'top-secret-output' };
+    state.templateVars = { secretInput: 'top-secret-input' };
+    await writeFile(stateFile, JSON.stringify(state, null, 2));
+
+    await runCliInProcess('stash --text', workspace, agentA);
+    const sessionFile = workspace.sessionPath();
+    const session = JSON.parse(await readFile(sessionFile, 'utf-8')) as Record<string, unknown>;
+    session.defaultStack = [];
+    await writeFile(sessionFile, JSON.stringify(session, null, 2));
+    return { childRunId, agentA };
+  }
+
+  it('anonymous caller cannot see an owned stash', async () => {
+    await setupOwnedStash();
+
+    const status = await runCliInProcess('status', workspace);
+
+    expect(status.exitCode).toBe(0);
+    expect(JSON.parse(status.stdout)).toEqual(
+      expect.objectContaining({ active: false, stashed: false }),
+    );
+    expect(status.stdout).not.toContain('child-secret.md');
+    expect(status.stdout).not.toContain('top-secret-input');
+    expect(status.stdout).not.toContain('top-secret-output');
+  });
+
+  it('cross-agent identified caller cannot see an owned stash', async () => {
+    await setupOwnedStash();
+
+    const status = await runCliInProcess('status', workspace, {
+      env: { RD_AGENT_ID: 'agent-b', RD_SESSION_ID: 'shared-session' },
+    });
+
+    expect(status.exitCode).toBe(0);
+    expect(JSON.parse(status.stdout)).toEqual(
+      expect.objectContaining({ active: false, stashed: false }),
+    );
+    expect(status.stdout).not.toContain('child-secret.md');
+    expect(status.stdout).not.toContain('top-secret-input');
+    expect(status.stdout).not.toContain('top-secret-output');
+  });
+
+  it('owner can see their own stashed status', async () => {
+    const { childRunId, agentA } = await setupOwnedStash();
+
+    const status = await runCliInProcess('status', workspace, agentA);
+    const output = JSON.parse(status.stdout);
+
+    expect(status.exitCode).toBe(0);
+    expect(output.active).toBe(false);
+    expect(output.stashed).toBe(true);
+    expect(output.file).toContain('child-secret.md');
+    expect(output.state).toContain(childRunId);
+    expect(output.parentLinkage).toEqual(
+      expect.objectContaining({
+        kind: 'delegation',
+        parentStepId: '1',
+      }),
+    );
+    expect(output.vars).toEqual(
+      expect.objectContaining({
+        secretInput: 'top-secret-input',
+        secretOutput: 'top-secret-output',
+      }),
+    );
+  });
+
+  it('anonymous stash remains visible to identified callers', async () => {
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+    await runCliInProcess('stash --text', workspace);
+
+    const status = await runCliInProcess('status', workspace, {
+      env: { RD_AGENT_ID: 'agent-a', RD_SESSION_ID: 'shared-session' },
+    });
+    const output = JSON.parse(status.stdout);
+
+    expect(status.exitCode).toBe(0);
+    expect(output.active).toBe(false);
+    expect(output.stashed).toBe(true);
+    expect(output.file).toContain('simple.runbook.md');
   });
 });
 

@@ -67,6 +67,15 @@ export class SessionService {
     }
   }
 
+  private getOwnershipStack(
+    ownedRunbooks: Record<string, AgentRunbookOwnership[]>,
+    ownerKey: AgentOwnerKey,
+  ): AgentRunbookOwnership[] {
+    const stack = ownedRunbooks[ownerKey] ?? [];
+    ownedRunbooks[ownerKey] = stack;
+    return stack;
+  }
+
   /**
    * Get the currently active runbook.
    *
@@ -118,15 +127,37 @@ export class SessionService {
       const session = await this.manager.loadSession();
       const ownerKey = buildAgentOwnerKey(identity);
 
-      for (const [existingKey, existing] of Object.entries(session.ownedRunbooks)) {
-        if (existing.childRunId === childRunId && existingKey !== ownerKey) {
+      if (session.stashedRunbookOwnership?.childRunId === childRunId) {
+        return {
+          status: 'conflict',
+          existing: session.stashedRunbookOwnership,
+        } satisfies ClaimRunbookForOwnerResult;
+      }
+
+      for (const [existingKey, ownershipStack] of Object.entries(session.ownedRunbooks)) {
+        const existing = ownershipStack.find((ownership) => ownership.childRunId === childRunId);
+        if (existing === undefined) {
+          continue;
+        }
+        if (existingKey !== ownerKey) {
           return { status: 'conflict', existing } satisfies ClaimRunbookForOwnerResult;
         }
       }
 
       const now = new Date().toISOString();
+      const ownershipStack = this.getOwnershipStack(session.ownedRunbooks, ownerKey);
+      const existingIndex = ownershipStack.findIndex(
+        (ownership) => ownership.childRunId === childRunId,
+      );
+      if (existingIndex !== -1) {
+        const refreshed = { ...ownershipStack[existingIndex], updatedAt: now };
+        ownershipStack[existingIndex] = refreshed;
+        await this.manager.saveSession(session);
+        return { status: 'claimed', ownership: refreshed } satisfies ClaimRunbookForOwnerResult;
+      }
+
       const ownership = createAgentRunbookOwnership(identity, childRunId, linkage, now);
-      session.ownedRunbooks[ownership.ownerKey] = ownership;
+      ownershipStack.push(ownership);
       await this.manager.saveSession(session);
       return { status: 'claimed', ownership } satisfies ClaimRunbookForOwnerResult;
     });
@@ -141,10 +172,11 @@ export class SessionService {
   async getActiveForOwner(identity: AgentOwnerIdentity): Promise<OwnedRunbookResolution> {
     const session = await this.manager.loadSession();
     const ownerKey = buildAgentOwnerKey(identity);
-    const ownership = Object.entries(session.ownedRunbooks).find(([key]) => key === ownerKey)?.[1];
-    if (!ownership) {
+    const ownershipStack = session.ownedRunbooks[ownerKey] ?? [];
+    if (ownershipStack.length === 0) {
       return { status: 'unowned', identity };
     }
+    const ownership = ownershipStack[ownershipStack.length - 1];
     if (ownership.agent_id !== identity.agent_id) {
       return { status: 'stale', identity, ownership, reason: 'agent-mismatch' };
     }
@@ -183,9 +215,12 @@ export class SessionService {
     const removedFromDefaultStack = session.defaultStack.length !== originalDefaultStackLength;
 
     const removedOwnerKeys: AgentOwnerKey[] = [];
-    for (const [ownerKey, ownership] of Object.entries(session.ownedRunbooks)) {
-      if (ownership.childRunId === runbookId) {
-        delete session.ownedRunbooks[ownerKey];
+    for (const [ownerKey, ownershipStack] of Object.entries(session.ownedRunbooks)) {
+      const originalLength = ownershipStack.length;
+      session.ownedRunbooks[ownerKey] = ownershipStack.filter(
+        (ownership) => ownership.childRunId !== runbookId,
+      );
+      if (session.ownedRunbooks[ownerKey].length !== originalLength) {
         removedOwnerKeys.push(ownerKey as AgentOwnerKey);
       }
     }
@@ -266,10 +301,14 @@ export class SessionService {
       const removedFromDefaultStack = session.defaultStack.length !== originalDefaultStackLength;
 
       let removedOwnership: AgentRunbookOwnership | undefined;
-      for (const [ownerKey, ownership] of Object.entries(session.ownedRunbooks)) {
-        if (ownership.childRunId === runbookId) {
-          delete session.ownedRunbooks[ownerKey];
-          removedOwnership = ownership;
+      for (const [ownerKey, ownershipStack] of Object.entries(session.ownedRunbooks)) {
+        const ownershipIndex = ownershipStack.findIndex(
+          (ownership) => ownership.childRunId === runbookId,
+        );
+        if (ownershipIndex !== -1) {
+          removedOwnership = ownershipStack[ownershipIndex];
+          ownershipStack.splice(ownershipIndex, 1);
+          session.ownedRunbooks[ownerKey] = ownershipStack;
         }
       }
 
@@ -327,10 +366,14 @@ export class SessionService {
       }
 
       const now = new Date().toISOString();
-      const ownership = createAgentRunbookOwnership(identity, stashedId, linkage, now);
+      const ownership =
+        stashedOwnership === undefined
+          ? createAgentRunbookOwnership(identity, stashedId, linkage, now)
+          : { ...stashedOwnership, updatedAt: now };
       session.stashedRunbookId = undefined;
       session.stashedRunbookOwnership = undefined;
-      session.ownedRunbooks[ownership.ownerKey] = ownership;
+      const ownershipStack = this.getOwnershipStack(session.ownedRunbooks, ownership.ownerKey);
+      ownershipStack.push(ownership);
       await this.manager.saveSession(session);
       return state;
     });

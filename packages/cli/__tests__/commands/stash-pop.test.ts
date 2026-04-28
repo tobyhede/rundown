@@ -135,7 +135,7 @@ describe('stash command', () => {
     expect(result.exitCode).toBe(0);
     session = await readSession(workspace);
     expect(session.active).not.toBe(childRunId);
-    expect(Object.values(session.ownedRunbooks)).toContainEqual(
+    expect(Object.values(session.ownedRunbooks).flat()).toContainEqual(
       expect.objectContaining({
         agent_id: 'stash-agent',
         session_id: 'stash-session',
@@ -220,6 +220,44 @@ describe('pop command', () => {
 
     const afterSession = await readSession(workspace);
     expect(afterSession.active).toBe(runbookId);
+  });
+
+  it('refuses identified caller restore of an anonymous stash', async () => {
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+    const beforeSession = await readSession(workspace);
+    const runbookId = beforeSession.active;
+    if (!runbookId) throw new Error('Expected active runbook before stash');
+    await runCliInProcess('stash --text', workspace);
+
+    const result = await runCliInProcess('pop', workspace, {
+      env: { RD_AGENT_ID: 'agent-a', RD_SESSION_ID: 'session-a' },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toEqual(
+      expect.objectContaining({
+        kind: 'error',
+        code: 'OWNED_RUNBOOK_UNAVAILABLE',
+        error: `Stashed runbook ${runbookId} has no agent ownership; restore as anonymous (unset RD_AGENT_ID) or claim a delegation token.`,
+      }),
+    );
+    const afterSession = await readSession(workspace);
+    expect(afterSession.stashed).toBe(runbookId);
+    expect(afterSession.active).toBeNull();
+  });
+
+  it('anonymous caller can still restore an anonymous stash', async () => {
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+    const beforeSession = await readSession(workspace);
+    const runbookId = beforeSession.active;
+    await runCliInProcess('stash --text', workspace);
+
+    const result = await runCliInProcess('pop --text', workspace);
+
+    expect(result.exitCode).toBe(0);
+    const afterSession = await readSession(workspace);
+    expect(afterSession.active).toBe(runbookId);
+    expect(afterSession.stashed).toBeNull();
   });
 
   it('clears stashed state', async () => {

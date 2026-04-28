@@ -1,7 +1,7 @@
 // packages/cli/src/commands/status.ts
 
 import type { Command } from 'commander';
-import { RunbookStateManager, SessionService } from '@rundown-org/core';
+import { buildAgentOwnerKey, RunbookStateManager, SessionService } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
@@ -67,6 +67,19 @@ export function registerStatusCommand(program: Command): void {
           }
 
           // Case 2: Something stashed but nothing active
+          const caller = resolveCallerIdentity();
+          const stashedOwnership = await sessionService.getStashedRunbookOwnership();
+          if (stashedOwnership !== null) {
+            const canViewStash =
+              caller.kind === 'identified' &&
+              stashedOwnership.ownerKey === buildAgentOwnerKey(caller.identity);
+            if (!canViewStash) {
+              output.detail(buildInactiveStatus() as unknown as Record<string, unknown>, 'status');
+              output.flush();
+              return;
+            }
+          }
+
           const stashed = await manager.load(stashedId);
           if (stashed) {
             output.detail(

@@ -375,7 +375,7 @@ export const SessionDataSchema = z
     defaultStack: z.array(z.string()).default([]),
     stashedRunbookId: z.string().optional(),
     stashedRunbookOwnership: AgentRunbookOwnershipSchema.optional(),
-    ownedRunbooks: z.record(AgentRunbookOwnershipSchema).default({}),
+    ownedRunbooks: z.record(z.array(AgentRunbookOwnershipSchema)).default({}),
   })
   .superRefine((session, ctx) => {
     if (
@@ -389,14 +389,48 @@ export const SessionDataSchema = z
       });
     }
 
-    for (const [ownerKey, ownership] of Object.entries(session.ownedRunbooks)) {
-      if (ownerKey !== ownership.ownerKey) {
+    const childRunIdLocations = new Map<string, string>();
+    const recordChildRunId = (
+      childRunId: string,
+      location: string,
+      path: (string | number)[],
+    ): void => {
+      const existingLocation = childRunIdLocations.get(childRunId);
+      if (existingLocation !== undefined) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          path: ['ownedRunbooks', ownerKey, 'ownerKey'],
-          message: 'ownedRunbooks key must match ownership.ownerKey',
+          path,
+          message: `childRunId must be unique across session ownership entries; duplicate at ${existingLocation} and ${location}`,
         });
+        return;
       }
+      childRunIdLocations.set(childRunId, location);
+    };
+
+    for (const [ownerKey, ownershipStack] of Object.entries(session.ownedRunbooks)) {
+      ownershipStack.forEach((ownership, index) => {
+        if (ownerKey !== ownership.ownerKey) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['ownedRunbooks', ownerKey, index, 'ownerKey'],
+            message: 'ownedRunbooks key must match ownership.ownerKey',
+          });
+        }
+
+        recordChildRunId(
+          ownership.childRunId,
+          `ownedRunbooks.${ownerKey}.${String(index)}.childRunId`,
+          ['ownedRunbooks', ownerKey, index, 'childRunId'],
+        );
+      });
+    }
+
+    if (session.stashedRunbookOwnership !== undefined) {
+      recordChildRunId(
+        session.stashedRunbookOwnership.childRunId,
+        'stashedRunbookOwnership.childRunId',
+        ['stashedRunbookOwnership', 'childRunId'],
+      );
     }
   });
 
