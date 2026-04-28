@@ -54,6 +54,9 @@ export class SessionService {
    * Read-only methods bypass the lock — the worst case is a slightly stale snapshot.
    * Mutations must always go through this helper so concurrent CLI processes
    * cannot lose interleaved writes to `.rundown/session.json`.
+   *
+   * @param fn - Async mutation to execute while the session lock is held
+   * @returns The value returned by `fn`
    */
   private async withLock<T>(fn: () => Promise<T>): Promise<T> {
     await this.lock.acquire();
@@ -168,6 +171,9 @@ export class SessionService {
 
   /**
    * Inner load-modify-save for releaseRunbook. Caller must hold the session lock.
+   *
+   * @param runbookId - Runbook id to release from session targeting structures
+   * @returns Structured release result describing what was removed
    */
   private async releaseRunbookLocked(runbookId: RunbookState['id']): Promise<ReleaseRunbookResult> {
     const session = await this.manager.loadSession();

@@ -103,7 +103,11 @@ export class RunbookStateManager {
     this._cwd = cwd;
   }
 
-  /** Project root directory used for all state file paths. */
+  /**
+   * Project root directory used for all state file paths.
+   *
+   * @returns The working directory passed to the constructor
+   */
   get cwd(): string {
     return this._cwd;
   }
