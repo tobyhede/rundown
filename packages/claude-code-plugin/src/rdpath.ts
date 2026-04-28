@@ -56,7 +56,7 @@ async function resolveActiveStateScope(): Promise<ActiveStateScope> {
 function isRecoverableActiveStateLookupError(error: unknown): boolean {
   if (!Error.isError(error)) return false;
 
-  if (error.name === 'StaleRunbookStateError' || error instanceof SyntaxError) {
+  if (error.name === 'StaleRunbookStateError' || error.name === 'SyntaxError') {
     return true;
   }
 
