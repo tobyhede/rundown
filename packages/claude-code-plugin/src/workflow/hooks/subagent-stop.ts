@@ -269,6 +269,10 @@ async function consumeDelegationTokenForAgent(
     }
 
     const { [input.agent_id]: _removed, ...remaining } = map;
+    // Hygiene: drop the entire `delegation_active_tokens` key when the last
+    // entry is consumed. Leaving an empty object would parse fine on the next
+    // read (the guard at line 248 treats {} the same as missing), but
+    // removing it keeps the metadata blob minimal and easier to inspect.
     const nextMeta =
       Object.keys(remaining).length > 0
         ? { ...meta, delegation_active_tokens: remaining }

@@ -948,11 +948,24 @@ export async function claimAndLaunch(
                 parentFrameKey: delegationFrameKey,
                 parentEntry: inferEntryFromState(freshParent, delegationFrameKey),
               };
-        await ctx.sessionService.claimRunbookForOwner(
+        const claimResult = await ctx.sessionService.claimRunbookForOwner(
           ownerIdentity,
           freshDelegation.childRunId,
           existingLinkage,
         );
+        if (claimResult.status === 'conflict') {
+          return {
+            ok: false,
+            error: `Delegation already owned by agent '${claimResult.existing.agent_id}'.`,
+            code: ErrorCodes.DELEGATION_OWNER_CONFLICT.code,
+            details: {
+              parentRunId: freshParent.id,
+              stepId,
+              childRunId: freshDelegation.childRunId,
+              existingOwnerAgentId: claimResult.existing.agent_id,
+            },
+          };
+        }
       }
 
       return {
@@ -986,11 +999,24 @@ export async function claimAndLaunch(
         tokenHash,
       );
       if (ownerIdentity && orphan.parentLinkage?.kind === 'delegation') {
-        await ctx.sessionService.claimRunbookForOwner(
+        const claimResult = await ctx.sessionService.claimRunbookForOwner(
           ownerIdentity,
           orphan.id,
           orphan.parentLinkage,
         );
+        if (claimResult.status === 'conflict') {
+          return {
+            ok: false,
+            error: `Delegation already owned by agent '${claimResult.existing.agent_id}'.`,
+            code: ErrorCodes.DELEGATION_OWNER_CONFLICT.code,
+            details: {
+              parentRunId: freshParent.id,
+              stepId,
+              childRunId: orphan.id,
+              existingOwnerAgentId: claimResult.existing.agent_id,
+            },
+          };
+        }
       }
       return {
         ok: true,

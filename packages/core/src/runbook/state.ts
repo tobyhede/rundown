@@ -424,7 +424,7 @@ export class RunbookStateManager {
     try {
       content = await fs.readFile(this.sessionPath, 'utf8');
     } catch (err: unknown) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      if (isNodeError(err) && err.code === 'ENOENT') {
         await this.warnIfLegacyStateExists();
         return { defaultStack: [], ownedRunbooks: {} };
       }

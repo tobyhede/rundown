@@ -6,7 +6,16 @@ import type {
 } from '@rundown-org/core';
 import type { CallerIdentityResult } from './caller-identity.js';
 
-/** Resolved active runbook target for a CLI caller. */
+/**
+ * Resolved active runbook target for a CLI caller.
+ *
+ * CLI-facing wrapper around the core {@link OwnedRunbookResolution} that adds
+ * `default` (anonymous default-stack target) and `invalid_identity`
+ * (env-var validation failure) variants. Use the core type for service-level
+ * ownership semantics; use this type for CLI command dispatch.
+ *
+ * @see OwnedRunbookResolution from `@rundown-org/core`
+ */
 export type ActiveRunbookResolution =
   | {
       readonly kind: 'owned';
@@ -50,7 +59,9 @@ export async function resolveActiveRunbook(
             state: owned.state,
           };
         case 'unowned':
-          break;
+          // Identified callers must claim their own runbook — never fall through to
+          // the default stack, which belongs to anonymous/parent callers.
+          return { kind: 'none' };
         case 'stale':
           return {
             kind: 'stale_owner',
@@ -64,16 +75,14 @@ export async function resolveActiveRunbook(
           return _exhaustive;
         }
       }
-      break;
     }
-    case 'anonymous':
-      break;
+    case 'anonymous': {
+      const state = await sessionService.getActive();
+      return state ? { kind: 'default', state } : { kind: 'none' };
+    }
     default: {
       const _exhaustive: never = caller;
       return _exhaustive;
     }
   }
-
-  const state = await sessionService.getActive();
-  return state ? { kind: 'default', state } : { kind: 'none' };
 }

@@ -102,6 +102,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     TOKEN_CANCELLED: { code: 'RD-809' },
     DELEGATION_LOCK_TIMEOUT: { code: 'RD-810' },
     LAUNCH_FAILED: { code: 'RD-816' },
+    DELEGATION_OWNER_CONFLICT: { code: 'RD-819' },
   },
   isJsonArray: jest.fn((v: unknown) => Array.isArray(v)),
   isJsonArrayStream: jest.fn(realIsJsonArrayStream),
@@ -1289,6 +1290,199 @@ describe('claimAndLaunch', () => {
       expect(result.childRunId).toBe('orphan-id');
     }
     expect(mockManager.update).toHaveBeenCalled();
+  });
+
+  it('rejects re-claim when the already-claimed child is owned by a different agent', async () => {
+    const delegation = {
+      tokenHash: MOCK_TOKEN_HASH,
+      childRunbookPath: 'child.md',
+      contextSnapshot: { vars: {}, ancestors: [] },
+      childRunId: 'existing-child-id',
+      createdAt: new Date().toISOString(),
+      cancelledAt: null,
+    };
+
+    const parentState = makeState('parent-id', {
+      substepStates: [
+        {
+          id: '1',
+          status: 'pending',
+          delegation,
+        },
+      ],
+    });
+
+    const mockScanner = {
+      findByToken: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
+        parentState,
+        stepId: '1',
+        substepId: '1',
+        delegation,
+      }),
+    };
+    jest
+      .mocked(core.DelegationScanService)
+      .mockImplementation(() => mockScanner as unknown as jest.MockedObject<DelegationScanService>);
+
+    const mockManager = {
+      load: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(parentState),
+    };
+    jest
+      .mocked(core.RunbookStateManager)
+      .mockImplementation(() => mockManager as unknown as jest.MockedObject<RunbookStateManager>);
+
+    jest.mocked(core.DelegationLock).mockImplementation(
+      () =>
+        ({
+          acquire: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
+          release: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
+        }) as unknown as jest.MockedObject<DelegationLock>,
+    );
+
+    const claimSpy = mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
+      status: 'conflict',
+      existing: {
+        kind: 'agent-owned-runbook',
+        ownerKey: 'agent:agent-a:session:session-a',
+        agent_id: 'agent-a',
+        session_id: 'session-a',
+        childRunId: 'existing-child-id',
+        tokenHash: MOCK_TOKEN_HASH,
+        parentRunId: 'parent-id',
+        parentStepId: '1',
+        claimedAt: '2026-04-28T00:00:00.000Z',
+        updatedAt: '2026-04-28T00:00:00.000Z',
+      },
+    });
+    const mockSessionService = {
+      claimRunbookForOwner: claimSpy,
+    } as unknown as SessionService;
+
+    const ctx = {
+      output: {} as unknown as OutputEmitter,
+      manager: mockManager as unknown as RunbookStateManager,
+      actorService: {} as unknown as RunbookActorService,
+      sessionService: mockSessionService,
+      lifecycleService: {} as unknown as ExecutionLifecycleService,
+      cwd: '/test',
+    } satisfies RunPipelineContext;
+
+    const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
+    const intruder = {
+      kind: 'agent-session' as const,
+      agent_id: 'agent-b',
+      session_id: 'session-b',
+    };
+    // cspell:disable-next-line
+    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {}, intruder);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('RD-819');
+    }
+  });
+
+  it('rejects orphan adoption when the orphan is owned by a different agent', async () => {
+    const tokenHash = MOCK_TOKEN_HASH;
+    const delegation = {
+      tokenHash,
+      childRunbookPath: 'child.md',
+      contextSnapshot: { vars: {}, ancestors: [] },
+      childRunId: null,
+      createdAt: new Date().toISOString(),
+      cancelledAt: null,
+    };
+
+    const parentState = makeState('parent-id', {
+      substepStates: [
+        {
+          id: '1',
+          status: 'pending',
+          delegation,
+        },
+      ],
+    });
+
+    const orphanState = makeState('orphan-id', {
+      parentLinkage: {
+        kind: 'delegation',
+        parentRunId: 'parent-id',
+        parentStepId: '1',
+        tokenHash,
+      },
+    });
+
+    const mockScanner = {
+      findByToken: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
+        parentState,
+        stepId: '1',
+        substepId: '1',
+        delegation,
+      }),
+      findOrphanedChild:
+        mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(orphanState),
+    };
+    jest
+      .mocked(core.DelegationScanService)
+      .mockImplementation(() => mockScanner as unknown as jest.MockedObject<DelegationScanService>);
+
+    const mockManager = {
+      load: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(parentState),
+      update: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
+    };
+    jest
+      .mocked(core.RunbookStateManager)
+      .mockImplementation(() => mockManager as unknown as jest.MockedObject<RunbookStateManager>);
+
+    jest.mocked(core.DelegationLock).mockImplementation(
+      () =>
+        ({
+          acquire: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
+          release: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
+        }) as unknown as jest.MockedObject<DelegationLock>,
+    );
+
+    const claimSpy = mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
+      status: 'conflict',
+      existing: {
+        kind: 'agent-owned-runbook',
+        ownerKey: 'agent:agent-a:session:session-a',
+        agent_id: 'agent-a',
+        session_id: 'session-a',
+        childRunId: 'orphan-id',
+        tokenHash,
+        parentRunId: 'parent-id',
+        parentStepId: '1',
+        claimedAt: '2026-04-28T00:00:00.000Z',
+        updatedAt: '2026-04-28T00:00:00.000Z',
+      },
+    });
+    const mockSessionService = {
+      claimRunbookForOwner: claimSpy,
+    } as unknown as SessionService;
+
+    const ctx = {
+      output: {} as unknown as OutputEmitter,
+      manager: mockManager as unknown as RunbookStateManager,
+      actorService: {} as unknown as RunbookActorService,
+      sessionService: mockSessionService,
+      lifecycleService: {} as unknown as ExecutionLifecycleService,
+      cwd: '/test',
+    } satisfies RunPipelineContext;
+
+    const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
+    const intruder = {
+      kind: 'agent-session' as const,
+      agent_id: 'agent-b',
+      session_id: 'session-b',
+    };
+    // cspell:disable-next-line
+    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {}, intruder);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('RD-819');
+    }
   });
 
   it('launches new child when no orphan exists', async () => {

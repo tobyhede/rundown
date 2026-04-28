@@ -7,23 +7,17 @@ declare const agentOwnerKeyBrand: unique symbol;
 /** Stable key for a caller-owned runbook entry in SessionData. */
 export type AgentOwnerKey = string & { readonly [agentOwnerKeyBrand]: true };
 
-/** Claude agent identifier carried into CLI commands as `RD_AGENT_ID`. */
-export type AgentId = string;
-
-/** Claude session identifier carried into CLI commands as `RD_SESSION_ID`. */
-export type AgentSessionId = string;
-
 /** Caller identity with both agent and session identifiers. */
 export interface AgentSessionOwnerIdentity {
   readonly kind: 'agent-session';
-  readonly agent_id: AgentId;
-  readonly session_id: AgentSessionId;
+  readonly agent_id: string;
+  readonly session_id: string;
 }
 
 /** Caller identity with only agent identifier available. */
 export interface AgentOnlyOwnerIdentity {
   readonly kind: 'agent-only';
-  readonly agent_id: AgentId;
+  readonly agent_id: string;
 }
 
 /** Caller identity used to own delegated child runs. */
@@ -33,8 +27,8 @@ export type AgentOwnerIdentity = AgentSessionOwnerIdentity | AgentOnlyOwnerIdent
 export interface AgentRunbookOwnership {
   readonly kind: 'agent-owned-runbook';
   readonly ownerKey: AgentOwnerKey;
-  readonly agent_id: AgentId;
-  readonly session_id?: AgentSessionId;
+  readonly agent_id: string;
+  readonly session_id?: string;
   readonly childRunId: RunbookState['id'];
   readonly tokenHash: DelegationTokenHash;
   readonly parentRunId: ParentLinkageBase['parentRunId'];
@@ -46,7 +40,13 @@ export interface AgentRunbookOwnership {
   readonly updatedAt: string;
 }
 
-/** Result of resolving the runbook owned by a caller. */
+/**
+ * Result of resolving the runbook owned by a caller.
+ *
+ * Service-level ownership state. CLI command dispatch wraps this in
+ * `ActiveRunbookResolution` (in `packages/cli/src/helpers/active-runbook-resolver.ts`)
+ * to add anonymous default-stack and invalid-identity variants.
+ */
 export type OwnedRunbookResolution =
   | {
       readonly status: 'owned';

@@ -344,6 +344,11 @@ export const AgentRunbookOwnershipSchema: z.ZodType<AgentRunbookOwnership, z.Zod
       claimedAt: z.string().min(1),
       updatedAt: z.string().min(1),
     })
+    // Record-level invariant: ownerKey must be derivable from agent_id/session_id.
+    // SessionDataSchema below adds a separate map-level invariant (map key matches
+    // ownership.ownerKey). Both are needed — record-level catches a tampered
+    // record that happens to be filed under its own (forged) key; map-level
+    // catches a mis-filed record whose internals are otherwise consistent.
     .superRefine((ownership, ctx) => {
       const expectedOwnerKey = buildAgentOwnerKey(
         ownership.session_id === undefined

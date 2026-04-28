@@ -82,7 +82,8 @@ export function registerClaimCommand(program: Command): void {
             if (caller.kind === 'invalid') {
               output.error(caller.message, 'INVALID_CALLER_IDENTITY');
               output.flush();
-              process.exit(1);
+              process.exitCode = 1;
+              return;
             }
 
             const result = await claimAndLaunch(

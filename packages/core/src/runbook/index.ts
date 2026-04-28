@@ -21,8 +21,6 @@ export {
   type AgentOwnerIdentity,
   type AgentSessionOwnerIdentity,
   type AgentOnlyOwnerIdentity,
-  type AgentId,
-  type AgentSessionId,
   type AgentOwnerKey,
   type AgentRunbookOwnership,
   type OwnedRunbookResolution,

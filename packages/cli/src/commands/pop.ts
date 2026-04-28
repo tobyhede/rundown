@@ -64,7 +64,7 @@ export function registerPopCommand(program: Command): void {
               const linkage = stashedState?.parentLinkage;
               if (stashedOwnership && linkage?.kind !== 'delegation') {
                 output.error(
-                  `Owned runbook ${stashedId} cannot be restored because delegation linkage is unavailable.`,
+                  `Owned runbook ${stashedId} cannot be restored: stash has linkage kind '${linkage?.kind ?? 'none'}', expected 'delegation'.`,
                   'OWNED_RUNBOOK_UNAVAILABLE',
                 );
                 output.flush();

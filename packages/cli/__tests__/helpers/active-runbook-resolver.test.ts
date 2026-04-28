@@ -44,7 +44,7 @@ describe('resolveActiveRunbook', () => {
     }
   });
 
-  it('falls back to default only when identified caller is unowned', async () => {
+  it('returns none for identified callers with no owned runbook (no default-stack fall-through)', async () => {
     const sessionService = {
       getActiveForOwner: async () => ({ status: 'unowned' as const, identity }),
       getActive: async () => parent,
@@ -54,6 +54,19 @@ describe('resolveActiveRunbook', () => {
       kind: 'identified',
       identity,
     });
+
+    expect(result).toEqual({ kind: 'none' });
+  });
+
+  it('returns the default stack runbook for anonymous callers', async () => {
+    const sessionService = {
+      getActiveForOwner: async () => {
+        throw new Error('should not be called for anonymous callers');
+      },
+      getActive: async () => parent,
+    } as unknown as SessionService;
+
+    const result = await resolveActiveRunbook(sessionService, { kind: 'anonymous' });
 
     expect(result).toEqual({ kind: 'default', state: parent });
   });
