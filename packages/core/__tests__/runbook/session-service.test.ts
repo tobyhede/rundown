@@ -325,6 +325,45 @@ describe('SessionService', () => {
     });
   });
 
+  describe('unstashForOwner ownership guard', () => {
+    it('throws SessionOwnershipMismatchError when caller is not the stash owner', async () => {
+      const parent = await manager.create('parent.md', mockRunbook, { runbookPath: 'parent.md' });
+      const child = await manager.create('child.md', mockRunbook, { runbookPath: 'child.md' });
+      await sessionService.pushRunbook(parent.id);
+
+      const agentA = {
+        kind: 'agent-session' as const,
+        agent_id: 'agent-a',
+        session_id: 'session-a',
+      };
+      const linkage = {
+        kind: 'delegation' as const,
+        parentRunId: parent.id,
+        parentStepId: '1',
+        tokenHash: assertDelegationTokenHash(`sha256:${'f'.repeat(64)}`),
+      };
+      await sessionService.claimRunbookForOwner(agentA, child.id, linkage);
+      await sessionService.stashRunbook(child.id);
+
+      const intruder = {
+        kind: 'agent-session' as const,
+        agent_id: 'agent-b',
+        session_id: 'session-b',
+      };
+      const { SessionOwnershipMismatchError } = await import(
+        '../../src/runbook/agent-ownership.js'
+      );
+      await expect(sessionService.unstashForOwner(intruder, linkage)).rejects.toBeInstanceOf(
+        SessionOwnershipMismatchError,
+      );
+
+      // Stash must remain intact for the rightful owner to recover.
+      expect(await sessionService.getStashedRunbookId()).toBe(child.id);
+      const ownership = await sessionService.getStashedRunbookOwnership();
+      expect(ownership?.agent_id).toBe('agent-a');
+    });
+  });
+
   describe('concurrent session.json mutations', () => {
     const linkageFor = (parentId: string, hashFill: string) => ({
       kind: 'delegation' as const,

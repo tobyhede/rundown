@@ -17,6 +17,7 @@ export {
   buildAgentOwnerKey,
   createAgentRunbookOwnership,
   isAgentRunbookOwnership,
+  SessionOwnershipMismatchError,
   type AgentOwnerIdentity,
   type AgentSessionOwnerIdentity,
   type AgentOnlyOwnerIdentity,

@@ -1,4 +1,3 @@
-import type { z } from 'zod';
 import { isDelegationTokenHash, type DelegationTokenHash } from './delegation-token.js';
 import type { FrameKey } from './targeting.js';
 import type { DelegationLinkage, ParentLinkageBase, RunbookState } from './types.js';
@@ -66,6 +65,18 @@ export type OwnedRunbookResolution =
       readonly reason: 'missing-state' | 'not-running' | 'agent-mismatch';
     };
 
+/**
+ * Result of claiming ownership of a delegated child runbook.
+ *
+ * `claimed` is returned when the entry was written (new claim, or idempotent re-claim
+ * by the same identity). `conflict` is returned when an existing ownership entry
+ * already references the same `childRunId` under a different owner key — a delegation
+ * may be owned by at most one caller.
+ */
+export type ClaimRunbookForOwnerResult =
+  | { readonly status: 'claimed'; readonly ownership: AgentRunbookOwnership }
+  | { readonly status: 'conflict'; readonly existing: AgentRunbookOwnership };
+
 /** Result of releasing a runbook from session targeting structures. */
 export type ReleaseRunbookResult =
   | {
@@ -79,6 +90,34 @@ export type ReleaseRunbookResult =
       readonly status: 'not-found';
       readonly runbookId: RunbookState['id'];
     };
+
+/**
+ * Thrown when a SessionService mutation is attempted by a caller whose
+ * identity does not match the ownership record on disk.
+ *
+ * Used as defense in depth — CLI commands SHOULD pre-check ownership
+ * before invoking the service, but the service must also fail loud if
+ * the invariant is violated by a future caller that forgets the check.
+ */
+export class SessionOwnershipMismatchError extends Error {
+  /**
+   * Construct a typed mismatch error referencing the contended owner key.
+   *
+   * @param expectedOwnerKey - The owner key recorded on disk (the rightful owner)
+   * @param actualOwnerKey   - The owner key derived from the calling identity
+   * @param context          - Short description of the operation that was attempted
+   */
+  constructor(
+    readonly expectedOwnerKey: AgentOwnerKey,
+    readonly actualOwnerKey: AgentOwnerKey,
+    context: string,
+  ) {
+    super(
+      `${context}: caller '${actualOwnerKey}' does not own this runbook (owned by '${expectedOwnerKey}').`,
+    );
+    this.name = 'SessionOwnershipMismatchError';
+  }
+}
 
 function encodeKeyPart(value: string): string {
   return encodeURIComponent(value);
@@ -194,6 +233,3 @@ export function isAgentRunbookOwnership(value: unknown): value is AgentRunbookOw
 
   return record.ownerKey === buildAgentOwnerKey(identity);
 }
-
-/** Inferred schema type hook used by schemas.ts without changing runtime behavior. */
-export type AgentRunbookOwnershipSchemaType = z.ZodType<AgentRunbookOwnership>;

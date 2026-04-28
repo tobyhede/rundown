@@ -15,6 +15,7 @@ import { SessionLock } from './session-lock.js';
 import {
   buildAgentOwnerKey,
   createAgentRunbookOwnership,
+  SessionOwnershipMismatchError,
   type AgentOwnerIdentity,
   type AgentOwnerKey,
   type AgentRunbookOwnership,
@@ -294,6 +295,22 @@ export class SessionService {
       const session = await this.manager.loadSession();
       const stashedId = session.stashedRunbookId;
       if (!stashedId) return null;
+
+      // Defense in depth: if the stash carries an ownership record, only the
+      // recorded owner may restore it. CLI commands pre-check this — but a
+      // future caller that forgets must fail loudly, not silently transfer
+      // ownership across agents.
+      const stashedOwnership = session.stashedRunbookOwnership;
+      if (stashedOwnership) {
+        const callerOwnerKey = buildAgentOwnerKey(identity);
+        if (stashedOwnership.ownerKey !== callerOwnerKey) {
+          throw new SessionOwnershipMismatchError(
+            stashedOwnership.ownerKey,
+            callerOwnerKey,
+            'unstashForOwner',
+          );
+        }
+      }
 
       const state = await this.manager.load(stashedId);
       if (!state) {
