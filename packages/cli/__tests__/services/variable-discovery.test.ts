@@ -815,6 +815,18 @@ describe('resolveVariables', () => {
       expect(result.providedKeys.has('data')).toBe(false);
     });
 
+    it('does not count a rejected external value when a builtin already exists', async () => {
+      const nested = path.join(tmpDir, 'project');
+      await fs.mkdir(nested, { recursive: true });
+
+      const result = await resolveVariables({ input: ['Date=file:../escape.txt'] }, nested);
+      expect(result.vars).toHaveProperty('Date');
+      expect(result.providedKeys.has('Date')).toBe(false);
+      expect(result.warnings).toEqual(
+        expect.arrayContaining([expect.stringContaining('path escapes project directory')]),
+      );
+    });
+
     it('includes accepted file source in providedKeys', async () => {
       const file = path.join(tmpDir, 'data.json');
       await fs.writeFile(file, '["ok"]');

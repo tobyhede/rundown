@@ -21,6 +21,18 @@ describe('validateFrontmatterVars', () => {
     expect(result[0].message).toContain('"Step"');
     expect(result[1].message).toContain('"Context"');
   });
+
+  it('returns error for reserved runtime names case-insensitively', () => {
+    const result = validateFrontmatterVars({ sTeP: '1', cOnTeXt: 'ctx' });
+    expect(result).toHaveLength(2);
+    expect(result.every((diagnostic) => diagnostic.severity === 'error')).toBe(true);
+    expect(result.map((diagnostic) => diagnostic.message)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('"sTeP"'),
+        expect.stringContaining('"cOnTeXt"'),
+      ]),
+    );
+  });
 });
 
 describe('validateRequiredVars', () => {
@@ -43,14 +55,17 @@ describe('validateRequiredVars', () => {
 
   it('returns error for reserved names and vars overlap', () => {
     const result = validateRequiredVars(['Step', 'PlanPath'], { PlanPath: 'value' });
-    expect(result).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ message: expect.stringContaining('reserved runtime variable') }),
-        expect.objectContaining({
-          message: expect.stringContaining('cannot be both in "required" and "vars"'),
-        }),
-      ]),
-    );
+    expect(result).toHaveLength(2);
+    expect(result).toEqual([
+      expect.objectContaining({
+        severity: 'error',
+        message: expect.stringContaining('reserved runtime variable'),
+      }),
+      expect.objectContaining({
+        severity: 'error',
+        message: expect.stringContaining('cannot be both in "required" and "vars"'),
+      }),
+    ]);
   });
 });
 

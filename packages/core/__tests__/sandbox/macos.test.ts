@@ -80,6 +80,64 @@ describe('SeatbeltSandbox', () => {
       expect(availability.supportsDenyPaths).toBe(true);
     });
 
+    it('returns unavailable when the probe profile cannot be written', async () => {
+      Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+      (existsSync as jest.Mock).mockReturnValue(true);
+      (writeFileSync as jest.Mock).mockImplementation(() => {
+        throw new Error('disk full');
+      });
+
+      const sandbox = new SeatbeltSandbox();
+      const availability = await sandbox.getAvailability();
+
+      expect(availability).toEqual(
+        expect.objectContaining({
+          available: false,
+          mechanism: 'none',
+          platform: 'darwin',
+          supportsReadRestrictions: false,
+          supportsWriteRestrictions: false,
+          supportsDenyPaths: false,
+          reason: expect.stringContaining('disk full'),
+        }),
+      );
+      expect(spawnSync).not.toHaveBeenCalled();
+    });
+
+    it('returns unavailable when the probe spawn fails and uses a timeout', async () => {
+      Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+      (existsSync as jest.Mock).mockReturnValue(true);
+      (writeFileSync as jest.Mock).mockImplementation(() => {
+        /* noop */
+      });
+      (spawnSync as jest.Mock).mockImplementation(() => {
+        throw new Error('probe timed out');
+      });
+
+      const sandbox = new SeatbeltSandbox();
+      const availability = await sandbox.getAvailability();
+
+      expect(spawnSync).toHaveBeenCalledWith(
+        '/usr/bin/sandbox-exec',
+        ['-f', expect.stringContaining('.sb'), '/bin/true'],
+        expect.objectContaining({
+          stdio: 'ignore',
+          timeout: 5000,
+        }),
+      );
+      expect(availability).toEqual(
+        expect.objectContaining({
+          available: false,
+          mechanism: 'none',
+          platform: 'darwin',
+          supportsReadRestrictions: false,
+          supportsWriteRestrictions: false,
+          supportsDenyPaths: false,
+          reason: expect.stringContaining('probe timed out'),
+        }),
+      );
+    });
+
     it('caches availability result', async () => {
       Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
       (existsSync as jest.Mock).mockReturnValue(true);

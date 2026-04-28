@@ -780,8 +780,8 @@ export interface StepConfig {
 export interface CreateRunbookOptions {
   /** Runbook name (appears in frontmatter) */
   name?: string;
-  /** Template variable declarations (appears in frontmatter inputs:) */
-  vars?: Record<string, string | number | boolean>;
+  /** Declared input names (appears in frontmatter inputs:) */
+  vars?: readonly string[] | Record<string, unknown>;
   /** Runbook steps */
   steps: StepConfig[];
   /** Custom title (defaults to 'Test') */
@@ -797,23 +797,24 @@ export interface CreateRunbookOptions {
  * @example
  * ```typescript
  * const content = createRunbook({
- *   vars: { message: 'hello' },
+ *   vars: ['message'],
  *   steps: [{ title: 'Echo', pass: 'COMPLETE', command: 'rd echo {{message}}' }]
  * });
  * ```
  */
 export function createRunbook(options: CreateRunbookOptions): string {
   const { name, vars, steps, title = 'Test' } = options;
+  const declaredInputs = Array.isArray(vars) ? vars : Object.keys(vars ?? {});
 
   const lines: string[] = [];
 
   // Frontmatter (only if name or vars present)
-  if (name || vars) {
+  if (name || declaredInputs.length > 0) {
     lines.push('---');
     if (name) lines.push(`name: ${name}`);
-    if (vars && Object.keys(vars).length > 0) {
+    if (declaredInputs.length > 0) {
       lines.push('inputs:');
-      for (const [key] of Object.entries(vars)) {
+      for (const key of declaredInputs) {
         lines.push(`  - ${key}`);
       }
     }

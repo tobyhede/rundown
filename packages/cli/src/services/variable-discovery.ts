@@ -550,7 +550,7 @@ async function routeVariable(
   projectRoot: string,
   security?: VariableSecurityContext,
   warnings?: string[],
-): Promise<void> {
+): Promise<boolean> {
   // String with file: prefix → load into vars based on extension
   if (typeof value === 'string' && value.startsWith('file:')) {
     const rawPath = value.slice(5);
@@ -568,7 +568,7 @@ async function routeVariable(
     const rel = path.relative(projectRoot, canonical);
     if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
       warnings?.push(`Ignoring file source "${key}" — path escapes project directory`);
-      return;
+      return false;
     }
 
     await enforceFileSourcePolicy(key, canonical, security);
@@ -586,7 +586,7 @@ async function routeVariable(
       );
     }
 
-    return;
+    return true;
   }
 
   // Array → vars as JsonArray (type-preserving, not comma-joined)
@@ -599,7 +599,7 @@ async function routeVariable(
       );
       vars[key] = value.map(String) as unknown as JsonArray;
     }
-    return;
+    return true;
   }
 
   // Non-array object → vars only as JsonObject (for dotted template access)
@@ -611,7 +611,7 @@ async function routeVariable(
       warnings?.push(`Variable "${key}" contains non-JSON values; converting to string`);
       vars[key] = JSON.stringify(value);
     }
-    return;
+    return true;
   }
 
   // Number → vars only (preserved, not stringified)
@@ -625,11 +625,12 @@ async function routeVariable(
     } else {
       vars[key] = value;
     }
-    return;
+    return true;
   }
 
   // Other scalar (string, boolean, null) → vars only (stringified)
   vars[key] = String(value);
+  return true;
 }
 
 /**
@@ -868,11 +869,11 @@ export async function resolveVariables(
         warnings.push(`Ignoring variable with invalid key: ${key}`);
         continue;
       }
-      await routeVariable(key, value, vars, cwd, projectRoot, security, warnings);
+      const accepted = await routeVariable(key, value, vars, cwd, projectRoot, security, warnings);
       // Track keys from external provider layers that were actually accepted by routing.
       // routeVariable() may silently reject values (e.g., path traversal in file: sources)
       // without writing to vars — only count keys that made it through.
-      if (EXTERNAL_PROVIDER_INDICES.has(layerIndex) && key in vars) {
+      if (EXTERNAL_PROVIDER_INDICES.has(layerIndex) && accepted) {
         providedKeys.add(key);
       }
     }

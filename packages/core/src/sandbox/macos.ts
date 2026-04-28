@@ -312,8 +312,9 @@ export class SeatbeltSandbox implements SandboxImplementation {
       writeFileSync(profilePath, '(version 1)\n(allow default)\n', { mode: 0o600 });
       const probe = spawnSync('/usr/bin/sandbox-exec', ['-f', profilePath, '/bin/true'], {
         stdio: 'ignore',
+        timeout: 5000,
       });
-      const available = probe.status === 0 && probe.error == null;
+      const available: boolean = probe.status === 0 && probe.error == null;
       this.availabilityCache = available
         ? {
             available: true,
@@ -332,6 +333,18 @@ export class SeatbeltSandbox implements SandboxImplementation {
             supportsWriteRestrictions: false,
             supportsDenyPaths: false,
           };
+      return Promise.resolve(this.availabilityCache);
+    } catch (error: unknown) {
+      const reason = Error.isError(error) ? error.message : String(error);
+      this.availabilityCache = {
+        available: false,
+        mechanism: 'none',
+        reason: `sandbox-exec probe failed: ${reason}`,
+        platform: process.platform,
+        supportsReadRestrictions: false,
+        supportsWriteRestrictions: false,
+        supportsDenyPaths: false,
+      };
       return Promise.resolve(this.availabilityCache);
     } finally {
       try {
