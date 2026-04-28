@@ -48,15 +48,16 @@ async function resolveActiveStateScope(): Promise<ActiveStateScope> {
   const vars = mergeEffectiveVars(state);
   const workPath = vars.WorkPath;
   const contextId = vars.ContextId;
+  const activeScope: ActiveStateScope = {};
 
-  return {
-    ...(typeof workPath === 'string' || typeof workPath === 'number'
-      ? { dir: String(workPath) }
-      : {}),
-    ...(typeof contextId === 'string' || typeof contextId === 'number'
-      ? { ctx: String(contextId) }
-      : {}),
-  };
+  if (typeof workPath === 'string' || typeof workPath === 'number') {
+    activeScope.dir = String(workPath);
+  }
+  if (typeof contextId === 'string' || typeof contextId === 'number') {
+    activeScope.ctx = String(contextId);
+  }
+
+  return activeScope;
 }
 
 /**
@@ -71,8 +72,7 @@ async function resolveScope(): Promise<ResolvedScope | null> {
   const opts = program.opts<{ dir?: string; ctx?: string }>();
   const flagOrEnvDir = opts.dir ?? process.env.RD_WORK_PATH;
   const flagOrEnvCtx = opts.ctx ?? process.env.RD_CONTEXT_ID;
-  const activeScope =
-    flagOrEnvDir === undefined || flagOrEnvCtx === undefined ? await resolveActiveStateScope() : {};
+  const activeScope = flagOrEnvDir === undefined ? await resolveActiveStateScope() : {};
   const dir = flagOrEnvDir ?? activeScope.dir;
   const ctx = flagOrEnvCtx ?? activeScope.ctx;
   if (!dir) {

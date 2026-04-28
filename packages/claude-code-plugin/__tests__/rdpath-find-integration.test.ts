@@ -90,6 +90,19 @@ Active step.
     await sessionService.pushRunbook(state.id);
   }
 
+  async function setupStaleActiveRunbook(cwd: string): Promise<void> {
+    const runsDir = path.join(cwd, '.rundown', 'runs');
+    await fs.mkdir(runsDir, { recursive: true });
+    await fs.writeFile(
+      path.join(cwd, '.rundown', 'session.json'),
+      JSON.stringify({ defaultStack: ['wf-stale-1'] }, null, 2),
+    );
+    await fs.writeFile(
+      path.join(runsDir, 'wf-stale-1.json'),
+      JSON.stringify({ schemaVersion: 1 }, null, 2),
+    );
+  }
+
   it('outputs one matching path per line', async () => {
     await fs.writeFile(path.join(testDir, '2026-03-17-pass1.md'), '');
     await fs.writeFile(path.join(testDir, '2026-03-17-pass2.md'), '');
@@ -238,6 +251,20 @@ Active step.
   });
 
   describe('active runbook state fallback', () => {
+    it('exits with the standard missing-dir error when no runbook is active', async () => {
+      const result = await runRdpath(
+        ['--file', 'plan.json'],
+        {
+          RD_WORK_PATH: undefined,
+          RD_CONTEXT_ID: undefined,
+        },
+        testDir,
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain('RD_WORK_PATH');
+    });
+
     it('uses active WorkPath and ContextId when flags and env vars are omitted', async () => {
       await setupActiveRunbook(testDir, {
         WorkPath: '.rundown/work',
@@ -329,27 +356,44 @@ Active step.
       expect(result.stdout.trim()).toBe(path.join(envDir, '.rd-env-ctx', 'env.json'));
     });
 
-    it('uses active ContextId when RD_WORK_PATH is set and RD_CONTEXT_ID is omitted', async () => {
+    it('uses active WorkPath when RD_CONTEXT_ID is set and RD_WORK_PATH is omitted', async () => {
       await setupActiveRunbook(testDir, {
         WorkPath: '.rundown/work',
         ContextId: 'state-ctx',
       });
-      const envDir = path.join(testDir, 'env-work');
-      const envCtxDir = path.join(envDir, '.rd-state-ctx');
+      const envCtxDir = path.join(testDir, '.rundown', 'work', '.rd-env-ctx');
       await fs.mkdir(envCtxDir, { recursive: true });
       await fs.writeFile(path.join(envCtxDir, 'env-context.json'), '');
 
       const result = await runRdpath(
         ['find', '*.json'],
         {
-          RD_WORK_PATH: envDir,
+          RD_WORK_PATH: undefined,
+          RD_CONTEXT_ID: 'env-ctx',
+        },
+        testDir,
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.trim()).toBe(
+        path.join('.rundown', 'work', '.rd-env-ctx', 'env-context.json'),
+      );
+    });
+
+    it('does not read stale active state when --dir is supplied', async () => {
+      await setupStaleActiveRunbook(testDir);
+
+      const result = await runRdpath(
+        ['--dir', '.work'],
+        {
+          RD_WORK_PATH: undefined,
           RD_CONTEXT_ID: undefined,
         },
         testDir,
       );
 
       expect(result.exitCode).toBe(0);
-      expect(result.stdout.trim()).toBe(path.join(envDir, '.rd-state-ctx', 'env-context.json'));
+      expect(result.stdout.trim()).toBe('.work');
     });
   });
 });
