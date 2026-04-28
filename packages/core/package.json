@@ -9,6 +9,10 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./session-reader": {
+      "import": "./dist/runbook/session-reader.js",
+      "types": "./dist/runbook/session-reader.d.ts"
     }
   },
   "files": [

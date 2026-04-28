@@ -9,7 +9,7 @@
  */
 
 import { Command } from 'commander';
-import { RunbookStateManager, SessionService, mergeEffectiveVars } from '@rundown-org/core';
+import { readActiveRunScope } from '@rundown-org/core/session-reader';
 import { assemblePath, findFiles } from './rdpath-core.js';
 import { getErrorMessage } from './shared/errors.js';
 
@@ -34,27 +34,20 @@ interface ActiveStateScope {
 /**
  * Resolve WorkPath / ContextId from the active runbook state.
  *
- * This mirrors `rd status` by going through the session service and state
- * manager rather than parsing persisted state files directly.
+ * This goes through the core session-reader helper rather than parsing
+ * persisted state files directly.
  *
  * @returns Active-state scope values, or an empty object when no runbook is active.
  */
 async function resolveActiveStateScope(): Promise<ActiveStateScope> {
-  const manager = new RunbookStateManager(process.cwd());
-  const sessionService = new SessionService(manager);
-  const state = await sessionService.getActive();
-  if (!state) return {};
-
-  const vars = mergeEffectiveVars(state);
-  const workPath = vars.WorkPath;
-  const contextId = vars.ContextId;
+  const { workPath, contextId } = await readActiveRunScope(process.cwd());
   const activeScope: ActiveStateScope = {};
 
-  if (typeof workPath === 'string' || typeof workPath === 'number') {
-    activeScope.dir = String(workPath);
+  if (workPath !== undefined) {
+    activeScope.dir = workPath;
   }
-  if (typeof contextId === 'string' || typeof contextId === 'number') {
-    activeScope.ctx = String(contextId);
+  if (contextId !== undefined) {
+    activeScope.ctx = contextId;
   }
 
   return activeScope;
