@@ -9,6 +9,7 @@
  */
 
 import { Command } from 'commander';
+import { RunbookStateManager, SessionService, mergeEffectiveVars } from '@rundown-org/core';
 import { assemblePath, findFiles } from './rdpath-core.js';
 import { getErrorMessage } from './shared/errors.js';
 
@@ -25,18 +26,55 @@ interface ResolvedScope {
   ctx?: string;
 }
 
+interface ActiveStateScope {
+  dir?: string;
+  ctx?: string;
+}
+
+/**
+ * Resolve WorkPath / ContextId from the active runbook state.
+ *
+ * This mirrors `rd status` by going through the session service and state
+ * manager rather than parsing persisted state files directly.
+ *
+ * @returns Active-state scope values, or an empty object when no runbook is active.
+ */
+async function resolveActiveStateScope(): Promise<ActiveStateScope> {
+  const manager = new RunbookStateManager(process.cwd());
+  const sessionService = new SessionService(manager);
+  const state = await sessionService.getActive();
+  if (!state) return {};
+
+  const vars = mergeEffectiveVars(state);
+  const workPath = vars.WorkPath;
+  const contextId = vars.ContextId;
+
+  return {
+    ...(typeof workPath === 'string' || typeof workPath === 'number'
+      ? { dir: String(workPath) }
+      : {}),
+    ...(typeof contextId === 'string' || typeof contextId === 'number'
+      ? { ctx: String(contextId) }
+      : {}),
+  };
+}
+
 /**
  * Resolve `--dir` / `--ctx` from the program-level options, falling back to
- * `RD_WORK_PATH` / `RD_CONTEXT_ID`. Writes the canonical "--dir is required"
- * error to stderr and sets `process.exitCode = 1` when no base directory is
- * available.
+ * `RD_WORK_PATH` / `RD_CONTEXT_ID`, then the active runbook state. Writes the
+ * canonical "--dir is required" error to stderr and sets `process.exitCode = 1`
+ * when no base directory is available.
  *
  * @returns The resolved scope, or `null` when no `dir` could be determined.
  */
-function resolveScope(): ResolvedScope | null {
+async function resolveScope(): Promise<ResolvedScope | null> {
   const opts = program.opts<{ dir?: string; ctx?: string }>();
-  const dir = opts.dir ?? process.env.RD_WORK_PATH;
-  const ctx = opts.ctx ?? process.env.RD_CONTEXT_ID;
+  const flagOrEnvDir = opts.dir ?? process.env.RD_WORK_PATH;
+  const flagOrEnvCtx = opts.ctx ?? process.env.RD_CONTEXT_ID;
+  const activeScope =
+    flagOrEnvDir === undefined || flagOrEnvCtx === undefined ? await resolveActiveStateScope() : {};
+  const dir = flagOrEnvDir ?? activeScope.dir;
+  const ctx = flagOrEnvCtx ?? activeScope.ctx;
   if (!dir) {
     process.stderr.write('error: --dir is required (or set $RD_WORK_PATH)\n');
     process.exitCode = 1;
@@ -48,10 +86,10 @@ function resolveScope(): ResolvedScope | null {
 const pathCmd = new Command('path')
   .description('Assemble an artifact path')
   .option('--file <name>', 'Filename to date-prefix (YYYY-MM-DD)')
-  .action((options: { file?: string }) => {
-    const scope = resolveScope();
-    if (!scope) return;
+  .action(async (options: { file?: string }) => {
     try {
+      const scope = await resolveScope();
+      if (!scope) return;
       process.stdout.write(`${assemblePath({ ...scope, file: options.file })}\n`);
     } catch (error) {
       const message = getErrorMessage(error);
@@ -69,9 +107,9 @@ const findCmd = new Command('find')
   .argument('<pattern>', 'Glob pattern to match files against')
   .option('--allow-empty', 'Exit 0 when zero files match (default: exit 1 on empty)')
   .action(async (pattern: string, options: { allowEmpty?: boolean }) => {
-    const scope = resolveScope();
-    if (!scope) return;
     try {
+      const scope = await resolveScope();
+      if (!scope) return;
       const results = await findFiles(scope, pattern);
       for (const result of results) {
         process.stdout.write(`${result}\n`);
