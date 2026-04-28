@@ -59,13 +59,31 @@ async function resolveActiveStateScope(): Promise<ActiveStateScope> {
  * canonical "--dir is required" error to stderr and sets `process.exitCode = 1`
  * when no base directory is available.
  *
+ * Active-state lookup runs in two modes. When `dir` cannot be resolved from
+ * flag or env, the lookup is mandatory and any error from the state manager
+ * (stale schema, corrupt JSON) propagates so the user sees the real cause.
+ * When only `ctx` is missing, the lookup is best-effort: stale or unreadable
+ * state is silently skipped so the path resolves without a context segment
+ * rather than failing an otherwise valid invocation.
+ *
  * @returns The resolved scope, or `null` when no `dir` could be determined.
  */
 async function resolveScope(): Promise<ResolvedScope | null> {
   const opts = program.opts<{ dir?: string; ctx?: string }>();
   const flagOrEnvDir = opts.dir ?? process.env.RD_WORK_PATH;
   const flagOrEnvCtx = opts.ctx ?? process.env.RD_CONTEXT_ID;
-  const activeScope = flagOrEnvDir === undefined ? await resolveActiveStateScope() : {};
+
+  let activeScope: ActiveStateScope = {};
+  if (flagOrEnvDir === undefined) {
+    activeScope = await resolveActiveStateScope();
+  } else if (flagOrEnvCtx === undefined) {
+    try {
+      activeScope = await resolveActiveStateScope();
+    } catch {
+      activeScope = {};
+    }
+  }
+
   const dir = flagOrEnvDir ?? activeScope.dir;
   const ctx = flagOrEnvCtx ?? activeScope.ctx;
   if (!dir) {

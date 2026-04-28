@@ -395,5 +395,48 @@ Active step.
       expect(result.exitCode).toBe(0);
       expect(result.stdout.trim()).toBe('.work');
     });
+
+    it('uses active ContextId when RD_WORK_PATH is set and RD_CONTEXT_ID is omitted', async () => {
+      await setupActiveRunbook(testDir, {
+        WorkPath: '.rundown/work',
+        ContextId: 'state-ctx',
+      });
+      const envDir = path.join(testDir, 'env-work');
+      const ctxDir = path.join(envDir, '.rd-state-ctx');
+      await fs.mkdir(ctxDir, { recursive: true });
+      await fs.writeFile(path.join(ctxDir, 'state-context.json'), '');
+
+      const result = await runRdpath(
+        ['find', '*.json'],
+        {
+          RD_WORK_PATH: envDir,
+          RD_CONTEXT_ID: undefined,
+        },
+        testDir,
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.trim()).toBe(path.join(envDir, '.rd-state-ctx', 'state-context.json'));
+    });
+
+    it('soft-fails active-state lookup when RD_WORK_PATH is set with stale state', async () => {
+      // Asymmetric case: dir is known via RD_WORK_PATH; ctx lookup hits stale
+      // state. The lookup must not propagate the stale-state error — the path
+      // assembles without a context segment and exits 0.
+      await setupStaleActiveRunbook(testDir);
+
+      const result = await runRdpath(
+        ['--file', 'plan.json'],
+        {
+          RD_WORK_PATH: '.work',
+          RD_CONTEXT_ID: undefined,
+        },
+        testDir,
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.trim()).toMatch(/^\.work\/\d{4}-\d{2}-\d{2}-plan\.json$/);
+      expect(result.stderr).toBe('');
+    });
   });
 });

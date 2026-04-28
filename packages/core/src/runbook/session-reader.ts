@@ -21,7 +21,7 @@ export interface ActiveRunScope {
  *
  * @param cwd - Project root containing `.rundown/session.json`.
  * @returns Active run scope values, or an empty object when no runbook is active.
- * @throws If active runbook state exists but fails validation or cannot be read.
+ * @throws {Error} If active runbook state exists but fails validation or cannot be read.
  */
 export async function readActiveRunScope(cwd: string): Promise<ActiveRunScope> {
   const manager = new RunbookStateManager(cwd);

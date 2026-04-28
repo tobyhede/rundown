@@ -520,6 +520,60 @@ describe('runExecutionLoop', () => {
     expect(core.executeCommand).toHaveBeenCalled();
   });
 
+  it('injects RD_WORK_PATH, RD_CONTEXT_ID, and RD_RUN_ID together when all three are strings in stepVars', async () => {
+    // Downstream tools (e.g. rdpath) treat these env vars as a structurally
+    // paired triple. Asserting them here keeps a regression in the injection
+    // gates at execution.ts (`if (typeof workPath === 'string') ...`) from
+    // silently dropping one half of the pair without any test failing.
+    mockManager.load.mockResolvedValue({
+      id: runbookId,
+      step: '1',
+      status: 'running',
+      templateVars: {
+        WorkPath: '/tmp/work',
+        ContextId: 'ctx-abc',
+        RunId: 'run-123',
+      },
+    });
+
+    jest.mocked(core.executeCommand).mockResolvedValue({ success: true, exitCode: 0 });
+    jest.mocked(core.executeCommandWithEnv).mockResolvedValue({ success: true, exitCode: 0 });
+
+    mockActorService.sendAndSync.mockResolvedValue({
+      state: {
+        id: runbookId,
+        step: '1',
+        status: 'done',
+        variables: {},
+        templateVars: {
+          WorkPath: '/tmp/work',
+          ContextId: 'ctx-abc',
+          RunId: 'run-123',
+        },
+      },
+      snapshot: {
+        status: 'done',
+        value: 'COMPLETE',
+        context: { lastAction: { type: 'COMPLETE' } },
+      },
+    });
+
+    await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps([steps[0]]),
+      '/tmp',
+      false,
+      asEmitter(mockEmitter),
+    );
+
+    expect(core.executeCommandWithEnv).toHaveBeenCalledTimes(1);
+    const envArg = jest.mocked(core.executeCommandWithEnv).mock.calls[0][2];
+    expect(envArg.RD_WORK_PATH).toBe('/tmp/work');
+    expect(envArg.RD_CONTEXT_ID).toBe('ctx-abc');
+    expect(envArg.RD_RUN_ID).toBe('run-123');
+  });
+
   it('handles policy denial', async () => {
     mockManager.load.mockResolvedValue({ id: runbookId, step: '1', status: 'running' });
     jest.mocked(policyContext.isPolicyEnforced).mockReturnValue(true);
