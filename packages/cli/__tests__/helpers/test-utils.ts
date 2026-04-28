@@ -804,7 +804,7 @@ export interface CreateRunbookOptions {
  */
 export function createRunbook(options: CreateRunbookOptions): string {
   const { name, vars, steps, title = 'Test' } = options;
-  const declaredInputs = Array.isArray(vars) ? vars : Object.keys(vars ?? {});
+  const declaredInputs: string[] = Array.isArray(vars) ? [...vars] : Object.keys(vars ?? {});
 
   const lines: string[] = [];
 

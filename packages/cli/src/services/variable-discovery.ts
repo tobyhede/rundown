@@ -541,6 +541,7 @@ async function loadJsonFile(canonical: string): Promise<JsonObject | JsonArray> 
  * @param projectRoot - Canonical project root path (pre-resolved)
  * @param security - Optional security context for file source policy enforcement
  * @param warnings - Optional array to collect routing warnings
+ * @returns `true` if the value was routed into `vars`; `false` if skipped (e.g., file path escapes project root)
  */
 async function routeVariable(
   key: string,
