@@ -249,6 +249,59 @@ Do work.
       expect(child1?.lifecycle).toBe('stopped');
       expect(child2?.lifecycle).toBe('running');
     });
+
+    it('anonymous fail does not mutate an agent-owned child runbook', async () => {
+      // Regression: anonymous (no RD_AGENT_ID) callers must target only the
+      // default-stack runbook (the parent), never an agent-owned delegated child.
+      const childRunbook = [
+        '# Child',
+        '',
+        '## 1. Work',
+        '',
+        '- PASS COMPLETE',
+        '- FAIL STOP',
+        '',
+        'Do child work.',
+        '',
+      ].join('\n');
+      const parentRunbook = [
+        '# Parent',
+        '',
+        '## 1. Fan out',
+        '',
+        '- DELEGATE',
+        '- PASS ALL CONTINUE',
+        '- FAIL ANY STOP',
+        '',
+        '### 1.1 Only child',
+        '',
+        '- child-fail.runbook.md',
+        '',
+      ].join('\n');
+
+      await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
+      await writeFile(join(workspace.cwd, 'runbooks', 'child-fail.runbook.md'), childRunbook);
+      await writeFile(join(workspace.cwd, 'runbooks', 'parent-fail.runbook.md'), parentRunbook);
+      await writeFile(join(workspace.runbooksDir(), 'child-fail.runbook.md'), childRunbook);
+
+      const start = await runCliInProcess(
+        'run --prompted runbooks/parent-fail.runbook.md',
+        workspace,
+      );
+      const frontier = findFrontierInEvents(parseConcatenatedJson(start.stdout)) ?? [];
+      const token = frontier.find((entry) => entry.id === '1.1')?.token;
+      expect(token).toBeDefined();
+
+      const agent = { env: { RD_AGENT_ID: 'lone-fail-agent', RD_SESSION_ID: 'lone-fail-session' } };
+      const claim = await runCliInProcess(`claim ${token!}`, workspace, agent);
+      const childId = String(findActionOutput(claim.stdout)?.run_id);
+
+      // Anonymous fail — must not stop the agent-owned child.
+      await runCliInProcess('fail --text', workspace);
+
+      const child = await readRunbookState(workspace, childId);
+      expect(child?.lifecycle).toBe('running');
+    }, 30_000);
   });
 
   describe('JSON output', () => {

@@ -343,6 +343,66 @@ Do child work.
       expect(child1?.lifecycle).toBe('completed');
       expect(child2?.lifecycle).toBe('running');
     }, 30_000);
+
+    it('anonymous pass does not mutate an agent-owned child runbook', async () => {
+      // Regression: anonymous (no RD_AGENT_ID) callers must target only the
+      // default-stack runbook (the parent), never an agent-owned delegated child.
+      const childRunbook = [
+        '# Child',
+        '',
+        '## 1. Work',
+        '',
+        '- PASS COMPLETE',
+        '- FAIL STOP',
+        '',
+        'Do child work.',
+        '',
+      ].join('\n');
+      const parentRunbook = [
+        '# Parent',
+        '',
+        '## 1. Fan out',
+        '',
+        '- DELEGATE',
+        '- PASS ALL CONTINUE',
+        '- FAIL ANY STOP',
+        '',
+        '### 1.1 Only child',
+        '',
+        '- child.runbook.md',
+        '',
+        '## 2. Done',
+        '',
+        '- PASS COMPLETE',
+        '',
+        'Finished.',
+        '',
+      ].join('\n');
+
+      await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
+      await writeFile(join(workspace.cwd, 'runbooks', 'child.runbook.md'), childRunbook);
+      await writeFile(join(workspace.cwd, 'runbooks', 'parent.runbook.md'), parentRunbook);
+      await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childRunbook);
+
+      const start = await runCliInProcess('run --prompted runbooks/parent.runbook.md', workspace);
+      expect(start.exitCode).toBe(0);
+      const frontier = findFrontierInEvents(parseConcatenatedJson(start.stdout)) ?? [];
+      const token = frontier.find((entry) => entry.id === '1.1')?.token;
+      expect(token).toBeDefined();
+
+      const agent = { env: { RD_AGENT_ID: 'lone-agent', RD_SESSION_ID: 'lone-session' } };
+      const claim = await runCliInProcess(`claim ${token!}`, workspace, agent);
+      expect(claim.exitCode).toBe(0);
+      const childId = String(findActionOutput(claim.stdout)?.run_id);
+
+      // Anonymous pass — the resolver must not route to the agent-owned child.
+      // Whether it succeeds or errors on the parent is not the regression we're guarding;
+      // the invariant is that the agent's child remains untouched.
+      await runCliInProcess('pass --text', workspace);
+
+      const child = await readRunbookState(workspace, childId);
+      expect(child?.lifecycle).toBe('running');
+    }, 30_000);
   });
 
   describe('runbook completion with stack', () => {
