@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   createTestWorkspace,
@@ -19,6 +19,37 @@ describe('delegate command', () => {
   afterEach(async () => {
     await workspace.cleanup();
   });
+
+  async function mirrorActiveSubstepStatesIntoSnapshot(): Promise<void> {
+    const state = await getActiveState(workspace);
+    if (!state) throw new Error('Expected active state');
+    const snapshot =
+      state.snapshot && typeof state.snapshot === 'object'
+        ? (state.snapshot as Record<string, unknown>)
+        : {};
+    const context =
+      snapshot.context && typeof snapshot.context === 'object'
+        ? (snapshot.context as Record<string, unknown>)
+        : {};
+    const stateFile = join(workspace.statePath(), `${state.id}.json`);
+    await writeFile(
+      stateFile,
+      JSON.stringify(
+        {
+          ...state,
+          snapshot: {
+            ...snapshot,
+            context: {
+              ...context,
+              substepStates: state.substepStates,
+            },
+          },
+        },
+        null,
+        2,
+      ),
+    );
+  }
 
   /** Start a prompted runbook with substeps and create a child runbook. */
   async function setupDelegation(): Promise<void> {
@@ -139,6 +170,35 @@ describe('delegate command', () => {
       const delegations = statusOutput.delegations as Array<Record<string, unknown>>;
       expect(delegations[0]?.state).toBe('claimed');
       expect(delegations[0]?.token).toBeUndefined();
+    });
+
+    it('removes the raw recovery token from persisted snapshot after claim', async () => {
+      await setupDelegation();
+
+      const delegated = await runCliInProcess(
+        'delegate runbooks/child.runbook.md --step 1.1',
+        workspace,
+      );
+      const token = JSON.parse(delegated.stdout).token as string;
+      await mirrorActiveSubstepStatesIntoSnapshot();
+
+      const claimed = await runCliInProcess(`claim ${token}`, workspace, {
+        env: { RD_AGENT_ID: 'snapshot-agent', RD_SESSION_ID: 'snapshot-session' },
+      });
+      expect(claimed.exitCode).toBe(0);
+
+      const parent = await getActiveState(workspace);
+      if (!parent) throw new Error('Expected parent state');
+      const persisted = JSON.parse(
+        await readFile(join(workspace.statePath(), `${parent.id}.json`), 'utf-8'),
+      ) as {
+        snapshot?: {
+          context?: { substepStates?: Array<{ delegation?: Record<string, unknown> }> };
+        };
+      };
+      const snapshotDelegation = persisted.snapshot?.context?.substepStates?.[0]?.delegation;
+      expect(snapshotDelegation?.tokenHash).toEqual(expect.stringMatching(/^sha256:[a-f0-9]{64}$/));
+      expect(snapshotDelegation?.token).toBeUndefined();
     });
 
     it('JSON output has snake_case keys', async () => {

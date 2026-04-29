@@ -812,6 +812,7 @@ describe('TextRenderer', () => {
               runbook: 'review-tests.md',
               state: 'claimed',
               childRunId: 'run_abc',
+              // cspell:disable-next-line
               token: 'rdtk_ZYXWVUTSRQPONMLKJIHGFEDCBA765432',
             },
             { substep: '1.3', runbook: 'review-security.md', state: 'cancelled' },
@@ -830,6 +831,7 @@ describe('TextRenderer', () => {
       expect(output).toContain('rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ234567');
       expect(output).toContain('1.2');
       expect(output).toContain('(claimed: run_abc)');
+      // cspell:disable-next-line
       expect(output).not.toContain('rdtk_ZYXWVUTSRQPONMLKJIHGFEDCBA765432');
       expect(output).toContain('1.3');
       expect(output).toContain('(cancelled)');

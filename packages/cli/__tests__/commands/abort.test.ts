@@ -6,7 +6,7 @@ import {
   getActiveState,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 describe('abort command - unit tests', () => {
@@ -61,6 +61,37 @@ describe('abort command - unit tests', () => {
     return tokenMatch![1];
   }
 
+  async function mirrorActiveSubstepStatesIntoSnapshot(): Promise<void> {
+    const state = await getActiveState(workspace);
+    if (!state) throw new Error('Expected active state');
+    const snapshot =
+      state.snapshot && typeof state.snapshot === 'object'
+        ? (state.snapshot as Record<string, unknown>)
+        : {};
+    const context =
+      snapshot.context && typeof snapshot.context === 'object'
+        ? (snapshot.context as Record<string, unknown>)
+        : {};
+    const stateFile = join(workspace.statePath(), `${state.id}.json`);
+    await writeFile(
+      stateFile,
+      JSON.stringify(
+        {
+          ...state,
+          snapshot: {
+            ...snapshot,
+            context: {
+              ...context,
+              substepStates: state.substepStates,
+            },
+          },
+        },
+        null,
+        2,
+      ),
+    );
+  }
+
   describe('token validation', () => {
     it('rejects token with incorrect prefix', async () => {
       const result = await runCliInProcess('abort invalid_token_without_prefix --text', workspace);
@@ -98,6 +129,28 @@ describe('abort command - unit tests', () => {
       const result = await runCliInProcess(`abort ${token} --text`, workspace);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toMatch(/CANCELLED/i);
+    });
+
+    it('pending → cancelled removes raw recovery token from persisted snapshot', async () => {
+      const token = await setupDelegation();
+      await mirrorActiveSubstepStatesIntoSnapshot();
+
+      const result = await runCliInProcess(`abort ${token} --text`, workspace);
+      expect(result.exitCode).toBe(0);
+
+      const parent = await getActiveState(workspace);
+      if (!parent) throw new Error('Expected parent state');
+      const persisted = JSON.parse(
+        await readFile(join(workspace.statePath(), `${parent.id}.json`), 'utf-8'),
+      ) as {
+        snapshot?: {
+          context?: { substepStates?: Array<{ delegation?: Record<string, unknown> }> };
+        };
+      };
+      const snapshotDelegation = persisted.snapshot?.context?.substepStates?.[0]?.delegation;
+      expect(snapshotDelegation?.cancelledAt).toEqual(expect.any(String));
+      expect(snapshotDelegation?.tokenHash).toEqual(expect.stringMatching(/^sha256:[a-f0-9]{64}$/));
+      expect(snapshotDelegation?.token).toBeUndefined();
     });
 
     it('pending → cancelled is idempotent', async () => {
