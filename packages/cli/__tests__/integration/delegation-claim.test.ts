@@ -177,8 +177,8 @@ Task uses {{ myVar }}.
     const result = runCli('claim bad-token', workspace);
     expect(result.exitCode).toBe(1);
 
-    const output = JSON.parse(result.stderr);
-    expect(output.message).toBeDefined();
+    const output = JSON.parse(result.stdout);
+    expect(output.error).toBeDefined();
     expect(output.code).toBeDefined();
   });
 

@@ -165,11 +165,11 @@ export async function handleParentCompletion(
   const transitionConfig =
     result === 'pass' ? createPassTransitionConfig() : createFailTransitionConfig();
 
-  // Parent completion: never pop during drain.
+  // Parent completion: never release during drain.
   // Session is managed explicitly below and by runExecutionLoop.
   const delegationPolicy: TransitionOrchestrationPolicy = {
-    onComplete: { popRunbook: false },
-    onStopped: { popRunbook: false },
+    onComplete: { releaseRunbook: false },
+    onStopped: { releaseRunbook: false },
   };
 
   const parentActorService = new RunbookActorService(manager);
@@ -225,7 +225,7 @@ export async function handleParentCompletion(
 
   // 8. Check if parent reached terminal state — cascade if it also has parent linkage
   if (drained.status === 'stopped') {
-    await sessionService.popRunbook();
+    await sessionService.releaseRunbook(parentRunId);
     const freshParent = await manager.load(parentRunId);
     if (freshParent && extractParentLinkage(freshParent)) {
       await handleParentCompletion(freshParent, 'fail', cwd, output, depth + 1);
@@ -235,7 +235,7 @@ export async function handleParentCompletion(
   }
 
   if (drained.status === 'done') {
-    await sessionService.popRunbook();
+    await sessionService.releaseRunbook(parentRunId);
     const freshParent = await manager.load(parentRunId);
     if (freshParent && extractParentLinkage(freshParent)) {
       return handleParentCompletion(freshParent, 'pass', cwd, output, depth + 1);
@@ -253,6 +253,7 @@ export async function handleParentCompletion(
       cwd,
       !!drained.state.prompted,
       emitter,
+      { terminalReleaseMode: 'release-runbook' },
     );
     output.flush();
 

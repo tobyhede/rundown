@@ -1,5 +1,15 @@
 import * as path from 'node:path';
 import { z } from 'zod';
+import {
+  DELEGATION_TOKEN_HASH_PATTERN,
+  type delegationTokenHashBrand,
+  type DelegationTokenHash,
+} from './runbook/delegation-token.js';
+import {
+  buildAgentOwnerKey,
+  type AgentOwnerKey,
+  type AgentRunbookOwnership,
+} from './runbook/agent-ownership.js';
 import type { FrameKey } from './runbook/targeting.js';
 import { createJsonArrayStream } from './runbook/types.js';
 import type { JsonValue, TemplateVarValue } from './runbook/types.js';
@@ -12,6 +22,16 @@ import { getErrorMessage } from './errors.js';
 
 /** Zod schema that parses strings and brands them as {@link FrameKey}. */
 const FrameKeySchema = z.string().transform((v) => v as FrameKey);
+
+/** Zod schema that parses strings and brands them as {@link DelegationTokenHash}. */
+export const DelegationTokenHashSchema: z.ZodType<DelegationTokenHash, z.ZodTypeDef, string> = z
+  .string()
+  .regex(DELEGATION_TOKEN_HASH_PATTERN)
+  .transform((value) => value as DelegationTokenHash);
+
+// Keeps the unique-symbol token-hash brand nameable in declaration emit for
+// exported schemas inferred from DelegationTokenHashSchema. This is type-only.
+type _DelegationTokenHashBrandForDeclarationEmit = typeof delegationTokenHashBrand;
 
 /**
  * Zod schema for tool_input in Step tool calls
@@ -271,7 +291,7 @@ export const ContextSnapshotSchema = z
  * Zod schema for delegation metadata attached to a substep.
  */
 export const StepDelegationSchema = z.object({
-  tokenHash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  tokenHash: DelegationTokenHashSchema,
   childRunbookPath: z.string(),
   contextSnapshot: ContextSnapshotSchema,
   childRunId: z.string().nullable(),
@@ -302,6 +322,137 @@ const ResolvedCompletionSchema = z.object({
   targetEntry: z.number().int().nonnegative().max(MAX_FOR_BOUND),
   completedAt: z.string(),
 });
+
+/** Zod schema for a single agent-owned child runbook session record. */
+export const AgentRunbookOwnershipSchema: z.ZodType<AgentRunbookOwnership, z.ZodTypeDef, unknown> =
+  z
+    .object({
+      kind: z.literal('agent-owned-runbook'),
+      ownerKey: z
+        .string()
+        .min(1)
+        .transform((value) => value as AgentOwnerKey),
+      agent_id: z.string().min(1),
+      session_id: z.string().min(1).optional(),
+      childRunId: z.string().min(1),
+      tokenHash: DelegationTokenHashSchema,
+      parentRunId: z.string().min(1),
+      parentStepId: z.string().min(1),
+      parentStep: z.string().optional(),
+      parentFrameKey: FrameKeySchema.optional(),
+      parentEntry: z.number().int().positive().optional(),
+      claimedAt: z.string().min(1),
+      updatedAt: z.string().min(1),
+    })
+    // Record-level invariant: ownerKey must be derivable from agent_id/session_id.
+    // SessionDataSchema below adds a separate map-level invariant (map key matches
+    // ownership.ownerKey). Both are needed — record-level catches a tampered
+    // record that happens to be filed under its own (forged) key; map-level
+    // catches a mis-filed record whose internals are otherwise consistent.
+    .superRefine((ownership, ctx) => {
+      const expectedOwnerKey = buildAgentOwnerKey(
+        ownership.session_id === undefined
+          ? { kind: 'agent-only', agent_id: ownership.agent_id }
+          : {
+              kind: 'agent-session',
+              agent_id: ownership.agent_id,
+              session_id: ownership.session_id,
+            },
+      );
+
+      if (ownership.ownerKey !== expectedOwnerKey) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['ownerKey'],
+          message: 'ownerKey must match agent_id and session_id',
+        });
+      }
+    });
+
+/** Zod schema for `.rundown/session.json`. */
+export const SessionDataSchema = z
+  .object({
+    defaultStack: z.array(z.string()).default([]),
+    stashedRunbookId: z.string().optional(),
+    stashedRunbookOwnership: AgentRunbookOwnershipSchema.optional(),
+    ownedRunbooks: z.record(z.array(AgentRunbookOwnershipSchema)).default({}),
+  })
+  .superRefine((session, ctx) => {
+    if (
+      session.stashedRunbookOwnership !== undefined &&
+      session.stashedRunbookOwnership.childRunId !== session.stashedRunbookId
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['stashedRunbookOwnership', 'childRunId'],
+        message: 'stashedRunbookOwnership.childRunId must match stashedRunbookId',
+      });
+    }
+
+    const childRunIdLocations = new Map<
+      string,
+      { readonly location: string; readonly path: (string | number)[]; reported: boolean }[]
+    >();
+    const recordChildRunId = (
+      childRunId: string,
+      location: string,
+      path: (string | number)[],
+    ): void => {
+      const existingLocations = childRunIdLocations.get(childRunId);
+      if (existingLocations !== undefined) {
+        for (const existing of existingLocations) {
+          if (!existing.reported) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: existing.path,
+              message: `childRunId must be unique across session ownership entries; duplicate at ${existing.location}`,
+            });
+            existing.reported = true;
+          }
+        }
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path,
+          message: `childRunId must be unique across session ownership entries; duplicate at ${location}`,
+        });
+        existingLocations.push({ location, path, reported: true });
+        return;
+      }
+      childRunIdLocations.set(childRunId, [{ location, path, reported: false }]);
+    };
+
+    session.defaultStack.forEach((runbookId, index) => {
+      recordChildRunId(runbookId, `defaultStack.${String(index)}`, ['defaultStack', index]);
+    });
+
+    for (const [ownerKey, ownershipStack] of Object.entries(session.ownedRunbooks)) {
+      ownershipStack.forEach((ownership, index) => {
+        if (ownerKey !== ownership.ownerKey) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['ownedRunbooks', ownerKey, index, 'ownerKey'],
+            message: 'ownedRunbooks key must match ownership.ownerKey',
+          });
+        }
+
+        recordChildRunId(
+          ownership.childRunId,
+          `ownedRunbooks.${ownerKey}.${String(index)}.childRunId`,
+          ['ownedRunbooks', ownerKey, index, 'childRunId'],
+        );
+      });
+    }
+
+    if (session.stashedRunbookOwnership !== undefined) {
+      recordChildRunId(
+        session.stashedRunbookOwnership.childRunId,
+        'stashedRunbookOwnership.childRunId',
+        ['stashedRunbookOwnership', 'childRunId'],
+      );
+    } else if (session.stashedRunbookId !== undefined) {
+      recordChildRunId(session.stashedRunbookId, 'stashedRunbookId', ['stashedRunbookId']);
+    }
+  });
 
 /**
  * Zod schema for {@link ForSource} — source descriptor for the unified variable model.
@@ -383,7 +534,7 @@ export const RunbookStateSchema = z
           kind: z.literal('delegation'),
           parentRunId: z.string(),
           parentStepId: z.string(),
-          tokenHash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+          tokenHash: DelegationTokenHashSchema,
           parentStep: z.string().optional(),
           parentFrameKey: FrameKeySchema.optional(),
           parentEntry: z.number().int().positive().optional(),
@@ -612,7 +763,7 @@ function makeContextSnapshotSchema(projectRoot: string): z.ZodTypeAny {
  */
 function makeStepDelegationSchema(projectRoot: string): z.ZodTypeAny {
   return z.object({
-    tokenHash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+    tokenHash: DelegationTokenHashSchema,
     childRunbookPath: z.string(),
     contextSnapshot: makeContextSnapshotSchema(projectRoot),
     childRunId: z.string().nullable(),

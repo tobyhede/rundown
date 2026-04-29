@@ -1,5 +1,6 @@
 import { describe, it, expect } from '@jest/globals';
 import { abortDelegation } from '../../src/runbook/delegation-service.js';
+import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type { RunbookState, StepDelegation, SubstepState } from '../../src/runbook/types.js';
 import { brandStoredOutputsForTest, brandEffectiveVarsForTest } from '../helpers/effective-vars.js';
@@ -7,7 +8,7 @@ import { brandStoredOutputsForTest, brandEffectiveVarsForTest } from '../helpers
 /** Helper: create a delegation object. */
 function makeDelegation(overrides: Partial<StepDelegation> = {}): StepDelegation {
   return {
-    tokenHash: `sha256:${'a'.repeat(64)}`,
+    tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
     childRunbookPath: 'child.md',
     contextSnapshot: { vars: brandEffectiveVarsForTest({}), ancestors: [] },
     childRunId: null,

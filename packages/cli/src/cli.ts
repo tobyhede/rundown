@@ -25,6 +25,7 @@ import { registerAbortCommand } from './commands/abort.js';
 import { registerCollectCommand } from './commands/collect.js';
 import {
   PolicyConfigTrustRequiredError,
+  isError,
   setColorEnabled,
   setHelperRegistry as setCoreHelperRegistry,
 } from '@rundown-org/core';
@@ -219,7 +220,7 @@ if (isEntryPoint) {
   program.parseAsync().catch((error: unknown) => {
     if (error instanceof PolicyConfigTrustRequiredError) {
       console.error(error.message);
-    } else if (Error.isError(error)) {
+    } else if (isError(error)) {
       console.error(error.message);
     } else {
       console.error(String(error));

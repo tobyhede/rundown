@@ -197,7 +197,7 @@ describe('resolveForValue', () => {
         makeContext(2),
         brandInitialTemplateVarsForTest(vars),
       ).catch((e: unknown) => e);
-      expect(Error.isError(err)).toBe(true);
+      expect(err).toBeInstanceOf(Error);
       const message = (err as Error).message;
       expect(message).toContain(file);
       expect(message).toContain('line 2');

@@ -28,6 +28,12 @@ export function getRundownCliPath(): string {
   return require.resolve('@rundown-org/cli');
 }
 
+/** Options for executing a rundown CLI command. */
+export interface RundownExecOptions {
+  /** Environment variables to merge over the current process environment. */
+  readonly env?: NodeJS.ProcessEnv;
+}
+
 /**
  * Execute a rundown CLI command.
  *
@@ -35,12 +41,14 @@ export function getRundownCliPath(): string {
  *
  * @param args - Command arguments as array (e.g., ['pass', '--agent', 'abc123'])
  * @param cwd - Working directory for the command
+ * @param execOptions - Optional execution settings such as environment overrides
  * @returns Command output as string
  */
-export function rundown(args: string[], cwd: string): string {
+export function rundown(args: string[], cwd: string, execOptions: RundownExecOptions = {}): string {
   const cliPath = getRundownCliPath();
   const options: ExecFileSyncOptions = {
     cwd,
+    ...(execOptions.env ? { env: { ...process.env, ...execOptions.env } } : {}),
     stdio: 'pipe',
     encoding: 'utf-8',
   };

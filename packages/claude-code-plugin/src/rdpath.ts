@@ -11,7 +11,7 @@
 import { Command } from 'commander';
 import { readActiveRunScope } from '@rundown-org/core/session-reader';
 import { assemblePath, findFiles } from './rdpath-core.js';
-import { getErrorMessage, isNodeError } from './shared/errors.js';
+import { getErrorMessage, isError, isNodeError } from './shared/errors.js';
 
 const program = new Command();
 program
@@ -54,7 +54,7 @@ async function resolveActiveStateScope(): Promise<ActiveStateScope> {
 }
 
 function isRecoverableActiveStateLookupError(error: unknown): boolean {
-  if (!Error.isError(error)) return false;
+  if (!isError(error)) return false;
 
   if (error.name === 'StaleRunbookStateError' || error.name === 'SyntaxError') {
     return true;

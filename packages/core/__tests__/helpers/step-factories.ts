@@ -12,6 +12,7 @@ import type {
   Transitions,
 } from '@rundown-org/parser';
 import type { ContextSnapshot, StepDelegation } from '../../src/runbook/types.js';
+import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 import { brandEffectiveVarsForTest } from './effective-vars.js';
 
 /**
@@ -207,7 +208,7 @@ export function makeContextSnapshot(partial: Partial<ContextSnapshot> = {}): Con
  */
 export function makeStepDelegation(partial: Partial<StepDelegation> = {}): StepDelegation {
   return {
-    tokenHash: `sha256:${'a'.repeat(64)}`,
+    tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
     childRunbookPath: 'child.md',
     contextSnapshot: makeContextSnapshot(),
     childRunId: null,

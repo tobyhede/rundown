@@ -17,14 +17,18 @@ import type {
 } from '@rundown-org/parser';
 import type { OutputEmitter } from '../../src/services/output-emitter.js';
 import type { PreparedRunbook, RunPipelineContext } from '../../src/helpers/runbook-pipeline.js';
+import { assertVariant } from './assert-variant.js';
 import { mockErrorHelpers } from './mock-error-helpers.js';
 import { makeRunPipelineContext } from './run-pipeline-context-helpers.js';
 import { mockFn } from './typed-mocks.js';
+import { brandDelegationTokenHashForTest } from './brand-helpers.js';
 
 // Capture the real isJsonArrayStream before the mock is registered.
 // jest.unstable_mockModule does NOT hoist (unlike jest.mock), so this top-level
 // await executes first and always captures the real branded implementation.
 const { isJsonArrayStream: realIsJsonArrayStream } = await import('@rundown-org/core');
+
+const MOCK_TOKEN_HASH = brandDelegationTokenHashForTest(`sha256:${'a'.repeat(64)}`);
 
 // Mock @rundown-org/core
 jest.unstable_mockModule('@rundown-org/core', () => ({
@@ -86,7 +90,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     (...args: unknown[]) => Record<string, unknown>
   >().mockReturnValue({}),
   extractInheritedUserVars: jest.fn(),
-  hashDelegationToken: mockFn<(token: string) => string>().mockReturnValue('sha256:mock'),
+  hashDelegationToken: mockFn<(token: string) => string>().mockReturnValue(MOCK_TOKEN_HASH),
   truncateDelegationToken: jest.fn((token: string) => {
     const prefix = 'rdtk_';
     const body = token.startsWith(prefix) ? token.slice(prefix.length) : token;
@@ -99,6 +103,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     TOKEN_CANCELLED: { code: 'RD-809' },
     DELEGATION_LOCK_TIMEOUT: { code: 'RD-810' },
     LAUNCH_FAILED: { code: 'RD-816' },
+    DELEGATION_OWNER_CONFLICT: { code: 'RD-819' },
   },
   isJsonArray: jest.fn((v: unknown) => Array.isArray(v)),
   isJsonArrayStream: jest.fn(realIsJsonArrayStream),
@@ -175,6 +180,8 @@ jest.unstable_mockModule('../../src/services/template-renderer', () => ({
 
 // Mock validate-frontmatter-vars
 jest.unstable_mockModule('../../src/helpers/validate-frontmatter-vars', () => ({
+  validateFrontmatterVars: mockFn<(...args: unknown[]) => unknown[]>().mockReturnValue([]),
+  validateRequiredVars: mockFn<(...args: unknown[]) => unknown[]>().mockReturnValue([]),
   validateOutputsDeclarations: mockFn<(...args: unknown[]) => unknown[]>().mockReturnValue([]),
 }));
 
@@ -203,7 +210,7 @@ const {
   warnUnresolvedRunbookVariables,
   collectUnresolvedRunbookVariables,
 } = await import('../../src/services/template-renderer.js');
-const { validateOutputsDeclarations } = await import(
+const { validateFrontmatterVars, validateRequiredVars, validateOutputsDeclarations } = await import(
   '../../src/helpers/validate-frontmatter-vars.js'
 );
 const fsPromises = await import('node:fs/promises');
@@ -358,6 +365,8 @@ beforeEach(() => {
   jest.mocked(expandLoopVariables).mockImplementation((text: string) => text);
   jest.mocked(warnUnresolvedRunbookVariables).mockReturnValue([]);
   jest.mocked(collectUnresolvedRunbookVariables).mockReturnValue(new Set());
+  jest.mocked(validateFrontmatterVars).mockReturnValue([]);
+  jest.mocked(validateRequiredVars).mockReturnValue([]);
   jest.mocked(validateOutputsDeclarations).mockReturnValue([]);
   // readFile is overloaded; jest.mocked picks the Buffer-returning overload, but we need to
   // resolve a string. Cast through unknown to a typed mock returning string.
@@ -365,7 +374,7 @@ beforeEach(() => {
     jest.mocked(fsPromises.readFile) as unknown as jest.Mock<() => Promise<string>>
   ).mockResolvedValue('# Test\n\n## 1. Step\n- PASS CONTINUE');
   jest.mocked(parser.parseRunbookDocument).mockReturnValue(mockParseResult());
-  jest.mocked(core.hashDelegationToken).mockReturnValue('sha256:mock');
+  jest.mocked(core.hashDelegationToken).mockReturnValue(MOCK_TOKEN_HASH);
   jest.mocked(core.reconstituteContextVars).mockReturnValue({});
   jest.mocked(core.extractInheritedUserVars).mockReturnValue({});
   jest.mocked(core.deriveActiveFrame).mockReturnValue({
@@ -609,6 +618,37 @@ describe('prepareRunbook', () => {
     }
   });
 
+  it('includes frontmatter vars diagnostics in prepare errors', async () => {
+    jest.mocked(resolveRunbookFile).mockResolvedValue({
+      path: '/test/reserved-vars.md',
+      source: 'project',
+    });
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue(
+      mockParseResult({
+        frontmatter: {
+          vars: { Step: '1' },
+        } as NonNullable<ParseResult['frontmatter']>,
+      }),
+    );
+    jest.mocked(validateFrontmatterVars).mockReturnValue([
+      {
+        severity: 'error',
+        message: 'Frontmatter var "Step" uses reserved runtime variable name.',
+      },
+    ]);
+
+    const result = await prepareRunbook('reserved-vars.md', {}, '/test');
+
+    expect(validateFrontmatterVars).toHaveBeenCalledWith({ Step: '1' });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('VALIDATION_ERROR');
+      expect(result.error).toContain('Frontmatter var "Step"');
+    }
+  });
+
   it('returns MISSING_REQUIRED_VARS when required var is not provided', async () => {
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/test/needs-var.md',
@@ -629,6 +669,38 @@ describe('prepareRunbook', () => {
       expect(result.code).toBe('MISSING_REQUIRED_VARS');
       expect(result.error).toContain('"PlanPath"');
       expect(result.details).toEqual(expect.objectContaining({ missing: ['PlanPath'] }));
+    }
+  });
+
+  it('returns VALIDATION_ERROR for invalid required declarations before missing checks', async () => {
+    jest.mocked(resolveRunbookFile).mockResolvedValue({
+      path: '/test/invalid-required.md',
+      source: 'project',
+    });
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue(
+      mockParseResult({
+        frontmatter: { required: ['Step'], vars: { PlanPath: '/tmp/plan.md' } },
+      }),
+    );
+    jest.mocked(validateRequiredVars).mockReturnValue([
+      {
+        severity: 'error',
+        message:
+          'Required variable "Step" uses reserved runtime variable name. Reserved names (case-insensitive): step, index, context',
+      },
+    ]);
+
+    const result = await prepareRunbook('invalid-required.md', {}, '/test');
+
+    expect(validateRequiredVars).toHaveBeenCalledWith(['Step'], { PlanPath: '/tmp/plan.md' });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('VALIDATION_ERROR');
+      expect(result.error).toContain(
+        'Required variable "Step" uses reserved runtime variable name',
+      );
     }
   });
 
@@ -1044,8 +1116,7 @@ describe('claimAndLaunch', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.code).toBe('RD-807');
-      expect(result.error).toContain('rdtk_');
+      assertVariant(result, 'reason', 'invalid-token');
     }
   });
 
@@ -1072,13 +1143,13 @@ describe('claimAndLaunch', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.code).toBe('RD-808');
+      assertVariant(result, 'reason', 'token-not-found');
     }
   });
 
   it('returns idempotent result when token already claimed', async () => {
     const delegation = {
-      tokenHash: 'sha256:mock',
+      tokenHash: MOCK_TOKEN_HASH,
       childRunbookPath: 'child.md',
       contextSnapshot: { vars: {}, ancestors: [] },
       childRunId: 'existing-child-id',
@@ -1145,7 +1216,7 @@ describe('claimAndLaunch', () => {
 
   it('returns error when delegation was cancelled', async () => {
     const delegation = {
-      tokenHash: 'sha256:mock',
+      tokenHash: MOCK_TOKEN_HASH,
       childRunbookPath: 'child.md',
       contextSnapshot: { vars: {}, ancestors: [] },
       childRunId: null,
@@ -1205,12 +1276,12 @@ describe('claimAndLaunch', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.code).toBe('RD-809');
+      assertVariant(result, 'reason', 'delegation-cancelled');
     }
   });
 
   it('adopts orphaned child when found', async () => {
-    const tokenHash = 'sha256:mock';
+    const tokenHash = MOCK_TOKEN_HASH;
     const delegation = {
       tokenHash,
       childRunbookPath: 'child.md',
@@ -1288,8 +1359,203 @@ describe('claimAndLaunch', () => {
     expect(mockManager.update).toHaveBeenCalled();
   });
 
+  it('rejects re-claim when the already-claimed child is owned by a different agent', async () => {
+    const delegation = {
+      tokenHash: MOCK_TOKEN_HASH,
+      childRunbookPath: 'child.md',
+      contextSnapshot: { vars: {}, ancestors: [] },
+      childRunId: 'existing-child-id',
+      createdAt: new Date().toISOString(),
+      cancelledAt: null,
+    };
+
+    const parentState = makeState('parent-id', {
+      substepStates: [
+        {
+          id: '1',
+          status: 'pending',
+          delegation,
+        },
+      ],
+    });
+
+    const mockScanner = {
+      findByToken: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
+        parentState,
+        stepId: '1',
+        substepId: '1',
+        delegation,
+      }),
+    };
+    jest
+      .mocked(core.DelegationScanService)
+      .mockImplementation(() => mockScanner as unknown as jest.MockedObject<DelegationScanService>);
+
+    const mockManager = {
+      load: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(parentState),
+    };
+    jest
+      .mocked(core.RunbookStateManager)
+      .mockImplementation(() => mockManager as unknown as jest.MockedObject<RunbookStateManager>);
+
+    jest.mocked(core.DelegationLock).mockImplementation(
+      () =>
+        ({
+          acquire: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
+          release: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
+        }) as unknown as jest.MockedObject<DelegationLock>,
+    );
+
+    const claimSpy = mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
+      status: 'conflict',
+      existing: {
+        kind: 'agent-owned-runbook',
+        ownerKey: 'agent:agent-a:session:session-a',
+        agent_id: 'agent-a',
+        session_id: 'session-a',
+        childRunId: 'existing-child-id',
+        tokenHash: MOCK_TOKEN_HASH,
+        parentRunId: 'parent-id',
+        parentStepId: '1',
+        claimedAt: '2026-04-28T00:00:00.000Z',
+        updatedAt: '2026-04-28T00:00:00.000Z',
+      },
+    });
+    const mockSessionService = {
+      claimRunbookForOwner: claimSpy,
+    } as unknown as SessionService;
+
+    const ctx = {
+      output: {} as unknown as OutputEmitter,
+      manager: mockManager as unknown as RunbookStateManager,
+      actorService: {} as unknown as RunbookActorService,
+      sessionService: mockSessionService,
+      lifecycleService: {} as unknown as ExecutionLifecycleService,
+      cwd: '/test',
+    } satisfies RunPipelineContext;
+
+    const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
+    const intruder = {
+      kind: 'agent-session' as const,
+      agent_id: 'agent-b',
+      session_id: 'session-b',
+    };
+    // cspell:disable-next-line
+    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {}, intruder);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      assertVariant(result, 'reason', 'owner-conflict');
+      expect(result.existingOwnerAgentId).toBe('agent-a');
+    }
+  });
+
+  it('rejects orphan adoption when the orphan is owned by a different agent', async () => {
+    const tokenHash = MOCK_TOKEN_HASH;
+    const delegation = {
+      tokenHash,
+      childRunbookPath: 'child.md',
+      contextSnapshot: { vars: {}, ancestors: [] },
+      childRunId: null,
+      createdAt: new Date().toISOString(),
+      cancelledAt: null,
+    };
+
+    const parentState = makeState('parent-id', {
+      substepStates: [
+        {
+          id: '1',
+          status: 'pending',
+          delegation,
+        },
+      ],
+    });
+
+    const orphanState = makeState('orphan-id', {
+      parentLinkage: {
+        kind: 'delegation',
+        parentRunId: 'parent-id',
+        parentStepId: '1',
+        tokenHash,
+      },
+    });
+
+    const mockScanner = {
+      findByToken: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
+        parentState,
+        stepId: '1',
+        substepId: '1',
+        delegation,
+      }),
+      findOrphanedChild:
+        mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(orphanState),
+    };
+    jest
+      .mocked(core.DelegationScanService)
+      .mockImplementation(() => mockScanner as unknown as jest.MockedObject<DelegationScanService>);
+
+    const mockManager = {
+      load: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(parentState),
+      update: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
+    };
+    jest
+      .mocked(core.RunbookStateManager)
+      .mockImplementation(() => mockManager as unknown as jest.MockedObject<RunbookStateManager>);
+
+    jest.mocked(core.DelegationLock).mockImplementation(
+      () =>
+        ({
+          acquire: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
+          release: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
+        }) as unknown as jest.MockedObject<DelegationLock>,
+    );
+
+    const claimSpy = mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
+      status: 'conflict',
+      existing: {
+        kind: 'agent-owned-runbook',
+        ownerKey: 'agent:agent-a:session:session-a',
+        agent_id: 'agent-a',
+        session_id: 'session-a',
+        childRunId: 'orphan-id',
+        tokenHash,
+        parentRunId: 'parent-id',
+        parentStepId: '1',
+        claimedAt: '2026-04-28T00:00:00.000Z',
+        updatedAt: '2026-04-28T00:00:00.000Z',
+      },
+    });
+    const mockSessionService = {
+      claimRunbookForOwner: claimSpy,
+    } as unknown as SessionService;
+
+    const ctx = {
+      output: {} as unknown as OutputEmitter,
+      manager: mockManager as unknown as RunbookStateManager,
+      actorService: {} as unknown as RunbookActorService,
+      sessionService: mockSessionService,
+      lifecycleService: {} as unknown as ExecutionLifecycleService,
+      cwd: '/test',
+    } satisfies RunPipelineContext;
+
+    const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
+    const intruder = {
+      kind: 'agent-session' as const,
+      agent_id: 'agent-b',
+      session_id: 'session-b',
+    };
+    // cspell:disable-next-line
+    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {}, intruder);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      assertVariant(result, 'reason', 'owner-conflict');
+      expect(result.existingOwnerAgentId).toBe('agent-a');
+    }
+  });
+
   it('launches new child when no orphan exists', async () => {
-    const tokenHash = 'sha256:mock';
+    const tokenHash = MOCK_TOKEN_HASH;
     const delegation = {
       tokenHash,
       childRunbookPath: 'child.md',
@@ -1393,7 +1659,7 @@ describe('claimAndLaunch', () => {
   });
 
   it('preserves ContextId but does not inherit parent RunId into child vars', async () => {
-    const tokenHash = 'sha256:mock';
+    const tokenHash = MOCK_TOKEN_HASH;
     const delegation = {
       tokenHash,
       childRunbookPath: 'child.md',
@@ -1509,7 +1775,7 @@ describe('claimAndLaunch', () => {
   });
 
   it('passes published OUTPUTS into delegated child inherited vars', async () => {
-    const tokenHash = 'sha256:mock';
+    const tokenHash = MOCK_TOKEN_HASH;
     const delegation = {
       tokenHash,
       childRunbookPath: 'child.md',
@@ -1628,7 +1894,7 @@ describe('claimAndLaunch', () => {
   });
 
   it('returns error when child runbook file not found', async () => {
-    const tokenHash = 'sha256:mock';
+    const tokenHash = MOCK_TOKEN_HASH;
     const delegation = {
       tokenHash,
       childRunbookPath: 'missing.md',
@@ -1694,12 +1960,14 @@ describe('claimAndLaunch', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
+      assertVariant(result, 'reason', 'prepare-failed');
       expect(result.code).toBe('RUNBOOK_NOT_FOUND');
+      expect(result.runbook).toBe('missing.md');
     }
   });
 
   it('inherits prompted flag from parent', async () => {
-    const tokenHash = 'sha256:mock';
+    const tokenHash = MOCK_TOKEN_HASH;
     const delegation = {
       tokenHash,
       childRunbookPath: 'child.md',

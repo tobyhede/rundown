@@ -2,7 +2,8 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import type { RunbookState, StepDelegation, TokenScanResult } from '@rundown-org/core';
 import type { RunPipelineContext } from '../../src/helpers/runbook-pipeline.js';
 import type * as VariableDiscoveryModule from '../../src/services/variable-discovery.js';
-import { brandFrameKeyForTest } from './brand-helpers.js';
+import { assertVariant } from './assert-variant.js';
+import { brandDelegationTokenHashForTest, brandFrameKeyForTest } from './brand-helpers.js';
 import { mockErrorHelpers } from './mock-error-helpers.js';
 import { mockFn } from './typed-mocks.js';
 
@@ -10,6 +11,10 @@ import { mockFn } from './typed-mocks.js';
 // jest.unstable_mockModule does NOT hoist (unlike jest.mock), so this top-level
 // await executes first and always captures the real branded implementation.
 const { isJsonArrayStream: realIsJsonArrayStream } = await import('@rundown-org/core');
+
+const MOCK_TOKEN_HASH = brandDelegationTokenHashForTest(`sha256:${'a'.repeat(64)}`);
+const DIFFERENT_TOKEN_HASH = brandDelegationTokenHashForTest(`sha256:${'b'.repeat(64)}`);
+const ORIGINAL_TOKEN_HASH = brandDelegationTokenHashForTest(`sha256:${'c'.repeat(64)}`);
 
 // Mock @rundown-org/core
 jest.unstable_mockModule('@rundown-org/core', () => ({
@@ -70,7 +75,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   },
   reconstituteContextVars: mockFn<() => Record<string, unknown>>().mockReturnValue({}),
   extractInheritedUserVars: mockFn<() => Record<string, unknown>>().mockReturnValue({}),
-  hashDelegationToken: mockFn<() => string>().mockReturnValue('sha256:mock'),
+  hashDelegationToken: mockFn<() => string>().mockReturnValue(MOCK_TOKEN_HASH),
   truncateDelegationToken: jest.fn((token: string) => {
     const prefix = 'rdtk_';
     const body = token.startsWith(prefix) ? token.slice(prefix.length) : token;
@@ -153,6 +158,8 @@ jest.unstable_mockModule('../../src/services/template-renderer', () => ({
 
 // Mock validate-frontmatter-vars
 jest.unstable_mockModule('../../src/helpers/validate-frontmatter-vars', () => ({
+  validateFrontmatterVars: mockFn<() => string[]>().mockReturnValue([]),
+  validateRequiredVars: mockFn<() => string[]>().mockReturnValue([]),
   validateOutputsDeclarations: mockFn<() => string[]>().mockReturnValue([]),
 }));
 
@@ -173,7 +180,7 @@ const { resolveRunbookFile } = await import('../../src/helpers/resolve-runbook.j
 const { resolveVariables } = await import('../../src/services/variable-discovery.js');
 const { substituteRunbookVariables, resolveForBounds, collectUnresolvedRunbookVariables } =
   await import('../../src/services/template-renderer.js');
-const { validateOutputsDeclarations } = await import(
+const { validateFrontmatterVars, validateRequiredVars, validateOutputsDeclarations } = await import(
   '../../src/helpers/validate-frontmatter-vars.js'
 );
 const { createBridgedEmitter } = await import('../../src/helpers/execution-emitter.js');
@@ -297,7 +304,7 @@ function mockHappyDelegationLock(): {
 beforeEach(() => {
   jest.resetAllMocks();
   // Restore defaults after reset
-  jest.mocked(core.hashDelegationToken).mockReturnValue('sha256:mock');
+  jest.mocked(core.hashDelegationToken).mockReturnValue(MOCK_TOKEN_HASH);
   jest.mocked(core.truncateDelegationToken).mockImplementation((token: string) => {
     const prefix = 'rdtk_';
     const body = token.startsWith(prefix) ? token.slice(prefix.length) : token;
@@ -317,6 +324,9 @@ beforeEach(() => {
     iteration: undefined,
     frameKey: brandFrameKeyForTest('1'),
   });
+  jest.mocked(validateFrontmatterVars).mockReturnValue([]);
+  jest.mocked(validateRequiredVars).mockReturnValue([]);
+  jest.mocked(validateOutputsDeclarations).mockReturnValue([]);
 });
 
 describe('claimAndLaunch', () => {
@@ -326,10 +336,9 @@ describe('claimAndLaunch', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.code).toBe('RD-807');
-      expect(result.error).toMatch(/invalid token format/i);
+      assertVariant(result, 'reason', 'invalid-token');
       // Token should be truncated, not raw
-      expect(result.details?.token).toMatch(/\.\.\./);
+      expect(result.token).toMatch(/\.\.\./);
     }
   });
 
@@ -344,7 +353,7 @@ describe('claimAndLaunch', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.code).toBe('RD-808');
+      assertVariant(result, 'reason', 'token-not-found');
     }
   });
 
@@ -357,7 +366,7 @@ describe('claimAndLaunch', () => {
         parentState: { id: 'run-1', substepStates: [] },
         stepId: '1',
         substepId: '1',
-        delegation: { tokenHash: 'sha256:mock', childRunbookPath: 'child.md' },
+        delegation: { tokenHash: MOCK_TOKEN_HASH, childRunbookPath: 'child.md' },
       }),
     );
 
@@ -383,7 +392,8 @@ describe('claimAndLaunch', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.code).toBe('RD-810');
+      assertVariant(result, 'reason', 'lock-timeout');
+      expect(result.parentRunId).toBe('run-1');
     }
   });
 
@@ -398,7 +408,7 @@ describe('claimAndLaunch', () => {
           id: '1',
           status: 'pending',
           delegation: {
-            tokenHash: 'sha256:mock',
+            tokenHash: MOCK_TOKEN_HASH,
             childRunbookPath: 'child.md',
             childRunId: null,
             cancelledAt: '2026-02-28T00:00:00.000Z',
@@ -432,8 +442,8 @@ describe('claimAndLaunch', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.code).toBe('RD-809');
-      expect(result.error).toMatch(/cancelled/i);
+      assertVariant(result, 'reason', 'delegation-cancelled');
+      expect(result.cancelledAt).toBe('2026-02-28T00:00:00.000Z');
     }
   });
 
@@ -448,7 +458,7 @@ describe('claimAndLaunch', () => {
           id: '1',
           status: 'pending',
           delegation: {
-            tokenHash: 'sha256:mock',
+            tokenHash: MOCK_TOKEN_HASH,
             childRunbookPath: 'child.md',
             childRunId: 'existing-child-run',
             cancelledAt: null,
@@ -496,7 +506,7 @@ describe('claimAndLaunch', () => {
           id: '1',
           status: 'pending',
           delegation: {
-            tokenHash: 'sha256:mock',
+            tokenHash: MOCK_TOKEN_HASH,
             childRunbookPath: 'child.md',
             childRunId: null,
             cancelledAt: null,
@@ -509,7 +519,7 @@ describe('claimAndLaunch', () => {
 
     const orphanState = {
       id: 'orphan-run-id',
-      delegation: { parentRunId: 'run-1', parentStepId: '1', tokenHash: 'sha256:mock' },
+      delegation: { parentRunId: 'run-1', parentStepId: '1', tokenHash: MOCK_TOKEN_HASH },
     };
 
     // Mock scan — findByToken returns parent, findOrphanedChild returns orphan
@@ -562,7 +572,7 @@ describe('claimAndLaunch', () => {
         parentState: { id: 'run-1', substepStates: [] },
         stepId: '1',
         substepId: '1',
-        delegation: { tokenHash: 'sha256:mock', childRunbookPath: 'child.md' },
+        delegation: { tokenHash: MOCK_TOKEN_HASH, childRunbookPath: 'child.md' },
       }),
     );
 
@@ -590,7 +600,7 @@ describe('claimAndLaunch', () => {
           id: '1',
           status: 'pending',
           delegation: {
-            tokenHash: 'sha256:mock',
+            tokenHash: MOCK_TOKEN_HASH,
             childRunbookPath: 'child.md',
             childRunId: null,
             cancelledAt: null,
@@ -622,8 +632,57 @@ describe('claimAndLaunch', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.code).toBe('RD-808');
-      expect(result.error).toContain('no longer exists');
+      assertVariant(result, 'reason', 'parent-missing');
+      expect(result.parentRunId).toBe('run-deleted');
+    }
+  });
+
+  it.each([
+    'completed',
+    'stopped',
+  ] as const)('returns parent-ended when parent is %s after lock', async (lifecycle) => {
+    const ctx = makeCtx();
+    const parentState = {
+      id: `run-${lifecycle}`,
+      lifecycle: 'running',
+      substepStates: [
+        {
+          id: '1',
+          status: 'pending',
+          delegation: {
+            tokenHash: MOCK_TOKEN_HASH,
+            childRunbookPath: 'child.md',
+            childRunId: null,
+            cancelledAt: null,
+            contextSnapshot: { vars: {}, ancestors: [] },
+            createdAt: '2026-02-27T10:00:00.000Z',
+          },
+        },
+      ],
+    };
+
+    mockScanService(
+      scanResult({
+        parentState,
+        stepId: '1',
+        substepId: '1',
+        delegation: parentState.substepStates[0].delegation,
+      }),
+    );
+    mockHappyDelegationLock();
+    jest.mocked(ctx.manager).load.mockResolvedValue({
+      ...parentState,
+      lifecycle,
+    } as unknown as RunbookState);
+
+    // cspell:disable-next-line
+    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      assertVariant(result, 'reason', 'parent-ended');
+      expect(result.parentRunId).toBe(`run-${lifecycle}`);
+      expect(result.lifecycle).toBe(lifecycle);
     }
   });
 
@@ -637,7 +696,7 @@ describe('claimAndLaunch', () => {
           id: '1',
           status: 'pending',
           delegation: {
-            tokenHash: 'sha256:mock',
+            tokenHash: MOCK_TOKEN_HASH,
             childRunbookPath: 'child.md',
             childRunId: null,
             cancelledAt: null,
@@ -673,8 +732,9 @@ describe('claimAndLaunch', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.code).toBe('RD-808');
-      expect(result.error).toContain('no longer exists');
+      assertVariant(result, 'reason', 'delegation-removed');
+      expect(result.parentRunId).toBe('run-1');
+      expect(result.stepId).toBe('1');
     }
   });
 
@@ -688,7 +748,7 @@ describe('claimAndLaunch', () => {
           id: '1',
           status: 'pending',
           delegation: {
-            tokenHash: 'sha256:original',
+            tokenHash: ORIGINAL_TOKEN_HASH,
             childRunbookPath: 'child.md',
             childRunId: null,
             cancelledAt: null,
@@ -721,7 +781,7 @@ describe('claimAndLaunch', () => {
           id: '1',
           status: 'pending',
           delegation: {
-            tokenHash: 'sha256:different',
+            tokenHash: DIFFERENT_TOKEN_HASH,
             childRunbookPath: 'child.md',
             childRunId: null,
             cancelledAt: null,
@@ -733,15 +793,16 @@ describe('claimAndLaunch', () => {
     } as unknown as RunbookState);
 
     // hashDelegationToken should return the original mock hash
-    jest.mocked(core.hashDelegationToken).mockReturnValue('sha256:original');
+    jest.mocked(core.hashDelegationToken).mockReturnValue(ORIGINAL_TOKEN_HASH);
 
     // cspell:disable-next-line
     const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.code).toBe('RD-808');
-      expect(result.error).toContain('no longer exists');
+      assertVariant(result, 'reason', 'delegation-removed');
+      expect(result.parentRunId).toBe('run-1');
+      expect(result.stepId).toBe('1');
     }
   });
 
@@ -751,8 +812,7 @@ describe('claimAndLaunch', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.code).toBe('RD-807');
-      expect(result.error).toMatch(/invalid token format/i);
+      assertVariant(result, 'reason', 'invalid-token');
     }
   });
 
@@ -764,9 +824,7 @@ describe('claimAndLaunch', () => {
     // Should validate format - scanner may return null or validation may catch it
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
-    expect([core.ErrorCodes.INVALID_TOKEN.code, core.ErrorCodes.TOKEN_NOT_FOUND.code]).toContain(
-      result.code,
-    );
+    expect(['invalid-token', 'token-not-found']).toContain(result.reason);
   });
 
   it('truncates token in error details for invalid format', async () => {
@@ -774,9 +832,9 @@ describe('claimAndLaunch', () => {
     const result = await claimAndLaunch(ctx, 'invalid-very-long-token-string-here', {});
 
     expect(result.ok).toBe(false);
-    if (!result.ok && typeof result.details?.token === 'string') {
+    if (!result.ok && result.reason === 'invalid-token') {
       // Should contain ellipsis for truncation
-      expect(result.details.token).toMatch(/\.\.\./);
+      expect(result.token).toMatch(/\.\.\./);
     }
   });
 
@@ -792,7 +850,7 @@ describe('claimAndLaunch', () => {
           frameKey: '1|3', // Delegation was created on iteration 3
           status: 'pending',
           delegation: {
-            tokenHash: 'sha256:mock',
+            tokenHash: MOCK_TOKEN_HASH,
             childRunbookPath: 'child.md',
             childRunId: null,
             cancelledAt: null,
@@ -930,7 +988,7 @@ describe('claimAndLaunch', () => {
           frameKey: '1|0',
           status: 'pending',
           delegation: {
-            tokenHash: 'sha256:mock',
+            tokenHash: MOCK_TOKEN_HASH,
             childRunbookPath: 'child.md',
             childRunId: null,
             cancelledAt: null,
@@ -1018,8 +1076,9 @@ describe('claimAndLaunch', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
+      assertVariant(result, 'reason', 'launch-failed');
       expect(result.code).toBe('RD-816');
-      expect(result.error).toContain('disk full');
+      expect(result.cause).toContain('disk full');
     }
     // Lock must be released even on init failure
     expect(mockRelease).toHaveBeenCalledWith('run-1');

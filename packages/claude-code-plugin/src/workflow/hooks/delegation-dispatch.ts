@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { parseRunbookDocument } from '@rundown-org/parser';
-import type { HookInput } from '../../shared/index.js';
+import { DelegationActiveTokensMetadataSchema, type HookInput } from '../../shared/index.js';
 import { Session } from '../../session.js';
 import { detectDelegationInToolInput } from './delegation-detector.js';
 import { rundown } from './rundown.js';
@@ -133,10 +133,33 @@ export async function handleDelegationDispatch(
 
   const { token } = detection;
 
-  // Store token in session metadata for SubagentStop abort correlation
+  // Store the token hash in session metadata for SubagentStop correlation.
+  // The raw token is only sent to the delegated agent in the hook context.
   const session = new Session(input.cwd);
   const meta = await session.get('metadata');
-  await session.set('metadata', { ...meta, delegation_active_token: token });
+  const tokenHash = hashToken(token);
+  if (input.agent_id) {
+    const existing =
+      meta.delegation_active_tokens === undefined
+        ? {}
+        : DelegationActiveTokensMetadataSchema.parse(meta.delegation_active_tokens);
+    const nextActiveTokens = DelegationActiveTokensMetadataSchema.parse({
+      ...existing,
+      [input.agent_id]: {
+        kind: 'delegation-active-token',
+        agent_id: input.agent_id,
+        ...(input.session_id ? { session_id: input.session_id } : {}),
+        tokenHash,
+        createdAt: new Date().toISOString(),
+      },
+    });
+    await session.set('metadata', {
+      ...meta,
+      delegation_active_tokens: nextActiveTokens,
+    });
+  } else {
+    await session.set('metadata', { ...meta, delegation_active_token: token });
+  }
 
   // Best-effort: enrich with current delegation status and inject child --input flags
   let claimCommand = `rd claim ${token}`;
@@ -161,10 +184,7 @@ export async function handleDelegationDispatch(
         delegations?: Array<{ runbook: string; state: string; tokenHash: string }>;
       }
     ).delegations;
-    const detectedTokenHash = hashToken(token);
-    const pending = delegations?.find(
-      (d) => d.state === 'pending' && d.tokenHash === detectedTokenHash,
-    );
+    const pending = delegations?.find((d) => d.state === 'pending' && d.tokenHash === tokenHash);
     const childRunbookPath = pending?.runbook;
     if (childRunbookPath && parentVars) {
       const inputFlags = await buildChildInputFlags(childRunbookPath, parentVars, input.cwd);
@@ -180,9 +200,21 @@ export async function handleDelegationDispatch(
     'This task is a delegated substep. Claim the delegation token before starting work:',
     '',
     '```',
+    ...(input.agent_id
+      ? [
+          `export RD_AGENT_ID=${shellQuote(input.agent_id)}`,
+          ...(input.session_id ? [`export RD_SESSION_ID=${shellQuote(input.session_id)}`] : []),
+        ]
+      : []),
     claimCommand,
     '```',
     '',
+    ...(input.agent_id
+      ? [
+          'Keep these environment variables set for `rd status`, `rd pass`, `rd fail`, `rd stash`, `rd pop`, and `rd stop`.',
+          '',
+        ]
+      : []),
     ...statusLines,
     ...(statusLines.length > 0 ? [''] : []),
     'After completing the delegated work, use `rd pass` or `rd fail` to report the result.',

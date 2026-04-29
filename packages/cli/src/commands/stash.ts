@@ -6,6 +6,8 @@ import { getCwd, getStepTotal } from '../helpers/context.js';
 import { buildMetadata } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
+import { resolveCallerIdentity } from '../helpers/caller-identity.js';
+import { resolveActiveRunbook } from '../helpers/active-runbook-resolver.js';
 
 /**
  * Registers the 'stash' command for pausing runbook enforcement.
@@ -23,18 +25,36 @@ export function registerStashCommand(program: Command): void {
           const output = new OutputEmitter({ text: options.text });
           const manager = new RunbookStateManager(cwd);
           const sessionService = new SessionService(manager);
-          const state = await sessionService.getActive();
+          const active = await resolveActiveRunbook(sessionService, resolveCallerIdentity());
 
-          if (!state) {
-            output.noActiveRunbook();
-            output.flush();
-            return;
+          switch (active.kind) {
+            case 'owned':
+            case 'default':
+              break;
+            case 'none':
+              output.noActiveRunbook();
+              output.flush();
+              return;
+            case 'stale_owner':
+            case 'invalid_identity':
+              output.error(active.message, 'OWNED_RUNBOOK_UNAVAILABLE');
+              output.flush();
+              process.exitCode = 1;
+              return;
+            default: {
+              const _exhaustive: never = active;
+              return _exhaustive;
+            }
           }
+          const state = active.state;
 
           const totalSteps = await getStepTotal(cwd, state.runbook);
 
           // Stash the runbook
-          const stashedId = await sessionService.stash();
+          const stashedId =
+            active.kind === 'owned'
+              ? await sessionService.stashRunbook(state.id)
+              : await sessionService.stash();
           if (!stashedId) {
             output.error('A runbook is already stashed. Pop it first.', 'ALREADY_STASHED');
             output.flush();

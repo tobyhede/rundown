@@ -1,7 +1,9 @@
 import { describe, it, expect } from '@jest/globals';
 import {
+  assertDelegationTokenHash,
   generateDelegationToken,
   hashDelegationToken,
+  isDelegationTokenHash,
   truncateDelegationToken,
   TOKEN_PREFIX,
 } from '../../src/runbook/delegation-token.js';
@@ -70,5 +72,35 @@ describe('hashDelegationToken', () => {
     const token1 = generateDelegationToken();
     const token2 = generateDelegationToken();
     expect(hashDelegationToken(token1)).not.toBe(hashDelegationToken(token2));
+  });
+});
+
+describe('DelegationTokenHash helpers', () => {
+  it('narrows valid sha256 token hashes', () => {
+    const token = generateDelegationToken();
+    const hash = hashDelegationToken(token);
+
+    expect(isDelegationTokenHash(hash)).toBe(true);
+  });
+
+  it.each([
+    ['missing prefix', 'a'.repeat(64)],
+    ['uppercase hex', `sha256:${'A'.repeat(64)}`],
+    ['too short', `sha256:${'a'.repeat(63)}`],
+    ['too long', `sha256:${'a'.repeat(65)}`],
+    ['non-string', 42],
+  ])('rejects %s', (_label, value) => {
+    expect(isDelegationTokenHash(value)).toBe(false);
+  });
+
+  it('assertDelegationTokenHash returns the hash when valid', () => {
+    const hash = `sha256:${'b'.repeat(64)}`;
+    expect(assertDelegationTokenHash(hash)).toBe(hash);
+  });
+
+  it('assertDelegationTokenHash throws a precise message when invalid', () => {
+    expect(() => assertDelegationTokenHash('sha256:bad')).toThrow(
+      'Invalid delegation token hash: expected sha256:<64 lowercase hex characters>',
+    );
   });
 });

@@ -1,6 +1,8 @@
 // src/workflow/hooks/subagent-stop.ts
 import { createHash } from 'node:crypto';
 import {
+  DelegationActiveTokenMetadataSchema,
+  DelegationActiveTokensMetadataSchema,
   type HookInput,
   ParentLinkageSchema,
   RunbookPositionBodySchema,
@@ -228,6 +230,77 @@ function hashToken(token: string): string {
   return `sha256:${createHash('sha256').update(token).digest('hex')}`;
 }
 
+type ConsumedDelegationToken =
+  | {
+      readonly kind: 'consumed';
+      readonly tokenHash: string;
+      readonly metadata: Record<string, unknown>;
+    }
+  | { readonly kind: 'none' }
+  | { readonly kind: 'tampered' };
+
+async function consumeLegacyDelegationToken(
+  session: Session,
+  meta: Record<string, unknown>,
+): Promise<ConsumedDelegationToken> {
+  const raw = meta.delegation_active_token;
+  const token = typeof raw === 'string' ? raw : undefined;
+  if (!token) {
+    return { kind: 'none' };
+  }
+  const { delegation_active_token: _removed, ...rest } = meta;
+  await session.set('metadata', rest);
+  return { kind: 'consumed', tokenHash: hashToken(token), metadata: rest };
+}
+
+async function consumeDelegationTokenForAgent(
+  session: Session,
+  input: HookInput,
+): Promise<ConsumedDelegationToken> {
+  const meta = await session.get('metadata');
+
+  if (input.agent_id) {
+    const rawMap = meta.delegation_active_tokens;
+    if (!rawMap || typeof rawMap !== 'object' || Array.isArray(rawMap)) {
+      return consumeLegacyDelegationToken(session, meta);
+    }
+    const parsedMap = DelegationActiveTokensMetadataSchema.safeParse(rawMap);
+    if (!parsedMap.success) {
+      return { kind: 'tampered' };
+    }
+    const map = parsedMap.data;
+    if (!Object.hasOwn(map, input.agent_id)) {
+      return consumeLegacyDelegationToken(session, meta);
+    }
+    const rawEntry = map[input.agent_id];
+    const parsed = DelegationActiveTokenMetadataSchema.safeParse(rawEntry);
+    if (!parsed.success) {
+      return { kind: 'tampered' };
+    }
+    const entry = parsed.data;
+    if (entry.agent_id !== input.agent_id) {
+      return { kind: 'tampered' };
+    }
+    if (input.session_id && entry.session_id && entry.session_id !== input.session_id) {
+      return { kind: 'tampered' };
+    }
+
+    const { [input.agent_id]: _removed, ...remaining } = map;
+    // Hygiene: drop the entire `delegation_active_tokens` key when the last
+    // entry is consumed. Leaving an empty object would parse fine on the next
+    // read (the guard at line 248 treats {} the same as missing), but
+    // removing it keeps the metadata blob minimal and easier to inspect.
+    const nextMeta =
+      Object.keys(remaining).length > 0
+        ? { ...meta, delegation_active_tokens: remaining }
+        : (({ delegation_active_tokens: _activeTokens, ...rest }) => rest)(meta);
+    await session.set('metadata', nextMeta);
+    return { kind: 'consumed', tokenHash: entry.tokenHash, metadata: nextMeta };
+  }
+
+  return consumeLegacyDelegationToken(session, meta);
+}
+
 // ---------------------------------------------------------------------------
 // Parsing — raw JSON to discriminated union
 // ---------------------------------------------------------------------------
@@ -370,47 +443,70 @@ export function queryRunbookStatus(cwd: string): RunbookStatus | undefined {
   try {
     const output = rundown(['status'], cwd);
     const parsed = JSON.parse(output) as Record<string, unknown>;
-
-    const active = parsed.active === true;
-    const stashed = parsed.stashed === true;
-    const file = typeof parsed.file === 'string' ? parsed.file : undefined;
-
-    const parentLinkage = parseParentLinkage(parsed.parentLinkage);
-
-    // Stashed-only: runbook paused via `rd stash`, not completed.
-    // When both active and stashed are true (active child + stashed parent),
-    // fall through to the active branch which preserves delegations.
-    if (stashed && !active && file) {
-      return {
-        kind: 'stashed',
-        file,
-        position: parsePosition(parsed.position),
-        step: parseStep(parsed.step),
-        ...(parentLinkage ? { parentLinkage } : {}),
-      };
-    }
-
-    // Not active and not stashed: nothing running
-    if (!active) {
-      return { kind: 'inactive' };
-    }
-
-    // Active: runbook is running (could be parent or child)
-    const { entries: delegations, hadInvalid: hadInvalidDelegations } = parseDelegations(
-      parsed.delegations,
-    );
-    return {
-      kind: 'active',
-      file: file ?? '(unknown)',
-      position: parsePosition(parsed.position),
-      step: parseStep(parsed.step),
-      delegations,
-      hadInvalidDelegations,
-      ...(parentLinkage ? { parentLinkage } : {}),
-    };
+    return parseRunbookStatus(parsed);
   } catch {
     return undefined;
   }
+}
+
+function buildIdentityEnv(input: HookInput): NodeJS.ProcessEnv | undefined {
+  if (!input.agent_id) {
+    return undefined;
+  }
+  return {
+    RD_AGENT_ID: input.agent_id,
+    ...(input.session_id ? { RD_SESSION_ID: input.session_id } : {}),
+  };
+}
+
+function queryRunbookStatusForHook(input: HookInput): RunbookStatus | undefined {
+  try {
+    const output = rundown(['status'], input.cwd, { env: buildIdentityEnv(input) });
+    const parsed = JSON.parse(output) as Record<string, unknown>;
+    return parseRunbookStatus(parsed);
+  } catch {
+    return undefined;
+  }
+}
+
+function parseRunbookStatus(parsed: Record<string, unknown>): RunbookStatus {
+  const active = parsed.active === true;
+  const stashed = parsed.stashed === true;
+  const file = typeof parsed.file === 'string' ? parsed.file : undefined;
+
+  const parentLinkage = parseParentLinkage(parsed.parentLinkage);
+
+  // Stashed-only: runbook paused via `rd stash`, not completed.
+  // When both active and stashed are true (active child + stashed parent),
+  // fall through to the active branch which preserves delegations.
+  if (stashed && !active && file) {
+    return {
+      kind: 'stashed',
+      file,
+      position: parsePosition(parsed.position),
+      step: parseStep(parsed.step),
+      ...(parentLinkage ? { parentLinkage } : {}),
+    };
+  }
+
+  // Not active and not stashed: nothing running
+  if (!active) {
+    return { kind: 'inactive' };
+  }
+
+  // Active: runbook is running (could be parent or child)
+  const { entries: delegations, hadInvalid: hadInvalidDelegations } = parseDelegations(
+    parsed.delegations,
+  );
+  return {
+    kind: 'active',
+    file: file ?? '(unknown)',
+    position: parsePosition(parsed.position),
+    step: parseStep(parsed.step),
+    delegations,
+    hadInvalidDelegations,
+    ...(parentLinkage ? { parentLinkage } : {}),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -651,11 +747,13 @@ function buildContextMessage(outcome: DelegationOutcome): string | undefined {
  * Handle a SubagentStop hook by consuming any active delegation token and
  * classifying the state of the child runbook it spawned.
  *
- * Reads (and consumes, once) `delegation_active_token` from session metadata
- * at `input.cwd`, hashes the token, and correlates it with the active
- * runbook's `parentLinkage.tokenHash` and the parent's outgoing delegations
- * in `rd status` to identify the exact delegation belonging to this
- * subagent.
+ * Reads (and consumes, once) active delegation token metadata from session
+ * metadata at `input.cwd`. Identified hook payloads consume only their
+ * matching `delegation_active_tokens[input.agent_id]` entry; legacy payloads
+ * without `agent_id` consume the older global `delegation_active_token`.
+ * The consumed token is hashed and correlated with the active runbook's
+ * `parentLinkage.tokenHash` and the parent's outgoing delegations in
+ * `rd status` to identify the exact delegation belonging to this subagent.
  *
  * Classifies the delegation into one of five {@link DelegationOutcome}
  * variants:
@@ -675,9 +773,9 @@ function buildContextMessage(outcome: DelegationOutcome): string | undefined {
  *
  * Never destroys child runbook state.
  *
- * @param input - Hook event payload. Only `input.hook_event_name` (used to
- *   gate execution) and `input.cwd` (used to open the session and run
- *   `rd status`) are read; other fields are ignored.
+ * @param input - Hook event payload. `input.hook_event_name` gates
+ *   execution, `input.cwd` opens the session and runs `rd status`, and
+ *   optional `agent_id`/`session_id` scope per-agent token consumption.
  * @returns A promise for a {@link SubagentStopResult}: `{ context }` when
  *   the classification produces a message for the orchestrator, or `{}`
  *   when no action is needed (non-SubagentStop event, no active delegation
@@ -691,27 +789,20 @@ export async function handleSubagentStop(input: HookInput): Promise<SubagentStop
     return {};
   }
 
-  // Read and consume delegation token from session metadata
   const session = new Session(input.cwd);
-  const meta = await session.get('metadata');
-  const raw = meta.delegation_active_token;
-  const token = typeof raw === 'string' ? raw : undefined;
-
-  // Clear the token (consume-once) regardless of outcome
-  if (token) {
-    const { delegation_active_token: _, ...rest } = meta;
-    await session.set('metadata', rest);
-  }
-
-  // No delegation token — no action needed
-  if (!token) {
+  const consumed = await consumeDelegationTokenForAgent(session, input);
+  if (consumed.kind === 'none') {
     return {};
+  }
+  if (consumed.kind === 'tampered') {
+    return { context: buildContextMessage({ kind: 'unknown' }) };
   }
 
   // Query runbook state and classify the delegation outcome
-  const status = queryRunbookStatus(input.cwd);
-  const hash = hashToken(token);
-  const outcome: DelegationOutcome = status ? classifyOutcome(status, hash) : { kind: 'unknown' };
+  const status = queryRunbookStatusForHook(input);
+  const outcome: DelegationOutcome = status
+    ? classifyOutcome(status, consumed.tokenHash)
+    : { kind: 'unknown' };
   const context = buildContextMessage(outcome);
 
   return context ? { context } : {};

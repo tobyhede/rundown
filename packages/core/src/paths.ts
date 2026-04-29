@@ -142,3 +142,14 @@ export const delegationLockPath = (cwd: string, runId: string): string => {
   assertSafeId(runId, 'runId');
   return path.join(cwd, LOCKS_DIR, `run-${runId}.delegation.lock`);
 };
+
+/**
+ * Absolute path to the workspace-wide session lock file.
+ *
+ * One lock per project root serializes load-modify-save cycles on
+ * `.rundown/session.json`. Lock path: `.rundown/locks/session.lock`.
+ *
+ * @param cwd - Project root directory
+ * @returns Path to the session lock file
+ */
+export const sessionLockPath = (cwd: string): string => path.join(cwd, LOCKS_DIR, 'session.lock');

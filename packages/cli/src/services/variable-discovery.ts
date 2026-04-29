@@ -541,7 +541,7 @@ async function loadJsonFile(canonical: string): Promise<JsonObject | JsonArray> 
  * @param projectRoot - Canonical project root path (pre-resolved)
  * @param security - Optional security context for file source policy enforcement
  * @param warnings - Optional array to collect routing warnings
- * @returns `true` if the value was routed into `vars`; `false` if skipped (e.g., file path escapes project root)
+ * @returns Promise resolving to `true` if the value was routed into `vars`; `false` if skipped
  */
 async function routeVariable(
   key: string,
@@ -793,9 +793,9 @@ async function enforceFileSourcePolicy(
  *
  * Processes variable layers in precedence order (lowest to highest):
  * 1. Built-in defaults (Date, DateTime, Year, Month, Day, Branch, WorkPath, RunId, ContextId)
- * 1b. Inherited vars from parent delegation (overrides builtins)
  * 2. Auto-discovered .rundown/config.yaml
- * 2b. Environment bridge (RD_INPUT_* env vars)
+ * 2b. Inherited vars from parent delegation
+ * 2c. Environment bridge (RD_INPUT_* env vars)
  * 3. --input-file contents (repeatable, later overrides earlier)
  * 4. --input flags
  * 5. --input-json flags (highest precedence)

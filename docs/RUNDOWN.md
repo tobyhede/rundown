@@ -422,13 +422,30 @@ The session tracks which runbooks are active using a **stack-based model**:
 
 ```json
 {
-  "defaultStack": ["wf-2024-01-07-xyz789"],
-  "stashedRunbookId": null
+  "defaultStack": ["wf-2026-04-28-parent"],
+  "stashedRunbookId": null,
+  "ownedRunbooks": {
+    "agent:agent-a:session:session-a": {
+      "kind": "agent-owned-runbook",
+      "ownerKey": "agent:agent-a:session:session-a",
+      "agent_id": "agent-a",
+      "session_id": "session-a",
+      "childRunId": "wf-2026-04-28-child",
+      "tokenHash": "sha256:...",
+      "parentRunId": "wf-2026-04-28-parent",
+      "parentStepId": "1",
+      "claimedAt": "2026-04-28T00:00:00.000Z",
+      "updatedAt": "2026-04-28T00:00:00.000Z"
+    }
+  }
 }
 ```
 
-- **defaultStack**: Active runbook stack (delegation creates nested entries)
-- **stashedRunbookId**: Temporarily paused runbook (for `rundown stash`/`rundown pop`)
+- **defaultStack**: Legacy/default active runbook stack for top-level, inline, and unidentified/manual flows.
+- **stashedRunbookId**: Temporarily paused runbook (for `rundown stash`/`rundown pop`).
+- **ownedRunbooks**: Per-agent/session ownership map for delegated child runs claimed by subagents. Identified callers resolve this map before falling back to `defaultStack`.
+
+Terminal cleanup commands (`rundown stop` and `rundown complete`) remove stale owned child references when the target state is already missing or unusable. Step-result commands (`rundown pass` and `rundown fail`) fail closed in that case because they cannot safely apply a result to a missing delegated child.
 
 ### Runbook State Structure
 
@@ -991,6 +1008,9 @@ Delegation semantics:
 - `claim` uses the delegation token (printed by `delegate`) to launch the child runbook.
 - Child runbook uses plain `rd pass` / `rd fail` to report its outcome.
 - Completion routing is frame + entry aware (`frame + entry + substep`) to prevent stale re-entry completions from being applied.
+- Identified subagents are routed by ownership, not by the shared stack. `rd claim <token>` records the claimed child run id under the caller's `agent_id`/`session_id`; later plain ownership-routed commands (`rd status`, `rd pass`, `rd fail`, `rd stash`, `rd pop`, and `rd stop`) resolve that owned child first.
+- The shared `defaultStack` is not a safe targeting mechanism for parallel delegated siblings because the most recently claimed child is not necessarily the caller's child.
+- If an ownership record points at missing or terminal state, commands fail closed instead of falling back to the shared stack in the same invocation.
 
 ### Runtime Identity Glossary
 

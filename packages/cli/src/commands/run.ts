@@ -34,7 +34,11 @@ import {
   inferEntryFromState,
   type RunPipelineContext,
 } from '../helpers/runbook-pipeline.js';
-import { buildGotoContext, validateGotoTarget, executeGoto } from '../helpers/goto-workflow.js';
+import {
+  validateGotoTarget,
+  executeGoto,
+  resolveTerminalReleaseModeForRunbook,
+} from '../helpers/goto-workflow.js';
 import {
   validateIndexRequiresStep,
   resolveIndexOption,
@@ -239,12 +243,25 @@ export function registerRunCommand(program: Command): void {
 
             // If --step provided with --prompted and runbook is waiting, jump to the step
             if (options.step && options.prompted && result.loopResult === 'waiting') {
-              const gotoCtx = await buildGotoContext(output, cwd);
-              if (!gotoCtx) {
+              const gotoState = await manager.load(result.stateId);
+              if (!gotoState) {
                 output.error('Failed to build goto context after start', 'ENGINE_INIT_FAILED');
                 output.flush();
                 process.exit(1);
               }
+              const gotoCtx = {
+                output,
+                manager,
+                actorService,
+                sessionService,
+                state: gotoState,
+                steps: [...getRunbookFromState(gotoState, cwd)],
+                cwd,
+                terminalReleaseMode: await resolveTerminalReleaseModeForRunbook(
+                  manager,
+                  gotoState.id,
+                ),
+              };
 
               const validation = validateGotoTarget(options.step, gotoCtx.steps, options.index);
               if (!validation.ok) {

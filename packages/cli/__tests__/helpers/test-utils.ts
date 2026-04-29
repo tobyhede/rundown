@@ -23,6 +23,7 @@ import type { ResolvedStep, Substep } from '@rundown-org/parser';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+const NAMED_IDENTIFIER_PATTERN_DESCRIPTION = '^[A-Za-z_][A-Za-z0-9_]*$';
 
 /**
  * Get the absolute path to the CLI entry point.
@@ -189,6 +190,14 @@ export function stripExitArtefact(buf: string): string {
 }
 
 /**
+ * Options for in-process CLI test execution.
+ */
+export interface RunCliInProcessOptions {
+  /** Per-invocation environment overrides, restored after the command finishes. */
+  readonly env?: Readonly<Record<string, string | undefined>>;
+}
+
+/**
  * Run CLI in-process via Commander for fast test execution (~1-5ms vs ~200-500ms subprocess).
  *
  * Uses `process.chdir()` to set the working directory, ensuring all code paths
@@ -202,8 +211,14 @@ export function stripExitArtefact(buf: string): string {
 export async function runCliInProcess(
   args: string | string[],
   workspace: TestWorkspace,
+  options: RunCliInProcessOptions = {},
 ): Promise<CliResult> {
   const argArray = Array.isArray(args) ? args : args.split(' ').filter(Boolean);
+  const extraEnv = options.env ?? {};
+  const extraEnvKeys = Object.keys(extraEnv);
+  const origExtraEnv = Object.fromEntries(
+    extraEnvKeys.map((key) => [key, process.env[key]]),
+  ) as Record<string, string | undefined>;
   const binPath = workspace.binPath();
   const pluginDir = join(workspace.cwd, 'plugin');
 
@@ -242,6 +257,13 @@ export async function runCliInProcess(
     process.env.CLAUDE_PLUGIN_ROOT = pluginDir;
     process.env.PATH = `${binPath}:${origEnv.PATH ?? ''}`;
     delete process.env.FORCE_COLOR;
+    for (const [key, value] of Object.entries(extraEnv)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
 
     // Capture stdout/stderr via process.stdout/stderr.write
     // ConsoleWriter consistently uses these (not console.log/error)
@@ -335,6 +357,13 @@ export async function runCliInProcess(
         process.env[key] = origEnv[key];
       }
     }
+    for (const [key, value] of Object.entries(origExtraEnv)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
 
     // Reset globals again for clean state
     resetPolicyContext();
@@ -359,14 +388,16 @@ export async function runCliInProcess(
  * Maps internal session fields to test-friendly names:
  * - `defaultStack` (top of default stack) → `active`
  * - `stashedRunbookId` (from RunbookStateManager) → `stashed`
- * - `stacks` (for multi-agent runbooks) → `stacks`
+ * - `stacks` (for legacy multi-agent runbooks) → `stacks`
  * - `defaultStack` (default stack for runbooks) → `defaultStack`
  */
 export async function readSession(workspace: TestWorkspace): Promise<{
   active: string | null;
   stashed: string | null;
+  stashedRunbookOwnership?: Record<string, unknown>;
   stacks: Record<string, string[]>;
   defaultStack: string[];
+  ownedRunbooks: Record<string, unknown[]>;
 }> {
   try {
     const content = await readFile(workspace.sessionPath(), 'utf-8');
@@ -374,6 +405,10 @@ export async function readSession(workspace: TestWorkspace): Promise<{
 
     const stacks = (session.stacks as Record<string, string[]> | undefined) ?? {};
     const defaultStack = (session.defaultStack as string[] | undefined) ?? [];
+    const ownedRunbooks =
+      session.ownedRunbooks && typeof session.ownedRunbooks === 'object'
+        ? (session.ownedRunbooks as Record<string, unknown[]>)
+        : {};
 
     // Active runbook is the top of the default stack
     const active = defaultStack.length > 0 ? (defaultStack[defaultStack.length - 1] ?? null) : null;
@@ -381,11 +416,16 @@ export async function readSession(workspace: TestWorkspace): Promise<{
     return {
       active,
       stashed: typeof session.stashedRunbookId === 'string' ? session.stashedRunbookId : null,
+      stashedRunbookOwnership:
+        session.stashedRunbookOwnership && typeof session.stashedRunbookOwnership === 'object'
+          ? (session.stashedRunbookOwnership as Record<string, unknown>)
+          : undefined,
       stacks,
       defaultStack,
+      ownedRunbooks,
     };
   } catch {
-    return { active: null, stashed: null, stacks: {}, defaultStack: [] };
+    return { active: null, stashed: null, stacks: {}, defaultStack: [], ownedRunbooks: {} };
   }
 }
 
@@ -402,6 +442,8 @@ export async function writeSession(
   session: {
     active?: string | null;
     stashed?: string | null;
+    stashedRunbookOwnership?: Record<string, unknown>;
+    ownedRunbooks?: Record<string, unknown[]>;
     stacks?: Record<string, string[]>;
     defaultStack?: string[];
   },
@@ -423,6 +465,12 @@ export async function writeSession(
 
   if (session.stashed !== undefined) {
     sessionData.stashedRunbookId = session.stashed;
+  }
+  if (session.stashedRunbookOwnership !== undefined) {
+    sessionData.stashedRunbookOwnership = session.stashedRunbookOwnership;
+  }
+  if (session.ownedRunbooks !== undefined) {
+    sessionData.ownedRunbooks = session.ownedRunbooks;
   }
 
   await writeFile(workspace.sessionPath(), JSON.stringify(sessionData, null, 2));
@@ -832,7 +880,7 @@ export function createRunbook(options: CreateRunbookOptions): string {
     if (step.id != null) {
       if (!NAMED_IDENTIFIER_PATTERN.test(step.id)) {
         throw new Error(
-          `StepConfig.id "${step.id}" is not a valid named identifier (must match ${NAMED_IDENTIFIER_PATTERN.source})`,
+          `StepConfig.id "${step.id}" is not a valid named identifier (must match ${NAMED_IDENTIFIER_PATTERN_DESCRIPTION})`,
         );
       }
       if (isReservedWord(step.id)) {
@@ -1119,4 +1167,56 @@ export function normalizeCliOutput(output: string, workspace: TestWorkspace): st
   text = text.replace(/\b([Pp][Ii][Dd][=:\s]+)\d+/g, '$1<pid>');
 
   return text;
+}
+
+/**
+ * Parse concatenated JSON values from CLI stdout.
+ *
+ * Some CLI flows emit multiple JSON documents without separators, and those
+ * documents may be pretty-printed. This extracts each top-level object/array
+ * while preserving nested structures and strings.
+ *
+ * @param raw - Raw stdout string
+ * @returns Parsed JSON values in document order; malformed chunks are skipped
+ */
+export function parseConcatenatedJson(raw: string): unknown[] {
+  const results: unknown[] = [];
+  let i = 0;
+  while (i < raw.length) {
+    while (i < raw.length && raw[i] !== '{' && raw[i] !== '[') i++;
+    if (i >= raw.length) break;
+    const start = i;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (; i < raw.length; i++) {
+      const ch = raw[i];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (ch === '\\') {
+          escaped = true;
+        } else if (ch === '"') {
+          inString = false;
+        }
+      } else if (ch === '"') {
+        inString = true;
+      } else if (ch === '{' || ch === '[') {
+        depth++;
+      } else if (ch === '}' || ch === ']') {
+        depth--;
+        if (depth === 0) {
+          i++;
+          break;
+        }
+      }
+    }
+    const chunk = raw.slice(start, i);
+    try {
+      results.push(JSON.parse(chunk));
+    } catch {
+      // CLI stdout can contain non-JSON text; ignore malformed chunks.
+    }
+  }
+  return results;
 }

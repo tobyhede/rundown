@@ -6,6 +6,7 @@ import {
   loadConfig,
   logger,
   isPathInside,
+  isError,
   getErrorMessage,
 } from './shared/index.js';
 import { injectContext } from './context.js';
@@ -233,7 +234,7 @@ async function updateSessionState(input: HookInput): Promise<void> {
     // Session state is best-effort, don't fail the hook if it errors
     // Structured error logging for debugging
     const errorData = {
-      error_type: Error.isError(error) ? error.constructor.name : 'UnknownError',
+      error_type: isError(error) ? error.constructor.name : 'UnknownError',
       error_message: getErrorMessage(error),
       hook_event: event,
       cwd: input.cwd,

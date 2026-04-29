@@ -1,4 +1,35 @@
 /**
+ * Cached reference to the native `Error.isError` (TC39 Stage 4, Node 24+).
+ *
+ * Resolved once at module load. `undefined` on hosts that don't ship it yet
+ * (notably WebContainer's bundled Node 22.x), in which case {@link isError}
+ * falls back to `instanceof Error`. `.bind(Error)` guards against detached-call
+ * lint rules and matches `Array.isArray` idioms.
+ *
+ * Direct `Error.isError(...)` calls are banned project-wide by ESLint
+ * `no-restricted-syntax`; the rule allow-lists this file only.
+ */
+const nativeIsError: ((value: unknown) => value is Error) | undefined =
+  typeof Error.isError === 'function' ? Error.isError.bind(Error) : undefined;
+
+/**
+ * Type guard for Error instances.
+ *
+ * Uses native `Error.isError` (Stage 4, Node 24+) when available — which
+ * survives cross-realm boundaries (Jest VM modules, `vm.runInNewContext`,
+ * worker_threads). Falls back to `instanceof Error` on older runtimes such
+ * as WebContainer's Node 22.x. The fallback's only weakness is the
+ * cross-realm edge case `instanceof` always had, which CLI process code
+ * effectively never hits.
+ *
+ * @param error - The value to check
+ * @returns True if the value is an Error instance, false otherwise
+ */
+export function isError(error: unknown): error is Error {
+  return nativeIsError !== undefined ? nativeIsError(error) : error instanceof Error;
+}
+
+/**
  * Type guard for NodeJS.ErrnoException.
  *
  * Checks if the given value is an Error instance with a 'code' property,
@@ -9,22 +40,8 @@
  */
 export function isNodeError(error: unknown): error is NodeJS.ErrnoException {
   return (
-    Error.isError(error) &&
-    'code' in error &&
-    typeof (error as { code?: unknown }).code === 'string'
+    isError(error) && 'code' in error && typeof (error as { code?: unknown }).code === 'string'
   );
-}
-
-/**
- * Type guard for Error instances.
- *
- * Checks if the given value is an instance of the Error class.
- *
- * @param error - The value to check
- * @returns True if the value is an Error instance, false otherwise
- */
-export function isError(error: unknown): error is Error {
-  return Error.isError(error);
 }
 
 /**

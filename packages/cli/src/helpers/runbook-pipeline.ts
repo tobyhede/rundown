@@ -22,6 +22,7 @@ import {
   type ResolvedRunbook,
   type DelegationLinkage,
   type ParentLinkage,
+  type AgentOwnerIdentity,
   RUNS_DIR,
   DelegationScanService,
   DelegationLock,
@@ -59,7 +60,11 @@ import {
   collectUnresolvedRunbookVariables,
 } from '../services/template-renderer.js';
 import { getPolicyEvaluator, getPolicyPrompter } from '../services/policy-context.js';
-import { validateOutputsDeclarations } from './validate-frontmatter-vars.js';
+import {
+  validateFrontmatterVars,
+  validateRequiredVars,
+  validateOutputsDeclarations,
+} from './validate-frontmatter-vars.js';
 import { getHelperRegistry, detectHelperCollisions } from '../services/helper-registry.js';
 
 /**
@@ -110,27 +115,69 @@ export interface PreparedRunbook {
   frontmatter: RunbookFrontmatter | null;
 }
 
+/** Failure produced while initializing a runbook launch. */
+export interface RunbookStartFailure {
+  ok: false;
+  reason: 'launch-failed';
+  error: string;
+  code: typeof ErrorCodes.LAUNCH_FAILED.code;
+  details: { runbookName: string };
+}
+
 /** Result of starting a runbook execution loop via {@link startRunbook}. */
 export type RunbookStartResult =
   | { ok: true; loopResult: 'done' | 'stopped' | 'waiting'; stateId: string }
-  | { ok: false; error: string; code: string; details?: Record<string, unknown> };
+  | RunbookStartFailure;
 
-/**
- * Result of claiming a delegation token and launching the child runbook.
- *
- * A discriminated union keyed on `ok`. On success, contains identifiers
- * linking parent and child runs. On failure, contains a human-readable
- * error, a machine-readable code, and optional structured details.
- *
- * Possible error codes:
- * - `RD-807` (`INVALID_TOKEN`) -- token format invalid
- * - `RD-808` (`TOKEN_NOT_FOUND`) -- no active run with this token
- * - `RD-809` (`TOKEN_CANCELLED`) -- delegation was cancelled
- * - `RD-810` (`DELEGATION_LOCK_TIMEOUT`) -- could not acquire lock
- *
- * @see claimAndLaunch
- * @see ErrorCodes
- */
+type LaunchSessionActivation =
+  | { readonly kind: 'default-stack' }
+  | {
+      readonly kind: 'agent-owned';
+      readonly identity: AgentOwnerIdentity;
+      readonly linkage: DelegationLinkage;
+    };
+
+/** Failure variants from claiming and launching a delegated child runbook. */
+export type ClaimFailure =
+  | { readonly reason: 'invalid-token'; readonly token: string }
+  | { readonly reason: 'token-not-found'; readonly token: string }
+  | { readonly reason: 'parent-missing'; readonly parentRunId: string }
+  | {
+      readonly reason: 'parent-ended';
+      readonly parentRunId: string;
+      readonly lifecycle: 'stopped' | 'completed';
+    }
+  | { readonly reason: 'delegation-removed'; readonly parentRunId: string; readonly stepId: string }
+  | {
+      readonly reason: 'delegation-cancelled';
+      readonly parentRunId: string;
+      readonly stepId: string;
+      readonly cancelledAt: string;
+    }
+  | { readonly reason: 'lock-timeout'; readonly parentRunId: string }
+  | {
+      readonly reason: 'owner-conflict';
+      readonly parentRunId: string;
+      readonly stepId: string;
+      readonly childRunId: string;
+      readonly existingOwnerAgentId: string;
+    }
+  | {
+      readonly reason: 'prepare-failed';
+      readonly runbook: string;
+      readonly code: PrepareFailure['code'];
+      readonly cause: string;
+      readonly details: PrepareFailure['details'];
+    }
+  | {
+      readonly reason: 'launch-failed';
+      readonly runbook: string;
+      readonly code: RunbookStartFailure['code'];
+      readonly cause: string;
+      readonly details: RunbookStartFailure['details'] & { readonly runbook: string };
+    };
+
+/** Result of claiming a delegation token and launching the child runbook. */
 export type ClaimResult =
   | {
       /** Discriminator indicating success. */
@@ -144,16 +191,7 @@ export type ClaimResult =
       /** Terminal state of the child execution loop. */
       loopResult: 'done' | 'stopped' | 'waiting';
     }
-  | {
-      /** Discriminator indicating failure. */
-      ok: false;
-      /** Human-readable error description. */
-      error: string;
-      /** Machine-readable error code (e.g. `'RD-807'`). */
-      code: string;
-      /** Optional structured details for diagnostics. */
-      details?: Record<string, unknown>;
-    };
+  | ({ readonly ok: false } & ClaimFailure);
 
 /**
  * Validate that all sourced FOR clauses reference defined iterable variables.
@@ -262,18 +300,39 @@ export interface PrepareSuccess {
   unresolved: readonly string[];
 }
 
-/** Failure result from {@link prepareRunbook}. */
-export interface PrepareFailure {
-  ok: false;
-  error: string;
-  code: string;
-  details?: Record<string, unknown>;
+interface PrepareFailureBase {
+  readonly ok: false;
+  readonly error: string;
   /** Partial results — available when pipeline progressed past parse */
-  variables?: Record<string, TemplateVarValue>;
-  stats?: { steps: number; substeps: number };
-  diagnostics?: readonly ValidationDiagnostic[];
-  warnings?: readonly string[];
+  readonly variables?: Record<string, TemplateVarValue>;
+  readonly stats?: { steps: number; substeps: number };
+  readonly diagnostics?: readonly ValidationDiagnostic[];
+  readonly warnings?: readonly string[];
 }
+
+/** Failure result from {@link prepareRunbook}. */
+export type PrepareFailure =
+  | (PrepareFailureBase & {
+      readonly code: 'RUNBOOK_NOT_FOUND' | 'PARSE_ERROR' | 'VARIABLE_RESOLUTION_ERROR';
+      readonly details: { readonly runbook: string };
+    })
+  | (PrepareFailureBase & {
+      readonly code: 'POLICY_DENIED';
+      readonly details: {
+        readonly runbook: string;
+        readonly variable: string;
+        readonly filePath: string;
+        readonly reason: string;
+      };
+    })
+  | (PrepareFailureBase & {
+      readonly code: 'VALIDATION_ERROR';
+      readonly details: { readonly runbook: string };
+    })
+  | (PrepareFailureBase & {
+      readonly code: 'MISSING_REQUIRED_VARS';
+      readonly details: { readonly runbook: string; readonly missing: readonly string[] };
+    });
 
 /** Discriminated union result of {@link prepareRunbook}. */
 export type PrepareResult = PrepareSuccess | PrepareFailure;
@@ -323,8 +382,8 @@ export interface LoadAndParseSuccess {
 export interface LoadAndParseFailure {
   ok: false;
   error: string;
-  code: string;
-  details?: Record<string, unknown>;
+  code: 'RUNBOOK_NOT_FOUND' | 'PARSE_ERROR';
+  details: { runbook: string };
 }
 
 /** Discriminated union result of {@link loadAndParseRunbook}. */
@@ -367,9 +426,17 @@ export async function loadAndParseRunbook(file: string, cwd: string): Promise<Lo
     } = parseRunbookDocument(rawContent, path.basename(filePath));
 
     const fmOutputs = frontmatter?.outputs;
+    const fmVars =
+      frontmatter?.vars && typeof frontmatter.vars === 'object' && !Array.isArray(frontmatter.vars)
+        ? (frontmatter.vars as Record<string, string | number | boolean>)
+        : undefined;
+    const varsDiagnostics = validateFrontmatterVars(fmVars);
+    const requiredDiagnostics = validateRequiredVars(frontmatter?.required, fmVars);
     const outputsDiagnostics = validateOutputsDeclarations(fmOutputs);
     const diagnostics: readonly ValidationDiagnostic[] = [
       ...parseDiagnostics,
+      ...varsDiagnostics,
+      ...requiredDiagnostics,
       ...outputsDiagnostics,
     ];
 
@@ -624,6 +691,7 @@ export async function prepareRunbook(
  * @param options.runbookName - Name identifier for the runbook being launched
  * @param options.prompted - Whether to run in prompted mode (no auto-execution)
  * @param options.parentLinkage - Optional parent linkage for child runs (delegation or inline)
+ * @param options.sessionActivation - Session activation mode for the launched runbook
  * @param options.afterInit - Optional callback invoked after state initialization with the new state ID
  * @returns RunbookStartResult
  */
@@ -634,6 +702,7 @@ async function launchRunbook(
     runbookName: string;
     prompted: boolean;
     parentLinkage?: ParentLinkage;
+    sessionActivation?: LaunchSessionActivation;
     afterInit?: (stateId: string) => Promise<void>;
   },
 ): Promise<RunbookStartResult> {
@@ -643,7 +712,7 @@ async function launchRunbook(
   const runbookPath = path.relative(cwd, filePath);
 
   // Init phase: state creation through start-event emission. Failures here
-  // produce a structured RD-816 result so callers (notably claimAndLaunch)
+  // produce a structured launch failure so callers (notably claimAndLaunch)
   // can release locks and report cleanly. The loop itself is outside the
   // try/catch — loop failures still propagate as exceptions.
   let stateId: string;
@@ -669,7 +738,25 @@ async function launchRunbook(
       await options.afterInit(state.id);
     }
 
-    await sessionService.pushRunbook(state.id);
+    const sessionActivation = options.sessionActivation ?? { kind: 'default-stack' as const };
+    switch (sessionActivation.kind) {
+      case 'default-stack':
+        await sessionService.pushRunbook(state.id);
+        break;
+      case 'agent-owned':
+        await sessionService.claimRunbookForOwner(
+          sessionActivation.identity,
+          state.id,
+          sessionActivation.linkage,
+        );
+        break;
+      default: {
+        const _exhaustive: never = sessionActivation;
+        throw new Error(
+          `Unhandled session activation kind: ${(_exhaustive as LaunchSessionActivation).kind}`,
+        );
+      }
+    }
 
     if (resolvedStepHasSubsteps(runbook.steps[0]) && runbook.steps[0].substeps.length > 0) {
       const freshState = await manager.load(state.id);
@@ -693,6 +780,7 @@ async function launchRunbook(
   } catch (err) {
     return {
       ok: false,
+      reason: 'launch-failed',
       error: getErrorMessage(err),
       code: ErrorCodes.LAUNCH_FAILED.code,
       details: { runbookName: options.runbookName },
@@ -706,6 +794,10 @@ async function launchRunbook(
     cwd,
     options.prompted,
     emitter,
+    {
+      terminalReleaseMode:
+        options.sessionActivation?.kind === 'agent-owned' ? 'release-runbook' : 'stack-pop',
+    },
   );
 
   return { ok: true, loopResult, stateId };
@@ -810,12 +902,14 @@ async function updateStepDelegationChildRunId(
  * @param ctx - Pipeline context
  * @param rawToken - The plain-text delegation token to claim
  * @param inputOpts - Input options from CLI flags
+ * @param ownerIdentity - Optional identified caller that owns the claimed child runbook
  * @returns ClaimResult with child run details or error
  */
 export async function claimAndLaunch(
   ctx: RunPipelineContext,
   rawToken: string,
   inputOpts: InputOptions,
+  ownerIdentity?: AgentOwnerIdentity,
 ): Promise<ClaimResult> {
   const { output, manager, cwd } = ctx;
   const truncatedToken = truncateDelegationToken(rawToken);
@@ -824,9 +918,8 @@ export async function claimAndLaunch(
   if (!rawToken.startsWith(DELEGATION_TOKEN_PREFIX)) {
     return {
       ok: false,
-      error: `Invalid token format. Tokens must start with "${DELEGATION_TOKEN_PREFIX}".`,
-      code: ErrorCodes.INVALID_TOKEN.code,
-      details: { token: truncatedToken },
+      reason: 'invalid-token',
+      token: truncatedToken,
     };
   }
 
@@ -837,9 +930,8 @@ export async function claimAndLaunch(
   if (!scanResult) {
     return {
       ok: false,
-      error: 'No active run contains a delegation with this token.',
-      code: ErrorCodes.TOKEN_NOT_FOUND.code,
-      details: { token: truncatedToken },
+      reason: 'token-not-found',
+      token: truncatedToken,
     };
   }
 
@@ -855,9 +947,8 @@ export async function claimAndLaunch(
     if (err instanceof DelegationLockTimeoutError) {
       return {
         ok: false,
-        error: `Could not acquire delegation lock for run ${parentState.id}. Another operation may be in progress.`,
-        code: ErrorCodes.DELEGATION_LOCK_TIMEOUT.code,
-        details: { parentRunId: parentState.id },
+        reason: 'lock-timeout',
+        parentRunId: parentState.id,
       };
     }
     throw err;
@@ -869,9 +960,8 @@ export async function claimAndLaunch(
     if (!freshParent) {
       return {
         ok: false,
-        error: `Parent run ${parentState.id} no longer exists.`,
-        code: ErrorCodes.TOKEN_NOT_FOUND.code,
-        details: { parentRunId: parentState.id },
+        reason: 'parent-missing',
+        parentRunId: parentState.id,
       };
     }
 
@@ -880,9 +970,9 @@ export async function claimAndLaunch(
       const reason = freshParent.lifecycle === 'completed' ? 'completed' : 'stopped';
       return {
         ok: false,
-        error: `Parent run has been ${reason}. Delegation cannot be claimed.`,
-        code: ErrorCodes.TOKEN_NOT_FOUND.code,
-        details: { parentRunId: freshParent.id },
+        reason: 'parent-ended',
+        parentRunId: freshParent.id,
+        lifecycle: reason,
       };
     }
 
@@ -896,14 +986,46 @@ export async function claimAndLaunch(
     if (!freshDelegation) {
       return {
         ok: false,
-        error: 'Delegation no longer exists on parent step.',
-        code: ErrorCodes.TOKEN_NOT_FOUND.code,
-        details: { parentRunId: parentState.id, stepId },
+        reason: 'delegation-removed',
+        parentRunId: parentState.id,
+        stepId,
       };
     }
 
     // 4b. Idempotent return if already claimed
     if (freshDelegation.childRunId) {
+      if (ownerIdentity) {
+        const delegationFrameKey = freshSubstep.frameKey;
+        const existingChild = await manager.load(freshDelegation.childRunId);
+        const existingLinkage =
+          existingChild?.parentLinkage?.kind === 'delegation'
+            ? existingChild.parentLinkage
+            : {
+                kind: 'delegation' as const,
+                parentRunId: freshParent.id,
+                parentStepId: substepId ?? stepId,
+                tokenHash,
+                parentStep: freshParent.step,
+                parentFrameKey: delegationFrameKey,
+                parentEntry: inferEntryFromState(freshParent, delegationFrameKey),
+              };
+        const claimResult = await ctx.sessionService.claimRunbookForOwner(
+          ownerIdentity,
+          freshDelegation.childRunId,
+          existingLinkage,
+        );
+        if (claimResult.status === 'conflict') {
+          return {
+            ok: false,
+            reason: 'owner-conflict',
+            parentRunId: freshParent.id,
+            stepId,
+            childRunId: freshDelegation.childRunId,
+            existingOwnerAgentId: claimResult.existing.agent_id,
+          };
+        }
+      }
+
       return {
         ok: true,
         childRunId: freshDelegation.childRunId,
@@ -917,9 +1039,10 @@ export async function claimAndLaunch(
     if (freshDelegation.cancelledAt) {
       return {
         ok: false,
-        error: 'This delegation has been cancelled and cannot be claimed.',
-        code: ErrorCodes.TOKEN_CANCELLED.code,
-        details: { parentRunId: freshParent.id, stepId, cancelledAt: freshDelegation.cancelledAt },
+        reason: 'delegation-cancelled',
+        parentRunId: freshParent.id,
+        stepId,
+        cancelledAt: freshDelegation.cancelledAt,
       };
     }
 
@@ -934,6 +1057,23 @@ export async function claimAndLaunch(
         orphan.id,
         tokenHash,
       );
+      if (ownerIdentity && orphan.parentLinkage?.kind === 'delegation') {
+        const claimResult = await ctx.sessionService.claimRunbookForOwner(
+          ownerIdentity,
+          orphan.id,
+          orphan.parentLinkage,
+        );
+        if (claimResult.status === 'conflict') {
+          return {
+            ok: false,
+            reason: 'owner-conflict',
+            parentRunId: freshParent.id,
+            stepId,
+            childRunId: orphan.id,
+            existingOwnerAgentId: claimResult.existing.agent_id,
+          };
+        }
+      }
       return {
         ok: true,
         childRunId: orphan.id,
@@ -955,9 +1095,11 @@ export async function claimAndLaunch(
     if (!prepResult.ok) {
       return {
         ok: false,
-        error: prepResult.error,
+        reason: 'prepare-failed',
+        runbook: freshDelegation.childRunbookPath,
         code: prepResult.code,
-        details: { runbook: freshDelegation.childRunbookPath, ...prepResult.details },
+        cause: prepResult.error,
+        details: prepResult.details,
       };
     }
 
@@ -993,6 +1135,9 @@ export async function claimAndLaunch(
       runbookName: freshDelegation.childRunbookPath,
       prompted: parentPrompted,
       parentLinkage: delegationLinkage,
+      sessionActivation: ownerIdentity
+        ? { kind: 'agent-owned', identity: ownerIdentity, linkage: delegationLinkage }
+        : { kind: 'default-stack' },
       afterInit: async (childStateId) => {
         // Set childRunId on parent delegation (tokenHash for precise matching)
         await updateStepDelegationChildRunId(
@@ -1009,9 +1154,11 @@ export async function claimAndLaunch(
     if (!launchResult.ok) {
       return {
         ok: false,
-        error: launchResult.error,
+        reason: 'launch-failed',
+        runbook: freshDelegation.childRunbookPath,
         code: launchResult.code,
-        details: launchResult.details,
+        cause: launchResult.error,
+        details: { ...launchResult.details, runbook: freshDelegation.childRunbookPath },
       };
     }
 

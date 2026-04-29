@@ -1,6 +1,10 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { mockErrorHelpers } from './mock-error-helpers.js';
-import { brandInitialTemplateVarsForTest, brandStoredOutputsForTest } from './brand-helpers.js';
+import {
+  brandDelegationTokenHashForTest,
+  brandInitialTemplateVarsForTest,
+  brandStoredOutputsForTest,
+} from './brand-helpers.js';
 import { mockFn } from './typed-mocks.js';
 
 import type * as CoreModule from '@rundown-org/core';
@@ -280,7 +284,9 @@ describe('parentLinkage projection', () => {
     const state = makeState({
       parentLinkage: {
         kind: 'delegation',
-        tokenHash: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+        tokenHash: brandDelegationTokenHashForTest(
+          'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+        ),
         parentRunId: 'parent-run-1',
         parentStepId: '1.1',
         parentStep: '1',
@@ -329,7 +335,9 @@ describe('parentLinkage projection', () => {
     const state = makeState({
       parentLinkage: {
         kind: 'delegation',
-        tokenHash: 'sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210',
+        tokenHash: brandDelegationTokenHashForTest(
+          'sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210',
+        ),
         parentRunId: 'parent-run-2',
         parentStepId: '2.1',
       },

@@ -16,7 +16,13 @@ import { execFileSync as nodeExecFileSync } from 'node:child_process';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { isJsonArrayStream, resolveForValue, RUNDOWN_DIR, WORK_DIR } from '@rundown-org/core';
+import {
+  isError,
+  isJsonArrayStream,
+  resolveForValue,
+  RUNDOWN_DIR,
+  WORK_DIR,
+} from '@rundown-org/core';
 import type { ForContext, PolicyEvaluator, PolicyPrompter } from '@rundown-org/core';
 import { brandInitialTemplateVarsForTest } from '../helpers/brand-helpers.js';
 import { mockFn } from '../helpers/typed-mocks.js';
@@ -495,8 +501,8 @@ describe('resolveVariables', () => {
       const error = await resolveVariables({ input: ['Step=a', 'Index=b'] }, tmpDir).catch(
         (e: unknown) => e,
       );
-      expect(Error.isError(error)).toBe(true);
-      if (!Error.isError(error)) throw new Error('Expected an Error to be thrown');
+      expect(isError(error)).toBe(true);
+      if (!isError(error)) throw new Error('Expected an Error to be thrown');
       expect(error.message).toMatch(/reserved runtime variables/i);
       expect(error.message).toContain('"Step"');
       expect(error.message).toContain('"Index"');

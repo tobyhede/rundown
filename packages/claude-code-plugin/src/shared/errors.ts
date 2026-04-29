@@ -1,4 +1,32 @@
 /**
+ * Cached reference to the native `Error.isError` (TC39 Stage 4, Node 24+).
+ *
+ * Resolved once at module load. `undefined` on hosts that don't ship it yet
+ * (notably WebContainer's bundled Node 22.x), in which case {@link isError}
+ * falls back to `instanceof Error`. `.bind(Error)` guards against detached-call
+ * lint rules and matches `Array.isArray` idioms.
+ *
+ * Direct `Error.isError(...)` calls are banned project-wide by ESLint
+ * `no-restricted-syntax`; the rule allow-lists this file only.
+ */
+const nativeIsError: ((value: unknown) => value is Error) | undefined =
+  typeof Error.isError === 'function' ? Error.isError.bind(Error) : undefined;
+
+/**
+ * Type guard for Error instances.
+ * Checks if an unknown value is an Error object.
+ *
+ * Uses native `Error.isError` when available (Node 24+); falls back to
+ * `instanceof Error` on older runtimes (e.g. WebContainer's Node 22.x).
+ *
+ * @param error - The unknown value to check
+ * @returns True if error is an Error instance
+ */
+export function isError(error: unknown): error is Error {
+  return nativeIsError !== undefined ? nativeIsError(error) : error instanceof Error;
+}
+
+/**
  * Type guard for NodeJS.ErrnoException.
  * Checks if an unknown value is a Node.js error with an error code.
  *
@@ -7,21 +35,8 @@
  */
 export function isNodeError(error: unknown): error is NodeJS.ErrnoException {
   return (
-    Error.isError(error) &&
-    'code' in error &&
-    typeof (error as { code?: unknown }).code === 'string'
+    isError(error) && 'code' in error && typeof (error as { code?: unknown }).code === 'string'
   );
-}
-
-/**
- * Type guard for Error instances.
- * Checks if an unknown value is an Error object.
- *
- * @param error - The unknown value to check
- * @returns True if error is an Error instance
- */
-export function isError(error: unknown): error is Error {
-  return Error.isError(error);
 }
 
 /**

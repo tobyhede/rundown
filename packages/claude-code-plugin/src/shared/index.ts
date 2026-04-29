@@ -4,6 +4,10 @@
 export * from './types.js';
 export {
   HookInputSchema,
+  DelegationActiveTokenMetadataSchema,
+  type DelegationActiveTokenMetadata,
+  DelegationActiveTokensMetadataSchema,
+  type DelegationActiveTokensMetadata,
   type ParseResult,
   parseHookInput,
   ParentLinkageSchema,

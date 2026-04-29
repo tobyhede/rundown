@@ -13,6 +13,7 @@ import {
   inferAllDelegateSubsteps,
 } from '../../src/helpers/delegate-inference.js';
 import {
+  brandDelegationTokenHashForTest,
   brandEffectiveVarsForTest,
   brandFrameKeyForTest,
   brandStoredOutputsForTest,
@@ -60,7 +61,7 @@ function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
 /** Build a delegation that is active (not cancelled). */
 function makeActiveDelegation(): StepDelegation {
   return {
-    tokenHash: 'sha256:abc',
+    tokenHash: brandDelegationTokenHashForTest(`sha256:${'a'.repeat(64)}`),
     childRunbookPath: 'child.runbook.md',
     contextSnapshot: { vars: brandEffectiveVarsForTest(), ancestors: [] },
     childRunId: null,

@@ -3,6 +3,7 @@ import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals
 import { setExecSync } from '../../../src/workflow/hooks/rundown.js';
 import { createMockHookInput } from '../../helpers/test-utils.js';
 import { mockExecFileSync, mockExecFileSyncError } from '../../helpers/execfile-mock.js';
+import { DelegationActiveTokensMetadataSchema } from '../../../src/shared/schemas.js';
 
 // Mock Session module
 import { createSessionMock, setGet } from '../../helpers/session-mock.js';
@@ -92,10 +93,12 @@ describe('handleDelegationDispatch', () => {
     expect(result.context).toContain(`rd claim ${VALID_TOKEN}`);
   });
 
-  it('stores token in session metadata on detection', async () => {
+  it('stores token in per-agent session metadata when agent_id is present', async () => {
     setGet(session, 'metadata', { existing_key: 'value' });
 
     const input = createMockHookInput('PreToolUse', {
+      agent_id: 'agent-123',
+      session_id: 'session-abc',
       tool_name: 'Task',
       tool_input: {
         prompt: `RD_CLAIM_TOKEN=${VALID_TOKEN}`,
@@ -106,6 +109,60 @@ describe('handleDelegationDispatch', () => {
 
     expect(mockSet).toHaveBeenCalledWith('metadata', {
       existing_key: 'value',
+      delegation_active_tokens: {
+        'agent-123': {
+          kind: 'delegation-active-token',
+          agent_id: 'agent-123',
+          session_id: 'session-abc',
+          tokenHash: hashToken(VALID_TOKEN),
+          createdAt: expect.any(String),
+        },
+      },
+    });
+    const written = mockSet.mock.calls.at(-1)?.[1] as Record<string, unknown>;
+    expect(DelegationActiveTokensMetadataSchema.parse(written.delegation_active_tokens)).toEqual(
+      written.delegation_active_tokens,
+    );
+  });
+
+  it('rejects write-side delegation_active_tokens schema drift', async () => {
+    setGet(session, 'metadata', {
+      delegation_active_tokens: {
+        'agent-1': {
+          kind: 'delegation-active-token',
+          agent_id: 'different-agent',
+          tokenHash: hashToken(VALID_TOKEN),
+          createdAt: '2026-04-28T00:00:00.000Z',
+        },
+      },
+    });
+
+    const input = createMockHookInput('PreToolUse', {
+      agent_id: 'agent-2',
+      session_id: 'session-abc',
+      tool_name: 'Task',
+      tool_input: {
+        prompt: `RD_CLAIM_TOKEN=${VALID_TOKEN}`,
+      },
+    });
+
+    await expect(handleDelegationDispatch(input)).rejects.toThrow(
+      'delegation_active_tokens key must match metadata.agent_id',
+    );
+    expect(mockSet).not.toHaveBeenCalled();
+  });
+
+  it('keeps legacy global metadata when agent_id is absent', async () => {
+    setGet(session, 'metadata', {});
+
+    const input = createMockHookInput('PreToolUse', {
+      tool_name: 'Task',
+      tool_input: { prompt: `RD_CLAIM_TOKEN=${VALID_TOKEN}` },
+    });
+
+    await handleDelegationDispatch(input);
+
+    expect(mockSet).toHaveBeenCalledWith('metadata', {
       delegation_active_token: VALID_TOKEN,
     });
   });
@@ -151,6 +208,50 @@ describe('handleDelegationDispatch', () => {
       existing_key: 'value',
       delegation_active_token: VALID_TOKEN,
     });
+  });
+
+  it('injects RD_AGENT_ID and RD_SESSION_ID exports into claim context', async () => {
+    const input = createMockHookInput('PreToolUse', {
+      agent_id: 'agent-123',
+      session_id: 'session-abc',
+      tool_name: 'Task',
+      tool_input: { prompt: `RD_CLAIM_TOKEN=${VALID_TOKEN}` },
+    });
+
+    const result = await handleDelegationDispatch(input);
+
+    expect(result.context).toContain("export RD_AGENT_ID='agent-123'");
+    expect(result.context).toContain("export RD_SESSION_ID='session-abc'");
+    expect(result.context).toContain(`rd claim ${VALID_TOKEN}`);
+    expect(result.context).toContain(
+      [
+        '```',
+        "export RD_AGENT_ID='agent-123'",
+        "export RD_SESSION_ID='session-abc'",
+        `rd claim ${VALID_TOKEN}`,
+        '```',
+      ].join('\n'),
+    );
+    expect(result.context).toContain(
+      'Keep these environment variables set for `rd status`, `rd pass`, `rd fail`, `rd stash`, `rd pop`, and `rd stop`.',
+    );
+  });
+
+  it('does not inject session identity without agent identity', async () => {
+    const input = createMockHookInput('PreToolUse', {
+      session_id: 'session-abc',
+      tool_name: 'Task',
+      tool_input: { prompt: `RD_CLAIM_TOKEN=${VALID_TOKEN}` },
+    });
+
+    const result = await handleDelegationDispatch(input);
+
+    expect(result.context).toContain(`rd claim ${VALID_TOKEN}`);
+    expect(result.context).not.toContain('export RD_AGENT_ID=');
+    expect(result.context).not.toContain('export RD_SESSION_ID=');
+    expect(result.context).not.toContain(
+      'Keep these environment variables set for `rd status`, `rd pass`, `rd fail`, `rd stash`, `rd pop`, and `rd stop`.',
+    );
   });
 
   it('returns context even when rd status --json fails (best-effort)', async () => {
