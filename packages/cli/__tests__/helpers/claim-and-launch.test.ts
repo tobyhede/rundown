@@ -335,10 +335,10 @@ describe('claimAndLaunch', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.code).toBe('RD-807');
-      expect(result.error).toMatch(/invalid token format/i);
+      expect(result.reason).toBe('invalid-token');
+      if (result.reason !== 'invalid-token') throw new Error(`Unexpected reason: ${result.reason}`);
       // Token should be truncated, not raw
-      expect(result.details?.token).toMatch(/\.\.\./);
+      expect(result.token).toMatch(/\.\.\./);
     }
   });
 
@@ -353,7 +353,7 @@ describe('claimAndLaunch', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.code).toBe('RD-808');
+      expect(result.reason).toBe('token-not-found');
     }
   });
 
@@ -392,7 +392,9 @@ describe('claimAndLaunch', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.code).toBe('RD-810');
+      expect(result.reason).toBe('lock-timeout');
+      if (result.reason !== 'lock-timeout') throw new Error(`Unexpected reason: ${result.reason}`);
+      expect(result.parentRunId).toBe('run-1');
     }
   });
 
@@ -441,8 +443,11 @@ describe('claimAndLaunch', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.code).toBe('RD-809');
-      expect(result.error).toMatch(/cancelled/i);
+      expect(result.reason).toBe('delegation-cancelled');
+      if (result.reason !== 'delegation-cancelled') {
+        throw new Error(`Unexpected reason: ${result.reason}`);
+      }
+      expect(result.cancelledAt).toBe('2026-02-28T00:00:00.000Z');
     }
   });
 
@@ -631,8 +636,11 @@ describe('claimAndLaunch', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.code).toBe('RD-808');
-      expect(result.error).toContain('no longer exists');
+      expect(result.reason).toBe('parent-missing');
+      if (result.reason !== 'parent-missing') {
+        throw new Error(`Unexpected reason: ${result.reason}`);
+      }
+      expect(result.parentRunId).toBe('run-deleted');
     }
   });
 
@@ -682,8 +690,12 @@ describe('claimAndLaunch', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.code).toBe('RD-808');
-      expect(result.error).toContain('no longer exists');
+      expect(result.reason).toBe('delegation-removed');
+      if (result.reason !== 'delegation-removed') {
+        throw new Error(`Unexpected reason: ${result.reason}`);
+      }
+      expect(result.parentRunId).toBe('run-1');
+      expect(result.stepId).toBe('1');
     }
   });
 
@@ -749,8 +761,12 @@ describe('claimAndLaunch', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.code).toBe('RD-808');
-      expect(result.error).toContain('no longer exists');
+      expect(result.reason).toBe('delegation-removed');
+      if (result.reason !== 'delegation-removed') {
+        throw new Error(`Unexpected reason: ${result.reason}`);
+      }
+      expect(result.parentRunId).toBe('run-1');
+      expect(result.stepId).toBe('1');
     }
   });
 
@@ -760,8 +776,7 @@ describe('claimAndLaunch', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.code).toBe('RD-807');
-      expect(result.error).toMatch(/invalid token format/i);
+      expect(result.reason).toBe('invalid-token');
     }
   });
 
@@ -773,9 +788,7 @@ describe('claimAndLaunch', () => {
     // Should validate format - scanner may return null or validation may catch it
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
-    expect([core.ErrorCodes.INVALID_TOKEN.code, core.ErrorCodes.TOKEN_NOT_FOUND.code]).toContain(
-      result.code,
-    );
+    expect(['invalid-token', 'token-not-found']).toContain(result.reason);
   });
 
   it('truncates token in error details for invalid format', async () => {
@@ -783,9 +796,9 @@ describe('claimAndLaunch', () => {
     const result = await claimAndLaunch(ctx, 'invalid-very-long-token-string-here', {});
 
     expect(result.ok).toBe(false);
-    if (!result.ok && typeof result.details?.token === 'string') {
+    if (!result.ok && result.reason === 'invalid-token') {
       // Should contain ellipsis for truncation
-      expect(result.details.token).toMatch(/\.\.\./);
+      expect(result.token).toMatch(/\.\.\./);
     }
   });
 
@@ -1027,8 +1040,9 @@ describe('claimAndLaunch', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.code).toBe('RD-816');
-      expect(result.error).toContain('disk full');
+      expect(result.reason).toBe('launch-failed');
+      if (result.reason !== 'launch-failed') throw new Error(`Unexpected reason: ${result.reason}`);
+      expect(result.cause).toContain('disk full');
     }
     // Lock must be released even on init failure
     expect(mockRelease).toHaveBeenCalledWith('run-1');

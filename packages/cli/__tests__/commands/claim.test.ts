@@ -67,6 +67,25 @@ describe('claim command', () => {
       expect(result.stdout + result.stderr).toMatch(/invalid.*token|rdtk_/i);
     });
 
+    it('emits INVALID_TOKEN JSON envelope for invalid token format', async () => {
+      const result = await runCliInProcess('claim invalid-token', workspace);
+
+      expect(result.exitCode).toBe(1);
+      const envelope = JSON.parse(result.stdout) as {
+        kind?: string;
+        code?: string;
+        details?: Record<string, unknown>;
+      };
+      expect(envelope).toEqual(
+        expect.objectContaining({
+          kind: 'error',
+          code: 'INVALID_TOKEN',
+          details: expect.objectContaining({ token: 'invalid-token' }),
+        }),
+      );
+      expect(ErrorResponseSchema.safeParse(envelope).success).toBe(true);
+    });
+
     it('rejects claim with token missing prefix', async () => {
       // cspell:disable
       const result = await runCliInProcess(

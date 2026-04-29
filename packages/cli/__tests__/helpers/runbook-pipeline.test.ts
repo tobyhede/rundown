@@ -1115,8 +1115,7 @@ describe('claimAndLaunch', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.code).toBe('RD-807');
-      expect(result.error).toContain('rdtk_');
+      expect(result.reason).toBe('invalid-token');
     }
   });
 
@@ -1143,7 +1142,7 @@ describe('claimAndLaunch', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.code).toBe('RD-808');
+      expect(result.reason).toBe('token-not-found');
     }
   });
 
@@ -1276,7 +1275,7 @@ describe('claimAndLaunch', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.code).toBe('RD-809');
+      expect(result.reason).toBe('delegation-cancelled');
     }
   });
 
@@ -1445,7 +1444,11 @@ describe('claimAndLaunch', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.code).toBe('RD-819');
+      expect(result.reason).toBe('owner-conflict');
+      if (result.reason !== 'owner-conflict') {
+        throw new Error(`Unexpected reason: ${result.reason}`);
+      }
+      expect(result.existingOwnerAgentId).toBe('agent-a');
     }
   });
 
@@ -1548,7 +1551,11 @@ describe('claimAndLaunch', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.code).toBe('RD-819');
+      expect(result.reason).toBe('owner-conflict');
+      if (result.reason !== 'owner-conflict') {
+        throw new Error(`Unexpected reason: ${result.reason}`);
+      }
+      expect(result.existingOwnerAgentId).toBe('agent-a');
     }
   });
 
@@ -1958,7 +1965,11 @@ describe('claimAndLaunch', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.code).toBe('RUNBOOK_NOT_FOUND');
+      expect(result.reason).toBe('launch-failed');
+      if (result.reason !== 'launch-failed') {
+        throw new Error(`Unexpected reason: ${result.reason}`);
+      }
+      expect(result.runbook).toBe('missing.md');
     }
   });
 

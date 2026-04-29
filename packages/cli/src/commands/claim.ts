@@ -9,26 +9,87 @@ import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { parseInputOption, parseInputJsonOption, collect } from '../helpers/option-utils.js';
-import { claimAndLaunch, type RunPipelineContext } from '../helpers/runbook-pipeline.js';
+import {
+  claimAndLaunch,
+  type ClaimFailure,
+  type RunPipelineContext,
+} from '../helpers/runbook-pipeline.js';
 import { handleParentCompletion, extractParentLinkage } from '../helpers/delegation-completion.js';
 import { resolveCallerIdentity } from '../helpers/caller-identity.js';
 
-function claimFailureCodeToCliCode(code: string): string {
-  switch (code) {
-    case 'RD-807':
-      return 'INVALID_TOKEN';
-    case 'RD-808':
-      return 'TOKEN_NOT_FOUND';
-    case 'RD-809':
-      return 'DELEGATION_CANCELLED';
-    case 'RD-810':
-      return 'DELEGATION_LOCK_TIMEOUT';
-    case 'RD-816':
-      return 'LAUNCH_FAILED';
-    case 'RD-819':
-      return 'DELEGATION_OWNER_CONFLICT';
-    default:
-      return 'UNKNOWN_ERROR';
+function claimFailureToEnvelope(failure: ClaimFailure): {
+  readonly code: string;
+  readonly message: string;
+  readonly details?: Record<string, unknown>;
+} {
+  switch (failure.reason) {
+    case 'invalid-token':
+      return {
+        code: 'INVALID_TOKEN',
+        message: 'Invalid token format. Tokens must start with "rdtk_".',
+        details: { token: failure.token },
+      };
+    case 'token-not-found':
+      return {
+        code: 'TOKEN_NOT_FOUND',
+        message: 'No active run contains a delegation with this token.',
+        details: { token: failure.token },
+      };
+    case 'parent-missing':
+      return {
+        code: 'TOKEN_NOT_FOUND',
+        message: `Parent run ${failure.parentRunId} no longer exists.`,
+        details: { parentRunId: failure.parentRunId },
+      };
+    case 'parent-ended':
+      return {
+        code: 'TOKEN_NOT_FOUND',
+        message: `Parent run has been ${failure.lifecycle}. Delegation cannot be claimed.`,
+        details: { parentRunId: failure.parentRunId, lifecycle: failure.lifecycle },
+      };
+    case 'delegation-removed':
+      return {
+        code: 'TOKEN_NOT_FOUND',
+        message: 'Delegation no longer exists on parent step.',
+        details: { parentRunId: failure.parentRunId, stepId: failure.stepId },
+      };
+    case 'delegation-cancelled':
+      return {
+        code: 'DELEGATION_CANCELLED',
+        message: 'This delegation has been cancelled and cannot be claimed.',
+        details: {
+          parentRunId: failure.parentRunId,
+          stepId: failure.stepId,
+          cancelledAt: failure.cancelledAt,
+        },
+      };
+    case 'lock-timeout':
+      return {
+        code: 'DELEGATION_LOCK_TIMEOUT',
+        message: `Could not acquire delegation lock for run ${failure.parentRunId}. Another operation may be in progress.`,
+        details: { parentRunId: failure.parentRunId },
+      };
+    case 'owner-conflict':
+      return {
+        code: 'DELEGATION_OWNER_CONFLICT',
+        message: `Delegation already owned by agent '${failure.existingOwnerAgentId}'.`,
+        details: {
+          parentRunId: failure.parentRunId,
+          stepId: failure.stepId,
+          childRunId: failure.childRunId,
+          existingOwnerAgentId: failure.existingOwnerAgentId,
+        },
+      };
+    case 'launch-failed':
+      return {
+        code: 'LAUNCH_FAILED',
+        message: failure.cause,
+        details: { runbook: failure.runbook },
+      };
+    default: {
+      const _exhaustive: never = failure;
+      return _exhaustive;
+    }
   }
 }
 
@@ -112,7 +173,8 @@ export function registerClaimCommand(program: Command): void {
             );
 
             if (!result.ok) {
-              output.error(result.error, claimFailureCodeToCliCode(result.code), result.details);
+              const envelope = claimFailureToEnvelope(result);
+              output.error(envelope.message, envelope.code, envelope.details);
               output.flush();
               process.exitCode = 1;
               return;

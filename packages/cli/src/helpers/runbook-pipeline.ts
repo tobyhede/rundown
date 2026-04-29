@@ -128,22 +128,34 @@ type LaunchSessionActivation =
       readonly linkage: DelegationLinkage;
     };
 
-/**
- * Result of claiming a delegation token and launching the child runbook.
- *
- * A discriminated union keyed on `ok`. On success, contains identifiers
- * linking parent and child runs. On failure, contains a human-readable
- * error, a machine-readable code, and optional structured details.
- *
- * Possible error codes:
- * - `RD-807` (`INVALID_TOKEN`) -- token format invalid
- * - `RD-808` (`TOKEN_NOT_FOUND`) -- no active run with this token
- * - `RD-809` (`TOKEN_CANCELLED`) -- delegation was cancelled
- * - `RD-810` (`DELEGATION_LOCK_TIMEOUT`) -- could not acquire lock
- *
- * @see claimAndLaunch
- * @see ErrorCodes
- */
+/** Failure variants from claiming and launching a delegated child runbook. */
+export type ClaimFailure =
+  | { readonly reason: 'invalid-token'; readonly token: string }
+  | { readonly reason: 'token-not-found'; readonly token: string }
+  | { readonly reason: 'parent-missing'; readonly parentRunId: string }
+  | {
+      readonly reason: 'parent-ended';
+      readonly parentRunId: string;
+      readonly lifecycle: 'stopped' | 'completed';
+    }
+  | { readonly reason: 'delegation-removed'; readonly parentRunId: string; readonly stepId: string }
+  | {
+      readonly reason: 'delegation-cancelled';
+      readonly parentRunId: string;
+      readonly stepId: string;
+      readonly cancelledAt: string;
+    }
+  | { readonly reason: 'lock-timeout'; readonly parentRunId: string }
+  | {
+      readonly reason: 'owner-conflict';
+      readonly parentRunId: string;
+      readonly stepId: string;
+      readonly childRunId: string;
+      readonly existingOwnerAgentId: string;
+    }
+  | { readonly reason: 'launch-failed'; readonly runbook: string; readonly cause: string };
+
+/** Result of claiming a delegation token and launching the child runbook. */
 export type ClaimResult =
   | {
       /** Discriminator indicating success. */
@@ -157,16 +169,7 @@ export type ClaimResult =
       /** Terminal state of the child execution loop. */
       loopResult: 'done' | 'stopped' | 'waiting';
     }
-  | {
-      /** Discriminator indicating failure. */
-      ok: false;
-      /** Human-readable error description. */
-      error: string;
-      /** Machine-readable error code (e.g. `'RD-807'`). */
-      code: string;
-      /** Optional structured details for diagnostics. */
-      details?: Record<string, unknown>;
-    };
+  | ({ readonly ok: false } & ClaimFailure);
 
 /**
  * Validate that all sourced FOR clauses reference defined iterable variables.
@@ -871,9 +874,8 @@ export async function claimAndLaunch(
   if (!rawToken.startsWith(DELEGATION_TOKEN_PREFIX)) {
     return {
       ok: false,
-      error: `Invalid token format. Tokens must start with "${DELEGATION_TOKEN_PREFIX}".`,
-      code: ErrorCodes.INVALID_TOKEN.code,
-      details: { token: truncatedToken },
+      reason: 'invalid-token',
+      token: truncatedToken,
     };
   }
 
@@ -884,9 +886,8 @@ export async function claimAndLaunch(
   if (!scanResult) {
     return {
       ok: false,
-      error: 'No active run contains a delegation with this token.',
-      code: ErrorCodes.TOKEN_NOT_FOUND.code,
-      details: { token: truncatedToken },
+      reason: 'token-not-found',
+      token: truncatedToken,
     };
   }
 
@@ -902,9 +903,8 @@ export async function claimAndLaunch(
     if (err instanceof DelegationLockTimeoutError) {
       return {
         ok: false,
-        error: `Could not acquire delegation lock for run ${parentState.id}. Another operation may be in progress.`,
-        code: ErrorCodes.DELEGATION_LOCK_TIMEOUT.code,
-        details: { parentRunId: parentState.id },
+        reason: 'lock-timeout',
+        parentRunId: parentState.id,
       };
     }
     throw err;
@@ -916,9 +916,8 @@ export async function claimAndLaunch(
     if (!freshParent) {
       return {
         ok: false,
-        error: `Parent run ${parentState.id} no longer exists.`,
-        code: ErrorCodes.TOKEN_NOT_FOUND.code,
-        details: { parentRunId: parentState.id },
+        reason: 'parent-missing',
+        parentRunId: parentState.id,
       };
     }
 
@@ -927,9 +926,9 @@ export async function claimAndLaunch(
       const reason = freshParent.lifecycle === 'completed' ? 'completed' : 'stopped';
       return {
         ok: false,
-        error: `Parent run has been ${reason}. Delegation cannot be claimed.`,
-        code: ErrorCodes.TOKEN_NOT_FOUND.code,
-        details: { parentRunId: freshParent.id },
+        reason: 'parent-ended',
+        parentRunId: freshParent.id,
+        lifecycle: reason,
       };
     }
 
@@ -943,9 +942,9 @@ export async function claimAndLaunch(
     if (!freshDelegation) {
       return {
         ok: false,
-        error: 'Delegation no longer exists on parent step.',
-        code: ErrorCodes.TOKEN_NOT_FOUND.code,
-        details: { parentRunId: parentState.id, stepId },
+        reason: 'delegation-removed',
+        parentRunId: parentState.id,
+        stepId,
       };
     }
 
@@ -974,14 +973,11 @@ export async function claimAndLaunch(
         if (claimResult.status === 'conflict') {
           return {
             ok: false,
-            error: `Delegation already owned by agent '${claimResult.existing.agent_id}'.`,
-            code: ErrorCodes.DELEGATION_OWNER_CONFLICT.code,
-            details: {
-              parentRunId: freshParent.id,
-              stepId,
-              childRunId: freshDelegation.childRunId,
-              existingOwnerAgentId: claimResult.existing.agent_id,
-            },
+            reason: 'owner-conflict',
+            parentRunId: freshParent.id,
+            stepId,
+            childRunId: freshDelegation.childRunId,
+            existingOwnerAgentId: claimResult.existing.agent_id,
           };
         }
       }
@@ -999,9 +995,10 @@ export async function claimAndLaunch(
     if (freshDelegation.cancelledAt) {
       return {
         ok: false,
-        error: 'This delegation has been cancelled and cannot be claimed.',
-        code: ErrorCodes.TOKEN_CANCELLED.code,
-        details: { parentRunId: freshParent.id, stepId, cancelledAt: freshDelegation.cancelledAt },
+        reason: 'delegation-cancelled',
+        parentRunId: freshParent.id,
+        stepId,
+        cancelledAt: freshDelegation.cancelledAt,
       };
     }
 
@@ -1025,14 +1022,11 @@ export async function claimAndLaunch(
         if (claimResult.status === 'conflict') {
           return {
             ok: false,
-            error: `Delegation already owned by agent '${claimResult.existing.agent_id}'.`,
-            code: ErrorCodes.DELEGATION_OWNER_CONFLICT.code,
-            details: {
-              parentRunId: freshParent.id,
-              stepId,
-              childRunId: orphan.id,
-              existingOwnerAgentId: claimResult.existing.agent_id,
-            },
+            reason: 'owner-conflict',
+            parentRunId: freshParent.id,
+            stepId,
+            childRunId: orphan.id,
+            existingOwnerAgentId: claimResult.existing.agent_id,
           };
         }
       }
@@ -1057,9 +1051,9 @@ export async function claimAndLaunch(
     if (!prepResult.ok) {
       return {
         ok: false,
-        error: prepResult.error,
-        code: prepResult.code,
-        details: { runbook: freshDelegation.childRunbookPath, ...prepResult.details },
+        reason: 'launch-failed',
+        runbook: freshDelegation.childRunbookPath,
+        cause: prepResult.error,
       };
     }
 
@@ -1114,9 +1108,9 @@ export async function claimAndLaunch(
     if (!launchResult.ok) {
       return {
         ok: false,
-        error: launchResult.error,
-        code: launchResult.code,
-        details: launchResult.details,
+        reason: 'launch-failed',
+        runbook: freshDelegation.childRunbookPath,
+        cause: launchResult.error,
       };
     }
 
