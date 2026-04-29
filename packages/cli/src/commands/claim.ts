@@ -95,7 +95,7 @@ function claimFailureToEnvelope(failure: ClaimFailure): {
       };
     default: {
       const _exhaustive: never = failure;
-      return _exhaustive;
+      throw new Error(`Unhandled claim failure reason: ${(_exhaustive as ClaimFailure).reason}`);
     }
   }
 }

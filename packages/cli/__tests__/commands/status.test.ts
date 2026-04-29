@@ -502,6 +502,70 @@ Do work.
     expect(session.defaultStack).toContain(parentState!.id);
     expect(session.active).toBe(parentState!.id);
   });
+
+  it('pops orphaned default-stack entry when state file is missing', async () => {
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+    const state = await getActiveState(workspace);
+    const stateId = state!.id;
+    await rm(join(workspace.statePath(), `${stateId}.json`));
+
+    const result = await runCliInProcess('complete', workspace);
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout).message).toBe('Removed unusable runbook state from session');
+    const session = await readSession(workspace);
+    expect(session.active).toBeNull();
+    expect(session.defaultStack).toHaveLength(0);
+  });
+
+  it('pops orphaned default-stack entry when state file is corrupted', async () => {
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+    const state = await getActiveState(workspace);
+    const stateId = state!.id;
+    await writeFile(join(workspace.statePath(), `${stateId}.json`), '{invalid');
+
+    const result = await runCliInProcess('complete', workspace);
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout).message).toBe('Removed unusable runbook state from session');
+    const session = await readSession(workspace);
+    expect(session.active).toBeNull();
+    expect(session.defaultStack).toHaveLength(0);
+  });
+
+  it('pops orphaned default-stack entry when state is stale', async () => {
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+    const state = await getActiveState(workspace);
+    const stateId = state!.id;
+    await writeFile(
+      join(workspace.statePath(), `${stateId}.json`),
+      JSON.stringify({ ...state, schemaVersion: 1 }),
+    );
+
+    const result = await runCliInProcess('complete', workspace);
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout).message).toBe('Removed unusable runbook state from session');
+    const session = await readSession(workspace);
+    expect(session.active).toBeNull();
+    expect(session.defaultStack).toHaveLength(0);
+  });
+
+  it('does not remove anonymous default stack when an identified caller has no claim', async () => {
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+    const sessionBefore = await readSession(workspace);
+    const parentId = sessionBefore.defaultStack.at(-1);
+    expect(parentId).toBeDefined();
+
+    const result = await runCliInProcess('complete --text', workspace, {
+      env: { RD_AGENT_ID: 'lone-complete-agent', RD_SESSION_ID: 'lone-complete-session' },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('No active runbook');
+    const sessionAfter = await readSession(workspace);
+    expect(sessionAfter.defaultStack).toEqual([parentId]);
+  });
 });
 
 describe('status with runbookSrc', () => {

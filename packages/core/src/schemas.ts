@@ -389,22 +389,36 @@ export const SessionDataSchema = z
       });
     }
 
-    const childRunIdLocations = new Map<string, string>();
+    const childRunIdLocations = new Map<
+      string,
+      { readonly location: string; readonly path: (string | number)[]; reported: boolean }[]
+    >();
     const recordChildRunId = (
       childRunId: string,
       location: string,
       path: (string | number)[],
     ): void => {
-      const existingLocation = childRunIdLocations.get(childRunId);
-      if (existingLocation !== undefined) {
+      const existingLocations = childRunIdLocations.get(childRunId);
+      if (existingLocations !== undefined) {
+        for (const existing of existingLocations) {
+          if (!existing.reported) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: existing.path,
+              message: `childRunId must be unique across session ownership entries; duplicate at ${existing.location}`,
+            });
+            existing.reported = true;
+          }
+        }
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path,
-          message: `childRunId must be unique across session ownership entries; duplicate at ${existingLocation} and ${location}`,
+          message: `childRunId must be unique across session ownership entries; duplicate at ${location}`,
         });
+        existingLocations.push({ location, path, reported: true });
         return;
       }
-      childRunIdLocations.set(childRunId, location);
+      childRunIdLocations.set(childRunId, [{ location, path, reported: false }]);
     };
 
     session.defaultStack.forEach((runbookId, index) => {

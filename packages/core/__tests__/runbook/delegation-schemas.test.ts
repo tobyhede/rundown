@@ -451,9 +451,27 @@ describe('SessionDataSchema ownership compatibility', () => {
 
     expect(result.success).toBe(false);
     if (!result.success) {
-      const message = result.error.issues.map((issue) => issue.message).join('\n');
-      expect(message).toContain('ownedRunbooks.agent:agent-a:session:session-a.0.childRunId');
-      expect(message).toContain('ownedRunbooks.agent:agent-b:session:session-b.0.childRunId');
+      const issuePaths = result.error.issues.map((issue) => issue.path.join('.'));
+      expect(issuePaths).toContain('ownedRunbooks.agent:agent-a:session:session-a.0.childRunId');
+      expect(issuePaths).toContain('ownedRunbooks.agent:agent-b:session:session-b.0.childRunId');
+    }
+  });
+
+  it('reports every location in a three-way duplicate childRunId conflict', () => {
+    const result = SessionDataSchema.safeParse({
+      defaultStack: ['child'],
+      stashedRunbookId: 'child',
+      ownedRunbooks: {
+        'agent:agent-a:session:session-a': [ownershipFor({ childRunId: 'child' })],
+      },
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const issuePaths = result.error.issues.map((issue) => issue.path.join('.'));
+      expect(issuePaths).toContain('defaultStack.0');
+      expect(issuePaths).toContain('ownedRunbooks.agent:agent-a:session:session-a.0.childRunId');
+      expect(issuePaths).toContain('stashedRunbookId');
     }
   });
 

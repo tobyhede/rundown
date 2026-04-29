@@ -1,13 +1,7 @@
 // packages/cli/src/commands/stop.ts
 
 import type { Command } from 'commander';
-import {
-  RunbookStateManager,
-  SessionService,
-  StaleRunbookStateError,
-  isError,
-  type RunbookState,
-} from '@rundown-org/core';
+import { RunbookStateManager, SessionService, isError, type RunbookState } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { buildMetadata } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
@@ -15,6 +9,10 @@ import { OutputEmitter } from '../services/output-emitter.js';
 import { handleParentCompletion, extractParentLinkage } from '../helpers/delegation-completion.js';
 import { resolveCallerIdentity } from '../helpers/caller-identity.js';
 import { resolveActiveRunbook } from '../helpers/active-runbook-resolver.js';
+import {
+  cleanupOrphanedActiveStack,
+  isRecoverableActiveStackError,
+} from '../helpers/active-runbook-cleanup.js';
 
 /**
  * Registers the 'stop' command for aborting runbooks.
@@ -78,21 +76,12 @@ export function registerStopCommand(program: Command): void {
             }
             // Unexpected errors must propagate — but stale/corrupted state errors
             // fall through to the orphan cleanup path since stop is a cleanup command.
-            if (
-              getActiveError &&
-              !(getActiveError instanceof StaleRunbookStateError) &&
-              !getActiveError.message.includes('dynamic-step snapshots') &&
-              !(isError(getActiveError) && getActiveError.name === 'SyntaxError')
-            ) {
+            if (getActiveError && !isRecoverableActiveStackError(getActiveError)) {
               throw getActiveError;
             }
-            // P2: Check for orphaned stack entry
-            const session = await manager.loadSession();
-            const orphanId = session.defaultStack[session.defaultStack.length - 1];
+            const orphanId = await cleanupOrphanedActiveStack(manager, sessionService);
             if (orphanId) {
               // Corrupted or missing state — delete the broken file and pop the stack
-              await manager.delete(orphanId);
-              await sessionService.releaseRunbook(orphanId);
               output.stopped('Removed unusable runbook state from session');
               output.flush();
               return;

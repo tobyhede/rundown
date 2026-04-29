@@ -18,6 +18,8 @@ export {
   createAgentRunbookOwnership,
   isAgentRunbookOwnership,
   SessionOwnershipMismatchError,
+  SessionStashOwnershipMissingError,
+  SessionStashOwnershipRequiredError,
   type AgentOwnerIdentity,
   type AgentSessionOwnerIdentity,
   type AgentOnlyOwnerIdentity,
@@ -26,6 +28,7 @@ export {
   type OwnedRunbookResolution,
   type ClaimRunbookForOwnerResult,
   type ReleaseRunbookResult,
+  type SessionOwnershipOperation,
 } from './agent-ownership.js';
 export { SessionService } from './session-service.js';
 export { readActiveRunScope, type ActiveRunScope } from './session-reader.js';

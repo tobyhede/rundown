@@ -125,8 +125,14 @@ describe('claim command', () => {
       );
 
       expect(result.exitCode).toBe(1);
-      expect(result.stdout + result.stderr).toMatch(/INVALID_CALLER_IDENTITY|RD_SESSION_ID/i);
-      expect(ErrorResponseSchema.safeParse(JSON.parse(result.stdout)).success).toBe(true);
+      const envelope = JSON.parse(result.stdout) as { kind?: string; code?: string };
+      expect(envelope).toEqual(
+        expect.objectContaining({
+          kind: 'error',
+          code: 'INVALID_CALLER_IDENTITY',
+        }),
+      );
+      expect(ErrorResponseSchema.safeParse(envelope).success).toBe(true);
     });
 
     it('successfully claims valid delegation token', async () => {

@@ -37,7 +37,7 @@ export function registerPopCommand(program: Command): void {
 
           let state: Awaited<ReturnType<typeof sessionService.unstash>>;
           if (caller.kind === 'invalid') {
-            output.error(caller.message, 'OWNED_RUNBOOK_UNAVAILABLE');
+            output.error(caller.message, 'INVALID_CALLER_IDENTITY');
             output.flush();
             process.exitCode = 1;
             return;
@@ -101,7 +101,7 @@ export function registerPopCommand(program: Command): void {
                 process.exitCode = 1;
                 return;
               }
-              state = await sessionService.unstashForOwner(caller.identity, linkage);
+              state = await sessionService.unstashForOwner(caller.identity);
             }
           } else {
             const stashedId = await sessionService.getStashedRunbookId();

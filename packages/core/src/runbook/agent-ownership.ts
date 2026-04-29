@@ -136,6 +136,9 @@ export type ReleaseRunbookResult =
       readonly runbookId: RunbookState['id'];
     };
 
+/** Session service operation names used in ownership invariant errors. */
+export type SessionOwnershipOperation = 'unstash' | 'unstashForOwner';
+
 /**
  * Thrown when a SessionService mutation is attempted by a caller whose
  * identity does not match the ownership record on disk.
@@ -155,12 +158,57 @@ export class SessionOwnershipMismatchError extends Error {
   constructor(
     readonly expectedOwnerKey: AgentOwnerKey,
     readonly actualOwnerKey: AgentOwnerKey,
-    context: string,
+    context: SessionOwnershipOperation,
   ) {
     super(
       `${context}: caller '${actualOwnerKey}' does not own this runbook (owned by '${expectedOwnerKey}').`,
     );
     this.name = 'SessionOwnershipMismatchError';
+  }
+}
+
+/**
+ * Thrown when an identified caller attempts to restore a stashed runbook that
+ * has no captured agent ownership record.
+ */
+export class SessionStashOwnershipMissingError extends Error {
+  /**
+   * Construct a typed missing-ownership error for an identified stash restore.
+   *
+   * @param stashedRunbookId - Stashed runbook id that lacks ownership metadata
+   * @param context - Session service operation that required ownership metadata
+   */
+  constructor(
+    readonly stashedRunbookId: RunbookState['id'],
+    context: SessionOwnershipOperation,
+  ) {
+    super(
+      `${context}: stashed runbook '${stashedRunbookId}' has no agent ownership; restore anonymously or claim a delegation token.`,
+    );
+    this.name = 'SessionStashOwnershipMissingError';
+  }
+}
+
+/**
+ * Thrown when an anonymous restore attempts to consume an agent-owned stash.
+ */
+export class SessionStashOwnershipRequiredError extends Error {
+  /**
+   * Construct a typed ownership-required error for an anonymous stash restore.
+   *
+   * @param stashedRunbookId - Stashed runbook id that carries agent ownership
+   * @param ownerKey - Owner key recorded on the stashed runbook
+   * @param context - Session service operation that refused anonymous restore
+   */
+  constructor(
+    readonly stashedRunbookId: RunbookState['id'],
+    readonly ownerKey: AgentOwnerKey,
+    context: SessionOwnershipOperation,
+  ) {
+    super(
+      `${context}: stashed runbook '${stashedRunbookId}' is owned by '${ownerKey}'; restore with the owning agent identity.`,
+    );
+    this.name = 'SessionStashOwnershipRequiredError';
   }
 }
 

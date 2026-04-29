@@ -3,6 +3,11 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RunbookStateManager } from '../../src/runbook/state.js';
+import {
+  SessionOwnershipMismatchError,
+  SessionStashOwnershipMissingError,
+  SessionStashOwnershipRequiredError,
+} from '../../src/runbook/agent-ownership.js';
 import { SessionService } from '../../src/runbook/session-service.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 import type { Step, Runbook } from '../../src/runbook/types.js';
@@ -112,6 +117,33 @@ describe('SessionService', () => {
       expect(restored?.id).toBe(state.id);
       expect((await sessionService.getActive())?.id).toBe(state.id);
       expect(await sessionService.getStashedRunbookId()).toBeNull();
+    });
+
+    it('unstash rejects an agent-owned stash without transferring ownership', async () => {
+      const parent = await manager.create('parent.md', mockRunbook, { runbookPath: 'parent.md' });
+      const child = await manager.create('child.md', mockRunbook, { runbookPath: 'child.md' });
+      const identity = {
+        kind: 'agent-session' as const,
+        agent_id: 'agent-a',
+        session_id: 'session-a',
+      };
+      const linkage = {
+        kind: 'delegation' as const,
+        parentRunId: parent.id,
+        parentStepId: '1',
+        tokenHash: assertDelegationTokenHash(`sha256:${'1'.repeat(64)}`),
+      };
+      await sessionService.claimRunbookForOwner(identity, child.id, linkage);
+      await sessionService.stashRunbook(child.id);
+
+      await expect(sessionService.unstash()).rejects.toBeInstanceOf(
+        SessionStashOwnershipRequiredError,
+      );
+
+      expect(await sessionService.getStashedRunbookId()).toBe(child.id);
+      expect((await sessionService.getStashedRunbookOwnership())?.childRunId).toBe(child.id);
+      expect(await sessionService.getActive()).toBeNull();
+      expect((await sessionService.getActiveForOwner(identity)).status).toBe('unowned');
     });
 
     it('unstash returns null when nothing stashed', async () => {
@@ -417,7 +449,7 @@ describe('SessionService', () => {
       await sessionService.claimRunbookForOwner(identity, childA.id, linkageA);
       await sessionService.stashRunbook(childA.id);
       await sessionService.claimRunbookForOwner(identity, childB.id, linkageB);
-      await sessionService.unstashForOwner(identity, linkageA);
+      await sessionService.unstashForOwner(identity);
 
       const session = await manager.loadSession();
       const ownerStack = Object.values(session.ownedRunbooks).flat();
@@ -475,7 +507,7 @@ describe('SessionService', () => {
       if (claimed.status !== 'claimed') return;
       await sessionService.stashRunbook(child.id);
       await new Promise((resolve) => setTimeout(resolve, 1));
-      await sessionService.unstashForOwner(identity, linkage);
+      await sessionService.unstashForOwner(identity);
 
       const active = await sessionService.getActiveForOwner(identity);
       expect(active.status).toBe('owned');
@@ -522,6 +554,51 @@ describe('SessionService', () => {
       await sessionService.popRunbook();
       expect((await sessionService.getActive())?.id).toBe(parent.id);
     });
+
+    it('releaseRunbook clears an anonymous stashed runbook by id', async () => {
+      const state = await manager.create('anonymous.md', mockRunbook, {
+        runbookPath: 'anonymous.md',
+      });
+      await sessionService.pushRunbook(state.id);
+      await sessionService.stash();
+
+      const released = await sessionService.releaseRunbook(state.id);
+      expect(released.status).toBe('released');
+      if (released.status === 'released') {
+        expect(released.removedFromDefaultStack).toBe(false);
+        expect(released.removedOwnerKeys).toEqual([]);
+      }
+      expect(await sessionService.getStashedRunbookId()).toBeNull();
+      expect(await sessionService.getStashedRunbookOwnership()).toBeNull();
+    });
+
+    it('releaseRunbook clears an agent-owned stashed runbook by id', async () => {
+      const parent = await manager.create('parent.md', mockRunbook, { runbookPath: 'parent.md' });
+      const child = await manager.create('child.md', mockRunbook, { runbookPath: 'child.md' });
+      const identity = {
+        kind: 'agent-session' as const,
+        agent_id: 'agent-a',
+        session_id: 'session-a',
+      };
+      const linkage = {
+        kind: 'delegation' as const,
+        parentRunId: parent.id,
+        parentStepId: '1',
+        tokenHash: assertDelegationTokenHash(`sha256:${'2'.repeat(64)}`),
+      };
+      await sessionService.claimRunbookForOwner(identity, child.id, linkage);
+      await sessionService.stashRunbook(child.id);
+
+      const released = await sessionService.releaseRunbook(child.id);
+      expect(released.status).toBe('released');
+      if (released.status === 'released') {
+        expect(released.removedFromDefaultStack).toBe(false);
+        expect(released.removedOwnerKeys).toEqual([]);
+      }
+      expect(await sessionService.getStashedRunbookId()).toBeNull();
+      expect(await sessionService.getStashedRunbookOwnership()).toBeNull();
+      expect((await sessionService.getActiveForOwner(identity)).status).toBe('unowned');
+    });
   });
 
   describe('unstashForOwner ownership guard', () => {
@@ -537,15 +614,8 @@ describe('SessionService', () => {
         agent_id: 'agent-a',
         session_id: 'session-a',
       };
-      const linkage = {
-        kind: 'delegation' as const,
-        parentRunId: 'parent',
-        parentStepId: '1',
-        tokenHash: assertDelegationTokenHash(`sha256:${'0'.repeat(64)}`),
-      };
-
-      await expect(sessionService.unstashForOwner(agentA, linkage)).rejects.toThrow(
-        'stashed runbook has no agent ownership',
+      await expect(sessionService.unstashForOwner(agentA)).rejects.toBeInstanceOf(
+        SessionStashOwnershipMissingError,
       );
 
       expect(await sessionService.getStashedRunbookId()).toBe(state.id);
@@ -577,10 +647,7 @@ describe('SessionService', () => {
         agent_id: 'agent-b',
         session_id: 'session-b',
       };
-      const { SessionOwnershipMismatchError } = await import(
-        '../../src/runbook/agent-ownership.js'
-      );
-      await expect(sessionService.unstashForOwner(intruder, linkage)).rejects.toBeInstanceOf(
+      await expect(sessionService.unstashForOwner(intruder)).rejects.toBeInstanceOf(
         SessionOwnershipMismatchError,
       );
 

@@ -405,6 +405,20 @@ describe('pop command', () => {
     expect(afterSession.active).toBeNull();
   });
 
+  it('emits INVALID_CALLER_IDENTITY for invalid caller identity', async () => {
+    const result = await runCliInProcess('pop', workspace, {
+      env: { RD_AGENT_ID: undefined, RD_SESSION_ID: 'session-without-agent' },
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toEqual(
+      expect.objectContaining({
+        kind: 'error',
+        code: 'INVALID_CALLER_IDENTITY',
+      }),
+    );
+  });
+
   it('anonymous caller can still restore an anonymous stash', async () => {
     await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
     const beforeSession = await readSession(workspace);
