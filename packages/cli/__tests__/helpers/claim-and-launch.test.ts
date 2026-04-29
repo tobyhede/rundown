@@ -644,6 +644,58 @@ describe('claimAndLaunch', () => {
     }
   });
 
+  it.each([
+    'completed',
+    'stopped',
+  ] as const)('returns parent-ended when parent is %s after lock', async (lifecycle) => {
+    const ctx = makeCtx();
+    const parentState = {
+      id: `run-${lifecycle}`,
+      lifecycle: 'running',
+      substepStates: [
+        {
+          id: '1',
+          status: 'pending',
+          delegation: {
+            tokenHash: MOCK_TOKEN_HASH,
+            childRunbookPath: 'child.md',
+            childRunId: null,
+            cancelledAt: null,
+            contextSnapshot: { vars: {}, ancestors: [] },
+            createdAt: '2026-02-27T10:00:00.000Z',
+          },
+        },
+      ],
+    };
+
+    mockScanService(
+      scanResult({
+        parentState,
+        stepId: '1',
+        substepId: '1',
+        delegation: parentState.substepStates[0].delegation,
+      }),
+    );
+    mockHappyDelegationLock();
+    jest.mocked(ctx.manager).load.mockResolvedValue({
+      ...parentState,
+      lifecycle,
+    } as unknown as RunbookState);
+
+    // cspell:disable-next-line
+    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toBe('parent-ended');
+      if (result.reason !== 'parent-ended') {
+        throw new Error(`Unexpected reason: ${result.reason}`);
+      }
+      expect(result.parentRunId).toBe(`run-${lifecycle}`);
+      expect(result.lifecycle).toBe(lifecycle);
+    }
+  });
+
   it('returns TOKEN_NOT_FOUND when delegation disappears after lock', async () => {
     const ctx = makeCtx();
 
@@ -1042,6 +1094,7 @@ describe('claimAndLaunch', () => {
     if (!result.ok) {
       expect(result.reason).toBe('launch-failed');
       if (result.reason !== 'launch-failed') throw new Error(`Unexpected reason: ${result.reason}`);
+      expect(result.code).toBe('RD-816');
       expect(result.cause).toContain('disk full');
     }
     // Lock must be released even on init failure

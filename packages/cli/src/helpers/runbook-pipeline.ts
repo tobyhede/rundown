@@ -115,10 +115,19 @@ export interface PreparedRunbook {
   frontmatter: RunbookFrontmatter | null;
 }
 
+/** Failure produced while initializing a runbook launch. */
+export interface RunbookStartFailure {
+  ok: false;
+  reason: 'launch-failed';
+  error: string;
+  code: string;
+  details: { runbookName: string };
+}
+
 /** Result of starting a runbook execution loop via {@link startRunbook}. */
 export type RunbookStartResult =
   | { ok: true; loopResult: 'done' | 'stopped' | 'waiting'; stateId: string }
-  | { ok: false; error: string; code: string; details?: Record<string, unknown> };
+  | RunbookStartFailure;
 
 type LaunchSessionActivation =
   | { readonly kind: 'default-stack' }
@@ -153,7 +162,20 @@ export type ClaimFailure =
       readonly childRunId: string;
       readonly existingOwnerAgentId: string;
     }
-  | { readonly reason: 'launch-failed'; readonly runbook: string; readonly cause: string };
+  | {
+      readonly reason: 'prepare-failed';
+      readonly runbook: string;
+      readonly code: PrepareFailure['code'];
+      readonly cause: string;
+      readonly details?: PrepareFailure['details'];
+    }
+  | {
+      readonly reason: 'launch-failed';
+      readonly runbook: string;
+      readonly code: RunbookStartFailure['code'];
+      readonly cause: string;
+      readonly details?: RunbookStartFailure['details'];
+    };
 
 /** Result of claiming a delegation token and launching the child runbook. */
 export type ClaimResult =
@@ -278,18 +300,39 @@ export interface PrepareSuccess {
   unresolved: readonly string[];
 }
 
-/** Failure result from {@link prepareRunbook}. */
-export interface PrepareFailure {
-  ok: false;
-  error: string;
-  code: string;
-  details?: Record<string, unknown>;
+interface PrepareFailureBase {
+  readonly ok: false;
+  readonly error: string;
   /** Partial results — available when pipeline progressed past parse */
-  variables?: Record<string, TemplateVarValue>;
-  stats?: { steps: number; substeps: number };
-  diagnostics?: readonly ValidationDiagnostic[];
-  warnings?: readonly string[];
+  readonly variables?: Record<string, TemplateVarValue>;
+  readonly stats?: { steps: number; substeps: number };
+  readonly diagnostics?: readonly ValidationDiagnostic[];
+  readonly warnings?: readonly string[];
 }
+
+/** Failure result from {@link prepareRunbook}. */
+export type PrepareFailure =
+  | (PrepareFailureBase & {
+      readonly code: 'RUNBOOK_NOT_FOUND' | 'PARSE_ERROR' | 'VARIABLE_RESOLUTION_ERROR';
+      readonly details: { readonly runbook: string };
+    })
+  | (PrepareFailureBase & {
+      readonly code: 'POLICY_DENIED';
+      readonly details: {
+        readonly runbook: string;
+        readonly variable: string;
+        readonly filePath: string;
+        readonly reason: string;
+      };
+    })
+  | (PrepareFailureBase & {
+      readonly code: 'VALIDATION_ERROR';
+      readonly details: { readonly runbook: string };
+    })
+  | (PrepareFailureBase & {
+      readonly code: 'MISSING_REQUIRED_VARS';
+      readonly details: { readonly runbook: string; readonly missing: readonly string[] };
+    });
 
 /** Discriminated union result of {@link prepareRunbook}. */
 export type PrepareResult = PrepareSuccess | PrepareFailure;
@@ -339,8 +382,8 @@ export interface LoadAndParseSuccess {
 export interface LoadAndParseFailure {
   ok: false;
   error: string;
-  code: string;
-  details?: Record<string, unknown>;
+  code: 'RUNBOOK_NOT_FOUND' | 'PARSE_ERROR';
+  details: { runbook: string };
 }
 
 /** Discriminated union result of {@link loadAndParseRunbook}. */
@@ -669,7 +712,7 @@ async function launchRunbook(
   const runbookPath = path.relative(cwd, filePath);
 
   // Init phase: state creation through start-event emission. Failures here
-  // produce a structured RD-816 result so callers (notably claimAndLaunch)
+  // produce a structured launch failure so callers (notably claimAndLaunch)
   // can release locks and report cleanly. The loop itself is outside the
   // try/catch — loop failures still propagate as exceptions.
   let stateId: string;
@@ -737,6 +780,7 @@ async function launchRunbook(
   } catch (err) {
     return {
       ok: false,
+      reason: 'launch-failed',
       error: getErrorMessage(err),
       code: ErrorCodes.LAUNCH_FAILED.code,
       details: { runbookName: options.runbookName },
@@ -1051,9 +1095,11 @@ export async function claimAndLaunch(
     if (!prepResult.ok) {
       return {
         ok: false,
-        reason: 'launch-failed',
+        reason: 'prepare-failed',
         runbook: freshDelegation.childRunbookPath,
+        code: prepResult.code,
         cause: prepResult.error,
+        details: prepResult.details,
       };
     }
 
@@ -1110,7 +1156,9 @@ export async function claimAndLaunch(
         ok: false,
         reason: 'launch-failed',
         runbook: freshDelegation.childRunbookPath,
+        code: launchResult.code,
         cause: launchResult.error,
+        details: launchResult.details,
       };
     }
 

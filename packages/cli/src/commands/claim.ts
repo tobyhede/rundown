@@ -1,5 +1,6 @@
 import { type Command, Option } from 'commander';
 import {
+  DELEGATION_TOKEN_PREFIX,
   RunbookStateManager,
   RunbookActorService,
   SessionService,
@@ -26,7 +27,7 @@ function claimFailureToEnvelope(failure: ClaimFailure): {
     case 'invalid-token':
       return {
         code: 'INVALID_TOKEN',
-        message: 'Invalid token format. Tokens must start with "rdtk_".',
+        message: `Invalid token format. Tokens must start with "${DELEGATION_TOKEN_PREFIX}".`,
         details: { token: failure.token },
       };
     case 'token-not-found':
@@ -80,11 +81,17 @@ function claimFailureToEnvelope(failure: ClaimFailure): {
           existingOwnerAgentId: failure.existingOwnerAgentId,
         },
       };
+    case 'prepare-failed':
+      return {
+        code: failure.code,
+        message: failure.cause,
+        details: { ...failure.details, runbook: failure.runbook },
+      };
     case 'launch-failed':
       return {
-        code: 'LAUNCH_FAILED',
+        code: failure.code,
         message: failure.cause,
-        details: { runbook: failure.runbook },
+        details: { ...failure.details, runbook: failure.runbook },
       };
     default: {
       const _exhaustive: never = failure;

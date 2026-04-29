@@ -1965,10 +1965,11 @@ describe('claimAndLaunch', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.reason).toBe('launch-failed');
-      if (result.reason !== 'launch-failed') {
+      expect(result.reason).toBe('prepare-failed');
+      if (result.reason !== 'prepare-failed') {
         throw new Error(`Unexpected reason: ${result.reason}`);
       }
+      expect(result.code).toBe('RUNBOOK_NOT_FOUND');
       expect(result.runbook).toBe('missing.md');
     }
   });
