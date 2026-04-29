@@ -3,6 +3,7 @@ import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals
 import { setExecSync } from '../../../src/workflow/hooks/rundown.js';
 import { createMockHookInput } from '../../helpers/test-utils.js';
 import { mockExecFileSync, mockExecFileSyncError } from '../../helpers/execfile-mock.js';
+import { DelegationActiveTokensMetadataSchema } from '../../../src/shared/schemas.js';
 
 // Mock Session module
 import { createSessionMock, setGet } from '../../helpers/session-mock.js';
@@ -118,6 +119,37 @@ describe('handleDelegationDispatch', () => {
         },
       },
     });
+    const written = mockSet.mock.calls.at(-1)?.[1] as Record<string, unknown>;
+    expect(DelegationActiveTokensMetadataSchema.parse(written.delegation_active_tokens)).toEqual(
+      written.delegation_active_tokens,
+    );
+  });
+
+  it('rejects write-side delegation_active_tokens schema drift', async () => {
+    setGet(session, 'metadata', {
+      delegation_active_tokens: {
+        'agent-1': {
+          kind: 'delegation-active-token',
+          agent_id: 'different-agent',
+          tokenHash: hashToken(VALID_TOKEN),
+          createdAt: '2026-04-28T00:00:00.000Z',
+        },
+      },
+    });
+
+    const input = createMockHookInput('PreToolUse', {
+      agent_id: 'agent-2',
+      session_id: 'session-abc',
+      tool_name: 'Task',
+      tool_input: {
+        prompt: `RD_CLAIM_TOKEN=${VALID_TOKEN}`,
+      },
+    });
+
+    await expect(handleDelegationDispatch(input)).rejects.toThrow(
+      'delegation_active_tokens key must match metadata.agent_id',
+    );
+    expect(mockSet).not.toHaveBeenCalled();
   });
 
   it('keeps legacy global metadata when agent_id is absent', async () => {

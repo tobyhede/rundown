@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { parseRunbookDocument } from '@rundown-org/parser';
-import type { HookInput } from '../../shared/index.js';
+import { DelegationActiveTokensMetadataSchema, type HookInput } from '../../shared/index.js';
 import { Session } from '../../session.js';
 import { detectDelegationInToolInput } from './delegation-detector.js';
 import { rundown } from './rundown.js';
@@ -140,23 +140,22 @@ export async function handleDelegationDispatch(
   const tokenHash = hashToken(token);
   if (input.agent_id) {
     const existing =
-      meta.delegation_active_tokens &&
-      typeof meta.delegation_active_tokens === 'object' &&
-      !Array.isArray(meta.delegation_active_tokens)
-        ? (meta.delegation_active_tokens as Record<string, unknown>)
-        : {};
+      meta.delegation_active_tokens === undefined
+        ? {}
+        : DelegationActiveTokensMetadataSchema.parse(meta.delegation_active_tokens);
+    const nextActiveTokens = DelegationActiveTokensMetadataSchema.parse({
+      ...existing,
+      [input.agent_id]: {
+        kind: 'delegation-active-token',
+        agent_id: input.agent_id,
+        ...(input.session_id ? { session_id: input.session_id } : {}),
+        tokenHash,
+        createdAt: new Date().toISOString(),
+      },
+    });
     await session.set('metadata', {
       ...meta,
-      delegation_active_tokens: {
-        ...existing,
-        [input.agent_id]: {
-          kind: 'delegation-active-token',
-          agent_id: input.agent_id,
-          ...(input.session_id ? { session_id: input.session_id } : {}),
-          tokenHash,
-          createdAt: new Date().toISOString(),
-        },
-      },
+      delegation_active_tokens: nextActiveTokens,
     });
   } else {
     await session.set('metadata', { ...meta, delegation_active_token: token });

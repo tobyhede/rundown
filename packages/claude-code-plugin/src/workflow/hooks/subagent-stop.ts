@@ -2,6 +2,7 @@
 import { createHash } from 'node:crypto';
 import {
   DelegationActiveTokenMetadataSchema,
+  DelegationActiveTokensMetadataSchema,
   type HookInput,
   ParentLinkageSchema,
   RunbookPositionBodySchema,
@@ -235,7 +236,8 @@ type ConsumedDelegationToken =
       readonly tokenHash: string;
       readonly metadata: Record<string, unknown>;
     }
-  | { readonly kind: 'none' };
+  | { readonly kind: 'none' }
+  | { readonly kind: 'tampered' };
 
 async function consumeLegacyDelegationToken(
   session: Session,
@@ -262,21 +264,25 @@ async function consumeDelegationTokenForAgent(
     if (!rawMap || typeof rawMap !== 'object' || Array.isArray(rawMap)) {
       return consumeLegacyDelegationToken(session, meta);
     }
-    const map = rawMap as Record<string, unknown>;
+    const parsedMap = DelegationActiveTokensMetadataSchema.safeParse(rawMap);
+    if (!parsedMap.success) {
+      return { kind: 'tampered' };
+    }
+    const map = parsedMap.data;
     const rawEntry = map[input.agent_id];
-    if (!rawEntry || typeof rawEntry !== 'object' || Array.isArray(rawEntry)) {
+    if (!rawEntry) {
       return consumeLegacyDelegationToken(session, meta);
     }
     const parsed = DelegationActiveTokenMetadataSchema.safeParse(rawEntry);
     if (!parsed.success) {
-      return consumeLegacyDelegationToken(session, meta);
+      return { kind: 'tampered' };
     }
     const entry = parsed.data;
     if (entry.agent_id !== input.agent_id) {
-      return consumeLegacyDelegationToken(session, meta);
+      return { kind: 'tampered' };
     }
     if (input.session_id && entry.session_id && entry.session_id !== input.session_id) {
-      return consumeLegacyDelegationToken(session, meta);
+      return { kind: 'tampered' };
     }
 
     const { [input.agent_id]: _removed, ...remaining } = map;
@@ -287,9 +293,7 @@ async function consumeDelegationTokenForAgent(
     const nextMeta =
       Object.keys(remaining).length > 0
         ? { ...meta, delegation_active_tokens: remaining }
-        : Object.fromEntries(
-            Object.entries(meta).filter(([key]) => key !== 'delegation_active_tokens'),
-          );
+        : (({ delegation_active_tokens: _activeTokens, ...rest }) => rest)(meta);
     await session.set('metadata', nextMeta);
     return { kind: 'consumed', tokenHash: entry.tokenHash, metadata: nextMeta };
   }
@@ -789,6 +793,9 @@ export async function handleSubagentStop(input: HookInput): Promise<SubagentStop
   const consumed = await consumeDelegationTokenForAgent(session, input);
   if (consumed.kind === 'none') {
     return {};
+  }
+  if (consumed.kind === 'tampered') {
+    return { context: buildContextMessage({ kind: 'unknown' }) };
   }
 
   // Query runbook state and classify the delegation outcome

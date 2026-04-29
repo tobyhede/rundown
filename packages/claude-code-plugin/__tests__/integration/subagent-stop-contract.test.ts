@@ -75,6 +75,31 @@ Delegate this.
 Done.
 `;
 
+const PARENT_FANOUT_RUNBOOK = `---
+name: parent-fanout-contract
+---
+# Parent Fanout Contract
+
+## 1. Delegated fanout
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+### 1.1 Child A
+- PASS DEFER
+
+Delegate A.
+
+### 1.2 Child B
+- PASS DEFER
+
+Delegate B.
+
+## 2. Final step
+- PASS COMPLETE
+
+Done.
+`;
+
 const CHILD_RUNBOOK = `---
 name: child-contract
 ---
@@ -84,6 +109,17 @@ name: child-contract
 - PASS COMPLETE
 
 Do the child work.
+`;
+
+const CHILD_B_RUNBOOK = `---
+name: child-b-contract
+---
+# Child B Contract
+
+## 1. Child B work
+- PASS COMPLETE
+
+Do child B work.
 `;
 
 /** Extract delegation token from `rd delegate` JSON stdout. */
@@ -146,6 +182,24 @@ describe('subagent-stop contract tests', () => {
     return handleSubagentStop(input);
   }
 
+  async function captureStatusAndHandleLegacy(
+    token: string,
+  ): Promise<{ context?: string; violation?: string }> {
+    setGet(session, 'metadata', { delegation_active_token: token });
+
+    const statusResult = runCli('status', tempDir);
+    expect(statusResult.exitCode).toBe(0);
+
+    setExecSync(mockExecFileSync(statusResult.stdout));
+
+    const input = createMockHookInput('SubagentStop', {
+      cwd: tempDir,
+      agent_id: undefined,
+      session_id: undefined,
+    });
+    return handleSubagentStop(input);
+  }
+
   /** Write parent + child runbooks, start parent, delegate, return real token. */
   function setupDelegation(): string {
     writeFileSync(join(tempDir, 'parent.runbook.md'), PARENT_RUNBOOK);
@@ -158,6 +212,28 @@ describe('subagent-stop contract tests', () => {
     expect(delegateResult.exitCode).toBe(0);
 
     return extractToken(delegateResult.stdout);
+  }
+
+  function setupFanoutDelegation(): { tokenA: string; tokenB: string } {
+    writeFileSync(join(tempDir, 'parent-fanout.runbook.md'), PARENT_FANOUT_RUNBOOK);
+    writeFileSync(join(tempDir, 'child-a.runbook.md'), CHILD_RUNBOOK);
+    writeFileSync(join(tempDir, 'child-b.runbook.md'), CHILD_B_RUNBOOK);
+
+    const runResult = runCli(
+      ['run', join(tempDir, 'parent-fanout.runbook.md'), '--prompted'],
+      tempDir,
+    );
+    expect(runResult.exitCode).toBe(0);
+
+    const delegateAResult = runCli('delegate child-a.runbook.md --step 1.1', tempDir);
+    expect(delegateAResult.exitCode).toBe(0);
+    const delegateBResult = runCli('delegate child-b.runbook.md --step 1.2', tempDir);
+    expect(delegateBResult.exitCode).toBe(0);
+
+    return {
+      tokenA: extractToken(delegateAResult.stdout),
+      tokenB: extractToken(delegateBResult.stdout),
+    };
   }
 
   describe('status shape contract', () => {
@@ -203,6 +279,29 @@ describe('subagent-stop contract tests', () => {
       expect(result.context).toBeDefined();
       expect(result.context).toContain('Delegation Never Claimed');
       expect(result.context).toContain('child.runbook.md');
+    });
+
+    it('detects the correct unclaimed sibling in a fan-out step', async () => {
+      const { tokenA, tokenB } = setupFanoutDelegation();
+      expect(tokenA).not.toBe(tokenB);
+
+      const result = await captureStatusAndHandle(tokenB);
+
+      expect(result.context).toBeDefined();
+      expect(result.context).toContain('Delegation Never Claimed');
+      expect(result.context).toContain('child-b.runbook.md');
+      expect(result.context).not.toContain('child-a.runbook.md');
+    });
+
+    it('supports anonymous legacy global-token metadata against real CLI status', async () => {
+      const token = setupDelegation();
+
+      const result = await captureStatusAndHandleLegacy(token);
+
+      expect(result.context).toBeDefined();
+      expect(result.context).toContain('Delegation Never Claimed');
+      expect(result.context).toContain('child.runbook.md');
+      expect(mockSet).toHaveBeenCalledWith('metadata', {});
     });
 
     it('classifies claimed-but-idle child via parentLinkage tokenHash', async () => {

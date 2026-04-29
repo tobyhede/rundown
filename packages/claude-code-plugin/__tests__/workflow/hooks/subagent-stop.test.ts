@@ -148,7 +148,6 @@ describe('handleSubagentStop', () => {
           'other-agent': {
             kind: 'delegation-active-token',
             agent_id: 'other-agent',
-            token: VALID_TOKEN,
             tokenHash: VALID_TOKEN_HASH,
             createdAt: '2026-04-28T00:00:00.000Z',
           },
@@ -192,8 +191,9 @@ describe('handleSubagentStop', () => {
       });
     });
 
-    it('does not consume malformed per-agent token metadata', async () => {
+    it('routes malformed per-agent token metadata to unknown without consuming legacy token', async () => {
       setGet(session, 'metadata', {
+        delegation_active_token: VALID_TOKEN,
         delegation_active_tokens: {
           'agent-1': {
             kind: 'delegation-active-token',
@@ -210,13 +210,14 @@ describe('handleSubagentStop', () => {
       const input = createMockHookInput('SubagentStop', { agent_id: 'agent-1' });
       const result = await handleSubagentStop(input);
 
-      expect(result).toEqual({});
+      expect(result.context).toContain('Unable to verify child runbook state');
       expect(mockExec).not.toHaveBeenCalled();
       expect(mockSet).not.toHaveBeenCalled();
     });
 
-    it('does not consume per-agent metadata containing legacy raw token fields', async () => {
+    it('routes per-agent metadata containing legacy raw token fields to unknown', async () => {
       setGet(session, 'metadata', {
+        delegation_active_token: VALID_TOKEN,
         delegation_active_tokens: {
           'agent-1': {
             kind: 'delegation-active-token',
@@ -233,19 +234,19 @@ describe('handleSubagentStop', () => {
       const input = createMockHookInput('SubagentStop', { agent_id: 'agent-1' });
       const result = await handleSubagentStop(input);
 
-      expect(result).toEqual({});
+      expect(result.context).toContain('Unable to verify child runbook state');
       expect(mockExec).not.toHaveBeenCalled();
       expect(mockSet).not.toHaveBeenCalled();
     });
 
-    it('does not consume per-agent metadata when raw token hash disagrees with tokenHash', async () => {
+    it('routes invalid tokenHash algorithms to unknown without legacy fallback', async () => {
       setGet(session, 'metadata', {
+        delegation_active_token: VALID_TOKEN,
         delegation_active_tokens: {
           'agent-1': {
             kind: 'delegation-active-token',
             agent_id: 'agent-1',
-            token: 'rdtk_DIFFERENT000000000000000000000',
-            tokenHash: VALID_TOKEN_HASH,
+            tokenHash: `sha512:${'a'.repeat(128)}`,
             createdAt: '2026-04-28T00:00:00.000Z',
           },
         },
@@ -256,13 +257,14 @@ describe('handleSubagentStop', () => {
       const input = createMockHookInput('SubagentStop', { agent_id: 'agent-1' });
       const result = await handleSubagentStop(input);
 
-      expect(result).toEqual({});
+      expect(result.context).toContain('Unable to verify child runbook state');
       expect(mockExec).not.toHaveBeenCalled();
       expect(mockSet).not.toHaveBeenCalled();
     });
 
-    it('does not consume token metadata for a different session_id', async () => {
+    it('routes token metadata for a different session_id to unknown without legacy fallback', async () => {
       setGet(session, 'metadata', {
+        delegation_active_token: VALID_TOKEN,
         delegation_active_tokens: {
           'agent-1': {
             kind: 'delegation-active-token',
@@ -282,7 +284,7 @@ describe('handleSubagentStop', () => {
       });
       const result = await handleSubagentStop(input);
 
-      expect(result).toEqual({});
+      expect(result.context).toContain('Unable to verify child runbook state');
       expect(mockExec).not.toHaveBeenCalled();
       expect(mockSet).not.toHaveBeenCalled();
     });
