@@ -655,7 +655,7 @@ export async function runExecutionLoop(
     projectRoot = await fs.realpath(cwd);
   } catch (err: unknown) {
     void logger.warn(
-      `runExecutionLoop: fs.realpath("${cwd}") failed, using raw path: ${Error.isError(err) ? err.message : String(err)}`,
+      `runExecutionLoop: fs.realpath("${cwd}") failed, using raw path: ${isError(err) ? err.message : String(err)}`,
     );
     projectRoot = cwd;
   }

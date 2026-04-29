@@ -92,6 +92,32 @@ export default tseslint.config(
           varsIgnorePattern: '^_',
         },
       ],
+
+      // Ban direct `Error.isError(...)` calls — undefined in Node ≤ 23
+      // (notably WebContainer's bundled Node 22.x, used by the marketing
+      // site and Playwright tests). Use the centralized polyfilled helpers
+      // `isError()` / `isNodeError()` from `@rundown-org/core` (or
+      // `packages/claude-code-plugin/src/shared/errors.ts` in the plugin).
+      // The polyfill modules themselves are allow-listed in a later block.
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector:
+            "CallExpression[callee.type='MemberExpression'][callee.object.name='Error'][callee.property.name='isError']",
+          message:
+            'Use isError() / isNodeError() from @rundown-org/core (or shared/errors in the plugin) — direct Error.isError() is undefined in Node ≤ 23 and breaks WebContainer.',
+        },
+      ],
+    },
+  },
+
+  // Polyfill modules: the only place where direct `Error.isError()` is allowed.
+  // These files implement the feature-detected fallback that all other code
+  // routes through — see the `no-restricted-syntax` rule above.
+  {
+    files: ['packages/core/src/errors.ts', 'packages/claude-code-plugin/src/shared/errors.ts'],
+    rules: {
+      'no-restricted-syntax': 'off',
     },
   },
 

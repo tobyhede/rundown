@@ -12,6 +12,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { writeFileSync, unlinkSync, existsSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
+import { isError } from '../errors.js';
 import type {
   SandboxOptions,
   SandboxExecutionResult,
@@ -336,7 +337,7 @@ export class SeatbeltSandbox implements SandboxImplementation {
           };
       return Promise.resolve(this.availabilityCache);
     } catch (error: unknown) {
-      const reason = Error.isError(error) ? error.message : String(error);
+      const reason = isError(error) ? error.message : String(error);
       this.availabilityCache = {
         available: false,
         mechanism: 'none',

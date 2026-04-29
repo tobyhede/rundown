@@ -1,5 +1,29 @@
-import { describe, it, expect } from '@jest/globals';
+import { describe, it, expect, jest } from '@jest/globals';
 import { isZodError } from '../src/shared/errors.js';
+
+describe('isError fallback path', () => {
+  // Mirrors the core test — exercises the `instanceof Error` fallback on
+  // hosts that don't ship `Error.isError` (Node ≤ 23 / WebContainer 22.x).
+  it('falls back to instanceof Error when Error.isError is undefined', async () => {
+    const original = (Error as { isError?: unknown }).isError;
+    jest.resetModules();
+    try {
+      delete (Error as { isError?: unknown }).isError;
+      const fallback = await import('../src/shared/errors.js');
+      expect(fallback.isError(new Error('boom'))).toBe(true);
+      expect(fallback.isError('not an error')).toBe(false);
+      expect(fallback.isError(null)).toBe(false);
+
+      const errnoLike = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      expect(fallback.isNodeError(errnoLike)).toBe(true);
+      expect(fallback.isNodeError(new Error('no code'))).toBe(false);
+    } finally {
+      if (original !== undefined) {
+        (Error as { isError?: unknown }).isError = original;
+      }
+    }
+  });
+});
 
 describe('isZodError', () => {
   it('accepts cross-realm Zod-like error with valid issues', () => {

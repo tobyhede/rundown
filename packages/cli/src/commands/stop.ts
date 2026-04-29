@@ -67,7 +67,7 @@ export function registerStopCommand(program: Command): void {
               }
             }
           } catch (error: unknown) {
-            getActiveError = Error.isError(error) ? error : new Error(String(error));
+            getActiveError = isError(error) ? error : new Error(String(error));
           }
 
           if (!state) {

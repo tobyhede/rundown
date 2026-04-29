@@ -639,7 +639,7 @@ fi
       expect(iter2Content).toBe('');
     } catch (err) {
       // ENOENT is also acceptable — channel file may not have been created if iteration aborted early
-      if (Error.isError(err) && isNodeError(err)) {
+      if (isNodeError(err)) {
         expect(err.code).toBe('ENOENT');
       } else {
         throw err;
