@@ -269,10 +269,10 @@ async function consumeDelegationTokenForAgent(
       return { kind: 'tampered' };
     }
     const map = parsedMap.data;
-    const rawEntry = map[input.agent_id];
-    if (!rawEntry) {
+    if (!Object.hasOwn(map, input.agent_id)) {
       return consumeLegacyDelegationToken(session, meta);
     }
+    const rawEntry = map[input.agent_id];
     const parsed = DelegationActiveTokenMetadataSchema.safeParse(rawEntry);
     if (!parsed.success) {
       return { kind: 'tampered' };
