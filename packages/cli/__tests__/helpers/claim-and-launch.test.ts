@@ -2,6 +2,7 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import type { RunbookState, StepDelegation, TokenScanResult } from '@rundown-org/core';
 import type { RunPipelineContext } from '../../src/helpers/runbook-pipeline.js';
 import type * as VariableDiscoveryModule from '../../src/services/variable-discovery.js';
+import { assertVariant } from './assert-variant.js';
 import { brandDelegationTokenHashForTest, brandFrameKeyForTest } from './brand-helpers.js';
 import { mockErrorHelpers } from './mock-error-helpers.js';
 import { mockFn } from './typed-mocks.js';
@@ -335,8 +336,7 @@ describe('claimAndLaunch', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.reason).toBe('invalid-token');
-      if (result.reason !== 'invalid-token') throw new Error(`Unexpected reason: ${result.reason}`);
+      assertVariant(result, 'reason', 'invalid-token');
       // Token should be truncated, not raw
       expect(result.token).toMatch(/\.\.\./);
     }
@@ -353,7 +353,7 @@ describe('claimAndLaunch', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.reason).toBe('token-not-found');
+      assertVariant(result, 'reason', 'token-not-found');
     }
   });
 
@@ -392,8 +392,7 @@ describe('claimAndLaunch', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.reason).toBe('lock-timeout');
-      if (result.reason !== 'lock-timeout') throw new Error(`Unexpected reason: ${result.reason}`);
+      assertVariant(result, 'reason', 'lock-timeout');
       expect(result.parentRunId).toBe('run-1');
     }
   });
@@ -443,10 +442,7 @@ describe('claimAndLaunch', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.reason).toBe('delegation-cancelled');
-      if (result.reason !== 'delegation-cancelled') {
-        throw new Error(`Unexpected reason: ${result.reason}`);
-      }
+      assertVariant(result, 'reason', 'delegation-cancelled');
       expect(result.cancelledAt).toBe('2026-02-28T00:00:00.000Z');
     }
   });
@@ -636,10 +632,7 @@ describe('claimAndLaunch', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.reason).toBe('parent-missing');
-      if (result.reason !== 'parent-missing') {
-        throw new Error(`Unexpected reason: ${result.reason}`);
-      }
+      assertVariant(result, 'reason', 'parent-missing');
       expect(result.parentRunId).toBe('run-deleted');
     }
   });
@@ -687,10 +680,7 @@ describe('claimAndLaunch', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.reason).toBe('parent-ended');
-      if (result.reason !== 'parent-ended') {
-        throw new Error(`Unexpected reason: ${result.reason}`);
-      }
+      assertVariant(result, 'reason', 'parent-ended');
       expect(result.parentRunId).toBe(`run-${lifecycle}`);
       expect(result.lifecycle).toBe(lifecycle);
     }
@@ -742,10 +732,7 @@ describe('claimAndLaunch', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.reason).toBe('delegation-removed');
-      if (result.reason !== 'delegation-removed') {
-        throw new Error(`Unexpected reason: ${result.reason}`);
-      }
+      assertVariant(result, 'reason', 'delegation-removed');
       expect(result.parentRunId).toBe('run-1');
       expect(result.stepId).toBe('1');
     }
@@ -813,10 +800,7 @@ describe('claimAndLaunch', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.reason).toBe('delegation-removed');
-      if (result.reason !== 'delegation-removed') {
-        throw new Error(`Unexpected reason: ${result.reason}`);
-      }
+      assertVariant(result, 'reason', 'delegation-removed');
       expect(result.parentRunId).toBe('run-1');
       expect(result.stepId).toBe('1');
     }
@@ -828,7 +812,7 @@ describe('claimAndLaunch', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.reason).toBe('invalid-token');
+      assertVariant(result, 'reason', 'invalid-token');
     }
   });
 
@@ -1092,8 +1076,7 @@ describe('claimAndLaunch', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.reason).toBe('launch-failed');
-      if (result.reason !== 'launch-failed') throw new Error(`Unexpected reason: ${result.reason}`);
+      assertVariant(result, 'reason', 'launch-failed');
       expect(result.code).toBe('RD-816');
       expect(result.cause).toContain('disk full');
     }

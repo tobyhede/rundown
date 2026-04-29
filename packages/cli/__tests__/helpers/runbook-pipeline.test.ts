@@ -17,6 +17,7 @@ import type {
 } from '@rundown-org/parser';
 import type { OutputEmitter } from '../../src/services/output-emitter.js';
 import type { PreparedRunbook, RunPipelineContext } from '../../src/helpers/runbook-pipeline.js';
+import { assertVariant } from './assert-variant.js';
 import { mockErrorHelpers } from './mock-error-helpers.js';
 import { makeRunPipelineContext } from './run-pipeline-context-helpers.js';
 import { mockFn } from './typed-mocks.js';
@@ -1115,7 +1116,7 @@ describe('claimAndLaunch', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.reason).toBe('invalid-token');
+      assertVariant(result, 'reason', 'invalid-token');
     }
   });
 
@@ -1142,7 +1143,7 @@ describe('claimAndLaunch', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.reason).toBe('token-not-found');
+      assertVariant(result, 'reason', 'token-not-found');
     }
   });
 
@@ -1275,7 +1276,7 @@ describe('claimAndLaunch', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.reason).toBe('delegation-cancelled');
+      assertVariant(result, 'reason', 'delegation-cancelled');
     }
   });
 
@@ -1444,10 +1445,7 @@ describe('claimAndLaunch', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.reason).toBe('owner-conflict');
-      if (result.reason !== 'owner-conflict') {
-        throw new Error(`Unexpected reason: ${result.reason}`);
-      }
+      assertVariant(result, 'reason', 'owner-conflict');
       expect(result.existingOwnerAgentId).toBe('agent-a');
     }
   });
@@ -1551,10 +1549,7 @@ describe('claimAndLaunch', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.reason).toBe('owner-conflict');
-      if (result.reason !== 'owner-conflict') {
-        throw new Error(`Unexpected reason: ${result.reason}`);
-      }
+      assertVariant(result, 'reason', 'owner-conflict');
       expect(result.existingOwnerAgentId).toBe('agent-a');
     }
   });
@@ -1965,10 +1960,7 @@ describe('claimAndLaunch', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.reason).toBe('prepare-failed');
-      if (result.reason !== 'prepare-failed') {
-        throw new Error(`Unexpected reason: ${result.reason}`);
-      }
+      assertVariant(result, 'reason', 'prepare-failed');
       expect(result.code).toBe('RUNBOOK_NOT_FOUND');
       expect(result.runbook).toBe('missing.md');
     }
