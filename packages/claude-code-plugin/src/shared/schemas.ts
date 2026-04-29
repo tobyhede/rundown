@@ -156,19 +156,30 @@ export type RunbookStepBody = z.infer<typeof RunbookStepBodySchema>;
 export type ParentLinkageBody = z.infer<typeof ParentLinkageSchema>;
 
 /** Plugin-local metadata for a delegation token assigned to a Claude Code agent. */
-export const DelegationActiveTokenMetadataSchema = z.object({
-  kind: z.literal('delegation-active-token'),
-  agent_id: z.string().min(1),
-  session_id: z.string().min(1).optional(),
-  tokenHash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
-  createdAt: z.string().min(1),
-});
+export const DelegationActiveTokenMetadataSchema = z
+  .object({
+    kind: z.literal('delegation-active-token'),
+    agent_id: z.string().min(1),
+    session_id: z.string().min(1).optional(),
+    tokenHash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+    createdAt: z.string().min(1),
+  })
+  .strict();
 
 /** Metadata map keyed by Claude Code `agent_id` for active delegation tokens. */
-export const DelegationActiveTokensMetadataSchema = z.record(
-  z.string(),
-  DelegationActiveTokenMetadataSchema,
-);
+export const DelegationActiveTokensMetadataSchema = z
+  .record(z.string(), DelegationActiveTokenMetadataSchema)
+  .superRefine((map, ctx) => {
+    for (const [agentId, metadata] of Object.entries(map)) {
+      if (metadata.agent_id !== agentId) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [agentId, 'agent_id'],
+          message: 'delegation_active_tokens key must match metadata.agent_id',
+        });
+      }
+    }
+  });
 
 /** Validated per-agent active delegation token metadata. */
 export type DelegationActiveTokenMetadata = z.infer<typeof DelegationActiveTokenMetadataSchema>;

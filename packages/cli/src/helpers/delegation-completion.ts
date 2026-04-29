@@ -165,11 +165,11 @@ export async function handleParentCompletion(
   const transitionConfig =
     result === 'pass' ? createPassTransitionConfig() : createFailTransitionConfig();
 
-  // Parent completion: never pop during drain.
+  // Parent completion: never release during drain.
   // Session is managed explicitly below and by runExecutionLoop.
   const delegationPolicy: TransitionOrchestrationPolicy = {
-    onComplete: { popRunbook: false },
-    onStopped: { popRunbook: false },
+    onComplete: { releaseRunbook: false },
+    onStopped: { releaseRunbook: false },
   };
 
   const parentActorService = new RunbookActorService(manager);

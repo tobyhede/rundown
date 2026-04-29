@@ -305,19 +305,19 @@ interface ApplyResultTransitionArgs {
 
 const EXECUTION_TERMINAL_POLICY: TransitionOrchestrationPolicy = {
   onComplete: {
-    popRunbook: true,
+    releaseRunbook: true,
   },
   onStopped: {
-    popRunbook: true,
+    releaseRunbook: true,
   },
 };
 
 const EXECUTION_TERMINAL_NO_STACK_POLICY: TransitionOrchestrationPolicy = {
   onComplete: {
-    popRunbook: false,
+    releaseRunbook: false,
   },
   onStopped: {
-    popRunbook: false,
+    releaseRunbook: false,
   },
 };
 

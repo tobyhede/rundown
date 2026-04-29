@@ -92,10 +92,10 @@ export function createPassTransitionConfig(): TransitionConfig {
       actionType !== 'RETRY' && actionType !== 'STOP',
     policy: {
       onStopped: {
-        popRunbook: true,
+        releaseRunbook: true,
       },
       onComplete: {
-        popRunbook: true,
+        releaseRunbook: true,
       },
     },
   };
@@ -114,10 +114,10 @@ export function createFailTransitionConfig(): TransitionConfig {
     computeActionResult: () => false,
     policy: {
       onStopped: {
-        popRunbook: true,
+        releaseRunbook: true,
       },
       onComplete: {
-        popRunbook: true,
+        releaseRunbook: true,
       },
     },
   };

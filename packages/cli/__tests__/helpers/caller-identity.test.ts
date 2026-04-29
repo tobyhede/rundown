@@ -33,4 +33,11 @@ describe('resolveCallerIdentity', () => {
       message: 'RD_SESSION_ID requires RD_AGENT_ID',
     });
   });
+
+  it('rejects whitespace-only session id when agent id is present', () => {
+    expect(resolveCallerIdentity({ RD_AGENT_ID: 'agent-a', RD_SESSION_ID: '   ' })).toEqual({
+      kind: 'invalid',
+      message: 'RD_SESSION_ID must not be blank when provided',
+    });
+  });
 });

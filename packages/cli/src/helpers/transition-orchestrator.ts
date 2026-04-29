@@ -24,8 +24,8 @@ import {
 
 /** Side-effect policy applied when a runbook reaches a terminal state. */
 export interface TerminalSideEffectsPolicy {
-  /** Whether to pop the runbook from the session stack. */
-  popRunbook: boolean;
+  /** Whether to release this runbook from all session targeting structures. */
+  releaseRunbook: boolean;
 }
 
 /** Policy governing side effects for each terminal outcome. */
@@ -142,7 +142,7 @@ async function applyTerminalSideEffects(
   policy: TerminalSideEffectsPolicy,
   runbookId: RunbookState['id'],
 ): Promise<void> {
-  if (policy.popRunbook) {
+  if (policy.releaseRunbook) {
     await sessionService.releaseRunbook(runbookId);
   }
 }

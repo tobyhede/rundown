@@ -1,3 +1,4 @@
+import { realpathSync } from 'node:fs';
 import { locksDir, sessionLockPath as _sessionLockPath } from '../paths.js';
 import { acquireFileLock, FileLockTimeoutError, releaseFileLock } from './file-lock.js';
 
@@ -42,8 +43,9 @@ export class SessionLock {
    * @param cwd - Project root directory
    */
   constructor(cwd: string) {
-    this.lockDir = locksDir(cwd);
-    this.lockFile = _sessionLockPath(cwd);
+    const projectRoot = realpathSync(cwd);
+    this.lockDir = locksDir(projectRoot);
+    this.lockFile = _sessionLockPath(projectRoot);
   }
 
   /**

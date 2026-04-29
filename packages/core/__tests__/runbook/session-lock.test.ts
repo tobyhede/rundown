@@ -10,6 +10,10 @@ describe('SessionLock', () => {
   let tmpDir: string;
   let lock: SessionLock;
 
+  async function canonicalSessionLockPath(dir: string): Promise<string> {
+    return sessionLockPath(await fs.realpath(dir));
+  }
+
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'session-lock-'));
     lock = new SessionLock(tmpDir);
@@ -53,13 +57,14 @@ describe('SessionLock', () => {
 
   it('second acquire blocks then succeeds after release', async () => {
     await lock.acquire();
+    const lock2 = new SessionLock(tmpDir);
 
     setTimeout(() => {
       void lock.release();
     }, 100);
 
-    await lock.acquire();
-    await lock.release();
+    await lock2.acquire();
+    await lock2.release();
   });
 
   it('release is idempotent', async () => {
@@ -81,11 +86,33 @@ describe('SessionLock', () => {
     expect(captured).toBeInstanceOf(SessionLockTimeoutError);
     expect(captured).toBeInstanceOf(FileLockTimeoutError);
     if (captured instanceof SessionLockTimeoutError) {
-      expect(captured.lockFile).toBe(sessionLockPath(tmpDir));
+      expect(captured.lockFile).toBe(await canonicalSessionLockPath(tmpDir));
       expect(captured.message).toMatch(/Session lock timeout/);
     }
 
     await lock.release();
+  }, 10_000);
+
+  it('canonicalizes symlinked project roots to the same lock file', async () => {
+    const alias = `${tmpDir}-alias`;
+    await fs.symlink(tmpDir, alias, 'dir');
+    const aliasLock = new SessionLock(alias);
+
+    await lock.acquire();
+    let captured: unknown;
+    try {
+      await aliasLock.acquire();
+    } catch (err) {
+      captured = err;
+    }
+
+    expect(captured).toBeInstanceOf(SessionLockTimeoutError);
+    if (captured instanceof SessionLockTimeoutError) {
+      expect(captured.lockFile).toBe(await canonicalSessionLockPath(tmpDir));
+    }
+
+    await lock.release();
+    await fs.rm(alias, { force: true });
   }, 10_000);
 
   it('multiple sequential acquire-release cycles work correctly', async () => {

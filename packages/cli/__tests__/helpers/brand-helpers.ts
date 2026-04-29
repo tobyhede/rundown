@@ -46,6 +46,7 @@ export function brandFrameKeyForTest(step: string, iteration?: number): FrameKey
  *
  * @param hash - Candidate persisted delegation token hash
  * @returns Branded `DelegationTokenHash`
+ * @throws {Error} If `hash` is not a canonical `sha256:<64 lowercase hex>` value
  */
 export function brandDelegationTokenHashForTest(hash: string): DelegationTokenHash {
   return assertDelegationTokenHash(hash);

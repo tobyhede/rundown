@@ -201,7 +201,7 @@ describe('handleDelegationDispatch', () => {
       ].join('\n'),
     );
     expect(result.context).toContain(
-      'Keep these environment variables set for `rd status`, `rd pass`, and `rd fail`.',
+      'Keep these environment variables set for `rd status`, `rd pass`, `rd fail`, `rd stash`, `rd pop`, and `rd stop`.',
     );
   });
 
@@ -218,7 +218,7 @@ describe('handleDelegationDispatch', () => {
     expect(result.context).not.toContain('export RD_AGENT_ID=');
     expect(result.context).not.toContain('export RD_SESSION_ID=');
     expect(result.context).not.toContain(
-      'Keep these environment variables set for `rd status`, `rd pass`, and `rd fail`.',
+      'Keep these environment variables set for `rd status`, `rd pass`, `rd fail`, `rd stash`, `rd pop`, and `rd stop`.',
     );
   });
 

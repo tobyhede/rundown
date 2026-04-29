@@ -164,6 +164,17 @@ export class SessionOwnershipMismatchError extends Error {
   }
 }
 
+/**
+ * Percent-encode an owner-key segment using `encodeURIComponent`.
+ *
+ * Owner keys use `:` as a structural separator, so literal colons inside
+ * `agent_id` or `session_id` must be escaped. `decodeURIComponent` is the
+ * matching decoder for any future diagnostic tooling that needs to display
+ * individual key parts.
+ *
+ * @param value - Raw owner-key segment
+ * @returns Percent-encoded segment safe for colon-separated owner keys
+ */
 function encodeKeyPart(value: string): string {
   return encodeURIComponent(value);
 }

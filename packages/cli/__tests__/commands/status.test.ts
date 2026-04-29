@@ -214,7 +214,12 @@ describe('agent-owned delegated children', () => {
     const token = JSON.parse(delegated.stdout).token as string;
     const agentA = { env: { RD_AGENT_ID: 'agent-a', RD_SESSION_ID: 'shared-session' } };
     const claimed = await runCliInProcess(`claim ${token}`, workspace, agentA);
-    const childRunId = String(findActionOutput(claimed.stdout)?.run_id);
+    const claimOutput = findActionOutput(claimed.stdout);
+    expect(typeof claimOutput?.run_id).toBe('string');
+    if (typeof claimOutput?.run_id !== 'string') {
+      throw new Error('Expected claim output to include run_id');
+    }
+    const childRunId = claimOutput.run_id;
 
     const stateFile = join(workspace.statePath(), `${childRunId}.json`);
     const state = JSON.parse(await readFile(stateFile, 'utf-8')) as Record<string, unknown>;

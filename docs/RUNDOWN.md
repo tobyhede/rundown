@@ -1006,7 +1006,7 @@ Delegation semantics:
 - `claim` uses the delegation token (printed by `delegate`) to launch the child runbook.
 - Child runbook uses plain `rd pass` / `rd fail` to report its outcome.
 - Completion routing is frame + entry aware (`frame + entry + substep`) to prevent stale re-entry completions from being applied.
-- Identified subagents are routed by ownership, not by the shared stack. `rd claim <token>` records the claimed child run id under the caller's `agent_id`/`session_id`; later plain `rd status`, `rd pass`, and `rd fail` resolve that owned child first.
+- Identified subagents are routed by ownership, not by the shared stack. `rd claim <token>` records the claimed child run id under the caller's `agent_id`/`session_id`; later plain ownership-routed commands (`rd status`, `rd pass`, `rd fail`, `rd stash`, `rd pop`, and `rd stop`) resolve that owned child first.
 - The shared `defaultStack` is not a safe targeting mechanism for parallel delegated siblings because the most recently claimed child is not necessarily the caller's child.
 - If an ownership record points at missing or terminal state, commands fail closed instead of falling back to the shared stack in the same invocation.
 

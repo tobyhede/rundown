@@ -46,11 +46,11 @@ async function propagateForceAbort(
 ): Promise<void> {
   const transitionConfig = createFailTransitionConfig();
 
-  // Delegation-specific: never pop during drain.
+  // Delegation-specific: never release during drain.
   // Session is managed explicitly below and by runExecutionLoop.
   const delegationPolicy: TransitionOrchestrationPolicy = {
-    onComplete: { popRunbook: false },
-    onStopped: { popRunbook: false },
+    onComplete: { releaseRunbook: false },
+    onStopped: { releaseRunbook: false },
   };
 
   const parentActorService = new RunbookActorService(manager);

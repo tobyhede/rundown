@@ -112,7 +112,6 @@ describe('handleSubagentStop', () => {
             kind: 'delegation-active-token',
             agent_id: 'agent-1',
             session_id: 'session-a',
-            token: VALID_TOKEN,
             tokenHash: VALID_TOKEN_HASH,
             createdAt: '2026-04-28T00:00:00.000Z',
           },
@@ -120,7 +119,6 @@ describe('handleSubagentStop', () => {
             kind: 'delegation-active-token',
             agent_id: 'agent-2',
             session_id: 'session-a',
-            token: siblingToken,
             tokenHash: `sha256:${createHash('sha256').update(siblingToken).digest('hex')}`,
             createdAt: '2026-04-28T00:00:00.000Z',
           },
@@ -138,7 +136,7 @@ describe('handleSubagentStop', () => {
         delegation_active_tokens: {
           'agent-2': expect.objectContaining({
             agent_id: 'agent-2',
-            token: siblingToken,
+            tokenHash: `sha256:${createHash('sha256').update(siblingToken).digest('hex')}`,
           }),
         },
       });
@@ -217,6 +215,52 @@ describe('handleSubagentStop', () => {
       expect(mockSet).not.toHaveBeenCalled();
     });
 
+    it('does not consume per-agent metadata containing legacy raw token fields', async () => {
+      setGet(session, 'metadata', {
+        delegation_active_tokens: {
+          'agent-1': {
+            kind: 'delegation-active-token',
+            agent_id: 'agent-1',
+            token: VALID_TOKEN,
+            tokenHash: VALID_TOKEN_HASH,
+            createdAt: '2026-04-28T00:00:00.000Z',
+          },
+        },
+      });
+      const mockExec = mockExecFileSync('{}');
+      setExecSync(mockExec);
+
+      const input = createMockHookInput('SubagentStop', { agent_id: 'agent-1' });
+      const result = await handleSubagentStop(input);
+
+      expect(result).toEqual({});
+      expect(mockExec).not.toHaveBeenCalled();
+      expect(mockSet).not.toHaveBeenCalled();
+    });
+
+    it('does not consume per-agent metadata when raw token hash disagrees with tokenHash', async () => {
+      setGet(session, 'metadata', {
+        delegation_active_tokens: {
+          'agent-1': {
+            kind: 'delegation-active-token',
+            agent_id: 'agent-1',
+            token: 'rdtk_DIFFERENT000000000000000000000',
+            tokenHash: VALID_TOKEN_HASH,
+            createdAt: '2026-04-28T00:00:00.000Z',
+          },
+        },
+      });
+      const mockExec = mockExecFileSync('{}');
+      setExecSync(mockExec);
+
+      const input = createMockHookInput('SubagentStop', { agent_id: 'agent-1' });
+      const result = await handleSubagentStop(input);
+
+      expect(result).toEqual({});
+      expect(mockExec).not.toHaveBeenCalled();
+      expect(mockSet).not.toHaveBeenCalled();
+    });
+
     it('does not consume token metadata for a different session_id', async () => {
       setGet(session, 'metadata', {
         delegation_active_tokens: {
@@ -224,7 +268,6 @@ describe('handleSubagentStop', () => {
             kind: 'delegation-active-token',
             agent_id: 'agent-1',
             session_id: 'session-a',
-            token: VALID_TOKEN,
             tokenHash: VALID_TOKEN_HASH,
             createdAt: '2026-04-28T00:00:00.000Z',
           },
@@ -291,7 +334,6 @@ describe('handleSubagentStop', () => {
             kind: 'delegation-active-token',
             agent_id: 'agent-1',
             session_id: 'session-a',
-            token: VALID_TOKEN,
             tokenHash: VALID_TOKEN_HASH,
             createdAt: '2026-04-28T00:00:00.000Z',
           },

@@ -211,7 +211,10 @@ export async function handleDelegationDispatch(
     '```',
     '',
     ...(input.agent_id
-      ? ['Keep these environment variables set for `rd status`, `rd pass`, and `rd fail`.', '']
+      ? [
+          'Keep these environment variables set for `rd status`, `rd pass`, `rd fail`, `rd stash`, `rd pop`, and `rd stop`.',
+          '',
+        ]
       : []),
     ...statusLines,
     ...(statusLines.length > 0 ? [''] : []),

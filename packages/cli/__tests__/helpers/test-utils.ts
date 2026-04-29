@@ -1178,7 +1178,7 @@ export function parseConcatenatedJson(raw: string): unknown[] {
   const results: unknown[] = [];
   let i = 0;
   while (i < raw.length) {
-    while (i < raw.length && /\s/.test(raw[i])) i++;
+    while (i < raw.length && raw[i] !== '{' && raw[i] !== '[') i++;
     if (i >= raw.length) break;
     const start = i;
     let depth = 0;

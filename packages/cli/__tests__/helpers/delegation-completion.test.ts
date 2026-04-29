@@ -666,7 +666,7 @@ describe('handleParentCompletion', () => {
     expect(MockLock).not.toHaveBeenCalled();
   });
 
-  it('passes delegation-specific popRunbook:false policy to drain', async () => {
+  it('passes delegation-specific releaseRunbook:false policy to drain', async () => {
     const delegation = makeDelegationLinkage();
     const childState = makeState('child-run-id', { parentLinkage: delegation });
     const parentState = makeState('parent-run-id', {
@@ -693,14 +693,14 @@ describe('handleParentCompletion', () => {
     expect(drainResolvedCompletions).toHaveBeenCalledWith(
       expect.objectContaining({
         transitionPolicy: {
-          onComplete: { popRunbook: false },
-          onStopped: { popRunbook: false },
+          onComplete: { releaseRunbook: false },
+          onStopped: { releaseRunbook: false },
         },
       }),
     );
   });
 
-  it('explicitly pops session when drain returns done', async () => {
+  it('explicitly releases parent runbook when drain returns done', async () => {
     const delegation = makeDelegationLinkage();
     const childState = makeState('child-run-id', { parentLinkage: delegation });
     const parentState = makeState('parent-run-id', {
@@ -725,12 +725,12 @@ describe('handleParentCompletion', () => {
 
     const MockSession = core.SessionService as jest.MockedClass<typeof core.SessionService>;
     const sessionInstance = MockSession.mock.results[0]?.value as {
-      releaseRunbook: jest.Mock<any>;
+      releaseRunbook: jest.Mock<(runbookId: string) => Promise<unknown>>;
     };
     expect(sessionInstance.releaseRunbook).toHaveBeenCalledWith('parent-run-id');
   });
 
-  it('explicitly pops session when drain returns stopped', async () => {
+  it('explicitly releases parent runbook when drain returns stopped', async () => {
     const delegation = makeDelegationLinkage();
     const childState = makeState('child-run-id', { parentLinkage: delegation });
     const parentState = makeState('parent-run-id', {
@@ -755,7 +755,7 @@ describe('handleParentCompletion', () => {
 
     const MockSession = core.SessionService as jest.MockedClass<typeof core.SessionService>;
     const sessionInstance = MockSession.mock.results[0]?.value as {
-      releaseRunbook: jest.Mock<any>;
+      releaseRunbook: jest.Mock<(runbookId: string) => Promise<unknown>>;
     };
     expect(sessionInstance.releaseRunbook).toHaveBeenCalledWith('parent-run-id');
   });
@@ -902,7 +902,9 @@ describe('handleParentCompletion', () => {
     await handleParentCompletion(childState, 'pass', '/test', output);
 
     const MockActor = core.RunbookActorService as jest.MockedClass<typeof core.RunbookActorService>;
-    const actorInstance = MockActor.mock.results[0]?.value as { sendAndSync: jest.Mock<any> };
+    const actorInstance = MockActor.mock.results[0]?.value as {
+      sendAndSync: jest.Mock<(...args: unknown[]) => Promise<unknown>>;
+    };
     expect(actorInstance.sendAndSync).toHaveBeenCalledWith('parent-run-id', expect.any(Array), {
       type: 'SET_VARIABLES',
       vars: { PlanPath: '/work/plan.json', version: '2.1' },
@@ -991,7 +993,9 @@ describe('handleParentCompletion', () => {
     await handleParentCompletion(childState, 'pass', '/test', output);
 
     const MockActor = core.RunbookActorService as jest.MockedClass<typeof core.RunbookActorService>;
-    const actorInstance = MockActor.mock.results[0]?.value as { sendAndSync: jest.Mock<any> };
+    const actorInstance = MockActor.mock.results[0]?.value as {
+      sendAndSync: jest.Mock<(...args: unknown[]) => Promise<unknown>>;
+    };
     expect(actorInstance.sendAndSync).not.toHaveBeenCalledWith(
       expect.anything(),
       expect.anything(),
