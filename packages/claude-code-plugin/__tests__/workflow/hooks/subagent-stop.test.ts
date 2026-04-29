@@ -104,6 +104,7 @@ describe('handleSubagentStop', () => {
     });
 
     it('consumes only the stopping agent token and preserves sibling token metadata', async () => {
+      // cspell:disable-next-line
       const siblingToken = 'rdtk_BBCDEFGHIJKLMNOPQRSTUVWXYZ234567';
       setGet(session, 'metadata', {
         delegation_active_tokens: {

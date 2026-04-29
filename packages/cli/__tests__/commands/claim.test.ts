@@ -97,6 +97,7 @@ describe('claim command', () => {
 
     it('rejects invalid caller identity before claiming', async () => {
       const result = await runCliInProcess(
+        // cspell:disable-next-line
         'claim rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH',
         workspace,
         {
@@ -160,6 +161,46 @@ describe('claim command', () => {
 
       const anonymousActive = await getActiveState(workspace);
       expect(anonymousActive?.id).toBe(parentId);
+    });
+
+    it('emits structured owner-conflict details when another agent claims the same child', async () => {
+      await writeParentRunbook();
+      await writeChildRunbook();
+
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      expect(result.exitCode).toBe(0);
+
+      result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
+      expect(result.exitCode).toBe(0);
+      const token = extractToken(result.stdout);
+
+      result = await runCliInProcess(`claim ${token}`, workspace, {
+        env: { RD_AGENT_ID: 'agent-a', RD_SESSION_ID: 'session-a' },
+      });
+      expect(result.exitCode).toBe(0);
+      const childRunId = String(findActionOutput(result.stdout)?.run_id);
+
+      result = await runCliInProcess(`claim ${token}`, workspace, {
+        env: { RD_AGENT_ID: 'agent-b', RD_SESSION_ID: 'session-b' },
+      });
+
+      expect(result.exitCode).toBe(1);
+      const envelope = JSON.parse(result.stdout) as {
+        kind?: string;
+        code?: string;
+        details?: Record<string, unknown>;
+      };
+      expect(envelope).toEqual(
+        expect.objectContaining({
+          kind: 'error',
+          code: 'DELEGATION_OWNER_CONFLICT',
+          details: expect.objectContaining({
+            existingOwnerAgentId: 'agent-a',
+            childRunId,
+          }),
+        }),
+      );
+      expect(ErrorResponseSchema.safeParse(envelope).success).toBe(true);
     });
 
     it('does not pop the parent when an identified child auto-completes', async () => {

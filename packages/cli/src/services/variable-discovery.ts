@@ -793,9 +793,9 @@ async function enforceFileSourcePolicy(
  *
  * Processes variable layers in precedence order (lowest to highest):
  * 1. Built-in defaults (Date, DateTime, Year, Month, Day, Branch, WorkPath, RunId, ContextId)
- * 1b. Inherited vars from parent delegation (overrides builtins)
  * 2. Auto-discovered .rundown/config.yaml
- * 2b. Environment bridge (RD_INPUT_* env vars)
+ * 2b. Inherited vars from parent delegation
+ * 2c. Environment bridge (RD_INPUT_* env vars)
  * 3. --input-file contents (repeatable, later overrides earlier)
  * 4. --input flags
  * 5. --input-json flags (highest precedence)

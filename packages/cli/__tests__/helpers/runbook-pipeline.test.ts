@@ -180,6 +180,7 @@ jest.unstable_mockModule('../../src/services/template-renderer', () => ({
 // Mock validate-frontmatter-vars
 jest.unstable_mockModule('../../src/helpers/validate-frontmatter-vars', () => ({
   validateFrontmatterVars: mockFn<(...args: unknown[]) => unknown[]>().mockReturnValue([]),
+  validateRequiredVars: mockFn<(...args: unknown[]) => unknown[]>().mockReturnValue([]),
   validateOutputsDeclarations: mockFn<(...args: unknown[]) => unknown[]>().mockReturnValue([]),
 }));
 
@@ -208,7 +209,7 @@ const {
   warnUnresolvedRunbookVariables,
   collectUnresolvedRunbookVariables,
 } = await import('../../src/services/template-renderer.js');
-const { validateFrontmatterVars, validateOutputsDeclarations } = await import(
+const { validateFrontmatterVars, validateRequiredVars, validateOutputsDeclarations } = await import(
   '../../src/helpers/validate-frontmatter-vars.js'
 );
 const fsPromises = await import('node:fs/promises');
@@ -364,6 +365,7 @@ beforeEach(() => {
   jest.mocked(warnUnresolvedRunbookVariables).mockReturnValue([]);
   jest.mocked(collectUnresolvedRunbookVariables).mockReturnValue(new Set());
   jest.mocked(validateFrontmatterVars).mockReturnValue([]);
+  jest.mocked(validateRequiredVars).mockReturnValue([]);
   jest.mocked(validateOutputsDeclarations).mockReturnValue([]);
   // readFile is overloaded; jest.mocked picks the Buffer-returning overload, but we need to
   // resolve a string. Cast through unknown to a typed mock returning string.
@@ -666,6 +668,38 @@ describe('prepareRunbook', () => {
       expect(result.code).toBe('MISSING_REQUIRED_VARS');
       expect(result.error).toContain('"PlanPath"');
       expect(result.details).toEqual(expect.objectContaining({ missing: ['PlanPath'] }));
+    }
+  });
+
+  it('returns VALIDATION_ERROR for invalid required declarations before missing checks', async () => {
+    jest.mocked(resolveRunbookFile).mockResolvedValue({
+      path: '/test/invalid-required.md',
+      source: 'project',
+    });
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue(
+      mockParseResult({
+        frontmatter: { required: ['Step'], vars: { PlanPath: '/tmp/plan.md' } },
+      }),
+    );
+    jest.mocked(validateRequiredVars).mockReturnValue([
+      {
+        severity: 'error',
+        message:
+          'Required variable "Step" uses reserved runtime variable name. Reserved names (case-insensitive): step, index, context',
+      },
+    ]);
+
+    const result = await prepareRunbook('invalid-required.md', {}, '/test');
+
+    expect(validateRequiredVars).toHaveBeenCalledWith(['Step'], { PlanPath: '/tmp/plan.md' });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('VALIDATION_ERROR');
+      expect(result.error).toContain(
+        'Required variable "Step" uses reserved runtime variable name',
+      );
     }
   });
 

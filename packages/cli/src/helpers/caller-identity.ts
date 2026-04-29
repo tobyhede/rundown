@@ -22,7 +22,7 @@ function readTrimmed(env: EnvSource, key: string): string | undefined {
  *
  * @remarks
  * **Threat model:** Agent identity is read from `RD_AGENT_ID` / `RD_SESSION_ID`
- * environment variables. These are **not signed** and are spoofable by any
+ * environment variables. These are **not signed** and can be spoofed by any
  * process that can set its own environment. Agent ownership is therefore an
  * **isolation-against-accident** mechanism, not an adversarial security
  * boundary — it prevents two cooperating agents from clobbering each other's

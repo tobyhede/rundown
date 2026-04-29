@@ -45,6 +45,18 @@ export const CLIErrorCodes = {
   OWNED_RUNBOOK_UNAVAILABLE: 'OWNED_RUNBOOK_UNAVAILABLE',
   /** Caller identity environment variables are inconsistent or invalid */
   INVALID_CALLER_IDENTITY: 'INVALID_CALLER_IDENTITY',
+  /** Delegation token format is invalid */
+  INVALID_TOKEN: 'INVALID_TOKEN',
+  /** Delegation token was not found */
+  TOKEN_NOT_FOUND: 'TOKEN_NOT_FOUND',
+  /** Delegation token was cancelled */
+  DELEGATION_CANCELLED: 'DELEGATION_CANCELLED',
+  /** Delegation lock could not be acquired */
+  DELEGATION_LOCK_TIMEOUT: 'DELEGATION_LOCK_TIMEOUT',
+  /** Delegation is already owned by another caller */
+  DELEGATION_OWNER_CONFLICT: 'DELEGATION_OWNER_CONFLICT',
+  /** Runbook launch failed */
+  LAUNCH_FAILED: 'LAUNCH_FAILED',
   /** Scenario not found */
   SCENARIO_NOT_FOUND: 'SCENARIO_NOT_FOUND',
   /** File system operation failed */
@@ -67,6 +79,12 @@ export const ErrorCodeSchema = z
     'NO_STASHED_RUNBOOK',
     'OWNED_RUNBOOK_UNAVAILABLE',
     'INVALID_CALLER_IDENTITY',
+    'INVALID_TOKEN',
+    'TOKEN_NOT_FOUND',
+    'DELEGATION_CANCELLED',
+    'DELEGATION_LOCK_TIMEOUT',
+    'DELEGATION_OWNER_CONFLICT',
+    'LAUNCH_FAILED',
     'SCENARIO_NOT_FOUND',
     'FILE_ERROR',
     'UNKNOWN_ERROR',

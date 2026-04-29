@@ -146,6 +146,8 @@ Do work.
 
       let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
       expect(result.exitCode).toBe(0);
+      const parentState = await getActiveState(workspace);
+      expect(parentState).not.toBeNull();
       result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
       expect(result.exitCode).toBe(0);
       const token = JSON.parse(result.stdout).token as string;
@@ -164,6 +166,9 @@ Do work.
       expect(Object.values(session.ownedRunbooks).flat()).not.toContainEqual(
         expect.objectContaining({ childRunId }),
       );
+      expect(session.defaultStack).toContain(parentState!.id);
+      expect(session.active).toBe(parentState!.id);
+      expect(await readRunbookState(workspace, parentState!.id)).not.toBeNull();
     });
   });
 
@@ -187,6 +192,24 @@ Do work.
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('No active runbook');
+    });
+
+    it('does not remove the default stack when an identified caller has no claim', async () => {
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+      const sessionBefore = await readSession(workspace);
+      const parentId = sessionBefore.defaultStack.at(-1);
+      expect(parentId).toBeDefined();
+
+      const result = await runCliInProcess('stop --text', workspace, {
+        env: { RD_AGENT_ID: 'lone-agent', RD_SESSION_ID: 'lone-session' },
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('No active runbook');
+
+      const sessionAfter = await readSession(workspace);
+      expect(sessionAfter.defaultStack).toEqual([parentId]);
+      expect(await readRunbookState(workspace, parentId!)).not.toBeNull();
     });
   });
 

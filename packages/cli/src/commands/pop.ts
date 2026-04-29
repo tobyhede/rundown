@@ -83,6 +83,24 @@ export function registerPopCommand(program: Command): void {
                   ? { parentEntry: stashedOwnership.parentEntry }
                   : {}),
               };
+              const parentState = await manager.load(linkage.parentRunId);
+              if (
+                !parentState ||
+                parentState.lifecycle === 'completed' ||
+                parentState.lifecycle === 'stopped'
+              ) {
+                const parentLifecycle = parentState?.lifecycle ?? 'unknown';
+                const reason = parentState
+                  ? `parent runbook is ${parentLifecycle}`
+                  : 'parent runbook state is missing';
+                output.error(
+                  `Cannot restore stashed runbook ${stashedId}: ${reason}.`,
+                  'OWNED_RUNBOOK_UNAVAILABLE',
+                );
+                output.flush();
+                process.exitCode = 1;
+                return;
+              }
               state = await sessionService.unstashForOwner(caller.identity, linkage);
             }
           } else {

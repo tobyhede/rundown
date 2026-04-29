@@ -386,6 +386,35 @@ describe('SessionDataSchema ownership compatibility', () => {
     expect(result.success).toBe(false);
   });
 
+  it('accepts an anonymous stashedRunbookId without stashed ownership when unique', () => {
+    const result = SessionDataSchema.safeParse({
+      defaultStack: ['parent'],
+      stashedRunbookId: 'child',
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.stashedRunbookId).toBe('child');
+      expect(result.data.stashedRunbookOwnership).toBeUndefined();
+    }
+  });
+
+  it('rejects anonymous stashedRunbookId duplicates instead of ignoring them', () => {
+    const result = SessionDataSchema.safeParse({
+      defaultStack: ['parent', 'child'],
+      stashedRunbookId: 'child',
+      ownedRunbooks: {
+        'agent:agent-a:session:session-a': [ownershipFor({ childRunId: 'child' })],
+      },
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const message = result.error.issues.map((issue) => issue.message).join('\n');
+      expect(message).toContain('stashedRunbookId');
+    }
+  });
+
   it('rejects a session with the same childRunId in owned stack and stash', () => {
     const result = SessionDataSchema.safeParse({
       defaultStack: ['parent'],

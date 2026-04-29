@@ -637,14 +637,14 @@ describe('SessionService', () => {
 
     it('preserves both side effects when a stash and a claim race', async () => {
       const parent = await manager.create('parent.md', mockRunbook, { runbookPath: 'parent.md' });
-      const stashable = await manager.create('stashable.md', mockRunbook, {
-        runbookPath: 'stashable.md',
+      const stashCandidate = await manager.create('stash-candidate.md', mockRunbook, {
+        runbookPath: 'stash-candidate.md',
       });
       const child = await manager.create('child.md', mockRunbook, { runbookPath: 'child.md' });
 
-      // parent on stack, stashable on top of it
+      // parent on stack, stash candidate on top of it
       await sessionService.pushRunbook(parent.id);
-      await sessionService.pushRunbook(stashable.id);
+      await sessionService.pushRunbook(stashCandidate.id);
 
       const agentA = {
         kind: 'agent-session' as const,
@@ -657,11 +657,11 @@ describe('SessionService', () => {
         sessionService.claimRunbookForOwner(agentA, child.id, linkageFor(parent.id, 'a')),
       ]);
 
-      expect(stashedId).toBe(stashable.id);
+      expect(stashedId).toBe(stashCandidate.id);
       expect(claimResult.status).toBe('claimed');
 
-      // Both effects must be visible: stash slot holds stashable, ownership recorded for agentA.
-      expect(await sessionService.getStashedRunbookId()).toBe(stashable.id);
+      // Both effects must be visible: stash slot holds the candidate, ownership recorded for agentA.
+      expect(await sessionService.getStashedRunbookId()).toBe(stashCandidate.id);
       const ownedByA = await sessionService.getActiveForOwner(agentA);
       expect(ownedByA.status).toBe('owned');
       if (ownedByA.status === 'owned') {

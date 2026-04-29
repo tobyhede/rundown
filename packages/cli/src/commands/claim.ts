@@ -4,7 +4,6 @@ import {
   RunbookActorService,
   SessionService,
   ExecutionLifecycleService,
-  Errors,
 } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
@@ -13,6 +12,25 @@ import { parseInputOption, parseInputJsonOption, collect } from '../helpers/opti
 import { claimAndLaunch, type RunPipelineContext } from '../helpers/runbook-pipeline.js';
 import { handleParentCompletion, extractParentLinkage } from '../helpers/delegation-completion.js';
 import { resolveCallerIdentity } from '../helpers/caller-identity.js';
+
+function claimFailureCodeToCliCode(code: string): string {
+  switch (code) {
+    case 'RD-807':
+      return 'INVALID_TOKEN';
+    case 'RD-808':
+      return 'TOKEN_NOT_FOUND';
+    case 'RD-809':
+      return 'DELEGATION_CANCELLED';
+    case 'RD-810':
+      return 'DELEGATION_LOCK_TIMEOUT';
+    case 'RD-816':
+      return 'LAUNCH_FAILED';
+    case 'RD-819':
+      return 'DELEGATION_OWNER_CONFLICT';
+    default:
+      return 'UNKNOWN_ERROR';
+  }
+}
 
 /**
  * Registers the 'claim' command for claiming delegation tokens.
@@ -94,7 +112,10 @@ export function registerClaimCommand(program: Command): void {
             );
 
             if (!result.ok) {
-              throw Errors.unknown(result.error);
+              output.error(result.error, claimFailureCodeToCliCode(result.code), result.details);
+              output.flush();
+              process.exitCode = 1;
+              return;
             }
 
             // Delegation propagation — if child auto-completed during launch

@@ -435,6 +435,8 @@ export const SessionDataSchema = z
         'stashedRunbookOwnership.childRunId',
         ['stashedRunbookOwnership', 'childRunId'],
       );
+    } else if (session.stashedRunbookId !== undefined) {
+      recordChildRunId(session.stashedRunbookId, 'stashedRunbookId', ['stashedRunbookId']);
     }
   });
 

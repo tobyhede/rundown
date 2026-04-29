@@ -354,7 +354,6 @@ export class SeatbeltSandbox implements SandboxImplementation {
         // Ignore cleanup errors
       }
     }
-    return Promise.resolve(this.availabilityCache);
   }
 
   /**

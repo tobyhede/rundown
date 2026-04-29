@@ -62,6 +62,7 @@ import {
 import { getPolicyEvaluator, getPolicyPrompter } from '../services/policy-context.js';
 import {
   validateFrontmatterVars,
+  validateRequiredVars,
   validateOutputsDeclarations,
 } from './validate-frontmatter-vars.js';
 import { getHelperRegistry, detectHelperCollisions } from '../services/helper-registry.js';
@@ -384,10 +385,12 @@ export async function loadAndParseRunbook(file: string, cwd: string): Promise<Lo
         ? (frontmatter.vars as Record<string, string | number | boolean>)
         : undefined;
     const varsDiagnostics = validateFrontmatterVars(fmVars);
+    const requiredDiagnostics = validateRequiredVars(frontmatter?.required, fmVars);
     const outputsDiagnostics = validateOutputsDeclarations(fmOutputs);
     const diagnostics: readonly ValidationDiagnostic[] = [
       ...parseDiagnostics,
       ...varsDiagnostics,
+      ...requiredDiagnostics,
       ...outputsDiagnostics,
     ];
 

@@ -36,17 +36,25 @@ export function registerStopCommand(program: Command): void {
 
           let state: RunbookState | null = null;
           let getActiveError: Error | undefined;
+          let cleanedStaleOwnedRunbook = false;
+          const caller = resolveCallerIdentity();
           try {
-            const active = await resolveActiveRunbook(sessionService, resolveCallerIdentity());
+            const active = await resolveActiveRunbook(sessionService, caller);
             switch (active.kind) {
               case 'owned':
               case 'default':
                 state = active.state;
                 break;
               case 'none':
+                if (caller.kind === 'identified') {
+                  output.noActiveRunbook('stop');
+                  output.flush();
+                  return;
+                }
                 break;
               case 'stale_owner':
                 await sessionService.releaseRunbook(active.ownership.childRunId);
+                cleanedStaleOwnedRunbook = true;
                 break;
               case 'invalid_identity':
                 output.error(active.message, 'OWNED_RUNBOOK_UNAVAILABLE');
@@ -63,6 +71,11 @@ export function registerStopCommand(program: Command): void {
           }
 
           if (!state) {
+            if (cleanedStaleOwnedRunbook) {
+              output.stopped('Removed unusable owned runbook state from session');
+              output.flush();
+              return;
+            }
             // Unexpected errors must propagate — but stale/corrupted state errors
             // fall through to the orphan cleanup path since stop is a cleanup command.
             if (

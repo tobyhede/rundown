@@ -8,6 +8,7 @@ import {
   getAllStates,
   findActionOutput,
   readRunbookState,
+  parseConcatenatedJson,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 import { ActionResponseSchema, ErrorResponseSchema } from '../helpers/schema-validator.js';
@@ -126,48 +127,6 @@ Do work.
       id: string;
       runbook: string;
       token: string;
-    }
-
-    function parseConcatenatedJson(raw: string): unknown[] {
-      const results: unknown[] = [];
-      let i = 0;
-      while (i < raw.length) {
-        while (i < raw.length && /\s/.test(raw[i])) i++;
-        if (i >= raw.length) break;
-        const start = i;
-        let depth = 0;
-        let inString = false;
-        let escaped = false;
-        for (; i < raw.length; i++) {
-          const ch = raw[i];
-          if (inString) {
-            if (escaped) {
-              escaped = false;
-            } else if (ch === '\\') {
-              escaped = true;
-            } else if (ch === '"') {
-              inString = false;
-            }
-          } else if (ch === '"') {
-            inString = true;
-          } else if (ch === '{' || ch === '[') {
-            depth++;
-          } else if (ch === '}' || ch === ']') {
-            depth--;
-            if (depth === 0) {
-              i++;
-              break;
-            }
-          }
-        }
-        const chunk = raw.slice(start, i);
-        try {
-          results.push(JSON.parse(chunk));
-        } catch {
-          // skip malformed chunk
-        }
-      }
-      return results;
     }
 
     function findFrontierInEvents(events: unknown[]): FrontierEntry[] | undefined {

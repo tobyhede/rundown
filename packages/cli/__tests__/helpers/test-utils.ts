@@ -1163,3 +1163,55 @@ export function normalizeCliOutput(output: string, workspace: TestWorkspace): st
 
   return text;
 }
+
+/**
+ * Parse concatenated JSON values from CLI stdout.
+ *
+ * Some CLI flows emit multiple JSON documents without separators, and those
+ * documents may be pretty-printed. This extracts each top-level object/array
+ * while preserving nested structures and strings.
+ *
+ * @param raw - Raw stdout string
+ * @returns Parsed JSON values in document order; malformed chunks are skipped
+ */
+export function parseConcatenatedJson(raw: string): unknown[] {
+  const results: unknown[] = [];
+  let i = 0;
+  while (i < raw.length) {
+    while (i < raw.length && /\s/.test(raw[i])) i++;
+    if (i >= raw.length) break;
+    const start = i;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (; i < raw.length; i++) {
+      const ch = raw[i];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (ch === '\\') {
+          escaped = true;
+        } else if (ch === '"') {
+          inString = false;
+        }
+      } else if (ch === '"') {
+        inString = true;
+      } else if (ch === '{' || ch === '[') {
+        depth++;
+      } else if (ch === '}' || ch === ']') {
+        depth--;
+        if (depth === 0) {
+          i++;
+          break;
+        }
+      }
+    }
+    const chunk = raw.slice(start, i);
+    try {
+      results.push(JSON.parse(chunk));
+    } catch {
+      // CLI stdout can contain non-JSON text; ignore malformed chunks.
+    }
+  }
+  return results;
+}

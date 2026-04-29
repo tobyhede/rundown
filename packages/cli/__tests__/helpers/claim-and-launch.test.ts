@@ -157,6 +157,8 @@ jest.unstable_mockModule('../../src/services/template-renderer', () => ({
 
 // Mock validate-frontmatter-vars
 jest.unstable_mockModule('../../src/helpers/validate-frontmatter-vars', () => ({
+  validateFrontmatterVars: mockFn<() => string[]>().mockReturnValue([]),
+  validateRequiredVars: mockFn<() => string[]>().mockReturnValue([]),
   validateOutputsDeclarations: mockFn<() => string[]>().mockReturnValue([]),
 }));
 
@@ -177,7 +179,7 @@ const { resolveRunbookFile } = await import('../../src/helpers/resolve-runbook.j
 const { resolveVariables } = await import('../../src/services/variable-discovery.js');
 const { substituteRunbookVariables, resolveForBounds, collectUnresolvedRunbookVariables } =
   await import('../../src/services/template-renderer.js');
-const { validateOutputsDeclarations } = await import(
+const { validateFrontmatterVars, validateRequiredVars, validateOutputsDeclarations } = await import(
   '../../src/helpers/validate-frontmatter-vars.js'
 );
 const { createBridgedEmitter } = await import('../../src/helpers/execution-emitter.js');
@@ -321,6 +323,9 @@ beforeEach(() => {
     iteration: undefined,
     frameKey: brandFrameKeyForTest('1'),
   });
+  jest.mocked(validateFrontmatterVars).mockReturnValue([]);
+  jest.mocked(validateRequiredVars).mockReturnValue([]);
+  jest.mocked(validateOutputsDeclarations).mockReturnValue([]);
 });
 
 describe('claimAndLaunch', () => {

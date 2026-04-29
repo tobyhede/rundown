@@ -72,6 +72,29 @@ export type BuildGotoContextResult =
   | Extract<ActiveRunbookResolution, { kind: 'none' | 'stale_owner' | 'invalid_identity' }>;
 
 /**
+ * Resolve how terminal execution should remove a specific runbook from session targeting.
+ *
+ * Used when a command already has the target state and cannot go through
+ * {@link buildGotoContext}, for example `run --prompted --step` immediately
+ * after launching a runbook.
+ *
+ * @param manager - State manager used to read session targeting data
+ * @param runbookId - Runbook state id that will continue executing after goto
+ * @returns Release mode matching the runbook's current session ownership
+ */
+export async function resolveTerminalReleaseModeForRunbook(
+  manager: RunbookStateManager,
+  runbookId: RunbookState['id'],
+): Promise<ExecutionTerminalReleaseMode> {
+  const session = await manager.loadSession();
+  const owned = Object.values(session.ownedRunbooks).some((entry) => {
+    const stack = Array.isArray(entry) ? entry : [entry];
+    return stack.some((ownership) => ownership.childRunId === runbookId);
+  });
+  return owned ? 'release-runbook' : 'stack-pop';
+}
+
+/**
  * Build context for goto command execution.
  *
  * Resolves active state, loads runbook steps, and creates required services.
