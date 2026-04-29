@@ -131,7 +131,6 @@ describe('subagent-stop contract tests', () => {
         [TEST_AGENT_ID]: {
           kind: 'delegation-active-token',
           agent_id: TEST_AGENT_ID,
-          token,
           tokenHash: hashToken(token),
           createdAt: new Date().toISOString(),
         },
