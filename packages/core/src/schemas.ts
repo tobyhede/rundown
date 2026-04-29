@@ -1,6 +1,7 @@
 import * as path from 'node:path';
 import { z } from 'zod';
 import {
+  DELEGATION_TOKEN_PATTERN,
   DELEGATION_TOKEN_HASH_PATTERN,
   type delegationTokenHashBrand,
   type DelegationTokenHash,
@@ -291,6 +292,7 @@ export const ContextSnapshotSchema = z
  * Zod schema for delegation metadata attached to a substep.
  */
 export const StepDelegationSchema = z.object({
+  token: z.string().regex(DELEGATION_TOKEN_PATTERN).optional(),
   tokenHash: DelegationTokenHashSchema,
   childRunbookPath: z.string(),
   contextSnapshot: ContextSnapshotSchema,
@@ -763,6 +765,7 @@ function makeContextSnapshotSchema(projectRoot: string): z.ZodTypeAny {
  */
 function makeStepDelegationSchema(projectRoot: string): z.ZodTypeAny {
   return z.object({
+    token: z.string().regex(DELEGATION_TOKEN_PATTERN).optional(),
     tokenHash: DelegationTokenHashSchema,
     childRunbookPath: z.string(),
     contextSnapshot: makeContextSnapshotSchema(projectRoot),

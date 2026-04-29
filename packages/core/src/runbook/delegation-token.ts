@@ -14,6 +14,9 @@ export type DelegationTokenHash = string & { readonly [delegationTokenHashBrand]
 /** Canonical persisted delegation token hash pattern. */
 export const DELEGATION_TOKEN_HASH_PATTERN = /^sha256:[a-f0-9]{64}$/;
 
+/** Canonical raw delegation token pattern. */
+export const DELEGATION_TOKEN_PATTERN = /^rdtk_[A-Z2-7]{32}$/;
+
 /**
  * Encode a buffer as RFC 4648 base32 (no padding).
  *
@@ -106,8 +109,8 @@ export function assertDelegationTokenHash(value: string): DelegationTokenHash {
 /**
  * Compute a SHA-256 hash of a delegation token.
  *
- * The hash is stored in state instead of the raw token to prevent
- * token leakage through persisted state files.
+ * The hash is stored in state for stable correlation after the raw pending
+ * token is claimed or cancelled.
  *
  * @param token - The raw delegation token to hash
  * @returns Hash string in format `sha256:<64 hex chars>`

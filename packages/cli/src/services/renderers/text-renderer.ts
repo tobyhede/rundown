@@ -58,7 +58,13 @@ interface StatusDetailData {
   step?: { name: string; description?: string };
   lastAction?: { action: string; result?: 'PASS' | 'FAIL' };
   pending?: string[];
-  delegations?: { substep: string; runbook: string; state: string; childRunId?: string }[];
+  delegations?: {
+    substep: string;
+    runbook: string;
+    state: string;
+    childRunId?: string;
+    token?: string;
+  }[];
 }
 
 /**
@@ -292,7 +298,7 @@ export class TextRenderer implements OutputRenderer {
         } else if (d.state === 'cancelled') {
           stateLabel = '(cancelled)';
         } else {
-          stateLabel = '(pending claim)';
+          stateLabel = d.token ? `(pending claim: ${d.token})` : '(pending claim)';
         }
         this.writer.writeLine(`  ${d.substep}  ${d.runbook}  DELEGATED  ${stateLabel}`);
       }

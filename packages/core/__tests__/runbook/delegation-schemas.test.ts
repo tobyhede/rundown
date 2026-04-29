@@ -612,13 +612,15 @@ describe('RunbookStateSchema round-trip with delegation', () => {
 
 describe('DelegationStatusEntrySchema', () => {
   const TOKEN_HASH = 'sha256:0000000000000000000000000000000000000000000000000000000000000000';
+  const TOKEN = 'rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 
-  it('validates a pending entry', () => {
+  it('validates a pending entry with a recovery token', () => {
     const entry = {
       substep: '1.1',
       runbook: 'child.md',
       state: 'pending',
       tokenHash: TOKEN_HASH,
+      token: TOKEN,
     };
     expect(() => DelegationStatusEntrySchema.parse(entry)).not.toThrow();
   });
@@ -660,6 +662,29 @@ describe('DelegationStatusEntrySchema', () => {
 
   it('rejects entry missing tokenHash', () => {
     const entry = { substep: '1.1', runbook: 'child.md', state: 'pending' };
+    expect(() => DelegationStatusEntrySchema.parse(entry)).toThrow();
+  });
+
+  it('rejects malformed recovery tokens', () => {
+    const entry = {
+      substep: '1.1',
+      runbook: 'child.md',
+      state: 'pending',
+      tokenHash: TOKEN_HASH,
+      token: 'bad-token',
+    };
+    expect(() => DelegationStatusEntrySchema.parse(entry)).toThrow();
+  });
+
+  it('rejects recovery tokens on claimed entries', () => {
+    const entry = {
+      substep: '1.1',
+      runbook: 'child.md',
+      state: 'claimed',
+      childRunId: 'run_abc123',
+      tokenHash: TOKEN_HASH,
+      token: TOKEN,
+    };
     expect(() => DelegationStatusEntrySchema.parse(entry)).toThrow();
   });
 });

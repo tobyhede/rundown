@@ -16,6 +16,7 @@
 
 import { z } from 'zod';
 import { TemplateVarValueSchema } from '../schemas.js';
+import { DELEGATION_TOKEN_PATTERN } from '../runbook/delegation-token.js';
 
 // ============================================================================
 // CLI Error Codes
@@ -273,10 +274,20 @@ export const DelegationStatusEntrySchema = z
     childRunId: z.string().optional().describe('Child run ID when delegation is claimed'),
     /** SHA-256 hash of the delegation token for correlation */
     tokenHash: z.string().describe('SHA-256 hash of the delegation token'),
+    /** Raw delegation token for pending-token recovery */
+    token: z
+      .string()
+      .regex(DELEGATION_TOKEN_PATTERN)
+      .optional()
+      .describe('Raw delegation token, present only while the delegation is pending'),
   })
   .refine((entry) => entry.state !== 'claimed' || !!entry.childRunId, {
     message: 'childRunId is required when state is claimed',
     path: ['childRunId'],
+  })
+  .refine((entry) => entry.state === 'pending' || entry.token === undefined, {
+    message: 'token is only available while state is pending',
+    path: ['token'],
   })
   .describe('Delegation status entry');
 

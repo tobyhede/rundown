@@ -70,7 +70,11 @@ describe('delegate command', () => {
     it('updates state with delegation on substep', async () => {
       await setupDelegation();
 
-      await runCliInProcess('delegate runbooks/child.runbook.md --step 1.1', workspace);
+      const result = await runCliInProcess(
+        'delegate runbooks/child.runbook.md --step 1.1',
+        workspace,
+      );
+      const output = JSON.parse(result.stdout) as Record<string, unknown>;
 
       const state = await getActiveState(workspace);
       const substepStates = state?.substepStates as Array<Record<string, unknown>> | undefined;
@@ -82,13 +86,18 @@ describe('delegate command', () => {
       const delegation = ss1?.delegation as Record<string, unknown>;
       expect(delegation.tokenHash).toBeDefined();
       expect((delegation.tokenHash as string).startsWith('sha256:')).toBe(true);
+      expect(delegation.token).toBe(output.token);
       expect(delegation.childRunId).toBeNull();
     });
 
     it('status shows delegation info', async () => {
       await setupDelegation();
 
-      await runCliInProcess('delegate runbooks/child.runbook.md --step 1.1', workspace);
+      const delegated = await runCliInProcess(
+        'delegate runbooks/child.runbook.md --step 1.1',
+        workspace,
+      );
+      const token = JSON.parse(delegated.stdout).token as string;
 
       const statusResult = await runCliInProcess('status', workspace);
       expect(statusResult.exitCode).toBe(0);
@@ -99,6 +108,37 @@ describe('delegate command', () => {
       expect(delegations).toHaveLength(1);
       expect(delegations?.[0]?.substep).toBe('1');
       expect(delegations?.[0]?.state).toBe('pending');
+      expect(delegations?.[0]?.token).toBe(token);
+      expect(delegations?.[0]?.tokenHash).toEqual(expect.stringMatching(/^sha256:[a-f0-9]{64}$/));
+    });
+
+    it('removes the raw recovery token after claim', async () => {
+      await setupDelegation();
+
+      const delegated = await runCliInProcess(
+        'delegate runbooks/child.runbook.md --step 1.1',
+        workspace,
+      );
+      const token = JSON.parse(delegated.stdout).token as string;
+
+      const claimed = await runCliInProcess(`claim ${token}`, workspace, {
+        env: { RD_AGENT_ID: 'delegate-agent', RD_SESSION_ID: 'delegate-session' },
+      });
+      expect(claimed.exitCode).toBe(0);
+
+      const state = await getActiveState(workspace);
+      const substepStates = state?.substepStates as Array<Record<string, unknown>> | undefined;
+      const ss1 = substepStates?.find((ss) => ss.id === '1');
+      const delegation = ss1?.delegation as Record<string, unknown>;
+      expect(delegation.childRunId).toEqual(expect.stringMatching(/^wf-/));
+      expect(delegation.tokenHash).toEqual(expect.stringMatching(/^sha256:[a-f0-9]{64}$/));
+      expect(delegation.token).toBeUndefined();
+
+      const statusResult = await runCliInProcess('status', workspace);
+      const statusOutput = JSON.parse(statusResult.stdout) as Record<string, unknown>;
+      const delegations = statusOutput.delegations as Array<Record<string, unknown>>;
+      expect(delegations[0]?.state).toBe('claimed');
+      expect(delegations[0]?.token).toBeUndefined();
     });
 
     it('JSON output has snake_case keys', async () => {

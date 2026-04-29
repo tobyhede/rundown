@@ -297,6 +297,7 @@ export function createDelegation(
 
   // 9. Create delegation object
   const delegation: StepDelegation = {
+    token,
     tokenHash,
     childRunbookPath,
     contextSnapshot,
@@ -373,6 +374,7 @@ export function abortDelegation(options: AbortDelegationOptions): AbortDelegatio
   // 4. Set cancelledAt
   const updatedDelegation: StepDelegation = {
     ...delegation,
+    token: undefined,
     cancelledAt: new Date().toISOString(),
   };
 

@@ -429,6 +429,13 @@ export interface ResolvedCompletion {
 
 /** Delegation metadata attached to a parent step's substep state. */
 export interface StepDelegation {
+  /**
+   * Raw delegation token while the delegation is pending.
+   *
+   * Present only until the token is claimed or cancelled, so operators can
+   * recover the `rd claim <token>` command from `rd status`.
+   */
+  readonly token?: string;
   readonly tokenHash: DelegationTokenHash;
   readonly childRunbookPath: string;
   readonly contextSnapshot: ContextSnapshot;
