@@ -220,11 +220,16 @@ export class SessionService {
     const removedOwnerKeys: AgentOwnerKey[] = [];
     for (const [ownerKey, ownershipStack] of Object.entries(session.ownedRunbooks)) {
       const originalLength = ownershipStack.length;
-      session.ownedRunbooks[ownerKey] = ownershipStack.filter(
+      const remainingOwnership = ownershipStack.filter(
         (ownership) => ownership.childRunId !== runbookId,
       );
-      if (session.ownedRunbooks[ownerKey].length !== originalLength) {
+      if (remainingOwnership.length !== originalLength) {
         removedOwnerKeys.push(ownerKey as AgentOwnerKey);
+      }
+      if (remainingOwnership.length > 0) {
+        session.ownedRunbooks[ownerKey] = remainingOwnership;
+      } else {
+        delete session.ownedRunbooks[ownerKey];
       }
     }
 

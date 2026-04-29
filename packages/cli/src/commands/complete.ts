@@ -46,6 +46,10 @@ export function registerCompleteCommand(program: Command): void {
               output.flush();
               return;
             case 'stale_owner':
+              await sessionService.releaseRunbook(active.ownership.childRunId);
+              output.complete('Removed unusable owned runbook state from session');
+              output.flush();
+              return;
             case 'invalid_identity':
               output.error(active.message, 'OWNED_RUNBOOK_UNAVAILABLE');
               output.flush();

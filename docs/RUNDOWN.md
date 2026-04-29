@@ -445,6 +445,8 @@ The session tracks which runbooks are active using a **stack-based model**:
 - **stashedRunbookId**: Temporarily paused runbook (for `rundown stash`/`rundown pop`).
 - **ownedRunbooks**: Per-agent/session ownership map for delegated child runs claimed by subagents. Identified callers resolve this map before falling back to `defaultStack`.
 
+Terminal cleanup commands (`rundown stop` and `rundown complete`) remove stale owned child references when the target state is already missing or unusable. Step-result commands (`rundown pass` and `rundown fail`) fail closed in that case because they cannot safely apply a result to a missing delegated child.
+
 ### Runbook State Structure
 
 Each runbook state file contains:

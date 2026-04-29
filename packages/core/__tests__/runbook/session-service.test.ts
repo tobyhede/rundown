@@ -271,6 +271,9 @@ describe('SessionService', () => {
 
       expect((await sessionService.getActive())?.id).toBe(parent.id);
       expect((await sessionService.getActiveForOwner(identity)).status).toBe('unowned');
+      expect((await manager.loadSession()).ownedRunbooks).not.toHaveProperty(
+        'agent:agent-a:session:session-a',
+      );
     });
 
     it('keeps same-owner claims on a stack with the second child active', async () => {

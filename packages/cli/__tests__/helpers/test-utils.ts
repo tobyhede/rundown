@@ -394,6 +394,7 @@ export async function runCliInProcess(
 export async function readSession(workspace: TestWorkspace): Promise<{
   active: string | null;
   stashed: string | null;
+  stashedRunbookOwnership?: Record<string, unknown>;
   stacks: Record<string, string[]>;
   defaultStack: string[];
   ownedRunbooks: Record<string, unknown[]>;
@@ -415,6 +416,10 @@ export async function readSession(workspace: TestWorkspace): Promise<{
     return {
       active,
       stashed: typeof session.stashedRunbookId === 'string' ? session.stashedRunbookId : null,
+      stashedRunbookOwnership:
+        session.stashedRunbookOwnership && typeof session.stashedRunbookOwnership === 'object'
+          ? (session.stashedRunbookOwnership as Record<string, unknown>)
+          : undefined,
       stacks,
       defaultStack,
       ownedRunbooks,

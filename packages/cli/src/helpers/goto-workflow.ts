@@ -87,10 +87,9 @@ export async function resolveTerminalReleaseModeForRunbook(
   runbookId: RunbookState['id'],
 ): Promise<ExecutionTerminalReleaseMode> {
   const session = await manager.loadSession();
-  const owned = Object.values(session.ownedRunbooks).some((entry) => {
-    const stack = Array.isArray(entry) ? entry : [entry];
-    return stack.some((ownership) => ownership.childRunId === runbookId);
-  });
+  const owned = Object.values(session.ownedRunbooks).some((ownershipStack) =>
+    ownershipStack.some((ownership) => ownership.childRunId === runbookId),
+  );
   return owned ? 'release-runbook' : 'stack-pop';
 }
 

@@ -460,6 +460,48 @@ describe('complete command', () => {
     const output = JSON.parse(result.stdout);
     expect(output.message).toBe('Runbook completed successfully');
   });
+
+  it('cleans up stale owned runbook state for identified callers', async () => {
+    const parentRunbook = `## 1. Review
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+### 1.1 Child
+Do child.
+`;
+    const childRunbook = `## 1. Child
+- PASS COMPLETE
+
+Do work.
+`;
+    await writeFile(join(workspace.cwd, 'parent.runbook.md'), parentRunbook);
+    await writeFile(join(workspace.cwd, 'child.runbook.md'), childRunbook);
+
+    let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+    expect(result.exitCode).toBe(0);
+    const parentState = await getActiveState(workspace);
+    expect(parentState).not.toBeNull();
+    result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
+    expect(result.exitCode).toBe(0);
+    const token = JSON.parse(result.stdout).token as string;
+    const agent = { env: { RD_AGENT_ID: 'stale-complete-agent', RD_SESSION_ID: 'stale-complete' } };
+
+    result = await runCliInProcess(`claim ${token}`, workspace, agent);
+    expect(result.exitCode).toBe(0);
+    const childRunId = findActionOutput(result.stdout)?.run_id;
+    expect(typeof childRunId).toBe('string');
+    await rm(join(workspace.statePath(), `${String(childRunId)}.json`));
+
+    result = await runCliInProcess('complete --text', workspace, agent);
+    expect(result.exitCode).toBe(0);
+
+    const session = await readSession(workspace);
+    expect(Object.values(session.ownedRunbooks).flat()).not.toContainEqual(
+      expect.objectContaining({ childRunId }),
+    );
+    expect(session.defaultStack).toContain(parentState!.id);
+    expect(session.active).toBe(parentState!.id);
+  });
 });
 
 describe('status with runbookSrc', () => {

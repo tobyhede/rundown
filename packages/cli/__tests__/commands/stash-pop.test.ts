@@ -206,6 +206,55 @@ describe('stash command', () => {
     expect(JSON.parse(ownerStatus.stdout).state).toContain(childRunId);
   });
 
+  it('prevents cross-agent stash from replacing an owned child stash', async () => {
+    const parent = createRunbook({
+      title: 'Parent',
+      steps: [
+        {
+          title: 'Review',
+          pass: 'CONTINUE',
+          substeps: [{ title: 'Code review', content: 'Do code review.' }],
+        },
+      ],
+    });
+    const child = createRunbook({
+      title: 'Child',
+      steps: [{ title: 'Execute', pass: 'COMPLETE', fail: 'STOP', content: 'Run child.' }],
+    });
+    await writeFile(join(workspace.cwd, 'parent.runbook.md'), parent);
+    await writeFile(join(workspace.cwd, 'child.runbook.md'), child);
+
+    let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+    expect(result.exitCode).toBe(0);
+    result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
+    expect(result.exitCode).toBe(0);
+    const token = JSON.parse(result.stdout).token as string;
+
+    const agentA = { env: { RD_AGENT_ID: 'agent-a', RD_SESSION_ID: 'shared-session' } };
+    const agentB = { env: { RD_AGENT_ID: 'agent-b', RD_SESSION_ID: 'shared-session' } };
+
+    result = await runCliInProcess(`claim ${token}`, workspace, agentA);
+    expect(result.exitCode).toBe(0);
+    const childRunId = String(findActionOutput(result.stdout)?.run_id);
+
+    result = await runCliInProcess('stash --text', workspace, agentA);
+    expect(result.exitCode).toBe(0);
+
+    result = await runCliInProcess('stash --text', workspace, agentB);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('No active runbook');
+
+    const session = await readSession(workspace);
+    expect(session.stashed).toBe(childRunId);
+    expect(session.stashedRunbookOwnership).toEqual(
+      expect.objectContaining({
+        agent_id: 'agent-a',
+        session_id: 'shared-session',
+        childRunId,
+      }),
+    );
+  });
+
   it('clears an owned stash when the stashed child state is missing', async () => {
     const parent = createRunbook({
       title: 'Parent',
