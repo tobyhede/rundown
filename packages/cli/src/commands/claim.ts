@@ -85,13 +85,13 @@ function claimFailureToEnvelope(failure: ClaimFailure): {
       return {
         code: failure.code,
         message: failure.cause,
-        details: { ...failure.details, runbook: failure.runbook },
+        details: failure.details,
       };
     case 'launch-failed':
       return {
         code: failure.code,
         message: failure.cause,
-        details: { ...failure.details, runbook: failure.runbook },
+        details: failure.details,
       };
     default: {
       const _exhaustive: never = failure;

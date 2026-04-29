@@ -120,7 +120,7 @@ export interface RunbookStartFailure {
   ok: false;
   reason: 'launch-failed';
   error: string;
-  code: string;
+  code: typeof ErrorCodes.LAUNCH_FAILED.code;
   details: { runbookName: string };
 }
 
@@ -167,14 +167,14 @@ export type ClaimFailure =
       readonly runbook: string;
       readonly code: PrepareFailure['code'];
       readonly cause: string;
-      readonly details?: PrepareFailure['details'];
+      readonly details: PrepareFailure['details'];
     }
   | {
       readonly reason: 'launch-failed';
       readonly runbook: string;
       readonly code: RunbookStartFailure['code'];
       readonly cause: string;
-      readonly details?: RunbookStartFailure['details'];
+      readonly details: RunbookStartFailure['details'] & { readonly runbook: string };
     };
 
 /** Result of claiming a delegation token and launching the child runbook. */
@@ -1158,7 +1158,7 @@ export async function claimAndLaunch(
         runbook: freshDelegation.childRunbookPath,
         code: launchResult.code,
         cause: launchResult.error,
-        details: launchResult.details,
+        details: { ...launchResult.details, runbook: freshDelegation.childRunbookPath },
       };
     }
 
