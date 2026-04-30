@@ -106,18 +106,16 @@ At terminal completion, listed names are read from the merged variable space and
 ```yaml
 ---
 name: review-plan
+INPUTS:
+  - PlanPath
+  - environment
 REQUIRED:
   - PlanPath
 ---
 ```
-`REQUIRED:` causes a hard error at startup if the variable isn't supplied by any source (CLI `--input`, env `RD_INPUT_*`, parent forwarding, config, or frontmatter `INPUTS:` defaults). Inside the runbook, just reference `{{ PlanPath }}`.
+`INPUTS:` is a YAML sequence of variable names the runbook accepts (declarations only, no values). `REQUIRED:` must be a subset of `INPUTS:` — names listed in `REQUIRED:` must also appear in `INPUTS:`, otherwise the parser rejects the frontmatter. `REQUIRED:` causes a hard error at startup if the variable isn't supplied by any source (CLI `--input`, env `RD_INPUT_*`, parent forwarding, config). Inside the runbook, just reference `{{ PlanPath }}`.
 
-The (optional) frontmatter `INPUTS:` field is a key→default map, **not** a list of names — use it to provide fallbacks:
-```yaml
-INPUTS:
-  environment: development
-  port: 3000
-```
+Defaults do not live in frontmatter. Supply them via `.rundown/config.yaml`, `--input-file`, `--input`, or `RD_INPUT_*` env.
 
 ### Frontmatter casing convention
 

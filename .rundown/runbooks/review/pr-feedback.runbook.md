@@ -5,7 +5,8 @@ tags:
   - review
   - github
 inputs:
-  repo: tobyhede/rundown
+  - repo
+  - pr_number
 required:
   - pr_number
 ---

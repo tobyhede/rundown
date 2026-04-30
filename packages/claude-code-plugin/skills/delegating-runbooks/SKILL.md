@@ -171,6 +171,8 @@ Write the plan to `{{ PlanPath }}`.
 ```markdown
 ---
 name: review-plan
+INPUTS:
+  - PlanPath
 REQUIRED:
   - PlanPath
 ---
@@ -187,8 +189,9 @@ When the parent delegates `write-plan` at step 2 and `review-plan` at step 3 (wi
 **Key rules:**
 - Step OUTPUTS are evaluated on every step transition, independent of PASS/FAIL. Values land in `state.variables`.
 - Frontmatter `OUTPUTS:` are evaluated at terminal completion (`COMPLETE` or `STOPPED`). Values land in `state.finalVars` and forward to the parent.
-- Frontmatter `INPUTS:` is a key→default map of fallback values, **not** a list of names — it sits at the bottom of the precedence stack.
-- Variable resolution precedence (highest → lowest): CLI `--input` / `--input-json` / `--input-file`, `RD_INPUT_*` env, project `.rundown/config.yaml`, parent-forwarded variables, frontmatter `INPUTS:` defaults.
+- Frontmatter `INPUTS:` is a YAML sequence of variable names the runbook accepts (declarations only — entries do not carry values). Defaults live in config / `--input-file` / env, not in frontmatter.
+- `REQUIRED:` must be a subset of `INPUTS:` — names in `REQUIRED:` must also appear in `INPUTS:`, otherwise the parser rejects the frontmatter.
+- Variable resolution precedence (highest → lowest): CLI `--input` / `--input-json` / `--input-file`, `RD_INPUT_*` env, parent-forwarded variables, project `.rundown/config.yaml`, built-in defaults.
 - `REQUIRED:` causes a hard error if the variable is missing from all sources.
 
 ### Frontmatter casing convention
