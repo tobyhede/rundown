@@ -149,9 +149,9 @@ describe('getBuiltinVariables', () => {
   });
 
   it('should fall back to WORK_DIR when not in git', () => {
-    setExecFileSyncImpl((() => {
+    setExecFileSyncImpl(() => {
       throw new Error('not a git repo');
-    }) as unknown as typeof nodeExecFileSync);
+    });
 
     const builtins = getBuiltinVariables();
     expect(builtins.WorkPath).toBe(WORK_DIR);

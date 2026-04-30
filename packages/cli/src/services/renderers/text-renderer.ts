@@ -164,13 +164,13 @@ export class TextRenderer implements OutputRenderer {
       if (typeof col.key === 'function') {
         return {
           header: col.header,
-          get: col.key as (row: Row) => string | number | boolean | undefined,
+          get: col.key,
           align: col.align,
         };
       }
       return {
         header: col.header,
-        key: col.key as keyof Row,
+        key: col.key,
         align: col.align,
       };
     });

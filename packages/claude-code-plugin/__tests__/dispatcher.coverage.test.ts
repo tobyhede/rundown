@@ -52,19 +52,19 @@ describe('Dispatcher Coverage Extensions', () => {
         hook_event_name: 'SlashCommandStart',
         cwd: testDir,
         command: 'cmd1',
-      } as any);
+      });
       expect(await session.get('active_command')).toBe('cmd1');
 
       // SlashCommandEnd (via Stop synthetic event)
-      await dispatch({ hook_event_name: 'Stop', cwd: testDir } as any);
+      await dispatch({ hook_event_name: 'Stop', cwd: testDir });
       expect(await session.get('active_command')).toBeNull();
 
       // SkillStart
-      await dispatch({ hook_event_name: 'SkillStart', cwd: testDir, skill: 'skill1' } as any);
+      await dispatch({ hook_event_name: 'SkillStart', cwd: testDir, skill: 'skill1' });
       expect(await session.get('active_skill')).toBe('skill1');
 
       // SkillEnd
-      await dispatch({ hook_event_name: 'SkillEnd', cwd: testDir } as any);
+      await dispatch({ hook_event_name: 'SkillEnd', cwd: testDir });
       expect(await session.get('active_skill')).toBeNull();
 
       // PostToolUse with extension
@@ -72,7 +72,7 @@ describe('Dispatcher Coverage Extensions', () => {
         hook_event_name: 'PostToolUse',
         cwd: testDir,
         tool_input: { file_path: 'test.ts' },
-      } as any);
+      });
       expect(await session.contains('edited_files', 'test.ts')).toBe(true);
       expect(await session.contains('file_extensions', 'ts')).toBe(true);
     });
@@ -87,7 +87,7 @@ describe('Dispatcher Coverage Extensions', () => {
         hook_event_name: 'SlashCommandStart',
         cwd: testDir,
         command: 'test',
-      } as any);
+      });
       const hadSessionError = consoleSpy.mock.calls.some((args) =>
         args.some((arg) => String(arg).includes('[Session Error]')),
       );
@@ -101,7 +101,7 @@ describe('Dispatcher Coverage Extensions', () => {
       const config = { file_patterns: ['**/*.ts'] } as any;
       expect(await gateMatchesFilePattern(config, '/outside/path.ts', testDir)).toBe(false);
       expect(
-        await gateMatchesFilePattern({ file_patterns: [null as any] } as any, 'test.ts', testDir),
+        await gateMatchesFilePattern({ file_patterns: [null as any] }, 'test.ts', testDir),
       ).toBe(false);
     });
   });
@@ -109,7 +109,7 @@ describe('Dispatcher Coverage Extensions', () => {
   describe('dispatch coverage', () => {
     it('covers various dispatch branches', async () => {
       // No config
-      const res1 = await dispatch({ hook_event_name: 'UserPromptSubmit', cwd: testDir } as any);
+      const res1 = await dispatch({ hook_event_name: 'UserPromptSubmit', cwd: testDir });
       expect(res1.context).toBeDefined();
 
       // Config with missing hook
@@ -117,7 +117,7 @@ describe('Dispatcher Coverage Extensions', () => {
         path.join(testDir, 'rundown-plugin.json'),
         JSON.stringify({ hooks: {}, gates: {} }),
       );
-      const res2 = await dispatch({ hook_event_name: 'UserPromptSubmit', cwd: testDir } as any);
+      const res2 = await dispatch({ hook_event_name: 'UserPromptSubmit', cwd: testDir });
       expect(res2.context).toBeDefined();
 
       // Config with filtered hook
@@ -130,7 +130,7 @@ describe('Dispatcher Coverage Extensions', () => {
         hook_event_name: 'PostToolUse',
         tool_name: 'Read',
         cwd: testDir,
-      } as any);
+      });
       expect(res3.context).toBeDefined();
 
       // Keyword skip
@@ -143,7 +143,7 @@ describe('Dispatcher Coverage Extensions', () => {
         hook_event_name: 'UserPromptSubmit',
         prompt: 'not related',
         cwd: testDir,
-      } as any);
+      });
       expect(resKeyword.context).not.toContain('gate result');
 
       // File pattern skip
@@ -156,7 +156,7 @@ describe('Dispatcher Coverage Extensions', () => {
         hook_event_name: 'PostToolUse',
         tool_input: { file_path: 'README.md' },
         cwd: testDir,
-      } as any);
+      });
       expect(resPattern.context).not.toContain('gate result');
 
       // Chained gate
@@ -165,7 +165,7 @@ describe('Dispatcher Coverage Extensions', () => {
         gates: { g1: { command: 'echo', on_pass: 'g2' }, g2: { command: 'echo' } },
       };
       await fs.writeFile(path.join(testDir, 'rundown-plugin.json'), JSON.stringify(config5));
-      const res5 = await dispatch({ hook_event_name: 'UserPromptSubmit', cwd: testDir } as any);
+      const res5 = await dispatch({ hook_event_name: 'UserPromptSubmit', cwd: testDir });
       expect(res5).toBeDefined();
     });
 
@@ -177,7 +177,7 @@ describe('Dispatcher Coverage Extensions', () => {
         },
       };
       await fs.writeFile(path.join(testDir, 'rundown-plugin.json'), JSON.stringify(config));
-      const res = await dispatch({ hook_event_name: 'UserPromptSubmit', cwd: testDir } as any);
+      const res = await dispatch({ hook_event_name: 'UserPromptSubmit', cwd: testDir });
       expect(res.blockReason).toContain('Exceeded max gate chain depth');
     });
 
@@ -187,7 +187,7 @@ describe('Dispatcher Coverage Extensions', () => {
         hook_event_name: 'UserPromptSubmit',
         prompt: '/test',
         cwd: testDir,
-      } as any);
+      });
       expect(res1).toBeDefined();
 
       // PreToolUse Skill -> SkillStart
@@ -196,7 +196,7 @@ describe('Dispatcher Coverage Extensions', () => {
         tool_name: 'Skill',
         tool_input: { skill: 's' },
         cwd: testDir,
-      } as any);
+      });
       expect(res2).toBeDefined();
 
       // PostToolUse Skill -> SkillEnd
@@ -205,7 +205,7 @@ describe('Dispatcher Coverage Extensions', () => {
         tool_name: 'Skill',
         tool_input: { skill: 's' },
         cwd: testDir,
-      } as any);
+      });
       expect(res3).toBeDefined();
     });
   });

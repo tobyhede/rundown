@@ -216,9 +216,9 @@ export async function runCliInProcess(
   const argArray = Array.isArray(args) ? args : args.split(' ').filter(Boolean);
   const extraEnv = options.env ?? {};
   const extraEnvKeys = Object.keys(extraEnv);
-  const origExtraEnv = Object.fromEntries(
+  const origExtraEnv: Record<string, string | undefined> = Object.fromEntries(
     extraEnvKeys.map((key) => [key, process.env[key]]),
-  ) as Record<string, string | undefined>;
+  );
   const binPath = workspace.binPath();
   const pluginDir = join(workspace.cwd, 'plugin');
 
@@ -230,8 +230,9 @@ export async function runCliInProcess(
   const origConsoleError = console.error.bind(console);
   const origConsoleLog = console.log.bind(console);
   const envKeys = ['NO_COLOR', 'RUNDOWN_LOG', 'CLAUDE_PLUGIN_ROOT', 'PATH', 'FORCE_COLOR'] as const;
+  type EnvKey = (typeof envKeys)[number];
   const origEnv = Object.fromEntries(envKeys.map((k) => [k, process.env[k]])) as Record<
-    string,
+    EnvKey,
     string | undefined
   >;
 
@@ -267,7 +268,7 @@ export async function runCliInProcess(
 
     // Capture stdout/stderr via process.stdout/stderr.write
     // ConsoleWriter consistently uses these (not console.log/error)
-    process.stdout.write = ((chunk: unknown, ...rest: unknown[]): boolean => {
+    process.stdout.write = (chunk: unknown, ...rest: unknown[]): boolean => {
       stdoutBuf +=
         typeof chunk === 'string'
           ? chunk
@@ -279,8 +280,8 @@ export async function runCliInProcess(
         | undefined;
       cb?.();
       return true;
-    }) as typeof process.stdout.write;
-    process.stderr.write = ((chunk: unknown, ...rest: unknown[]): boolean => {
+    };
+    process.stderr.write = (chunk: unknown, ...rest: unknown[]): boolean => {
       stderrBuf +=
         typeof chunk === 'string'
           ? chunk
@@ -292,7 +293,7 @@ export async function runCliInProcess(
         | undefined;
       cb?.();
       return true;
-    }) as typeof process.stderr.write;
+    };
 
     // Create ConsoleWriter AFTER monkey-patching stdout/stderr so it
     // captures output into the buffers above (not the original streams)
@@ -311,10 +312,10 @@ export async function runCliInProcess(
     // Intercept process.exit. Set the cleanup flag at interception so the
     // artefact stripper still runs even if a downstream caller swallows the
     // ExitSignal before it surfaces to the outer catch.
-    process.exit = ((code?: number) => {
+    process.exit = (code?: number) => {
       exit.signalled = true;
       throw new ExitSignal(code ?? 0);
-    }) as never;
+    };
 
     // Create fresh program and parse
     const program = createProgram();

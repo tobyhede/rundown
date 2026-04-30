@@ -579,7 +579,7 @@ describe('RunbookStateManager', () => {
 
       const state = await manager.create('test.md', mockRunbook, {
         runbookPath: 'test.md',
-        templateVars: templateVars as Record<string, any>,
+        templateVars: templateVars,
       });
 
       // Verify templateVars are present in created state

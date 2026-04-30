@@ -518,7 +518,7 @@ async function loadJsonFile(canonical: string): Promise<JsonObject | JsonArray> 
   if (!isJsonValue(parsed) || parsed === null || typeof parsed !== 'object') {
     throw new Error(`File "${canonical}" contains ${typeof parsed}, expected JSON object or array`);
   }
-  return parsed as JsonObject | JsonArray;
+  return parsed;
 }
 
 /**
@@ -593,12 +593,12 @@ async function routeVariable(
   // Array → vars as JsonArray (type-preserving, not comma-joined)
   if (Array.isArray(value)) {
     if (value.every(isJsonValue)) {
-      vars[key] = value as JsonArray;
+      vars[key] = value;
     } else {
       warnings?.push(
         `Variable "${key}" array contains non-JSON values; converting items to strings`,
       );
-      vars[key] = value.map(String) as unknown as JsonArray;
+      vars[key] = value.map(String);
     }
     return true;
   }
@@ -607,7 +607,7 @@ async function routeVariable(
   // Validate recursively: yaml.load() can produce Date, undefined, etc.
   if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
     if (isJsonValue(value)) {
-      vars[key] = value as JsonObject;
+      vars[key] = value;
     } else {
       warnings?.push(`Variable "${key}" contains non-JSON values; converting to string`);
       vars[key] = JSON.stringify(value);

@@ -9976,7 +9976,7 @@ echo "processing"
         const result = args.results[ss.id];
         if (result === undefined) return ss;
         if (ss.id === lastSeedSubstep && ss.frameKey === frameKey) return ss;
-        return { ...ss, status: 'done' as const, result } as SubstepState;
+        return { ...ss, status: 'done' as const, result };
       });
 
       // If trimSteps: drop substep '1' from the compiled runbook so retryDelegation
@@ -10235,9 +10235,11 @@ echo "processing"
       ]);
 
       const seeded = seedDelegations(steps, ['1']);
-      const preparedSubsteps: SubstepState[] = seeded.map(
-        (ss) => ({ ...ss, status: 'done' as const, result: 'fail' as const }) as SubstepState,
-      );
+      const preparedSubsteps: SubstepState[] = seeded.map((ss) => ({
+        ...ss,
+        status: 'done' as const,
+        result: 'fail' as const,
+      }));
 
       const machine = compileRunbookToMachine(steps);
       const tmp = createActor(machine);

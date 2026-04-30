@@ -522,9 +522,7 @@ function handleForClause(
           `Invalid nested bullet under FOR clause in step "${ctx.currentStep.name}": only transitions (PASS/FAIL/DEFER) are allowed${formatLineNum(nestedItem)}`,
         );
       }
-      const nestedText = extractText(
-        nestedParagraph as PhrasingContent | Heading | Paragraph | ListItem,
-      );
+      const nestedText = extractText(nestedParagraph);
       const cond = parseConditional(nestedText);
       if (!cond) {
         throw new RunbookSyntaxError(
@@ -676,7 +674,7 @@ function handleOutputsDirective(node: ListItem, ctx: ActiveStepContext): typeof 
         `Invalid OUTPUTS declaration in ${targetLabel}${formatLineNum(item)}: expected "Name value"`,
       );
     }
-    const text = extractText(paragraph as PhrasingContent | Heading | Paragraph | ListItem);
+    const text = extractText(paragraph);
     const decl = parseStepOutputDeclaration(text);
     if (!decl) {
       throw new RunbookSyntaxError(
@@ -760,7 +758,7 @@ function handleListItem(node: ListItem, ctx: ActiveStepContext): typeof SKIP | u
   const firstParagraph = node.children.find((c) => c.type === 'paragraph');
   if (!firstParagraph) return;
 
-  const text = extractText(firstParagraph as PhrasingContent | Heading | Paragraph | ListItem);
+  const text = extractText(firstParagraph);
 
   // Check for OUTPUTS directive on the active execution unit (step or substep)
   if (text.trim() === 'OUTPUTS') {

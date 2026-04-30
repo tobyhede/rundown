@@ -374,7 +374,7 @@ describe('validator strict rules', () => {
           forClause: { start: 1, end: 10 },
           transitions: { ...DEFAULT_TRANSITIONS },
           substeps: [],
-        } as Step,
+        },
       ];
       const errors = validateRunbook(steps);
       expect(errors.some((e) => e.message.includes('must have at least one substep'))).toBe(true);

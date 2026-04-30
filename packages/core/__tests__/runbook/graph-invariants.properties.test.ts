@@ -78,7 +78,7 @@ function buildStepsFromShapes(shapes: StepShape[]): StepInput[] {
 
 // Helper: extract state configs from a compiled machine
 function getStates(machine: AnyStateMachine): Record<string, unknown> {
-  return (machine.config.states ?? {}) as Record<string, unknown>;
+  return machine.config.states ?? {};
 }
 
 // ---------------------------------------------------------------------------

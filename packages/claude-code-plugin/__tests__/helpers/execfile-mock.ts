@@ -78,5 +78,5 @@ export function mockExecFileSyncError(error: {
   // Same double-cast rationale as mockExecFileSync above.
   return jest.fn(() => {
     throw err;
-  }) as unknown as ExecFileSyncMock;
+  });
 }

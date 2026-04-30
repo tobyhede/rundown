@@ -66,7 +66,7 @@ function isZodIssueLike(
     typeof value === 'object' &&
     value !== null &&
     'path' in value &&
-    Array.isArray((value as { path: unknown }).path) &&
+    Array.isArray(value.path) &&
     'message' in value &&
     typeof (value as { message: unknown }).message === 'string'
   );
@@ -83,7 +83,7 @@ export function isZodError(
   error: unknown,
 ): error is { issues: Array<{ path: Array<string | number>; message: string }> } {
   if (typeof error !== 'object' || error === null || !('issues' in error)) return false;
-  const issues = (error as { issues: unknown }).issues;
+  const issues = error.issues;
   if (!Array.isArray(issues) || issues.length === 0) return false;
   return issues.every(isZodIssueLike);
 }

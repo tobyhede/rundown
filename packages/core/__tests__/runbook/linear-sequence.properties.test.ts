@@ -32,7 +32,7 @@ const linearConfigArb: fc.Arbitrary<LinearConfig> = fc
       passActions: fc.tuple(
         ...Array.from({ length: numSteps - 1 }, () => simpleActionArb),
         fc.constant('COMPLETE' as const),
-      ) as fc.Arbitrary<('CONTINUE' | 'STOP' | 'COMPLETE')[]>,
+      ),
       failActions: fc.array(simpleActionArb, {
         minLength: numSteps,
         maxLength: numSteps,

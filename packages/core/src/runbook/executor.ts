@@ -210,7 +210,7 @@ export async function executeCommandWithPolicy(
 
   // Inject rundown-specific vars (RD_WORK_PATH, RD_RUN_ID, etc.) after policy filtering
   // These are rundown-wins: they cannot be blocked by user-supplied environment variables
-  const finalEnv = { ...filteredEnv, ...rdInjected } as Record<string, string>;
+  const finalEnv = { ...filteredEnv, ...rdInjected };
 
   // Execute with sandbox if enabled
   if (sandbox) {

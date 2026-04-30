@@ -459,7 +459,7 @@ describe('RunbookActorService', () => {
       // Create with templateVars containing arrays
       const state = await manager.create('test.md', mockRunbook, {
         runbookPath: 'test.md',
-        templateVars: templateVars as Record<string, any>,
+        templateVars: templateVars,
       });
 
       expect(state.templateVars?.items).toEqual(['a', 'b', 'c']);

@@ -53,12 +53,12 @@ describe('Synthetic Events Integration', () => {
         hook_event_name: 'UserPromptSubmit',
         cwd: testDir,
         prompt: '/verify',
-      } as HookInput);
+      });
 
       await dispatch({
         hook_event_name: 'Stop',
         cwd: testDir,
-      } as HookInput);
+      });
 
       const session = new Session(testDir);
       expect(await session.get('active_command')).toBeNull();

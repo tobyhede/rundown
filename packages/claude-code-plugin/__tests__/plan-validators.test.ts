@@ -39,7 +39,7 @@ function minimalPlan(overrides: Partial<Plan> = {}): Plan {
       },
     ],
     ...overrides,
-  } as Plan;
+  };
 }
 
 // ── checkTddCycle ────────────────────────────────────────────────────────────

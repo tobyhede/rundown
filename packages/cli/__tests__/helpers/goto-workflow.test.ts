@@ -7,7 +7,6 @@ import type {
   RunbookStateManager,
   SessionService,
   StepId,
-  StepPosition,
 } from '@rundown-org/core';
 import type { OutputEmitter } from '../../src/services/output-emitter.js';
 import { brandAgentOwnerKeyForTest, brandDelegationTokenHashForTest } from './brand-helpers.js';
@@ -132,14 +131,11 @@ beforeEach(() => {
   jest
     .mocked(core.stepIdToString)
     .mockImplementation((id) => (id.substep ? `${id.step}.${id.substep}` : id.step));
-  jest.mocked(core.buildStepPosition).mockImplementation(
-    (current, total, substep) =>
-      ({
-        current,
-        total,
-        ...(substep ? { substep } : {}),
-      }) as StepPosition,
-  );
+  jest.mocked(core.buildStepPosition).mockImplementation((current, total, substep) => ({
+    current,
+    total,
+    ...(substep ? { substep } : {}),
+  }));
   jest
     .mocked(core.derivePositionAt)
     .mockImplementation(
@@ -384,7 +380,7 @@ describe('executeGoto', () => {
       updatedAt: '2026-01-01T00:00:00.000Z',
       prompted: false,
       ...overrides,
-    } as RunbookState;
+    };
   }
 
   it('returns error when sendAndSync fails', async () => {

@@ -136,7 +136,7 @@ export function registerPruneCommand(program: Command): void {
 
           if (allItems.length === 0) {
             // Use output.list() for consistency - outputs raw array in JSON mode
-            output.list([], columns as Parameters<typeof output.list>[1], {
+            output.list([], columns, {
               emptyMessage: 'No runbook state to prune.',
               jsonMapper,
             });
@@ -145,7 +145,7 @@ export function registerPruneCommand(program: Command): void {
           }
 
           if (options.dryRun) {
-            output.list(allItems, columns as Parameters<typeof output.list>[1], {
+            output.list(allItems, columns, {
               jsonMapper,
             });
             output.flush();
@@ -160,7 +160,7 @@ export function registerPruneCommand(program: Command): void {
             await manager.delete(id);
           }
 
-          output.list(allItems, columns as Parameters<typeof output.list>[1], { jsonMapper });
+          output.list(allItems, columns, { jsonMapper });
           output.flush();
         },
         { text: options.text },

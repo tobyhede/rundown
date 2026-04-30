@@ -46,7 +46,7 @@ function narrowSnapshotContext(snapshot: unknown): SnapshotContext | undefined {
     snapshot.context &&
     typeof snapshot.context === 'object'
   ) {
-    return snapshot.context as SnapshotContext;
+    return snapshot.context;
   }
   return undefined;
 }
