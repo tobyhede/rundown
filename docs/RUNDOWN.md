@@ -425,27 +425,40 @@ The session tracks which runbooks are active using a **stack-based model**:
   "defaultStack": ["wf-2026-04-28-parent"],
   "stashedRunbookId": null,
   "ownedRunbooks": {
-    "agent:agent-a:session:session-a": {
-      "kind": "agent-owned-runbook",
-      "ownerKey": "agent:agent-a:session:session-a",
-      "agent_id": "agent-a",
-      "session_id": "session-a",
-      "childRunId": "wf-2026-04-28-child",
-      "tokenHash": "sha256:...",
-      "parentRunId": "wf-2026-04-28-parent",
-      "parentStepId": "1",
-      "claimedAt": "2026-04-28T00:00:00.000Z",
-      "updatedAt": "2026-04-28T00:00:00.000Z"
-    }
+    "agent:agent-a:session:session-a": [
+      {
+        "kind": "agent-owned-runbook",
+        "ownerKey": "agent:agent-a:session:session-a",
+        "agent_id": "agent-a",
+        "session_id": "session-a",
+        "childRunId": "wf-2026-04-28-child",
+        "tokenHash": "sha256:...",
+        "parentRunId": "wf-2026-04-28-parent",
+        "parentStepId": "1",
+        "parentFrameKey": "1|",
+        "parentEntry": 1,
+        "claimedAt": "2026-04-28T00:00:00.000Z",
+        "updatedAt": "2026-04-28T00:00:00.000Z"
+      }
+    ]
   }
 }
 ```
 
 - **defaultStack**: Legacy/default active runbook stack for top-level, inline, and unidentified/manual flows.
 - **stashedRunbookId**: Temporarily paused runbook (for `rundown stash`/`rundown pop`).
-- **ownedRunbooks**: Per-agent/session ownership map for delegated child runs claimed by subagents. Identified callers resolve this map before falling back to `defaultStack`.
+- **stashedRunbookOwnership**: Ownership record captured when an agent-owned child is stashed.
+- **ownedRunbooks**: Per-agent/session ownership stacks for delegated child runs claimed by subagents. Identified callers resolve the top entry for their owner key and do not fall back to `defaultStack`.
+
+Agent identity is read from `RD_AGENT_ID` and optional `RD_SESSION_ID`. This is an isolation mechanism for cooperating local agents, not a security boundary; any process can set those environment variables. Owner keys are `agent:<agent_id>` or `agent:<agent_id>:session:<session_id>` with key segments percent-encoded.
 
 Terminal cleanup commands (`rundown stop` and `rundown complete`) remove stale owned child references when the target state is already missing or unusable. Step-result commands (`rundown pass` and `rundown fail`) fail closed in that case because they cannot safely apply a result to a missing delegated child.
+
+`stash` and `pop` are ownership-aware:
+- Anonymous `stash` moves the default-stack active runbook into the single stash slot.
+- Identified `stash` resolves the caller-owned child, removes it from that owner's stack, and stores the ownership record in `stashedRunbookOwnership`.
+- Anonymous `pop` refuses an agent-owned stash; identified `pop` refuses anonymous stashes and stashes owned by another caller.
+- Owned `pop` also verifies the delegated parent still exists and is not terminal before restoring the child to the owner's stack.
 
 ### Runbook State Structure
 
@@ -973,6 +986,14 @@ rundown scenario run <file> <name>          # Execute and verify
 rundown scenario run <file> <name> --quiet  # Suppress command output
 ```
 
+Implementation notes:
+- `scenario run` creates an isolated temp workspace, copies the scenario runbook into `.rundown/runbooks/`, copies referenced `*.runbook.md` children found in commands, and executes commands through `executeCommandSequence`.
+- `rd`/`rundown` commands are spawned directly as `node <cliPath> ...` so JSON output can be captured; non-`rd` commands run through the shell.
+- Leading command-scoped env assignments are supported for `rd` commands, for example `RD_AGENT_ID=a RD_SESSION_ID=s rd pass`. Shell operators in an `rd` command are rejected; split those commands into separate scenario entries.
+- Prefix a command with `!` followed by a literal space when a non-zero exit is expected. If an expected-failure command exits 0, the scenario fails; otherwise the failed command is allowed to continue.
+- Delegation tokens are captured from `rd delegate` JSON responses and from `step_entered.delegateFrontier` auto-issued tokens. `${TOKEN}` expands to the first captured token, `${TOKEN_2}` to the second, and so on.
+- `--input-file` dependencies are copied by directory. Scenario execution copies the entire containing directory for each relative `--input-file` path so YAML files that contain sibling `file:` references keep working. Absolute paths and `..` traversal are rejected.
+
 #### `rundown scenario-suite` - Scenario Suites
 
 List, show, or execute cases from a scenario suite file.
@@ -1008,8 +1029,9 @@ Delegation semantics:
 - `claim` uses the delegation token (printed by `delegate`) to launch the child runbook.
 - Child runbook uses plain `rd pass` / `rd fail` to report its outcome.
 - Completion routing is frame + entry aware (`frame + entry + substep`) to prevent stale re-entry completions from being applied.
-- Identified subagents are routed by ownership, not by the shared stack. `rd claim <token>` records the claimed child run id under the caller's `agent_id`/`session_id`; later plain ownership-routed commands (`rd status`, `rd pass`, `rd fail`, `rd stash`, `rd pop`, and `rd stop`) resolve that owned child first.
-- The shared `defaultStack` is not a safe targeting mechanism for parallel delegated siblings because the most recently claimed child is not necessarily the caller's child.
+- Identified subagents are routed by ownership, not by the shared stack. `rd claim <token>` records the claimed child run id under the caller's `RD_AGENT_ID`/`RD_SESSION_ID`; later plain ownership-routed commands (`rd status`, `rd pass`, `rd fail`, `rd stash`, `rd pop`, `rd stop`, and `rd complete`) resolve that owned child.
+- Ownership is stored as a stack per owner key. Re-claim by the same owner refreshes/moves the existing entry to the top; claim by a different owner for the same child is rejected with `DELEGATION_OWNER_CONFLICT`.
+- Anonymous claims still use `defaultStack`; identified claims use `ownedRunbooks`. The shared `defaultStack` is not a safe targeting mechanism for parallel delegated siblings because the most recently claimed child is not necessarily the caller's child.
 - If an ownership record points at missing or terminal state, commands fail closed instead of falling back to the shared stack in the same invocation.
 
 ### Runtime Identity Glossary

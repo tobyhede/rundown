@@ -242,7 +242,7 @@ Steps annotated with `FOR` execute their substeps repeatedly.
 *   **Source references**: `{{ source }}` in FOR clauses is NOT template-expanded. It is a data source identifier resolved at runtime. Template-variable bounds (`{{ Max }}`) ARE expanded before parsing.
 *   **Unresolved bounds**: When a template-variable bound in a FOR clause cannot be resolved (undefined variable), the step is demoted to `kind: 'prompted-for'` — a substeps-only step with no executable `forClause`. The original FOR text is preserved as prompt text. This allows an orchestrating agent to handle unresolved FOR bounds manually.
 *   **Named variable required**: Data source FOR clauses require a named variable. Unnamed syntax (`FOR {{source}}`) is invalid.
-*   **Data sources**: Provided at runtime as arrays (in-memory) or files (text or JSONL). Resolved against a sources map. See [RUNDOWN.md](./RUNDOWN.md#data-sources) for configuration.
+* **Data sources**: Provided at runtime as arrays or file-backed JSON/JSONL sources. `file:` source values must stay within the project root after symlink resolution.
 *   **Constraint**: FOR steps MUST have substeps. Step-level runbook-list shorthand qualifies because it is canonicalized to implicit substeps.
 *   **Scope**: Loop variable available in substeps as `{{var}}`.
 *   **Aggregation**: Transitions on the parent FOR step evaluate the aggregate result of all iterations.

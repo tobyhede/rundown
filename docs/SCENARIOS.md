@@ -40,10 +40,34 @@ expect_block =
   [ "steps:" step_assertion { step_assertion } ]
 
 step_assertion =
-  "- " [ "at:" text ] [ "from:" text ] [ "action:" text ] [ "result:" ( "PASS" | "FAIL" ) ] [ "command:" text ] [ "aggregated:" boolean ]
+  "- " [ "runbook:" text ] [ "at:" text ] [ "from:" text ] [ "action:" text ] [ "result:" ( "PASS" | "FAIL" ) ] [ "command:" text ] [ "aggregated:" boolean ]
 ```
 
 At least one of top-level `result:` or `expect.result` must be specified. If both are present, they must match.
+
+External scenario suites use the same command and assertion model in standalone `*.scenario-suite.yaml` files:
+
+```yaml
+version: 1
+name: Regression Suite
+description: Optional suite description
+tags: [regression]
+cases:
+  happy-path:
+    description: Optional case description
+    file: path/to/example.runbook.md
+    commands:
+      - rd run --prompted example.runbook.md
+      - rd pass
+    expect:
+      result: COMPLETE
+      steps:
+        - runbook: example.runbook.md
+          at: "1"
+          action: COMPLETE
+```
+
+Suite `version` must be `1`, `name` is required, `cases` must be non-empty, and each case `file` must end in `.runbook.md`. Each case requires `commands` plus either top-level `result` or `expect.result`.
 
 ## Design Principles
 
@@ -149,7 +173,27 @@ scenarios:
       result: STOP
 ```
 
-Commands output JSON by default. The scenario runner parses JSON output when `expect.steps` is present or when running `rd delegate` (for token capture). Use `--text` for human-readable terminal output in demo scenarios.
+Commands output JSON by default. The scenario runner parses every `rd`/`rundown` command's stdout to collect terminal state, step transitions, and delegation tokens. Use `--text` for human-readable terminal output in demo scenarios; `--text` output is not useful for `expect.steps` or token capture.
+
+The runner executes plain `rd` and `rundown` commands directly through the current CLI entry point instead of through a shell. Leading command-scoped environment assignments are supported:
+
+```yaml
+commands:
+  - RD_AGENT_ID=agent-a RD_SESSION_ID=session-a rd claim ${TOKEN}
+  - RD_AGENT_ID=agent-a RD_SESSION_ID=session-a rundown pass
+```
+
+Shell operators in an `rd`/`rundown` command are rejected (`&&`, `||`, `|`, etc.). Split those into separate `commands` entries. Non-`rd` commands run through the user's shell.
+
+Prefix a command with `!` followed by a literal space when a non-zero exit is the expected outcome:
+
+```yaml
+commands:
+  - rd run --prompted validation.runbook.md
+  - "! rd claim rdtk_invalid"
+```
+
+For `!` commands, exit code `0` is an error. The `!` token must be followed by a space. For normal commands, a non-zero exit is an error unless the command output still produced a parsed terminal runbook result.
 
 ### Naming Convention
 
@@ -177,7 +221,12 @@ Scenario names describe the execution path:
 
 ### Token Capture
 
-The scenario runner extracts delegation tokens from parsed JSON output. When `rd delegate` runs, the JSON response includes a `token` field. These tokens are captured in order and available for substitution in subsequent commands:
+The scenario runner extracts delegation tokens from parsed JSON output. Tokens are captured in order from:
+
+- `rd delegate` JSON responses with `action: "delegated"` and a string `token`
+- `step_entered` events whose `delegateFrontier` array contains string `token` values
+
+Captured tokens are available for substitution in subsequent commands:
 
 - First token captured: `${TOKEN}`
 - Second token: `${TOKEN_2}`
@@ -193,7 +242,7 @@ commands:
   - rd claim ${TOKEN}
 ```
 
-The runner substitutes `${TOKEN}` with the actual token value extracted from the delegate command's JSON `token` field. For multi-delegation scenarios:
+The runner substitutes `${TOKEN}` with the actual captured token value. For multi-delegation scenarios:
 
 ```yaml
 commands:
@@ -203,6 +252,8 @@ commands:
   - rd delegate child-b.runbook.md --step 1.2
   - rd claim ${TOKEN_2}     # claims child-b token
 ```
+
+For `DELEGATE`-annotated steps, `rd run` can auto-issue frontier tokens as soon as the delegate step is entered. In that case, a later `rd claim ${TOKEN}` can use the token captured from the `step_entered.delegateFrontier` event without an explicit `rd delegate` command.
 
 ### Auto-Execution Scenarios
 
@@ -227,8 +278,11 @@ Assertion field names align with both the `StepTransitionedPayload` event fields
 |-------|---------|--------|
 | `at` | Step position after transition | Qualified ID: `1`, `1.1`, `1.3.1`, `ErrorHandler` |
 | `from` | Step position before transition | Same as `at` |
-| `action` | Transition type | `CONTINUE`, `GOTO`, `STOP`, `COMPLETE`, `RETRY`, `BREAK`, `NEXT` |
+| `action` | Transition type | `CONTINUE`, `DEFER`, `GOTO`, `STOP`, `COMPLETE`, `RETRY`, `BREAK`, `NEXT` |
 | `result` | Step outcome that triggered transition | `PASS`, `FAIL` |
+| `command` | Command associated with the transition | Exact command string |
+| `aggregated` | Whether the transition came from deferred aggregation | `true`, `false` |
+| `runbook` | Runbook that emitted the transition | Suffix match against event `runbook.path`, falling back to `runbook.name` |
 
 ### Action Semantics: NEXT vs CONTINUE
 
@@ -276,7 +330,8 @@ expect:
   result: COMPLETE              # Terminal outcome (optional if top-level result: present)
 
   steps:                        # Transition assertions (optional, ordered)
-    - at: "1.1"
+    - runbook: child.runbook.md  # Optional runbook filter for delegated/nested runs
+      at: "1.1"
       from: "1"
       action: CONTINUE
       result: PASS
@@ -288,6 +343,8 @@ expect:
 All fields within `steps` entries are optional. Assert only what matters for the test.
 
 There is no separate `final` block. The last `steps` entry serves as the terminal assertion when needed. The `result` field at the top level (`COMPLETE`/`STOP`) captures the terminal outcome from `RUNBOOK_COMPLETED`/`RUNBOOK_STOPPED` events.
+
+Terminal results are parsed from JSON event streams (`type: "runbook_completed"` or `type: "runbook_stopped"`) and from flushed JSON command responses with `complete: true` or `stopped: true`. Step assertions are matched only against streamed `step_transitioned` events, not flushed summary objects.
 
 ### Matching Semantics
 
@@ -355,3 +412,27 @@ expect:
     - action: GOTO
       at: ErrorHandler
 ```
+
+**Delegated child transition:**
+
+```yaml
+expect:
+  result: COMPLETE
+  steps:
+    - runbook: child.runbook.md
+      from: "1"
+      action: COMPLETE
+      result: PASS
+    - runbook: parent.runbook.md
+      action: COMPLETE
+```
+
+## Dependency Copying and Path Safety
+
+Scenarios and suite cases run in isolated temporary workspaces.
+
+For runbook-frontmatter scenarios, the runner copies the scenario's source runbook into the temp workspace's `.rundown/runbooks/` directory. It also scans commands for `*.runbook.md` references and copies those referenced runbooks from the source runbook's directory. Missing referenced runbooks fail before command execution.
+
+For `--input-file` arguments in frontmatter scenarios, both `--input-file` followed by `path.yaml` and `--input-file=path.yaml` are detected, including inside `!` expected-failure commands and env-prefixed `rd` commands. The `!` token must be followed by a space. The runner copies the entire containing input-file directory because YAML input files may refer to sibling `file:` data sources. Absolute input-file paths and `..` traversal are rejected, and source and destination paths are resolved to ensure they stay inside the source directory and temp workspace.
+
+For scenario suites, each case's `file` path is resolved relative to the suite file. The runner rejects absolute paths and `..` traversal, preserves the case file's subdirectory structure under `.rundown/runbooks/`, and also copies the main runbook flat by basename so bare-filename commands resolve. Referenced child runbooks are copied from the main runbook's directory first, then the suite directory, with path traversal rejected.
