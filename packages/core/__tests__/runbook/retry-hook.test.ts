@@ -121,7 +121,7 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
       ],
     } as unknown as ResolvedStepHavingSubsteps;
 
-    const steps: ResolvedStep[] = [parentStep as unknown as ResolvedStep];
+    const steps: ResolvedStep[] = [parentStep];
 
     const fixtureDelegation: StepDelegation = {
       tokenHash: 'hash_test',
@@ -160,7 +160,7 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
       lifecycle: 'running' as const,
       substepStates: originalSubstepStates,
       activeFrameKey: frameKey,
-    } as unknown as RunbookContext;
+    };
 
     return { context, parentStep, steps, originalSubstepStates };
   }
@@ -300,7 +300,7 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
         },
       ],
     } as unknown as ResolvedStepHavingSubsteps;
-    const steps: ResolvedStep[] = [parentStep as unknown as ResolvedStep];
+    const steps: ResolvedStep[] = [parentStep];
 
     const staleDelegation: StepDelegation = {
       tokenHash: 'hash_stale',
@@ -339,7 +339,7 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
       lifecycle: 'running' as const,
       substepStates: originalSubstepStates,
       activeFrameKey,
-    } as unknown as RunbookContext;
+    };
 
     const result = runRetryHook(context, parentStep, steps);
 
@@ -386,7 +386,7 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
         },
       ],
     } as unknown as ResolvedStepHavingSubsteps;
-    const steps: ResolvedStep[] = [parentStep as unknown as ResolvedStep];
+    const steps: ResolvedStep[] = [parentStep];
 
     const orphanDelegation: StepDelegation = {
       tokenHash: 'hash_orphan',
@@ -424,7 +424,7 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
       lifecycle: 'running' as const,
       substepStates: originalSubstepStates,
       activeFrameKey,
-    } as unknown as RunbookContext;
+    };
 
     const result = runRetryHook(context, parentStep, steps);
 

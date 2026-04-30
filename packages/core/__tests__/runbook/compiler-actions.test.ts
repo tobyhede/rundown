@@ -1,11 +1,10 @@
 import { describe, it, expect } from '@jest/globals';
 import { actionRef, type CompilerActionRef } from '../../src/runbook/compiler-actions.js';
-import type { LastAction } from '../../src/runbook/types.js';
 
 describe('actionRef', () => {
   it('builds a setLastAction ref with the exact shape the setup expects', () => {
     const ref = actionRef('setLastAction', {
-      action: { type: 'STOP' } as LastAction,
+      action: { type: 'STOP' },
       msg: 'stopped for test',
     });
 
@@ -17,8 +16,8 @@ describe('actionRef', () => {
 
   it('narrows on the discriminant so consumers can branch on ref.type', () => {
     const refs: CompilerActionRef[] = [
-      actionRef('setLastAction', { action: { type: 'STOP' } as LastAction, msg: 'a' }),
-      actionRef('setLastAction', { action: { type: 'COMPLETE' } as LastAction }),
+      actionRef('setLastAction', { action: { type: 'STOP' }, msg: 'a' }),
+      actionRef('setLastAction', { action: { type: 'COMPLETE' } }),
     ];
 
     const seen: string[] = [];
@@ -43,7 +42,7 @@ describe('actionRef (type-level assertions)', () => {
     actionRef('setLastAction', { msg: 'no action' });
 
     // Sanity: the correct form compiles.
-    actionRef('setLastAction', { action: { type: 'STOP' } as LastAction });
+    actionRef('setLastAction', { action: { type: 'STOP' } });
     expect(true).toBe(true);
   });
 });

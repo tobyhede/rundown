@@ -25,10 +25,7 @@ const toResponse = (r: { data?: unknown; error?: string }): McpResponse => ({
 });
 
 function createServer(): McpServer {
-  const server = new McpServer({ name: 'rundown', version: VERSION } as {
-    name: string;
-    version: string;
-  });
+  const server = new McpServer({ name: 'rundown', version: VERSION });
 
   server.registerTool(
     'validate',

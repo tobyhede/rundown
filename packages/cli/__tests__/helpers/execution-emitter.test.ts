@@ -30,7 +30,7 @@ describe('createBridgedEmitter', () => {
   } {
     const executionEventFn = jest.fn<(event: ExecutionEvent) => void>();
     return {
-      output: { executionEvent: executionEventFn } as Pick<OutputEmitter, 'executionEvent'>,
+      output: { executionEvent: executionEventFn },
       executionEventFn,
     };
   }

@@ -55,7 +55,7 @@ export function asTemplateVars(vars: OutputVars): Readonly<Record<string, Templa
     // string | number | JsonArray | JsonObject — all valid TemplateVarValue
     // subtypes. (TemplateVarValue also permits JsonArrayStream, which cannot
     // appear here: OutputVars is already a flattened output frame.)
-    result[key] = value as TemplateVarValue;
+    result[key] = value;
   }
   return result;
 }

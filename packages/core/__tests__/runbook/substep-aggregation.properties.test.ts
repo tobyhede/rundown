@@ -14,7 +14,7 @@ import {
   DEFAULT_TRANSITIONS,
   type StepInput,
 } from './compiler-property-helpers.js';
-import type { Substep, Aggregation } from '../../src/runbook/types.js';
+import type { Substep } from '../../src/runbook/types.js';
 
 // ---------------------------------------------------------------------------
 // Builders
@@ -43,7 +43,7 @@ function buildAggregationSteps(opts: {
         opts.parentFailAction,
         opts.parentFailRetry ?? 0,
       ),
-      aggregation: { strategy: opts.aggregationMode } as Aggregation,
+      aggregation: { strategy: opts.aggregationMode },
       substeps,
     },
     {

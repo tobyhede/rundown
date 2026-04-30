@@ -327,7 +327,7 @@ describe('isWindowed', () => {
 
   it('returns false for a FullSourceWindow (no end)', () => {
     const fc: FullSourceWindow = { variable: 'server', start: 1, source: 'servers' };
-    expect(isWindowed(fc as SourceWindow)).toBe(false);
+    expect(isWindowed(fc)).toBe(false);
   });
 
   it('narrows type so fc.end is number after guard', () => {

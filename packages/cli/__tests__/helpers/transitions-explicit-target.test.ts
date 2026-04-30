@@ -21,7 +21,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     ) {
       return (action as { type: ActionType }).type;
     }
-    return 'CONTINUE' as ActionType;
+    return 'CONTINUE';
   }),
   parseStepIdFromString: mockFn<(input: string) => StepId | null>(),
   SENTINEL_ENTRY: 0,

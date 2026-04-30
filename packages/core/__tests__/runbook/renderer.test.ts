@@ -345,7 +345,7 @@ describe('renderForClause coverage', () => {
       forClause: { unresolved: true as const, variable: 'item', start: 1, end: { ref: 'Max' } },
       transitions: DEFAULT_TRANSITIONS,
       substeps: [{ id: '1', description: 'Process', transitions: DEFAULT_TRANSITIONS }],
-    } as Step;
+    };
     expect(() => renderStep(step)).toThrow('Cannot render unresolved FOR clause bounds');
   });
 });

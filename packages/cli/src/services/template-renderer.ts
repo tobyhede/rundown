@@ -60,7 +60,7 @@ function buildResolvedForStep(
   forClause: ForClause,
   extras?: { prompt?: string },
 ): ResolvedStepWithFor {
-  return { ...rest, forClause, ...extras } as ResolvedStepWithFor;
+  return { ...rest, forClause, ...extras };
 }
 
 /**
@@ -846,7 +846,7 @@ function substituteStep(step: ResolvedStep, variables: Record<string, unknown>):
   // Handle kind-specific fields that contain text
   switch (step.kind) {
     case 'base':
-      return substituted as ResolvedStep;
+      return substituted;
     case 'command':
       return {
         ...substituted,

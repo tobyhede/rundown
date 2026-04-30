@@ -11,7 +11,7 @@ describe('withErrorHandling', () => {
   let errorSpy: jest.SpiedFunction<typeof console.error>;
 
   beforeEach(() => {
-    mockExit = jest.fn() as unknown as jest.Mock;
+    mockExit = jest.fn();
     process.exit = mockExit as unknown as typeof process.exit;
     errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
   });

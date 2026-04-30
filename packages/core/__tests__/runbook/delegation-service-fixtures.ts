@@ -110,7 +110,7 @@ export function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
     ],
     templateVars: brandInitialTemplateVarsForTest({ env: 'staging' }),
     ...overrides,
-  } as RunbookState;
+  };
 }
 
 /** Helper: create minimal Step[] for testing. */
@@ -127,7 +127,7 @@ export function makeSteps(
       substeps: substepIds.map(makeTestSubstep),
     },
   ];
-  return steps as readonly ResolvedStep[];
+  return steps;
 }
 
 /** Helper: create steps without substeps. */
@@ -140,7 +140,7 @@ export function makeSimpleSteps(stepName = '1'): readonly ResolvedStep[] {
       transitions: DEFAULT_TRANSITIONS,
     },
   ];
-  return steps as readonly ResolvedStep[];
+  return steps;
 }
 
 /** Helper: create FOR steps with substeps (supports three-level step IDs). */
@@ -158,7 +158,7 @@ export function makeForSteps(
       substeps: substepIds.map(makeTestSubstep),
     },
   ];
-  return steps as readonly ResolvedStep[];
+  return steps;
 }
 
 /**
@@ -186,7 +186,7 @@ export function makeMultiStepSteps(
       transitions: DEFAULT_TRANSITIONS,
     },
   ];
-  return steps as readonly ResolvedStep[];
+  return steps;
 }
 
 /** Helper: create prompted-for steps with substeps (supports three-level step IDs). */
@@ -203,5 +203,5 @@ export function makePromptedForSteps(
       substeps: substepIds.map(makeTestSubstep),
     },
   ];
-  return steps as readonly ResolvedStep[];
+  return steps;
 }

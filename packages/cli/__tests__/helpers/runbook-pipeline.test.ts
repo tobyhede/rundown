@@ -342,9 +342,7 @@ beforeEach(() => {
     warnings: [],
     providedKeys: new Set(),
   } as unknown as Awaited<ReturnType<typeof resolveVariables>>);
-  jest
-    .mocked(buildStepVariables)
-    .mockReturnValue({ Step: '1.1' } as unknown as ReturnType<typeof buildStepVariables>);
+  jest.mocked(buildStepVariables).mockReturnValue({ Step: '1.1' });
   jest
     .mocked(substituteRunbookVariables)
     .mockImplementation(

@@ -306,8 +306,6 @@ describe('validateFileSnapshot', () => {
     const now = new Date();
     await fs.utimes(file, now, new Date(now.getTime() + 5000));
 
-    await expect(validateFileSnapshot(file, snapshotWithoutFingerprint as any)).rejects.toThrow(
-      /drift/i,
-    );
+    await expect(validateFileSnapshot(file, snapshotWithoutFingerprint)).rejects.toThrow(/drift/i);
   });
 });

@@ -146,7 +146,7 @@ describe('FOR loop design invariants', () => {
 
               // All FAIL events — enough for any retry depth
               const maxEvents = iterations * 2 * (1 + retryCount) + 20;
-              const events = Array.from({ length: maxEvents }, () => 'FAIL' as EventType);
+              const events = Array.from({ length: maxEvents }, () => 'FAIL');
 
               const noRetry = runFromSteps(buildCustomSteps(baseOpts), events);
               const withRetry = runFromSteps(buildCustomSteps(retryOpts), events);
@@ -191,7 +191,7 @@ describe('FOR loop design invariants', () => {
             };
 
             const maxEvents = iterations * 2 * (1 + retryCount) + 20;
-            const events = Array.from({ length: maxEvents }, () => 'FAIL' as EventType);
+            const events = Array.from({ length: maxEvents }, () => 'FAIL');
 
             const noRetry = runFromSteps(buildCustomSteps(baseOpts), events);
             const withRetry = runFromSteps(buildCustomSteps(retryOpts), events);
@@ -234,7 +234,7 @@ describe('FOR loop design invariants', () => {
             };
 
             const maxEvents = iterations * 2 * 4 + 20;
-            const events = Array.from({ length: maxEvents }, () => 'FAIL' as EventType);
+            const events = Array.from({ length: maxEvents }, () => 'FAIL');
 
             const noRetry = runFromSteps(buildCustomSteps(baseOpts), events);
             const withRetry = runFromSteps(buildCustomSteps(retryOpts), events);
@@ -276,7 +276,7 @@ describe('FOR loop design invariants', () => {
               parentFailRetry: 0,
             };
 
-            const events = Array.from({ length: iterations + 10 }, () => 'PASS' as EventType);
+            const events = Array.from({ length: iterations + 10 }, () => 'PASS');
             const result = runForLoop(config, events);
             expect(result.iterationResults.length).toBe(0);
           },
@@ -349,7 +349,7 @@ describe('FOR loop design invariants', () => {
 
             // All FAIL → each DEFER substep defers 'fail', then BREAK substep fails → BREAK
             const totalSubsteps = numDeferSubsteps + 1;
-            const events = Array.from({ length: totalSubsteps + 10 }, () => 'FAIL' as EventType);
+            const events = Array.from({ length: totalSubsteps + 10 }, () => 'FAIL');
 
             const result = runFromSteps(buildCustomSteps(opts), events);
 

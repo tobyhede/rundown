@@ -1832,7 +1832,7 @@ function buildTerminalTransition(
   return {
     target,
     actions: actionRef('setLastAction', {
-      action: { type: actionType } as LastAction,
+      action: { type: actionType },
       msg: message,
     }),
   };
@@ -1862,7 +1862,7 @@ function buildLoopControlTransition(
     return {
       target: 'STOPPED',
       actions: actionRef('setLastAction', {
-        action: { type: actionType } as LastAction,
+        action: { type: actionType },
       }),
     };
   }
@@ -2143,11 +2143,8 @@ function prependActions<T extends RunbookTransitionObject | (RunbookAlwaysEntry 
   if (extra.length === 0) return transition;
   return {
     ...transition,
-    actions: [
-      ...extra,
-      ...toActionArray(transition.actions as RunbookAction | RunbookAction[] | undefined),
-    ],
-  } as T;
+    actions: [...extra, ...toActionArray(transition.actions)],
+  };
 }
 
 /**
@@ -2277,7 +2274,7 @@ function extractTargets(config: RunbookStateConfig): string[] {
 
   if (config.on) {
     for (const tc of Object.values(config.on)) {
-      collectFromTransitionConfig(tc as RunbookEventTransition | RunbookEventTransition[]);
+      collectFromTransitionConfig(tc);
     }
   }
 
@@ -2287,7 +2284,7 @@ function extractTargets(config: RunbookStateConfig): string[] {
       always.forEach(collectFromEntry);
     } else {
       // Same wide-union issue: cast to the non-array element form.
-      collectFromEntry(always as RunbookAlwaysEntry);
+      collectFromEntry(always);
     }
   }
 

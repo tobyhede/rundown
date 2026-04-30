@@ -52,7 +52,7 @@ describe('DelegationScanService', () => {
       lifecycle: 'running',
       schemaVersion: 2,
       ...overrides,
-    } as RunbookState;
+    };
   }
 
   function makeDelegation(token: string): StepDelegation {

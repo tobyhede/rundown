@@ -94,7 +94,7 @@ describe('extractNameAndStage coverage', () => {
       path.join(testDir, '.claude', 'context', 'commit-start.md'),
       'Start content',
     );
-    const result = await injectContext('SlashCommandStart', input as any);
+    const result = await injectContext('SlashCommandStart', input);
     expect(result).toBe('Start content');
   });
 
@@ -106,7 +106,7 @@ describe('extractNameAndStage coverage', () => {
     };
     await fs.mkdir(path.join(testDir, '.claude', 'context'), { recursive: true });
     await fs.writeFile(path.join(testDir, '.claude', 'context', 'commit-end.md'), 'End content');
-    const result = await injectContext('SlashCommandEnd', input as any);
+    const result = await injectContext('SlashCommandEnd', input);
     expect(result).toBe('End content');
   });
 
@@ -121,7 +121,7 @@ describe('extractNameAndStage coverage', () => {
       path.join(testDir, '.claude', 'context', 'brainstorm-start.md'),
       'Skill start',
     );
-    const result = await injectContext('SkillStart', input as any);
+    const result = await injectContext('SkillStart', input);
     expect(result).toBe('Skill start');
   });
 
@@ -135,7 +135,7 @@ describe('extractNameAndStage coverage', () => {
       path.join(testDir, '.claude', 'context', 'prompt-submit.md'),
       'Prompt context',
     );
-    const result = await injectContext('UserPromptSubmit', input as any);
+    const result = await injectContext('UserPromptSubmit', input);
     expect(result).toBe('Prompt context');
   });
 
@@ -144,7 +144,7 @@ describe('extractNameAndStage coverage', () => {
       hook_event_name: 'UnknownEvent',
       cwd: testDir,
     };
-    const result = await injectContext('UnknownEvent', input as any);
+    const result = await injectContext('UnknownEvent', input);
     expect(result).toBeNull();
   });
 
@@ -160,7 +160,7 @@ describe('extractNameAndStage coverage', () => {
       'Agent end context',
     );
 
-    const result = await injectContext('SubagentStop', input as any);
+    const result = await injectContext('SubagentStop', input);
     expect(result).toBe('Agent end context');
   });
 });
@@ -187,7 +187,7 @@ describe('Synthetic event context injection', () => {
       path.join(testDir, '.claude', 'context', 'verify-start.md'),
       'Verify context',
     );
-    const result = await injectContext('SlashCommandStart', input as any);
+    const result = await injectContext('SlashCommandStart', input);
     expect(result).toBe('Verify context');
   });
 
@@ -202,7 +202,7 @@ describe('Synthetic event context injection', () => {
       path.join(testDir, '.claude', 'context', 'brainstorm-end.md'),
       'Brainstorm end context',
     );
-    const result = await injectContext('SlashCommandEnd', input as any);
+    const result = await injectContext('SlashCommandEnd', input);
     expect(result).toBe('Brainstorm end context');
   });
 
@@ -217,7 +217,7 @@ describe('Synthetic event context injection', () => {
       path.join(testDir, '.claude', 'context', 'brainstorm-start.md'),
       'Brainstorm context',
     );
-    const result = await injectContext('SkillStart', input as any);
+    const result = await injectContext('SkillStart', input);
     expect(result).toBe('Brainstorm context');
   });
 
@@ -232,7 +232,7 @@ describe('Synthetic event context injection', () => {
       path.join(testDir, '.claude', 'context', 'code-review-end.md'),
       'Code review end context',
     );
-    const result = await injectContext('SkillEnd', input as any);
+    const result = await injectContext('SkillEnd', input);
     expect(result).toBe('Code review end context');
   });
 
@@ -242,7 +242,7 @@ describe('Synthetic event context injection', () => {
       cwd: testDir,
       agent_type: 'cipherpowers:code-review-agent',
     };
-    const result = await injectContext('SubagentStart', input as any);
+    const result = await injectContext('SubagentStart', input);
     expect(result).toBeNull();
   });
 });
@@ -358,7 +358,7 @@ describe('Context injection - Additional Edge Cases', () => {
       command: '/test',
     };
 
-    const result = await injectContext('SlashCommandStart', input as any);
+    const result = await injectContext('SlashCommandStart', input);
     expect(result).toBeNull();
   });
 
@@ -369,7 +369,7 @@ describe('Context injection - Additional Edge Cases', () => {
       command: '',
     };
 
-    const result = await injectContext('SlashCommandStart', input as any);
+    const result = await injectContext('SlashCommandStart', input);
     expect(result).toBeNull();
   });
 
@@ -386,7 +386,7 @@ describe('Context injection - Additional Edge Cases', () => {
       'Commit context',
     );
 
-    const result = await injectContext('SlashCommandStart', input as any);
+    const result = await injectContext('SlashCommandStart', input);
     expect(result).toBe('Commit context');
   });
 
@@ -403,7 +403,7 @@ describe('Context injection - Additional Edge Cases', () => {
       'Skill context',
     );
 
-    const result = await injectContext('SkillStart', input as any);
+    const result = await injectContext('SkillStart', input);
     expect(result).toBe('Skill context');
   });
 
@@ -418,7 +418,7 @@ describe('Context injection - Additional Edge Cases', () => {
     await fs.mkdir(path.join(testDir, '.claude', 'context'), { recursive: true });
     await fs.writeFile(path.join(testDir, '.claude', 'context', 'test-start.md'), multilineContent);
 
-    const result = await injectContext('SlashCommandStart', input as any);
+    const result = await injectContext('SlashCommandStart', input);
     expect(result).toBe(multilineContent);
   });
 
@@ -432,7 +432,7 @@ describe('Context injection - Additional Edge Cases', () => {
     await fs.mkdir(path.join(testDir, '.claude', 'context'), { recursive: true });
     await fs.writeFile(path.join(testDir, '.claude', 'context', 'test-start.md'), '');
 
-    const result = await injectContext('SlashCommandStart', input as any);
+    const result = await injectContext('SlashCommandStart', input);
     expect(result).toBe('');
   });
 
@@ -447,7 +447,7 @@ describe('Context injection - Additional Edge Cases', () => {
     await fs.mkdir(path.join(testDir, '.claude', 'context'), { recursive: true });
     await fs.writeFile(path.join(testDir, '.claude', 'context', 'test-start.md'), unicodeContent);
 
-    const result = await injectContext('SlashCommandStart', input as any);
+    const result = await injectContext('SlashCommandStart', input);
     expect(result).toBe(unicodeContent);
   });
 
@@ -457,7 +457,7 @@ describe('Context injection - Additional Edge Cases', () => {
       cwd: testDir,
     };
 
-    const result = await injectContext('SessionStart', input as any);
+    const result = await injectContext('SessionStart', input);
     expect(result).toBeNull();
   });
 
@@ -467,7 +467,7 @@ describe('Context injection - Additional Edge Cases', () => {
       cwd: testDir,
     };
 
-    const result = await injectContext('ConfigChange', input as any);
+    const result = await injectContext('ConfigChange', input);
     expect(result).toBeNull();
   });
 
@@ -484,7 +484,7 @@ describe('Context injection - Additional Edge Cases', () => {
       'Skill end context',
     );
 
-    const result = await injectContext('SkillEnd', input as any);
+    const result = await injectContext('SkillEnd', input);
     expect(result).toBe('Skill end context');
   });
 });
