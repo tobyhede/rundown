@@ -230,7 +230,11 @@ export async function runCliInProcess(
   const origConsoleError = console.error.bind(console);
   const origConsoleLog = console.log.bind(console);
   const envKeys = ['NO_COLOR', 'RUNDOWN_LOG', 'CLAUDE_PLUGIN_ROOT', 'PATH', 'FORCE_COLOR'] as const;
-  const origEnv = Object.fromEntries(envKeys.map((k) => [k, process.env[k]]));
+  type EnvKey = (typeof envKeys)[number];
+  const origEnv = Object.fromEntries(envKeys.map((k) => [k, process.env[k]])) as Record<
+    EnvKey,
+    string | undefined
+  >;
 
   let stdoutBuf = '';
   let stderrBuf = '';

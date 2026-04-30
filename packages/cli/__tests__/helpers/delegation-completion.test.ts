@@ -52,7 +52,10 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     (
       fields: Omit<ResolvedCompletion, 'completedAt'> & { completedAt?: string },
     ) => ResolvedCompletion
-  >().mockImplementation((fields) => ({ completedAt: '2026-02-27T10:00:00.000Z', ...fields })),
+  >().mockImplementation((fields) => ({
+    ...fields,
+    completedAt: fields.completedAt ?? '2026-02-27T10:00:00.000Z',
+  })),
   deriveActiveFrame: mockFn<
     (state: RunbookState) => { frameKey: FrameKey; step: string; iteration?: number }
   >().mockImplementation((state) => ({
@@ -284,9 +287,10 @@ beforeEach(() => {
     .mockImplementation(
       (frameKey, entry, substepId) => `${String(frameKey)}|${String(entry)}|${substepId ?? ''}`,
     );
-  jest
-    .mocked(core.buildResolvedCompletion)
-    .mockImplementation((fields) => ({ completedAt: '2026-02-27T10:00:00.000Z', ...fields }));
+  jest.mocked(core.buildResolvedCompletion).mockImplementation((fields) => ({
+    ...fields,
+    completedAt: fields.completedAt ?? '2026-02-27T10:00:00.000Z',
+  }));
   jest.mocked(core.deriveActiveFrame).mockImplementation((state) => ({
     frameKey: (state.activeFrameKey ?? `${state.step}|`) as FrameKey,
     step: state.step,
