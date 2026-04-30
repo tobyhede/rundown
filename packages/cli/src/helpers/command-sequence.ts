@@ -103,7 +103,8 @@ export function parseRdCommandWithEnv(cmd: string): ParsedRdCommand | null {
   const hasOperators = shellArgs.some((entry) => typeof entry !== 'string');
   if (hasOperators) {
     const executable = findExecutableAfterEnvAssignments(shellArgs);
-    if (executable === 'rd' || executable === 'rundown') {
+    const hasRdToken = shellArgs.some((entry) => entry === 'rd' || entry === 'rundown');
+    if (executable === 'rd' || executable === 'rundown' || hasRdToken) {
       throw new Error(
         `Unsupported shell operators in scenario command: ${cmd}. ` +
           'Split into separate commands instead of using &&, ||, |, etc.',

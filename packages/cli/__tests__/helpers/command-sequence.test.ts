@@ -519,6 +519,12 @@ describe('parseRdCommandWithEnv', () => {
       /Unsupported shell operators/,
     );
   });
+
+  it('rejects rd tokens after shell operators', () => {
+    expect(() => parseRdCommandWithEnv('echo setup && rd pass')).toThrow(
+      /Unsupported shell operators/,
+    );
+  });
 });
 
 describe('extractRunbookReferences', () => {
