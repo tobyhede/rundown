@@ -877,9 +877,10 @@ async function updateStepDelegationChildRunId(
     if (ss.id === substepId && ss.delegation) {
       // When tokenHash is provided, match precisely; otherwise fall back to id match
       if (tokenHash && ss.delegation.tokenHash !== tokenHash) return ss;
+      const { token: _claimedToken, ...claimedDelegation } = ss.delegation;
       return {
         ...ss,
-        delegation: { ...ss.delegation, childRunId },
+        delegation: { ...claimedDelegation, childRunId },
       };
     }
     return ss;

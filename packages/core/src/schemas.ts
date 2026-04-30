@@ -1,6 +1,7 @@
 import * as path from 'node:path';
 import { z } from 'zod';
 import {
+  DELEGATION_TOKEN_PATTERN,
   DELEGATION_TOKEN_HASH_PATTERN,
   type delegationTokenHashBrand,
   type DelegationTokenHash,
@@ -287,18 +288,31 @@ export const ContextSnapshotSchema = z
     }
   });
 
+function isPendingDelegation(delegation: {
+  readonly childRunId: string | null;
+  readonly cancelledAt: string | null;
+}): boolean {
+  return delegation.childRunId === null && delegation.cancelledAt === null;
+}
+
 /**
  * Zod schema for delegation metadata attached to a substep.
  */
-export const StepDelegationSchema = z.object({
-  tokenHash: DelegationTokenHashSchema,
-  childRunbookPath: z.string(),
-  contextSnapshot: ContextSnapshotSchema,
-  childRunId: z.string().nullable(),
-  createdAt: z.string(),
-  cancelledAt: z.string().nullable(),
-  extraVars: z.record(z.string(), TemplateVarValueSchema).optional(),
-});
+export const StepDelegationSchema = z
+  .object({
+    token: z.string().regex(DELEGATION_TOKEN_PATTERN).optional(),
+    tokenHash: DelegationTokenHashSchema,
+    childRunbookPath: z.string(),
+    contextSnapshot: ContextSnapshotSchema,
+    childRunId: z.string().nullable(),
+    createdAt: z.string(),
+    cancelledAt: z.string().nullable(),
+    extraVars: z.record(z.string(), TemplateVarValueSchema).optional(),
+  })
+  .refine((delegation) => delegation.token === undefined || isPendingDelegation(delegation), {
+    message: 'token is only allowed while delegation is pending',
+    path: ['token'],
+  });
 
 /**
  * Zod schema for SubstepState
@@ -762,15 +776,21 @@ function makeContextSnapshotSchema(projectRoot: string): z.ZodTypeAny {
  * @returns Zod schema for StepDelegation with path-validated contextSnapshot
  */
 function makeStepDelegationSchema(projectRoot: string): z.ZodTypeAny {
-  return z.object({
-    tokenHash: DelegationTokenHashSchema,
-    childRunbookPath: z.string(),
-    contextSnapshot: makeContextSnapshotSchema(projectRoot),
-    childRunId: z.string().nullable(),
-    createdAt: z.string(),
-    cancelledAt: z.string().nullable(),
-    extraVars: z.record(z.string(), TemplateVarValueSchema).optional(),
-  });
+  return z
+    .object({
+      token: z.string().regex(DELEGATION_TOKEN_PATTERN).optional(),
+      tokenHash: DelegationTokenHashSchema,
+      childRunbookPath: z.string(),
+      contextSnapshot: makeContextSnapshotSchema(projectRoot),
+      childRunId: z.string().nullable(),
+      createdAt: z.string(),
+      cancelledAt: z.string().nullable(),
+      extraVars: z.record(z.string(), TemplateVarValueSchema).optional(),
+    })
+    .refine((delegation) => delegation.token === undefined || isPendingDelegation(delegation), {
+      message: 'token is only allowed while delegation is pending',
+      path: ['token'],
+    });
 }
 
 /**

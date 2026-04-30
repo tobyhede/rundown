@@ -73,6 +73,8 @@ export interface StatusOutputData {
     childRunId?: string;
     /** SHA-256 hash of the delegation token for cross-system correlation. */
     tokenHash: string;
+    /** Raw claim token, present only while the delegation is pending. */
+    token?: string;
   }>;
   /**
    * Parent linkage projection when this runbook was launched as a child.
@@ -295,6 +297,11 @@ export function buildActiveStatus(
             : ('pending' as const),
       ...(ss.delegation!.childRunId != null ? { childRunId: ss.delegation!.childRunId } : {}),
       tokenHash: ss.delegation!.tokenHash,
+      ...(ss.delegation!.childRunId == null &&
+      ss.delegation!.cancelledAt == null &&
+      ss.delegation!.token != null
+        ? { token: ss.delegation!.token }
+        : {}),
     }));
 
   return {

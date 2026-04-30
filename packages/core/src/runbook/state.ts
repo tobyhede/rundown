@@ -28,6 +28,26 @@ import {
 /** Current persisted state schema version. Bump whenever RunbookState shape changes incompatibly. */
 const CURRENT_SCHEMA_VERSION = 2;
 
+function patchSnapshotSubstepStates(
+  snapshot: unknown,
+  substepStates: readonly SubstepState[] | undefined,
+): unknown {
+  if (!snapshot || typeof snapshot !== 'object' || !('context' in snapshot)) {
+    return snapshot;
+  }
+  const context = (snapshot as { context?: unknown }).context;
+  if (!context || typeof context !== 'object') {
+    return snapshot;
+  }
+  return {
+    ...(snapshot as Record<string, unknown>),
+    context: {
+      ...(context as Record<string, unknown>),
+      substepStates,
+    },
+  };
+}
+
 /**
  * Thrown when a persisted state file was written by an older schema version.
  * Callers should surface this to the user with a prompt to run `rd prune --all`.
@@ -342,10 +362,18 @@ export class RunbookStateManager {
       templateVars: updatesTemplateVars,
       ...restUpdates
     } = updates;
+    const shouldPatchSnapshotSubstepStates =
+      restUpdates.substepStates !== undefined && restUpdates.snapshot === undefined;
+    const patchedRestUpdates = shouldPatchSnapshotSubstepStates
+      ? {
+          ...restUpdates,
+          snapshot: patchSnapshotSubstepStates(existing.snapshot, restUpdates.substepStates),
+        }
+      : restUpdates;
 
     const updated: RunbookState = {
       ...existing,
-      ...restUpdates,
+      ...patchedRestUpdates,
       variables: brandStoredOutputs({ ...existing.variables, ...(updatesVariables ?? {}) }),
       ...(updatesTemplateVars !== undefined
         ? { templateVars: brandInitialTemplateVars(updatesTemplateVars) }
