@@ -391,9 +391,13 @@ export type LoadAndParseResult = LoadAndParseSuccess | LoadAndParseFailure;
  * Performs:
  * 1. File discovery via `resolveRunbookFile`
  * 2. File read
- * 3. Parse (returns diagnostics as data, not exceptions)
- * 4. Frontmatter var validation (reserved variable names)
- * 5. Substep counting
+ * 3. Parse (returns `parseDiagnostics` as data, not exceptions)
+ * 4. Validate frontmatter `outputs` declarations with `validateOutputsDeclarations`
+ * 5. Merge `parseDiagnostics` and `outputsDiagnostics` into `diagnostics`
+ * 6. Substep counting
+ *
+ * Frontmatter variable validation is no longer performed here; the resulting
+ * `diagnostics` array combines parser diagnostics with outputs validation only.
  *
  * @param file - Runbook file path or namespace:name
  * @param cwd - Current working directory for resolution

@@ -145,7 +145,7 @@ REQUIRED:
 - `INPUTS:` is a YAML sequence of variable names the runbook accepts. Declarations only — entries do not carry values. Names must match `/^[a-zA-Z_][a-zA-Z0-9_]*$/` and must not collide with reserved/built-in names.
 - `REQUIRED:` is a subset of `INPUTS:`. Every name in `REQUIRED:` must also appear in `INPUTS:` — mismatch is a parse-time error. Missing values trigger a hard `MISSING_REQUIRED_VARS` error at resolution.
 
-Defaults are not carried in frontmatter. Provide values via `--input`, `--input-json`, `--input-file`, `RD_INPUT_*` env, project `.rundown/config.yaml`, or parent-forwarded variables (from a parent runbook's `OUTPUTS:`).
+Defaults are not carried in frontmatter. Provide values via `--input`, `--input-json`, `--input-file`, `RD_INPUT_*` env, parent-forwarded variables (from a parent runbook's `OUTPUTS:`), or project `.rundown/config.yaml`.
 
 Variable resolution precedence (highest → lowest): CLI `--input` / `--input-json` / `--input-file`, `RD_INPUT_*` env, parent-forwarded variables, project `.rundown/config.yaml`, built-in defaults.
 
