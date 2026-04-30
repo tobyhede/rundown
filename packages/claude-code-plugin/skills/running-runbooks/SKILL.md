@@ -103,6 +103,7 @@ OUTPUTS:
 At terminal completion, listed names are read from the merged variable space and written to `state.finalVars`. When the runbook completes as a child of a delegation, those `finalVars` are forwarded into the parent's `state.variables` via a `SET_VARIABLES` event — so the parent's later steps see `{{ PlanPath }}` automatically. No CLI plumbing required.
 
 **Receiving inputs** — declare what a runbook needs in frontmatter:
+
 ```yaml
 ---
 name: review-plan
@@ -113,9 +114,10 @@ REQUIRED:
   - PlanPath
 ---
 ```
-`INPUTS:` is a YAML sequence of variable names the runbook accepts (declarations only, no values). `REQUIRED:` must be a subset of `INPUTS:` — names listed in `REQUIRED:` must also appear in `INPUTS:`, otherwise the parser rejects the frontmatter. `REQUIRED:` causes a hard error at startup if the variable isn't supplied by any source (CLI `--input`, env `RD_INPUT_*`, parent forwarding, config). Inside the runbook, just reference `{{ PlanPath }}`.
 
-Defaults do not live in frontmatter. Supply them via `.rundown/config.yaml`, `--input-file`, `--input`, or `RD_INPUT_*` env.
+`INPUTS:` is a YAML sequence of variable names the runbook accepts (declarations only, no values). `REQUIRED:` must be a subset of `INPUTS:` — names listed in `REQUIRED:` must also appear in `INPUTS:`, otherwise the parser rejects the frontmatter. `REQUIRED:` causes a hard error at startup if the variable isn't supplied by any source: CLI `--input`, `--input-file`, or `--input-json`; environment variables via `RD_INPUT_*`; parent forwarding; or project `.rundown/config.yaml`. Inside the runbook, just reference `{{ PlanPath }}`.
+
+Defaults do not live in frontmatter. Supply them via `.rundown/config.yaml`, `--input`, `--input-file`, `--input-json`, or `RD_INPUT_*` env.
 
 ### Frontmatter casing convention
 
