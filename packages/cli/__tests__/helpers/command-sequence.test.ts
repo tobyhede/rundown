@@ -514,6 +514,10 @@ describe('parseRdCommandWithEnv', () => {
     expect(parseRdCommandWithEnv('FOO=bar echo ok && echo done')).toBeNull();
   });
 
+  it('returns null when rd is a shell command argument before an operator', () => {
+    expect(parseRdCommandWithEnv('echo rd && echo done')).toBeNull();
+  });
+
   it('rejects env-prefixed rd commands with operators', () => {
     expect(() => parseRdCommandWithEnv('RD_AGENT_ID=agent-a rd pass && echo done')).toThrow(
       /Unsupported shell operators/,
@@ -522,6 +526,12 @@ describe('parseRdCommandWithEnv', () => {
 
   it('rejects rd tokens after shell operators', () => {
     expect(() => parseRdCommandWithEnv('echo setup && rd pass')).toThrow(
+      /Unsupported shell operators/,
+    );
+  });
+
+  it('rejects env-prefixed rd commands after shell operators', () => {
+    expect(() => parseRdCommandWithEnv('echo setup && RD_AGENT_ID=agent-a rd pass')).toThrow(
       /Unsupported shell operators/,
     );
   });

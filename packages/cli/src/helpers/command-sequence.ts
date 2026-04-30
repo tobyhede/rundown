@@ -90,6 +90,26 @@ function findExecutableAfterEnvAssignments(shellArgs: Array<string | object>): s
   return null;
 }
 
+function hasRdExecutableInOperatorSeparatedSegment(shellArgs: Array<string | object>): boolean {
+  let segment: Array<string | object> = [];
+
+  for (const entry of shellArgs) {
+    if (typeof entry !== 'string') {
+      const executable = findExecutableAfterEnvAssignments(segment);
+      if (executable === 'rd' || executable === 'rundown') {
+        return true;
+      }
+      segment = [];
+      continue;
+    }
+
+    segment.push(entry);
+  }
+
+  const executable = findExecutableAfterEnvAssignments(segment);
+  return executable === 'rd' || executable === 'rundown';
+}
+
 /**
  * Parse a scenario command as an `rd` command, allowing leading environment
  * assignments such as `RD_AGENT_ID=a RD_SESSION_ID=s rd pass`.
@@ -102,9 +122,7 @@ export function parseRdCommandWithEnv(cmd: string): ParsedRdCommand | null {
   const shellArgs = shellParse(cmd);
   const hasOperators = shellArgs.some((entry) => typeof entry !== 'string');
   if (hasOperators) {
-    const executable = findExecutableAfterEnvAssignments(shellArgs);
-    const hasRdToken = shellArgs.some((entry) => entry === 'rd' || entry === 'rundown');
-    if (executable === 'rd' || executable === 'rundown' || hasRdToken) {
+    if (hasRdExecutableInOperatorSeparatedSegment(shellArgs)) {
       throw new Error(
         `Unsupported shell operators in scenario command: ${cmd}. ` +
           'Split into separate commands instead of using &&, ||, |, etc.',
