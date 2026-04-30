@@ -990,7 +990,7 @@ Implementation notes:
 - `scenario run` creates an isolated temp workspace, copies the scenario runbook into `.rundown/runbooks/`, copies referenced `*.runbook.md` children found in commands, and executes commands through `executeCommandSequence`.
 - `rd`/`rundown` commands are spawned directly as `node <cliPath> ...` so JSON output can be captured; non-`rd` commands run through the shell.
 - Leading command-scoped env assignments are supported for `rd` commands, for example `RD_AGENT_ID=a RD_SESSION_ID=s rd pass`. Shell operators in an `rd` command are rejected; split those commands into separate scenario entries.
-- Prefix a command with `! ` when a non-zero exit is expected. If an expected-failure command exits 0, the scenario fails; otherwise the failed command is allowed to continue.
+- Prefix a command with `!` followed by a literal space when a non-zero exit is expected. If an expected-failure command exits 0, the scenario fails; otherwise the failed command is allowed to continue.
 - Delegation tokens are captured from `rd delegate` JSON responses and from `step_entered.delegateFrontier` auto-issued tokens. `${TOKEN}` expands to the first captured token, `${TOKEN_2}` to the second, and so on.
 - `--input-file` dependencies are copied by directory. Scenario execution copies the entire containing directory for each relative `--input-file` path so YAML files that contain sibling `file:` references keep working. Absolute paths and `..` traversal are rejected.
 

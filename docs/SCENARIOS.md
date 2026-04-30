@@ -185,7 +185,7 @@ commands:
 
 Shell operators in an `rd`/`rundown` command are rejected (`&&`, `||`, `|`, etc.). Split those into separate `commands` entries. Non-`rd` commands run through the user's shell.
 
-Prefix a command with `! ` when a non-zero exit is the expected outcome:
+Prefix a command with `!` followed by a literal space when a non-zero exit is the expected outcome:
 
 ```yaml
 commands:
@@ -193,7 +193,7 @@ commands:
   - "! rd claim rdtk_invalid"
 ```
 
-For `! ` commands, exit code `0` is an error. For normal commands, a non-zero exit is an error unless the command output still produced a parsed terminal runbook result.
+For `!` commands, exit code `0` is an error. The `!` token must be followed by a space. For normal commands, a non-zero exit is an error unless the command output still produced a parsed terminal runbook result.
 
 ### Naming Convention
 
@@ -433,6 +433,6 @@ Scenarios and suite cases run in isolated temporary workspaces.
 
 For runbook-frontmatter scenarios, the runner copies the scenario's source runbook into the temp workspace's `.rundown/runbooks/` directory. It also scans commands for `*.runbook.md` references and copies those referenced runbooks from the source runbook's directory. Missing referenced runbooks fail before command execution.
 
-For `--input-file` arguments in frontmatter scenarios, both `--input-file path.yaml` and `--input-file=path.yaml` are detected, including inside `! ` expected-failure commands and env-prefixed `rd` commands. The runner copies the entire containing input-file directory because YAML input files may refer to sibling `file:` data sources. Absolute input-file paths and `..` traversal are rejected, and source and destination paths are resolved to ensure they stay inside the source directory and temp workspace.
+For `--input-file` arguments in frontmatter scenarios, both `--input-file` followed by `path.yaml` and `--input-file=path.yaml` are detected, including inside `!` expected-failure commands and env-prefixed `rd` commands. The `!` token must be followed by a space. The runner copies the entire containing input-file directory because YAML input files may refer to sibling `file:` data sources. Absolute input-file paths and `..` traversal are rejected, and source and destination paths are resolved to ensure they stay inside the source directory and temp workspace.
 
 For scenario suites, each case's `file` path is resolved relative to the suite file. The runner rejects absolute paths and `..` traversal, preserves the case file's subdirectory structure under `.rundown/runbooks/`, and also copies the main runbook flat by basename so bare-filename commands resolve. Referenced child runbooks are copied from the main runbook's directory first, then the suite directory, with path traversal rejected.

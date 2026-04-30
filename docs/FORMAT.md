@@ -45,7 +45,9 @@ version_field  ::= "version:" ws text
 author_field   ::= "author:" ws text
 tags_field     ::= "tags:" newline tag_list
 inputs_fm_field ::= "inputs:" newline input_list
+                  | "inputs:" ws inline_sequence
 required_field  ::= "required:" newline required_list
+                  | "required:" ws inline_sequence
 outputs_fm_field ::= "outputs:" newline output_fm_list
 
 name_string    ::= [a-zA-Z0-9_-] ( [a-zA-Z0-9_ -]* [a-zA-Z0-9_-] )?
@@ -53,13 +55,14 @@ tag_list       ::= ( ws "- " tag newline )+
 tag            ::= text
 input_list     ::= ( ws "- " variable_name newline )+
 required_list  ::= ( ws "- " variable_name newline )+
+inline_sequence ::= "[" variable_name ( "," variable_name )* "]"
 output_fm_list ::= ( ws "- " quoted_output_entry newline
                    | ws "- " output_entry newline )+
 ```
 
 Public frontmatter keys are case-insensitive (`inputs:`, `INPUTS:`, and `Inputs:` are equivalent); unknown keys are preserved with their original casing. All fields are optional.
 
-`inputs:` declares variable names only. Runtime values come from CLI flags, config, environment bridge variables, or delegation inheritance. Each name must match `variable_name` and must not be [reserved](#reserved-variable-names). `required:` entries must also be declared in `inputs:`.
+`inputs:` declares variable names only. Runtime values come from CLI flags, config, environment bridge variables, or delegation inheritance. Each name must match `variable_name` and must not be [reserved](#reserved-variable-names). `required:` entries must also be declared in `inputs:`. Both block YAML sequences and inline YAML sequences such as `inputs: [PlanPath]` are valid.
 
 `outputs:` uses the same entry grammar as [OUTPUTS directives](#context-directives). Quote entries that contain template expressions in YAML:
 
