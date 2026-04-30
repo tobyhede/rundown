@@ -345,6 +345,8 @@ Do child work.
 
       const start = await runCliInProcess('run --prompted runbooks/parent.runbook.md', workspace);
       expect(start.exitCode).toBe(0);
+      const parentId = (await getActiveState(workspace))?.id;
+      expect(parentId).toBeDefined();
       const frontier = findFrontierInEvents(parseConcatenatedJson(start.stdout)) ?? [];
       const token = frontier.find((entry) => entry.id === '1.1')?.token;
       expect(token).toBeDefined();
@@ -354,12 +356,15 @@ Do child work.
       expect(claim.exitCode).toBe(0);
       const childId = String(findActionOutput(claim.stdout)?.run_id);
 
-      // Anonymous pass — the resolver must not route to the agent-owned child.
-      // Whether it succeeds or errors on the parent is not the regression we're guarding;
-      // the invariant is that the agent's child remains untouched.
-      await runCliInProcess('pass --text', workspace);
+      // Anonymous pass — the resolver must route to the default-stack parent,
+      // never to the agent-owned child.
+      const passResult = await runCliInProcess('pass --text', workspace);
+      expect(passResult.exitCode).toBe(0);
 
+      const parent = await readRunbookState(workspace, parentId!);
       const child = await readRunbookState(workspace, childId);
+      expect(parent?.step).toBe('2');
+      expect(parent?.lifecycle).toBe('running');
       expect(child?.lifecycle).toBe('running');
     }, 30_000);
   });

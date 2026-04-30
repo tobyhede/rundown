@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { isError } from '../../src/errors.js';
@@ -271,6 +271,20 @@ describe('RunbookStateManager', () => {
   });
 
   describe('Load and save operations', () => {
+    it('rejects legacy per-agent stacks session shape', async () => {
+      await mkdir(join(testDir, '.rundown'), { recursive: true });
+      await writeFile(
+        join(testDir, '.rundown', 'session.json'),
+        JSON.stringify({
+          stacks: {
+            'agent:legacy-agent:session:legacy-session': ['legacy-run-id'],
+          },
+        }),
+      );
+
+      await expect(manager.loadSession()).rejects.toThrow(/Legacy per-agent session format/);
+    });
+
     it('load returns null for nonexistent runbook', async () => {
       const result = await manager.load('nonexistent-id');
       expect(result).toBeNull();

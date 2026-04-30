@@ -24,6 +24,7 @@ jest.unstable_mockModule('node:fs/promises', () => ({
 const { handleDelegationDispatch, buildChildInputFlags } = await import(
   '../../../src/workflow/hooks/delegation-dispatch.js'
 );
+const { handleSubagentStop } = await import('../../../src/workflow/hooks/subagent-stop.js');
 
 function hashToken(token: string): string {
   return `sha256:${createHash('sha256').update(token).digest('hex')}`;
@@ -35,7 +36,6 @@ describe('handleDelegationDispatch', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     setGet(session, 'metadata', {});
-    mockSet.mockResolvedValue(undefined);
     // Default: rd status --json fails (no active runbook)
     setExecSync(mockExecFileSyncError({ message: 'no active runbook' }));
   });
@@ -123,6 +123,65 @@ describe('handleDelegationDispatch', () => {
     expect(DelegationActiveTokensMetadataSchema.parse(written.delegation_active_tokens)).toEqual(
       written.delegation_active_tokens,
     );
+  });
+
+  it('round-trips per-agent token metadata from dispatch to SubagentStop', async () => {
+    // cspell:disable-next-line
+    const siblingToken = 'rdtk_BBCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+    setGet(session, 'metadata', {
+      delegation_active_tokens: {
+        'sibling-agent': {
+          kind: 'delegation-active-token',
+          agent_id: 'sibling-agent',
+          session_id: 'session-abc',
+          tokenHash: hashToken(siblingToken),
+          createdAt: '2026-04-28T00:00:00.000Z',
+        },
+      },
+    });
+
+    const dispatchInput = createMockHookInput('PreToolUse', {
+      agent_id: 'agent-123',
+      session_id: 'session-abc',
+      tool_name: 'Task',
+      tool_input: {
+        prompt: `Do the delegated work\nRD_CLAIM_TOKEN=${VALID_TOKEN}`,
+      },
+    });
+
+    await handleDelegationDispatch(dispatchInput);
+
+    const written = mockSet.mock.calls.at(-1)?.[1] as Record<string, unknown>;
+    expect(written.delegation_active_tokens).toMatchObject({
+      'agent-123': {
+        kind: 'delegation-active-token',
+        agent_id: 'agent-123',
+        session_id: 'session-abc',
+        tokenHash: hashToken(VALID_TOKEN),
+      },
+      'sibling-agent': {
+        agent_id: 'sibling-agent',
+        tokenHash: hashToken(siblingToken),
+      },
+    });
+    expect(JSON.stringify(written.delegation_active_tokens)).not.toContain(VALID_TOKEN);
+
+    setExecSync(mockExecFileSync(JSON.stringify({ active: false, stashed: false })));
+    const stopInput = createMockHookInput('SubagentStop', {
+      agent_id: 'agent-123',
+      session_id: 'session-abc',
+    });
+
+    await handleSubagentStop(stopInput);
+
+    expect(mockSet).toHaveBeenLastCalledWith('metadata', {
+      delegation_active_tokens: {
+        'sibling-agent': expect.objectContaining({
+          agent_id: 'sibling-agent',
+          tokenHash: hashToken(siblingToken),
+        }),
+      },
+    });
   });
 
   it('rejects write-side delegation_active_tokens schema drift', async () => {

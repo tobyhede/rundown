@@ -4,6 +4,7 @@ import {
   matchStepAssertions,
   formatStepAssertionDescription,
   substituteTokens,
+  parseRdCommandWithEnv,
   extractRunbookReferences,
   extractInputFileReferences,
 } from '../../src/helpers/command-sequence.js';
@@ -485,6 +486,57 @@ describe('substituteTokens', () => {
   });
 });
 
+describe('parseRdCommandWithEnv', () => {
+  it('parses plain rd commands', () => {
+    expect(parseRdCommandWithEnv('rd pass --text')).toEqual({
+      args: ['pass', '--text'],
+      env: {},
+    });
+  });
+
+  it('parses leading environment assignments for rd commands', () => {
+    expect(
+      parseRdCommandWithEnv("RD_AGENT_ID=agent-a RD_SESSION_ID='session a' rd claim rdtk_abc123"),
+    ).toEqual({
+      args: ['claim', 'rdtk_abc123'],
+      env: {
+        RD_AGENT_ID: 'agent-a',
+        RD_SESSION_ID: 'session a',
+      },
+    });
+  });
+
+  it('returns null for non-rd shell commands', () => {
+    expect(parseRdCommandWithEnv('echo hello')).toBeNull();
+  });
+
+  it('returns null for env-prefixed non-rd shell commands with operators', () => {
+    expect(parseRdCommandWithEnv('FOO=bar echo ok && echo done')).toBeNull();
+  });
+
+  it('returns null when rd is a shell command argument before an operator', () => {
+    expect(parseRdCommandWithEnv('echo rd && echo done')).toBeNull();
+  });
+
+  it('rejects env-prefixed rd commands with operators', () => {
+    expect(() => parseRdCommandWithEnv('RD_AGENT_ID=agent-a rd pass && echo done')).toThrow(
+      /Unsupported shell operators/,
+    );
+  });
+
+  it('rejects rd tokens after shell operators', () => {
+    expect(() => parseRdCommandWithEnv('echo setup && rd pass')).toThrow(
+      /Unsupported shell operators/,
+    );
+  });
+
+  it('rejects env-prefixed rd commands after shell operators', () => {
+    expect(() => parseRdCommandWithEnv('echo setup && RD_AGENT_ID=agent-a rd pass')).toThrow(
+      /Unsupported shell operators/,
+    );
+  });
+});
+
 describe('extractRunbookReferences', () => {
   it('extracts dot-prefixed relative path ./child.runbook.md', () => {
     const refs = extractRunbookReferences(['rd delegate ./child.runbook.md --step 1']);
@@ -511,6 +563,12 @@ describe('extractInputFileReferences', () => {
 
   it('extracts --input-file <path> (space form)', () => {
     const commands = ['rd run my.runbook.md --input-file data/sources.yaml'];
+    const result = extractInputFileReferences(commands);
+    expect(result).toEqual(['data/sources.yaml']);
+  });
+
+  it('extracts --input-file from expected-failure rd commands', () => {
+    const commands = ['! rd run my.runbook.md --input-file data/sources.yaml'];
     const result = extractInputFileReferences(commands);
     expect(result).toEqual(['data/sources.yaml']);
   });

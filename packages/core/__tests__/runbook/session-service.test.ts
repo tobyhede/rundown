@@ -462,6 +462,49 @@ describe('SessionService', () => {
       }
     });
 
+    it('restores a stashed middle child on top of an in-progress owner stack', async () => {
+      const parent = await manager.create('parent.md', mockRunbook, { runbookPath: 'parent.md' });
+      const childA = await manager.create('child-a.md', mockRunbook, {
+        runbookPath: 'child-a.md',
+      });
+      const childB = await manager.create('child-b.md', mockRunbook, {
+        runbookPath: 'child-b.md',
+      });
+      const childC = await manager.create('child-c.md', mockRunbook, {
+        runbookPath: 'child-c.md',
+      });
+      const linkageA = linkageFor(parent.id, '1');
+      const linkageB = linkageFor(parent.id, '2');
+      const linkageC = linkageFor(parent.id, '3');
+
+      await sessionService.claimRunbookForOwner(identity, childA.id, linkageA);
+      const claimedB = await sessionService.claimRunbookForOwner(identity, childB.id, linkageB);
+      expect(claimedB.status).toBe('claimed');
+      if (claimedB.status !== 'claimed') return;
+
+      await sessionService.stashRunbook(childB.id);
+      await sessionService.claimRunbookForOwner(identity, childC.id, linkageC);
+      await sessionService.unstashForOwner(identity);
+
+      const session = await manager.loadSession();
+      const ownerStack = Object.values(session.ownedRunbooks).flat();
+      expect(ownerStack.map((ownership) => ownership.childRunId)).toEqual([
+        childA.id,
+        childC.id,
+        childB.id,
+      ]);
+
+      const active = await sessionService.getActiveForOwner(identity);
+      expect(active.status).toBe('owned');
+      if (active.status === 'owned') {
+        expect(active.state.id).toBe(childB.id);
+        expect(active.ownership.claimedAt).toBe(claimedB.ownership.claimedAt);
+        expect(active.ownership.tokenHash).toBe(claimedB.ownership.tokenHash);
+        expect(active.ownership.parentRunId).toBe(parent.id);
+        expect(active.ownership.parentStepId).toBe('1');
+      }
+    });
+
     it('rejects same-owner re-claim of a stashed child with conflict', async () => {
       const parent = await manager.create('parent.md', mockRunbook, { runbookPath: 'parent.md' });
       const child = await manager.create('child.md', mockRunbook, { runbookPath: 'child.md' });

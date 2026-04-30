@@ -67,6 +67,89 @@ export interface CommandSequenceOptions {
   env?: Record<string, string | undefined>;
 }
 
+/** Parsed `rd` command with command-scoped environment assignments. */
+export interface ParsedRdCommand {
+  /** Arguments passed to the Rundown CLI, excluding the `rd` executable. */
+  args: string[];
+  /** Environment assignments that apply only to this command. */
+  env: Record<string, string>;
+}
+
+const ENV_ASSIGNMENT_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*=.*/;
+
+function findExecutableAfterEnvAssignments(shellArgs: Array<string | object>): string | null {
+  for (const entry of shellArgs) {
+    if (typeof entry !== 'string') {
+      return null;
+    }
+    if (ENV_ASSIGNMENT_PATTERN.test(entry)) {
+      continue;
+    }
+    return entry;
+  }
+  return null;
+}
+
+function hasRdExecutableInOperatorSeparatedSegment(shellArgs: Array<string | object>): boolean {
+  let segment: Array<string | object> = [];
+
+  for (const entry of shellArgs) {
+    if (typeof entry !== 'string') {
+      const executable = findExecutableAfterEnvAssignments(segment);
+      if (executable === 'rd' || executable === 'rundown') {
+        return true;
+      }
+      segment = [];
+      continue;
+    }
+
+    segment.push(entry);
+  }
+
+  const executable = findExecutableAfterEnvAssignments(segment);
+  return executable === 'rd' || executable === 'rundown';
+}
+
+/**
+ * Parse a scenario command as an `rd` command, allowing leading environment
+ * assignments such as `RD_AGENT_ID=a RD_SESSION_ID=s rd pass`.
+ *
+ * @param cmd - Scenario command string after token substitution
+ * @returns Parsed args/env for `rd`/`rundown`, or null for non-`rd` shell commands
+ * @throws {Error} When shell operators are present in an `rd` command
+ */
+export function parseRdCommandWithEnv(cmd: string): ParsedRdCommand | null {
+  const shellArgs = shellParse(cmd);
+  const hasOperators = shellArgs.some((entry) => typeof entry !== 'string');
+  if (hasOperators) {
+    if (hasRdExecutableInOperatorSeparatedSegment(shellArgs)) {
+      throw new Error(
+        `Unsupported shell operators in scenario command: ${cmd}. ` +
+          'Split into separate commands instead of using &&, ||, |, etc.',
+      );
+    }
+    return null;
+  }
+
+  const args = shellArgs as string[];
+  const env: Record<string, string> = {};
+  let commandIndex = 0;
+
+  while (commandIndex < args.length && ENV_ASSIGNMENT_PATTERN.test(args[commandIndex])) {
+    const assignment = args[commandIndex];
+    const equalsIndex = assignment.indexOf('=');
+    env[assignment.slice(0, equalsIndex)] = assignment.slice(equalsIndex + 1);
+    commandIndex++;
+  }
+
+  const executable = args[commandIndex];
+  if (executable !== 'rd' && executable !== 'rundown') {
+    return null;
+  }
+
+  return { args: args.slice(commandIndex + 1), env };
+}
+
 /**
  * Substitute captured token placeholders in a command string.
  *
@@ -402,9 +485,11 @@ export function extractInputFileReferences(commands: string[]): string[] {
   const result: string[] = [];
 
   for (const cmd of commands) {
-    const rdMatch = /^rd\s+(.*)$/.exec(cmd);
-    if (!rdMatch) continue;
-    const args = shellParse(rdMatch[1]).filter((a): a is string => typeof a === 'string');
+    const trimmed = cmd.trimStart();
+    const commandText = trimmed.startsWith('! ') ? trimmed.slice(2).trimStart() : cmd;
+    const parsed = parseRdCommandWithEnv(commandText);
+    if (!parsed) continue;
+    const args = parsed.args;
     for (let i = 0; i < args.length; i++) {
       const arg = args[i];
       let filePath: string | undefined;
@@ -428,9 +513,10 @@ export function extractInputFileReferences(commands: string[]): string[] {
  * Execute a sequence of commands in order, accumulating transitions and tokens.
  *
  * Handles `rd` commands (JSON is the default output format) and generic
- * shell commands. Token placeholders (`${TOKEN}`, `${TOKEN_2}`, etc.) are
- * substituted with previously captured delegation tokens before each
- * command runs. Tokens are extracted from parsed JSON `delegate` responses.
+ * shell commands. Prefix a command with `! ` when a non-zero exit is the
+ * expected outcome. Token placeholders (`${TOKEN}`, `${TOKEN_2}`, etc.) are
+ * substituted with previously captured delegation tokens before each command
+ * runs. Tokens are extracted from parsed JSON `delegate` responses.
  *
  * @param options - Execution options including commands, working directory, CLI path, and quiet flag
  * @returns Promise resolving to the terminal result, all transitions, and captured tokens
@@ -447,27 +533,25 @@ export async function executeCommandSequence(
   const { commands, cwd, cliPath, quiet, env } = options;
 
   for (const rawCmd of commands) {
+    const trimmedRaw = rawCmd.trimStart();
+    const expectsFailure = trimmedRaw.startsWith('! ');
+    const commandText = expectsFailure ? trimmedRaw.slice(2).trimStart() : rawCmd;
     // Token substitution — replace ${TOKEN}, ${TOKEN_2}, etc. with captured values
-    const cmd = substituteTokens(rawCmd, capturedTokens);
+    const cmd = substituteTokens(commandText, capturedTokens);
 
-    options.onCommandStart?.(cmd);
+    options.onCommandStart?.(expectsFailure ? `! ${cmd}` : cmd);
 
-    const rdMatch = /^rd\s+(.*)$/.exec(cmd);
+    const rdCommand = parseRdCommandWithEnv(cmd);
 
     let stdout: string;
 
-    if (rdMatch) {
+    if (rdCommand) {
       // rd command — parse args (JSON is the default output format)
-      const shellArgs = shellParse(rdMatch[1]);
-      const hasOperators = shellArgs.some((entry) => typeof entry !== 'string');
-      if (hasOperators) {
-        throw new Error(
-          `Unsupported shell operators in scenario command: ${cmd}. ` +
-            'Split into separate commands instead of using &&, ||, |, etc.',
-        );
-      }
-      const args = shellArgs as string[];
-      const result = await runCommandWithTee({ kind: 'rd', args }, { cwd, quiet, cliPath, env });
+      const commandEnv = { ...env, ...rdCommand.env };
+      const result = await runCommandWithTee(
+        { kind: 'rd', args: rdCommand.args },
+        { cwd, quiet, cliPath, env: commandEnv },
+      );
       stdout = result.stdout;
 
       // Parse JSON output to extract transitions, terminal state, and tokens
@@ -483,14 +567,20 @@ export async function executeCommandSequence(
       }
 
       // If the command failed and no terminal result was parsed, propagate the failure
-      if (result.exitCode !== 0 && jsonResult.terminal === null) {
+      if (expectsFailure && result.exitCode === 0) {
+        throw new Error(`Command was expected to fail but exited 0: ${cmd}`);
+      }
+      if (!expectsFailure && result.exitCode !== 0 && jsonResult.terminal === null) {
         throw new Error(`Command failed with exit code ${String(result.exitCode)}: ${cmd}`);
       }
     } else {
       // Shell command — execute directly
       const result = await runCommandWithTee({ kind: 'shell', cmd }, { cwd, quiet, cliPath, env });
       stdout = result.stdout;
-      if (result.exitCode !== 0) {
+      if (expectsFailure && result.exitCode === 0) {
+        throw new Error(`Shell command was expected to fail but exited 0: ${cmd}`);
+      }
+      if (!expectsFailure && result.exitCode !== 0) {
         throw new Error(`Shell command failed with exit code ${String(result.exitCode)}: ${cmd}`);
       }
     }
