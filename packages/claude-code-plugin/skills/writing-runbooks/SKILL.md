@@ -142,12 +142,12 @@ REQUIRED:
 ---
 ```
 
-- `INPUTS:` is a YAML sequence of variable names the runbook accepts. Declarations only — entries do not carry values. Names must match `/^[a-zA-Z_][a-zA-Z0-9_]*$/` and must not collide with reserved/built-in names.
-- `REQUIRED:` is a subset of `INPUTS:`. Every name in `REQUIRED:` must also appear in `INPUTS:` — mismatch is a parse-time error. Missing values trigger a hard `MISSING_REQUIRED_VARS` error at resolution.
+- `INPUTS:` is a YAML sequence of variable names the runbook accepts. Declarations only — entries do not carry values. Names must match `/^[a-zA-Z_][a-zA-Z0-9_]*$/` and must not collide with reserved/built-in names. Values may come from `.rundown/config.yaml`, `--input`, `--input-json`, `--input-file`, `RD_INPUT_*` env, or parent-forwarded vars from a parent runbook/step.
+- `REQUIRED:` is a subset of `INPUTS:`. Every name in `REQUIRED:` must also appear in `INPUTS:` — mismatch is a parse-time error. Missing values trigger a hard `MISSING_REQUIRED_VARS` error at resolution if not supplied by `.rundown/config.yaml`, `--input`, `--input-json`, `--input-file`, `RD_INPUT_*` env, or parent-forwarded vars from a parent runbook/step.
 
-Defaults are not carried in frontmatter. Provide values via `--input`, `--input-json`, `--input-file`, `RD_INPUT_*` env, parent-forwarded variables (from a parent runbook's `OUTPUTS:`), or project `.rundown/config.yaml`.
+Defaults are not carried in frontmatter. Provide values via `.rundown/config.yaml`, `--input`, `--input-json`, `--input-file`, `RD_INPUT_*` env, or parent-forwarded vars from a parent runbook/step.
 
-Variable resolution precedence (highest → lowest): CLI `--input` / `--input-json` / `--input-file`, `RD_INPUT_*` env, parent-forwarded variables, project `.rundown/config.yaml`, built-in defaults.
+Variable resolution precedence (highest → lowest): CLI flags (`--input-json` > `--input` > `--input-file`), `RD_INPUT_*` environment variables, parent-forwarded variables, project `.rundown/config.yaml`, built-in defaults.
 
 ## Transitions
 
@@ -237,8 +237,8 @@ Use `{{ variableName }}` syntax. See [CLAUDE.md — Template Variables](../../..
 
 Key authoring notes:
 - Undefined variables preserved as literal `{{ variable }}` text
-- Frontmatter `INPUTS:` declares names only — defaults come from `.rundown/config.yaml`, `--input`, `--input-json`, `--input-file`, or `RD_INPUT_*` env
-- Data sources for FOR loops: use `--input-json` for inline arrays, or `.rundown/config.yaml` / `--input-file` for arrays and `file:` values
+- Frontmatter `INPUTS:` declares names only — values may come from `.rundown/config.yaml`, `--input`, `--input-json`, `--input-file`, `RD_INPUT_*` env, or parent-forwarded vars from a parent runbook/step
+- Data sources for FOR loops: use `--input-json` for inline arrays, or `.rundown/config.yaml`, `--input-file`, or parent-forwarded vars from a parent runbook/step for arrays and `file:` values
 
 ## Common Mistakes
 
@@ -248,7 +248,7 @@ Key authoring notes:
 | Command block + substeps in same step | Choose one — cannot mix |
 | OUTPUTS after transitions | Content order: OUTPUTS → FOR → transitions → body |
 | Reserved word as step ID | `PASS`, `FAIL`, `CONTINUE`, etc. are reserved |
-| `INPUTS:` written as a key→default map (`VarName: default`) | `INPUTS:` is a YAML sequence of bare names (`- VarName`). Defaults live in config / `--input-file` / `--input-json` / env, not in frontmatter. |
+| `INPUTS:` written as a key→default map (`VarName: default`) | `INPUTS:` is a YAML sequence of bare names (`- VarName`). Values may come from `.rundown/config.yaml`, `--input`, `--input-json`, `--input-file`, `RD_INPUT_*` env, or parent-forwarded vars from a parent runbook/step, not frontmatter defaults. |
 | Name in `REQUIRED:` not declared in `INPUTS:` | `REQUIRED:` must be a subset of `INPUTS:`. Add the name to `INPUTS:` too. |
 | Skipping `rd check` | Always validate: `rd check <file>` |
 

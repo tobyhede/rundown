@@ -44,18 +44,26 @@ desc_field     ::= "description:" ws text
 version_field  ::= "version:" ws text
 author_field   ::= "author:" ws text
 tags_field     ::= "tags:" newline tag_list
-inputs_fm_field ::= "inputs:" newline inputs_map
+inputs_fm_field ::= "inputs:" newline input_list
+                  | "inputs:" ws inline_sequence
 required_field  ::= "required:" newline required_list
+                  | "required:" ws inline_sequence
+outputs_fm_field ::= "outputs:" newline output_fm_list
+                   | "outputs:" ws inline_output_sequence
 
 name_string    ::= [a-zA-Z0-9_-] ( [a-zA-Z0-9_ -]* [a-zA-Z0-9_-] )?
 tag_list       ::= ( ws "- " tag newline )+
 tag            ::= text
-inputs_map     ::= ( ws variable_name ":" ws value newline )+
-value          ::= text
+input_list     ::= ( ws "- " variable_name newline )+
 required_list  ::= ( ws "- " variable_name newline )+
+inline_sequence ::= "[" variable_name ( "," variable_name )* "]"
+output_fm_list ::= ( ws "- " quoted_output_entry newline
+                   | ws "- " output_entry newline )+
+inline_output_sequence ::= "[" ( output_sequence_entry ( "," output_sequence_entry )* )? "]"
+output_sequence_entry  ::= output_entry | quoted_output_entry
 ```
 
-Additional fields beyond those listed are preserved (open schema). All fields are optional.
+Public frontmatter keys are case-insensitive (`inputs:`, `INPUTS:`, and `Inputs:` are equivalent); unknown keys are preserved with their original casing. All fields are optional.
 
 ## Steps
 
@@ -90,12 +98,13 @@ Substeps cannot contain nested substeps. See [SPEC.md §1.1](./SPEC.md) for the 
 outputs_directive ::= "- OUTPUTS" newline output_list
 output_list       ::= ( ws "- " output_entry newline )+
 output_entry      ::= variable_name ( ws output_value )?
+quoted_output_entry ::= quoted_string
 output_value      ::= helper_call | template_variable | quoted_string | variable_name
 helper_call       ::= "{{" ws? variable_name ( ws argument )+ ws? "}}"
 argument          ::= quoted_string | variable_path
 ```
 
-A step or substep may declare at most one OUTPUTS directive. Duplicate directives on the same target are rejected. The `- INPUTS` directive has been removed — use the frontmatter `inputs:` field to declare default variable values.
+A step or substep may declare at most one OUTPUTS directive. Duplicate directives on the same target are rejected.
 
 OUTPUTS declares values to inject into the runbook's live variable space
 after step completion. An entry may be a **naked declaration** (name only)
