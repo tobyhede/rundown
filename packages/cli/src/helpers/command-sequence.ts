@@ -466,7 +466,9 @@ export function extractInputFileReferences(commands: string[]): string[] {
   const result: string[] = [];
 
   for (const cmd of commands) {
-    const parsed = parseRdCommandWithEnv(cmd);
+    const trimmed = cmd.trimStart();
+    const commandText = trimmed.startsWith('! ') ? trimmed.slice(2).trimStart() : cmd;
+    const parsed = parseRdCommandWithEnv(commandText);
     if (!parsed) continue;
     const args = parsed.args;
     for (let i = 0; i < args.length; i++) {
