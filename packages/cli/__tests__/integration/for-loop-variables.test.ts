@@ -394,7 +394,7 @@ describe('Per-step variable expansion ({{Step}}, {{Index}}, FOR loop variables)'
     });
     await writeFile(join(workspace.cwd, 'for-var-bounds.runbook.md'), content);
 
-    const result = runCli('run for-var-bounds.runbook.md', workspace);
+    const result = runCli('run for-var-bounds.runbook.md --input Max=3', workspace);
     expect(result.exitCode).toBe(0);
 
     const events = result.stdout

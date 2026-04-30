@@ -22,12 +22,26 @@ export function registerGotoCommand(program: Command): void {
           const output = new OutputEmitter({ text: options.text });
           const cwd = getCwd();
 
-          const ctx = await buildGotoContext(output, cwd);
-          if (!ctx) {
-            output.noActiveRunbook('goto');
-            output.flush();
-            return;
+          const contextResult = await buildGotoContext(output, cwd);
+          switch (contextResult.kind) {
+            case 'ready':
+              break;
+            case 'none':
+              output.noActiveRunbook('goto');
+              output.flush();
+              return;
+            case 'stale_owner':
+            case 'invalid_identity':
+              output.error(contextResult.message, 'OWNED_RUNBOOK_UNAVAILABLE');
+              output.flush();
+              process.exitCode = 1;
+              return;
+            default: {
+              const _exhaustive: never = contextResult;
+              return _exhaustive;
+            }
           }
+          const ctx = contextResult.ctx;
 
           const validation = validateGotoTarget(stepArg, ctx.steps, options.index);
           if (!validation.ok) {

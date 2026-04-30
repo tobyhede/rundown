@@ -7,6 +7,7 @@ import type {
   SubstepState,
 } from '../../src/runbook/types.js';
 import type { RunbookContext } from '../../src/runbook/compiler.js';
+import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import { brandEffectiveVarsForTest } from '../helpers/effective-vars.js';
 import { Errors } from '../../src/errors/factory.js';
@@ -25,6 +26,11 @@ const { retryDelegation } = await import('../../src/runbook/delegation-service.j
 const { runRetryHook, asTemplateVars } = await import('../../src/runbook/retry-hook.js');
 
 const mockedRetryDelegation = retryDelegation as jest.MockedFunction<typeof retryDelegation>;
+const HASH_TEST = assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`);
+const HASH_NEW = assertDelegationTokenHash(`sha256:${'b'.repeat(64)}`);
+const HASH_STALE = assertDelegationTokenHash(`sha256:${'c'.repeat(64)}`);
+const HASH_ORPHAN = assertDelegationTokenHash(`sha256:${'d'.repeat(64)}`);
+const HASH_NO_AT = assertDelegationTokenHash(`sha256:${'e'.repeat(64)}`);
 
 describe('asTemplateVars', () => {
   it('passes through strings, numbers, arrays, and objects unchanged', () => {
@@ -124,7 +130,7 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
     const steps: ResolvedStep[] = [parentStep];
 
     const fixtureDelegation: StepDelegation = {
-      tokenHash: 'hash_test',
+      tokenHash: HASH_TEST,
       childRunbookPath: 'child-1.md',
       childRunId: null,
       createdAt: '2026-01-01T00:00:00.000Z',
@@ -173,7 +179,7 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
     // id is "1.2.1", not "1.1".
     const { context, parentStep, steps, originalSubstepStates } = buildInputs();
     const delegation: StepDelegation = {
-      tokenHash: 'hash_new',
+      tokenHash: HASH_NEW,
       childRunbookPath: 'child-1.md',
       childRunId: null,
       createdAt: '2026-01-01T00:00:00.000Z',
@@ -190,7 +196,7 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
     mockedRetryDelegation.mockImplementation(() => ({
       status: 'retried' as const,
       token: 'rdtk_new_token',
-      tokenHash: 'hash_new',
+      tokenHash: HASH_NEW,
       delegation,
       updatedSubstepStates: [...originalSubstepStates],
     }));
@@ -303,7 +309,7 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
     const steps: ResolvedStep[] = [parentStep];
 
     const staleDelegation: StepDelegation = {
-      tokenHash: 'hash_stale',
+      tokenHash: HASH_STALE,
       childRunbookPath: 'child-1.md',
       childRunId: null,
       createdAt: '2026-01-01T00:00:00.000Z',
@@ -389,7 +395,7 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
     const steps: ResolvedStep[] = [parentStep];
 
     const orphanDelegation: StepDelegation = {
-      tokenHash: 'hash_orphan',
+      tokenHash: HASH_ORPHAN,
       childRunbookPath: 'child-99.md',
       childRunId: null,
       createdAt: '2026-01-01T00:00:00.000Z',
@@ -444,7 +450,7 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
     // would mis-target the re-entry frontier (e.g. "1.1" for an iteration-2 retry).
     const { context, parentStep, steps, originalSubstepStates } = buildInputs();
     const delegation: StepDelegation = {
-      tokenHash: 'hash_no_at',
+      tokenHash: HASH_NO_AT,
       childRunbookPath: 'child-1.md',
       childRunId: null,
       createdAt: '2026-01-01T00:00:00.000Z',
@@ -460,7 +466,7 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
     mockedRetryDelegation.mockImplementation(() => ({
       status: 'retried' as const,
       token: 'rdtk_new_token',
-      tokenHash: 'hash_no_at',
+      tokenHash: HASH_NO_AT,
       delegation,
       updatedSubstepStates: [...originalSubstepStates],
     }));

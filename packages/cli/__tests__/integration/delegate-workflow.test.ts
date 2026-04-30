@@ -9,6 +9,7 @@ import {
   readRunbookState,
   readSession,
   writeSession,
+  parseConcatenatedJson,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 
@@ -35,61 +36,6 @@ interface StepEnteredEvent {
   delegateFrontier?: FrontierEntry[];
   stepName?: string;
   position?: unknown;
-}
-
-/**
- * Walk a stdout buffer that may contain multiple concatenated JSON values
- * (pretty-printed or compact) and yield each top-level parsed value.
- *
- * Used because `rd run` emits event objects and a terminal status object,
- * and those objects may be pretty-printed with newlines so line-by-line
- * JSON parsing won't work.
- *
- * Copied from `__tests__/commands/collect.test.ts` (end-to-end CLI flow).
- *
- * @param raw - Raw stdout string
- * @returns Array of parsed JSON values in document order
- */
-function parseConcatenatedJson(raw: string): unknown[] {
-  const results: unknown[] = [];
-  let i = 0;
-  while (i < raw.length) {
-    while (i < raw.length && /\s/.test(raw[i])) i++;
-    if (i >= raw.length) break;
-    const start = i;
-    let depth = 0;
-    let inString = false;
-    let escaped = false;
-    for (; i < raw.length; i++) {
-      const ch = raw[i];
-      if (inString) {
-        if (escaped) {
-          escaped = false;
-        } else if (ch === '\\') {
-          escaped = true;
-        } else if (ch === '"') {
-          inString = false;
-        }
-      } else if (ch === '"') {
-        inString = true;
-      } else if (ch === '{' || ch === '[') {
-        depth++;
-      } else if (ch === '}' || ch === ']') {
-        depth--;
-        if (depth === 0) {
-          i++;
-          break;
-        }
-      }
-    }
-    const chunk = raw.slice(start, i);
-    try {
-      results.push(JSON.parse(chunk));
-    } catch {
-      // skip malformed chunk
-    }
-  }
-  return results;
 }
 
 /**
@@ -966,7 +912,7 @@ describe('DELEGATE re-entry and retry', () => {
       // instead we manually rewrite the session to place parent at the top.
       const session = await readSession(workspace);
       await writeSession(workspace, {
-        stashed: session.stashed,
+        ...(session.stashed ? { stashed: session.stashed } : {}),
         defaultStack: [parentRunId],
       });
 
@@ -993,7 +939,7 @@ describe('DELEGATE re-entry and retry', () => {
       const { parentRunId, priorDelegation } = await setupClaimed();
       const session = await readSession(workspace);
       await writeSession(workspace, {
-        stashed: session.stashed,
+        ...(session.stashed ? { stashed: session.stashed } : {}),
         defaultStack: [parentRunId],
       });
       const retry = await runCliInProcess(['delegate', '--retry'], workspace);

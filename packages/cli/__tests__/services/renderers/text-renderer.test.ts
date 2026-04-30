@@ -790,6 +790,8 @@ describe('TextRenderer', () => {
     it('renders delegations section when present', () => {
       const writer = createMockWriter();
       const renderer = new TextRenderer({ writer });
+      const pendingToken = 'rdtk_TEST_PENDING_TOKEN';
+      const claimedToken = 'rdtk_TEST_CLAIMED_TOKEN';
 
       const event: DetailOutput = {
         type: 'detail',
@@ -801,8 +803,19 @@ describe('TextRenderer', () => {
           position: { current: '1', total: 2 },
           step: { name: '1', description: 'Review' },
           delegations: [
-            { substep: '1.1', runbook: 'review-code.md', state: 'pending' },
-            { substep: '1.2', runbook: 'review-tests.md', state: 'claimed', childRunId: 'run_abc' },
+            {
+              substep: '1.1',
+              runbook: 'review-code.md',
+              state: 'pending',
+              token: pendingToken,
+            },
+            {
+              substep: '1.2',
+              runbook: 'review-tests.md',
+              state: 'claimed',
+              childRunId: 'run_abc',
+              token: claimedToken,
+            },
             { substep: '1.3', runbook: 'review-security.md', state: 'cancelled' },
           ],
         },
@@ -815,9 +828,11 @@ describe('TextRenderer', () => {
       expect(output).toContain('Delegations:');
       expect(output).toContain('1.1');
       expect(output).toContain('review-code.md');
-      expect(output).toContain('(pending claim)');
+      expect(output).toContain(`(pending claim: ${pendingToken})`);
+      expect(output).toContain(pendingToken);
       expect(output).toContain('1.2');
       expect(output).toContain('(claimed: run_abc)');
+      expect(output).not.toContain(claimedToken);
       expect(output).toContain('1.3');
       expect(output).toContain('(cancelled)');
     });

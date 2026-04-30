@@ -525,10 +525,13 @@ describe('Inline linkage integration (rd run --step)', () => {
 
   describe('variable and context inheritance', () => {
     it('inline child inherits parent template vars', async () => {
-      await writeParentRunbook({ Region: 'us-west' });
+      await writeParentRunbook({ Region: 'frontmatter-region' });
       await writePassingChild();
 
-      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      let result = await runCliInProcess(
+        'run --prompted parent.runbook.md --input Region=cli-region --text',
+        workspace,
+      );
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);
@@ -540,7 +543,7 @@ describe('Inline linkage integration (rd run --step)', () => {
       const childState = await findChildState(parentRunId);
       expect(childState).not.toBeNull();
       const templateVars = childState!.templateVars as Record<string, unknown>;
-      expect(templateVars.Region).toBe('us-west');
+      expect(templateVars.Region).toBe('cli-region');
     });
 
     it('inline child auto-executes when parent is prompted', async () => {
@@ -568,7 +571,10 @@ describe('Inline linkage integration (rd run --step)', () => {
       await writeParentRunbook({ AppName: 'rundown' });
       await writePassingChild();
 
-      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      let result = await runCliInProcess(
+        'run --prompted parent.runbook.md --input AppName=rundown --text',
+        workspace,
+      );
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);
@@ -588,7 +594,10 @@ describe('Inline linkage integration (rd run --step)', () => {
       await writeParentRunbook({ Region: 'us-west' });
       await writePassingChild();
 
-      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      let result = await runCliInProcess(
+        'run --prompted parent.runbook.md --input Region=us-west --text',
+        workspace,
+      );
       expect(result.exitCode).toBe(0);
 
       const parentState = await getActiveState(workspace);

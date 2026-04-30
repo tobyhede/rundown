@@ -1,7 +1,7 @@
 ---
 name: snapshot-child
 description: Child runbook that consumes Message from parent delegation
-required:
+inputs:
   - Message
 ---
 # Snapshot Child

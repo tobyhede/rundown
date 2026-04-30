@@ -15,6 +15,9 @@ export {
   ActionSchema,
   TransitionsSchema,
   // Delegation schemas
+  DelegationTokenHashSchema,
+  AgentRunbookOwnershipSchema,
+  SessionDataSchema,
   StepDelegationSchema,
   ContextSnapshotSchema,
   AncestorSnapshotSchema,

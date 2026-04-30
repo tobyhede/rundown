@@ -1,10 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { writeFile, rm } from 'node:fs/promises';
+import { readFile, writeFile, rm, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   createTestWorkspace,
   runCliInProcess,
   readSession,
+  getActiveState,
+  findActionOutput,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 
@@ -81,6 +83,223 @@ describe('status command', () => {
 
     expect(result.exitCode).toBe(0);
     const output = JSON.parse(result.stdout);
+    expect(output.active).toBe(false);
+    expect(output.stashed).toBe(true);
+    expect(output.file).toContain('simple.runbook.md');
+  });
+});
+
+describe('agent-owned delegated children', () => {
+  let workspace: TestWorkspace;
+
+  beforeEach(async () => {
+    workspace = await createTestWorkspace();
+  });
+
+  afterEach(async () => {
+    await workspace.cleanup();
+  });
+
+  it('resolves status to the caller-owned child before the default stack', async () => {
+    const parentRunbook = [
+      '# Parent',
+      '',
+      '## 1. Fan out',
+      '',
+      '- PASS ALL CONTINUE',
+      '- FAIL ANY STOP',
+      '',
+      '### 1.1 First child',
+      '',
+      'Do first child.',
+      '',
+      '### 1.2 Second child',
+      '',
+      'Do second child.',
+      '',
+    ].join('\n');
+    const childRunbook = [
+      '# Child',
+      '',
+      '## 1. Work',
+      '',
+      '- PASS COMPLETE',
+      '- FAIL STOP',
+      '',
+      'Do child work.',
+      '',
+    ].join('\n');
+
+    await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
+    await writeFile(join(workspace.cwd, 'runbooks', 'parent-status.md'), parentRunbook);
+    await writeFile(join(workspace.cwd, 'runbooks', 'child-status.md'), childRunbook);
+
+    await runCliInProcess('run --prompted runbooks/parent-status.md --text', workspace);
+    const parentId = (await getActiveState(workspace))!.id;
+
+    let result = await runCliInProcess('delegate runbooks/child-status.md --step 1.1', workspace);
+    const token1 = JSON.parse(result.stdout).token as string;
+    result = await runCliInProcess('delegate runbooks/child-status.md --step 1.2', workspace);
+    const token2 = JSON.parse(result.stdout).token as string;
+
+    result = await runCliInProcess(`claim ${token1}`, workspace, {
+      env: { RD_AGENT_ID: 'status-agent-1', RD_SESSION_ID: 'status-session' },
+    });
+    const child1Output = findActionOutput(result.stdout);
+    expect(typeof child1Output?.run_id).toBe('string');
+    if (typeof child1Output?.run_id !== 'string') {
+      throw new Error('Expected first claim output to include run_id');
+    }
+    const child1Id = child1Output.run_id;
+
+    result = await runCliInProcess(`claim ${token2}`, workspace, {
+      env: { RD_AGENT_ID: 'status-agent-2', RD_SESSION_ID: 'status-session' },
+    });
+    const child2Output = findActionOutput(result.stdout);
+    expect(typeof child2Output?.run_id).toBe('string');
+    if (typeof child2Output?.run_id !== 'string') {
+      throw new Error('Expected second claim output to include run_id');
+    }
+    const child2Id = child2Output.run_id;
+
+    let status = await runCliInProcess('status', workspace, {
+      env: { RD_AGENT_ID: 'status-agent-1', RD_SESSION_ID: 'status-session' },
+    });
+    expect(JSON.parse(status.stdout).state).toContain(child1Id);
+
+    status = await runCliInProcess('status', workspace, {
+      env: { RD_AGENT_ID: 'status-agent-2', RD_SESSION_ID: 'status-session' },
+    });
+    expect(JSON.parse(status.stdout).state).toContain(child2Id);
+
+    status = await runCliInProcess('status', workspace);
+    expect(JSON.parse(status.stdout).state).toContain(parentId);
+  });
+
+  async function setupOwnedStash() {
+    const parentRunbook = [
+      '# Parent Secret',
+      '',
+      '## 1. Fan out',
+      '',
+      '- PASS ALL CONTINUE',
+      '- FAIL ANY STOP',
+      '',
+      '### 1.1 Child',
+      '',
+      'Do child.',
+      '',
+    ].join('\n');
+    const childRunbook = [
+      '# Child Secret',
+      '',
+      '## 1. Work',
+      '',
+      '- PASS COMPLETE',
+      '- FAIL STOP',
+      '',
+      'Do child work.',
+      '',
+    ].join('\n');
+
+    await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
+    await writeFile(join(workspace.cwd, 'runbooks', 'parent-secret.md'), parentRunbook);
+    await writeFile(join(workspace.cwd, 'runbooks', 'child-secret.md'), childRunbook);
+
+    await runCliInProcess('run --prompted runbooks/parent-secret.md --text', workspace);
+    const delegated = await runCliInProcess(
+      'delegate runbooks/child-secret.md --step 1.1',
+      workspace,
+    );
+    const token = JSON.parse(delegated.stdout).token as string;
+    const agentA = { env: { RD_AGENT_ID: 'agent-a', RD_SESSION_ID: 'shared-session' } };
+    const claimed = await runCliInProcess(`claim ${token}`, workspace, agentA);
+    const claimOutput = findActionOutput(claimed.stdout);
+    expect(typeof claimOutput?.run_id).toBe('string');
+    if (typeof claimOutput?.run_id !== 'string') {
+      throw new Error('Expected claim output to include run_id');
+    }
+    const childRunId = claimOutput.run_id;
+
+    const stateFile = join(workspace.statePath(), `${childRunId}.json`);
+    const state = JSON.parse(await readFile(stateFile, 'utf-8')) as Record<string, unknown>;
+    state.variables = { secretOutput: 'top-secret-output' };
+    state.templateVars = { secretInput: 'top-secret-input' };
+    await writeFile(stateFile, JSON.stringify(state, null, 2));
+
+    await runCliInProcess('stash --text', workspace, agentA);
+    const sessionFile = workspace.sessionPath();
+    const session = JSON.parse(await readFile(sessionFile, 'utf-8')) as Record<string, unknown>;
+    session.defaultStack = [];
+    await writeFile(sessionFile, JSON.stringify(session, null, 2));
+    return { childRunId, agentA };
+  }
+
+  it('anonymous caller cannot see an owned stash', async () => {
+    await setupOwnedStash();
+
+    const status = await runCliInProcess('status', workspace);
+
+    expect(status.exitCode).toBe(0);
+    expect(JSON.parse(status.stdout)).toEqual(
+      expect.objectContaining({ active: false, stashed: false }),
+    );
+    expect(status.stdout).not.toContain('child-secret.md');
+    expect(status.stdout).not.toContain('top-secret-input');
+    expect(status.stdout).not.toContain('top-secret-output');
+  });
+
+  it('cross-agent identified caller cannot see an owned stash', async () => {
+    await setupOwnedStash();
+
+    const status = await runCliInProcess('status', workspace, {
+      env: { RD_AGENT_ID: 'agent-b', RD_SESSION_ID: 'shared-session' },
+    });
+
+    expect(status.exitCode).toBe(0);
+    expect(JSON.parse(status.stdout)).toEqual(
+      expect.objectContaining({ active: false, stashed: false }),
+    );
+    expect(status.stdout).not.toContain('child-secret.md');
+    expect(status.stdout).not.toContain('top-secret-input');
+    expect(status.stdout).not.toContain('top-secret-output');
+  });
+
+  it('owner can see their own stashed status', async () => {
+    const { childRunId, agentA } = await setupOwnedStash();
+
+    const status = await runCliInProcess('status', workspace, agentA);
+    const output = JSON.parse(status.stdout);
+
+    expect(status.exitCode).toBe(0);
+    expect(output.active).toBe(false);
+    expect(output.stashed).toBe(true);
+    expect(output.file).toContain('child-secret.md');
+    expect(output.state).toContain(childRunId);
+    expect(output.parentLinkage).toEqual(
+      expect.objectContaining({
+        kind: 'delegation',
+        parentStepId: '1',
+      }),
+    );
+    expect(output.vars).toEqual(
+      expect.objectContaining({
+        secretInput: 'top-secret-input',
+        secretOutput: 'top-secret-output',
+      }),
+    );
+  });
+
+  it('anonymous stash remains visible to identified callers', async () => {
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+    await runCliInProcess('stash --text', workspace);
+
+    const status = await runCliInProcess('status', workspace, {
+      env: { RD_AGENT_ID: 'agent-a', RD_SESSION_ID: 'shared-session' },
+    });
+    const output = JSON.parse(status.stdout);
+
+    expect(status.exitCode).toBe(0);
     expect(output.active).toBe(false);
     expect(output.stashed).toBe(true);
     expect(output.file).toContain('simple.runbook.md');
@@ -240,6 +459,112 @@ describe('complete command', () => {
 
     const output = JSON.parse(result.stdout);
     expect(output.message).toBe('Runbook completed successfully');
+  });
+
+  it('cleans up stale owned runbook state for identified callers', async () => {
+    const parentRunbook = `## 1. Review
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+### 1.1 Child
+Do child.
+`;
+    const childRunbook = `## 1. Child
+- PASS COMPLETE
+
+Do work.
+`;
+    await writeFile(join(workspace.cwd, 'parent.runbook.md'), parentRunbook);
+    await writeFile(join(workspace.cwd, 'child.runbook.md'), childRunbook);
+
+    let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+    expect(result.exitCode).toBe(0);
+    const parentState = await getActiveState(workspace);
+    expect(parentState).not.toBeNull();
+    result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
+    expect(result.exitCode).toBe(0);
+    const token = JSON.parse(result.stdout).token as string;
+    const agent = { env: { RD_AGENT_ID: 'stale-complete-agent', RD_SESSION_ID: 'stale-complete' } };
+
+    result = await runCliInProcess(`claim ${token}`, workspace, agent);
+    expect(result.exitCode).toBe(0);
+    const childRunId = findActionOutput(result.stdout)?.run_id;
+    expect(typeof childRunId).toBe('string');
+    await rm(join(workspace.statePath(), `${String(childRunId)}.json`));
+
+    result = await runCliInProcess('complete --text', workspace, agent);
+    expect(result.exitCode).toBe(0);
+
+    const session = await readSession(workspace);
+    expect(Object.values(session.ownedRunbooks).flat()).not.toContainEqual(
+      expect.objectContaining({ childRunId }),
+    );
+    expect(session.defaultStack).toContain(parentState!.id);
+    expect(session.active).toBe(parentState!.id);
+  });
+
+  it('pops orphaned default-stack entry when state file is missing', async () => {
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+    const state = await getActiveState(workspace);
+    const stateId = state!.id;
+    await rm(join(workspace.statePath(), `${stateId}.json`));
+
+    const result = await runCliInProcess('complete', workspace);
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout).message).toBe('Removed unusable runbook state from session');
+    const session = await readSession(workspace);
+    expect(session.active).toBeNull();
+    expect(session.defaultStack).toHaveLength(0);
+  });
+
+  it('pops orphaned default-stack entry when state file is corrupted', async () => {
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+    const state = await getActiveState(workspace);
+    const stateId = state!.id;
+    await writeFile(join(workspace.statePath(), `${stateId}.json`), '{invalid');
+
+    const result = await runCliInProcess('complete', workspace);
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout).message).toBe('Removed unusable runbook state from session');
+    const session = await readSession(workspace);
+    expect(session.active).toBeNull();
+    expect(session.defaultStack).toHaveLength(0);
+  });
+
+  it('pops orphaned default-stack entry when state is stale', async () => {
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+    const state = await getActiveState(workspace);
+    const stateId = state!.id;
+    await writeFile(
+      join(workspace.statePath(), `${stateId}.json`),
+      JSON.stringify({ ...state, schemaVersion: 1 }),
+    );
+
+    const result = await runCliInProcess('complete', workspace);
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout).message).toBe('Removed unusable runbook state from session');
+    const session = await readSession(workspace);
+    expect(session.active).toBeNull();
+    expect(session.defaultStack).toHaveLength(0);
+  });
+
+  it('does not remove anonymous default stack when an identified caller has no claim', async () => {
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+    const sessionBefore = await readSession(workspace);
+    const parentId = sessionBefore.defaultStack.at(-1);
+    expect(parentId).toBeDefined();
+
+    const result = await runCliInProcess('complete --text', workspace, {
+      env: { RD_AGENT_ID: 'lone-complete-agent', RD_SESSION_ID: 'lone-complete-session' },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('No active runbook');
+    const sessionAfter = await readSession(workspace);
+    expect(sessionAfter.defaultStack).toEqual([parentId]);
   });
 });
 

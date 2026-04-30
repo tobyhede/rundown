@@ -4,16 +4,19 @@ import type {
   CreateDelegationResult,
 } from '../../src/runbook/delegation-service.js';
 import { Errors } from '../../src/errors/factory.js';
+import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 import { brandEffectiveVars } from '../../src/runbook/effective-vars.js';
+
+const TEST_TOKEN_HASH = assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`);
 
 describe('Result types', () => {
   describe('CreateDelegationResult type', () => {
     const makeResult = (): CreateDelegationResult => ({
       status: 'created',
       token: 'dlg_test',
-      tokenHash: 'sha256:x',
+      tokenHash: TEST_TOKEN_HASH,
       delegation: {
-        tokenHash: 'sha256:x',
+        tokenHash: TEST_TOKEN_HASH,
         childRunbookPath: 'child.md',
         contextSnapshot: { vars: brandEffectiveVars({}), ancestors: [] },
         childRunId: null,
@@ -30,7 +33,7 @@ describe('Result types', () => {
         throw new Error(`expected created, got ${result.status}`);
       }
       expect(result.token).toBe('dlg_test');
-      expect(result.tokenHash).toBe('sha256:x');
+      expect(result.tokenHash).toBe(TEST_TOKEN_HASH);
     });
   });
 

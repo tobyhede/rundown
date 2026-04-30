@@ -8,10 +8,11 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { writeFileSync, unlinkSync, existsSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
+import { isError } from '../errors.js';
 import type {
   SandboxOptions,
   SandboxExecutionResult,
@@ -303,15 +304,57 @@ export class SeatbeltSandbox implements SandboxImplementation {
       return Promise.resolve(this.availabilityCache);
     }
 
-    this.availabilityCache = {
-      available: true,
-      mechanism: 'seatbelt',
-      platform: process.platform,
-      supportsReadRestrictions: true,
-      supportsWriteRestrictions: true,
-      supportsDenyPaths: true,
-    };
-    return Promise.resolve(this.availabilityCache);
+    // Verify that sandbox-exec can actually apply a profile in this
+    // environment, not just that the binary exists. Some CI/container
+    // configurations expose /usr/bin/sandbox-exec but deny profile
+    // application with EPERM.
+    const profilePath = join(tmpdir(), `rundown-sandbox-probe-${randomUUID()}.sb`);
+    try {
+      writeFileSync(profilePath, '(version 1)\n(allow default)\n', { mode: 0o600 });
+      const probe = spawnSync('/usr/bin/sandbox-exec', ['-f', profilePath, '/bin/true'], {
+        stdio: 'ignore',
+        timeout: 5000,
+        killSignal: 'SIGKILL',
+      });
+      const available: boolean = probe.status === 0 && probe.error == null;
+      this.availabilityCache = available
+        ? {
+            available: true,
+            mechanism: 'seatbelt',
+            platform: process.platform,
+            supportsReadRestrictions: true,
+            supportsWriteRestrictions: true,
+            supportsDenyPaths: true,
+          }
+        : {
+            available: false,
+            mechanism: 'none',
+            reason: `sandbox-exec could not run in this environment${probe.error ? `: ${probe.error.message}` : ''}`,
+            platform: process.platform,
+            supportsReadRestrictions: false,
+            supportsWriteRestrictions: false,
+            supportsDenyPaths: false,
+          };
+      return Promise.resolve(this.availabilityCache);
+    } catch (error: unknown) {
+      const reason = isError(error) ? error.message : String(error);
+      this.availabilityCache = {
+        available: false,
+        mechanism: 'none',
+        reason: `sandbox-exec probe failed: ${reason}`,
+        platform: process.platform,
+        supportsReadRestrictions: false,
+        supportsWriteRestrictions: false,
+        supportsDenyPaths: false,
+      };
+      return Promise.resolve(this.availabilityCache);
+    } finally {
+      try {
+        unlinkSync(profilePath);
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
   }
 
   /**

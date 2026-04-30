@@ -67,6 +67,31 @@ describe('start --prompted', () => {
       expect(state?.step).toBe('2');
     });
 
+    it('uses the newly started runbook for prompted --step goto under identified env', async () => {
+      const runbook = `## 1. First
+- PASS CONTINUE
+
+First step.
+
+## 2. Second
+- PASS COMPLETE
+
+Second step.
+`;
+      await writeFile(join(workspace.cwd, 'goto-start.runbook.md'), runbook);
+
+      const result = await runCliInProcess(
+        'run --prompted goto-start.runbook.md --step 2 --text',
+        workspace,
+        { env: { RD_AGENT_ID: 'prompted-run-agent', RD_SESSION_ID: 'prompted-run-session' } },
+      );
+
+      expect(result.exitCode).toBe(0);
+      const state = await getActiveState(workspace);
+      expect(state?.runbook).toBe('goto-start.runbook.md');
+      expect(state?.step).toBe('2');
+    });
+
     it('shows command in output without executing', async () => {
       const result = await runCliInProcess(
         'run --prompted runbooks/with-commands.runbook.md --text',

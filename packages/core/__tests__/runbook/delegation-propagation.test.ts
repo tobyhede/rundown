@@ -5,6 +5,7 @@ import {
   buildFrameKey,
   deriveActiveFrame,
 } from '../../src/runbook/targeting.js';
+import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 import type { DelegationLinkage, RunbookState } from '../../src/runbook/types.js';
 import { brandStoredOutputsForTest } from '../helpers/effective-vars.js';
 
@@ -73,7 +74,7 @@ describe('DelegationLinkage type shape', () => {
       kind: 'delegation',
       parentRunId: 'run-parent',
       parentStepId: '1',
-      tokenHash: `sha256:${'a'.repeat(64)}`,
+      tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
     };
     expect(linkage).toBeDefined();
     expect(linkage.parentRunId).toBe('run-parent');
@@ -256,7 +257,7 @@ describe('frame identity derivation for propagation', () => {
       kind: 'delegation',
       parentRunId: 'run-parent',
       parentStepId: '1',
-      tokenHash: `sha256:${'a'.repeat(64)}`,
+      tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
       parentStep: '1',
       parentFrameKey: buildFrameKey('1'),
       parentEntry: 1,
@@ -275,7 +276,7 @@ describe('frame identity derivation for propagation', () => {
       kind: 'delegation',
       parentRunId: 'run-parent',
       parentStepId: '2',
-      tokenHash: `sha256:${'a'.repeat(64)}`,
+      tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
       // No parentFrameKey, parentEntry — legacy linkage
     };
 

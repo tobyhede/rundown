@@ -7,6 +7,7 @@ import type {
 } from '../../src/runbook/types.js';
 // TDD red state: RetryWorkingState WILL FAIL to import until Task 4 exports it.
 import type { RetryWorkingState } from '../../src/runbook/retry-hook.js';
+import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import { Errors } from '../../src/errors/factory.js';
 import { brandEffectiveVarsForTest } from '../helpers/effective-vars.js';
@@ -21,6 +22,9 @@ const { retryDelegation } = await import('../../src/runbook/delegation-service.j
 const { retrySingleSubstep } = await import('../../src/runbook/retry-hook.js');
 
 const mockedRetryDelegation = retryDelegation as jest.MockedFunction<typeof retryDelegation>;
+const HASH_TEST = assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`);
+const HASH_NEW = assertDelegationTokenHash(`sha256:${'b'.repeat(64)}`);
+const HASH_NO_AT = assertDelegationTokenHash(`sha256:${'c'.repeat(64)}`);
 
 function makeInputs(overrides?: { substepStates?: readonly SubstepState[] }): {
   working: RetryWorkingState;
@@ -60,7 +64,7 @@ function makeInputs(overrides?: { substepStates?: readonly SubstepState[] }): {
   const steps: ResolvedStep[] = [parentStep as unknown as ResolvedStep];
 
   const defaultDelegation: StepDelegation = {
-    tokenHash: 'hash_test',
+    tokenHash: HASH_TEST,
     childRunbookPath: 'child-1.md',
     childRunId: null,
     createdAt: '2026-01-01T00:00:00.000Z',
@@ -128,7 +132,7 @@ describe('retrySingleSubstep', () => {
     const { working, substep, frameKey, parentName, steps, originalSubstepStates } = makeInputs();
 
     const newDelegation: StepDelegation = {
-      tokenHash: 'hash_new',
+      tokenHash: HASH_NEW,
       childRunbookPath: 'child-1.md',
       childRunId: null,
       createdAt: '2026-01-01T00:00:00.000Z',
@@ -145,7 +149,7 @@ describe('retrySingleSubstep', () => {
     mockedRetryDelegation.mockImplementation(() => ({
       status: 'retried' as const,
       token: 'rdtk_new_token',
-      tokenHash: 'hash_new',
+      tokenHash: HASH_NEW,
       delegation: newDelegation,
       updatedSubstepStates: [...originalSubstepStates],
     }));
@@ -214,7 +218,7 @@ describe('retrySingleSubstep', () => {
   it('error variant from RD-904 on missing contextSnapshot.at does NOT carry substepStates', () => {
     const { working, substep, frameKey, parentName, steps, originalSubstepStates } = makeInputs();
     const delegationNoAt: StepDelegation = {
-      tokenHash: 'hash_no_at',
+      tokenHash: HASH_NO_AT,
       childRunbookPath: 'child-1.md',
       childRunId: null,
       createdAt: '2026-01-01T00:00:00.000Z',
@@ -230,7 +234,7 @@ describe('retrySingleSubstep', () => {
     mockedRetryDelegation.mockImplementation(() => ({
       status: 'retried' as const,
       token: 'rdtk_new_token',
-      tokenHash: 'hash_no_at',
+      tokenHash: HASH_NO_AT,
       delegation: delegationNoAt,
       updatedSubstepStates: [...originalSubstepStates],
     }));
@@ -270,7 +274,7 @@ describe('retrySingleSubstep', () => {
     const snapshot = JSON.parse(JSON.stringify(working)) as RetryWorkingState;
 
     const newDelegation: StepDelegation = {
-      tokenHash: 'hash_new',
+      tokenHash: HASH_NEW,
       childRunbookPath: 'child-1.md',
       childRunId: null,
       createdAt: '2026-01-01T00:00:00.000Z',
@@ -286,7 +290,7 @@ describe('retrySingleSubstep', () => {
     mockedRetryDelegation.mockImplementation(() => ({
       status: 'retried' as const,
       token: 'rdtk_new_token',
-      tokenHash: 'hash_new',
+      tokenHash: HASH_NEW,
       delegation: newDelegation,
       updatedSubstepStates: [...originalSubstepStates],
     }));

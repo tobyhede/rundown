@@ -103,7 +103,7 @@ Executable scenarios for all three forms live at [runbooks/delegation/delegate-k
 
 1. **Step entry** — the engine fires `STEP_ENTERED` with a `delegateFrontier` field: an array of `{id, runbook, token}` records, one per DELEGATE substep.
 2. **Dispatch** — the orchestrating agent dispatches a subagent per record, passing the token in the subagent's prompt. The plugin detects the token and injects claim instructions.
-3. **Claim** — each subagent runs `rd claim <token>`, which launches the child runbook with the inherited `ContextId` and any forwarded variables.
+3. **Claim** — each subagent runs `rd claim <token>`, which launches the child runbook with the inherited `ContextId` and any forwarded variables. The Claude plugin exports `RD_AGENT_ID` and `RD_SESSION_ID` in the subagent context; keep those variables set so subsequent plain ownership-routed commands (`rd status`, `rd pass`, `rd fail`, `rd stash`, `rd pop`, and `rd stop`) target the child owned by that subagent.
 4. **Resolve** — the subagent completes the child runbook and calls `rd pass` / `rd fail`.
 5. **Aggregation** — when the final substep resolves, auto-aggregation fires on the parent step's transition (e.g., `PASS ALL CONTINUE`, `FAIL ANY STOP`).
 
@@ -159,9 +159,40 @@ Agent types support namespace prefixes using `namespace:name` syntax (e.g., `cip
 
 ---
 
+## Threat Model and Identity
+
+Agent ownership is an **isolation-against-accident** mechanism, not an adversarial security boundary.
+
+Caller identity is read from two environment variables exported by the Claude Code plugin's delegation-dispatch hook:
+
+- `RD_AGENT_ID` — the subagent's `agent_id`
+- `RD_SESSION_ID` — the dispatching session id
+
+CLI commands (`rd pass`, `rd fail`, `rd pop`, `rd stash`, `rd status`, etc.) derive the caller's `AgentOwnerIdentity` from these values and route to the runbook the caller owns. The session-service rejects cross-agent claims (RD-819) and refuses cross-agent stash restoration as defense in depth.
+
+What this provides:
+
+- **Sibling fan-out isolation.** Two subagents claiming different delegation tokens against the same parent each operate on their own child runbook. `rd pass` from agent A cannot accidentally complete agent B's child.
+- **Stash protection.** A runbook stashed by agent A cannot be restored by agent B; the stash remains intact for the rightful owner.
+- **Single-owner claim invariant.** A second `rd claim` against an already-owned token from a different identity is rejected with `RD-819 DELEGATION_OWNER_CONFLICT`.
+
+What this does **not** provide:
+
+- **No cryptographic identity.** Environment variables are unsigned. Any process that can set its own environment can present any `RD_AGENT_ID` / `RD_SESSION_ID`. A user shell that exports both can impersonate any agent.
+- **No authentication of the dispatching session.** The plugin trusts whatever values its host process exposes; the CLI trusts whatever the plugin set.
+- **No protection against a malicious local process.** All workspace state (`.rundown/`) is filesystem-readable by the user; an actor with shell access can edit `session.json` directly.
+
+The threat model assumes cooperating agents in a trusted local workspace. If you need adversarial isolation between agents, run them in separate workspaces or as separate operating-system users — not as cooperating processes against the same `.rundown/` directory.
+
+---
+
 ## Delegation Completion
 
 Subagents complete delegated work using `rd pass` or `rd fail`, which updates the child runbook state directly. The parent agent observes results via `rd status`.
+
+Parallel delegated siblings are isolated by agent/session ownership. A subagent that claims token A owns the child created for token A, even if another subagent later claims token B in the same workspace. Plain `rd pass` and `rd fail` resolve the caller-owned child before consulting the default stack.
+
+The plugin tracks active delegation tokens per `agent_id` for `SubagentStop` handling. When one subagent stops, the hook consumes only that agent's token metadata and preserves sibling token metadata.
 
 When a subagent stops, the plugin checks the child runbook state via `rd status`:
 

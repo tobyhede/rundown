@@ -130,9 +130,10 @@ RD_INPUT_environment=staging rundown run deploy.md                 # Environment
 ---
 name: my-runbook
 inputs:
-  environment: development
-  port: 3000
-  debug: true
+  - environment
+  - port
+  - debug
+  - PlanPath
 required:
   - PlanPath
 ---
@@ -143,12 +144,12 @@ Server running on port {{ port }} in {{ environment }} mode.
 Deploy plan at {{ PlanPath }}.
 ```
 
-The `required` field declares variables the caller must provide. Required variables must not appear in `inputs:` (they have no default). Missing required variables produce a hard error at resolution time. Provide them via `--input`, `--input-file`, config, `RD_INPUT_*` env vars, or delegation inheritance.
+The `inputs` field is a list of names — declarations only, with no values. The `required` field declares which of those variables the caller must provide; names listed in `required` must also appear in `inputs`. Missing required variables produce a hard error at resolution time. Provide values via `--input`, `--input-file`, config, `RD_INPUT_*` env vars, or delegation inheritance.
 
 **Notes:**
 - Variable names must match pattern `/^[a-zA-Z_][a-zA-Z0-9_]*$/`
 - Undefined variables are preserved as literal `{{variable}}` text
-- Frontmatter inputs support string, number, and boolean values (converted to strings). For arrays, use `--input-json` inline or `.rundown/config.yaml` / `--input-file`. For `file:` data sources, use `.rundown/config.yaml` or `--input-file`
+- Frontmatter `inputs:` declares names only — values come from `--input`, `--input-file`, `RD_INPUT_*` env vars, `.rundown/config.yaml`, or delegation inheritance. Use `--input-json`, `.rundown/config.yaml`, or `--input-file` for arrays and `file:` data sources
 - `--input KEY` (without `=`) inherits the value of environment variable `KEY`
 
 ### Data Sources
@@ -168,7 +169,7 @@ Data sources are referenced in FOR clauses: `FOR item IN {{ items }}`.
 **File formats:** Only `.json` and `.jsonl` extensions are supported. `.jsonl` files are parsed as JSON Lines (one JSON value per line). Each line may contain any JSON value (string, number, boolean, null, array, or object). When the loop variable holds a parsed JSON object, dotted field access is supported in templates (e.g., `{{item.name}}`). Using `{{item}}` alone renders the serialized JSON string. `.json` files are eagerly loaded as a `JsonObject` or `JsonArray` value.
 
 **Notes:**
-- Arrays can be passed inline via `--input-json` or in `.rundown/config.yaml` and `--input-file` (not in frontmatter `inputs:`). `file:` values are supported in `.rundown/config.yaml` and `--input-file` only
+- Arrays can be passed via `--input-json` (inline), `.rundown/config.yaml`, or `--input-file`. `file:` values are supported in `.rundown/config.yaml` and `--input-file` only. Frontmatter `inputs:` declares names only and does not carry values
 - File paths must stay within the project root (symlinks resolved, traversal blocked)
 - `file:` values are routed into the internal variable store as typed values (`JsonArrayStream` for `.jsonl`, `JsonArray`/`JsonObject` for `.json`)
 
@@ -315,7 +316,7 @@ npm run test:e2e:build                        # Docker: build E2E test image
 
 ## Testing Conventions
 
-- **Use `Error.isError()` instead of `instanceof Error`** in tests and production code. `instanceof` fails across ESM realm boundaries (e.g. Jest module sandboxing). Node 24+ provides `Error.isError()` (TC39). Centralized guards `isError()`, `isNodeError()`, `getErrorMessage()` are in `packages/core/src/errors.ts` (and `packages/claude-code-plugin/src/shared/errors.ts`). Keep `instanceof` only for same-realm custom error classes (e.g. `RunbookSyntaxError`, `RundownError`).
+- **Use `isError()` / `isNodeError()` / `getErrorMessage()` from `@rundown-org/core`** (or `packages/claude-code-plugin/src/shared/errors.ts` inside the plugin) — never call `Error.isError()` directly. The helpers feature-detect native `Error.isError` (TC39 Stage 4, Node 24+) and fall back to `instanceof Error` so the codebase runs on hosts that ship older Node — notably WebContainer's bundled Node 22.x in `site/`, where direct `Error.isError(...)` throws `TypeError: Error.isError is not a function`. Direct calls are blocked by ESLint `no-restricted-syntax`; the rule allow-lists only the two polyfill modules. Keep `instanceof` only for same-realm custom error classes (e.g. `RunbookSyntaxError`, `RundownError`).
 - **Mock injected core services structurally in non-core tests.** Tests in `packages/core` may construct real core services because they own that behavior. Tests outside `packages/core` that mock `@rundown-org/core` should pass object-shaped service doubles for injected dependencies (for example `actorService: { initializeState } as unknown as RunbookActorService`) instead of calling `new core.RunbookActorService(...)` from a mocked module. Use explicit mock constructors only when production code constructs the service and constructor behavior is part of the test.
 
 ## TSDoc Standards

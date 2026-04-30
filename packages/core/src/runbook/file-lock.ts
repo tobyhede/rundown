@@ -11,7 +11,7 @@
  */
 
 import * as fs from 'node:fs/promises';
-import { isNodeError } from '../errors.js';
+import { isError, isNodeError } from '../errors.js';
 
 const LOCK_DEADLINE_MS = 5_000;
 const RETRY_MIN_MS = 50;
@@ -87,7 +87,7 @@ async function tryReclaimStale(lockFile: string): Promise<boolean> {
       return true;
     }
     // Corrupted lock file (invalid JSON) — unlink and reclaim
-    if (Error.isError(err) && err.name === 'SyntaxError') {
+    if (isError(err) && err.name === 'SyntaxError') {
       try {
         await fs.unlink(lockFile);
       } catch (unlinkErr: unknown) {

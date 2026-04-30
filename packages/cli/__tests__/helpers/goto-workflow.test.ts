@@ -9,6 +9,7 @@ import type {
   StepId,
 } from '@rundown-org/core';
 import type { OutputEmitter } from '../../src/services/output-emitter.js';
+import { brandAgentOwnerKeyForTest, brandDelegationTokenHashForTest } from './brand-helpers.js';
 import { mockErrorHelpers } from './mock-error-helpers.js';
 import { mockFn } from './typed-mocks.js';
 
@@ -55,7 +56,9 @@ jest.unstable_mockModule('../../src/helpers/execution-emitter', () => ({
 // Import after mocking
 const core = await import('@rundown-org/core');
 const { runExecutionLoop } = await import('../../src/services/execution.js');
-const { validateGotoTarget, executeGoto } = await import('../../src/helpers/goto-workflow.js');
+const { validateGotoTarget, executeGoto, resolveTerminalReleaseModeForRunbook } = await import(
+  '../../src/helpers/goto-workflow.js'
+);
 
 const DEFAULT_TRANSITIONS: Transitions = {
   pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
@@ -396,6 +399,7 @@ describe('executeGoto', () => {
       state: makeState(),
       steps: [makeStep()],
       cwd: '/test',
+      terminalReleaseMode: 'stack-pop' as const,
     };
 
     const result = await executeGoto(ctx, { step: '2' });
@@ -429,6 +433,7 @@ describe('executeGoto', () => {
       state: makeState(),
       steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
       cwd: '/test',
+      terminalReleaseMode: 'stack-pop' as const,
     };
 
     const target: StepId = { step: '2' };
@@ -466,6 +471,7 @@ describe('executeGoto', () => {
       state: makeState(),
       steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
       cwd: '/test',
+      terminalReleaseMode: 'stack-pop' as const,
     };
 
     const result = await executeGoto(ctx, { step: '2' });
@@ -474,5 +480,60 @@ describe('executeGoto', () => {
     if (result.ok) {
       expect(result.loopResult).toBe('stopped');
     }
+  });
+});
+
+describe('resolveTerminalReleaseModeForRunbook', () => {
+  it('uses stack-pop for default-stack runbooks', async () => {
+    const loadSession = mockFn<RunbookStateManager['loadSession']>();
+    loadSession.mockResolvedValue({
+      defaultStack: ['runbook-a'],
+      ownedRunbooks: {},
+    });
+
+    const mode = await resolveTerminalReleaseModeForRunbook(
+      { loadSession } as unknown as RunbookStateManager,
+      'runbook-a',
+    );
+
+    expect(mode).toBe('stack-pop');
+  });
+
+  it('uses release-runbook for owner-owned runbooks', async () => {
+    const loadSession = mockFn<RunbookStateManager['loadSession']>();
+    const identity = {
+      kind: 'agent-session' as const,
+      agent_id: 'agent-a',
+      session_id: 'session-a',
+    };
+    const ownerKey = brandAgentOwnerKeyForTest(identity);
+    loadSession.mockResolvedValue({
+      defaultStack: ['parent-runbook'],
+      ownedRunbooks: {
+        [ownerKey]: [
+          {
+            kind: 'agent-owned-runbook',
+            ownerKey,
+            agent_id: 'agent-a',
+            session_id: 'session-a',
+            childRunId: 'owned-runbook',
+            parentRunId: 'parent-runbook',
+            parentStepId: '1.1',
+            tokenHash: brandDelegationTokenHashForTest(
+              'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+            ),
+            claimedAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+          },
+        ],
+      },
+    });
+
+    const mode = await resolveTerminalReleaseModeForRunbook(
+      { loadSession } as unknown as RunbookStateManager,
+      'owned-runbook',
+    );
+
+    expect(mode).toBe('release-runbook');
   });
 });

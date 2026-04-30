@@ -4,10 +4,12 @@ import { promises as fs } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { RunbookStateManager, SessionService, parseRunbook, type Runbook } from '@rundown-org/core';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const packageDir = path.resolve(__dirname, '..');
+const rdpathScript = path.join(packageDir, 'dist', 'rdpath.js');
 
 describe('rdpath find integration', () => {
   let testDir: string;
@@ -23,6 +25,7 @@ describe('rdpath find integration', () => {
   const runRdpath = (
     args: string[],
     env?: Record<string, string | undefined>,
+    cwd = packageDir,
   ): Promise<{ stdout: string; stderr: string; exitCode: number }> => {
     return new Promise((resolve, reject) => {
       // Strip rundown-injected vars from inherited host env so a developer or
@@ -37,8 +40,8 @@ describe('rdpath find integration', () => {
       const spawnEnv = Object.fromEntries(
         Object.entries(merged).filter((entry): entry is [string, string] => entry[1] !== undefined),
       );
-      const proc = spawn('node', ['dist/rdpath.js', ...args], {
-        cwd: packageDir,
+      const proc = spawn('node', [rdpathScript, ...args], {
+        cwd,
         env: spawnEnv,
       });
 
@@ -60,6 +63,55 @@ describe('rdpath find integration', () => {
       proc.on('error', reject);
     });
   };
+
+  const normalizeOutputPath = (value: string): string => value.trim().replaceAll('\\', '/');
+
+  async function setupActiveRunbook(
+    cwd: string,
+    vars: { WorkPath: string; ContextId: string },
+  ): Promise<void> {
+    const manager = new RunbookStateManager(cwd);
+    const sessionService = new SessionService(manager);
+    const steps = parseRunbook(`## 1. Active step
+
+- PASS COMPLETE
+- FAIL STOP
+
+Active step.
+`);
+    const runbook: Runbook = {
+      title: 'Active Runbook',
+      steps,
+    };
+
+    const state = await manager.create('active.runbook.md', runbook, {
+      runbookPath: 'active.runbook.md',
+      prompted: true,
+      templateVars: vars,
+    });
+    await sessionService.pushRunbook(state.id);
+  }
+
+  async function setupStaleActiveRunbook(cwd: string): Promise<void> {
+    const runsDir = path.join(cwd, '.rundown', 'runs');
+    await fs.mkdir(runsDir, { recursive: true });
+    await fs.writeFile(
+      path.join(cwd, '.rundown', 'session.json'),
+      JSON.stringify({ defaultStack: ['wf-stale-1'] }, null, 2),
+    );
+    await fs.writeFile(
+      path.join(runsDir, 'wf-stale-1.json'),
+      JSON.stringify({ schemaVersion: 1 }, null, 2),
+    );
+  }
+
+  async function setupActiveRunbookWithInvalidId(cwd: string): Promise<void> {
+    await fs.mkdir(path.join(cwd, '.rundown'), { recursive: true });
+    await fs.writeFile(
+      path.join(cwd, '.rundown', 'session.json'),
+      JSON.stringify({ defaultStack: ['../outside'] }, null, 2),
+    );
+  }
 
   it('outputs one matching path per line', async () => {
     await fs.writeFile(path.join(testDir, '2026-03-17-pass1.md'), '');
@@ -205,6 +257,213 @@ describe('rdpath find integration', () => {
 
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain('RD_WORK_PATH');
+    });
+  });
+
+  describe('active runbook state fallback', () => {
+    it('exits with the standard missing-dir error when no runbook is active', async () => {
+      const result = await runRdpath(
+        ['--file', 'plan.json'],
+        {
+          RD_WORK_PATH: undefined,
+          RD_CONTEXT_ID: undefined,
+        },
+        testDir,
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain('RD_WORK_PATH');
+    });
+
+    it('uses active WorkPath and ContextId when flags and env vars are omitted', async () => {
+      await setupActiveRunbook(testDir, {
+        WorkPath: '.rundown/work',
+        ContextId: 'state-ctx',
+      });
+
+      const result = await runRdpath(
+        ['--file', 'plan.json'],
+        {
+          RD_WORK_PATH: undefined,
+          RD_CONTEXT_ID: undefined,
+        },
+        testDir,
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(normalizeOutputPath(result.stdout)).toMatch(
+        /^\.rundown\/work\/\.rd-state-ctx\/\d{4}-\d{2}-\d{2}-plan\.json$/,
+      );
+    });
+
+    it('uses active WorkPath and ContextId for find when flags and env vars are omitted', async () => {
+      await setupActiveRunbook(testDir, {
+        WorkPath: '.rundown/work',
+        ContextId: 'state-ctx',
+      });
+      const ctxDir = path.join(testDir, '.rundown', 'work', '.rd-state-ctx');
+      await fs.mkdir(ctxDir, { recursive: true });
+      await fs.writeFile(path.join(ctxDir, 'found.json'), '');
+
+      const result = await runRdpath(
+        ['find', '*.json'],
+        {
+          RD_WORK_PATH: undefined,
+          RD_CONTEXT_ID: undefined,
+        },
+        testDir,
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.trim()).toBe(
+        path.join('.rundown', 'work', '.rd-state-ctx', 'found.json'),
+      );
+    });
+
+    it('prefers explicit --dir over active WorkPath', async () => {
+      await setupActiveRunbook(testDir, {
+        WorkPath: '.rundown/work',
+        ContextId: 'state-ctx',
+      });
+      const altDir = path.join(testDir, 'alt-work');
+      const altCtxDir = path.join(altDir, '.rd-alt-ctx');
+      await fs.mkdir(altCtxDir, { recursive: true });
+      await fs.writeFile(path.join(altCtxDir, 'alt.json'), '');
+
+      const result = await runRdpath(
+        ['--dir', altDir, '--ctx', 'alt-ctx', 'find', '*.json'],
+        {
+          RD_WORK_PATH: undefined,
+          RD_CONTEXT_ID: undefined,
+        },
+        testDir,
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.trim()).toBe(path.join(altDir, '.rd-alt-ctx', 'alt.json'));
+    });
+
+    it('prefers RD_WORK_PATH over active WorkPath', async () => {
+      await setupActiveRunbook(testDir, {
+        WorkPath: '.rundown/work',
+        ContextId: 'state-ctx',
+      });
+      const envDir = path.join(testDir, 'env-work');
+      const envCtxDir = path.join(envDir, '.rd-env-ctx');
+      await fs.mkdir(envCtxDir, { recursive: true });
+      await fs.writeFile(path.join(envCtxDir, 'env.json'), '');
+
+      const result = await runRdpath(
+        ['find', '*.json'],
+        {
+          RD_WORK_PATH: envDir,
+          RD_CONTEXT_ID: 'env-ctx',
+        },
+        testDir,
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.trim()).toBe(path.join(envDir, '.rd-env-ctx', 'env.json'));
+    });
+
+    it('uses active WorkPath when RD_CONTEXT_ID is set and RD_WORK_PATH is omitted', async () => {
+      await setupActiveRunbook(testDir, {
+        WorkPath: '.rundown/work',
+        ContextId: 'state-ctx',
+      });
+      const envCtxDir = path.join(testDir, '.rundown', 'work', '.rd-env-ctx');
+      await fs.mkdir(envCtxDir, { recursive: true });
+      await fs.writeFile(path.join(envCtxDir, 'env-context.json'), '');
+
+      const result = await runRdpath(
+        ['find', '*.json'],
+        {
+          RD_WORK_PATH: undefined,
+          RD_CONTEXT_ID: 'env-ctx',
+        },
+        testDir,
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.trim()).toBe(
+        path.join('.rundown', 'work', '.rd-env-ctx', 'env-context.json'),
+      );
+    });
+
+    it('does not read stale active state when --dir is supplied', async () => {
+      await setupStaleActiveRunbook(testDir);
+
+      const result = await runRdpath(
+        ['--dir', '.work'],
+        {
+          RD_WORK_PATH: undefined,
+          RD_CONTEXT_ID: undefined,
+        },
+        testDir,
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.trim()).toBe('.work');
+    });
+
+    it('uses active ContextId when RD_WORK_PATH is set and RD_CONTEXT_ID is omitted', async () => {
+      await setupActiveRunbook(testDir, {
+        WorkPath: '.rundown/work',
+        ContextId: 'state-ctx',
+      });
+      const envDir = path.join(testDir, 'env-work');
+      const ctxDir = path.join(envDir, '.rd-state-ctx');
+      await fs.mkdir(ctxDir, { recursive: true });
+      await fs.writeFile(path.join(ctxDir, 'state-context.json'), '');
+
+      const result = await runRdpath(
+        ['find', '*.json'],
+        {
+          RD_WORK_PATH: envDir,
+          RD_CONTEXT_ID: undefined,
+        },
+        testDir,
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.trim()).toBe(path.join(envDir, '.rd-state-ctx', 'state-context.json'));
+    });
+
+    it('soft-fails active-state lookup when RD_WORK_PATH is set with stale state', async () => {
+      // Asymmetric case: dir is known via RD_WORK_PATH; ctx lookup hits stale
+      // state. The lookup must not propagate the stale-state error — the path
+      // assembles without a context segment and exits 0.
+      await setupStaleActiveRunbook(testDir);
+
+      const result = await runRdpath(
+        ['--file', 'plan.json'],
+        {
+          RD_WORK_PATH: '.work',
+          RD_CONTEXT_ID: undefined,
+        },
+        testDir,
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(normalizeOutputPath(result.stdout)).toMatch(/^\.work\/\d{4}-\d{2}-\d{2}-plan\.json$/);
+      expect(result.stderr).toBe('');
+    });
+
+    it('skips invalid active-state lookup errors when RD_WORK_PATH is set', async () => {
+      await setupActiveRunbookWithInvalidId(testDir);
+
+      const result = await runRdpath(
+        ['--file', 'plan.json'],
+        {
+          RD_WORK_PATH: '.work',
+          RD_CONTEXT_ID: undefined,
+        },
+        testDir,
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(normalizeOutputPath(result.stdout)).toMatch(/^\.work\/\d{4}-\d{2}-\d{2}-plan\.json$/);
+      expect(result.stderr).not.toContain('Invalid id');
     });
   });
 });

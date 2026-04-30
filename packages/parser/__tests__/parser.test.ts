@@ -1976,8 +1976,8 @@ This is the preamble description.
     const md = `---
 name: my-runbook
 inputs:
-  greeting: Hello
-  count: 42
+  - greeting
+  - count
 ---
 ## 1 Step
 - PASS COMPLETE
@@ -1985,7 +1985,7 @@ inputs:
     const { frontmatter } = parseRunbookDocument(md);
     expect(frontmatter).not.toBeNull();
     expect(frontmatter?.name).toBe('my-runbook');
-    expect(frontmatter?.inputs).toEqual({ greeting: 'Hello', count: 42 });
+    expect(frontmatter?.inputs).toEqual(['greeting', 'count']);
   });
 
   it('preserves extension fields in frontmatter via passthrough', () => {

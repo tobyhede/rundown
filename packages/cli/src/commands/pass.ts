@@ -38,13 +38,26 @@ export function registerPassCommand(program: Command): void {
           }
 
           const cwd = getCwd();
-          const ctx = await buildTransitionContext(output, cwd);
-
-          if (!ctx) {
-            output.noActiveRunbook('pass');
-            output.flush();
-            return;
+          const contextResult = await buildTransitionContext(output, cwd);
+          switch (contextResult.kind) {
+            case 'ready':
+              break;
+            case 'none':
+              output.noActiveRunbook('pass');
+              output.flush();
+              return;
+            case 'stale_owner':
+            case 'invalid_identity':
+              output.error(contextResult.message, 'OWNED_RUNBOOK_UNAVAILABLE');
+              output.flush();
+              process.exitCode = 1;
+              return;
+            default: {
+              const _exhaustive: never = contextResult;
+              return _exhaustive;
+            }
           }
+          const ctx = contextResult.ctx;
 
           // Exit-code contract (mirrors fail.ts): when this runbook is a
           // delegated child whose terminal outcome is absorbed non-terminally

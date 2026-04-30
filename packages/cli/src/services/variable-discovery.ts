@@ -541,6 +541,7 @@ async function loadJsonFile(canonical: string): Promise<JsonObject | JsonArray> 
  * @param projectRoot - Canonical project root path (pre-resolved)
  * @param security - Optional security context for file source policy enforcement
  * @param warnings - Optional array to collect routing warnings
+ * @returns Promise resolving to `true` if the value was routed into `vars`; `false` if skipped
  */
 async function routeVariable(
   key: string,
@@ -550,7 +551,7 @@ async function routeVariable(
   projectRoot: string,
   security?: VariableSecurityContext,
   warnings?: string[],
-): Promise<void> {
+): Promise<boolean> {
   // String with file: prefix → load into vars based on extension
   if (typeof value === 'string' && value.startsWith('file:')) {
     const rawPath = value.slice(5);
@@ -568,7 +569,7 @@ async function routeVariable(
     const rel = path.relative(projectRoot, canonical);
     if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
       warnings?.push(`Ignoring file source "${key}" — path escapes project directory`);
-      return;
+      return false;
     }
 
     await enforceFileSourcePolicy(key, canonical, security);
@@ -586,7 +587,7 @@ async function routeVariable(
       );
     }
 
-    return;
+    return true;
   }
 
   // Array → vars as JsonArray (type-preserving, not comma-joined)
@@ -599,7 +600,7 @@ async function routeVariable(
       );
       vars[key] = value.map(String);
     }
-    return;
+    return true;
   }
 
   // Non-array object → vars only as JsonObject (for dotted template access)
@@ -611,7 +612,7 @@ async function routeVariable(
       warnings?.push(`Variable "${key}" contains non-JSON values; converting to string`);
       vars[key] = JSON.stringify(value);
     }
-    return;
+    return true;
   }
 
   // Number → vars only (preserved, not stringified)
@@ -625,11 +626,12 @@ async function routeVariable(
     } else {
       vars[key] = value;
     }
-    return;
+    return true;
   }
 
   // Other scalar (string, boolean, null) → vars only (stringified)
   vars[key] = String(value);
+  return true;
 }
 
 /**
@@ -691,21 +693,20 @@ function collectEnvBridgeVars(warnings?: string[]): Record<string, unknown> {
  *
  * ```
  * Layer 0: builtins        ← Date, Branch, WorkPath, RunId, ContextId (fresh)
- * Layer 1: inheritedVars   ← parent delegation vars (overrides builtins)
- * Layer 2: frontmatter     ← runbook YAML frontmatter vars:
- * Layer 3: discovered      ← .rundown/config.yaml (auto-discovered)
- * Layer 4: envBridge        ← RD_INPUT_* environment variables
- * Layer 5: cliFlags        ← --input-file, --input, --input-json (highest precedence)
+ * Layer 1: discovered      ← .rundown/config.yaml (auto-discovered)
+ * Layer 2: inheritedVars   ← parent delegation vars (overrides builtins/config)
+ * Layer 3: envBridge       ← RD_INPUT_* environment variables
+ * Layer 4: cliFlags        ← --input-file, --input, --input-json (highest precedence)
  * ```
  *
  * The inherited layer ensures that parent ContextId survives into child
- * runbooks during delegation, rather than being replaced by a fresh builtin.
+ * runbooks during delegation, rather than being replaced by a fresh builtin
+ * or shadowed by project-local config.
  *
- * @param options - Variable sources from CLI flags, input-file, frontmatter vars, and inherited vars
+ * @param options - Variable sources from CLI flags, input-file, and inherited vars
  * @param options.inputFile - Array of paths to YAML files containing variable definitions (repeatable)
  * @param options.input - Array of key=value flag strings from CLI
  * @param options.inputJson - Array of key=json flag strings from CLI for structured values
- * @param options.frontmatterVars - Pre-extracted frontmatter vars (from parser's validated RunbookFrontmatter)
  * @param options.inheritedVars - Variables inherited from parent delegation
  * @param cwd - Current working directory for resolving relative paths
  * @param warnings - Optional array to collect discovery warnings
@@ -716,7 +717,6 @@ async function collectRawLayers(
     inputFile?: string[];
     input?: string[];
     inputJson?: string[];
-    frontmatterVars?: Record<string, string | number | boolean>;
     inheritedVars?: Record<string, TemplateVarValue>;
   },
   cwd: string,
@@ -725,22 +725,19 @@ async function collectRawLayers(
   // Layer 0: Built-ins (lowest)
   const builtins: Record<string, unknown> = getBuiltinVariables();
 
-  // Layer 1: Inherited vars from parent delegation (overrides builtins)
-  const inherited: Record<string, unknown> = options.inheritedVars ?? {};
-
-  // Layer 2: Frontmatter vars — pre-extracted from parser's validated RunbookFrontmatter
-  const frontmatter: Record<string, unknown> = options.frontmatterVars ?? {};
-
-  // Layer 3: Auto-discovered config
+  // Layer 1: Auto-discovered config
   const discovered: Record<string, unknown> = await discoverRawVariables(cwd);
 
-  // Layer 4: Environment bridge (RD_INPUT_* env vars)
+  // Layer 2: Inherited vars from parent delegation (overrides builtins/config)
+  const inherited: Record<string, unknown> = options.inheritedVars ?? {};
+
+  // Layer 3: Environment bridge (RD_INPUT_* env vars)
   const envBridge = collectEnvBridgeVars(warnings);
 
-  // Layer 5: CLI flags (--input-file, --input, --input-json merged)
+  // Layer 4: CLI flags (--input-file, --input, --input-json merged)
   const cliFlags = await collectCliFlags(options, cwd);
 
-  return [builtins, inherited, frontmatter, discovered, envBridge, cliFlags];
+  return [builtins, discovered, inherited, envBridge, cliFlags];
 }
 
 /**
@@ -796,13 +793,12 @@ async function enforceFileSourcePolicy(
  *
  * Processes variable layers in precedence order (lowest to highest):
  * 1. Built-in defaults (Date, DateTime, Year, Month, Day, Branch, WorkPath, RunId, ContextId)
- * 1b. Inherited vars from parent delegation (overrides builtins)
- * 2. Frontmatter vars
- * 3. Auto-discovered .rundown/config.yaml
- * 3b. Environment bridge (RD_INPUT_* env vars)
- * 4. --input-file contents (repeatable, later overrides earlier)
- * 5. --input flags
- * 6. --input-json flags (highest precedence)
+ * 2. Auto-discovered .rundown/config.yaml
+ * 2b. Inherited vars from parent delegation
+ * 2c. Environment bridge (RD_INPUT_* env vars)
+ * 3. --input-file contents (repeatable, later overrides earlier)
+ * 4. --input flags
+ * 5. --input-json flags (highest precedence)
  *
  * Each variable value is routed into `vars` based on its type:
  * - String with `file:` prefix → JsonArrayStream (.jsonl) or JsonArray/JsonObject (.json)
@@ -811,11 +807,10 @@ async function enforceFileSourcePolicy(
  * - Number → preserved, not stringified
  * - Other scalar (boolean, null, plain string) → stringified
  *
- * @param options - Variable sources from CLI flags, input-file, frontmatter vars, and inherited vars
+ * @param options - Variable sources from CLI flags, input-file, and inherited vars
  * @param options.inputFile - Array of paths to YAML files containing variable definitions (repeatable)
  * @param options.input - Array of key=value flag strings from CLI
  * @param options.inputJson - Array of key=json flag strings from CLI for structured values
- * @param options.frontmatterVars - Pre-extracted frontmatter vars (from parser's validated RunbookFrontmatter)
  * @param options.inheritedVars - Variables inherited from parent delegation (overrides builtins)
  * @param cwd - Current working directory for resolving relative paths
  * @param security - Optional security context for file source policy enforcement
@@ -828,7 +823,6 @@ export async function resolveVariables(
     inputFile?: string[];
     input?: string[];
     inputJson?: string[];
-    frontmatterVars?: Record<string, string | number | boolean>;
     inheritedVars?: Record<string, TemplateVarValue>;
   },
   cwd: string,
@@ -843,10 +837,10 @@ export async function resolveVariables(
   // Collect raw inputs at each precedence level
   const layers = await collectRawLayers(options, cwd, warnings);
 
-  // External provider layer indices — excludes builtins (0) and frontmatter (2).
+  // External provider layer indices — excludes builtins (0).
   // Used to track which keys were actually accepted via routing for `required` var validation.
-  // Indices must match collectRawLayers ordering: 1=inherited, 3=config, 4=env, 5=CLI.
-  const EXTERNAL_PROVIDER_INDICES = new Set([1, 3, 4, 5]);
+  // Indices must match collectRawLayers ordering: 1=config, 2=inherited, 3=env, 4=CLI.
+  const EXTERNAL_PROVIDER_INDICES = new Set([1, 2, 3, 4]);
   const providedKeys = new Set<string>();
 
   // Process each layer in precedence order (lowest to highest)
@@ -876,11 +870,11 @@ export async function resolveVariables(
         warnings.push(`Ignoring variable with invalid key: ${key}`);
         continue;
       }
-      await routeVariable(key, value, vars, cwd, projectRoot, security, warnings);
+      const accepted = await routeVariable(key, value, vars, cwd, projectRoot, security, warnings);
       // Track keys from external provider layers that were actually accepted by routing.
       // routeVariable() may silently reject values (e.g., path traversal in file: sources)
       // without writing to vars — only count keys that made it through.
-      if (EXTERNAL_PROVIDER_INDICES.has(layerIndex) && key in vars) {
+      if (EXTERNAL_PROVIDER_INDICES.has(layerIndex) && accepted) {
         providedKeys.add(key);
       }
     }

@@ -1,5 +1,6 @@
 // src/runbook/types.ts
 import type { OutputDeclaration } from '@rundown-org/parser';
+import type { DelegationTokenHash } from './delegation-token.js';
 import type { EffectiveVars, InitialTemplateVars, StoredOutputs } from './effective-vars.js';
 import type { FrameKey } from './targeting.js';
 
@@ -428,7 +429,14 @@ export interface ResolvedCompletion {
 
 /** Delegation metadata attached to a parent step's substep state. */
 export interface StepDelegation {
-  readonly tokenHash: string;
+  /**
+   * Raw delegation token while the delegation is pending.
+   *
+   * Present only until the token is claimed or cancelled, so operators can
+   * recover the `rd claim <token>` command from `rd status`.
+   */
+  readonly token?: string;
+  readonly tokenHash: DelegationTokenHash;
   readonly childRunbookPath: string;
   readonly contextSnapshot: ContextSnapshot;
   readonly childRunId: string | null;
@@ -505,7 +513,7 @@ export interface ParentLinkageBase {
 /** Linkage data a child run carries to identify its parent delegation. */
 export interface DelegationLinkage extends ParentLinkageBase {
   readonly kind: 'delegation';
-  readonly tokenHash: string;
+  readonly tokenHash: DelegationTokenHash;
 }
 
 /**

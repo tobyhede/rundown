@@ -1,18 +1,18 @@
 // packages/cli/src/commands/stop.ts
 
 import type { Command } from 'commander';
-import {
-  RunbookStateManager,
-  SessionService,
-  StaleRunbookStateError,
-  isError,
-  type RunbookState,
-} from '@rundown-org/core';
+import { RunbookStateManager, SessionService, isError, type RunbookState } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { buildMetadata } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { handleParentCompletion, extractParentLinkage } from '../helpers/delegation-completion.js';
+import { resolveCallerIdentity } from '../helpers/caller-identity.js';
+import { resolveActiveRunbook } from '../helpers/active-runbook-resolver.js';
+import {
+  cleanupOrphanedActiveStack,
+  isRecoverableActiveStackError,
+} from '../helpers/active-runbook-cleanup.js';
 
 /**
  * Registers the 'stop' command for aborting runbooks.
@@ -34,30 +34,54 @@ export function registerStopCommand(program: Command): void {
 
           let state: RunbookState | null = null;
           let getActiveError: Error | undefined;
+          let cleanedStaleOwnedRunbook = false;
+          const caller = resolveCallerIdentity();
           try {
-            state = await sessionService.getActive();
+            const active = await resolveActiveRunbook(sessionService, caller);
+            switch (active.kind) {
+              case 'owned':
+              case 'default':
+                state = active.state;
+                break;
+              case 'none':
+                if (caller.kind === 'identified') {
+                  output.noActiveRunbook('stop');
+                  output.flush();
+                  return;
+                }
+                break;
+              case 'stale_owner':
+                await sessionService.releaseRunbook(active.ownership.childRunId);
+                cleanedStaleOwnedRunbook = true;
+                break;
+              case 'invalid_identity':
+                output.error(active.message, 'OWNED_RUNBOOK_UNAVAILABLE');
+                output.flush();
+                process.exitCode = 1;
+                return;
+              default: {
+                const _exhaustive: never = active;
+                return _exhaustive;
+              }
+            }
           } catch (error: unknown) {
-            getActiveError = Error.isError(error) ? error : new Error(String(error));
+            getActiveError = isError(error) ? error : new Error(String(error));
           }
 
           if (!state) {
+            if (cleanedStaleOwnedRunbook) {
+              output.stopped('Removed unusable owned runbook state from session');
+              output.flush();
+              return;
+            }
             // Unexpected errors must propagate — but stale/corrupted state errors
             // fall through to the orphan cleanup path since stop is a cleanup command.
-            if (
-              getActiveError &&
-              !(getActiveError instanceof StaleRunbookStateError) &&
-              !getActiveError.message.includes('dynamic-step snapshots') &&
-              !(isError(getActiveError) && getActiveError.name === 'SyntaxError')
-            ) {
+            if (getActiveError && !isRecoverableActiveStackError(getActiveError)) {
               throw getActiveError;
             }
-            // P2: Check for orphaned stack entry
-            const session = await manager.loadSession();
-            const orphanId = session.defaultStack[session.defaultStack.length - 1];
+            const orphanId = await cleanupOrphanedActiveStack(manager, sessionService);
             if (orphanId) {
               // Corrupted or missing state — delete the broken file and pop the stack
-              await manager.delete(orphanId);
-              await sessionService.popRunbook();
               output.stopped('Removed unusable runbook state from session');
               output.flush();
               return;
@@ -73,7 +97,7 @@ export function registerStopCommand(program: Command): void {
             lastResult: 'fail',
             lifecycle: 'stopped',
           });
-          await sessionService.popRunbook();
+          await sessionService.releaseRunbook(state.id);
 
           // Emit structured output - renderer decides format
           output.metadata(buildMetadata(state));

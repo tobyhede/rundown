@@ -13,7 +13,8 @@ import type {
   ParentLinkage,
   TemplateVarValue,
 } from './types.js';
-import { makeRunbookStateSchema } from '../schemas.js';
+import type { AgentRunbookOwnership } from './agent-ownership.js';
+import { makeRunbookStateSchema, SessionDataSchema } from '../schemas.js';
 import { isNodeError } from '../errors.js';
 import { logger } from '../logger.js';
 import { brandInitialTemplateVars, brandStoredOutputs } from './effective-vars.js';
@@ -26,6 +27,26 @@ import {
 
 /** Current persisted state schema version. Bump whenever RunbookState shape changes incompatibly. */
 const CURRENT_SCHEMA_VERSION = 2;
+
+function patchSnapshotSubstepStates(
+  snapshot: unknown,
+  substepStates: readonly SubstepState[] | undefined,
+): unknown {
+  if (!snapshot || typeof snapshot !== 'object' || !('context' in snapshot)) {
+    return snapshot;
+  }
+  const context = (snapshot as { context?: unknown }).context;
+  if (!context || typeof context !== 'object') {
+    return snapshot;
+  }
+  return {
+    ...(snapshot as Record<string, unknown>),
+    context: {
+      ...(context as Record<string, unknown>),
+      substepStates,
+    },
+  };
+}
 
 /**
  * Thrown when a persisted state file was written by an older schema version.
@@ -56,10 +77,14 @@ function generateId(): string {
  * A single shared stash slot allows temporarily parking a runbook.
  */
 export interface SessionData {
-  /** Active runbook stack */
+  /** Active runbook stack for legacy/default targeting. */
   defaultStack: string[];
-  /** ID of a temporarily stashed runbook, if any */
+  /** ID of a temporarily stashed runbook, if any. */
   stashedRunbookId?: string;
+  /** Ownership record captured when an agent-owned runbook is stashed. */
+  stashedRunbookOwnership?: AgentRunbookOwnership;
+  /** Per-agent/session ownership stack of delegated child runbooks. */
+  ownedRunbooks: Record<string, AgentRunbookOwnership[]>;
 }
 
 interface CreateOptions {
@@ -87,7 +112,7 @@ export class RunbookStateManager {
    * per process regardless of how many RunbookStateManager instances exist.
    */
   private static legacyWarningEmitted = false;
-  private readonly cwd: string;
+  private readonly _cwd: string;
 
   /**
    * Create a new RunbookStateManager.
@@ -95,7 +120,16 @@ export class RunbookStateManager {
    * @param cwd - The working directory (project root) for state file paths
    */
   constructor(cwd: string) {
-    this.cwd = cwd;
+    this._cwd = cwd;
+  }
+
+  /**
+   * Project root directory used for all state file paths.
+   *
+   * @returns The working directory passed to the constructor
+   */
+  get cwd(): string {
+    return this._cwd;
   }
 
   private get stateDir(): string {
@@ -328,10 +362,18 @@ export class RunbookStateManager {
       templateVars: updatesTemplateVars,
       ...restUpdates
     } = updates;
+    const shouldPatchSnapshotSubstepStates =
+      restUpdates.substepStates !== undefined && restUpdates.snapshot === undefined;
+    const patchedRestUpdates = shouldPatchSnapshotSubstepStates
+      ? {
+          ...restUpdates,
+          snapshot: patchSnapshotSubstepStates(existing.snapshot, restUpdates.substepStates),
+        }
+      : restUpdates;
 
     const updated: RunbookState = {
       ...existing,
-      ...restUpdates,
+      ...patchedRestUpdates,
       variables: brandStoredOutputs({ ...existing.variables, ...(updatesVariables ?? {}) }),
       ...(updatesTemplateVars !== undefined
         ? { templateVars: brandInitialTemplateVars(updatesTemplateVars) }
@@ -414,9 +456,9 @@ export class RunbookStateManager {
     try {
       content = await fs.readFile(this.sessionPath, 'utf8');
     } catch (err: unknown) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      if (isNodeError(err) && err.code === 'ENOENT') {
         await this.warnIfLegacyStateExists();
-        return { defaultStack: [] };
+        return { defaultStack: [], ownedRunbooks: {} };
       }
       throw err;
     }
@@ -429,20 +471,14 @@ export class RunbookStateManager {
       );
     }
 
-    const rawStack = Array.isArray(raw.defaultStack) ? raw.defaultStack : [];
-    const defaultStack = rawStack.filter((e): e is string => typeof e === 'string');
-    if (rawStack.length > 0 && defaultStack.length !== rawStack.length) {
+    const result = SessionDataSchema.safeParse(raw);
+    if (!result.success) {
       throw new Error(
-        'Session file contains invalid entries in defaultStack. Delete the session file and restart.',
+        'Session file contains invalid runbook targeting data. Delete .rundown/session.json and restart active runbooks.',
       );
     }
 
-    return {
-      defaultStack,
-      ...(typeof raw.stashedRunbookId === 'string'
-        ? { stashedRunbookId: raw.stashedRunbookId }
-        : {}),
-    };
+    return result.data;
   }
 
   /**

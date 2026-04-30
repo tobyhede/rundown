@@ -105,16 +105,16 @@ describe('Template Variables Integration', () => {
     });
   });
 
-  describe('frontmatter vars precedence', () => {
-    it('uses frontmatter vars when no other source provides value', async () => {
+  describe('frontmatter inputs precedence', () => {
+    it('uses declared inputs when supplied via --input', async () => {
       const runbookContent = createRunbook({
         name: 'test-runbook',
-        vars: { message: 'from-frontmatter' },
+        vars: { message: 'from-input' },
         steps: [{ title: 'Echo', pass: 'COMPLETE', command: 'rd echo {{message}}' }],
       });
       await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
 
-      const result = runCli('run test.runbook.md', workspace);
+      const result = runCli('run test.runbook.md --input message=from-input', workspace);
 
       expect(result.exitCode).toBe(0);
 
@@ -122,32 +122,13 @@ describe('Template Variables Integration', () => {
       const commandStartedEvent = events.find((e) => e.type === 'command_started');
 
       expect(commandStartedEvent).toBeDefined();
-      expect(commandStartedEvent!.command).toBe('rd echo from-frontmatter');
+      expect(commandStartedEvent!.command).toBe('rd echo from-input');
     });
 
-    it('--input overrides frontmatter vars', async () => {
+    it('--input-file overrides declared inputs', async () => {
       const runbookContent = createRunbook({
         name: 'test-runbook',
-        vars: { message: 'from-frontmatter' },
-        steps: [{ title: 'Echo', pass: 'COMPLETE', command: 'rd echo {{message}}' }],
-      });
-      await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
-
-      const result = runCli('run test.runbook.md --input message=from-flag', workspace);
-
-      expect(result.exitCode).toBe(0);
-
-      const events = parseJsonlEvents(result.stdout);
-      const commandStartedEvent = events.find((e) => e.type === 'command_started');
-
-      expect(commandStartedEvent).toBeDefined();
-      expect(commandStartedEvent!.command).toBe('rd echo from-flag');
-    });
-
-    it('--input-file overrides frontmatter vars', async () => {
-      const runbookContent = createRunbook({
-        name: 'test-runbook',
-        vars: { message: 'from-frontmatter' },
+        vars: { message: 'from-input' },
         steps: [{ title: 'Echo', pass: 'COMPLETE', command: 'rd echo {{message}}' }],
       });
       await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
@@ -164,10 +145,10 @@ describe('Template Variables Integration', () => {
       expect(commandStartedEvent!.command).toBe('rd echo from-file');
     });
 
-    it('config.yaml overrides frontmatter vars', async () => {
+    it('config.yaml overrides declared inputs', async () => {
       const runbookContent = createRunbook({
         name: 'test-runbook',
-        vars: { message: 'from-frontmatter' },
+        vars: { message: 'from-input' },
         steps: [{ title: 'Echo', pass: 'COMPLETE', command: 'rd echo {{message}}' }],
       });
       await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
@@ -187,7 +168,7 @@ describe('Template Variables Integration', () => {
       expect(commandStartedEvent!.command).toBe('rd echo from-config');
     });
 
-    it('frontmatter vars work with multiple variables', async () => {
+    it('declared inputs work with multiple variables', async () => {
       const runbookContent = createRunbook({
         name: 'test-runbook',
         vars: { greeting: 'Hello', name: 'World', count: 42 },
@@ -197,7 +178,10 @@ describe('Template Variables Integration', () => {
       });
       await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
 
-      const result = runCli('run test.runbook.md', workspace);
+      const result = runCli(
+        'run test.runbook.md --input greeting=Hello --input name=World --input count=42',
+        workspace,
+      );
 
       expect(result.exitCode).toBe(0);
 
@@ -208,7 +192,7 @@ describe('Template Variables Integration', () => {
       expect(commandStartedEvent!.command).toBe('rd echo "Hello World 42"');
     });
 
-    it('--input partially overrides frontmatter vars (other vars use defaults)', async () => {
+    it('--input partially overrides values from --input-file', async () => {
       const runbookContent = createRunbook({
         name: 'test-runbook',
         vars: { greeting: 'Hello', count: 42 },
@@ -221,8 +205,12 @@ describe('Template Variables Integration', () => {
         ],
       });
       await writeFile(join(workspace.cwd, 'test.runbook.md'), runbookContent);
+      await writeFile(join(workspace.cwd, 'vars.yaml'), 'greeting: Hello\ncount: 42');
 
-      const result = runCli('run test.runbook.md --input greeting=Hi', workspace);
+      const result = runCli(
+        'run test.runbook.md --input-file vars.yaml --input greeting=Hi',
+        workspace,
+      );
 
       expect(result.exitCode).toBe(0);
 
@@ -230,13 +218,10 @@ describe('Template Variables Integration', () => {
       const commandStartedEvent = events.find((e) => e.type === 'command_started');
 
       expect(commandStartedEvent).toBeDefined();
-      // greeting overridden to "Hi", count stays at frontmatter default "42"
       expect(commandStartedEvent!.command).toBe('rd echo "Hi, count is 42"');
     });
 
-    it('frontmatter vars work in child runbooks', async () => {
-      // Test frontmatter vars by running child runbook directly (not via Mode 3)
-      // This verifies the vars are extracted and applied during run
+    it('declared inputs work in child runbooks', async () => {
       const childRunbook = createRunbook({
         name: 'child-runbook',
         vars: { task_name: 'DefaultTask' },
@@ -246,11 +231,9 @@ describe('Template Variables Integration', () => {
 
       await writeFile(join(workspace.cwd, 'child.runbook.md'), childRunbook);
 
-      // Run child runbook directly (JSON is default) to capture JSONL events
-      const result = runCli('run child.runbook.md', workspace);
+      const result = runCli('run child.runbook.md --input task_name=DefaultTask', workspace);
       expect(result.exitCode).toBe(0);
 
-      // Verify the command was expanded with the frontmatter default variable
       const events = parseJsonlEvents(result.stdout);
       const commandStartedEvent = events.find((e) => e.type === 'command_started');
       expect(commandStartedEvent).toBeDefined();

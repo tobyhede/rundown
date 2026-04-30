@@ -122,7 +122,7 @@ Do something.
       runbookPath,
       `---
 inputs:
-  Step: custom
+  - Step
 ---
 ## 1. Do something
 - PASS COMPLETE
@@ -145,7 +145,7 @@ Hello.
       runbookPath,
       `---
 inputs:
-  Index: 5
+  - Index
 ---
 ## 1. Do something
 - PASS COMPLETE
@@ -168,7 +168,7 @@ Hello.
       runbookPath,
       `---
 inputs:
-  Date: "2025-01-01"
+  - Date
 ---
 ## 1. Do something
 - PASS COMPLETE

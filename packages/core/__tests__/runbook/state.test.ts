@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { isError } from '../../src/errors.js';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 import { statePath as _statePath } from '../../src/paths.js';
 import { SessionService } from '../../src/runbook/session-service.js';
@@ -546,7 +547,7 @@ describe('RunbookStateManager', () => {
         await manager.load(state.id);
         throw new Error('Should have thrown');
       } catch (e) {
-        if (Error.isError(e)) {
+        if (isError(e)) {
           expect(e.message).toContain('dynamic-step snapshots');
           expect(e.message).toContain('no longer supported');
           expect(e.message).toContain('restart execution');

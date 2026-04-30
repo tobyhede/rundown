@@ -3,6 +3,7 @@ import { describe, it, expect } from '@jest/globals';
 import {
   createRunbook,
   createTestWorkspace,
+  parseConcatenatedJson,
   runCliInProcess,
   stripExitArtefact,
 } from './test-utils.js';
@@ -27,8 +28,9 @@ describe('createRunbook', () => {
       });
       expect(md).toContain('---');
       expect(md).toContain('name: my-runbook');
-      expect(md).toContain('  env: staging');
-      expect(md).toContain('  port: 3000');
+      expect(md).toContain('inputs:');
+      expect(md).toContain('  - env');
+      expect(md).toContain('  - port');
     });
 
     it('renders custom title', () => {
@@ -372,6 +374,12 @@ describe('createRunbook', () => {
         ],
       });
     });
+  });
+});
+
+describe('parseConcatenatedJson', () => {
+  it('skips leading non-JSON text and parses subsequent concatenated objects', () => {
+    expect(parseConcatenatedJson('debug\n{"a":1}{"b":2}')).toEqual([{ a: 1 }, { b: 2 }]);
   });
 });
 

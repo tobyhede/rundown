@@ -5,14 +5,14 @@ version: 1.0.0
 author: Rundown Team
 tags:
   - transitions
-inputs:
-  greeting: hello
-  port: 3000
+INPUTS:
+  - greeting
+  - port
 scenarios:
   completed:
-    description: Exercises every metadata field with variable expansion
+    description: Exercises every metadata field with explicit variable inputs
     commands:
-      - rd run metadata-full.runbook.md
+      - rd run --input greeting=hello --input port=3000 metadata-full.runbook.md
     result: COMPLETE
 ---
 

@@ -3,11 +3,13 @@ import { writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   createTestWorkspace,
+  findActionOutput,
   runCliInProcess,
   getActiveState,
+  readRunbookState,
   readSession,
   getAllStates,
-  findActionOutput,
+  parseConcatenatedJson,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 import { ActionResponseSchema } from '../helpers/schema-validator.js';
@@ -186,6 +188,180 @@ Do child work.
       const session3 = await readSession(workspace);
       expect(session3.active).toBe(parentId);
     });
+  });
+
+  describe('sibling fan-out isolation', () => {
+    interface FrontierEntry {
+      id: string;
+      runbook: string;
+      token: string;
+    }
+
+    function findFrontierInEvents(events: unknown[]): FrontierEntry[] | undefined {
+      for (const ev of events) {
+        if (Array.isArray(ev)) {
+          const nested = findFrontierInEvents(ev);
+          if (nested) return nested;
+        } else if (ev && typeof ev === 'object') {
+          const e = ev as { type?: string; delegateFrontier?: FrontierEntry[] };
+          if (e.type === 'step_entered' && e.delegateFrontier) {
+            return e.delegateFrontier;
+          }
+        }
+      }
+      return undefined;
+    }
+
+    it('does not let the later claimed sibling steal the first child pass', async () => {
+      const childRunbook = [
+        '# Child',
+        '',
+        '## 1. Work',
+        '',
+        '- PASS COMPLETE',
+        '- FAIL STOP',
+        '',
+        'Do child work.',
+        '',
+      ].join('\n');
+      const parentRunbook = [
+        '# Parent',
+        '',
+        '## 1. Fan out',
+        '',
+        '- DELEGATE',
+        '- PASS ALL CONTINUE',
+        '- FAIL ANY STOP',
+        '',
+        '### 1.1 First child',
+        '',
+        '- child.runbook.md',
+        '',
+        '### 1.2 Second child',
+        '',
+        '- child.runbook.md',
+        '',
+        '## 2. Done',
+        '',
+        '- PASS COMPLETE',
+        '',
+        'Finished.',
+        '',
+      ].join('\n');
+
+      await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
+      await writeFile(join(workspace.cwd, 'runbooks', 'child.runbook.md'), childRunbook);
+      await writeFile(join(workspace.cwd, 'runbooks', 'parent.runbook.md'), parentRunbook);
+      await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childRunbook);
+
+      const start = await runCliInProcess('run --prompted runbooks/parent.runbook.md', workspace);
+      expect(start.exitCode).toBe(0);
+      const frontier = findFrontierInEvents(parseConcatenatedJson(start.stdout)) ?? [];
+      expect(frontier).toHaveLength(2);
+      const token1 = frontier.find((entry) => entry.id === '1.1')?.token;
+      const token2 = frontier.find((entry) => entry.id === '1.2')?.token;
+      expect(token1).toBeDefined();
+      expect(token2).toBeDefined();
+
+      const agent1 = { env: { RD_AGENT_ID: 'agent-one', RD_SESSION_ID: 'session-main' } };
+      const agent2 = { env: { RD_AGENT_ID: 'agent-two', RD_SESSION_ID: 'session-main' } };
+
+      let result = await runCliInProcess(`claim ${token1!}`, workspace, agent1);
+      expect(result.exitCode).toBe(0);
+      const child1Output = findActionOutput(result.stdout);
+      expect(child1Output).toBeDefined();
+      if (!child1Output || typeof child1Output.run_id !== 'string') {
+        throw new Error('Expected claim output to include run_id string');
+      }
+      const child1Id = child1Output.run_id;
+
+      result = await runCliInProcess(`claim ${token2!}`, workspace, agent2);
+      expect(result.exitCode).toBe(0);
+      const child2Output = findActionOutput(result.stdout);
+      expect(child2Output).toBeDefined();
+      if (!child2Output || typeof child2Output.run_id !== 'string') {
+        throw new Error('Expected claim output to include run_id string');
+      }
+      const child2Id = child2Output.run_id;
+
+      const anonymousActive = await getActiveState(workspace);
+      expect(anonymousActive?.runbook).toBe('runbooks/parent.runbook.md');
+
+      let status = await runCliInProcess('status', workspace, agent1);
+      expect(JSON.parse(status.stdout).state).toContain(child1Id);
+
+      status = await runCliInProcess('status', workspace, agent2);
+      expect(JSON.parse(status.stdout).state).toContain(child2Id);
+
+      result = await runCliInProcess('pass --text', workspace, agent1);
+      expect(result.exitCode).toBe(0);
+
+      const child1 = await readRunbookState(workspace, child1Id);
+      const child2 = await readRunbookState(workspace, child2Id);
+
+      expect(child1?.lifecycle).toBe('completed');
+      expect(child2?.lifecycle).toBe('running');
+    }, 30_000);
+
+    it('anonymous pass does not mutate an agent-owned child runbook', async () => {
+      // Regression: anonymous (no RD_AGENT_ID) callers must target only the
+      // default-stack runbook (the parent), never an agent-owned delegated child.
+      const childRunbook = [
+        '# Child',
+        '',
+        '## 1. Work',
+        '',
+        '- PASS COMPLETE',
+        '- FAIL STOP',
+        '',
+        'Do child work.',
+        '',
+      ].join('\n');
+      const parentRunbook = [
+        '# Parent',
+        '',
+        '## 1. Fan out',
+        '',
+        '- DELEGATE',
+        '- PASS ALL CONTINUE',
+        '- FAIL ANY STOP',
+        '',
+        '### 1.1 Only child',
+        '',
+        '- child.runbook.md',
+        '',
+        '## 2. Done',
+        '',
+        '- PASS COMPLETE',
+        '',
+        'Finished.',
+        '',
+      ].join('\n');
+
+      await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
+      await writeFile(join(workspace.cwd, 'runbooks', 'child.runbook.md'), childRunbook);
+      await writeFile(join(workspace.cwd, 'runbooks', 'parent.runbook.md'), parentRunbook);
+      await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childRunbook);
+
+      const start = await runCliInProcess('run --prompted runbooks/parent.runbook.md', workspace);
+      expect(start.exitCode).toBe(0);
+      const frontier = findFrontierInEvents(parseConcatenatedJson(start.stdout)) ?? [];
+      const token = frontier.find((entry) => entry.id === '1.1')?.token;
+      expect(token).toBeDefined();
+
+      const agent = { env: { RD_AGENT_ID: 'lone-agent', RD_SESSION_ID: 'lone-session' } };
+      const claim = await runCliInProcess(`claim ${token!}`, workspace, agent);
+      expect(claim.exitCode).toBe(0);
+      const childId = String(findActionOutput(claim.stdout)?.run_id);
+
+      // Anonymous pass — the resolver must not route to the agent-owned child.
+      // Whether it succeeds or errors on the parent is not the regression we're guarding;
+      // the invariant is that the agent's child remains untouched.
+      await runCliInProcess('pass --text', workspace);
+
+      const child = await readRunbookState(workspace, childId);
+      expect(child?.lifecycle).toBe('running');
+    }, 30_000);
   });
 
   describe('runbook completion with stack', () => {

@@ -21,11 +21,14 @@ import {
   type StepId,
   type RunbookState,
 } from '@rundown-org/core';
-import { runExecutionLoop } from '../services/execution.js';
+import { runExecutionLoop, type ExecutionTerminalReleaseMode } from '../services/execution.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
 import { resolveIndexOption, IndexOptionError } from './index-option.js';
 import { getRunbookFromState } from './runbook-loader.js';
+import { resolveCallerIdentity } from './caller-identity.js';
+import type { CallerIdentityResult } from './caller-identity.js';
+import { resolveActiveRunbook, type ActiveRunbookResolution } from './active-runbook-resolver.js';
 
 /**
  * Context for executing a goto operation.
@@ -45,6 +48,8 @@ export interface GotoContext {
   steps: ResolvedStep[];
   /** Current working directory for file resolution */
   cwd: string;
+  /** How terminal follow-on execution should release this runbook from session targeting. */
+  terminalReleaseMode: ExecutionTerminalReleaseMode;
 }
 
 /**
@@ -61,6 +66,33 @@ export type GotoExecutionResult =
   | { ok: true; loopResult: 'done' | 'stopped' | 'waiting' }
   | { ok: false; error: string; code: string };
 
+/** Result of resolving the runbook target and building goto execution context. */
+export type BuildGotoContextResult =
+  | { readonly kind: 'ready'; readonly ctx: GotoContext }
+  | Extract<ActiveRunbookResolution, { kind: 'none' | 'stale_owner' | 'invalid_identity' }>;
+
+/**
+ * Resolve how terminal execution should remove a specific runbook from session targeting.
+ *
+ * Used when a command already has the target state and cannot go through
+ * {@link buildGotoContext}, for example `run --prompted --step` immediately
+ * after launching a runbook.
+ *
+ * @param manager - State manager used to read session targeting data
+ * @param runbookId - Runbook state id that will continue executing after goto
+ * @returns Release mode matching the runbook's current session ownership
+ */
+export async function resolveTerminalReleaseModeForRunbook(
+  manager: RunbookStateManager,
+  runbookId: RunbookState['id'],
+): Promise<ExecutionTerminalReleaseMode> {
+  const session = await manager.loadSession();
+  const owned = Object.values(session.ownedRunbooks).some((ownershipStack) =>
+    ownershipStack.some((ownership) => ownership.childRunId === runbookId),
+  );
+  return owned ? 'release-runbook' : 'stack-pop';
+}
+
 /**
  * Build context for goto command execution.
  *
@@ -69,25 +101,43 @@ export type GotoExecutionResult =
  *
  * @param output - Output emitter for CLI output
  * @param cwd - Current working directory
+ * @param caller - Caller identity to resolve; defaults to the current CLI environment
  * @returns GotoContext or null if no active runbook
  */
 export async function buildGotoContext(
   output: OutputEmitter,
   cwd: string,
-): Promise<GotoContext | null> {
+  caller: CallerIdentityResult = resolveCallerIdentity(),
+): Promise<BuildGotoContextResult> {
   const manager = new RunbookStateManager(cwd);
   const sessionService = new SessionService(manager);
-  const state = await sessionService.getActive();
+  const active = await resolveActiveRunbook(sessionService, caller);
 
-  if (!state) {
-    return null;
+  switch (active.kind) {
+    case 'owned':
+    case 'default':
+      break;
+    case 'none':
+    case 'stale_owner':
+    case 'invalid_identity':
+      return active;
+    default: {
+      const _exhaustive: never = active;
+      return _exhaustive;
+    }
   }
 
+  const state = active.state;
+  const terminalReleaseMode: ExecutionTerminalReleaseMode =
+    active.kind === 'owned' ? 'release-runbook' : 'stack-pop';
   const readonlySteps = getRunbookFromState(state, cwd);
   const steps = [...readonlySteps];
   const actorService = new RunbookActorService(manager);
 
-  return { output, manager, actorService, sessionService, state, steps, cwd };
+  return {
+    kind: 'ready',
+    ctx: { output, manager, actorService, sessionService, state, steps, cwd, terminalReleaseMode },
+  };
 }
 
 /**
@@ -249,6 +299,7 @@ export async function executeGoto(ctx: GotoContext, target: StepId): Promise<Got
     cwd,
     !!state.prompted,
     emitter,
+    { terminalReleaseMode: ctx.terminalReleaseMode },
   );
 
   return { ok: true, loopResult };

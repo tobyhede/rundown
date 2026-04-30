@@ -96,85 +96,54 @@ description: Test
     expect(result.content.trim()).toBe('');
   });
 
-  it('extracts frontmatter with inputs field containing strings', () => {
+  it('extracts frontmatter with inputs field as a declaration list', () => {
+    const markdown = `---
+name: my-runbook
+inputs:
+  - greeting
+  - name
+---
+# Content`;
+
+    const result = extractFrontmatter(markdown);
+
+    expect(result.frontmatter).not.toBeNull();
+    expect(result.frontmatter?.name).toBe('my-runbook');
+    expect(result.frontmatter?.inputs).toEqual(['greeting', 'name']);
+  });
+
+  it('extracts frontmatter with uppercase INPUTS: as a declaration list', () => {
+    const markdown = `---
+INPUTS:
+  - environment
+  - port
+---
+# Content`;
+
+    const result = extractFrontmatter(markdown);
+
+    expect(result.frontmatter?.inputs).toEqual(['environment', 'port']);
+  });
+
+  it('returns undefined for an explicit empty INPUTS list', () => {
+    const markdown = `---
+name: my-runbook
+INPUTS: []
+---
+# Content`;
+
+    const result = extractFrontmatter(markdown);
+
+    expect(result.frontmatter).not.toBeNull();
+    expect(result.frontmatter?.inputs).toBeUndefined();
+    expect(result.diagnostics).toHaveLength(0);
+  });
+
+  it('rejects legacy map-style inputs', () => {
     const markdown = `---
 name: my-runbook
 inputs:
   greeting: Hello
-  name: World
----
-# Content`;
-
-    const result = extractFrontmatter(markdown);
-
-    expect(result.frontmatter).not.toBeNull();
-    expect(result.frontmatter?.name).toBe('my-runbook');
-    expect(result.frontmatter?.inputs).toEqual({
-      greeting: 'Hello',
-      name: 'World',
-    });
-  });
-
-  it('extracts frontmatter with inputs field containing numbers', () => {
-    const markdown = `---
-name: my-runbook
-inputs:
-  port: 3000
-  ratio: 1.618
----
-# Content`;
-
-    const result = extractFrontmatter(markdown);
-
-    expect(result.frontmatter).not.toBeNull();
-    expect(result.frontmatter?.inputs).toEqual({
-      port: 3000,
-      ratio: 1.618,
-    });
-  });
-
-  it('extracts frontmatter with inputs field containing booleans', () => {
-    const markdown = `---
-name: my-runbook
-inputs:
-  debug: true
-  production: false
----
-# Content`;
-
-    const result = extractFrontmatter(markdown);
-
-    expect(result.frontmatter).not.toBeNull();
-    expect(result.frontmatter?.inputs).toEqual({
-      debug: true,
-      production: false,
-    });
-  });
-
-  it('extracts frontmatter with inputs field containing mixed types', () => {
-    const markdown = `---
-name: my-runbook
-inputs:
-  name: test-app
-  port: 8080
-  debug: true
----
-# Content`;
-
-    const result = extractFrontmatter(markdown);
-
-    expect(result.frontmatter).not.toBeNull();
-    expect(result.frontmatter?.inputs).toEqual({
-      name: 'test-app',
-      port: 8080,
-      debug: true,
-    });
-  });
-
-  it('extracts frontmatter with empty inputs object', () => {
-    const markdown = `---
-name: my-runbook
-inputs: {}
 ---
 # Content`;
 
@@ -182,43 +151,7 @@ inputs: {}
 
     expect(result.frontmatter).not.toBeNull();
     expect(result.frontmatter?.inputs).toBeUndefined();
-  });
-
-  it('collapses entire inputs: field to undefined when values are invalid types (arrays)', () => {
-    const markdown = `---
-name: my-runbook
-inputs:
-  items:
-    - one
-    - two
----
-# Content`;
-
-    const result = extractFrontmatter(markdown);
-
-    // inputs: fails Zod record validation entirely when values are non-scalar — whole field collapses to undefined via .catch(undefined)
-    expect(result.frontmatter).not.toBeNull();
-    expect(result.frontmatter?.name).toBe('my-runbook');
-    expect(result.frontmatter?.inputs).toBeUndefined();
-    expect(result.content.trim()).toBe('# Content');
-  });
-
-  it('collapses entire inputs: field to undefined when values are invalid types (nested objects)', () => {
-    const markdown = `---
-name: my-runbook
-inputs:
-  config:
-    nested: value
----
-# Content`;
-
-    const result = extractFrontmatter(markdown);
-
-    // inputs: fails Zod record validation entirely when values are non-scalar — whole field collapses to undefined via .catch(undefined)
-    expect(result.frontmatter).not.toBeNull();
-    expect(result.frontmatter?.name).toBe('my-runbook');
-    expect(result.frontmatter?.inputs).toBeUndefined();
-    expect(result.content.trim()).toBe('# Content');
+    expect(result.diagnostics.some((d) => d.message.includes('YAML sequence'))).toBe(true);
   });
 
   // New tests for gray-matter specific behavior
@@ -242,11 +175,11 @@ another_field: 123
     expect(result.content.trim()).toBe('# Content');
   });
 
-  it('preserves typed inputs and required alongside unknown passthrough fields', () => {
+  it('preserves declarations and required alongside unknown passthrough fields', () => {
     const markdown = `---
 name: test-runbook
 inputs:
-  PlanPath: /default/path
+  - PlanPath
 required:
   - Region
 skill: my-skill
@@ -255,7 +188,7 @@ skill: my-skill
 
     const result = extractFrontmatter(markdown);
 
-    expect(result.frontmatter?.inputs).toEqual({ PlanPath: '/default/path' });
+    expect(result.frontmatter?.inputs).toEqual(['PlanPath']);
     expect(result.frontmatter?.required).toEqual(['Region']);
     expect(result.frontmatter).toHaveProperty('skill', 'my-skill');
   });
@@ -563,14 +496,15 @@ describe('required field', () => {
     const md = `---\nname: test\nrequired:\n  - ""\n  - VarA\n---\n# Content`;
     const { frontmatter, diagnostics } = extractFrontmatter(md);
     expect(frontmatter?.required).toEqual(['VarA']);
-    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics).toHaveLength(2);
     expect(diagnostics[0].message).toMatch(/required\[0\].*not a valid identifier/);
+    expect(diagnostics[1].message).toMatch(/must also be declared in "inputs"/);
   });
 
   it('coexists with inputs', () => {
-    const md = `---\nname: test\ninputs:\n  port: 3000\nrequired:\n  - PlanPath\n---\n# Content`;
+    const md = `---\nname: test\ninputs:\n  - port\nrequired:\n  - PlanPath\n---\n# Content`;
     const { frontmatter } = extractFrontmatter(md);
-    expect(frontmatter?.inputs).toEqual({ port: 3000 });
+    expect(frontmatter?.inputs).toEqual(['port']);
     expect(frontmatter?.required).toEqual(['PlanPath']);
   });
 
@@ -593,27 +527,50 @@ describe('required field', () => {
     const md = `---\nname: test\nrequired:\n  - GoodName\n  - "bad-name"\n---\n# Content`;
     const { frontmatter, diagnostics } = extractFrontmatter(md);
     expect(frontmatter?.required).toEqual(['GoodName']);
-    expect(diagnostics).toEqual([
-      expect.objectContaining({
-        severity: 'error',
-        message: expect.stringMatching(/bad-name.*not a valid identifier/),
-      }),
-    ]);
+    expect(diagnostics).toHaveLength(2);
+    expect(diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: 'error',
+          message: expect.stringMatching(/bad-name.*not a valid identifier/),
+        }),
+        expect.objectContaining({
+          severity: 'error',
+          message: expect.stringMatching(/must also be declared in "inputs"/),
+        }),
+      ]),
+    );
+  });
+
+  it('rejects duplicate required names before subset validation', () => {
+    const md = `---\nname: test\ninputs:\n  - PlanPath\nrequired:\n  - PlanPath\n  - PlanPath\n---\n# Content`;
+    const { frontmatter, diagnostics } = extractFrontmatter(md);
+    expect(frontmatter?.required).toEqual(['PlanPath']);
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0].message).toMatch(/duplicate entry "PlanPath".*"required"/i);
+  });
+
+  it('rejects poisoned required identifiers', () => {
+    const md = `---\nname: test\nrequired:\n  - constructor\n---\n# Content`;
+    const { frontmatter, diagnostics } = extractFrontmatter(md);
+    expect(frontmatter?.required).toBeUndefined();
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0].message).toMatch(/constructor.*not a valid identifier/i);
   });
 });
 
 describe('extractFrontmatter() — case-insensitive keys', () => {
   it('parses INPUTS: (uppercase) identically to inputs:', () => {
-    const md = `---\nINPUTS:\n  env: staging\n---\n# Content`;
+    const md = `---\nINPUTS:\n  - env\n---\n# Content`;
     const { frontmatter, diagnostics } = extractFrontmatter(md);
     expect(diagnostics).toHaveLength(0);
-    expect(frontmatter?.inputs).toEqual({ env: 'staging' });
+    expect(frontmatter?.inputs).toEqual(['env']);
   });
 
   it('parses Inputs: (mixed case) identically to inputs:', () => {
-    const md = `---\nInputs:\n  region: us-east-1\n---\n# Content`;
+    const md = `---\nInputs:\n  - region\n---\n# Content`;
     const { frontmatter } = extractFrontmatter(md);
-    expect(frontmatter?.inputs).toEqual({ region: 'us-east-1' });
+    expect(frontmatter?.inputs).toEqual(['region']);
   });
 
   it('parses REQUIRED: (uppercase) identically to required:', () => {
@@ -629,10 +586,11 @@ describe('extractFrontmatter() — case-insensitive keys', () => {
   });
 
   it('first-occurrence wins on key collision (inputs: + INPUTS:)', () => {
-    const md = `---\ninputs:\n  env: first\nINPUTS:\n  env: second\n---\n# Content`;
-    const { frontmatter } = extractFrontmatter(md);
+    const md = `---\ninputs:\n  - first\nINPUTS:\n  - second\n---\n# Content`;
+    const { frontmatter, diagnostics } = extractFrontmatter(md);
     // YAML preserves the first key; second is dropped
-    expect(frontmatter?.inputs).toEqual({ env: 'first' });
+    expect(diagnostics).toHaveLength(0);
+    expect(frontmatter?.inputs).toEqual(['first']);
   });
 
   it('preserves unknown passthrough keys unchanged', () => {
@@ -642,37 +600,44 @@ describe('extractFrontmatter() — case-insensitive keys', () => {
   });
 });
 
-describe('inputs: field (new — default variable values)', () => {
-  it('parses inputs: as Record<string, string|number|boolean>', () => {
+describe('inputs: field (declaration list)', () => {
+  it('parses inputs: as a string array', () => {
     const markdown = `---
 inputs:
-  environment: staging
-  port: 3000
-  debug: true
+  - environment
+  - port
+  - debug
 ---
 # Test`;
     const { frontmatter, diagnostics } = extractFrontmatter(markdown);
     expect(diagnostics).toHaveLength(0);
-    expect(frontmatter?.inputs).toEqual({
-      environment: 'staging',
-      port: 3000,
-      debug: true,
-    });
+    expect(frontmatter?.inputs).toEqual(['environment', 'port', 'debug']);
   });
 
-  it('filters null values per-entry (PlanPath: with no value = null in YAML)', () => {
+  it('rejects map-style entries inside the list', () => {
     const markdown = `---
 inputs:
-  environment: staging
-  PlanPath:
+  - environment
+  - PlanPath: staging
 ---
 # Test`;
     const { frontmatter, diagnostics } = extractFrontmatter(markdown);
-    expect(diagnostics).toHaveLength(0);
-    // null value filtered; scalar value kept
-    expect(frontmatter?.inputs).toEqual({ environment: 'staging' });
-    // PlanPath key is absent (filtered), not present as null
-    expect((frontmatter?.inputs as Record<string, unknown>).PlanPath).toBeUndefined();
+    expect(diagnostics).toHaveLength(1);
+    expect(frontmatter?.inputs).toEqual(['environment']);
+    expect(diagnostics[0].message).toContain('must be a string identifier');
+  });
+
+  it('rejects poisoned identifiers in inputs', () => {
+    const markdown = `---
+inputs:
+  - __proto__
+  - environment
+---
+# Test`;
+    const { frontmatter, diagnostics } = extractFrontmatter(markdown);
+    expect(frontmatter?.inputs).toEqual(['environment']);
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0].message).toMatch(/__proto__.*not a valid identifier/i);
   });
 
   it('treats vars: as unknown passthrough (not a known field)', () => {
@@ -687,11 +652,10 @@ vars:
     expect(frontmatter?.inputs).toBeUndefined();
   });
 
-  it('returns undefined when all inputs: values are null (all keys with no value)', () => {
+  it('returns undefined when the inputs list is empty', () => {
     const markdown = `---
 inputs:
-  PlanPath:
-  OtherVar:
+  []
 ---
 # Test`;
     const { frontmatter, diagnostics } = extractFrontmatter(markdown);

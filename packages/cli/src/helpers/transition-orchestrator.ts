@@ -24,8 +24,8 @@ import {
 
 /** Side-effect policy applied when a runbook reaches a terminal state. */
 export interface TerminalSideEffectsPolicy {
-  /** Whether to pop the runbook from the session stack. */
-  popRunbook: boolean;
+  /** Whether to release this runbook from all session targeting structures. */
+  releaseRunbook: boolean;
 }
 
 /** Policy governing side effects for each terminal outcome. */
@@ -140,9 +140,10 @@ function buildTransitionPositions(
 async function applyTerminalSideEffects(
   sessionService: SessionService,
   policy: TerminalSideEffectsPolicy,
+  runbookId: RunbookState['id'],
 ): Promise<void> {
-  if (policy.popRunbook) {
-    await sessionService.popRunbook();
+  if (policy.releaseRunbook) {
+    await sessionService.releaseRunbook(runbookId);
   }
 }
 
@@ -228,7 +229,7 @@ export async function orchestrateTransition(
       finalPosition: positions.to,
     });
 
-    await applyTerminalSideEffects(sessionService, policy.onComplete);
+    await applyTerminalSideEffects(sessionService, policy.onComplete, runbookId);
     return { status: 'done', action: actionType, from: fromStr, at: atStr, message };
   }
 
@@ -246,7 +247,7 @@ export async function orchestrateTransition(
       reason: 'fail_transition',
     });
 
-    await applyTerminalSideEffects(sessionService, policy.onStopped);
+    await applyTerminalSideEffects(sessionService, policy.onStopped, runbookId);
     return { status: 'stopped', action: actionType, from: fromStr, at: atStr, message };
   }
 

@@ -1,4 +1,4 @@
-import { describe, it, expect } from '@jest/globals';
+import { describe, it, expect, jest } from '@jest/globals';
 import {
   isNodeError,
   isError,
@@ -66,6 +66,35 @@ describe('getErrorMessage', () => {
   it('handles null and undefined', () => {
     expect(getErrorMessage(null)).toBe('null');
     expect(getErrorMessage(undefined)).toBe('undefined');
+  });
+});
+
+describe('isError fallback path', () => {
+  // The polyfill resolves `nativeIsError` once at module load. To exercise
+  // the `instanceof Error` fallback (the path used on Node ≤ 23, e.g.
+  // WebContainer's Node 22.x), delete `Error.isError`, reset the module
+  // cache, and re-import errors.ts fresh.
+  it('falls back to instanceof Error when Error.isError is undefined', async () => {
+    const original = (Error as { isError?: unknown }).isError;
+    jest.resetModules();
+    try {
+      delete (Error as { isError?: unknown }).isError;
+      const fallback = await import('../src/errors.js');
+      expect(fallback.isError(new Error('boom'))).toBe(true);
+      expect(fallback.isError(new TypeError('type'))).toBe(true);
+      expect(fallback.isError('not an error')).toBe(false);
+      expect(fallback.isError(null)).toBe(false);
+      expect(fallback.isError(undefined)).toBe(false);
+      expect(fallback.isError({ message: 'fake' })).toBe(false);
+
+      const errnoLike = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      expect(fallback.isNodeError(errnoLike)).toBe(true);
+      expect(fallback.isNodeError(new Error('no code'))).toBe(false);
+    } finally {
+      if (original !== undefined) {
+        (Error as { isError?: unknown }).isError = original;
+      }
+    }
   });
 });
 

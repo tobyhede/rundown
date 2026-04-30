@@ -13,7 +13,25 @@ export * from './step-utils.js';
 export * from './targeting.js';
 export * from './transition-kernel.js';
 export { RunbookStateManager, StaleRunbookStateError, type SessionData } from './state.js';
+export {
+  buildAgentOwnerKey,
+  createAgentRunbookOwnership,
+  isAgentRunbookOwnership,
+  SessionOwnershipMismatchError,
+  SessionStashOwnershipMissingError,
+  SessionStashOwnershipRequiredError,
+  type AgentOwnerIdentity,
+  type AgentSessionOwnerIdentity,
+  type AgentOnlyOwnerIdentity,
+  type AgentOwnerKey,
+  type AgentRunbookOwnership,
+  type OwnedRunbookResolution,
+  type ClaimRunbookForOwnerResult,
+  type ReleaseRunbookResult,
+  type SessionOwnershipOperation,
+} from './agent-ownership.js';
 export { SessionService } from './session-service.js';
+export { readActiveRunScope, type ActiveRunScope } from './session-reader.js';
 export { ExecutionLifecycleService } from './execution-lifecycle-service.js';
 export { compileRunbookToMachine, runbookSetup, MAX_FILE_ITERATIONS } from './compiler.js';
 export type { RunbookMachine } from './compiler.js';
@@ -72,12 +90,17 @@ export {
   type RetryDelegationErrorResult,
 } from './delegation-service.js';
 export {
+  DELEGATION_TOKEN_HASH_PATTERN,
+  assertDelegationTokenHash,
   generateDelegationToken,
   hashDelegationToken,
+  isDelegationTokenHash,
   truncateDelegationToken,
   TOKEN_PREFIX as DELEGATION_TOKEN_PREFIX,
+  type DelegationTokenHash,
 } from './delegation-token.js';
 export { DelegationLock, DelegationLockTimeoutError } from './delegation-lock.js';
+export { SessionLock, SessionLockTimeoutError } from './session-lock.js';
 export { FileLockTimeoutError } from './file-lock.js';
 export { DelegationScanService, type TokenScanResult } from './delegation-scan.js';
 export {

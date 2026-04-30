@@ -10,7 +10,12 @@ import {
   brandEffectiveVars,
   brandInitialTemplateVars,
   brandStoredOutputs,
+  assertDelegationTokenHash,
+  buildAgentOwnerKey,
   buildFrameKey,
+  type AgentOwnerIdentity,
+  type AgentOwnerKey,
+  type DelegationTokenHash,
   type EffectiveVars,
   type FrameKey,
   type InitialTemplateVars,
@@ -31,6 +36,33 @@ import {
  */
 export function brandFrameKeyForTest(step: string, iteration?: number): FrameKey {
   return buildFrameKey(step, iteration);
+}
+
+/**
+ * Test-only producer of {@link DelegationTokenHash}.
+ *
+ * Delegates to the production assertion helper so test fixtures use the
+ * same canonical hash validation as production code.
+ *
+ * @param hash - Candidate persisted delegation token hash
+ * @returns Branded `DelegationTokenHash`
+ * @throws {Error} If `hash` is not a canonical `sha256:<64 lowercase hex>` value
+ */
+export function brandDelegationTokenHashForTest(hash: string): DelegationTokenHash {
+  return assertDelegationTokenHash(hash);
+}
+
+/**
+ * Test-only producer of {@link AgentOwnerKey}.
+ *
+ * Delegates to the production owner-key builder so fixtures use the same
+ * stable key derivation as session ownership code.
+ *
+ * @param identity - Agent identity used to derive the persisted owner key
+ * @returns Branded `AgentOwnerKey`
+ */
+export function brandAgentOwnerKeyForTest(identity: AgentOwnerIdentity): AgentOwnerKey {
+  return buildAgentOwnerKey(identity);
 }
 
 /**

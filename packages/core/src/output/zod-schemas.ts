@@ -16,6 +16,7 @@
 
 import { z } from 'zod';
 import { TemplateVarValueSchema } from '../schemas.js';
+import { DELEGATION_TOKEN_PATTERN } from '../runbook/delegation-token.js';
 
 // ============================================================================
 // CLI Error Codes
@@ -41,6 +42,22 @@ export const CLIErrorCodes = {
   ALREADY_STASHED: 'ALREADY_STASHED',
   /** No stashed runbook to restore */
   NO_STASHED_RUNBOOK: 'NO_STASHED_RUNBOOK',
+  /** Caller-owned runbook is missing, terminal, or otherwise unavailable */
+  OWNED_RUNBOOK_UNAVAILABLE: 'OWNED_RUNBOOK_UNAVAILABLE',
+  /** Caller identity environment variables are inconsistent or invalid */
+  INVALID_CALLER_IDENTITY: 'INVALID_CALLER_IDENTITY',
+  /** Delegation token format is invalid */
+  INVALID_TOKEN: 'INVALID_TOKEN',
+  /** Delegation token was not found */
+  TOKEN_NOT_FOUND: 'TOKEN_NOT_FOUND',
+  /** Delegation token was cancelled */
+  DELEGATION_CANCELLED: 'DELEGATION_CANCELLED',
+  /** Delegation lock could not be acquired */
+  DELEGATION_LOCK_TIMEOUT: 'DELEGATION_LOCK_TIMEOUT',
+  /** Delegation is already owned by another caller */
+  DELEGATION_OWNER_CONFLICT: 'DELEGATION_OWNER_CONFLICT',
+  /** Runbook launch failed */
+  LAUNCH_FAILED: 'LAUNCH_FAILED',
   /** Scenario not found */
   SCENARIO_NOT_FOUND: 'SCENARIO_NOT_FOUND',
   /** File system operation failed */
@@ -61,6 +78,14 @@ export const ErrorCodeSchema = z
     'VALIDATION_ERROR',
     'ALREADY_STASHED',
     'NO_STASHED_RUNBOOK',
+    'OWNED_RUNBOOK_UNAVAILABLE',
+    'INVALID_CALLER_IDENTITY',
+    'INVALID_TOKEN',
+    'TOKEN_NOT_FOUND',
+    'DELEGATION_CANCELLED',
+    'DELEGATION_LOCK_TIMEOUT',
+    'DELEGATION_OWNER_CONFLICT',
+    'LAUNCH_FAILED',
     'SCENARIO_NOT_FOUND',
     'FILE_ERROR',
     'UNKNOWN_ERROR',
@@ -249,10 +274,20 @@ export const DelegationStatusEntrySchema = z
     childRunId: z.string().optional().describe('Child run ID when delegation is claimed'),
     /** SHA-256 hash of the delegation token for correlation */
     tokenHash: z.string().describe('SHA-256 hash of the delegation token'),
+    /** Raw delegation token for pending-token recovery */
+    token: z
+      .string()
+      .regex(DELEGATION_TOKEN_PATTERN)
+      .optional()
+      .describe('Raw delegation token, present only while the delegation is pending'),
   })
   .refine((entry) => entry.state !== 'claimed' || !!entry.childRunId, {
     message: 'childRunId is required when state is claimed',
     path: ['childRunId'],
+  })
+  .refine((entry) => entry.state === 'pending' || entry.token === undefined, {
+    message: 'token is only available while state is pending',
+    path: ['token'],
   })
   .describe('Delegation status entry');
 

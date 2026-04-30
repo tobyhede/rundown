@@ -1,7 +1,7 @@
 // packages/cli/src/commands/status.ts
 
 import type { Command } from 'commander';
-import { RunbookStateManager, SessionService } from '@rundown-org/core';
+import { buildAgentOwnerKey, RunbookStateManager, SessionService } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
@@ -10,6 +10,8 @@ import {
   buildStashedStatus,
   buildActiveStatus,
 } from '../helpers/status-builder.js';
+import { resolveCallerIdentity } from '../helpers/caller-identity.js';
+import { resolveActiveRunbook } from '../helpers/active-runbook-resolver.js';
 
 /**
  * Registers the 'status' command for displaying runbook state.
@@ -28,47 +30,67 @@ export function registerStatusCommand(program: Command): void {
 
           const manager = new RunbookStateManager(cwd);
           const sessionService = new SessionService(manager);
-          const state = await sessionService.getActive();
+          const active = await resolveActiveRunbook(sessionService, resolveCallerIdentity());
           const stashedId = await sessionService.getStashedRunbookId();
 
+          switch (active.kind) {
+            case 'owned':
+            case 'default':
+              output.detail(
+                buildActiveStatus(active.state, cwd, stashedId ?? undefined) as unknown as Record<
+                  string,
+                  unknown
+                >,
+                'status',
+              );
+              output.flush();
+              return;
+            case 'none':
+              break;
+            case 'stale_owner':
+            case 'invalid_identity':
+              output.error(active.message, 'OWNED_RUNBOOK_UNAVAILABLE');
+              output.flush();
+              process.exitCode = 1;
+              return;
+            default: {
+              const _exhaustive: never = active;
+              return _exhaustive;
+            }
+          }
+
           // Case 1: No active runbook and nothing stashed
-          if (!state && !stashedId) {
+          if (!stashedId) {
             output.detail(buildInactiveStatus() as unknown as Record<string, unknown>, 'status');
             output.flush();
             return;
           }
 
           // Case 2: Something stashed but nothing active
-          if (stashedId && !state) {
-            const stashed = await manager.load(stashedId);
-            if (stashed) {
-              output.detail(
-                buildStashedStatus(stashed, cwd) as unknown as Record<string, unknown>,
-                'status',
-              );
+          const caller = resolveCallerIdentity();
+          const stashedOwnership = await sessionService.getStashedRunbookOwnership();
+          if (stashedOwnership !== null) {
+            const canViewStash =
+              caller.kind === 'identified' &&
+              stashedOwnership.ownerKey === buildAgentOwnerKey(caller.identity);
+            if (!canViewStash) {
+              output.detail(buildInactiveStatus() as unknown as Record<string, unknown>, 'status');
               output.flush();
               return;
             }
-            // Stale stash reference — treat as inactive
-            output.detail(buildInactiveStatus() as unknown as Record<string, unknown>, 'status');
+          }
+
+          const stashed = await manager.load(stashedId);
+          if (stashed) {
+            output.detail(
+              buildStashedStatus(stashed, cwd) as unknown as Record<string, unknown>,
+              'status',
+            );
             output.flush();
             return;
           }
-
-          // Early exit if no state (shouldn't happen, but defensive)
-          if (!state) {
-            output.flush();
-            return;
-          }
-
-          // Case 3: Active runbook
-          output.detail(
-            buildActiveStatus(state, cwd, stashedId ?? undefined) as unknown as Record<
-              string,
-              unknown
-            >,
-            'status',
-          );
+          // Stale stash reference — treat as inactive
+          output.detail(buildInactiveStatus() as unknown as Record<string, unknown>, 'status');
           output.flush();
         },
         { text: options.text },
