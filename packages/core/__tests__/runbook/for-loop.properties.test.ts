@@ -86,7 +86,7 @@ describe('FOR loop properties', () => {
       fc.property(fullConfigArb, (config) => {
         // Generate enough events to drive any config to completion
         const maxEvents = config.iterations * config.numSubsteps * 3 + 20;
-        const events = Array.from({ length: maxEvents }, () => 'PASS');
+        const events: EventType[] = Array.from({ length: maxEvents }, () => 'PASS');
         const result = runForLoop(config, events);
         expect(result.terminalState).toMatch(/^(COMPLETE|STOPPED)$/);
       }),
@@ -116,7 +116,7 @@ describe('FOR loop properties', () => {
     fc.assert(
       fc.property(noBypassConfig, (config) => {
         const maxEvents = config.iterations * config.numSubsteps * 3 + 20;
-        const events = Array.from({ length: maxEvents }, () => 'PASS');
+        const events: EventType[] = Array.from({ length: maxEvents }, () => 'PASS');
         const result = runForLoop(config, events);
         expect(result.forStackLength).toBe(0);
       }),
@@ -146,7 +146,7 @@ describe('FOR loop properties', () => {
       fc.property(constrainedConfig, (config) => {
         // All PASS events
         const total = config.iterations * config.numSubsteps;
-        const events = Array.from({ length: total + 10 }, () => 'PASS');
+        const events: EventType[] = Array.from({ length: total + 10 }, () => 'PASS');
         const result = runForLoop(config, events);
         expect(result.terminalState).toBe('COMPLETE');
       }),
@@ -369,7 +369,10 @@ describe('FOR loop properties', () => {
 
     fc.assert(
       fc.property(completeParentConfig, (cfg) => {
-        const events = Array.from({ length: cfg.iterations * cfg.numSubsteps + 10 }, () => 'PASS');
+        const events: EventType[] = Array.from(
+          { length: cfg.iterations * cfg.numSubsteps + 10 },
+          () => 'PASS',
+        );
         const result = runForLoop(cfg, events);
         // All pass → parent passes → COMPLETE (not CONTINUE → step 2 → COMPLETE)
         expect(result.terminalState).toBe('COMPLETE');
@@ -406,7 +409,7 @@ describe('FOR loop properties', () => {
     fc.assert(
       fc.property(allFailConfig, (config) => {
         const total = config.iterations * config.numSubsteps;
-        const events = Array.from({ length: total + 10 }, () => 'FAIL');
+        const events: EventType[] = Array.from({ length: total + 10 }, () => 'FAIL');
         const result = runForLoop(config, events);
         expect(result.terminalState).toBe('STOPPED');
       }),
@@ -437,7 +440,7 @@ describe('FOR loop properties', () => {
     fc.assert(
       fc.property(anyFailConfig, (config) => {
         const total = config.iterations * config.numSubsteps;
-        const events = Array.from({ length: total + 10 }, () => 'FAIL');
+        const events: EventType[] = Array.from({ length: total + 10 }, () => 'FAIL');
         const result = runForLoop(config, events);
         expect(result.terminalState).toBe('STOPPED');
       }),
@@ -467,7 +470,7 @@ describe('FOR loop properties', () => {
     fc.assert(
       fc.property(failCompleteConfig, (cfg) => {
         const total = cfg.iterations * cfg.numSubsteps;
-        const events = Array.from({ length: total + 10 }, () => 'FAIL');
+        const events: EventType[] = Array.from({ length: total + 10 }, () => 'FAIL');
         const result = runForLoop(cfg, events);
         // All fail → parent fails → COMPLETE (not STOP)
         expect(result.terminalState).toBe('COMPLETE');
@@ -539,7 +542,7 @@ describe('FOR loop properties', () => {
     fc.assert(
       fc.property(seqPassConfig, (cfg) => {
         const total = cfg.iterations * cfg.numSubsteps;
-        const events = Array.from({ length: total + 10 }, () => 'PASS');
+        const events: EventType[] = Array.from({ length: total + 10 }, () => 'PASS');
         const result = runForLoop(cfg, events);
         // All pass → COMPLETE (via step 2 terminal)
         expect(result.terminalState).toBe('COMPLETE');
