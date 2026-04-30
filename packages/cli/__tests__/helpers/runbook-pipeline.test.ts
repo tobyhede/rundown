@@ -526,7 +526,7 @@ describe('prepareRunbook', () => {
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue(
       mockParseResult({
-        frontmatter: { inputs: ['Region'] } as NonNullable<ParseResult['frontmatter']>,
+        frontmatter: { inputs: ['Region'] },
       }),
     );
 
@@ -548,7 +548,7 @@ describe('prepareRunbook', () => {
         frontmatter: {
           inputs: ['PlanPath'],
           required: ['Region'],
-        } as NonNullable<ParseResult['frontmatter']>,
+        },
         diagnostics: [
           {
             severity: 'error',
@@ -576,7 +576,7 @@ describe('prepareRunbook', () => {
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
     ).mockReturnValue(
       mockParseResult({
-        frontmatter: { inputs: ['context'] } as NonNullable<ParseResult['frontmatter']>,
+        frontmatter: { inputs: ['context'] },
         diagnostics: [
           {
             severity: 'error',
@@ -627,7 +627,7 @@ describe('prepareRunbook', () => {
       mockParseResult({
         frontmatter: {
           vars: { Step: '1' },
-        } as NonNullable<ParseResult['frontmatter']>,
+        },
       }),
     );
     jest.mocked(validateFrontmatterVars).mockReturnValue([

@@ -216,9 +216,9 @@ export async function runCliInProcess(
   const argArray = Array.isArray(args) ? args : args.split(' ').filter(Boolean);
   const extraEnv = options.env ?? {};
   const extraEnvKeys = Object.keys(extraEnv);
-  const origExtraEnv = Object.fromEntries(
+  const origExtraEnv: Record<string, string | undefined> = Object.fromEntries(
     extraEnvKeys.map((key) => [key, process.env[key]]),
-  ) as Record<string, string | undefined>;
+  );
   const binPath = workspace.binPath();
   const pluginDir = join(workspace.cwd, 'plugin');
 
