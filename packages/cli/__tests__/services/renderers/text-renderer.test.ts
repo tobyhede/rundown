@@ -790,6 +790,8 @@ describe('TextRenderer', () => {
     it('renders delegations section when present', () => {
       const writer = createMockWriter();
       const renderer = new TextRenderer({ writer });
+      const pendingToken = 'rdtk_TEST_PENDING_TOKEN';
+      const claimedToken = 'rdtk_TEST_CLAIMED_TOKEN';
 
       const event: DetailOutput = {
         type: 'detail',
@@ -805,15 +807,14 @@ describe('TextRenderer', () => {
               substep: '1.1',
               runbook: 'review-code.md',
               state: 'pending',
-              token: 'rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ234567',
+              token: pendingToken,
             },
             {
               substep: '1.2',
               runbook: 'review-tests.md',
               state: 'claimed',
               childRunId: 'run_abc',
-              // cspell:disable-next-line
-              token: 'rdtk_ZYXWVUTSRQPONMLKJIHGFEDCBA765432',
+              token: claimedToken,
             },
             { substep: '1.3', runbook: 'review-security.md', state: 'cancelled' },
           ],
@@ -827,12 +828,11 @@ describe('TextRenderer', () => {
       expect(output).toContain('Delegations:');
       expect(output).toContain('1.1');
       expect(output).toContain('review-code.md');
-      expect(output).toContain('(pending claim: rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ234567)');
-      expect(output).toContain('rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ234567');
+      expect(output).toContain(`(pending claim: ${pendingToken})`);
+      expect(output).toContain(pendingToken);
       expect(output).toContain('1.2');
       expect(output).toContain('(claimed: run_abc)');
-      // cspell:disable-next-line
-      expect(output).not.toContain('rdtk_ZYXWVUTSRQPONMLKJIHGFEDCBA765432');
+      expect(output).not.toContain(claimedToken);
       expect(output).toContain('1.3');
       expect(output).toContain('(cancelled)');
     });

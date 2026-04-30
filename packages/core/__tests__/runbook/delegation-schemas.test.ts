@@ -218,12 +218,30 @@ describe('StepDelegationSchema', () => {
     expect(result.success).toBe(true);
   });
 
+  it('rejects a token on a claimed delegation', () => {
+    const result = StepDelegationSchema.safeParse({
+      ...validDelegation,
+      token: 'rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ234567',
+      childRunId: 'child-run-456',
+    });
+    expect(result.success).toBe(false);
+  });
+
   it('accepts non-null cancelledAt', () => {
     const result = StepDelegationSchema.safeParse({
       ...validDelegation,
       cancelledAt: '2026-02-27T11:00:00.000Z',
     });
     expect(result.success).toBe(true);
+  });
+
+  it('rejects a token on a cancelled delegation', () => {
+    const result = StepDelegationSchema.safeParse({
+      ...validDelegation,
+      token: 'rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ234567',
+      cancelledAt: '2026-02-27T11:00:00.000Z',
+    });
+    expect(result.success).toBe(false);
   });
 
   it('preserves extraVars through parse (round-trip)', () => {

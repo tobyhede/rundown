@@ -6,6 +6,10 @@ export const TOKEN_PREFIX = 'rdtk_';
 /** RFC 4648 base32 alphabet. */
 const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 
+function escapeRegExpLiteral(value: string): string {
+  return value.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&');
+}
+
 export declare const delegationTokenHashBrand: unique symbol;
 
 /** SHA-256 hash of a delegation token in persisted state format. */
@@ -15,7 +19,9 @@ export type DelegationTokenHash = string & { readonly [delegationTokenHashBrand]
 export const DELEGATION_TOKEN_HASH_PATTERN = /^sha256:[a-f0-9]{64}$/;
 
 /** Canonical raw delegation token pattern. */
-export const DELEGATION_TOKEN_PATTERN = /^rdtk_[A-Z2-7]{32}$/;
+export const DELEGATION_TOKEN_PATTERN = new RegExp(
+  `^${escapeRegExpLiteral(TOKEN_PREFIX)}[A-Z2-7]{32}$`,
+);
 
 /**
  * Encode a buffer as RFC 4648 base32 (no padding).

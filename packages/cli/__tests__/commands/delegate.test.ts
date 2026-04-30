@@ -105,6 +105,7 @@ describe('delegate command', () => {
         'delegate runbooks/child.runbook.md --step 1.1',
         workspace,
       );
+      expect(result.exitCode).toBe(0);
       const output = JSON.parse(result.stdout) as Record<string, unknown>;
 
       const state = await getActiveState(workspace);
@@ -128,6 +129,7 @@ describe('delegate command', () => {
         'delegate runbooks/child.runbook.md --step 1.1',
         workspace,
       );
+      expect(delegated.exitCode).toBe(0);
       const token = JSON.parse(delegated.stdout).token as string;
 
       const statusResult = await runCliInProcess('status', workspace);
@@ -150,6 +152,7 @@ describe('delegate command', () => {
         'delegate runbooks/child.runbook.md --step 1.1',
         workspace,
       );
+      expect(delegated.exitCode).toBe(0);
       const token = JSON.parse(delegated.stdout).token as string;
 
       const claimed = await runCliInProcess(`claim ${token}`, workspace, {
@@ -166,6 +169,7 @@ describe('delegate command', () => {
       expect(delegation.token).toBeUndefined();
 
       const statusResult = await runCliInProcess('status', workspace);
+      expect(statusResult.exitCode).toBe(0);
       const statusOutput = JSON.parse(statusResult.stdout) as Record<string, unknown>;
       const delegations = statusOutput.delegations as Array<Record<string, unknown>>;
       expect(delegations[0]?.state).toBe('claimed');
@@ -179,6 +183,7 @@ describe('delegate command', () => {
         'delegate runbooks/child.runbook.md --step 1.1',
         workspace,
       );
+      expect(delegated.exitCode).toBe(0);
       const token = JSON.parse(delegated.stdout).token as string;
       await mirrorActiveSubstepStatesIntoSnapshot();
 
