@@ -60,11 +60,7 @@ import {
   collectUnresolvedRunbookVariables,
 } from '../services/template-renderer.js';
 import { getPolicyEvaluator, getPolicyPrompter } from '../services/policy-context.js';
-import {
-  validateFrontmatterVars,
-  validateRequiredVars,
-  validateOutputsDeclarations,
-} from './validate-frontmatter-vars.js';
+import { validateOutputsDeclarations } from './validate-frontmatter-vars.js';
 import { getHelperRegistry, detectHelperCollisions } from '../services/helper-registry.js';
 
 /**
@@ -395,9 +391,13 @@ export type LoadAndParseResult = LoadAndParseSuccess | LoadAndParseFailure;
  * Performs:
  * 1. File discovery via `resolveRunbookFile`
  * 2. File read
- * 3. Parse (returns diagnostics as data, not exceptions)
- * 4. Frontmatter var validation (reserved variable names)
- * 5. Substep counting
+ * 3. Parse (returns `parseDiagnostics` as data, not exceptions)
+ * 4. Validate frontmatter `outputs` declarations with `validateOutputsDeclarations`
+ * 5. Merge `parseDiagnostics` and `outputsDiagnostics` into `diagnostics`
+ * 6. Substep counting
+ *
+ * Frontmatter variable validation is no longer performed here; the resulting
+ * `diagnostics` array combines parser diagnostics with outputs validation only.
  *
  * @param file - Runbook file path or namespace:name
  * @param cwd - Current working directory for resolution
@@ -425,18 +425,9 @@ export async function loadAndParseRunbook(file: string, cwd: string): Promise<Lo
       diagnostics: parseDiagnostics,
     } = parseRunbookDocument(rawContent, path.basename(filePath));
 
-    const fmOutputs = frontmatter?.outputs;
-    const fmVars =
-      frontmatter?.vars && typeof frontmatter.vars === 'object' && !Array.isArray(frontmatter.vars)
-        ? (frontmatter.vars as Record<string, string | number | boolean>)
-        : undefined;
-    const varsDiagnostics = validateFrontmatterVars(fmVars);
-    const requiredDiagnostics = validateRequiredVars(frontmatter?.required, fmVars);
-    const outputsDiagnostics = validateOutputsDeclarations(fmOutputs);
+    const outputsDiagnostics = validateOutputsDeclarations(frontmatter?.outputs);
     const diagnostics: readonly ValidationDiagnostic[] = [
       ...parseDiagnostics,
-      ...varsDiagnostics,
-      ...requiredDiagnostics,
       ...outputsDiagnostics,
     ];
 

@@ -17,7 +17,8 @@ description: What this runbook does
 tags:
   - category
 INPUTS:
-  environment: staging
+  - environment
+  - PlanPath
 REQUIRED:
   - PlanPath
 OUTPUTS:
@@ -128,22 +129,25 @@ OUTPUTS:
 
 Combine with a step-level OUTPUTS so the value lands in `state.variables` first, then exports at completion.
 
-### Frontmatter `REQUIRED:` and `INPUTS:` — declaring what a runbook needs
+### Frontmatter `INPUTS:` and `REQUIRED:` — declaring what a runbook needs
 
 ```yaml
 ---
 name: review-plan
+INPUTS:
+  - PlanPath
+  - environment
 REQUIRED:
   - PlanPath
-INPUTS:
-  environment: development
 ---
 ```
 
-- `REQUIRED:` is a list of variable names. Missing values trigger a hard error at startup.
-- `INPUTS:` is a key→default map (string / number / boolean), **not** a list. Use it to provide fallbacks when the caller doesn't supply a value. Don't put `REQUIRED:` keys in `INPUTS:` — they have no default by definition.
+- `INPUTS:` is a YAML sequence of variable names the runbook accepts. Declarations only — entries do not carry values. Names must match `/^[a-zA-Z_][a-zA-Z0-9_]*$/` and must not collide with reserved/built-in names.
+- `REQUIRED:` is a subset of `INPUTS:`. Every name in `REQUIRED:` must also appear in `INPUTS:` — mismatch is a parse-time error. Missing values trigger a hard `MISSING_REQUIRED_VARS` error at resolution.
 
-Variable resolution precedence (highest → lowest): CLI `--input` / `--input-json` / `--input-file`, `RD_INPUT_*` env, project `.rundown/config.yaml`, parent-forwarded variables (from a parent runbook's `OUTPUTS:`), frontmatter `INPUTS:` defaults.
+Defaults are not carried in frontmatter. Provide values via `--input`, `--input-json`, `--input-file`, `RD_INPUT_*` env, parent-forwarded variables (from a parent runbook's `OUTPUTS:`), or project `.rundown/config.yaml`.
+
+Variable resolution precedence (highest → lowest): CLI `--input` / `--input-json` / `--input-file`, `RD_INPUT_*` env, parent-forwarded variables, project `.rundown/config.yaml`, built-in defaults.
 
 ## Transitions
 
@@ -233,8 +237,8 @@ Use `{{ variableName }}` syntax. See [CLAUDE.md — Template Variables](../../..
 
 Key authoring notes:
 - Undefined variables preserved as literal `{{ variable }}` text
-- Frontmatter `INPUTS:` supports string, number, boolean defaults (not arrays / file refs)
-- Data sources for FOR loops: use `.rundown/config.yaml` or `--input-file` (arrays / `file:` values)
+- Frontmatter `INPUTS:` declares names only — defaults come from `.rundown/config.yaml`, `--input`, `--input-json`, `--input-file`, or `RD_INPUT_*` env
+- Data sources for FOR loops: use `--input-json` for inline arrays, or `.rundown/config.yaml` / `--input-file` for arrays and `file:` values
 
 ## Common Mistakes
 
@@ -244,7 +248,8 @@ Key authoring notes:
 | Command block + substeps in same step | Choose one — cannot mix |
 | OUTPUTS after transitions | Content order: OUTPUTS → FOR → transitions → body |
 | Reserved word as step ID | `PASS`, `FAIL`, `CONTINUE`, etc. are reserved |
-| `INPUTS:` written as a YAML sequence (`- VarName`) | `INPUTS:` is a key→default map (`VarName: default`). For a bare list of names the runbook needs, use `REQUIRED:`. |
+| `INPUTS:` written as a key→default map (`VarName: default`) | `INPUTS:` is a YAML sequence of bare names (`- VarName`). Defaults live in config / `--input-file` / `--input-json` / env, not in frontmatter. |
+| Name in `REQUIRED:` not declared in `INPUTS:` | `REQUIRED:` must be a subset of `INPUTS:`. Add the name to `INPUTS:` too. |
 | Skipping `rd check` | Always validate: `rd check <file>` |
 
 ## Reference
