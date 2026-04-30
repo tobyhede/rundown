@@ -249,6 +249,9 @@ Do work.
         'run --prompted runbooks/parent-fail.runbook.md',
         workspace,
       );
+      expect(start.exitCode).toBe(0);
+      const parentId = (await getActiveState(workspace))?.id;
+      expect(parentId).toBeDefined();
       const frontier = findFrontierInEvents(parseConcatenatedJson(start.stdout)) ?? [];
       const token = frontier.find((entry) => entry.id === '1.1')?.token;
       expect(token).toBeDefined();
@@ -257,10 +260,14 @@ Do work.
       const claim = await runCliInProcess(`claim ${token!}`, workspace, agent);
       const childId = String(findActionOutput(claim.stdout)?.run_id);
 
-      // Anonymous fail — must not stop the agent-owned child.
-      await runCliInProcess('fail --text', workspace);
+      // Anonymous fail — must stop the default-stack parent, not the
+      // agent-owned child.
+      const failResult = await runCliInProcess('fail --text', workspace);
+      expect(failResult.exitCode).toBe(1);
 
+      const parent = await readRunbookState(workspace, parentId!);
       const child = await readRunbookState(workspace, childId);
+      expect(parent?.lifecycle).toBe('stopped');
       expect(child?.lifecycle).toBe('running');
     }, 30_000);
   });
