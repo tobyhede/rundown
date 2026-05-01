@@ -16,6 +16,7 @@
 
 import { z } from 'zod';
 import { TemplateVarValueSchema } from '../schemas.js';
+import { CLAIM_ID_PATTERN } from '../runbook/claim-id.js';
 import { DELEGATION_TOKEN_PATTERN } from '../runbook/delegation-token.js';
 
 // ============================================================================
@@ -979,6 +980,8 @@ export const ClaimResponseSchema = ExecutionSummarySchema.extend({
   action: z.literal('claimed').describe('Action type'),
   /** Truncated delegation token */
   token: z.string().describe('Truncated delegation token'),
+  /** Claim ID for explicit child targeting */
+  claim_id: z.string().regex(CLAIM_ID_PATTERN).describe('Claim ID for explicit child targeting'),
   /** Child run ID */
   run_id: z.string().describe('Child run ID'),
   /** Child runbook path */

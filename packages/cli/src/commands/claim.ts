@@ -16,7 +16,6 @@ import {
   type RunPipelineContext,
 } from '../helpers/runbook-pipeline.js';
 import { handleParentCompletion, extractParentLinkage } from '../helpers/delegation-completion.js';
-import { resolveCallerIdentity } from '../helpers/caller-identity.js';
 
 function claimFailureToEnvelope(failure: ClaimFailure): {
   readonly code: string;
@@ -69,17 +68,6 @@ function claimFailureToEnvelope(failure: ClaimFailure): {
         code: 'DELEGATION_LOCK_TIMEOUT',
         message: `Could not acquire delegation lock for run ${failure.parentRunId}. Another operation may be in progress.`,
         details: { parentRunId: failure.parentRunId },
-      };
-    case 'owner-conflict':
-      return {
-        code: 'DELEGATION_OWNER_CONFLICT',
-        message: `Delegation already owned by agent '${failure.existingOwnerAgentId}'.`,
-        details: {
-          parentRunId: failure.parentRunId,
-          stepId: failure.stepId,
-          childRunId: failure.childRunId,
-          existingOwnerAgentId: failure.existingOwnerAgentId,
-        },
       };
     case 'prepare-failed':
       return {
@@ -164,20 +152,7 @@ export function registerClaimCommand(program: Command): void {
               input: options.input,
               inputJson: options.inputJson,
             };
-            const caller = resolveCallerIdentity();
-            if (caller.kind === 'invalid') {
-              output.error(caller.message, 'INVALID_CALLER_IDENTITY');
-              output.flush();
-              process.exitCode = 1;
-              return;
-            }
-
-            const result = await claimAndLaunch(
-              ctx,
-              token,
-              inputOpts,
-              caller.kind === 'identified' ? caller.identity : undefined,
-            );
+            const result = await claimAndLaunch(ctx, token, inputOpts);
 
             if (!result.ok) {
               const envelope = claimFailureToEnvelope(result);

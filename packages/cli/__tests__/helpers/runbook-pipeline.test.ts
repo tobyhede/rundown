@@ -1338,22 +1338,13 @@ describe('claimAndLaunch', () => {
     );
 
     const claimSpy = mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
-      status: 'conflict',
-      existing: {
-        kind: 'agent-owned-runbook',
-        ownerKey: 'agent:agent-a:session:session-a',
-        agent_id: 'agent-a',
-        session_id: 'session-a',
-        childRunId: 'existing-child-id',
-        tokenHash: MOCK_TOKEN_HASH,
-        parentRunId: 'parent-id',
-        parentStepId: '1',
-        claimedAt: '2026-04-28T00:00:00.000Z',
-        updatedAt: '2026-04-28T00:00:00.000Z',
+      status: 'claimed',
+      claim: {
+        claimId: 'rdclm_abcdefghijklmnopqrstu1',
       },
     });
     const mockSessionService = {
-      claimRunbookForOwner: claimSpy,
+      claimRunbook: claimSpy,
     } as unknown as SessionService;
 
     const ctx = {
@@ -1366,18 +1357,12 @@ describe('claimAndLaunch', () => {
     } satisfies RunPipelineContext;
 
     const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
-    const intruder = {
-      kind: 'agent-session' as const,
-      agent_id: 'agent-b',
-      session_id: 'session-b',
-    };
     // cspell:disable-next-line
-    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {}, intruder);
+    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      assertVariant(result, 'reason', 'owner-conflict');
-      expect(result.existingOwnerAgentId).toBe('agent-a');
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.claimId).toBe('rdclm_abcdefghijklmnopqrstu1');
     }
   });
 
@@ -1442,22 +1427,13 @@ describe('claimAndLaunch', () => {
     );
 
     const claimSpy = mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
-      status: 'conflict',
-      existing: {
-        kind: 'agent-owned-runbook',
-        ownerKey: 'agent:agent-a:session:session-a',
-        agent_id: 'agent-a',
-        session_id: 'session-a',
-        childRunId: 'orphan-id',
-        tokenHash,
-        parentRunId: 'parent-id',
-        parentStepId: '1',
-        claimedAt: '2026-04-28T00:00:00.000Z',
-        updatedAt: '2026-04-28T00:00:00.000Z',
+      status: 'claimed',
+      claim: {
+        claimId: 'rdclm_abcdefghijklmnopqrstu1',
       },
     });
     const mockSessionService = {
-      claimRunbookForOwner: claimSpy,
+      claimRunbook: claimSpy,
     } as unknown as SessionService;
 
     const ctx = {
@@ -1470,18 +1446,12 @@ describe('claimAndLaunch', () => {
     } satisfies RunPipelineContext;
 
     const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
-    const intruder = {
-      kind: 'agent-session' as const,
-      agent_id: 'agent-b',
-      session_id: 'session-b',
-    };
     // cspell:disable-next-line
-    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {}, intruder);
+    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      assertVariant(result, 'reason', 'owner-conflict');
-      expect(result.existingOwnerAgentId).toBe('agent-a');
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.claimId).toBe('rdclm_abcdefghijklmnopqrstu1');
     }
   });
 

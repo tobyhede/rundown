@@ -399,6 +399,7 @@ export async function readSession(workspace: TestWorkspace): Promise<{
   stacks: Record<string, string[]>;
   defaultStack: string[];
   ownedRunbooks: Record<string, unknown[]>;
+  claims: Record<string, Record<string, unknown>>;
 }> {
   try {
     const content = await readFile(workspace.sessionPath(), 'utf-8');
@@ -409,6 +410,10 @@ export async function readSession(workspace: TestWorkspace): Promise<{
     const ownedRunbooks =
       session.ownedRunbooks && typeof session.ownedRunbooks === 'object'
         ? (session.ownedRunbooks as Record<string, unknown[]>)
+        : {};
+    const claims =
+      session.claims && typeof session.claims === 'object'
+        ? (session.claims as Record<string, Record<string, unknown>>)
         : {};
 
     // Active runbook is the top of the default stack
@@ -424,9 +429,17 @@ export async function readSession(workspace: TestWorkspace): Promise<{
       stacks,
       defaultStack,
       ownedRunbooks,
+      claims,
     };
   } catch {
-    return { active: null, stashed: null, stacks: {}, defaultStack: [], ownedRunbooks: {} };
+    return {
+      active: null,
+      stashed: null,
+      stacks: {},
+      defaultStack: [],
+      ownedRunbooks: {},
+      claims: {},
+    };
   }
 }
 
