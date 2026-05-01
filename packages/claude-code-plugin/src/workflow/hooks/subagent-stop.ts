@@ -449,19 +449,9 @@ export function queryRunbookStatus(cwd: string): RunbookStatus | undefined {
   }
 }
 
-function buildIdentityEnv(input: HookInput): NodeJS.ProcessEnv | undefined {
-  if (!input.agent_id) {
-    return undefined;
-  }
-  return {
-    RD_AGENT_ID: input.agent_id,
-    ...(input.session_id ? { RD_SESSION_ID: input.session_id } : {}),
-  };
-}
-
 function queryRunbookStatusForHook(input: HookInput): RunbookStatus | undefined {
   try {
-    const output = rundown(['status'], input.cwd, { env: buildIdentityEnv(input) });
+    const output = rundown(['status'], input.cwd);
     const parsed = JSON.parse(output) as Record<string, unknown>;
     return parseRunbookStatus(parsed);
   } catch {
@@ -798,12 +788,8 @@ export async function handleSubagentStop(input: HookInput): Promise<SubagentStop
     return { context: buildContextMessage({ kind: 'unknown' }) };
   }
 
-  // Query runbook state and classify the delegation outcome
-  const status = queryRunbookStatusForHook(input);
-  const outcome: DelegationOutcome = status
-    ? classifyOutcome(status, consumed.tokenHash)
-    : { kind: 'unknown' };
-  const context = buildContextMessage(outcome);
-
-  return context ? { context } : {};
+  return {
+    violation:
+      'Delegated Rundown work must be closed explicitly with rd pass --claim-id <claim_id> or rd fail --claim-id <claim_id>.',
+  };
 }

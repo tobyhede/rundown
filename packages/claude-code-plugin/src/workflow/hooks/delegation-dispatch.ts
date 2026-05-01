@@ -200,24 +200,24 @@ export async function handleDelegationDispatch(
     'This task is a delegated substep. Claim the delegation token before starting work:',
     '',
     '```',
-    ...(input.agent_id
-      ? [
-          `export RD_AGENT_ID=${shellQuote(input.agent_id)}`,
-          ...(input.session_id ? [`export RD_SESSION_ID=${shellQuote(input.session_id)}`] : []),
-        ]
-      : []),
     claimCommand,
     '```',
     '',
-    ...(input.agent_id
-      ? [
-          'Keep these environment variables set for `rd status`, `rd pass`, `rd fail`, `rd stash`, `rd pop`, and `rd stop`.',
-          '',
-        ]
-      : []),
+    'Copy the `claim_id` from the claim output. Use it for all later Rundown commands:',
+    '',
+    '```',
+    'rd status --claim-id <claim_id>',
+    'rd pass --claim-id <claim_id>',
+    'rd fail --claim-id <claim_id>',
+    'rd stash --claim-id <claim_id>',
+    'rd pop --claim-id <claim_id>',
+    'rd stop --claim-id <claim_id>',
+    'rd complete --claim-id <claim_id>',
+    '```',
+    '',
     ...statusLines,
     ...(statusLines.length > 0 ? [''] : []),
-    'After completing the delegated work, use `rd pass` or `rd fail` to report the result.',
+    'Before stopping, complete the delegated runbook explicitly with `rd pass --claim-id <claim_id>` or `rd fail --claim-id <claim_id>`.',
   ];
 
   return { context: lines.join('\n') };
