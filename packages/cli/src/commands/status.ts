@@ -1,7 +1,7 @@
 // packages/cli/src/commands/status.ts
 
 import type { Command } from 'commander';
-import { buildAgentOwnerKey, RunbookStateManager, SessionService } from '@rundown-org/core';
+import { RunbookStateManager, SessionService } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
@@ -10,8 +10,8 @@ import {
   buildStashedStatus,
   buildActiveStatus,
 } from '../helpers/status-builder.js';
-import { resolveCallerIdentity } from '../helpers/caller-identity.js';
 import { resolveActiveRunbook } from '../helpers/active-runbook-resolver.js';
+import { parseClaimIdOption } from '../helpers/claim-id-option.js';
 
 /**
  * Registers the 'status' command for displaying runbook state.
@@ -21,8 +21,9 @@ export function registerStatusCommand(program: Command): void {
   program
     .command('status')
     .description('Show current runbook state')
+    .option('--claim-id <claimId>', 'Target a claimed delegated child runbook')
     .option('--text', 'Output as human-readable text')
-    .action(async (options: { text?: boolean }) => {
+    .action(async (options: { claimId?: string; text?: boolean }) => {
       await withErrorHandling(
         async () => {
           const cwd = getCwd();
@@ -30,11 +31,15 @@ export function registerStatusCommand(program: Command): void {
 
           const manager = new RunbookStateManager(cwd);
           const sessionService = new SessionService(manager);
-          const active = await resolveActiveRunbook(sessionService, resolveCallerIdentity());
+          const claimTarget = parseClaimIdOption(options.claimId, output);
+          if (!claimTarget.ok) return;
+          const active = await resolveActiveRunbook(sessionService, {
+            claimId: claimTarget.claimId,
+          });
           const stashedId = await sessionService.getStashedRunbookId();
 
           switch (active.kind) {
-            case 'owned':
+            case 'claim':
             case 'default':
               output.detail(
                 buildActiveStatus(active.state, cwd, stashedId ?? undefined) as unknown as Record<
@@ -47,9 +52,8 @@ export function registerStatusCommand(program: Command): void {
               return;
             case 'none':
               break;
-            case 'stale_owner':
-            case 'invalid_identity':
-              output.error(active.message, 'OWNED_RUNBOOK_UNAVAILABLE');
+            case 'stale_claim':
+              output.error(active.message, 'CLAIMED_RUNBOOK_UNAVAILABLE');
               output.flush();
               process.exitCode = 1;
               return;
@@ -67,19 +71,6 @@ export function registerStatusCommand(program: Command): void {
           }
 
           // Case 2: Something stashed but nothing active
-          const caller = resolveCallerIdentity();
-          const stashedOwnership = await sessionService.getStashedRunbookOwnership();
-          if (stashedOwnership !== null) {
-            const canViewStash =
-              caller.kind === 'identified' &&
-              stashedOwnership.ownerKey === buildAgentOwnerKey(caller.identity);
-            if (!canViewStash) {
-              output.detail(buildInactiveStatus() as unknown as Record<string, unknown>, 'status');
-              output.flush();
-              return;
-            }
-          }
-
           const stashed = await manager.load(stashedId);
           if (stashed) {
             output.detail(

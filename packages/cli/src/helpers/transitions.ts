@@ -31,6 +31,7 @@ import {
   type RunbookCompletedPayload,
   type RunbookStoppedPayload,
   type StepTransitionedPayload,
+  type ClaimId,
 } from '@rundown-org/core';
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { resolveIndexOption } from './index-option.js';
@@ -48,7 +49,6 @@ import {
   type TransitionEventSink,
   type TransitionOrchestrationPolicy,
 } from './transition-orchestrator.js';
-import { resolveCallerIdentity } from './caller-identity.js';
 import { resolveActiveRunbook, type ActiveRunbookResolution } from './active-runbook-resolver.js';
 export type { ActionType } from '@rundown-org/core';
 
@@ -154,7 +154,7 @@ export interface TransitionContext {
 /** Result of resolving the runbook target and building transition execution context. */
 export type BuildTransitionContextResult =
   | { readonly kind: 'ready'; readonly ctx: TransitionContext }
-  | Extract<ActiveRunbookResolution, { kind: 'none' | 'stale_owner' | 'invalid_identity' }>;
+  | Extract<ActiveRunbookResolution, { kind: 'none' | 'stale_claim' }>;
 
 /**
  * Build full transition context from resolved state.
@@ -170,20 +170,20 @@ export type BuildTransitionContextResult =
 export async function buildTransitionContext(
   output: OutputEmitter,
   cwd: string,
+  options: { readonly claimId?: ClaimId } = {},
 ): Promise<BuildTransitionContextResult> {
   const manager = new RunbookStateManager(cwd);
   const actorService = new RunbookActorService(manager);
   const sessionService = new SessionService(manager);
   const lifecycleService = new ExecutionLifecycleService(manager);
-  const active = await resolveActiveRunbook(sessionService, resolveCallerIdentity());
+  const active = await resolveActiveRunbook(sessionService, options);
 
   switch (active.kind) {
-    case 'owned':
+    case 'claim':
     case 'default':
       break;
     case 'none':
-    case 'stale_owner':
-    case 'invalid_identity':
+    case 'stale_claim':
       return active;
     default: {
       const _exhaustive: never = active;
@@ -193,7 +193,7 @@ export async function buildTransitionContext(
 
   const state = active.state;
   const terminalReleaseMode: ExecutionTerminalReleaseMode =
-    active.kind === 'owned' ? 'release-runbook' : 'stack-pop';
+    active.kind === 'claim' ? 'release-runbook' : 'stack-pop';
   const readonlySteps = getRunbookFromState(state, cwd);
   const steps = [...readonlySteps]; // Convert to mutable array for TransitionContext
   const actor = await actorService.createActor(state.id, steps);

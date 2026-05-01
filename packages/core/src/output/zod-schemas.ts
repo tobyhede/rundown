@@ -47,6 +47,10 @@ export const CLIErrorCodes = {
   OWNED_RUNBOOK_UNAVAILABLE: 'OWNED_RUNBOOK_UNAVAILABLE',
   /** Caller identity environment variables are inconsistent or invalid */
   INVALID_CALLER_IDENTITY: 'INVALID_CALLER_IDENTITY',
+  /** Claim id format is invalid */
+  INVALID_CLAIM_ID: 'INVALID_CLAIM_ID',
+  /** Claimed runbook is missing, terminal, or otherwise unavailable */
+  CLAIMED_RUNBOOK_UNAVAILABLE: 'CLAIMED_RUNBOOK_UNAVAILABLE',
   /** Delegation token format is invalid */
   INVALID_TOKEN: 'INVALID_TOKEN',
   /** Delegation token was not found */
@@ -81,6 +85,8 @@ export const ErrorCodeSchema = z
     'NO_STASHED_RUNBOOK',
     'OWNED_RUNBOOK_UNAVAILABLE',
     'INVALID_CALLER_IDENTITY',
+    'INVALID_CLAIM_ID',
+    'CLAIMED_RUNBOOK_UNAVAILABLE',
     'INVALID_TOKEN',
     'TOKEN_NOT_FOUND',
     'DELEGATION_CANCELLED',

@@ -8,8 +8,9 @@ import type {
   SessionService,
   StepId,
 } from '@rundown-org/core';
+import { assertClaimId } from '@rundown-org/core';
 import type { OutputEmitter } from '../../src/services/output-emitter.js';
-import { brandAgentOwnerKeyForTest, brandDelegationTokenHashForTest } from './brand-helpers.js';
+import { brandDelegationTokenHashForTest } from './brand-helpers.js';
 import { mockErrorHelpers } from './mock-error-helpers.js';
 import { mockFn } from './typed-mocks.js';
 
@@ -488,7 +489,7 @@ describe('resolveTerminalReleaseModeForRunbook', () => {
     const loadSession = mockFn<RunbookStateManager['loadSession']>();
     loadSession.mockResolvedValue({
       defaultStack: ['runbook-a'],
-      ownedRunbooks: {},
+      claims: {},
     });
 
     const mode = await resolveTerminalReleaseModeForRunbook(
@@ -499,39 +500,29 @@ describe('resolveTerminalReleaseModeForRunbook', () => {
     expect(mode).toBe('stack-pop');
   });
 
-  it('uses release-runbook for owner-owned runbooks', async () => {
+  it('uses release-runbook for claim-targeted runbooks', async () => {
     const loadSession = mockFn<RunbookStateManager['loadSession']>();
-    const identity = {
-      kind: 'agent-session' as const,
-      agent_id: 'agent-a',
-      session_id: 'session-a',
-    };
-    const ownerKey = brandAgentOwnerKeyForTest(identity);
     loadSession.mockResolvedValue({
       defaultStack: ['parent-runbook'],
-      ownedRunbooks: {
-        [ownerKey]: [
-          {
-            kind: 'agent-owned-runbook',
-            ownerKey,
-            agent_id: 'agent-a',
-            session_id: 'session-a',
-            childRunId: 'owned-runbook',
-            parentRunId: 'parent-runbook',
-            parentStepId: '1.1',
-            tokenHash: brandDelegationTokenHashForTest(
-              'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-            ),
-            claimedAt: '2026-01-01T00:00:00.000Z',
-            updatedAt: '2026-01-01T00:00:00.000Z',
-          },
-        ],
+      claims: {
+        rdclm_abcdefghijklmnopqrstu1: {
+          kind: 'claim-record',
+          claimId: assertClaimId('rdclm_abcdefghijklmnopqrstu1'),
+          childRunId: 'claimed-runbook',
+          parentRunId: 'parent-runbook',
+          parentStepId: '1.1',
+          tokenHash: brandDelegationTokenHashForTest(
+            'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          ),
+          claimedAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
       },
     });
 
     const mode = await resolveTerminalReleaseModeForRunbook(
       { loadSession } as unknown as RunbookStateManager,
-      'owned-runbook',
+      'claimed-runbook',
     );
 
     expect(mode).toBe('release-runbook');

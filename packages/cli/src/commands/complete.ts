@@ -7,12 +7,12 @@ import { buildMetadata } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { getRunbookFromState } from '../helpers/runbook-loader.js';
-import { resolveCallerIdentity } from '../helpers/caller-identity.js';
 import { resolveActiveRunbook } from '../helpers/active-runbook-resolver.js';
 import {
   cleanupOrphanedActiveStack,
   isRecoverableActiveStackError,
 } from '../helpers/active-runbook-cleanup.js';
+import { parseClaimIdOption } from '../helpers/claim-id-option.js';
 
 /**
  * Registers the 'complete' command for manually completing runbooks.
@@ -31,8 +31,9 @@ export function registerCompleteCommand(program: Command): void {
     .command('complete')
     .description('Force early completion of current runbook (runbooks auto-complete on final step)')
     .argument('[message]', 'Completion message')
+    .option('--claim-id <claimId>', 'Target a claimed delegated child runbook')
     .option('--text', 'Output as human-readable text')
-    .action(async (message: string | undefined, options: { text?: boolean }) => {
+    .action(async (message: string | undefined, options: { claimId?: string; text?: boolean }) => {
       await withErrorHandling(
         async () => {
           const output = new OutputEmitter({ text: options.text });
@@ -42,29 +43,22 @@ export function registerCompleteCommand(program: Command): void {
 
           let state: RunbookState | null = null;
           let getActiveError: Error | undefined;
-          let cleanedStaleOwnedRunbook = false;
-          const caller = resolveCallerIdentity();
+          const claimTarget = parseClaimIdOption(options.claimId, output);
+          if (!claimTarget.ok) return;
           try {
-            const active = await resolveActiveRunbook(sessionService, caller);
+            const active = await resolveActiveRunbook(sessionService, {
+              claimId: claimTarget.claimId,
+            });
 
             switch (active.kind) {
-              case 'owned':
+              case 'claim':
               case 'default':
                 state = active.state;
                 break;
               case 'none':
-                if (caller.kind === 'identified') {
-                  output.noActiveRunbook('complete');
-                  output.flush();
-                  return;
-                }
                 break;
-              case 'stale_owner':
-                await sessionService.releaseRunbook(active.ownership.childRunId);
-                cleanedStaleOwnedRunbook = true;
-                break;
-              case 'invalid_identity':
-                output.error(active.message, 'OWNED_RUNBOOK_UNAVAILABLE');
+              case 'stale_claim':
+                output.error(active.message, 'CLAIMED_RUNBOOK_UNAVAILABLE');
                 output.flush();
                 process.exitCode = 1;
                 return;
@@ -78,13 +72,13 @@ export function registerCompleteCommand(program: Command): void {
           }
 
           if (!state) {
-            if (cleanedStaleOwnedRunbook) {
-              output.complete('Removed unusable owned runbook state from session');
-              output.flush();
-              return;
-            }
             if (getActiveError && !isRecoverableActiveStackError(getActiveError)) {
               throw getActiveError;
+            }
+            if (claimTarget.claimId !== undefined) {
+              output.noActiveRunbook('complete');
+              output.flush();
+              return;
             }
             const orphanId = await cleanupOrphanedActiveStack(manager, sessionService);
             if (orphanId) {
