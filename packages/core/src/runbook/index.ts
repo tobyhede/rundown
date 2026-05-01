@@ -11,6 +11,7 @@ export {
 export * from './step-id.js';
 export * from './step-utils.js';
 export * from './targeting.js';
+export * from './claim-id.js';
 export * from './transition-kernel.js';
 export { RunbookStateManager, StaleRunbookStateError, type SessionData } from './state.js';
 export {
