@@ -282,7 +282,7 @@ describe('RunbookStateManager', () => {
         }),
       );
 
-      await expect(manager.loadSession()).rejects.toThrow(/Legacy per-agent session format/);
+      await expect(manager.loadSession()).rejects.toThrow(/Legacy session ownership format/);
     });
 
     it('load returns null for nonexistent runbook', async () => {

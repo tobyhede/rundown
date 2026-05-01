@@ -13,7 +13,7 @@ import type {
   ParentLinkage,
   TemplateVarValue,
 } from './types.js';
-import type { AgentRunbookOwnership } from './agent-ownership.js';
+import type { ClaimRecord } from './claim-id.js';
 import { makeRunbookStateSchema, SessionDataSchema } from '../schemas.js';
 import { isNodeError } from '../errors.js';
 import { logger } from '../logger.js';
@@ -77,14 +77,12 @@ function generateId(): string {
  * A single shared stash slot allows temporarily parking a runbook.
  */
 export interface SessionData {
-  /** Active runbook stack for legacy/default targeting. */
+  /** Active runbook stack for default targeting. */
   defaultStack: string[];
   /** ID of a temporarily stashed runbook, if any. */
   stashedRunbookId?: string;
-  /** Ownership record captured when an agent-owned runbook is stashed. */
-  stashedRunbookOwnership?: AgentRunbookOwnership;
-  /** Per-agent/session ownership stack of delegated child runbooks. */
-  ownedRunbooks: Record<string, AgentRunbookOwnership[]>;
+  /** Explicit claim-id records for delegated child runbook targeting. */
+  claims: Record<string, ClaimRecord>;
 }
 
 interface CreateOptions {
@@ -458,16 +456,16 @@ export class RunbookStateManager {
     } catch (err: unknown) {
       if (isNodeError(err) && err.code === 'ENOENT') {
         await this.warnIfLegacyStateExists();
-        return { defaultStack: [], ownedRunbooks: {} };
+        return { defaultStack: [], claims: {} };
       }
       throw err;
     }
 
     const raw = JSON.parse(content) as Record<string, unknown>;
 
-    if ('stacks' in raw) {
+    if ('ownedRunbooks' in raw || 'stacks' in raw) {
       throw new Error(
-        'Legacy per-agent session format detected. Delete the session file and restart.',
+        'Legacy session ownership format detected. Finish or prune active runbooks and restart.',
       );
     }
 

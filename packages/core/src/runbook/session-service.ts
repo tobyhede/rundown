@@ -12,19 +12,15 @@
 
 import type { RunbookStateManager } from './state.js';
 import { SessionLock } from './session-lock.js';
+import { type ReleaseRunbookResult } from './agent-ownership.js';
 import {
-  buildAgentOwnerKey,
-  createAgentRunbookOwnership,
-  SessionOwnershipMismatchError,
-  SessionStashOwnershipMissingError,
-  SessionStashOwnershipRequiredError,
-  type AgentOwnerIdentity,
-  type AgentOwnerKey,
-  type AgentRunbookOwnership,
-  type ClaimRunbookForOwnerResult,
-  type OwnedRunbookResolution,
-  type ReleaseRunbookResult,
-} from './agent-ownership.js';
+  createClaimRecord,
+  generateClaimId,
+  type ClaimId,
+  type ClaimIdResolution,
+  type ClaimRecord,
+  type ClaimRunbookResult,
+} from './claim-id.js';
 import type { DelegationLinkage, RunbookState } from './types.js';
 
 /**
@@ -69,23 +65,11 @@ export class SessionService {
     }
   }
 
-  /**
-   * Return an owner stack, creating and storing an empty stack when absent.
-   *
-   * This helper intentionally mutates `ownedRunbooks` so callers can append to
-   * the returned array and persist the existing session object.
-   *
-   * @param ownedRunbooks - Session ownership map to mutate when the owner is absent
-   * @param ownerKey - Owner key whose stack should exist
-   * @returns Existing or newly inserted ownership stack
-   */
-  private ensureOwnershipStack(
-    ownedRunbooks: Record<string, AgentRunbookOwnership[]>,
-    ownerKey: AgentOwnerKey,
-  ): AgentRunbookOwnership[] {
-    const stack = ownedRunbooks[ownerKey] ?? [];
-    ownedRunbooks[ownerKey] = stack;
-    return stack;
+  private findClaimByChildRunId(
+    claims: Record<string, ClaimRecord>,
+    childRunId: RunbookState['id'],
+  ): ClaimRecord | undefined {
+    return Object.values(claims).find((claim) => claim.childRunId === childRunId);
   }
 
   /**
@@ -119,91 +103,73 @@ export class SessionService {
   }
 
   /**
-   * Record that a caller owns a delegated child runbook.
+   * Record that a delegation token has been claimed for a child runbook.
    *
-   * Idempotent re-claim by the same identity refreshes the entry and returns `claimed`.
-   * A claim from a different identity against an existing entry for the same `childRunId`
-   * is rejected with `conflict` — a delegation may be owned by at most one caller.
-   *
-   * @param identity - Caller identity that claimed the delegation
    * @param childRunId - Child run id created or reused by claim
    * @param linkage - Delegation linkage written to the child state
-   * @returns Discriminated result indicating `claimed` (with new ownership) or `conflict` (with the existing owner record)
+   * @returns Claim record for explicit child targeting
    */
-  async claimRunbookForOwner(
-    identity: AgentOwnerIdentity,
+  async claimRunbook(
     childRunId: RunbookState['id'],
     linkage: DelegationLinkage,
-  ): Promise<ClaimRunbookForOwnerResult> {
+  ): Promise<ClaimRunbookResult> {
     return this.withLock(async () => {
       const session = await this.manager.loadSession();
-      const ownerKey = buildAgentOwnerKey(identity);
-
-      if (session.stashedRunbookOwnership?.childRunId === childRunId) {
-        return {
-          status: 'conflict',
-          existing: session.stashedRunbookOwnership,
-        } satisfies ClaimRunbookForOwnerResult;
-      }
-
-      for (const [existingKey, ownershipStack] of Object.entries(session.ownedRunbooks)) {
-        const existing = ownershipStack.find((ownership) => ownership.childRunId === childRunId);
-        if (existing === undefined) {
-          continue;
-        }
-        if (existingKey !== ownerKey) {
-          return { status: 'conflict', existing } satisfies ClaimRunbookForOwnerResult;
-        }
-      }
-
       const now = new Date().toISOString();
-      const ownershipStack = this.ensureOwnershipStack(session.ownedRunbooks, ownerKey);
-      const existingIndex = ownershipStack.findIndex(
-        (ownership) => ownership.childRunId === childRunId,
-      );
-      if (existingIndex !== -1) {
-        const existing = ownershipStack.splice(existingIndex, 1)[0];
+      const existing = this.findClaimByChildRunId(session.claims, childRunId);
+      if (existing !== undefined) {
         const refreshed = { ...existing, updatedAt: now };
-        ownershipStack.push(refreshed);
+        session.claims[existing.claimId] = refreshed;
         await this.manager.saveSession(session);
-        return { status: 'claimed', ownership: refreshed } satisfies ClaimRunbookForOwnerResult;
+        return { status: 'claimed', claim: refreshed };
       }
 
-      const ownership = createAgentRunbookOwnership(identity, childRunId, linkage, now);
-      ownershipStack.push(ownership);
+      const claimId = generateClaimId();
+      const claim = createClaimRecord(claimId, childRunId, linkage, now);
+      session.claims[claimId] = claim;
       await this.manager.saveSession(session);
-      return { status: 'claimed', ownership } satisfies ClaimRunbookForOwnerResult;
+      return { status: 'claimed', claim };
     });
   }
 
   /**
-   * Resolve the active runbook owned by a caller without falling back to the default stack.
+   * Resolve an explicit claim id to an active child runbook.
    *
-   * @param identity - Caller identity
-   * @returns Owned, unowned, or stale resolution result
+   * @param claimId - Claim id returned by `rd claim`
+   * @returns Claim resolution result
    */
-  async getActiveForOwner(identity: AgentOwnerIdentity): Promise<OwnedRunbookResolution> {
+  async getActiveForClaimId(claimId: ClaimId): Promise<ClaimIdResolution> {
     const session = await this.manager.loadSession();
-    const ownerKey = buildAgentOwnerKey(identity);
-    const ownershipStack = session.ownedRunbooks[ownerKey] ?? [];
-    if (ownershipStack.length === 0) {
-      return { status: 'unowned', identity };
-    }
-    const ownership = ownershipStack[ownershipStack.length - 1];
-    // Defense in depth: SessionDataSchema enforces ownerKey derivation, but
-    // return stale instead of trusting a corrupted in-memory caller.
-    if (ownership.agent_id !== identity.agent_id) {
-      return { status: 'stale', identity, ownership, reason: 'agent-mismatch' };
+    const claim = session.claims[claimId];
+    if (claim === undefined) {
+      return { status: 'missing', claimId };
     }
 
-    const state = await this.manager.load(ownership.childRunId);
+    const state = await this.manager.load(claim.childRunId);
     if (!state) {
-      return { status: 'stale', identity, ownership, reason: 'missing-state' };
+      return { status: 'stale', claim, reason: 'missing-state' };
     }
-    if (state.lifecycle !== 'running') {
-      return { status: 'stale', identity, ownership, reason: 'not-running' };
+    if (state.lifecycle === 'completed' || state.lifecycle === 'stopped') {
+      return { status: 'terminal', claim, lifecycle: state.lifecycle };
     }
-    return { status: 'owned', identity, ownership, state };
+    if (
+      state.parentLinkage?.kind !== 'delegation' ||
+      state.parentLinkage.parentRunId !== claim.parentRunId ||
+      state.parentLinkage.parentStepId !== claim.parentStepId ||
+      state.parentLinkage.tokenHash !== claim.tokenHash
+    ) {
+      return { status: 'unlinked', claim, reason: 'child-linkage-mismatch' };
+    }
+
+    const parent = await this.manager.load(claim.parentRunId);
+    if (!parent) {
+      return { status: 'unlinked', claim, reason: 'parent-missing' };
+    }
+    if (parent.lifecycle === 'completed' || parent.lifecycle === 'stopped') {
+      return { status: 'unlinked', claim, reason: 'parent-ended' };
+    }
+
+    return { status: 'claimed', claim, state };
   }
 
   /**
@@ -229,29 +195,20 @@ export class SessionService {
     session.defaultStack = session.defaultStack.filter((id) => id !== runbookId);
     const removedFromDefaultStack = session.defaultStack.length !== originalDefaultStackLength;
 
-    const removedOwnerKeys: AgentOwnerKey[] = [];
-    for (const [ownerKey, ownershipStack] of Object.entries(session.ownedRunbooks)) {
-      const originalLength = ownershipStack.length;
-      const remainingOwnership = ownershipStack.filter(
-        (ownership) => ownership.childRunId !== runbookId,
-      );
-      if (remainingOwnership.length !== originalLength) {
-        removedOwnerKeys.push(ownerKey as AgentOwnerKey);
-      }
-      if (remainingOwnership.length > 0) {
-        session.ownedRunbooks[ownerKey] = remainingOwnership;
-      } else {
-        delete session.ownedRunbooks[ownerKey];
+    const removedClaimIds: string[] = [];
+    for (const [claimId, claim] of Object.entries(session.claims)) {
+      if (claim.childRunId === runbookId) {
+        removedClaimIds.push(claimId);
+        delete session.claims[claimId];
       }
     }
 
     const removedFromStash = session.stashedRunbookId === runbookId;
     if (removedFromStash) {
       session.stashedRunbookId = undefined;
-      session.stashedRunbookOwnership = undefined;
     }
 
-    if (!removedFromDefaultStack && removedOwnerKeys.length === 0 && !removedFromStash) {
+    if (!removedFromDefaultStack && removedClaimIds.length === 0 && !removedFromStash) {
       return { status: 'not-found', runbookId } satisfies ReleaseRunbookResult;
     }
 
@@ -260,7 +217,7 @@ export class SessionService {
       status: 'released',
       runbookId,
       removedFromDefaultStack,
-      removedOwnerKeys,
+      removedOwnerKeys: [],
       nextDefaultRunbookId: session.defaultStack[session.defaultStack.length - 1] ?? null,
     } satisfies ReleaseRunbookResult;
   }
@@ -326,78 +283,39 @@ export class SessionService {
       session.defaultStack = session.defaultStack.filter((id) => id !== runbookId);
       const removedFromDefaultStack = session.defaultStack.length !== originalDefaultStackLength;
 
-      let removedOwnership: AgentRunbookOwnership | undefined;
-      for (const [ownerKey, ownershipStack] of Object.entries(session.ownedRunbooks)) {
-        const ownershipIndex = ownershipStack.findIndex(
-          (ownership) => ownership.childRunId === runbookId,
-        );
-        if (ownershipIndex !== -1) {
-          removedOwnership = ownershipStack[ownershipIndex];
-          ownershipStack.splice(ownershipIndex, 1);
-          session.ownedRunbooks[ownerKey] = ownershipStack;
-          break;
-        }
-      }
+      const targetedByClaim = Object.values(session.claims).some(
+        (claim) => claim.childRunId === runbookId,
+      );
 
-      if (!removedFromDefaultStack && !removedOwnership) return null;
+      if (!removedFromDefaultStack && !targetedByClaim) return null;
 
       session.stashedRunbookId = runbookId;
-      if (removedOwnership) {
-        session.stashedRunbookOwnership = removedOwnership;
-      } else {
-        session.stashedRunbookOwnership = undefined;
-      }
       await this.manager.saveSession(session);
       return runbookId;
     });
   }
 
   /**
-   * Restore a stashed delegated runbook as owned by the given caller.
+   * Restore a stashed delegated runbook by explicit claim id.
    *
-   * @param identity - Caller identity that should own the restored delegated runbook
+   * @param claimId - Claim id for the stashed child runbook
    * @returns The restored runbook state, or null if no stashed runbook exists
    */
-  async unstashForOwner(identity: AgentOwnerIdentity): Promise<RunbookState | null> {
+  async unstashForClaimId(claimId: ClaimId): Promise<RunbookState | null> {
     return this.withLock(async () => {
       const session = await this.manager.loadSession();
-      const stashedId = session.stashedRunbookId;
-      if (!stashedId) return null;
-
-      // Defense in depth: if the stash carries an ownership record, only the
-      // recorded owner may restore it. CLI commands pre-check this — but a
-      // future caller that forgets must fail loudly, not silently transfer
-      // ownership across agents.
-      const stashedOwnership = session.stashedRunbookOwnership;
-      if (stashedOwnership) {
-        const callerOwnerKey = buildAgentOwnerKey(identity);
-        if (stashedOwnership.ownerKey !== callerOwnerKey) {
-          throw new SessionOwnershipMismatchError(
-            stashedOwnership.ownerKey,
-            callerOwnerKey,
-            'unstashForOwner',
-          );
-        }
-      }
-
-      const state = await this.manager.load(stashedId);
-      if (!state) {
-        session.stashedRunbookId = undefined;
-        session.stashedRunbookOwnership = undefined;
-        await this.manager.saveSession(session);
+      const claim = session.claims[claimId];
+      if (claim === undefined || session.stashedRunbookId !== claim.childRunId) {
         return null;
       }
 
-      const now = new Date().toISOString();
-      if (stashedOwnership === undefined) {
-        throw new SessionStashOwnershipMissingError(stashedId, 'unstashForOwner');
+      const state = await this.manager.load(claim.childRunId);
+      if (!state || state.lifecycle !== 'running') {
+        return null;
       }
 
-      const ownership = { ...stashedOwnership, updatedAt: now };
       session.stashedRunbookId = undefined;
-      session.stashedRunbookOwnership = undefined;
-      const ownershipStack = this.ensureOwnershipStack(session.ownedRunbooks, ownership.ownerKey);
-      ownershipStack.push(ownership);
+      session.claims[claimId] = { ...claim, updatedAt: new Date().toISOString() };
       await this.manager.saveSession(session);
       return state;
     });
@@ -417,19 +335,10 @@ export class SessionService {
       const stashedId = session.stashedRunbookId;
 
       if (!stashedId) return null;
-      const stashedOwnership = session.stashedRunbookOwnership;
-      if (stashedOwnership) {
-        throw new SessionStashOwnershipRequiredError(
-          stashedId,
-          stashedOwnership.ownerKey,
-          'unstash',
-        );
-      }
 
       const state = await this.manager.load(stashedId);
       if (!state) {
         session.stashedRunbookId = undefined;
-        session.stashedRunbookOwnership = undefined;
         await this.manager.saveSession(session);
         return null;
       }
@@ -437,21 +346,10 @@ export class SessionService {
       // Push back to stack
       session.defaultStack.push(stashedId);
       session.stashedRunbookId = undefined;
-      session.stashedRunbookOwnership = undefined;
       await this.manager.saveSession(session);
 
       return state;
     });
-  }
-
-  /**
-   * Get the ownership record captured with the currently stashed runbook, if any.
-   *
-   * @returns Captured stashed ownership, or null for legacy/default-stack stashes
-   */
-  async getStashedRunbookOwnership(): Promise<AgentRunbookOwnership | null> {
-    const session = await this.manager.loadSession();
-    return session.stashedRunbookOwnership ?? null;
   }
 
   /**

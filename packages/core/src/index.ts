@@ -17,6 +17,8 @@ export {
   // Delegation schemas
   DelegationTokenHashSchema,
   AgentRunbookOwnershipSchema,
+  ClaimIdSchema,
+  ClaimRecordSchema,
   SessionDataSchema,
   StepDelegationSchema,
   ContextSnapshotSchema,
