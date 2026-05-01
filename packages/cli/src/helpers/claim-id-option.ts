@@ -1,6 +1,13 @@
 import { assertClaimId, type ClaimId } from '@rundown-org/core';
 import type { OutputEmitter } from '../services/output-emitter.js';
 
+/**
+ * Parse and validate an optional CLI claim id argument.
+ *
+ * @param raw - Raw claim id option value
+ * @param output - Output emitter used to report validation errors
+ * @returns Parsed claim id result, or `ok: false` after emitting an error
+ */
 export function parseClaimIdOption(
   raw: string | undefined,
   output: OutputEmitter,

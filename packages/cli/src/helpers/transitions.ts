@@ -163,6 +163,8 @@ export type BuildTransitionContextResult =
  *
  * @param output - Output emitter for CLI output
  * @param cwd - Current working directory
+ * @param options - Optional explicit claim-id target
+ * @param options.claimId - Claim id to resolve instead of the default stack
  * @returns TransitionContext or null if no active runbook
  * @throws {Error} if state is missing runbookSrc (corrupted state)
  * @throws {Error} if runbook engine fails to initialize

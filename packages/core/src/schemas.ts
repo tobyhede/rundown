@@ -360,8 +360,8 @@ export const SessionDataSchema = z
     defaultStack: z.array(z.string()).default([]),
     stashedRunbookId: z.string().optional(),
     claims: z.record(z.string(), ClaimRecordSchema).default({}),
-    ownedRunbooks: z.never().optional(),
-    stashedRunbookOwnership: z.never().optional(),
+    ownedRunbooks: z.unknown().optional(),
+    stashedRunbookOwnership: z.unknown().optional(),
   })
   .superRefine((session, ctx) => {
     if (session.ownedRunbooks !== undefined) {

@@ -17,6 +17,7 @@ export type ActiveRunbookResolution =
  *
  * @param sessionService - Session service used to read claim and default active targets
  * @param options - Optional explicit claim-id target
+ * @param options.claimId - Claim id to resolve instead of the default stack
  * @returns Discriminated active runbook resolution
  */
 export async function resolveActiveRunbook(

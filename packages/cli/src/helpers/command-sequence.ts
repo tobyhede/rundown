@@ -174,17 +174,32 @@ export function substituteTokens(cmd: string, tokens: string[]): string {
   });
 }
 
+/**
+ * Substitute captured claim id placeholders in a command string.
+ *
+ * `${CLAIM_ID}` maps to the first claim id, `${CLAIM_ID_2}` maps to the second.
+ *
+ * @param command - Command string with optional claim id placeholders
+ * @param capturedClaimIds - Claim ids captured from earlier `rd claim` output
+ * @returns Command string with claim id placeholders substituted
+ * @throws {Error} If a placeholder references a claim id that has not been captured
+ */
 export function substituteClaimIds(command: string, capturedClaimIds: readonly string[]): string {
   return command.replace(/\$\{CLAIM_ID(?:_(\d+))?\}/g, (_match, index: string | undefined) => {
     const offset = index === undefined ? 0 : Number(index) - 1;
-    const claimId = capturedClaimIds[offset];
-    if (claimId === undefined) {
+    if (offset < 0 || offset >= capturedClaimIds.length) {
       throw new Error(`Missing captured claim id for \${CLAIM_ID${index ? `_${index}` : ''}}`);
     }
-    return claimId;
+    return capturedClaimIds[offset];
   });
 }
 
+/**
+ * Capture a claim id from a parsed `rd claim` JSON object.
+ *
+ * @param value - Parsed JSON value to inspect
+ * @param capturedClaimIds - Array to append captured claim ids into
+ */
 export function captureClaimIdFromJsonObject(value: unknown, capturedClaimIds: string[]): void {
   if (
     value !== null &&
@@ -267,6 +282,7 @@ async function runCommandWithTee(
  * @param obj - A parsed JSON object from command output
  * @param transitions - Array to push extracted transitions into
  * @param tokens - Array to push captured delegation tokens into
+ * @param claimIds - Array to push captured claim ids into
  * @returns Terminal state detected from this object, or null
  */
 function processJsonObject(

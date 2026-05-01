@@ -449,16 +449,6 @@ export function queryRunbookStatus(cwd: string): RunbookStatus | undefined {
   }
 }
 
-function queryRunbookStatusForHook(input: HookInput): RunbookStatus | undefined {
-  try {
-    const output = rundown(['status'], input.cwd);
-    const parsed = JSON.parse(output) as Record<string, unknown>;
-    return parseRunbookStatus(parsed);
-  } catch {
-    return undefined;
-  }
-}
-
 function parseRunbookStatus(parsed: Record<string, unknown>): RunbookStatus {
   const active = parsed.active === true;
   const stashed = parsed.stashed === true;

@@ -62,12 +62,23 @@ export type ClaimIdResolution =
       readonly reason: 'parent-missing' | 'parent-ended' | 'child-linkage-mismatch';
     };
 
-/** Return true when value is a canonical claim id. */
+/**
+ * Return true when value is a canonical claim id.
+ *
+ * @param value - Value to test
+ * @returns Whether the value is a branded claim id string
+ */
 export function isClaimId(value: unknown): value is ClaimId {
   return typeof value === 'string' && CLAIM_ID_PATTERN.test(value);
 }
 
-/** Assert and brand a canonical claim id. */
+/**
+ * Assert and brand a canonical claim id.
+ *
+ * @param value - String to validate
+ * @returns Branded claim id
+ * @throws {Error} If the string is not a canonical claim id
+ */
 export function assertClaimId(value: string): ClaimId {
   if (!isClaimId(value)) {
     throw new Error('Invalid claim id: expected rdclm_<22 base64url characters>');
@@ -75,12 +86,24 @@ export function assertClaimId(value: string): ClaimId {
   return value;
 }
 
-/** Generate a cryptographically random claim id. */
+/**
+ * Generate a cryptographically random claim id.
+ *
+ * @returns New branded claim id
+ */
 export function generateClaimId(): ClaimId {
   return assertClaimId(`${CLAIM_ID_PREFIX}${randomBytes(16).toString('base64url')}`);
 }
 
-/** Create a persisted claim record from delegation linkage. */
+/**
+ * Create a persisted claim record from delegation linkage.
+ *
+ * @param claimId - Claim id to store
+ * @param childRunId - Child runbook state id controlled by the claim
+ * @param linkage - Delegation linkage from the child runbook
+ * @param now - ISO timestamp for claim creation and update time
+ * @returns Persisted claim record
+ */
 export function createClaimRecord(
   claimId: ClaimId,
   childRunId: RunbookState['id'],

@@ -22,6 +22,7 @@ import {
 } from './claim-id.js';
 import type { DelegationLinkage, RunbookState } from './types.js';
 
+/** Result of removing a runbook from session targeting structures. */
 export type ReleaseRunbookResult =
   | { readonly status: 'not-found'; readonly runbookId: RunbookState['id'] }
   | {
@@ -149,10 +150,10 @@ export class SessionService {
    */
   async getActiveForClaimId(claimId: ClaimId): Promise<ClaimIdResolution> {
     const session = await this.manager.loadSession();
-    const claim = session.claims[claimId];
-    if (claim === undefined) {
+    if (!(claimId in session.claims)) {
       return { status: 'missing', claimId };
     }
+    const claim = session.claims[claimId];
 
     const state = await this.manager.load(claim.childRunId);
     if (!state) {
@@ -313,25 +314,33 @@ export class SessionService {
   async unstashForClaimId(claimId: ClaimId): Promise<RunbookState | null> {
     return this.withLock(async () => {
       const session = await this.manager.loadSession();
+      if (!(claimId in session.claims)) {
+        return null;
+      }
       const claim = session.claims[claimId];
-      if (claim === undefined || session.stashedRunbookId !== claim.childRunId) {
+      if (session.stashedRunbookId !== claim.childRunId) {
         return null;
       }
 
       const state = await this.manager.load(claim.childRunId);
-      if (!state || state.lifecycle !== 'running') {
+      if (state?.lifecycle !== 'running') {
         return null;
       }
+      const linkage = state.parentLinkage;
       if (
-        state.parentLinkage?.kind !== 'delegation' ||
-        state.parentLinkage.parentRunId !== claim.parentRunId ||
-        state.parentLinkage.parentStepId !== claim.parentStepId ||
-        state.parentLinkage.tokenHash !== claim.tokenHash
+        linkage?.kind !== 'delegation' ||
+        linkage.parentRunId !== claim.parentRunId ||
+        linkage.parentStepId !== claim.parentStepId ||
+        linkage.tokenHash !== claim.tokenHash
       ) {
         return null;
       }
       const parent = await this.manager.load(claim.parentRunId);
-      if (!parent || parent.lifecycle === 'completed' || parent.lifecycle === 'stopped') {
+      if (
+        parent?.lifecycle === undefined ||
+        parent.lifecycle === 'completed' ||
+        parent.lifecycle === 'stopped'
+      ) {
         return null;
       }
 

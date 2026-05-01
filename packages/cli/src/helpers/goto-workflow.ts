@@ -99,6 +99,7 @@ export async function resolveTerminalReleaseModeForRunbook(
  * @param output - Output emitter for CLI output
  * @param cwd - Current working directory
  * @param options - Optional explicit claim-id target
+ * @param options.claimId - Claim id to resolve instead of the default stack
  * @returns GotoContext or null if no active runbook
  */
 export async function buildGotoContext(

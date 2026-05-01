@@ -144,12 +144,10 @@ describe('claim-id delegated children', () => {
 
     result = await runCliInProcess(`claim ${token1}`, workspace);
     const child1Output = findActionOutput(result.stdout);
-    expect(typeof child1Output?.run_id).toBe('string');
-    expect(typeof child1Output?.claim_id).toBe('string');
-    if (typeof child1Output?.run_id !== 'string') {
+    if (!child1Output || typeof child1Output.run_id !== 'string') {
       throw new Error('Expected first claim output to include run_id');
     }
-    if (typeof child1Output?.claim_id !== 'string') {
+    if (typeof child1Output.claim_id !== 'string') {
       throw new Error('Expected first claim output to include claim_id');
     }
     const child1Id = child1Output.run_id;
@@ -157,12 +155,10 @@ describe('claim-id delegated children', () => {
 
     result = await runCliInProcess(`claim ${token2}`, workspace);
     const child2Output = findActionOutput(result.stdout);
-    expect(typeof child2Output?.run_id).toBe('string');
-    expect(typeof child2Output?.claim_id).toBe('string');
-    if (typeof child2Output?.run_id !== 'string') {
+    if (!child2Output || typeof child2Output.run_id !== 'string') {
       throw new Error('Expected second claim output to include run_id');
     }
-    if (typeof child2Output?.claim_id !== 'string') {
+    if (typeof child2Output.claim_id !== 'string') {
       throw new Error('Expected second claim output to include claim_id');
     }
     const child2Id = child2Output.run_id;
@@ -216,12 +212,10 @@ describe('claim-id delegated children', () => {
     const token = JSON.parse(delegated.stdout).token as string;
     const claimed = await runCliInProcess(`claim ${token}`, workspace);
     const claimOutput = findActionOutput(claimed.stdout);
-    expect(typeof claimOutput?.run_id).toBe('string');
-    expect(typeof claimOutput?.claim_id).toBe('string');
-    if (typeof claimOutput?.run_id !== 'string') {
+    if (!claimOutput || typeof claimOutput.run_id !== 'string') {
       throw new Error('Expected claim output to include run_id');
     }
-    if (typeof claimOutput?.claim_id !== 'string') {
+    if (typeof claimOutput.claim_id !== 'string') {
       throw new Error('Expected claim output to include claim_id');
     }
     const childRunId = claimOutput.run_id;
