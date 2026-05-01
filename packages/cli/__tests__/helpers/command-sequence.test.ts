@@ -7,6 +7,7 @@ import {
   parseRdCommandWithEnv,
   extractRunbookReferences,
   extractInputFileReferences,
+  substituteClaimIds,
 } from '../../src/helpers/command-sequence.js';
 import type { StepAssertion } from '../../src/schemas/scenarios.js';
 
@@ -198,6 +199,18 @@ describe('parseJsonLines', () => {
     const result = parseJsonLines(stdout);
     expect(result.tokens).toEqual(['rdtk_first', 'rdtk_second']);
     expect(result.terminal).toBe('COMPLETE');
+  });
+
+  it('extracts claim ids from claim responses', () => {
+    const stdout = [
+      '{"action":"claimed","token":"rdtk_first","claim_id":"rdclm_abcdefghijklmnopQRSTUV","run_id":"wf-child-1"}',
+      '{"action":"claimed","token":"rdtk_second","claim_id":"rdclm_1234567890abcdefghijkl","run_id":"wf-child-2"}',
+    ].join('\n');
+    const result = parseJsonLines(stdout);
+    expect(result.claimIds).toEqual([
+      'rdclm_abcdefghijklmnopQRSTUV',
+      'rdclm_1234567890abcdefghijkl',
+    ]);
   });
 
   it('ignores objects without action=delegated', () => {
@@ -483,6 +496,26 @@ describe('substituteTokens', () => {
 
   it('returns original string unchanged when no placeholders', () => {
     expect(substituteTokens('rd pass', [])).toBe('rd pass');
+  });
+});
+
+describe('substituteClaimIds', () => {
+  it('${CLAIM_ID} maps to first captured claim id', () => {
+    expect(substituteClaimIds('rd pass --claim-id ${CLAIM_ID}', ['rdclm_first'])).toBe(
+      'rd pass --claim-id rdclm_first',
+    );
+  });
+
+  it('${CLAIM_ID_2} maps to second captured claim id', () => {
+    expect(
+      substituteClaimIds('rd fail --claim-id ${CLAIM_ID_2}', ['rdclm_first', 'rdclm_second']),
+    ).toBe('rd fail --claim-id rdclm_second');
+  });
+
+  it('throws for uncaptured claim id references', () => {
+    expect(() => substituteClaimIds('rd pass --claim-id ${CLAIM_ID_2}', ['rdclm_first'])).toThrow(
+      /Missing captured claim id/,
+    );
   });
 });
 

@@ -1137,6 +1137,9 @@ export function normalizeCliOutput(output: string, workspace: TestWorkspace): st
   text = text.replace(/rdtk_[A-Za-z0-9]+\.{3}[A-Za-z0-9]+/g, '<token>');
   text = text.replace(/rdtk_[A-Za-z0-9]+/g, '<token>');
 
+  // 3b. Claim ids (CLAIM_ID_PREFIX from packages/core/src/runbook/claim-id.ts)
+  text = text.replace(/rdclm_[A-Za-z0-9_-]{22}/g, '<claimId>');
+
   // 4. SHA-256 hex digests (e.g. delegation token_hash field)
   text = text.replace(/sha256:[0-9a-f]{64}/g, '<tokenHash>');
 

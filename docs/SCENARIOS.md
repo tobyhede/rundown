@@ -173,15 +173,17 @@ scenarios:
       result: STOP
 ```
 
-Commands output JSON by default. The scenario runner parses every `rd`/`rundown` command's stdout to collect terminal state, step transitions, and delegation tokens. Use `--text` for human-readable terminal output in demo scenarios; `--text` output is not useful for `expect.steps` or token capture.
+Commands output JSON by default. The scenario runner parses every `rd`/`rundown` command's stdout to collect terminal state, step transitions, delegation tokens, and claim ids. Use `--text` for human-readable terminal output in demo scenarios; `--text` output is not useful for `expect.steps`, token capture, or claim-id capture.
 
 The runner executes plain `rd` and `rundown` commands directly through the current CLI entry point instead of through a shell. Leading command-scoped environment assignments are supported:
 
 ```yaml
 commands:
-  - RD_AGENT_ID=agent-a RD_SESSION_ID=session-a rd claim ${TOKEN}
-  - RD_AGENT_ID=agent-a RD_SESSION_ID=session-a rundown pass
+  - rd claim ${TOKEN}
+  - rundown pass --claim-id ${CLAIM_ID}
 ```
+
+Claim ids captured from `rd claim` expand as `${CLAIM_ID}` for the first claim and `${CLAIM_ID_2}` for the second claim. Use claim-id placeholders when a scenario claims multiple delegated siblings.
 
 Shell operators in an `rd`/`rundown` command are rejected (`&&`, `||`, `|`, etc.). Split those into separate `commands` entries. Non-`rd` commands run through the user's shell.
 

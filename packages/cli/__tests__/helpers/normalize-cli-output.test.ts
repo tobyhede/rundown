@@ -39,6 +39,11 @@ describe('normalizeCliOutput', () => {
     expect(normalizeCliOutput(input, workspace)).toBe('"token": "<token>"');
   });
 
+  it('replaces claim ids with <claimId>', () => {
+    const input = '"claim_id": "rdclm_65vgjvar2liaL8dja5vpDA"';
+    expect(normalizeCliOutput(input, workspace)).toBe('"claim_id": "<claimId>"');
+  });
+
   it('replaces sha256 hex digests with <tokenHash>', () => {
     const input =
       '"token_hash": "sha256:99f78f8946aa2736d1894b2f5800989c37343f04cf645e0110735913e7607306"';

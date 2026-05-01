@@ -140,16 +140,16 @@ cases:
 
   # agent-dispatch/
   agent-dispatch-orchestrator-completed:
-    description: Same agent claims two children and completes them as an owner stack
+    description: Same orchestrator claims two children and completes them by claim id
     file: agent-dispatch/orchestrator.runbook.md
     commands:
       - rd run --prompted orchestrator.runbook.md
       - rd delegate agent-child-prompted.runbook.md --step 1.1
       - rd delegate agent-child-prompted.runbook.md --step 1.2
-      - RD_AGENT_ID=orchestrator RD_SESSION_ID=agent-dispatch rd claim ${TOKEN}
-      - RD_AGENT_ID=orchestrator RD_SESSION_ID=agent-dispatch rd claim ${TOKEN_2}
-      - RD_AGENT_ID=orchestrator RD_SESSION_ID=agent-dispatch rd pass
-      - RD_AGENT_ID=orchestrator RD_SESSION_ID=agent-dispatch rd pass
+      - rd claim ${TOKEN}
+      - rd claim ${TOKEN_2}
+      - rd pass --claim-id ${CLAIM_ID_2}
+      - rd pass --claim-id ${CLAIM_ID}
       - rd collect
     result: COMPLETE
 
@@ -160,25 +160,24 @@ cases:
       - rd run --prompted sibling-fan-out.runbook.md
       - rd delegate agent-child-prompted.runbook.md --step 1.1
       - rd delegate agent-child-prompted.runbook.md --step 1.2
-      - RD_AGENT_ID=agent-one RD_SESSION_ID=sibling-session rd claim ${TOKEN}
-      - RD_AGENT_ID=agent-two RD_SESSION_ID=sibling-session rd claim ${TOKEN_2}
-      - RD_AGENT_ID=agent-one RD_SESSION_ID=sibling-session rd pass
-      - RD_AGENT_ID=agent-two RD_SESSION_ID=sibling-session rd pass
+      - rd claim ${TOKEN}
+      - rd claim ${TOKEN_2}
+      - rd pass --claim-id ${CLAIM_ID}
+      - rd pass --claim-id ${CLAIM_ID_2}
       - rd collect
     result: COMPLETE
 
-  agent-dispatch-ownership-refusal-completed:
-    description: Owned stash refuses anonymous pop and cross-agent claim before owner restores it
+  agent-dispatch-claim-stash-completed:
+    description: Claimed stash refuses anonymous pop before claim-id restore completes it
     file: agent-dispatch/ownership-refusal.runbook.md
     commands:
       - rd run --prompted ownership-refusal.runbook.md
       - rd delegate agent-child-prompted.runbook.md --step 1.1
-      - RD_AGENT_ID=agent-a RD_SESSION_ID=refusal-session rd claim ${TOKEN}
-      - RD_AGENT_ID=agent-a RD_SESSION_ID=refusal-session rd stash
+      - rd claim ${TOKEN}
+      - rd stash --claim-id ${CLAIM_ID}
       - "! rd pop"
-      - "! RD_AGENT_ID=agent-b RD_SESSION_ID=refusal-session rd claim ${TOKEN}"
-      - RD_AGENT_ID=agent-a RD_SESSION_ID=refusal-session rd pop
-      - RD_AGENT_ID=agent-a RD_SESSION_ID=refusal-session rd pass
+      - rd pop --claim-id ${CLAIM_ID}
+      - rd pass --claim-id ${CLAIM_ID}
       - rd collect
     result: COMPLETE
 

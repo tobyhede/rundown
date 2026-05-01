@@ -418,47 +418,40 @@ Only `.json` and `.jsonl` extensions are supported for `file:` sources.
 
 ### Session Structure
 
-The session tracks which runbooks are active using a **stack-based model**:
+The session tracks top-level runbooks with a default stack and delegated children with explicit claim ids:
 
 ```json
 {
   "defaultStack": ["wf-2026-04-28-parent"],
   "stashedRunbookId": null,
-  "ownedRunbooks": {
-    "agent:agent-a:session:session-a": [
-      {
-        "kind": "agent-owned-runbook",
-        "ownerKey": "agent:agent-a:session:session-a",
-        "agent_id": "agent-a",
-        "session_id": "session-a",
-        "childRunId": "wf-2026-04-28-child",
-        "tokenHash": "sha256:...",
-        "parentRunId": "wf-2026-04-28-parent",
-        "parentStepId": "1",
-        "parentFrameKey": "1|",
-        "parentEntry": 1,
-        "claimedAt": "2026-04-28T00:00:00.000Z",
-        "updatedAt": "2026-04-28T00:00:00.000Z"
-      }
-    ]
+  "claims": {
+    "rdclm_F3J3n3d_f8fo0a0b1B2c3Q": {
+      "kind": "claim-record",
+      "claimId": "rdclm_F3J3n3d_f8fo0a0b1B2c3Q",
+      "childRunId": "wf-2026-04-28-child",
+      "tokenHash": "sha256:...",
+      "parentRunId": "wf-2026-04-28-parent",
+      "parentStepId": "1.1",
+      "parentFrameKey": "1|",
+      "parentEntry": 1,
+      "claimedAt": "2026-04-28T00:00:00.000Z",
+      "updatedAt": "2026-04-28T00:00:00.000Z"
+    }
   }
 }
 ```
 
 - **defaultStack**: Legacy/default active runbook stack for top-level, inline, and unidentified/manual flows.
 - **stashedRunbookId**: Temporarily paused runbook (for `rundown stash`/`rundown pop`).
-- **stashedRunbookOwnership**: Ownership record captured when an agent-owned child is stashed.
-- **ownedRunbooks**: Per-agent/session ownership stacks for delegated child runs claimed by subagents. Identified callers resolve the top entry for their owner key and do not fall back to `defaultStack`.
+- **claims**: Map of `rdclm_...` handles returned by `rd claim`, each pointing at exactly one delegated child runbook and its parent linkage.
 
-Agent identity is read from `RD_AGENT_ID` and optional `RD_SESSION_ID`. This is an isolation mechanism for cooperating local agents, not a security boundary; any process can set those environment variables. Owner keys are `agent:<agent_id>` or `agent:<agent_id>:session:<session_id>` with key segments percent-encoded.
+Claimed delegated children are not pushed onto `defaultStack`. Commands that accept `--claim-id` (`status`, `pass`, `fail`, `collect`, `goto`, `stash`, `pop`, `stop`, and `complete`) resolve the exact child runbook for that claim and fail closed if the claim is missing, stale, terminal, or no longer linked to a live parent.
 
-Terminal cleanup commands (`rundown stop` and `rundown complete`) remove stale owned child references when the target state is already missing or unusable. Step-result commands (`rundown pass` and `rundown fail`) fail closed in that case because they cannot safely apply a result to a missing delegated child.
-
-`stash` and `pop` are ownership-aware:
-- Anonymous `stash` moves the default-stack active runbook into the single stash slot.
-- Identified `stash` resolves the caller-owned child, removes it from that owner's stack, and stores the ownership record in `stashedRunbookOwnership`.
-- Anonymous `pop` refuses an agent-owned stash; identified `pop` refuses anonymous stashes and stashes owned by another caller.
-- Owned `pop` also verifies the delegated parent still exists and is not terminal before restoring the child to the owner's stack.
+`stash` and `pop` target either the default stack or a claim id:
+- Plain `stash` moves the default-stack active runbook into the single stash slot.
+- `stash --claim-id <id>` stashes the claimed child while preserving the claim record.
+- Plain `pop` restores only default-stack stashes.
+- `pop --claim-id <id>` restores the child for that claim id after verifying the delegated parent is still active.
 
 ### Runbook State Structure
 
@@ -989,9 +982,10 @@ rundown scenario run <file> <name> --quiet  # Suppress command output
 Implementation notes:
 - `scenario run` creates an isolated temp workspace, copies the scenario runbook into `.rundown/runbooks/`, copies referenced `*.runbook.md` children found in commands, and executes commands through `executeCommandSequence`.
 - `rd`/`rundown` commands are spawned directly as `node <cliPath> ...` so JSON output can be captured; non-`rd` commands run through the shell.
-- Leading command-scoped env assignments are supported for `rd` commands, for example `RD_AGENT_ID=a RD_SESSION_ID=s rd pass`. Shell operators in an `rd` command are rejected; split those commands into separate scenario entries.
+- Leading command-scoped env assignments are supported for `rd` commands when a scenario needs them for unrelated command behavior. Shell operators in an `rd` command are rejected; split those commands into separate scenario entries.
 - Prefix a command with `!` followed by a literal space when a non-zero exit is expected. If an expected-failure command exits 0, the scenario fails; otherwise the failed command is allowed to continue.
 - Delegation tokens are captured from `rd delegate` JSON responses and from `step_entered.delegateFrontier` auto-issued tokens. `${TOKEN}` expands to the first captured token, `${TOKEN_2}` to the second, and so on.
+- Claim ids are captured from `rd claim` JSON responses. `${CLAIM_ID}` expands to the first captured claim id, `${CLAIM_ID_2}` to the second, and so on.
 - `--input-file` dependencies are copied by directory. Scenario execution copies the entire containing directory for each relative `--input-file` path so YAML files that contain sibling `file:` references keep working. Absolute paths and `..` traversal are rejected.
 
 #### `rundown scenario-suite` - Scenario Suites
@@ -1019,20 +1013,22 @@ Two companion CLIs ship alongside `rundown`:
 |---------|-------------|
 | `rd delegate <runbook> --step <id>` | Delegate substep to child runbook |
 | `rd delegate <runbook> --step <id> --input key=value` | Delegate with variables |
-| `rd claim <token>` | Claim a delegation token and launch child |
+| `rd claim <token>` | Claim a delegation token, launch child, and return `claim_id` |
 | `rd claim <token> --input key=value` | Claim with variables |
+| `rd pass --claim-id <claim_id>` | Complete a claimed child with PASS |
+| `rd fail --claim-id <claim_id>` | Complete a claimed child with FAIL |
 | `rd abort <token>` | Cancel a delegation token |
 | `rd abort <token> --force` | Cancel a claimed delegation |
 
 Delegation semantics:
 - `delegate` requires a child runbook as a positional argument and `--step` to identify the target substep.
-- `claim` uses the delegation token (printed by `delegate`) to launch the child runbook.
-- Child runbook uses plain `rd pass` / `rd fail` to report its outcome.
+- `claim` uses the delegation token (printed by `delegate`) to launch the child runbook and returns a stable `claim_id`.
+- Child runbook uses `rd pass --claim-id <claim_id>` / `rd fail --claim-id <claim_id>` to report its outcome.
 - Completion routing is frame + entry aware (`frame + entry + substep`) to prevent stale re-entry completions from being applied.
-- Identified subagents are routed by ownership, not by the shared stack. `rd claim <token>` records the claimed child run id under the caller's `RD_AGENT_ID`/`RD_SESSION_ID`; later plain ownership-routed commands (`rd status`, `rd pass`, `rd fail`, `rd stash`, `rd pop`, `rd stop`, and `rd complete`) resolve that owned child.
-- Ownership is stored as a stack per owner key. Re-claim by the same owner refreshes/moves the existing entry to the top; claim by a different owner for the same child is rejected with `DELEGATION_OWNER_CONFLICT`.
-- Anonymous claims still use `defaultStack`; identified claims use `ownedRunbooks`. The shared `defaultStack` is not a safe targeting mechanism for parallel delegated siblings because the most recently claimed child is not necessarily the caller's child.
-- If an ownership record points at missing or terminal state, commands fail closed instead of falling back to the shared stack in the same invocation.
+- Claimed children are routed by claim id, not by the shared stack. `rd claim <token>` records the claimed child run id under a generated `rdclm_...` handle; later commands use `--claim-id <claim_id>` to resolve that exact child.
+- Re-claiming the same delegated child refreshes and returns the existing claim id.
+- Claimed children are never pushed to `defaultStack`, so parallel delegated siblings cannot be accidentally targeted by plain stack commands.
+- If a claim record points at missing, terminal, stale, or unlinked state, commands fail closed instead of falling back to the shared stack in the same invocation.
 
 ### Runtime Identity Glossary
 
@@ -1160,14 +1156,15 @@ rd claim <token>
 
 # 4. Subagent works through child runbook...
 
-# 5. Subagent reports result (plain pass/fail, no --agent needed)
-rd pass    # or: rd fail
+# 5. Subagent reports result using the claim_id returned by rd claim
+rd pass --claim-id <claim_id>    # or: rd fail --claim-id <claim_id>
 ```
 
 **Key points:**
 - `delegate` requires the child runbook as a positional argument and `--step` to identify the target substep
 - The delegation token printed by `delegate` is passed to `claim` by the subagent
-- Child uses plain `rd pass` / `rd fail` — no `--agent` flag needed
+- The `claim_id` printed by `claim` is passed to every child-targeting command
+- Child uses `rd pass --claim-id <claim_id>` / `rd fail --claim-id <claim_id>`
 - Completions are validated against frame + entry identity; stale completions from prior re-entry are rejected
 - Valid completions are recorded and drained in deterministic substep order before step-level transition
 
@@ -1384,6 +1381,7 @@ rdx <file>                   # Render JSON to Markdown (see RDX.md)
 
 # Delegation
 rd delegate <runbook> --step <id>  # Delegate substep to child runbook
-rd claim <token>                   # Claim delegation token
+rd claim <token>                   # Claim delegation token and return claim_id
+rd pass --claim-id <claim_id>      # Complete claimed child
 rd abort <token>                   # Cancel delegation token
 ```
