@@ -114,13 +114,13 @@ describe('claim command', () => {
       expect(result.stdout + result.stderr).toMatch(/not found|no active/i);
     });
 
-    it('ignores legacy caller identity env vars when claiming', async () => {
+    it('ignores unrelated env vars when claiming', async () => {
       const result = await runCliInProcess(
         // cspell:disable-next-line
         'claim rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH',
         workspace,
         {
-          env: { RD_AGENT_ID: undefined, RD_SESSION_ID: 'session-without-agent' },
+          env: { RUNDOWN_TEST_ENV: 'session-without-agent' },
         },
       );
 

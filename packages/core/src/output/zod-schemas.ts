@@ -43,10 +43,6 @@ export const CLIErrorCodes = {
   ALREADY_STASHED: 'ALREADY_STASHED',
   /** No stashed runbook to restore */
   NO_STASHED_RUNBOOK: 'NO_STASHED_RUNBOOK',
-  /** Caller-owned runbook is missing, terminal, or otherwise unavailable */
-  OWNED_RUNBOOK_UNAVAILABLE: 'OWNED_RUNBOOK_UNAVAILABLE',
-  /** Caller identity environment variables are inconsistent or invalid */
-  INVALID_CALLER_IDENTITY: 'INVALID_CALLER_IDENTITY',
   /** Claim id format is invalid */
   INVALID_CLAIM_ID: 'INVALID_CLAIM_ID',
   /** Claimed runbook is missing, terminal, or otherwise unavailable */
@@ -59,8 +55,6 @@ export const CLIErrorCodes = {
   DELEGATION_CANCELLED: 'DELEGATION_CANCELLED',
   /** Delegation lock could not be acquired */
   DELEGATION_LOCK_TIMEOUT: 'DELEGATION_LOCK_TIMEOUT',
-  /** Delegation is already owned by another caller */
-  DELEGATION_OWNER_CONFLICT: 'DELEGATION_OWNER_CONFLICT',
   /** Runbook launch failed */
   LAUNCH_FAILED: 'LAUNCH_FAILED',
   /** Scenario not found */
@@ -83,15 +77,12 @@ export const ErrorCodeSchema = z
     'VALIDATION_ERROR',
     'ALREADY_STASHED',
     'NO_STASHED_RUNBOOK',
-    'OWNED_RUNBOOK_UNAVAILABLE',
-    'INVALID_CALLER_IDENTITY',
     'INVALID_CLAIM_ID',
     'CLAIMED_RUNBOOK_UNAVAILABLE',
     'INVALID_TOKEN',
     'TOKEN_NOT_FOUND',
     'DELEGATION_CANCELLED',
     'DELEGATION_LOCK_TIMEOUT',
-    'DELEGATION_OWNER_CONFLICT',
     'LAUNCH_FAILED',
     'SCENARIO_NOT_FOUND',
     'FILE_ERROR',

@@ -528,13 +528,11 @@ describe('parseRdCommandWithEnv', () => {
   });
 
   it('parses leading environment assignments for rd commands', () => {
-    expect(
-      parseRdCommandWithEnv("RD_AGENT_ID=agent-a RD_SESSION_ID='session a' rd claim rdtk_abc123"),
-    ).toEqual({
+    expect(parseRdCommandWithEnv("FOO=agent-a BAR='session a' rd claim rdtk_abc123")).toEqual({
       args: ['claim', 'rdtk_abc123'],
       env: {
-        RD_AGENT_ID: 'agent-a',
-        RD_SESSION_ID: 'session a',
+        FOO: 'agent-a',
+        BAR: 'session a',
       },
     });
   });
@@ -552,7 +550,7 @@ describe('parseRdCommandWithEnv', () => {
   });
 
   it('rejects env-prefixed rd commands with operators', () => {
-    expect(() => parseRdCommandWithEnv('RD_AGENT_ID=agent-a rd pass && echo done')).toThrow(
+    expect(() => parseRdCommandWithEnv('FOO=agent-a rd pass && echo done')).toThrow(
       /Unsupported shell operators/,
     );
   });
@@ -564,7 +562,7 @@ describe('parseRdCommandWithEnv', () => {
   });
 
   it('rejects env-prefixed rd commands after shell operators', () => {
-    expect(() => parseRdCommandWithEnv('echo setup && RD_AGENT_ID=agent-a rd pass')).toThrow(
+    expect(() => parseRdCommandWithEnv('echo setup && FOO=agent-a rd pass')).toThrow(
       /Unsupported shell operators/,
     );
   });

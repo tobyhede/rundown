@@ -322,6 +322,18 @@ export class SessionService {
       if (!state || state.lifecycle !== 'running') {
         return null;
       }
+      if (
+        state.parentLinkage?.kind !== 'delegation' ||
+        state.parentLinkage.parentRunId !== claim.parentRunId ||
+        state.parentLinkage.parentStepId !== claim.parentStepId ||
+        state.parentLinkage.tokenHash !== claim.tokenHash
+      ) {
+        return null;
+      }
+      const parent = await this.manager.load(claim.parentRunId);
+      if (!parent || parent.lifecycle === 'completed' || parent.lifecycle === 'stopped') {
+        return null;
+      }
 
       session.stashedRunbookId = undefined;
       session.claims[claimId] = { ...claim, updatedAt: new Date().toISOString() };
@@ -344,6 +356,13 @@ export class SessionService {
       const stashedId = session.stashedRunbookId;
 
       if (!stashedId) return null;
+
+      const targetedByClaim = Object.values(session.claims).some(
+        (claim) => claim.childRunId === stashedId,
+      );
+      if (targetedByClaim) {
+        return null;
+      }
 
       const state = await this.manager.load(stashedId);
       if (!state) {

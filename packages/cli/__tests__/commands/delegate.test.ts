@@ -155,9 +155,7 @@ describe('delegate command', () => {
       expect(delegated.exitCode).toBe(0);
       const token = JSON.parse(delegated.stdout).token as string;
 
-      const claimed = await runCliInProcess(`claim ${token}`, workspace, {
-        env: { RD_AGENT_ID: 'delegate-agent', RD_SESSION_ID: 'delegate-session' },
-      });
+      const claimed = await runCliInProcess(`claim ${token}`, workspace);
       expect(claimed.exitCode).toBe(0);
 
       const state = await getActiveState(workspace);
@@ -187,9 +185,7 @@ describe('delegate command', () => {
       const token = JSON.parse(delegated.stdout).token as string;
       await mirrorActiveSubstepStatesIntoSnapshot();
 
-      const claimed = await runCliInProcess(`claim ${token}`, workspace, {
-        env: { RD_AGENT_ID: 'snapshot-agent', RD_SESSION_ID: 'snapshot-session' },
-      });
+      const claimed = await runCliInProcess(`claim ${token}`, workspace);
       expect(claimed.exitCode).toBe(0);
 
       const parent = await getActiveState(workspace);

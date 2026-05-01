@@ -192,16 +192,15 @@ Do work.
       expect(token1).toBeDefined();
       expect(token2).toBeDefined();
 
-      const agent1 = { env: { RD_AGENT_ID: 'fail-agent-one', RD_SESSION_ID: 'fail-session' } };
-      const agent2 = { env: { RD_AGENT_ID: 'fail-agent-two', RD_SESSION_ID: 'fail-session' } };
+      let result = await runCliInProcess(`claim ${token1!}`, workspace);
+      const child1Output = findActionOutput(result.stdout);
+      const child1Id = String(child1Output?.run_id);
+      const claimId1 = String(child1Output?.claim_id);
 
-      let result = await runCliInProcess(`claim ${token1!}`, workspace, agent1);
-      const child1Id = String(findActionOutput(result.stdout)?.run_id);
-
-      result = await runCliInProcess(`claim ${token2!}`, workspace, agent2);
+      result = await runCliInProcess(`claim ${token2!}`, workspace);
       const child2Id = String(findActionOutput(result.stdout)?.run_id);
 
-      result = await runCliInProcess('fail --text', workspace, agent1);
+      result = await runCliInProcess(['fail', '--claim-id', claimId1, '--text'], workspace);
       expect(result.exitCode).toBe(0);
 
       const child1 = await readRunbookState(workspace, child1Id);
@@ -211,9 +210,9 @@ Do work.
       expect(child2?.lifecycle).toBe('running');
     });
 
-    it('anonymous fail does not mutate an agent-owned child runbook', async () => {
-      // Regression: anonymous (no RD_AGENT_ID) callers must target only the
-      // default-stack runbook (the parent), never an agent-owned delegated child.
+    it('plain fail does not mutate a claimed child runbook', async () => {
+      // Regression: plain callers must target only the default-stack runbook
+      // (the parent), never a claimed delegated child.
       const childRunbook = [
         '# Child',
         '',
@@ -256,12 +255,10 @@ Do work.
       const token = frontier.find((entry) => entry.id === '1.1')?.token;
       expect(token).toBeDefined();
 
-      const agent = { env: { RD_AGENT_ID: 'lone-fail-agent', RD_SESSION_ID: 'lone-fail-session' } };
-      const claim = await runCliInProcess(`claim ${token!}`, workspace, agent);
+      const claim = await runCliInProcess(`claim ${token!}`, workspace);
       const childId = String(findActionOutput(claim.stdout)?.run_id);
 
-      // Anonymous fail — must stop the default-stack parent, not the
-      // agent-owned child.
+      // Plain fail must stop the default-stack parent, not the claimed child.
       const failResult = await runCliInProcess('fail --text', workspace);
       expect(failResult.exitCode).toBe(1);
 

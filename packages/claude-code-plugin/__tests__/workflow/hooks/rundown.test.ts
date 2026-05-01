@@ -82,7 +82,7 @@ describe('rundown', () => {
     setExecSync(mockExec);
 
     rundown(['status'], '/custom/directory', {
-      env: { RD_AGENT_ID: 'agent-1', RD_SESSION_ID: 'session-a' },
+      env: { RUNDOWN_TEST_ENV: 'session-a' },
     });
 
     expect(mockExec).toHaveBeenCalledWith(
@@ -91,8 +91,7 @@ describe('rundown', () => {
       expect.objectContaining({
         env: expect.objectContaining({
           PATH: process.env.PATH,
-          RD_AGENT_ID: 'agent-1',
-          RD_SESSION_ID: 'session-a',
+          RUNDOWN_TEST_ENV: 'session-a',
         }),
       }),
     );

@@ -323,16 +323,6 @@ export const ErrorCodes = {
       `stopping the running runbook and starting a fresh run.`,
     docSlug: 'delegation-owner-lost-substeps',
   },
-  DELEGATION_OWNER_CONFLICT: {
-    code: 'RD-819',
-    category: ErrorCategory.DELEGATION,
-    title: 'Delegation owned by a different caller',
-    description:
-      `The claimed child run is already owned by a different agent identity. ` +
-      `A delegation can be owned by at most one caller; the second claim is rejected.`,
-    docSlug: 'delegation-owner-conflict',
-  },
-
   // Retry hook (9xx) — sub-range of ErrorCategory.EXECUTION reserved for
   // retry-hook lifecycle failures (delegation re-issuance, frame-key invariants,
   // canonical-at requirements). Kept as EXECUTION rather than a dedicated

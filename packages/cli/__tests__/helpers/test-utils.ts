@@ -389,16 +389,14 @@ export async function runCliInProcess(
  * Maps internal session fields to test-friendly names:
  * - `defaultStack` (top of default stack) → `active`
  * - `stashedRunbookId` (from RunbookStateManager) → `stashed`
- * - `stacks` (for legacy multi-agent runbooks) → `stacks`
  * - `defaultStack` (default stack for runbooks) → `defaultStack`
+ * - `claims` (delegated child claim registry) → `claims`
  */
 export async function readSession(workspace: TestWorkspace): Promise<{
   active: string | null;
   stashed: string | null;
-  stashedRunbookOwnership?: Record<string, unknown>;
   stacks: Record<string, string[]>;
   defaultStack: string[];
-  ownedRunbooks: Record<string, unknown[]>;
   claims: Record<string, Record<string, unknown>>;
 }> {
   try {
@@ -407,10 +405,6 @@ export async function readSession(workspace: TestWorkspace): Promise<{
 
     const stacks = (session.stacks as Record<string, string[]> | undefined) ?? {};
     const defaultStack = (session.defaultStack as string[] | undefined) ?? [];
-    const ownedRunbooks =
-      session.ownedRunbooks && typeof session.ownedRunbooks === 'object'
-        ? (session.ownedRunbooks as Record<string, unknown[]>)
-        : {};
     const claims =
       session.claims && typeof session.claims === 'object'
         ? (session.claims as Record<string, Record<string, unknown>>)
@@ -422,13 +416,8 @@ export async function readSession(workspace: TestWorkspace): Promise<{
     return {
       active,
       stashed: typeof session.stashedRunbookId === 'string' ? session.stashedRunbookId : null,
-      stashedRunbookOwnership:
-        session.stashedRunbookOwnership && typeof session.stashedRunbookOwnership === 'object'
-          ? (session.stashedRunbookOwnership as Record<string, unknown>)
-          : undefined,
       stacks,
       defaultStack,
-      ownedRunbooks,
       claims,
     };
   } catch {
@@ -437,7 +426,6 @@ export async function readSession(workspace: TestWorkspace): Promise<{
       stashed: null,
       stacks: {},
       defaultStack: [],
-      ownedRunbooks: {},
       claims: {},
     };
   }
@@ -449,17 +437,16 @@ export async function readSession(workspace: TestWorkspace): Promise<{
  * Uses stack-based format:
  * - `active` is written to the top of `defaultStack`
  * - `stashed` is written to `stashedRunbookId`
- * - `stacks` for multi-agent runbooks
+ * - `claims` for delegated children
  */
 export async function writeSession(
   workspace: TestWorkspace,
   session: {
     active?: string | null;
     stashed?: string | null;
-    stashedRunbookOwnership?: Record<string, unknown>;
-    ownedRunbooks?: Record<string, unknown[]>;
     stacks?: Record<string, string[]>;
     defaultStack?: string[];
+    claims?: Record<string, Record<string, unknown>>;
   },
 ): Promise<void> {
   const sessionData: Record<string, unknown> = {};
@@ -480,11 +467,8 @@ export async function writeSession(
   if (session.stashed !== undefined) {
     sessionData.stashedRunbookId = session.stashed;
   }
-  if (session.stashedRunbookOwnership !== undefined) {
-    sessionData.stashedRunbookOwnership = session.stashedRunbookOwnership;
-  }
-  if (session.ownedRunbooks !== undefined) {
-    sessionData.ownedRunbooks = session.ownedRunbooks;
+  if (session.claims !== undefined) {
+    sessionData.claims = session.claims;
   }
 
   await writeFile(workspace.sessionPath(), JSON.stringify(sessionData, null, 2));
