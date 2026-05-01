@@ -12,7 +12,6 @@
 
 import type { RunbookStateManager } from './state.js';
 import { SessionLock } from './session-lock.js';
-import { type ReleaseRunbookResult } from './agent-ownership.js';
 import {
   createClaimRecord,
   generateClaimId,
@@ -22,6 +21,16 @@ import {
   type ClaimRunbookResult,
 } from './claim-id.js';
 import type { DelegationLinkage, RunbookState } from './types.js';
+
+export type ReleaseRunbookResult =
+  | { readonly status: 'not-found'; readonly runbookId: RunbookState['id'] }
+  | {
+      readonly status: 'released';
+      readonly runbookId: RunbookState['id'];
+      readonly removedFromDefaultStack: boolean;
+      readonly removedOwnerKeys: readonly string[];
+      readonly nextDefaultRunbookId: RunbookState['id'] | null;
+    };
 
 /**
  * Manages runbook session stacks and stash operations.

@@ -49,6 +49,8 @@ export interface CommandSequenceResult {
   transitions: CapturedTransition[];
   /** Tokens captured from delegate JSON responses */
   capturedTokens: string[];
+  /** Claim IDs captured from claim JSON responses */
+  capturedClaimIds: string[];
 }
 
 /** Options for command sequence execution. */
@@ -112,7 +114,7 @@ function hasRdExecutableInOperatorSeparatedSegment(shellArgs: Array<string | obj
 
 /**
  * Parse a scenario command as an `rd` command, allowing leading environment
- * assignments such as `RD_AGENT_ID=a RD_SESSION_ID=s rd pass`.
+ * assignments such as `FOO=bar rd claim ...`.
  *
  * @param cmd - Scenario command string after token substitution
  * @returns Parsed args/env for `rd`/`rundown`, or null for non-`rd` shell commands
@@ -170,6 +172,30 @@ export function substituteTokens(cmd: string, tokens: string[]): string {
     }
     return tokens[idx];
   });
+}
+
+export function substituteClaimIds(command: string, capturedClaimIds: readonly string[]): string {
+  return command.replace(/\$\{CLAIM_ID(?:_(\d+))?\}/g, (_match, index: string | undefined) => {
+    const offset = index === undefined ? 0 : Number(index) - 1;
+    const claimId = capturedClaimIds[offset];
+    if (claimId === undefined) {
+      throw new Error(`Missing captured claim id for \${CLAIM_ID${index ? `_${index}` : ''}}`);
+    }
+    return claimId;
+  });
+}
+
+export function captureClaimIdFromJsonObject(value: unknown, capturedClaimIds: string[]): void {
+  if (
+    value !== null &&
+    typeof value === 'object' &&
+    'action' in value &&
+    'claim_id' in value &&
+    (value as { action?: unknown }).action === 'claimed' &&
+    typeof (value as { claim_id?: unknown }).claim_id === 'string'
+  ) {
+    capturedClaimIds.push((value as { claim_id: string }).claim_id);
+  }
 }
 
 /**
@@ -247,6 +273,7 @@ function processJsonObject(
   obj: Record<string, unknown>,
   transitions: CapturedTransition[],
   tokens: string[],
+  claimIds: string[],
 ): 'COMPLETE' | 'STOP' | null {
   let terminal: 'COMPLETE' | 'STOP' | null = null;
 
@@ -278,6 +305,7 @@ function processJsonObject(
   if (obj.action === 'delegated' && typeof obj.token === 'string') {
     tokens.push(obj.token);
   }
+  captureClaimIdFromJsonObject(obj, claimIds);
 
   // Extract pre-issued delegation tokens from STEP_ENTERED delegateFrontier.
   // Emitted when `rd run` enters a DELEGATE step: tokens are auto-issued for
@@ -316,12 +344,14 @@ export function parseJsonLines(stdout: string): {
   transitions: CapturedTransition[];
   terminal: 'COMPLETE' | 'STOP' | null;
   tokens: string[];
+  claimIds: string[];
 } {
   const trimmed = stdout.trim();
-  if (!trimmed) return { transitions: [], terminal: null, tokens: [] };
+  if (!trimmed) return { transitions: [], terminal: null, tokens: [], claimIds: [] };
 
   const transitions: CapturedTransition[] = [];
   const tokens: string[] = [];
+  const claimIds: string[] = [];
   let terminal: 'COMPLETE' | 'STOP' | null = null;
 
   // Try parsing as a single JSON object first (handles pretty-printed output)
@@ -331,8 +361,8 @@ export function parseJsonLines(stdout: string): {
       throw new Error('Not a JSON object');
     }
     const obj = parsed as Record<string, unknown>;
-    terminal = processJsonObject(obj, transitions, tokens);
-    return { transitions, terminal, tokens };
+    terminal = processJsonObject(obj, transitions, tokens, claimIds);
+    return { transitions, terminal, tokens, claimIds };
   } catch {
     // Not a single JSON object — fall through to line-by-line parsing
   }
@@ -347,13 +377,13 @@ export function parseJsonLines(stdout: string): {
       continue; // Non-JSON line — skip
     }
 
-    const detected = processJsonObject(obj, transitions, tokens);
+    const detected = processJsonObject(obj, transitions, tokens, claimIds);
     if (detected !== null) {
       terminal = detected;
     }
   }
 
-  return { transitions, terminal, tokens };
+  return { transitions, terminal, tokens, claimIds };
 }
 
 /**
@@ -527,6 +557,7 @@ export async function executeCommandSequence(
   options: CommandSequenceOptions,
 ): Promise<CommandSequenceResult> {
   const capturedTokens: string[] = [];
+  const capturedClaimIds: string[] = [];
   const transitions: CapturedTransition[] = [];
   let terminalResult: 'COMPLETE' | 'STOP' | 'UNKNOWN' = 'UNKNOWN';
 
@@ -537,7 +568,7 @@ export async function executeCommandSequence(
     const expectsFailure = trimmedRaw.startsWith('! ');
     const commandText = expectsFailure ? trimmedRaw.slice(2).trimStart() : rawCmd;
     // Token substitution — replace ${TOKEN}, ${TOKEN_2}, etc. with captured values
-    const cmd = substituteTokens(commandText, capturedTokens);
+    const cmd = substituteClaimIds(substituteTokens(commandText, capturedTokens), capturedClaimIds);
 
     options.onCommandStart?.(expectsFailure ? `! ${cmd}` : cmd);
 
@@ -561,6 +592,9 @@ export async function executeCommandSequence(
       }
       for (const tok of jsonResult.tokens) {
         capturedTokens.push(tok);
+      }
+      for (const claimId of jsonResult.claimIds) {
+        capturedClaimIds.push(claimId);
       }
       if (jsonResult.terminal !== null) {
         terminalResult = jsonResult.terminal;
@@ -586,5 +620,5 @@ export async function executeCommandSequence(
     }
   }
 
-  return { terminalResult, transitions, capturedTokens };
+  return { terminalResult, transitions, capturedTokens, capturedClaimIds };
 }

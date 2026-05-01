@@ -7,11 +7,6 @@ import {
   type DelegationTokenHash,
 } from './runbook/delegation-token.js';
 import { CLAIM_ID_PATTERN, type ClaimId, type ClaimRecord } from './runbook/claim-id.js';
-import {
-  buildAgentOwnerKey,
-  type AgentOwnerKey,
-  type AgentRunbookOwnership,
-} from './runbook/agent-ownership.js';
 import type { FrameKey } from './runbook/targeting.js';
 import { createJsonArrayStream } from './runbook/types.js';
 import type { JsonValue, TemplateVarValue } from './runbook/types.js';
@@ -337,52 +332,6 @@ const ResolvedCompletionSchema = z.object({
   targetEntry: z.number().int().nonnegative().max(MAX_FOR_BOUND),
   completedAt: z.string(),
 });
-
-/** Zod schema for a single agent-owned child runbook session record. */
-export const AgentRunbookOwnershipSchema: z.ZodType<AgentRunbookOwnership, z.ZodTypeDef, unknown> =
-  z
-    .object({
-      kind: z.literal('agent-owned-runbook'),
-      ownerKey: z
-        .string()
-        .min(1)
-        .transform((value) => value as AgentOwnerKey),
-      agent_id: z.string().min(1),
-      session_id: z.string().min(1).optional(),
-      childRunId: z.string().min(1),
-      tokenHash: DelegationTokenHashSchema,
-      parentRunId: z.string().min(1),
-      parentStepId: z.string().min(1),
-      parentStep: z.string().optional(),
-      parentFrameKey: FrameKeySchema.optional(),
-      parentEntry: z.number().int().positive().optional(),
-      claimedAt: z.string().min(1),
-      updatedAt: z.string().min(1),
-    })
-    // Record-level invariant: ownerKey must be derivable from agent_id/session_id.
-    // SessionDataSchema below adds a separate map-level invariant (map key matches
-    // ownership.ownerKey). Both are needed — record-level catches a tampered
-    // record that happens to be filed under its own (forged) key; map-level
-    // catches a mis-filed record whose internals are otherwise consistent.
-    .superRefine((ownership, ctx) => {
-      const expectedOwnerKey = buildAgentOwnerKey(
-        ownership.session_id === undefined
-          ? { kind: 'agent-only', agent_id: ownership.agent_id }
-          : {
-              kind: 'agent-session',
-              agent_id: ownership.agent_id,
-              session_id: ownership.session_id,
-            },
-      );
-
-      if (ownership.ownerKey !== expectedOwnerKey) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['ownerKey'],
-          message: 'ownerKey must match agent_id and session_id',
-        });
-      }
-    });
 
 /** Zod schema that parses strings and brands them as {@link ClaimId}. */
 export const ClaimIdSchema = z

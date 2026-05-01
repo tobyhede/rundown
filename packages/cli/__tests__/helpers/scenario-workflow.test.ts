@@ -443,6 +443,7 @@ describe('executeScenario', () => {
       terminalResult: 'COMPLETE',
       transitions: [],
       capturedTokens: [],
+      capturedClaimIds: [],
       ...overrides,
     };
   }
