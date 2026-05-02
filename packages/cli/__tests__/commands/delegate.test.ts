@@ -5,7 +5,6 @@ import {
   createTestWorkspace,
   runCliInProcess,
   getActiveState,
-  readRunbookState,
   type TestWorkspace,
   createRunbook,
 } from '../helpers/test-utils.js';
@@ -148,9 +147,6 @@ describe('delegate command', () => {
 
     it('removes the raw recovery token after claim', async () => {
       await setupDelegation();
-      // Capture parent before claim — under Route A, `rd claim` activates the
-      // child, so getActiveState would return the child afterwards.
-      const parentId = (await getActiveState(workspace))!.id;
 
       const delegated = await runCliInProcess(
         'delegate runbooks/child.runbook.md --step 1.1',
@@ -162,22 +158,24 @@ describe('delegate command', () => {
       const claimed = await runCliInProcess(`claim ${token}`, workspace);
       expect(claimed.exitCode).toBe(0);
 
-      // Read the parent's state directly; the active default-stack entry is
-      // now the claimed child. The persisted delegation should retain the
-      // tokenHash and the linked childRunId, with the raw token redacted.
-      const parent = await readRunbookState(workspace, parentId);
-      const substepStates = parent?.substepStates as Array<Record<string, unknown>> | undefined;
+      const state = await getActiveState(workspace);
+      const substepStates = state?.substepStates as Array<Record<string, unknown>> | undefined;
       const ss1 = substepStates?.find((ss) => ss.id === '1');
       const delegation = ss1?.delegation as Record<string, unknown>;
       expect(delegation.childRunId).toEqual(expect.stringMatching(/^wf-/));
       expect(delegation.tokenHash).toEqual(expect.stringMatching(/^sha256:[a-f0-9]{64}$/));
       expect(delegation.token).toBeUndefined();
+
+      const statusResult = await runCliInProcess('status', workspace);
+      expect(statusResult.exitCode).toBe(0);
+      const statusOutput = JSON.parse(statusResult.stdout) as Record<string, unknown>;
+      const delegations = statusOutput.delegations as Array<Record<string, unknown>>;
+      expect(delegations[0]?.state).toBe('claimed');
+      expect(delegations[0]?.token).toBeUndefined();
     });
 
     it('removes the raw recovery token from persisted snapshot after claim', async () => {
       await setupDelegation();
-      // Capture parent before claim — Route A: `rd claim` activates the child.
-      const parentId = (await getActiveState(workspace))!.id;
 
       const delegated = await runCliInProcess(
         'delegate runbooks/child.runbook.md --step 1.1',
@@ -190,8 +188,10 @@ describe('delegate command', () => {
       const claimed = await runCliInProcess(`claim ${token}`, workspace);
       expect(claimed.exitCode).toBe(0);
 
+      const parent = await getActiveState(workspace);
+      if (!parent) throw new Error('Expected parent state');
       const persisted = JSON.parse(
-        await readFile(join(workspace.statePath(), `${parentId}.json`), 'utf-8'),
+        await readFile(join(workspace.statePath(), `${parent.id}.json`), 'utf-8'),
       ) as {
         snapshot?: {
           context?: { substepStates?: Array<{ delegation?: Record<string, unknown> }> };

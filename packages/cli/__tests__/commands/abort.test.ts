@@ -375,13 +375,6 @@ describe('abort command - unit tests', () => {
   describe('delegation propagation after force abort', () => {
     it('propagates failure to parent after force abort of claimed delegation', async () => {
       const token = await setupDelegation();
-      // Capture parent before claim — Route A: `rd claim` activates the
-      // child, so getActiveState would return the child afterwards.
-      const parentBeforeClaim = await getActiveState(workspace);
-      expect(parentBeforeClaim).not.toBeNull();
-      if (!parentBeforeClaim) throw new Error('Expected parent run state to exist');
-      expect(parentBeforeClaim.step).toBe('1');
-      const parentId = parentBeforeClaim.id;
 
       // Claim the token
       let result = await runCliInProcess(`claim ${token}`, workspace);
@@ -391,12 +384,18 @@ describe('abort command - unit tests', () => {
       expect(typeof claimOutput?.run_id).toBe('string');
       const childRunId = claimOutput!.run_id as string;
 
+      // Get parent state
+      const parentState = await getActiveState(workspace);
+      expect(parentState).not.toBeNull();
+      if (!parentState) throw new Error('Expected parent run state to exist');
+      expect(parentState.step).toBe('1');
+
       // Force abort stops and releases the claimed child.
       result = await runCliInProcess(`abort ${token} --force --text`, workspace);
       expect(result.exitCode).toBe(0);
 
-      // The parent remains; the child state is gone.
-      const afterAbortParent = await readRunbookState(workspace, parentId);
+      // The parent remains the default-stack runbook; the child state is gone.
+      const afterAbortParent = await readRunbookState(workspace, parentState.id);
       expect(afterAbortParent?.lifecycle).toBe('running');
       expect(await readRunbookState(workspace, childRunId)).toBeNull();
     });

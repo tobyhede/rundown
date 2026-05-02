@@ -341,7 +341,7 @@ describe('SessionService', () => {
       const claimed = await sessionService.claimRunbook(child.id, linkage);
 
       // Simulate the active-claimed-child state: child on default stack and
-      // referenced by the claim record (Route A).
+      // referenced by the claim record.
       await sessionService.pushRunbook(child.id);
       expect((await sessionService.getActive())?.id).toBe(child.id);
 
