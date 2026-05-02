@@ -55,6 +55,8 @@ export const CLIErrorCodes = {
   DELEGATION_CANCELLED: 'DELEGATION_CANCELLED',
   /** Delegation lock could not be acquired */
   DELEGATION_LOCK_TIMEOUT: 'DELEGATION_LOCK_TIMEOUT',
+  /** Nested delegation forbidden (claimed child cannot delegate further) */
+  DELEGATION_NESTED_FORBIDDEN: 'DELEGATION_NESTED_FORBIDDEN',
   /** Runbook launch failed */
   LAUNCH_FAILED: 'LAUNCH_FAILED',
   /** Scenario not found */
@@ -83,6 +85,7 @@ export const ErrorCodeSchema = z
     'TOKEN_NOT_FOUND',
     'DELEGATION_CANCELLED',
     'DELEGATION_LOCK_TIMEOUT',
+    'DELEGATION_NESTED_FORBIDDEN',
     'LAUNCH_FAILED',
     'SCENARIO_NOT_FOUND',
     'FILE_ERROR',

@@ -119,6 +119,9 @@ export const Errors = {
   delegationOwnerLostSubsteps: (substepId: string, step: string): RundownError =>
     new RundownError('DELEGATION_OWNER_LOST_SUBSTEPS', { substepId, step }),
 
+  delegationNestedForbidden: (runId: string): RundownError =>
+    new RundownError('DELEGATION_NESTED_FORBIDDEN', { runId }),
+
   retryHookStaleSubstep: (substepId: string, parentStep: string): RundownError =>
     new RundownError('RETRY_HOOK_STALE_SUBSTEP', { substepId, parentStep }),
 

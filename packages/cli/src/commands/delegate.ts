@@ -214,6 +214,7 @@ export function registerDelegateCommand(program: Command): void {
             case 'substep_required':
             case 'substep_not_found':
             case 'delegation_exists':
+            case 'parent_is_delegated':
               // Rethrow so withErrorHandling's toRundownError -> stderr envelope
               // fires with the same code and message as the pre-refactor throw.
               throw result.error;

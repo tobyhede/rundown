@@ -43,6 +43,7 @@ import {
   createDelegation,
   Errors,
   isError,
+  RundownError,
   type DelegateFrontierEntry,
   partitionOutputDeclarations,
   prepareOutputChannels,
@@ -893,6 +894,7 @@ export async function runExecutionLoop(
                   case 'substep_required':
                   case 'substep_not_found':
                   case 'delegation_exists':
+                  case 'parent_is_delegated':
                     // All-or-nothing fan-out: reject the whole batch and re-throw so
                     // the outer catch block transitions the runbook to stopped with
                     // the same RUNBOOK_STOPPED envelope as pre-refactor.
@@ -925,11 +927,19 @@ export async function runExecutionLoop(
               // runbook to stopped so it does not strand on a DELEGATE step
               // waiting for tokens that will never be issued.
               const message = isError(err) ? err.message : String(err);
+              // Discriminate the nested-delegation guard from generic resolution
+              // failures so the RUNBOOK_STOPPED envelope carries actionable
+              // semantics. RundownError.code is the formatted "RD-XXX" string;
+              // matching the codeKey would require digging through `errorCode`.
+              const reason =
+                err instanceof RundownError && err.code === 'RD-819'
+                  ? 'nested_delegation_forbidden'
+                  : 'delegation_resolution_failed';
               await manager.update(runbookId, { lifecycle: 'stopped' });
               emitter.emit('RUNBOOK_STOPPED', {
                 message,
                 position: stepPosition,
-                reason: 'delegation_resolution_failed',
+                reason,
               });
               await applyExecutionTerminalRelease(sessionService, runbookId, terminalReleaseMode);
               return 'stopped';

@@ -323,6 +323,16 @@ export const ErrorCodes = {
       `stopping the running runbook and starting a fresh run.`,
     docSlug: 'delegation-owner-lost-substeps',
   },
+  DELEGATION_NESTED_FORBIDDEN: {
+    code: 'RD-819',
+    category: ErrorCategory.DELEGATION,
+    title: 'Nested delegation forbidden',
+    description:
+      'A claimed (delegated) child runbook may not issue further delegations. ' +
+      'Delegation is single-level: subagents cannot spawn subagents. Use `rd run` ' +
+      'for runbook composition inside a claimed child.',
+    docSlug: 'delegation-nested-forbidden',
+  },
   // Retry hook (9xx) — sub-range of ErrorCategory.EXECUTION reserved for
   // retry-hook lifecycle failures (delegation re-issuance, frame-key invariants,
   // canonical-at requirements). Kept as EXECUTION rather than a dedicated

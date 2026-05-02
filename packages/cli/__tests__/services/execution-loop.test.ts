@@ -66,6 +66,7 @@ const {
   isJsonArrayStream: realIsJsonArrayStream,
   ForResolutionError: RealForResolutionError,
   Errors: RealErrors,
+  RundownError: RealRundownError,
 } = await import('@rundown-org/core');
 
 jest.unstable_mockModule('@rundown-org/core', () => {
@@ -244,6 +245,7 @@ jest.unstable_mockModule('@rundown-org/core', () => {
     createJsonArrayStream: jest.fn(),
     createDelegation: jest.fn(),
     Errors: RealErrors,
+    RundownError: RealRundownError,
     // Helper-call validator imported by template-renderer; the real impl is fine.
     invokeHelperSafely: jest.fn(
       (_name: string, helper: (v: string) => string, arg: string): string | undefined => {
@@ -1324,6 +1326,97 @@ describe('runExecutionLoop', () => {
       return call[1] === delegateSteps && event?.type === 'PENDING_FRONTIER_CONSUMED';
     });
     expect(consumedCall).toBeUndefined();
+  });
+
+  it('auto-fan-out: stops the runbook with reason "nested_delegation_forbidden" when active runbook is a claimed child', async () => {
+    // Single-level delegation invariant: a claimed (delegated) child runbook
+    // may not auto-fan-out further delegations on entering a delegating step.
+    // The guard at createDelegation surfaces `parent_is_delegated`, the inner
+    // switch re-throws the wrapped RD-819 error, and the outer catch
+    // discriminates the reason on the RUNBOOK_STOPPED envelope.
+    const delegateSteps: any[] = [
+      {
+        kind: 'substeps',
+        name: '1',
+        description: 'Parallel work',
+        substeps: [
+          {
+            id: '1',
+            description: 'First task',
+            delegate: true,
+            runbooks: ['child-a.runbook.md'],
+            transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+          },
+        ],
+        transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+      },
+    ];
+
+    mockManager.load.mockResolvedValue({
+      id: runbookId,
+      step: '1',
+      substep: '1',
+      status: 'running',
+      substepStates: [],
+      // Active runbook is itself a claimed child — guard should fire.
+      parentLinkage: {
+        kind: 'delegation',
+        parentRunId: 'parent-run-id',
+        parentStepId: '1',
+        tokenHash: `sha256:${'a'.repeat(64)}`,
+      },
+    });
+
+    jest
+      .mocked(delegateInference.inferAllDelegateSubsteps)
+      .mockReturnValue([{ runbookRef: 'child-a.runbook.md', stepId: '1.1' }]);
+
+    jest.mocked(resolveRunbook.resolveRunbookFile).mockResolvedValue({
+      path: '/project/.rundown/runbooks/child-a.runbook.md',
+      source: 'project',
+    });
+
+    // Real createDelegation enforces the guard — let it run rather than mock
+    // the variant by hand. The test exercises end-to-end dispatch from
+    // createDelegation -> inner switch -> outer catch.
+    jest.mocked(core.createDelegation).mockImplementation((opts: any) => ({
+      status: 'parent_is_delegated',
+      parentRunId: opts.state.parentLinkage.parentRunId,
+      error: RealErrors.delegationNestedForbidden(opts.state.id),
+    }));
+
+    const result = await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(delegateSteps),
+      '/tmp',
+      false,
+      asEmitter(mockEmitter),
+    );
+
+    expect(result).toBe('stopped');
+
+    // RUNBOOK_STOPPED carries the discriminated reason — not the generic
+    // 'delegation_resolution_failed' fallback.
+    expect(mockEmitter.emit).toHaveBeenCalledWith(
+      'RUNBOOK_STOPPED',
+      expect.objectContaining({
+        reason: 'nested_delegation_forbidden',
+      }),
+    );
+
+    // No tokens persisted: the `manager.update` call before the catch (which
+    // would have written substepStates) never happens because createDelegation
+    // throws on the first target. The lifecycle update DOES happen — guard
+    // verifies `update` was called only with `lifecycle: 'stopped'`, not with
+    // `substepStates`.
+    const updateCalls = mockManager.update.mock.calls.filter(
+      (call: unknown[]) =>
+        typeof call[1] === 'object' &&
+        call[1] !== null &&
+        'substepStates' in (call[1] as Record<string, unknown>),
+    );
+    expect(updateCalls).toHaveLength(0);
   });
 });
 

@@ -150,7 +150,8 @@ export interface RunbookStoppedPayload {
     | 'policy_denied'
     | 'fail_transition'
     | 'user_abort'
-    | 'delegation_resolution_failed';
+    | 'delegation_resolution_failed'
+    | 'nested_delegation_forbidden';
 }
 
 /** Payload emitted when an error occurs during execution (ERROR_OCCURRED event). */
