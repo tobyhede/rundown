@@ -8,6 +8,7 @@ import {
   readSession,
   readRunbookState,
   findActionOutput,
+  extractToken,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 
@@ -300,13 +301,6 @@ Final step.
 Run the child task.
 `;
       await writeFile(join(workspace.cwd, 'child.runbook.md'), content);
-    }
-
-    function extractToken(stdout: string): string {
-      // JSON output (default): delegate response is a JSON object with a token field
-      const parsed = JSON.parse(stdout) as { token?: string };
-      if (!parsed.token) throw new Error(`No token found in delegate output:\n${stdout}`);
-      return parsed.token;
     }
 
     it('propagates fail to parent when child is stopped', async () => {

@@ -5,6 +5,7 @@ import {
   runCliInProcess,
   getActiveState,
   readRunbookState,
+  extractToken,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 import { writeFile, readFile } from 'node:fs/promises';
@@ -47,13 +48,6 @@ describe('Delegation propagation integration', () => {
       steps: [{ title: 'Execute', pass: 'COMPLETE', fail: 'STOP', content: 'Run the child task.' }],
     });
     await writeFile(join(workspace.cwd, 'child.runbook.md'), content);
-  }
-
-  /** Helper: extract delegation token from CLI output. */
-  function extractToken(stdout: string): string {
-    const parsed = JSON.parse(stdout) as { token?: string };
-    if (!parsed.token) throw new Error(`No token found in delegate output:\n${stdout}`);
-    return parsed.token;
   }
 
   /** Helper: read resolvedCompletions from a run state file. */

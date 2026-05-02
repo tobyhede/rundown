@@ -697,6 +697,39 @@ export function parseJsonEvents(stdout: string): JsonOutputEvent[] {
 }
 
 /**
+ * Extract a delegation token from a `rd delegate` JSON stdout payload.
+ *
+ * @param stdout - The stdout string from `rd delegate`
+ * @returns The token string
+ * @throws If the output is not parseable JSON or has no `token` field
+ */
+export function extractToken(stdout: string): string {
+  const parsed = JSON.parse(stdout) as { token?: string };
+  if (!parsed.token) throw new Error(`No token found in delegate output:\n${stdout}`);
+  return parsed.token;
+}
+
+/**
+ * Extract the claim id from a `rd claim` JSON stdout payload.
+ *
+ * Reuses {@link findActionOutput} to handle multi-line / multi-object output
+ * shapes that `rd claim` emits when the launched child runbook produces its
+ * own action records on the same stream.
+ *
+ * @param stdout - The stdout string from `rd claim`
+ * @returns The `claim_id` from the action output
+ * @throws If no action output with a `claim_id` field is present
+ */
+export function extractClaimId(stdout: string): string {
+  const action = findActionOutput(stdout);
+  const claimId = action?.claim_id;
+  if (typeof claimId !== 'string' || claimId.length === 0) {
+    throw new Error(`No claim_id found in claim output:\n${stdout}`);
+  }
+  return claimId;
+}
+
+/**
  * Helper to find action output from JSON output.
  * JSON output may be multi-line formatted or contain multiple JSON objects.
  *

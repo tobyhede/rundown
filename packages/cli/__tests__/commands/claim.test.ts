@@ -7,6 +7,7 @@ import {
   getActiveState,
   readRunbookState,
   readSession,
+  extractToken,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 import { writeFile } from 'node:fs/promises';
@@ -50,14 +51,6 @@ describe('claim command', () => {
       steps: [{ title: 'Execute', pass: 'COMPLETE', fail: 'STOP', content: 'Run the child task.' }],
     });
     await writeFile(join(workspace.cwd, 'child.runbook.md'), content);
-  }
-
-  /** Helper: extract token from output */
-  function extractToken(stdout: string): string {
-    // JSON output (default): delegate response is a JSON object with a token field
-    const parsed = JSON.parse(stdout) as { token?: string };
-    if (!parsed.token) throw new Error(`No token found in delegate output:\n${stdout}`);
-    return parsed.token;
   }
 
   describe('basic claim functionality', () => {
