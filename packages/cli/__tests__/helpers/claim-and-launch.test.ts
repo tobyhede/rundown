@@ -214,9 +214,6 @@ function makeCtx(overrides: Record<string, unknown> = {}): RunPipelineContext {
         // cspell:disable-next-line
         claim: { claimId: 'rdclm_abcdefghijklmnopqrstu1' },
       }),
-      // Route A: claimAndLaunch pushes the claimed child onto the default
-      // stack via launchRunbook → sessionService.pushRunbook.
-      pushRunbook: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
     },
     lifecycleService: {},
     cwd: '/tmp/test',

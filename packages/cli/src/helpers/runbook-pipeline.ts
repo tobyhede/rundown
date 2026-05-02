@@ -1186,7 +1186,7 @@ export async function claimAndLaunch(
       runbookName: freshDelegation.childRunbookPath,
       prompted: parentPrompted,
       parentLinkage: delegationLinkage,
-      sessionActivation: { kind: 'default-stack' },
+      sessionActivation: { kind: 'none' },
       afterInit: async (childStateId) => {
         // Set childRunId on parent delegation (tokenHash for precise matching)
         await updateStepDelegationChildRunId(

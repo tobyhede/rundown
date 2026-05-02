@@ -210,11 +210,9 @@ Do work.
       expect(child2?.lifecycle).toBe('running');
     });
 
-    it('plain fail after claim stops the claimed child and propagates to the parent', async () => {
-      // `rd claim` activates the child by pushing it onto the default stack.
-      // Bare `rd fail` therefore targets the claimed child; the child stops
-      // (FAIL STOP), the parent's substep 1.1 receives a fail, and FAIL ANY
-      // STOP on the parent step propagates the stop upward.
+    it('plain fail does not mutate a claimed child runbook', async () => {
+      // Regression: plain callers must target only the default-stack runbook
+      // (the parent), never a claimed delegated child.
       const childRunbook = [
         '# Child',
         '',
@@ -260,15 +258,14 @@ Do work.
       const claim = await runCliInProcess(`claim ${token!}`, workspace);
       const childId = String(findActionOutput(claim.stdout)?.run_id);
 
-      // Bare fail — child is on top of the default stack after claim. The
-      // child stops (FAIL STOP), and FAIL ANY STOP on the parent propagates.
+      // Plain fail must stop the default-stack parent, not the claimed child.
       const failResult = await runCliInProcess('fail --text', workspace);
       expect(failResult.exitCode).toBe(1);
 
       const parent = await readRunbookState(workspace, parentId!);
       const child = await readRunbookState(workspace, childId);
       expect(parent?.lifecycle).toBe('stopped');
-      expect(child?.lifecycle).toBe('stopped');
+      expect(child?.lifecycle).toBe('running');
     }, 30_000);
   });
 
