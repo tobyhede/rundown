@@ -359,11 +359,20 @@ export const SessionDataSchema = z
   .object({
     defaultStack: z.array(z.string()).default([]),
     stashedRunbookId: z.string().optional(),
-    claims: z.record(ClaimIdSchema, ClaimRecordSchema).default({}),
+    claims: z.record(z.string(), ClaimRecordSchema).default({}),
   })
   .superRefine((session, ctx) => {
     const claimChildRunIds = new Map<string, string>();
     for (const [claimId, claim] of Object.entries(session.claims)) {
+      if (!CLAIM_ID_PATTERN.test(claimId)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['claims', claimId],
+          message: 'claims key must be a canonical claim id (rdclm_<22 base64url characters>)',
+        });
+        continue;
+      }
+
       if (claimId !== claim.claimId) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
