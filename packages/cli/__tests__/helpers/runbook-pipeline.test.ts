@@ -950,6 +950,11 @@ describe('startRunbook', () => {
       } as unknown as RunbookActorService,
       sessionService: {
         pushRunbook: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
+        claimRunbook: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
+          status: 'claimed',
+          // cspell:disable-next-line
+          claim: { claimId: 'rdclm_abcdefghijklmnopqrstu1' },
+        }),
       } as unknown as SessionService,
       lifecycleService: makeLifecycle() as unknown as ExecutionLifecycleService,
       cwd: '/test',
@@ -1004,6 +1009,11 @@ describe('startRunbook', () => {
       } as unknown as RunbookActorService,
       sessionService: {
         pushRunbook: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
+        claimRunbook: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
+          status: 'claimed',
+          // cspell:disable-next-line
+          claim: { claimId: 'rdclm_abcdefghijklmnopqrstu1' },
+        }),
       } as unknown as SessionService,
       lifecycleService: makeLifecycle() as unknown as ExecutionLifecycleService,
       cwd: '/test',
@@ -1124,11 +1134,16 @@ describe('claimAndLaunch', () => {
         }) as unknown as jest.MockedObject<DelegationLock>,
     );
 
+    const claimSpy = mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
+      status: 'claimed',
+      // cspell:disable-next-line
+      claim: { claimId: 'rdclm_abcdefghijklmnopqrstu1' },
+    });
     const ctx = {
-      output: {} as unknown as OutputEmitter,
+      output: { status: jest.fn(), flush: jest.fn() } as unknown as OutputEmitter,
       manager: mockManager as unknown as RunbookStateManager,
       actorService: {} as unknown as RunbookActorService,
-      sessionService: {} as unknown as SessionService,
+      sessionService: { claimRunbook: claimSpy } as unknown as SessionService,
       lifecycleService: {} as unknown as ExecutionLifecycleService,
       cwd: '/test',
     } satisfies RunPipelineContext;
@@ -1269,11 +1284,16 @@ describe('claimAndLaunch', () => {
         }) as unknown as jest.MockedObject<DelegationLock>,
     );
 
+    const claimSpy = mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
+      status: 'claimed',
+      // cspell:disable-next-line
+      claim: { claimId: 'rdclm_abcdefghijklmnopqrstu1' },
+    });
     const ctx = {
-      output: {} as unknown as OutputEmitter,
+      output: { status: jest.fn(), flush: jest.fn() } as unknown as OutputEmitter,
       manager: mockManager as unknown as RunbookStateManager,
       actorService: {} as unknown as RunbookActorService,
-      sessionService: {} as unknown as SessionService,
+      sessionService: { claimRunbook: claimSpy } as unknown as SessionService,
       lifecycleService: {} as unknown as ExecutionLifecycleService,
       cwd: '/test',
     } satisfies RunPipelineContext;
@@ -1347,7 +1367,7 @@ describe('claimAndLaunch', () => {
     } as unknown as SessionService;
 
     const ctx = {
-      output: {} as unknown as OutputEmitter,
+      output: { status: jest.fn(), flush: jest.fn() } as unknown as OutputEmitter,
       manager: mockManager as unknown as RunbookStateManager,
       actorService: {} as unknown as RunbookActorService,
       sessionService: mockSessionService,
@@ -1436,7 +1456,7 @@ describe('claimAndLaunch', () => {
     } as unknown as SessionService;
 
     const ctx = {
-      output: {} as unknown as OutputEmitter,
+      output: { status: jest.fn(), flush: jest.fn() } as unknown as OutputEmitter,
       manager: mockManager as unknown as RunbookStateManager,
       actorService: {} as unknown as RunbookActorService,
       sessionService: mockSessionService,
@@ -1531,6 +1551,11 @@ describe('claimAndLaunch', () => {
       } as unknown as RunbookActorService,
       sessionService: {
         pushRunbook: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
+        claimRunbook: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
+          status: 'claimed',
+          // cspell:disable-next-line
+          claim: { claimId: 'rdclm_abcdefghijklmnopqrstu1' },
+        }),
       } as unknown as SessionService,
       lifecycleService: makeLifecycle() as unknown as ExecutionLifecycleService,
       cwd: '/test',
@@ -1644,6 +1669,11 @@ describe('claimAndLaunch', () => {
       } as unknown as RunbookActorService,
       sessionService: {
         pushRunbook: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
+        claimRunbook: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
+          status: 'claimed',
+          // cspell:disable-next-line
+          claim: { claimId: 'rdclm_abcdefghijklmnopqrstu1' },
+        }),
       } as unknown as SessionService,
       lifecycleService: makeLifecycle() as unknown as ExecutionLifecycleService,
       cwd: '/test',
@@ -1770,6 +1800,11 @@ describe('claimAndLaunch', () => {
       } as unknown as RunbookActorService,
       sessionService: {
         pushRunbook: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
+        claimRunbook: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
+          status: 'claimed',
+          // cspell:disable-next-line
+          claim: { claimId: 'rdclm_abcdefghijklmnopqrstu1' },
+        }),
       } as unknown as SessionService,
       lifecycleService: makeLifecycle() as unknown as ExecutionLifecycleService,
       cwd: '/test',
@@ -1943,6 +1978,11 @@ describe('claimAndLaunch', () => {
       } as unknown as RunbookActorService,
       sessionService: {
         pushRunbook: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
+        claimRunbook: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
+          status: 'claimed',
+          // cspell:disable-next-line
+          claim: { claimId: 'rdclm_abcdefghijklmnopqrstu1' },
+        }),
       } as unknown as SessionService,
       lifecycleService: makeLifecycle() as unknown as ExecutionLifecycleService,
       cwd: '/test',

@@ -29,9 +29,21 @@ export type ReleaseRunbookResult =
       readonly status: 'released';
       readonly runbookId: RunbookState['id'];
       readonly removedFromDefaultStack: boolean;
-      readonly removedOwnerKeys: readonly string[];
       readonly nextDefaultRunbookId: RunbookState['id'] | null;
     };
+
+/**
+ * True when `linkage` is a delegation linkage that matches `claim`'s parent run / step / token hash.
+ * Used to verify a child runbook's parentLinkage genuinely originated from the supplied claim record.
+ */
+function linkageMatchesClaim(linkage: RunbookState['parentLinkage'], claim: ClaimRecord): boolean {
+  return (
+    linkage?.kind === 'delegation' &&
+    linkage.parentRunId === claim.parentRunId &&
+    linkage.parentStepId === claim.parentStepId &&
+    linkage.tokenHash === claim.tokenHash
+  );
+}
 
 /**
  * Manages runbook session stacks and stash operations.
@@ -162,12 +174,7 @@ export class SessionService {
     if (state.lifecycle === 'completed' || state.lifecycle === 'stopped') {
       return { status: 'terminal', claim, lifecycle: state.lifecycle };
     }
-    if (
-      state.parentLinkage?.kind !== 'delegation' ||
-      state.parentLinkage.parentRunId !== claim.parentRunId ||
-      state.parentLinkage.parentStepId !== claim.parentStepId ||
-      state.parentLinkage.tokenHash !== claim.tokenHash
-    ) {
+    if (!linkageMatchesClaim(state.parentLinkage, claim)) {
       return { status: 'unlinked', claim, reason: 'child-linkage-mismatch' };
     }
 
@@ -227,7 +234,6 @@ export class SessionService {
       status: 'released',
       runbookId,
       removedFromDefaultStack,
-      removedOwnerKeys: [],
       nextDefaultRunbookId: session.defaultStack[session.defaultStack.length - 1] ?? null,
     } satisfies ReleaseRunbookResult;
   }
@@ -326,13 +332,7 @@ export class SessionService {
       if (state?.lifecycle !== 'running') {
         return null;
       }
-      const linkage = state.parentLinkage;
-      if (
-        linkage?.kind !== 'delegation' ||
-        linkage.parentRunId !== claim.parentRunId ||
-        linkage.parentStepId !== claim.parentStepId ||
-        linkage.tokenHash !== claim.tokenHash
-      ) {
+      if (!linkageMatchesClaim(state.parentLinkage, claim)) {
         return null;
       }
       const parent = await this.manager.load(claim.parentRunId);

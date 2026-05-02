@@ -357,15 +357,6 @@ describe('SessionDataSchema claims registry', () => {
 
     expect(result.success).toBe(false);
   });
-
-  it('rejects legacy ownedRunbooks session data', () => {
-    const result = SessionDataSchema.safeParse({
-      defaultStack: ['parent'],
-      ownedRunbooks: {},
-    });
-
-    expect(result.success).toBe(false);
-  });
 });
 
 describe('SubstepStateSchema backward compatibility', () => {

@@ -208,7 +208,13 @@ function makeCtx(overrides: Record<string, unknown> = {}): RunPipelineContext {
       update: jest.fn(),
     },
     actorService: {},
-    sessionService: {},
+    sessionService: {
+      claimRunbook: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
+        status: 'claimed',
+        // cspell:disable-next-line
+        claim: { claimId: 'rdclm_abcdefghijklmnopqrstu1' },
+      }),
+    },
     lifecycleService: {},
     cwd: '/tmp/test',
     ...overrides,
@@ -938,6 +944,11 @@ describe('claimAndLaunch', () => {
       },
       sessionService: {
         pushRunbook: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
+        claimRunbook: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
+          status: 'claimed',
+          // cspell:disable-next-line
+          claim: { claimId: 'rdclm_abcdefghijklmnopqrstu1' },
+        }),
       },
       lifecycleService: {
         ensureActiveEntry: mockFn<

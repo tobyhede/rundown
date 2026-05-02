@@ -463,7 +463,7 @@ export class RunbookStateManager {
 
     const raw = JSON.parse(content) as Record<string, unknown>;
 
-    if ('ownedRunbooks' in raw || 'stacks' in raw) {
+    if ('ownedRunbooks' in raw || 'stashedRunbookOwnership' in raw || 'stacks' in raw) {
       throw new Error(
         'Legacy session ownership format detected. Finish or prune active runbooks and restart.',
       );

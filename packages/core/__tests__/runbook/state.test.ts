@@ -285,6 +285,32 @@ describe('RunbookStateManager', () => {
       await expect(manager.loadSession()).rejects.toThrow(/Legacy session ownership format/);
     });
 
+    it('rejects legacy ownedRunbooks session shape', async () => {
+      await mkdir(join(testDir, '.rundown'), { recursive: true });
+      await writeFile(
+        join(testDir, '.rundown', 'session.json'),
+        JSON.stringify({
+          defaultStack: ['parent'],
+          ownedRunbooks: {},
+        }),
+      );
+
+      await expect(manager.loadSession()).rejects.toThrow(/Legacy session ownership format/);
+    });
+
+    it('rejects legacy stashedRunbookOwnership session shape', async () => {
+      await mkdir(join(testDir, '.rundown'), { recursive: true });
+      await writeFile(
+        join(testDir, '.rundown', 'session.json'),
+        JSON.stringify({
+          defaultStack: ['parent'],
+          stashedRunbookOwnership: { agent: 'foo', session: 'bar' },
+        }),
+      );
+
+      await expect(manager.loadSession()).rejects.toThrow(/Legacy session ownership format/);
+    });
+
     it('load returns null for nonexistent runbook', async () => {
       const result = await manager.load('nonexistent-id');
       expect(result).toBeNull();

@@ -359,29 +359,9 @@ export const SessionDataSchema = z
   .object({
     defaultStack: z.array(z.string()).default([]),
     stashedRunbookId: z.string().optional(),
-    claims: z.record(z.string(), ClaimRecordSchema).default({}),
-    ownedRunbooks: z.unknown().optional(),
-    stashedRunbookOwnership: z.unknown().optional(),
+    claims: z.record(ClaimIdSchema, ClaimRecordSchema).default({}),
   })
   .superRefine((session, ctx) => {
-    if (session.ownedRunbooks !== undefined) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['ownedRunbooks'],
-        message:
-          'Legacy ownedRunbooks session data is no longer supported. Finish or prune active runbooks and restart.',
-      });
-    }
-
-    if (session.stashedRunbookOwnership !== undefined) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['stashedRunbookOwnership'],
-        message:
-          'Legacy stashedRunbookOwnership session data is no longer supported. Finish or prune active runbooks and restart.',
-      });
-    }
-
     const claimChildRunIds = new Map<string, string>();
     for (const [claimId, claim] of Object.entries(session.claims)) {
       if (claimId !== claim.claimId) {

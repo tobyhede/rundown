@@ -869,9 +869,6 @@ async function claimChildForPipeline(
   childRunId: string,
   linkage: DelegationLinkage,
 ): Promise<ClaimId> {
-  if (typeof ctx.sessionService.claimRunbook !== 'function') {
-    return 'rdclm_abcdefghijklmnopqrstu1' as ClaimId;
-  }
   const claim = await ctx.sessionService.claimRunbook(childRunId, linkage);
   return claim.claim.claimId;
 }
@@ -881,9 +878,36 @@ function emitClaimedOutput(
   message: string,
   data: Record<string, unknown>,
 ): void {
-  if (typeof output.status === 'function') {
-    output.status('claimed', message, data);
-  }
+  output.status('claimed', message, data);
+}
+
+/**
+ * Build the structured payload emitted alongside a successful claim.
+ *
+ * Centralises the shape used by the three claim sites in {@link claimAndLaunch}
+ * (idempotent return, orphan adoption, fresh launch) so the field set stays in
+ * lock-step across call sites.
+ *
+ * @param args - Claim payload inputs
+ * @returns Structured payload suitable for {@link emitClaimedOutput}
+ */
+function buildClaimedPayload(args: {
+  readonly truncatedToken: string;
+  readonly claimId: ClaimId;
+  readonly childRunId: string;
+  readonly childRunbookPath: string;
+  readonly parentRunId: string;
+  readonly parentStepAt: string | undefined;
+}): Record<string, unknown> {
+  return {
+    action: 'claimed',
+    token: args.truncatedToken,
+    claim_id: args.claimId,
+    run_id: args.childRunId,
+    runbook: args.childRunbookPath,
+    parent_run_id: args.parentRunId,
+    parent_step: args.parentStepAt,
+  };
 }
 
 /**
@@ -1008,15 +1032,14 @@ export async function claimAndLaunch(
       emitClaimedOutput(
         output,
         `Claimed ${truncatedToken} -> ${freshDelegation.childRunbookPath}`,
-        {
-          action: 'claimed',
-          token: truncatedToken,
-          claim_id: claimId,
-          run_id: freshDelegation.childRunId,
-          runbook: freshDelegation.childRunbookPath,
-          parent_run_id: freshParent.id,
-          parent_step: freshDelegation.contextSnapshot.at,
-        },
+        buildClaimedPayload({
+          truncatedToken,
+          claimId,
+          childRunId: freshDelegation.childRunId,
+          childRunbookPath: freshDelegation.childRunbookPath,
+          parentRunId: freshParent.id,
+          parentStepAt: freshDelegation.contextSnapshot.at,
+        }),
       );
 
       return {
@@ -1067,15 +1090,14 @@ export async function claimAndLaunch(
       emitClaimedOutput(
         output,
         `Claimed ${truncatedToken} -> ${freshDelegation.childRunbookPath}`,
-        {
-          action: 'claimed',
-          token: truncatedToken,
-          claim_id: claimId,
-          run_id: orphan.id,
-          runbook: freshDelegation.childRunbookPath,
-          parent_run_id: freshParent.id,
-          parent_step: freshDelegation.contextSnapshot.at,
-        },
+        buildClaimedPayload({
+          truncatedToken,
+          claimId,
+          childRunId: orphan.id,
+          childRunbookPath: freshDelegation.childRunbookPath,
+          parentRunId: freshParent.id,
+          parentStepAt: freshDelegation.contextSnapshot.at,
+        }),
       );
       return {
         ok: true,
@@ -1166,7 +1188,6 @@ export async function claimAndLaunch(
       };
     }
 
-    const childRunId = capturedChildRunId ?? 'unknown';
     const claimId = capturedClaimId;
     if (claimId === undefined) {
       return {
@@ -1181,17 +1202,37 @@ export async function claimAndLaunch(
         },
       };
     }
+    // capturedClaimId and capturedChildRunId are assigned together in afterInit
+    // (see the launch-result handler above); a defined claim id implies a defined
+    // child run id. The defensive check below preserves the invariant explicitly.
+    if (capturedChildRunId === undefined) {
+      return {
+        ok: false,
+        reason: 'launch-failed',
+        runbook: freshDelegation.childRunbookPath,
+        code: ErrorCodes.LAUNCH_FAILED.code,
+        cause: 'Child run id was not captured for delegated child.',
+        details: {
+          runbookName: freshDelegation.childRunbookPath,
+          runbook: freshDelegation.childRunbookPath,
+        },
+      };
+    }
+    const childRunId = capturedChildRunId;
 
     // Emit claimed output
-    emitClaimedOutput(output, `Claimed ${truncatedToken} -> ${freshDelegation.childRunbookPath}`, {
-      action: 'claimed',
-      token: truncatedToken,
-      claim_id: claimId,
-      run_id: childRunId,
-      runbook: freshDelegation.childRunbookPath,
-      parent_run_id: freshParent.id,
-      parent_step: freshDelegation.contextSnapshot.at,
-    });
+    emitClaimedOutput(
+      output,
+      `Claimed ${truncatedToken} -> ${freshDelegation.childRunbookPath}`,
+      buildClaimedPayload({
+        truncatedToken,
+        claimId,
+        childRunId,
+        childRunbookPath: freshDelegation.childRunbookPath,
+        parentRunId: freshParent.id,
+        parentStepAt: freshDelegation.contextSnapshot.at,
+      }),
+    );
 
     return {
       ok: true,
