@@ -13,6 +13,7 @@ import {
   isRecoverableActiveStackError,
 } from '../helpers/active-runbook-cleanup.js';
 import { parseClaimIdOption } from '../helpers/claim-id-option.js';
+import { extractParentLinkage, handleParentCompletion } from '../helpers/delegation-completion.js';
 
 /**
  * Registers the 'complete' command for manually completing runbooks.
@@ -95,11 +96,14 @@ export function registerCompleteCommand(program: Command): void {
           output.metadata(buildMetadata(state));
 
           const steps = getRunbookFromState(state, cwd);
-          await manager.update(state.id, {
+          const updatedState = await manager.update(state.id, {
             step: steps[steps.length - 1].name,
             lifecycle: 'completed',
           });
           await sessionService.releaseRunbook(state.id);
+          if (extractParentLinkage(updatedState)) {
+            await handleParentCompletion(updatedState, 'pass', cwd, output);
+          }
 
           // Emit completion
           output.complete(message ?? 'Runbook completed successfully');

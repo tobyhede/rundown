@@ -7,6 +7,7 @@ import {
   readSession,
   getActiveState,
   findActionOutput,
+  readRunbookState,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 
@@ -483,6 +484,60 @@ Do work.
     expect(Object.values(session.claims)).toContainEqual(expect.objectContaining({ childRunId }));
     expect(session.defaultStack).toContain(parentState!.id);
     expect(session.active).toBe(parentState!.id);
+  });
+
+  it('propagates delegated child completion to the parent', async () => {
+    const parentRunbook = `## 1. Review
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+### 1.1 Child
+Do child.
+
+## 2. Done
+- PASS COMPLETE
+
+Done.
+`;
+    const childRunbook = `## 1. Child
+- PASS COMPLETE
+
+Do work.
+`;
+    await writeFile(join(workspace.cwd, 'parent.runbook.md'), parentRunbook);
+    await writeFile(join(workspace.cwd, 'child.runbook.md'), childRunbook);
+
+    let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+    expect(result.exitCode).toBe(0);
+    const parentState = await getActiveState(workspace);
+    expect(parentState).not.toBeNull();
+
+    result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
+    expect(result.exitCode).toBe(0);
+    const token = JSON.parse(result.stdout).token as string;
+
+    result = await runCliInProcess(`claim ${token}`, workspace);
+    expect(result.exitCode).toBe(0);
+    const claimAction = findActionOutput(result.stdout);
+    const childRunId = claimAction?.run_id;
+    const claimId = claimAction?.claim_id;
+    expect(typeof childRunId).toBe('string');
+    expect(typeof claimId).toBe('string');
+
+    result = await runCliInProcess(`complete --claim-id ${claimId} --text`, workspace);
+    expect(result.exitCode).toBe(0);
+
+    const childState = await readRunbookState(workspace, String(childRunId));
+    expect(childState?.lifecycle).toBe('completed');
+
+    const updatedParent = await readRunbookState(workspace, parentState!.id);
+    expect(updatedParent?.step).toBe('2');
+
+    const session = await readSession(workspace);
+    expect(session.defaultStack).toContain(parentState!.id);
+    expect(Object.values(session.claims)).not.toContainEqual(
+      expect.objectContaining({ childRunId }),
+    );
   });
 
   it('pops orphaned default-stack entry when state file is missing', async () => {

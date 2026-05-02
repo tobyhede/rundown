@@ -63,6 +63,16 @@ function claimFailureToEnvelope(failure: ClaimFailure): {
           cancelledAt: failure.cancelledAt,
         },
       };
+    case 'delegation-resolved':
+      return {
+        code: 'DELEGATION_ALREADY_RESOLVED',
+        message: 'This delegation has already been resolved and cannot be claimed again.',
+        details: {
+          parentRunId: failure.parentRunId,
+          stepId: failure.stepId,
+          childRunId: failure.childRunId,
+        },
+      };
     case 'lock-timeout':
       return {
         code: 'DELEGATION_LOCK_TIMEOUT',

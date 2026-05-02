@@ -144,6 +144,12 @@ export type ClaimFailure =
       readonly stepId: string;
       readonly cancelledAt: string;
     }
+  | {
+      readonly reason: 'delegation-resolved';
+      readonly parentRunId: string;
+      readonly stepId: string;
+      readonly childRunId: string;
+    }
   | { readonly reason: 'lock-timeout'; readonly parentRunId: string }
   | {
       readonly reason: 'prepare-failed';
@@ -1014,8 +1020,20 @@ export async function claimAndLaunch(
 
     // 4b. Idempotent return if already claimed
     if (freshDelegation.childRunId) {
-      const delegationFrameKey = freshSubstep.frameKey;
       const existingChild = await manager.load(freshDelegation.childRunId);
+      if (
+        existingChild &&
+        (existingChild.lifecycle === 'completed' || existingChild.lifecycle === 'stopped')
+      ) {
+        return {
+          ok: false,
+          reason: 'delegation-resolved',
+          parentRunId: freshParent.id,
+          stepId,
+          childRunId: freshDelegation.childRunId,
+        };
+      }
+      const delegationFrameKey = freshSubstep.frameKey;
       const existingLinkage =
         existingChild?.parentLinkage?.kind === 'delegation'
           ? existingChild.parentLinkage
