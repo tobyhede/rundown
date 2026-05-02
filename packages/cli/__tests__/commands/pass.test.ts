@@ -291,8 +291,12 @@ Do child work.
       const child2Id = child2Output.run_id;
       const claimId2 = child2Output.claim_id;
 
+      // Route A: each `rd claim` pushes the child onto the default stack.
+      // After two sibling claims the most recently claimed child is on top.
+      // Sibling fan-out isolation is preserved because every transition below
+      // uses `--claim-id` to target the specific sibling.
       const anonymousActive = await getActiveState(workspace);
-      expect(anonymousActive?.runbook).toBe('runbooks/parent.runbook.md');
+      expect(anonymousActive?.id).toBe(child2Id);
 
       let status = await runCliInProcess(['status', '--claim-id', claimId1], workspace);
       expect(JSON.parse(status.stdout).state).toContain(child1Id);
@@ -310,9 +314,11 @@ Do child work.
       expect(child2?.lifecycle).toBe('running');
     }, 30_000);
 
-    it('plain pass does not mutate a claimed child runbook', async () => {
-      // Regression: plain callers must target only the default-stack runbook
-      // (the parent), never a claimed delegated child.
+    it('plain pass after claim transitions the claimed child runbook', async () => {
+      // `rd claim` activates the child by pushing it onto the default stack.
+      // Bare `rd pass` therefore targets the claimed child; the child completes,
+      // propagates its result to the parent's delegated substep, and the
+      // parent advances. The `claim_id` remains for cross-agent targeting.
       const childRunbook = [
         '# Child',
         '',
@@ -362,8 +368,9 @@ Do child work.
       expect(claim.exitCode).toBe(0);
       const childId = String(findActionOutput(claim.stdout)?.run_id);
 
-      // Anonymous pass — the resolver must route to the default-stack parent,
-      // never to the agent-owned child.
+      // Bare pass — child is on top of the default stack after claim, so this
+      // targets the child. Child step has PASS COMPLETE; child completes and
+      // propagates to the parent's substep 1.1.
       const passResult = await runCliInProcess('pass --text', workspace);
       expect(passResult.exitCode).toBe(0);
 
@@ -371,7 +378,7 @@ Do child work.
       const child = await readRunbookState(workspace, childId);
       expect(parent?.step).toBe('2');
       expect(parent?.lifecycle).toBe('running');
-      expect(child?.lifecycle).toBe('running');
+      expect(child?.lifecycle).toBe('completed');
     }, 30_000);
   });
 

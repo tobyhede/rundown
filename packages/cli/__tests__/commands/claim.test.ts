@@ -153,7 +153,7 @@ describe('claim command', () => {
       expect(result.exitCode).toBe(0);
     });
 
-    it('records a claim id and leaves anonymous active runbook on the parent', async () => {
+    it('records a claim id and activates the claimed child runbook', async () => {
       await writeParentRunbook();
       await writeChildRunbook();
 
@@ -173,7 +173,7 @@ describe('claim command', () => {
       expect(claimId).toMatch(/^rdclm_[A-Za-z0-9_-]{22}$/);
 
       const session = await readSession(workspace);
-      expect(session.defaultStack).toEqual([parentId]);
+      expect(session.defaultStack).toEqual([parentId, childRunId]);
       expect(Object.values(session.claims)).toContainEqual(
         expect.objectContaining({
           kind: 'claim-record',
@@ -184,8 +184,9 @@ describe('claim command', () => {
         }),
       );
 
-      const anonymousActive = await getActiveState(workspace);
-      expect(anonymousActive?.id).toBe(parentId);
+      // Bare commands target the claimed child — `rd claim` activates it.
+      const active = await getActiveState(workspace);
+      expect(active?.id).toBe(childRunId);
     });
 
     it('returns the same claim_id when re-claiming the same token', async () => {

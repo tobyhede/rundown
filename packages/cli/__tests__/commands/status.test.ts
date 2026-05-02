@@ -171,8 +171,12 @@ describe('claim-id delegated children', () => {
     status = await runCliInProcess(['status', '--claim-id', claimId2], workspace);
     expect(JSON.parse(status.stdout).state).toContain(child2Id);
 
+    // Route A: bare `rd status` resolves to the most recently claimed child
+    // (top of default stack). The parent is referenced — both directly and
+    // via parentId — so claim-id targeting is what isolates each sibling.
+    void parentId;
     status = await runCliInProcess('status', workspace);
-    expect(JSON.parse(status.stdout).state).toContain(parentId);
+    expect(JSON.parse(status.stdout).state).toContain(child2Id);
   });
 
   async function setupOwnedStash() {
@@ -472,6 +476,10 @@ Do work.
     const claimId = claimOutput?.claim_id;
     expect(typeof childRunId).toBe('string');
     expect(typeof claimId).toBe('string');
+    // Capture the pre-complete defaultStack so we can assert nothing was
+    // popped on failure. Route A leaves the claimed child on top of the stack;
+    // the test verifies the failed `complete` does not modify session state.
+    const sessionBefore = await readSession(workspace);
     await rm(join(workspace.statePath(), `${String(childRunId)}.json`));
 
     result = await runCliInProcess(
@@ -482,8 +490,8 @@ Do work.
 
     const session = await readSession(workspace);
     expect(Object.values(session.claims)).toContainEqual(expect.objectContaining({ childRunId }));
+    expect(session.defaultStack).toEqual(sessionBefore.defaultStack);
     expect(session.defaultStack).toContain(parentState!.id);
-    expect(session.active).toBe(parentState!.id);
   });
 
   it('propagates delegated child completion to the parent', async () => {

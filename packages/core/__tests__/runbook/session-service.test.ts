@@ -300,6 +300,65 @@ describe('SessionService', () => {
         'claimed',
       );
     });
+
+    it('exposes a stashed claimed child read-only via includeStashed', async () => {
+      const parent = await manager.create('parent.md', mockRunbook, { runbookPath: 'parent.md' });
+      const linkage = linkageFor(parent.id, '1');
+      const child = await manager.create('child.md', mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkage,
+      });
+      const claimed = await sessionService.claimRunbook(child.id, linkage);
+
+      await sessionService.stashRunbook(child.id);
+
+      // Default (write) gate refuses.
+      const gated = await sessionService.getActiveForClaimId(claimed.claim.claimId);
+      expect(gated.status).toBe('unlinked');
+      if (gated.status === 'unlinked') {
+        expect(gated.reason).toBe('stashed');
+      }
+
+      // includeStashed flips the gate so read-only commands like `rd status
+      // --claim-id` can inspect the parked child.
+      const inspected = await sessionService.getActiveForClaimId(claimed.claim.claimId, {
+        includeStashed: true,
+      });
+      expect(inspected.status).toBe('claimed');
+      if (inspected.status === 'claimed') {
+        expect(inspected.state.id).toBe(child.id);
+        expect(inspected.claim.claimId).toBe(claimed.claim.claimId);
+      }
+    });
+
+    it('releaseRunbook clears defaultStack and claim records together when the child completes', async () => {
+      const parent = await manager.create('parent.md', mockRunbook, { runbookPath: 'parent.md' });
+      const linkage = linkageFor(parent.id, '1');
+      const child = await manager.create('child.md', mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkage,
+      });
+      const claimed = await sessionService.claimRunbook(child.id, linkage);
+
+      // Simulate the active-claimed-child state: child on default stack and
+      // referenced by the claim record (Route A).
+      await sessionService.pushRunbook(child.id);
+      expect((await sessionService.getActive())?.id).toBe(child.id);
+
+      // Child completes: terminal release pops the default-stack entry and
+      // removes the claim record in one pass.
+      await manager.update(child.id, { lifecycle: 'completed' });
+      const released = await sessionService.releaseRunbook(child.id);
+      expect(released.status).toBe('released');
+
+      const session = await manager.loadSession();
+      expect(session.defaultStack).not.toContain(child.id);
+      expect(session.claims[claimed.claim.claimId]).toBeUndefined();
+
+      // The claim id is now `missing` rather than `unlinked`.
+      const after = await sessionService.getActiveForClaimId(claimed.claim.claimId);
+      expect(after.status).toBe('missing');
+    });
   });
 
   describe('releaseRunbook default stack cleanup', () => {

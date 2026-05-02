@@ -158,6 +158,10 @@ Do work.
       const claimId = claimOutput?.claim_id;
       expect(typeof childRunId).toBe('string');
       expect(typeof claimId).toBe('string');
+      // Capture pre-stop defaultStack — Route A leaves the claimed child on
+      // the stack; the test verifies a failed `stop --claim-id` doesn't pop
+      // it.
+      const sessionBefore = await readSession(workspace);
       await unlink(join(workspace.statePath(), `${String(childRunId)}.json`));
 
       result = await runCliInProcess(['stop', '--claim-id', String(claimId), '--text'], workspace);
@@ -165,8 +169,8 @@ Do work.
 
       const session = await readSession(workspace);
       expect(Object.values(session.claims)).toContainEqual(expect.objectContaining({ childRunId }));
+      expect(session.defaultStack).toEqual(sessionBefore.defaultStack);
       expect(session.defaultStack).toContain(parentState!.id);
-      expect(session.active).toBe(parentState!.id);
       expect(await readRunbookState(workspace, parentState!.id)).not.toBeNull();
     });
   });
