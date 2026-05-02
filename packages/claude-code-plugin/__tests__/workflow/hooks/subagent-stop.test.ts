@@ -19,7 +19,7 @@ const VALID_TOKEN = 'rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 const VALID_TOKEN_HASH = `sha256:${createHash('sha256').update(VALID_TOKEN).digest('hex')}`;
 
 const CLAIM_VIOLATION =
-  'Delegated Rundown work must be closed explicitly with rd pass --claim-id <claim_id> or rd fail --claim-id <claim_id>.';
+  'Delegated Rundown work was active when the subagent stopped. Run `rd status` to discover the active delegation, then close it explicitly: if a claim id was issued (the subagent ran `rd claim`), use `rd pass --claim-id <claim_id>` or `rd fail --claim-id <claim_id>`; if the token was never claimed, retry with `rd delegate --retry` or cancel with `rd abort <token>`.';
 const UNKNOWN_CONTEXT =
   'Subagent stopped with an active delegation. Unable to verify child runbook state — check with `rd status`.';
 

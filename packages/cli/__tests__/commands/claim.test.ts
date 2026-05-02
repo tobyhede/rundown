@@ -263,14 +263,19 @@ describe('claim command', () => {
       // First claim
       result = await runCliInProcess(`claim ${token}`, workspace);
       expect(result.exitCode).toBe(0);
-      const firstChildId = (await getActiveState(workspace))!.id;
+      const firstClaim = findActionOutput(result.stdout);
+      expect(typeof firstClaim?.run_id).toBe('string');
+      expect(typeof firstClaim?.claim_id).toBe('string');
 
       // Second claim - should return same child
       result = await runCliInProcess(`claim ${token}`, workspace);
       expect(result.exitCode).toBe(0);
-      const secondChildId = (await getActiveState(workspace))!.id;
+      const secondClaim = findActionOutput(result.stdout);
+      expect(typeof secondClaim?.run_id).toBe('string');
+      expect(typeof secondClaim?.claim_id).toBe('string');
 
-      expect(firstChildId).toBe(secondChildId);
+      expect(secondClaim?.run_id).toBe(firstClaim?.run_id);
+      expect(secondClaim?.claim_id).toBe(firstClaim?.claim_id);
     }, 15_000);
 
     it('third claim still returns same child', async () => {
@@ -313,6 +318,7 @@ describe('claim command', () => {
       const output = JSON.parse(jsonLines[jsonLines.length - 1]);
       expect(output.action).toBe('claimed');
       expect(output.token).toMatch(/^rdtk_.{3}\.\.\..{4}$/);
+      expect(typeof output.claim_id).toBe('string');
       expect(typeof output.run_id).toBe('string');
       expect(typeof output.runbook).toBe('string');
       expect(typeof output.parent_run_id).toBe('string');
@@ -343,6 +349,7 @@ describe('claim command', () => {
       // Verify all required fields
       expect(output).toHaveProperty('action');
       expect(output).toHaveProperty('token');
+      expect(output).toHaveProperty('claim_id');
       expect(output).toHaveProperty('run_id');
       expect(output).toHaveProperty('runbook');
       expect(output).toHaveProperty('parent_run_id');

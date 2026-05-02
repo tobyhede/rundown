@@ -35,6 +35,9 @@ export function registerStatusCommand(program: Command): void {
           if (!claimTarget.ok) return;
           const active = await resolveActiveRunbook(sessionService, {
             claimId: claimTarget.claimId,
+            // Status is a read-only inspection path — surface the stashed child
+            // rather than gating it behind `rd pop`.
+            allowStashed: true,
           });
           const stashedId = await sessionService.getStashedRunbookId();
 

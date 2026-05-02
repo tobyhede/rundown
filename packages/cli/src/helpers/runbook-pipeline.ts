@@ -890,11 +890,17 @@ function emitClaimedOutput(
 /**
  * Build the structured payload emitted alongside a successful claim.
  *
- * Centralises the shape used by the three claim sites in {@link claimAndLaunch}
+ * Centralizes the shape used by the three claim sites in {@link claimAndLaunch}
  * (idempotent return, orphan adoption, fresh launch) so the field set stays in
  * lock-step across call sites.
  *
  * @param args - Claim payload inputs
+ * @param args.truncatedToken - Redacted display form of the delegation token (safe for output)
+ * @param args.claimId - Branded claim id identifying this claim record
+ * @param args.childRunId - Run id of the launched child runbook state
+ * @param args.childRunbookPath - Source path of the child runbook
+ * @param args.parentRunId - Run id of the parent runbook state that issued the delegation
+ * @param args.parentStepAt - Parent step at-position (e.g. for FOR-loop iterations); undefined when not applicable
  * @returns Structured payload suitable for {@link emitClaimedOutput}
  */
 function buildClaimedPayload(args: {

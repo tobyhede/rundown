@@ -43,7 +43,7 @@ export interface TransitionCommandDef {
  * Both commands share the same flow: parse options, build the transition
  * context, execute the transition, and propagate the outcome to the parent if
  * this run is a delegated child. Only the transition factory and a few labels
- * differ; this helper centralises everything else so behavior stays in lock-step.
+ * differ; this helper centralizes everything else so behavior stays in lock-step.
  *
  * @param program - Commander program instance to register the command on
  * @param def - Per-command definition supplying name, aliases, description,

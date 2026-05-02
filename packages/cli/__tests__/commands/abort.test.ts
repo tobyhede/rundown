@@ -379,7 +379,10 @@ describe('abort command - unit tests', () => {
       // Claim the token
       let result = await runCliInProcess(`claim ${token}`, workspace);
       expect(result.exitCode).toBe(0);
-      const childRunId = String(findActionOutput(result.stdout)?.run_id);
+      const claimOutput = findActionOutput(result.stdout);
+      expect(claimOutput).toBeDefined();
+      expect(typeof claimOutput?.run_id).toBe('string');
+      const childRunId = claimOutput!.run_id as string;
 
       // Get parent state
       const parentState = await getActiveState(workspace);

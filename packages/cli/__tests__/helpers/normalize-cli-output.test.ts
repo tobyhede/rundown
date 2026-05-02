@@ -40,6 +40,7 @@ describe('normalizeCliOutput', () => {
   });
 
   it('replaces claim ids with <claimId>', () => {
+    // cspell:disable-next-line
     const input = '"claim_id": "rdclm_65vgjvar2liaL8dja5vpDA"';
     expect(normalizeCliOutput(input, workspace)).toBe('"claim_id": "<claimId>"');
   });

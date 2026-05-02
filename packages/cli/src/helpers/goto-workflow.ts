@@ -94,13 +94,15 @@ export async function resolveTerminalReleaseModeForRunbook(
  * Build context for goto command execution.
  *
  * Resolves active state, loads runbook steps, and creates required services.
- * Returns null if no active runbook is found.
  *
  * @param output - Output emitter for CLI output
  * @param cwd - Current working directory
  * @param options - Optional explicit claim-id target
  * @param options.claimId - Claim id to resolve instead of the default stack
- * @returns GotoContext or null if no active runbook
+ * @returns Discriminated union: `{ kind: 'ready'; ctx }` when an active runbook
+ *   was resolved and a goto context is available; `{ kind: 'none' }` when no
+ *   active runbook exists; or `{ kind: 'stale_claim' }` when the supplied
+ *   claim id no longer maps to an active child.
  */
 export async function buildGotoContext(
   output: OutputEmitter,

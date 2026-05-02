@@ -33,6 +33,10 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
       `${pos.current}${pos.for?.index != null ? `.${String(pos.for.index)}` : ''}${pos.substep ? `.${pos.substep}` : ''}`,
   ),
   countNumberedSteps: mockFn<(steps: readonly { name: string }[]) => number>().mockReturnValue(3),
+  // Runtime-only validator with no service dependencies; pass-through preserves
+  // structural mocking — every static import from @rundown-org/core resolves
+  // through the factory rather than leaking the real module.
+  assertClaimId: jest.fn((s: string) => s),
   ...mockErrorHelpers,
 }));
 

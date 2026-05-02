@@ -59,7 +59,7 @@ export type ClaimIdResolution =
   | {
       readonly status: 'unlinked';
       readonly claim: ClaimRecord;
-      readonly reason: 'parent-missing' | 'parent-ended' | 'child-linkage-mismatch';
+      readonly reason: 'parent-missing' | 'parent-ended' | 'child-linkage-mismatch' | 'stashed';
     };
 
 /**

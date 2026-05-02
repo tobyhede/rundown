@@ -18,14 +18,20 @@ export type ActiveRunbookResolution =
  * @param sessionService - Session service used to read claim and default active targets
  * @param options - Optional explicit claim-id target
  * @param options.claimId - Claim id to resolve instead of the default stack
+ * @param options.allowStashed - When true, stashed claimed children resolve as
+ *   `claim` (read-only inspection paths set this); when false (default), they
+ *   resolve as `stale_claim` so write commands refuse to operate on a parked
+ *   runbook and the user must `rd pop --claim-id` to resume.
  * @returns Discriminated active runbook resolution
  */
 export async function resolveActiveRunbook(
   sessionService: SessionService,
-  options: { readonly claimId?: ClaimId } = {},
+  options: { readonly claimId?: ClaimId; readonly allowStashed?: boolean } = {},
 ): Promise<ActiveRunbookResolution> {
   if (options.claimId !== undefined) {
-    const claimed = await sessionService.getActiveForClaimId(options.claimId);
+    const claimed = await sessionService.getActiveForClaimId(options.claimId, {
+      includeStashed: options.allowStashed === true,
+    });
     switch (claimed.status) {
       case 'claimed':
         return {
@@ -53,6 +59,13 @@ export async function resolveActiveRunbook(
           message: `Claim id ${options.claimId} points at a ${claimed.lifecycle} child runbook.`,
         };
       case 'unlinked':
+        if (claimed.reason === 'stashed') {
+          return {
+            kind: 'stale_claim',
+            claimId: options.claimId,
+            message: `Claim id ${options.claimId} is currently stashed. Run \`rd pop --claim-id ${options.claimId}\` to resume.`,
+          };
+        }
         return {
           kind: 'stale_claim',
           claimId: options.claimId,

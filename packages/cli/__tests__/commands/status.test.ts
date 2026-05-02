@@ -524,7 +524,7 @@ Do work.
     expect(typeof childRunId).toBe('string');
     expect(typeof claimId).toBe('string');
 
-    result = await runCliInProcess(`complete --claim-id ${claimId} --text`, workspace);
+    result = await runCliInProcess(`complete --claim-id ${String(claimId)} --text`, workspace);
     expect(result.exitCode).toBe(0);
 
     const childState = await readRunbookState(workspace, String(childRunId));

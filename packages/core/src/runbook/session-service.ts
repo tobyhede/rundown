@@ -35,6 +35,10 @@ export type ReleaseRunbookResult =
 /**
  * True when `linkage` is a delegation linkage that matches `claim`'s parent run / step / token hash.
  * Used to verify a child runbook's parentLinkage genuinely originated from the supplied claim record.
+ *
+ * @param linkage - Parent linkage stored on the child runbook state (any kind, including non-delegation or absent)
+ * @param claim - Claim record whose parent run id, parent step id, and token hash must all match
+ * @returns `true` only when `linkage.kind === 'delegation'` and every identifying field matches `claim`; `false` otherwise
  */
 function linkageMatchesClaim(linkage: RunbookState['parentLinkage'], claim: ClaimRecord): boolean {
   return (
@@ -157,15 +161,33 @@ export class SessionService {
   /**
    * Resolve an explicit claim id to an active child runbook.
    *
+   * By default, claims whose child runbook is parked in
+   * `session.stashedRunbookId` resolve as `unlinked` with `reason: 'stashed'`
+   * so write commands (pass/fail/goto/complete/stop) refuse to operate on a
+   * runbook the user explicitly parked — they must `rd pop --claim-id` first.
+   * Read-only inspection paths (e.g. `rd status --claim-id`) opt into seeing
+   * the stashed child by passing `{ includeStashed: true }`.
+   *
    * @param claimId - Claim id returned by `rd claim`
+   * @param options - Optional resolution flags
+   * @param options.includeStashed - When true, do not gate on the stashed
+   *   runbook; the claim resolves as `claimed` even if its child is parked.
+   *   Defaults to false.
    * @returns Claim resolution result
    */
-  async getActiveForClaimId(claimId: ClaimId): Promise<ClaimIdResolution> {
+  async getActiveForClaimId(
+    claimId: ClaimId,
+    options: { readonly includeStashed?: boolean } = {},
+  ): Promise<ClaimIdResolution> {
     const session = await this.manager.loadSession();
     if (!(claimId in session.claims)) {
       return { status: 'missing', claimId };
     }
     const claim = session.claims[claimId];
+
+    if (options.includeStashed !== true && session.stashedRunbookId === claim.childRunId) {
+      return { status: 'unlinked', claim, reason: 'stashed' };
+    }
 
     const state = await this.manager.load(claim.childRunId);
     if (!state) {

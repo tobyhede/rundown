@@ -126,8 +126,11 @@ async function consumeDelegationTokenForAgent(
  * - **Tampered metadata** (`kind: 'tampered'`): returns an `unknown`-state
  *   context message instructing the orchestrator to consult `rd status`.
  * - **Token consumed** (default): returns a `violation` requiring the
- *   delegated work to be closed explicitly with `rd pass --claim-id` or
- *   `rd fail --claim-id`.
+ *   delegated work to be closed explicitly. The message covers both states
+ *   the consumed token may be in: claimed (recovered via `rd pass`/`rd fail
+ *   --claim-id`) or unclaimed (recovered via `rd delegate --retry` or
+ *   `rd abort <token>`), since the plugin cannot determine claim status
+ *   without reading rundown's session state.
  *
  * Never destroys child runbook state.
  *
@@ -157,6 +160,6 @@ export async function handleSubagentStop(input: HookInput): Promise<SubagentStop
 
   return {
     violation:
-      'Delegated Rundown work must be closed explicitly with rd pass --claim-id <claim_id> or rd fail --claim-id <claim_id>.',
+      'Delegated Rundown work was active when the subagent stopped. Run `rd status` to discover the active delegation, then close it explicitly: if a claim id was issued (the subagent ran `rd claim`), use `rd pass --claim-id <claim_id>` or `rd fail --claim-id <claim_id>`; if the token was never claimed, retry with `rd delegate --retry` or cancel with `rd abort <token>`.',
   };
 }

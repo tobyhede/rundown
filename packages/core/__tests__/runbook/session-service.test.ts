@@ -284,13 +284,21 @@ describe('SessionService', () => {
 
       await sessionService.stashRunbook(child.id);
       expect(await sessionService.getStashedRunbookId()).toBe(child.id);
-      expect((await sessionService.getActiveForClaimId(claimed.claim.claimId)).status).toBe(
-        'claimed',
-      );
+
+      const resolved = await sessionService.getActiveForClaimId(claimed.claim.claimId);
+      expect(resolved.status).toBe('unlinked');
+      if (resolved.status === 'unlinked') {
+        expect(resolved.reason).toBe('stashed');
+      }
 
       const restored = await sessionService.unstashForClaimId(claimed.claim.claimId);
       expect(restored?.id).toBe(child.id);
       expect(await sessionService.getStashedRunbookId()).toBeNull();
+
+      // After pop the claim is active again.
+      expect((await sessionService.getActiveForClaimId(claimed.claim.claimId)).status).toBe(
+        'claimed',
+      );
     });
   });
 
