@@ -44,6 +44,7 @@ import {
   Errors,
   isError,
   RundownError,
+  ErrorCodes,
   type DelegateFrontierEntry,
   partitionOutputDeclarations,
   prepareOutputChannels,
@@ -927,12 +928,9 @@ export async function runExecutionLoop(
               // runbook to stopped so it does not strand on a DELEGATE step
               // waiting for tokens that will never be issued.
               const message = isError(err) ? err.message : String(err);
-              // Discriminate the nested-delegation guard from generic resolution
-              // failures so the RUNBOOK_STOPPED envelope carries actionable
-              // semantics. RundownError.code is the formatted "RD-XXX" string;
-              // matching the codeKey would require digging through `errorCode`.
               const reason =
-                err instanceof RundownError && err.code === 'RD-819'
+                err instanceof RundownError &&
+                err.errorCode === ErrorCodes.DELEGATION_NESTED_FORBIDDEN
                   ? 'nested_delegation_forbidden'
                   : 'delegation_resolution_failed';
               await manager.update(runbookId, { lifecycle: 'stopped' });

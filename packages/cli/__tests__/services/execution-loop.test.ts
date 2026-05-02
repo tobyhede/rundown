@@ -67,6 +67,7 @@ const {
   ForResolutionError: RealForResolutionError,
   Errors: RealErrors,
   RundownError: RealRundownError,
+  ErrorCodes: RealErrorCodes,
 } = await import('@rundown-org/core');
 
 jest.unstable_mockModule('@rundown-org/core', () => {
@@ -246,6 +247,7 @@ jest.unstable_mockModule('@rundown-org/core', () => {
     createDelegation: jest.fn(),
     Errors: RealErrors,
     RundownError: RealRundownError,
+    ErrorCodes: RealErrorCodes,
     // Helper-call validator imported by template-renderer; the real impl is fine.
     invokeHelperSafely: jest.fn(
       (_name: string, helper: (v: string) => string, arg: string): string | undefined => {
