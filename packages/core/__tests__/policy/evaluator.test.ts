@@ -173,6 +173,22 @@ describe('PolicyEvaluator', () => {
       expect(decision.requiresPrompt).toBe(false);
     });
 
+    it('denies shell wrappers when the wrapper executable is not allowlisted', () => {
+      const evaluator = new PolicyEvaluator(denyRunPolicy(['git']), { repoRoot });
+      const decision = evaluator.checkCommand('sh -c "git status"');
+
+      expect(decision.allowed).toBe(false);
+      expect(decision.requiresPrompt).toBe(false);
+    });
+
+    it('denies dynamic shell wrapper scripts despite an allowlisted wrapper', () => {
+      const evaluator = new PolicyEvaluator(denyRunPolicy(['sh']), { repoRoot });
+      const decision = evaluator.checkCommand('sh -c "$CMD"');
+
+      expect(decision.allowed).toBe(false);
+      expect(decision.requiresPrompt).toBe(false);
+    });
+
     it('should deny takes precedence over allow', () => {
       const policy: PolicyConfig = {
         version: 1,

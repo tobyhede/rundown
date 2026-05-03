@@ -184,6 +184,14 @@ function extractHeredocDelimiters(line: string): HeredocDelimiter[] {
       if (delimiterQuote === '"') {
         if (current === '"' && !isOddBackslashEscaped(line, i, 0)) {
           delimiterQuote = null;
+        } else if (current === '\\') {
+          const next = line[i + 1];
+          if (next === '"' || next === '\\' || next === '$' || next === '`') {
+            delimiter += next;
+            i += 2;
+            continue;
+          }
+          delimiter += current;
         } else {
           delimiter += current;
         }
@@ -201,6 +209,15 @@ function extractHeredocDelimiters(line: string): HeredocDelimiter[] {
         delimiterQuote = '"';
         i++;
         continue;
+      }
+
+      if (current === '\\') {
+        const next = line[i + 1];
+        if (next !== undefined) {
+          delimiter += next;
+          i += 2;
+          continue;
+        }
       }
 
       if (
@@ -469,6 +486,16 @@ function tokenize(command: string): Token[] {
       i += 2;
       continue;
     }
+    if ((ch === '>' && (next === '&' || next === '|')) || (ch === '<' && next === '&')) {
+      if (/^\d+$/.test(wordBuf)) {
+        wordBuf = '';
+      } else {
+        flushWord();
+      }
+      tokens.push({ kind: 'redir' });
+      i += 2;
+      continue;
+    }
     if (ch === '>' && next === '>') {
       if (/^\d+$/.test(wordBuf)) {
         wordBuf = '';
@@ -584,6 +611,7 @@ function isEnvAssignment(token: string): boolean {
  *
  * extractCommands('sh -c "npm test && npm run build"')
  * // => [
+ * //   { executable: 'sh', original: 'sh -c npm test && npm run build' },
  * //   { executable: 'npm', original: 'npm test' },
  * //   { executable: 'npm', original: 'npm run build' }
  * // ]
@@ -622,10 +650,12 @@ export function extractCommands(command: string): ParsedCommand[] {
       return;
     }
 
+    const original = words.map((w) => w.value).join(' ');
     const executable = path.basename(firstWord.value);
     if (!executable) return;
 
-    // sh -c detection: recursively parse the -c argument
+    // sh -c detection: keep the wrapper executable and recursively parse the
+    // -c script so policies must allow both the shell and nested commands.
     if (SHELLS.has(executable)) {
       let dashCIdx = -1;
       for (let k = 0; k < words.length; k++) {
@@ -635,13 +665,22 @@ export function extractCommands(command: string): ParsedCommand[] {
         }
       }
       if (dashCIdx >= 0 && dashCIdx + 1 < words.length) {
-        const nested = extractCommands(words[dashCIdx + 1].value);
+        commands.push({ executable, original });
+        const scriptWord = words[dashCIdx + 1];
+        if (scriptWord.dynamic) {
+          commands.push({
+            executable: DYNAMIC_EXECUTABLE_SENTINEL,
+            original: scriptWord.value,
+          });
+          return;
+        }
+        const nested = extractCommands(scriptWord.value);
         commands.push(...nested);
         return;
       }
     }
 
-    commands.push({ executable, original: words.map((w) => w.value).join(' ') });
+    commands.push({ executable, original });
   };
 
   for (const tok of tokens) {
@@ -675,7 +714,7 @@ export function extractCommands(command: string): ParsedCommand[] {
  * @example
  * ```typescript
  * extractPrimaryExecutable('git status')  // => 'git'
- * extractPrimaryExecutable('sh -c "npm test"')  // => 'npm'
+ * extractPrimaryExecutable('sh -c "npm test"')  // => 'sh'
  * ```
  */
 export function extractPrimaryExecutable(command: string): string | null {

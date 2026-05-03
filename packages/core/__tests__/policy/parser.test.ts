@@ -56,23 +56,26 @@ describe('Command Parser', () => {
     it('should handle sh -c wrapper', () => {
       const result = extractCommands('sh -c "npm test"');
 
-      expect(result).toHaveLength(1);
-      expect(result[0].executable).toBe('npm');
+      expect(result).toHaveLength(2);
+      expect(result[0].executable).toBe('sh');
+      expect(result[1].executable).toBe('npm');
     });
 
     it('should handle bash -c wrapper', () => {
       const result = extractCommands('bash -c "git commit -m message"');
 
-      expect(result).toHaveLength(1);
-      expect(result[0].executable).toBe('git');
+      expect(result).toHaveLength(2);
+      expect(result[0].executable).toBe('bash');
+      expect(result[1].executable).toBe('git');
     });
 
     it('should handle nested commands in sh -c', () => {
       const result = extractCommands('sh -c "npm test && npm run build"');
 
-      expect(result).toHaveLength(2);
-      expect(result[0].executable).toBe('npm');
+      expect(result).toHaveLength(3);
+      expect(result[0].executable).toBe('sh');
       expect(result[1].executable).toBe('npm');
+      expect(result[2].executable).toBe('npm');
     });
 
     it('should handle command with quoted arguments', () => {
@@ -130,10 +133,10 @@ describe('Command Parser', () => {
       expect(result).toBe('cat');
     });
 
-    it('should return nested command for sh -c', () => {
+    it('should return shell wrapper executable for sh -c', () => {
       const result = extractPrimaryExecutable('sh -c "npm test"');
 
-      expect(result).toBe('npm');
+      expect(result).toBe('sh');
     });
 
     it('should return null for empty command', () => {
@@ -288,6 +291,39 @@ describe('Command Parser', () => {
       expect(result).toContain('git');
       expect(result).not.toContain('printf');
       expect(result).not.toContain('EOF');
+    });
+
+    it('resumes command extraction after a backslash-quoted heredoc terminator', () => {
+      const command = ['cat <<\\EOF', 'printf hi', 'EOF', 'git status'].join('\n');
+      const result = extractAllExecutables(command);
+
+      expect(result).toContain('cat');
+      expect(result).toContain('git');
+      expect(result).not.toContain('printf');
+      expect(result).not.toContain('EOF');
+    });
+
+    it('does not treat descriptor duplication redirects as command boundaries', () => {
+      expect(extractAllExecutables('cmd 2>&1')).toEqual(['cmd']);
+      expect(extractAllExecutables('cmd <&0')).toEqual(['cmd']);
+    });
+
+    it('does not treat clobber redirects as pipeline command boundaries', () => {
+      expect(extractAllExecutables('cmd >|file')).toEqual(['cmd']);
+    });
+
+    it('preserves shell wrappers alongside nested -c commands', () => {
+      const result = extractAllExecutables('sh -c "git status"');
+
+      expect(result).toContain('sh');
+      expect(result).toContain('git');
+    });
+
+    it('treats dynamic shell -c scripts as unknown executable content', () => {
+      const result = extractAllExecutables('sh -c "$CMD"');
+
+      expect(result).toContain('sh');
+      expect(result).toContain(DYNAMIC_EXECUTABLE_SENTINEL);
     });
   });
 
