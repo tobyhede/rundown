@@ -35,6 +35,7 @@ export const JSON_OUTPUT_COMMANDS = [
   'run',
   'ls',
   'prune',
+  'collect',
   'scenario ls',
   'scenario show',
   'scenario run',

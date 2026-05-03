@@ -152,9 +152,7 @@ export function isErrorResponse(response: CLIResponse | ErrorResponse): response
  * @param response - The response to check
  * @returns True if the response is a WarningResponse
  */
-export function isWarningResponse(
-  response: CLIResponse | WarningResponse,
-): response is WarningResponse {
+export function isWarningResponse(response: CLIResponse): response is WarningResponse {
   return 'kind' in response && response.kind === 'warning';
 }
 

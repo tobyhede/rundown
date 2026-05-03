@@ -106,6 +106,28 @@ export const RunbookSchema = z
 export const RunbookListSchema = z.array(RunbookSchema).describe('List of runbook state entries');
 
 /**
+ * Collect response schema.
+ *
+ * Covers the explicit JSON object emitted by `rd collect` when delegation
+ * completions have already been aggregated and no execution events are
+ * streamed.
+ */
+export const CollectResponseSchema = z
+  .object({
+    /** Response type discriminant */
+    kind: z.literal('collect').describe('Response type discriminant'),
+    /** Command action that was performed */
+    action: z.literal('collect').describe('Command action that was performed'),
+    /** Collection status */
+    status: z.literal('already-aggregated').describe('Collection status'),
+    /** DELEGATE step scope that was collected */
+    step: z.string().describe('DELEGATE step scope'),
+    /** Parent runbook state identifier */
+    parentRunId: z.string().describe('Parent runbook state identifier'),
+  })
+  .describe('Response from the collect command');
+
+/**
  * Validation error entry (alias for consistency with CLI naming).
  */
 export { CheckValidationErrorSchema as ValidationErrorSchema } from '@rundown-org/core';
@@ -147,7 +169,9 @@ import {
   ClaimResponseSchema,
 } from '@rundown-org/core';
 
-const withWarningResponse = <Schema extends z.ZodSchema>(schema: Schema) =>
+const withWarningResponse = <Schema extends z.ZodTypeAny>(
+  schema: Schema,
+): z.ZodUnion<[Schema, typeof WarningResponseSchema]> =>
   z.union([schema, WarningResponseSchema]);
 
 const ActionOrWarningResponseSchema = withWarningResponse(ActionResponseSchema);
@@ -174,6 +198,7 @@ export const COMMAND_SCHEMAS: Record<string, z.ZodSchema> = {
   run: RunCommandResponseSchema,
   ls: z.union([RunbookListSchema, AvailableRunbooksListSchema]),
   prune: RunbookListSchema,
+  collect: withWarningResponse(CollectResponseSchema),
   'scenario ls': ScenarioListSchema,
   'scenario show': ScenarioDetailSchema,
   'scenario run': ScenarioRunResponseSchema,

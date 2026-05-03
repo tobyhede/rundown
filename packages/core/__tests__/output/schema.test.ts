@@ -162,6 +162,20 @@ describe('WarningResponseSchema code semantics', () => {
       }).success,
     ).toBe(false);
   });
+
+  it('preserves extra fields for forward-compatible warning responses', () => {
+    const parsed = WarningResponseSchema.parse({
+      kind: 'warning',
+      message: 'No active runbook',
+      code: 'NO_ACTIVE_RUNBOOK',
+      command: 'collect',
+      context: { runbook: 'parent.runbook.md' },
+    });
+
+    expect(parsed).toMatchObject({
+      context: { runbook: 'parent.runbook.md' },
+    });
+  });
 });
 
 describe('Check/Resolve kind discriminator', () => {

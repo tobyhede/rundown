@@ -210,6 +210,80 @@ describe('handleSubagentStop', () => {
     expect(mockSet).toHaveBeenCalledWith('metadata', {});
   });
 
+  it('does not flag delegated subagent when the parent delegation was cancelled', async () => {
+    setGet(session, 'metadata', {
+      delegation_active_tokens: {
+        'agent-1': {
+          kind: 'delegation-active-token',
+          agent_id: 'agent-1',
+          session_id: 'session-a',
+          tokenHash: VALID_TOKEN_HASH,
+          createdAt: '2026-04-28T00:00:00.000Z',
+        },
+      },
+    });
+    mockListStates.mockResolvedValue([
+      {
+        id: 'parent-id',
+        substepStates: [
+          {
+            id: '1',
+            status: 'pending',
+            delegation: {
+              tokenHash: VALID_TOKEN_HASH,
+              childRunId: null,
+              cancelledAt: '2026-04-28T00:01:00.000Z',
+            },
+          },
+        ],
+      },
+    ]);
+
+    const input = createMockHookInput('SubagentStop', {
+      agent_id: 'agent-1',
+      session_id: 'session-a',
+    });
+    const result = await handleSubagentStop(input);
+
+    expect(result).toEqual({});
+    expect(mockSet).toHaveBeenCalledWith('metadata', {});
+  });
+
+  it('does not flag delegated subagent when parent was pruned but child already stopped', async () => {
+    setGet(session, 'metadata', {
+      delegation_active_tokens: {
+        'agent-1': {
+          kind: 'delegation-active-token',
+          agent_id: 'agent-1',
+          session_id: 'session-a',
+          tokenHash: VALID_TOKEN_HASH,
+          createdAt: '2026-04-28T00:00:00.000Z',
+        },
+      },
+    });
+    mockListStates.mockResolvedValue([
+      {
+        id: 'child-id',
+        lifecycle: 'stopped',
+        parentLinkage: {
+          kind: 'delegation',
+          parentRunId: 'pruned-parent-id',
+          parentStepId: '1',
+          tokenHash: VALID_TOKEN_HASH,
+        },
+      },
+    ]);
+
+    const input = createMockHookInput('SubagentStop', {
+      agent_id: 'agent-1',
+      session_id: 'session-a',
+    });
+    const result = await handleSubagentStop(input);
+
+    expect(result).toEqual({});
+    expect(mockSet).toHaveBeenCalledWith('metadata', {});
+  });
+
   it('returns closure violation when token hash is not found in rundown state', async () => {
     setGet(session, 'metadata', {
       delegation_active_tokens: {
