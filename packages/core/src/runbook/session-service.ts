@@ -33,6 +33,30 @@ export type ReleaseRunbookResult =
     };
 
 /**
+ * True when persisted child linkage matches an incoming delegation linkage on the
+ * three identifying fields (`parentRunId`, `parentStepId`, `tokenHash`).
+ *
+ * Used by {@link SessionService.claimRunbook} to refuse a claim when the child's
+ * persisted linkage disagrees with the freshly token-validated linkage the caller
+ * is presenting — a fail-closed signal for state corruption.
+ *
+ * @param persisted - Parent linkage stored on the child runbook state
+ * @param incoming - Freshly built delegation linkage offered by the caller
+ * @returns `true` only when both are delegation-shaped and all identifying fields agree
+ */
+function linkageMatchesLinkage(
+  persisted: RunbookState['parentLinkage'],
+  incoming: DelegationLinkage,
+): boolean {
+  return (
+    persisted?.kind === 'delegation' &&
+    persisted.parentRunId === incoming.parentRunId &&
+    persisted.parentStepId === incoming.parentStepId &&
+    persisted.tokenHash === incoming.tokenHash
+  );
+}
+
+/**
  * True when `linkage` is a delegation linkage that matches `claim`'s parent run / step / token hash.
  * Used to verify a child runbook's parentLinkage genuinely originated from the supplied claim record.
  *
@@ -131,15 +155,37 @@ export class SessionService {
   /**
    * Record that a delegation token has been claimed for a child runbook.
    *
+   * Validates write-side invariants before recording the claim: the child run
+   * must exist on disk, and its persisted `parentLinkage` must match the
+   * incoming `linkage` on the three identifying fields. A mismatch indicates
+   * state corruption (manual edits, stale persisted linkage from a prior
+   * delegation, cross-host state merge) and is refused rather than silently
+   * propagated into the claim record.
+   *
    * @param childRunId - Child run id created or reused by claim
-   * @param linkage - Delegation linkage written to the child state
-   * @returns Claim record for explicit child targeting
+   * @param linkage - Delegation linkage to record in the claim. Caller must build
+   *   this from freshly token-validated parent state.
+   * @returns A claim record on success, or a failure variant when the child is
+   *   missing or its persisted linkage diverges from `linkage`.
    */
   async claimRunbook(
     childRunId: RunbookState['id'],
     linkage: DelegationLinkage,
   ): Promise<ClaimRunbookResult> {
     return this.withLock(async () => {
+      const childState = await this.manager.load(childRunId);
+      if (!childState) {
+        return { status: 'missing-child', childRunId };
+      }
+      if (!linkageMatchesLinkage(childState.parentLinkage, linkage)) {
+        return {
+          status: 'linkage-mismatch',
+          childRunId,
+          expected: linkage,
+          actual: childState.parentLinkage,
+        };
+      }
+
       const session = await this.manager.loadSession();
       const now = new Date().toISOString();
       const existing = this.findClaimByChildRunId(session.claims, childRunId);

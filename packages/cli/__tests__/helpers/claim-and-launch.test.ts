@@ -929,6 +929,12 @@ describe('claimAndLaunch', () => {
       title: 'Child',
     });
 
+    const mockClaimRunbook = mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
+      status: 'claimed',
+      // cspell:disable-next-line
+      claim: { claimId: 'rdclm_abcdefghijklmnopqrstu1' },
+    });
+
     const ctx = makeCtx({
       manager: {
         load: mockFn<() => Promise<RunbookState>>().mockResolvedValue(
@@ -944,11 +950,7 @@ describe('claimAndLaunch', () => {
       },
       sessionService: {
         pushRunbook: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
-        claimRunbook: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
-          status: 'claimed',
-          // cspell:disable-next-line
-          claim: { claimId: 'rdclm_abcdefghijklmnopqrstu1' },
-        }),
+        claimRunbook: mockClaimRunbook,
       },
       lifecycleService: {
         ensureActiveEntry: mockFn<
@@ -980,6 +982,21 @@ describe('claimAndLaunch', () => {
           kind: 'delegation',
           parentFrameKey: '1|3',
         }),
+      }),
+    );
+
+    // Result surfaces the claim id returned by claimRunbook, and claimRunbook
+    // is called with the freshly built linkage (not stale persisted data).
+    if (result.ok) {
+      // cspell:disable-next-line
+      expect(result.claimId).toBe('rdclm_abcdefghijklmnopqrstu1');
+      expect(result.childRunId).toBe('new-child-id');
+    }
+    expect(mockClaimRunbook).toHaveBeenCalledWith(
+      'new-child-id',
+      expect.objectContaining({
+        kind: 'delegation',
+        parentFrameKey: '1|3',
       }),
     );
   });

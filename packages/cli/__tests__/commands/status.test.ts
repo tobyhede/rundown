@@ -246,6 +246,10 @@ describe('claim-id delegated children', () => {
       expect.objectContaining({ active: false, stashed: true }),
     );
     expect(status.stdout).toContain('child-secret.md');
+    // Plain status must not leak claim-scoped variables: only `--claim-id`
+    // callers see them (asserted positively in the next test).
+    expect(status.stdout).not.toContain('top-secret-input');
+    expect(status.stdout).not.toContain('top-secret-output');
   });
 
   it('claim id can see its own stashed status', async () => {
@@ -534,7 +538,8 @@ Do work.
     expect(updatedParent?.step).toBe('2');
 
     const session = await readSession(workspace);
-    expect(session.defaultStack).toContain(parentState!.id);
+    expect(session.defaultStack.at(-1)).toBe(parentState!.id);
+    expect(session.defaultStack).not.toContain(String(childRunId));
     expect(Object.values(session.claims)).not.toContainEqual(
       expect.objectContaining({ childRunId }),
     );

@@ -161,8 +161,17 @@ Do work.
       expect(typeof claimId).toBe('string');
       await unlink(join(workspace.statePath(), `${String(childRunId)}.json`));
 
-      result = await runCliInProcess(['stop', '--claim-id', String(claimId), '--text'], workspace);
-      expect(result.exitCode).not.toBe(0);
+      result = await runCliInProcess(['stop', '--claim-id', String(claimId)], workspace);
+      expect(result.exitCode).toBe(1);
+      const errorResponse = JSON.parse(result.stdout) as Record<string, unknown>;
+      expect(errorResponse).toEqual(
+        expect.objectContaining({
+          kind: 'error',
+          code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+        }),
+      );
+      expect(String(errorResponse.error)).toContain(String(claimId));
+      expect(String(errorResponse.error)).toContain('missing child state');
 
       const session = await readSession(workspace);
       expect(Object.values(session.claims)).toContainEqual(expect.objectContaining({ childRunId }));
@@ -201,12 +210,19 @@ Do work.
       expect(parentId).toBeDefined();
 
       const result = await runCliInProcess(
-        ['stop', '--claim-id', 'rdclm_abcdefghijklmnopQRSTUV', '--text'],
+        ['stop', '--claim-id', 'rdclm_abcdefghijklmnopQRSTUV'],
         workspace,
       );
 
-      expect(result.exitCode).not.toBe(0);
-      expect(`${result.stdout}${result.stderr}`).toContain(
+      expect(result.exitCode).toBe(1);
+      const errorResponse = JSON.parse(result.stdout) as Record<string, unknown>;
+      expect(errorResponse).toEqual(
+        expect.objectContaining({
+          kind: 'error',
+          code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+        }),
+      );
+      expect(String(errorResponse.error)).toContain(
         'Claim id rdclm_abcdefghijklmnopQRSTUV does not exist',
       );
 

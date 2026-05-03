@@ -73,6 +73,26 @@ function claimFailureToEnvelope(failure: ClaimFailure): {
           childRunId: failure.childRunId,
         },
       };
+    case 'child-missing':
+      return {
+        code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+        message: `Child run ${failure.childRunId} no longer exists on disk. Delegation cannot be claimed.`,
+        details: {
+          parentRunId: failure.parentRunId,
+          stepId: failure.stepId,
+          childRunId: failure.childRunId,
+        },
+      };
+    case 'linkage-mismatch':
+      return {
+        code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+        message: `Persisted linkage for child run ${failure.childRunId} does not match the verified delegation. State may be corrupted; inspect .rundown/runs/${failure.childRunId}.json.`,
+        details: {
+          parentRunId: failure.parentRunId,
+          stepId: failure.stepId,
+          childRunId: failure.childRunId,
+        },
+      };
     case 'lock-timeout':
       return {
         code: 'DELEGATION_LOCK_TIMEOUT',

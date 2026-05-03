@@ -127,12 +127,24 @@ describe('SessionService', () => {
   });
 
   describe('claim-id runbook targeting', () => {
-    const linkageFor = (parentId: string, fill: string) => ({
+    const linkageFor = (
+      parentId: string,
+      fill: string,
+    ): Parameters<SessionService['claimRunbook']>[1] => ({
       kind: 'delegation' as const,
       parentRunId: parentId,
       parentStepId: '1.1',
       tokenHash: assertDelegationTokenHash(`sha256:${fill.repeat(64)}`),
     });
+
+    const assertClaimed = <T extends { status: string }>(
+      result: T,
+    ): Extract<T, { status: 'claimed' }> => {
+      if (result.status !== 'claimed') {
+        throw new Error(`Expected claim result, got status=${result.status}`);
+      }
+      return result as Extract<T, { status: 'claimed' }>;
+    };
 
     it('registers a delegated child claim without changing the default stack', async () => {
       const parent = await manager.create('parent.md', mockRunbook, { runbookPath: 'parent.md' });
@@ -142,9 +154,10 @@ describe('SessionService', () => {
       });
       await sessionService.pushRunbook(parent.id);
 
-      const claimed = await sessionService.claimRunbook(child.id, linkageFor(parent.id, 'a'));
+      const claimed = assertClaimed(
+        await sessionService.claimRunbook(child.id, linkageFor(parent.id, 'a')),
+      );
 
-      expect(claimed.status).toBe('claimed');
       expect((await sessionService.getActive())?.id).toBe(parent.id);
 
       const resolved = await sessionService.getActiveForClaimId(claimed.claim.claimId);
@@ -162,8 +175,8 @@ describe('SessionService', () => {
         parentLinkage: linkage,
       });
 
-      const first = await sessionService.claimRunbook(child.id, linkage);
-      const second = await sessionService.claimRunbook(child.id, linkage);
+      const first = assertClaimed(await sessionService.claimRunbook(child.id, linkage));
+      const second = assertClaimed(await sessionService.claimRunbook(child.id, linkage));
 
       expect(second.claim.claimId).toBe(first.claim.claimId);
       expect(second.claim.claimedAt).toBe(first.claim.claimedAt);
@@ -187,7 +200,7 @@ describe('SessionService', () => {
         runbookPath: 'child.md',
         parentLinkage: linkage,
       });
-      const claimed = await sessionService.claimRunbook(child.id, linkage);
+      const claimed = assertClaimed(await sessionService.claimRunbook(child.id, linkage));
 
       await manager.delete(child.id);
 
@@ -205,7 +218,7 @@ describe('SessionService', () => {
         runbookPath: 'child.md',
         parentLinkage: linkage,
       });
-      const claimed = await sessionService.claimRunbook(child.id, linkage);
+      const claimed = assertClaimed(await sessionService.claimRunbook(child.id, linkage));
 
       await manager.update(child.id, { lifecycle: 'completed' });
 
@@ -223,7 +236,7 @@ describe('SessionService', () => {
         runbookPath: 'child.md',
         parentLinkage: linkage,
       });
-      const claimed = await sessionService.claimRunbook(child.id, linkage);
+      const claimed = assertClaimed(await sessionService.claimRunbook(child.id, linkage));
 
       await manager.update(child.id, {
         parentLinkage: {
@@ -239,14 +252,14 @@ describe('SessionService', () => {
       }
     });
 
-    it('returns unlinked when the parent is missing or ended', async () => {
+    it('returns unlinked when the parent has ended', async () => {
       const parent = await manager.create('parent.md', mockRunbook, { runbookPath: 'parent.md' });
       const linkage = linkageFor(parent.id, 'f');
       const child = await manager.create('child.md', mockRunbook, {
         runbookPath: 'child.md',
         parentLinkage: linkage,
       });
-      const claimed = await sessionService.claimRunbook(child.id, linkage);
+      const claimed = assertClaimed(await sessionService.claimRunbook(child.id, linkage));
 
       await manager.update(parent.id, { lifecycle: 'completed' });
 
@@ -257,6 +270,71 @@ describe('SessionService', () => {
       }
     });
 
+    it('returns unlinked when the parent state is missing', async () => {
+      const parent = await manager.create('parent.md', mockRunbook, { runbookPath: 'parent.md' });
+      const linkage = linkageFor(parent.id, '0');
+      const child = await manager.create('child.md', mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkage,
+      });
+      const claimed = assertClaimed(await sessionService.claimRunbook(child.id, linkage));
+
+      await manager.delete(parent.id);
+
+      const resolved = await sessionService.getActiveForClaimId(claimed.claim.claimId);
+      expect(resolved.status).toBe('unlinked');
+      if (resolved.status === 'unlinked') {
+        expect(resolved.reason).toBe('parent-missing');
+      }
+    });
+
+    it('claimRunbook refuses when the child run state is missing', async () => {
+      const parent = await manager.create('parent.md', mockRunbook, { runbookPath: 'parent.md' });
+      const linkage = linkageFor(parent.id, '1');
+      const child = await manager.create('child.md', mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkage,
+      });
+      await manager.delete(child.id);
+
+      const result = await sessionService.claimRunbook(child.id, linkage);
+      expect(result.status).toBe('missing-child');
+      if (result.status === 'missing-child') {
+        expect(result.childRunId).toBe(child.id);
+      }
+    });
+
+    it('claimRunbook refuses when persisted child linkage diverges from incoming linkage', async () => {
+      const parent = await manager.create('parent.md', mockRunbook, { runbookPath: 'parent.md' });
+      const linkage = linkageFor(parent.id, '2');
+      const child = await manager.create('child.md', mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkage,
+      });
+
+      const drifted = { ...linkage, tokenHash: linkageFor(parent.id, '3').tokenHash };
+      const result = await sessionService.claimRunbook(child.id, drifted);
+
+      expect(result.status).toBe('linkage-mismatch');
+      if (result.status === 'linkage-mismatch') {
+        expect(result.childRunId).toBe(child.id);
+        expect(result.expected).toBe(drifted);
+        expect(result.actual).toEqual(linkage);
+      }
+    });
+
+    it('claimRunbook refuses when child has no parent linkage at all', async () => {
+      const parent = await manager.create('parent.md', mockRunbook, { runbookPath: 'parent.md' });
+      const child = await manager.create('child.md', mockRunbook, { runbookPath: 'child.md' });
+      const linkage = linkageFor(parent.id, '4');
+
+      const result = await sessionService.claimRunbook(child.id, linkage);
+      expect(result.status).toBe('linkage-mismatch');
+      if (result.status === 'linkage-mismatch') {
+        expect(result.actual).toBeUndefined();
+      }
+    });
+
     it('releaseRunbook removes matching claim records', async () => {
       const parent = await manager.create('parent.md', mockRunbook, { runbookPath: 'parent.md' });
       const linkage = linkageFor(parent.id, 'f');
@@ -264,7 +342,7 @@ describe('SessionService', () => {
         runbookPath: 'child.md',
         parentLinkage: linkage,
       });
-      const claimed = await sessionService.claimRunbook(child.id, linkage);
+      const claimed = assertClaimed(await sessionService.claimRunbook(child.id, linkage));
 
       await sessionService.releaseRunbook(child.id);
 
@@ -280,7 +358,7 @@ describe('SessionService', () => {
         runbookPath: 'child.md',
         parentLinkage: linkage,
       });
-      const claimed = await sessionService.claimRunbook(child.id, linkage);
+      const claimed = assertClaimed(await sessionService.claimRunbook(child.id, linkage));
 
       await sessionService.stashRunbook(child.id);
       expect(await sessionService.getStashedRunbookId()).toBe(child.id);
@@ -308,7 +386,7 @@ describe('SessionService', () => {
         runbookPath: 'child.md',
         parentLinkage: linkage,
       });
-      const claimed = await sessionService.claimRunbook(child.id, linkage);
+      const claimed = assertClaimed(await sessionService.claimRunbook(child.id, linkage));
 
       await sessionService.stashRunbook(child.id);
 
@@ -338,7 +416,7 @@ describe('SessionService', () => {
         runbookPath: 'child.md',
         parentLinkage: linkage,
       });
-      const claimed = await sessionService.claimRunbook(child.id, linkage);
+      const claimed = assertClaimed(await sessionService.claimRunbook(child.id, linkage));
 
       // Simulate the active-claimed-child state: child on default stack and
       // referenced by the claim record.

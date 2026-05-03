@@ -197,6 +197,10 @@ export function buildStashedStatus(stashedState: RunbookState, cwd: string): Sta
   const metadata = buildMetadata(stashedState);
   const parentLinkage = buildParentLinkage(stashedState);
   const vars = buildVars(stashedState);
+  // Claim-scoped data (vars inherited via delegation OUTPUTS/inputs) is only
+  // surfaced to callers holding the claim id. Plain status sees position and
+  // file path but not the variable contents.
+  const isClaimScoped = stashedState.parentLinkage?.kind === 'delegation';
 
   return {
     active: false,
@@ -211,7 +215,7 @@ export function buildStashedStatus(stashedState: RunbookState, cwd: string): Sta
       stashedState.forStack,
     ),
     ...(parentLinkage ? { parentLinkage } : {}),
-    ...(vars != null && { vars }),
+    ...(vars != null && !isClaimScoped && { vars }),
   };
 }
 

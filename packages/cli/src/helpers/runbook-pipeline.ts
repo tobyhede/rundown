@@ -150,6 +150,18 @@ export type ClaimFailure =
       readonly stepId: string;
       readonly childRunId: string;
     }
+  | {
+      readonly reason: 'child-missing';
+      readonly parentRunId: string;
+      readonly stepId: string;
+      readonly childRunId: string;
+    }
+  | {
+      readonly reason: 'linkage-mismatch';
+      readonly parentRunId: string;
+      readonly stepId: string;
+      readonly childRunId: string;
+    }
   | { readonly reason: 'lock-timeout'; readonly parentRunId: string }
   | {
       readonly reason: 'prepare-failed';
@@ -870,21 +882,79 @@ async function updateStepDelegationChildRunId(
   await manager.update(runId, { substepStates: updated });
 }
 
+/** Outcome of {@link claimChildForPipeline}. */
+type ClaimChildResult =
+  | { readonly ok: true; readonly claimId: ClaimId }
+  | {
+      readonly ok: false;
+      readonly reason: 'child-missing' | 'linkage-mismatch';
+      readonly childRunId: string;
+    };
+
 async function claimChildForPipeline(
   ctx: RunPipelineContext,
   childRunId: string,
   linkage: DelegationLinkage,
-): Promise<ClaimId> {
+): Promise<ClaimChildResult> {
   const claim = await ctx.sessionService.claimRunbook(childRunId, linkage);
-  return claim.claim.claimId;
+  switch (claim.status) {
+    case 'claimed':
+      return { ok: true, claimId: claim.claim.claimId };
+    case 'missing-child':
+      return { ok: false, reason: 'child-missing', childRunId: claim.childRunId };
+    case 'linkage-mismatch':
+      return { ok: false, reason: 'linkage-mismatch', childRunId: claim.childRunId };
+    default: {
+      const _exhaustive: never = claim;
+      throw new Error(
+        `Unhandled claimRunbook status: ${(_exhaustive as { status: string }).status}`,
+      );
+    }
+  }
+}
+
+/**
+ * Convert a {@link claimChildForPipeline} failure into a {@link ClaimResult}
+ * envelope carrying the surrounding parent context.
+ *
+ * @param result - The failure variant returned by {@link claimChildForPipeline}
+ * @param parentRunId - Parent run id at the call site
+ * @param stepId - Parent step (or substep) id where the claim was attempted
+ * @returns A failure {@link ClaimResult} ready to bubble up from claimAndLaunch
+ */
+function claimResultToFailure(
+  result: Extract<ClaimChildResult, { ok: false }>,
+  parentRunId: string,
+  stepId: string,
+): ClaimResult {
+  return {
+    ok: false,
+    reason: result.reason,
+    parentRunId,
+    stepId,
+    childRunId: result.childRunId,
+  };
+}
+
+/** Structured payload emitted alongside a successful `rd claim`. */
+export interface ClaimedOutputPayload {
+  readonly action: 'claimed';
+  readonly token: string;
+  readonly claim_id: ClaimId;
+  readonly run_id: string;
+  readonly runbook: string;
+  readonly parent_run_id: string;
+  readonly parent_step: string | undefined;
 }
 
 function emitClaimedOutput(
   output: OutputEmitter,
   message: string,
-  data: Record<string, unknown>,
+  data: ClaimedOutputPayload,
 ): void {
-  output.status('claimed', message, data);
+  // OutputEmitter.status takes Record<string, unknown>; widen at the boundary
+  // — ClaimedOutputPayload is structurally compatible.
+  output.status('claimed', message, { ...data });
 }
 
 /**
@@ -910,7 +980,7 @@ function buildClaimedPayload(args: {
   readonly childRunbookPath: string;
   readonly parentRunId: string;
   readonly parentStepAt: string | undefined;
-}): Record<string, unknown> {
+}): ClaimedOutputPayload {
   return {
     action: 'claimed',
     token: args.truncatedToken,
@@ -1027,10 +1097,18 @@ export async function claimAndLaunch(
     // 4b. Idempotent return if already claimed
     if (freshDelegation.childRunId) {
       const existingChild = await manager.load(freshDelegation.childRunId);
-      if (
-        existingChild &&
-        (existingChild.lifecycle === 'completed' || existingChild.lifecycle === 'stopped')
-      ) {
+      if (!existingChild) {
+        // Parent points at a child run that no longer exists on disk. Fail
+        // closed rather than minting a claim against a missing run.
+        return {
+          ok: false,
+          reason: 'child-missing',
+          parentRunId: freshParent.id,
+          stepId,
+          childRunId: freshDelegation.childRunId,
+        };
+      }
+      if (existingChild.lifecycle === 'completed' || existingChild.lifecycle === 'stopped') {
         return {
           ok: false,
           reason: 'delegation-resolved',
@@ -1040,19 +1118,24 @@ export async function claimAndLaunch(
         };
       }
       const delegationFrameKey = freshSubstep.frameKey;
-      const existingLinkage =
-        existingChild?.parentLinkage?.kind === 'delegation'
-          ? existingChild.parentLinkage
-          : {
-              kind: 'delegation' as const,
-              parentRunId: freshParent.id,
-              parentStepId: substepId ?? stepId,
-              tokenHash,
-              parentStep: freshParent.step,
-              parentFrameKey: delegationFrameKey,
-              parentEntry: inferEntryFromState(freshParent, delegationFrameKey),
-            };
-      const claimId = await claimChildForPipeline(ctx, freshDelegation.childRunId, existingLinkage);
+      const freshLinkage: DelegationLinkage = {
+        kind: 'delegation',
+        parentRunId: freshParent.id,
+        parentStepId: substepId ?? stepId,
+        tokenHash,
+        parentStep: freshParent.step,
+        parentFrameKey: delegationFrameKey,
+        parentEntry: inferEntryFromState(freshParent, delegationFrameKey),
+      };
+      const claimResult = await claimChildForPipeline(
+        ctx,
+        freshDelegation.childRunId,
+        freshLinkage,
+      );
+      if (!claimResult.ok) {
+        return claimResultToFailure(claimResult, freshParent.id, stepId);
+      }
+      const claimId = claimResult.claimId;
       emitClaimedOutput(
         output,
         `Claimed ${truncatedToken} -> ${freshDelegation.childRunbookPath}`,
@@ -1098,19 +1181,20 @@ export async function claimAndLaunch(
         orphan.id,
         tokenHash,
       );
-      const orphanLinkage =
-        orphan.parentLinkage?.kind === 'delegation'
-          ? orphan.parentLinkage
-          : {
-              kind: 'delegation' as const,
-              parentRunId: freshParent.id,
-              parentStepId: substepId ?? stepId,
-              tokenHash,
-              parentStep: freshParent.step,
-              parentFrameKey: freshSubstep.frameKey,
-              parentEntry: inferEntryFromState(freshParent, freshSubstep.frameKey),
-            };
-      const claimId = await claimChildForPipeline(ctx, orphan.id, orphanLinkage);
+      const orphanLinkage: DelegationLinkage = {
+        kind: 'delegation',
+        parentRunId: freshParent.id,
+        parentStepId: substepId ?? stepId,
+        tokenHash,
+        parentStep: freshParent.step,
+        parentFrameKey: freshSubstep.frameKey,
+        parentEntry: inferEntryFromState(freshParent, freshSubstep.frameKey),
+      };
+      const claimResult = await claimChildForPipeline(ctx, orphan.id, orphanLinkage);
+      if (!claimResult.ok) {
+        return claimResultToFailure(claimResult, freshParent.id, stepId);
+      }
+      const claimId = claimResult.claimId;
       emitClaimedOutput(
         output,
         `Claimed ${truncatedToken} -> ${freshDelegation.childRunbookPath}`,
@@ -1196,7 +1280,17 @@ export async function claimAndLaunch(
           childStateId,
           tokenHash,
         );
-        capturedClaimId = await claimChildForPipeline(ctx, childStateId, delegationLinkage);
+        const claimResult = await claimChildForPipeline(ctx, childStateId, delegationLinkage);
+        if (!claimResult.ok) {
+          // Fresh launch path: child was just created with `delegationLinkage`
+          // and `claimRunbook` validates the same linkage matches. A failure
+          // here is an internal invariant violation — surface it via the
+          // launchRunbook try/catch as a launch-failed result.
+          throw new Error(
+            `Claim invariant violated for fresh child ${claimResult.childRunId}: ${claimResult.reason}`,
+          );
+        }
+        capturedClaimId = claimResult.claimId;
         capturedChildRunId = childStateId;
       },
     });

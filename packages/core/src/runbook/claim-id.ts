@@ -41,10 +41,15 @@ export interface ClaimRecord {
 }
 
 /** Result of creating or refreshing a claim record for a child runbook. */
-export type ClaimRunbookResult = {
-  readonly status: 'claimed';
-  readonly claim: ClaimRecord;
-};
+export type ClaimRunbookResult =
+  | { readonly status: 'claimed'; readonly claim: ClaimRecord }
+  | { readonly status: 'missing-child'; readonly childRunId: RunbookState['id'] }
+  | {
+      readonly status: 'linkage-mismatch';
+      readonly childRunId: RunbookState['id'];
+      readonly expected: DelegationLinkage;
+      readonly actual: RunbookState['parentLinkage'];
+    };
 
 /** Result of resolving a claim id to a usable child runbook. */
 export type ClaimIdResolution =

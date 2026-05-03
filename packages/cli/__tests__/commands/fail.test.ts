@@ -193,12 +193,27 @@ Do work.
       expect(token2).toBeDefined();
 
       let result = await runCliInProcess(`claim ${token1!}`, workspace);
+      expect(result.exitCode).toBe(0);
       const child1Output = findActionOutput(result.stdout);
-      const child1Id = String(child1Output?.run_id);
-      const claimId1 = String(child1Output?.claim_id);
+      expect(child1Output).toBeDefined();
+      if (
+        !child1Output ||
+        typeof child1Output.run_id !== 'string' ||
+        typeof child1Output.claim_id !== 'string'
+      ) {
+        throw new Error('Expected claim output to include run_id and claim_id strings');
+      }
+      const child1Id = child1Output.run_id;
+      const claimId1 = child1Output.claim_id;
 
       result = await runCliInProcess(`claim ${token2!}`, workspace);
-      const child2Id = String(findActionOutput(result.stdout)?.run_id);
+      expect(result.exitCode).toBe(0);
+      const child2Output = findActionOutput(result.stdout);
+      expect(child2Output).toBeDefined();
+      if (!child2Output || typeof child2Output.run_id !== 'string') {
+        throw new Error('Expected claim output to include run_id string');
+      }
+      const child2Id = child2Output.run_id;
 
       result = await runCliInProcess(['fail', '--claim-id', claimId1, '--text'], workspace);
       expect(result.exitCode).toBe(0);

@@ -195,11 +195,23 @@ describe('claim command', () => {
       result = await runCliInProcess(`claim ${token}`, workspace);
       expect(result.exitCode).toBe(0);
       const first = findActionOutput(result.stdout);
+      expect(first).toEqual(
+        expect.objectContaining({
+          run_id: expect.any(String),
+          claim_id: expect.any(String),
+        }),
+      );
 
       result = await runCliInProcess(`claim ${token}`, workspace);
 
       expect(result.exitCode).toBe(0);
       const second = findActionOutput(result.stdout);
+      expect(second).toEqual(
+        expect.objectContaining({
+          run_id: expect.any(String),
+          claim_id: expect.any(String),
+        }),
+      );
       expect(second?.run_id).toBe(first?.run_id);
       expect(second?.claim_id).toBe(first?.claim_id);
     });
@@ -410,6 +422,7 @@ Execute with {{Env}} environment.
       expect(result.exitCode).toBe(0);
 
       const claimAction = findActionOutput(result.stdout);
+      expect(claimAction).toEqual(expect.objectContaining({ run_id: expect.any(String) }));
       const childState = await readRunbookState(workspace, String(claimAction?.run_id));
       expect(childState).not.toBeNull();
       const childTemplateVars = (childState?.templateVars ?? {}) as Record<string, unknown>;
@@ -607,12 +620,24 @@ rd echo --result fail
       result = await runCliInProcess(`claim ${tokenA}`, workspace);
       expect(result.exitCode).toBe(0);
       const actionA = findActionOutput(result.stdout);
+      expect(actionA).toEqual(
+        expect.objectContaining({
+          run_id: expect.any(String),
+          claim_id: expect.any(String),
+        }),
+      );
       const childAId = String(actionA?.run_id);
       const claimIdA = String(actionA?.claim_id);
 
       result = await runCliInProcess(`claim ${tokenB}`, workspace);
       expect(result.exitCode).toBe(0);
       const actionB = findActionOutput(result.stdout);
+      expect(actionB).toEqual(
+        expect.objectContaining({
+          run_id: expect.any(String),
+          claim_id: expect.any(String),
+        }),
+      );
       const childBId = String(actionB?.run_id);
       const claimIdB = String(actionB?.claim_id);
 
