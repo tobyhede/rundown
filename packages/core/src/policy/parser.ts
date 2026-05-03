@@ -70,6 +70,22 @@ function isOddBackslashEscaped(command: string, index: number, floor: number): b
   return bs % 2 === 1;
 }
 
+function isShellCommentStart(line: string, index: number): boolean {
+  if (line[index] !== '#' || isOddBackslashEscaped(line, index, 0)) return false;
+  if (index === 0) return true;
+
+  const previous = line[index - 1];
+  return (
+    previous === ' ' ||
+    previous === '\t' ||
+    previous === ';' ||
+    previous === '&' ||
+    previous === '|' ||
+    previous === '(' ||
+    previous === ')'
+  );
+}
+
 /**
  * Advance past a balanced $(...) block.
  *
@@ -159,6 +175,8 @@ function extractHeredocDelimiters(line: string): HeredocDelimiter[] {
       continue;
     }
 
+    if (isShellCommentStart(line, i)) break;
+
     if (ch !== '<' || line[i + 1] !== '<' || line[i + 2] === '<') {
       i++;
       continue;
@@ -222,7 +240,11 @@ function extractHeredocDelimiters(line: string): HeredocDelimiter[] {
         current === '\t' ||
         current === ';' ||
         current === '&' ||
-        current === '|'
+        current === '|' ||
+        current === '<' ||
+        current === '>' ||
+        current === '(' ||
+        current === ')'
       ) {
         break;
       }
@@ -758,8 +780,25 @@ export function extractAllExecutables(command: string, depth = 0): string[] {
  * @returns Array of executable names found inside backticks
  */
 export function extractBacktickCommands(command: string, depth = 0): string[] {
-  const backtickRegex = /`(.+?)`/g;
-  return extractRecursiveMatches(stripHeredocBodies(command), backtickRegex, depth);
+  const executables: string[] = [];
+  const normalizedCommand = stripHeredocBodies(command);
+  let i = 0;
+
+  while (i < normalizedCommand.length) {
+    if (normalizedCommand[i] === '`') {
+      const end = scanBacktick(normalizedCommand, i + 1);
+      if (end >= 0) {
+        const nestedContent = normalizedCommand.slice(i + 1, end - 1);
+        const nestedExecutables = extractAllExecutables(nestedContent, depth);
+        executables.push(...nestedExecutables);
+        i = end;
+        continue;
+      }
+    }
+    i++;
+  }
+
+  return executables;
 }
 
 /**
@@ -800,30 +839,5 @@ export function extractDollarSubstitutions(command: string, depth = 0): string[]
     }
     i++;
   }
-  return executables;
-}
-
-/**
- * Helper to extract and recursively parse commands from regex matches.
- *
- * @param command - Command string to scan
- * @param regex - Regex with one capturing group for the nested command
- * @param depth - Current recursion depth
- * @returns Array of executable names
- */
-function extractRecursiveMatches(command: string, regex: RegExp, depth: number): string[] {
-  const executables: string[] = [];
-  let match: RegExpExecArray | null = null;
-
-  // Reset regex index for safety if it has the global flag
-  if (regex.global) regex.lastIndex = 0;
-
-  // biome-ignore lint/suspicious/noAssignInExpressions: idiomatic regex loop
-  while ((match = regex.exec(command)) !== null) {
-    const nestedContent = match[1];
-    const nestedExecutables = extractAllExecutables(nestedContent, depth);
-    executables.push(...nestedExecutables);
-  }
-
   return executables;
 }

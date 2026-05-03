@@ -303,6 +303,25 @@ describe('Command Parser', () => {
       expect(result).not.toContain('EOF');
     });
 
+    it('ignores heredoc markers in comments', () => {
+      const command = ['echo ok # <<EOF', 'git status'].join('\n');
+      const result = extractAllExecutables(command);
+
+      expect(result).toContain('echo');
+      expect(result).toContain('git');
+      expect(result).not.toContain('EOF');
+    });
+
+    it('terminates heredoc delimiters before shell metacharacters', () => {
+      const command = ['cat <<EOF>out', 'payload', 'EOF', 'git status'].join('\n');
+      const result = extractAllExecutables(command);
+
+      expect(result).toContain('cat');
+      expect(result).toContain('git');
+      expect(result).not.toContain('payload');
+      expect(result).not.toContain('EOF');
+    });
+
     it('does not treat descriptor duplication redirects as command boundaries', () => {
       expect(extractAllExecutables('cmd 2>&1')).toEqual(['cmd']);
       expect(extractAllExecutables('cmd <&0')).toEqual(['cmd']);
@@ -324,6 +343,13 @@ describe('Command Parser', () => {
 
       expect(result).toContain('sh');
       expect(result).toContain(DYNAMIC_EXECUTABLE_SENTINEL);
+    });
+
+    it('extracts executables from multiline backtick substitutions', () => {
+      const result = extractAllExecutables(['echo `printf hello', 'world`'].join('\n'));
+
+      expect(result).toContain('echo');
+      expect(result).toContain('printf');
     });
   });
 

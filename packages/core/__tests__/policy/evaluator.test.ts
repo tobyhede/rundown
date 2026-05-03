@@ -189,6 +189,14 @@ describe('PolicyEvaluator', () => {
       expect(decision.requiresPrompt).toBe(false);
     });
 
+    it('denies multiline backtick substitutions when nested executable is not allowlisted', () => {
+      const evaluator = new PolicyEvaluator(denyRunPolicy(['echo']), { repoRoot });
+      const decision = evaluator.checkCommand(['echo `printf hello', 'world`'].join('\n'));
+
+      expect(decision.allowed).toBe(false);
+      expect(decision.requiresPrompt).toBe(false);
+    });
+
     it('should deny takes precedence over allow', () => {
       const policy: PolicyConfig = {
         version: 1,
