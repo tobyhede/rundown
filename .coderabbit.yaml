@@ -47,7 +47,7 @@ reviews:
         This is a Markdown runbook parser. Focus on:
         - Correctness of AST generation from Markdown.
         - Edge cases in frontmatter parsing, YAML normalization, code blocks, H2/H3 step definitions, transitions, FOR clauses, and DELEGATE annotations.
-        - ParseResult validation diagnostics and whether changed syntax also updates docs/SPEC.md, docs/FORMAT.md, runbooks, and parser tests.
+        - ParseResult validation diagnostics and whether changed syntax also updates docs/spec/language.md, docs/spec/grammar.md, runbooks, and parser tests.
         - Keeping RESULT, HANDLER, and ACTION concepts distinct.
     - path: "packages/core/src/runbook/**/*.ts"
       instructions: |

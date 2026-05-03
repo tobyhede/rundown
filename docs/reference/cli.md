@@ -279,7 +279,7 @@ rundown goto 3 --index 2      # Jump to step 3 and enter FOR iteration 2
 
 | Target | Valid From | Description |
 |--------|------------|-------------|
-| `GOTO N` | Any step | Jump to step N (if FOR step, defaults to loop start value) |
+| `GOTO N` | Any step | Jump to step N (if FOR step, AT defaults per [spec §4.2](../spec/language.md#42-actions)) |
 | `GOTO N.M` | Any step | Jump to substep M of step N |
 | `GOTO Name` | Any step | Jump to named step |
 | `GOTO Name.M` | Any step | Jump to substep M of named step |
@@ -287,7 +287,7 @@ rundown goto 3 --index 2      # Jump to step 3 and enter FOR iteration 2
 | `GOTO N.M AT I` | Any step | Jump to substep M of FOR step N at iteration I |
 | `GOTO Name AT I` | Any step | Enter named FOR step at iteration I |
 
-The `AT` qualifier is only valid when the target is a step with a FOR annotation. If `AT` is omitted for a FOR step, it defaults to the loop's start value (e.g., `1` for `FOR 1 TO 10`, `5` for `FOR 5 TO 1`). See [docs/spec/language.md Actions](../spec/language.md#42-actions) for full details.
+The `AT` qualifier is only valid when the target is a step with a FOR annotation. See [docs/spec/language.md §4.2](../spec/language.md#42-actions) for the authoritative AT default rule. See [docs/spec/language.md Actions](../spec/language.md#42-actions) for full details.
 
 ### Status Commands
 

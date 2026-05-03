@@ -147,10 +147,10 @@ Parent FOR step transitions (`PASS ALL`, `FAIL ANY`, etc.) aggregate results acr
 The `AT` qualifier on GOTO targets specific iterations of a FOR step:
 
 ```bash
-rundown goto 3        # Jump to FOR step 3 at the loop's start value
+rundown goto 3        # Jump to FOR step 3
 ```
 
-In runbook transitions, `GOTO N AT I` enters step N at iteration I. See [docs/reference/cli.md GOTO formats](cli.md#rundown-goto-step---jump-to-step) for the full table.
+In runbook transitions, `GOTO N AT I` enters step N at iteration I. When `AT` is omitted for a FOR step, the default is defined in [docs/spec/language.md §4.2](../spec/language.md#42-actions). See [docs/reference/cli.md GOTO formats](cli.md#rundown-goto-step---jump-to-step) for the full valid-format table.
 
 **Status display during loops:**
 
@@ -369,11 +369,10 @@ Variables are collected from multiple sources with the following precedence (hig
 |--------|-------------|
 | CLI flags (`--input-file`, `--input`, `--input-json`) | Repeatable, highest priority |
 | `RD_INPUT_*` environment variables | Prefix stripped (e.g., `RD_INPUT_environment` sets `environment`) |
-| `.rundown/config.yaml` | Auto-discovered from cwd upward, stops at git root |
-| Frontmatter `vars:` field | Variables defined in runbook frontmatter |
 | Inherited delegation variables | Parent context in delegation tree |
-| INPUTS (context passing) | Fill-gaps-only injection from the inherited live variable space / delegated `finalVars` — see [docs/spec/language.md §7](../spec/language.md#7-context-passing-outputs) |
+| `.rundown/config.yaml` | Auto-discovered from cwd upward, stops at git root |
 | Built-in defaults | System-provided variables — see [Built-in Variables](#built-in-variables) for the full table |
+| INPUTS (context passing) | Fill-gaps-only injection from the inherited live variable space / delegated `finalVars` — see [docs/spec/language.md §7](../spec/language.md#7-context-passing-outputs) |
 
 ### Auto-Discovery
 
