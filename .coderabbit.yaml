@@ -62,7 +62,7 @@ reviews:
         Security-sensitive policy code. Focus on:
         - Command extraction correctness, including shell separators, pipes, substitutions, redirection, environment assignment, and quoting.
         - Deny precedence, allow-list precision, environment variable filtering, and fail-closed behavior.
-        - No command, path, or environment capability should be widened without tests and docs/SECURITY.md updates.
+        - No command, path, or environment capability should be widened without tests and docs/reference/security.md updates.
     - path: "packages/core/src/sandbox/**/*.ts"
       instructions: |
         Security-sensitive sandbox mapping code. Focus on:
@@ -105,7 +105,7 @@ reviews:
       instructions: |
         MCP server package. Focus on:
         - Tool argument validation, structured error responses, and no leakage of local filesystem paths or sensitive environment values.
-        - Consistency with docs/MCP.md.
+        - Consistency with docs/reference/mcp.md.
         - Meaningful tests when behavior becomes non-placeholder.
     - path: "packages/claude-code-plugin/**/*.ts"
       instructions: |
@@ -221,7 +221,7 @@ reviews:
       - name: "Security policy review"
         mode: "warning"
         instructions: |
-          Warn if policy, sandbox, command execution, file data sources, path resolution, or environment handling changes widen command, path, or environment capabilities without corresponding tests or docs/SECURITY.md updates.
+          Warn if policy, sandbox, command execution, file data sources, path resolution, or environment handling changes widen command, path, or environment capabilities without corresponding tests or docs/reference/security.md updates.
           Pass if the PR does not touch these areas.
           Pass if the PR includes tests or documentation showing traversal, symlink escape, deny precedence, env leakage, shell parsing, and fail-closed behavior were preserved.
 
