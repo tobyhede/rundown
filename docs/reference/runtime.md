@@ -53,6 +53,29 @@ Rundown separates **runbook definition** from **state tracking**:
 
 **Note:** A `prompt` code block becomes an `rd prompt '...'` command that outputs the content wrapped in markdown fences. It executes automatically like `bash` blocks.
 
+Example of a step that auto-executes:
+
+````markdown
+## 3. Run tests
+- PASS CONTINUE
+- FAIL RETRY 2 STOP
+
+```bash
+npm test
+```
+````
+
+Example of a prompted step:
+
+````markdown
+## 4. Code review
+- PASS CONTINUE
+- FAIL STOP
+
+Review the implementation for issues.
+`rundown pass` if acceptable, `rundown fail` if blocked.
+````
+
 ---
 
 ## FOR Loops

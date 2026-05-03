@@ -396,22 +396,7 @@ Currently supported internally: `echo`, `prompt`. Unsupported commands fall back
 
 ## Documentation
 
-- [docs/spec/language.md](docs/spec/language.md) - Rundown specification (includes §6 Templating and §7 Context Passing / INPUTS / OUTPUTS)
-- [docs/spec/grammar.md](docs/spec/grammar.md) - W3C EBNF grammar for runbook syntax
-- [docs/reference/mcp.md](docs/reference/mcp.md) - MCP server reference
-- [docs/reference/security.md](docs/reference/security.md) - Security policy configuration
-- [docs/reference/cli.md](docs/reference/cli.md) - CLI command reference and user guide
-- [docs/reference/runtime.md](docs/reference/runtime.md) - Execution model, variables, FOR loops, state (includes Built-in Variables)
-- [docs/spec/cli-output.md](docs/spec/cli-output.md) - CLI output format specification
-- [runbooks/README.md](runbooks/README.md) - Runbook authoring patterns
-- [docs/guides/scripting.md](docs/guides/scripting.md) - Scripting and automation guide
-- [docs/guides/agent-orchestration.md](docs/guides/agent-orchestration.md) - Subagent delegation, context discovery, and delegation completion
-- [docs/guides/project-integration.md](docs/guides/project-integration.md) - Project integration guide
-- [docs/internal/docker.md](docs/internal/docker.md) - Docker testing (verification, E2E, plugin smoke tests)
-- [docs/internal/scenarios.md](docs/internal/scenarios.md) - Scenarios and test runbook standard
-- [docs/internal/architecture.md](docs/internal/architecture.md) - Internal architecture and design principles
-- [docs/reference/rdx.md](docs/reference/rdx.md) - RDX JSON-to-Markdown CLI reference
-- [docs/reference/rdpath.md](docs/reference/rdpath.md) - rdpath path assembly CLI reference
+See **[docs/README.md](docs/README.md)** for the full documentation index, organized by audience and task.
 
 ## Conceptual Model
 

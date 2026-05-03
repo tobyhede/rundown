@@ -149,19 +149,7 @@ The `rd` command is an alias for `rundown`.
 
 ## Documentation
 
-- [docs/spec/language.md](docs/spec/language.md) - Rundown format specification
-- [docs/spec/grammar.md](docs/spec/grammar.md) - Formal BNF-style grammar
-- [docs/reference/mcp.md](docs/reference/mcp.md) - MCP server reference
-- [docs/reference/security.md](docs/reference/security.md) - Security policy configuration
-- [docs/reference/cli.md](docs/reference/cli.md) - CLI command reference and user guide
-- [docs/reference/runtime.md](docs/reference/runtime.md) - Execution model, variables, state
-- [docs/spec/cli-output.md](docs/spec/cli-output.md) - CLI output format specification
-- [docs/guides/scripting.md](docs/guides/scripting.md) - Scripting and automation guide
-- [docs/guides/agent-orchestration.md](docs/guides/agent-orchestration.md) - Subagent delegation, context discovery, and delegation completion
-- [docs/guides/project-integration.md](docs/guides/project-integration.md) - Project integration guide
-- [docs/internal/docker.md](docs/internal/docker.md) - Docker verification pipeline
-- [docs/internal/scenarios.md](docs/internal/scenarios.md) - Scenarios and test runbook standard
-- [Runbook Patterns](runbooks/README.md) - Runbook authoring patterns
+See **[docs/README.md](docs/README.md)** for the full documentation index, organized by audience and task.
 
 ## Contributing
 

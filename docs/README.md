@@ -16,7 +16,7 @@ This index routes you to the right document based on what you're trying to do.
 - **[docs/reference/runtime.md](reference/runtime.md)** — Execution model, FOR loop semantics, state persistence, template variables, built-in variables, and security policy.
 
 ### Integrate Rundown with a project
-- **[docs/guides/project-integration.md](guides/project-integration.md)** — Adoption guidance and worked examples such as write-plan / execute-plan.
+- **[docs/guides/project-integration.md](guides/project-integration.md)** — Adoption guidance and a worked `pr-feedback` example.
 - **[docs/guides/scripting.md](guides/scripting.md)** — Scripting and automation guide.
 - **[docs/guides/agent-orchestration.md](guides/agent-orchestration.md)** — Subagent delegation lifecycle, tokens, `rd collect`, retry fan-out.
 
