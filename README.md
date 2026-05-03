@@ -52,7 +52,7 @@ Rundown includes a Deno-inspired security policy layer that provides explicit al
 - `--policy <file>` - Custom policy file
 - `--non-interactive` - CI mode (auto-deny)
 
-See [Security Documentation](docs/SECURITY.md) for full configuration options.
+See [Security Documentation](docs/reference/security.md) for full configuration options.
 
 ## Get Started
 
@@ -149,17 +149,18 @@ The `rd` command is an alias for `rundown`.
 
 ## Documentation
 
-- [SPEC.md](docs/SPEC.md) - Rundown format specification (includes §6.1 Built-in Variables and §7 Context Passing / INPUTS / OUTPUTS)
-- [FORMAT.md](docs/FORMAT.md) - Formal BNF-style grammar
-- [MCP.md](docs/MCP.md) - MCP server reference
-- [SECURITY.md](docs/SECURITY.md) - Security policy configuration
-- [RUNDOWN.md](docs/RUNDOWN.md) - Rundown internal architecture
-- [CLI-OUTPUT-SPEC.md](docs/CLI-OUTPUT-SPEC.md) - CLI output format specification
-- [SCRIPTING.md](docs/SCRIPTING.md) - Scripting and automation guide
-- [AGENT-ORCHESTRATION.md](docs/AGENT-ORCHESTRATION.md) - Subagent delegation, context discovery, and delegation completion
-- [PROJECT-INTEGRATION.md](docs/PROJECT-INTEGRATION.md) - Project integration guide
-- [DOCKER.md](docs/DOCKER.md) - Docker verification pipeline
-- [SCENARIOS.md](docs/SCENARIOS.md) - Scenarios and test runbook standard
+- [docs/spec/language.md](docs/spec/language.md) - Rundown format specification
+- [docs/spec/grammar.md](docs/spec/grammar.md) - Formal BNF-style grammar
+- [docs/reference/mcp.md](docs/reference/mcp.md) - MCP server reference
+- [docs/reference/security.md](docs/reference/security.md) - Security policy configuration
+- [docs/reference/cli.md](docs/reference/cli.md) - CLI command reference and user guide
+- [docs/reference/runtime.md](docs/reference/runtime.md) - Execution model, variables, state
+- [docs/spec/cli-output.md](docs/spec/cli-output.md) - CLI output format specification
+- [docs/guides/scripting.md](docs/guides/scripting.md) - Scripting and automation guide
+- [docs/guides/agent-orchestration.md](docs/guides/agent-orchestration.md) - Subagent delegation, context discovery, and delegation completion
+- [docs/guides/project-integration.md](docs/guides/project-integration.md) - Project integration guide
+- [docs/internal/docker.md](docs/internal/docker.md) - Docker verification pipeline
+- [docs/internal/scenarios.md](docs/internal/scenarios.md) - Scenarios and test runbook standard
 - [Runbook Patterns](runbooks/README.md) - Runbook authoring patterns
 
 ## Contributing

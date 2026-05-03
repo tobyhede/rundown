@@ -106,15 +106,15 @@ rdx <file> --check                # Validate only, no rendering
 rdx <file> --schema <name>        # Explicit schema for validation
 ```
 
-Schema validation is automatic when the JSON includes `"$schema": "https://rundown.org/schemas/<name>.schema.json"`. See [docs/RDX.md](docs/RDX.md) for full reference.
+Schema validation is automatic when the JSON includes `"$schema": "https://rundown.org/schemas/<name>.schema.json"`. See [docs/reference/rdx.md](docs/reference/rdx.md) for full reference.
 
 ## Template Variables
 
 Template variables use Handlebars syntax `{{variableName}}` and are expanded at run time. The full precedence table, built-in variables list, and context-passing semantics live in the specification:
 
-- [docs/SPEC.md §6 Templating](docs/SPEC.md#6-templating) — precedence order, reserved keys, required variables
-- [docs/SPEC.md §6.1 Built-in Variables](docs/SPEC.md#61-built-in-variables) — `Date`, `Branch`, `WorkPath`, `RunId`, `ContextId`, `Step`, `Index`, `context.current.*`, plus plugin variables (`CLAUDE_PLUGIN_ROOT`)
-- [docs/SPEC.md §7 Context Passing](docs/SPEC.md#7-context-passing-outputs) — OUTPUTS directives and frontmatter `outputs:` / `inputs:` fields
+- [docs/spec/language.md §6 Templating](docs/spec/language.md#6-templating) — precedence order, reserved keys, required variables
+- [docs/reference/runtime.md Built-in Variables](docs/reference/runtime.md#built-in-variables) — `Date`, `Branch`, `WorkPath`, `RunId`, `ContextId`, `Step`, `Index`, `context.current.*`, plus plugin variables (`CLAUDE_PLUGIN_ROOT`)
+- [docs/spec/language.md §7 Context Passing](docs/spec/language.md#7-context-passing-outputs) — OUTPUTS directives and frontmatter `outputs:` / `inputs:` fields
 
 **CLI Example:**
 ```bash
@@ -173,7 +173,7 @@ Data sources are referenced in FOR clauses: `FOR item IN {{ items }}`.
 - File paths must stay within the project root (symlinks resolved, traversal blocked)
 - `file:` values are routed into the internal variable store as typed values (`JsonArrayStream` for `.jsonl`, `JsonArray`/`JsonObject` for `.json`)
 
-**Note:** The `scenarios` frontmatter field is an internal testing/demo feature, not part of the public Rundown format specification. See [docs/SCENARIOS.md](docs/SCENARIOS.md).
+**Note:** The `scenarios` frontmatter field is an internal testing/demo feature, not part of the public Rundown format specification. See [docs/internal/scenarios.md](docs/internal/scenarios.md).
 
 ## Schema Output
 
@@ -263,7 +263,7 @@ rundown run [file] --trust-js-policy      # Trust executable JS policy configs a
 
 Policy files are auto-discovered from: `.rundownrc`, `.rundownrc.json`, `.rundownrc.yaml`, `.rundownrc.yml`, `package.json` (rundown field). JavaScript config files (`.js`, `.cjs`, `.mjs`) are not auto-discovered — they require explicit `--policy <path>` with `--trust-js-policy`. Helper modules declared by policy config are skipped unless `--trust-js-policy` is set; `--helpers` remains an explicit CLI opt-in.
 
-See [docs/SECURITY.md](docs/SECURITY.md) for full security policy documentation.
+See [docs/reference/security.md](docs/reference/security.md) for full security policy documentation.
 
 ## Environment Variables
 
@@ -382,7 +382,7 @@ Key conventions:
 - Left-align text, right-align numbers
 - JSON output by default; `--text` flag for human-readable output
 
-See [docs/RUNDOWN.md](docs/RUNDOWN.md#output-format) for full output formatting standards.
+See [docs/reference/cli.md](docs/reference/cli.md#output-format) for full output formatting standards.
 
 ## Internal Command Execution
 
@@ -396,20 +396,22 @@ Currently supported internally: `echo`, `prompt`. Unsupported commands fall back
 
 ## Documentation
 
-- [docs/SPEC.md](docs/SPEC.md) - Rundown specification (includes §6.1 Built-in Variables and §7 Context Passing / INPUTS / OUTPUTS)
-- [docs/FORMAT.md](docs/FORMAT.md) - W3C EBNF grammar for runbook syntax
-- [docs/MCP.md](docs/MCP.md) - MCP server reference
-- [docs/SECURITY.md](docs/SECURITY.md) - Security policy configuration
-- [docs/RUNDOWN.md](docs/RUNDOWN.md) - Rundown internal architecture
-- [docs/CLI-OUTPUT-SPEC.md](docs/CLI-OUTPUT-SPEC.md) - CLI output format specification
+- [docs/spec/language.md](docs/spec/language.md) - Rundown specification (includes §6 Templating and §7 Context Passing / INPUTS / OUTPUTS)
+- [docs/spec/grammar.md](docs/spec/grammar.md) - W3C EBNF grammar for runbook syntax
+- [docs/reference/mcp.md](docs/reference/mcp.md) - MCP server reference
+- [docs/reference/security.md](docs/reference/security.md) - Security policy configuration
+- [docs/reference/cli.md](docs/reference/cli.md) - CLI command reference and user guide
+- [docs/reference/runtime.md](docs/reference/runtime.md) - Execution model, variables, FOR loops, state (includes Built-in Variables)
+- [docs/spec/cli-output.md](docs/spec/cli-output.md) - CLI output format specification
 - [runbooks/README.md](runbooks/README.md) - Runbook authoring patterns
-- [docs/SCRIPTING.md](docs/SCRIPTING.md) - Scripting and automation guide
-- [docs/AGENT-ORCHESTRATION.md](docs/AGENT-ORCHESTRATION.md) - Subagent delegation, context discovery, and delegation completion
-- [docs/PROJECT-INTEGRATION.md](docs/PROJECT-INTEGRATION.md) - Project integration guide
-- [docs/DOCKER.md](docs/DOCKER.md) - Docker testing (verification, E2E, plugin smoke tests)
-- [docs/SCENARIOS.md](docs/SCENARIOS.md) - Scenarios and test runbook standard
-- [docs/RDX.md](docs/RDX.md) - RDX JSON-to-Markdown CLI reference
-- [docs/RDPATH.md](docs/RDPATH.md) - rdpath path assembly CLI reference
+- [docs/guides/scripting.md](docs/guides/scripting.md) - Scripting and automation guide
+- [docs/guides/agent-orchestration.md](docs/guides/agent-orchestration.md) - Subagent delegation, context discovery, and delegation completion
+- [docs/guides/project-integration.md](docs/guides/project-integration.md) - Project integration guide
+- [docs/internal/docker.md](docs/internal/docker.md) - Docker testing (verification, E2E, plugin smoke tests)
+- [docs/internal/scenarios.md](docs/internal/scenarios.md) - Scenarios and test runbook standard
+- [docs/internal/architecture.md](docs/internal/architecture.md) - Internal architecture and design principles
+- [docs/reference/rdx.md](docs/reference/rdx.md) - RDX JSON-to-Markdown CLI reference
+- [docs/reference/rdpath.md](docs/reference/rdpath.md) - rdpath path assembly CLI reference
 
 ## Conceptual Model
 
@@ -425,7 +427,7 @@ A step produces a **result** (pass/fail). The runbook's **handler** for that res
 
 ## Design Principles
 
-**Type-driven dispatch.** Types drive logic everywhere possible. Use discriminated unions and type narrowing to make invalid states unrepresentable. Guards express domain conditions through typed return values, never raw action-type string checks. If logic branches on a string discriminant, that discriminant should be encoded in a purpose-built type that forces callers to narrow before accessing variant-specific fields. `if` statements checking action types in guards are code smells — missing type structure. See [docs/RUNDOWN.md](docs/RUNDOWN.md#design-principles) for state machine specifics.
+**Type-driven dispatch.** Types drive logic everywhere possible. Use discriminated unions and type narrowing to make invalid states unrepresentable. Guards express domain conditions through typed return values, never raw action-type string checks. If logic branches on a string discriminant, that discriminant should be encoded in a purpose-built type that forces callers to narrow before accessing variant-specific fields. `if` statements checking action types in guards are code smells — missing type structure. See [docs/internal/architecture.md](docs/internal/architecture.md#design-principles) for state machine specifics.
 
 **No silent mapping.** Actions like STOP, COMPLETE, BREAK must propagate as themselves. Never silently convert one action type to another (e.g., mapping DEFER to CONTINUE). Each action type has distinct semantics that must be preserved through the entire dispatch chain.
 

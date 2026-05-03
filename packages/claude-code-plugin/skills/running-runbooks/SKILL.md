@@ -192,5 +192,5 @@ rd status --text    # Human-readable text output
 ## Reference
 
 - [Runbook patterns and examples](../../../../runbooks/README.md)
-- [Rundown specification](../../../../docs/SPEC.md)
+- [Rundown specification](../../../../docs/spec/language.md)
 - [CLI reference](../../../../CLAUDE.md)

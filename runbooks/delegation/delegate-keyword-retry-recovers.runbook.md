@@ -27,7 +27,7 @@ scenarios:
 
 Two substeps fan out in parallel. Substep 1.2 fails on the first attempt;
 aggregation triggers a retry that re-issues *both* substeps (uniform
-re-delegation per `docs/SPEC.md` §4.2, §5 — RETRY retries the step, not a
+re-delegation per `docs/spec/language.md` §4.2, §5 — RETRY retries the step, not a
 selected subset). On the second attempt 1.2 passes (via the marker-based
 child) and the parent completes.
 

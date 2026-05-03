@@ -13,7 +13,7 @@ Targeted tests or checks:
 Check all that apply:
 
 - [ ] Public CLI behavior changed; docs and JSON schema output were checked.
-- [ ] Runbook syntax or parser behavior changed; `docs/SPEC.md`, `docs/FORMAT.md`, and
+- [ ] Runbook syntax or parser behavior changed; `docs/spec/language.md`, `docs/spec/grammar.md`, and
       runbook fixtures were checked.
 - [ ] Persisted runbook state changed; stale-state handling follows the no-migration rule.
 - [ ] Security policy, sandbox, path resolution, or command execution changed; traversal,

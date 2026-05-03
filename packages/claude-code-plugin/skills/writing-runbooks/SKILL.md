@@ -254,7 +254,7 @@ Key authoring notes:
 
 ## Reference
 
-- [Rundown specification](../../../../docs/SPEC.md)
-- [Format grammar (EBNF)](../../../../docs/FORMAT.md)
+- [Rundown specification](../../../../docs/spec/language.md)
+- [Format grammar (EBNF)](../../../../docs/spec/grammar.md)
 - [Runbook patterns and examples](../../../../runbooks/README.md)
 - [Template variables](../../../../CLAUDE.md#template-variables)
