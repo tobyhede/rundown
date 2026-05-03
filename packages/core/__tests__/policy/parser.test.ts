@@ -276,6 +276,15 @@ describe('Command Parser', () => {
       expect(result).toContain('git');
     });
 
+    it('ignores closing parens inside substitution comments', () => {
+      const command = ['echo "$(printf ok # )', 'id', ')"'].join('\n');
+      const result = extractAllExecutables(command);
+
+      expect(result).toContain('echo');
+      expect(result).toContain('printf');
+      expect(result).toContain('id');
+    });
+
     it('does not extract executables from heredoc body lines or terminators', () => {
       const command = ['cat <<EOF', 'printf hi', 'EOF'].join('\n');
       const result = extractAllExecutables(command);
@@ -350,6 +359,15 @@ describe('Command Parser', () => {
 
       expect(result).toContain('echo');
       expect(result).toContain('printf');
+    });
+
+    it('ignores closing backticks inside backtick substitution comments', () => {
+      const command = ['echo "`printf ok # `', 'id', '`"'].join('\n');
+      const result = extractAllExecutables(command);
+
+      expect(result).toContain('echo');
+      expect(result).toContain('printf');
+      expect(result).toContain('id');
     });
   });
 

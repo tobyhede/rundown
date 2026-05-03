@@ -197,6 +197,22 @@ describe('PolicyEvaluator', () => {
       expect(decision.requiresPrompt).toBe(false);
     });
 
+    it('denies command substitution content after a comment-hidden closing paren', () => {
+      const evaluator = new PolicyEvaluator(denyRunPolicy(['echo', 'printf']), { repoRoot });
+      const decision = evaluator.checkCommand(['echo "$(printf ok # )', 'id', ')"'].join('\n'));
+
+      expect(decision.allowed).toBe(false);
+      expect(decision.requiresPrompt).toBe(false);
+    });
+
+    it('denies backtick substitution content after a comment-hidden closing backtick', () => {
+      const evaluator = new PolicyEvaluator(denyRunPolicy(['echo', 'printf']), { repoRoot });
+      const decision = evaluator.checkCommand(['echo "`printf ok # `', 'id', '`"'].join('\n'));
+
+      expect(decision.allowed).toBe(false);
+      expect(decision.requiresPrompt).toBe(false);
+    });
+
     it('should deny takes precedence over allow', () => {
       const policy: PolicyConfig = {
         version: 1,

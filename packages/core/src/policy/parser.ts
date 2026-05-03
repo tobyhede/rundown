@@ -70,20 +70,27 @@ function isOddBackslashEscaped(command: string, index: number, floor: number): b
   return bs % 2 === 1;
 }
 
-function isShellCommentStart(line: string, index: number): boolean {
-  if (line[index] !== '#' || isOddBackslashEscaped(line, index, 0)) return false;
-  if (index === 0) return true;
+function isShellCommentStart(command: string, index: number, floor = 0): boolean {
+  if (command[index] !== '#' || isOddBackslashEscaped(command, index, floor)) return false;
+  if (index <= floor) return true;
 
-  const previous = line[index - 1];
+  const previous = command[index - 1];
   return (
     previous === ' ' ||
     previous === '\t' ||
+    previous === '\n' ||
     previous === ';' ||
     previous === '&' ||
     previous === '|' ||
     previous === '(' ||
     previous === ')'
   );
+}
+
+function skipShellComment(command: string, startIdx: number): number {
+  let i = startIdx;
+  while (i < command.length && command[i] !== '\n') i++;
+  return i;
 }
 
 /**
@@ -128,6 +135,9 @@ function scanSubst(command: string, startIdx: number): number {
         if (ch === '(') level++;
         else level--;
       }
+    } else if (isShellCommentStart(command, i, startIdx)) {
+      i = skipShellComment(command, i);
+      continue;
     }
     i++;
   }
@@ -300,12 +310,40 @@ function stripHeredocBodies(command: string): string {
  */
 function scanBacktick(command: string, startIdx: number): number {
   let i = startIdx;
+  let state: 'normal' | 'single' | 'double' = 'normal';
+
   while (i < command.length) {
-    if (command[i] === '\\') {
+    const ch = command[i];
+
+    if (state === 'single') {
+      if (ch === "'") state = 'normal';
+      i++;
+      continue;
+    }
+
+    if (state === 'double') {
+      if (ch === '"' && !isOddBackslashEscaped(command, i, startIdx)) {
+        state = 'normal';
+      }
+      i++;
+      continue;
+    }
+
+    if (ch === '\\') {
       i += 2;
       continue;
     }
-    if (command[i] === '`') return i + 1;
+    if (isShellCommentStart(command, i, startIdx)) {
+      i = skipShellComment(command, i);
+      continue;
+    }
+    if (ch === "'" && !isOddBackslashEscaped(command, i, startIdx)) {
+      state = 'single';
+    } else if (ch === '"' && !isOddBackslashEscaped(command, i, startIdx)) {
+      state = 'double';
+    } else if (ch === '`') {
+      return i + 1;
+    }
     i++;
   }
   return -1;
