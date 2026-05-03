@@ -95,7 +95,8 @@ const { resolveRunbookFile } = await import('../../src/helpers/resolve-runbook.j
 const { extractFrontmatter } = await import('@rundown-org/parser');
 const { parseScenarios } = await import('../../src/schemas/scenarios.js');
 const { readFile, rm } = await import('node:fs/promises');
-const { copyFileSync } = await import('node:fs');
+const { copyFileSync, symlinkSync } = await import('node:fs');
+const { delimiter } = await import('node:path');
 const { executeCommandSequence, matchStepAssertions, matchErrorAssertions } = await import(
   '../../src/helpers/command-sequence.js'
 );
@@ -591,11 +592,24 @@ describe('executeScenario', () => {
 
     await executeScenario(makeLoadedRunbook(), 'happy', true, mockOutput, '/cli/dist/cli.js');
 
+    expect(symlinkSync).toHaveBeenCalledWith(
+      '/cli/dist/cli.js',
+      '/tmp/rd-scenario-test/node_modules/.bin/rd',
+    );
+    expect(symlinkSync).toHaveBeenCalledWith(
+      '/cli/dist/cli.js',
+      '/tmp/rd-scenario-test/node_modules/.bin/rundown',
+    );
     expect(executeCommandSequence).toHaveBeenCalledWith(
       expect.objectContaining({
         commands: ['rd run my.runbook.md', 'rd pass'],
         cliPath: '/cli/dist/cli.js',
         quiet: true,
+        env: expect.objectContaining({
+          PATH: ['/tmp/rd-scenario-test/node_modules/.bin', process.env.PATH]
+            .filter((value): value is string => Boolean(value))
+            .join(delimiter),
+        }),
       }),
     );
   });

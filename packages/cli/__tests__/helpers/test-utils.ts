@@ -704,9 +704,12 @@ export function parseJsonEvents(stdout: string): JsonOutputEvent[] {
  * @throws If the output is not parseable JSON or has no `token` field
  */
 export function extractToken(stdout: string): string {
-  const parsed = JSON.parse(stdout) as { token?: string };
-  if (!parsed.token) throw new Error(`No token found in delegate output:\n${stdout}`);
-  return parsed.token;
+  const action = findActionOutput(stdout);
+  const token = action?.token;
+  if (typeof token !== 'string' || token.length === 0) {
+    throw new Error(`No token found in delegate output:\n${stdout}`);
+  }
+  return token;
 }
 
 /**

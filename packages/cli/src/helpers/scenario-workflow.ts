@@ -9,7 +9,7 @@
 
 import { readFile, rm, cp } from 'node:fs/promises';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, symlinkSync } from 'node:fs';
-import { basename, dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
+import { basename, delimiter, dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { isNodeError, runbooksDir } from '@rundown-org/core';
 import {
@@ -291,7 +291,9 @@ export async function executeScenario(
       cliPath,
       quiet,
       env: {
-        PATH: `${binDir}:${process.env.PATH ?? ''}`,
+        PATH: [binDir, process.env.PATH]
+          .filter((value): value is string => Boolean(value))
+          .join(delimiter),
       },
       onCommandStart: quiet
         ? undefined

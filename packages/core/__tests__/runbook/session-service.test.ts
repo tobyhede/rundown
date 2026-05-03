@@ -163,6 +163,8 @@ describe('SessionService', () => {
       );
 
       expect((await sessionService.getActive())?.id).toBe(parent.id);
+      const session = await manager.loadSession();
+      expect(session.defaultStack).toEqual([parent.id]);
 
       const resolved = await sessionService.getActiveForClaimId(claimed.claim.claimId);
       expect(resolved.status).toBe('claimed');
