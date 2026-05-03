@@ -301,7 +301,9 @@ describe('CLI program', () => {
       const result = runCli('pass', workspace);
       expect(result.exitCode).toBe(0);
       const output = JSON.parse(result.stdout);
-      expect(output).toHaveProperty('error');
+      expect(output).toHaveProperty('kind', 'warning');
+      expect(output).toHaveProperty('message', 'No active runbook');
+      expect(output).toHaveProperty('code', 'NO_ACTIVE_RUNBOOK');
     });
   });
 });

@@ -73,9 +73,11 @@ export {
   BaseResponseSchema,
   SuccessResponseSchema,
   ErrorResponseSchema,
+  WarningResponseSchema,
   type BaseResponse,
   type SuccessResponse,
   type ErrorResponse,
+  type WarningResponse,
 } from './schema.js';
 
 // Action and status schemas

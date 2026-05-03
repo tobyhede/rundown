@@ -30,6 +30,7 @@ export {
   BaseResponseSchema,
   SuccessResponseSchema,
   ErrorResponseSchema,
+  WarningResponseSchema,
   // Action schemas
   ActionResponseSchema,
   StatusResponseSchema,
@@ -83,6 +84,7 @@ export {
   type BaseResponse,
   type SuccessResponse,
   type ErrorResponse,
+  type WarningResponse,
   type ActionResponse,
   type DelegationStatusEntry,
   type StatusResponse,

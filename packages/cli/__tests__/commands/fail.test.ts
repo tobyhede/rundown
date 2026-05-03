@@ -11,7 +11,7 @@ import {
   parseConcatenatedJson,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
-import { ActionResponseSchema, ErrorResponseSchema } from '../helpers/schema-validator.js';
+import { ActionResponseSchema, WarningResponseSchema } from '../helpers/schema-validator.js';
 
 describe('fail command', () => {
   let workspace: TestWorkspace;
@@ -285,23 +285,24 @@ Do work.
   });
 
   describe('JSON output', () => {
-    it('includes action field when no active runbook', async () => {
+    it('includes warning kind when no active runbook', async () => {
       // Run fail with no active runbook
       const result = await runCliInProcess('fail', workspace);
 
-      // Should exit with error code
+      // Should exit cleanly (no active runbook is not an error)
       expect(result.exitCode).toBe(0);
 
       // Parse JSON output
       const output = JSON.parse(result.stdout);
 
-      // No-active-runbook path emits an error response with kind: 'error'
-      expect(output).toHaveProperty('kind', 'error');
+      // No-active-runbook path emits a warning response (not an error)
+      expect(output).toHaveProperty('kind', 'warning');
+      expect(output).toHaveProperty('message', 'No active runbook');
       expect(output).toHaveProperty('command', 'fail');
       expect(output.code).toBe('NO_ACTIVE_RUNBOOK');
 
-      // Validate against ErrorResponseSchema (not ActionResponseSchema)
-      const parseResult = ErrorResponseSchema.safeParse(output);
+      // Validate against WarningResponseSchema (not ErrorResponseSchema)
+      const parseResult = WarningResponseSchema.safeParse(output);
       expect(parseResult.success).toBe(true);
     });
   });

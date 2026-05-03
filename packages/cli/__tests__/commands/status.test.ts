@@ -144,26 +144,22 @@ describe('claim-id delegated children', () => {
     const token2 = JSON.parse(result.stdout).token as string;
 
     result = await runCliInProcess(`claim ${token1}`, workspace);
+    expect(result.exitCode).toBe(0);
     const child1Output = findActionOutput(result.stdout);
-    if (!child1Output || typeof child1Output.run_id !== 'string') {
-      throw new Error('Expected first claim output to include run_id');
-    }
-    if (typeof child1Output.claim_id !== 'string') {
-      throw new Error('Expected first claim output to include claim_id');
-    }
-    const child1Id = child1Output.run_id;
-    const claimId1 = child1Output.claim_id;
+    expect(child1Output).toBeDefined();
+    expect(typeof child1Output?.run_id).toBe('string');
+    expect(typeof child1Output?.claim_id).toBe('string');
+    const child1Id = child1Output!.run_id as string;
+    const claimId1 = child1Output!.claim_id as string;
 
     result = await runCliInProcess(`claim ${token2}`, workspace);
+    expect(result.exitCode).toBe(0);
     const child2Output = findActionOutput(result.stdout);
-    if (!child2Output || typeof child2Output.run_id !== 'string') {
-      throw new Error('Expected second claim output to include run_id');
-    }
-    if (typeof child2Output.claim_id !== 'string') {
-      throw new Error('Expected second claim output to include claim_id');
-    }
-    const child2Id = child2Output.run_id;
-    const claimId2 = child2Output.claim_id;
+    expect(child2Output).toBeDefined();
+    expect(typeof child2Output?.run_id).toBe('string');
+    expect(typeof child2Output?.claim_id).toBe('string');
+    const child2Id = child2Output!.run_id as string;
+    const claimId2 = child2Output!.claim_id as string;
 
     let status = await runCliInProcess(['status', '--claim-id', claimId1], workspace);
     expect(JSON.parse(status.stdout).state).toContain(child1Id);

@@ -221,6 +221,30 @@ export const ErrorResponseSchema = z
   .describe('Error response indicating command execution failure')
   .passthrough();
 
+/**
+ * Warning response schema.
+ *
+ * Used for conditions that are not errors but merit attention — for example,
+ * commands run when no runbook is active (exit 0, but no work was performed).
+ *
+ * Unlike `ErrorResponseSchema`, warning responses exit 0 and carry a `message`
+ * field rather than an `error` field. The `code` field follows the same
+ * machine-readable code convention as error responses.
+ */
+export const WarningResponseSchema = z
+  .object({
+    /** Response kind discriminant */
+    kind: z.literal('warning').describe('Response type discriminant'),
+    /** Human-readable warning message */
+    message: z.string().describe('Warning message describing the condition'),
+    /** Machine-readable error code for programmatic handling */
+    code: ErrorCodeSchema.optional().describe('Error code for programmatic handling'),
+    /** CLI command that triggered the warning (e.g., 'pass', 'fail', 'goto') */
+    command: z.string().optional().describe('CLI command that triggered the warning'),
+  })
+  .describe('Warning response for conditions that are not errors but merit attention')
+  .passthrough();
+
 // ============================================================================
 // Action Command Schemas (pass, fail, goto, stop, complete)
 // ============================================================================
@@ -1070,6 +1094,9 @@ export type SuccessResponse = z.infer<typeof SuccessResponseSchema>;
 /** Error response */
 export type ErrorResponse = z.infer<typeof ErrorResponseSchema>;
 
+/** Warning response (non-error, exit 0 conditions) */
+export type WarningResponse = z.infer<typeof WarningResponseSchema>;
+
 /** Action response (pass, fail, goto, stop, complete) */
 export type ActionResponse = z.infer<typeof ActionResponseSchema>;
 
@@ -1164,6 +1191,7 @@ export type ClaimResponse = z.infer<typeof ClaimResponseSchema>;
 export type CLIResponse =
   | ActionResponse
   | ErrorResponse
+  | WarningResponse
   | StatusResponse
   | CheckResponse
   | ResolveResponse

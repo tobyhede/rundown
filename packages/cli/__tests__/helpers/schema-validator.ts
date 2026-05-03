@@ -19,6 +19,7 @@ export {
   ErrorDetailsSchema,
   // Response schemas
   ErrorResponseSchema,
+  WarningResponseSchema,
   ActionResponseSchema,
   StatusResponseSchema,
   RunbookSchema,
@@ -58,6 +59,7 @@ import {
   StashResponseSchema,
   PopResponseSchema,
   ErrorResponseSchema,
+  WarningResponseSchema,
   ExecutionSummarySchema,
 } from '../../src/schemas/output-schemas.js';
 
@@ -229,6 +231,13 @@ export function validatePopOutput(data: unknown): ValidationResult {
  */
 export function validateErrorOutput(data: unknown): ValidationResult {
   return validateSchema(ErrorResponseSchema, data);
+}
+
+/**
+ * Validate warning response JSON output.
+ */
+export function validateWarningOutput(data: unknown): ValidationResult {
+  return validateSchema(WarningResponseSchema, data);
 }
 
 // ============================================================================

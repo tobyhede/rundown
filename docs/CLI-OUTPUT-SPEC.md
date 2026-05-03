@@ -728,6 +728,8 @@ Error responses include `error` and `code` fields. A non-zero exit code indicate
 
 ### No active runbook
 
+Exit code 0 — the condition is informational, not a failure.
+
 **Text:**
 ```text
 No active runbook.
@@ -736,7 +738,8 @@ No active runbook.
 **JSON:**
 ```json
 {
-  "error": "No active runbook",
+  "kind": "warning",
+  "message": "No active runbook",
   "code": "NO_ACTIVE_RUNBOOK"
 }
 ```

@@ -22,6 +22,7 @@ export {
   ErrorDetailsSchema,
   // Response schemas
   ErrorResponseSchema,
+  WarningResponseSchema,
   ActionResponseSchema,
   StatusResponseSchema,
   CheckResponseSchema,
