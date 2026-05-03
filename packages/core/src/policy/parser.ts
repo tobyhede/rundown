@@ -36,6 +36,7 @@ type OpToken = { kind: 'op' };
 /** Redir token — a redirect operator that is NOT a statement boundary: > >> < << */
 type RedirToken = { kind: 'redir' };
 type Token = WordToken | OpToken | RedirToken;
+type HeredocDelimiter = { value: string; stripLeadingTabs: boolean };
 
 /** Shell executable names for sh -c wrapper detection. */
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'ksh', 'dash', 'fish', 'csh', 'tcsh']);
@@ -51,6 +52,25 @@ const SHELLS = new Set(['sh', 'bash', 'zsh', 'ksh', 'dash', 'fish', 'csh', 'tcsh
 export const DYNAMIC_EXECUTABLE_SENTINEL = '\x00<dynamic>';
 
 /**
+ * Check whether the character at index is escaped by an odd-length backslash
+ * run within the current scanning range.
+ *
+ * @param command - Full command string
+ * @param index - Character index to inspect
+ * @param floor - Lowest index that can contribute escaping backslashes
+ * @returns True when an odd number of backslashes immediately precedes index
+ */
+function isOddBackslashEscaped(command: string, index: number, floor: number): boolean {
+  let bs = 0;
+  let k = index - 1;
+  while (k >= floor && command[k] === '\\') {
+    bs++;
+    k--;
+  }
+  return bs % 2 === 1;
+}
+
+/**
  * Advance past a balanced $(...) block.
  *
  * startIdx is the position immediately after the opening '(' in '$('. Uses the
@@ -64,16 +84,31 @@ export const DYNAMIC_EXECUTABLE_SENTINEL = '\x00<dynamic>';
 function scanSubst(command: string, startIdx: number): number {
   let level = 1;
   let i = startIdx;
+  let state: 'normal' | 'single' | 'double' = 'normal';
+
   while (i < command.length && level > 0) {
     const ch = command[i];
-    if (ch === '(' || ch === ')') {
-      let bs = 0;
-      let k = i - 1;
-      while (k >= startIdx && command[k] === '\\') {
-        bs++;
-        k--;
+
+    if (state === 'single') {
+      if (ch === "'") state = 'normal';
+      i++;
+      continue;
+    }
+
+    if (state === 'double') {
+      if (ch === '"' && !isOddBackslashEscaped(command, i, startIdx)) {
+        state = 'normal';
       }
-      if (bs % 2 === 0) {
+      i++;
+      continue;
+    }
+
+    if (ch === "'" && !isOddBackslashEscaped(command, i, startIdx)) {
+      state = 'single';
+    } else if (ch === '"' && !isOddBackslashEscaped(command, i, startIdx)) {
+      state = 'double';
+    } else if (ch === '(' || ch === ')') {
+      if (!isOddBackslashEscaped(command, i, startIdx)) {
         if (ch === '(') level++;
         else level--;
       }
@@ -81,6 +116,143 @@ function scanSubst(command: string, startIdx: number): number {
     i++;
   }
   return level === 0 ? i : -1;
+}
+
+/**
+ * Parse heredoc delimiter words from a command line.
+ *
+ * This intentionally covers the common heredoc forms the policy parser needs
+ * to suppress safely: `<<EOF`, `<< EOF`, `<<'EOF'`, `<<"EOF"`, and `<<-EOF`.
+ *
+ * @param line - A single command line
+ * @returns Heredoc delimiters in the order their bodies will appear
+ */
+function extractHeredocDelimiters(line: string): HeredocDelimiter[] {
+  const delimiters: HeredocDelimiter[] = [];
+  let state: 'normal' | 'single' | 'double' = 'normal';
+  let i = 0;
+
+  while (i < line.length) {
+    const ch = line[i];
+
+    if (state === 'single') {
+      if (ch === "'") state = 'normal';
+      i++;
+      continue;
+    }
+
+    if (state === 'double') {
+      if (ch === '"' && !isOddBackslashEscaped(line, i, 0)) state = 'normal';
+      i++;
+      continue;
+    }
+
+    if (ch === "'" && !isOddBackslashEscaped(line, i, 0)) {
+      state = 'single';
+      i++;
+      continue;
+    }
+
+    if (ch === '"' && !isOddBackslashEscaped(line, i, 0)) {
+      state = 'double';
+      i++;
+      continue;
+    }
+
+    if (ch !== '<' || line[i + 1] !== '<' || line[i + 2] === '<') {
+      i++;
+      continue;
+    }
+
+    i += 2;
+    const stripLeadingTabs = line[i] === '-';
+    if (stripLeadingTabs) i++;
+    while (i < line.length && (line[i] === ' ' || line[i] === '\t')) i++;
+
+    let delimiter = '';
+    let delimiterQuote: "'" | '"' | null = null;
+    while (i < line.length) {
+      const current = line[i];
+
+      if (delimiterQuote === "'") {
+        if (current === "'") delimiterQuote = null;
+        else delimiter += current;
+        i++;
+        continue;
+      }
+
+      if (delimiterQuote === '"') {
+        if (current === '"' && !isOddBackslashEscaped(line, i, 0)) {
+          delimiterQuote = null;
+        } else {
+          delimiter += current;
+        }
+        i++;
+        continue;
+      }
+
+      if (current === "'") {
+        delimiterQuote = "'";
+        i++;
+        continue;
+      }
+
+      if (current === '"' && !isOddBackslashEscaped(line, i, 0)) {
+        delimiterQuote = '"';
+        i++;
+        continue;
+      }
+
+      if (
+        current === ' ' ||
+        current === '\t' ||
+        current === ';' ||
+        current === '&' ||
+        current === '|'
+      ) {
+        break;
+      }
+
+      delimiter += current;
+      i++;
+    }
+
+    if (delimiter.length > 0) delimiters.push({ value: delimiter, stripLeadingTabs });
+  }
+
+  return delimiters;
+}
+
+/**
+ * Remove heredoc body and terminator lines before command extraction.
+ *
+ * Heredoc bodies are data, not executable shell source. Keeping the initiating
+ * line preserves the command that consumes the heredoc while preventing body
+ * text and terminators from becoming phantom commands.
+ *
+ * @param command - Shell command string
+ * @returns Command with heredoc body and terminator lines omitted
+ */
+function stripHeredocBodies(command: string): string {
+  const lines = command.split('\n');
+  const kept: string[] = [];
+  const pendingDelimiters: HeredocDelimiter[] = [];
+
+  for (const line of lines) {
+    if (pendingDelimiters.length > 0) {
+      const terminator = pendingDelimiters[0];
+      const terminatorLine = terminator.stripLeadingTabs ? line.replace(/^\t+/, '') : line;
+      if (terminatorLine === terminator.value) {
+        pendingDelimiters.shift();
+      }
+      continue;
+    }
+
+    kept.push(line);
+    pendingDelimiters.push(...extractHeredocDelimiters(line));
+  }
+
+  return kept.join('\n');
 }
 
 /**
@@ -195,9 +367,12 @@ function tokenize(command: string): Token[] {
           // $(…) inside double-quote: word value is now unknowable at parse time
           wordIsDynamic = true;
           const end = scanSubst(command, i + 2);
-          i = end < 0 ? i + 2 : end;
+          i = end < 0 ? command.length : end;
         } else if (/[\w{]/.test(next)) {
-          // Skip $VAR inside double-quote — no expansion, no empty token
+          // Runtime parameter expansion can form the executable word. Preserve a
+          // dynamic token so command position stays fail-closed, while argument
+          // position remains harmless.
+          wordIsDynamic = true;
           i = scanVar(command, i + 1);
         } else {
           wordBuf += ch;
@@ -252,9 +427,12 @@ function tokenize(command: string): Token[] {
         // the entire token (prefix + substitution + any suffix) is dynamic.
         wordIsDynamic = true;
         const end = scanSubst(command, i + 2);
-        i = end < 0 ? i + 2 : end;
+        i = end < 0 ? command.length : end;
       } else if (/[\w{]/.test(next)) {
-        // $VAR reference — skip entirely, produces no token
+        // Runtime parameter expansion can form the executable word. Preserve a
+        // dynamic token so command position stays fail-closed, while argument
+        // position remains harmless.
+        wordIsDynamic = true;
         i = scanVar(command, i + 1);
       } else {
         wordBuf += ch;
@@ -413,7 +591,8 @@ function isEnvAssignment(token: string): boolean {
  */
 export function extractCommands(command: string): ParsedCommand[] {
   const commands: ParsedCommand[] = [];
-  const tokens = tokenize(command);
+  const normalizedCommand = stripHeredocBodies(command);
+  const tokens = tokenize(normalizedCommand);
 
   let stmtTokens: WordToken[] = [];
   let skipNextWord = false;
@@ -544,7 +723,7 @@ export function extractAllExecutables(command: string, depth = 0): string[] {
  */
 export function extractBacktickCommands(command: string, depth = 0): string[] {
   const backtickRegex = /`(.+?)`/g;
-  return extractRecursiveMatches(command, backtickRegex, depth);
+  return extractRecursiveMatches(stripHeredocBodies(command), backtickRegex, depth);
 }
 
 /**
@@ -562,37 +741,24 @@ export function extractDollarSubstitutions(command: string, depth = 0): string[]
   // Use balanced parenthesis counting instead of regex to avoid ReDoS
   // and correctly handle nested $(...) substitutions
   const executables: string[] = [];
+  const normalizedCommand = stripHeredocBodies(command);
   let i = 0;
-  while (i < command.length - 1) {
+  while (i < normalizedCommand.length - 1) {
     // Match $( but not $$( — double-dollar is PID expansion, not command substitution.
     // Note: $((...)) arithmetic and $(...) inside single quotes are conservatively
     // detected as substitutions, producing safe false positives.
-    if (command[i] === '$' && command[i + 1] === '(' && (i === 0 || command[i - 1] !== '$')) {
-      let level = 1;
-      let j = i + 2;
-      while (j < command.length && level > 0) {
-        if (command[j] === '(' || command[j] === ')') {
-          // Count preceding backslashes to detect escaped parentheses
-          let bs = 0;
-          let k = j - 1;
-          while (k >= i + 2 && command[k] === '\\') {
-            bs++;
-            k--;
-          }
-          if (bs % 2 === 0) {
-            // Unescaped parenthesis
-            if (command[j] === '(') level++;
-            else level--;
-          }
-        }
-        j++;
-      }
-      if (level === 0) {
-        const nestedContent = command.slice(i + 2, j - 1);
+    if (
+      normalizedCommand[i] === '$' &&
+      normalizedCommand[i + 1] === '(' &&
+      (i === 0 || normalizedCommand[i - 1] !== '$')
+    ) {
+      const end = scanSubst(normalizedCommand, i + 2);
+      if (end >= 0) {
+        const nestedContent = normalizedCommand.slice(i + 2, end - 1);
         // Recursively extract executables from the substitution content
         const nestedExecutables = extractAllExecutables(nestedContent, depth);
         executables.push(...nestedExecutables);
-        i = j;
+        i = end;
         continue;
       }
     }
