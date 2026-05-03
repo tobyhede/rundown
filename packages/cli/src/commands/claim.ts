@@ -16,7 +16,6 @@ import {
   type RunPipelineContext,
 } from '../helpers/runbook-pipeline.js';
 import { handleParentCompletion, extractParentLinkage } from '../helpers/delegation-completion.js';
-import { resolveCallerIdentity } from '../helpers/caller-identity.js';
 
 function claimFailureToEnvelope(failure: ClaimFailure): {
   readonly code: string;
@@ -64,22 +63,41 @@ function claimFailureToEnvelope(failure: ClaimFailure): {
           cancelledAt: failure.cancelledAt,
         },
       };
+    case 'delegation-resolved':
+      return {
+        code: 'DELEGATION_ALREADY_RESOLVED',
+        message: 'This delegation has already been resolved and cannot be claimed again.',
+        details: {
+          parentRunId: failure.parentRunId,
+          stepId: failure.stepId,
+          childRunId: failure.childRunId,
+        },
+      };
+    case 'child-missing':
+      return {
+        code: 'CHILD_RUN_MISSING',
+        message: `Child run ${failure.childRunId} no longer exists on disk. Delegation cannot be claimed.`,
+        details: {
+          parentRunId: failure.parentRunId,
+          stepId: failure.stepId,
+          childRunId: failure.childRunId,
+        },
+      };
+    case 'linkage-mismatch':
+      return {
+        code: 'CHILD_LINKAGE_MISMATCH',
+        message: `Persisted linkage for child run ${failure.childRunId} does not match the verified delegation. State may be corrupted; inspect .rundown/runs/${failure.childRunId}.json.`,
+        details: {
+          parentRunId: failure.parentRunId,
+          stepId: failure.stepId,
+          childRunId: failure.childRunId,
+        },
+      };
     case 'lock-timeout':
       return {
         code: 'DELEGATION_LOCK_TIMEOUT',
         message: `Could not acquire delegation lock for run ${failure.parentRunId}. Another operation may be in progress.`,
         details: { parentRunId: failure.parentRunId },
-      };
-    case 'owner-conflict':
-      return {
-        code: 'DELEGATION_OWNER_CONFLICT',
-        message: `Delegation already owned by agent '${failure.existingOwnerAgentId}'.`,
-        details: {
-          parentRunId: failure.parentRunId,
-          stepId: failure.stepId,
-          childRunId: failure.childRunId,
-          existingOwnerAgentId: failure.existingOwnerAgentId,
-        },
       };
     case 'prepare-failed':
       return {
@@ -143,7 +161,7 @@ export function registerClaimCommand(program: Command): void {
       ) => {
         await withErrorHandling(
           async () => {
-            const output = new OutputEmitter({ text: options.text });
+            const output = new OutputEmitter({ text: options.text, command: 'claim' });
             const cwd = getCwd();
             const manager = new RunbookStateManager(cwd);
             const actorService = new RunbookActorService(manager);
@@ -164,20 +182,7 @@ export function registerClaimCommand(program: Command): void {
               input: options.input,
               inputJson: options.inputJson,
             };
-            const caller = resolveCallerIdentity();
-            if (caller.kind === 'invalid') {
-              output.error(caller.message, 'INVALID_CALLER_IDENTITY');
-              output.flush();
-              process.exitCode = 1;
-              return;
-            }
-
-            const result = await claimAndLaunch(
-              ctx,
-              token,
-              inputOpts,
-              caller.kind === 'identified' ? caller.identity : undefined,
-            );
+            const result = await claimAndLaunch(ctx, token, inputOpts);
 
             if (!result.ok) {
               const envelope = claimFailureToEnvelope(result);

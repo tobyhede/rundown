@@ -323,16 +323,28 @@ export const ErrorCodes = {
       `stopping the running runbook and starting a fresh run.`,
     docSlug: 'delegation-owner-lost-substeps',
   },
-  DELEGATION_OWNER_CONFLICT: {
+  DELEGATION_NESTED_FORBIDDEN: {
     code: 'RD-819',
     category: ErrorCategory.DELEGATION,
-    title: 'Delegation owned by a different caller',
+    title: 'Nested delegation forbidden',
     description:
-      `The claimed child run is already owned by a different agent identity. ` +
-      `A delegation can be owned by at most one caller; the second claim is rejected.`,
-    docSlug: 'delegation-owner-conflict',
+      'A claimed (delegated) child runbook may not issue further delegations. ' +
+      'Delegation is single-level: subagents cannot spawn subagents. Use `rd run` ' +
+      'for runbook composition inside a claimed child.',
+    docSlug: 'delegation-nested-forbidden',
   },
-
+  CLAIM_INVARIANT_VIOLATED: {
+    code: 'RD-820',
+    category: ErrorCategory.DELEGATION,
+    title: 'Claim invariant violated during fresh launch',
+    description:
+      `A freshly launched delegated child failed write-side claim validation. ` +
+      `The child was just created with the same delegation linkage now being ` +
+      `rejected — indicates internal inconsistency between manager.create() ` +
+      `and SessionService.claimRunbook(). State may be corrupted; inspect ` +
+      `.rundown/runs/<childRunId>.json and the parent's substep delegation.`,
+    docSlug: 'claim-invariant-violated',
+  },
   // Retry hook (9xx) — sub-range of ErrorCategory.EXECUTION reserved for
   // retry-hook lifecycle failures (delegation re-issuance, frame-key invariants,
   // canonical-at requirements). Kept as EXECUTION rather than a dedicated

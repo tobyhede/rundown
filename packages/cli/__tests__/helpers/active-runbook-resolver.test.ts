@@ -1,107 +1,61 @@
 import { describe, it, expect } from '@jest/globals';
+import { assertClaimId, type RunbookState, type SessionService } from '@rundown-org/core';
 import { resolveActiveRunbook } from '../../src/helpers/active-runbook-resolver.js';
-import type { AgentOwnerIdentity, RunbookState, SessionService } from '@rundown-org/core';
 
 const parent = { id: 'parent', lifecycle: 'running' } as RunbookState;
 const child = { id: 'child', lifecycle: 'running' } as RunbookState;
-const identity: AgentOwnerIdentity = {
-  kind: 'agent-session',
-  agent_id: 'agent-a',
-  session_id: 'session-a',
-};
 
 describe('resolveActiveRunbook', () => {
-  it('prefers owned child over default stack', async () => {
+  it('resolves explicit claim id before default stack', async () => {
+    const claimId = assertClaimId('rdclm_abcdefghijklmnopqrstu1');
     const sessionService = {
-      getActiveForOwner: async () => ({
-        status: 'owned' as const,
-        identity,
-        ownership: {
-          kind: 'agent-owned-runbook',
-          ownerKey: 'agent:agent-a:session:session-a',
-          agent_id: 'agent-a',
-          session_id: 'session-a',
+      getActiveForClaimId: async () => ({
+        status: 'claimed' as const,
+        claim: {
+          kind: 'claim-record',
+          claimId,
           childRunId: 'child',
           tokenHash: `sha256:${'a'.repeat(64)}`,
           parentRunId: 'parent',
-          parentStepId: '1',
-          claimedAt: '2026-04-28T00:00:00.000Z',
-          updatedAt: '2026-04-28T00:00:00.000Z',
+          parentStepId: '1.1',
+          claimedAt: '2026-05-01T00:00:00.000Z',
+          updatedAt: '2026-05-01T00:00:00.000Z',
         },
         state: child,
       }),
       getActive: async () => parent,
     } as unknown as SessionService;
 
-    const result = await resolveActiveRunbook(sessionService, {
-      kind: 'identified',
-      identity,
-    });
+    const result = await resolveActiveRunbook(sessionService, { claimId });
 
-    expect(result.kind).toBe('owned');
-    if (result.kind === 'owned') {
+    expect(result.kind).toBe('claim');
+    if (result.kind === 'claim') {
       expect(result.state.id).toBe('child');
     }
   });
 
-  it('returns none for identified callers with no owned runbook (no default-stack fall-through)', async () => {
+  it('does not fall back when explicit claim id is missing', async () => {
+    const claimId = assertClaimId('rdclm_abcdefghijklmnopqrstu1');
     const sessionService = {
-      getActiveForOwner: async () => ({ status: 'unowned' as const, identity }),
+      getActiveForClaimId: async () => ({ status: 'missing' as const, claimId }),
       getActive: async () => parent,
     } as unknown as SessionService;
 
-    const result = await resolveActiveRunbook(sessionService, {
-      kind: 'identified',
-      identity,
-    });
+    const result = await resolveActiveRunbook(sessionService, { claimId });
 
-    expect(result).toEqual({ kind: 'none' });
+    expect(result.kind).toBe('stale_claim');
+    if (result.kind === 'stale_claim') {
+      expect(result.message).toContain('Claim id');
+    }
   });
 
-  it('returns the default stack runbook for anonymous callers', async () => {
+  it('resolves default stack when no claim id is supplied', async () => {
     const sessionService = {
-      getActiveForOwner: async () => {
-        throw new Error('should not be called for anonymous callers');
-      },
       getActive: async () => parent,
     } as unknown as SessionService;
 
-    const result = await resolveActiveRunbook(sessionService, { kind: 'anonymous' });
+    const result = await resolveActiveRunbook(sessionService, {});
 
     expect(result).toEqual({ kind: 'default', state: parent });
-  });
-
-  it('does not fall back when owned mapping is stale', async () => {
-    const staleOwnership = {
-      kind: 'agent-owned-runbook' as const,
-      ownerKey: 'agent:agent-a:session:session-a',
-      agent_id: 'agent-a',
-      session_id: 'session-a',
-      childRunId: 'missing-child',
-      tokenHash: `sha256:${'b'.repeat(64)}`,
-      parentRunId: 'parent',
-      parentStepId: '1',
-      claimedAt: '2026-04-28T00:00:00.000Z',
-      updatedAt: '2026-04-28T00:00:00.000Z',
-    };
-    const sessionService = {
-      getActiveForOwner: async () => ({
-        status: 'stale' as const,
-        identity,
-        ownership: staleOwnership,
-        reason: 'missing-state' as const,
-      }),
-      getActive: async () => parent,
-    } as unknown as SessionService;
-
-    const result = await resolveActiveRunbook(sessionService, {
-      kind: 'identified',
-      identity,
-    });
-
-    expect(result.kind).toBe('stale_owner');
-    if (result.kind === 'stale_owner') {
-      expect(result.ownership.childRunId).toBe('missing-child');
-    }
   });
 });

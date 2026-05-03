@@ -252,12 +252,15 @@ echo hello
       const output = JSON.parse(jsonBlocks[0]);
 
       // Uses standard error format from output.error()
-      expect(output).toEqual({
-        kind: 'error',
-        error: 'Scenario "non-existent" not found',
-        code: 'SCENARIO_NOT_FOUND',
-        details: { available: ['test-scenario'] },
-      });
+      expect(output).toEqual(
+        expect.objectContaining({
+          kind: 'error',
+          error: 'Scenario "non-existent" not found',
+          code: 'SCENARIO_NOT_FOUND',
+          command: 'scenario show',
+          details: { available: ['test-scenario'] },
+        }),
+      );
     });
   });
 

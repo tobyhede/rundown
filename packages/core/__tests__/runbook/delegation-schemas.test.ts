@@ -5,11 +5,10 @@ import {
   AncestorSnapshotSchema,
   RunbookStateSchema,
   DelegationTokenHashSchema,
-  AgentRunbookOwnershipSchema,
+  ClaimRecordSchema,
   SessionDataSchema,
 } from '../../src/schemas.js';
 import { DelegationStatusEntrySchema, StatusResponseSchema } from '../../src/output/zod-schemas.js';
-import { isAgentRunbookOwnership } from '../../src/runbook/agent-ownership.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 
 describe('AncestorSnapshotSchema', () => {
@@ -277,251 +276,86 @@ describe('DelegationTokenHashSchema', () => {
   });
 });
 
-describe('AgentRunbookOwnershipSchema', () => {
-  const validOwnership = {
-    kind: 'agent-owned-runbook',
-    ownerKey: 'agent:agent-a:session:session-a',
-    agent_id: 'agent-a',
-    session_id: 'session-a',
-    childRunId: 'wf-2026-04-28-child',
-    tokenHash: `sha256:${'d'.repeat(64)}`,
-    parentRunId: 'wf-2026-04-28-parent',
-    parentStepId: '1',
+describe('ClaimRecordSchema', () => {
+  const validClaim = {
+    kind: 'claim-record',
+    claimId: 'rdclm_abcdefghijklmnopqrstu1',
+    childRunId: 'wf-2026-05-01-child',
+    tokenHash: `sha256:${'a'.repeat(64)}`,
+    parentRunId: 'wf-2026-05-01-parent',
+    parentStepId: '1.1',
     parentStep: '1',
     parentFrameKey: '1|',
     parentEntry: 1,
-    claimedAt: '2026-04-28T00:00:00.000Z',
-    updatedAt: '2026-04-28T00:00:01.000Z',
+    claimedAt: '2026-05-01T00:00:00.000Z',
+    updatedAt: '2026-05-01T00:00:01.000Z',
   };
 
-  it('accepts a complete ownership record', () => {
-    expect(AgentRunbookOwnershipSchema.safeParse(validOwnership).success).toBe(true);
+  it('accepts a complete claim record', () => {
+    expect(ClaimRecordSchema.safeParse(validClaim).success).toBe(true);
   });
 
-  it('requires agent_id even though ownerKey also contains it', () => {
-    const { agent_id: _agentId, ...withoutAgentId } = validOwnership;
-    expect(AgentRunbookOwnershipSchema.safeParse(withoutAgentId).success).toBe(false);
-  });
-
-  it('rejects malformed token hashes', () => {
-    expect(
-      AgentRunbookOwnershipSchema.safeParse({
-        ...validOwnership,
-        tokenHash: 'not-a-hash',
-      }).success,
-    ).toBe(false);
-  });
-
-  it('rejects records whose ownerKey does not match agent_id and session_id', () => {
-    expect(
-      AgentRunbookOwnershipSchema.safeParse({
-        ...validOwnership,
-        ownerKey: 'agent:other-agent:session:session-a',
-      }).success,
-    ).toBe(false);
-  });
-
-  it('accepts agent-only owner keys when session_id is absent', () => {
-    expect(
-      AgentRunbookOwnershipSchema.safeParse({
-        ...validOwnership,
-        ownerKey: 'agent:agent-a',
-        session_id: undefined,
-      }).success,
-    ).toBe(true);
-  });
-
-  it('does not structurally narrow incomplete ownership objects', () => {
-    expect(isAgentRunbookOwnership({ kind: 'agent-owned-runbook' })).toBe(false);
+  it('rejects malformed claim ids', () => {
+    expect(ClaimRecordSchema.safeParse({ ...validClaim, claimId: 'rdclm_short' }).success).toBe(
+      false,
+    );
   });
 });
 
-describe('SessionDataSchema ownership compatibility', () => {
-  const ownershipFor = (overrides: Record<string, unknown> = {}) => ({
-    kind: 'agent-owned-runbook',
-    ownerKey: 'agent:agent-a:session:session-a',
-    agent_id: 'agent-a',
-    session_id: 'session-a',
-    childRunId: 'wf-2026-04-28-child',
-    tokenHash: `sha256:${'d'.repeat(64)}`,
-    parentRunId: 'wf-2026-04-28-parent',
-    parentStepId: '1',
-    parentStep: '1',
-    parentFrameKey: '1|',
-    parentEntry: 1,
-    claimedAt: '2026-04-28T00:00:00.000Z',
-    updatedAt: '2026-04-28T00:00:01.000Z',
-    ...overrides,
-  });
-
-  it('loads legacy sessions without ownedRunbooks', () => {
+describe('SessionDataSchema claims registry', () => {
+  it('loads sessions without claims using an empty claims registry', () => {
     const result = SessionDataSchema.safeParse({ defaultStack: ['parent'] });
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.ownedRunbooks).toEqual({});
-      expect(result.data.stashedRunbookOwnership).toBeUndefined();
+      expect(result.data.claims).toEqual({});
     }
   });
 
-  it('rejects malformed ownedRunbooks instead of ignoring them', () => {
+  it('rejects claim records whose map key differs from claimId', () => {
     const result = SessionDataSchema.safeParse({
       defaultStack: ['parent'],
-      ownedRunbooks: {
-        bad: [{ kind: 'agent-owned-runbook', childRunId: 42 }],
+      claims: {
+        rdclm_abcdefghijklmnopqrstu1: {
+          kind: 'claim-record',
+          claimId: 'rdclm_1234567890abcdefghijkl',
+          childRunId: 'child',
+          tokenHash: `sha256:${'a'.repeat(64)}`,
+          parentRunId: 'parent',
+          parentStepId: '1.1',
+          claimedAt: '2026-05-01T00:00:00.000Z',
+          updatedAt: '2026-05-01T00:00:01.000Z',
+        },
       },
     });
     expect(result.success).toBe(false);
   });
 
-  it('rejects ownedRunbooks entries whose map key differs from ownerKey', () => {
+  it('rejects duplicate claim records for the same childRunId', () => {
+    const base = {
+      kind: 'claim-record',
+      childRunId: 'child',
+      tokenHash: `sha256:${'b'.repeat(64)}`,
+      parentRunId: 'parent',
+      parentStepId: '1.1',
+      claimedAt: '2026-05-01T00:00:00.000Z',
+      updatedAt: '2026-05-01T00:00:01.000Z',
+    };
+
     const result = SessionDataSchema.safeParse({
       defaultStack: ['parent'],
-      ownedRunbooks: {
-        'agent:agent-b:session:session-a': [ownershipFor()],
-      },
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it('rejects stashed ownership that does not match the stashed runbook id', () => {
-    const result = SessionDataSchema.safeParse({
-      defaultStack: ['parent'],
-      stashedRunbookId: 'different-child',
-      stashedRunbookOwnership: {
-        kind: 'agent-owned-runbook',
-        ownerKey: 'agent:agent-a:session:session-a',
-        agent_id: 'agent-a',
-        session_id: 'session-a',
-        childRunId: 'child',
-        tokenHash: `sha256:${'f'.repeat(64)}`,
-        parentRunId: 'parent',
-        parentStepId: '1',
-        claimedAt: '2026-04-28T00:00:00.000Z',
-        updatedAt: '2026-04-28T00:00:00.000Z',
+      claims: {
+        rdclm_abcdefghijklmnopqrstu1: {
+          ...base,
+          claimId: 'rdclm_abcdefghijklmnopqrstu1',
+        },
+        rdclm_1234567890abcdefghijkl: {
+          ...base,
+          claimId: 'rdclm_1234567890abcdefghijkl',
+        },
       },
     });
 
     expect(result.success).toBe(false);
-  });
-
-  it('accepts an anonymous stashedRunbookId without stashed ownership when unique', () => {
-    const result = SessionDataSchema.safeParse({
-      defaultStack: ['parent'],
-      stashedRunbookId: 'child',
-    });
-
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.stashedRunbookId).toBe('child');
-      expect(result.data.stashedRunbookOwnership).toBeUndefined();
-    }
-  });
-
-  it('rejects anonymous stashedRunbookId duplicates instead of ignoring them', () => {
-    const result = SessionDataSchema.safeParse({
-      defaultStack: ['parent', 'child'],
-      stashedRunbookId: 'child',
-      ownedRunbooks: {
-        'agent:agent-a:session:session-a': [ownershipFor({ childRunId: 'child' })],
-      },
-    });
-
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      const message = result.error.issues.map((issue) => issue.message).join('\n');
-      expect(message).toContain('stashedRunbookId');
-    }
-  });
-
-  it('rejects a session with the same childRunId in owned stack and stash', () => {
-    const result = SessionDataSchema.safeParse({
-      defaultStack: ['parent'],
-      stashedRunbookId: 'child',
-      stashedRunbookOwnership: ownershipFor({ childRunId: 'child' }),
-      ownedRunbooks: {
-        'agent:agent-a:session:session-a': [ownershipFor({ childRunId: 'child' })],
-      },
-    });
-
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      const message = result.error.issues.map((issue) => issue.message).join('\n');
-      expect(message).toContain('ownedRunbooks.agent:agent-a:session:session-a.0.childRunId');
-      expect(message).toContain('stashedRunbookOwnership.childRunId');
-    }
-  });
-
-  it('rejects duplicate childRunId entries across owned stacks', () => {
-    const result = SessionDataSchema.safeParse({
-      defaultStack: ['parent'],
-      ownedRunbooks: {
-        'agent:agent-a:session:session-a': [ownershipFor({ childRunId: 'child' })],
-        'agent:agent-b:session:session-b': [
-          ownershipFor({
-            ownerKey: 'agent:agent-b:session:session-b',
-            agent_id: 'agent-b',
-            session_id: 'session-b',
-            childRunId: 'child',
-          }),
-        ],
-      },
-    });
-
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      const issuePaths = result.error.issues.map((issue) => issue.path.join('.'));
-      expect(issuePaths).toContain('ownedRunbooks.agent:agent-a:session:session-a.0.childRunId');
-      expect(issuePaths).toContain('ownedRunbooks.agent:agent-b:session:session-b.0.childRunId');
-    }
-  });
-
-  it('reports every location in a three-way duplicate childRunId conflict', () => {
-    const result = SessionDataSchema.safeParse({
-      defaultStack: ['child'],
-      stashedRunbookId: 'child',
-      ownedRunbooks: {
-        'agent:agent-a:session:session-a': [ownershipFor({ childRunId: 'child' })],
-      },
-    });
-
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      const issuePaths = result.error.issues.map((issue) => issue.path.join('.'));
-      expect(issuePaths).toContain('defaultStack.0');
-      expect(issuePaths).toContain('ownedRunbooks.agent:agent-a:session:session-a.0.childRunId');
-      expect(issuePaths).toContain('stashedRunbookId');
-    }
-  });
-
-  it('rejects a child runbook that is both default-active and owner-owned', () => {
-    const result = SessionDataSchema.safeParse({
-      defaultStack: ['parent', 'child'],
-      ownedRunbooks: {
-        'agent:agent-a:session:session-a': [ownershipFor({ childRunId: 'child' })],
-      },
-    });
-
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      const message = result.error.issues.map((issue) => issue.message).join('\n');
-      expect(message).toContain('defaultStack.1');
-      expect(message).toContain('ownedRunbooks.agent:agent-a:session:session-a.0.childRunId');
-    }
-  });
-
-  it('rejects a child runbook that is both default-active and owner-stashed', () => {
-    const result = SessionDataSchema.safeParse({
-      defaultStack: ['parent', 'child'],
-      stashedRunbookId: 'child',
-      stashedRunbookOwnership: ownershipFor({ childRunId: 'child' }),
-    });
-
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      const message = result.error.issues.map((issue) => issue.message).join('\n');
-      expect(message).toContain('defaultStack.1');
-      expect(message).toContain('stashedRunbookOwnership.childRunId');
-    }
   });
 });
 

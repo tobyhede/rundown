@@ -20,6 +20,7 @@ import { handleParentCompletion, extractParentLinkage } from '../helpers/delegat
 import { createBridgedEmitter } from '../helpers/execution-emitter.js';
 import { drainResolvedCompletions, runExecutionLoop } from '../services/execution.js';
 import { resolveIndexOption, IndexOptionError } from '../helpers/index-option.js';
+import { parseClaimIdOption } from '../helpers/claim-id-option.js';
 
 /**
  * Registers the 'collect' command — triggers aggregation after DELEGATE fan-out.
@@ -44,52 +45,58 @@ export function registerCollectCommand(program: Command): void {
     .description('Collect delegation results and fire aggregation transition')
     .option('--step <stepId>', 'Target specific DELEGATE step scope (e.g., "1" or "1.2")')
     .option('--index <number>', 'FOR loop iteration to target (requires --step on a FOR step)')
+    .option('--claim-id <claimId>', 'Target a claimed delegated child runbook')
     .option('--text', 'Output as human-readable text')
-    .action(async (options: { step?: string; index?: string; text?: boolean }) => {
-      await withErrorHandling(
-        async () => {
-          const output = new OutputEmitter({ text: options.text });
-          const cwd = getCwd();
+    .action(
+      async (options: { step?: string; index?: string; claimId?: string; text?: boolean }) => {
+        await withErrorHandling(
+          async () => {
+            const output = new OutputEmitter({ text: options.text, command: 'collect' });
+            const cwd = getCwd();
 
-          const contextResult = await buildTransitionContext(output, cwd);
-          switch (contextResult.kind) {
-            case 'ready':
-              break;
-            case 'none':
-              output.noActiveRunbook('collect');
-              output.flush();
-              return;
-            case 'stale_owner':
-            case 'invalid_identity':
-              output.error(contextResult.message, 'OWNED_RUNBOOK_UNAVAILABLE');
-              output.flush();
-              process.exitCode = 1;
-              return;
-            default: {
-              const _exhaustive: never = contextResult;
-              return _exhaustive;
-            }
-          }
-          const ctx = contextResult.ctx;
-
-          let shouldExitWithError = false;
-          try {
-            shouldExitWithError = await runCollect(ctx, cwd, {
-              step: options.step,
-              index: options.index,
-              text: options.text,
+            const claimTarget = parseClaimIdOption(options.claimId, output);
+            if (!claimTarget.ok) return;
+            const contextResult = await buildTransitionContext(output, cwd, {
+              claimId: claimTarget.claimId,
             });
-          } finally {
-            ctx.actor.stop();
-          }
+            switch (contextResult.kind) {
+              case 'ready':
+                break;
+              case 'none':
+                output.noActiveRunbook('collect');
+                output.flush();
+                return;
+              case 'stale_claim':
+                output.error(contextResult.message, 'CLAIMED_RUNBOOK_UNAVAILABLE');
+                output.flush();
+                process.exitCode = 1;
+                return;
+              default: {
+                const _exhaustive: never = contextResult;
+                return _exhaustive;
+              }
+            }
+            const ctx = contextResult.ctx;
 
-          if (shouldExitWithError) {
-            process.exitCode = 1;
-          }
-        },
-        { text: options.text },
-      );
-    });
+            let shouldExitWithError = false;
+            try {
+              shouldExitWithError = await runCollect(ctx, cwd, {
+                step: options.step,
+                index: options.index,
+                text: options.text,
+              });
+            } finally {
+              ctx.actor.stop();
+            }
+
+            if (shouldExitWithError) {
+              process.exitCode = 1;
+            }
+          },
+          { text: options.text },
+        );
+      },
+    );
 }
 
 /** Options forwarded from the Commander action handler to runCollect. */

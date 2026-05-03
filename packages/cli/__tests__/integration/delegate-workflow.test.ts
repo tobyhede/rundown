@@ -7,9 +7,8 @@ import {
   runCliInProcess,
   getActiveState,
   readRunbookState,
-  readSession,
-  writeSession,
   parseConcatenatedJson,
+  findActionOutput,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 
@@ -206,17 +205,25 @@ describe('DELEGATE full workflow — rd run → auto-delegation → rd claim →
       expect(entry.token.startsWith('rdtk_')).toBe(true);
     }
 
-    // Claim + pass first subagent. Auto-propagation advances parent to substep 1.2.
+    // Claim + pass first subagent. Drop --text so the claim's JSON output is
+    // parseable for claim_id extraction. Bare `pass` would target the parent
+    // under reverted Route A — thread --claim-id to land on the child.
     let r = await runCliInProcess(`claim ${token1}`, workspace);
     expect(r.exitCode).toBe(0);
-    r = await runCliInProcess(['pass'], workspace);
+    const claim1 = findActionOutput(r.stdout);
+    expect(claim1).not.toBeNull();
+    const claimId1 = String(claim1!.claim_id);
+    r = await runCliInProcess(['pass', '--claim-id', claimId1], workspace);
     expect(r.exitCode).toBe(0);
 
     // Claim + pass second subagent. Auto-propagation resolves both substeps
     // and aggregation fires immediately — parent advances past step 1.
     r = await runCliInProcess(`claim ${token2}`, workspace);
     expect(r.exitCode).toBe(0);
-    r = await runCliInProcess(['pass'], workspace);
+    const claim2 = findActionOutput(r.stdout);
+    expect(claim2).not.toBeNull();
+    const claimId2 = String(claim2!.claim_id);
+    r = await runCliInProcess(['pass', '--claim-id', claimId2], workspace);
     expect(r.exitCode).toBe(0);
 
     // Verify parent moved to step 2 via aggregation → CONTINUE.
@@ -238,16 +245,23 @@ describe('DELEGATE full workflow — rd run → auto-delegation → rd claim →
     // parent aggregates to STOP.
     const { parentRunId, token1, token2 } = await setupParentWithChildren('child-fail.runbook.md');
 
-    // First subagent passes.
+    // First subagent passes. Bare `pass` would target the parent under
+    // reverted Route A — thread --claim-id to land on the child.
     let r = await runCliInProcess(`claim ${token1}`, workspace);
     expect(r.exitCode).toBe(0);
-    r = await runCliInProcess(['pass'], workspace);
+    const claim1 = findActionOutput(r.stdout);
+    expect(claim1).not.toBeNull();
+    const claimId1 = String(claim1!.claim_id);
+    r = await runCliInProcess(['pass', '--claim-id', claimId1], workspace);
     expect(r.exitCode).toBe(0);
 
     // Second subagent fails — auto-propagation on fail + aggregation → STOP.
     r = await runCliInProcess(`claim ${token2}`, workspace);
     // claim may fail exit because the child auto-fails; check state instead.
-    r = await runCliInProcess(['fail'], workspace);
+    const claim2 = findActionOutput(r.stdout);
+    expect(claim2).not.toBeNull();
+    const claimId2 = String(claim2!.claim_id);
+    r = await runCliInProcess(['fail', '--claim-id', claimId2], workspace);
     // FAIL ANY STOP aggregation is fatal — exit non-zero.
     expect(r.exitCode).not.toBe(0);
 
@@ -263,14 +277,22 @@ describe('DELEGATE full workflow — rd run → auto-delegation → rd claim →
     // Claim + pass both subagents. The final `rd pass` on substep 1.2 is
     // what triggers aggregation — its stdout event stream should contain
     // both the step_transitioned for step 1 and step_entered for step 2.
+    // Bare `pass` would target the parent under reverted Route A — thread
+    // --claim-id to land on each child.
     let r = await runCliInProcess(`claim ${token1}`, workspace);
     expect(r.exitCode).toBe(0);
-    r = await runCliInProcess(['pass'], workspace);
+    const claim1 = findActionOutput(r.stdout);
+    expect(claim1).not.toBeNull();
+    const claimId1 = String(claim1!.claim_id);
+    r = await runCliInProcess(['pass', '--claim-id', claimId1], workspace);
     expect(r.exitCode).toBe(0);
 
     r = await runCliInProcess(`claim ${token2}`, workspace);
     expect(r.exitCode).toBe(0);
-    const finalPass = await runCliInProcess(['pass'], workspace);
+    const claim2 = findActionOutput(r.stdout);
+    expect(claim2).not.toBeNull();
+    const claimId2 = String(claim2!.claim_id);
+    const finalPass = await runCliInProcess(['pass', '--claim-id', claimId2], workspace);
     expect(finalPass.exitCode).toBe(0);
 
     const events = flattenEventObjects(parseConcatenatedJson(finalPass.stdout));
@@ -553,9 +575,13 @@ describe('DELEGATE re-entry and retry', () => {
     const { token1: tokenA1, token2: tokenA2 } = await setupRetryParent();
 
     // Subagent 1.1 passes (pass child auto-completes and triggers propagation).
+    // Bare `pass` would target parent under reverted Route A — thread --claim-id.
     let r = await runCliInProcess(`claim ${tokenA1}`, workspace);
     expect(r.exitCode).toBe(0);
-    r = await runCliInProcess(['pass'], workspace);
+    const claimA1 = findActionOutput(r.stdout);
+    expect(claimA1).not.toBeNull();
+    const claimIdA1 = String(claimA1!.claim_id);
+    r = await runCliInProcess(['pass', '--claim-id', claimIdA1], workspace);
     expect(r.exitCode).toBe(0);
 
     // Subagent 1.2 claims and fails — triggers FAIL ANY aggregation, which
@@ -565,7 +591,10 @@ describe('DELEGATE re-entry and retry', () => {
     // the new frontier is emitted as part of the `rd fail` invocation.
     r = await runCliInProcess(`claim ${tokenA2}`, workspace);
     expect(r.exitCode).toBe(0);
-    const failResult = await runCliInProcess(['fail'], workspace);
+    const claimA2 = findActionOutput(r.stdout);
+    expect(claimA2).not.toBeNull();
+    const claimIdA2 = String(claimA2!.claim_id);
+    const failResult = await runCliInProcess(['fail', '--claim-id', claimIdA2], workspace);
     // RETRY supersedes child STOP: parent absorbs the child's terminal outcome
     // non-terminally and re-enters with fresh tokens, so `rd fail` exits 0.
     expect(failResult.exitCode).toBe(0);
@@ -605,17 +634,24 @@ describe('DELEGATE re-entry and retry', () => {
   it('cancelled tokens return TOKEN_CANCELLED on claim — every prior token is unclaimable (spec §8.1 Test 2)', async () => {
     const { token1: tokenA1, token2: tokenA2 } = await setupRetryParent();
 
-    // Subagent 1.1 passes.
+    // Subagent 1.1 passes. Bare `pass` would target parent under reverted
+    // Route A — thread --claim-id.
     let r = await runCliInProcess(`claim ${tokenA1}`, workspace);
     expect(r.exitCode).toBe(0);
-    r = await runCliInProcess(['pass'], workspace);
+    const claimA1 = findActionOutput(r.stdout);
+    expect(claimA1).not.toBeNull();
+    const claimIdA1 = String(claimA1!.claim_id);
+    r = await runCliInProcess(['pass', '--claim-id', claimIdA1], workspace);
     expect(r.exitCode).toBe(0);
 
     // Subagent 1.2 fails — triggers RETRY, re-issuing fresh tokens for BOTH
     // substeps. The original tokens (tokenA1 and tokenA2) are cancelled.
     r = await runCliInProcess(`claim ${tokenA2}`, workspace);
     expect(r.exitCode).toBe(0);
-    const failResult = await runCliInProcess(['fail'], workspace);
+    const claimA2 = findActionOutput(r.stdout);
+    expect(claimA2).not.toBeNull();
+    const claimIdA2 = String(claimA2!.claim_id);
+    const failResult = await runCliInProcess(['fail', '--claim-id', claimIdA2], workspace);
     // RETRY supersedes child STOP: parent re-enters non-terminally → exit 0.
     expect(failResult.exitCode).toBe(0);
 
@@ -716,10 +752,14 @@ describe('DELEGATE re-entry and retry', () => {
     expect(token1).toBeDefined();
     expect(token2).toBeDefined();
 
-    // Subagent 1.1 passes.
+    // Subagent 1.1 passes. Bare `pass` would target parent under reverted
+    // Route A — thread --claim-id.
     let r = await runCliInProcess(`claim ${token1!}`, workspace);
     expect(r.exitCode).toBe(0);
-    r = await runCliInProcess(['pass'], workspace);
+    const claim1 = findActionOutput(r.stdout);
+    expect(claim1).not.toBeNull();
+    const claimId1 = String(claim1!.claim_id);
+    r = await runCliInProcess(['pass', '--claim-id', claimId1], workspace);
     expect(r.exitCode).toBe(0);
 
     // Subagent 1.2 fails. FAIL ALL is NOT satisfied (one passed); PASS ALL
@@ -729,7 +769,10 @@ describe('DELEGATE re-entry and retry', () => {
     // is result-agnostic regardless of aggregation branch.
     r = await runCliInProcess(`claim ${token2!}`, workspace);
     expect(r.exitCode).toBe(0);
-    const failResult = await runCliInProcess(['fail'], workspace);
+    const claim2 = findActionOutput(r.stdout);
+    expect(claim2).not.toBeNull();
+    const claimId2 = String(claim2!.claim_id);
+    const failResult = await runCliInProcess(['fail', '--claim-id', claimId2], workspace);
     // RETRY supersedes child STOP: parent re-enters non-terminally → exit 0.
     expect(failResult.exitCode).toBe(0);
 
@@ -819,10 +862,14 @@ describe('DELEGATE re-entry and retry', () => {
     const preDelegation = preSs?.delegation as Record<string, unknown> | undefined;
     expect(preDelegation?.extraVars).toEqual({ env: 'staging' });
 
-    // Claim + fail the manual delegation.
+    // Claim + fail the manual delegation. Bare `fail` would target parent
+    // under reverted Route A — thread --claim-id.
     const r = await runCliInProcess(`claim ${tokenA}`, workspace);
     expect(r.exitCode).toBe(0);
-    const failResult = await runCliInProcess(['fail'], workspace);
+    const claimA = findActionOutput(r.stdout);
+    expect(claimA).not.toBeNull();
+    const claimIdA = String(claimA!.claim_id);
+    const failResult = await runCliInProcess(['fail', '--claim-id', claimIdA], workspace);
     // RETRY supersedes child STOP: parent re-enters non-terminally → exit 0.
     expect(failResult.exitCode).toBe(0);
 
@@ -855,8 +902,8 @@ describe('DELEGATE re-entry and retry', () => {
   it('rd delegate --retry CLI forms (token, --step, inferred) all produce equivalent state (spec §8.1 Test 5)', async () => {
     // Helper: build a parent + child, start the parent, and run claim on ss2
     // (so it's in a claimed-but-not-yet-resolved state suitable for retry).
-    // After claim, the child runbook becomes the active session top — so
-    // state is read by parentRunId rather than via getActiveState.
+    // Under reverted Route A, claimed children are NOT pushed onto
+    // defaultStack — the parent remains at session top after `rd claim`.
     async function setupClaimed(): Promise<{
       parentRunId: string;
       token2: string;
@@ -864,12 +911,17 @@ describe('DELEGATE re-entry and retry', () => {
     }> {
       const { parentRunId, token1, token2 } = await setupRetryParent();
       // Resolve 1.1 so cursor advances to 1.2 (required for inferred form to
-      // resolve to substep '2' correctly).
+      // resolve to substep '2' correctly). Bare `pass` would target parent
+      // under reverted Route A — thread --claim-id to land on the child.
       let r = await runCliInProcess(`claim ${token1}`, workspace);
       expect(r.exitCode).toBe(0);
-      r = await runCliInProcess(['pass'], workspace);
+      const claim1 = findActionOutput(r.stdout);
+      expect(claim1).not.toBeNull();
+      const claimId1 = String(claim1!.claim_id);
+      r = await runCliInProcess(['pass', '--claim-id', claimId1], workspace);
       expect(r.exitCode).toBe(0);
-      // Claim ss2 but don't pass/fail yet. Child runbook becomes active.
+      // Claim ss2 but don't pass/fail yet — leaves the delegation in
+      // claimed-but-unresolved state for retry tests.
       r = await runCliInProcess(`claim ${token2}`, workspace);
       expect(r.exitCode).toBe(0);
       const state = await readRunbookState(workspace, parentRunId);
@@ -904,18 +956,12 @@ describe('DELEGATE re-entry and retry', () => {
     await workspace.cleanup();
     workspace = await createTestWorkspace();
 
-    // Form 2: --step. Requires active session to point at the parent. After
-    // `rd claim`, the child is active — pop it first so parent is active.
+    // Form 2: --step. Requires active session to point at the parent. Under
+    // reverted Route A, the parent remains at session top after `rd claim`
+    // (claimed children are not pushed onto defaultStack), so no session
+    // manipulation is needed.
     {
       const { parentRunId, priorDelegation } = await setupClaimed();
-      // Pop child so parent becomes active. `rd pop` requires a stash, so
-      // instead we manually rewrite the session to place parent at the top.
-      const session = await readSession(workspace);
-      await writeSession(workspace, {
-        ...(session.stashed ? { stashed: session.stashed } : {}),
-        defaultStack: [parentRunId],
-      });
-
       const retry = await runCliInProcess(['delegate', '--retry', '--step', '1.2'], workspace);
       expect(retry.exitCode).toBe(0);
       const out = JSON.parse(retry.stdout) as Record<string, unknown>;
@@ -933,15 +979,10 @@ describe('DELEGATE re-entry and retry', () => {
     await workspace.cleanup();
     workspace = await createTestWorkspace();
 
-    // Form 3: inferred (no args) — infers from active substep. Requires
-    // parent at session top (same as form 2).
+    // Form 3: inferred (no args) — infers from active substep. Under reverted
+    // Route A, parent is already at session top after `rd claim`.
     {
       const { parentRunId, priorDelegation } = await setupClaimed();
-      const session = await readSession(workspace);
-      await writeSession(workspace, {
-        ...(session.stashed ? { stashed: session.stashed } : {}),
-        defaultStack: [parentRunId],
-      });
       const retry = await runCliInProcess(['delegate', '--retry'], workspace);
       expect(retry.exitCode).toBe(0);
       const out = JSON.parse(retry.stdout) as Record<string, unknown>;
@@ -980,14 +1021,22 @@ describe('DELEGATE re-entry and retry', () => {
     const { parentRunId, token1, token2: tokenA2 } = await setupRetryParent();
 
     // Attempt 1: 1.1 passes, 1.2 fails — triggers RETRY (budget 0→1).
+    // Bare `pass`/`fail` would target parent under reverted Route A — thread
+    // --claim-id to land on each child.
     let r = await runCliInProcess(`claim ${token1}`, workspace);
     expect(r.exitCode).toBe(0);
-    r = await runCliInProcess(['pass'], workspace);
+    const claim1 = findActionOutput(r.stdout);
+    expect(claim1).not.toBeNull();
+    const claimId1 = String(claim1!.claim_id);
+    r = await runCliInProcess(['pass', '--claim-id', claimId1], workspace);
     expect(r.exitCode).toBe(0);
 
     r = await runCliInProcess(`claim ${tokenA2}`, workspace);
     expect(r.exitCode).toBe(0);
-    const firstFail = await runCliInProcess(['fail'], workspace);
+    const claimA2 = findActionOutput(r.stdout);
+    expect(claimA2).not.toBeNull();
+    const claimIdA2 = String(claimA2!.claim_id);
+    const firstFail = await runCliInProcess(['fail', '--claim-id', claimIdA2], workspace);
     // RETRY supersedes child STOP: parent re-enters non-terminally → exit 0.
     expect(firstFail.exitCode).toBe(0);
 
@@ -1016,12 +1065,18 @@ describe('DELEGATE re-entry and retry', () => {
     // guard no longer matches → exhaustion action (STOP) fires.
     r = await runCliInProcess(`claim ${tokenB1!}`, workspace);
     expect(r.exitCode).toBe(0);
-    r = await runCliInProcess(['pass'], workspace);
+    const claimB1 = findActionOutput(r.stdout);
+    expect(claimB1).not.toBeNull();
+    const claimIdB1 = String(claimB1!.claim_id);
+    r = await runCliInProcess(['pass', '--claim-id', claimIdB1], workspace);
     expect(r.exitCode).toBe(0);
 
     r = await runCliInProcess(`claim ${tokenB2!}`, workspace);
     expect(r.exitCode).toBe(0);
-    const secondFail = await runCliInProcess(['fail'], workspace);
+    const claimB2 = findActionOutput(r.stdout);
+    expect(claimB2).not.toBeNull();
+    const claimIdB2 = String(claimB2!.claim_id);
+    const secondFail = await runCliInProcess(['fail', '--claim-id', claimIdB2], workspace);
 
     // Child stops with non-zero — the child's FAIL STOP fires.
     expect(secondFail.exitCode).not.toBe(0);
@@ -1110,15 +1165,22 @@ describe('DELEGATE re-entry and retry', () => {
     expect(firstFrontier[0].id).toBe('1.1');
     const tokenA = firstFrontier[0].token;
 
-    // Subagent 1.1 claims + fails. The fail on the child propagates to parent
-    // ss1 as a fail result. Cursor advances to ss2 (command substep).
+    // Subagent 1.1 claims + fails. Bare `fail` would target parent under
+    // reverted Route A — thread --claim-id to land on the child. The fail on
+    // the child propagates to parent ss1 as a fail result. Cursor advances
+    // to ss2 (command substep).
     let r = await runCliInProcess(`claim ${tokenA}`, workspace);
     expect(r.exitCode).toBe(0);
-    r = await runCliInProcess(['fail'], workspace);
+    const claimA = findActionOutput(r.stdout);
+    expect(claimA).not.toBeNull();
+    const claimIdA = String(claimA!.claim_id);
+    r = await runCliInProcess(['fail', '--claim-id', claimIdA], workspace);
 
     // In --prompted mode the command is printed but not executed — explicitly
-    // fail ss2 to drive aggregation. After both substeps are fail, FAIL ANY
-    // RETRY fires the retry hook. 1.1 gets a fresh delegation; 1.2 (no
+    // fail ss2 to drive aggregation. ss2 is a command substep with no
+    // delegation; bare `fail` targets the parent (its current substep), which
+    // is the correct target. After both substeps are fail, FAIL ANY RETRY
+    // fires the retry hook. 1.1 gets a fresh delegation; 1.2 (no
     // delegation) is untouched by the hook (its state will be reset by the
     // normal cursor re-entry machinery on the next iteration).
     const fail12 = await runCliInProcess(['fail'], workspace);
@@ -1215,12 +1277,16 @@ describe('DELEGATE re-entry and retry', () => {
     const iter1TokenA = firstFrontier[0].token;
     expect(iter1TokenA.startsWith('rdtk_')).toBe(true);
 
-    // Iteration 1, attempt 1: claim + fail. The iteration-level FAIL ANY
-    // RETRY fires → retry hook re-issues the delegation with a fresh token
-    // in the same iteration frame.
+    // Iteration 1, attempt 1: claim + fail. Bare `fail` would target parent
+    // under reverted Route A — thread --claim-id to land on the child. The
+    // iteration-level FAIL ANY RETRY fires → retry hook re-issues the
+    // delegation with a fresh token in the same iteration frame.
     const r = await runCliInProcess(`claim ${iter1TokenA}`, workspace);
     expect(r.exitCode).toBe(0);
-    const fail1 = await runCliInProcess(['fail'], workspace);
+    const claimIter1 = findActionOutput(r.stdout);
+    expect(claimIter1).not.toBeNull();
+    const claimIdIter1 = String(claimIter1!.claim_id);
+    const fail1 = await runCliInProcess(['fail', '--claim-id', claimIdIter1], workspace);
     // Iteration RETRY supersedes child STOP: parent re-enters non-terminally → exit 0.
     expect(fail1.exitCode).toBe(0);
 
@@ -1290,16 +1356,21 @@ describe('DELEGATE re-entry and retry', () => {
     // State 2: CLAIMED (running). Claim ss2 but don't pass/fail.
     {
       const { parentRunId, token1, token2 } = await setupRetryParent();
-      // Resolve ss1 first so cursor is on ss2.
+      // Resolve ss1 first so cursor is on ss2. Bare `pass` would target
+      // parent under reverted Route A — thread --claim-id.
       let r = await runCliInProcess(`claim ${token1}`, workspace);
       expect(r.exitCode).toBe(0);
-      r = await runCliInProcess(['pass'], workspace);
+      const claim1 = findActionOutput(r.stdout);
+      expect(claim1).not.toBeNull();
+      const claimId1 = String(claim1!.claim_id);
+      r = await runCliInProcess(['pass', '--claim-id', claimId1], workspace);
       expect(r.exitCode).toBe(0);
       // Claim ss2 → childRunId set on parent's delegation record, but no
       // result yet (child runbook is now active, stuck subagent scenario).
       r = await runCliInProcess(`claim ${token2}`, workspace);
       expect(r.exitCode).toBe(0);
-      // After claim, active session points to child — read parent by id.
+      // Under reverted Route A, parent stays at session top after `rd claim`.
+      // Read parent by id either way to be explicit about the target.
       const preState = await readRunbookState(workspace, parentRunId);
       const preSubsteps = preState?.substepStates as Array<Record<string, unknown>> | undefined;
       const preSs = preSubsteps?.find((s) => s.id === '2');
@@ -1322,7 +1393,12 @@ describe('DELEGATE re-entry and retry', () => {
       const { parentRunId, token1 } = await setupRetryParent();
       let r = await runCliInProcess(`claim ${token1}`, workspace);
       expect(r.exitCode).toBe(0);
-      r = await runCliInProcess(['pass'], workspace);
+      // Bare `pass` would target parent under reverted Route A — thread
+      // --claim-id to land on the child so its pass propagates to ss1.
+      const claim1 = findActionOutput(r.stdout);
+      expect(claim1).not.toBeNull();
+      const claimId1 = String(claim1!.claim_id);
+      r = await runCliInProcess(['pass', '--claim-id', claimId1], workspace);
       expect(r.exitCode).toBe(0);
       // ss1 is now done:pass. state.step is still '1' (ss2 pending).
       const preState = await readRunbookState(workspace, parentRunId);
@@ -1550,15 +1626,22 @@ describe('DELEGATE with custom substep transitions', () => {
     expect(token1).toBeDefined();
     expect(token2).toBeDefined();
 
-    // Subagent for 1.1 passes.
+    // Subagent for 1.1 passes. Bare `pass` would target parent under reverted
+    // Route A — thread --claim-id.
     let r = await runCliInProcess(`claim ${token1!}`, workspace);
     expect(r.exitCode).toBe(0);
-    r = await runCliInProcess(['pass'], workspace);
+    const claim1 = findActionOutput(r.stdout);
+    expect(claim1).not.toBeNull();
+    const claimId1 = String(claim1!.claim_id);
+    r = await runCliInProcess(['pass', '--claim-id', claimId1], workspace);
     expect(r.exitCode).toBe(0);
 
     // Subagent for 1.2 fails — per-substep `- FAIL STOP` fires immediately.
     r = await runCliInProcess(`claim ${token2!}`, workspace);
-    const failResult = await runCliInProcess(['fail'], workspace);
+    const claim2 = findActionOutput(r.stdout);
+    expect(claim2).not.toBeNull();
+    const claimId2 = String(claim2!.claim_id);
+    const failResult = await runCliInProcess(['fail', '--claim-id', claimId2], workspace);
     expect(failResult.exitCode).not.toBe(0);
 
     // Parent must be stopped. When a runbook stops, it may be removed from
@@ -1619,10 +1702,14 @@ describe('DELEGATE with custom substep transitions', () => {
     expect(token1).toBeDefined();
     expect(token2).toBeDefined();
 
-    // Subagent 1.1 passes.
+    // Subagent 1.1 passes. Bare `pass` would target parent under reverted
+    // Route A — thread --claim-id.
     let r = await runCliInProcess(`claim ${token1!}`, workspace);
     expect(r.exitCode).toBe(0);
-    r = await runCliInProcess(['pass'], workspace);
+    const claim1 = findActionOutput(r.stdout);
+    expect(claim1).not.toBeNull();
+    const claimId1 = String(claim1!.claim_id);
+    r = await runCliInProcess(['pass', '--claim-id', claimId1], workspace);
     expect(r.exitCode).toBe(0);
 
     // Subagent 1.2 fails — but `PASS ANY` is already satisfied by 1.1.
@@ -1630,7 +1717,10 @@ describe('DELEGATE with custom substep transitions', () => {
     // for the child; but the parent aggregation should fire CONTINUE and
     // advance to step 2. We focus on the parent's state to verify CONTINUE.
     r = await runCliInProcess(`claim ${token2!}`, workspace);
-    await runCliInProcess(['fail'], workspace);
+    const claim2 = findActionOutput(r.stdout);
+    expect(claim2).not.toBeNull();
+    const claimId2 = String(claim2!.claim_id);
+    await runCliInProcess(['fail', '--claim-id', claimId2], workspace);
 
     const afterParent = await readRunbookState(workspace, parentRunId);
     expect(afterParent?.step).toBe('2');

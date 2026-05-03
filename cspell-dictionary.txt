@@ -139,6 +139,7 @@ promptable
 pstep
 psub
 pwd
+rdclm
 rdpath
 rdtest
 rdtk

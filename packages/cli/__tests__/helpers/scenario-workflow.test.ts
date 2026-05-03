@@ -25,12 +25,15 @@ jest.unstable_mockModule('../../src/schemas/scenarios', () => {
     mockFn<
       (s: {
         result?: 'COMPLETE' | 'STOP';
-        expect?: { result?: 'COMPLETE' | 'STOP' };
-      }) => 'COMPLETE' | 'STOP'
+        expect?: { result?: 'COMPLETE' | 'STOP'; errors?: readonly unknown[] };
+      }) => 'COMPLETE' | 'STOP' | 'UNKNOWN'
     >();
   getEffectiveResultMock.mockImplementation((s) => {
     const r = s.result ?? s.expect?.result;
     if (r === undefined) {
+      if (s.expect?.errors !== undefined && s.expect.errors.length > 0) {
+        return 'UNKNOWN';
+      }
       throw new Error('Neither result nor expect.result is defined');
     }
     return r;
@@ -63,6 +66,7 @@ jest.unstable_mockModule('node:fs', () => {
     mkdtempSync: mkdtempSyncMock,
     mkdirSync: jest.fn(),
     copyFileSync: jest.fn(),
+    symlinkSync: jest.fn(),
   };
 });
 
@@ -80,6 +84,8 @@ const actualCommandSequence = await import('../../src/helpers/command-sequence.j
 jest.unstable_mockModule('../../src/helpers/command-sequence', () => ({
   executeCommandSequence: jest.fn(),
   matchStepAssertions: jest.fn(),
+  matchErrorAssertions: jest.fn(),
+  formatErrorAssertionDescription: actualCommandSequence.formatErrorAssertionDescription,
   extractRunbookReferences: actualCommandSequence.extractRunbookReferences,
   extractInputFileReferences: actualCommandSequence.extractInputFileReferences,
 }));
@@ -89,8 +95,9 @@ const { resolveRunbookFile } = await import('../../src/helpers/resolve-runbook.j
 const { extractFrontmatter } = await import('@rundown-org/parser');
 const { parseScenarios } = await import('../../src/schemas/scenarios.js');
 const { readFile, rm } = await import('node:fs/promises');
-const { copyFileSync } = await import('node:fs');
-const { executeCommandSequence, matchStepAssertions } = await import(
+const { copyFileSync, symlinkSync } = await import('node:fs');
+const { delimiter } = await import('node:path');
+const { executeCommandSequence, matchStepAssertions, matchErrorAssertions } = await import(
   '../../src/helpers/command-sequence.js'
 );
 const {
@@ -443,6 +450,8 @@ describe('executeScenario', () => {
       terminalResult: 'COMPLETE',
       transitions: [],
       capturedTokens: [],
+      capturedClaimIds: [],
+      errors: [],
       ...overrides,
     };
   }
@@ -528,16 +537,79 @@ describe('executeScenario', () => {
     expect(result.stepAssertions![0].matched).toBe(false);
   });
 
+  it('evaluates error assertions when expect.errors present', async () => {
+    jest.mocked(executeCommandSequence).mockResolvedValue(
+      makeSequenceResult({
+        terminalResult: 'UNKNOWN',
+        errors: [{ code: 'CLAIMED_RUNBOOK_UNAVAILABLE', command: 'pass' }],
+      }),
+    );
+    jest.mocked(matchErrorAssertions).mockReturnValue([
+      {
+        assertion: { code: 'CLAIMED_RUNBOOK_UNAVAILABLE', command: 'pass' },
+        matched: true,
+        matchedError: { code: 'CLAIMED_RUNBOOK_UNAVAILABLE', command: 'pass' },
+      },
+    ]);
+
+    const loaded = makeLoadedRunbook({
+      result: undefined,
+      expect: { errors: [{ code: 'CLAIMED_RUNBOOK_UNAVAILABLE', command: 'pass' }] },
+    });
+
+    const result = await executeScenario(loaded, 'happy', true, mockOutput, '/cli/dist/cli.js');
+
+    expect(result.passed).toBe(true);
+    expect(result.expected).toBe('UNKNOWN');
+    expect(result.errorAssertions).toBeDefined();
+    expect(result.errorAssertions![0].matched).toBe(true);
+  });
+
+  it('fails when error assertion does not match', async () => {
+    jest
+      .mocked(executeCommandSequence)
+      .mockResolvedValue(makeSequenceResult({ terminalResult: 'UNKNOWN' }));
+    jest.mocked(matchErrorAssertions).mockReturnValue([
+      {
+        assertion: { code: 'CLAIMED_RUNBOOK_UNAVAILABLE' },
+        matched: false,
+      },
+    ]);
+
+    const loaded = makeLoadedRunbook({
+      result: undefined,
+      expect: { errors: [{ code: 'CLAIMED_RUNBOOK_UNAVAILABLE' }] },
+    });
+
+    const result = await executeScenario(loaded, 'happy', true, mockOutput, '/cli/dist/cli.js');
+
+    expect(result.passed).toBe(false);
+    expect(result.errorAssertions![0].matched).toBe(false);
+  });
+
   it('passes executeCommandSequence correct options', async () => {
     jest.mocked(executeCommandSequence).mockResolvedValue(makeSequenceResult());
 
     await executeScenario(makeLoadedRunbook(), 'happy', true, mockOutput, '/cli/dist/cli.js');
 
+    expect(symlinkSync).toHaveBeenCalledWith(
+      '/cli/dist/cli.js',
+      '/tmp/rd-scenario-test/node_modules/.bin/rd',
+    );
+    expect(symlinkSync).toHaveBeenCalledWith(
+      '/cli/dist/cli.js',
+      '/tmp/rd-scenario-test/node_modules/.bin/rundown',
+    );
     expect(executeCommandSequence).toHaveBeenCalledWith(
       expect.objectContaining({
         commands: ['rd run my.runbook.md', 'rd pass'],
         cliPath: '/cli/dist/cli.js',
         quiet: true,
+        env: expect.objectContaining({
+          PATH: ['/tmp/rd-scenario-test/node_modules/.bin', process.env.PATH]
+            .filter((value): value is string => Boolean(value))
+            .join(delimiter),
+        }),
       }),
     );
   });

@@ -7,6 +7,7 @@
 | Type | Format | Detection |
 |------|--------|-----------|
 | **Error** | `{ "error": "msg", "code": "CODE" }` | `error` field exists |
+| **Warning** | `{ "kind": "warning", "message": "msg", "code": "CODE" }` | `kind === "warning"` |
 | **Workflow** | `{ "action": "...", ... }` | `action` field exists |
 | **List** | `[...]` | `Array.isArray()` |
 
@@ -15,6 +16,7 @@
 - **Lists**: Raw arrays `[...]` (no wrapper object)
 - **Workflow commands**: Include `action` field (pass, fail, stop, complete, stash, pop)
 - **Errors**: `{ "error": "message", "code": "CODE" }`
+- **Warnings**: `{ "kind": "warning", "message": "message", "code": "CODE" }`
 - **Success/failure**: Workflow commands use exit code, not a `result` field
 - **Position**: `{ "current": string, "total": number|string }`
 - **Action field**: Shows transition (e.g., "CONTINUE", "GOTO 3", "RETRY"), not command name
@@ -131,6 +133,10 @@ No active runbook.
 }
 ```
 
+### `rd status --claim-id <claim_id>`
+
+Same output shape as active `rd status`, but resolves the delegated child identified by `claim_id` instead of the default stack. Invalid, missing, stale, terminal, or unlinked claim ids return an error response.
+
 ---
 
 ## run
@@ -166,6 +172,34 @@ Runbook:  COMPLETE
 
 ---
 
+## claim
+
+### `rd claim <token>`
+
+Claims a delegation token, launches the delegated child runbook, and returns the `claim_id` used for subsequent child-targeting commands.
+
+**Text:**
+```text
+CLAIMED: Claimed rdtk_abcd... -> child.runbook.md
+```
+
+**JSON:**
+```json
+{
+  "action": "claimed",
+  "token": "rdtk_abcd...",
+  "claim_id": "rdclm_F3J3n3d_f8fo0a0b1B2c3Q",
+  "run_id": "wf-2026-01-26-child",
+  "runbook": "child.runbook.md",
+  "parent_run_id": "wf-2026-01-26-parent",
+  "parent_step": "1.1"
+}
+```
+
+Use the returned `claim_id` with `rd status --claim-id <claim_id>`, `rd pass --claim-id <claim_id>`, or `rd fail --claim-id <claim_id>` for delegated child work.
+
+---
+
 ## pass
 
 ### `rd pass`
@@ -198,6 +232,10 @@ Next step description.
   "to": { "current": "2", "total": 3 }
 }
 ```
+
+### `rd pass --claim-id <claim_id>`
+
+Same output shape as `rd pass`, but targets the delegated child identified by `claim_id` instead of the default stack.
 
 ---
 
@@ -249,6 +287,10 @@ Runbook:  STOP
   "stopped": true
 }
 ```
+
+### `rd fail --claim-id <claim_id>`
+
+Same output shape as `rd fail`, but targets the delegated child identified by `claim_id` instead of the default stack.
 
 ---
 
@@ -365,6 +407,10 @@ Runbook:  STASHED
 }
 ```
 
+### `rd stash --claim-id <claim_id>`
+
+Same output shape as `rd stash`, but stashes the delegated child identified by `claim_id`.
+
 ---
 
 ## pop
@@ -398,6 +444,10 @@ Step description.
   "step": { "name": "2", "description": "Second Step" }
 }
 ```
+
+### `rd pop --claim-id <claim_id>`
+
+Same output shape as `rd pop`, but restores the stashed delegated child identified by `claim_id`.
 
 ### `rd pop` (nothing stashed)
 
@@ -680,6 +730,8 @@ Error responses include `error` and `code` fields. A non-zero exit code indicate
 
 ### No active runbook
 
+Exit code 0 — the condition is informational, not a failure.
+
 **Text:**
 ```text
 No active runbook.
@@ -688,7 +740,8 @@ No active runbook.
 **JSON:**
 ```json
 {
-  "error": "No active runbook",
+  "kind": "warning",
+  "message": "No active runbook",
   "code": "NO_ACTIVE_RUNBOOK"
 }
 ```

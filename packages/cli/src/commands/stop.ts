@@ -7,12 +7,12 @@ import { buildMetadata } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { handleParentCompletion, extractParentLinkage } from '../helpers/delegation-completion.js';
-import { resolveCallerIdentity } from '../helpers/caller-identity.js';
 import { resolveActiveRunbook } from '../helpers/active-runbook-resolver.js';
 import {
   cleanupOrphanedActiveStack,
   isRecoverableActiveStackError,
 } from '../helpers/active-runbook-cleanup.js';
+import { parseClaimIdOption } from '../helpers/claim-id-option.js';
 
 /**
  * Registers the 'stop' command for aborting runbooks.
@@ -23,39 +23,33 @@ export function registerStopCommand(program: Command): void {
     .command('stop')
     .description('Abort current runbook')
     .argument('[message]', 'Stop message')
+    .option('--claim-id <claimId>', 'Target a claimed delegated child runbook')
     .option('--text', 'Output as human-readable text')
-    .action(async (message: string | undefined, options: { text?: boolean }) => {
+    .action(async (message: string | undefined, options: { claimId?: string; text?: boolean }) => {
       await withErrorHandling(
         async () => {
           const cwd = getCwd();
-          const output = new OutputEmitter({ text: options.text });
+          const output = new OutputEmitter({ text: options.text, command: 'stop' });
           const manager = new RunbookStateManager(cwd);
           const sessionService = new SessionService(manager);
 
           let state: RunbookState | null = null;
           let getActiveError: Error | undefined;
-          let cleanedStaleOwnedRunbook = false;
-          const caller = resolveCallerIdentity();
+          const claimTarget = parseClaimIdOption(options.claimId, output);
+          if (!claimTarget.ok) return;
           try {
-            const active = await resolveActiveRunbook(sessionService, caller);
+            const active = await resolveActiveRunbook(sessionService, {
+              claimId: claimTarget.claimId,
+            });
             switch (active.kind) {
-              case 'owned':
+              case 'claim':
               case 'default':
                 state = active.state;
                 break;
               case 'none':
-                if (caller.kind === 'identified') {
-                  output.noActiveRunbook('stop');
-                  output.flush();
-                  return;
-                }
                 break;
-              case 'stale_owner':
-                await sessionService.releaseRunbook(active.ownership.childRunId);
-                cleanedStaleOwnedRunbook = true;
-                break;
-              case 'invalid_identity':
-                output.error(active.message, 'OWNED_RUNBOOK_UNAVAILABLE');
+              case 'stale_claim':
+                output.error(active.message, 'CLAIMED_RUNBOOK_UNAVAILABLE');
                 output.flush();
                 process.exitCode = 1;
                 return;
@@ -69,15 +63,15 @@ export function registerStopCommand(program: Command): void {
           }
 
           if (!state) {
-            if (cleanedStaleOwnedRunbook) {
-              output.stopped('Removed unusable owned runbook state from session');
-              output.flush();
-              return;
-            }
             // Unexpected errors must propagate — but stale/corrupted state errors
             // fall through to the orphan cleanup path since stop is a cleanup command.
             if (getActiveError && !isRecoverableActiveStackError(getActiveError)) {
               throw getActiveError;
+            }
+            if (claimTarget.claimId !== undefined) {
+              output.noActiveRunbook('stop');
+              output.flush();
+              return;
             }
             const orphanId = await cleanupOrphanedActiveStack(manager, sessionService);
             if (orphanId) {

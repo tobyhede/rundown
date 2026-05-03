@@ -90,7 +90,7 @@ export function registerRunCommand(program: Command): void {
           inputJson?: string[];
         },
       ) => {
-        const output = new OutputEmitter({ text: options.text });
+        const output = new OutputEmitter({ text: options.text, command: 'run' });
 
         try {
           const cwd = getCwd();

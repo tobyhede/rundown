@@ -16,6 +16,7 @@
 
 import { z } from 'zod';
 import { TemplateVarValueSchema } from '../schemas.js';
+import { CLAIM_ID_PATTERN } from '../runbook/claim-id.js';
 import { DELEGATION_TOKEN_PATTERN } from '../runbook/delegation-token.js';
 
 // ============================================================================
@@ -42,10 +43,14 @@ export const CLIErrorCodes = {
   ALREADY_STASHED: 'ALREADY_STASHED',
   /** No stashed runbook to restore */
   NO_STASHED_RUNBOOK: 'NO_STASHED_RUNBOOK',
-  /** Caller-owned runbook is missing, terminal, or otherwise unavailable */
-  OWNED_RUNBOOK_UNAVAILABLE: 'OWNED_RUNBOOK_UNAVAILABLE',
-  /** Caller identity environment variables are inconsistent or invalid */
-  INVALID_CALLER_IDENTITY: 'INVALID_CALLER_IDENTITY',
+  /** Claim id format is invalid */
+  INVALID_CLAIM_ID: 'INVALID_CLAIM_ID',
+  /** Claimed runbook is missing, terminal, or otherwise unavailable */
+  CLAIMED_RUNBOOK_UNAVAILABLE: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+  /** Child run state file is missing on disk (transient — pruning may help) */
+  CHILD_RUN_MISSING: 'CHILD_RUN_MISSING',
+  /** Child runbook's persisted parentLinkage diverges from the freshly token-validated linkage (state corruption — operator intervention required) */
+  CHILD_LINKAGE_MISMATCH: 'CHILD_LINKAGE_MISMATCH',
   /** Delegation token format is invalid */
   INVALID_TOKEN: 'INVALID_TOKEN',
   /** Delegation token was not found */
@@ -54,16 +59,28 @@ export const CLIErrorCodes = {
   DELEGATION_CANCELLED: 'DELEGATION_CANCELLED',
   /** Delegation lock could not be acquired */
   DELEGATION_LOCK_TIMEOUT: 'DELEGATION_LOCK_TIMEOUT',
-  /** Delegation is already owned by another caller */
-  DELEGATION_OWNER_CONFLICT: 'DELEGATION_OWNER_CONFLICT',
+  /** Nested delegation forbidden (claimed child cannot delegate further) */
+  DELEGATION_NESTED_FORBIDDEN: 'DELEGATION_NESTED_FORBIDDEN',
   /** Runbook launch failed */
   LAUNCH_FAILED: 'LAUNCH_FAILED',
+  /** Fresh claim launch violated write-side invariants */
+  CLAIM_INVARIANT_VIOLATED: 'RD-820',
   /** Scenario not found */
   SCENARIO_NOT_FOUND: 'SCENARIO_NOT_FOUND',
   /** File system operation failed */
   FILE_ERROR: 'FILE_ERROR',
   /** Unknown or unexpected error */
   UNKNOWN_ERROR: 'UNKNOWN_ERROR',
+} as const;
+
+/**
+ * Machine-readable warning codes for CLI JSON output.
+ *
+ * These codes enable programmatic handling of non-error conditions.
+ */
+export const CLIWarningCodes = {
+  /** No runbook is currently active */
+  NO_ACTIVE_RUNBOOK: 'NO_ACTIVE_RUNBOOK',
 } as const;
 
 /**
@@ -78,14 +95,17 @@ export const ErrorCodeSchema = z
     'VALIDATION_ERROR',
     'ALREADY_STASHED',
     'NO_STASHED_RUNBOOK',
-    'OWNED_RUNBOOK_UNAVAILABLE',
-    'INVALID_CALLER_IDENTITY',
+    'INVALID_CLAIM_ID',
+    'CLAIMED_RUNBOOK_UNAVAILABLE',
+    'CHILD_RUN_MISSING',
+    'CHILD_LINKAGE_MISMATCH',
     'INVALID_TOKEN',
     'TOKEN_NOT_FOUND',
     'DELEGATION_CANCELLED',
     'DELEGATION_LOCK_TIMEOUT',
-    'DELEGATION_OWNER_CONFLICT',
+    'DELEGATION_NESTED_FORBIDDEN',
     'LAUNCH_FAILED',
+    'RD-820',
     'SCENARIO_NOT_FOUND',
     'FILE_ERROR',
     'UNKNOWN_ERROR',
@@ -93,9 +113,21 @@ export const ErrorCodeSchema = z
   .describe('Error code identifying the type of error that occurred');
 
 /**
+ * Zod schema for warning codes.
+ */
+export const WarningCodeSchema = z
+  .enum(['NO_ACTIVE_RUNBOOK'])
+  .describe('Warning code identifying the non-error condition that occurred');
+
+/**
  * Union type of all valid CLI error codes.
  */
 export type CLIErrorCode = (typeof CLIErrorCodes)[keyof typeof CLIErrorCodes];
+
+/**
+ * Union type of all valid CLI warning codes.
+ */
+export type CLIWarningCode = (typeof CLIWarningCodes)[keyof typeof CLIWarningCodes];
 
 // ============================================================================
 // Shared Schemas
@@ -209,6 +241,30 @@ export const ErrorResponseSchema = z
     details: ErrorDetailsSchema.optional().describe('Additional error context'),
   })
   .describe('Error response indicating command execution failure')
+  .passthrough();
+
+/**
+ * Warning response schema.
+ *
+ * Used for conditions that are not errors but merit attention — for example,
+ * commands run when no runbook is active (exit 0, but no work was performed).
+ *
+ * Unlike `ErrorResponseSchema`, warning responses exit 0 and carry a `message`
+ * field rather than an `error` field. The `code` field is scoped to
+ * machine-readable warning codes.
+ */
+export const WarningResponseSchema = z
+  .object({
+    /** Response kind discriminant */
+    kind: z.literal('warning').describe('Response type discriminant'),
+    /** Human-readable warning message */
+    message: z.string().describe('Warning message describing the condition'),
+    /** Machine-readable warning code for programmatic handling */
+    code: WarningCodeSchema.optional().describe('Warning code for programmatic handling'),
+    /** CLI command that triggered the warning (e.g., 'pass', 'fail', 'goto') */
+    command: z.string().optional().describe('CLI command that triggered the warning'),
+  })
+  .describe('Warning response for conditions that are not errors but merit attention')
   .passthrough();
 
 // ============================================================================
@@ -649,6 +705,48 @@ export const ScenarioStepAssertionResultSchema = z
   .describe('Result of matching a step assertion against the event stream');
 
 /**
+ * Schema for a single JSON error assertion as specified in the scenario.
+ */
+export const ErrorAssertionInputSchema = z
+  .object({
+    /** Error code */
+    code: z.string().optional().describe('Error code'),
+    /** CLI command that triggered the error */
+    command: z.string().optional().describe('Command that triggered the error'),
+    /** Error message substring */
+    error: z.string().optional().describe('Error message substring'),
+  })
+  .describe('Error assertion from scenario definition');
+
+/**
+ * Schema for a captured JSON error response.
+ */
+export const CapturedErrorSchema = z
+  .object({
+    /** Error code */
+    code: z.string().optional().describe('Error code'),
+    /** Human-readable error message */
+    error: z.string().optional().describe('Error message'),
+    /** CLI command that triggered the error */
+    command: z.string().optional().describe('Command that triggered the error'),
+  })
+  .describe('Captured error response from command execution');
+
+/**
+ * Error assertion result from matching against JSON error responses.
+ */
+export const ScenarioErrorAssertionResultSchema = z
+  .object({
+    /** The assertion that was evaluated */
+    assertion: ErrorAssertionInputSchema.describe('The assertion that was evaluated'),
+    /** Whether a matching error was found */
+    matched: z.boolean().describe('Whether a matching error was found'),
+    /** The error that matched (if any) */
+    matchedError: CapturedErrorSchema.optional().describe('The error that matched'),
+  })
+  .describe('Result of matching an error assertion against captured errors');
+
+/**
  * Scenario run result.
  */
 export const ScenarioRunResponseSchema = z
@@ -670,6 +768,11 @@ export const ScenarioRunResponseSchema = z
       .array(ScenarioStepAssertionResultSchema)
       .optional()
       .describe('Per-step assertion results'),
+    /** Per-error assertion results (present when expect.errors block is used) */
+    errorAssertions: z
+      .array(ScenarioErrorAssertionResultSchema)
+      .optional()
+      .describe('Per-error assertion results'),
   })
   .describe('Response from scenario run command');
 
@@ -979,6 +1082,8 @@ export const ClaimResponseSchema = ExecutionSummarySchema.extend({
   action: z.literal('claimed').describe('Action type'),
   /** Truncated delegation token */
   token: z.string().describe('Truncated delegation token'),
+  /** Claim ID for explicit child targeting */
+  claim_id: z.string().regex(CLAIM_ID_PATTERN).describe('Claim ID for explicit child targeting'),
   /** Child run ID */
   run_id: z.string().describe('Child run ID'),
   /** Child runbook path */
@@ -1010,6 +1115,9 @@ export type SuccessResponse = z.infer<typeof SuccessResponseSchema>;
 
 /** Error response */
 export type ErrorResponse = z.infer<typeof ErrorResponseSchema>;
+
+/** Warning response (non-error, exit 0 conditions) */
+export type WarningResponse = z.infer<typeof WarningResponseSchema>;
 
 /** Action response (pass, fail, goto, stop, complete) */
 export type ActionResponse = z.infer<typeof ActionResponseSchema>;
@@ -1105,6 +1213,7 @@ export type ClaimResponse = z.infer<typeof ClaimResponseSchema>;
 export type CLIResponse =
   | ActionResponse
   | ErrorResponse
+  | WarningResponse
   | StatusResponse
   | CheckResponse
   | ResolveResponse

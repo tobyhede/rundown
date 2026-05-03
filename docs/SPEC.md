@@ -186,7 +186,7 @@ GOTO targeting the containing step (self-reference) without an AT qualifier may 
 
 Use `- DELEGATE` when the nested runbook should run **out-of-process** in a subagent. A runbook-list entry without `- DELEGATE` is inline linkage and runs in the same process — see [§3.2](#32-substeps).
 
-`- DELEGATE` is a structural bullet annotation that marks substeps for delegation. When a DELEGATE step is entered, the execution engine auto-issues a delegation token for each marked substep and surfaces them in the `STEP_ENTERED` event's `delegateFrontier` field (an array of `{id, runbook, token}`). Subagents claim each token with `rd claim`, resolve with `rd pass`/`rd fail`, and the final resolution triggers auto-aggregation of the parent step's transition.
+`- DELEGATE` is a structural bullet annotation that marks substeps for delegation. When a DELEGATE step is entered, the execution engine auto-issues a delegation token for each marked substep and surfaces them in the `STEP_ENTERED` event's `delegateFrontier` field (an array of `{id, runbook, token}`). Subagents claim each token with `rd claim`, copy the returned `claim_id`, resolve with `rd pass --claim-id <claim_id>` or `rd fail --claim-id <claim_id>`, and the final resolution triggers auto-aggregation of the parent step's transition.
 
 **Syntax.** The annotation is bare — `DELEGATE foo` is a syntax error. DELEGATE accepts three equivalent forms:
 

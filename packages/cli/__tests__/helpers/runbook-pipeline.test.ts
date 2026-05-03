@@ -103,7 +103,6 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     TOKEN_CANCELLED: { code: 'RD-809' },
     DELEGATION_LOCK_TIMEOUT: { code: 'RD-810' },
     LAUNCH_FAILED: { code: 'RD-816' },
-    DELEGATION_OWNER_CONFLICT: { code: 'RD-819' },
   },
   isJsonArray: jest.fn((v: unknown) => Array.isArray(v)),
   isJsonArrayStream: jest.fn(realIsJsonArrayStream),
@@ -951,6 +950,11 @@ describe('startRunbook', () => {
       } as unknown as RunbookActorService,
       sessionService: {
         pushRunbook: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
+        claimRunbook: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
+          status: 'claimed',
+          // cspell:disable-next-line
+          claim: { claimId: 'rdclm_abcdefghijklmnopqrstu1' },
+        }),
       } as unknown as SessionService,
       lifecycleService: makeLifecycle() as unknown as ExecutionLifecycleService,
       cwd: '/test',
@@ -1005,6 +1009,11 @@ describe('startRunbook', () => {
       } as unknown as RunbookActorService,
       sessionService: {
         pushRunbook: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
+        claimRunbook: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
+          status: 'claimed',
+          // cspell:disable-next-line
+          claim: { claimId: 'rdclm_abcdefghijklmnopqrstu1' },
+        }),
       } as unknown as SessionService,
       lifecycleService: makeLifecycle() as unknown as ExecutionLifecycleService,
       cwd: '/test',
@@ -1125,11 +1134,16 @@ describe('claimAndLaunch', () => {
         }) as unknown as jest.MockedObject<DelegationLock>,
     );
 
+    const claimSpy = mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
+      status: 'claimed',
+      // cspell:disable-next-line
+      claim: { claimId: 'rdclm_abcdefghijklmnopqrstu1' },
+    });
     const ctx = {
-      output: {} as unknown as OutputEmitter,
+      output: { status: jest.fn(), flush: jest.fn() } as unknown as OutputEmitter,
       manager: mockManager as unknown as RunbookStateManager,
       actorService: {} as unknown as RunbookActorService,
-      sessionService: {} as unknown as SessionService,
+      sessionService: { claimRunbook: claimSpy } as unknown as SessionService,
       lifecycleService: {} as unknown as ExecutionLifecycleService,
       cwd: '/test',
     } satisfies RunPipelineContext;
@@ -1270,11 +1284,16 @@ describe('claimAndLaunch', () => {
         }) as unknown as jest.MockedObject<DelegationLock>,
     );
 
+    const claimSpy = mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
+      status: 'claimed',
+      // cspell:disable-next-line
+      claim: { claimId: 'rdclm_abcdefghijklmnopqrstu1' },
+    });
     const ctx = {
-      output: {} as unknown as OutputEmitter,
+      output: { status: jest.fn(), flush: jest.fn() } as unknown as OutputEmitter,
       manager: mockManager as unknown as RunbookStateManager,
       actorService: {} as unknown as RunbookActorService,
-      sessionService: {} as unknown as SessionService,
+      sessionService: { claimRunbook: claimSpy } as unknown as SessionService,
       lifecycleService: {} as unknown as ExecutionLifecycleService,
       cwd: '/test',
     } satisfies RunPipelineContext;
@@ -1338,26 +1357,17 @@ describe('claimAndLaunch', () => {
     );
 
     const claimSpy = mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
-      status: 'conflict',
-      existing: {
-        kind: 'agent-owned-runbook',
-        ownerKey: 'agent:agent-a:session:session-a',
-        agent_id: 'agent-a',
-        session_id: 'session-a',
-        childRunId: 'existing-child-id',
-        tokenHash: MOCK_TOKEN_HASH,
-        parentRunId: 'parent-id',
-        parentStepId: '1',
-        claimedAt: '2026-04-28T00:00:00.000Z',
-        updatedAt: '2026-04-28T00:00:00.000Z',
+      status: 'claimed',
+      claim: {
+        claimId: 'rdclm_abcdefghijklmnopqrstu1',
       },
     });
     const mockSessionService = {
-      claimRunbookForOwner: claimSpy,
+      claimRunbook: claimSpy,
     } as unknown as SessionService;
 
     const ctx = {
-      output: {} as unknown as OutputEmitter,
+      output: { status: jest.fn(), flush: jest.fn() } as unknown as OutputEmitter,
       manager: mockManager as unknown as RunbookStateManager,
       actorService: {} as unknown as RunbookActorService,
       sessionService: mockSessionService,
@@ -1366,18 +1376,12 @@ describe('claimAndLaunch', () => {
     } satisfies RunPipelineContext;
 
     const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
-    const intruder = {
-      kind: 'agent-session' as const,
-      agent_id: 'agent-b',
-      session_id: 'session-b',
-    };
     // cspell:disable-next-line
-    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {}, intruder);
+    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      assertVariant(result, 'reason', 'owner-conflict');
-      expect(result.existingOwnerAgentId).toBe('agent-a');
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.claimId).toBe('rdclm_abcdefghijklmnopqrstu1');
     }
   });
 
@@ -1442,26 +1446,22 @@ describe('claimAndLaunch', () => {
     );
 
     const claimSpy = mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
-      status: 'conflict',
-      existing: {
-        kind: 'agent-owned-runbook',
-        ownerKey: 'agent:agent-a:session:session-a',
-        agent_id: 'agent-a',
-        session_id: 'session-a',
-        childRunId: 'orphan-id',
-        tokenHash,
-        parentRunId: 'parent-id',
+      status: 'linkage-mismatch',
+      childRunId: 'orphan-id',
+      persisted: orphanState.parentLinkage,
+      incoming: {
+        kind: 'delegation',
+        parentRunId: 'different-parent-id',
         parentStepId: '1',
-        claimedAt: '2026-04-28T00:00:00.000Z',
-        updatedAt: '2026-04-28T00:00:00.000Z',
+        tokenHash,
       },
     });
     const mockSessionService = {
-      claimRunbookForOwner: claimSpy,
+      claimRunbook: claimSpy,
     } as unknown as SessionService;
 
     const ctx = {
-      output: {} as unknown as OutputEmitter,
+      output: { status: jest.fn(), flush: jest.fn() } as unknown as OutputEmitter,
       manager: mockManager as unknown as RunbookStateManager,
       actorService: {} as unknown as RunbookActorService,
       sessionService: mockSessionService,
@@ -1470,19 +1470,15 @@ describe('claimAndLaunch', () => {
     } satisfies RunPipelineContext;
 
     const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
-    const intruder = {
-      kind: 'agent-session' as const,
-      agent_id: 'agent-b',
-      session_id: 'session-b',
-    };
     // cspell:disable-next-line
-    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {}, intruder);
+    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      assertVariant(result, 'reason', 'owner-conflict');
-      expect(result.existingOwnerAgentId).toBe('agent-a');
+      assertVariant(result, 'reason', 'linkage-mismatch');
+      expect(result.childRunId).toBe('orphan-id');
     }
+    expect(mockManager.update).not.toHaveBeenCalled();
   });
 
   it('launches new child when no orphan exists', async () => {
@@ -1562,6 +1558,11 @@ describe('claimAndLaunch', () => {
       } as unknown as RunbookActorService,
       sessionService: {
         pushRunbook: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
+        claimRunbook: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
+          status: 'claimed',
+          // cspell:disable-next-line
+          claim: { claimId: 'rdclm_abcdefghijklmnopqrstu1' },
+        }),
       } as unknown as SessionService,
       lifecycleService: makeLifecycle() as unknown as ExecutionLifecycleService,
       cwd: '/test',
@@ -1675,6 +1676,11 @@ describe('claimAndLaunch', () => {
       } as unknown as RunbookActorService,
       sessionService: {
         pushRunbook: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
+        claimRunbook: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
+          status: 'claimed',
+          // cspell:disable-next-line
+          claim: { claimId: 'rdclm_abcdefghijklmnopqrstu1' },
+        }),
       } as unknown as SessionService,
       lifecycleService: makeLifecycle() as unknown as ExecutionLifecycleService,
       cwd: '/test',
@@ -1801,6 +1807,11 @@ describe('claimAndLaunch', () => {
       } as unknown as RunbookActorService,
       sessionService: {
         pushRunbook: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
+        claimRunbook: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
+          status: 'claimed',
+          // cspell:disable-next-line
+          claim: { claimId: 'rdclm_abcdefghijklmnopqrstu1' },
+        }),
       } as unknown as SessionService,
       lifecycleService: makeLifecycle() as unknown as ExecutionLifecycleService,
       cwd: '/test',
@@ -1974,6 +1985,11 @@ describe('claimAndLaunch', () => {
       } as unknown as RunbookActorService,
       sessionService: {
         pushRunbook: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
+        claimRunbook: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
+          status: 'claimed',
+          // cspell:disable-next-line
+          claim: { claimId: 'rdclm_abcdefghijklmnopqrstu1' },
+        }),
       } as unknown as SessionService,
       lifecycleService: makeLifecycle() as unknown as ExecutionLifecycleService,
       cwd: '/test',

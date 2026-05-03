@@ -181,7 +181,7 @@ export function stripExitArtefact(buf: string): string {
   // start AND one preceded by a newline that terminated a legitimate line.
   // The previous `(?<=\n)` lookbehind missed the buffer-start case.
   const artefactPattern =
-    /(^|\n)\{\s*"error":\s*"process\.exit\(\d+\)",\s*"kind":\s*"error",\s*"code":\s*"UNKNOWN_ERROR"\s*\}\s*$/;
+    /(^|\n)\{\s*"error":\s*"process\.exit\(\d+\)",\s*"kind":\s*"error",\s*"code":\s*"UNKNOWN_ERROR"(?:,\s*"command":\s*"[^"]+")?\s*\}\s*$/;
   let out = buf.replace(artefactPattern, '$1');
   // `getErrorMessage(err)` on ExitSignal also produces a bare "process.exit(N)"
   // tail that may be appended elsewhere; swallow that too at end-of-buffer.
@@ -389,16 +389,15 @@ export async function runCliInProcess(
  * Maps internal session fields to test-friendly names:
  * - `defaultStack` (top of default stack) → `active`
  * - `stashedRunbookId` (from RunbookStateManager) → `stashed`
- * - `stacks` (for legacy multi-agent runbooks) → `stacks`
  * - `defaultStack` (default stack for runbooks) → `defaultStack`
+ * - `claims` (delegated child claim registry) → `claims`
  */
 export async function readSession(workspace: TestWorkspace): Promise<{
   active: string | null;
   stashed: string | null;
-  stashedRunbookOwnership?: Record<string, unknown>;
   stacks: Record<string, string[]>;
   defaultStack: string[];
-  ownedRunbooks: Record<string, unknown[]>;
+  claims: Record<string, Record<string, unknown>>;
 }> {
   try {
     const content = await readFile(workspace.sessionPath(), 'utf-8');
@@ -406,9 +405,9 @@ export async function readSession(workspace: TestWorkspace): Promise<{
 
     const stacks = (session.stacks as Record<string, string[]> | undefined) ?? {};
     const defaultStack = (session.defaultStack as string[] | undefined) ?? [];
-    const ownedRunbooks =
-      session.ownedRunbooks && typeof session.ownedRunbooks === 'object'
-        ? (session.ownedRunbooks as Record<string, unknown[]>)
+    const claims =
+      session.claims && typeof session.claims === 'object'
+        ? (session.claims as Record<string, Record<string, unknown>>)
         : {};
 
     // Active runbook is the top of the default stack
@@ -417,16 +416,18 @@ export async function readSession(workspace: TestWorkspace): Promise<{
     return {
       active,
       stashed: typeof session.stashedRunbookId === 'string' ? session.stashedRunbookId : null,
-      stashedRunbookOwnership:
-        session.stashedRunbookOwnership && typeof session.stashedRunbookOwnership === 'object'
-          ? (session.stashedRunbookOwnership as Record<string, unknown>)
-          : undefined,
       stacks,
       defaultStack,
-      ownedRunbooks,
+      claims,
     };
   } catch {
-    return { active: null, stashed: null, stacks: {}, defaultStack: [], ownedRunbooks: {} };
+    return {
+      active: null,
+      stashed: null,
+      stacks: {},
+      defaultStack: [],
+      claims: {},
+    };
   }
 }
 
@@ -436,17 +437,16 @@ export async function readSession(workspace: TestWorkspace): Promise<{
  * Uses stack-based format:
  * - `active` is written to the top of `defaultStack`
  * - `stashed` is written to `stashedRunbookId`
- * - `stacks` for multi-agent runbooks
+ * - `claims` for delegated children
  */
 export async function writeSession(
   workspace: TestWorkspace,
   session: {
     active?: string | null;
     stashed?: string | null;
-    stashedRunbookOwnership?: Record<string, unknown>;
-    ownedRunbooks?: Record<string, unknown[]>;
     stacks?: Record<string, string[]>;
     defaultStack?: string[];
+    claims?: Record<string, Record<string, unknown>>;
   },
 ): Promise<void> {
   const sessionData: Record<string, unknown> = {};
@@ -467,11 +467,8 @@ export async function writeSession(
   if (session.stashed !== undefined) {
     sessionData.stashedRunbookId = session.stashed;
   }
-  if (session.stashedRunbookOwnership !== undefined) {
-    sessionData.stashedRunbookOwnership = session.stashedRunbookOwnership;
-  }
-  if (session.ownedRunbooks !== undefined) {
-    sessionData.ownedRunbooks = session.ownedRunbooks;
+  if (session.claims !== undefined) {
+    sessionData.claims = session.claims;
   }
 
   await writeFile(workspace.sessionPath(), JSON.stringify(sessionData, null, 2));
@@ -697,6 +694,22 @@ export function parseJsonEvents(stdout: string): JsonOutputEvent[] {
     }
   }
   return events;
+}
+
+/**
+ * Extract a delegation token from a `rd delegate` JSON stdout payload.
+ *
+ * @param stdout - The stdout string from `rd delegate`
+ * @returns The token string
+ * @throws If the output is not parseable JSON or has no `token` field
+ */
+export function extractToken(stdout: string): string {
+  const action = findActionOutput(stdout);
+  const token = action?.token;
+  if (typeof token !== 'string' || token.length === 0) {
+    throw new Error(`No token found in delegate output:\n${stdout}`);
+  }
+  return token;
 }
 
 /**
@@ -1123,6 +1136,9 @@ export function normalizeCliOutput(output: string, workspace: TestWorkspace): st
   //    after the prefix has been replaced by the broader rule below.
   text = text.replace(/rdtk_[A-Za-z0-9]+\.{3}[A-Za-z0-9]+/g, '<token>');
   text = text.replace(/rdtk_[A-Za-z0-9]+/g, '<token>');
+
+  // 3b. Claim ids (CLAIM_ID_PREFIX from packages/core/src/runbook/claim-id.ts)
+  text = text.replace(/rdclm_[A-Za-z0-9_-]{22}/g, '<claimId>');
 
   // 4. SHA-256 hex digests (e.g. delegation token_hash field)
   text = text.replace(/sha256:[0-9a-f]{64}/g, '<tokenHash>');

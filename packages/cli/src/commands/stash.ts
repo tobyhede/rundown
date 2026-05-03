@@ -6,8 +6,8 @@ import { getCwd, getStepTotal } from '../helpers/context.js';
 import { buildMetadata } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
-import { resolveCallerIdentity } from '../helpers/caller-identity.js';
 import { resolveActiveRunbook } from '../helpers/active-runbook-resolver.js';
+import { parseClaimIdOption } from '../helpers/claim-id-option.js';
 
 /**
  * Registers the 'stash' command for pausing runbook enforcement.
@@ -17,27 +17,31 @@ export function registerStashCommand(program: Command): void {
   program
     .command('stash')
     .description('Pause runbook enforcement, preserve state')
+    .option('--claim-id <claimId>', 'Target a claimed delegated child runbook')
     .option('--text', 'Output as human-readable text')
-    .action(async (options: { text?: boolean }) => {
+    .action(async (options: { claimId?: string; text?: boolean }) => {
       await withErrorHandling(
         async () => {
           const cwd = getCwd();
-          const output = new OutputEmitter({ text: options.text });
+          const output = new OutputEmitter({ text: options.text, command: 'stash' });
           const manager = new RunbookStateManager(cwd);
           const sessionService = new SessionService(manager);
-          const active = await resolveActiveRunbook(sessionService, resolveCallerIdentity());
+          const claimTarget = parseClaimIdOption(options.claimId, output);
+          if (!claimTarget.ok) return;
+          const active = await resolveActiveRunbook(sessionService, {
+            claimId: claimTarget.claimId,
+          });
 
           switch (active.kind) {
-            case 'owned':
+            case 'claim':
             case 'default':
               break;
             case 'none':
               output.noActiveRunbook();
               output.flush();
               return;
-            case 'stale_owner':
-            case 'invalid_identity':
-              output.error(active.message, 'OWNED_RUNBOOK_UNAVAILABLE');
+            case 'stale_claim':
+              output.error(active.message, 'CLAIMED_RUNBOOK_UNAVAILABLE');
               output.flush();
               process.exitCode = 1;
               return;
@@ -51,10 +55,7 @@ export function registerStashCommand(program: Command): void {
           const totalSteps = await getStepTotal(cwd, state.runbook);
 
           // Stash the runbook
-          const stashedId =
-            active.kind === 'owned'
-              ? await sessionService.stashRunbook(state.id)
-              : await sessionService.stash();
+          const stashedId = await sessionService.stashRunbook(state.id);
           if (!stashedId) {
             output.error('A runbook is already stashed. Pop it first.', 'ALREADY_STASHED');
             output.flush();

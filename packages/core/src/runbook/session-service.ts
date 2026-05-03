@@ -13,19 +13,65 @@
 import type { RunbookStateManager } from './state.js';
 import { SessionLock } from './session-lock.js';
 import {
-  buildAgentOwnerKey,
-  createAgentRunbookOwnership,
-  SessionOwnershipMismatchError,
-  SessionStashOwnershipMissingError,
-  SessionStashOwnershipRequiredError,
-  type AgentOwnerIdentity,
-  type AgentOwnerKey,
-  type AgentRunbookOwnership,
-  type ClaimRunbookForOwnerResult,
-  type OwnedRunbookResolution,
-  type ReleaseRunbookResult,
-} from './agent-ownership.js';
+  createClaimRecord,
+  generateClaimId,
+  type ClaimId,
+  type ClaimIdResolution,
+  type ClaimRecord,
+  type ClaimRunbookResult,
+} from './claim-id.js';
 import type { DelegationLinkage, RunbookState } from './types.js';
+
+/** Result of removing a runbook from session targeting structures. */
+export type ReleaseRunbookResult =
+  | { readonly status: 'not-found'; readonly runbookId: RunbookState['id'] }
+  | {
+      readonly status: 'released';
+      readonly runbookId: RunbookState['id'];
+      readonly removedFromDefaultStack: boolean;
+      readonly nextDefaultRunbookId: RunbookState['id'] | null;
+    };
+
+/**
+ * True when persisted child linkage matches an incoming delegation linkage on the
+ * three identifying fields (`parentRunId`, `parentStepId`, `tokenHash`).
+ *
+ * Used by {@link SessionService.claimRunbook} to refuse a claim when the child's
+ * persisted linkage disagrees with the freshly token-validated linkage the caller
+ * is presenting — a fail-closed signal for state corruption.
+ *
+ * @param persisted - Parent linkage stored on the child runbook state
+ * @param incoming - Freshly built delegation linkage offered by the caller
+ * @returns `true` only when both are delegation-shaped and all identifying fields agree
+ */
+function linkageMatchesLinkage(
+  persisted: RunbookState['parentLinkage'],
+  incoming: DelegationLinkage,
+): boolean {
+  return (
+    persisted?.kind === 'delegation' &&
+    persisted.parentRunId === incoming.parentRunId &&
+    persisted.parentStepId === incoming.parentStepId &&
+    persisted.tokenHash === incoming.tokenHash
+  );
+}
+
+/**
+ * True when `linkage` is a delegation linkage that matches `claim`'s parent run / step / token hash.
+ * Used to verify a child runbook's parentLinkage genuinely originated from the supplied claim record.
+ *
+ * @param linkage - Parent linkage stored on the child runbook state (any kind, including non-delegation or absent)
+ * @param claim - Claim record whose parent run id, parent step id, and token hash must all match
+ * @returns `true` only when `linkage.kind === 'delegation'` and every identifying field matches `claim`; `false` otherwise
+ */
+function linkageMatchesClaim(linkage: RunbookState['parentLinkage'], claim: ClaimRecord): boolean {
+  return (
+    linkage?.kind === 'delegation' &&
+    linkage.parentRunId === claim.parentRunId &&
+    linkage.parentStepId === claim.parentStepId &&
+    linkage.tokenHash === claim.tokenHash
+  );
+}
 
 /**
  * Manages runbook session stacks and stash operations.
@@ -69,23 +115,23 @@ export class SessionService {
     }
   }
 
-  /**
-   * Return an owner stack, creating and storing an empty stack when absent.
-   *
-   * This helper intentionally mutates `ownedRunbooks` so callers can append to
-   * the returned array and persist the existing session object.
-   *
-   * @param ownedRunbooks - Session ownership map to mutate when the owner is absent
-   * @param ownerKey - Owner key whose stack should exist
-   * @returns Existing or newly inserted ownership stack
-   */
-  private ensureOwnershipStack(
-    ownedRunbooks: Record<string, AgentRunbookOwnership[]>,
-    ownerKey: AgentOwnerKey,
-  ): AgentRunbookOwnership[] {
-    const stack = ownedRunbooks[ownerKey] ?? [];
-    ownedRunbooks[ownerKey] = stack;
-    return stack;
+  private findClaimByChildRunId(
+    claims: Record<string, ClaimRecord>,
+    childRunId: RunbookState['id'],
+  ): ClaimRecord | undefined {
+    return Object.values(claims).find((claim) => claim.childRunId === childRunId);
+  }
+
+  private findClaimByDelegationLinkage(
+    claims: Record<string, ClaimRecord>,
+    linkage: DelegationLinkage,
+  ): ClaimRecord | undefined {
+    return Object.values(claims).find(
+      (claim) =>
+        claim.parentRunId === linkage.parentRunId &&
+        claim.parentStepId === linkage.parentStepId &&
+        claim.tokenHash === linkage.tokenHash,
+    );
   }
 
   /**
@@ -119,91 +165,142 @@ export class SessionService {
   }
 
   /**
-   * Record that a caller owns a delegated child runbook.
+   * Resolve an existing claim record for a delegation linkage, if one has
+   * already been created.
    *
-   * Idempotent re-claim by the same identity refreshes the entry and returns `claimed`.
-   * A claim from a different identity against an existing entry for the same `childRunId`
-   * is rejected with `conflict` — a delegation may be owned by at most one caller.
-   *
-   * @param identity - Caller identity that claimed the delegation
-   * @param childRunId - Child run id created or reused by claim
-   * @param linkage - Delegation linkage written to the child state
-   * @returns Discriminated result indicating `claimed` (with new ownership) or `conflict` (with the existing owner record)
+   * @param linkage - Delegation linkage to match by parent run, parent step, and token hash
+   * @returns The matching claim record, or `null` when the delegation has not been claimed
    */
-  async claimRunbookForOwner(
-    identity: AgentOwnerIdentity,
-    childRunId: RunbookState['id'],
-    linkage: DelegationLinkage,
-  ): Promise<ClaimRunbookForOwnerResult> {
+  async findClaimForDelegation(linkage: DelegationLinkage): Promise<ClaimRecord | null> {
     return this.withLock(async () => {
       const session = await this.manager.loadSession();
-      const ownerKey = buildAgentOwnerKey(identity);
-
-      if (session.stashedRunbookOwnership?.childRunId === childRunId) {
-        return {
-          status: 'conflict',
-          existing: session.stashedRunbookOwnership,
-        } satisfies ClaimRunbookForOwnerResult;
-      }
-
-      for (const [existingKey, ownershipStack] of Object.entries(session.ownedRunbooks)) {
-        const existing = ownershipStack.find((ownership) => ownership.childRunId === childRunId);
-        if (existing === undefined) {
-          continue;
-        }
-        if (existingKey !== ownerKey) {
-          return { status: 'conflict', existing } satisfies ClaimRunbookForOwnerResult;
-        }
-      }
-
-      const now = new Date().toISOString();
-      const ownershipStack = this.ensureOwnershipStack(session.ownedRunbooks, ownerKey);
-      const existingIndex = ownershipStack.findIndex(
-        (ownership) => ownership.childRunId === childRunId,
-      );
-      if (existingIndex !== -1) {
-        const existing = ownershipStack.splice(existingIndex, 1)[0];
-        const refreshed = { ...existing, updatedAt: now };
-        ownershipStack.push(refreshed);
-        await this.manager.saveSession(session);
-        return { status: 'claimed', ownership: refreshed } satisfies ClaimRunbookForOwnerResult;
-      }
-
-      const ownership = createAgentRunbookOwnership(identity, childRunId, linkage, now);
-      ownershipStack.push(ownership);
-      await this.manager.saveSession(session);
-      return { status: 'claimed', ownership } satisfies ClaimRunbookForOwnerResult;
+      return this.findClaimByDelegationLinkage(session.claims, linkage) ?? null;
     });
   }
 
   /**
-   * Resolve the active runbook owned by a caller without falling back to the default stack.
+   * Record that a delegation token has been claimed for a child runbook.
    *
-   * @param identity - Caller identity
-   * @returns Owned, unowned, or stale resolution result
+   * Validates write-side invariants before recording the claim: the child run
+   * must exist on disk, and its persisted `parentLinkage` must match the
+   * incoming `linkage` on the three identifying fields. A mismatch indicates
+   * state corruption (manual edits, stale persisted linkage from a prior
+   * delegation, cross-host state merge) and is refused rather than silently
+   * propagated into the claim record.
+   *
+   * @param childRunId - Child run id created or reused by claim
+   * @param linkage - Delegation linkage to record in the claim. Caller must build
+   *   this from freshly token-validated parent state.
+   * @returns A claim record on success, or a failure variant when the child is
+   *   missing or its persisted linkage diverges from `linkage`.
    */
-  async getActiveForOwner(identity: AgentOwnerIdentity): Promise<OwnedRunbookResolution> {
+  async claimRunbook(
+    childRunId: RunbookState['id'],
+    linkage: DelegationLinkage,
+  ): Promise<ClaimRunbookResult> {
+    return this.withLock(async () => {
+      const childState = await this.manager.load(childRunId);
+      if (!childState) {
+        return { status: 'missing-child', childRunId };
+      }
+      if (!linkageMatchesLinkage(childState.parentLinkage, linkage)) {
+        return {
+          status: 'linkage-mismatch',
+          childRunId,
+          incoming: linkage,
+          persisted: childState.parentLinkage,
+        };
+      }
+
+      const session = await this.manager.loadSession();
+      const now = new Date().toISOString();
+      const existing = this.findClaimByChildRunId(session.claims, childRunId);
+      if (existing !== undefined) {
+        const refreshed = { ...existing, updatedAt: now };
+        session.claims[existing.claimId] = refreshed;
+        await this.manager.saveSession(session);
+        return { status: 'claimed', claim: refreshed };
+      }
+
+      const existingForDelegation = this.findClaimByDelegationLinkage(session.claims, linkage);
+      if (existingForDelegation !== undefined) {
+        const existingState = await this.manager.load(existingForDelegation.childRunId);
+        if (!existingState) {
+          return { status: 'missing-child', childRunId: existingForDelegation.childRunId };
+        }
+        if (!linkageMatchesLinkage(existingState.parentLinkage, linkage)) {
+          return {
+            status: 'linkage-mismatch',
+            childRunId: existingForDelegation.childRunId,
+            incoming: linkage,
+            persisted: existingState.parentLinkage,
+          };
+        }
+        const refreshed = { ...existingForDelegation, updatedAt: now };
+        session.claims[existingForDelegation.claimId] = refreshed;
+        await this.manager.saveSession(session);
+        return { status: 'claimed', claim: refreshed };
+      }
+
+      const claimId = generateClaimId();
+      const claim = createClaimRecord(claimId, childRunId, linkage, now);
+      session.claims[claimId] = claim;
+      await this.manager.saveSession(session);
+      return { status: 'claimed', claim };
+    });
+  }
+
+  /**
+   * Resolve an explicit claim id to an active child runbook.
+   *
+   * By default, claims whose child runbook is parked in
+   * `session.stashedRunbookId` resolve as `unlinked` with `reason: 'stashed'`
+   * so write commands (pass/fail/goto/complete/stop) refuse to operate on a
+   * runbook the user explicitly parked — they must `rd pop --claim-id` first.
+   * Read-only inspection paths (e.g. `rd status --claim-id`) opt into seeing
+   * the stashed child by passing `{ includeStashed: true }`.
+   *
+   * @param claimId - Claim id returned by `rd claim`
+   * @param options - Optional resolution flags
+   * @param options.includeStashed - When true, do not gate on the stashed
+   *   runbook; the claim resolves as `claimed` even if its child is parked.
+   *   Defaults to false.
+   * @returns Claim resolution result
+   */
+  async getActiveForClaimId(
+    claimId: ClaimId,
+    options: { readonly includeStashed?: boolean } = {},
+  ): Promise<ClaimIdResolution> {
     const session = await this.manager.loadSession();
-    const ownerKey = buildAgentOwnerKey(identity);
-    const ownershipStack = session.ownedRunbooks[ownerKey] ?? [];
-    if (ownershipStack.length === 0) {
-      return { status: 'unowned', identity };
+    if (!(claimId in session.claims)) {
+      return { status: 'missing', claimId };
     }
-    const ownership = ownershipStack[ownershipStack.length - 1];
-    // Defense in depth: SessionDataSchema enforces ownerKey derivation, but
-    // return stale instead of trusting a corrupted in-memory caller.
-    if (ownership.agent_id !== identity.agent_id) {
-      return { status: 'stale', identity, ownership, reason: 'agent-mismatch' };
+    const claim = session.claims[claimId];
+
+    if (options.includeStashed !== true && session.stashedRunbookId === claim.childRunId) {
+      return { status: 'unlinked', claim, reason: 'stashed' };
     }
 
-    const state = await this.manager.load(ownership.childRunId);
+    const state = await this.manager.load(claim.childRunId);
     if (!state) {
-      return { status: 'stale', identity, ownership, reason: 'missing-state' };
+      return { status: 'stale', claim, reason: 'missing-state' };
     }
-    if (state.lifecycle !== 'running') {
-      return { status: 'stale', identity, ownership, reason: 'not-running' };
+    if (state.lifecycle === 'completed' || state.lifecycle === 'stopped') {
+      return { status: 'terminal', claim, lifecycle: state.lifecycle };
     }
-    return { status: 'owned', identity, ownership, state };
+    if (!linkageMatchesClaim(state.parentLinkage, claim)) {
+      return { status: 'unlinked', claim, reason: 'child-linkage-mismatch' };
+    }
+
+    const parent = await this.manager.load(claim.parentRunId);
+    if (!parent) {
+      return { status: 'unlinked', claim, reason: 'parent-missing' };
+    }
+    if (parent.lifecycle === 'completed' || parent.lifecycle === 'stopped') {
+      return { status: 'unlinked', claim, reason: 'parent-ended' };
+    }
+
+    return { status: 'claimed', claim, state };
   }
 
   /**
@@ -229,29 +326,20 @@ export class SessionService {
     session.defaultStack = session.defaultStack.filter((id) => id !== runbookId);
     const removedFromDefaultStack = session.defaultStack.length !== originalDefaultStackLength;
 
-    const removedOwnerKeys: AgentOwnerKey[] = [];
-    for (const [ownerKey, ownershipStack] of Object.entries(session.ownedRunbooks)) {
-      const originalLength = ownershipStack.length;
-      const remainingOwnership = ownershipStack.filter(
-        (ownership) => ownership.childRunId !== runbookId,
-      );
-      if (remainingOwnership.length !== originalLength) {
-        removedOwnerKeys.push(ownerKey as AgentOwnerKey);
-      }
-      if (remainingOwnership.length > 0) {
-        session.ownedRunbooks[ownerKey] = remainingOwnership;
-      } else {
-        delete session.ownedRunbooks[ownerKey];
+    const removedClaimIds: string[] = [];
+    for (const [claimId, claim] of Object.entries(session.claims)) {
+      if (claim.childRunId === runbookId) {
+        removedClaimIds.push(claimId);
+        delete session.claims[claimId];
       }
     }
 
     const removedFromStash = session.stashedRunbookId === runbookId;
     if (removedFromStash) {
       session.stashedRunbookId = undefined;
-      session.stashedRunbookOwnership = undefined;
     }
 
-    if (!removedFromDefaultStack && removedOwnerKeys.length === 0 && !removedFromStash) {
+    if (!removedFromDefaultStack && removedClaimIds.length === 0 && !removedFromStash) {
       return { status: 'not-found', runbookId } satisfies ReleaseRunbookResult;
     }
 
@@ -260,7 +348,6 @@ export class SessionService {
       status: 'released',
       runbookId,
       removedFromDefaultStack,
-      removedOwnerKeys,
       nextDefaultRunbookId: session.defaultStack[session.defaultStack.length - 1] ?? null,
     } satisfies ReleaseRunbookResult;
   }
@@ -326,78 +413,53 @@ export class SessionService {
       session.defaultStack = session.defaultStack.filter((id) => id !== runbookId);
       const removedFromDefaultStack = session.defaultStack.length !== originalDefaultStackLength;
 
-      let removedOwnership: AgentRunbookOwnership | undefined;
-      for (const [ownerKey, ownershipStack] of Object.entries(session.ownedRunbooks)) {
-        const ownershipIndex = ownershipStack.findIndex(
-          (ownership) => ownership.childRunId === runbookId,
-        );
-        if (ownershipIndex !== -1) {
-          removedOwnership = ownershipStack[ownershipIndex];
-          ownershipStack.splice(ownershipIndex, 1);
-          session.ownedRunbooks[ownerKey] = ownershipStack;
-          break;
-        }
-      }
+      const targetedByClaim = Object.values(session.claims).some(
+        (claim) => claim.childRunId === runbookId,
+      );
 
-      if (!removedFromDefaultStack && !removedOwnership) return null;
+      if (!removedFromDefaultStack && !targetedByClaim) return null;
 
       session.stashedRunbookId = runbookId;
-      if (removedOwnership) {
-        session.stashedRunbookOwnership = removedOwnership;
-      } else {
-        session.stashedRunbookOwnership = undefined;
-      }
       await this.manager.saveSession(session);
       return runbookId;
     });
   }
 
   /**
-   * Restore a stashed delegated runbook as owned by the given caller.
+   * Restore a stashed delegated runbook by explicit claim id.
    *
-   * @param identity - Caller identity that should own the restored delegated runbook
+   * @param claimId - Claim id for the stashed child runbook
    * @returns The restored runbook state, or null if no stashed runbook exists
    */
-  async unstashForOwner(identity: AgentOwnerIdentity): Promise<RunbookState | null> {
+  async unstashForClaimId(claimId: ClaimId): Promise<RunbookState | null> {
     return this.withLock(async () => {
       const session = await this.manager.loadSession();
-      const stashedId = session.stashedRunbookId;
-      if (!stashedId) return null;
-
-      // Defense in depth: if the stash carries an ownership record, only the
-      // recorded owner may restore it. CLI commands pre-check this — but a
-      // future caller that forgets must fail loudly, not silently transfer
-      // ownership across agents.
-      const stashedOwnership = session.stashedRunbookOwnership;
-      if (stashedOwnership) {
-        const callerOwnerKey = buildAgentOwnerKey(identity);
-        if (stashedOwnership.ownerKey !== callerOwnerKey) {
-          throw new SessionOwnershipMismatchError(
-            stashedOwnership.ownerKey,
-            callerOwnerKey,
-            'unstashForOwner',
-          );
-        }
+      if (!(claimId in session.claims)) {
+        return null;
       }
-
-      const state = await this.manager.load(stashedId);
-      if (!state) {
-        session.stashedRunbookId = undefined;
-        session.stashedRunbookOwnership = undefined;
-        await this.manager.saveSession(session);
+      const claim = session.claims[claimId];
+      if (session.stashedRunbookId !== claim.childRunId) {
         return null;
       }
 
-      const now = new Date().toISOString();
-      if (stashedOwnership === undefined) {
-        throw new SessionStashOwnershipMissingError(stashedId, 'unstashForOwner');
+      const state = await this.manager.load(claim.childRunId);
+      if (state?.lifecycle !== 'running') {
+        return null;
+      }
+      if (!linkageMatchesClaim(state.parentLinkage, claim)) {
+        return null;
+      }
+      const parent = await this.manager.load(claim.parentRunId);
+      if (
+        parent?.lifecycle === undefined ||
+        parent.lifecycle === 'completed' ||
+        parent.lifecycle === 'stopped'
+      ) {
+        return null;
       }
 
-      const ownership = { ...stashedOwnership, updatedAt: now };
       session.stashedRunbookId = undefined;
-      session.stashedRunbookOwnership = undefined;
-      const ownershipStack = this.ensureOwnershipStack(session.ownedRunbooks, ownership.ownerKey);
-      ownershipStack.push(ownership);
+      session.claims[claimId] = { ...claim, updatedAt: new Date().toISOString() };
       await this.manager.saveSession(session);
       return state;
     });
@@ -417,19 +479,17 @@ export class SessionService {
       const stashedId = session.stashedRunbookId;
 
       if (!stashedId) return null;
-      const stashedOwnership = session.stashedRunbookOwnership;
-      if (stashedOwnership) {
-        throw new SessionStashOwnershipRequiredError(
-          stashedId,
-          stashedOwnership.ownerKey,
-          'unstash',
-        );
+
+      const targetedByClaim = Object.values(session.claims).some(
+        (claim) => claim.childRunId === stashedId,
+      );
+      if (targetedByClaim) {
+        return null;
       }
 
       const state = await this.manager.load(stashedId);
       if (!state) {
         session.stashedRunbookId = undefined;
-        session.stashedRunbookOwnership = undefined;
         await this.manager.saveSession(session);
         return null;
       }
@@ -437,21 +497,10 @@ export class SessionService {
       // Push back to stack
       session.defaultStack.push(stashedId);
       session.stashedRunbookId = undefined;
-      session.stashedRunbookOwnership = undefined;
       await this.manager.saveSession(session);
 
       return state;
     });
-  }
-
-  /**
-   * Get the ownership record captured with the currently stashed runbook, if any.
-   *
-   * @returns Captured stashed ownership, or null for legacy/default-stack stashes
-   */
-  async getStashedRunbookOwnership(): Promise<AgentRunbookOwnership | null> {
-    const session = await this.manager.loadSession();
-    return session.stashedRunbookOwnership ?? null;
   }
 
   /**

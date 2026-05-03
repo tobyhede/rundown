@@ -23,6 +23,7 @@ import {
   validateEchoOutput,
   validatePromptOutput,
   validateErrorOutput,
+  validateWarningOutput,
 } from '../helpers/schema-validator.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -317,14 +318,19 @@ echo done
       expect(output).toHaveProperty('action');
     });
 
-    it('validates pass error when no active runbook', async () => {
+    it('validates pass warning when no active runbook', async () => {
       const result = await runCliInProcess('pass', workspace);
       const output = parseJsonOutput(result.stdout);
 
       // Should still be valid JSON
       expect(typeof output).toBe('object');
-      // Should indicate no active runbook via error field
-      expect(output).toHaveProperty('error');
+      // No-active-runbook is a warning (not an error) — exit 0, message field
+      expect(output).toHaveProperty('kind', 'warning');
+      expect(output).toHaveProperty('message', 'No active runbook');
+      expect(output).toHaveProperty('code', 'NO_ACTIVE_RUNBOOK');
+
+      const validation = validateWarningOutput(output);
+      expect(validation.valid).toBe(true);
     });
   });
 
@@ -434,12 +440,17 @@ prompt: Wait
       expect(output).toHaveProperty('action', 'stash');
     });
 
-    it('validates stash error when no active runbook', async () => {
+    it('validates stash warning when no active runbook', async () => {
       const result = await runCliInProcess('stash', workspace);
       const output = parseJsonOutput(result.stdout);
 
-      // Should indicate error via error field
-      expect(output).toHaveProperty('error');
+      // No-active-runbook is a warning (not an error) — exit 0, message field
+      expect(output).toHaveProperty('kind', 'warning');
+      expect(output).toHaveProperty('message', 'No active runbook');
+      expect(output).toHaveProperty('code', 'NO_ACTIVE_RUNBOOK');
+
+      const validation = validateWarningOutput(output);
+      expect(validation.valid).toBe(true);
     });
   });
 
@@ -860,17 +871,17 @@ prompt: Wait
   // ==========================================================================
 
   describe('error responses', () => {
-    it('validates no active runbook error format', async () => {
+    it('validates no active runbook warning format', async () => {
       const result = await runCliInProcess('pass', workspace);
       const output = parseJsonOutput(result.stdout);
 
-      // Verify error structure - should have error field
-      expect(output).toHaveProperty('error');
-      // The error message varies by command
-      expect(
-        typeof (output as { error?: string }).error === 'string' ||
-          typeof (output as { message?: string }).message === 'string',
-      ).toBe(true);
+      // No-active-runbook emits a warning (not an error): exit 0, kind: 'warning', message field
+      expect(output).toHaveProperty('kind', 'warning');
+      expect(output).toHaveProperty('message', 'No active runbook');
+      expect(output).toHaveProperty('code', 'NO_ACTIVE_RUNBOOK');
+
+      const validation = validateWarningOutput(output);
+      expect(validation.valid).toBe(true);
     });
   });
 

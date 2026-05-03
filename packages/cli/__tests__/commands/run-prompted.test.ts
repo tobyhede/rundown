@@ -5,6 +5,8 @@ import {
   createTestWorkspace,
   runCliInProcess,
   getActiveState,
+  findActionOutput,
+  readRunbookState,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 
@@ -67,7 +69,7 @@ describe('start --prompted', () => {
       expect(state?.step).toBe('2');
     });
 
-    it('uses the newly started runbook for prompted --step goto under identified env', async () => {
+    it('uses the newly started runbook for prompted --step goto with unrelated env', async () => {
       const runbook = `## 1. First
 - PASS CONTINUE
 
@@ -83,7 +85,7 @@ Second step.
       const result = await runCliInProcess(
         'run --prompted goto-start.runbook.md --step 2 --text',
         workspace,
-        { env: { RD_AGENT_ID: 'prompted-run-agent', RD_SESSION_ID: 'prompted-run-session' } },
+        { env: { RUNDOWN_TEST_ENV: 'prompted-run-session' } },
       );
 
       expect(result.exitCode).toBe(0);
@@ -119,11 +121,13 @@ Second step.
       expect(token).toBeDefined();
 
       // Claim the delegation token — launches child runbook
-      const claimResult = await runCliInProcess(`claim ${token!} --text`, workspace);
+      const claimResult = await runCliInProcess(`claim ${token!}`, workspace);
       expect(claimResult.exitCode).toBe(0);
+      const childRunId = findActionOutput(claimResult.stdout)?.run_id;
+      expect(typeof childRunId).toBe('string');
 
       // Child should inherit prompted flag from parent
-      const state = await getActiveState(workspace);
+      const state = await readRunbookState(workspace, String(childRunId));
       expect(state?.prompted).toBe(true);
       expect(state?.runbook).toContain('with-commands');
     });

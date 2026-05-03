@@ -7,6 +7,9 @@ import {
   parseRdCommandWithEnv,
   extractRunbookReferences,
   extractInputFileReferences,
+  substituteClaimIds,
+  matchErrorAssertions,
+  formatErrorAssertionDescription,
 } from '../../src/helpers/command-sequence.js';
 import type { StepAssertion } from '../../src/schemas/scenarios.js';
 
@@ -108,6 +111,19 @@ describe('parseJsonLines', () => {
     expect(result.tokens[0]).toBe('rdtk_abc123');
   });
 
+  it('captures JSON error responses', () => {
+    const stdout =
+      '{"kind":"error","error":"Claim id rdclm_missing does not exist.","code":"CLAIMED_RUNBOOK_UNAVAILABLE","command":"pass"}\n';
+    const result = parseJsonLines(stdout);
+    expect(result.errors).toEqual([
+      {
+        code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+        error: 'Claim id rdclm_missing does not exist.',
+        command: 'pass',
+      },
+    ]);
+  });
+
   it('extracts multiple tokens from NDJSON', () => {
     const stdout = [
       '{"action":"delegated","step":"1.1","runbook":"child-a.runbook.md","token":"rdtk_first","token_hash":"sha256:a","parent_run_id":"run-1"}',
@@ -200,6 +216,18 @@ describe('parseJsonLines', () => {
     expect(result.terminal).toBe('COMPLETE');
   });
 
+  it('extracts claim ids from claim responses', () => {
+    const stdout = [
+      '{"action":"claimed","token":"rdtk_first","claim_id":"rdclm_abcdefghijklmnopQRSTUV","run_id":"wf-child-1"}',
+      '{"action":"claimed","token":"rdtk_second","claim_id":"rdclm_1234567890abcdefghijkl","run_id":"wf-child-2"}',
+    ].join('\n');
+    const result = parseJsonLines(stdout);
+    expect(result.claimIds).toEqual([
+      'rdclm_abcdefghijklmnopQRSTUV',
+      'rdclm_1234567890abcdefghijkl',
+    ]);
+  });
+
   it('ignores objects without action=delegated', () => {
     const stdout = [
       '{"type":"step_transitioned","action":"CONTINUE","from":"1","at":"2","result":"PASS"}',
@@ -240,6 +268,43 @@ describe('parseJsonLines', () => {
     const result = parseJsonLines(stdout);
     expect(result.transitions[0].runbook).toBeUndefined();
     expect(result.transitions[0].parentStepId).toBeUndefined();
+  });
+});
+
+describe('matchErrorAssertions', () => {
+  it('matches errors by code, command, and error substring', () => {
+    const result = matchErrorAssertions(
+      [{ code: 'CLAIMED_RUNBOOK_UNAVAILABLE', command: 'pass', error: 'does not exist' }],
+      [
+        {
+          code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+          command: 'pass',
+          error: 'Claim id rdclm_missing does not exist.',
+        },
+      ],
+    );
+
+    expect(result).toEqual([
+      {
+        assertion: {
+          code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+          command: 'pass',
+          error: 'does not exist',
+        },
+        matched: true,
+        matchedError: {
+          code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+          command: 'pass',
+          error: 'Claim id rdclm_missing does not exist.',
+        },
+      },
+    ]);
+  });
+
+  it('formats unmatched error assertions for diagnostics', () => {
+    const [result] = matchErrorAssertions([{ code: 'TOKEN_NOT_FOUND' }], []);
+
+    expect(formatErrorAssertionDescription(result)).toBe('error code=TOKEN_NOT_FOUND: no match');
   });
 });
 
@@ -486,6 +551,26 @@ describe('substituteTokens', () => {
   });
 });
 
+describe('substituteClaimIds', () => {
+  it('${CLAIM_ID} maps to first captured claim id', () => {
+    expect(substituteClaimIds('rd pass --claim-id ${CLAIM_ID}', ['rdclm_first'])).toBe(
+      'rd pass --claim-id rdclm_first',
+    );
+  });
+
+  it('${CLAIM_ID_2} maps to second captured claim id', () => {
+    expect(
+      substituteClaimIds('rd fail --claim-id ${CLAIM_ID_2}', ['rdclm_first', 'rdclm_second']),
+    ).toBe('rd fail --claim-id rdclm_second');
+  });
+
+  it('throws for uncaptured claim id references', () => {
+    expect(() => substituteClaimIds('rd pass --claim-id ${CLAIM_ID_2}', ['rdclm_first'])).toThrow(
+      /Missing captured claim id/,
+    );
+  });
+});
+
 describe('parseRdCommandWithEnv', () => {
   it('parses plain rd commands', () => {
     expect(parseRdCommandWithEnv('rd pass --text')).toEqual({
@@ -495,13 +580,11 @@ describe('parseRdCommandWithEnv', () => {
   });
 
   it('parses leading environment assignments for rd commands', () => {
-    expect(
-      parseRdCommandWithEnv("RD_AGENT_ID=agent-a RD_SESSION_ID='session a' rd claim rdtk_abc123"),
-    ).toEqual({
+    expect(parseRdCommandWithEnv("FOO=agent-a BAR='session a' rd claim rdtk_abc123")).toEqual({
       args: ['claim', 'rdtk_abc123'],
       env: {
-        RD_AGENT_ID: 'agent-a',
-        RD_SESSION_ID: 'session a',
+        FOO: 'agent-a',
+        BAR: 'session a',
       },
     });
   });
@@ -519,7 +602,7 @@ describe('parseRdCommandWithEnv', () => {
   });
 
   it('rejects env-prefixed rd commands with operators', () => {
-    expect(() => parseRdCommandWithEnv('RD_AGENT_ID=agent-a rd pass && echo done')).toThrow(
+    expect(() => parseRdCommandWithEnv('FOO=agent-a rd pass && echo done')).toThrow(
       /Unsupported shell operators/,
     );
   });
@@ -531,7 +614,7 @@ describe('parseRdCommandWithEnv', () => {
   });
 
   it('rejects env-prefixed rd commands after shell operators', () => {
-    expect(() => parseRdCommandWithEnv('echo setup && RD_AGENT_ID=agent-a rd pass')).toThrow(
+    expect(() => parseRdCommandWithEnv('echo setup && FOO=agent-a rd pass')).toThrow(
       /Unsupported shell operators/,
     );
   });

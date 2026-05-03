@@ -20,14 +20,13 @@ import {
   type ResolvedStep,
   type StepId,
   type RunbookState,
+  type ClaimId,
 } from '@rundown-org/core';
 import { runExecutionLoop, type ExecutionTerminalReleaseMode } from '../services/execution.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
 import { resolveIndexOption, IndexOptionError } from './index-option.js';
 import { getRunbookFromState } from './runbook-loader.js';
-import { resolveCallerIdentity } from './caller-identity.js';
-import type { CallerIdentityResult } from './caller-identity.js';
 import { resolveActiveRunbook, type ActiveRunbookResolution } from './active-runbook-resolver.js';
 
 /**
@@ -69,7 +68,7 @@ export type GotoExecutionResult =
 /** Result of resolving the runbook target and building goto execution context. */
 export type BuildGotoContextResult =
   | { readonly kind: 'ready'; readonly ctx: GotoContext }
-  | Extract<ActiveRunbookResolution, { kind: 'none' | 'stale_owner' | 'invalid_identity' }>;
+  | Extract<ActiveRunbookResolution, { kind: 'none' | 'stale_claim' }>;
 
 /**
  * Resolve how terminal execution should remove a specific runbook from session targeting.
@@ -87,39 +86,39 @@ export async function resolveTerminalReleaseModeForRunbook(
   runbookId: RunbookState['id'],
 ): Promise<ExecutionTerminalReleaseMode> {
   const session = await manager.loadSession();
-  const owned = Object.values(session.ownedRunbooks).some((ownershipStack) =>
-    ownershipStack.some((ownership) => ownership.childRunId === runbookId),
-  );
-  return owned ? 'release-runbook' : 'stack-pop';
+  const claimed = Object.values(session.claims).some((claim) => claim.childRunId === runbookId);
+  return claimed ? 'release-runbook' : 'stack-pop';
 }
 
 /**
  * Build context for goto command execution.
  *
  * Resolves active state, loads runbook steps, and creates required services.
- * Returns null if no active runbook is found.
  *
  * @param output - Output emitter for CLI output
  * @param cwd - Current working directory
- * @param caller - Caller identity to resolve; defaults to the current CLI environment
- * @returns GotoContext or null if no active runbook
+ * @param options - Optional explicit claim-id target
+ * @param options.claimId - Claim id to resolve instead of the default stack
+ * @returns Discriminated union: `{ kind: 'ready'; ctx }` when an active runbook
+ *   was resolved and a goto context is available; `{ kind: 'none' }` when no
+ *   active runbook exists; or `{ kind: 'stale_claim' }` when the supplied
+ *   claim id no longer maps to an active child.
  */
 export async function buildGotoContext(
   output: OutputEmitter,
   cwd: string,
-  caller: CallerIdentityResult = resolveCallerIdentity(),
+  options: { readonly claimId?: ClaimId } = {},
 ): Promise<BuildGotoContextResult> {
   const manager = new RunbookStateManager(cwd);
   const sessionService = new SessionService(manager);
-  const active = await resolveActiveRunbook(sessionService, caller);
+  const active = await resolveActiveRunbook(sessionService, options);
 
   switch (active.kind) {
-    case 'owned':
+    case 'claim':
     case 'default':
       break;
     case 'none':
-    case 'stale_owner':
-    case 'invalid_identity':
+    case 'stale_claim':
       return active;
     default: {
       const _exhaustive: never = active;
@@ -129,7 +128,7 @@ export async function buildGotoContext(
 
   const state = active.state;
   const terminalReleaseMode: ExecutionTerminalReleaseMode =
-    active.kind === 'owned' ? 'release-runbook' : 'stack-pop';
+    active.kind === 'claim' ? 'release-runbook' : 'stack-pop';
   const readonlySteps = getRunbookFromState(state, cwd);
   const steps = [...readonlySteps];
   const actorService = new RunbookActorService(manager);

@@ -18,6 +18,22 @@ Two flows are available:
 - **DELEGATE annotation** (recommended for multi-substep delegation) — the step declares its substeps are delegated, and the engine auto-issues tokens on step entry. See [DELEGATE Annotation](#delegate-annotation).
 - **Manual `rd delegate --step`** — for single-delegation or ad-hoc dispatch from an orchestrating agent.
 
+### Single-Level Delegation Invariant
+
+Delegation is single-level: a claimed (delegated) child runbook may not issue further delegations. Subagents do not spawn subagents. The CLI enforces this at runtime at the issuance source (`createDelegation`), so the rule covers every path that mints a token: manual `rd delegate`, the executor's auto-fan-out on entry to a step with delegating substeps, and `rd delegate --retry` re-issuance. Issuance refuses with error `RD-819 DELEGATION_NESTED_FORBIDDEN` when the active runbook is itself a delegated child.
+
+When a claimed child needs to invoke another runbook, use composition (`rd run`) inside a substep body — composition is unrestricted. The fenced-bash form is parsed as a shell command rather than a delegation list:
+
+```markdown
+### 1.1 Compose another runbook
+
+```bash
+rd run other.runbook.md
+```
+```
+
+Claimed children are never pushed onto `defaultStack`; bare commands always target the project-default active runbook (the parent), and claim-targeted commands (`pass`, `fail`, `stop`, `complete`, `goto`, `status`, `stash`, `pop`, `collect`) require explicit `--claim-id`. `rd delegate` does not accept `--claim-id` because delegating from a claimed child is forbidden by this invariant.
+
 ### Manual `rd delegate --step`
 
 **Example runbook:**
@@ -46,7 +62,7 @@ rd delegate <runbook> --step 2.1
 rd claim <token>
 
 # 4. Subagent works through the delegated runbook, then reports result
-rd pass   # or: rd fail
+rd pass --claim-id <claim_id>   # or: rd fail --claim-id <claim_id>
 ```
 
 ### Dispatch Frontier and Identity
@@ -103,8 +119,8 @@ Executable scenarios for all three forms live at [runbooks/delegation/delegate-k
 
 1. **Step entry** — the engine fires `STEP_ENTERED` with a `delegateFrontier` field: an array of `{id, runbook, token}` records, one per DELEGATE substep.
 2. **Dispatch** — the orchestrating agent dispatches a subagent per record, passing the token in the subagent's prompt. The plugin detects the token and injects claim instructions.
-3. **Claim** — each subagent runs `rd claim <token>`, which launches the child runbook with the inherited `ContextId` and any forwarded variables. The Claude plugin exports `RD_AGENT_ID` and `RD_SESSION_ID` in the subagent context; keep those variables set so subsequent plain ownership-routed commands (`rd status`, `rd pass`, `rd fail`, `rd stash`, `rd pop`, and `rd stop`) target the child owned by that subagent.
-4. **Resolve** — the subagent completes the child runbook and calls `rd pass` / `rd fail`.
+3. **Claim** — each subagent runs `rd claim <token>`, which launches the child runbook with the inherited `ContextId` and any forwarded variables. The command returns a `claim_id`; keep that handle and pass it to every child-targeting command (`rd status`, `rd pass`, `rd fail`, `rd stash`, `rd pop`, and `rd stop`) with `--claim-id <claim_id>`.
+4. **Resolve** — the subagent completes the child runbook and calls `rd pass --claim-id <claim_id>` / `rd fail --claim-id <claim_id>`.
 5. **Aggregation** — when the final substep resolves, auto-aggregation fires on the parent step's transition (e.g., `PASS ALL CONTINUE`, `FAIL ANY STOP`).
 
 ### `rd collect`
@@ -159,27 +175,22 @@ Agent types support namespace prefixes using `namespace:name` syntax (e.g., `cip
 
 ---
 
-## Threat Model and Identity
+## Threat Model and Claim IDs
 
-Agent ownership is an **isolation-against-accident** mechanism, not an adversarial security boundary.
+Claim ids are an **isolation-against-accident** mechanism, not an adversarial security boundary.
 
-Caller identity is read from two environment variables exported by the Claude Code plugin's delegation-dispatch hook:
-
-- `RD_AGENT_ID` — the subagent's `agent_id`
-- `RD_SESSION_ID` — the dispatching session id
-
-CLI commands (`rd pass`, `rd fail`, `rd pop`, `rd stash`, `rd status`, etc.) derive the caller's `AgentOwnerIdentity` from these values and route to the runbook the caller owns. The session-service rejects cross-agent claims (RD-819) and refuses cross-agent stash restoration as defense in depth.
+`rd claim <token>` returns a generated `rdclm_...` handle stored in `.rundown/session.json`. CLI commands that accept `--claim-id` (`rd status`, `rd pass`, `rd fail`, `rd pop`, `rd stash`, `rd stop`, and `rd complete`) route to the exact delegated child runbook for that handle. Plain commands continue to target only the default stack.
 
 What this provides:
 
-- **Sibling fan-out isolation.** Two subagents claiming different delegation tokens against the same parent each operate on their own child runbook. `rd pass` from agent A cannot accidentally complete agent B's child.
-- **Stash protection.** A runbook stashed by agent A cannot be restored by agent B; the stash remains intact for the rightful owner.
-- **Single-owner claim invariant.** A second `rd claim` against an already-owned token from a different identity is rejected with `RD-819 DELEGATION_OWNER_CONFLICT`.
+- **Sibling fan-out isolation.** Two subagents claiming different delegation tokens against the same parent each operate on their own child runbook. `rd pass --claim-id <id-a>` cannot accidentally complete the child for `<id-b>`.
+- **Stash protection.** A claimed child stashed with `rd stash --claim-id <id>` can be restored only with `rd pop --claim-id <id>`; plain `rd pop` refuses it.
+- **Fail-closed targeting.** A stale, terminal, missing, or unlinked claim id fails instead of falling back to the shared default stack.
 
 What this does **not** provide:
 
-- **No cryptographic identity.** Environment variables are unsigned. Any process that can set its own environment can present any `RD_AGENT_ID` / `RD_SESSION_ID`. A user shell that exports both can impersonate any agent.
-- **No authentication of the dispatching session.** The plugin trusts whatever values its host process exposes; the CLI trusts whatever the plugin set.
+- **No cryptographic capability.** Claim ids are persisted in workspace state and printed to local command output. Any process that can read the workspace state or command transcript can use the handle.
+- **No authentication of the dispatching session.** The plugin trusts the local workspace state and the CLI trusts any syntactically valid claim id supplied by the caller.
 - **No protection against a malicious local process.** All workspace state (`.rundown/`) is filesystem-readable by the user; an actor with shell access can edit `session.json` directly.
 
 The threat model assumes cooperating agents in a trusted local workspace. If you need adversarial isolation between agents, run them in separate workspaces or as separate operating-system users — not as cooperating processes against the same `.rundown/` directory.
@@ -188,16 +199,16 @@ The threat model assumes cooperating agents in a trusted local workspace. If you
 
 ## Delegation Completion
 
-Subagents complete delegated work using `rd pass` or `rd fail`, which updates the child runbook state directly. The parent agent observes results via `rd status`.
+Subagents complete delegated work using `rd pass --claim-id <claim_id>` or `rd fail --claim-id <claim_id>`, which updates the child runbook state directly. The parent agent observes results via `rd status`.
 
-Parallel delegated siblings are isolated by agent/session ownership. A subagent that claims token A owns the child created for token A, even if another subagent later claims token B in the same workspace. Plain `rd pass` and `rd fail` resolve the caller-owned child before consulting the default stack.
+Parallel delegated siblings are isolated by claim id. A subagent that claims token A receives the handle for token A's child, even if another subagent later claims token B in the same workspace. Plain `rd pass` and `rd fail` do not target claimed children.
 
-The plugin tracks active delegation tokens per `agent_id` for `SubagentStop` handling. When one subagent stops, the hook consumes only that agent's token metadata and preserves sibling token metadata.
+The plugin tracks active delegation tokens per `agent_id` for `SubagentStop` diagnostics. When one subagent stops, the hook consumes only that agent's token metadata and preserves sibling token metadata.
 
-When a subagent stops, the plugin checks the child runbook state via `rd status`:
+When a subagent stops without explicitly closing the delegated work, the plugin reports a diagnostic to the parent:
 
-- **Child completed** (`rd pass`/`rd fail` was called): The child runbook has already been popped from the session stack and the result propagated to the parent. No action needed.
-- **Child still active** (subagent stopped without completing): The plugin surfaces context to the parent agent with the child's current position and step, so the parent can decide how to proceed (retry, complete manually, or fail the step).
+- **Child completed** (`rd pass --claim-id`/`rd fail --claim-id` was called): The child runbook has already propagated the result to the parent. No action needed.
+- **Child not explicitly closed**: The plugin tells the parent that delegated Rundown work must be closed explicitly with `rd pass --claim-id <claim_id>` or `rd fail --claim-id <claim_id>`.
 
 The plugin never destroys child runbook state. Incomplete delegations preserve their context for inspection.
 

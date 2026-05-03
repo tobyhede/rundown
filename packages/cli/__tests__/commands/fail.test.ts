@@ -11,7 +11,7 @@ import {
   parseConcatenatedJson,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
-import { ActionResponseSchema, ErrorResponseSchema } from '../helpers/schema-validator.js';
+import { ActionResponseSchema, WarningResponseSchema } from '../helpers/schema-validator.js';
 
 describe('fail command', () => {
   let workspace: TestWorkspace;
@@ -192,16 +192,30 @@ Do work.
       expect(token1).toBeDefined();
       expect(token2).toBeDefined();
 
-      const agent1 = { env: { RD_AGENT_ID: 'fail-agent-one', RD_SESSION_ID: 'fail-session' } };
-      const agent2 = { env: { RD_AGENT_ID: 'fail-agent-two', RD_SESSION_ID: 'fail-session' } };
+      let result = await runCliInProcess(`claim ${token1!}`, workspace);
+      expect(result.exitCode).toBe(0);
+      const child1Output = findActionOutput(result.stdout);
+      expect(child1Output).toBeDefined();
+      if (
+        !child1Output ||
+        typeof child1Output.run_id !== 'string' ||
+        typeof child1Output.claim_id !== 'string'
+      ) {
+        throw new Error('Expected claim output to include run_id and claim_id strings');
+      }
+      const child1Id = child1Output.run_id;
+      const claimId1 = child1Output.claim_id;
 
-      let result = await runCliInProcess(`claim ${token1!}`, workspace, agent1);
-      const child1Id = String(findActionOutput(result.stdout)?.run_id);
+      result = await runCliInProcess(`claim ${token2!}`, workspace);
+      expect(result.exitCode).toBe(0);
+      const child2Output = findActionOutput(result.stdout);
+      expect(child2Output).toBeDefined();
+      if (!child2Output || typeof child2Output.run_id !== 'string') {
+        throw new Error('Expected claim output to include run_id string');
+      }
+      const child2Id = child2Output.run_id;
 
-      result = await runCliInProcess(`claim ${token2!}`, workspace, agent2);
-      const child2Id = String(findActionOutput(result.stdout)?.run_id);
-
-      result = await runCliInProcess('fail --text', workspace, agent1);
+      result = await runCliInProcess(['fail', '--claim-id', claimId1, '--text'], workspace);
       expect(result.exitCode).toBe(0);
 
       const child1 = await readRunbookState(workspace, child1Id);
@@ -211,9 +225,9 @@ Do work.
       expect(child2?.lifecycle).toBe('running');
     });
 
-    it('anonymous fail does not mutate an agent-owned child runbook', async () => {
-      // Regression: anonymous (no RD_AGENT_ID) callers must target only the
-      // default-stack runbook (the parent), never an agent-owned delegated child.
+    it('plain fail does not mutate a claimed child runbook', async () => {
+      // Regression: plain callers must target only the default-stack runbook
+      // (the parent), never a claimed delegated child.
       const childRunbook = [
         '# Child',
         '',
@@ -256,12 +270,10 @@ Do work.
       const token = frontier.find((entry) => entry.id === '1.1')?.token;
       expect(token).toBeDefined();
 
-      const agent = { env: { RD_AGENT_ID: 'lone-fail-agent', RD_SESSION_ID: 'lone-fail-session' } };
-      const claim = await runCliInProcess(`claim ${token!}`, workspace, agent);
+      const claim = await runCliInProcess(`claim ${token!}`, workspace);
       const childId = String(findActionOutput(claim.stdout)?.run_id);
 
-      // Anonymous fail — must stop the default-stack parent, not the
-      // agent-owned child.
+      // Plain fail must stop the default-stack parent, not the claimed child.
       const failResult = await runCliInProcess('fail --text', workspace);
       expect(failResult.exitCode).toBe(1);
 
@@ -273,23 +285,24 @@ Do work.
   });
 
   describe('JSON output', () => {
-    it('includes action field when no active runbook', async () => {
+    it('includes warning kind when no active runbook', async () => {
       // Run fail with no active runbook
       const result = await runCliInProcess('fail', workspace);
 
-      // Should exit with error code
+      // Should exit cleanly (no active runbook is not an error)
       expect(result.exitCode).toBe(0);
 
       // Parse JSON output
       const output = JSON.parse(result.stdout);
 
-      // No-active-runbook path emits an error response with kind: 'error'
-      expect(output).toHaveProperty('kind', 'error');
+      // No-active-runbook path emits a warning response (not an error)
+      expect(output).toHaveProperty('kind', 'warning');
+      expect(output).toHaveProperty('message', 'No active runbook');
       expect(output).toHaveProperty('command', 'fail');
       expect(output.code).toBe('NO_ACTIVE_RUNBOOK');
 
-      // Validate against ErrorResponseSchema (not ActionResponseSchema)
-      const parseResult = ErrorResponseSchema.safeParse(output);
+      // Validate against WarningResponseSchema (not ErrorResponseSchema)
+      const parseResult = WarningResponseSchema.safeParse(output);
       expect(parseResult.success).toBe(true);
     });
   });

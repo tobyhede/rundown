@@ -4,15 +4,19 @@ import {
   isCheckResponse,
   isResolveResponse,
   isErrorResponse,
+  isWarningResponse,
 } from '../../src/output/schema.js';
 import {
   ResolveSourceInfoSchema,
   CheckResponseSchema,
   ResolveResponseSchema,
+  WarningCodeSchema,
+  WarningResponseSchema,
 } from '../../src/output/zod-schemas.js';
 import type {
   ActionResponse,
   ErrorResponse,
+  WarningResponse,
   StashResponse,
   PopResponse,
   CLIResponse,
@@ -110,6 +114,67 @@ describe('isErrorResponse type guard', () => {
     };
 
     expect(isErrorResponse(response as CLIResponse)).toBe(false);
+  });
+});
+
+describe('isWarningResponse type guard', () => {
+  it('returns true for WarningResponse payloads', () => {
+    const response: WarningResponse = {
+      kind: 'warning',
+      message: 'No active runbook',
+      code: 'NO_ACTIVE_RUNBOOK',
+      command: 'pass',
+    };
+
+    expect(isWarningResponse(response)).toBe(true);
+  });
+
+  it('returns false for error payloads', () => {
+    const response: ErrorResponse = {
+      kind: 'error',
+      error: 'No stashed runbook to restore',
+      code: 'NO_STASHED_RUNBOOK',
+    };
+
+    expect(isWarningResponse(response as CLIResponse)).toBe(false);
+  });
+});
+
+describe('WarningResponseSchema code semantics', () => {
+  it('accepts warning codes for warning responses', () => {
+    expect(WarningCodeSchema.safeParse('NO_ACTIVE_RUNBOOK').success).toBe(true);
+    expect(
+      WarningResponseSchema.safeParse({
+        kind: 'warning',
+        message: 'No active runbook',
+        code: 'NO_ACTIVE_RUNBOOK',
+      }).success,
+    ).toBe(true);
+  });
+
+  it('rejects error-only codes for warning responses', () => {
+    expect(WarningCodeSchema.safeParse('STEP_NOT_FOUND').success).toBe(false);
+    expect(
+      WarningResponseSchema.safeParse({
+        kind: 'warning',
+        message: 'Target step does not exist',
+        code: 'STEP_NOT_FOUND',
+      }).success,
+    ).toBe(false);
+  });
+
+  it('preserves extra fields for forward-compatible warning responses', () => {
+    const parsed = WarningResponseSchema.parse({
+      kind: 'warning',
+      message: 'No active runbook',
+      code: 'NO_ACTIVE_RUNBOOK',
+      command: 'collect',
+      context: { runbook: 'parent.runbook.md' },
+    });
+
+    expect(parsed).toMatchObject({
+      context: { runbook: 'parent.runbook.md' },
+    });
   });
 });
 

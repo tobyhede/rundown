@@ -38,12 +38,16 @@ scenario =
 expect_block =
   [ "result:" ( "COMPLETE" | "STOP" ) ]
   [ "steps:" step_assertion { step_assertion } ]
+  [ "errors:" error_assertion { error_assertion } ]
 
 step_assertion =
   "- " [ "runbook:" text ] [ "at:" text ] [ "from:" text ] [ "action:" text ] [ "result:" ( "PASS" | "FAIL" ) ] [ "command:" text ] [ "aggregated:" boolean ]
+
+error_assertion =
+  "- " [ "code:" text ] [ "command:" text ] [ "error:" text ]
 ```
 
-At least one of top-level `result:` or `expect.result` must be specified. If both are present, they must match.
+At least one of top-level `result:`, `expect.result`, or `expect.errors` must be specified. If both result fields are present, they must match.
 
 External scenario suites use the same command and assertion model in standalone `*.scenario-suite.yaml` files:
 
@@ -173,15 +177,17 @@ scenarios:
       result: STOP
 ```
 
-Commands output JSON by default. The scenario runner parses every `rd`/`rundown` command's stdout to collect terminal state, step transitions, and delegation tokens. Use `--text` for human-readable terminal output in demo scenarios; `--text` output is not useful for `expect.steps` or token capture.
+Commands output JSON by default. The scenario runner parses every `rd`/`rundown` command's stdout to collect terminal state, step transitions, delegation tokens, and claim ids. Use `--text` for human-readable terminal output in demo scenarios; `--text` output is not useful for `expect.steps`, token capture, or claim-id capture.
 
 The runner executes plain `rd` and `rundown` commands directly through the current CLI entry point instead of through a shell. Leading command-scoped environment assignments are supported:
 
 ```yaml
 commands:
-  - RD_AGENT_ID=agent-a RD_SESSION_ID=session-a rd claim ${TOKEN}
-  - RD_AGENT_ID=agent-a RD_SESSION_ID=session-a rundown pass
+  - rd claim ${TOKEN}
+  - rundown pass --claim-id ${CLAIM_ID}
 ```
+
+Claim ids captured from `rd claim` expand as `${CLAIM_ID}` for the first claim and `${CLAIM_ID_2}` for the second claim. Use claim-id placeholders when a scenario claims multiple delegated siblings.
 
 Shell operators in an `rd`/`rundown` command are rejected (`&&`, `||`, `|`, etc.). Split those into separate `commands` entries. Non-`rd` commands run through the user's shell.
 
@@ -345,6 +351,8 @@ All fields within `steps` entries are optional. Assert only what matters for the
 There is no separate `final` block. The last `steps` entry serves as the terminal assertion when needed. The `result` field at the top level (`COMPLETE`/`STOP`) captures the terminal outcome from `RUNBOOK_COMPLETED`/`RUNBOOK_STOPPED` events.
 
 Terminal results are parsed from JSON event streams (`type: "runbook_completed"` or `type: "runbook_stopped"`) and from flushed JSON command responses with `complete: true` or `stopped: true`. Step assertions are matched only against streamed `step_transitioned` events, not flushed summary objects.
+
+Error assertions match JSON error responses emitted by expected-failure commands (`! rd ...`). `code` and `command` match exactly; `error` matches as a substring of the human-readable error message.
 
 ### Matching Semantics
 

@@ -22,7 +22,7 @@ import {
   type ResolvedRunbook,
   type DelegationLinkage,
   type ParentLinkage,
-  type AgentOwnerIdentity,
+  type ClaimId,
   RUNS_DIR,
   DelegationScanService,
   DelegationLock,
@@ -125,13 +125,7 @@ export type RunbookStartResult =
   | { ok: true; loopResult: 'done' | 'stopped' | 'waiting'; stateId: string }
   | RunbookStartFailure;
 
-type LaunchSessionActivation =
-  | { readonly kind: 'default-stack' }
-  | {
-      readonly kind: 'agent-owned';
-      readonly identity: AgentOwnerIdentity;
-      readonly linkage: DelegationLinkage;
-    };
+type LaunchSessionActivation = { readonly kind: 'default-stack' } | { readonly kind: 'none' };
 
 /** Failure variants from claiming and launching a delegated child runbook. */
 export type ClaimFailure =
@@ -150,14 +144,38 @@ export type ClaimFailure =
       readonly stepId: string;
       readonly cancelledAt: string;
     }
-  | { readonly reason: 'lock-timeout'; readonly parentRunId: string }
   | {
-      readonly reason: 'owner-conflict';
+      readonly reason: 'delegation-resolved';
       readonly parentRunId: string;
       readonly stepId: string;
       readonly childRunId: string;
-      readonly existingOwnerAgentId: string;
     }
+  | {
+      /**
+       * The parent's substep references a `childRunId` that no longer exists
+       * on disk. Transient — pruning + restarting the parent typically
+       * resolves it. Rendered as `CHILD_RUN_MISSING`.
+       */
+      readonly reason: 'child-missing';
+      readonly parentRunId: string;
+      readonly stepId: string;
+      readonly childRunId: string;
+    }
+  | {
+      /**
+       * The child's persisted `parentLinkage` disagrees with the freshly
+       * token-validated linkage. Indicates state corruption (manual edits,
+       * stale linkage from a prior delegation, cross-host state merge);
+       * operator intervention required — inspect
+       * `.rundown/runs/<childRunId>.json`. Rendered as
+       * `CHILD_LINKAGE_MISMATCH`.
+       */
+      readonly reason: 'linkage-mismatch';
+      readonly parentRunId: string;
+      readonly stepId: string;
+      readonly childRunId: string;
+    }
+  | { readonly reason: 'lock-timeout'; readonly parentRunId: string }
   | {
       readonly reason: 'prepare-failed';
       readonly runbook: string;
@@ -168,7 +186,7 @@ export type ClaimFailure =
   | {
       readonly reason: 'launch-failed';
       readonly runbook: string;
-      readonly code: RunbookStartFailure['code'];
+      readonly code: RunbookStartFailure['code'] | typeof ErrorCodes.CLAIM_INVARIANT_VIOLATED.code;
       readonly cause: string;
       readonly details: RunbookStartFailure['details'] & { readonly runbook: string };
     };
@@ -180,6 +198,8 @@ export type ClaimResult =
       ok: true;
       /** Unique identifier of the launched (or idempotently returned) child run. */
       childRunId: string;
+      /** Claim id for explicit child targeting. */
+      claimId: ClaimId;
       /** Unique identifier of the parent run that owns the delegation. */
       parentRunId: string;
       /** Step (or substep) ID on the parent that holds the delegation. */
@@ -734,12 +754,7 @@ async function launchRunbook(
       case 'default-stack':
         await sessionService.pushRunbook(state.id);
         break;
-      case 'agent-owned':
-        await sessionService.claimRunbookForOwner(
-          sessionActivation.identity,
-          state.id,
-          sessionActivation.linkage,
-        );
+      case 'none':
         break;
       default: {
         const _exhaustive: never = sessionActivation;
@@ -787,7 +802,7 @@ async function launchRunbook(
     emitter,
     {
       terminalReleaseMode:
-        options.sessionActivation?.kind === 'agent-owned' ? 'release-runbook' : 'stack-pop',
+        options.sessionActivation?.kind === 'none' ? 'release-runbook' : 'stack-pop',
     },
   );
 
@@ -880,6 +895,130 @@ async function updateStepDelegationChildRunId(
   await manager.update(runId, { substepStates: updated });
 }
 
+/** Outcome of {@link claimChildForPipeline}. */
+type ClaimChildResult =
+  | { readonly ok: true; readonly claimId: ClaimId; readonly childRunId: string }
+  | {
+      readonly ok: false;
+      readonly reason: 'child-missing' | 'linkage-mismatch';
+      readonly childRunId: string;
+    };
+
+async function claimChildForPipeline(
+  ctx: RunPipelineContext,
+  childRunId: string,
+  linkage: DelegationLinkage,
+): Promise<ClaimChildResult> {
+  const claim = await ctx.sessionService.claimRunbook(childRunId, linkage);
+  switch (claim.status) {
+    case 'claimed':
+      return {
+        ok: true,
+        claimId: claim.claim.claimId,
+        childRunId: (claim.claim as { readonly childRunId?: string }).childRunId ?? childRunId,
+      };
+    case 'missing-child':
+      return { ok: false, reason: 'child-missing', childRunId: claim.childRunId };
+    case 'linkage-mismatch':
+      return { ok: false, reason: 'linkage-mismatch', childRunId: claim.childRunId };
+    default: {
+      const _exhaustive: never = claim;
+      throw new Error(
+        `Unhandled claimRunbook status: ${(_exhaustive as { status: string }).status}`,
+      );
+    }
+  }
+}
+
+/**
+ * Convert a {@link claimChildForPipeline} failure into a {@link ClaimResult}
+ * envelope carrying the surrounding parent context.
+ *
+ * @param result - The failure variant returned by {@link claimChildForPipeline}
+ * @param parentRunId - Parent run id at the call site
+ * @param stepId - Parent step (or substep) id where the claim was attempted
+ * @returns A failure {@link ClaimResult} ready to bubble up from claimAndLaunch
+ */
+function claimResultToFailure(
+  result: Extract<ClaimChildResult, { ok: false }>,
+  parentRunId: string,
+  stepId: string,
+): ClaimResult {
+  return {
+    ok: false,
+    reason: result.reason,
+    parentRunId,
+    stepId,
+    childRunId: result.childRunId,
+  };
+}
+
+/**
+ * Structured payload emitted alongside a successful `rd claim`.
+ *
+ * Stable JSON shape returned by the `rd claim` CLI on success. Field names
+ * use snake_case to match other CLI outputs (`run_id`, `parent_run_id`).
+ */
+export interface ClaimedOutputPayload {
+  /** Discriminator: always `'claimed'` on success. */
+  readonly action: 'claimed';
+  /** Redacted display form of the delegation token (safe to log). */
+  readonly token: string;
+  /** Branded claim id for subsequent `--claim-id` commands. */
+  readonly claim_id: ClaimId;
+  /** Run id of the launched (or idempotently returned) child runbook. */
+  readonly run_id: string;
+  /** Source path of the child runbook. */
+  readonly runbook: string;
+  /** Run id of the parent runbook that issued the delegation. */
+  readonly parent_run_id: string;
+  /** Parent step at-position (e.g. for FOR-loop iterations); `undefined` for bare-step delegations without an at-qualifier. */
+  readonly parent_step: string | undefined;
+}
+
+function emitClaimedOutput(
+  output: OutputEmitter,
+  message: string,
+  data: ClaimedOutputPayload,
+): void {
+  output.status('claimed', message, data);
+}
+
+/**
+ * Build the structured payload emitted alongside a successful claim.
+ *
+ * Centralizes the shape used by the three claim sites in {@link claimAndLaunch}
+ * (idempotent return, orphan adoption, fresh launch) so the field set stays in
+ * lock-step across call sites.
+ *
+ * @param args - Claim payload inputs
+ * @param args.truncatedToken - Redacted display form of the delegation token (safe for output)
+ * @param args.claimId - Branded claim id identifying this claim record
+ * @param args.childRunId - Run id of the launched child runbook state
+ * @param args.childRunbookPath - Source path of the child runbook
+ * @param args.parentRunId - Run id of the parent runbook state that issued the delegation
+ * @param args.parentStepAt - Parent step at-position (e.g. for FOR-loop iterations); undefined when not applicable
+ * @returns Structured payload suitable for {@link emitClaimedOutput}
+ */
+function buildClaimedPayload(args: {
+  readonly truncatedToken: string;
+  readonly claimId: ClaimId;
+  readonly childRunId: string;
+  readonly childRunbookPath: string;
+  readonly parentRunId: string;
+  readonly parentStepAt: string | undefined;
+}): ClaimedOutputPayload {
+  return {
+    action: 'claimed',
+    token: args.truncatedToken,
+    claim_id: args.claimId,
+    run_id: args.childRunId,
+    runbook: args.childRunbookPath,
+    parent_run_id: args.parentRunId,
+    parent_step: args.parentStepAt,
+  };
+}
+
 /**
  * Claim a delegation token, reconstitute inherited context, and launch the child runbook.
  *
@@ -894,14 +1033,12 @@ async function updateStepDelegationChildRunId(
  * @param ctx - Pipeline context
  * @param rawToken - The plain-text delegation token to claim
  * @param inputOpts - Input options from CLI flags
- * @param ownerIdentity - Optional identified caller that owns the claimed child runbook
  * @returns ClaimResult with child run details or error
  */
 export async function claimAndLaunch(
   ctx: RunPipelineContext,
   rawToken: string,
   inputOpts: InputOptions,
-  ownerIdentity?: AgentOwnerIdentity,
 ): Promise<ClaimResult> {
   const { output, manager, cwd } = ctx;
   const truncatedToken = truncateDelegationToken(rawToken);
@@ -986,41 +1123,63 @@ export async function claimAndLaunch(
 
     // 4b. Idempotent return if already claimed
     if (freshDelegation.childRunId) {
-      if (ownerIdentity) {
-        const delegationFrameKey = freshSubstep.frameKey;
-        const existingChild = await manager.load(freshDelegation.childRunId);
-        const existingLinkage =
-          existingChild?.parentLinkage?.kind === 'delegation'
-            ? existingChild.parentLinkage
-            : {
-                kind: 'delegation' as const,
-                parentRunId: freshParent.id,
-                parentStepId: substepId ?? stepId,
-                tokenHash,
-                parentStep: freshParent.step,
-                parentFrameKey: delegationFrameKey,
-                parentEntry: inferEntryFromState(freshParent, delegationFrameKey),
-              };
-        const claimResult = await ctx.sessionService.claimRunbookForOwner(
-          ownerIdentity,
-          freshDelegation.childRunId,
-          existingLinkage,
-        );
-        if (claimResult.status === 'conflict') {
-          return {
-            ok: false,
-            reason: 'owner-conflict',
-            parentRunId: freshParent.id,
-            stepId,
-            childRunId: freshDelegation.childRunId,
-            existingOwnerAgentId: claimResult.existing.agent_id,
-          };
-        }
+      const existingChild = await manager.load(freshDelegation.childRunId);
+      if (!existingChild) {
+        // Parent points at a child run that no longer exists on disk. Fail
+        // closed rather than minting a claim against a missing run.
+        return {
+          ok: false,
+          reason: 'child-missing',
+          parentRunId: freshParent.id,
+          stepId,
+          childRunId: freshDelegation.childRunId,
+        };
       }
+      if (existingChild.lifecycle === 'completed' || existingChild.lifecycle === 'stopped') {
+        return {
+          ok: false,
+          reason: 'delegation-resolved',
+          parentRunId: freshParent.id,
+          stepId,
+          childRunId: freshDelegation.childRunId,
+        };
+      }
+      const delegationFrameKey = freshSubstep.frameKey;
+      const freshLinkage: DelegationLinkage = {
+        kind: 'delegation',
+        parentRunId: freshParent.id,
+        parentStepId: substepId ?? stepId,
+        tokenHash,
+        parentStep: freshParent.step,
+        parentFrameKey: delegationFrameKey,
+        parentEntry: inferEntryFromState(freshParent, delegationFrameKey),
+      };
+      const claimResult = await claimChildForPipeline(
+        ctx,
+        freshDelegation.childRunId,
+        freshLinkage,
+      );
+      if (!claimResult.ok) {
+        return claimResultToFailure(claimResult, freshParent.id, stepId);
+      }
+      const claimId = claimResult.claimId;
+      emitClaimedOutput(
+        output,
+        `Claimed ${truncatedToken} -> ${freshDelegation.childRunbookPath}`,
+        buildClaimedPayload({
+          truncatedToken,
+          claimId,
+          childRunId: freshDelegation.childRunId,
+          childRunbookPath: freshDelegation.childRunbookPath,
+          parentRunId: freshParent.id,
+          parentStepAt: freshDelegation.contextSnapshot.at,
+        }),
+      );
 
       return {
         ok: true,
         childRunId: freshDelegation.childRunId,
+        claimId,
         parentRunId: freshParent.id,
         stepId,
         loopResult: 'waiting',
@@ -1041,34 +1200,115 @@ export async function claimAndLaunch(
     // 4d. Orphan reconciliation: scan for child run with matching tokenHash
     const orphan = await scanner.findOrphanedChild(tokenHash);
     if (orphan) {
-      // Adopt the orphan — set childRunId on parent
+      const orphanLinkage: DelegationLinkage = {
+        kind: 'delegation',
+        parentRunId: freshParent.id,
+        parentStepId: substepId ?? stepId,
+        tokenHash,
+        parentStep: freshParent.step,
+        parentFrameKey: freshSubstep.frameKey,
+        parentEntry: inferEntryFromState(freshParent, freshSubstep.frameKey),
+      };
+      const claimResult = await claimChildForPipeline(ctx, orphan.id, orphanLinkage);
+      if (!claimResult.ok) {
+        return claimResultToFailure(claimResult, freshParent.id, stepId);
+      }
+      const adoptedChildRunId = claimResult.childRunId;
+      // Adopt the orphan only after claim validation confirms its persisted
+      // child linkage belongs to this delegation.
       await updateStepDelegationChildRunId(
         manager,
         freshParent.id,
         substepId ?? stepId,
-        orphan.id,
+        adoptedChildRunId,
         tokenHash,
       );
-      if (ownerIdentity && orphan.parentLinkage?.kind === 'delegation') {
-        const claimResult = await ctx.sessionService.claimRunbookForOwner(
-          ownerIdentity,
-          orphan.id,
-          orphan.parentLinkage,
-        );
-        if (claimResult.status === 'conflict') {
-          return {
-            ok: false,
-            reason: 'owner-conflict',
-            parentRunId: freshParent.id,
-            stepId,
-            childRunId: orphan.id,
-            existingOwnerAgentId: claimResult.existing.agent_id,
-          };
-        }
-      }
+      const claimId = claimResult.claimId;
+      emitClaimedOutput(
+        output,
+        `Claimed ${truncatedToken} -> ${freshDelegation.childRunbookPath}`,
+        buildClaimedPayload({
+          truncatedToken,
+          claimId,
+          childRunId: adoptedChildRunId,
+          childRunbookPath: freshDelegation.childRunbookPath,
+          parentRunId: freshParent.id,
+          parentStepAt: freshDelegation.contextSnapshot.at,
+        }),
+      );
       return {
         ok: true,
-        childRunId: orphan.id,
+        childRunId: adoptedChildRunId,
+        claimId,
+        parentRunId: freshParent.id,
+        stepId,
+        loopResult: 'waiting',
+      };
+    }
+
+    // Build delegation linkage for the child.
+    // Use the delegation's stored frame key — not the parent's current frame.
+    // The parent may have advanced past the iteration where the delegation was created.
+    const delegationFrameKey = freshSubstep.frameKey;
+    const delegationLinkage: DelegationLinkage = {
+      kind: 'delegation' as const,
+      parentRunId: freshParent.id,
+      parentStepId: substepId ?? stepId,
+      tokenHash,
+      parentStep: freshParent.step,
+      parentFrameKey: delegationFrameKey,
+      parentEntry: inferEntryFromState(freshParent, delegationFrameKey),
+    };
+
+    const sessionServiceWithOptionalLookup = ctx.sessionService as Partial<
+      Pick<SessionService, 'findClaimForDelegation'>
+    >;
+    const existingClaim = sessionServiceWithOptionalLookup.findClaimForDelegation
+      ? await sessionServiceWithOptionalLookup.findClaimForDelegation(delegationLinkage)
+      : null;
+    if (existingClaim !== null) {
+      const existingChild = await manager.load(existingClaim.childRunId);
+      if (!existingChild) {
+        return {
+          ok: false,
+          reason: 'child-missing',
+          parentRunId: freshParent.id,
+          stepId,
+          childRunId: existingClaim.childRunId,
+        };
+      }
+      if (existingChild.lifecycle === 'completed' || existingChild.lifecycle === 'stopped') {
+        return {
+          ok: false,
+          reason: 'delegation-resolved',
+          parentRunId: freshParent.id,
+          stepId,
+          childRunId: existingClaim.childRunId,
+        };
+      }
+      await updateStepDelegationChildRunId(
+        manager,
+        freshParent.id,
+        substepId ?? stepId,
+        existingClaim.childRunId,
+        tokenHash,
+      );
+      emitClaimedOutput(
+        output,
+        `Claimed ${truncatedToken} -> ${freshDelegation.childRunbookPath}`,
+        buildClaimedPayload({
+          truncatedToken,
+          claimId: existingClaim.claimId,
+          childRunId: existingClaim.childRunId,
+          childRunbookPath: freshDelegation.childRunbookPath,
+          parentRunId: freshParent.id,
+          parentStepAt: freshDelegation.contextSnapshot.at,
+        }),
+      );
+      return {
+        ok: true,
+        childRunId: existingClaim.childRunId,
+        claimId: existingClaim.claimId,
         parentRunId: freshParent.id,
         stepId,
         loopResult: 'waiting',
@@ -1104,44 +1344,57 @@ export async function claimAndLaunch(
       output.warning(`Undefined variable "{{${name}}}" preserved as literal text`);
     }
 
-    // Build delegation linkage for the child run.
-    // Use the delegation's stored frame key — not the parent's current frame.
-    // The parent may have advanced past the iteration where the delegation was created.
-    const delegationFrameKey = freshSubstep.frameKey;
-    const delegationLinkage: DelegationLinkage = {
-      kind: 'delegation' as const,
-      parentRunId: freshParent.id,
-      parentStepId: substepId ?? stepId,
-      tokenHash,
-      parentStep: freshParent.step,
-      parentFrameKey: delegationFrameKey,
-      parentEntry: inferEntryFromState(freshParent, delegationFrameKey),
-    };
-
     const parentPrompted = freshParent.prompted ?? false;
 
     // 4g. Launch child runbook
     let capturedChildRunId: string | undefined;
+    let capturedClaimId: ClaimId | undefined;
+    // Captures a write-side claim invariant violation in `afterInit` so we
+    // can surface it as a structured launch-failed result instead of an
+    // anonymous thrown Error. Should never trigger in practice — the child
+    // was just created with the same delegationLinkage being validated.
+    let invariantViolation: Extract<ClaimChildResult, { ok: false }> | undefined;
 
     const launchResult = await launchRunbook(ctx, prepResult.prepared, {
       runbookName: freshDelegation.childRunbookPath,
       prompted: parentPrompted,
       parentLinkage: delegationLinkage,
-      sessionActivation: ownerIdentity
-        ? { kind: 'agent-owned', identity: ownerIdentity, linkage: delegationLinkage }
-        : { kind: 'default-stack' },
+      sessionActivation: { kind: 'none' },
       afterInit: async (childStateId) => {
         // Set childRunId on parent delegation (tokenHash for precise matching)
+        const claimResult = await claimChildForPipeline(ctx, childStateId, delegationLinkage);
+        if (!claimResult.ok) {
+          // Capture and bail; the outer block translates this into a typed
+          // launch-failed envelope with CLAIM_INVARIANT_VIOLATED so
+          // post-mortem from CLI output reveals the cause.
+          invariantViolation = claimResult;
+          return;
+        }
         await updateStepDelegationChildRunId(
           manager,
           freshParent.id,
           substepId ?? stepId,
-          childStateId,
+          claimResult.childRunId,
           tokenHash,
         );
-        capturedChildRunId = childStateId;
+        capturedClaimId = claimResult.claimId;
+        capturedChildRunId = claimResult.childRunId;
       },
     });
+
+    if (invariantViolation !== undefined) {
+      return {
+        ok: false,
+        reason: 'launch-failed',
+        runbook: freshDelegation.childRunbookPath,
+        code: ErrorCodes.CLAIM_INVARIANT_VIOLATED.code,
+        cause: `Claim invariant violated for fresh child ${invariantViolation.childRunId}: ${invariantViolation.reason}`,
+        details: {
+          runbookName: freshDelegation.childRunbookPath,
+          runbook: freshDelegation.childRunbookPath,
+        },
+      };
+    }
 
     if (!launchResult.ok) {
       return {
@@ -1154,21 +1407,56 @@ export async function claimAndLaunch(
       };
     }
 
-    const childRunId = capturedChildRunId ?? 'unknown';
+    const claimId = capturedClaimId;
+    if (claimId === undefined) {
+      return {
+        ok: false,
+        reason: 'launch-failed',
+        runbook: freshDelegation.childRunbookPath,
+        code: ErrorCodes.LAUNCH_FAILED.code,
+        cause: 'Claim id was not created for delegated child.',
+        details: {
+          runbookName: freshDelegation.childRunbookPath,
+          runbook: freshDelegation.childRunbookPath,
+        },
+      };
+    }
+    // capturedClaimId and capturedChildRunId are assigned together in afterInit
+    // (see the launch-result handler above); a defined claim id implies a defined
+    // child run id. The defensive check below preserves the invariant explicitly.
+    if (capturedChildRunId === undefined) {
+      return {
+        ok: false,
+        reason: 'launch-failed',
+        runbook: freshDelegation.childRunbookPath,
+        code: ErrorCodes.LAUNCH_FAILED.code,
+        cause: 'Child run id was not captured for delegated child.',
+        details: {
+          runbookName: freshDelegation.childRunbookPath,
+          runbook: freshDelegation.childRunbookPath,
+        },
+      };
+    }
+    const childRunId = capturedChildRunId;
 
     // Emit claimed output
-    output.status('claimed', `Claimed ${truncatedToken} -> ${freshDelegation.childRunbookPath}`, {
-      action: 'claimed',
-      token: truncatedToken,
-      run_id: childRunId,
-      runbook: freshDelegation.childRunbookPath,
-      parent_run_id: freshParent.id,
-      parent_step: freshDelegation.contextSnapshot.at,
-    });
+    emitClaimedOutput(
+      output,
+      `Claimed ${truncatedToken} -> ${freshDelegation.childRunbookPath}`,
+      buildClaimedPayload({
+        truncatedToken,
+        claimId,
+        childRunId,
+        childRunbookPath: freshDelegation.childRunbookPath,
+        parentRunId: freshParent.id,
+        parentStepAt: freshDelegation.contextSnapshot.at,
+      }),
+    );
 
     return {
       ok: true,
       childRunId,
+      claimId,
       parentRunId: freshParent.id,
       stepId,
       loopResult: launchResult.loopResult,

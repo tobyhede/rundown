@@ -1,23 +1,22 @@
 ---
 name: delegate-nested
-description: Direct delegation to both child and grandchild via nested claims
+description: Single-level delegation where child composes grandchild inline
 tags:
   - delegation
 scenarios:
   all-pass:
-    description: Three-level delegation chain completes
+    description: Single-level delegation; child composes grandchild inline
     commands:
       - rd run delegate-nested.runbook.md
       - rd delegate
       - rd claim ${TOKEN}
-      - rd delegate
-      - rd claim ${TOKEN_2}
+      - rd pass --claim-id ${CLAIM_ID}
     result: COMPLETE
 ---
 
 # Delegate Nested
 
-Parent runbook that delegates to a child, which delegates to a grandchild.
+Parent runbook that delegates to a child, which composes the grandchild inline.
 
 ## 1. Parent work
 
@@ -25,7 +24,5 @@ Parent runbook that delegates to a child, which delegates to a grandchild.
 - FAIL ANY STOP
 
 ### 1.1 Child task
-
-Delegated to a child runbook.
 
 - delegate-nested-child.runbook.md

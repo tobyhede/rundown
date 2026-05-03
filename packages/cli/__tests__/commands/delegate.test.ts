@@ -155,9 +155,7 @@ describe('delegate command', () => {
       expect(delegated.exitCode).toBe(0);
       const token = JSON.parse(delegated.stdout).token as string;
 
-      const claimed = await runCliInProcess(`claim ${token}`, workspace, {
-        env: { RD_AGENT_ID: 'delegate-agent', RD_SESSION_ID: 'delegate-session' },
-      });
+      const claimed = await runCliInProcess(`claim ${token}`, workspace);
       expect(claimed.exitCode).toBe(0);
 
       const state = await getActiveState(workspace);
@@ -187,9 +185,7 @@ describe('delegate command', () => {
       const token = JSON.parse(delegated.stdout).token as string;
       await mirrorActiveSubstepStatesIntoSnapshot();
 
-      const claimed = await runCliInProcess(`claim ${token}`, workspace, {
-        env: { RD_AGENT_ID: 'snapshot-agent', RD_SESSION_ID: 'snapshot-session' },
-      });
+      const claimed = await runCliInProcess(`claim ${token}`, workspace);
       expect(claimed.exitCode).toBe(0);
 
       const parent = await getActiveState(workspace);
@@ -355,6 +351,52 @@ describe('delegate command', () => {
 
       expect(result.exitCode).not.toBe(0);
       expect(result.stdout + result.stderr).toContain('not found');
+    });
+
+    it('refuses nested delegation when active runbook is itself a claimed child', async () => {
+      // Single-level delegation invariant: a claimed (delegated) child runbook
+      // may not issue further delegations. Seed an active runbook with
+      // `parentLinkage.kind === 'delegation'` (mirroring how `rd claim` writes
+      // child state) and verify `rd delegate` is rejected with RD-819 before
+      // any token is minted or persisted.
+      await setupDelegation();
+
+      const state = await getActiveState(workspace);
+      if (!state) throw new Error('Expected active state');
+      const stateFile = join(workspace.statePath(), `${state.id}.json`);
+      await writeFile(
+        stateFile,
+        JSON.stringify(
+          {
+            ...state,
+            parentLinkage: {
+              kind: 'delegation',
+              parentRunId: 'parent-run-id',
+              parentStepId: '1',
+              tokenHash: `sha256:${'a'.repeat(64)}`,
+            },
+          },
+          null,
+          2,
+        ),
+      );
+
+      const result = await runCliInProcess(
+        'delegate runbooks/child.runbook.md --step 1.1',
+        workspace,
+      );
+
+      expect(result.exitCode).not.toBe(0);
+      // withErrorHandling -> toJSON envelope emits the formatted error code.
+      expect(result.stdout + result.stderr).toMatch(/RD-819/);
+      expect(result.stdout + result.stderr).toMatch(/nested delegation forbidden/i);
+
+      // No token persisted: state.substepStates retains the original (no
+      // delegation field on substep '1').
+      const after = await getActiveState(workspace);
+      const substepStates = after?.substepStates as Array<Record<string, unknown>> | undefined;
+      const ss1 = substepStates?.find((ss) => ss.id === '1');
+      expect(ss1?.delegation).toBeUndefined();
     });
   });
 

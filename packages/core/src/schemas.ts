@@ -6,11 +6,7 @@ import {
   type delegationTokenHashBrand,
   type DelegationTokenHash,
 } from './runbook/delegation-token.js';
-import {
-  buildAgentOwnerKey,
-  type AgentOwnerKey,
-  type AgentRunbookOwnership,
-} from './runbook/agent-ownership.js';
+import { CLAIM_ID_PATTERN, type ClaimId, type ClaimRecord } from './runbook/claim-id.js';
 import type { FrameKey } from './runbook/targeting.js';
 import { createJsonArrayStream } from './runbook/types.js';
 import type { JsonValue, TemplateVarValue } from './runbook/types.js';
@@ -337,134 +333,64 @@ const ResolvedCompletionSchema = z.object({
   completedAt: z.string(),
 });
 
-/** Zod schema for a single agent-owned child runbook session record. */
-export const AgentRunbookOwnershipSchema: z.ZodType<AgentRunbookOwnership, z.ZodTypeDef, unknown> =
-  z
-    .object({
-      kind: z.literal('agent-owned-runbook'),
-      ownerKey: z
-        .string()
-        .min(1)
-        .transform((value) => value as AgentOwnerKey),
-      agent_id: z.string().min(1),
-      session_id: z.string().min(1).optional(),
-      childRunId: z.string().min(1),
-      tokenHash: DelegationTokenHashSchema,
-      parentRunId: z.string().min(1),
-      parentStepId: z.string().min(1),
-      parentStep: z.string().optional(),
-      parentFrameKey: FrameKeySchema.optional(),
-      parentEntry: z.number().int().positive().optional(),
-      claimedAt: z.string().min(1),
-      updatedAt: z.string().min(1),
-    })
-    // Record-level invariant: ownerKey must be derivable from agent_id/session_id.
-    // SessionDataSchema below adds a separate map-level invariant (map key matches
-    // ownership.ownerKey). Both are needed — record-level catches a tampered
-    // record that happens to be filed under its own (forged) key; map-level
-    // catches a mis-filed record whose internals are otherwise consistent.
-    .superRefine((ownership, ctx) => {
-      const expectedOwnerKey = buildAgentOwnerKey(
-        ownership.session_id === undefined
-          ? { kind: 'agent-only', agent_id: ownership.agent_id }
-          : {
-              kind: 'agent-session',
-              agent_id: ownership.agent_id,
-              session_id: ownership.session_id,
-            },
-      );
+/** Zod schema that parses strings and brands them as {@link ClaimId}. */
+export const ClaimIdSchema = z
+  .string()
+  .regex(CLAIM_ID_PATTERN)
+  .transform((value) => value as ClaimId);
 
-      if (ownership.ownerKey !== expectedOwnerKey) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['ownerKey'],
-          message: 'ownerKey must match agent_id and session_id',
-        });
-      }
-    });
+/** Zod schema for a single claimed child runbook session record. */
+export const ClaimRecordSchema: z.ZodType<ClaimRecord, z.ZodTypeDef, unknown> = z.object({
+  kind: z.literal('claim-record'),
+  claimId: ClaimIdSchema,
+  childRunId: z.string().min(1),
+  tokenHash: DelegationTokenHashSchema,
+  parentRunId: z.string().min(1),
+  parentStepId: z.string().min(1),
+  parentStep: z.string().optional(),
+  parentFrameKey: FrameKeySchema.optional(),
+  parentEntry: z.number().int().positive().optional(),
+  claimedAt: z.string().min(1),
+  updatedAt: z.string().min(1),
+});
 
 /** Zod schema for `.rundown/session.json`. */
 export const SessionDataSchema = z
   .object({
     defaultStack: z.array(z.string()).default([]),
     stashedRunbookId: z.string().optional(),
-    stashedRunbookOwnership: AgentRunbookOwnershipSchema.optional(),
-    ownedRunbooks: z.record(z.array(AgentRunbookOwnershipSchema)).default({}),
+    claims: z.record(z.string(), ClaimRecordSchema).default({}),
   })
   .superRefine((session, ctx) => {
-    if (
-      session.stashedRunbookOwnership !== undefined &&
-      session.stashedRunbookOwnership.childRunId !== session.stashedRunbookId
-    ) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['stashedRunbookOwnership', 'childRunId'],
-        message: 'stashedRunbookOwnership.childRunId must match stashedRunbookId',
-      });
-    }
-
-    const childRunIdLocations = new Map<
-      string,
-      { readonly location: string; readonly path: (string | number)[]; reported: boolean }[]
-    >();
-    const recordChildRunId = (
-      childRunId: string,
-      location: string,
-      path: (string | number)[],
-    ): void => {
-      const existingLocations = childRunIdLocations.get(childRunId);
-      if (existingLocations !== undefined) {
-        for (const existing of existingLocations) {
-          if (!existing.reported) {
-            ctx.addIssue({
-              code: z.ZodIssueCode.custom,
-              path: existing.path,
-              message: `childRunId must be unique across session ownership entries; duplicate at ${existing.location}`,
-            });
-            existing.reported = true;
-          }
-        }
+    const claimChildRunIds = new Map<string, string>();
+    for (const [claimId, claim] of Object.entries(session.claims)) {
+      if (!CLAIM_ID_PATTERN.test(claimId)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          path,
-          message: `childRunId must be unique across session ownership entries; duplicate at ${location}`,
+          path: ['claims', claimId],
+          message: 'claims key must be a canonical claim id (rdclm_<22 base64url characters>)',
         });
-        existingLocations.push({ location, path, reported: true });
-        return;
+        continue;
       }
-      childRunIdLocations.set(childRunId, [{ location, path, reported: false }]);
-    };
 
-    session.defaultStack.forEach((runbookId, index) => {
-      recordChildRunId(runbookId, `defaultStack.${String(index)}`, ['defaultStack', index]);
-    });
+      if (claimId !== claim.claimId) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['claims', claimId, 'claimId'],
+          message: 'claims key must match claim.claimId',
+        });
+      }
 
-    for (const [ownerKey, ownershipStack] of Object.entries(session.ownedRunbooks)) {
-      ownershipStack.forEach((ownership, index) => {
-        if (ownerKey !== ownership.ownerKey) {
-          ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            path: ['ownedRunbooks', ownerKey, index, 'ownerKey'],
-            message: 'ownedRunbooks key must match ownership.ownerKey',
-          });
-        }
-
-        recordChildRunId(
-          ownership.childRunId,
-          `ownedRunbooks.${ownerKey}.${String(index)}.childRunId`,
-          ['ownedRunbooks', ownerKey, index, 'childRunId'],
-        );
-      });
-    }
-
-    if (session.stashedRunbookOwnership !== undefined) {
-      recordChildRunId(
-        session.stashedRunbookOwnership.childRunId,
-        'stashedRunbookOwnership.childRunId',
-        ['stashedRunbookOwnership', 'childRunId'],
-      );
-    } else if (session.stashedRunbookId !== undefined) {
-      recordChildRunId(session.stashedRunbookId, 'stashedRunbookId', ['stashedRunbookId']);
+      const existing = claimChildRunIds.get(claim.childRunId);
+      if (existing !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['claims', claimId, 'childRunId'],
+          message: `childRunId must be unique across claim records; duplicate at claims.${existing}.childRunId`,
+        });
+      } else {
+        claimChildRunIds.set(claim.childRunId, claimId);
+      }
     }
   });
 

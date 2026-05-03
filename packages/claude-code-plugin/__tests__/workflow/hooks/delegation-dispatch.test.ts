@@ -269,7 +269,7 @@ describe('handleDelegationDispatch', () => {
     });
   });
 
-  it('injects RD_AGENT_ID and RD_SESSION_ID exports into claim context', async () => {
+  it('injects claim-id command guidance into claim context', async () => {
     const input = createMockHookInput('PreToolUse', {
       agent_id: 'agent-123',
       session_id: 'session-abc',
@@ -279,24 +279,31 @@ describe('handleDelegationDispatch', () => {
 
     const result = await handleDelegationDispatch(input);
 
-    expect(result.context).toContain("export RD_AGENT_ID='agent-123'");
-    expect(result.context).toContain("export RD_SESSION_ID='session-abc'");
     expect(result.context).toContain(`rd claim ${VALID_TOKEN}`);
+    expect(result.context).toContain('Copy the `claim_id` from the claim output.');
+    expect(result.context).toContain('rd status --claim-id <claim_id>');
+    expect(result.context).toContain('rd pass --claim-id <claim_id>');
+    expect(result.context).toContain('rd fail --claim-id <claim_id>');
+    expect(result.context).toContain(['```', `rd claim ${VALID_TOKEN}`, '```'].join('\n'));
     expect(result.context).toContain(
       [
         '```',
-        "export RD_AGENT_ID='agent-123'",
-        "export RD_SESSION_ID='session-abc'",
-        `rd claim ${VALID_TOKEN}`,
+        'rd status --claim-id <claim_id>',
+        'rd pass --claim-id <claim_id>',
+        'rd fail --claim-id <claim_id>',
+        'rd stash --claim-id <claim_id>',
+        'rd pop --claim-id <claim_id>',
+        'rd stop --claim-id <claim_id>',
+        'rd complete --claim-id <claim_id>',
         '```',
       ].join('\n'),
     );
     expect(result.context).toContain(
-      'Keep these environment variables set for `rd status`, `rd pass`, `rd fail`, `rd stash`, `rd pop`, and `rd stop`.',
+      'Before stopping, complete the delegated runbook explicitly with `rd pass --claim-id <claim_id>` or `rd fail --claim-id <claim_id>`.',
     );
   });
 
-  it('does not inject session identity without agent identity', async () => {
+  it('injects claim-id guidance without agent identity', async () => {
     const input = createMockHookInput('PreToolUse', {
       session_id: 'session-abc',
       tool_name: 'Task',
@@ -306,11 +313,7 @@ describe('handleDelegationDispatch', () => {
     const result = await handleDelegationDispatch(input);
 
     expect(result.context).toContain(`rd claim ${VALID_TOKEN}`);
-    expect(result.context).not.toContain('export RD_AGENT_ID=');
-    expect(result.context).not.toContain('export RD_SESSION_ID=');
-    expect(result.context).not.toContain(
-      'Keep these environment variables set for `rd status`, `rd pass`, `rd fail`, `rd stash`, `rd pop`, and `rd stop`.',
-    );
+    expect(result.context).toContain('rd pass --claim-id <claim_id>');
   });
 
   it('returns context even when rd status --json fails (best-effort)', async () => {

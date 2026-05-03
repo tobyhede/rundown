@@ -941,4 +941,67 @@ describe('createDelegation', () => {
     if (result.status !== 'created') return;
     expect(result.delegation.extraVars).toBeUndefined();
   });
+
+  describe('single-level delegation invariant', () => {
+    it('returns { status: "parent_is_delegated" } when state has delegation linkage', () => {
+      // Single-level delegation invariant: a claimed (delegated) child runbook
+      // may not issue further delegations. Guard fires before any other
+      // validation, so even an otherwise-valid (1.1, frontier-current) request
+      // is rejected.
+      const state = makeState({
+        parentLinkage: {
+          kind: 'delegation',
+          parentRunId: 'parent-run-id',
+          parentStepId: '1',
+          tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
+        },
+      });
+      const steps = makeSteps();
+
+      const result = createDelegation(
+        { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+        steps,
+      );
+
+      expect(result.status).toBe('parent_is_delegated');
+      if (result.status !== 'parent_is_delegated') return;
+      expect(result.parentRunId).toBe('parent-run-id');
+      expect(result.error.code).toBe('RD-819');
+      expect(result.error.message).toMatch(/nested delegation forbidden/i);
+    });
+
+    it('does not block a runbook with no parentLinkage', () => {
+      const state = makeState();
+      const steps = makeSteps();
+
+      const result = createDelegation(
+        { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+        steps,
+      );
+
+      expect(result.status).toBe('created');
+    });
+
+    it('does not block a runbook whose parentLinkage is inline (rd run --step)', () => {
+      // The discriminant is `kind === 'delegation'`, not "has any parent
+      // linkage". Inline children (`rd run --step`) execute in the same agent
+      // process and may freely delegate; only delegation-linked children are
+      // gated.
+      const state = makeState({
+        parentLinkage: {
+          kind: 'inline',
+          parentRunId: 'parent-run-id',
+          parentStepId: '1',
+        },
+      });
+      const steps = makeSteps();
+
+      const result = createDelegation(
+        { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+        steps,
+      );
+
+      expect(result.status).toBe('created');
+    });
+  });
 });

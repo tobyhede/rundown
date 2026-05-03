@@ -153,6 +153,20 @@ export interface CreateDelegationExistsResult {
 }
 
 /**
+ * The active runbook is itself a claimed delegated child. Issuing further
+ * delegations would violate the single-level delegation invariant
+ * (Main -> Delegate -> Claim is the only chain; subagents may not spawn
+ * subagents). Use `rd run` for runbook composition inside a claimed child.
+ */
+export interface CreateDelegationParentDelegatedResult {
+  readonly status: 'parent_is_delegated';
+  /** RunId of the parent delegation (the original delegating runbook). */
+  readonly parentRunId: string;
+  /** Wrapped RundownError (RD-819) for callers that re-surface the message. */
+  readonly error: RundownError;
+}
+
+/**
  * Outcome of attempting to create a delegation.
  *
  * Discriminated on `status`. The `created` variant holds the token and
@@ -166,7 +180,8 @@ export type CreateDelegationResult =
   | CreateDelegationStepNotCurrentResult
   | CreateDelegationSubstepRequiredResult
   | CreateDelegationSubstepNotFoundResult
-  | CreateDelegationExistsResult;
+  | CreateDelegationExistsResult
+  | CreateDelegationParentDelegatedResult;
 
 /**
  * Create a delegation for a substep (or bare step) of the current runbook.
@@ -194,6 +209,19 @@ export function createDelegation(
   steps: readonly ResolvedStep[],
 ): CreateDelegationResult {
   const { state, stepId, childRunbookPath, extraVars, ancestors, frameKey } = options;
+
+  // 0. Single-level delegation invariant: a claimed (delegated) child runbook
+  //    may not issue further delegations. This guard runs before any other
+  //    validation so it covers all three issuance paths uniformly: manual
+  //    `rd delegate`, auto-fan-out on entry to a delegating step, and the
+  //    retry-hook re-issuance path that flows through `retryDelegation`.
+  if (state.parentLinkage?.kind === 'delegation') {
+    return {
+      status: 'parent_is_delegated',
+      parentRunId: state.parentLinkage.parentRunId,
+      error: Errors.delegationNestedForbidden(state.id),
+    };
+  }
 
   // 1. Parse step ID
   const parsed = parseStepIdFromString(stepId);

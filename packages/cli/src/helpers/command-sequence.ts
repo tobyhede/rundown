@@ -9,7 +9,7 @@
 
 import { spawn } from 'node:child_process';
 import { parse as shellParse } from 'shell-quote';
-import type { StepAssertion } from '../schemas/scenarios.js';
+import type { ErrorAssertion, StepAssertion } from '../schemas/scenarios.js';
 
 /** A captured step transition from JSON output. */
 export interface CapturedTransition {
@@ -31,6 +31,16 @@ export interface CapturedTransition {
   parentStepId?: string;
 }
 
+/** A captured JSON error response from command output. */
+export interface CapturedError {
+  /** Machine-readable error code. */
+  code?: string;
+  /** Human-readable error message. */
+  error?: string;
+  /** CLI command that triggered the error. */
+  command?: string;
+}
+
 /** Result of matching a single step assertion against the event stream. */
 export interface StepAssertionResult {
   /** The assertion that was evaluated */
@@ -41,6 +51,16 @@ export interface StepAssertionResult {
   matchedEvent?: CapturedTransition;
 }
 
+/** Result of matching a single error assertion against captured JSON errors. */
+export interface ErrorAssertionResult {
+  /** The assertion that was evaluated */
+  assertion: ErrorAssertion;
+  /** Whether a matching error was found */
+  matched: boolean;
+  /** The error that matched (if any) */
+  matchedError?: CapturedError;
+}
+
 /** Result of executing a command sequence. */
 export interface CommandSequenceResult {
   /** Terminal outcome determined from JSON output */
@@ -49,6 +69,10 @@ export interface CommandSequenceResult {
   transitions: CapturedTransition[];
   /** Tokens captured from delegate JSON responses */
   capturedTokens: string[];
+  /** Claim IDs captured from claim JSON responses */
+  capturedClaimIds: string[];
+  /** JSON error responses captured from command output */
+  errors: CapturedError[];
 }
 
 /** Options for command sequence execution. */
@@ -112,7 +136,7 @@ function hasRdExecutableInOperatorSeparatedSegment(shellArgs: Array<string | obj
 
 /**
  * Parse a scenario command as an `rd` command, allowing leading environment
- * assignments such as `RD_AGENT_ID=a RD_SESSION_ID=s rd pass`.
+ * assignments such as `FOO=bar rd claim ...`.
  *
  * @param cmd - Scenario command string after token substitution
  * @returns Parsed args/env for `rd`/`rundown`, or null for non-`rd` shell commands
@@ -170,6 +194,45 @@ export function substituteTokens(cmd: string, tokens: string[]): string {
     }
     return tokens[idx];
   });
+}
+
+/**
+ * Substitute captured claim id placeholders in a command string.
+ *
+ * `${CLAIM_ID}` maps to the first claim id, `${CLAIM_ID_2}` maps to the second.
+ *
+ * @param command - Command string with optional claim id placeholders
+ * @param capturedClaimIds - Claim ids captured from earlier `rd claim` output
+ * @returns Command string with claim id placeholders substituted
+ * @throws {Error} If a placeholder references a claim id that has not been captured
+ */
+export function substituteClaimIds(command: string, capturedClaimIds: readonly string[]): string {
+  return command.replace(/\$\{CLAIM_ID(?:_(\d+))?\}/g, (_match, index: string | undefined) => {
+    const offset = index === undefined ? 0 : Number(index) - 1;
+    if (offset < 0 || offset >= capturedClaimIds.length) {
+      throw new Error(`Missing captured claim id for \${CLAIM_ID${index ? `_${index}` : ''}}`);
+    }
+    return capturedClaimIds[offset];
+  });
+}
+
+/**
+ * Capture a claim id from a parsed `rd claim` JSON object.
+ *
+ * @param value - Parsed JSON value to inspect
+ * @param capturedClaimIds - Array to append captured claim ids into
+ */
+export function captureClaimIdFromJsonObject(value: unknown, capturedClaimIds: string[]): void {
+  if (
+    value !== null &&
+    typeof value === 'object' &&
+    'action' in value &&
+    'claim_id' in value &&
+    (value as { action?: unknown }).action === 'claimed' &&
+    typeof (value as { claim_id?: unknown }).claim_id === 'string'
+  ) {
+    capturedClaimIds.push((value as { claim_id: string }).claim_id);
+  }
 }
 
 /**
@@ -241,12 +304,16 @@ async function runCommandWithTee(
  * @param obj - A parsed JSON object from command output
  * @param transitions - Array to push extracted transitions into
  * @param tokens - Array to push captured delegation tokens into
+ * @param claimIds - Array to push captured claim ids into
+ * @param errors - Array to push captured JSON error responses into
  * @returns Terminal state detected from this object, or null
  */
 function processJsonObject(
   obj: Record<string, unknown>,
   transitions: CapturedTransition[],
   tokens: string[],
+  claimIds: string[],
+  errors: CapturedError[],
 ): 'COMPLETE' | 'STOP' | null {
   let terminal: 'COMPLETE' | 'STOP' | null = null;
 
@@ -277,6 +344,15 @@ function processJsonObject(
   // Extract delegation token from delegate response
   if (obj.action === 'delegated' && typeof obj.token === 'string') {
     tokens.push(obj.token);
+  }
+  captureClaimIdFromJsonObject(obj, claimIds);
+
+  if (obj.kind === 'error') {
+    errors.push({
+      code: typeof obj.code === 'string' ? obj.code : undefined,
+      error: typeof obj.error === 'string' ? obj.error : undefined,
+      command: typeof obj.command === 'string' ? obj.command : undefined,
+    });
   }
 
   // Extract pre-issued delegation tokens from STEP_ENTERED delegateFrontier.
@@ -316,12 +392,16 @@ export function parseJsonLines(stdout: string): {
   transitions: CapturedTransition[];
   terminal: 'COMPLETE' | 'STOP' | null;
   tokens: string[];
+  claimIds: string[];
+  errors: CapturedError[];
 } {
   const trimmed = stdout.trim();
-  if (!trimmed) return { transitions: [], terminal: null, tokens: [] };
+  if (!trimmed) return { transitions: [], terminal: null, tokens: [], claimIds: [], errors: [] };
 
   const transitions: CapturedTransition[] = [];
   const tokens: string[] = [];
+  const claimIds: string[] = [];
+  const errors: CapturedError[] = [];
   let terminal: 'COMPLETE' | 'STOP' | null = null;
 
   // Try parsing as a single JSON object first (handles pretty-printed output)
@@ -331,8 +411,8 @@ export function parseJsonLines(stdout: string): {
       throw new Error('Not a JSON object');
     }
     const obj = parsed as Record<string, unknown>;
-    terminal = processJsonObject(obj, transitions, tokens);
-    return { transitions, terminal, tokens };
+    terminal = processJsonObject(obj, transitions, tokens, claimIds, errors);
+    return { transitions, terminal, tokens, claimIds, errors };
   } catch {
     // Not a single JSON object — fall through to line-by-line parsing
   }
@@ -347,13 +427,13 @@ export function parseJsonLines(stdout: string): {
       continue; // Non-JSON line — skip
     }
 
-    const detected = processJsonObject(obj, transitions, tokens);
+    const detected = processJsonObject(obj, transitions, tokens, claimIds, errors);
     if (detected !== null) {
       terminal = detected;
     }
   }
 
-  return { transitions, terminal, tokens };
+  return { transitions, terminal, tokens, claimIds, errors };
 }
 
 /**
@@ -424,6 +504,45 @@ export function matchStepAssertions(
 }
 
 /**
+ * Match error assertions against captured JSON error responses using ordered
+ * skip-matching.
+ *
+ * @param assertions - Ordered list of error assertions to evaluate
+ * @param events - Captured JSON error responses from command execution
+ * @returns Array of assertion results in the same order as input assertions
+ */
+export function matchErrorAssertions(
+  assertions: ErrorAssertion[],
+  events: CapturedError[],
+): ErrorAssertionResult[] {
+  const results: ErrorAssertionResult[] = [];
+  let eventIndex = 0;
+
+  for (const assertion of assertions) {
+    let matched = false;
+    while (eventIndex < events.length) {
+      const event = events[eventIndex];
+      if (
+        (assertion.code === undefined || event.code === assertion.code) &&
+        (assertion.command === undefined || event.command === assertion.command) &&
+        (assertion.error === undefined || event.error?.includes(assertion.error) === true)
+      ) {
+        results.push({ assertion, matched: true, matchedError: event });
+        eventIndex++;
+        matched = true;
+        break;
+      }
+      eventIndex++;
+    }
+    if (!matched) {
+      results.push({ assertion, matched: false });
+    }
+  }
+
+  return results;
+}
+
+/**
  * Format a step assertion result for human-readable display.
  *
  * @param sa - The step assertion result to format
@@ -441,6 +560,21 @@ export function formatStepAssertionDescription(sa: StepAssertionResult): string 
     parts.push(`aggregated=${String(sa.assertion.aggregated)}`);
   const desc = parts.length > 0 ? parts.join(' ') : '(empty assertion)';
   return `step ${desc}: ${sa.matched ? 'matched' : 'no match'}`;
+}
+
+/**
+ * Format an error assertion result for human-readable display.
+ *
+ * @param result - The error assertion result to format
+ * @returns A descriptive string like "error code=TOKEN_NOT_FOUND: matched"
+ */
+export function formatErrorAssertionDescription(result: ErrorAssertionResult): string {
+  const parts: string[] = [];
+  if (result.assertion.code !== undefined) parts.push(`code=${result.assertion.code}`);
+  if (result.assertion.command !== undefined) parts.push(`command=${result.assertion.command}`);
+  if (result.assertion.error !== undefined) parts.push(`error~=${result.assertion.error}`);
+  const desc = parts.length > 0 ? parts.join(' ') : '(empty assertion)';
+  return `error ${desc}: ${result.matched ? 'matched' : 'no match'}`;
 }
 
 /**
@@ -527,6 +661,8 @@ export async function executeCommandSequence(
   options: CommandSequenceOptions,
 ): Promise<CommandSequenceResult> {
   const capturedTokens: string[] = [];
+  const capturedClaimIds: string[] = [];
+  const errors: CapturedError[] = [];
   const transitions: CapturedTransition[] = [];
   let terminalResult: 'COMPLETE' | 'STOP' | 'UNKNOWN' = 'UNKNOWN';
 
@@ -537,7 +673,7 @@ export async function executeCommandSequence(
     const expectsFailure = trimmedRaw.startsWith('! ');
     const commandText = expectsFailure ? trimmedRaw.slice(2).trimStart() : rawCmd;
     // Token substitution — replace ${TOKEN}, ${TOKEN_2}, etc. with captured values
-    const cmd = substituteTokens(commandText, capturedTokens);
+    const cmd = substituteClaimIds(substituteTokens(commandText, capturedTokens), capturedClaimIds);
 
     options.onCommandStart?.(expectsFailure ? `! ${cmd}` : cmd);
 
@@ -561,6 +697,12 @@ export async function executeCommandSequence(
       }
       for (const tok of jsonResult.tokens) {
         capturedTokens.push(tok);
+      }
+      for (const claimId of jsonResult.claimIds) {
+        capturedClaimIds.push(claimId);
+      }
+      for (const error of jsonResult.errors) {
+        errors.push(error);
       }
       if (jsonResult.terminal !== null) {
         terminalResult = jsonResult.terminal;
@@ -586,5 +728,5 @@ export async function executeCommandSequence(
     }
   }
 
-  return { terminalResult, transitions, capturedTokens };
+  return { terminalResult, transitions, capturedTokens, capturedClaimIds, errors };
 }

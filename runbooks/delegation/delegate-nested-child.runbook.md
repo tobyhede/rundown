@@ -1,15 +1,14 @@
 ---
 name: delegate-nested-child
-description: Child runbook that delegates to a grandchild
+description: Child runbook that composes a grandchild inline
 tags:
   - delegation
 scenarios:
   completed:
-    description: Child delegates to grandchild and completes
+    description: Child composes the grandchild runbook and completes
     commands:
       - rd run delegate-nested-child.runbook.md
-      - rd delegate
-      - rd claim ${TOKEN}
+      - rd pass
     result: COMPLETE
 ---
 
@@ -21,7 +20,5 @@ scenarios:
 - FAIL ANY STOP
 
 ### 1.1 Grandchild task
-
-Delegated to a grandchild runbook.
 
 - delegate-nested-grandchild.runbook.md

@@ -4,6 +4,8 @@ import {
   createRunbook,
   runCliInProcess,
   getActiveState,
+  readRunbookState,
+  findActionOutput,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 import { readFile, writeFile } from 'node:fs/promises';
@@ -170,7 +172,7 @@ describe('abort command - unit tests', () => {
       const token = await setupDelegation();
 
       // Claim the token
-      let result = await runCliInProcess(`claim ${token} --text`, workspace);
+      let result = await runCliInProcess(`claim ${token}`, workspace);
       expect(result.exitCode).toBe(0);
 
       // Try to abort without force
@@ -183,7 +185,7 @@ describe('abort command - unit tests', () => {
       const token = await setupDelegation();
 
       // Claim the token
-      let result = await runCliInProcess(`claim ${token} --text`, workspace);
+      let result = await runCliInProcess(`claim ${token}`, workspace);
       expect(result.exitCode).toBe(0);
 
       // Force abort
@@ -359,7 +361,7 @@ describe('abort command - unit tests', () => {
       const token = await setupDelegation();
 
       // Claim first
-      let result = await runCliInProcess(`claim ${token} --text`, workspace);
+      let result = await runCliInProcess(`claim ${token}`, workspace);
       expect(result.exitCode).toBe(0);
 
       // Force abort
@@ -375,8 +377,12 @@ describe('abort command - unit tests', () => {
       const token = await setupDelegation();
 
       // Claim the token
-      let result = await runCliInProcess(`claim ${token} --text`, workspace);
+      let result = await runCliInProcess(`claim ${token}`, workspace);
       expect(result.exitCode).toBe(0);
+      const claimOutput = findActionOutput(result.stdout);
+      expect(claimOutput).toBeDefined();
+      expect(typeof claimOutput?.run_id).toBe('string');
+      const childRunId = claimOutput!.run_id as string;
 
       // Get parent state
       const parentState = await getActiveState(workspace);
@@ -384,15 +390,14 @@ describe('abort command - unit tests', () => {
       if (!parentState) throw new Error('Expected parent run state to exist');
       expect(parentState.step).toBe('1');
 
-      // Force abort - should propagate fail to parent
+      // Force abort stops and releases the claimed child.
       result = await runCliInProcess(`abort ${token} --force --text`, workspace);
       expect(result.exitCode).toBe(0);
 
-      // Parent should be stopped due to FAIL ANY: STOP
-      // Check that parent is no longer active (was stopped)
-      const afterAbortState = await getActiveState(workspace);
-      // The parent should have been stopped or advanced
-      expect(afterAbortState?.id).not.toBe(parentState.id);
+      // The parent remains the default-stack runbook; the child state is gone.
+      const afterAbortParent = await readRunbookState(workspace, parentState.id);
+      expect(afterAbortParent?.lifecycle).toBe('running');
+      expect(await readRunbookState(workspace, childRunId)).toBeNull();
     });
   });
 

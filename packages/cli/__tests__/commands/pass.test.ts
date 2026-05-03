@@ -263,37 +263,44 @@ Do child work.
       expect(token1).toBeDefined();
       expect(token2).toBeDefined();
 
-      const agent1 = { env: { RD_AGENT_ID: 'agent-one', RD_SESSION_ID: 'session-main' } };
-      const agent2 = { env: { RD_AGENT_ID: 'agent-two', RD_SESSION_ID: 'session-main' } };
-
-      let result = await runCliInProcess(`claim ${token1!}`, workspace, agent1);
+      let result = await runCliInProcess(`claim ${token1!}`, workspace);
       expect(result.exitCode).toBe(0);
       const child1Output = findActionOutput(result.stdout);
       expect(child1Output).toBeDefined();
-      if (!child1Output || typeof child1Output.run_id !== 'string') {
-        throw new Error('Expected claim output to include run_id string');
+      if (
+        !child1Output ||
+        typeof child1Output.run_id !== 'string' ||
+        typeof child1Output.claim_id !== 'string'
+      ) {
+        throw new Error('Expected claim output to include run_id and claim_id strings');
       }
       const child1Id = child1Output.run_id;
+      const claimId1 = child1Output.claim_id;
 
-      result = await runCliInProcess(`claim ${token2!}`, workspace, agent2);
+      result = await runCliInProcess(`claim ${token2!}`, workspace);
       expect(result.exitCode).toBe(0);
       const child2Output = findActionOutput(result.stdout);
       expect(child2Output).toBeDefined();
-      if (!child2Output || typeof child2Output.run_id !== 'string') {
-        throw new Error('Expected claim output to include run_id string');
+      if (
+        !child2Output ||
+        typeof child2Output.run_id !== 'string' ||
+        typeof child2Output.claim_id !== 'string'
+      ) {
+        throw new Error('Expected claim output to include run_id and claim_id strings');
       }
       const child2Id = child2Output.run_id;
+      const claimId2 = child2Output.claim_id;
 
       const anonymousActive = await getActiveState(workspace);
       expect(anonymousActive?.runbook).toBe('runbooks/parent.runbook.md');
 
-      let status = await runCliInProcess('status', workspace, agent1);
+      let status = await runCliInProcess(['status', '--claim-id', claimId1], workspace);
       expect(JSON.parse(status.stdout).state).toContain(child1Id);
 
-      status = await runCliInProcess('status', workspace, agent2);
+      status = await runCliInProcess(['status', '--claim-id', claimId2], workspace);
       expect(JSON.parse(status.stdout).state).toContain(child2Id);
 
-      result = await runCliInProcess('pass --text', workspace, agent1);
+      result = await runCliInProcess(['pass', '--claim-id', claimId1, '--text'], workspace);
       expect(result.exitCode).toBe(0);
 
       const child1 = await readRunbookState(workspace, child1Id);
@@ -303,9 +310,9 @@ Do child work.
       expect(child2?.lifecycle).toBe('running');
     }, 30_000);
 
-    it('anonymous pass does not mutate an agent-owned child runbook', async () => {
-      // Regression: anonymous (no RD_AGENT_ID) callers must target only the
-      // default-stack runbook (the parent), never an agent-owned delegated child.
+    it('plain pass does not mutate a claimed child runbook', async () => {
+      // Regression: plain callers must target only the default-stack runbook
+      // (the parent), never a claimed delegated child.
       const childRunbook = [
         '# Child',
         '',
@@ -351,8 +358,7 @@ Do child work.
       const token = frontier.find((entry) => entry.id === '1.1')?.token;
       expect(token).toBeDefined();
 
-      const agent = { env: { RD_AGENT_ID: 'lone-agent', RD_SESSION_ID: 'lone-session' } };
-      const claim = await runCliInProcess(`claim ${token!}`, workspace, agent);
+      const claim = await runCliInProcess(`claim ${token!}`, workspace);
       expect(claim.exitCode).toBe(0);
       const childId = String(findActionOutput(claim.stdout)?.run_id);
 

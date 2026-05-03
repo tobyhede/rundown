@@ -8,8 +8,8 @@
  */
 
 import { readFile, rm, cp } from 'node:fs/promises';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync } from 'node:fs';
-import { basename, dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, symlinkSync } from 'node:fs';
+import { basename, delimiter, dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { isNodeError, runbooksDir } from '@rundown-org/core';
 import {
@@ -26,7 +26,9 @@ import {
   executeCommandSequence,
   extractRunbookReferences,
   extractInputFileReferences,
+  matchErrorAssertions,
   matchStepAssertions,
+  type ErrorAssertionResult,
   type StepAssertionResult,
 } from './command-sequence.js';
 
@@ -65,6 +67,8 @@ export interface ScenarioRunResult {
   actual: string;
   /** Per-step assertion results (present when expect.steps block is used). */
   stepAssertions?: StepAssertionResult[];
+  /** Per-error assertion results (present when expect.errors block is used). */
+  errorAssertions?: ErrorAssertionResult[];
 }
 
 /**
@@ -212,6 +216,16 @@ export async function executeScenario(
     // Copy runbook and any referenced child runbooks
     copyFileSync(filePath, join(runbooksDirPath, runbookFilename));
 
+    // Symlink the CLI as `rd` / `rundown` inside the workspace so substep
+    // shell commands like `rd run X.md` resolve against the same CLI binary
+    // the scenario runner is using. Without this, composition (a substep
+    // body containing `rd run`) would fail at the shell with "command not
+    // found" because the process PATH doesn't include the workspace bin.
+    const binDir = join(tmpDir, 'node_modules', '.bin');
+    mkdirSync(binDir, { recursive: true });
+    symlinkSync(cliPath, join(binDir, 'rd'));
+    symlinkSync(cliPath, join(binDir, 'rundown'));
+
     const referenced = extractReferencedRunbooks(scenario);
     const sourceDir = dirname(filePath);
     for (const ref of referenced) {
@@ -267,12 +281,20 @@ export async function executeScenario(
       output.message('', 'info');
     }
 
-    // Execute all commands, tee child output, and capture JSON stdout
+    // Execute all commands, tee child output, and capture JSON stdout.
+    // Prepend the workspace bin to PATH so shell commands inside substep
+    // bodies (e.g. `rd run X.md` for runbook composition) resolve `rd` to
+    // the same CLI binary the scenario runner is using.
     const seqResult = await executeCommandSequence({
       commands: scenario.commands,
       cwd: tmpDir,
       cliPath,
       quiet,
+      env: {
+        PATH: [binDir, process.env.PATH]
+          .filter((value): value is string => Boolean(value))
+          .join(delimiter),
+      },
       onCommandStart: quiet
         ? undefined
         : (cmd) => {
@@ -285,25 +307,31 @@ export async function executeScenario(
 
     const actualResult = seqResult.terminalResult;
 
-    // Evaluate step assertions if present
+    // Evaluate assertions if present
     let stepAssertions: StepAssertionResult[] | undefined;
     if (scenario.expect?.steps) {
       stepAssertions = matchStepAssertions(scenario.expect.steps, seqResult.transitions);
     }
+    let errorAssertions: ErrorAssertionResult[] | undefined;
+    if (scenario.expect?.errors) {
+      errorAssertions = matchErrorAssertions(scenario.expect.errors, seqResult.errors);
+    }
 
     const resultPassed = actualResult === effectiveResult;
     const assertionsPassed = stepAssertions ? stepAssertions.every((a) => a.matched) : true;
+    const errorAssertionsPassed = errorAssertions ? errorAssertions.every((a) => a.matched) : true;
 
     if (!quiet) {
       output.message('', 'info');
     }
 
     return {
-      passed: resultPassed && assertionsPassed,
+      passed: resultPassed && assertionsPassed && errorAssertionsPassed,
       scenario: scenarioName,
       expected: effectiveResult,
       actual: actualResult,
       stepAssertions,
+      errorAssertions,
     };
   } finally {
     await rm(tmpDir, { recursive: true, force: true });

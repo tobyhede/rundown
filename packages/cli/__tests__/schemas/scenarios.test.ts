@@ -100,6 +100,16 @@ describe('ScenarioSchema', () => {
     expect(result.success).toBe(false);
   });
 
+  it('accepts error-only scenario with expect.errors', () => {
+    const scenario = {
+      commands: ['! rd pass --claim-id rdclm_abcdefghijklmnopQRSTUV'],
+      expect: { errors: [{ code: 'CLAIMED_RUNBOOK_UNAVAILABLE', command: 'pass' }] },
+    };
+
+    const result = ScenarioSchema.safeParse(scenario);
+    expect(result.success).toBe(true);
+  });
+
   it('rejects scenario with no result and no expect block', () => {
     const scenario = {
       commands: ['rd run test.runbook.md'],
@@ -125,6 +135,13 @@ describe('ScenarioExpectSchema', () => {
     const result = ScenarioExpectSchema.safeParse({
       result: 'COMPLETE',
       steps: [{ at: '2', action: 'CONTINUE', result: 'PASS' }],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('validates with errors array', () => {
+    const result = ScenarioExpectSchema.safeParse({
+      errors: [{ code: 'TOKEN_NOT_FOUND', command: 'claim', error: 'not found' }],
     });
     expect(result.success).toBe(true);
   });
@@ -233,6 +250,14 @@ describe('getEffectiveResult', () => {
     expect(() => getEffectiveResult(scenario)).toThrow(
       'Neither result nor expect.result is defined',
     );
+  });
+
+  it('returns UNKNOWN when only error assertions are present', () => {
+    const scenario = {
+      commands: ['! rd claim rdtk_missing'],
+      expect: { errors: [{ code: 'TOKEN_NOT_FOUND' }] },
+    };
+    expect(getEffectiveResult(scenario)).toBe('UNKNOWN');
   });
 });
 

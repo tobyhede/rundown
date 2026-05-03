@@ -8,6 +8,7 @@ import {
   readSession,
   readRunbookState,
   findActionOutput,
+  extractToken,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 
@@ -128,7 +129,7 @@ describe('stop command', () => {
       expect(session.defaultStack).toHaveLength(0);
     });
 
-    it('cleans up stale owned runbook state for identified callers', async () => {
+    it('fails closed for stale claimed runbook state without touching default stack', async () => {
       const parentRunbook = `## 1. Review
 - PASS ALL CONTINUE
 - FAIL ANY STOP
@@ -151,21 +152,30 @@ Do work.
       result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
       expect(result.exitCode).toBe(0);
       const token = JSON.parse(result.stdout).token as string;
-      const agent = { env: { RD_AGENT_ID: 'stale-stop-agent', RD_SESSION_ID: 'stale-stop' } };
-
-      result = await runCliInProcess(`claim ${token}`, workspace, agent);
+      result = await runCliInProcess(`claim ${token}`, workspace);
       expect(result.exitCode).toBe(0);
-      const childRunId = findActionOutput(result.stdout)?.run_id;
+      const claimOutput = findActionOutput(result.stdout);
+      const childRunId = claimOutput?.run_id;
+      const claimId = claimOutput?.claim_id;
       expect(typeof childRunId).toBe('string');
+      expect(typeof claimId).toBe('string');
       await unlink(join(workspace.statePath(), `${String(childRunId)}.json`));
 
-      result = await runCliInProcess('stop --text', workspace, agent);
-      expect(result.exitCode).toBe(0);
+      result = await runCliInProcess(['stop', '--claim-id', String(claimId)], workspace);
+      expect(result.exitCode).toBe(1);
+      const errorResponse = JSON.parse(result.stdout) as Record<string, unknown>;
+      expect(errorResponse).toEqual(
+        expect.objectContaining({
+          kind: 'error',
+          code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+          command: 'stop',
+        }),
+      );
+      expect(String(errorResponse.error)).toContain(String(claimId));
+      expect(String(errorResponse.error)).toContain('missing child state');
 
       const session = await readSession(workspace);
-      expect(Object.values(session.ownedRunbooks).flat()).not.toContainEqual(
-        expect.objectContaining({ childRunId }),
-      );
+      expect(Object.values(session.claims)).toContainEqual(expect.objectContaining({ childRunId }));
       expect(session.defaultStack).toContain(parentState!.id);
       expect(session.active).toBe(parentState!.id);
       expect(await readRunbookState(workspace, parentState!.id)).not.toBeNull();
@@ -194,18 +204,29 @@ Do work.
       expect(result.stdout).toContain('No active runbook');
     });
 
-    it('does not remove the default stack when an identified caller has no claim', async () => {
+    it('does not remove the default stack when a claim id has no claim', async () => {
       await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
       const sessionBefore = await readSession(workspace);
       const parentId = sessionBefore.defaultStack.at(-1);
       expect(parentId).toBeDefined();
 
-      const result = await runCliInProcess('stop --text', workspace, {
-        env: { RD_AGENT_ID: 'lone-agent', RD_SESSION_ID: 'lone-session' },
-      });
+      const result = await runCliInProcess(
+        ['stop', '--claim-id', 'rdclm_abcdefghijklmnopQRSTUV'],
+        workspace,
+      );
 
-      expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain('No active runbook');
+      expect(result.exitCode).toBe(1);
+      const errorResponse = JSON.parse(result.stdout) as Record<string, unknown>;
+      expect(errorResponse).toEqual(
+        expect.objectContaining({
+          kind: 'error',
+          code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+          command: 'stop',
+        }),
+      );
+      expect(String(errorResponse.error)).toContain(
+        'Claim id rdclm_abcdefghijklmnopQRSTUV does not exist',
+      );
 
       const sessionAfter = await readSession(workspace);
       expect(sessionAfter.defaultStack).toEqual([parentId]);
@@ -300,13 +321,6 @@ Run the child task.
       await writeFile(join(workspace.cwd, 'child.runbook.md'), content);
     }
 
-    function extractToken(stdout: string): string {
-      // JSON output (default): delegate response is a JSON object with a token field
-      const parsed = JSON.parse(stdout) as { token?: string };
-      if (!parsed.token) throw new Error(`No token found in delegate output:\n${stdout}`);
-      return parsed.token;
-    }
-
     it('propagates fail to parent when child is stopped', async () => {
       await writeParentRunbook();
       await writeChildRunbook();
@@ -350,10 +364,14 @@ Run the child task.
 
       result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
       const token = extractToken(result.stdout);
-      result = await runCliInProcess(`claim ${token} --text`, workspace);
+      result = await runCliInProcess(`claim ${token}`, workspace);
+      const claimId = String(findActionOutput(result.stdout)?.claim_id);
 
       // Stop with message — child stops, propagation to parent 1.1
-      result = await runCliInProcess(['stop', 'Task cancelled by user', '--text'], workspace);
+      result = await runCliInProcess(
+        ['stop', 'Task cancelled by user', '--claim-id', claimId, '--text'],
+        workspace,
+      );
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('STOP');
 
@@ -379,9 +397,10 @@ Run the child task.
       const token = delegateOutput.token as string;
 
       result = await runCliInProcess(`claim ${token}`, workspace);
+      const claimId = String(findActionOutput(result.stdout)?.claim_id);
 
       // Stop with JSON — child stops, propagation to parent 1.1
-      result = await runCliInProcess('stop', workspace);
+      result = await runCliInProcess(['stop', '--claim-id', claimId], workspace);
       expect(result.exitCode).toBe(0);
 
       const lines = result.stdout.split('\n').filter((l: string) => l.trim());

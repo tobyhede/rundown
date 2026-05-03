@@ -148,6 +148,9 @@ export class JSONRenderer implements OutputRenderer {
         if (event.code) {
           this.output.code = event.code;
         }
+        if (event.command) {
+          this.output.command = event.command;
+        }
         if (event.details) {
           this.output.details = event.details;
         }
@@ -175,8 +178,8 @@ export class JSONRenderer implements OutputRenderer {
         }
         break;
       case 'no_active_runbook':
-        this.output.error = 'No active runbook';
-        this.output.kind = 'error';
+        this.output.message = 'No active runbook';
+        this.output.kind = 'warning';
         if (event.command) {
           this.output.command = event.command;
         }
