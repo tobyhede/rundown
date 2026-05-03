@@ -171,8 +171,7 @@ import {
 
 const withWarningResponse = <Schema extends z.ZodTypeAny>(
   schema: Schema,
-): z.ZodUnion<[Schema, typeof WarningResponseSchema]> =>
-  z.union([schema, WarningResponseSchema]);
+): z.ZodUnion<[Schema, typeof WarningResponseSchema]> => z.union([schema, WarningResponseSchema]);
 
 const ActionOrWarningResponseSchema = withWarningResponse(ActionResponseSchema);
 
