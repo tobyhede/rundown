@@ -1200,14 +1200,6 @@ export async function claimAndLaunch(
     // 4d. Orphan reconciliation: scan for child run with matching tokenHash
     const orphan = await scanner.findOrphanedChild(tokenHash);
     if (orphan) {
-      // Adopt the orphan — set childRunId on parent
-      await updateStepDelegationChildRunId(
-        manager,
-        freshParent.id,
-        substepId ?? stepId,
-        orphan.id,
-        tokenHash,
-      );
       const orphanLinkage: DelegationLinkage = {
         kind: 'delegation',
         parentRunId: freshParent.id,
@@ -1221,6 +1213,16 @@ export async function claimAndLaunch(
       if (!claimResult.ok) {
         return claimResultToFailure(claimResult, freshParent.id, stepId);
       }
+      const adoptedChildRunId = claimResult.childRunId;
+      // Adopt the orphan only after claim validation confirms its persisted
+      // child linkage belongs to this delegation.
+      await updateStepDelegationChildRunId(
+        manager,
+        freshParent.id,
+        substepId ?? stepId,
+        adoptedChildRunId,
+        tokenHash,
+      );
       const claimId = claimResult.claimId;
       emitClaimedOutput(
         output,
@@ -1228,7 +1230,7 @@ export async function claimAndLaunch(
         buildClaimedPayload({
           truncatedToken,
           claimId,
-          childRunId: orphan.id,
+          childRunId: adoptedChildRunId,
           childRunbookPath: freshDelegation.childRunbookPath,
           parentRunId: freshParent.id,
           parentStepAt: freshDelegation.contextSnapshot.at,
@@ -1236,7 +1238,7 @@ export async function claimAndLaunch(
       );
       return {
         ok: true,
-        childRunId: orphan.id,
+        childRunId: adoptedChildRunId,
         claimId,
         parentRunId: freshParent.id,
         stepId,

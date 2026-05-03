@@ -8,9 +8,16 @@ import { createSessionMock, setGet } from '../../helpers/session-mock.js';
 
 const session = createSessionMock();
 const mockSet = session.set;
+const mockListStates = jest.fn<() => Promise<unknown[]>>();
 
 jest.unstable_mockModule('../../../src/session.js', () => ({
   Session: jest.fn().mockImplementation(() => session),
+}));
+
+jest.unstable_mockModule('@rundown-org/core', () => ({
+  RunbookStateManager: jest.fn().mockImplementation(() => ({
+    list: mockListStates,
+  })),
 }));
 
 const { handleSubagentStop } = await import('../../../src/workflow/hooks/subagent-stop.js');
@@ -39,6 +46,7 @@ describe('handleSubagentStop', () => {
     jest.clearAllMocks();
     setGet(session, 'metadata', {});
     mockSet.mockResolvedValue(undefined);
+    mockListStates.mockResolvedValue([]);
   });
 
   it('returns empty result for non-SubagentStop events', async () => {
@@ -102,6 +110,55 @@ describe('handleSubagentStop', () => {
         }),
       },
     });
+  });
+
+  it('does not flag delegated subagent when the claimed child already completed', async () => {
+    setGet(session, 'metadata', {
+      delegation_active_tokens: {
+        'agent-1': {
+          kind: 'delegation-active-token',
+          agent_id: 'agent-1',
+          session_id: 'session-a',
+          tokenHash: VALID_TOKEN_HASH,
+          createdAt: '2026-04-28T00:00:00.000Z',
+        },
+      },
+    });
+    mockListStates.mockResolvedValue([
+      {
+        id: 'parent-id',
+        substepStates: [
+          {
+            id: '1',
+            status: 'pending',
+            delegation: {
+              tokenHash: VALID_TOKEN_HASH,
+              childRunId: 'child-id',
+              cancelledAt: null,
+            },
+          },
+        ],
+      },
+      {
+        id: 'child-id',
+        lifecycle: 'completed',
+        parentLinkage: {
+          kind: 'delegation',
+          parentRunId: 'parent-id',
+          parentStepId: '1',
+          tokenHash: VALID_TOKEN_HASH,
+        },
+      },
+    ]);
+
+    const input = createMockHookInput('SubagentStop', {
+      agent_id: 'agent-1',
+      session_id: 'session-a',
+    });
+    const result = await handleSubagentStop(input);
+
+    expect(result).toEqual({});
+    expect(mockSet).toHaveBeenCalledWith('metadata', {});
   });
 
   it('returns unknown-state context when per-agent token entry is tampered', async () => {

@@ -1446,9 +1446,14 @@ describe('claimAndLaunch', () => {
     );
 
     const claimSpy = mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
-      status: 'claimed',
-      claim: {
-        claimId: 'rdclm_abcdefghijklmnopqrstu1',
+      status: 'linkage-mismatch',
+      childRunId: 'orphan-id',
+      persisted: orphanState.parentLinkage,
+      incoming: {
+        kind: 'delegation',
+        parentRunId: 'different-parent-id',
+        parentStepId: '1',
+        tokenHash,
       },
     });
     const mockSessionService = {
@@ -1468,10 +1473,12 @@ describe('claimAndLaunch', () => {
     // cspell:disable-next-line
     const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
 
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.claimId).toBe('rdclm_abcdefghijklmnopqrstu1');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      assertVariant(result, 'reason', 'linkage-mismatch');
+      expect(result.childRunId).toBe('orphan-id');
     }
+    expect(mockManager.update).not.toHaveBeenCalled();
   });
 
   it('launches new child when no orphan exists', async () => {

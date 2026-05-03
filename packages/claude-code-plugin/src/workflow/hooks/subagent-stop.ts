@@ -1,5 +1,6 @@
 // src/workflow/hooks/subagent-stop.ts
 import { createHash } from 'node:crypto';
+import { RunbookStateManager, type RunbookState } from '@rundown-org/core';
 import {
   DelegationActiveTokenMetadataSchema,
   DelegationActiveTokensMetadataSchema,
@@ -109,6 +110,57 @@ async function consumeDelegationTokenForAgent(
 }
 
 // ---------------------------------------------------------------------------
+// Rundown delegation state inspection
+// ---------------------------------------------------------------------------
+
+function isTerminalRun(state: RunbookState | undefined): boolean {
+  return state?.lifecycle === 'completed' || state?.lifecycle === 'stopped';
+}
+
+function findRunState(states: readonly RunbookState[], runId: string): RunbookState | undefined {
+  return states.find((state) => state.id === runId);
+}
+
+function delegationStillRequiresClosure(
+  states: readonly RunbookState[],
+  tokenHash: string,
+): boolean {
+  for (const parent of states) {
+    for (const substep of parent.substepStates ?? []) {
+      const delegation = substep.delegation;
+      if (delegation?.tokenHash !== tokenHash) {
+        continue;
+      }
+      if (delegation.cancelledAt) {
+        return false;
+      }
+      if (delegation.childRunId === null) {
+        return true;
+      }
+      return !isTerminalRun(findRunState(states, delegation.childRunId));
+    }
+  }
+
+  for (const child of states) {
+    const linkage = child.parentLinkage;
+    if (linkage?.kind === 'delegation' && linkage.tokenHash === tokenHash) {
+      return !isTerminalRun(child);
+    }
+  }
+
+  return true;
+}
+
+async function consumedDelegationStillRequiresClosure(
+  cwd: string,
+  tokenHash: string,
+): Promise<boolean> {
+  const manager = new RunbookStateManager(cwd);
+  const states = await manager.list();
+  return delegationStillRequiresClosure(states, tokenHash);
+}
+
+// ---------------------------------------------------------------------------
 // Hook handler
 // ---------------------------------------------------------------------------
 
@@ -125,12 +177,14 @@ async function consumeDelegationTokenForAgent(
  * - **No active token** (`kind: 'none'`): returns `{}`.
  * - **Tampered metadata** (`kind: 'tampered'`): returns an `unknown`-state
  *   context message instructing the orchestrator to consult `rd status`.
- * - **Token consumed** (default): returns a `violation` requiring the
- *   delegated work to be closed explicitly. The message covers both states
- *   the consumed token may be in: claimed (recovered via `rd pass`/`rd fail
- *   --claim-id`) or unclaimed (recovered via `rd delegate --retry` or
- *   `rd abort <token>`), since the plugin cannot determine claim status
- *   without reading rundown's session state.
+ * - **Token consumed and closed**: returns `{}` when Rundown state shows the
+ *   matching delegated child has already reached a terminal lifecycle or the
+ *   delegation was cancelled.
+ * - **Token consumed and still open** (default): returns a `violation`
+ *   requiring the delegated work to be closed explicitly. The message covers
+ *   both states the consumed token may be in: claimed (recovered via `rd pass`
+ *   / `rd fail --claim-id`) or unclaimed (recovered via `rd delegate --retry`
+ *   or `rd abort <token>`).
  *
  * Never destroys child runbook state.
  *
@@ -156,6 +210,15 @@ export async function handleSubagentStop(input: HookInput): Promise<SubagentStop
       context:
         'Subagent stopped with an active delegation. Unable to verify child runbook state — check with `rd status`.',
     };
+  }
+
+  try {
+    if (!(await consumedDelegationStillRequiresClosure(input.cwd, consumed.tokenHash))) {
+      return {};
+    }
+  } catch {
+    // Fall through to the explicit-closure violation when state inspection
+    // cannot prove the delegation is already closed.
   }
 
   return {
