@@ -17,7 +17,7 @@ The Rundown system separates concerns into three layers:
 
 The CLI is an orchestration and control interface. Claude executes the actual work.
 
-```
+```text
 [Runbook File] --> [Parser] --> [XState Machine] --> [State Manager]
                                        ^                    |
                                        |                    v
@@ -65,14 +65,15 @@ The state machine responds to these input events:
 | `GOTO` | `rundown goto N` or GOTO action | Jump to step N |
 | `RETRY` | FAIL + RETRY action | Increment retryCount, stay in state |
 
-These input events are distinct from the action output recorded as `lastAction.type` after a transition resolves. The full `LastAction` union has nine variants: `START`, `CONTINUE`, `DEFER`, `GOTO`, `COMPLETE`, `STOP`, `RETRY`, `NEXT`, `BREAK` (see `packages/core/src/runbook/types.ts`).
+These input events are distinct from the action output recorded as `lastAction.type` after a transition resolves. The primary `LastAction` action variants are `START`, `CONTINUE`, `DEFER`, `GOTO`, `COMPLETE`, `STOP`, `RETRY`, `NEXT`, and `BREAK`; retry exhaustion may also surface the `RETRY_ERROR` variant (see `packages/core/src/runbook/types.ts`).
 
 ### Transitions
 
 Default transitions when none specified:
-```
-PASS ALL CONTINUE
-FAIL ANY STOP
+
+```text
+PASS CONTINUE
+FAIL STOP
 ```
 
 Transition evaluation:

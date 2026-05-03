@@ -364,11 +364,14 @@ rundown check my-runbook.runbook.md
 ```
 
 **Output:**
-```
+
+```text
 PASS: 5 steps, 3 substeps
 ```
+
 or
-```
+
+```text
 FAIL: 2 errors
 
 Line 15: Step 3 missing (expected sequential numbering)

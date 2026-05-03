@@ -170,6 +170,7 @@ STOP and COMPLETE accept optional messages. Include a message only when it provi
 ```
 
 Not:
+
 ```markdown
 ## 1 Compile
 - FAIL STOP "Compilation failed."

@@ -102,6 +102,8 @@ Tests the full plugin workflow: `claude -p` triggers hook dispatch, the `/writin
 
 **Prerequisites:** Docker, Claude Code credentials (mandatory — exits with error if missing).
 
+Persisted runbook state follows the repository no-migration rule in E2E runs too. If state from a previous run is stale or incompatible, finish or close the affected run, or prune the state and restart. The harness must not silently migrate, shim, or rewrite stale runbook state.
+
 ### E2E Files
 
 | File | Role |
@@ -125,6 +127,8 @@ Tests the full plugin workflow: `claude -p` triggers hook dispatch, the `/writin
 | 4. Run claude -p | Executes `/writing-plans` prompt with plugin (600s timeout) |
 | 5. Verify artifacts | Checks plan file exists, schema validation (rdx), structural validation |
 | 6. Report | Pass/fail summary with log locations |
+
+> **Warning:** `scripts/e2e-entrypoint.sh` uses Claude Code's `--dangerously-skip-permissions` flag to keep automated tests non-interactive. This is test harness plumbing only; it is not a security guarantee and is not a production-style workflow.
 
 ### E2E Direct Docker Usage
 

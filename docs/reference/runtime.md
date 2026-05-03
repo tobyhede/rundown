@@ -200,6 +200,7 @@ Sources are defined via `--input-json`, `.rundown/config.yaml`, `--input-file`, 
 | Scalar string/number | Template vars only (no iteration source) |
 
 **Example `.rundown/config.yaml`:**
+
 ```yaml
 environment: staging
 items:
@@ -210,6 +211,7 @@ log_file: file:data/results.jsonl
 ```
 
 **Example runbook:**
+
 ````markdown
 ## 2 Process items
 - FOR item IN {{ items }}
@@ -290,6 +292,12 @@ Claimed delegated children are not pushed onto `defaultStack`. Commands that acc
 - `stash --claim-id <id>` stashes the claimed child while preserving the claim record.
 - Plain `pop` restores only default-stack stashes.
 - `pop --claim-id <id>` restores the child for that claim id after verifying the delegated parent is still active.
+
+### Stale persisted state / no-migration
+
+Persisted state is not migrated between runtime versions. If a runbook state file (`wf-...json`), `.rundown/session.json`, `stashedRunbookId`, or `claims` entry is stale, structurally incompatible, or from a schema/runtime version the current CLI cannot safely resume, Rundown fails closed and refuses to continue that run.
+
+The user-facing recovery path is to finish or close the affected run if possible, or prune/clean persisted state and restart the runbook. Rundown must not silently migrate, shim, adapt, rewrite, or resume incompatible persisted state.
 
 ### Runbook State Structure
 
@@ -405,6 +413,7 @@ The CLI automatically searches for `.rundown/config.yaml` starting from the curr
 - The filesystem root
 
 Example `.rundown/config.yaml`:
+
 ```yaml
 environment: staging
 version: 1.2.3

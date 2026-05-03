@@ -289,6 +289,8 @@ Substeps execute → each produces RESULT (pass/fail)
 
 Variables use Handlebars syntax: `{{variable}}`.
 
+Whitespace inside Handlebars delimiters is allowed: `{{ Step }}` resolves the same way as `{{Step}}`, and spacing does not change undefined-variable warning behavior or `{{context.vars.NAME}}` path resolution.
+
 | Source | Scope | Description |
 | :--- | :--- | :--- |
 | CLI (`--input`) | Global | Expanded at startup. |
@@ -300,12 +302,12 @@ Variables use Handlebars syntax: `{{variable}}`.
 | `{{context.vars.NAME}}` | Global | User/config/frontmatter variable namespace. |
 | Loop Var | Loop | Current item/index (e.g., `{{batch}}`). |
 
-*   **Undefined**: Preserved as literal text. A warning is emitted to stderr for each undefined variable.
-*   **Evaluation**: Global vars expanded once; Step/Loop vars expanded per iteration.
-*   **Parent variables**: `{{context.parent.vars.NAME}}` exposes the parent's resolved template variables. Only non-context keys propagate. Available via both chain (`context.parent.parent.vars.*`) and array (`context.ancestors.N.vars.*`) addressing.
-*   **Depth limit**: Parent context chain addressing is capped at 32 levels (enforced on the delegation ancestor chain depth). Exceeding this limit produces an error.
-*   **Path resolution**: Dotted paths are supported consistently (for example `{{context.parent.index}}`).
-*   **Required variables**: The frontmatter `required` field declares variables that must be provided by the caller via CLI flags, config, environment bridge, or delegation inheritance. Names listed in `required` must also appear in `inputs:`. Missing required variables produce a hard error (`MISSING_REQUIRED_VARS`) during resolution. Reserved runtime names are also rejected in `required`.
+* **Undefined**: Preserved as literal text. A warning is emitted to stderr for each undefined variable.
+* **Evaluation**: Global vars expanded once; Step/Loop vars expanded per iteration.
+* **Parent variables**: `{{context.parent.vars.NAME}}` exposes the parent's resolved template variables. Only non-context keys propagate. Available via both chain (`context.parent.parent.vars.*`) and array (`context.ancestors.N.vars.*`) addressing.
+* **Depth limit**: Parent context chain addressing is capped at 32 levels (enforced on the delegation ancestor chain depth). Exceeding this limit produces an error.
+* **Path resolution**: Dotted paths are supported consistently (for example `{{context.parent.index}}`).
+* **Required variables**: The frontmatter `required` field declares variables that must be provided by the caller via CLI flags, config, environment bridge, or delegation inheritance. Names listed in `required` must also appear in `inputs:`. Missing required variables produce a hard error (`MISSING_REQUIRED_VARS`) during resolution. Reserved runtime names are also rejected in `required`.
 * **Reserved keys**: Runtime keys `step`, `index`, and `context` are reserved (matching is case-insensitive — any case variant such as `STEP`, `Step`, `INDEX` is also reserved) and cannot be overridden by user variables. The CLI rejects these names in frontmatter `inputs:`, `required`, `--input` flags, `--input-file` contents, and `.rundown/config.yaml` with an error diagnostic. Reserved names in `RD_INPUT_*` environment variables are silently skipped with a warning.
 * **Precedence** (highest to lowest): CLI flags → `RD_INPUT_*` env vars → inherited delegation variables → `.rundown/config.yaml` → built-in defaults → INPUTS from context outputs store. See [docs/reference/runtime.md Variable Sources](../reference/runtime.md#variable-sources) for the full precedence table and operational details.
 * **Built-in variables**: Rundown provides a set of built-in variables (`Date`, `Branch`, `WorkPath`, `RunId`, `ContextId`, `Step`, `Index`, etc.). See [docs/reference/runtime.md Built-in Variables](../reference/runtime.md#built-in-variables) for the full table.

@@ -120,7 +120,7 @@ Executable scenarios for all three forms live at [runbooks/delegation/delegate-k
 
 1. **Step entry** — the engine fires `STEP_ENTERED` with a `delegateFrontier` field: an array of `{id, runbook, token}` records, one per DELEGATE substep.
 2. **Dispatch** — the orchestrating agent dispatches a subagent per record, passing the token in the subagent's prompt. The plugin detects the token and injects claim instructions.
-3. **Claim** — each subagent runs `rd claim <token>`, which launches the child runbook with the inherited `ContextId` and any forwarded variables. The command returns a `claim_id`; keep that handle and pass it to every child-targeting command (`rd status`, `rd pass`, `rd fail`, `rd stash`, `rd pop`, `rd stop`, and `rd complete`) with `--claim-id <claim_id>`.
+3. **Claim** — each subagent runs `rd claim <token>`, which launches the child runbook with the inherited `ContextId` and any forwarded variables. The command returns a `claim_id`; keep that handle and pass it to every child-targeting command (`rd status`, `rd pass`, `rd fail`, `rd collect`, `rd goto`, `rd stash`, `rd pop`, `rd stop`, and `rd complete`) with `--claim-id <claim_id>`.
 4. **Resolve** — the subagent completes the child runbook and calls `rd pass --claim-id <claim_id>` / `rd fail --claim-id <claim_id>`.
 5. **Aggregation** — when the final substep resolves, auto-aggregation fires on the parent step's transition (e.g., `PASS ALL CONTINUE`, `FAIL ANY STOP`).
 
@@ -172,7 +172,7 @@ Place a `code-review-agent-start.md` file in `.claude/context/` and it is automa
 
 ### Namespaces
 
-Agent types support namespace prefixes using `namespace:name` syntax (e.g., `cipherpowers:code-review-agent`). The namespace is stripped for context file discovery — `cipherpowers:code-review-agent` maps to `code-review-agent-start.md`.
+Agent types support namespace prefixes using `namespace:name` syntax (e.g., `cipherpowers:code-review-agent`). The namespace is stripped for context file discovery — `cipherpowers:code-review-agent` maps to `code-review-agent-start.md`. The remaining name is sanitized by the plugin context discovery path builder before lookup, so path segments such as `/` and `..` cannot escape `.claude/context/`.
 
 ---
 
@@ -180,7 +180,7 @@ Agent types support namespace prefixes using `namespace:name` syntax (e.g., `cip
 
 Claim ids are an **isolation-against-accident** mechanism, not an adversarial security boundary.
 
-`rd claim <token>` returns a generated `rdclm_...` handle stored in `.rundown/session.json`. CLI commands that accept `--claim-id` (`rd status`, `rd pass`, `rd fail`, `rd pop`, `rd stash`, `rd stop`, and `rd complete`) route to the exact delegated child runbook for that handle. Plain commands continue to target only the default stack.
+`rd claim <token>` returns a generated `rdclm_...` handle stored in `.rundown/session.json`. CLI commands that accept `--claim-id` (`rd status`, `rd pass`, `rd fail`, `rd collect`, `rd goto`, `rd stash`, `rd pop`, `rd stop`, and `rd complete`) route to the exact delegated child runbook for that handle. Plain commands continue to target only the default stack.
 
 What this provides:
 

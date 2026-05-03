@@ -11,6 +11,7 @@ This document provides a reference for the Rundown MCP (Model Context Protocol) 
 ## Table of Contents
 
 - [Overview](#overview)
+- [Security and State](#security-and-state)
 - [Installation](#installation)
 - [Claude Desktop Configuration](#claude-desktop-configuration)
 - [Architecture](#architecture)
@@ -45,6 +46,14 @@ The Rundown MCP server (`@rundown-org/mcp`) provides MCP integration for runbook
 | **Binary** | `rundown-mcp` |
 | **Transport** | stdio |
 | **Timeout** | 30 seconds per command |
+
+---
+
+## Security and State
+
+The MCP server delegates execution to the Rundown CLI, so the same policy and runtime rules apply. Policy mode, allow/deny lists, sandbox checks, and prompt/non-interactive behavior are documented in [docs/reference/security.md](security.md). Persisted runbook state, session files, claim ids, and the no-migration rule are documented in [docs/reference/runtime.md](runtime.md).
+
+MCP does not migrate or shim CLI state. If persisted state is stale or incompatible, the CLI refuses to continue and reports the state problem through the MCP response.
 
 ---
 
@@ -287,7 +296,7 @@ Start a runbook.
 
 **CLI Equivalent:** `rundown run [<file>] [--prompted] [--input key=value]... [--input-file path]`
 
-**Note:** The `--input` and `--input-file` options are CLI-only. The MCP `run` tool does not currently expose variable configuration parameters. Delegation to child runbooks uses the CLI `delegate`/`claim`/`abort` commands. See [docs/reference/runtime.md Variable Sources](runtime.md#variable-sources) for full variable configuration details.
+**Note:** The `--input` and `--input-file` options are CLI-only. The MCP `run` tool does not currently expose variable configuration parameters. Delegation to child runbooks uses the CLI `delegate`/`claim`/`abort` commands. See [runtime.md Variable Sources](runtime.md#variable-sources) for full variable configuration details.
 
 ---
 
@@ -504,6 +513,10 @@ See [docs/reference/cli.md Delegation Commands](cli.md#delegation-commands) for 
 | "No active runbook" | No runbook running | Use `run` tool to start a runbook |
 | Timeout after 30s | Command hanging | Check CLI directly, verify state files |
 | Empty response | CLI returned no output | Check stderr in server logs |
+
+### Stale persisted state detected
+
+If MCP reports stale or incompatible persisted state, finish or close the affected run if it is still meaningful, or prune the state and restart the runbook. Rundown will not automatically migrate, silently shim, rewrite, or resume stale state.
 
 ### Debugging
 
