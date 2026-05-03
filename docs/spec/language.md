@@ -309,7 +309,7 @@ Whitespace inside Handlebars delimiters is allowed: `{{ Step }}` resolves the sa
 * **Path resolution**: Dotted paths are supported consistently (for example `{{context.parent.index}}`).
 * **Required variables**: The frontmatter `required` field declares variables that must be provided by the caller via CLI flags, config, environment bridge, or delegation inheritance. Names listed in `required` must also appear in `inputs:`. Missing required variables produce a hard error (`MISSING_REQUIRED_VARS`) during resolution. Reserved runtime names are also rejected in `required`.
 * **Reserved keys**: Runtime keys `step`, `index`, and `context` are reserved (matching is case-insensitive — any case variant such as `STEP`, `Step`, `INDEX` is also reserved) and cannot be overridden by user variables. The CLI rejects these names in frontmatter `inputs:`, `required`, `--input` flags, `--input-file` contents, and `.rundown/config.yaml` with an error diagnostic. Reserved names in `RD_INPUT_*` environment variables are silently skipped with a warning.
-* **Precedence** (highest to lowest): CLI flags → `RD_INPUT_*` env vars → inherited delegation variables → `.rundown/config.yaml` → built-in defaults → INPUTS from context outputs store. See [docs/reference/runtime.md Variable Sources](../reference/runtime.md#variable-sources) for the full precedence table and operational details.
+* **Precedence** (highest to lowest): CLI flags → plugin variables (when resolving a plugin runbook) → `RD_INPUT_*` env vars → inherited delegation variables → `.rundown/config.yaml` → built-in defaults → INPUTS from context outputs store. See [docs/reference/runtime.md Variable Sources](../reference/runtime.md#variable-sources) for the full precedence table and operational details.
 * **Built-in variables**: Rundown provides a set of built-in variables (`Date`, `Branch`, `WorkPath`, `RunId`, `ContextId`, `Step`, `Index`, etc.). See [docs/reference/runtime.md Built-in Variables](../reference/runtime.md#built-in-variables) for the full table.
 * **Shell environment injection**: Built-in variables `WorkPath`, `ContextId`, and `RunId` are injected into each shell block's subprocess environment. See [docs/reference/runtime.md Shell Environment](../reference/runtime.md#shell-environment).
 
@@ -363,7 +363,7 @@ The frontmatter `outputs:` field declares variables to capture at run completion
 
 Children in a delegation tree inherit the parent's `ContextId` via `--input`, providing a shared identity. Step OUTPUTS accumulate in `state.variables` throughout execution; frontmatter `outputs:` at termination produce `state.finalVars` which propagate to the parent actor on completion.
 
-### 7.5 Example: write-plan / execute-plan
+### 7.4 Example: write-plan / execute-plan
 
 A parent runbook produces a plan file and delegates to a child runbook that consumes it. Both share a `ContextId` through delegation inheritance (see [§7.3](#73-delegation-inheritance) for the hand-off contract — the child automatically inherits the parent's `ContextId` via `--input`).
 
@@ -441,3 +441,5 @@ Flow:
 ## 9. Compatibility
 
 Step-level runbook lists are represented internally as sequential substeps (`N.1`, `N.2`, ...). In-progress sessions created before this model are not auto-migrated and must be restarted after upgrade.
+
+Rundown implementations MUST NOT migrate persisted runbook state between versions. This applies to all data under `.rundown/runs/`, including structured state fields and opaque snapshots. When persisted state is stale or structurally incompatible, implementations SHOULD require the user to complete, stop, or prune the run and restart from the source document. See [docs/reference/runtime.md Stale persisted state / no-migration](../reference/runtime.md#stale-persisted-state--no-migration) for runtime recovery details.

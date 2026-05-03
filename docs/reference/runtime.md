@@ -48,10 +48,10 @@ Rundown separates **runbook definition** from **state tracking**:
 
 | Behavior | Triggered By | What Happens |
 |----------|-------------|--------------|
-| **Automatic** | Step has `bash` or `prompt` code block | CLI runs command, exit code determines PASS/FAIL |
-| **Manual** | `--prompted` flag, or step has neither a bash nor prompt code block | CLI waits for manual `rd pass` or `rd fail` |
+| **Automatic command** | Step has `bash`, `sh`, or `shell` code block | CLI runs command, exit code determines PASS/FAIL |
+| **Manual** | `--prompted` flag, display-only code block, or step has no executable code block | CLI waits for manual `rd pass` or `rd fail` |
 
-**Note:** A `prompt` code block becomes an `rd prompt '...'` command that outputs the content wrapped in markdown fences. It executes automatically like `bash` blocks.
+**Note:** A `prompt` code block is display-only. Rundown may render it through the `rd prompt` helper so the content appears wrapped in markdown fences, but it is not shell-executed and does not derive PASS/FAIL from a command exit code.
 
 Example of a step that auto-executes:
 
@@ -143,21 +143,28 @@ These are expanded per-iteration, unlike template variables which are expanded o
 
 ### Iteration Semantics
 
-Substep transitions control within-iteration flow:
+FOR-level transitions (the bullets directly under the `FOR ...` clause) decide what happens after iteration results are aggregated. Substep handler actions inside a FOR loop control only the current iteration:
 
 | Action | Effect |
 |--------|--------|
-| `CONTINUE` | Proceed to next substep (or next iteration if last substep) |
+| `DEFER` | Record the substep result for iteration aggregation |
 | `NEXT` | Skip remaining substeps, advance to next iteration |
 | `BREAK` | Exit the FOR loop; parent step transitions evaluate |
 | `STOP` | Halt runbook execution immediately |
+| `COMPLETE` | Complete runbook execution immediately |
+| `GOTO` | Jump to the target step or FOR iteration |
+| `RETRY` | Retry according to the configured retry wrapper |
+
+At FOR-transition scope, `CONTINUE` exits the loop without accumulating the current iteration result.
 
 FOR-level nested transitions (nested bullets directly under `- FOR ...`) run at **iteration scope**:
 
 | Action | Effect |
 |--------|--------|
+| `DEFER` | Record the current iteration result; parent FOR aggregation runs after the final recorded iteration |
+| `NEXT` | Do not record the current iteration result; continue with the next iteration |
 | `CONTINUE` | Exit loop (current result NOT recorded) → step-level handler |
-| `BREAK` | Exit loop immediately (non-accumulating — same as NEXT) |
+| `BREAK` | Exit loop immediately (current result NOT recorded) → step-level handler |
 | `GOTO` | Jump immediately; bypass parent FOR aggregation |
 | `STOP` | Stop immediately; bypass parent FOR aggregation |
 | `COMPLETE` | Complete immediately; bypass parent FOR aggregation |
@@ -399,6 +406,7 @@ Variables are collected from multiple sources with the following precedence (hig
 | Source | Description |
 |--------|-------------|
 | CLI flags (`--input-file`, `--input`, `--input-json`) | Repeatable, highest priority |
+| Plugin variables | Injected when resolving plugin runbooks, such as `rundown:write-plan` |
 | `RD_INPUT_*` environment variables | Prefix stripped (e.g., `RD_INPUT_environment` sets `environment`) |
 | Inherited delegation variables | Parent context in delegation tree |
 | `.rundown/config.yaml` | Auto-discovered from cwd upward, stops at git root |

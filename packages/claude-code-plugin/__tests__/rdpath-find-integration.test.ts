@@ -390,7 +390,7 @@ Active step.
       );
     });
 
-    it('does not read stale active state when --dir is supplied', async () => {
+    it('does not fail on stale active state when --dir is supplied', async () => {
       await setupStaleActiveRunbook(testDir);
 
       const result = await runRdpath(
@@ -404,6 +404,7 @@ Active step.
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout.trim()).toBe('.work');
+      expect(result.stderr).toBe('');
     });
 
     it('uses active ContextId when RD_WORK_PATH is set and RD_CONTEXT_ID is omitted', async () => {
@@ -449,7 +450,7 @@ Active step.
       expect(result.stderr).toBe('');
     });
 
-    it('skips invalid active-state lookup errors when RD_WORK_PATH is set', async () => {
+    it('soft-fails invalid active-state lookup when RD_WORK_PATH is set', async () => {
       await setupActiveRunbookWithInvalidId(testDir);
 
       const result = await runRdpath(

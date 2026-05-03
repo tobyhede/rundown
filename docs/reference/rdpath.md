@@ -15,7 +15,14 @@ rdpath [--dir <path>] find <pattern>          # Find files matching glob pattern
 rdpath [--dir <path>] --ctx <id> find <pattern> # Find within context scope
 ```
 
-**Fallback resolution:** `--dir` is optional when `rdpath` can infer a run work path. The base directory resolves from explicit `--dir`, then `$RD_WORK_PATH`, then active runbook `WorkPath`. This base-directory fallback is mandatory: if the base directory depends on active state and that state is stale, corrupt, or unreadable, `rdpath` fails visibly so the user sees the real cause. `--ctx` resolves from explicit `--ctx`, then `$RD_CONTEXT_ID`, then active runbook `ContextId`. Context lookup is optional enrichment. When the base directory is supplied via `--dir` or `$RD_WORK_PATH` and only optional context lookup depends on active state, stale or corrupt state is skipped and the path assembles without a `.rd-<ctx>/` segment. `rdpath` does not migrate, rewrite, resume, or otherwise adapt stale runbook state. If no base directory can be resolved, `rdpath` writes `error: --dir is required (or set $RD_WORK_PATH)` to stderr and exits with code `1`. `--ctx` remains optional — when no flag, env var, or active `ContextId` is available, the path is assembled without a context segment.
+**Fallback resolution:** `--dir` is optional when `rdpath` can infer a run work path. Base directory resolution and context enrichment are intentionally asymmetric:
+
+1. The base directory resolves from explicit `--dir`, then `$RD_WORK_PATH`, then active runbook `WorkPath`.
+2. If the base directory depends on active state and that state is stale, corrupt, unreadable, or structurally invalid, `rdpath` fails visibly so the user sees the real cause.
+3. `--ctx` resolves from explicit `--ctx`, then `$RD_CONTEXT_ID`, then active runbook `ContextId`.
+4. Context lookup is optional enrichment. When the base directory is already known from `--dir` or `$RD_WORK_PATH`, a stale, corrupt, unreadable, or structurally invalid active state only means no active `ContextId` can be inferred; the path assembles without a `.rd-<ctx>/` segment.
+
+This optional context fallback does not migrate, rewrite, resume, shim, or otherwise adapt persisted runbook state. It is equivalent to running without any available `--ctx`, `$RD_CONTEXT_ID`, or active `ContextId`. If no base directory can be resolved, `rdpath` writes `error: --dir is required (or set $RD_WORK_PATH)` to stderr and exits with code `1`.
 
 ### Examples
 
