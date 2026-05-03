@@ -40,6 +40,8 @@ To keep runbooks as local-only project files instead, ignore the entire director
 .rundown/
 ```
 
+Persisted runtime state is not migrated between incompatible Rundown versions. If `.rundown/runs/`, `.rundown/session.json`, stashed runs, or claim records become stale or structurally incompatible, finish or stop the affected run if possible, then prune/clean the state and restart from the source runbook. See [docs/reference/runtime.md Stale persisted state / no-migration](../reference/runtime.md#stale-persisted-state--no-migration).
+
 ## Discovery
 
 List all discoverable runbooks (project, plugin, and bundled):
@@ -89,6 +91,8 @@ Benefits:
 - Runbooks read as **workflow documentation** — steps, transitions, and intent
 - Scripts are **testable independently** — `bash scripts/fetch-data.sh myrepo`
 - Separation of concerns — change implementation without touching workflow
+
+Running a script directly with `bash ...` is for script-level testing only. Direct shell execution bypasses Rundown command policy, filesystem sandboxing, runtime variables, and step-state handling; run the containing runbook when validating the workflow contract.
 
 ## Frontmatter
 

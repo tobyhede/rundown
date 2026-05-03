@@ -194,11 +194,15 @@ The `.claude-docker/` directory is gitignored. Do not commit credentials.
 
 If Claude prompts for login on every run:
 
-1. **Check credentials exist**: `ls -la .claude-docker/.credentials.json`
-2. **Check onboarding marker**: `.claude-docker/.claude.json` must contain `"hasCompletedOnboarding": true`
+1. **Check credentials exist**:
+   - On the host: `ls -la .claude-docker/.credentials.json`
+   - Inside the container: `ls -la ~/.claude/.credentials.json`
+2. **Check onboarding marker** in `.claude-docker/.claude.json` on the host, or `~/.claude/.claude.json` inside the container:
+   - Verification runs require `"hasCompletedOnboarding": true`
+   - E2E runs require `"onboardingComplete": true`
 3. **Check `CLAUDE_CONFIG_DIR`**: Must be set in the container environment (the compose file sets this to `/home/testuser/.claude`)
 4. **Check token expiry**: The `expiresAt` field in `.credentials.json` — expired access tokens should auto-refresh via the refresh token, but if both are expired, re-login is needed
-5. **Reset credentials**: Delete `.claude-docker/.credentials.json` and run again to re-authenticate
+5. **Reset credentials**: Delete `.claude-docker/.credentials.json` on the host, or `~/.claude/.credentials.json` inside the container, and run again to re-authenticate
 
 ### Differences Between Systems
 

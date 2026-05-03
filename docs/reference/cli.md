@@ -474,13 +474,20 @@ Two companion CLIs ship alongside `rundown`:
 | `rd claim <token> --input key=value` | Claim with variables |
 | `rd pass --claim-id <claim_id>` | Complete a claimed child with PASS |
 | `rd fail --claim-id <claim_id>` | Complete a claimed child with FAIL |
+| `rd status --claim-id <claim_id>` | Inspect a claimed child runbook |
+| `rd collect --claim-id <claim_id>` | Collect delegated results for a claimed child scope |
+| `rd goto <step> --claim-id <claim_id>` | Jump within a claimed child runbook |
+| `rd stash --claim-id <claim_id>` | Stash a claimed child runbook while preserving the claim record |
+| `rd pop --claim-id <claim_id>` | Restore a stashed claimed child runbook |
+| `rd stop --claim-id <claim_id>` | Stop a claimed child runbook |
+| `rd complete --claim-id <claim_id>` | Complete a claimed child runbook |
 | `rd abort <token>` | Cancel a delegation token |
 | `rd abort <token> --force` | Cancel a claimed delegation |
 
 Delegation semantics:
 - `delegate` requires a child runbook as a positional argument and `--step` to identify the target substep.
 - `claim` uses the delegation token (printed by `delegate`) to launch the child runbook and returns a stable `claim_id`.
-- Child runbook uses `rd pass --claim-id <claim_id>` / `rd fail --claim-id <claim_id>` to report its outcome.
+- Child runbook uses `rd pass --claim-id <claim_id>` / `rd fail --claim-id <claim_id>` to report its outcome. Other claim-targeted lifecycle commands use the same explicit child routing.
 - Completion routing is frame + entry aware (`frame + entry + substep`) to prevent stale re-entry completions from being applied.
 - Claimed children are routed by claim id, not by the shared stack. `rd claim <token>` records the claimed child run id under a generated `rdclm_...` handle; later commands use `--claim-id <claim_id>` to resolve that exact child.
 - Re-claiming the same delegated child refreshes and returns the existing claim id.
@@ -823,6 +830,14 @@ rdx <file>                   # Render JSON to Markdown (see docs/reference/rdx.m
 # Delegation
 rd delegate <runbook> --step <id>  # Delegate substep to child runbook
 rd claim <token>                   # Claim delegation token and return claim_id
-rd pass --claim-id <claim_id>      # Complete claimed child
+rd status --claim-id <claim_id>    # Inspect claimed child
+rd pass --claim-id <claim_id>      # Complete claimed child with PASS
+rd fail --claim-id <claim_id>      # Complete claimed child with FAIL
+rd goto <step> --claim-id <claim_id> # Jump within claimed child
+rd stash --claim-id <claim_id>     # Stash claimed child
+rd pop --claim-id <claim_id>       # Restore stashed claimed child
+rd collect --claim-id <claim_id>   # Collect delegated child results
+rd stop --claim-id <claim_id>      # Stop claimed child
+rd complete --claim-id <claim_id>  # Complete claimed child
 rd abort <token>                   # Cancel delegation token
 ```
