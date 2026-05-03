@@ -181,7 +181,7 @@ export function stripExitArtefact(buf: string): string {
   // start AND one preceded by a newline that terminated a legitimate line.
   // The previous `(?<=\n)` lookbehind missed the buffer-start case.
   const artefactPattern =
-    /(^|\n)\{\s*"error":\s*"process\.exit\(\d+\)",\s*"kind":\s*"error",\s*"code":\s*"UNKNOWN_ERROR"\s*\}\s*$/;
+    /(^|\n)\{\s*"error":\s*"process\.exit\(\d+\)",\s*"kind":\s*"error",\s*"code":\s*"UNKNOWN_ERROR"(?:,\s*"command":\s*"[^"]+")?\s*\}\s*$/;
   let out = buf.replace(artefactPattern, '$1');
   // `getErrorMessage(err)` on ExitSignal also produces a bare "process.exit(N)"
   // tail that may be appended elsewhere; swallow that too at end-of-buffer.

@@ -151,12 +151,25 @@ export type ClaimFailure =
       readonly childRunId: string;
     }
   | {
+      /**
+       * The parent's substep references a `childRunId` that no longer exists
+       * on disk. Transient — pruning + restarting the parent typically
+       * resolves it. Rendered as `CHILD_RUN_MISSING`.
+       */
       readonly reason: 'child-missing';
       readonly parentRunId: string;
       readonly stepId: string;
       readonly childRunId: string;
     }
   | {
+      /**
+       * The child's persisted `parentLinkage` disagrees with the freshly
+       * token-validated linkage. Indicates state corruption (manual edits,
+       * stale linkage from a prior delegation, cross-host state merge);
+       * operator intervention required — inspect
+       * `.rundown/runs/<childRunId>.json`. Rendered as
+       * `CHILD_LINKAGE_MISMATCH`.
+       */
       readonly reason: 'linkage-mismatch';
       readonly parentRunId: string;
       readonly stepId: string;
@@ -173,7 +186,7 @@ export type ClaimFailure =
   | {
       readonly reason: 'launch-failed';
       readonly runbook: string;
-      readonly code: RunbookStartFailure['code'];
+      readonly code: RunbookStartFailure['code'] | typeof ErrorCodes.CLAIM_INVARIANT_VIOLATED.code;
       readonly cause: string;
       readonly details: RunbookStartFailure['details'] & { readonly runbook: string };
     };
@@ -884,7 +897,7 @@ async function updateStepDelegationChildRunId(
 
 /** Outcome of {@link claimChildForPipeline}. */
 type ClaimChildResult =
-  | { readonly ok: true; readonly claimId: ClaimId }
+  | { readonly ok: true; readonly claimId: ClaimId; readonly childRunId: string }
   | {
       readonly ok: false;
       readonly reason: 'child-missing' | 'linkage-mismatch';
@@ -899,7 +912,11 @@ async function claimChildForPipeline(
   const claim = await ctx.sessionService.claimRunbook(childRunId, linkage);
   switch (claim.status) {
     case 'claimed':
-      return { ok: true, claimId: claim.claim.claimId };
+      return {
+        ok: true,
+        claimId: claim.claim.claimId,
+        childRunId: (claim.claim as { readonly childRunId?: string }).childRunId ?? childRunId,
+      };
     case 'missing-child':
       return { ok: false, reason: 'child-missing', childRunId: claim.childRunId };
     case 'linkage-mismatch':
@@ -936,14 +953,26 @@ function claimResultToFailure(
   };
 }
 
-/** Structured payload emitted alongside a successful `rd claim`. */
+/**
+ * Structured payload emitted alongside a successful `rd claim`.
+ *
+ * Stable JSON shape returned by the `rd claim` CLI on success. Field names
+ * use snake_case to match other CLI outputs (`run_id`, `parent_run_id`).
+ */
 export interface ClaimedOutputPayload {
+  /** Discriminator: always `'claimed'` on success. */
   readonly action: 'claimed';
+  /** Redacted display form of the delegation token (safe to log). */
   readonly token: string;
+  /** Branded claim id for subsequent `--claim-id` commands. */
   readonly claim_id: ClaimId;
+  /** Run id of the launched (or idempotently returned) child runbook. */
   readonly run_id: string;
+  /** Source path of the child runbook. */
   readonly runbook: string;
+  /** Run id of the parent runbook that issued the delegation. */
   readonly parent_run_id: string;
+  /** Parent step at-position (e.g. for FOR-loop iterations); `undefined` for bare-step delegations without an at-qualifier. */
   readonly parent_step: string | undefined;
 }
 
@@ -952,9 +981,7 @@ function emitClaimedOutput(
   message: string,
   data: ClaimedOutputPayload,
 ): void {
-  // OutputEmitter.status takes Record<string, unknown>; widen at the boundary
-  // — ClaimedOutputPayload is structurally compatible.
-  output.status('claimed', message, { ...data });
+  output.status('claimed', message, data);
 }
 
 /**
@@ -1217,6 +1244,75 @@ export async function claimAndLaunch(
       };
     }
 
+    // Build delegation linkage for the child.
+    // Use the delegation's stored frame key — not the parent's current frame.
+    // The parent may have advanced past the iteration where the delegation was created.
+    const delegationFrameKey = freshSubstep.frameKey;
+    const delegationLinkage: DelegationLinkage = {
+      kind: 'delegation' as const,
+      parentRunId: freshParent.id,
+      parentStepId: substepId ?? stepId,
+      tokenHash,
+      parentStep: freshParent.step,
+      parentFrameKey: delegationFrameKey,
+      parentEntry: inferEntryFromState(freshParent, delegationFrameKey),
+    };
+
+    const sessionServiceWithOptionalLookup = ctx.sessionService as Partial<
+      Pick<SessionService, 'findClaimForDelegation'>
+    >;
+    const existingClaim = sessionServiceWithOptionalLookup.findClaimForDelegation
+      ? await sessionServiceWithOptionalLookup.findClaimForDelegation(delegationLinkage)
+      : null;
+    if (existingClaim !== null) {
+      const existingChild = await manager.load(existingClaim.childRunId);
+      if (!existingChild) {
+        return {
+          ok: false,
+          reason: 'child-missing',
+          parentRunId: freshParent.id,
+          stepId,
+          childRunId: existingClaim.childRunId,
+        };
+      }
+      if (existingChild.lifecycle === 'completed' || existingChild.lifecycle === 'stopped') {
+        return {
+          ok: false,
+          reason: 'delegation-resolved',
+          parentRunId: freshParent.id,
+          stepId,
+          childRunId: existingClaim.childRunId,
+        };
+      }
+      await updateStepDelegationChildRunId(
+        manager,
+        freshParent.id,
+        substepId ?? stepId,
+        existingClaim.childRunId,
+        tokenHash,
+      );
+      emitClaimedOutput(
+        output,
+        `Claimed ${truncatedToken} -> ${freshDelegation.childRunbookPath}`,
+        buildClaimedPayload({
+          truncatedToken,
+          claimId: existingClaim.claimId,
+          childRunId: existingClaim.childRunId,
+          childRunbookPath: freshDelegation.childRunbookPath,
+          parentRunId: freshParent.id,
+          parentStepAt: freshDelegation.contextSnapshot.at,
+        }),
+      );
+      return {
+        ok: true,
+        childRunId: existingClaim.childRunId,
+        claimId: existingClaim.claimId,
+        parentRunId: freshParent.id,
+        stepId,
+        loopResult: 'waiting',
+      };
+    }
+
     // 4e. Reconstitute context vars from frozen snapshot
     const inheritedContextVars = reconstituteContextVars(freshDelegation.contextSnapshot);
     const inheritedUserVars = extractInheritedUserVars(freshDelegation.contextSnapshot);
@@ -1246,25 +1342,16 @@ export async function claimAndLaunch(
       output.warning(`Undefined variable "{{${name}}}" preserved as literal text`);
     }
 
-    // Build delegation linkage for the child run.
-    // Use the delegation's stored frame key — not the parent's current frame.
-    // The parent may have advanced past the iteration where the delegation was created.
-    const delegationFrameKey = freshSubstep.frameKey;
-    const delegationLinkage: DelegationLinkage = {
-      kind: 'delegation' as const,
-      parentRunId: freshParent.id,
-      parentStepId: substepId ?? stepId,
-      tokenHash,
-      parentStep: freshParent.step,
-      parentFrameKey: delegationFrameKey,
-      parentEntry: inferEntryFromState(freshParent, delegationFrameKey),
-    };
-
     const parentPrompted = freshParent.prompted ?? false;
 
     // 4g. Launch child runbook
     let capturedChildRunId: string | undefined;
     let capturedClaimId: ClaimId | undefined;
+    // Captures a write-side claim invariant violation in `afterInit` so we
+    // can surface it as a structured launch-failed result instead of an
+    // anonymous thrown Error. Should never trigger in practice — the child
+    // was just created with the same delegationLinkage being validated.
+    let invariantViolation: Extract<ClaimChildResult, { ok: false }> | undefined;
 
     const launchResult = await launchRunbook(ctx, prepResult.prepared, {
       runbookName: freshDelegation.childRunbookPath,
@@ -1273,27 +1360,39 @@ export async function claimAndLaunch(
       sessionActivation: { kind: 'none' },
       afterInit: async (childStateId) => {
         // Set childRunId on parent delegation (tokenHash for precise matching)
+        const claimResult = await claimChildForPipeline(ctx, childStateId, delegationLinkage);
+        if (!claimResult.ok) {
+          // Capture and bail; the outer block translates this into a typed
+          // launch-failed envelope with CLAIM_INVARIANT_VIOLATED so
+          // post-mortem from CLI output reveals the cause.
+          invariantViolation = claimResult;
+          return;
+        }
         await updateStepDelegationChildRunId(
           manager,
           freshParent.id,
           substepId ?? stepId,
-          childStateId,
+          claimResult.childRunId,
           tokenHash,
         );
-        const claimResult = await claimChildForPipeline(ctx, childStateId, delegationLinkage);
-        if (!claimResult.ok) {
-          // Fresh launch path: child was just created with `delegationLinkage`
-          // and `claimRunbook` validates the same linkage matches. A failure
-          // here is an internal invariant violation — surface it via the
-          // launchRunbook try/catch as a launch-failed result.
-          throw new Error(
-            `Claim invariant violated for fresh child ${claimResult.childRunId}: ${claimResult.reason}`,
-          );
-        }
         capturedClaimId = claimResult.claimId;
-        capturedChildRunId = childStateId;
+        capturedChildRunId = claimResult.childRunId;
       },
     });
+
+    if (invariantViolation !== undefined) {
+      return {
+        ok: false,
+        reason: 'launch-failed',
+        runbook: freshDelegation.childRunbookPath,
+        code: ErrorCodes.CLAIM_INVARIANT_VIOLATED.code,
+        cause: `Claim invariant violated for fresh child ${invariantViolation.childRunId}: ${invariantViolation.reason}`,
+        details: {
+          runbookName: freshDelegation.childRunbookPath,
+          runbook: freshDelegation.childRunbookPath,
+        },
+      };
+    }
 
     if (!launchResult.ok) {
       return {

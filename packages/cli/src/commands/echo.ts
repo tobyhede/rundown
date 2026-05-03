@@ -24,7 +24,7 @@ export function registerEchoCommand(program: Command): void {
     .option('--text', 'Output as human-readable text')
     .action(
       async (command: string[] | undefined, options: { result: string[]; text?: boolean }) => {
-        const output = new OutputEmitter({ text: options.text });
+        const output = new OutputEmitter({ text: options.text, command: 'echo' });
 
         try {
           const cwd = getCwd();

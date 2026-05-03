@@ -4,7 +4,10 @@ import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { getErrorMessage } from '@rundown-org/core';
 import { OutputEmitter } from '../services/output-emitter.js';
-import { formatStepAssertionDescription } from '../helpers/command-sequence.js';
+import {
+  formatErrorAssertionDescription,
+  formatStepAssertionDescription,
+} from '../helpers/command-sequence.js';
 import {
   loadScenarios,
   buildScenarioListRows,
@@ -60,7 +63,7 @@ export function registerScenariosCommand(program: Command): void {
     .description('List all scenarios in a runbook')
     .option('--text', 'Output as human-readable text')
     .action(async (file: string, options: { text?: boolean }) => {
-      const output = new OutputEmitter({ text: options.text });
+      const output = new OutputEmitter({ text: options.text, command: 'scenario ls' });
       try {
         const result = await loadScenarios(file, process.cwd());
         if (!result.ok) {
@@ -88,7 +91,7 @@ export function registerScenariosCommand(program: Command): void {
     .description('Show details for a specific scenario')
     .option('--text', 'Output as human-readable text')
     .action(async (file: string, scenarioName: string, options: { text?: boolean }) => {
-      const output = new OutputEmitter({ text: options.text });
+      const output = new OutputEmitter({ text: options.text, command: 'scenario show' });
       try {
         const result = await loadScenarios(file, process.cwd());
         if (!result.ok) {
@@ -134,7 +137,7 @@ export function registerScenariosCommand(program: Command): void {
     .option('--text', 'Output as human-readable text')
     .action(
       async (file: string, scenarioName: string, options: { quiet?: boolean; text?: boolean }) => {
-        const output = new OutputEmitter({ text: options.text });
+        const output = new OutputEmitter({ text: options.text, command: 'scenario run' });
 
         const result = await loadScenarios(file, process.cwd());
         if (!result.ok) {
@@ -170,6 +173,9 @@ export function registerScenariosCommand(program: Command): void {
         if (runResult.stepAssertions) {
           detailData.stepAssertions = runResult.stepAssertions;
         }
+        if (runResult.errorAssertions) {
+          detailData.errorAssertions = runResult.errorAssertions;
+        }
 
         output.detail(detailData, 'scenario_result');
 
@@ -181,6 +187,15 @@ export function registerScenariosCommand(program: Command): void {
             const icon = sa.matched ? '\u2713' : '\u2717';
             const status = sa.matched ? 'dim' : 'error';
             output.message(`  ${icon} ${formatStepAssertionDescription(sa)}`, status);
+          }
+        }
+        if (options.text && runResult.errorAssertions && runResult.errorAssertions.length > 0) {
+          output.message('', 'info');
+          output.message('Error Assertions:', 'info');
+          for (const ea of runResult.errorAssertions) {
+            const icon = ea.matched ? '\u2713' : '\u2717';
+            const status = ea.matched ? 'dim' : 'error';
+            output.message(`  ${icon} ${formatErrorAssertionDescription(ea)}`, status);
           }
         }
 

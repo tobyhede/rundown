@@ -122,6 +122,18 @@ export class SessionService {
     return Object.values(claims).find((claim) => claim.childRunId === childRunId);
   }
 
+  private findClaimByDelegationLinkage(
+    claims: Record<string, ClaimRecord>,
+    linkage: DelegationLinkage,
+  ): ClaimRecord | undefined {
+    return Object.values(claims).find(
+      (claim) =>
+        claim.parentRunId === linkage.parentRunId &&
+        claim.parentStepId === linkage.parentStepId &&
+        claim.tokenHash === linkage.tokenHash,
+    );
+  }
+
   /**
    * Get the currently active runbook.
    *
@@ -149,6 +161,20 @@ export class SessionService {
       const session = await this.manager.loadSession();
       session.defaultStack.push(id);
       await this.manager.saveSession(session);
+    });
+  }
+
+  /**
+   * Resolve an existing claim record for a delegation linkage, if one has
+   * already been created.
+   *
+   * @param linkage - Delegation linkage to match by parent run, parent step, and token hash
+   * @returns The matching claim record, or `null` when the delegation has not been claimed
+   */
+  async findClaimForDelegation(linkage: DelegationLinkage): Promise<ClaimRecord | null> {
+    return this.withLock(async () => {
+      const session = await this.manager.loadSession();
+      return this.findClaimByDelegationLinkage(session.claims, linkage) ?? null;
     });
   }
 
@@ -181,8 +207,8 @@ export class SessionService {
         return {
           status: 'linkage-mismatch',
           childRunId,
-          expected: linkage,
-          actual: childState.parentLinkage,
+          incoming: linkage,
+          persisted: childState.parentLinkage,
         };
       }
 
@@ -192,6 +218,26 @@ export class SessionService {
       if (existing !== undefined) {
         const refreshed = { ...existing, updatedAt: now };
         session.claims[existing.claimId] = refreshed;
+        await this.manager.saveSession(session);
+        return { status: 'claimed', claim: refreshed };
+      }
+
+      const existingForDelegation = this.findClaimByDelegationLinkage(session.claims, linkage);
+      if (existingForDelegation !== undefined) {
+        const existingState = await this.manager.load(existingForDelegation.childRunId);
+        if (!existingState) {
+          return { status: 'missing-child', childRunId: existingForDelegation.childRunId };
+        }
+        if (!linkageMatchesLinkage(existingState.parentLinkage, linkage)) {
+          return {
+            status: 'linkage-mismatch',
+            childRunId: existingForDelegation.childRunId,
+            incoming: linkage,
+            persisted: existingState.parentLinkage,
+          };
+        }
+        const refreshed = { ...existingForDelegation, updatedAt: now };
+        session.claims[existingForDelegation.claimId] = refreshed;
         await this.manager.saveSession(session);
         return { status: 'claimed', claim: refreshed };
       }

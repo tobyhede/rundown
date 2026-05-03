@@ -23,7 +23,7 @@ export function registerLsCommand(program: Command): void {
       await withErrorHandling(
         async () => {
           const cwd = getCwd();
-          const output = new OutputEmitter({ text: options.text });
+          const output = new OutputEmitter({ text: options.text, command: 'ls' });
 
           // MODE 1: List available runbooks (--all)
           if (options.all) {

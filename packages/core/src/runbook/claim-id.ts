@@ -40,15 +40,30 @@ export interface ClaimRecord {
   readonly updatedAt: string;
 }
 
-/** Result of creating or refreshing a claim record for a child runbook. */
+/**
+ * Result of creating or refreshing a claim record for a child runbook.
+ *
+ * - `claimed` — Claim recorded successfully. The included `claim` is the
+ *   freshly created or idempotently refreshed record.
+ * - `missing-child` — Transient failure: the child run state file is absent
+ *   on disk. May be recoverable by pruning + restarting the parent.
+ * - `linkage-mismatch` — Corruption signal: the child's persisted
+ *   `parentLinkage` disagrees with the freshly token-validated `incoming`
+ *   linkage on at least one identifying field (`parentRunId`,
+ *   `parentStepId`, `tokenHash`). Operator intervention required — inspect
+ *   `.rundown/runs/<childRunId>.json`. Fields are named from the write
+ *   site's POV: `incoming` is what the caller offered, `persisted` is what
+ *   was already on disk. `persisted` is `undefined` when the child has no
+ *   parent linkage at all.
+ */
 export type ClaimRunbookResult =
   | { readonly status: 'claimed'; readonly claim: ClaimRecord }
   | { readonly status: 'missing-child'; readonly childRunId: RunbookState['id'] }
   | {
       readonly status: 'linkage-mismatch';
       readonly childRunId: RunbookState['id'];
-      readonly expected: DelegationLinkage;
-      readonly actual: RunbookState['parentLinkage'];
+      readonly incoming: DelegationLinkage;
+      readonly persisted: RunbookState['parentLinkage'];
     };
 
 /** Result of resolving a claim id to a usable child runbook. */

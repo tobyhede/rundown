@@ -39,6 +39,8 @@ import { JSONRenderer } from './renderers/json-renderer.js';
 export interface OutputEmitterOptions {
   /** Whether to output text instead of JSON (JSON is the default) */
   text?: boolean;
+  /** CLI command name to include on structured error output */
+  command?: string;
   /** Custom writer to use for output */
   writer?: OutputWriter;
   /** Custom renderer (overrides text option) */
@@ -75,6 +77,7 @@ export interface ListOptions<T, U = T> {
 export class OutputEmitter {
   private renderer: OutputRenderer;
   private writer: OutputWriter;
+  private command?: string;
 
   /**
    * Create a new OutputEmitter.
@@ -83,6 +86,7 @@ export class OutputEmitter {
    */
   constructor(options: OutputEmitterOptions = {}) {
     this.writer = options.writer ?? getWriter();
+    this.command = options.command;
 
     if (options.renderer) {
       this.renderer = options.renderer;
@@ -157,16 +161,21 @@ export class OutputEmitter {
   /**
    * Emit an operation status.
    *
+   * Accepts any structurally-compatible object so callers can pass typed
+   * payloads (e.g. `ClaimedOutputPayload`) without losing the type at the
+   * boundary. The payload is read structurally; readonly + branded fields
+   * are accepted unchanged.
+   *
    * @param action - The action that was performed
    * @param message - Optional message about the result
    * @param data - Additional structured data
    */
-  status(action: string, message?: string, data?: Record<string, unknown>): void {
+  status(action: string, message?: string, data?: object): void {
     const event: StatusOutput = {
       type: 'status',
       action,
       message,
-      data,
+      data: data as Record<string, unknown> | undefined,
     };
     this.renderer.render(event);
   }
@@ -268,6 +277,7 @@ export class OutputEmitter {
       type: 'error',
       message,
       code,
+      command: this.command,
       details: errorDetails,
     };
     this.renderer.render(event);

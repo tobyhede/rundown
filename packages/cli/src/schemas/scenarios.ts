@@ -27,6 +27,21 @@ export const StepAssertionSchema = z.object({
 export type StepAssertion = z.infer<typeof StepAssertionSchema>;
 
 /**
+ * Schema for a single JSON error assertion.
+ *
+ * All fields are optional — only specified fields are matched against captured
+ * error responses from command output.
+ */
+export const ErrorAssertionSchema = z.object({
+  code: z.string().optional(),
+  command: z.string().optional(),
+  error: z.string().optional(),
+});
+
+/** A parsed error assertion used to match against captured JSON error output. */
+export type ErrorAssertion = z.infer<typeof ErrorAssertionSchema>;
+
+/**
  * Schema for rich assertions on scenario execution state.
  *
  * All fields are optional — only specified fields are matched.
@@ -34,6 +49,7 @@ export type StepAssertion = z.infer<typeof StepAssertionSchema>;
 export const ScenarioExpectSchema = z.object({
   result: z.enum(['COMPLETE', 'STOP']).optional(),
   steps: z.array(StepAssertionSchema).optional(),
+  errors: z.array(ErrorAssertionSchema).optional(),
 });
 
 /**
@@ -62,10 +78,16 @@ export const ScenarioSchema = z
     /** Optional tags for categorizing scenarios */
     tags: z.array(z.string()).optional(),
   })
-  .refine((s) => s.result !== undefined || s.expect?.result !== undefined, {
-    message: 'Either result or expect.result must be specified',
-    path: ['result'],
-  })
+  .refine(
+    (s) =>
+      s.result !== undefined ||
+      s.expect?.result !== undefined ||
+      (s.expect?.errors !== undefined && s.expect.errors.length > 0),
+    {
+      message: 'Either result, expect.result, or expect.errors must be specified',
+      path: ['result'],
+    },
+  )
   .refine(
     (s) => {
       if (s.result !== undefined && s.expect?.result !== undefined) {
@@ -104,15 +126,19 @@ export type ScenarioExpect = z.infer<typeof ScenarioExpectSchema>;
  * @param scenario.result - Top-level expected terminal result
  * @param scenario.expect - Rich assertion block with optional result and step assertions
  * @param scenario.expect.result - Expected terminal result within the expect block
- * @returns The effective terminal result ('COMPLETE' or 'STOP')
+ * @param scenario.expect.errors - Error assertions that allow an error-only scenario
+ * @returns The effective terminal result, or 'UNKNOWN' for error-only scenarios
  * @throws {Error} When neither `scenario.result` nor `scenario.expect?.result` is defined
  */
 export function getEffectiveResult(scenario: {
   result?: 'COMPLETE' | 'STOP';
-  expect?: { result?: 'COMPLETE' | 'STOP' };
-}): 'COMPLETE' | 'STOP' {
+  expect?: { result?: 'COMPLETE' | 'STOP'; errors?: readonly unknown[] };
+}): 'COMPLETE' | 'STOP' | 'UNKNOWN' {
   const result = scenario.result ?? scenario.expect?.result;
   if (result === undefined) {
+    if (scenario.expect?.errors !== undefined && scenario.expect.errors.length > 0) {
+      return 'UNKNOWN';
+    }
     throw new Error('Neither result nor expect.result is defined');
   }
   return result;

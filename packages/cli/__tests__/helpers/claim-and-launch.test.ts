@@ -565,6 +565,118 @@ describe('claimAndLaunch', () => {
     );
   });
 
+  it('surfaces child-missing when claimRunbook reports the child state is gone', async () => {
+    const parentState = {
+      id: 'run-1',
+      variables: {},
+      substepStates: [
+        {
+          id: '1',
+          status: 'pending',
+          delegation: {
+            tokenHash: MOCK_TOKEN_HASH,
+            childRunbookPath: 'child.md',
+            childRunId: 'existing-child-run',
+            cancelledAt: null,
+            contextSnapshot: { vars: {}, ancestors: [] },
+            createdAt: '2026-02-27T10:00:00.000Z',
+          },
+        },
+      ],
+    };
+
+    const mockClaimRunbook = mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
+      status: 'missing-child',
+      childRunId: 'existing-child-run',
+    });
+
+    const ctx = makeCtx({
+      sessionService: {
+        pushRunbook: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
+        claimRunbook: mockClaimRunbook,
+      },
+    });
+
+    mockScanService(
+      scanResult({
+        parentState,
+        stepId: '1',
+        substepId: '1',
+        delegation: parentState.substepStates[0].delegation,
+      }),
+    );
+    mockHappyDelegationLock();
+    jest.mocked(ctx.manager).load.mockResolvedValue(parentState as unknown as RunbookState);
+
+    // cspell:disable-next-line
+    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      assertVariant(result, 'reason', 'child-missing');
+      expect(result.childRunId).toBe('existing-child-run');
+      expect(result.parentRunId).toBe('run-1');
+    }
+    expect(mockClaimRunbook).toHaveBeenCalled();
+  });
+
+  it('surfaces linkage-mismatch when claimRunbook reports persisted linkage divergence', async () => {
+    const parentState = {
+      id: 'run-1',
+      variables: {},
+      substepStates: [
+        {
+          id: '1',
+          status: 'pending',
+          delegation: {
+            tokenHash: MOCK_TOKEN_HASH,
+            childRunbookPath: 'child.md',
+            childRunId: 'existing-child-run',
+            cancelledAt: null,
+            contextSnapshot: { vars: {}, ancestors: [] },
+            createdAt: '2026-02-27T10:00:00.000Z',
+          },
+        },
+      ],
+    };
+
+    const mockClaimRunbook = mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
+      status: 'linkage-mismatch',
+      childRunId: 'existing-child-run',
+      incoming: { kind: 'delegation', tokenHash: MOCK_TOKEN_HASH },
+      persisted: { kind: 'delegation', tokenHash: DIFFERENT_TOKEN_HASH },
+    });
+
+    const ctx = makeCtx({
+      sessionService: {
+        pushRunbook: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
+        claimRunbook: mockClaimRunbook,
+      },
+    });
+
+    mockScanService(
+      scanResult({
+        parentState,
+        stepId: '1',
+        substepId: '1',
+        delegation: parentState.substepStates[0].delegation,
+      }),
+    );
+    mockHappyDelegationLock();
+    jest.mocked(ctx.manager).load.mockResolvedValue(parentState as unknown as RunbookState);
+
+    // cspell:disable-next-line
+    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      assertVariant(result, 'reason', 'linkage-mismatch');
+      expect(result.childRunId).toBe('existing-child-run');
+      expect(result.parentRunId).toBe('run-1');
+    }
+    expect(mockClaimRunbook).toHaveBeenCalled();
+  });
+
   it('re-throws non-timeout lock errors instead of masking them', async () => {
     const ctx = makeCtx();
 

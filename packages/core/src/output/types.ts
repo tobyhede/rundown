@@ -154,6 +154,8 @@ export interface ErrorOutput extends BaseOutputEvent {
   message: string;
   /** Error code for programmatic handling */
   code?: string;
+  /** CLI command that triggered this error */
+  command?: string;
   /** Additional error details */
   details?: Record<string, unknown>;
 }

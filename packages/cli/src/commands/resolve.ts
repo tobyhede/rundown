@@ -88,7 +88,7 @@ export function registerResolveCommand(program: Command): void {
     )
     .option('--text', 'Output as human-readable text')
     .action(async (file: string, options: ResolveOptions) => {
-      const output = new OutputEmitter({ text: options.text });
+      const output = new OutputEmitter({ text: options.text, command: 'resolve' });
       const cwd = process.cwd();
 
       const result = await prepareRunbook(

@@ -80,11 +80,14 @@ describe('stash command', () => {
     const result = await runCliInProcess('stash', workspace);
 
     expect(result.exitCode).toBe(1);
-    expect(JSON.parse(result.stdout)).toEqual({
-      kind: 'error',
-      error: 'A runbook is already stashed. Pop it first.',
-      code: 'ALREADY_STASHED',
-    });
+    expect(JSON.parse(result.stdout)).toEqual(
+      expect.objectContaining({
+        kind: 'error',
+        error: 'A runbook is already stashed. Pop it first.',
+        code: 'ALREADY_STASHED',
+        command: 'stash',
+      }),
+    );
   });
 
   it('keeps claimed delegated children out of plain pop', async () => {

@@ -51,7 +51,7 @@ export function registerCollectCommand(program: Command): void {
       async (options: { step?: string; index?: string; claimId?: string; text?: boolean }) => {
         await withErrorHandling(
           async () => {
-            const output = new OutputEmitter({ text: options.text });
+            const output = new OutputEmitter({ text: options.text, command: 'collect' });
             const cwd = getCwd();
 
             const claimTarget = parseClaimIdOption(options.claimId, output);

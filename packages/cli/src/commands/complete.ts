@@ -37,7 +37,7 @@ export function registerCompleteCommand(program: Command): void {
     .action(async (message: string | undefined, options: { claimId?: string; text?: boolean }) => {
       await withErrorHandling(
         async () => {
-          const output = new OutputEmitter({ text: options.text });
+          const output = new OutputEmitter({ text: options.text, command: 'complete' });
           const cwd = getCwd();
           const manager = new RunbookStateManager(cwd);
           const sessionService = new SessionService(manager);

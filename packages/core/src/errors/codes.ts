@@ -333,6 +333,18 @@ export const ErrorCodes = {
       'for runbook composition inside a claimed child.',
     docSlug: 'delegation-nested-forbidden',
   },
+  CLAIM_INVARIANT_VIOLATED: {
+    code: 'RD-820',
+    category: ErrorCategory.DELEGATION,
+    title: 'Claim invariant violated during fresh launch',
+    description:
+      `A freshly launched delegated child failed write-side claim validation. ` +
+      `The child was just created with the same delegation linkage now being ` +
+      `rejected — indicates internal inconsistency between manager.create() ` +
+      `and SessionService.claimRunbook(). State may be corrupted; inspect ` +
+      `.rundown/runs/<childRunId>.json and the parent's substep delegation.`,
+    docSlug: 'claim-invariant-violated',
+  },
   // Retry hook (9xx) — sub-range of ErrorCategory.EXECUTION reserved for
   // retry-hook lifecycle failures (delegation re-issuance, frame-key invariants,
   // canonical-at requirements). Kept as EXECUTION rather than a dedicated

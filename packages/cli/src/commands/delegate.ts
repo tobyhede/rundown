@@ -82,7 +82,7 @@ export function registerDelegateCommand(program: Command): void {
     .action(async (runbookArg: string | undefined, options: DelegateActionOptions) => {
       await withErrorHandling(
         async () => {
-          const output = new OutputEmitter({ text: options.text });
+          const output = new OutputEmitter({ text: options.text, command: 'delegate' });
 
           const depError = validateIndexRequiresStep(options.index, options.step);
           if (depError) {

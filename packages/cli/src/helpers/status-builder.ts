@@ -197,10 +197,14 @@ export function buildStashedStatus(stashedState: RunbookState, cwd: string): Sta
   const metadata = buildMetadata(stashedState);
   const parentLinkage = buildParentLinkage(stashedState);
   const vars = buildVars(stashedState);
-  // Claim-scoped data (vars inherited via delegation OUTPUTS/inputs) is only
-  // surfaced to callers holding the claim id. Plain status sees position and
-  // file path but not the variable contents.
-  const isClaimScoped = stashedState.parentLinkage?.kind === 'delegation';
+  // Caller-scoped vars (inherited from a parent runbook via delegation
+  // OUTPUTS/inputs or via inline templateVars) are only surfaced to callers
+  // who can identify themselves. Plain status sees position and file path
+  // but not the variable contents — the original caller can recover
+  // visibility by `rd unstash`-ing the runbook back into the active stack
+  // (where `buildActiveStatus` re-includes vars), or for delegated children
+  // by passing `--claim-id`.
+  const isCallerScoped = stashedState.parentLinkage != null;
 
   return {
     active: false,
@@ -215,7 +219,7 @@ export function buildStashedStatus(stashedState: RunbookState, cwd: string): Sta
       stashedState.forStack,
     ),
     ...(parentLinkage ? { parentLinkage } : {}),
-    ...(vars != null && !isClaimScoped && { vars }),
+    ...(vars != null && !isCallerScoped && { vars }),
   };
 }
 

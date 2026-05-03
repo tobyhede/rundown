@@ -38,12 +38,16 @@ scenario =
 expect_block =
   [ "result:" ( "COMPLETE" | "STOP" ) ]
   [ "steps:" step_assertion { step_assertion } ]
+  [ "errors:" error_assertion { error_assertion } ]
 
 step_assertion =
   "- " [ "runbook:" text ] [ "at:" text ] [ "from:" text ] [ "action:" text ] [ "result:" ( "PASS" | "FAIL" ) ] [ "command:" text ] [ "aggregated:" boolean ]
+
+error_assertion =
+  "- " [ "code:" text ] [ "command:" text ] [ "error:" text ]
 ```
 
-At least one of top-level `result:` or `expect.result` must be specified. If both are present, they must match.
+At least one of top-level `result:`, `expect.result`, or `expect.errors` must be specified. If both result fields are present, they must match.
 
 External scenario suites use the same command and assertion model in standalone `*.scenario-suite.yaml` files:
 
@@ -347,6 +351,8 @@ All fields within `steps` entries are optional. Assert only what matters for the
 There is no separate `final` block. The last `steps` entry serves as the terminal assertion when needed. The `result` field at the top level (`COMPLETE`/`STOP`) captures the terminal outcome from `RUNBOOK_COMPLETED`/`RUNBOOK_STOPPED` events.
 
 Terminal results are parsed from JSON event streams (`type: "runbook_completed"` or `type: "runbook_stopped"`) and from flushed JSON command responses with `complete: true` or `stopped: true`. Step assertions are matched only against streamed `step_transitioned` events, not flushed summary objects.
+
+Error assertions match JSON error responses emitted by expected-failure commands (`! rd ...`). `code` and `command` match exactly; `error` matches as a substring of the human-readable error message.
 
 ### Matching Semantics
 

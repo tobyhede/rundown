@@ -27,7 +27,7 @@ export function registerStatusCommand(program: Command): void {
       await withErrorHandling(
         async () => {
           const cwd = getCwd();
-          const output = new OutputEmitter({ text: options.text });
+          const output = new OutputEmitter({ text: options.text, command: 'status' });
 
           const manager = new RunbookStateManager(cwd);
           const sessionService = new SessionService(manager);

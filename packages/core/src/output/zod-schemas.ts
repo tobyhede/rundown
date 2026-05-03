@@ -47,6 +47,10 @@ export const CLIErrorCodes = {
   INVALID_CLAIM_ID: 'INVALID_CLAIM_ID',
   /** Claimed runbook is missing, terminal, or otherwise unavailable */
   CLAIMED_RUNBOOK_UNAVAILABLE: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+  /** Child run state file is missing on disk (transient — pruning may help) */
+  CHILD_RUN_MISSING: 'CHILD_RUN_MISSING',
+  /** Child runbook's persisted parentLinkage diverges from the freshly token-validated linkage (state corruption — operator intervention required) */
+  CHILD_LINKAGE_MISMATCH: 'CHILD_LINKAGE_MISMATCH',
   /** Delegation token format is invalid */
   INVALID_TOKEN: 'INVALID_TOKEN',
   /** Delegation token was not found */
@@ -59,6 +63,8 @@ export const CLIErrorCodes = {
   DELEGATION_NESTED_FORBIDDEN: 'DELEGATION_NESTED_FORBIDDEN',
   /** Runbook launch failed */
   LAUNCH_FAILED: 'LAUNCH_FAILED',
+  /** Fresh claim launch violated write-side invariants */
+  CLAIM_INVARIANT_VIOLATED: 'RD-820',
   /** Scenario not found */
   SCENARIO_NOT_FOUND: 'SCENARIO_NOT_FOUND',
   /** File system operation failed */
@@ -81,12 +87,15 @@ export const ErrorCodeSchema = z
     'NO_STASHED_RUNBOOK',
     'INVALID_CLAIM_ID',
     'CLAIMED_RUNBOOK_UNAVAILABLE',
+    'CHILD_RUN_MISSING',
+    'CHILD_LINKAGE_MISMATCH',
     'INVALID_TOKEN',
     'TOKEN_NOT_FOUND',
     'DELEGATION_CANCELLED',
     'DELEGATION_LOCK_TIMEOUT',
     'DELEGATION_NESTED_FORBIDDEN',
     'LAUNCH_FAILED',
+    'RD-820',
     'SCENARIO_NOT_FOUND',
     'FILE_ERROR',
     'UNKNOWN_ERROR',
@@ -650,6 +659,48 @@ export const ScenarioStepAssertionResultSchema = z
   .describe('Result of matching a step assertion against the event stream');
 
 /**
+ * Schema for a single JSON error assertion as specified in the scenario.
+ */
+export const ErrorAssertionInputSchema = z
+  .object({
+    /** Error code */
+    code: z.string().optional().describe('Error code'),
+    /** CLI command that triggered the error */
+    command: z.string().optional().describe('Command that triggered the error'),
+    /** Error message substring */
+    error: z.string().optional().describe('Error message substring'),
+  })
+  .describe('Error assertion from scenario definition');
+
+/**
+ * Schema for a captured JSON error response.
+ */
+export const CapturedErrorSchema = z
+  .object({
+    /** Error code */
+    code: z.string().optional().describe('Error code'),
+    /** Human-readable error message */
+    error: z.string().optional().describe('Error message'),
+    /** CLI command that triggered the error */
+    command: z.string().optional().describe('Command that triggered the error'),
+  })
+  .describe('Captured error response from command execution');
+
+/**
+ * Error assertion result from matching against JSON error responses.
+ */
+export const ScenarioErrorAssertionResultSchema = z
+  .object({
+    /** The assertion that was evaluated */
+    assertion: ErrorAssertionInputSchema.describe('The assertion that was evaluated'),
+    /** Whether a matching error was found */
+    matched: z.boolean().describe('Whether a matching error was found'),
+    /** The error that matched (if any) */
+    matchedError: CapturedErrorSchema.optional().describe('The error that matched'),
+  })
+  .describe('Result of matching an error assertion against captured errors');
+
+/**
  * Scenario run result.
  */
 export const ScenarioRunResponseSchema = z
@@ -671,6 +722,11 @@ export const ScenarioRunResponseSchema = z
       .array(ScenarioStepAssertionResultSchema)
       .optional()
       .describe('Per-step assertion results'),
+    /** Per-error assertion results (present when expect.errors block is used) */
+    errorAssertions: z
+      .array(ScenarioErrorAssertionResultSchema)
+      .optional()
+      .describe('Per-error assertion results'),
   })
   .describe('Response from scenario run command');
 

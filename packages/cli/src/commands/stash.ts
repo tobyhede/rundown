@@ -23,7 +23,7 @@ export function registerStashCommand(program: Command): void {
       await withErrorHandling(
         async () => {
           const cwd = getCwd();
-          const output = new OutputEmitter({ text: options.text });
+          const output = new OutputEmitter({ text: options.text, command: 'stash' });
           const manager = new RunbookStateManager(cwd);
           const sessionService = new SessionService(manager);
           const claimTarget = parseClaimIdOption(options.claimId, output);

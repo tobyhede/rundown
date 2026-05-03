@@ -146,7 +146,7 @@ export function registerAbortCommand(program: Command): void {
     .action(async (token: string, options: { force?: boolean; text?: boolean }) => {
       await withErrorHandling(
         async () => {
-          const output = new OutputEmitter({ text: options.text });
+          const output = new OutputEmitter({ text: options.text, command: 'abort' });
           const cwd = getCwd();
           const manager = new RunbookStateManager(cwd);
           const hint = truncateDelegationToken(token);

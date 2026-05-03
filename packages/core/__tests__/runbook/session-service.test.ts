@@ -137,13 +137,17 @@ describe('SessionService', () => {
       tokenHash: assertDelegationTokenHash(`sha256:${fill.repeat(64)}`),
     });
 
+    const isClaimed = <T extends { status: string }>(
+      result: T,
+    ): result is Extract<T, { status: 'claimed' }> => result.status === 'claimed';
+
     const assertClaimed = <T extends { status: string }>(
       result: T,
     ): Extract<T, { status: 'claimed' }> => {
-      if (result.status !== 'claimed') {
+      if (!isClaimed(result)) {
         throw new Error(`Expected claim result, got status=${result.status}`);
       }
-      return result as Extract<T, { status: 'claimed' }>;
+      return result;
     };
 
     it('registers a delegated child claim without changing the default stack', async () => {
@@ -318,8 +322,8 @@ describe('SessionService', () => {
       expect(result.status).toBe('linkage-mismatch');
       if (result.status === 'linkage-mismatch') {
         expect(result.childRunId).toBe(child.id);
-        expect(result.expected).toBe(drifted);
-        expect(result.actual).toEqual(linkage);
+        expect(result.incoming).toBe(drifted);
+        expect(result.persisted).toEqual(linkage);
       }
     });
 
@@ -331,7 +335,7 @@ describe('SessionService', () => {
       const result = await sessionService.claimRunbook(child.id, linkage);
       expect(result.status).toBe('linkage-mismatch');
       if (result.status === 'linkage-mismatch') {
-        expect(result.actual).toBeUndefined();
+        expect(result.persisted).toBeUndefined();
       }
     });
 

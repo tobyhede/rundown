@@ -12,7 +12,7 @@ export function registerCheckCommand(program: Command): void {
     .description('Check a runbook file for errors')
     .option('--text', 'Output as human-readable text')
     .action(async (file: string, options: { text?: boolean }) => {
-      const output = new OutputEmitter({ text: options.text });
+      const output = new OutputEmitter({ text: options.text, command: 'check' });
       const cwd = process.cwd();
 
       const result = await loadAndParseRunbook(file, cwd);

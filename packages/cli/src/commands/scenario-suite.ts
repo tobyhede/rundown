@@ -205,7 +205,7 @@ export function registerScenarioSuiteCommand(program: Command): void {
     .description('List all cases in a scenario suite')
     .option('--text', 'Output as human-readable text')
     .action(async (suiteFile: string, options: { text?: boolean }) => {
-      const output = new OutputEmitter({ text: options.text });
+      const output = new OutputEmitter({ text: options.text, command: 'scenario-suite ls' });
       try {
         const result = await loadScenarioSuite(suiteFile);
         if (!result.ok) {
@@ -248,7 +248,7 @@ export function registerScenarioSuiteCommand(program: Command): void {
     .description('Show details for a specific case in a suite')
     .option('--text', 'Output as human-readable text')
     .action(async (suiteFile: string, caseName: string, options: { text?: boolean }) => {
-      const output = new OutputEmitter({ text: options.text });
+      const output = new OutputEmitter({ text: options.text, command: 'scenario-suite show' });
       try {
         const result = await loadScenarioSuite(suiteFile);
         if (!result.ok) {
@@ -301,7 +301,7 @@ export function registerScenarioSuiteCommand(program: Command): void {
         caseName: string | undefined,
         options: { all?: boolean; quiet?: boolean; text?: boolean },
       ) => {
-        const output = new OutputEmitter({ text: options.text });
+        const output = new OutputEmitter({ text: options.text, command: 'scenario-suite run' });
         try {
           const result = await loadScenarioSuite(suiteFile);
           if (!result.ok) {

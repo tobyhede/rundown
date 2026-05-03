@@ -18,7 +18,9 @@ import {
   executeCommandSequence,
   extractInputFileReferences,
   extractRunbookReferences,
+  matchErrorAssertions,
   matchStepAssertions,
+  formatErrorAssertionDescription,
   formatStepAssertionDescription,
 } from '../../src/helpers/command-sequence.js';
 import { copyFileSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
@@ -260,6 +262,25 @@ async function executeScenario(
         `Step assertion failures for ${filename}:\n  ${descriptions}\n\nCaptured transitions:\n  ${eventSummary}`,
       );
     }
+  }
+
+  if (scenario.expect?.errors) {
+    const assertionResults = matchErrorAssertions(scenario.expect.errors, seqResult.errors);
+    const failed = assertionResults.filter((r) => !r.matched);
+    if (failed.length > 0) {
+      const descriptions = failed.map(formatErrorAssertionDescription).join('\n  ');
+      const eventSummary = seqResult.errors
+        .map((e) => `{code=${e.code ?? '?'}, command=${e.command ?? '?'}, error=${e.error ?? '?'}}`)
+        .join('\n  ');
+      throw new Error(
+        `Error assertion failures for ${filename}:\n  ${descriptions}\n\nCaptured errors:\n  ${eventSummary}`,
+      );
+    }
+  }
+
+  if (expectedResult === 'UNKNOWN') {
+    expect(seqResult.terminalResult).toBe('UNKNOWN');
+    return;
   }
 
   const states = await getAllStates(workspace);

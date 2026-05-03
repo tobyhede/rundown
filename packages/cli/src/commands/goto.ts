@@ -22,7 +22,7 @@ export function registerGotoCommand(program: Command): void {
       async (stepArg: string, options: { index?: string; claimId?: string; text?: boolean }) => {
         await withErrorHandling(
           async () => {
-            const output = new OutputEmitter({ text: options.text });
+            const output = new OutputEmitter({ text: options.text, command: 'goto' });
             const cwd = getCwd();
 
             const claimTarget = parseClaimIdOption(options.claimId, output);

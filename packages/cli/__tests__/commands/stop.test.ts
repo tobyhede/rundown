@@ -168,6 +168,7 @@ Do work.
         expect.objectContaining({
           kind: 'error',
           code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+          command: 'stop',
         }),
       );
       expect(String(errorResponse.error)).toContain(String(claimId));
@@ -220,6 +221,7 @@ Do work.
         expect.objectContaining({
           kind: 'error',
           code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+          command: 'stop',
         }),
       );
       expect(String(errorResponse.error)).toContain(

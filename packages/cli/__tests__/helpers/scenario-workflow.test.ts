@@ -25,12 +25,15 @@ jest.unstable_mockModule('../../src/schemas/scenarios', () => {
     mockFn<
       (s: {
         result?: 'COMPLETE' | 'STOP';
-        expect?: { result?: 'COMPLETE' | 'STOP' };
-      }) => 'COMPLETE' | 'STOP'
+        expect?: { result?: 'COMPLETE' | 'STOP'; errors?: readonly unknown[] };
+      }) => 'COMPLETE' | 'STOP' | 'UNKNOWN'
     >();
   getEffectiveResultMock.mockImplementation((s) => {
     const r = s.result ?? s.expect?.result;
     if (r === undefined) {
+      if (s.expect?.errors !== undefined && s.expect.errors.length > 0) {
+        return 'UNKNOWN';
+      }
       throw new Error('Neither result nor expect.result is defined');
     }
     return r;
@@ -81,6 +84,8 @@ const actualCommandSequence = await import('../../src/helpers/command-sequence.j
 jest.unstable_mockModule('../../src/helpers/command-sequence', () => ({
   executeCommandSequence: jest.fn(),
   matchStepAssertions: jest.fn(),
+  matchErrorAssertions: jest.fn(),
+  formatErrorAssertionDescription: actualCommandSequence.formatErrorAssertionDescription,
   extractRunbookReferences: actualCommandSequence.extractRunbookReferences,
   extractInputFileReferences: actualCommandSequence.extractInputFileReferences,
 }));
@@ -91,7 +96,7 @@ const { extractFrontmatter } = await import('@rundown-org/parser');
 const { parseScenarios } = await import('../../src/schemas/scenarios.js');
 const { readFile, rm } = await import('node:fs/promises');
 const { copyFileSync } = await import('node:fs');
-const { executeCommandSequence, matchStepAssertions } = await import(
+const { executeCommandSequence, matchStepAssertions, matchErrorAssertions } = await import(
   '../../src/helpers/command-sequence.js'
 );
 const {
@@ -445,6 +450,7 @@ describe('executeScenario', () => {
       transitions: [],
       capturedTokens: [],
       capturedClaimIds: [],
+      errors: [],
       ...overrides,
     };
   }
@@ -528,6 +534,56 @@ describe('executeScenario', () => {
 
     expect(result.passed).toBe(false);
     expect(result.stepAssertions![0].matched).toBe(false);
+  });
+
+  it('evaluates error assertions when expect.errors present', async () => {
+    jest.mocked(executeCommandSequence).mockResolvedValue(
+      makeSequenceResult({
+        terminalResult: 'UNKNOWN',
+        errors: [{ code: 'CLAIMED_RUNBOOK_UNAVAILABLE', command: 'pass' }],
+      }),
+    );
+    jest.mocked(matchErrorAssertions).mockReturnValue([
+      {
+        assertion: { code: 'CLAIMED_RUNBOOK_UNAVAILABLE', command: 'pass' },
+        matched: true,
+        matchedError: { code: 'CLAIMED_RUNBOOK_UNAVAILABLE', command: 'pass' },
+      },
+    ]);
+
+    const loaded = makeLoadedRunbook({
+      result: undefined,
+      expect: { errors: [{ code: 'CLAIMED_RUNBOOK_UNAVAILABLE', command: 'pass' }] },
+    });
+
+    const result = await executeScenario(loaded, 'happy', true, mockOutput, '/cli/dist/cli.js');
+
+    expect(result.passed).toBe(true);
+    expect(result.expected).toBe('UNKNOWN');
+    expect(result.errorAssertions).toBeDefined();
+    expect(result.errorAssertions![0].matched).toBe(true);
+  });
+
+  it('fails when error assertion does not match', async () => {
+    jest
+      .mocked(executeCommandSequence)
+      .mockResolvedValue(makeSequenceResult({ terminalResult: 'UNKNOWN' }));
+    jest.mocked(matchErrorAssertions).mockReturnValue([
+      {
+        assertion: { code: 'CLAIMED_RUNBOOK_UNAVAILABLE' },
+        matched: false,
+      },
+    ]);
+
+    const loaded = makeLoadedRunbook({
+      result: undefined,
+      expect: { errors: [{ code: 'CLAIMED_RUNBOOK_UNAVAILABLE' }] },
+    });
+
+    const result = await executeScenario(loaded, 'happy', true, mockOutput, '/cli/dist/cli.js');
+
+    expect(result.passed).toBe(false);
+    expect(result.errorAssertions![0].matched).toBe(false);
   });
 
   it('passes executeCommandSequence correct options', async () => {

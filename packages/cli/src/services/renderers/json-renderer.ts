@@ -148,6 +148,9 @@ export class JSONRenderer implements OutputRenderer {
         if (event.code) {
           this.output.code = event.code;
         }
+        if (event.command) {
+          this.output.command = event.command;
+        }
         if (event.details) {
           this.output.details = event.details;
         }

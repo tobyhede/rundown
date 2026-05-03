@@ -62,7 +62,7 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
       async (options: { step?: string; index?: string; claimId?: string; text?: boolean }) => {
         await withErrorHandling(
           async () => {
-            const output = new OutputEmitter({ text: options.text });
+            const output = new OutputEmitter({ text: options.text, command: def.name });
 
             const depError = validateIndexRequiresStep(options.index, options.step);
             if (depError) {

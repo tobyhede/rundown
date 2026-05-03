@@ -75,7 +75,7 @@ function claimFailureToEnvelope(failure: ClaimFailure): {
       };
     case 'child-missing':
       return {
-        code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+        code: 'CHILD_RUN_MISSING',
         message: `Child run ${failure.childRunId} no longer exists on disk. Delegation cannot be claimed.`,
         details: {
           parentRunId: failure.parentRunId,
@@ -85,7 +85,7 @@ function claimFailureToEnvelope(failure: ClaimFailure): {
       };
     case 'linkage-mismatch':
       return {
-        code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+        code: 'CHILD_LINKAGE_MISMATCH',
         message: `Persisted linkage for child run ${failure.childRunId} does not match the verified delegation. State may be corrupted; inspect .rundown/runs/${failure.childRunId}.json.`,
         details: {
           parentRunId: failure.parentRunId,
@@ -161,7 +161,7 @@ export function registerClaimCommand(program: Command): void {
       ) => {
         await withErrorHandling(
           async () => {
-            const output = new OutputEmitter({ text: options.text });
+            const output = new OutputEmitter({ text: options.text, command: 'claim' });
             const cwd = getCwd();
             const manager = new RunbookStateManager(cwd);
             const actorService = new RunbookActorService(manager);

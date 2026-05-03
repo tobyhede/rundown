@@ -8,9 +8,11 @@ import {
   readRunbookState,
   readSession,
   extractToken,
+  getCliPath,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 import { writeFile } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { ErrorResponseSchema } from '@rundown-org/core';
 
@@ -51,6 +53,38 @@ describe('claim command', () => {
       steps: [{ title: 'Execute', pass: 'COMPLETE', fail: 'STOP', content: 'Run the child task.' }],
     });
     await writeFile(join(workspace.cwd, 'child.runbook.md'), content);
+  }
+
+  function runCliSubprocess(args: string[]): Promise<{
+    stdout: string;
+    stderr: string;
+    exitCode: number;
+  }> {
+    return new Promise((resolve, reject) => {
+      const child = spawn('node', [getCliPath(), ...args], {
+        cwd: workspace.cwd,
+        env: {
+          ...process.env,
+          PATH: `${workspace.binPath()}:${process.env.PATH ?? ''}`,
+          CLAUDE_PLUGIN_ROOT: join(workspace.cwd, 'plugin'),
+          NO_COLOR: '1',
+          FORCE_COLOR: undefined,
+          RUNDOWN_LOG: '0',
+        },
+      });
+      const stdout: Buffer[] = [];
+      const stderr: Buffer[] = [];
+      child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk));
+      child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
+      child.on('error', reject);
+      child.on('close', (code) => {
+        resolve({
+          stdout: Buffer.concat(stdout).toString('utf-8'),
+          stderr: Buffer.concat(stderr).toString('utf-8'),
+          exitCode: code ?? 1,
+        });
+      });
+    });
   }
 
   describe('basic claim functionality', () => {
@@ -584,6 +618,37 @@ rd echo --result fail
   });
 
   describe('successive claims', () => {
+    it('returns the same claim and child run for concurrent claims of the same token', async () => {
+      await writeParentRunbook();
+      await writeChildRunbook();
+
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
+      const token = extractToken(result.stdout);
+
+      const [first, second] = await Promise.all([
+        runCliSubprocess(['claim', token]),
+        runCliSubprocess(['claim', token]),
+      ]);
+
+      expect(first.exitCode).toBe(0);
+      expect(second.exitCode).toBe(0);
+      const firstAction = findActionOutput(first.stdout);
+      const secondAction = findActionOutput(second.stdout);
+      expect(firstAction).toEqual(
+        expect.objectContaining({
+          run_id: expect.any(String),
+          claim_id: expect.any(String),
+        }),
+      );
+      expect(secondAction).toEqual(
+        expect.objectContaining({
+          run_id: firstAction?.run_id,
+          claim_id: firstAction?.claim_id,
+        }),
+      );
+    }, 15_000);
+
     it('handles rapid successive claims of same token', async () => {
       await writeParentRunbook();
       await writeChildRunbook();

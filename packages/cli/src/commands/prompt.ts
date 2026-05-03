@@ -13,7 +13,7 @@ export function registerPromptCommand(program: Command): void {
     .description('Output content wrapped in markdown fences')
     .option('--text', 'Output as human-readable text')
     .action((content: string, options: { text?: boolean }) => {
-      const output = new OutputEmitter({ text: options.text });
+      const output = new OutputEmitter({ text: options.text, command: 'prompt' });
 
       // Emit structured data unconditionally - renderer handles formatting
       // TextRenderer wraps in markdown fences, JSONRenderer outputs as-is

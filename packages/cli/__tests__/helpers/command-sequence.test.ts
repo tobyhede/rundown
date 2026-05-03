@@ -8,6 +8,8 @@ import {
   extractRunbookReferences,
   extractInputFileReferences,
   substituteClaimIds,
+  matchErrorAssertions,
+  formatErrorAssertionDescription,
 } from '../../src/helpers/command-sequence.js';
 import type { StepAssertion } from '../../src/schemas/scenarios.js';
 
@@ -107,6 +109,19 @@ describe('parseJsonLines', () => {
     const result = parseJsonLines(stdout);
     expect(result.tokens).toHaveLength(1);
     expect(result.tokens[0]).toBe('rdtk_abc123');
+  });
+
+  it('captures JSON error responses', () => {
+    const stdout =
+      '{"kind":"error","error":"Claim id rdclm_missing does not exist.","code":"CLAIMED_RUNBOOK_UNAVAILABLE","command":"pass"}\n';
+    const result = parseJsonLines(stdout);
+    expect(result.errors).toEqual([
+      {
+        code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+        error: 'Claim id rdclm_missing does not exist.',
+        command: 'pass',
+      },
+    ]);
   });
 
   it('extracts multiple tokens from NDJSON', () => {
@@ -253,6 +268,43 @@ describe('parseJsonLines', () => {
     const result = parseJsonLines(stdout);
     expect(result.transitions[0].runbook).toBeUndefined();
     expect(result.transitions[0].parentStepId).toBeUndefined();
+  });
+});
+
+describe('matchErrorAssertions', () => {
+  it('matches errors by code, command, and error substring', () => {
+    const result = matchErrorAssertions(
+      [{ code: 'CLAIMED_RUNBOOK_UNAVAILABLE', command: 'pass', error: 'does not exist' }],
+      [
+        {
+          code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+          command: 'pass',
+          error: 'Claim id rdclm_missing does not exist.',
+        },
+      ],
+    );
+
+    expect(result).toEqual([
+      {
+        assertion: {
+          code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+          command: 'pass',
+          error: 'does not exist',
+        },
+        matched: true,
+        matchedError: {
+          code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+          command: 'pass',
+          error: 'Claim id rdclm_missing does not exist.',
+        },
+      },
+    ]);
+  });
+
+  it('formats unmatched error assertions for diagnostics', () => {
+    const [result] = matchErrorAssertions([{ code: 'TOKEN_NOT_FOUND' }], []);
+
+    expect(formatErrorAssertionDescription(result)).toBe('error code=TOKEN_NOT_FOUND: no match');
   });
 });
 
