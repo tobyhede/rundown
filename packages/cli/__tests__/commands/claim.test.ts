@@ -7,6 +7,7 @@ import {
   getActiveState,
   readRunbookState,
   readSession,
+  writeSession,
   extractToken,
   getCliPath,
   type TestWorkspace,
@@ -645,6 +646,87 @@ rd echo --result fail
         expect.objectContaining({
           run_id: firstAction?.run_id,
           claim_id: firstAction?.claim_id,
+        }),
+      );
+    }, 15_000);
+
+    it('adopts an orphaned child state with matching token hash', async () => {
+      await writeParentRunbook();
+      await writeChildRunbook();
+
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      expect(result.exitCode).toBe(0);
+      const parent = await getActiveState(workspace);
+      expect(parent).not.toBeNull();
+
+      result = await runCliInProcess('delegate child.runbook.md --step 1.1', workspace);
+      expect(result.exitCode).toBe(0);
+      const token = extractToken(result.stdout);
+
+      const delegatedParent = await readRunbookState(workspace, parent!.id);
+      const delegatedSubstep = delegatedParent?.substepStates?.find(
+        (substep) => substep.delegation?.token === token,
+      );
+      const delegation = delegatedSubstep?.delegation;
+      expect(delegation).toEqual(
+        expect.objectContaining({
+          tokenHash: expect.any(String),
+          childRunId: null,
+        }),
+      );
+
+      result = await runCliInProcess('run --prompted child.runbook.md --text', workspace);
+      expect(result.exitCode).toBe(0);
+      const orphan = await getActiveState(workspace);
+      expect(orphan).not.toBeNull();
+
+      const orphanState = {
+        ...orphan!,
+        parentLinkage: {
+          kind: 'delegation',
+          parentRunId: parent!.id,
+          parentStepId: delegatedSubstep!.id,
+          tokenHash: delegation!.tokenHash,
+          parentStep: delegatedParent!.step,
+          parentFrameKey: delegatedSubstep!.frameKey,
+          parentEntry: delegatedParent!.activeEntry,
+        },
+      };
+      await writeFile(
+        join(workspace.statePath(), `${orphan!.id}.json`),
+        JSON.stringify(orphanState, null, 2),
+      );
+      await writeSession(workspace, { defaultStack: [parent!.id], claims: {} });
+
+      result = await runCliInProcess(`claim ${token}`, workspace);
+      expect(result.exitCode).toBe(0);
+      const action = findActionOutput(result.stdout);
+      expect(action).toEqual(
+        expect.objectContaining({
+          action: 'claimed',
+          run_id: orphan!.id,
+          claim_id: expect.any(String),
+        }),
+      );
+
+      const adoptedParent = await readRunbookState(workspace, parent!.id);
+      const adoptedDelegation = adoptedParent?.substepStates?.find(
+        (substep) => substep.id === delegatedSubstep!.id,
+      )?.delegation;
+      expect(adoptedDelegation).toEqual(
+        expect.objectContaining({
+          childRunId: orphan!.id,
+          tokenHash: delegation!.tokenHash,
+        }),
+      );
+
+      const session = await readSession(workspace);
+      expect(Object.values(session.claims)).toContainEqual(
+        expect.objectContaining({
+          childRunId: orphan!.id,
+          parentRunId: parent!.id,
+          parentStepId: delegatedSubstep!.id,
+          tokenHash: delegation!.tokenHash,
         }),
       );
     }, 15_000);
