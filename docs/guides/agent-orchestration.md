@@ -6,7 +6,7 @@ How Rundown delegates substep execution to subagents via the plugin's hook syste
 - [docs/reference/cli.md](../reference/cli.md) — CLI command reference and user guide
 - [docs/reference/runtime.md](../reference/runtime.md) — Execution model, state, variables
 - [docs/spec/language.md](../spec/language.md) — Rundown format specification (steps, substeps, transitions)
-- [runbooks/](../runbooks/) — Runbook pattern examples
+- [runbooks/](../../runbooks/) — Runbook pattern examples
 
 ---
 
@@ -114,7 +114,7 @@ See [docs/spec/language.md §4.3](../spec/language.md#43-delegate) for the full 
   - DELEGATE
 ```
 
-Executable scenarios for all three forms live at [runbooks/delegation/delegate-keyword-*.runbook.md](../runbooks/delegation/).
+Executable scenarios for all three forms live at [runbooks/delegation/delegate-keyword-*.runbook.md](../../runbooks/delegation/).
 
 ### Auto-issuance lifecycle
 
@@ -221,7 +221,7 @@ The plugin never destroys child runbook state. Incomplete delegations preserve t
 
 **Data flow between parent and child:** Delegated runbooks exchange values through context passing — a parent step's `- OUTPUTS` directive writes values into the live machine variable space when that step transition completes, and frontmatter `outputs:` writes terminal values into `state.finalVars`. Children inherit the parent's `ContextId` via `--input`, and parent/child hand-off happens through forwarded live vars and `finalVars`, not through a shared `outputs.json` file.
 
-See [Section 4: Control Flow](SPEC.md#4-control-flow) for transition semantics.
+See [Section 4: Control Flow](../spec/language.md#4-control-flow) for transition semantics.
 
 ---
 
