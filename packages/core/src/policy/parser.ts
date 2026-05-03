@@ -1,13 +1,18 @@
 /**
  * Command parser for extracting executable names from shell commands.
  *
- * Uses shell-quote to safely parse complex shell commands including
- * pipelines, redirections, and `sh -c` wrappers.
+ * Purpose-built for policy extraction: identifies which programs a bash
+ * command block will invoke so they can be checked against an allowlist.
+ *
+ * Uses a hand-crafted character-level tokenizer rather than shell-quote,
+ * which correctly handles the following patterns that shell-quote mishandles:
+ * - Newlines as statement separators (not whitespace)
+ * - $VAR references: skipped without expansion (no phantom empty executables)
+ * - Redirect targets (> >> < <<): not statement boundaries, never treated as executables
  *
  * @module
  */
 
-import { parse } from 'shell-quote';
 import * as path from 'node:path';
 
 /**
@@ -20,6 +25,342 @@ export interface ParsedCommand {
   original: string;
 }
 
+// ---------------------------------------------------------------------------
+// Internal tokenizer
+// ---------------------------------------------------------------------------
+
+/** Word token — a command word (executable, argument, or redirect target). */
+type WordToken = { kind: 'word'; value: string };
+/** Op token — a statement boundary: ; \n && || | ( ) */
+type OpToken = { kind: 'op' };
+/** Redir token — a redirect operator that is NOT a statement boundary: > >> < << */
+type RedirToken = { kind: 'redir' };
+type Token = WordToken | OpToken | RedirToken;
+
+/** Shell executable names for sh -c wrapper detection. */
+const SHELLS = new Set(['sh', 'bash', 'zsh', 'ksh', 'dash', 'fish', 'csh', 'tcsh']);
+
+/**
+ * Advance past a balanced $(...) block.
+ *
+ * startIdx is the position immediately after the opening '(' in '$('. Uses the
+ * same balanced-parenthesis algorithm as extractDollarSubstitutions to handle
+ * nesting and escaped parens consistently.
+ *
+ * @param command - Full command string
+ * @param startIdx - Position immediately after the opening '('
+ * @returns Index after the matching ')' or -1 if unbalanced
+ */
+function scanSubst(command: string, startIdx: number): number {
+  let level = 1;
+  let i = startIdx;
+  while (i < command.length && level > 0) {
+    const ch = command[i];
+    if (ch === '(' || ch === ')') {
+      let bs = 0;
+      let k = i - 1;
+      while (k >= startIdx && command[k] === '\\') {
+        bs++;
+        k--;
+      }
+      if (bs % 2 === 0) {
+        if (ch === '(') level++;
+        else level--;
+      }
+    }
+    i++;
+  }
+  return level === 0 ? i : -1;
+}
+
+/**
+ * Advance past a backtick block.
+ *
+ * @param command - Full command string
+ * @param startIdx - Position immediately after the opening backtick
+ * @returns Index after the closing backtick or -1 if unmatched
+ */
+function scanBacktick(command: string, startIdx: number): number {
+  let i = startIdx;
+  while (i < command.length) {
+    if (command[i] === '\\') {
+      i += 2;
+      continue;
+    }
+    if (command[i] === '`') return i + 1;
+    i++;
+  }
+  return -1;
+}
+
+/**
+ * Advance past a $VAR or ${VAR} reference.
+ *
+ * @param command - Full command string
+ * @param startIdx - Position immediately after the '$'
+ * @returns Index after the variable reference
+ */
+function scanVar(command: string, startIdx: number): number {
+  if (startIdx >= command.length) return startIdx;
+  if (command[startIdx] === '{') {
+    const end = command.indexOf('}', startIdx + 1);
+    return end < 0 ? startIdx + 1 : end + 1;
+  }
+  let i = startIdx;
+  while (i < command.length && /\w/.test(command[i])) i++;
+  return i;
+}
+
+/**
+ * Tokenize a shell command string into words, statement-boundary operators,
+ * and redirect markers.
+ *
+ * Key design decisions vs. shell-quote:
+ * - `\n` is a statement boundary (op), not whitespace
+ * - `$VAR` references are skipped entirely — produce no token and no empty string
+ * - `$(…)` and backtick bodies are skipped — their content is handled separately by
+ *   extractDollarSubstitutions / extractBacktickCommands on the raw string
+ * - `>`, `>>`, `<`, `<<` emit redir tokens (not op) so redirect targets stay in the
+ *   same statement and are never mistaken for executables
+ * - Empty word buffers are suppressed — no empty-string word tokens
+ *
+ * @param command - Shell command string to tokenize
+ * @returns Array of tokens
+ */
+function tokenize(command: string): Token[] {
+  const tokens: Token[] = [];
+  let wordBuf = '';
+  let state: 'normal' | 'single' | 'double' = 'normal';
+  let i = 0;
+
+  const flushWord = (): void => {
+    if (wordBuf.length > 0) {
+      tokens.push({ kind: 'word', value: wordBuf });
+      wordBuf = '';
+    }
+  };
+
+  while (i < command.length) {
+    const ch = command[i];
+
+    // ── Single-quote context: everything literal until closing ' ───────────
+    if (state === 'single') {
+      if (ch === "'") {
+        state = 'normal';
+        i++;
+      } else {
+        wordBuf += ch;
+        i++;
+      }
+      continue;
+    }
+
+    // ── Double-quote context: $VAR and $(...) still active, spaces literal ─
+    if (state === 'double') {
+      if (ch === '"') {
+        state = 'normal';
+        i++;
+        continue;
+      }
+      if (ch === '\\') {
+        const next = command[i + 1] ?? '';
+        if (next === '"' || next === '\\' || next === '$' || next === '`') {
+          wordBuf += next;
+        } else {
+          wordBuf += ch + next;
+        }
+        i += 2;
+        continue;
+      }
+      if (ch === '$') {
+        const next = command[i + 1] ?? '';
+        if (next === '(') {
+          // Skip $(…) inside double-quote — extracted by extractDollarSubstitutions
+          const end = scanSubst(command, i + 2);
+          i = end < 0 ? i + 2 : end;
+        } else if (/[\w{]/.test(next)) {
+          // Skip $VAR inside double-quote — no expansion, no empty token
+          i = scanVar(command, i + 1);
+        } else {
+          wordBuf += ch;
+          i++;
+        }
+        continue;
+      }
+      if (ch === '`') {
+        const end = scanBacktick(command, i + 1);
+        i = end < 0 ? i + 1 : end;
+        continue;
+      }
+      wordBuf += ch;
+      i++;
+      continue;
+    }
+
+    // ── Normal context ────────────────────────────────────────────────────
+    if (ch === "'") {
+      state = 'single';
+      i++;
+      continue;
+    }
+    if (ch === '"') {
+      state = 'double';
+      i++;
+      continue;
+    }
+    if (ch === '\\') {
+      const next = command[i + 1] ?? '';
+      if (next === '\n') {
+        i += 2; // line continuation — skip backslash + newline
+      } else {
+        wordBuf += next;
+        i += 2;
+      }
+      continue;
+    }
+    // Comment — skip to end of line (only when at start of a new token)
+    if (ch === '#' && wordBuf.length === 0) {
+      while (i < command.length && command[i] !== '\n') i++;
+      continue;
+    }
+    if (ch === '$') {
+      const prev = i > 0 ? command[i - 1] : '';
+      const next = command[i + 1] ?? '';
+      if (next === '(' && prev !== '$') {
+        // $(…) command substitution — skip body, extracted by extractDollarSubstitutions
+        flushWord();
+        const end = scanSubst(command, i + 2);
+        i = end < 0 ? i + 2 : end;
+      } else if (/[\w{]/.test(next)) {
+        // $VAR reference — skip entirely, produces no token
+        i = scanVar(command, i + 1);
+      } else {
+        wordBuf += ch;
+        i++;
+      }
+      continue;
+    }
+    if (ch === '`') {
+      flushWord();
+      const end = scanBacktick(command, i + 1);
+      i = end < 0 ? i + 1 : end;
+      continue;
+    }
+
+    // Whitespace (space and tab — \n handled below as operator)
+    if (ch === ' ' || ch === '\t') {
+      flushWord();
+      i++;
+      continue;
+    }
+
+    // Multi-character operators (must check before single-char fallthrough)
+    const next = command[i + 1] ?? '';
+    if (ch === '&' && next === '&') {
+      flushWord();
+      tokens.push({ kind: 'op' });
+      i += 2;
+      continue;
+    }
+    if (ch === '|' && next === '|') {
+      flushWord();
+      tokens.push({ kind: 'op' });
+      i += 2;
+      continue;
+    }
+    if (ch === '>' && next === '>') {
+      if (/^\d+$/.test(wordBuf)) {
+        wordBuf = '';
+      } else {
+        flushWord();
+      }
+      tokens.push({ kind: 'redir' });
+      i += 2;
+      continue;
+    }
+    if (ch === '<' && next === '<') {
+      if (/^\d+$/.test(wordBuf)) {
+        wordBuf = '';
+      } else {
+        flushWord();
+      }
+      tokens.push({ kind: 'redir' });
+      i += 2;
+      continue;
+    }
+
+    // Single-character statement boundaries
+    if (ch === '\n' || ch === ';') {
+      flushWord();
+      tokens.push({ kind: 'op' });
+      i++;
+      continue;
+    }
+    if (ch === '|') {
+      flushWord();
+      tokens.push({ kind: 'op' });
+      i++;
+      continue;
+    }
+    if (ch === '&') {
+      // Background execution (&) — treat as statement boundary
+      flushWord();
+      tokens.push({ kind: 'op' });
+      i++;
+      continue;
+    }
+    if (ch === '(' || ch === ')') {
+      // Subshell delimiters — statement boundaries
+      flushWord();
+      tokens.push({ kind: 'op' });
+      i++;
+      continue;
+    }
+
+    // Redirect operators — NOT statement boundaries
+    if (ch === '>') {
+      if (/^\d+$/.test(wordBuf)) {
+        wordBuf = '';
+      } else {
+        flushWord();
+      }
+      tokens.push({ kind: 'redir' });
+      i++;
+      continue;
+    }
+    if (ch === '<') {
+      if (/^\d+$/.test(wordBuf)) {
+        wordBuf = '';
+      } else {
+        flushWord();
+      }
+      tokens.push({ kind: 'redir' });
+      i++;
+      continue;
+    }
+
+    wordBuf += ch;
+    i++;
+  }
+
+  flushWord();
+  return tokens;
+}
+
+// ---------------------------------------------------------------------------
+// Command extraction
+// ---------------------------------------------------------------------------
+
+/**
+ * Check if a word is an environment variable assignment (KEY=VALUE).
+ *
+ * @param token - Token string to check
+ * @returns True if the token is a KEY=VALUE assignment
+ */
+function isEnvAssignment(token: string): boolean {
+  return /^[A-Za-z_][A-Za-z0-9_]*=/.test(token);
+}
+
 /**
  * Extract all executable names from a shell command string.
  *
@@ -28,8 +369,9 @@ export interface ParsedCommand {
  * - Pipelines: `cat file | grep pattern`
  * - Shell wrappers: `sh -c 'git commit -m "msg"'`
  * - Logical operators: `npm test && npm run build`
+ * - Multi-line blocks: each newline-separated statement parsed independently
  * - Subshells: `(cd dir && make)`
- * - Redirections: `echo hello > file.txt`
+ * - Redirections: `echo hello > file.txt` — redirect target is never an executable
  *
  * @param command - The shell command string to parse
  * @returns Array of parsed commands with executable names
@@ -48,121 +390,63 @@ export interface ParsedCommand {
  */
 export function extractCommands(command: string): ParsedCommand[] {
   const commands: ParsedCommand[] = [];
+  const tokens = tokenize(command);
 
-  try {
-    const parsed = parse(command);
-    const currentCommand: string[] = [];
-    let skipNext = false;
+  let stmtWords: string[] = [];
+  let skipNextWord = false;
 
-    for (let i = 0; i < parsed.length; i++) {
-      const token = parsed[i];
+  const flushStatement = (): void => {
+    const words = stmtWords;
+    stmtWords = [];
+    skipNextWord = false;
 
-      // Skip argument to -c flag
-      if (skipNext) {
-        skipNext = false;
-        // The -c argument is itself a command string, parse it recursively
-        if (typeof token === 'string') {
-          const nestedCommands = extractCommands(token);
-          commands.push(...nestedCommands);
+    if (words.length === 0) return;
+
+    // Skip leading KEY=VALUE assignments to find the actual executable
+    let execIdx = 0;
+    while (execIdx < words.length && isEnvAssignment(words[execIdx])) execIdx++;
+    if (execIdx >= words.length) return;
+
+    const executable = path.basename(words[execIdx]);
+    if (!executable) return;
+
+    // sh -c detection: recursively parse the -c argument
+    if (SHELLS.has(executable)) {
+      let dashCIdx = -1;
+      for (let k = 0; k < words.length; k++) {
+        if (words[k] === '-c') {
+          dashCIdx = k;
+          break;
         }
-        continue;
       }
-
-      // Handle operators (pipe, logical, etc.)
-      if (typeof token === 'object' && 'op' in token) {
-        // Flush current command
-        if (currentCommand.length > 0) {
-          const cmd = buildCommand(currentCommand);
-          if (cmd) commands.push(cmd);
-          currentCommand.length = 0;
-        }
-        continue;
-      }
-
-      // Handle string tokens
-      if (typeof token === 'string') {
-        // Check for shell invocation with -c flag
-        if (isShellInvocation(token) && i + 1 < parsed.length) {
-          const nextToken = parsed[i + 1];
-          if (typeof nextToken === 'string' && nextToken === '-c') {
-            // Skip 'sh' and '-c', mark to parse the command argument
-            skipNext = true;
-            i++; // Skip -c
-            continue;
-          }
-        }
-
-        currentCommand.push(token);
+      if (dashCIdx >= 0 && dashCIdx + 1 < words.length) {
+        const nested = extractCommands(words[dashCIdx + 1]);
+        commands.push(...nested);
+        return;
       }
     }
 
-    // Flush remaining command
-    if (currentCommand.length > 0) {
-      const cmd = buildCommand(currentCommand);
-      if (cmd) commands.push(cmd);
-    }
-  } catch {
-    // If shell-quote fails to parse, treat the whole thing as a single command
-    const firstWord = command.trim().split(/\s+/)[0];
-    if (firstWord) {
-      commands.push({
-        executable: path.basename(firstWord),
-        original: command,
-      });
+    commands.push({ executable, original: words.join(' ') });
+  };
+
+  for (const tok of tokens) {
+    if (tok.kind === 'op') {
+      flushStatement();
+    } else if (tok.kind === 'redir') {
+      // Next word is a redirect target — skip it, it is not an executable
+      skipNextWord = true;
+    } else {
+      // word token
+      if (skipNextWord) {
+        skipNextWord = false;
+      } else {
+        stmtWords.push(tok.value);
+      }
     }
   }
+  flushStatement();
 
   return commands;
-}
-
-/**
- * Check if a token is an environment variable assignment (KEY=VALUE).
- *
- * @param token - Token to check
- * @returns True if token matches KEY=VALUE pattern
- */
-function isEnvAssignment(token: string): boolean {
-  // Match KEY=VALUE where KEY is a valid env var name (alphanumeric + underscore, not starting with digit)
-  return /^[A-Za-z_][A-Za-z0-9_]*=/.test(token);
-}
-
-/**
- * Build a ParsedCommand from an array of tokens.
- *
- * Skips leading environment variable assignments (KEY=VALUE) to find the actual executable.
- * For example, `NODE_ENV=production node app.js` extracts `node` as the executable.
- *
- * @param tokens - Array of command tokens
- * @returns ParsedCommand or null if tokens are empty or only contain env assignments
- */
-function buildCommand(tokens: string[]): ParsedCommand | null {
-  if (tokens.length === 0) return null;
-
-  // Skip leading KEY=VALUE environment assignments to find the actual executable
-  let executableIndex = 0;
-  while (executableIndex < tokens.length && isEnvAssignment(tokens[executableIndex])) {
-    executableIndex++;
-  }
-
-  // If all tokens are env assignments, no executable found
-  if (executableIndex >= tokens.length) return null;
-
-  const executable = path.basename(tokens[executableIndex]);
-  const original = tokens.join(' ');
-
-  return { executable, original };
-}
-
-/**
- * Check if a token is a shell invocation (sh, bash, zsh, etc.).
- *
- * @param token - Token to check
- * @returns True if token is a shell executable name
- */
-function isShellInvocation(token: string): boolean {
-  const shells = ['sh', 'bash', 'zsh', 'ksh', 'dash', 'fish', 'csh', 'tcsh'];
-  const basename = path.basename(token);
-  return shells.includes(basename);
 }
 
 /**
@@ -186,6 +470,9 @@ export function extractPrimaryExecutable(command: string): string | null {
 
 /**
  * Get all unique executable names from a command string.
+ *
+ * Combines direct command extraction with recursive scanning of command
+ * substitutions ($(...) and backticks) to find all programs that will run.
  *
  * @param command - The shell command string to parse
  * @param depth - Internal recursion depth to prevent infinite loops (max 5)

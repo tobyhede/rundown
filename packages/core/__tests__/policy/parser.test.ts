@@ -187,4 +187,38 @@ describe('Command Parser', () => {
       expect(result).toEqual([]);
     });
   });
+
+  describe('extractAllExecutables — issue #242 regression cases', () => {
+    it('multiline bash block: no empty string, all executables found', () => {
+      const command = [
+        'TARGET="$(rdpath --dir "$RD_WORK_PATH" --ctx "$RD_CONTEXT_ID" --file fixture.json)"',
+        'mkdir -p "$(dirname "$TARGET")"',
+        'printf \'%s\\n\' \'{"ok":true}\' > "$TARGET"',
+      ].join('\n');
+
+      const result = extractAllExecutables(command);
+
+      expect(result).toContain('rdpath');
+      expect(result).toContain('mkdir');
+      expect(result).toContain('dirname');
+      expect(result).toContain('printf');
+      expect(result).not.toContain('');
+    });
+
+    it('$() in redirect target: no literal $(...) executable', () => {
+      const command = 'echo hello > "$(rdpath --dir /tmp --file out.txt)"';
+
+      const result = extractAllExecutables(command);
+
+      expect(result).toContain('echo');
+      expect(result).toContain('rdpath');
+      expect(result.some((e) => e.startsWith('$('))).toBe(false);
+    });
+
+    it('fd-redirect digit suppression: 2>/dev/null does not produce phantom "2"', () => {
+      const result = extractAllExecutables('cmd 2>/dev/null');
+
+      expect(result).toEqual(['cmd']);
+    });
+  });
 });
