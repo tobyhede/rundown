@@ -59,6 +59,7 @@ npm install -g @rundown-org/mcp
 - `@rundown-org/cli` installed (global or local)
 
 Verify installation:
+
 ```bash
 rundown-mcp --help
 ```
@@ -119,7 +120,7 @@ For project-specific usage:
 
 The MCP server acts as a bridge between MCP clients (like Claude Desktop) and the Rundown CLI:
 
-```
+```text
 [MCP Client] --> [MCP Server] --> [Rundown CLI] --> [State Files]
                      |                   |
                 stdio transport     execFile
@@ -170,6 +171,7 @@ Check runbook syntax before execution.
 | `file` | string | Yes | Path to runbook file |
 
 **Example:**
+
 ```json
 {
   "tool": "validate",
@@ -195,6 +197,7 @@ List active or available runbooks.
 | `tags` | string | No | Filter by tags (comma-separated, requires `all: true`) |
 
 **Example - List active runbooks:**
+
 ```json
 {
   "tool": "list",
@@ -203,6 +206,7 @@ List active or available runbooks.
 ```
 
 **Example - List all available runbooks:**
+
 ```json
 {
   "tool": "list",
@@ -213,6 +217,7 @@ List active or available runbooks.
 ```
 
 **Example - Filter by tags:**
+
 ```json
 {
   "tool": "list",
@@ -234,6 +239,7 @@ Get current runbook state.
 **Parameters:** None.
 
 **Example:**
+
 ```json
 {
   "tool": "status",
@@ -257,6 +263,7 @@ Start a runbook.
 | `prompted` | boolean | No | Disable automatic command execution |
 
 **Example - Start runbook:**
+
 ```json
 {
   "tool": "run",
@@ -267,6 +274,7 @@ Start a runbook.
 ```
 
 **Example - Start in prompted mode:**
+
 ```json
 {
   "tool": "run",
@@ -290,6 +298,7 @@ Mark the current step as passed.
 **Parameters:** None.
 
 **Example:**
+
 ```json
 {
   "tool": "pass",
@@ -308,6 +317,7 @@ Mark the current step as failed.
 **Parameters:** None.
 
 **Example:**
+
 ```json
 {
   "tool": "fail",
@@ -330,6 +340,7 @@ Jump to a specific step.
 | `step` | string | Yes | Target step (e.g., "3" or "2.1") |
 
 **Example - Jump to step:**
+
 ```json
 {
   "tool": "goto",
@@ -340,6 +351,7 @@ Jump to a specific step.
 ```
 
 **Example - Jump to substep:**
+
 ```json
 {
   "tool": "goto",
@@ -366,6 +378,7 @@ Force early completion of a runbook (runbooks auto-complete on final step).
 | `message` | string | No | Completion message |
 
 **Example:**
+
 ```json
 {
   "tool": "complete",
@@ -374,6 +387,7 @@ Force early completion of a runbook (runbooks auto-complete on final step).
 ```
 
 **Example - With message:**
+
 ```json
 {
   "tool": "complete",
@@ -398,6 +412,7 @@ Stop the runbook (abort execution).
 | `message` | string | No | Stop reason message |
 
 **Example:**
+
 ```json
 {
   "tool": "stop",
@@ -406,6 +421,7 @@ Stop the runbook (abort execution).
 ```
 
 **Example - With reason:**
+
 ```json
 {
   "tool": "stop",
@@ -499,7 +515,8 @@ See [docs/reference/cli.md Delegation Commands](cli.md#delegation-commands) for 
 ### Server Startup Message
 
 When running correctly, the server outputs to stderr:
-```
+
+```text
 Rundown MCP Server running
 ```
 

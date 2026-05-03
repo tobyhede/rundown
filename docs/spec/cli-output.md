@@ -16,12 +16,12 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 ### Key Conventions
 
 - **Lists**: Raw arrays `[...]` (no wrapper object)
-- **Workflow commands**: Include `action` field (pass, fail, stop, complete, stash, pop)
+- **Workflow commands**: Include `action` field. Transition commands (`pass`, `fail`, `goto`) use transition text; lifecycle/session commands (`run`, `stop`, `complete`, `stash`, `pop`) use command-name actions.
 - **Errors**: `{ "error": "message", "code": "CODE" }`
 - **Warnings**: `{ "kind": "warning", "message": "message", "code": "CODE" }`
 - **Success/failure**: Workflow commands use exit code, not a `result` field
-- **Position**: `{ "current": string, "total": number|string }`
-- **Action field**: Shows transition (e.g., "CONTINUE", "GOTO 3", "RETRY"), not command name
+- **Position**: `{ "current": string, "total": number }`
+- **Action field**: For transition commands, shows transition text (e.g., "CONTINUE", "GOTO 3", "RETRY"); for lifecycle/session commands, shows the command-name action (e.g., "complete", "stop", "stash", "pop").
 
 ### Schema Reference
 
@@ -335,7 +335,7 @@ Step description.
 
 ### `rd stop [message]`
 
-Uses `action: "stop"` (command name). Stopping sets a non-zero exit code.
+Uses `action: "stop"` (command-name action). Stopping sets a non-zero exit code.
 
 **Text:**
 ```text
@@ -385,7 +385,7 @@ Runbook:  COMPLETE
 
 ### `rd stash`
 
-Uses `action: "stash"` (command name).
+Uses `action: "stash"` (command-name action).
 
 **Text:**
 ```text
@@ -419,7 +419,7 @@ Same output shape as `rd stash`, but stashes the delegated child identified by `
 
 ### `rd pop`
 
-Uses `action: "pop"` (command name).
+Uses `action: "pop"` (command-name action).
 
 **Text:**
 ```text

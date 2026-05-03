@@ -75,7 +75,7 @@ rd run rundown:write-plan      # Explicit: from plugin only
 
 **Principle**: Runbook code blocks should be one-liners that call scripts. This keeps runbooks readable as workflow documentation while scripts handle implementation complexity.
 
-```markdown
+````markdown
 ## 1 Fetch Data
 - PASS CONTINUE
 - FAIL STOP
@@ -83,7 +83,7 @@ rd run rundown:write-plan      # Explicit: from plugin only
 ```bash
 .rundown/runbooks/review/scripts/fetch-data.sh {{repo}}
 ```
-```
+````
 
 Benefits:
 - Runbooks read as **workflow documentation** — steps, transitions, and intent
@@ -126,7 +126,7 @@ Variables defined in frontmatter `vars:` serve as defaults. CLI `--input` flags 
 
 See [docs/reference/runtime.md Variable Sources](../reference/runtime.md#variable-sources) for the full variable source precedence.
 
-#### Data Sources in Configuration
+### Data Sources in Configuration
 
 Arrays and `file:`-prefixed values in configuration enable FOR loop data sources:
 

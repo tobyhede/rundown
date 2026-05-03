@@ -84,7 +84,7 @@ The policy layer protects against:
 
 ### Trust Boundaries
 
-```
+```text
 ┌─────────────────────────────────────────────────────┐
 │                     User                            │
 │  - Approves permission prompts                      │

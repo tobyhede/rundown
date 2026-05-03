@@ -120,7 +120,7 @@ reviews:
     - path: "packages/claude-code-plugin/runbooks/**/*.runbook.md"
       instructions: |
         Plugin runbooks. Focus on:
-        - Syntax conformance with docs/SPEC.md and docs/FORMAT.md.
+        - Syntax conformance with docs/spec/language.md and docs/spec/grammar.md.
         - Correct use of required variables, OUTPUTS/INPUTS context passing, and delegation patterns.
         - Running plugin runbook validation tests when plugin runbook behavior changes.
     - path: "packages/claude-code-plugin/skills/**/*.md"
@@ -144,7 +144,7 @@ reviews:
     - path: "runbooks/**/*.runbook.md"
       instructions: |
         Root runbook fixtures and examples. Focus on:
-        - Syntax conformance with docs/SPEC.md and docs/FORMAT.md.
+        - Syntax conformance with docs/spec/language.md and docs/spec/grammar.md.
         - Scenario frontmatter consistency where present.
         - Whether parser/core tests or scenario-suite coverage should be updated for behavior changes.
     - path: "docs/**/*.md"

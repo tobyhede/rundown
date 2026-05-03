@@ -185,7 +185,7 @@ Immediately terminate the active runbook.
 rundown stop [message]
 ```
 
-Deletes runbook state and clears from session.
+Marks the runbook as stopped, preserves the stopped state file for inspection, and removes it from the active session stack.
 
 #### `rundown complete [message]` - Force Early Completion
 
@@ -205,7 +205,7 @@ rundown complete "Skipping remaining steps" # Complete with message
 
 **Comparison with `stop`:**
 - `complete` - Marks runbook as **successful**, preserves state
-- `stop` - Marks runbook as **aborted/failed**, deletes state
+- `stop` - Marks runbook as **aborted/failed**, preserves stopped state, and removes it from the active stack
 
 ### State Transitions
 
@@ -300,7 +300,7 @@ rundown status
 ```
 
 **Output:**
-```
+```text
 File:     my-runbook.runbook.md
 State:    .rundown/runs/wf-2024-01-07-abc123.json
 Action:   CONTINUE
@@ -640,11 +640,11 @@ Output formatting is implemented in `packages/cli/src/services/output-emitter.ts
 
 ### Standard Output Structure
 
-```
+```text
 File:     runbook.runbook.md
 State:    .rundown/runs/wf-xxx.json
 Action:   START
-At:       1/5
+At:       1
 
 Step description here...
 
@@ -676,14 +676,14 @@ List commands (`rd ls`, `rd scenario ls`) use aligned tables following Linux CLI
 | **Machine output** | JSON output by default |
 
 Example (`rd ls --all`):
-```
+```text
 NAME           SOURCE   DESCRIPTION                    TAGS
 retry-success  bundled  Tests RETRY before exhaustion  retry, auto-exec
 simple         project  Basic two-step runbook
 ```
 
 Example (`rd scenario ls`):
-```
+```text
 NAME              EXPECTED  DESCRIPTION                   TAGS
 completed         COMPLETE  Step passes on first attempt
 retry-exhaustion  STOP      Retries exhausted, stops
@@ -700,7 +700,7 @@ Single-item display commands (`rd scenario show`) use aligned key-value format:
 | **Nested items** | Indent 2 spaces under label |
 
 Example (`rd scenario show`):
-```
+```text
 Name:        completed
 Description: Step passes on first attempt
 Expected:    COMPLETE
@@ -713,7 +713,7 @@ Commands:
 
 Commands that execute operations (`rd scenario run`) use a Scenario/Execution/Result structure:
 
-```
+```text
 Scenario: scenario-name
 
 ---

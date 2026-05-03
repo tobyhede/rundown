@@ -109,8 +109,9 @@ output_list       ::= ( ws "- " output_entry newline )+
 output_entry      ::= variable_name ( ws output_value )?
 quoted_output_entry ::= quoted_string
 output_value      ::= helper_call | template_variable | quoted_string | variable_name
-helper_call       ::= "{{" ws? variable_name ( ws argument )+ ws? "}}"
-argument          ::= quoted_string | variable_path
+helper_call       ::= "{{" ws? variable_name ( ws helper_argument )+ ws? "}}"
+helper_argument   ::= quoted_string | variable_path | keyed_argument
+keyed_argument    ::= variable_name "=" ( quoted_string | variable_path | ctx_ref )
 ```
 
 A step or substep may declare at most one OUTPUTS directive. Duplicate directives on the same target are rejected. The `- INPUTS` directive has been removed — use the frontmatter `inputs:` field to declare variable names.

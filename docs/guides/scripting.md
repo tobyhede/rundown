@@ -88,9 +88,11 @@ Key points:
 
 - `SCRIPT_NAME` is always included (used by `usage()`)
 - Add `SCRIPT_DIR` only when the script needs to reference files relative to its own location:
+
   ```bash
   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   ```
+
   Scripts that work from the caller's working directory (e.g., runbook-invoked scripts) don't need it.
 - `--help` always works, always exits 0
 - Unknown flags fail loudly with usage hint

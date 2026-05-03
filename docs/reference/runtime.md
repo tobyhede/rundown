@@ -24,7 +24,7 @@ This document covers Rundown's execution model, state management, template varia
   - [Variable Name Requirements](#variable-name-requirements)
   - [Runtime Context Model](#runtime-context-model)
   - [Undefined Variables](#undefined-variables)
-  - [State Persistence](#state-persistence-1)
+  - [Template Variable Persistence](#template-variable-persistence)
 - [Security Policy](#security-policy)
 - [Runtime Identity Glossary](#runtime-identity-glossary)
 
@@ -490,7 +490,7 @@ Top-level aliases are retained for ergonomics:
 
 Undefined variables and missing dotted paths are preserved as literal placeholders (`{{variable}}`, `{{context.parent.missing}}`) rather than causing an error. A deduplicated warning is emitted to stderr for each undefined variable.
 
-### State Persistence
+### Template Variable Persistence
 
 `state.runbookSrc` stores raw runbook source, while `state.templateVars` stores the resolved variable map. On resume, FOR bounds and template placeholders are re-applied deterministically from this frozen variable state.
 

@@ -7,31 +7,38 @@ This index routes you to the right document based on what you're trying to do.
 ## I want to...
 
 ### Write or run runbooks
+
 - **[docs/spec/language.md](spec/language.md)** — The Rundown language spec: step syntax, control flow, FOR loops, OUTPUTS directives.
 - **[docs/spec/grammar.md](spec/grammar.md)** — Formal W3C EBNF grammar for the runbook format.
 - **[runbooks/README.md](../runbooks/README.md)** — Runbook authoring patterns and worked examples.
 
 ### Use the CLI
+
 - **[docs/reference/cli.md](reference/cli.md)** — Installation, quick start, all CLI commands, common tasks, and troubleshooting.
 - **[docs/reference/runtime.md](reference/runtime.md)** — Execution model, FOR loop semantics, state persistence, template variables, built-in variables, and security policy.
 
 ### Integrate Rundown with a project
+
 - **[docs/guides/project-integration.md](guides/project-integration.md)** — Adoption guidance and a worked `pr-feedback` example.
 - **[docs/guides/scripting.md](guides/scripting.md)** — Scripting and automation guide.
 - **[docs/guides/agent-orchestration.md](guides/agent-orchestration.md)** — Subagent delegation lifecycle, tokens, `rd collect`, retry fan-out.
 
 ### Use the MCP server or RDX/rdpath tools
+
 - **[docs/reference/mcp.md](reference/mcp.md)** — MCP server tool reference.
 - **[docs/reference/rdpath.md](reference/rdpath.md)** — `rdpath` path assembly CLI reference.
 - **[docs/reference/rdx.md](reference/rdx.md)** — `rdx` JSON-to-Markdown CLI reference.
 
 ### Configure security policy
+
 - **[docs/reference/security.md](reference/security.md)** — Security policy configuration, sandbox options, policy file format.
 
 ### Understand the CLI output contract
+
 - **[docs/spec/cli-output.md](spec/cli-output.md)** — Normative CLI output format specification.
 
 ### Contribute to or develop Rundown
+
 - **[docs/internal/architecture.md](internal/architecture.md)** — State machine design, XState compilation, design principles.
 - **[docs/internal/docker.md](internal/docker.md)** — Docker testing: verification, E2E, plugin smoke tests.
 - **[docs/internal/scenarios.md](internal/scenarios.md)** — Scenarios and test runbook standard.

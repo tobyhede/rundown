@@ -333,7 +333,7 @@ Note: The task-level `### Files` table appears between the task heading and subt
 1. Create `packages/claude-code-plugin/src/<name>-schema.ts` exporting `validate(data: unknown): T`
 2. Register in `schemaLoaders` in `packages/claude-code-plugin/src/rdx-validate.ts`
 3. Create `packages/claude-code-plugin/schemas/<name>.schema.json` for editor autocomplete
-4. Keep Zod and JSON Schema representations in sync (see `docs/implement/claude-code-plugin/schema-design.md`)
+4. Keep Zod and JSON Schema representations in sync (see [docs/implement/claude-code-plugin/schema-design.md](../implement/claude-code-plugin/schema-design.md))
 
 ### Schema Design Rules
 
@@ -345,7 +345,7 @@ When designing schemas for use with Claude's structured output:
 - Use `const` for fixed values
 - Inline definitions — `$ref` and `$defs` are not supported
 
-See `docs/implement/claude-code-plugin/schema-design.md` for full guidance.
+See [docs/implement/claude-code-plugin/schema-design.md](../implement/claude-code-plugin/schema-design.md) for full guidance.
 
 ---
 

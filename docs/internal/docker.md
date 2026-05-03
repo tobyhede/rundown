@@ -24,14 +24,14 @@ All scripts can be run from a worktree — they resolve paths relative to their 
 | `local` | Build from source, pack tarballs, install in container | Pre-publish verification |
 | `npm` | Install from npm registry at runtime | Post-publish verification |
 
-### What It Verifies
+### Verification Coverage
 
 1. `rd` and `rundown` binaries are executable
 2. Plugin directory exists with expected files and directories
 3. A test runbook executes successfully
 4. Claude Code integration (if credentials are available)
 
-### Files
+### Verification Files
 
 | File | Role |
 |------|------|
@@ -40,7 +40,7 @@ All scripts can be run from a worktree — they resolve paths relative to their 
 | `scripts/docker-entrypoint.sh` | Container entrypoint running verification checks |
 | `docker-compose.verify.yml` | Compose services (`test-local`, `test-npm`) |
 
-### Direct Docker Usage
+### Verification Direct Docker Usage
 
 ```bash
 # Build and run local verification
@@ -52,7 +52,7 @@ docker compose -f docker-compose.verify.yml build test-npm
 docker compose -f docker-compose.verify.yml run --rm test-npm
 ```
 
-### Interactive Shell
+### Verification Interactive Shell
 
 Drop into the container for manual testing:
 
@@ -102,7 +102,7 @@ Tests the full plugin workflow: `claude -p` triggers hook dispatch, the `/writin
 
 **Prerequisites:** Docker, Claude Code credentials (mandatory — exits with error if missing).
 
-### Files
+### E2E Files
 
 | File | Role |
 |------|------|
@@ -115,7 +115,7 @@ Tests the full plugin workflow: `claude -p` triggers hook dispatch, the `/writin
 | `scripts/e2e-shell-entrypoint.sh` | Container entrypoint (workspace setup + interactive claude) |
 | `tests/e2e/fixtures/test-app/` | Test fixture (Hono + SQLite REST API) |
 
-### What It Verifies
+### E2E Coverage
 
 | Phase | Description |
 |-------|-------------|
@@ -126,14 +126,14 @@ Tests the full plugin workflow: `claude -p` triggers hook dispatch, the `/writin
 | 5. Verify artifacts | Checks plan file exists, schema validation (rdx), structural validation |
 | 6. Report | Pass/fail summary with log locations |
 
-### Direct Docker Usage
+### E2E Direct Docker Usage
 
 ```bash
 docker compose -f docker-compose.e2e.yml build e2e
 docker compose -f docker-compose.e2e.yml run --rm e2e
 ```
 
-### Interactive Shell
+### E2E Interactive Shell
 
 `test:e2e:shell` builds the image and launches an interactive Claude Code session with the plugin pre-loaded by default. `--no-build` skips the rebuild, and `--bash` bypasses the launcher and drops into a plain shell:
 
@@ -201,7 +201,7 @@ If Claude prompts for login on every run:
 | Aspect | Verification | E2E |
 |--------|-------------|-----|
 | Required | Optional (Claude tests skipped) | Mandatory (exit 1) |
-| Credential file | `.credentials.json` | `credentials.json` |
+| Credential file | `.credentials.json` | `.credentials.json` |
 | Cleanup | Persists across runs | Cleaned up on exit (`trap`) |
 | Onboarding marker | `hasCompletedOnboarding` | `onboardingComplete` |
 
@@ -256,13 +256,16 @@ ls logs/debug-*.log            # Claude Code debug logs
 
 1. **Hook errors** (`SessionStart:startup hook error`): Check the debug log for the hook that failed. Common causes: missing files in the plugin directory, permission issues, or incompatible plugin format
 2. **Plugin not loading**: Verify the plugin directory structure inside the container:
+
    ```bash
    PLUGIN_DIR="$(npm root -g)/@rundown-org/claude-code-plugin"
    ls -la "$PLUGIN_DIR/.claude-plugin/plugin.json"
    ls -la "$PLUGIN_DIR/hooks/hooks.json"
    ls -la "$PLUGIN_DIR/dist/cli.js"
    ```
+
 3. **Debug categories**: Use `--debug` with category filters for targeted output:
+
    ```bash
    claude --plugin-dir "$PLUGIN_DIR" --debug "hooks,plugins"
    ```
