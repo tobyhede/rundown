@@ -1,6 +1,6 @@
 ---
 name: delegate-nested-child
-description: Child runbook that composes a grandchild via rd run
+description: Child runbook that composes a grandchild inline
 tags:
   - delegation
 scenarios:
@@ -8,6 +8,7 @@ scenarios:
     description: Child composes the grandchild runbook and completes
     commands:
       - rd run delegate-nested-child.runbook.md
+      - rd pass
     result: COMPLETE
 ---
 
@@ -20,8 +21,4 @@ scenarios:
 
 ### 1.1 Grandchild task
 
-Compose the grandchild runbook inline.
-
-```bash
-rd run delegate-nested-grandchild.runbook.md
-```
+- delegate-nested-grandchild.runbook.md
