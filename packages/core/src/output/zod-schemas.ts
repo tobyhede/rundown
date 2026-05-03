@@ -74,6 +74,16 @@ export const CLIErrorCodes = {
 } as const;
 
 /**
+ * Machine-readable warning codes for CLI JSON output.
+ *
+ * These codes enable programmatic handling of non-error conditions.
+ */
+export const CLIWarningCodes = {
+  /** No runbook is currently active */
+  NO_ACTIVE_RUNBOOK: 'NO_ACTIVE_RUNBOOK',
+} as const;
+
+/**
  * Zod schema for error codes.
  */
 export const ErrorCodeSchema = z
@@ -103,9 +113,21 @@ export const ErrorCodeSchema = z
   .describe('Error code identifying the type of error that occurred');
 
 /**
+ * Zod schema for warning codes.
+ */
+export const WarningCodeSchema = z
+  .enum(['NO_ACTIVE_RUNBOOK'])
+  .describe('Warning code identifying the non-error condition that occurred');
+
+/**
  * Union type of all valid CLI error codes.
  */
 export type CLIErrorCode = (typeof CLIErrorCodes)[keyof typeof CLIErrorCodes];
+
+/**
+ * Union type of all valid CLI warning codes.
+ */
+export type CLIWarningCode = (typeof CLIWarningCodes)[keyof typeof CLIWarningCodes];
 
 // ============================================================================
 // Shared Schemas
@@ -228,8 +250,8 @@ export const ErrorResponseSchema = z
  * commands run when no runbook is active (exit 0, but no work was performed).
  *
  * Unlike `ErrorResponseSchema`, warning responses exit 0 and carry a `message`
- * field rather than an `error` field. The `code` field follows the same
- * machine-readable code convention as error responses.
+ * field rather than an `error` field. The `code` field is scoped to
+ * machine-readable warning codes.
  */
 export const WarningResponseSchema = z
   .object({
@@ -237,8 +259,8 @@ export const WarningResponseSchema = z
     kind: z.literal('warning').describe('Response type discriminant'),
     /** Human-readable warning message */
     message: z.string().describe('Warning message describing the condition'),
-    /** Machine-readable error code for programmatic handling */
-    code: ErrorCodeSchema.optional().describe('Error code for programmatic handling'),
+    /** Machine-readable warning code for programmatic handling */
+    code: WarningCodeSchema.optional().describe('Warning code for programmatic handling'),
     /** CLI command that triggered the warning (e.g., 'pass', 'fail', 'goto') */
     command: z.string().optional().describe('CLI command that triggered the warning'),
   })

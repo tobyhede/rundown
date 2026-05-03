@@ -37,11 +37,24 @@ describe('schema-service', () => {
       expect(schema).toHaveProperty('definitions');
     });
 
-    it('should return JSON Schema for pass command (ActionResponse)', () => {
+    it('should return JSON Schema for pass command (ActionResponse or WarningResponse)', () => {
       const schema = getCommandSchema('pass');
 
       expect(schema).toBeDefined();
       expect(schema).toHaveProperty('$schema');
+    });
+
+    it('should include warning variant in generated pass command JSON Schema', () => {
+      const schema = getCommandSchema('pass') as {
+        $ref: string;
+        definitions: Record<string, unknown>;
+      };
+      const refName = schema.$ref.replace('#/definitions/', '');
+      const responseSchema = schema.definitions[refName] as { anyOf?: unknown[] };
+
+      expect(responseSchema.anyOf).toHaveLength(2);
+      expect(JSON.stringify(responseSchema)).toContain('"const":"warning"');
+      expect(JSON.stringify(responseSchema)).toContain('"NO_ACTIVE_RUNBOOK"');
     });
 
     it('should return JSON Schema for scenario ls subcommand', () => {

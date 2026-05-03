@@ -20,8 +20,11 @@
 export {
   // Error codes
   CLIErrorCodes,
+  CLIWarningCodes,
   ErrorCodeSchema,
+  WarningCodeSchema,
   type CLIErrorCode,
+  type CLIWarningCode,
   // Shared schemas
   PositionSchema,
   RunbookContextSchema,
@@ -126,6 +129,7 @@ export {
 import type {
   CLIResponse,
   ErrorResponse,
+  WarningResponse,
   ActionResponse,
   StatusResponse,
   CheckResponse,
@@ -140,6 +144,18 @@ import type {
  */
 export function isErrorResponse(response: CLIResponse | ErrorResponse): response is ErrorResponse {
   return 'kind' in response && response.kind === 'error';
+}
+
+/**
+ * Type guard to check if a response is a warning response.
+ *
+ * @param response - The response to check
+ * @returns True if the response is a WarningResponse
+ */
+export function isWarningResponse(
+  response: CLIResponse | WarningResponse,
+): response is WarningResponse {
+  return 'kind' in response && response.kind === 'warning';
 }
 
 /**

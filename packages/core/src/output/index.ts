@@ -54,8 +54,11 @@ export {
 // Error codes
 export {
   CLIErrorCodes,
+  CLIWarningCodes,
   ErrorCodeSchema,
+  WarningCodeSchema,
   type CLIErrorCode,
+  type CLIWarningCode,
 } from './schema.js';
 
 // Shared schemas
@@ -198,6 +201,7 @@ export type { CLIResponse, CLIListResponse } from './schema.js';
 // Type guards
 export {
   isErrorResponse,
+  isWarningResponse,
   isActionResponse,
   isStatusResponse as isSchemaStatusResponse,
   isCheckResponse,

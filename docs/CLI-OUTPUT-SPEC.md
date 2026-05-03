@@ -7,6 +7,7 @@
 | Type | Format | Detection |
 |------|--------|-----------|
 | **Error** | `{ "error": "msg", "code": "CODE" }` | `error` field exists |
+| **Warning** | `{ "kind": "warning", "message": "msg", "code": "CODE" }` | `kind === "warning"` |
 | **Workflow** | `{ "action": "...", ... }` | `action` field exists |
 | **List** | `[...]` | `Array.isArray()` |
 
@@ -15,6 +16,7 @@
 - **Lists**: Raw arrays `[...]` (no wrapper object)
 - **Workflow commands**: Include `action` field (pass, fail, stop, complete, stash, pop)
 - **Errors**: `{ "error": "message", "code": "CODE" }`
+- **Warnings**: `{ "kind": "warning", "message": "message", "code": "CODE" }`
 - **Success/failure**: Workflow commands use exit code, not a `result` field
 - **Position**: `{ "current": string, "total": number|string }`
 - **Action field**: Shows transition (e.g., "CONTINUE", "GOTO 3", "RETRY"), not command name

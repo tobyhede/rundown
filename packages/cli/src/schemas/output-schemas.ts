@@ -127,6 +127,7 @@ export { ScenarioDetailSchema as ScenarioShowResponseSchema } from '@rundown-org
 import {
   StatusResponseSchema,
   ActionResponseSchema,
+  WarningResponseSchema,
   CheckResponseSchema,
   ResolveResponseSchema,
   EchoResponseSchema,
@@ -146,6 +147,11 @@ import {
   ClaimResponseSchema,
 } from '@rundown-org/core';
 
+const withWarningResponse = <Schema extends z.ZodSchema>(schema: Schema) =>
+  z.union([schema, WarningResponseSchema]);
+
+const ActionOrWarningResponseSchema = withWarningResponse(ActionResponseSchema);
+
 /**
  * Maps CLI command names to their output schemas.
  *
@@ -154,12 +160,12 @@ import {
  */
 export const COMMAND_SCHEMAS: Record<string, z.ZodSchema> = {
   status: StatusResponseSchema,
-  pass: ActionResponseSchema,
-  fail: ActionResponseSchema,
-  goto: ExecutionSummarySchema,
-  complete: ActionResponseSchema,
-  stop: ActionResponseSchema,
-  stash: StashResponseSchema,
+  pass: ActionOrWarningResponseSchema,
+  fail: ActionOrWarningResponseSchema,
+  goto: withWarningResponse(ExecutionSummarySchema),
+  complete: ActionOrWarningResponseSchema,
+  stop: ActionOrWarningResponseSchema,
+  stash: withWarningResponse(StashResponseSchema),
   pop: PopResponseSchema,
   check: CheckResponseSchema,
   resolve: ResolveResponseSchema,
@@ -175,6 +181,6 @@ export const COMMAND_SCHEMAS: Record<string, z.ZodSchema> = {
   'scenario-suite ls': ScenarioSuiteListSchema,
   'scenario-suite show': ScenarioSuiteCaseDetailSchema,
   'scenario-suite run': ScenarioSuiteRunResponseSchema,
-  delegate: DelegateResponseSchema,
+  delegate: withWarningResponse(DelegateResponseSchema),
   claim: ClaimResponseSchema,
 };
