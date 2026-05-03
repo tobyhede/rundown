@@ -18,6 +18,22 @@ Two flows are available:
 - **DELEGATE annotation** (recommended for multi-substep delegation) — the step declares its substeps are delegated, and the engine auto-issues tokens on step entry. See [DELEGATE Annotation](#delegate-annotation).
 - **Manual `rd delegate --step`** — for single-delegation or ad-hoc dispatch from an orchestrating agent.
 
+### Single-Level Delegation Invariant
+
+Delegation is single-level: a claimed (delegated) child runbook may not issue further delegations. Subagents do not spawn subagents. The CLI enforces this at runtime at the issuance source (`createDelegation`), so the rule covers every path that mints a token: manual `rd delegate`, the executor's auto-fan-out on entry to a step with delegating substeps, and `rd delegate --retry` re-issuance. Issuance refuses with error `RD-819 DELEGATION_NESTED_FORBIDDEN` when the active runbook is itself a delegated child.
+
+When a claimed child needs to invoke another runbook, use composition (`rd run`) inside a substep body — composition is unrestricted. The fenced-bash form is parsed as a shell command rather than a delegation list:
+
+```markdown
+### 1.1 Compose another runbook
+
+```bash
+rd run other.runbook.md
+```
+```
+
+Claimed children are never pushed onto `defaultStack`; bare commands always target the project-default active runbook (the parent), and claim-targeted commands (`pass`, `fail`, `stop`, `complete`, `goto`, `status`, `stash`, `pop`, `collect`) require explicit `--claim-id`. `rd delegate` does not accept `--claim-id` because delegating from a claimed child is forbidden by this invariant.
+
 ### Manual `rd delegate --step`
 
 **Example runbook:**
