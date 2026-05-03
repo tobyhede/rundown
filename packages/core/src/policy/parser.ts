@@ -211,13 +211,10 @@ function extractHeredocDelimiters(line: string): HeredocDelimiter[] {
         continue;
       }
 
-      if (current === '\\') {
-        const next = line[i + 1];
-        if (next !== undefined) {
-          delimiter += next;
-          i += 2;
-          continue;
-        }
+      if (current === '\\' && i + 1 < line.length) {
+        delimiter += line[i + 1];
+        i += 2;
+        continue;
       }
 
       if (
