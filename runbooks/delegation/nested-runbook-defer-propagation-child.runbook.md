@@ -1,17 +1,15 @@
 ---
 name: nested-runbook-defer-propagation-child
-description: Child with two DEFER substeps under PASS ALL; 1.1 delegates to grandchild, 1.2 runs locally
+description: Child with two DEFER substeps under PASS ALL; 1.1 composes grandchild via rd run, 1.2 runs locally
 tags:
   - delegation
   - defer
 
 scenarios:
   auto-pass:
-    description: Delegated grandchild completes; local substep passes; aggregated COMPLETE
+    description: Composed grandchild completes; local substep passes; aggregated COMPLETE
     commands:
       - rd run nested-runbook-defer-propagation-child.runbook.md
-      - rd delegate
-      - rd claim ${TOKEN}
     expect:
       result: COMPLETE
       steps:
@@ -24,22 +22,24 @@ scenarios:
           aggregated: true
 ---
 
-# Child DEFER Aggregation (With Grandchild Delegation)
+# Child DEFER Aggregation (With Grandchild Composition)
 
-Middle of a 3-level DEFER propagation chain. Substep 1.1 delegates to
-the grandchild runbook; 1.2 runs locally. Both default to DEFER under
-`PASS ALL COMPLETE`.
+Middle of a 3-level DEFER propagation chain. Substep 1.1 composes the
+grandchild runbook via `rd run`; 1.2 runs locally. Both default to
+DEFER under `PASS ALL COMPLETE`.
 
 ## 1. Child work
 
 - PASS ALL COMPLETE
 - FAIL ANY STOP
 
-### 1.1 Delegated grandchild task
+### 1.1 Composed grandchild task
 
-Delegated to the grandchild runbook.
+Compose the grandchild runbook inline.
 
-- nested-runbook-defer-propagation-grandchild.runbook.md
+```bash
+rd run nested-runbook-defer-propagation-grandchild.runbook.md
+```
 
 ### 1.2 Local child task
 

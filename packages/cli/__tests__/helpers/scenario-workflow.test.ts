@@ -63,6 +63,7 @@ jest.unstable_mockModule('node:fs', () => {
     mkdtempSync: mkdtempSyncMock,
     mkdirSync: jest.fn(),
     copyFileSync: jest.fn(),
+    symlinkSync: jest.fn(),
   };
 });
 

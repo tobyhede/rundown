@@ -5,13 +5,11 @@ tags:
   - delegation
 scenarios:
   all-pass:
-    description: Three-level delegation chain completes
+    description: Single-level delegation; child composes grandchild via rd run
     commands:
       - rd run delegate-nested.runbook.md
       - rd delegate
       - rd claim ${TOKEN}
-      - rd delegate
-      - rd claim ${TOKEN_2}
     result: COMPLETE
 ---
 
