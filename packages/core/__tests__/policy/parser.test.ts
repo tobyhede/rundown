@@ -2,6 +2,7 @@ import {
   extractCommands,
   extractPrimaryExecutable,
   extractAllExecutables,
+  DYNAMIC_EXECUTABLE_SENTINEL,
 } from '../../src/policy/parser.js';
 
 describe('Command Parser', () => {
@@ -219,6 +220,19 @@ describe('Command Parser', () => {
       const result = extractAllExecutables('cmd 2>/dev/null');
 
       expect(result).toEqual(['cmd']);
+    });
+
+    it('embedded substitution in executable word: prefix is not accepted as safe', () => {
+      // git$(printf evil) runs 'gitevil' (or similar), NOT 'git'.
+      // A policy allowing git,printf must not accept this command.
+      const result = extractAllExecutables('git$(printf evil) status');
+
+      // The literal prefix 'git' must NOT appear — it is not the real executable.
+      expect(result).not.toContain('git');
+      // The sentinel must be present so the policy evaluator denies the command.
+      expect(result).toContain(DYNAMIC_EXECUTABLE_SENTINEL);
+      // printf IS inside the substitution and will be found by extractDollarSubstitutions.
+      expect(result).toContain('printf');
     });
   });
 });

@@ -215,3 +215,4 @@ worktrees
 xstate
 zod
 redir
+gitevil

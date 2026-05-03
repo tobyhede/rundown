@@ -30,7 +30,7 @@ export interface ParsedCommand {
 // ---------------------------------------------------------------------------
 
 /** Word token — a command word (executable, argument, or redirect target). */
-type WordToken = { kind: 'word'; value: string };
+type WordToken = { kind: 'word'; value: string; dynamic?: boolean };
 /** Op token — a statement boundary: ; \n && || | ( ) */
 type OpToken = { kind: 'op' };
 /** Redir token — a redirect operator that is NOT a statement boundary: > >> < << */
@@ -39,6 +39,16 @@ type Token = WordToken | OpToken | RedirToken;
 
 /** Shell executable names for sh -c wrapper detection. */
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'ksh', 'dash', 'fish', 'csh', 'tcsh']);
+
+/**
+ * Sentinel executable emitted when a command word contains an embedded runtime
+ * substitution (e.g. `git$(evil)`). The word's value is unknowable at parse time,
+ * so no allowlist pattern can safely match it. The null-byte prefix is intentional —
+ * it cannot appear in a Unix executable name and therefore never matches any real
+ * allowlist entry, ensuring the policy evaluator denies the command unless
+ * `--allow-all` is set.
+ */
+export const DYNAMIC_EXECUTABLE_SENTINEL = '\x00<dynamic>';
 
 /**
  * Advance past a balanced $(...) block.
@@ -123,6 +133,9 @@ function scanVar(command: string, startIdx: number): number {
  * - `>`, `>>`, `<`, `<<` emit redir tokens (not op) so redirect targets stay in the
  *   same statement and are never mistaken for executables
  * - Empty word buffers are suppressed — no empty-string word tokens
+ * - Words that contain an embedded substitution (e.g. `git$(evil)`) are marked
+ *   `dynamic: true` — the value is unknowable at parse time and extractCommands will
+ *   emit DYNAMIC_EXECUTABLE_SENTINEL rather than accepting the literal prefix as safe
  *
  * @param command - Shell command string to tokenize
  * @returns Array of tokens
@@ -130,13 +143,17 @@ function scanVar(command: string, startIdx: number): number {
 function tokenize(command: string): Token[] {
   const tokens: Token[] = [];
   let wordBuf = '';
+  let wordIsDynamic = false;
   let state: 'normal' | 'single' | 'double' = 'normal';
   let i = 0;
 
   const flushWord = (): void => {
-    if (wordBuf.length > 0) {
-      tokens.push({ kind: 'word', value: wordBuf });
+    if (wordBuf.length > 0 || wordIsDynamic) {
+      const token: WordToken = { kind: 'word', value: wordBuf };
+      if (wordIsDynamic) token.dynamic = true;
+      tokens.push(token);
       wordBuf = '';
+      wordIsDynamic = false;
     }
   };
 
@@ -175,7 +192,8 @@ function tokenize(command: string): Token[] {
       if (ch === '$') {
         const next = command[i + 1] ?? '';
         if (next === '(') {
-          // Skip $(…) inside double-quote — extracted by extractDollarSubstitutions
+          // $(…) inside double-quote: word value is now unknowable at parse time
+          wordIsDynamic = true;
           const end = scanSubst(command, i + 2);
           i = end < 0 ? i + 2 : end;
         } else if (/[\w{]/.test(next)) {
@@ -188,6 +206,8 @@ function tokenize(command: string): Token[] {
         continue;
       }
       if (ch === '`') {
+        // Backtick inside double-quote: word value is now unknowable at parse time
+        wordIsDynamic = true;
         const end = scanBacktick(command, i + 1);
         i = end < 0 ? i + 1 : end;
         continue;
@@ -227,8 +247,10 @@ function tokenize(command: string): Token[] {
       const prev = i > 0 ? command[i - 1] : '';
       const next = command[i + 1] ?? '';
       if (next === '(' && prev !== '$') {
-        // $(…) command substitution — skip body, extracted by extractDollarSubstitutions
-        flushWord();
+        // $(…) command substitution: marks the current word as dynamic — the word's
+        // value is unknowable at parse time. Do NOT flush the prefix as a valid word;
+        // the entire token (prefix + substitution + any suffix) is dynamic.
+        wordIsDynamic = true;
         const end = scanSubst(command, i + 2);
         i = end < 0 ? i + 2 : end;
       } else if (/[\w{]/.test(next)) {
@@ -241,7 +263,8 @@ function tokenize(command: string): Token[] {
       continue;
     }
     if (ch === '`') {
-      flushWord();
+      // Backtick substitution: marks the current word as dynamic (same as $(...)).
+      wordIsDynamic = true;
       const end = scanBacktick(command, i + 1);
       i = end < 0 ? i + 1 : end;
       continue;
@@ -392,41 +415,54 @@ export function extractCommands(command: string): ParsedCommand[] {
   const commands: ParsedCommand[] = [];
   const tokens = tokenize(command);
 
-  let stmtWords: string[] = [];
+  let stmtTokens: WordToken[] = [];
   let skipNextWord = false;
 
   const flushStatement = (): void => {
-    const words = stmtWords;
-    stmtWords = [];
+    const words = stmtTokens;
+    stmtTokens = [];
     skipNextWord = false;
 
     if (words.length === 0) return;
 
     // Skip leading KEY=VALUE assignments to find the actual executable
     let execIdx = 0;
-    while (execIdx < words.length && isEnvAssignment(words[execIdx])) execIdx++;
+    while (execIdx < words.length && isEnvAssignment(words[execIdx].value)) execIdx++;
     if (execIdx >= words.length) return;
 
-    const executable = path.basename(words[execIdx]);
+    const firstWord = words[execIdx];
+
+    // If the executable word contains an embedded substitution its value is
+    // unknowable at parse time. Emit the sentinel so the policy evaluator
+    // cannot match it against any allowlist entry.
+    if (firstWord.dynamic) {
+      commands.push({
+        executable: DYNAMIC_EXECUTABLE_SENTINEL,
+        original: words.map((w) => w.value).join(' '),
+      });
+      return;
+    }
+
+    const executable = path.basename(firstWord.value);
     if (!executable) return;
 
     // sh -c detection: recursively parse the -c argument
     if (SHELLS.has(executable)) {
       let dashCIdx = -1;
       for (let k = 0; k < words.length; k++) {
-        if (words[k] === '-c') {
+        if (words[k].value === '-c') {
           dashCIdx = k;
           break;
         }
       }
       if (dashCIdx >= 0 && dashCIdx + 1 < words.length) {
-        const nested = extractCommands(words[dashCIdx + 1]);
+        const nested = extractCommands(words[dashCIdx + 1].value);
         commands.push(...nested);
         return;
       }
     }
 
-    commands.push({ executable, original: words.join(' ') });
+    commands.push({ executable, original: words.map((w) => w.value).join(' ') });
   };
 
   for (const tok of tokens) {
@@ -436,11 +472,11 @@ export function extractCommands(command: string): ParsedCommand[] {
       // Next word is a redirect target — skip it, it is not an executable
       skipNextWord = true;
     } else {
-      // word token
+      // word token — TypeScript narrows to WordToken here
       if (skipNextWord) {
         skipNextWord = false;
       } else {
-        stmtWords.push(tok.value);
+        stmtTokens.push(tok);
       }
     }
   }
