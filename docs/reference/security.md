@@ -2,6 +2,8 @@
 
 Rundown includes a Deno-inspired security policy layer that provides explicit allowlist-based permission control for runbook execution.
 
+The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "SHOULD NOT", "RECOMMENDED", "MAY", and "OPTIONAL" in normative policy sections of this document are to be interpreted as described in [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
+
 ## Security Model
 
 Rundown provides **two layers of security**:
@@ -82,7 +84,7 @@ The policy layer protects against:
 
 ### Trust Boundaries
 
-```
+```text
 ┌─────────────────────────────────────────────────────┐
 │                     User                            │
 │  - Approves permission prompts                      │
@@ -123,7 +125,7 @@ File-backed data sources (`--input items=file:data.txt`) are subject to security
 - **Path containment:** Resolved paths must stay within the project root directory
 - **Policy enforcement:** The resolved path is checked against the active `read` policy before it becomes a FOR-loop source
 - **Prompt behavior:** Promptable reads ask for permission in interactive mode and fail startup in non-interactive mode
-- **Blocked sources:** Paths escaping the project are silently ignored with a warning
+- **Blocked sources:** Paths escaping the project are omitted from variable discovery with a warning. A FOR loop depending on that omitted variable fails closed when the loop starts with `ForResolutionError('undefined-variable')`; a `JsonArrayStream` that later resolves outside the project root fails with `policy-violation`, never zero silent iterations.
 - **Drift detection:** File snapshots (size, mtime, SHA-256 of first 64 KiB) detect modification between iterations
 - **Iteration cap:** `MAX_FILE_ITERATIONS` (10,000) prevents runaway loops from unbounded file sources
 

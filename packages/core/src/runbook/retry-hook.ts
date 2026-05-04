@@ -169,7 +169,7 @@ export function retrySingleSubstep(
   | { status: 'error'; code: string; message: string } {
   const ss = findSubstepState(working.substepStates ?? [], substep.id, activeFrameKey);
   if (!ss) return { status: 'skipped' };
-  // Uniform re-delegation (docs/SPEC.md §4.2, §5; retry-semantics spec §3 step 3,
+  // Uniform re-delegation (docs/spec/language.md §4.2, §5; retry-semantics spec §3 step 3,
   // §3.1 invariant, §4.4): every substep with a delegation record re-issues on
   // retry, regardless of prior `result`. Substeps without a delegation are
   // skipped here — the cursor-re-entry machinery handles their re-execution.
@@ -243,7 +243,7 @@ export function retrySingleSubstep(
  *
  * Inspects `context.substepStates` for the active frame; for each substep with
  * a delegation record — regardless of prior `result` — calls `retryDelegation`.
- * Uniform re-delegation per `docs/SPEC.md` §4.2, §5 (RETRY is universal):
+ * Uniform re-delegation per `docs/spec/language.md` §4.2, §5 (RETRY is universal):
  * every delegation in the frame is cancelled and re-issued with a fresh token
  * on retry, not just failed ones. Each retried substep's state is reset to
  * `{ status: 'pending', result: undefined }` so the fresh subagent's

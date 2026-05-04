@@ -109,7 +109,7 @@ prompt: Wait
 
       expect(output.active).toBe(true);
       expect(output.stashed).toBe(false);
-      // Flat structure per CLI-OUTPUT-SPEC
+      // Flat structure per docs/spec/cli-output.md
       expect(output).toHaveProperty('file', 'test.runbook.md');
       expect(output.position).toHaveProperty('current', '1');
       expect(output.position).toHaveProperty('total', 1);

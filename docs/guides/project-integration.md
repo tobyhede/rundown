@@ -40,6 +40,8 @@ To keep runbooks as local-only project files instead, ignore the entire director
 .rundown/
 ```
 
+Persisted runtime state is not migrated between incompatible Rundown versions. If `.rundown/runs/`, `.rundown/session.json`, stashed runs, or claim records become stale or structurally incompatible, finish or stop the affected run if possible, then prune/clean the state and restart from the source runbook. See [docs/reference/runtime.md Stale persisted state / no-migration](../reference/runtime.md#stale-persisted-state--no-migration).
+
 ## Discovery
 
 List all discoverable runbooks (project, plugin, and bundled):
@@ -75,7 +77,7 @@ rd run rundown:write-plan      # Explicit: from plugin only
 
 **Principle**: Runbook code blocks should be one-liners that call scripts. This keeps runbooks readable as workflow documentation while scripts handle implementation complexity.
 
-```markdown
+````markdown
 ## 1 Fetch Data
 - PASS CONTINUE
 - FAIL STOP
@@ -83,12 +85,14 @@ rd run rundown:write-plan      # Explicit: from plugin only
 ```bash
 .rundown/runbooks/review/scripts/fetch-data.sh {{repo}}
 ```
-```
+````
 
 Benefits:
 - Runbooks read as **workflow documentation** — steps, transitions, and intent
 - Scripts are **testable independently** — `bash scripts/fetch-data.sh myrepo`
 - Separation of concerns — change implementation without touching workflow
+
+Running a script directly with `bash ...` is for script-level testing only. Direct shell execution bypasses Rundown command policy, filesystem sandboxing, runtime variables, and step-state handling; run the containing runbook when validating the workflow contract.
 
 ## Frontmatter
 
@@ -124,9 +128,9 @@ rd run pr-feedback --input pr_number=11 --input repo=myorg/myrepo
 
 Variables defined in frontmatter `vars:` serve as defaults. CLI `--input` flags take precedence.
 
-See [SPEC.md §6 Templating](./SPEC.md#6-templating) for the full variable source precedence.
+See [docs/reference/runtime.md Variable Sources](../reference/runtime.md#variable-sources) for the full variable source precedence.
 
-#### Data Sources in Configuration
+### Data Sources in Configuration
 
 Arrays and `file:`-prefixed values in configuration enable FOR loop data sources:
 
@@ -170,12 +174,13 @@ STOP and COMPLETE accept optional messages. Include a message only when it provi
 ```
 
 Not:
+
 ```markdown
 ## 1 Compile
 - FAIL STOP "Compilation failed."
 ```
 
-See [FORMAT.md Messages](./FORMAT.md#messages) for the full rationale.
+See [docs/spec/grammar.md Messages](../spec/grammar.md#messages) for the full rationale.
 
 ## Worked Example: `pr-feedback`
 

@@ -1,7 +1,9 @@
 # Rundown Grammar
 
 W3C EBNF grammar for Rundown runbook syntax.
-See [SPEC.md](./SPEC.md) for execution semantics.
+See [docs/spec/language.md](language.md) for execution semantics.
+
+The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "SHOULD NOT", "RECOMMENDED", "MAY", and "OPTIONAL" in this document are to be interpreted as described in [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
 
 ## Notation
 
@@ -97,7 +99,7 @@ substep ::= "### " substep_id separator? text? newline
             ( code_block | runbook_list )?
 ```
 
-Substeps cannot contain nested substeps. See [SPEC.md §1.1](./SPEC.md) for the heading hierarchy rules.
+Substeps cannot contain nested substeps. See [docs/spec/language.md §1.1](language.md) for the heading hierarchy rules.
 
 ## Context Directives
 
@@ -107,8 +109,9 @@ output_list       ::= ( ws "- " output_entry newline )+
 output_entry      ::= variable_name ( ws output_value )?
 quoted_output_entry ::= quoted_string
 output_value      ::= helper_call | template_variable | quoted_string | variable_name
-helper_call       ::= "{{" ws? variable_name ( ws argument )+ ws? "}}"
-argument          ::= quoted_string | variable_path
+helper_call       ::= "{{" ws? variable_name ( ws helper_argument )+ ws? "}}"
+helper_argument   ::= quoted_string | variable_path | keyed_argument
+keyed_argument    ::= variable_name "=" ( quoted_string | variable_path | ctx_ref )
 ```
 
 A step or substep may declare at most one OUTPUTS directive. Duplicate directives on the same target are rejected. The `- INPUTS` directive has been removed — use the frontmatter `inputs:` field to declare variable names.
@@ -127,14 +130,14 @@ iteration index) followed by `<VarName>` and exports its absolute path as
 | Substep | `.rundown/runs/<runId>/outputs/<stepId>/<substepId>/<VarName>` |
 | FOR iteration (in substep) | `.rundown/runs/<runId>/outputs/<stepId>/<substepId>/<iteration>/<VarName>` |
 
-See [docs/SPEC.md §7.1](./SPEC.md#71-outputs). Expression-form output values
+See [docs/spec/language.md §7.1](language.md#71-outputs). Expression-form output values
 may be Handlebars helper calls (`{{ path "file.json" }}`), template variable
 references (`{{ VarName }}`), quoted literals (`"value"`), or bare variable
 references (`VarName`).
 
 Variable names in OUTPUTS must match `variable_name` and must not be [reserved variable names](#reserved-variable-names).
 
-The `path` helper call `{{ path "file.json" }}` is syntactic sugar for the CLI form `rdpath --dir WorkPath --ctx ContextId --file file.json`. The optional `ctx=` argument (`{{ path "file.json" ctx=alt-ctx }}`) overrides the default `ContextId`. Filenames must match the [`filename`](#lexical-rules) production; context identifiers must match [`ctx_ref`](#lexical-rules). See [docs/RDPATH.md](./RDPATH.md) for the full path-assembly contract.
+The `path` helper call `{{ path "file.json" }}` is syntactic sugar for the CLI form `rdpath --dir WorkPath --ctx ContextId --file file.json`. The optional `ctx=` argument (`{{ path "file.json" ctx=alt-ctx }}`) overrides the default `ContextId`. Filenames must match the [`filename`](#lexical-rules) production; context identifiers must match [`ctx_ref`](#lexical-rules). See [docs/reference/rdpath.md](../reference/rdpath.md) for the full path-assembly contract.
 
 ## Identifiers
 
@@ -199,7 +202,7 @@ A step may contain at most one FOR clause. The FOR clause must appear before tra
 delegate_annotation ::= "- DELEGATE" newline
 ```
 
-`DELEGATE` is bare — it takes no arguments. On an H2 step it propagates to every H3 substep; on an H3 substep or runbook-list entry it applies only to that target. DELEGATE precedes transitions within the step's or substep's bullet block; when a FOR clause is present, FOR precedes DELEGATE. A DELEGATE substep must resolve to a runbook reference. See [SPEC.md §4.3](./SPEC.md#43-delegate) for execution semantics.
+`DELEGATE` is bare — it takes no arguments. On an H2 step it propagates to every H3 substep; on an H3 substep or runbook-list entry it applies only to that target. DELEGATE precedes transitions within the step's or substep's bullet block; when a FOR clause is present, FOR precedes DELEGATE. A DELEGATE substep must resolve to a runbook reference. See [docs/spec/language.md §4.3](language.md#43-delegate) for execution semantics.
 
 ## Transitions
 

@@ -52,7 +52,7 @@ Rundown includes a Deno-inspired security policy layer that provides explicit al
 - `--policy <file>` - Custom policy file
 - `--non-interactive` - CI mode (auto-deny)
 
-See [Security Documentation](docs/SECURITY.md) for full configuration options.
+See [Security Documentation](docs/reference/security.md) for full configuration options.
 
 ## Get Started
 
@@ -149,18 +149,7 @@ The `rd` command is an alias for `rundown`.
 
 ## Documentation
 
-- [SPEC.md](docs/SPEC.md) - Rundown format specification (includes §6.1 Built-in Variables and §7 Context Passing / INPUTS / OUTPUTS)
-- [FORMAT.md](docs/FORMAT.md) - Formal BNF-style grammar
-- [MCP.md](docs/MCP.md) - MCP server reference
-- [SECURITY.md](docs/SECURITY.md) - Security policy configuration
-- [RUNDOWN.md](docs/RUNDOWN.md) - Rundown internal architecture
-- [CLI-OUTPUT-SPEC.md](docs/CLI-OUTPUT-SPEC.md) - CLI output format specification
-- [SCRIPTING.md](docs/SCRIPTING.md) - Scripting and automation guide
-- [AGENT-ORCHESTRATION.md](docs/AGENT-ORCHESTRATION.md) - Subagent delegation, context discovery, and delegation completion
-- [PROJECT-INTEGRATION.md](docs/PROJECT-INTEGRATION.md) - Project integration guide
-- [DOCKER.md](docs/DOCKER.md) - Docker verification pipeline
-- [SCENARIOS.md](docs/SCENARIOS.md) - Scenarios and test runbook standard
-- [Runbook Patterns](runbooks/README.md) - Runbook authoring patterns
+See **[docs/README.md](docs/README.md)** for the full documentation index, organized by audience and task.
 
 ## Contributing
 

@@ -6,6 +6,8 @@ version: 1.0.0
 
 Rundown is a format for defining executable runbooks using Markdown. It combines human-readable instructions with machine-executable commands and deterministic control flow.
 
+The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "SHOULD NOT", "RECOMMENDED", "MAY", and "OPTIONAL" in this document are to be interpreted as described in [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
+
 ## 1. Document Structure
 
 A Rundown document (`.runbook.md`) is a Markdown file with an optional YAML frontmatter.
@@ -133,7 +135,7 @@ Execution path notation such as `1.2.1` (`STEP.INDEX.SUBSTEP`) is display-only. 
 Control flow is defined by **Transitions** (conditions) and **Actions** (effects).
 
 ### 4.1 Transitions
-Syntax: `- {RESULT} [{AGGREGATION}]: {ACTION}`
+Syntax: `- {RESULT} [{AGGREGATION}] {ACTION}`
 
 | Component | Values | Description |
 | :--- | :--- | :--- |
@@ -184,7 +186,7 @@ GOTO targeting the containing step (self-reference) without an AT qualifier may 
 
 ### 4.3 DELEGATE
 
-Use `- DELEGATE` when the nested runbook should run **out-of-process** in a subagent. A runbook-list entry without `- DELEGATE` is inline linkage and runs in the same process — see [§3.2](#32-substeps).
+Use `- DELEGATE` when the nested runbook should run **out-of-process** in a subagent. A runbook-list entry without `- DELEGATE` is inline linkage and runs in the same process — see [§3.3](#33-runbook-list-shorthand).
 
 `- DELEGATE` is a structural bullet annotation that marks substeps for delegation. When a DELEGATE step is entered, the execution engine auto-issues a delegation token for each marked substep and surfaces them in the `STEP_ENTERED` event's `delegateFrontier` field (an array of `{id, runbook, token}`). Subagents claim each token with `rd claim`, copy the returned `claim_id`, resolve with `rd pass --claim-id <claim_id>` or `rd fail --claim-id <claim_id>`, and the final resolution triggers auto-aggregation of the parent step's transition.
 
@@ -287,6 +289,8 @@ Substeps execute → each produces RESULT (pass/fail)
 
 Variables use Handlebars syntax: `{{variable}}`.
 
+Whitespace inside Handlebars delimiters is allowed: `{{ Step }}` resolves the same way as `{{Step}}`, and spacing does not change undefined-variable warning behavior or `{{context.vars.NAME}}` path resolution.
+
 | Source | Scope | Description |
 | :--- | :--- | :--- |
 | CLI (`--input`) | Global | Expanded at startup. |
@@ -298,57 +302,16 @@ Variables use Handlebars syntax: `{{variable}}`.
 | `{{context.vars.NAME}}` | Global | User/config/frontmatter variable namespace. |
 | Loop Var | Loop | Current item/index (e.g., `{{batch}}`). |
 
-*   **Undefined**: Preserved as literal text. A warning is emitted to stderr for each undefined variable.
-*   **Evaluation**: Global vars expanded once; Step/Loop vars expanded per iteration.
-*   **Parent variables**: `{{context.parent.vars.NAME}}` exposes the parent's resolved template variables. Only non-context keys propagate. Available via both chain (`context.parent.parent.vars.*`) and array (`context.ancestors.N.vars.*`) addressing.
-*   **Depth limit**: Parent context chain addressing is capped at 32 levels (enforced on the delegation ancestor chain depth). Exceeding this limit produces an error.
-*   **Path resolution**: Dotted paths are supported consistently (for example `{{context.parent.index}}`).
-*   **Required variables**: The frontmatter `required` field declares variables that must be provided by the caller via CLI flags, config, environment bridge, or delegation inheritance. Names listed in `required` must also appear in `inputs:`. Missing required variables produce a hard error (`MISSING_REQUIRED_VARS`) during resolution. Reserved runtime names are also rejected in `required`.
+* **Undefined**: Preserved as literal text. A warning is emitted to stderr for each undefined variable.
+* **Evaluation**: Global vars expanded once; Step/Loop vars expanded per iteration.
+* **Parent variables**: `{{context.parent.vars.NAME}}` exposes the parent's resolved template variables. Only non-context keys propagate. Available via both chain (`context.parent.parent.vars.*`) and array (`context.ancestors.N.vars.*`) addressing.
+* **Depth limit**: Parent context chain addressing is capped at 32 levels (enforced on the delegation ancestor chain depth). Exceeding this limit produces an error.
+* **Path resolution**: Dotted paths are supported consistently (for example `{{context.parent.index}}`).
+* **Required variables**: The frontmatter `required` field declares variables that must be provided by the caller via CLI flags, config, environment bridge, or delegation inheritance. Names listed in `required` must also appear in `inputs:`. Missing required variables produce a hard error (`MISSING_REQUIRED_VARS`) during resolution. Reserved runtime names are also rejected in `required`.
 * **Reserved keys**: Runtime keys `step`, `index`, and `context` are reserved (matching is case-insensitive — any case variant such as `STEP`, `Step`, `INDEX` is also reserved) and cannot be overridden by user variables. The CLI rejects these names in frontmatter `inputs:`, `required`, `--input` flags, `--input-file` contents, and `.rundown/config.yaml` with an error diagnostic. Reserved names in `RD_INPUT_*` environment variables are silently skipped with a warning.
-* **Precedence** (highest to lowest):
-    1. CLI flags (`--input-file`, `--input`, `--input-json`) — highest priority
-    2. `RD_INPUT_*` environment variables (prefix stripped)
-    3. Inherited delegation variables (parent context)
-    4. `.rundown/config.yaml` (auto-discovered from cwd upward)
-    5. Built-in defaults — see [§6.1 Built-in Variables](#61-built-in-variables).
-    6. INPUTS injected from the context outputs store — fill gaps only, never override an existing variable (including built-ins, which are always present). Silently skipped when `ContextId` is unset or the requested key is absent. See [§7 Context Passing](#7-context-passing-outputs).
-    Frontmatter `inputs:` only declares which names the runbook accepts; it is not a runtime value layer.
-
-### 6.1 Built-in Variables
-
-Rundown sets the following built-in variables once per execution (unless marked dynamic per-step). PascalCase is canonical; lowercase aliases `step` and `index` are also accepted.
-
-| Variable | Example Value | Description |
-|----------|---------------|-------------|
-| `Date` | `2026-02-04` | Current date (YYYY-MM-DD) |
-| `DateTime` | `2026-02-04T10:30:00.000Z` | Full ISO 8601 timestamp |
-| `Year` | `2026` | Current year |
-| `Month` | `02` | Current month (01-12) |
-| `Day` | `04` | Current day (01-31) |
-| `Branch` | `feature/my-work` | Current git branch name (empty when not in git) |
-| `WorkPath` | `.rundown/work/feature-my-work` | Branch-isolated artifact directory (falls back to `.rundown/work` outside git). Default base directory for the `{{ path "..." }}` helper used in OUTPUTS expressions — see [§7.1 OUTPUTS](#71-outputs). |
-| `RunId` | `4a7f0c3e` | Unique-per-execution identifier (fresh 8-char hex per execution; each child in a delegation tree gets its own) |
-| `ContextId` | `a3b8c1d2` | Shared identity across a delegation tree. Scopes `{{ path "..." }}` helper output into `.rd-<ContextId>/` for context passing — see [§7 Context Passing](#7-context-passing-outputs). Children inherit the parent's `ContextId` via `--input`. Overridable via `--input ContextId=<name>` for a meaningful identifier (e.g., `sprint-42`). |
-| `Step` | `3.1` | Current qualified step identifier (dynamic per step) |
-| `Index` | `3` | Current loop iteration number inside FOR (dynamic per iteration) |
-| `context.current.step` | `3.1` | Canonical current step identifier (dynamic) |
-| `context.current.substep` | `1` | Current substep number when in a substep (dynamic) |
-| `context.current.index` | `3` | Current loop iteration inside FOR (dynamic) |
-| `context.current.at` | `3.3.1` | Full execution position (`STEP.INDEX.SUBSTEP` inside a FOR loop, `STEP.SUBSTEP` otherwise) (dynamic) |
-
-Static variables (`Date`, `DateTime`, `Year`, `Month`, `Day`, `Branch`, `WorkPath`, `RunId`, `ContextId`) can be overridden via `--input`. Dynamic variables (`Step`, `Index`, `context.current.*` and their lowercase aliases) reflect the current execution position and cannot be overridden. The variable name `context` is reserved.
-
-**Plugin Variables:** When a runbook is resolved from a plugin source (e.g., `rundown:write-plan`), Rundown auto-injects additional variables using UPPER_SNAKE_CASE (mirroring host environment conventions):
-
-| Variable | Description |
-|----------|-------------|
-| `CLAUDE_PLUGIN_ROOT` | Plugin installation directory |
-
-Plugin variables sit in the precedence chain just below CLI flags and can be overridden via `--input`.
-
-### 6.2 Shell Environment
-
-The built-in variables `WorkPath`, `ContextId`, and `RunId` are injected into each shell block's subprocess environment as `RD_WORK_PATH`, `RD_CONTEXT_ID`, and `RD_RUN_ID` respectively. These are injected after policy environment filtering using rundown-wins semantics (they are always present and cannot be blocked by user-supplied environment variables). The `RD_` prefix is reserved for rundown-injected environment variables; see also `RD_OUTPUTS_*` for file-backed output channels (§7).
+* **Precedence** (highest to lowest): CLI flags → plugin variables (when resolving a plugin runbook) → `RD_INPUT_*` env vars → inherited delegation variables → `.rundown/config.yaml` → built-in defaults → INPUTS from context outputs store. See [docs/reference/runtime.md Variable Sources](../reference/runtime.md#variable-sources) for the full precedence table and operational details.
+* **Built-in variables**: Rundown provides a set of built-in variables (`Date`, `Branch`, `WorkPath`, `RunId`, `ContextId`, `Step`, `Index`, etc.). See [docs/reference/runtime.md Built-in Variables](../reference/runtime.md#built-in-variables) for the full table.
+* **Shell environment injection**: Built-in variables `WorkPath`, `ContextId`, and `RunId` are injected into each shell block's subprocess environment. See [docs/reference/runtime.md Shell Environment](../reference/runtime.md#shell-environment).
 
 ## 7. Context Passing (OUTPUTS)
 
@@ -400,7 +363,7 @@ The frontmatter `outputs:` field declares variables to capture at run completion
 
 Children in a delegation tree inherit the parent's `ContextId` via `--input`, providing a shared identity. Step OUTPUTS accumulate in `state.variables` throughout execution; frontmatter `outputs:` at termination produce `state.finalVars` which propagate to the parent actor on completion.
 
-### 7.5 Example: write-plan / execute-plan
+### 7.4 Example: write-plan / execute-plan
 
 A parent runbook produces a plan file and delegates to a child runbook that consumes it. Both share a `ContextId` through delegation inheritance (see [§7.3](#73-delegation-inheritance) for the hand-off contract — the child automatically inherits the parent's `ContextId` via `--input`).
 
@@ -444,37 +407,39 @@ Flow:
 
 ## 8. Conformance
 
-1.  **Strict Hierarchy**: H2 -> H3. No H4.
-2.  **Sequential IDs**: Numeric steps must be sequential (1, 2, 3...; gaps invalid). Named steps do not participate in sequential numbering.
-3.  **Strict Ordering**: OUTPUTS -> FOR -> DELEGATE -> Transitions -> Prompt -> Body.
-4.  **Exclusivity**: Only one body type (Code OR Substeps). Step-level runbook lists are shorthand for Substeps.
-5.  **Single Code Block**: Max one code block per step (executable or display-only).
-6.  **Loop Safety**: `NEXT` and `BREAK` are valid **only** in FOR substeps and FOR iteration-level transitions. Using them at step level outside any FOR loop is rejected by the validator.
-7.  **Source Validation**: FOR clauses referencing a data source must reference a defined source. Named variable required.
-8.  **FOR Requires Substeps**: A FOR-annotated step must contain substeps.
-9.  **No Nested RETRY**: RETRY fallback actions cannot be RETRY.
-10. **FOR Iteration Action Set**: FOR-level nested transitions only allow `CONTINUE`, `DEFER`, `NEXT`, `BREAK`, `GOTO`, `STOP`, `COMPLETE` (plus RETRY wrappers).
-11. **Single Directives**: At most one OUTPUTS directive per step or substep.
-12. **Reserved Names in Directives**: OUTPUTS variable names must not be reserved names (case-insensitive).
-13. **No INPUTS Directive**: The `- INPUTS` step directive has been removed. Use the frontmatter `inputs:` field to declare the variable names the runbook accepts; values are supplied via `--input` flags or other runtime sources at invocation time.
-14. **DELEGATE Ordering**: The `- DELEGATE` annotation must appear after `- FOR` (when present) and before transitions, prompt, and body. Misordered DELEGATE is a parse error. (See §4.3.)
-15. **DELEGATE Requires Runbook Target**: Every substep marked `delegate: true` must declare at least one runbook target. A bare DELEGATE substep (no runbook bullet) is rejected at parse time. Step-level DELEGATE propagates to all substeps and the same target requirement applies to every propagated child.
-16. **RETRY on DELEGATE is Result-Agnostic**: `rd delegate --retry` succeeds regardless of the substep's prior result. Retry re-issues a fresh token by cancelling the current delegation and re-creating one with a new token; the retry hook propagates the canonical FOR-iteration location through `contextSnapshot.at`.
-17. **Parent Orchestration Supersedes Child Lifecycle for Exit Codes**: When a delegated child runbook reaches a terminal lifecycle (e.g. `FAIL STOP` on the child) and a parent absorbs the outcome non-terminally (e.g. `FAIL RETRY`), the child's CLI invocation (`rd pass` / `rd fail`) exits 0. Exit 1 is reserved for cases where the orchestrated workflow has actually halted: no parent linkage exists and the local lifecycle is `stopped`, or the parent's propagation also resolves to `stopped` (e.g. RETRY exhaustion → `STOP` fallback). This lets scripted orchestrators use exit codes as flow control without mistaking an in-progress retry for a terminal failure.
+1.  **Strict Hierarchy**: Steps MUST use H2; substeps MUST use H3. H4 and deeper are not permitted.
+2.  **Sequential IDs**: Numeric steps MUST be sequential (1, 2, 3...; gaps are invalid). Named steps do not participate in sequential numbering.
+3.  **Strict Ordering**: Within a step or substep bullet block, directives MUST appear in this order: OUTPUTS → FOR → DELEGATE → Transitions → Prompt → Body.
+4.  **Exclusivity**: A step MUST have only one body type: either a code block OR substeps (including runbook-list shorthand, which is canonicalized to substeps). Both together are not permitted.
+5.  **Single Code Block**: A step or substep MUST contain at most one code block (executable or display-only).
+6.  **Loop Safety**: `NEXT` and `BREAK` are valid **only** in FOR substeps and FOR iteration-level transitions. Using them at step level outside any FOR loop MUST be rejected by the validator.
+7.  **Source Validation**: FOR clauses referencing a data source MUST reference a defined source. A named variable is REQUIRED.
+8.  **FOR Requires Substeps**: A FOR-annotated step MUST contain substeps.
+9.  **No Nested RETRY**: RETRY fallback actions MUST NOT be RETRY.
+10. **FOR Iteration Action Set**: FOR-level nested transitions MUST only use `CONTINUE`, `DEFER`, `NEXT`, `BREAK`, `GOTO`, `STOP`, `COMPLETE` (plus RETRY wrappers).
+11. **Single Directives**: A step or substep MUST contain at most one OUTPUTS directive.
+12. **Reserved Names in Directives**: OUTPUTS variable names MUST NOT be reserved names (case-insensitive).
+13. **No INPUTS Directive**: The `- INPUTS` step directive has been removed. Implementations MUST use the frontmatter `inputs:` field to declare the variable names the runbook accepts; values are supplied via `--input` flags or other runtime sources at invocation time.
+14. **DELEGATE Ordering**: The `- DELEGATE` annotation MUST appear after `- FOR` (when present) and before transitions, prompt, and body. Misordered DELEGATE MUST be a parse error. (See §4.3.)
+15. **DELEGATE Requires Runbook Target**: Every substep marked `delegate: true` MUST declare at least one runbook target. A bare DELEGATE substep (no runbook bullet) MUST be rejected at parse time. Step-level DELEGATE propagates to all substeps and the same target requirement applies to every propagated child.
+16. **RETRY on DELEGATE is Result-Agnostic**: `rd delegate --retry` MUST succeed regardless of the substep's prior result. Retry re-issues a fresh token by cancelling the current delegation and re-creating one with a new token; the retry hook propagates the canonical FOR-iteration location through `contextSnapshot.at`.
+17. **Parent Orchestration Supersedes Child Lifecycle for Exit Codes**: When a delegated child runbook reaches a terminal lifecycle (e.g. `FAIL STOP` on the child) and a parent absorbs the outcome non-terminally (e.g. `FAIL RETRY`), the child's CLI invocation (`rd pass` / `rd fail`) MUST exit 0. Exit 1 is reserved for cases where the orchestrated workflow has actually halted: no parent linkage exists and the local lifecycle is `stopped`, or the parent's propagation also resolves to `stopped` (e.g. RETRY exhaustion → `STOP` fallback). This lets scripted orchestrators use exit codes as flow control without mistaking an in-progress retry for a terminal failure.
 18. **File-Backed Naked OUTPUTS**: A naked OUTPUTS entry (name only) at step
     or substep level activates a file-backed channel. `RD_OUTPUTS_<VarName>`
-    is injected only for naked-form entries; expression-form entries produce
-    no file and no env var.
-19. **Mixed OUTPUTS Forms**: A step or substep may mix naked and expression
+    MUST be injected only for naked-form entries; expression-form entries MUST
+    produce no file and no env var.
+19. **Mixed OUTPUTS Forms**: A step or substep MAY mix naked and expression
     OUTPUTS entries within a single OUTPUTS block.
-20. **`RD_OUTPUTS_*` is Rundown-Wins**: `RD_OUTPUTS_<VarName>` is always a
-    valid writable absolute path when the command starts. These env vars are
-    injected by Rundown after policy environment filtering and cannot be
+20. **`RD_OUTPUTS_*` is Rundown-Wins**: `RD_OUTPUTS_<VarName>` MUST always be
+    a valid writable absolute path when the command starts. These env vars MUST
+    be injected by Rundown after policy environment filtering and MUST NOT be
     blocked or overridden by user-supplied environment variables.
-21. **Captured Output Merge Precedence**: Captured naked outputs merge into
+21. **Captured Output Merge Precedence**: Captured naked outputs MUST merge into
     `context.variables` using the same precedence as expression-form
     outputs — same-name keys overwrite existing values.
 
 ## 9. Compatibility
 
 Step-level runbook lists are represented internally as sequential substeps (`N.1`, `N.2`, ...). In-progress sessions created before this model are not auto-migrated and must be restarted after upgrade.
+
+Rundown implementations MUST NOT migrate persisted runbook state between versions. This applies to all data under `.rundown/runs/`, including structured state fields and opaque snapshots. When persisted state is stale or structurally incompatible, implementations SHOULD require the user to complete, stop, or prune the run and restart from the source document. See [docs/reference/runtime.md Stale persisted state / no-migration](../reference/runtime.md#stale-persisted-state--no-migration) for runtime recovery details.

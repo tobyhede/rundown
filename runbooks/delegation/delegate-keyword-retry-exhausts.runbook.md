@@ -26,7 +26,7 @@ scenarios:
 # DELEGATE with RETRY (Exhausts)
 
 Two substeps fan out in parallel. Substep 1.2 always fails; retry re-issues
-*both* substeps (uniform re-delegation per `docs/SPEC.md` §4.2, §5) and 1.2
+*both* substeps (uniform re-delegation per `docs/spec/language.md` §4.2, §5) and 1.2
 fails a second time, so the parent stops via the exhaustion action.
 
 Four claims total: T1/T2 on first entry, T3/T4 after retry re-issues both

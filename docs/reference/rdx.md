@@ -2,6 +2,8 @@
 
 `rdx` is a schema-aware JSON-to-Markdown transformation tool shipped with `@rundown-org/claude-code-plugin`. It renders arbitrary JSON to readable Markdown following structural conventions and optionally validates against discoverable schemas.
 
+The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "SHOULD NOT", "RECOMMENDED", "MAY", and "OPTIONAL" in normative sections of this document are to be interpreted as described in [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
+
 ## Usage
 
 ```bash
@@ -331,7 +333,7 @@ Note: The task-level `### Files` table appears between the task heading and subt
 1. Create `packages/claude-code-plugin/src/<name>-schema.ts` exporting `validate(data: unknown): T`
 2. Register in `schemaLoaders` in `packages/claude-code-plugin/src/rdx-validate.ts`
 3. Create `packages/claude-code-plugin/schemas/<name>.schema.json` for editor autocomplete
-4. Keep Zod and JSON Schema representations in sync (see `docs/implement/claude-code-plugin/schema-design.md`)
+4. Keep Zod and JSON Schema representations in sync (see [docs/implement/claude-code-plugin/schema-design.md](../implement/claude-code-plugin/schema-design.md))
 
 ### Schema Design Rules
 
@@ -343,7 +345,7 @@ When designing schemas for use with Claude's structured output:
 - Use `const` for fixed values
 - Inline definitions — `$ref` and `$defs` are not supported
 
-See `docs/implement/claude-code-plugin/schema-design.md` for full guidance.
+See [docs/implement/claude-code-plugin/schema-design.md](../implement/claude-code-plugin/schema-design.md) for full guidance.
 
 ---
 

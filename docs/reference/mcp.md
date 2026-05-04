@@ -3,14 +3,15 @@
 This document provides a reference for the Rundown MCP (Model Context Protocol) server, which enables AI agents to execute runbooks via MCP tools.
 
 **For CLI usage, see:**
-- [RUNDOWN.md](./RUNDOWN.md) - CLI guide and reference
-- [SPEC.md](./SPEC.md) - Rundown specification
+- [docs/reference/cli.md](cli.md) - CLI command reference and user guide
+- [docs/spec/language.md](../spec/language.md) - Rundown specification
 
 ---
 
 ## Table of Contents
 
 - [Overview](#overview)
+- [Security and State](#security-and-state)
 - [Installation](#installation)
 - [Claude Desktop Configuration](#claude-desktop-configuration)
 - [Architecture](#architecture)
@@ -48,6 +49,14 @@ The Rundown MCP server (`@rundown-org/mcp`) provides MCP integration for runbook
 
 ---
 
+## Security and State
+
+The MCP server delegates execution to the Rundown CLI, so the same policy and runtime rules apply. Policy mode, allow/deny lists, sandbox checks, and prompt/non-interactive behavior are documented in [docs/reference/security.md](security.md). Persisted runbook state, session files, claim ids, and the no-migration rule are documented in [docs/reference/runtime.md](runtime.md).
+
+MCP does not migrate or shim CLI state. If persisted state is stale or incompatible, the CLI refuses to continue and reports the state problem through the MCP response.
+
+---
+
 ## Installation
 
 ```bash
@@ -59,6 +68,7 @@ npm install -g @rundown-org/mcp
 - `@rundown-org/cli` installed (global or local)
 
 Verify installation:
+
 ```bash
 rundown-mcp --help
 ```
@@ -119,7 +129,7 @@ For project-specific usage:
 
 The MCP server acts as a bridge between MCP clients (like Claude Desktop) and the Rundown CLI:
 
-```
+```text
 [MCP Client] --> [MCP Server] --> [Rundown CLI] --> [State Files]
                      |                   |
                 stdio transport     execFile
@@ -170,6 +180,7 @@ Check runbook syntax before execution.
 | `file` | string | Yes | Path to runbook file |
 
 **Example:**
+
 ```json
 {
   "tool": "validate",
@@ -195,6 +206,7 @@ List active or available runbooks.
 | `tags` | string | No | Filter by tags (comma-separated, requires `all: true`) |
 
 **Example - List active runbooks:**
+
 ```json
 {
   "tool": "list",
@@ -203,6 +215,7 @@ List active or available runbooks.
 ```
 
 **Example - List all available runbooks:**
+
 ```json
 {
   "tool": "list",
@@ -213,6 +226,7 @@ List active or available runbooks.
 ```
 
 **Example - Filter by tags:**
+
 ```json
 {
   "tool": "list",
@@ -234,6 +248,7 @@ Get current runbook state.
 **Parameters:** None.
 
 **Example:**
+
 ```json
 {
   "tool": "status",
@@ -257,6 +272,7 @@ Start a runbook.
 | `prompted` | boolean | No | Disable automatic command execution |
 
 **Example - Start runbook:**
+
 ```json
 {
   "tool": "run",
@@ -267,6 +283,7 @@ Start a runbook.
 ```
 
 **Example - Start in prompted mode:**
+
 ```json
 {
   "tool": "run",
@@ -279,7 +296,7 @@ Start a runbook.
 
 **CLI Equivalent:** `rundown run [<file>] [--prompted] [--input key=value]... [--input-file path]`
 
-**Note:** The `--input` and `--input-file` options are CLI-only. The MCP `run` tool does not currently expose variable configuration parameters. Delegation to child runbooks uses the CLI `delegate`/`claim`/`abort` commands. See [SPEC.md §6 Templating](./SPEC.md#6-templating) for full variable configuration details.
+**Note:** The `--input` and `--input-file` options are CLI-only. The MCP `run` tool does not currently expose variable configuration parameters. Delegation to child runbooks uses the CLI `delegate`/`claim`/`abort` commands. See [runtime.md Variable Sources](runtime.md#variable-sources) for full variable configuration details.
 
 ---
 
@@ -290,6 +307,7 @@ Mark the current step as passed.
 **Parameters:** None.
 
 **Example:**
+
 ```json
 {
   "tool": "pass",
@@ -308,6 +326,7 @@ Mark the current step as failed.
 **Parameters:** None.
 
 **Example:**
+
 ```json
 {
   "tool": "fail",
@@ -330,6 +349,7 @@ Jump to a specific step.
 | `step` | string | Yes | Target step (e.g., "3" or "2.1") |
 
 **Example - Jump to step:**
+
 ```json
 {
   "tool": "goto",
@@ -340,6 +360,7 @@ Jump to a specific step.
 ```
 
 **Example - Jump to substep:**
+
 ```json
 {
   "tool": "goto",
@@ -366,6 +387,7 @@ Force early completion of a runbook (runbooks auto-complete on final step).
 | `message` | string | No | Completion message |
 
 **Example:**
+
 ```json
 {
   "tool": "complete",
@@ -374,6 +396,7 @@ Force early completion of a runbook (runbooks auto-complete on final step).
 ```
 
 **Example - With message:**
+
 ```json
 {
   "tool": "complete",
@@ -398,6 +421,7 @@ Stop the runbook (abort execution).
 | `message` | string | No | Stop reason message |
 
 **Example:**
+
 ```json
 {
   "tool": "stop",
@@ -406,6 +430,7 @@ Stop the runbook (abort execution).
 ```
 
 **Example - With reason:**
+
 ```json
 {
   "tool": "stop",
@@ -438,7 +463,7 @@ The `text` field contains pretty-printed JSON from the CLI output.
 
 ### Success Response
 
-The nested JSON structure varies by command. See [CLI-OUTPUT-SPEC.md](./CLI-OUTPUT-SPEC.md) for detailed schemas.
+The nested JSON structure varies by command. See [docs/spec/cli-output.md](../spec/cli-output.md) for detailed schemas.
 
 ### Error Response
 
@@ -474,7 +499,7 @@ rd claim <token>
 rd pass    # or: rd fail
 ```
 
-See [RUNDOWN.md](./RUNDOWN.md#delegation-commands) for full delegation command reference.
+See [docs/reference/cli.md Delegation Commands](cli.md#delegation-commands) for full delegation command reference.
 
 ---
 
@@ -489,6 +514,10 @@ See [RUNDOWN.md](./RUNDOWN.md#delegation-commands) for full delegation command r
 | Timeout after 30s | Command hanging | Check CLI directly, verify state files |
 | Empty response | CLI returned no output | Check stderr in server logs |
 
+### Stale persisted state detected
+
+If MCP reports stale or incompatible persisted state, finish or close the affected run if it is still meaningful, or prune the state and restart the runbook. Rundown will not automatically migrate, silently shim, rewrite, or resume stale state.
+
 ### Debugging
 
 1. **Check MCP server logs** - Look for errors in Claude Desktop console
@@ -499,7 +528,8 @@ See [RUNDOWN.md](./RUNDOWN.md#delegation-commands) for full delegation command r
 ### Server Startup Message
 
 When running correctly, the server outputs to stderr:
-```
+
+```text
 Rundown MCP Server running
 ```
 

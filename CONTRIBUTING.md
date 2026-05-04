@@ -164,7 +164,7 @@ pnpm exec playwright install
 
 ### Docker Testing
 
-Docker-based tests verify installation and plugin integration in clean Linux containers. See [docs/DOCKER.md](docs/DOCKER.md) for full details.
+Docker-based tests verify installation and plugin integration in clean Linux containers. See [docs/internal/docker.md](docs/internal/docker.md) for full details.
 
 ```bash
 npm run verify:claude    # Verify CLI+plugin install (local build)

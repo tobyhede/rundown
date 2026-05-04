@@ -585,7 +585,7 @@ describe('DELEGATE re-entry and retry', () => {
     expect(r.exitCode).toBe(0);
 
     // Subagent 1.2 claims and fails — triggers FAIL ANY aggregation, which
-    // fires the RETRY transition. Under uniform re-delegation (docs/SPEC.md
+    // fires the RETRY transition. Under uniform re-delegation (docs/spec/language.md
     // §4.2, §5) the retry hook re-issues delegations for BOTH substeps,
     // regardless of prior pass/fail result. The re-entry STEP_ENTERED with
     // the new frontier is emitted as part of the `rd fail` invocation.
@@ -764,7 +764,7 @@ describe('DELEGATE re-entry and retry', () => {
 
     // Subagent 1.2 fails. FAIL ALL is NOT satisfied (one passed); PASS ALL
     // is NOT satisfied (one failed) so the PASS-branch retry fires with
-    // budget=1. Under uniform re-delegation (docs/SPEC.md §4.2, §5) the retry
+    // budget=1. Under uniform re-delegation (docs/spec/language.md §4.2, §5) the retry
     // hook re-issues delegations for BOTH substeps symmetrically — the hook
     // is result-agnostic regardless of aggregation branch.
     r = await runCliInProcess(`claim ${token2!}`, workspace);

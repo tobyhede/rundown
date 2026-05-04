@@ -3,9 +3,10 @@
 How Rundown delegates substep execution to subagents via the plugin's hook system.
 
 **Related docs:**
-- [RUNDOWN.md](./RUNDOWN.md) — CLI architecture, execution model, and command reference
-- [SPEC.md](./SPEC.md) — Rundown format specification (steps, substeps, transitions)
-- [runbooks/](../runbooks/) — Runbook pattern examples
+- [docs/reference/cli.md](../reference/cli.md) — CLI command reference and user guide
+- [docs/reference/runtime.md](../reference/runtime.md) — Execution model, state, variables
+- [docs/spec/language.md](../spec/language.md) — Rundown format specification (steps, substeps, transitions)
+- [runbooks/](../../runbooks/) — Runbook pattern examples
 
 ---
 
@@ -79,7 +80,7 @@ rd pass --claim-id <claim_id>   # or: rd fail --claim-id <claim_id>
 
 `- DELEGATE` is a structural bullet annotation that marks substeps for delegation. When the parent step is entered, the execution engine auto-issues a delegation token for each marked substep, so the orchestrating agent does not need to call `rd delegate` per substep. This is the recommended flow for any step that delegates more than one substep to subagents.
 
-See [SPEC.md §4.3](./SPEC.md#43-delegate) for the full format specification and [FORMAT.md](./FORMAT.md#delegate-annotation) for the grammar.
+See [docs/spec/language.md §4.3](../spec/language.md#43-delegate) for the full format specification and [docs/spec/grammar.md](../spec/grammar.md#delegate-annotation) for the grammar.
 
 ### Three equivalent forms
 
@@ -113,13 +114,13 @@ See [SPEC.md §4.3](./SPEC.md#43-delegate) for the full format specification and
   - DELEGATE
 ```
 
-Executable scenarios for all three forms live at [runbooks/delegation/delegate-keyword-*.runbook.md](../runbooks/delegation/).
+Executable scenarios for all three forms live at [runbooks/delegation/delegate-keyword-*.runbook.md](../../runbooks/delegation/).
 
 ### Auto-issuance lifecycle
 
 1. **Step entry** — the engine fires `STEP_ENTERED` with a `delegateFrontier` field: an array of `{id, runbook, token}` records, one per DELEGATE substep.
 2. **Dispatch** — the orchestrating agent dispatches a subagent per record, passing the token in the subagent's prompt. The plugin detects the token and injects claim instructions.
-3. **Claim** — each subagent runs `rd claim <token>`, which launches the child runbook with the inherited `ContextId` and any forwarded variables. The command returns a `claim_id`; keep that handle and pass it to every child-targeting command (`rd status`, `rd pass`, `rd fail`, `rd stash`, `rd pop`, and `rd stop`) with `--claim-id <claim_id>`.
+3. **Claim** — each subagent runs `rd claim <token>`, which launches the child runbook with the inherited `ContextId` and any forwarded variables. The command returns a `claim_id`; keep that handle and pass it to every child-targeting command (`rd status`, `rd pass`, `rd fail`, `rd collect`, `rd goto`, `rd stash`, `rd pop`, `rd stop`, and `rd complete`) with `--claim-id <claim_id>`.
 4. **Resolve** — the subagent completes the child runbook and calls `rd pass --claim-id <claim_id>` / `rd fail --claim-id <claim_id>`.
 5. **Aggregation** — when the final substep resolves, auto-aggregation fires on the parent step's transition (e.g., `PASS ALL CONTINUE`, `FAIL ANY STOP`).
 
@@ -171,7 +172,7 @@ Place a `code-review-agent-start.md` file in `.claude/context/` and it is automa
 
 ### Namespaces
 
-Agent types support namespace prefixes using `namespace:name` syntax (e.g., `cipherpowers:code-review-agent`). The namespace is stripped for context file discovery — `cipherpowers:code-review-agent` maps to `code-review-agent-start.md`.
+Agent types support namespace prefixes using `namespace:name` syntax (e.g., `cipherpowers:code-review-agent`). The namespace is stripped for context file discovery — `cipherpowers:code-review-agent` maps to `code-review-agent-start.md`. The remaining name is sanitized by the plugin context discovery path builder before lookup, so path segments such as `/` and `..` cannot escape `.claude/context/`.
 
 ---
 
@@ -179,7 +180,7 @@ Agent types support namespace prefixes using `namespace:name` syntax (e.g., `cip
 
 Claim ids are an **isolation-against-accident** mechanism, not an adversarial security boundary.
 
-`rd claim <token>` returns a generated `rdclm_...` handle stored in `.rundown/session.json`. CLI commands that accept `--claim-id` (`rd status`, `rd pass`, `rd fail`, `rd pop`, `rd stash`, `rd stop`, and `rd complete`) route to the exact delegated child runbook for that handle. Plain commands continue to target only the default stack.
+`rd claim <token>` returns a generated `rdclm_...` handle stored in `.rundown/session.json`. CLI commands that accept `--claim-id` (`rd status`, `rd pass`, `rd fail`, `rd collect`, `rd goto`, `rd stash`, `rd pop`, `rd stop`, and `rd complete`) route to the exact delegated child runbook for that handle. Plain commands continue to target only the default stack.
 
 What this provides:
 
@@ -220,7 +221,7 @@ The plugin never destroys child runbook state. Incomplete delegations preserve t
 
 **Data flow between parent and child:** Delegated runbooks exchange values through context passing — a parent step's `- OUTPUTS` directive writes values into the live machine variable space when that step transition completes, and frontmatter `outputs:` writes terminal values into `state.finalVars`. Children inherit the parent's `ContextId` via `--input`, and parent/child hand-off happens through forwarded live vars and `finalVars`, not through a shared `outputs.json` file.
 
-See [Section 4: Control Flow](SPEC.md#4-control-flow) for transition semantics.
+See [Section 4: Control Flow](../spec/language.md#4-control-flow) for transition semantics.
 
 ---
 
@@ -245,4 +246,4 @@ When substeps involve agents, transition rules use aggregate conditions:
 | `FAIL ALL` | All substep agents failed (pair with `PASS ANY`) |
 | `PASS` / `FAIL` | Standard single-result transitions |
 
-See [SPEC.md](./SPEC.md) for the full transition grammar.
+See [docs/spec/language.md](../spec/language.md) for the full transition grammar.

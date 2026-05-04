@@ -227,7 +227,7 @@ rd delegate --step 2.3
 
 ## Reference
 
-- [Subagent delegation](../../../../docs/AGENT-ORCHESTRATION.md)
+- [Subagent delegation](../../../../docs/guides/agent-orchestration.md)
 - [Delegation patterns](../../../../runbooks/delegation/)
-- [Rundown specification](../../../../docs/SPEC.md)
+- [Rundown specification](../../../../docs/spec/language.md)
 - [CLI reference](../../../../CLAUDE.md)
