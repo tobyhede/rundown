@@ -36,7 +36,7 @@ type OpToken = { kind: 'op' };
 /** Redir token — a redirect operator that is NOT a statement boundary: > >> < << */
 type RedirToken = { kind: 'redir' };
 type Token = WordToken | OpToken | RedirToken;
-type HeredocDelimiter = { value: string; stripLeadingTabs: boolean };
+type HeredocDelimiter = { value: string; stripLeadingTabs: boolean; expands: boolean };
 
 /** Shell executable names for sh -c wrapper detection. */
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'ksh', 'dash', 'fish', 'csh', 'tcsh']);
@@ -199,6 +199,7 @@ function extractHeredocDelimiters(line: string): HeredocDelimiter[] {
 
     let delimiter = '';
     let delimiterQuote: "'" | '"' | null = null;
+    let delimiterWasQuoted = false;
     while (i < line.length) {
       const current = line[i];
 
@@ -228,18 +229,21 @@ function extractHeredocDelimiters(line: string): HeredocDelimiter[] {
       }
 
       if (current === "'") {
+        delimiterWasQuoted = true;
         delimiterQuote = "'";
         i++;
         continue;
       }
 
       if (current === '"' && !isOddBackslashEscaped(line, i, 0)) {
+        delimiterWasQuoted = true;
         delimiterQuote = '"';
         i++;
         continue;
       }
 
       if (current === '\\' && i + 1 < line.length) {
+        delimiterWasQuoted = true;
         delimiter += line[i + 1];
         i += 2;
         continue;
@@ -263,7 +267,13 @@ function extractHeredocDelimiters(line: string): HeredocDelimiter[] {
       i++;
     }
 
-    if (delimiter.length > 0) delimiters.push({ value: delimiter, stripLeadingTabs });
+    if (delimiter.length > 0) {
+      delimiters.push({
+        value: delimiter,
+        stripLeadingTabs,
+        expands: !delimiterWasQuoted,
+      });
+    }
   }
 
   return delimiters;
@@ -274,12 +284,15 @@ function extractHeredocDelimiters(line: string): HeredocDelimiter[] {
  *
  * Heredoc bodies are data, not executable shell source. Keeping the initiating
  * line preserves the command that consumes the heredoc while preventing body
- * text and terminators from becoming phantom commands.
+ * text and terminators from becoming phantom commands. Substitution scanners
+ * can opt into retaining unquoted heredoc bodies because shells expand command
+ * substitutions and backticks in those bodies.
  *
  * @param command - Shell command string
+ * @param keepExpandingBodies - Whether to keep unquoted heredoc body lines
  * @returns Command with heredoc body and terminator lines omitted
  */
-function stripHeredocBodies(command: string): string {
+function stripHeredocBodies(command: string, keepExpandingBodies = false): string {
   const lines = command.split('\n');
   const kept: string[] = [];
   const pendingDelimiters: HeredocDelimiter[] = [];
@@ -290,6 +303,8 @@ function stripHeredocBodies(command: string): string {
       const terminatorLine = terminator.stripLeadingTabs ? line.replace(/^\t+/, '') : line;
       if (terminatorLine === terminator.value) {
         pendingDelimiters.shift();
+      } else if (keepExpandingBodies && terminator.expands) {
+        kept.push(line);
       }
       continue;
     }
@@ -819,7 +834,7 @@ export function extractAllExecutables(command: string, depth = 0): string[] {
  */
 export function extractBacktickCommands(command: string, depth = 0): string[] {
   const executables: string[] = [];
-  const normalizedCommand = stripHeredocBodies(command);
+  const normalizedCommand = stripHeredocBodies(command, true);
   let i = 0;
 
   while (i < normalizedCommand.length) {
@@ -854,7 +869,7 @@ export function extractDollarSubstitutions(command: string, depth = 0): string[]
   // Use balanced parenthesis counting instead of regex to avoid ReDoS
   // and correctly handle nested $(...) substitutions
   const executables: string[] = [];
-  const normalizedCommand = stripHeredocBodies(command);
+  const normalizedCommand = stripHeredocBodies(command, true);
   let i = 0;
   while (i < normalizedCommand.length - 1) {
     // Match $( but not $$( — double-dollar is PID expansion, not command substitution.
