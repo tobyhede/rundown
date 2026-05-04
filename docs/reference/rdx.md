@@ -111,8 +111,10 @@ Rundown schema URIs.
 
 ### 5.2 Bare Schema Names
 
-The `--schema` flag MAY accept either a bare name or a full URI. Bare names
-MUST match `^[a-z][a-z0-9-]*$`.
+The `--schema` flag MUST accept a bare name only. Bare names MUST match
+`^[a-z][a-z0-9-]*$`. URIs are not accepted by `--schema`; the schema URI form
+defined in [§5.1](#51-schema-uri-format) applies only to the embedded
+`$schema` field.
 
 The name pattern is a security boundary: it constrains the set of strings that
 may be used to load a validator module. Names that do not match the pattern
