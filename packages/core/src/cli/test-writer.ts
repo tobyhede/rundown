@@ -1,4 +1,5 @@
 import type { OutputWriter, OutputStream } from './writer.js';
+import { serializeJsonForOutput } from './json-serialization.js';
 
 /**
  * Captured output entry for test assertions.
@@ -71,15 +72,7 @@ export class TestWriter implements OutputWriter {
    * @param pretty - Whether to pretty-print with indentation (defaults to true)
    */
   writeJson(data: unknown, pretty = true): void {
-    const stringify = JSON.stringify as (
-      value: unknown,
-      replacer?: null,
-      space?: string | number,
-    ) => string | undefined;
-    const json = pretty ? stringify(data, null, 2) : stringify(data);
-    // JSON.stringify can return undefined at runtime for functions/symbols,
-    // but TypeScript types it as string. Use a runtime-accurate signature here.
-    this.writeLine(json ?? 'null');
+    this.write(`${serializeJsonForOutput(data, pretty)}\n`);
   }
 
   // Test helper methods

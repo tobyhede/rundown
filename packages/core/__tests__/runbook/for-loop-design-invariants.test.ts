@@ -21,6 +21,9 @@ import {
   makeTransitionObject,
   type ForLoopConfig,
   type EventType,
+  type IterationAction,
+  type ParentAction,
+  type SubstepAction,
 } from './for-loop-test-helpers.js';
 import type { ResolvedStep, Substep } from '../../src/runbook/types.js';
 
@@ -29,8 +32,8 @@ import type { ResolvedStep, Substep } from '../../src/runbook/types.js';
 // ---------------------------------------------------------------------------
 
 interface SubstepConfig {
-  passAction: string;
-  failAction: string;
+  passAction: SubstepAction;
+  failAction: SubstepAction;
   failRetry?: number;
 }
 
@@ -38,14 +41,14 @@ interface CustomForOpts {
   iterations: number;
   substeps: SubstepConfig[];
   iterationTransitions: {
-    passAction: string;
-    failAction: string;
+    passAction: IterationAction;
+    failAction: IterationAction;
     aggMode: 'ALL' | 'ANY' | 'none';
     failRetry?: number;
   };
   parentTransitions: {
-    passAction: string;
-    failAction: string;
+    passAction: ParentAction;
+    failAction: ParentAction;
     aggMode: 'ALL' | 'ANY' | 'none';
   };
 }

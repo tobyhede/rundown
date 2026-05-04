@@ -50,6 +50,11 @@ describe('TestWriter', () => {
       writer.writeJson({ key: 'value' }, false);
       expect(writer.getOutput()).toBe('{"key":"value"}\n');
     });
+
+    it('appends exactly one newline', () => {
+      writer.writeJson({ key: 'value' }, false);
+      expect(writer.getOutput()).toBe(`${JSON.stringify({ key: 'value' })}\n`);
+    });
   });
 
   describe('clear', () => {

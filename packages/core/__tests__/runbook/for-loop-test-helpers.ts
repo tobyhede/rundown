@@ -25,6 +25,7 @@ import type {
 export type SubstepAction = 'CONTINUE' | 'DEFER' | 'NEXT' | 'BREAK' | 'STOP' | 'COMPLETE';
 export type IterationAction = 'CONTINUE' | 'DEFER' | 'NEXT' | 'BREAK' | 'STOP' | 'COMPLETE';
 export type ParentAction = 'CONTINUE' | 'DEFER' | 'STOP' | 'COMPLETE';
+export type ForLoopAction = SubstepAction | IterationAction | ParentAction;
 
 export interface ForLoopConfig {
   iterations: number; // 1–5
@@ -52,7 +53,7 @@ export interface ForLoopConfig {
 // Step builder — converts ForLoopConfig to parser Step[]
 // ---------------------------------------------------------------------------
 
-export function makeAction(type: string): Action {
+export function makeAction(type: ForLoopAction): Action {
   switch (type) {
     case 'CONTINUE':
       return { type: 'CONTINUE' };
@@ -66,22 +67,22 @@ export function makeAction(type: string): Action {
       return { type: 'STOP' };
     case 'COMPLETE':
       return { type: 'COMPLETE' };
-    default:
-      return { type: 'CONTINUE' };
   }
+  const exhaustive: never = type;
+  return exhaustive;
 }
 
 export function makeTransitionObject(
   kind: 'pass' | 'fail',
-  action: string,
+  action: ForLoopAction,
   retry = 0,
 ): TransitionObject {
   return { kind, retry, action: makeAction(action) };
 }
 
 export function makeTransitions(
-  passAction: string,
-  failAction: string,
+  passAction: ForLoopAction,
+  failAction: ForLoopAction,
   failRetry = 0,
 ): Transitions {
   return {
