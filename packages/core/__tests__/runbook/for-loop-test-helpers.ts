@@ -144,7 +144,7 @@ export function makeAction(type: ForLoopAction): Action {
       return { type: 'GOTO', target: { step: '1' } };
   }
   const exhaustive: never = type;
-  return exhaustive;
+  throw new Error(`Unexpected ForLoopAction type: ${String(exhaustive)}`);
 }
 
 /**
