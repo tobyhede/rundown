@@ -1,86 +1,384 @@
-# Rundown MCP Server
+# Rundown MCP Server Specification
 
-This document provides a reference for the Rundown MCP (Model Context Protocol) server, which enables AI agents to execute runbooks via MCP tools.
+This document specifies the Rundown MCP (Model Context Protocol) server: its
+transport, tool surface, request and response envelope, error semantics, and the
+way it delegates execution to the Rundown CLI. For runtime semantics, see
+[docs/reference/runtime.md](runtime.md). For policy semantics, see
+[docs/reference/security.md](security.md). For CLI usage, see
+[docs/reference/cli.md](cli.md).
 
-**For CLI usage, see:**
-- [docs/reference/cli.md](cli.md) - CLI command reference and user guide
-- [docs/spec/language.md](../spec/language.md) - Rundown specification
+The key words MUST, MUST NOT, REQUIRED, SHALL, SHALL NOT, SHOULD, SHOULD NOT,
+RECOMMENDED, MAY, and OPTIONAL in normative sections of this document are to be
+interpreted as described in [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
+Sections explicitly marked "non-normative" provide setup instructions, examples,
+or troubleshooting guidance.
+
+## 1. Scope
+
+This specification defines the behavior of the `@rundown-org/mcp` server. It
+covers the stdio transport contract, the set of MCP tools exposed by the server,
+the request and response envelope, error provenance, the inheritance
+relationship with the Rundown CLI, and conformance requirements.
+
+This specification does not define Rundown document syntax, CLI command-line
+semantics, runtime state machines, security policy semantics, or the inner JSON
+shape of CLI command output. Those topics are defined in
+[docs/spec/language.md](../spec/language.md),
+[docs/reference/cli.md](cli.md), [docs/reference/runtime.md](runtime.md),
+[docs/reference/security.md](security.md), and
+[docs/spec/cli-output.md](../spec/cli-output.md), respectively.
+
+<a id="overview"></a>
+
+## 2. Terminology
+
+| Term | Meaning |
+| --- | --- |
+| MCP client | Process that consumes the server over stdio (for example Claude Desktop). |
+| MCP server | The `rundown-mcp` process exposing Rundown tools to a client. |
+| Tool | A named, schema-validated operation registered with the MCP server. |
+| Content block | An MCP response element of the form `{ "type": "text", "text": "..." }`. |
+| Response envelope | The MCP response object containing one or more content blocks. |
+| Active run | The current top-level run as understood by the Rundown CLI session. |
+| Tool invocation | A single client-initiated call to one MCP tool. |
+
+## 3. Server Identity
+
+| Aspect | Requirement |
+| --- | --- |
+| Package | `@rundown-org/mcp`. |
+| Binary | `rundown-mcp`. |
+| Server name | The server MUST advertise the MCP server name `rundown`. |
+| Server version | The server MUST advertise its package version as the MCP server version. |
+| Transport | The server MUST use stdio transport. |
+| Runtime | The server REQUIRES Node.js 24 or later. |
+| CLI prerequisite | The server REQUIRES the Rundown CLI to be resolvable through `npx`. |
+| Startup message | On successful startup the server MUST write the line `Rundown MCP Server running` to stderr. |
+
+The server MUST NOT expose any tool not defined by this specification.
+
+<a id="architecture"></a>
+
+## 4. CLI Delegation Model
+
+The MCP server is a thin bridge over the Rundown CLI.
+
+```text
+[MCP Client] --stdio--> [rundown-mcp] --execFile--> [rundown CLI] --> [.rundown/]
+```
+
+| Aspect | Requirement |
+| --- | --- |
+| Invocation | The server MUST execute the CLI as `npx --no rundown <args...>`. |
+| Per-call timeout | Each CLI invocation MUST be bounded by a 30 second timeout. |
+| Argument passing | Tool arguments MUST be forwarded to the CLI as separate `argv` entries; the server MUST NOT shell-interpolate tool arguments. |
+| Working directory | The CLI MUST inherit the server process working directory. |
+| Environment | The CLI MUST inherit the server process environment without modification by the MCP layer. |
+| Output capture | The server MUST capture CLI stdout and stderr and parse them per [§6](#response-format). |
+
+The MCP server MUST NOT augment, weaken, retry, migrate, or alter CLI behavior.
+Policy semantics, sandboxing, prompt and non-interactive behavior, and runtime
+state semantics are inherited from the CLI process and are defined by
+[docs/reference/security.md](security.md) and
+[docs/reference/runtime.md](runtime.md).
+
+<a id="mcp-tools-reference"></a>
+
+## 5. Tool Surface
+
+### 5.1 Tool Summary
+
+The server MUST register exactly the following tools:
+
+| Tool | Required parameters | Optional parameters | CLI mapping |
+| --- | --- | --- | --- |
+| [`validate`](#validate) | `file` | — | `rundown check <file>` |
+| [`list`](#list) | — | `all`, `tags` | `rundown ls [--all] [--tags <tags>]` |
+| [`status`](#status) | — | — | `rundown status` |
+| [`run`](#run) | — | `file`, `prompted` | `rundown run [<file>] [--prompted]` |
+| [`pass`](#pass) | — | — | `rundown pass` |
+| [`fail`](#fail) | — | — | `rundown fail` |
+| [`goto`](#goto) | `step` | — | `rundown goto <step>` |
+| [`complete`](#complete) | — | `message` | `rundown complete [<message>]` |
+| [`stop`](#stop) | — | `message` | `rundown stop [<message>]` |
+
+Parameter types are defined per tool below. The server MUST validate tool inputs
+against the declared schema and reject inputs that fail validation without
+invoking the CLI.
+
+<a id="validate"></a>
+
+### 5.2 `validate`
+
+Check runbook syntax without execution.
+
+| Parameter | Type | Required | Behavior |
+| --- | --- | --- | --- |
+| `file` | string | Yes | Path to a runbook file passed verbatim to `rundown check`. |
+
+<a id="list"></a>
+
+### 5.3 `list`
+
+List active or available runbooks.
+
+| Parameter | Type | Required | Behavior |
+| --- | --- | --- | --- |
+| `all` | boolean | No | When true, the server MUST forward `--all` to the CLI. |
+| `tags` | string | No | When set, the server MUST forward `--tags <value>` to the CLI. |
+
+Tag filtering is meaningful only in combination with `all: true`; the CLI
+defines that semantics.
+
+<a id="status"></a>
+
+### 5.4 `status`
+
+Return current runbook state. The server MUST forward no arguments other than
+`status`.
+
+<a id="run"></a>
+
+### 5.5 `run`
+
+Start or resume a runbook.
+
+| Parameter | Type | Required | Behavior |
+| --- | --- | --- | --- |
+| `file` | string | No | When set, forwarded as the positional runbook argument to `rundown run`. |
+| `prompted` | boolean | No | When true, the server MUST forward `--prompted`. |
+
+The MCP `run` tool MUST NOT accept variable inputs. Variable configuration is
+defined by [docs/reference/runtime.md §Variable Sources](runtime.md#variable-sources)
+and is provided to the CLI process through environment variables, config files,
+or an explicit CLI invocation outside MCP.
+
+<a id="pass"></a>
+
+### 5.6 `pass`
+
+Mark the current step as passed. The server MUST forward no arguments other
+than `pass`.
+
+<a id="fail"></a>
+
+### 5.7 `fail`
+
+Mark the current step as failed. The server MUST forward no arguments other
+than `fail`.
+
+<a id="goto"></a>
+
+### 5.8 `goto`
+
+Jump to a step.
+
+| Parameter | Type | Required | Behavior |
+| --- | --- | --- | --- |
+| `step` | string | Yes | Target step (for example `"3"` or `"2.1"`), forwarded verbatim to `rundown goto`. |
+
+The MCP `goto` tool MUST NOT accept iteration indices. Loop-iteration targeting
+is available only through the CLI.
+
+<a id="complete"></a>
+
+### 5.9 `complete`
+
+Force early completion of the active runbook.
+
+| Parameter | Type | Required | Behavior |
+| --- | --- | --- | --- |
+| `message` | string | No | When set, forwarded as the positional message argument to `rundown complete`. |
+
+<a id="stop"></a>
+
+### 5.10 `stop`
+
+Abort the active runbook.
+
+| Parameter | Type | Required | Behavior |
+| --- | --- | --- | --- |
+| `message` | string | No | When set, forwarded as the positional message argument to `rundown stop`. |
+
+### 5.11 Unsupported CLI Operations
+
+The MCP server MUST NOT expose the following CLI capabilities. Clients
+requiring these capabilities MUST drive the CLI directly.
+
+| CLI capability | Reason for exclusion |
+| --- | --- |
+| `stash`, `pop` | Local session state management. |
+| `delegate`, `claim`, `abort`, `collect` | Multi-agent coordination is CLI-driven. See [§8](#delegation). |
+| `prune` | Destructive state operation. |
+| `scenario`, `scenario-suite` | Authoring and testing surfaces. |
+| `prompt`, `echo` | Authoring helpers. |
+| `--input`, `--input-file`, `--input-json` | MCP does not expose variable configuration. |
+| `goto --index`, `pass --step`, `fail --step`, retry tokens | Substep- and iteration-level targeting is CLI-only. |
+| `--schema` | JSON Schema introspection is a CLI inspection feature. |
+| Policy flags (`--allow-*`, `--deny-all`, `--policy`, `--sandbox*`, `--trust-js-policy`) | Policy is inherited from CLI invocation context. |
+
+<a id="response-format"></a>
+
+## 6. Request and Response Format
+
+### 6.1 Tool Input
+
+Tool inputs MUST conform to the schema declared in [§5](#mcp-tools-reference).
+Unknown properties MAY be ignored. Type-incorrect properties MUST cause the
+server to reject the invocation without spawning the CLI.
+
+### 6.2 Response Envelope
+
+Every tool response MUST be an MCP response object whose `content` field is an
+array containing exactly one text content block. The `text` field MUST be a
+pretty-printed (two-space indent) JSON serialization of the response payload.
+
+```json
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "{\n  \"step\": \"2\",\n  \"status\": \"running\"\n}"
+    }
+  ]
+}
+```
+
+### 6.3 Success Payload
+
+When the CLI exits with status zero and produces non-empty stdout, the
+serialized response payload MUST be the parsed CLI stdout payload.
+
+When the CLI exits with status zero and produces empty stdout, the serialized
+response payload MUST represent the absence of data. The exact JSON shape is
+implementation-defined but MUST NOT include an `error` field.
+
+### 6.4 Error Payload
+
+When the CLI exits with non-zero status, the serialized response payload MUST
+include an `error` field carrying a human-readable message. Error provenance
+MUST follow this order:
+
+1. JSON parsed from CLI stdout, if any.
+2. JSON parsed from CLI stderr, if any.
+3. Trimmed raw stderr or stdout text.
+4. The transport-layer error message.
+
+The first source that yields content MUST be used. The server MUST NOT retry
+the CLI on error.
+
+### 6.5 Multi-Payload Stdout
+
+The CLI MAY emit multiple JSON payloads on stdout (for example interleaved
+event lines and a terminal action result). When more than one JSON value is
+present, the server MUST prefer the last value whose object representation
+contains an `action` key. If no such value exists, the server MUST surface all
+parsed values as an array.
+
+### 6.6 Streaming
+
+The MCP server MUST NOT stream partial CLI output to the client. Each tool
+invocation MUST resolve to exactly one response envelope.
+
+## 7. Variables and Inputs
+
+The MCP tool surface does not expose Rundown variable configuration. The full
+variable model — explicit invocation inputs, config files, environment bridging
+through `RD_INPUT_*`, delegation inheritance, dynamic built-ins, and reserved
+names — is defined by
+[docs/reference/runtime.md §Variable Resolution](runtime.md#template-variables).
+
+`RD_INPUT_*` environment variables present in the MCP server's process
+environment MUST flow to the CLI unchanged through normal environment
+inheritance.
+
+<a id="delegation"></a>
+
+## 8. Delegation
+
+The MCP server MUST NOT expose delegation tools. Multi-agent coordination —
+issuing tokens, claiming child runs, aborting tokens, and collecting child
+results — MUST be performed through the CLI commands `rd delegate`, `rd claim`,
+`rd abort`, and `rd collect`. See
+[docs/reference/cli.md Delegation Commands](cli.md#delegation-commands) and
+[docs/reference/runtime.md State Persistence](runtime.md#state-persistence).
+
+<a id="security-and-state"></a>
+
+## 9. Security and Runtime Inheritance
+
+The MCP server MUST NOT define independent policy, sandbox, or state semantics.
+
+| Concern | Source of truth |
+| --- | --- |
+| Command, file, and environment policy | [docs/reference/security.md](security.md). |
+| Sandbox enforcement | [docs/reference/security.md §Filesystem Sandbox](security.md#sandbox-usage). |
+| Policy modes (`prompted`, `execute`, `deny`) and CLI grants | [docs/reference/security.md](security.md). |
+| Runtime state, sessions, claims, stash semantics | [docs/reference/runtime.md §State Persistence](runtime.md#state-persistence). |
+| Stale persisted state and no-migration rule | [docs/reference/runtime.md §Stale Persisted State / No Migration](runtime.md#stale-persisted-state--no-migration). |
+| Variable resolution | [docs/reference/runtime.md §Variable Resolution](runtime.md#template-variables). |
+
+When the CLI fails closed on stale or incompatible persisted state, the MCP
+server MUST surface the CLI's error verbatim through the response envelope. The
+MCP server MUST NOT shim, retry, migrate, rewrite, or otherwise mask such
+errors.
+
+## 10. Conformance
+
+A conforming Rundown MCP server MUST satisfy the following requirements:
+
+1. Advertise the MCP server name `rundown` and the package version as server
+   version.
+2. Use stdio transport and write `Rundown MCP Server running` to stderr on
+   successful startup.
+3. Register exactly the tools defined in [§5](#mcp-tools-reference).
+4. Validate tool inputs against their declared schemas and reject invalid
+   inputs without invoking the CLI.
+5. Invoke the CLI through `npx --no rundown <args>` with a 30 second per-call
+   timeout.
+6. Forward tool arguments as separate `argv` entries without shell
+   interpolation.
+7. Return responses as a single text content block whose `text` is the
+   pretty-printed JSON payload.
+8. On success with empty stdout, return a payload that does not include an
+   `error` field.
+9. On CLI failure, populate `error` using the stdout-then-stderr-then-raw
+   provenance order defined in [§6.4](#response-format).
+10. When CLI stdout contains multiple JSON values, return the last
+    action-bearing payload, or all parsed payloads as an array if none is
+    action-bearing.
+11. Refuse to expose unsupported CLI capabilities listed in [§5.11](#mcp-tools-reference).
+12. Inherit policy and runtime semantics from the CLI process without
+    modification, retry, or migration.
 
 ---
 
-## Table of Contents
-
-- [Overview](#overview)
-- [Security and State](#security-and-state)
-- [Installation](#installation)
-- [Claude Desktop Configuration](#claude-desktop-configuration)
-- [Architecture](#architecture)
-- [MCP Tools Reference](#mcp-tools-reference)
-  - [validate](#validate)
-  - [list](#list)
-  - [status](#status)
-  - [run](#run)
-  - [pass](#pass)
-  - [fail](#fail)
-  - [goto](#goto)
-  - [complete](#complete)
-  - [stop](#stop)
-- [Response Format](#response-format)
-- [Delegation](#delegation)
-- [Troubleshooting](#troubleshooting)
-
----
-
-## Overview
-
-The Rundown MCP server (`@rundown-org/mcp`) provides MCP integration for runbook execution. It exposes the Rundown CLI commands as MCP tools, allowing AI agents to:
-
-- Start and manage runbook execution
-- Navigate through runbook steps
-- Report step outcomes (pass/fail)
-- Query runbook status
-
-| Component | Description |
-|-----------|-------------|
-| **Package** | `@rundown-org/mcp` |
-| **Binary** | `rundown-mcp` |
-| **Transport** | stdio |
-| **Timeout** | 30 seconds per command |
-
----
-
-## Security and State
-
-The MCP server delegates execution to the Rundown CLI, so the same policy and runtime rules apply. Policy mode, allow/deny lists, sandbox checks, and prompt/non-interactive behavior are documented in [docs/reference/security.md](security.md). Persisted runbook state, session files, claim ids, and the no-migration rule are documented in [docs/reference/runtime.md](runtime.md).
-
-MCP does not migrate or shim CLI state. If persisted state is stale or incompatible, the CLI refuses to continue and reports the state problem through the MCP response.
-
----
-
-## Installation
+## Installation (non-normative) <a id="installation"></a>
 
 ```bash
 npm install -g @rundown-org/mcp
 ```
 
-**Requirements:**
-- Node.js >= 24.0.0
-- `@rundown-org/cli` installed (global or local)
-
-Verify installation:
+Verify:
 
 ```bash
 rundown-mcp --help
 ```
 
----
+The CLI must also be resolvable through `npx`:
 
-## Claude Desktop Configuration
+```bash
+npm install -g @rundown-org/cli
+```
 
-Add the Rundown MCP server to your Claude Desktop settings:
+## Claude Desktop Configuration (non-normative) <a id="claude-desktop-configuration"></a>
 
-**macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
-**Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+Configuration file location:
+
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+
+Default (use `npx`):
 
 ```json
 {
@@ -93,9 +391,7 @@ Add the Rundown MCP server to your Claude Desktop settings:
 }
 ```
 
-### Alternative: Global Installation
-
-If installed globally:
+Global install:
 
 ```json
 {
@@ -107,9 +403,7 @@ If installed globally:
 }
 ```
 
-### Alternative: Local Project
-
-For project-specific usage:
+Project-scoped working directory:
 
 ```json
 {
@@ -123,330 +417,36 @@ For project-specific usage:
 }
 ```
 
----
+## Examples (non-normative)
 
-## Architecture
-
-The MCP server acts as a bridge between MCP clients (like Claude Desktop) and the Rundown CLI:
-
-```text
-[MCP Client] --> [MCP Server] --> [Rundown CLI] --> [State Files]
-                     |                   |
-                stdio transport     execFile
-```
-
-**Key characteristics:**
-
-| Aspect | Implementation |
-|--------|----------------|
-| **Transport** | stdio (standard input/output) |
-| **CLI Invocation** | `npx --no rundown <cmd>` |
-| **Response Format** | JSON wrapped in MCP content blocks |
-| **Timeout** | 30 seconds per command |
-| **Error Handling** | Parses JSON errors from stdout/stderr |
-
-The server delegates all operations to the CLI, then wraps the JSON response in MCP content format.
-
----
-
-## MCP Tools Reference
-
-### Tool Summary
-
-| Tool | Description | Required | Optional |
-|------|-------------|----------|----------|
-| `validate` | Check runbook syntax | `file` | - |
-| `list` | List runbooks | - | `all`, `tags` |
-| `status` | Get runbook state | - | - |
-| `run` | Start runbook | - | `file`, `prompted` |
-| `pass` | Mark step passed | - | - |
-| `fail` | Mark step failed | - | - |
-| `goto` | Jump to step | `step` | - |
-| `complete` | Force early completion | - | `message` |
-| `stop` | Stop runbook | - | `message` |
-
-> **Note:** The CLI `stash` and `pop` commands are not exposed via MCP. These commands manage local session state which is typically not needed in MCP agent workflows.
-
----
-
-### validate
-
-Check runbook syntax before execution.
-
-**Parameters:**
-
-| Name | Type | Required | Description |
-|------|------|----------|-------------|
-| `file` | string | Yes | Path to runbook file |
-
-**Example:**
+Validate a runbook:
 
 ```json
 {
   "tool": "validate",
-  "arguments": {
-    "file": "deploy.runbook.md"
-  }
+  "arguments": { "file": "deploy.runbook.md" }
 }
 ```
 
-**CLI Equivalent:** `rundown check <file>`
-
----
-
-### list
-
-List active or available runbooks.
-
-**Parameters:**
-
-| Name | Type | Required | Description |
-|------|------|----------|-------------|
-| `all` | boolean | No | List available runbook files (default: active only) |
-| `tags` | string | No | Filter by tags (comma-separated, requires `all: true`) |
-
-**Example - List active runbooks:**
-
-```json
-{
-  "tool": "list",
-  "arguments": {}
-}
-```
-
-**Example - List all available runbooks:**
-
-```json
-{
-  "tool": "list",
-  "arguments": {
-    "all": true
-  }
-}
-```
-
-**Example - Filter by tags:**
-
-```json
-{
-  "tool": "list",
-  "arguments": {
-    "all": true,
-    "tags": "deploy,production"
-  }
-}
-```
-
-**CLI Equivalent:** `rundown ls [--all] [--tags <tags>]`
-
----
-
-### status
-
-Get current runbook state.
-
-**Parameters:** None.
-
-**Example:**
-
-```json
-{
-  "tool": "status",
-  "arguments": {}
-}
-```
-
-**CLI Equivalent:** `rundown status`
-
----
-
-### run
-
-Start a runbook.
-
-**Parameters:**
-
-| Name | Type | Required | Description |
-|------|------|----------|-------------|
-| `file` | string | No | Runbook file to start |
-| `prompted` | boolean | No | Disable automatic command execution |
-
-**Example - Start runbook:**
+Start a runbook in prompted mode:
 
 ```json
 {
   "tool": "run",
-  "arguments": {
-    "file": "deploy.runbook.md"
-  }
+  "arguments": { "file": "deploy.runbook.md", "prompted": true }
 }
 ```
 
-**Example - Start in prompted mode:**
-
-```json
-{
-  "tool": "run",
-  "arguments": {
-    "file": "deploy.runbook.md",
-    "prompted": true
-  }
-}
-```
-
-**CLI Equivalent:** `rundown run [<file>] [--prompted] [--input key=value]... [--input-file path]`
-
-**Note:** The `--input` and `--input-file` options are CLI-only. The MCP `run` tool does not currently expose variable configuration parameters. Delegation to child runbooks uses the CLI `delegate`/`claim`/`abort` commands. See [runtime.md Variable Sources](runtime.md#variable-sources) for full variable configuration details.
-
----
-
-### pass
-
-Mark the current step as passed.
-
-**Parameters:** None.
-
-**Example:**
-
-```json
-{
-  "tool": "pass",
-  "arguments": {}
-}
-```
-
-**CLI Equivalent:** `rundown pass`
-
----
-
-### fail
-
-Mark the current step as failed.
-
-**Parameters:** None.
-
-**Example:**
-
-```json
-{
-  "tool": "fail",
-  "arguments": {}
-}
-```
-
-**CLI Equivalent:** `rundown fail`
-
----
-
-### goto
-
-Jump to a specific step.
-
-**Parameters:**
-
-| Name | Type | Required | Description |
-|------|------|----------|-------------|
-| `step` | string | Yes | Target step (e.g., "3" or "2.1") |
-
-**Example - Jump to step:**
+Jump to a substep:
 
 ```json
 {
   "tool": "goto",
-  "arguments": {
-    "step": "3"
-  }
+  "arguments": { "step": "2.1" }
 }
 ```
 
-**Example - Jump to substep:**
-
-```json
-{
-  "tool": "goto",
-  "arguments": {
-    "step": "2.1"
-  }
-}
-```
-
-**CLI Equivalent:** `rundown goto <step>`
-
----
-
-### complete
-
-Force early completion of a runbook (runbooks auto-complete on final step).
-
-**Note:** Runbooks auto-complete when the final step's PASS transition executes. This tool is for forcing early completion from any step, bypassing remaining steps.
-
-**Parameters:**
-
-| Name | Type | Required | Description |
-|------|------|----------|-------------|
-| `message` | string | No | Completion message |
-
-**Example:**
-
-```json
-{
-  "tool": "complete",
-  "arguments": {}
-}
-```
-
-**Example - With message:**
-
-```json
-{
-  "tool": "complete",
-  "arguments": {
-    "message": "All deployment steps verified"
-  }
-}
-```
-
-**CLI Equivalent:** `rundown complete [<message>]`
-
----
-
-### stop
-
-Stop the runbook (abort execution).
-
-**Parameters:**
-
-| Name | Type | Required | Description |
-|------|------|----------|-------------|
-| `message` | string | No | Stop reason message |
-
-**Example:**
-
-```json
-{
-  "tool": "stop",
-  "arguments": {}
-}
-```
-
-**Example - With reason:**
-
-```json
-{
-  "tool": "stop",
-  "arguments": {
-    "message": "Deployment blocked by failing tests"
-  }
-}
-```
-
-**CLI Equivalent:** `rundown stop [<message>]`
-
----
-
-## Response Format
-
-All tools return responses wrapped in MCP content blocks:
+Sample success response:
 
 ```json
 {
@@ -459,15 +459,7 @@ All tools return responses wrapped in MCP content blocks:
 }
 ```
 
-The `text` field contains pretty-printed JSON from the CLI output.
-
-### Success Response
-
-The nested JSON structure varies by command. See [docs/spec/cli-output.md](../spec/cli-output.md) for detailed schemas.
-
-### Error Response
-
-Errors are returned in the same format:
+Sample error response:
 
 ```json
 {
@@ -480,71 +472,22 @@ Errors are returned in the same format:
 }
 ```
 
----
+<a id="troubleshooting"></a>
 
-## Delegation
+## Troubleshooting (non-normative)
 
-MCP tools operate on the active runbook context. Multi-agent delegation (dispatching substeps to child runbooks) is managed via the CLI `delegate`/`claim`/`abort` commands, not through MCP tools.
+| Symptom | Likely cause | Resolution |
+| --- | --- | --- |
+| `command not found: rundown` | CLI not installed or not on `PATH`. | `npm install -g @rundown-org/cli`. |
+| `No active runbook` | No run is active. | Start one with the `run` tool. |
+| Timeout after 30 seconds | CLI invocation hung (interactive prompt, blocked policy decision, missing dependency). | Run the equivalent CLI command directly. Confirm `--non-interactive` semantics in the host environment. |
+| Empty response | CLI produced no stdout. | Check stderr in MCP host logs and run the CLI directly. |
+| Stale-state error surfaced | CLI refused to resume an incompatible persisted run. | Finish or close the run, or prune the affected state and restart. See [runtime.md §Stale Persisted State / No Migration](runtime.md#stale-persisted-state--no-migration). |
 
-### Delegation Workflow (CLI)
+To debug further:
 
-```bash
-# 1. Main agent delegates substep to child runbook
-rd delegate task.runbook.md --step 2.1
-
-# 2. Subagent claims the delegation token
-rd claim <token>
-
-# 3. Subagent works through child runbook and reports result
-rd pass    # or: rd fail
-```
-
-See [docs/reference/cli.md Delegation Commands](cli.md#delegation-commands) for full delegation command reference.
-
----
-
-## Troubleshooting
-
-### Common Issues
-
-| Issue | Cause | Resolution |
-|-------|-------|------------|
-| "command not found: rundown" | CLI not installed | `npm install -g @rundown-org/cli` |
-| "No active runbook" | No runbook running | Use `run` tool to start a runbook |
-| Timeout after 30s | Command hanging | Check CLI directly, verify state files |
-| Empty response | CLI returned no output | Check stderr in server logs |
-
-### Stale persisted state detected
-
-If MCP reports stale or incompatible persisted state, finish or close the affected run if it is still meaningful, or prune the state and restart the runbook. Rundown will not automatically migrate, silently shim, rewrite, or resume stale state.
-
-### Debugging
-
-1. **Check MCP server logs** - Look for errors in Claude Desktop console
-2. **Test CLI directly** - Run `rundown status --text` in terminal
-3. **Verify state files** - Check `.rundown/` directory
-4. **Check permissions** - Ensure npx can find rundown
-
-### Server Startup Message
-
-When running correctly, the server outputs to stderr:
-
-```text
-Rundown MCP Server running
-```
-
----
-
-## Quick Reference
-
-| Operation | Tool | Required Parameters |
-|-----------|------|---------------------|
-| Check syntax | `validate` | `file` |
-| List runbooks | `list` | - |
-| Get status | `status` | - |
-| Start runbook | `run` | - |
-| Step passed | `pass` | - |
-| Step failed | `fail` | - |
-| Jump to step | `goto` | `step` |
-| Mark complete | `complete` | - |
-| Abort | `stop` | - |
+1. Inspect MCP host logs for stderr from `rundown-mcp`.
+2. Run the corresponding CLI command directly with `--text` for human-readable
+   output.
+3. Confirm `.rundown/` state files exist and are readable.
+4. Confirm `npx` can resolve `rundown` from the MCP server's working directory.
