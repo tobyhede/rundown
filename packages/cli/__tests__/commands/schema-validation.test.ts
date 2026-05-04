@@ -602,7 +602,7 @@ echo hello
       expect(validation.valid).toBe(true);
       expect(validation.errors).toEqual([]);
 
-      // Verify error structure per CLI-OUTPUT-SPEC
+      // Verify error structure per docs/spec/cli-output.md
       expect(output).toHaveProperty('error', 'Scenario "non-existent" not found');
       expect(output).toHaveProperty('code', 'SCENARIO_NOT_FOUND');
     });
@@ -633,7 +633,7 @@ prompt: Wait
       expect(validation.valid).toBe(true);
       expect(validation.errors).toEqual([]);
 
-      // Uses `output` for echoed text per CLI-OUTPUT-SPEC
+      // Uses `output` for echoed text per docs/spec/cli-output.md
       expect(output).toHaveProperty('output', 'hello world');
       expect(output).toHaveProperty('exitCode', 0);
       // Echo without --result should have result as boolean
@@ -662,7 +662,7 @@ prompt: Wait
       expect(validation.valid).toBe(true);
       expect(validation.errors).toEqual([]);
 
-      // Uses `output` for echoed text, `result` is boolean per CLI-OUTPUT-SPEC
+      // Uses `output` for echoed text, `result` is boolean per docs/spec/cli-output.md
       expect(output).toHaveProperty('output', 'test');
       expect(output).toHaveProperty('result', true);
       // Explicit type check: result must be boolean, not string
@@ -684,7 +684,7 @@ prompt: Wait
       expect(validation.valid).toBe(true);
       expect(validation.errors).toEqual([]);
 
-      // Uses `output` for content per CLI-OUTPUT-SPEC
+      // Uses `output` for content per docs/spec/cli-output.md
       expect(output).toHaveProperty('output', 'Hello World');
     });
 
@@ -835,7 +835,7 @@ prompt: Wait
       expect(validation.valid).toBe(true);
       expect(validation.errors).toEqual([]);
 
-      // Per CLI-OUTPUT-SPEC: action='stop' (command name)
+      // Per docs/spec/cli-output.md: action='stop' (command name)
       expect(output).toHaveProperty('action', 'stop');
     });
   });

@@ -27,7 +27,7 @@ import { getRunbookFromState } from './runbook-loader.js';
 /**
  * Internal data structure for status command output.
  *
- * Uses flat structure per CLI-OUTPUT-SPEC:
+ * Uses flat structure per docs/spec/cli-output.md:
  * - `file`/`state`/`prompted` at top level (not nested in `runbook`)
  * - `position` for step position (current/total/substep)
  * - `step` for step details (name/description)

@@ -10026,7 +10026,7 @@ echo "processing"
 
     it('populates pendingDelegateFrontier with every delegated substep (pass and fail alike)', () => {
       // Scenario: 1.1 pass (with delegation), 1.2 fail (with delegation).
-      // Under uniform re-delegation (docs/SPEC.md §4.2, §5), BOTH substeps
+      // Under uniform re-delegation (docs/spec/language.md §4.2, §5), BOTH substeps
       // re-issue on retry — the pass branch is not preserved.
       const { actor } = buildRetryScenario({
         seedIds: ['1', '2'],
@@ -10373,7 +10373,7 @@ echo "processing"
     });
 
     it('excludes substeps without delegation records (command/prompt substeps)', () => {
-      // Mix scenario (uniform re-delegation per docs/SPEC.md §4.2, §5):
+      // Mix scenario (uniform re-delegation per docs/spec/language.md §4.2, §5):
       //   1.1 pass + delegation (retried — prior pass does not exclude it)
       //   1.2 fail + no delegation (skipped — has no delegation to re-issue)
       //   1.3 fail + delegation (retried)
@@ -10450,7 +10450,7 @@ echo "processing"
 
       const ctx = actor.getSnapshot().context;
 
-      // Under uniform re-delegation (docs/SPEC.md §4.2, §5):
+      // Under uniform re-delegation (docs/spec/language.md §4.2, §5):
       //   1.1 (pass + delegation)    → RE-ISSUED (prior pass no longer excludes)
       //   1.2 (fail, no delegation)  → SKIPPED (no delegation to re-issue)
       //   1.3 (fail + delegation)    → RE-ISSUED

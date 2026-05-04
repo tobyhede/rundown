@@ -215,7 +215,7 @@ function finalizePendingSubstep(ctx: VisitorContext): void {
     // Validate NEXT usage before converting to transitions
     validateLoopControlUsage(ps.pendingConditionals, ctx.currentStep.forClause !== undefined);
 
-    // Enforce docs/SPEC.md §4.3: DELEGATE substeps must resolve to a runbook
+    // Enforce docs/spec/language.md §4.3: DELEGATE substeps must resolve to a runbook
     // target. Applies to both explicit H3 substeps and runbook-list-derived
     // substeps (both route through this function). Runbook-list-derived
     // substeps always have ps.runbooks.length >= 1, so this only fires on
@@ -1091,7 +1091,7 @@ function finalizeStep(
 
   // Step-level DELEGATE requires at least one substep to propagate to.
   // Base steps (no body, no substeps) and command steps (body only) have
-  // nothing to delegate — reject per docs/SPEC.md §4.3.
+  // nothing to delegate — reject per docs/spec/language.md §4.3.
   if (step.hasSeenDelegate && step.substeps.length === 0) {
     throw new RunbookSyntaxError(
       `Step "${step.name}": DELEGATE requires at least one substep; ` +

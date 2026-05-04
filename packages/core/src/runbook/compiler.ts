@@ -959,7 +959,7 @@ function buildParentStateConfig(
         actions: runbookSetup.assign(({ context }: { context: RunbookContext }) => {
           // Run the retry hook: iterate every delegated substep in the active
           // frame, re-issue their delegations, collect new tokens into a
-          // frontier. Uniform re-delegation (docs/SPEC.md §4.2, §5). Never throws.
+          // frontier. Uniform re-delegation (docs/spec/language.md §4.2, §5). Never throws.
           const hook = runRetryHook(context, parentStep, steps);
           if (hook.status === 'error') {
             // RETRY_ERROR variant: structurally distinct LastAction type. The
@@ -979,7 +979,7 @@ function buildParentStateConfig(
             // `aggregated: true` marks this RETRY as aggregation-driven (spec §3.5).
             lastAction: { type: 'RETRY' as const, aggregated: true },
             parentRetryCount: context.parentRetryCount + 1,
-            // Counter contract on parent-aggregation retry (see docs/RUNDOWN.md §Retry Counters under "rundown fail"):
+            // Counter contract on parent-aggregation retry (see docs/internal/architecture.md §Retry Counters):
             //   parentRetryCount — machine-invariant counter used by the retry-budget guards
             //     above (`context.parentRetryCount < transition.retry`). Must be incremented
             //     here or the guard never exhausts. RESET the sibling `iterationRetryCount`
@@ -1081,7 +1081,7 @@ function buildParentStateConfig(
             // Run the retry hook: iterate every delegated substep in the
             // current iteration frame, re-issue their delegations, collect new
             // tokens into a frontier. Uniform re-delegation within the frame
-            // (docs/SPEC.md §4.2, §5). activeFrameKey scopes the hook to this
+            // (docs/spec/language.md §4.2, §5). activeFrameKey scopes the hook to this
             // iteration — other iterations' substep states remain untouched.
             const hook = runRetryHook(context, parentStep, steps);
             if (hook.status === 'error') {
@@ -1101,7 +1101,7 @@ function buildParentStateConfig(
             }
             return {
               iterationRetryCount: context.iterationRetryCount + 1,
-              // Counter contract on FOR-iteration retry (see docs/RUNDOWN.md §Retry Counters under "rundown fail"):
+              // Counter contract on FOR-iteration retry (see docs/internal/architecture.md §Retry Counters):
               //   iterationRetryCount — machine-invariant counter used by the iteration
               //     retry-budget guard above. Must be incremented here or the guard never
               //     exhausts. Leave `parentRetryCount` UNTOUCHED: a nested iteration retry
