@@ -99,7 +99,9 @@ in the input data.
 
 ### 5.1 Schema URI Format
 
-A schema URI MUST take the form:
+The URI form is one of two accepted forms for the embedded `$schema` field
+(the other is a bare name; see [§5.2](#52-bare-schema-names)). A schema URI
+MUST take the form:
 
 ```text
 https://rundown.org/schemas/<name>.schema.json
@@ -107,14 +109,21 @@ https://rundown.org/schemas/<name>.schema.json
 
 `<name>` MUST match the regular expression `^[a-z][a-z0-9-]*$`. URIs whose
 extracted `<name>` does not match this pattern MUST NOT be recognized as
-Rundown schema URIs.
+Rundown schema URIs. The URI form MUST NOT be accepted by the `--schema`
+flag.
 
 ### 5.2 Bare Schema Names
 
-The `--schema` flag MUST accept a bare name only. Bare names MUST match
-`^[a-z][a-z0-9-]*$`. URIs are not accepted by `--schema`; the schema URI form
-defined in [§5.1](#51-schema-uri-format) applies only to the embedded
-`$schema` field.
+A bare schema name MUST match `^[a-z][a-z0-9-]*$`.
+
+| Source | Bare name | URI |
+| --- | --- | --- |
+| `--schema` flag | Accepted | Rejected |
+| Embedded `$schema` field | Accepted | Accepted (per [§5.1](#51-schema-uri-format)) |
+
+Bare-name acceptance for the embedded `$schema` field is preserved for
+backward compatibility with documents whose `$schema` value is the schema
+name alone (for example, `"$schema": "plan"`).
 
 The name pattern is a security boundary: it constrains the set of strings that
 may be used to load a validator module. Names that do not match the pattern
@@ -129,8 +138,8 @@ first:
 
 | Priority | Source | Rule |
 | --- | --- | --- |
-| 1 | `--schema <name>` | Explicit CLI flag. |
-| 2 | `$schema` field in input data | Embedded URI parsed per [§5.1](#51-schema-uri-format). |
+| 1 | `--schema <name>` | Explicit CLI flag. Bare name only (per [§5.2](#52-bare-schema-names)). |
+| 2 | `$schema` field in input data | Embedded value parsed as a URI per [§5.1](#51-schema-uri-format) or a bare name per [§5.2](#52-bare-schema-names). |
 
 When both sources are present, the `--schema` flag MUST be used and the
 embedded `$schema` value MUST NOT influence schema selection. The `$schema`
@@ -154,10 +163,11 @@ not present in the registry MUST cause `rdx` to fail closed with the message
 
 ### 5.5 Unrecognized `$schema` Values
 
-If the input data contains a `$schema` field whose value cannot be parsed to
-a name accepted by [§5.1](#51-schema-uri-format), `rdx` MUST fail closed with
-the message `unrecognized schema: <raw value>`. `rdx` MUST NOT silently fall
-back to schema-less rendering when an unrecognized `$schema` value is present.
+If the input data contains a `$schema` field whose value is neither a URI per
+[§5.1](#51-schema-uri-format) nor a bare name per [§5.2](#52-bare-schema-names),
+`rdx` MUST fail closed with the message `unrecognized schema: <raw value>`.
+`rdx` MUST NOT silently fall back to schema-less rendering when an
+unrecognized `$schema` value is present.
 
 When the `--schema` flag is supplied, the embedded `$schema` value is not
 consulted for selection; an unrecognized embedded value MUST NOT cause failure
@@ -443,8 +453,9 @@ A conforming `rdx` implementation MUST satisfy these requirements:
 3. Resolve schema names with the precedence `--schema` over embedded
    `$schema`.
 4. Reject schema URIs and bare names that fail `^[a-z][a-z0-9-]*$`.
-5. Treat schema URIs only when they match
-   `https://rundown.org/schemas/<name>.schema.json`.
+5. Recognize the URI form `https://rundown.org/schemas/<name>.schema.json`
+   and the bare-name form `^[a-z][a-z0-9-]*$` as the only accepted `$schema`
+   values; accept bare names only — never URIs — from the `--schema` flag.
 6. Fail closed when an embedded `$schema` is present but unrecognized and no
    `--schema` flag overrides selection.
 7. Recognize exactly the schema names listed in the registry table in
