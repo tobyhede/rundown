@@ -12,16 +12,9 @@
  * `state.variables` assertion model in
  * packages/cli/__tests__/integration/context-passing-outputs.test.ts.
  *
- * Sandbox/policy note: rd run defaults to sandbox-on. We pass --allow-all
- * --non-interactive for this test. The user-realistic alternative — an
- * explicit `--allow-run rdpath,mkdir,...` allowlist — does not work because
- * the policy parser (packages/core/src/policy/parser.ts, shell-quote based)
- * strips $VAR references at parse time and produces empty/literal-$()
- * "executable" names from redirects whose target uses command substitution.
- * Those stray executables never match any allowlist pattern, so the policy
- * denies the bash block. An isolated mkdtemp workspace is a sufficient trust
- * boundary for this fixture; tightening the allowlist further is tracked
- * at https://github.com/tobyhede/rundown/issues/242.
+ * Policy note: uses --allow-run with an explicit allowlist and --no-sandbox for the
+ * mkdtemp workspace (an isolated trust boundary). --allow-write does not reach the
+ * OS sandbox path grants, so --no-sandbox is the correct flag here.
  *
  * Bin-resolution note: rdpath/rdx dist scripts ship without the execute bit,
  * so symlinking them onto $PATH and relying on the shebang fails. We instead
@@ -109,7 +102,15 @@ describe('runbook end-to-end: rdpath + OUTPUTS contract', () => {
   } {
     const result = spawnSync(
       'node',
-      [cliPath, 'run', runbookPath, '--allow-all', '--non-interactive'],
+      [
+        cliPath,
+        'run',
+        runbookPath,
+        '--allow-run',
+        'rdpath,mkdir,printf,dirname',
+        '--no-sandbox',
+        '--non-interactive',
+      ],
       {
         cwd: tempDir,
         encoding: 'utf-8',

@@ -291,7 +291,7 @@ rundown run deploy.runbook.md --deny-all
 
 ## Allow/Deny Lists
 
-Pattern matching uses [picomatch](https://github.com/micromatch/picomatch) for glob syntax. Command parsing uses [shell-quote](https://github.com/substack/shell-quote) to extract executables from complex shell commands.
+Pattern matching uses [picomatch](https://github.com/micromatch/picomatch) for glob syntax. Command parsing uses Rundown's policy tokenizer to extract executables from shell commands, including pipelines, redirects, command substitutions, and here-documents. Executable words that depend on runtime expansion are treated as dynamic and fail closed unless trust mode is enabled.
 
 ### Command Execution (run)
 

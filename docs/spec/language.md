@@ -2,444 +2,492 @@
 version: 1.0.0
 ---
 
-# Rundown Specification
+# Rundown Language Specification
 
-Rundown is a format for defining executable runbooks using Markdown. It combines human-readable instructions with machine-executable commands and deterministic control flow.
+## 1. Scope
 
-The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "SHOULD NOT", "RECOMMENDED", "MAY", and "OPTIONAL" in this document are to be interpreted as described in [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
+Rundown is a Markdown-based DSL for executable runbooks. This specification
+defines valid Rundown document structure and core DSL semantics. CLI usage,
+output formats, policy configuration, and implementation architecture are out of
+scope except where required to define document validity.
 
-## 1. Document Structure
+## 2. Terminology
 
-A Rundown document (`.runbook.md`) is a Markdown file with an optional YAML frontmatter.
+The key words MUST, MUST NOT, REQUIRED, SHOULD, SHOULD NOT, and MAY are to be
+interpreted as described in [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
 
-| Element | Markdown | Count | Description |
-| :--- | :--- | :--- | :--- |
-| **Title** | `# Title` | 0..1 | Document title (metadata). |
-| **Description** | Text | 0..1 | Optional description after title. |
-| **Steps** | `## ID Title` | 1..N | Top-level execution units. |
+| Term | Meaning |
+| --- | --- |
+| Document | One Markdown runbook file. |
+| Frontmatter | Optional YAML metadata before Markdown content. |
+| Step | Top-level executable unit, introduced by H2. |
+| Substep | Nested executable unit, introduced by H3. |
+| Body | Prompt, command, substeps, runbook-list shorthand, or FOR body. |
+| Result | Execution outcome: `PASS` or `FAIL`. |
+| Handler | A transition mapping a result to an action. |
+| Action | Control-flow effect such as `CONTINUE`, `STOP`, or `GOTO`. |
+| Directive | Structural bullet: `OUTPUTS`, `FOR`, or `DELEGATE`. |
 
-### 1.1 Hierarchy
-* **H1**: Metadata (Title).
-* **H2**: Step.
-* **H3**: Substep.
-* **H4+**: Invalid.
+## 3. Document Model
 
-### 1.2 Frontmatter
+A Rundown document is CommonMark-compatible Markdown with optional YAML
+frontmatter.
 
-Frontmatter fields beyond `name`, `description`, `version`, `author`, `tags`, `inputs`, `outputs`, and `required` are preserved (open schema). This allows forward-compatible extensions and user-defined metadata.
+| Element | Form | Cardinality | Rule |
+| --- | --- | --- | --- |
+| Frontmatter | YAML between `---` fences | 0..1 | MUST precede Markdown. |
+| Title | H1 | 0..1 | Metadata only. |
+| Description | Text between H1 and first H2 | 0..1 | Metadata only. |
+| Step | H2 | 1..N | Executable top-level unit. |
+| Substep | H3 | 0..N | Nested unit under a step. |
 
-The `required` field declares variable names that must be provided by the caller (via CLI flags, config, environment, or delegation). Each entry must be a valid template variable identifier matching `/^[a-zA-Z_][a-zA-Z0-9_]*$/`. Names listed in `required` must also be declared in `inputs`. Missing required variables produce a hard error during resolution.
+H4 and deeper headings are invalid.
 
-The `inputs` field declares the names of template variables the runbook accepts. It is a list of identifiers; entries do not carry values. Each name must match the identifier pattern `/^[a-zA-Z_][a-zA-Z0-9_]*$/`. Reserved runtime names (`step`, `index`, `context`, matched case-insensitively) are rejected. Values for declared inputs are supplied at runtime via CLI flags, environment, config files, delegation inheritance, or context outputs (see [§7 Context Passing](#7-context-passing-outputs)).
+### 3.1 Frontmatter
 
-The frontmatter `description` field provides a summary for runbook discovery and listing (`rd ls --all`). The `Runbook.description` in the parsed AST is derived from preamble text between the H1 title and first H2 step. These are independent values.
+Frontmatter is an open YAML object; unknown fields MUST be preserved.
 
-## 2. Steps
+| Field | Type | Rule |
+| --- | --- | --- |
+| `name` | string | Optional runbook identifier. |
+| `description` | string | Discovery/listing summary; independent from Markdown preamble. |
+| `version` | string | Optional document version. |
+| `author` | string | Optional author metadata. |
+| `tags` | string array | Optional discovery metadata. |
+| `inputs` | string array | Declares accepted variable names; does not provide values. |
+| `required` | string array | Names required at resolution; each MUST also appear in `inputs`. |
+| `outputs` | output declaration array | Terminal outputs captured at run completion. |
 
-Steps are the fundamental units of execution defined by H2 headers.
+Input and required names MUST match `/^[a-zA-Z_][a-zA-Z0-9_]*$/`. `step`,
+`index`, and `context` are reserved case-insensitively and MUST NOT appear in
+`inputs` or `required`. Missing required variables are resolution errors.
 
-### 2.1 Identifiers
-Steps must be identified sequentially or by name.
+### 3.2 Heading Hierarchy
 
-| Format | Type | Usage |
-| :--- | :--- | :--- |
-| `## 1` | Static | Sequential execution. Must start at 1. |
-| `## Name` | Named | GOTO target only. Skipped by default flow. |
+Valid hierarchy is H1 metadata, H2 steps, then H3 substeps. H3 headings belong to
+the nearest preceding H2 unless they use a qualified identifier. H4+ is invalid.
 
-**Reserved Names**: `NEXT`, `CONTINUE`, `DEFER`, `DELEGATE`, `COMPLETE`, `STOP`, `GOTO`, `RETRY`, `PASS`, `FAIL`, `YES`, `NO`, `ALL`, `ANY`, `BREAK`, `FOR`, `IN`, `TO`, `AT`.
+## 4. Identifiers
 
-Reserved word matching is case-sensitive. `NEXT` is reserved; `Next` and `NextStep` are valid.
+| Form | Example | Rule |
+| --- | --- | --- |
+| Numeric step | `## 1. Build` | MUST start at `1` and increase by `1` without gaps. |
+| Named step | `## Recover` | Valid `GOTO` target; skipped by default sequential flow. |
+| Qualified numeric substep | `### 1.1 Build DB` | Explicit parent step and substep. |
+| Bare numeric substep | `### 1 Build DB` | Parent is containing H2. |
+| Bare named substep | `### Repair` | Parent is containing H2. |
+| Qualified named substep | `### 1.Repair` | Parent is explicit. |
 
-Named identifiers must match `/^[A-Za-z_][A-Za-z0-9_]*$/`.
+Named identifiers MUST match `/^[A-Za-z_][A-Za-z0-9_]*$/`.
 
-### 2.2 Content Order
-Step content must appear in this strict order:
-1.  **OUTPUTS**: Context output declarations (optional). Must appear as a bullet item immediately after the step header.
-2.  **FOR Annotation**: Loop definition (optional). Must appear as a bullet item after directives.
-3.  **DELEGATE Annotation**: Delegation marker (optional). See [§4.3 DELEGATE](#43-delegate).
-4.  **Transitions**: Control flow rules (optional). Must appear as bullet items immediately after DELEGATE / FOR (or after directives if neither is present). Transitions must appear before any prompt text or body content.
-5.  **Prompt**: Text instructions.
-6.  **Body**: One of: Code Block or Substeps. A step-level runbook list is shorthand for implicit sequential substeps (`.1`, `.2`, ...).
+Reserved identifiers, matched exactly and case-sensitively: `NEXT`, `CONTINUE`,
+`DEFER`, `DELEGATE`, `COMPLETE`, `STOP`, `GOTO`, `RETRY`, `PASS`, `FAIL`,
+`YES`, `NO`, `ALL`, `ANY`, `BREAK`, `FOR`, `IN`, `TO`, `AT`.
 
-## 3. Step Bodies
+`NEXT` is reserved; `Next` and `NextStep` are valid.
 
-A step must contain exactly one type of body content.
+## 5. Step Content
 
-Steps are represented as a discriminated union on `kind`: `'base'` (prompt-only), `'command'` (executable code block), `'substeps'` (nested H3 steps), `'for'` (loop with substeps), `'prompted-for'` (unresolved FOR demoted to prompt-only).
+Step and substep content MUST appear in this order:
 
-### 3.1 Code Blocks
-Executes a command or displays a prompt. Max one code block per step.
+1. `OUTPUTS` directive.
+2. `FOR` directive.
+3. `DELEGATE` directive.
+4. Transitions.
+5. Prompt text.
+6. Body.
 
-| Tag | Type | Behavior |
-| :--- | :--- | :--- |
-| `bash`, `sh`, `shell` | Executable | Runs in shell. Exit 0 = PASS, else FAIL. |
-| `bash prompt`, `prompt` | Display | Output only. Not executed. |
-| `json`, `yaml`, etc. | Display | Output only. Treated as prompt. |
-| *(none)* | Invalid | Bare code fences (no info string) are rejected. |
+Each item is optional except the step heading itself. Misordered content is
+invalid.
 
-Code block info string tags are matched case-insensitively. `BASH`, `Bash`, and `bash` are all treated as executable.
+### 5.1 Body Kinds
 
-*   **Environment**: Inherits parent environment.
-*   **CWD**: Project root.
-*   **Stdio**: Inherited.
+A step or substep MUST contain exactly one body kind. A prompt-only step is a
+`base` body.
 
-### 3.2 Substeps
+| Kind | Form | Rule |
+| --- | --- | --- |
+| `base` | Prompt only | No executable body. |
+| `command` | One fenced code block | Executes or displays by info string. |
+| `substeps` | H3 children | Parent result is aggregated from children. |
+| `for` | `FOR` plus substeps | Repeats substeps per iteration. |
+| `prompted-for` | Unresolved template bound in `FOR` | Original `FOR` text is preserved as prompt text. |
 
-Nested steps defined by H3 (`###`) headers.
-* **Identifiers**: `### 1` (bare numeric), `### Name` (bare named), `### 1.1` (qualified numeric), or `### Step.Name` (qualified named). Bare forms inherit their parent step from document position — they belong to the H2 step they appear under. Qualified forms explicitly specify their parent.
-* **Strict H3 rule**: When a step contains any valid substep, all H3 headers within that step must be valid substep identifiers.
-* **Aggregation**: Parent step outcome is derived from substeps via transitions (`ALL`/`ANY`).
+Code blocks and substeps are mutually exclusive. Step-level runbook-list
+shorthand is canonicalized to implicit substeps and counts as `substeps`.
 
-### 3.3 Runbook List Shorthand
+### 5.2 Code Blocks
 
-List of external runbooks to execute.
+A step or substep MUST NOT contain more than one fenced code block. Bare fences
+without an info string are invalid.
+
+| Info string | Rule |
+| --- | --- |
+| `bash`, `sh`, `shell` | Execute in a shell; exit `0` => `PASS`, non-zero => `FAIL`. |
+| `bash prompt`, `prompt` | Display only. |
+| Other non-empty string | Display only. |
+
+Info string matching is case-insensitive. Executable blocks inherit the parent
+environment, run from the project root, and inherit stdio.
+
+### 5.3 Substeps
+
+If a step contains any valid substep, every H3 in that step MUST be a valid
+substep identifier. Parent results are derived from substep results through
+transitions and aggregation.
+
+### 5.4 Runbook List Shorthand
+
+A step-level list of runbook references is shorthand for implicit sequential
+substeps `.1`, `.2`, and so on. Example:
 
 ```markdown
-- ./deploy-db.runbook.md
-- ./deploy-api.runbook.md
+  ## 2. Review
+  - review-a.runbook.md
+  - review-b.runbook.md
 ```
 
-At step level, this syntax is canonicalized to implicit sequential substeps (`1`, `2`, ...), one workflow per substep.
-When step-level prompt text appears above this shorthand body, it is attached to the first generated implicit substep only.
-These two forms are execution-equivalent:
+This is equivalent to explicit substeps `2.1` and `2.2` with one runbook
+reference each. Prompt text above the shorthand attaches to the first generated
+substep only.
 
-```markdown
-## 2. Review the plan
-- review-technical-accuracy.runbook.md
-- review-structural-integrity.runbook.md
-```
+Runbook references MAY be literal targets or template references such as
+`{{ RunbookName }}`. Undefined template references are preserved as literal
+text. A runbook-list entry without nested `DELEGATE` is inline linkage: the
+child runbook executes in-session and its terminal result propagates to the
+parent substep.
 
-```markdown
-## 2. Review the plan
-### 2.1
-- review-technical-accuracy.runbook.md
-### 2.2
-- review-structural-integrity.runbook.md
-```
+### 5.5 Runtime Target Identity
 
-Runbook list entries may use template variable references (`{{ VarName }}`) instead of literal paths. These are resolved to concrete runbook target strings during the variable resolution phase. Undefined references are preserved as literal text, consistent with general template variable behavior.
+Canonical runtime identity is `step + substep + iteration`. Display notation
+such as `1.2.1` (`STEP.INDEX.SUBSTEP` inside `FOR`) is not authoring syntax and
+is not canonical.
 
-A runbook-list entry may carry a nested `- DELEGATE` bullet to mark that entry for delegation; see [§4.3 DELEGATE](#43-delegate).
+<a id="4-control-flow"></a>
 
-A runbook-list entry **without** a nested `- DELEGATE` bullet is *inline linkage*: the parent steps through the child runbook in the same process, and the child's terminal result auto-propagates back to the parent substep. Inline linkage and DELEGATE are the two execution boundaries for nested runbooks — inline keeps the walk in-session, DELEGATE dispatches it out-of-process via a token (see §4.3).
+## 6. Transitions and Actions
 
-### 3.4 Runtime Target Identity
-Runtime dispatch/completion identity is canonicalized as:
-
-`step + substep + iteration`
-
-Execution path notation such as `1.2.1` (`STEP.INDEX.SUBSTEP`) is display-only. It is neither authoring syntax nor a canonical identifier.
-
-## 4. Control Flow
-
-Control flow is defined by **Transitions** (conditions) and **Actions** (effects).
-
-### 4.1 Transitions
-Syntax: `- {RESULT} [{AGGREGATION}] {ACTION}`
-
-| Component | Values | Description |
-| :--- | :--- | :--- |
-| **Result** | `PASS` (`YES`), `FAIL` (`NO`) | Outcome of the step's body. |
-| **Aggregation** | `ALL`, `ANY` | For substeps. Step-level runbook-list shorthand is canonicalized to substeps. Default: `PASS ALL`, `FAIL ANY`. |
-
-Aggregation modifiers must form complementary pairs: `PASS ALL` with `FAIL ANY` (pessimistic — any failure stops), or `PASS ANY` with `FAIL ALL` (optimistic — only total failure stops). Non-complementary combinations are invalid because they create evaluation gaps (ALL/ALL) or overlaps (ANY/ANY).
-
-Transition keywords (`PASS`, `YES`, `FAIL`, `NO`) are matched as whole words in list items — the keyword must be followed by whitespace and an action. Words that merely start with a keyword (e.g., `NOTE`, `PASSING`) are not treated as transitions.
-
-**Aggregation semantics:** Aggregation always waits for all DEFER'd results before evaluating. `ALL`/`ANY` evaluates over the count of DEFER'd results, not total substeps/iterations. This mirrors `Promise.allSettled` semantics — all results are collected before the outcome is determined.
-
-**Defaults**:
-*   If only `PASS` defined: `FAIL` -> `STOP`.
-*   If only `FAIL` defined: `PASS` -> `CONTINUE`.
-*   If neither is defined: `PASS CONTINUE`, `FAIL STOP`.
-*   Substeps under aggregation or with runbook delegation default to `PASS DEFER`, `FAIL DEFER`.
-
-One-sided aggregation modifiers are rejected — both sides must be explicitly authored (e.g., `PASS ALL ... FAIL ANY ...`).
-
-### 4.2 Actions
-
-| Action | Context | Effect |
-| :--- | :--- | :--- |
-| `CONTINUE` | Step | Proceed to next step. |
-| `CONTINUE` | FOR Iteration-Level | Exit loop (result NOT accumulated). |
-| `DEFER` | Substep, FOR Iteration-Level | Pass result up one level for aggregation. |
-| `STOP [msg]` | Any | Terminate execution immediately (failure). |
-| `COMPLETE [msg]` | Any | Terminate execution immediately (success). |
-| `GOTO {Target}` | Any | Jump to step/substep (e.g., `1`, `Error`). |
-| `RETRY N Act` | Any | Retry N times, then perform Act (both required). |
-| `NEXT` | FOR Substep, FOR Iteration-Level | Skip to next iteration (no result accumulation). |
-| `BREAK` | FOR Substep, FOR Iteration-Level | Exit loop immediately. |
-
-> **Shorthand:** A standalone `- DEFER` bullet (without PASS/FAIL prefix) expands to `- PASS DEFER` + `- FAIL DEFER`. This is convenient for substeps where both outcomes should propagate to parent aggregation. DEFER is not valid at step level.
-
-> **RETRY syntax:** Both count and fallback action are required (e.g., `RETRY 3 STOP`). Nested RETRY (RETRY as fallback action) is invalid.
-
-GOTO targeting the containing step (self-reference) without an AT qualifier may create an infinite loop. Use RETRY for bounded re-execution.
-
-**GOTO Syntax**:
-*   `GOTO 3`: Jump to Step 3.
-*   `GOTO 3` (FOR step, no AT): Defaults to the loop's start value (e.g., `1` for `FOR 1 TO 10`, `5` for `FOR 5 TO 1`).
-*   `GOTO 3 AT 1`: Jump to Step 3, iteration 1 (if FOR step).
-*   `GOTO 3 AT {{Index}}`: Re-enter Step 3 at current iteration.
-
-> **Internal:** The compiler resolves step-to-step advancement using `CONTINUE` actions mapped to concrete next-step state IDs at compile time. `NEXT` is rejected as a GOTO target by the parser.
-
-### 4.3 DELEGATE
-
-Use `- DELEGATE` when the nested runbook should run **out-of-process** in a subagent. A runbook-list entry without `- DELEGATE` is inline linkage and runs in the same process — see [§3.3](#33-runbook-list-shorthand).
-
-`- DELEGATE` is a structural bullet annotation that marks substeps for delegation. When a DELEGATE step is entered, the execution engine auto-issues a delegation token for each marked substep and surfaces them in the `STEP_ENTERED` event's `delegateFrontier` field (an array of `{id, runbook, token}`). Subagents claim each token with `rd claim`, copy the returned `claim_id`, resolve with `rd pass --claim-id <claim_id>` or `rd fail --claim-id <claim_id>`, and the final resolution triggers auto-aggregation of the parent step's transition.
-
-**Syntax.** The annotation is bare — `DELEGATE foo` is a syntax error. DELEGATE accepts three equivalent forms:
-
-* **Step-level** — on the H2 step, propagates to all H3 substeps:
-    ```markdown
-    ## 1. Delegated work
-    - DELEGATE
-    - PASS ALL CONTINUE
-    - FAIL ANY STOP
-
-    ### 1.1 First task
-    - child-a.runbook.md
-    ```
-* **Per-substep** — on individual H3 substeps, applies only to the annotated substeps:
-    ```markdown
-    ### 1.1 First task
-    - DELEGATE
-    - child-a.runbook.md
-    ```
-* **Runbook-list shorthand** — nested under runbook-list entries (no H3 headers):
-    ```markdown
-    ## 1. Delegated work
-    - child-a.runbook.md
-      - DELEGATE
-    ```
-
-**Ordering.** `- DELEGATE` precedes transitions and prompt content. When a FOR clause is also present, `FOR ... IN ...` precedes `DELEGATE`.
-
-**Target requirement.** A DELEGATE substep must resolve to a runbook reference (either a `.runbook.md` entry or a template reference). A DELEGATE substep with no runbook target is a structural error.
-
-**Aggregation.** The final substep resolution auto-aggregates the parent step's transition. An explicit `rd collect` CLI invocation triggers aggregation (used when a DELEGATE step mixes delegated and non-delegated substeps, or to force aggregation without waiting for the final subagent callback). Repeat invocations surface `already-aggregated`; terminal drain states propagate result to the parent run via `handleParentCompletion`.
-
-**RETRY on DELEGATE.** `RETRY N Act` on a DELEGATE step is uniform: on retry, every delegated substep in the active frame is cancelled and re-issued with a fresh token, regardless of the substep's prior pass/fail result. Stale tokens return `TOKEN_CANCELLED` on `rd claim`. The `STEP_TRANSITIONED { action: 'RETRY', aggregated: true }` event signals the boundary; the subsequent `STEP_ENTERED` carries the new `delegateFrontier`. This matches §4.2 — `RETRY` re-executes the step's work, and for DELEGATE that work is the fan-out.
-
-## 5. Iteration (FOR)
-
-Steps annotated with `FOR` execute their substeps repeatedly.
-
-| Syntax | Description |
-| :--- | :--- |
-| `FOR var IN 1 TO N` | Named variable, ascending range. |
-| `FOR 1 TO N` | Unnamed, ascending range. |
-| `FOR var IN N TO 1` | Named variable, descending range. |
-| `FOR N TO 1` | Unnamed, descending range. |
-| `FOR var IN N` | Named variable, implicit start (1 TO N). |
-| `FOR N` | Unnamed, implicit start (1 TO N). |
-| `FOR var IN 1 TO {{Max}}` | Template-variable bound (expanded before parse). |
-| `FOR var IN {{source}}` | Named variable, data source (all items). |
-| `FOR var IN 1 TO N OF {{source}}` | Named variable, windowed data source. |
-
-*   **Direction**: When `start > end`, iteration descends (step −1). When `start <= end`, it ascends (step +1). Single-number shorthand (`FOR N`) always ascends from 1.
-*   **Limits**: Open-ended data source iteration is capped at 10,000 iterations. Numeric bounds are capped at 10,000 at parse time.
-*   **Source references**: `{{ source }}` in FOR clauses is NOT template-expanded. It is a data source identifier resolved at runtime. Template-variable bounds (`{{ Max }}`) ARE expanded before parsing.
-*   **Unresolved bounds**: When a template-variable bound in a FOR clause cannot be resolved (undefined variable), the step is demoted to `kind: 'prompted-for'` — a substeps-only step with no executable `forClause`. The original FOR text is preserved as prompt text. This allows an orchestrating agent to handle unresolved FOR bounds manually.
-*   **Named variable required**: Data source FOR clauses require a named variable. Unnamed syntax (`FOR {{source}}`) is invalid.
-* **Data sources**: Provided at runtime as arrays or file-backed JSON/JSONL sources. `file:` source values must stay within the project root after symlink resolution.
-*   **Constraint**: FOR steps MUST have substeps. Step-level runbook-list shorthand qualifies because it is canonicalized to implicit substeps.
-*   **Scope**: Loop variable available in substeps as `{{var}}`.
-*   **Aggregation**: Transitions on the parent FOR step evaluate the aggregate result of all iterations.
-*   **Iteration-level transitions**: Nested `PASS`/`FAIL` transitions under a `FOR` clause are stored on the `forClause.transitions` field and execute per iteration. Allowed actions: `DEFER` (default, loop back with accumulation), `NEXT` (loop back without accumulation), `CONTINUE` (exit loop), `BREAK` (exit loop), `GOTO`, `STOP`, `COMPLETE` (optionally wrapped by `RETRY`).
-* **CONTINUE at iteration scope**: At step level, CONTINUE proceeds to the next step. At FOR iteration level, CONTINUE exits the loop — the current iteration result is NOT accumulated (same as NEXT/BREAK), and execution continues with the step after the FOR step.
-*   **Nested bullet rule**: Nested bullets under `FOR` must be transition bullets; non-transition nested bullets are invalid and fail parse.
-*   **Retry order**: Iteration-level `RETRY` semantics are deterministic: retry first, then execute the exhausted action. RETRY is universal — it fires for ALL substep actions (including `BREAK` and `NEXT`) based on the iteration result, not the substep action. After retries are exhausted, the substep's action takes effect:
-    *   `BREAK` → exit loop (non-accumulating, same as NEXT)
-    *   `NEXT` → skip to next iteration (or aggregation at end, non-accumulating)
-    *   `DEFER`/`CONTINUE` → configured iteration-level transition applies
-* **Execution model**: Each iteration executes its substeps. Each substep produces a **result** (pass/fail). Substep **handlers** map results to **actions**. Only two actions are loop control: `NEXT` (advance to next iteration) and `BREAK` (exit loop). All other actions (`CONTINUE`, `GOTO`, `STOP`, `COMPLETE`) are general flow control that exit the loop as a side effect.
-
-**Iteration execution flow:**
+Transition syntax:
 
 ```text
-Substeps execute → each produces RESULT (pass/fail)
-                 → substep HANDLER maps RESULT to ACTION
-                 → DEFER'd results accumulate within iteration
-                 → after all substeps: iteration RESULT = aggregate of DEFER'd results
-                 → iteration-level HANDLER maps iteration RESULT to ACTION:
-
-    DEFER     → record iteration result, advance to next iteration
-    NEXT      → advance to next iteration (do NOT record result)
-    BREAK     → exit loop (do NOT record result) → step-level HANDLER
-    CONTINUE  → exit loop → step-level HANDLER (current iteration result NOT recorded)
-    GOTO/STOP/COMPLETE → exit loop, bypass step-level HANDLER entirely
-```
-
-**Result recording by action:**
-
-| Action | Loop Control? | Records Iteration Result | Step-Level Handler Fires |
-| :--- | :--- | :--- | :--- |
-| `DEFER` | No (accumulate + loop back) | Yes | After final iteration |
-| `NEXT` | Yes (skip + loop back) | No | After final iteration |
-| `BREAK` | Yes (exit) | No | Yes |
-| `CONTINUE` | No (flow control) | No | Yes |
-| `GOTO` | No (flow control) | No | No (bypassed) |
-| `STOP` | No (flow control) | No | No (bypassed) |
-| `COMPLETE` | No (flow control) | No | No (bypassed) |
-
-## 6. Templating
-
-Variables use Handlebars syntax: `{{variable}}`.
-
-Whitespace inside Handlebars delimiters is allowed: `{{ Step }}` resolves the same way as `{{Step}}`, and spacing does not change undefined-variable warning behavior or `{{context.vars.NAME}}` path resolution.
-
-| Source | Scope | Description |
-| :--- | :--- | :--- |
-| CLI (`--input`) | Global | Expanded at startup. |
-| `{{Step}}`, `{{step}}` | Step | Current execution identifier for this runbook context (e.g., `1`, `1.2`). |
-| `{{Index}}`, `{{index}}` | Loop | Current iteration number for this runbook context. |
-| `{{context.current.*}}` | Step/Loop | Canonical current runbook context: `step` (e.g., `3`), `substep` (e.g., `1`), `index` (e.g., `3`), `at` (e.g., `3.3.1` — `STEP.INDEX.SUBSTEP` inside a FOR loop, `STEP.SUBSTEP` otherwise). |
-| `{{context.parent.*}}` | Nested | Parent runbook structural context and template variables (`vars.*`). |
-| `{{context.ancestors.N.*}}` | Nested | Ancestor runbook contexts (`0` is nearest parent). |
-| `{{context.vars.NAME}}` | Global | User/config/frontmatter variable namespace. |
-| Loop Var | Loop | Current item/index (e.g., `{{batch}}`). |
-
-* **Undefined**: Preserved as literal text. A warning is emitted to stderr for each undefined variable.
-* **Evaluation**: Global vars expanded once; Step/Loop vars expanded per iteration.
-* **Parent variables**: `{{context.parent.vars.NAME}}` exposes the parent's resolved template variables. Only non-context keys propagate. Available via both chain (`context.parent.parent.vars.*`) and array (`context.ancestors.N.vars.*`) addressing.
-* **Depth limit**: Parent context chain addressing is capped at 32 levels (enforced on the delegation ancestor chain depth). Exceeding this limit produces an error.
-* **Path resolution**: Dotted paths are supported consistently (for example `{{context.parent.index}}`).
-* **Required variables**: The frontmatter `required` field declares variables that must be provided by the caller via CLI flags, config, environment bridge, or delegation inheritance. Names listed in `required` must also appear in `inputs:`. Missing required variables produce a hard error (`MISSING_REQUIRED_VARS`) during resolution. Reserved runtime names are also rejected in `required`.
-* **Reserved keys**: Runtime keys `step`, `index`, and `context` are reserved (matching is case-insensitive — any case variant such as `STEP`, `Step`, `INDEX` is also reserved) and cannot be overridden by user variables. The CLI rejects these names in frontmatter `inputs:`, `required`, `--input` flags, `--input-file` contents, and `.rundown/config.yaml` with an error diagnostic. Reserved names in `RD_INPUT_*` environment variables are silently skipped with a warning.
-* **Precedence** (highest to lowest): CLI flags → plugin variables (when resolving a plugin runbook) → `RD_INPUT_*` env vars → inherited delegation variables → `.rundown/config.yaml` → built-in defaults → INPUTS from context outputs store. See [docs/reference/runtime.md Variable Sources](../reference/runtime.md#variable-sources) for the full precedence table and operational details.
-* **Built-in variables**: Rundown provides a set of built-in variables (`Date`, `Branch`, `WorkPath`, `RunId`, `ContextId`, `Step`, `Index`, etc.). See [docs/reference/runtime.md Built-in Variables](../reference/runtime.md#built-in-variables) for the full table.
-* **Shell environment injection**: Built-in variables `WorkPath`, `ContextId`, and `RunId` are injected into each shell block's subprocess environment. See [docs/reference/runtime.md Shell Environment](../reference/runtime.md#shell-environment).
-
-## 7. Context Passing (OUTPUTS)
-
-Steps and substeps may declare OUTPUTS directives for passing data between steps and across delegation boundaries.
-
-### 7.1 OUTPUTS
-
-OUTPUTS declares values to inject into the runbook's live variable space after step completion.
-
-* **Evaluation trigger**: OUTPUTS are evaluated by the XState machine on both PASS and FAIL transitions when the completing step or substep declares outputs.
-* **Storage**: Step-level outputs merge into the machine's live `context.variables`; terminal frontmatter outputs are written to `context.finalVars` and persisted to `RunbookState.finalVars`.
-* **Expressions**: Each entry is evaluated against the step's resolved
-  runtime frame. Supported forms: naked file-backed channel (`VarName` only —
-  see "Naked form" below), Handlebars expressions (`{{ path "file.json" }}`),
-  quoted literals (`"value"` — may embed Handlebars templates, e.g.
-  `"{{ Index }}"`), and bare variable references (`VarName value`).
-* **Naked form (file-backed channel)**: An OUTPUTS entry with no expression
-  (just the name) at step or substep level activates a file-backed output
-  channel. Before the step's command spawns, Rundown creates an empty file
-  whose path includes the active scope tiers in this order: step id, optional
-  substep id, optional FOR iteration index, then `<VarName>`. The three
-  resulting paths are:
-
-  | Scope | Path |
-  |---|---|
-  | Step | `.rundown/runs/<runId>/outputs/<stepId>/<VarName>` |
-  | Substep | `.rundown/runs/<runId>/outputs/<stepId>/<substepId>/<VarName>` |
-  | FOR iteration (in substep) | `.rundown/runs/<runId>/outputs/<stepId>/<substepId>/<iteration>/<VarName>` |
-
-  Rundown injects `RD_OUTPUTS_<VarName>=<absolute-path>` into the command's
-  environment (after policy filtering, rundown-wins). When the command exits,
-  Rundown reads the file, trims trailing whitespace and newlines, and merges
-  the value into `context.variables` using the same precedence as
-  expression-form outputs. UTF-8 only; missing, empty, or non-UTF-8 content
-  is logged and omitted (best-effort, transition not rolled back).
-* **Best-effort**: OUTPUTS evaluation is non-fatal. Failed expressions are omitted from the stored result and logged; the step transition is not rolled back.
-* **Merge semantics**: Outputs merge into the existing live variable space — new keys are added, existing keys are overwritten.
-* **Status visibility**: The `rd status` command includes a `vars` field that exposes the current merged variable space (template vars + step outputs).
-
-### 7.2 Frontmatter `outputs:`
-
-The frontmatter `outputs:` field declares variables to capture at run completion and write to `state.finalVars`.
-
-*   **Evaluation timing**: Evaluated when the runbook reaches a terminal machine transition (`COMPLETE` or `STOPPED`).
-*   **Variable space**: Evaluated against the full merged variable space at termination time (template vars + accumulated step outputs + active step/index frame).
-*   **Cross-runbook forwarding**: When a child runbook completes, its `state.finalVars` are forwarded to the parent's live variable space via `SET_VARIABLES`, making the child's outputs available to subsequent parent steps.
-
-### 7.3 Delegation Inheritance
-
-Children in a delegation tree inherit the parent's `ContextId` via `--input`, providing a shared identity. Step OUTPUTS accumulate in `state.variables` throughout execution; frontmatter `outputs:` at termination produce `state.finalVars` which propagate to the parent actor on completion.
-
-### 7.4 Example: write-plan / execute-plan
-
-A parent runbook produces a plan file and delegates to a child runbook that consumes it. Both share a `ContextId` through delegation inheritance (see [§7.3](#73-delegation-inheritance) for the hand-off contract — the child automatically inherits the parent's `ContextId` via `--input`).
-
-Parent (`write-plan.runbook.md`):
-
-```markdown
-## 1. Write the plan
-- OUTPUTS
-  - PlanPath {{ path "plan.md" }}
 - PASS CONTINUE
-
-Draft the plan and save it to `{{ path "plan.md" }}`.
-
-## 2. Hand off
-- ./execute-plan.runbook.md
+- FAIL STOP
+- PASS ALL CONTINUE
+- FAIL ANY STOP
 ```
 
-Child (`execute-plan.runbook.md`):
+`YES` aliases `PASS`; `NO` aliases `FAIL`. Transition keywords MUST match whole
+words in list items; prefixes such as `PASSING` are not transitions.
 
-```markdown
----
-name: execute-plan
-inputs:
-  - PlanPath
-required:
-  - PlanPath
----
+### 6.1 Aggregation
 
-## 1. Execute
-- PASS COMPLETE
+Aggregation modifiers apply to substep and `FOR` parents.
 
-Execute the plan stored at `{{ PlanPath }}`.
-```
+| Pair | Meaning |
+| --- | --- |
+| `PASS ALL` with `FAIL ANY` | Pessimistic aggregation. |
+| `PASS ANY` with `FAIL ALL` | Optimistic aggregation. |
 
-Flow:
+Only complementary pairs are valid. `ALL`/`ALL`, `ANY`/`ANY`, and one-sided
+aggregation modifiers are invalid. Aggregation waits for all deferred results
+and evaluates only the deferred result set.
 
-1. Parent step 1 runs and its transition completes. The machine evaluates the step's `OUTPUTS`, resolves `PlanPath` via the `{{ path }}` helper (e.g. `.rundown/work/feature-my-work/.rd-a3b8c1d2/2026-02-04-plan.md`), and merges `{ PlanPath: "<resolved path>" }` into the live `context.variables`.
-2. Parent step 2 delegates to the child. The child inherits `ContextId=a3b8c1d2` via `--input`, and the plugin forwards the parent's live variable space (including `PlanPath`) as `--input` flags on the child's `rd claim` invocation.
-3. Child pipeline setup resolves variables: `--input PlanPath=...` binds the value to the declared `inputs:` entry and satisfies `required: PlanPath`.
-4. Child step 1 renders `{{ PlanPath }}` as the forwarded value and executes.
+Defaults:
 
-## 8. Conformance
+| Authored | Implied |
+| --- | --- |
+| Only `PASS` | `FAIL STOP` |
+| Only `FAIL` | `PASS CONTINUE` |
+| Neither | `PASS CONTINUE`, `FAIL STOP` |
+| Substeps under aggregation or delegation | `PASS DEFER`, `FAIL DEFER` |
 
-1.  **Strict Hierarchy**: Steps MUST use H2; substeps MUST use H3. H4 and deeper are not permitted.
-2.  **Sequential IDs**: Numeric steps MUST be sequential (1, 2, 3...; gaps are invalid). Named steps do not participate in sequential numbering.
-3.  **Strict Ordering**: Within a step or substep bullet block, directives MUST appear in this order: OUTPUTS → FOR → DELEGATE → Transitions → Prompt → Body.
-4.  **Exclusivity**: A step MUST have only one body type: either a code block OR substeps (including runbook-list shorthand, which is canonicalized to substeps). Both together are not permitted.
-5.  **Single Code Block**: A step or substep MUST contain at most one code block (executable or display-only).
-6.  **Loop Safety**: `NEXT` and `BREAK` are valid **only** in FOR substeps and FOR iteration-level transitions. Using them at step level outside any FOR loop MUST be rejected by the validator.
-7.  **Source Validation**: FOR clauses referencing a data source MUST reference a defined source. A named variable is REQUIRED.
-8.  **FOR Requires Substeps**: A FOR-annotated step MUST contain substeps.
-9.  **No Nested RETRY**: RETRY fallback actions MUST NOT be RETRY.
-10. **FOR Iteration Action Set**: FOR-level nested transitions MUST only use `CONTINUE`, `DEFER`, `NEXT`, `BREAK`, `GOTO`, `STOP`, `COMPLETE` (plus RETRY wrappers).
-11. **Single Directives**: A step or substep MUST contain at most one OUTPUTS directive.
-12. **Reserved Names in Directives**: OUTPUTS variable names MUST NOT be reserved names (case-insensitive).
-13. **No INPUTS Directive**: The `- INPUTS` step directive has been removed. Implementations MUST use the frontmatter `inputs:` field to declare the variable names the runbook accepts; values are supplied via `--input` flags or other runtime sources at invocation time.
-14. **DELEGATE Ordering**: The `- DELEGATE` annotation MUST appear after `- FOR` (when present) and before transitions, prompt, and body. Misordered DELEGATE MUST be a parse error. (See §4.3.)
-15. **DELEGATE Requires Runbook Target**: Every substep marked `delegate: true` MUST declare at least one runbook target. A bare DELEGATE substep (no runbook bullet) MUST be rejected at parse time. Step-level DELEGATE propagates to all substeps and the same target requirement applies to every propagated child.
-16. **RETRY on DELEGATE is Result-Agnostic**: `rd delegate --retry` MUST succeed regardless of the substep's prior result. Retry re-issues a fresh token by cancelling the current delegation and re-creating one with a new token; the retry hook propagates the canonical FOR-iteration location through `contextSnapshot.at`.
-17. **Parent Orchestration Supersedes Child Lifecycle for Exit Codes**: When a delegated child runbook reaches a terminal lifecycle (e.g. `FAIL STOP` on the child) and a parent absorbs the outcome non-terminally (e.g. `FAIL RETRY`), the child's CLI invocation (`rd pass` / `rd fail`) MUST exit 0. Exit 1 is reserved for cases where the orchestrated workflow has actually halted: no parent linkage exists and the local lifecycle is `stopped`, or the parent's propagation also resolves to `stopped` (e.g. RETRY exhaustion → `STOP` fallback). This lets scripted orchestrators use exit codes as flow control without mistaking an in-progress retry for a terminal failure.
-18. **File-Backed Naked OUTPUTS**: A naked OUTPUTS entry (name only) at step
-    or substep level activates a file-backed channel. `RD_OUTPUTS_<VarName>`
-    MUST be injected only for naked-form entries; expression-form entries MUST
-    produce no file and no env var.
-19. **Mixed OUTPUTS Forms**: A step or substep MAY mix naked and expression
-    OUTPUTS entries within a single OUTPUTS block.
-20. **`RD_OUTPUTS_*` is Rundown-Wins**: `RD_OUTPUTS_<VarName>` MUST always be
-    a valid writable absolute path when the command starts. These env vars MUST
-    be injected by Rundown after policy environment filtering and MUST NOT be
-    blocked or overridden by user-supplied environment variables.
-21. **Captured Output Merge Precedence**: Captured naked outputs MUST merge into
-    `context.variables` using the same precedence as expression-form
-    outputs — same-name keys overwrite existing values.
+<a id="42-actions"></a>
 
-## 9. Compatibility
+### 6.2 Actions
 
-Step-level runbook lists are represented internally as sequential substeps (`N.1`, `N.2`, ...). In-progress sessions created before this model are not auto-migrated and must be restarted after upgrade.
+| Action | Valid context | Rule |
+| --- | --- | --- |
+| `CONTINUE` | Step | Proceed to next step. |
+| `CONTINUE` | `FOR` iteration | Exit loop without accumulating current result. |
+| `DEFER` | Substep, `FOR` iteration | Propagate result to parent aggregation. |
+| `STOP [message]` | Any | Terminate as failure. |
+| `COMPLETE [message]` | Any | Terminate as success. |
+| `GOTO target` | Any | Jump to step or substep target. |
+| `GOTO target AT value` | `FOR` target | Jump to a specific iteration of a `FOR` target. |
+| `RETRY N action` | Any | Retry `N` times, then perform fallback action. |
+| `NEXT` | `FOR` substep or iteration | Advance without accumulating current result. |
+| `BREAK` | `FOR` substep or iteration | Exit loop without accumulating current result. |
 
-Rundown implementations MUST NOT migrate persisted runbook state between versions. This applies to all data under `.rundown/runs/`, including structured state fields and opaque snapshots. When persisted state is stale or structurally incompatible, implementations SHOULD require the user to complete, stop, or prune the run and restart from the source document. See [docs/reference/runtime.md Stale persisted state / no-migration](../reference/runtime.md#stale-persisted-state--no-migration) for runtime recovery details.
+`NEXT` and `BREAK` are invalid outside `FOR`. `DEFER` is invalid at top-level
+step scope. Standalone `- DEFER` expands to `- PASS DEFER` and `- FAIL DEFER`.
+`RETRY` requires both count and fallback; nested `RETRY` fallback is invalid.
+`NEXT` is invalid as a `GOTO` target. `GOTO` to the containing step without `AT`
+can loop indefinitely; use `RETRY` for bounded re-execution.
+
+When `GOTO target` targets a `FOR` step and omits `AT`, execution enters the
+target at the loop's start value: `1` for `FOR 1 TO 10`, `5` for `FOR 5 TO 1`,
+and so on. `GOTO target AT {{Index}}` re-enters the target at the current
+iteration value.
+
+<a id="43-delegate"></a>
+
+## 7. Delegation
+
+`DELEGATE` marks nested runbook work for out-of-process execution. It MUST be a
+bare structural bullet; `DELEGATE value` is invalid.
+
+Valid forms:
+
+| Form | Rule |
+| --- | --- |
+| Step-level `- DELEGATE` | Applies to all substeps. |
+| Per-substep `- DELEGATE` | Applies only to the annotated substep. |
+| Nested under runbook-list entry | Applies only to that list entry. |
+
+Ordering: `FOR` MUST precede `DELEGATE`; `DELEGATE` MUST precede transitions,
+prompt, and body. A delegated substep MUST resolve to at least one runbook
+target, either a `.runbook.md` target or a template target.
+
+When a delegated step is entered, each delegated substep is exposed as a
+delegation frontier item containing an id, runbook target, and token. A child
+claims the token and resolves the claimed work as `PASS` or `FAIL`; the final
+substep resolution auto-aggregates the parent transition. An explicit collection
+operation MAY force aggregation for mixed delegated/non-delegated substeps;
+repeat collection of an already aggregated frame reports `already-aggregated`.
+
+`RETRY N action` on a delegated step cancels and reissues every delegated
+substep in the active frame with fresh tokens, regardless of prior substep
+result. Stale tokens return `TOKEN_CANCELLED`. The retry boundary preserves the
+canonical `FOR` iteration location in the runtime context snapshot and the next
+step entry exposes the new delegation frontier.
+
+When a delegated child reaches a terminal lifecycle but the parent absorbs the
+outcome non-terminally, such as `FAIL RETRY`, the child resolution is not itself
+an orchestrated workflow failure. Terminal failure is reserved for cases where
+there is no parent linkage or the parent's propagation also resolves to a
+terminal stopped state.
+
+<a id="5-iteration-for"></a>
+
+## 8. Iteration
+
+A `FOR` directive repeats a step's substeps.
+
+| Syntax | Meaning |
+| --- | --- |
+| `FOR var IN 1 TO N` | Named numeric range. |
+| `FOR 1 TO N` | Unnamed numeric range. |
+| `FOR var IN N TO 1` | Named descending range. |
+| `FOR N TO 1` | Unnamed descending range. |
+| `FOR var IN N` | Named `1 TO N`. |
+| `FOR N` | Unnamed `1 TO N`. |
+| `FOR var IN 1 TO {{Max}}` | Template-expanded numeric bound. |
+| `FOR var IN {{source}}` | Named data-source iteration. |
+| `FOR var IN 1 TO N OF {{source}}` | Named data-source window. |
+
+Rules:
+
+| Rule | Requirement |
+| --- | --- |
+| Direction | `start > end` descends by `1`; otherwise ascends by `1`. |
+| Single-number shorthand | Always ascends from `1`. |
+| Limits | Numeric bounds and open-ended data sources are capped at 10,000 iterations. |
+| Data-source variable | Data-source iteration MUST use a named variable; `FOR {{source}}` is invalid. |
+| Data-source reference | `{{source}}` names a defined runtime data source and is not template-expanded. |
+| Template bounds | Bounds such as `{{Max}}` are expanded before parsing. |
+| Unresolved bounds | Step becomes `prompted-for`; original `FOR` text is preserved as prompt. |
+| Body | `FOR` MUST have substeps; runbook-list shorthand qualifies. |
+| Scope | Named loop variable is available in substeps as `{{var}}`. |
+
+Data sources are runtime arrays or file-backed JSON/JSONL sources. `file:` paths
+MUST remain inside the project root after symlink resolution. `.jsonl` sources
+are JSON Lines; `.json` sources are JSON arrays or objects, with arrays usable
+for iteration.
+
+### 8.1 Iteration-Level Transitions
+
+Nested bullets under `FOR` MUST be transitions. Allowed actions are `CONTINUE`,
+`DEFER`, `NEXT`, `BREAK`, `GOTO`, `STOP`, `COMPLETE`, and `RETRY` wrappers.
+
+| Action | Records iteration result | Step-level handler fires |
+| --- | --- | --- |
+| `DEFER` | Yes | After final recorded iteration. |
+| `NEXT` | No | After final iteration. |
+| `BREAK` | No | Yes. |
+| `CONTINUE` | No | Yes. |
+| `GOTO` | No | No. |
+| `STOP` | No | No. |
+| `COMPLETE` | No | No. |
+
+Default iteration-level action is `DEFER`. Iteration-level `RETRY` is evaluated
+before the exhausted fallback action and applies to the iteration result, not
+the substep action.
+
+<a id="6-templating"></a>
+
+## 9. Templating
+
+Variables use Handlebars syntax: `{{variable}}`. Dotted paths are supported,
+including `{{context.parent.vars.Name}}`.
+
+Undefined variables are preserved as literal text; a warning is emitted for each
+undefined variable.
+Global variables expand once. Dynamic step, substep, and iteration variables
+expand against the current runtime frame.
+
+### 9.1 Variable Names and Precedence
+
+`step`, `index`, and `context` are reserved case-insensitively and MUST NOT be
+overridden by user variables. Reserved names are rejected in frontmatter
+`inputs`, frontmatter `required`, explicit invocation inputs, input files, and
+configuration files. Reserved `RD_INPUT_*` environment variables are skipped
+with a warning.
+
+Precedence, highest first:
+
+1. Explicit invocation inputs: files, scalar inputs, JSON inputs.
+2. Plugin variables, when resolving a plugin runbook.
+3. `RD_INPUT_*` environment variables, prefix stripped.
+4. Inherited delegation variables.
+5. `.rundown/config.yaml`, discovered from cwd upward.
+6. Built-in defaults.
+7. Context-output inputs, which fill gaps only.
+
+Frontmatter `inputs` declares accepted names; it is not a value layer. Missing
+frontmatter `required` variables produce a hard resolution error
+(`MISSING_REQUIRED_VARS`).
+
+<a id="61-built-in-variables"></a>
+
+### 9.2 Built-In Variables
+
+PascalCase is canonical. Lowercase `step` and `index` aliases are accepted for
+dynamic current-frame values but remain reserved for user input.
+
+| Variable | Rule |
+| --- | --- |
+| `Date`, `DateTime`, `Year`, `Month`, `Day` | Current date/time components. |
+| `Branch` | Current git branch, or empty outside git. |
+| `WorkPath` | Branch-isolated artifact directory; fallback `.rundown/work`; base for `{{ path "..." }}`. |
+| `RunId` | Fresh execution identifier for this runbook execution. |
+| `ContextId` | Shared identity across a delegation tree; scopes `{{ path "..." }}` into `.rd-<ContextId>/`. |
+| `Step`, `Index` | Dynamic current step and iteration. |
+| `context.current.*` | Dynamic current `step`, `substep`, `index`, and `at`. |
+| `context.parent.*` | Parent structural context. |
+| `context.parent.vars.NAME` | Parent resolved variable. |
+| `context.ancestors.N.*` | Ancestor contexts; `0` is nearest parent. |
+| `context.vars.NAME` | Current variable namespace. |
+
+Static built-ins MAY be overridden by higher-precedence sources. Dynamic
+variables MUST NOT be overridden. Parent context chain addressing is capped at
+32 levels. Plugin runbooks MAY receive upper-snake-case plugin variables;
+`CLAUDE_PLUGIN_ROOT` identifies the plugin installation directory.
+
+### 9.3 Shell Environment
+
+Executable shell blocks receive `RD_WORK_PATH`, `RD_CONTEXT_ID`, and `RD_RUN_ID`
+from `WorkPath`, `ContextId`, and `RunId`. These variables are injected after
+policy environment filtering and use Rundown-wins semantics. The `RD_` prefix is
+reserved for Rundown-injected variables.
+
+<a id="7-context-passing-outputs"></a>
+<a id="7-context-passing-inputs--outputs"></a>
+
+## 10. Context Passing
+
+Context passing uses step `OUTPUTS`, frontmatter `outputs`, and delegation
+inheritance.
+
+<a id="71-outputs"></a>
+
+### 10.1 Step `OUTPUTS`
+
+`OUTPUTS` declares values to merge into the live variable space after a step or
+substep completes.
+
+Rules:
+
+| Rule | Requirement |
+| --- | --- |
+| Cardinality | At most one `OUTPUTS` directive per step or substep. |
+| Ordering | MUST be the first directive after the heading. |
+| Names | MUST NOT be reserved runtime names, case-insensitively. |
+| Timing | Evaluated on both `PASS` and `FAIL` transitions. |
+| Forms | Handlebars expression, quoted literal with templates, bare variable reference, or naked file-backed entry. |
+| Merge | Adds new keys and overwrites same-name live variables. |
+| Failure | Failed expressions are omitted and logged; transition is not rolled back. |
+| Status visibility | The merged variable space is exposed in status output as `vars`. |
+
+A naked entry is only a variable name. It activates a file-backed channel:
+Rundown creates a writable UTF-8 file, injects `RD_OUTPUTS_<VarName>` with its
+absolute path, then reads, trims, and merges the file content after command exit.
+Missing, empty, or non-UTF-8 content is omitted. Naked and expression forms MAY
+mix in one `OUTPUTS` block.
+
+File-backed output path scopes:
+
+| Scope | Relative path |
+| --- | --- |
+| Step | `.rundown/runs/<runId>/outputs/<stepId>/<VarName>` |
+| Substep | `.rundown/runs/<runId>/outputs/<stepId>/<substepId>/<VarName>` |
+| `FOR` iteration | `.rundown/runs/<runId>/outputs/<stepId>/<substepId>/<iteration>/<VarName>` |
+
+`RD_OUTPUTS_*` is injected after policy filtering and cannot be blocked or
+overridden by user environment variables. Expression-form entries do not create
+files or environment variables.
+
+The removed `INPUTS` step directive is invalid; use frontmatter `inputs`.
+
+### 10.2 Frontmatter `outputs`
+
+Frontmatter `outputs` is evaluated at terminal `COMPLETE` or `STOPPED`
+transition against the merged variable space. Entries use the same declaration
+grammar as step `OUTPUTS`, except naked frontmatter entries read variables by
+name and do not create file-backed channels. Results are written to final run
+state and forwarded from child runbooks to parent live variables on completion.
+
+### 10.3 Delegation Inheritance
+
+Delegated children inherit the parent's `ContextId` and non-context template
+variables. Step outputs accumulate during execution; terminal frontmatter
+outputs propagate back to the parent.
+
+## 11. Conformance
+
+A conforming parser MUST reject documents that violate any MUST-level rule above.
+In particular:
+
+1. At least one H2 step is required.
+2. H4+ headings are invalid.
+3. Numeric steps must be sequential.
+4. Content ordering is strict.
+5. Body kinds are mutually exclusive.
+6. At most one code block is allowed per step or substep.
+7. Bare code fences are invalid.
+8. `FOR` requires substeps and named variables for data sources.
+9. Nested `FOR` bullets must be transitions.
+10. `NEXT`, `BREAK`, and `DEFER` are valid only in their specified contexts.
+11. `RETRY` requires count and fallback; fallback cannot be `RETRY`.
+12. Aggregation modifiers must be complementary.
+13. At most one `OUTPUTS` directive is allowed per step or substep.
+14. Reserved runtime names are invalid for inputs and outputs.
+15. `INPUTS` step directives are invalid.
+16. `DELEGATE` must be bare, ordered correctly, and target a runbook.
+17. Step-level `DELEGATE` must satisfy target requirements for every child.
+18. `NEXT` is invalid as a `GOTO` target.
+19. `GOTO` to a `FOR` target without `AT` enters at the target loop's start value.
+20. Delegation retry must cancel and reissue every delegated substep in the active frame.
+21. Naked `OUTPUTS` entries alone create `RD_OUTPUTS_<VarName>`.
+
+## 12. Compatibility
+
+Step-level runbook lists are represented as sequential implicit substeps
+(`N.1`, `N.2`, ...).
+
+Rundown implementations MUST NOT migrate persisted runbook state between
+versions. This applies to all data under `.rundown/runs/`, including structured
+state fields and opaque snapshots. When persisted state is stale or structurally
+incompatible, implementations SHOULD require the user to complete, stop, or
+prune the run and restart from the source document. See
+[runtime recovery](../reference/runtime.md#stale-persisted-state--no-migration)
+for operational details.
