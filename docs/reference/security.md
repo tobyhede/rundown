@@ -9,6 +9,7 @@ This document specifies Rundown security policy behavior for command execution, 
 Sections marked "non-normative" provide explanation, examples, or troubleshooting. All other sections are normative.
 
 <a id="security-model"></a>
+
 ## 2. Terminology
 
 An **operation** is a requested command execution, file read, file write, or environment variable access.
@@ -51,6 +52,7 @@ User
 The user is trusted to approve prompts, configure policy files, and choose CLI overrides. A runbook is not inherently trusted.
 
 <a id="sandbox-usage"></a>
+
 ## 4. Security Layers
 
 Rundown has two security layers.
@@ -89,9 +91,9 @@ When `--policy` is not supplied, Rundown MUST search for policy configuration in
 4. `.rundownrc.yml`
 5. `package.json` `rundown` field
 
-If no policy configuration is found, Rundown MUST use the built-in default policy.
+When no policy configuration is found, Rundown MUST use the built-in default policy.
 
-If an auto-discovered configuration file is invalid, Rundown MUST warn and use the built-in default policy. If an explicitly selected policy file is missing or invalid, Rundown MUST fail closed.
+Invalid auto-discovered configuration MUST trigger a warning and fall back to the built-in default policy. A missing or invalid explicitly selected policy file MUST fail closed.
 
 JavaScript policy files MUST NOT be auto-discovered.
 
@@ -155,6 +157,7 @@ The effective policy for a run MUST be assembled from:
 The built-in policy mode is `prompted`.
 
 <a id="default-policy"></a>
+
 ### 7.1 Built-In Default Policy
 
 When no configuration file is found, Rundown uses the built-in default policy.
@@ -199,6 +202,7 @@ Denied environment variables:
 - Specific tokens: `GITHUB_TOKEN`, `GITLAB_TOKEN`, `NPM_TOKEN`
 
 <a id="allowdeny-lists"></a>
+
 ## 8. Policy Decisions
 
 Policy decisions MUST use this precedence order:
@@ -220,6 +224,7 @@ Configured deny lists MUST take precedence over configured allow lists.
 The policy mode MUST be consulted only after no earlier rule decides the operation.
 
 <a id="policy-modes"></a>
+
 ### 8.1 Policy Modes
 
 | Mode | Behavior |
@@ -263,11 +268,11 @@ The sandbox MUST be enabled by default unless `--no-sandbox` or `--allow-all` is
 
 `--allow-all` MUST disable sandboxing.
 
-If sandboxing is enabled but unavailable, Rundown MUST warn and execute unsandboxed unless `--sandbox-strict` is supplied.
+When sandboxing is enabled but unavailable, Rundown MUST warn and execute unsandboxed unless `--sandbox-strict` is supplied.
 
-If `--sandbox-strict` is supplied and sandboxing is unavailable, Rundown MUST fail closed and MUST NOT execute the command.
+With `--sandbox-strict`, unavailable sandboxing MUST fail closed and MUST NOT execute the command.
 
-If the Linux sandbox backend cannot safely represent effective deny-path rules, Rundown MUST fail closed instead of silently weakening policy.
+When the Linux sandbox backend cannot safely represent effective deny-path rules, Rundown MUST fail closed instead of silently weakening policy.
 
 When sandboxing is disabled with `--no-sandbox`, file read and write policy still applies in the policy evaluator, but OS-level enforcement does not apply. Commands can access any file the user account can access if the command itself bypasses or exceeds the evaluator's visibility.
 
@@ -330,6 +335,7 @@ When `--non-interactive` is supplied, or when the process is detected as non-int
 `-y` or `--yes` MAY approve promptable operations without showing a prompt. It MUST NOT override `--deny-all`, configured deny rules, or other earlier denial decisions.
 
 <a id="fallback-behavior"></a>
+
 ## 14. Failure Semantics
 
 | Case | Behavior |
@@ -485,6 +491,7 @@ default:
 ## 16. Troubleshooting (non-normative)
 
 <a id="sandbox-troubleshooting"></a>
+
 ### 16.1 Linux Landlock
 
 ```bash

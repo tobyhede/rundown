@@ -28,7 +28,7 @@ interpreted as described in [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
 | Run | One active or persisted execution of a runbook. |
 | State file | JSON file under `.rundown/runs/` storing one run's state. |
 | Session | `.rundown/session.json`, which tracks active top-level runs, stashes, and claims. |
-| Frame | Internal execution scope key: `step|iteration`. |
+| Frame | Internal execution scope key: `step\|iteration`. |
 | Entry | Monotonic re-entry counter for a frame. |
 | Claim | `rdclm_...` handle that targets one delegated child run. |
 | Data source | Runtime value used by `FOR ... IN {{ source }}` iteration. |
@@ -174,7 +174,7 @@ Only `.json` and `.jsonl` file source extensions are supported.
 
 ### 6.2 File Source Rules
 
-File-backed data sources MUST satisfy all of the following rules:
+File-backed data sources MUST satisfy the following rules:
 
 | Rule | Requirement |
 | --- | --- |
@@ -467,7 +467,7 @@ Canonical runtime identity is `step + substep + iteration`.
 | Step | Top-level runbook step id. |
 | Substep | Nested substep id, if active. |
 | Iteration | Current `FOR` iteration, if active. |
-| Frame | Internal `step|iteration` scope key. |
+| Frame | Internal `step\|iteration` scope key. |
 | Entry | Monotonic re-entry counter for a frame. |
 | Completion key | `frame + entry + substep`. |
 

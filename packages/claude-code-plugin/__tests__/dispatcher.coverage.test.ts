@@ -105,13 +105,9 @@ describe('Dispatcher Coverage Extensions', () => {
     it('covers path jail and error handling', async () => {
       const config = { file_patterns: ['**/*.ts'] } satisfies GateConfig;
       expect(await gateMatchesFilePattern(config, '/outside/path.ts', testDir)).toBe(false);
-      expect(
-        await gateMatchesFilePattern(
-          malformedGateConfig([null]),
-          'test.ts',
-          testDir,
-        ),
-      ).toBe(false);
+      expect(await gateMatchesFilePattern(malformedGateConfig([null]), 'test.ts', testDir)).toBe(
+        false,
+      );
     });
   });
 
@@ -123,10 +119,7 @@ describe('Dispatcher Coverage Extensions', () => {
 
       // Config with missing hook
       const emptyConfig = { hooks: {}, gates: {} } satisfies RundownPluginConfig;
-      await fs.writeFile(
-        path.join(testDir, 'rundown-plugin.json'),
-        JSON.stringify(emptyConfig),
-      );
+      await fs.writeFile(path.join(testDir, 'rundown-plugin.json'), JSON.stringify(emptyConfig));
       const res2 = await dispatch({ hook_event_name: 'UserPromptSubmit', cwd: testDir });
       expect(res2.context).toBeDefined();
 

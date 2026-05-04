@@ -22,9 +22,16 @@ import type {
 // Config type — captures all 3 layers as data
 // ---------------------------------------------------------------------------
 
-export type SubstepAction = 'CONTINUE' | 'DEFER' | 'NEXT' | 'BREAK' | 'STOP' | 'COMPLETE';
-export type IterationAction = 'CONTINUE' | 'DEFER' | 'NEXT' | 'BREAK' | 'STOP' | 'COMPLETE';
-export type ParentAction = 'CONTINUE' | 'DEFER' | 'STOP' | 'COMPLETE';
+export type SubstepAction = 'CONTINUE' | 'DEFER' | 'NEXT' | 'BREAK' | 'STOP' | 'COMPLETE' | 'GOTO';
+export type IterationAction =
+  | 'CONTINUE'
+  | 'DEFER'
+  | 'NEXT'
+  | 'BREAK'
+  | 'STOP'
+  | 'COMPLETE'
+  | 'GOTO';
+export type ParentAction = 'CONTINUE' | 'DEFER' | 'STOP' | 'COMPLETE' | 'GOTO';
 export type ForLoopAction = SubstepAction | IterationAction | ParentAction;
 
 export interface ForLoopConfig {
@@ -67,6 +74,8 @@ export function makeAction(type: ForLoopAction): Action {
       return { type: 'STOP' };
     case 'COMPLETE':
       return { type: 'COMPLETE' };
+    case 'GOTO':
+      return { type: 'GOTO', target: { step: '1' } };
   }
   const exhaustive: never = type;
   return exhaustive;

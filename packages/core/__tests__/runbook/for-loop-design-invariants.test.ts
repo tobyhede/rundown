@@ -107,6 +107,13 @@ function buildCustomSteps(opts: CustomForOpts): ResolvedStep[] {
 // ---------------------------------------------------------------------------
 
 describe('FOR loop design invariants', () => {
+  it('shared helper can represent GOTO actions', () => {
+    expect(makeTransitionObject('pass', 'GOTO').action).toEqual({
+      type: 'GOTO',
+      target: { step: '1' },
+    });
+  });
+
   // Property 1: RETRY is universal — fires for every substep action type
   //
   // Iteration-level RETRY fires based on iteration result, not substep action type.
