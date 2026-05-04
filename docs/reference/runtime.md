@@ -1,271 +1,218 @@
-# Rundown Runtime Reference
+# Rundown Runtime Specification
 
-This document covers Rundown's execution model, state management, template variables, FOR loop semantics, security policy, and runtime identity. For the CLI command reference and user guide, see [docs/reference/cli.md](cli.md). For internal architecture, see [docs/internal/architecture.md](../internal/architecture.md).
+This document defines Rundown runtime behavior: execution state, iteration,
+data-source handling, variable resolution, persisted state, and runtime identity.
+For authoring syntax, see [docs/spec/language.md](../spec/language.md). For CLI
+usage, see [docs/reference/cli.md](cli.md). For the full security policy
+contract, see [docs/reference/security.md](security.md).
 
----
+## 1. Scope
 
-## Table of Contents
+This specification covers behavior after a runbook has been selected for
+execution. It defines how the runtime evaluates commands, advances steps,
+resolves variables, stores state, handles data sources, and targets nested or
+delegated work.
 
-- [Execution Model](#execution-model)
-- [Command Execution](#command-execution)
-- [FOR Loops](#for-loops)
-  - [FOR Clause Variants](#for-clause-variants)
-  - [Loop Variable Expansion](#loop-variable-expansion)
-  - [Iteration Semantics](#iteration-semantics)
-  - [GOTO AT Interaction](#goto-at-interaction)
-  - [Data Sources](#data-sources)
-- [State Persistence](#state-persistence)
-  - [File Locations](#file-locations)
-  - [Session Structure](#session-structure)
-  - [Runbook State Structure](#runbook-state-structure)
-- [Template Variables](#template-variables)
-  - [Variable Sources](#variable-sources)
-  - [Auto-Discovery](#auto-discovery)
-  - [Variable Name Requirements](#variable-name-requirements)
-  - [Runtime Context Model](#runtime-context-model)
-  - [Undefined Variables](#undefined-variables)
-  - [Template Variable Persistence](#template-variable-persistence)
-- [Security Policy](#security-policy)
-- [Runtime Identity Glossary](#runtime-identity-glossary)
+This specification does not define Rundown document syntax, CLI command-line
+parsing, JSON output shape, policy file format, or implementation architecture
+except where those topics affect runtime correctness.
 
----
+The key words MUST, MUST NOT, REQUIRED, SHOULD, SHOULD NOT, and MAY are to be
+interpreted as described in [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
 
-## Execution Model
-
-Rundown separates **runbook definition** from **state tracking**:
+## 2. Terminology
 
-| Component | Role |
-|-----------|------|
-| **Runbook file** | Markdown document defining steps, transitions, and conditions |
-| **CLI (`rundown`)** | Tracks runbook state: current step, retry count, variables |
-| **Agent (Claude)** | Executes work, uses CLI to report outcomes |
+| Term | Meaning |
+| --- | --- |
+| Runtime | The CLI-managed execution process for one or more runbooks. |
+| Run | One active or persisted execution of a runbook. |
+| State file | JSON file under `.rundown/runs/` storing one run's state. |
+| Session | `.rundown/session.json`, which tracks active top-level runs, stashes, and claims. |
+| Frame | Internal execution scope key: `step|iteration`. |
+| Entry | Monotonic re-entry counter for a frame. |
+| Claim | `rdclm_...` handle that targets one delegated child run. |
+| Data source | Runtime value used by `FOR ... IN {{ source }}` iteration. |
+| Static variable | Variable resolved once at run startup. |
+| Dynamic variable | Variable derived from the current step, substep, or iteration frame. |
 
-**Key concept:** The CLI tracks which step you are on and what happens when you report PASS or FAIL. For code blocks, it can execute commands automatically. Otherwise, the agent (or user) does the actual work.
+<a id="execution-model"></a>
 
----
+## 3. Runtime Model
 
-## Command Execution
+Rundown separates runbook definition from runtime state.
 
-| Behavior | Triggered By | What Happens |
-|----------|-------------|--------------|
-| **Automatic command** | Step has `bash`, `sh`, or `shell` code block | CLI runs command, exit code determines PASS/FAIL |
-| **Manual** | `--prompted` flag, display-only code block, or step has no executable code block | CLI waits for manual `rd pass` or `rd fail` |
+| Component | Runtime role |
+| --- | --- |
+| Runbook source | Defines steps, transitions, commands, inputs, outputs, and control flow. |
+| Runtime state | Tracks current position, variables, retries, loop state, child links, and persisted snapshot. |
+| Agent or user | Performs prompted work and reports `PASS` or `FAIL`. |
+| CLI | Evaluates transitions, persists state, runs executable command blocks, and enforces policy. |
 
-**Note:** A `prompt` code block is display-only. Rundown may render it through the `rd prompt` helper so the content appears wrapped in markdown fences, but it is not shell-executed and does not derive PASS/FAIL from a command exit code.
+The runtime MUST preserve the conceptual separation between result, handler, and
+action:
 
-Example of a step that auto-executes:
+| Layer | Runtime meaning |
+| --- | --- |
+| Result | Outcome signal: `PASS` or `FAIL`. |
+| Handler | Authored mapping from result to action. |
+| Action | Runtime control-flow effect such as `CONTINUE`, `GOTO`, `STOP`, or `DEFER`. |
 
-````markdown
-## 3. Run tests
-- PASS CONTINUE
-- FAIL RETRY 2 STOP
+Actions MUST propagate with their own semantics. The runtime MUST NOT silently
+map one action into another to simplify execution.
 
-```bash
-npm test
-```
-````
+<a id="command-execution"></a>
 
-Example of a prompted step:
+## 4. Command Execution
 
-````markdown
-## 4. Code review
-- PASS CONTINUE
-- FAIL STOP
-
-Review the implementation for issues.
-`rundown pass` if acceptable, `rundown fail` if blocked.
-````
+The runtime supports automatic and prompted execution.
 
----
+| Mode | Trigger | Runtime behavior |
+| --- | --- | --- |
+| Automatic command | Step or substep has `bash`, `sh`, or `shell` code block and execution is not prompted. | CLI executes the command from the project root; exit `0` signals `PASS`, non-zero signals `FAIL`. |
+| Prompted/manual | `--prompted`, display-only code block, or no executable code block. | CLI surfaces the prompt and waits for `rd pass` or `rd fail`. |
 
-## FOR Loops
+Executable command blocks inherit the parent process environment after policy
+filtering and Rundown environment injection. A `prompt` code block is
+display-only: it MUST NOT be shell-executed and MUST NOT derive a result from an
+exit code.
 
-Steps can iterate their substeps over a numeric range using a FOR annotation. FOR loops are defined in the runbook syntax and the CLI manages loop state automatically.
+The CLI MAY render display-only code blocks through `rd prompt` so the content
+appears as fenced Markdown.
 
-**Syntax (brief):**
+<a id="for-loops"></a>
 
-````markdown
-## 3. Process batches
-- FOR batch IN 1 TO 5
-- PASS ALL CONTINUE
-- FAIL ANY STOP
+## 5. Iteration Runtime
 
-### 1. Process item
-- PASS CONTINUE
-- FAIL BREAK
-````
+`FOR` syntax is defined in [docs/spec/language.md §8](../spec/language.md#8-iteration).
+At runtime, a `FOR` step repeats its substeps over a numeric range or data
+source.
 
-Step-level runbook lists are shorthand for implicit sequential substeps (`.1`, `.2`, ...), so FOR execution is equivalent across these forms:
+### 5.1 Loop State
 
-````markdown
-## 2. Review the plan
-- FOR pass IN 1 TO 2
-- PASS ALL CONTINUE
-- FAIL ANY GOTO Synthesize
+For an active loop, runtime state MUST track:
 
-- review-technical-accuracy.runbook.md
-- review-structural-integrity.runbook.md
-````
+| Field | Requirement |
+| --- | --- |
+| Current step | The parent `FOR` step id. |
+| Iteration | Current numeric iteration index. |
+| Direction | Ascending or descending range traversal. |
+| Loop variable | Optional named variable exposed to substeps. |
+| Current value | Current data element for array/file-backed sources. |
+| Iteration results | Recorded `PASS`/`FAIL` outcomes used for parent aggregation. |
 
-````markdown
-## 2. Review the plan
-- FOR pass IN 1 TO 2
-- PASS ALL CONTINUE
-- FAIL ANY GOTO Synthesize
+Numeric bounds and open-ended data-source iteration are capped at 10,000
+iterations.
 
-### 2.1
-- review-technical-accuracy.runbook.md
-### 2.2
-- review-structural-integrity.runbook.md
-````
+### 5.2 Dynamic Loop Variables
 
-See [docs/spec/language.md Iteration (FOR)](../spec/language.md#5-iteration-for) for the full grammar and all clause variants.
+The runtime MUST expand loop and location variables against the active frame.
 
-### FOR Clause Variants
+| Variable | Runtime value |
+| --- | --- |
+| `{{Index}}`, `{{index}}` | Current iteration number for this runbook context. |
+| `{{Step}}`, `{{step}}` | Current qualified step/substep position for this runbook context. |
+| `{{var}}` | Named loop variable; for ranges, the iteration index; for data sources, the current item. |
+| `{{context.current.*}}` | Canonical current structural context. |
 
-| Syntax | Description |
-|--------|-------------|
-| `FOR var IN 1 TO N` | Explicit range, named variable |
-| `FOR 1 TO N` | Explicit range, no variable |
-| `FOR var IN N` | Implicit start (1), named variable |
-| `FOR N` | Implicit start (1), no variable |
-| `FOR var IN {{ source }}` | All items from data source |
-| `FOR var IN 1 TO N OF {{ source }}` | Windowed data source |
-
-### Loop Variable Expansion
+Dynamic variables MUST NOT be overridden by user input, config, environment, or
+delegation inheritance.
 
-The named loop variable plus runtime step/index aliases are expanded per-iteration:
-- `{{Index}}` / `{{index}}` - Current iteration number (1-based), available inside all FOR substeps
-- `{{Step}}` / `{{step}}` - Qualified current runbook-context execution location (for shorthand runbook-list steps this is `N.1`, `N.2`, ...)
-- `{{var}}` - Named loop variable. For numeric ranges, equals the iteration index. For data sources (array/file), holds the current data element.
+### 5.3 Iteration Actions
 
-These are expanded per-iteration, unlike template variables which are expanded once at `rd run` time.
+Substep actions inside a `FOR` step affect the current iteration. Nested
+iteration-level transitions under `FOR` affect the loop after iteration
+aggregation.
 
-### Iteration Semantics
+| Action | Records current result | Parent step handler fires | Runtime effect |
+| --- | --- | --- | --- |
+| `DEFER` | Yes | After final recorded iteration | Record result and advance. |
+| `NEXT` | No | After final iteration | Skip remaining work and advance. |
+| `BREAK` | No | Yes | Exit loop immediately. |
+| `CONTINUE` | No | Yes | Exit loop and continue through step-level handler. |
+| `GOTO` | No | No | Jump immediately. |
+| `STOP` | No | No | Stop immediately. |
+| `COMPLETE` | No | No | Complete immediately. |
 
-FOR-level transitions (the bullets directly under the `FOR ...` clause) decide what happens after iteration results are aggregated. Substep handler actions inside a FOR loop control only the current iteration:
+Iteration-level `RETRY N action` MUST retry the current iteration before applying
+the exhausted fallback action. It applies to the iteration result, not to the
+specific substep action that produced that result.
 
-| Action | Effect |
-|--------|--------|
-| `DEFER` | Record the substep result for iteration aggregation |
-| `NEXT` | Skip remaining substeps, advance to next iteration |
-| `BREAK` | Exit the FOR loop; parent step transitions evaluate |
-| `STOP` | Halt runbook execution immediately |
-| `COMPLETE` | Complete runbook execution immediately |
-| `GOTO` | Jump to the target step or FOR iteration |
-| `RETRY` | Retry according to the configured retry wrapper |
+### 5.4 GOTO AT
 
-At FOR-transition scope, `CONTINUE` exits the loop without accumulating the current iteration result.
+When a `GOTO` targets a `FOR` step:
 
-FOR-level nested transitions (nested bullets directly under `- FOR ...`) run at **iteration scope**:
+| Form | Runtime target |
+| --- | --- |
+| `GOTO N` | Enters the target loop at that loop's start value. |
+| `GOTO N AT I` | Enters the target loop at iteration `I`. |
+| `GOTO N AT {{Index}}` | Re-enters at the current iteration value. |
 
-| Action | Effect |
-|--------|--------|
-| `DEFER` | Record the current iteration result; parent FOR aggregation runs after the final recorded iteration |
-| `NEXT` | Do not record the current iteration result; continue with the next iteration |
-| `CONTINUE` | Exit loop (current result NOT recorded) → step-level handler |
-| `BREAK` | Exit loop immediately (current result NOT recorded) → step-level handler |
-| `GOTO` | Jump immediately; bypass parent FOR aggregation |
-| `STOP` | Stop immediately; bypass parent FOR aggregation |
-| `COMPLETE` | Complete immediately; bypass parent FOR aggregation |
-| `RETRY N X` | Retry current iteration first, then execute exhausted action `X` |
+Status output MAY show display paths such as `STEP.INDEX.SUBSTEP`. Display paths
+are not authoring identifiers and are not canonical runtime identity.
 
-Parent FOR step transitions (`PASS ALL`, `FAIL ANY`, etc.) aggregate results across all iterations after normal loop completion, iteration-level `BREAK`, or iteration-level `CONTINUE`.
+<a id="data-sources"></a>
 
-### GOTO AT Interaction
+## 6. Data Sources
 
-The `AT` qualifier on GOTO targets specific iterations of a FOR step:
+Data sources are runtime values used by named `FOR` clauses. Data-source
+iteration MUST use a named loop variable.
 
-```bash
-rundown goto 3        # Jump to FOR step 3
-```
+### 6.1 Source Routing
 
-In runbook transitions, `GOTO N AT I` enters step N at iteration I. When `AT` is omitted for a FOR step, the default is defined in [docs/spec/language.md §4.2](../spec/language.md#42-actions). See [docs/reference/cli.md GOTO formats](cli.md#rundown-goto-step---jump-to-step) for the full valid-format table.
+Input values are routed into template variables and data sources based on their
+runtime type.
 
-**Status display during loops:**
+| Value pattern | Template rendering | Data-source routing |
+| --- | --- | --- |
+| JSON array from `--input-json` | Comma-joined string | Array source. |
+| YAML array from config/input file | Comma-joined string | Array source. |
+| `file:*.jsonl` | Source reference | Lazy JSON Lines stream. |
+| `file:*.json` | Source reference | JSON array/object; arrays are iterable. |
+| Scalar string/number/boolean | Scalar string value | Not a data source. |
 
-When a FOR loop is active, output includes explicit loop scope and expanded location:
-- `For: index/end` (or `index/?` for open-ended data sources)
-- `At: STEP.INDEX.SUBSTEP` (display path)
+Only `.json` and `.jsonl` file source extensions are supported.
 
-The display path is not an authoring identifier. Canonical runtime identity is `step + substep + iteration`.
+### 6.2 File Source Rules
 
-### Data Sources
+File-backed data sources MUST satisfy all of the following rules:
 
-FOR loops can iterate over arrays or files instead of numeric ranges.
+| Rule | Requirement |
+| --- | --- |
+| Containment | Resolved path MUST remain inside the project root after symlink resolution. |
+| Policy | Resolved path MUST be allowed by the active read policy before execution starts. |
+| Format | `.jsonl` is parsed as one JSON value per line; `.json` is parsed as JSON. |
+| Drift detection | Runtime MUST snapshot source metadata and detect modification on resume. |
+| Failure mode | Missing, denied, invalid, escaped, or drifted sources MUST fail visibly. |
 
-**Defining sources:**
+Blocked or invalid file sources MUST NOT silently become empty iteration sources.
 
-Sources are defined via `--input-json`, `.rundown/config.yaml`, `--input-file`, or `--input` flags. Values are routed based on type:
+For `.jsonl`, each line MAY contain any JSON value. When the current item is a
+JSON object, dotted field access is supported in templates. Rendering the whole
+item serializes it as JSON.
 
-| Value Pattern | Routing |
-|---------------|---------|
-| `--input-json items='["a","b"]'` | Comma-joined in vars, JsonArray for iteration |
-| `file:path/to/data.jsonl` | JsonArrayStream in vars (lazy streaming) |
-| `file:path/to/data.json` | JsonArray or JsonObject in vars (eager load) |
-| YAML array `[a, b, c]` | Comma-joined in vars, JsonArray for iteration |
-| Scalar string/number | Template vars only (no iteration source) |
+### 6.3 Windowed Sources
 
-**Example `.rundown/config.yaml`:**
+Windowed iteration reads only the requested inclusive item positions from the
+source. Open-ended data-source iteration reads until source exhaustion or the
+10,000-iteration cap.
 
-```yaml
-environment: staging
-items:
-  - alpha
-  - bravo
-  - charlie
-log_file: file:data/results.jsonl
-```
+<a id="state-persistence"></a>
 
-**Example runbook:**
+## 7. State Persistence
 
-````markdown
-## 2 Process items
-- FOR item IN {{ items }}
-- PASS ALL CONTINUE
-- FAIL ANY STOP
-### 1 Handle item
-- PASS CONTINUE
-- FAIL BREAK
-Handle {{item}} (iteration {{Index}}).
-````
+Runtime state persists across process exits and context clears.
 
-**File formats:**
-
-| Extension | Format | Parsing |
-|-----------|--------|---------|
-| `.jsonl` | JSON Lines | One JSON value per line (string, number, boolean, null, array, or object) |
-| `.json` | JSON | Eagerly loaded as JsonArray or JsonObject |
-
-Only `.json` and `.jsonl` extensions are supported for `file:` sources.
-
-`file:` sources are resolved to a canonical path, confined to the project root, and checked against the active security policy before execution starts. A denied source fails the runbook before the first step.
-
-**JSONL semantics:** Each `.jsonl` line is parsed as a JSON value. When the loop variable holds a parsed JSON object, dotted field access is supported in templates (e.g., `{{item.name}}`). Using `{{item}}` alone renders the serialized JSON string.
-
-**Open-ended iteration:** `FOR item IN {{ source }}` iterates until the source is exhausted, capped at 10,000 iterations.
-
-**Windowed iteration:** `FOR item IN 3 TO 7 OF {{ source }}` reads only items at positions 3 through 7.
-
-**Drift detection:** File sources record a snapshot (size, mtime, SHA-256 fingerprint) at first access. On resume, the snapshot is validated — if the file changed, execution fails with a drift error. Fingerprint comparison allows harmless mtime changes (e.g., backup tools) to pass.
-
-**Validation:** The CLI validates that all sourced FOR clauses reference defined data sources. Missing sources produce: `FOR loop references undefined data source "{{name}}"`.
-
----
-
-## State Persistence
-
-### File Locations
+### 7.1 File Locations
 
 | Path | Purpose |
-|------|---------|
-| `.rundown/runs/` | Runbook state files (`wf-YYYY-MM-DD-xxxxx.json`) |
-| `.rundown/session.json` | Active runbook tracking and stash state |
-| `.rundown/runbooks/` | Runbook source files (discovered for `rundown ls --all`) |
+| --- | --- |
+| `.rundown/runs/` | Runbook state files. |
+| `.rundown/session.json` | Active runbook stack, stash, and claim tracking. |
+| `.rundown/runbooks/` | Project-local runbook discovery source. |
 
-### Session Structure
+### 7.2 Session Structure
 
-The session tracks top-level runbooks with a default stack and delegated children with explicit claim ids:
+The session tracks top-level runs and delegated children separately.
 
 ```json
 {
@@ -288,27 +235,54 @@ The session tracks top-level runbooks with a default stack and delegated childre
 }
 ```
 
-- **defaultStack**: Legacy/default active runbook stack for top-level, inline, and unidentified/manual flows.
-- **stashedRunbookId**: Temporarily paused runbook (for `rundown stash`/`rundown pop`).
-- **claims**: Map of `rdclm_...` handles returned by `rd claim`, each pointing at exactly one delegated child runbook and its parent linkage.
+| Field | Requirement |
+| --- | --- |
+| `defaultStack` | Tracks active top-level, inline, and unidentified/manual flows. |
+| `stashedRunbookId` | Stores the default-stack run paused by plain `rd stash`. |
+| `claims` | Maps claim ids to exact delegated child runbooks and parent linkage. |
 
-Claimed delegated children are not pushed onto `defaultStack`. Commands that accept `--claim-id` (`status`, `pass`, `fail`, `collect`, `goto`, `stash`, `pop`, `stop`, and `complete`) resolve the exact child runbook for that claim and fail closed if the claim is missing, stale, terminal, or no longer linked to a live parent.
+Claimed delegated children MUST NOT be pushed onto `defaultStack`.
 
-`stash` and `pop` target either the default stack or a claim id:
-- Plain `stash` moves the default-stack active runbook into the single stash slot.
-- `stash --claim-id <id>` stashes the claimed child while preserving the claim record.
-- Plain `pop` restores only default-stack stashes.
-- `pop --claim-id <id>` restores the child for that claim id after verifying the delegated parent is still active.
+Commands that accept `--claim-id` MUST resolve the exact child run for that
+claim and MUST fail closed if the claim is missing, stale, terminal, or no
+longer linked to a live parent.
 
-### Stale persisted state / no-migration
+### 7.3 Stash Targeting
 
-Persisted state is not migrated between runtime versions. If a runbook state file (`wf-...json`), `.rundown/session.json`, `stashedRunbookId`, or `claims` entry is stale, structurally incompatible, or from a schema/runtime version the current CLI cannot safely resume, Rundown fails closed and refuses to continue that run.
+`stash` and `pop` target either the default stack or a specific claim.
 
-The user-facing recovery path is to finish or close the affected run if possible, or prune/clean persisted state and restart the runbook. Rundown must not silently migrate, shim, adapt, rewrite, or resume incompatible persisted state.
+| Command | Runtime target |
+| --- | --- |
+| `rd stash` | Moves the default-stack active run into the single default stash slot. |
+| `rd stash --claim-id <id>` | Stashes the claimed child and preserves its claim record. |
+| `rd pop` | Restores only default-stack stashes. |
+| `rd pop --claim-id <id>` | Restores the child for that claim after parent-link validation. |
 
-### Runbook State Structure
+Plain `rd pop` MUST NOT restore a claimed child.
 
-Each runbook state file contains:
+<a id="stale-persisted-state--no-migration"></a>
+
+### 7.4 Stale Persisted State / No Migration
+
+Persisted state MUST NOT be migrated between runtime versions. This applies to:
+
+| State | Covered data |
+| --- | --- |
+| Runbook state files | Structured fields and opaque `snapshot` blob. |
+| Session state | `defaultStack`, `stashedRunbookId`, and `claims`. |
+| Delegation state | Claim records, parent links, child links, tokens, and completion records. |
+
+If persisted state is stale, structurally incompatible, corrupt, unreadable, or
+from a schema/runtime version the current CLI cannot safely resume, Rundown MUST
+fail closed and refuse to continue that run.
+
+The recovery path is to finish or close the affected run if possible, or prune
+the incompatible state and restart from the source runbook. The runtime MUST NOT
+silently migrate, shim, adapt, rewrite, or resume incompatible persisted state.
+
+### 7.5 Runbook State Fields
+
+Each run state file stores enough information to resume deterministically.
 
 ```json
 {
@@ -319,42 +293,16 @@ Each runbook state file contains:
   "description": "Runbook description",
   "step": "2",
   "substep": "1",
-  "stepName": "Execute batch",
   "retryCount": 0,
   "variables": { "environment": "staging" },
   "templateVars": { "environment": "staging" },
-  "steps": [],
-  "substepStates": [
-    {
-      "id": "1",
-      "frameKey": "2|",
-      "status": "done",
-      "delegation": {
-        "tokenHash": "abc123...",
-        "childRunbookPath": ".rundown/runbooks/child.runbook.md",
-        "status": "claimed",
-        "childRunId": "wf-2024-01-07-child1"
-      }
-    }
-  ],
+  "substepStates": [],
   "resolvedCompletions": {},
   "frameEntries": { "2|2": 1 },
   "activeFrameKey": "2|2",
   "activeEntry": 1,
-  "forStack": [
-    {
-      "stepId": "2",
-      "iteration": 2,
-      "start": 1,
-      "variable": "item",
-      "source": { "kind": "array", "items": ["alpha", "bravo", "charlie"] },
-      "currentValue": "bravo"
-    }
-  ],
-  "iterationResults": ["pass", "pass"],
-  "startedAt": "2024-01-07T10:00:00.000Z",
-  "updatedAt": "2024-01-07T10:05:00.000Z",
-  "prompted": false,
+  "forStack": [],
+  "iterationResults": ["pass"],
   "lastResult": "pass",
   "lastAction": { "type": "CONTINUE" },
   "runbookSrc": "---\nname: my-runbook\n---\n# My Runbook\n...",
@@ -362,206 +310,198 @@ Each runbook state file contains:
 }
 ```
 
-Key fields:
-- `step`: Current step identifier (string: "1", "ErrorHandler")
-- `substep`: Current substep ID (e.g., "1", "2")
-- `retryCount`: Current retry attempt
-- `steps`: Array of step states for all runbook steps
-- `lastAction`: Most recent transition as a structured object (e.g., `{"type": "CONTINUE"}`, `{"type": "GOTO", "target": "3", "at": 2}`)
-- `lastResult`: Last PASS/FAIL signal (`pass` or `fail`)
-- `runbookPath`: Repo-relative resolved file path to the runbook source
-- `runbookSrc`: Raw runbook source content (template placeholders preserved)
-- `templateVars`: Frozen template variable map used for deterministic resume rendering
-- `forStack`: Active FOR loop stack (present during loop execution; see [FOR Loops](#for-loops))
-- `forStack[].source`: Resolved source for the active loop (range, array, or file with snapshot)
-- `forStack[].currentValue`: Data element at the current iteration (array/file sources)
-- `iterationResults`: Array of per-iteration outcomes (`"pass"` or `"fail"`) for the current loop
-- `substepStates[].id`: Substep identifier matching `Substep.id` (e.g., "1", "2")
-- `substepStates[].frameKey`: Scopes identity in FOR loops (e.g., "2|" or "2|3")
-- `substepStates[].status`: Substep lifecycle state (`pending`, `running`, `done`)
-- `substepStates[].delegation`: Delegation state for substeps (tokenHash, childRunbookPath, status, childRunId)
-- `resolvedCompletions`: Completion records keyed by `frame + entry + substep`
-- `frameEntries` / `activeFrameKey` / `activeEntry`: Re-entry-safe frame identity used to reject stale completions
-- `snapshot`: XState persisted snapshot for state restoration
+| Field | Runtime requirement |
+| --- | --- |
+| `step`, `substep` | Current structural position. |
+| `retryCount` | User-visible retry count across retry sites. |
+| `variables` | Live variable space, including accumulated outputs. |
+| `templateVars` | Frozen variable map used for deterministic resume rendering. |
+| `forStack` | Active loop frame and current source value. |
+| `iterationResults` | Results recorded for current loop aggregation. |
+| `substepStates` | Substep lifecycle and delegation state. |
+| `resolvedCompletions` | Completion records keyed by frame, entry, and substep. |
+| `frameEntries`, `activeFrameKey`, `activeEntry` | Re-entry-safe identity for stale-completion rejection. |
+| `lastResult`, `lastAction` | Last result signal and resolved action. |
+| `runbookSrc` | Raw source content with template placeholders preserved. |
+| `snapshot` | Opaque XState persisted snapshot. |
 
----
+The runtime MUST treat `snapshot` as persisted state subject to the no-migration
+rule.
 
-## Template Variables
+<a id="template-variables"></a>
 
-Rundown supports template variables using Handlebars syntax `{{variableName}}` for parameterizing runbooks.
+## 8. Variable Resolution
 
-### Syntax
+Rundown uses Handlebars syntax for template variables. Variable syntax is defined
+in [docs/spec/language.md §9](../spec/language.md#9-templating).
 
-````markdown
-## 1. Deploy to {{environment}}
-```bash
-npm run deploy --env={{environment}} --version={{version}}
-```
-````
+<a id="variable-sources"></a>
 
-### Variable Sources
+### 8.1 Variable Sources
 
-Variables are collected from multiple sources with the following precedence (highest to lowest):
+Variables are collected with this precedence, highest first:
 
-| Source | Description |
-|--------|-------------|
-| CLI flags (`--input-file`, `--input`, `--input-json`) | Repeatable, highest priority |
-| Plugin variables | Injected when resolving plugin runbooks, such as `rundown:write-plan` |
-| `RD_INPUT_*` environment variables | Prefix stripped (e.g., `RD_INPUT_environment` sets `environment`) |
-| Inherited delegation variables | Parent context in delegation tree |
-| `.rundown/config.yaml` | Auto-discovered from cwd upward, stops at git root |
-| Built-in defaults | System-provided variables — see [Built-in Variables](#built-in-variables) for the full table |
-| INPUTS (context passing) | Fill-gaps-only injection from the inherited live variable space / delegated `finalVars` — see [docs/spec/language.md §7](../spec/language.md#7-context-passing-outputs) |
+| Priority | Source | Rule |
+| --- | --- | --- |
+| 1 | Explicit invocation inputs | `--input-file`, `--input`, and `--input-json`; highest priority. |
+| 2 | Plugin variables | Injected only when resolving plugin runbooks. |
+| 3 | `RD_INPUT_*` environment variables | Prefix stripped. |
+| 4 | Inherited delegation variables | Parent runtime variable space passed to child. |
+| 5 | `.rundown/config.yaml` | Auto-discovered from cwd upward. |
+| 6 | Built-in defaults | Runtime-provided static defaults. |
+| 7 | Context-output inputs | Fill gaps only; MUST NOT override existing values. |
 
-### Auto-Discovery
+Frontmatter `inputs` declares accepted names only. It is not a value layer.
 
-The CLI automatically searches for `.rundown/config.yaml` starting from the current working directory and walking upward. The search stops at:
-- The first `.rundown/config.yaml` found
-- The git repository root (`.git` directory)
-- The filesystem root
+### 8.2 Config Auto-Discovery
 
-Example `.rundown/config.yaml`:
+The runtime searches for `.rundown/config.yaml` from the current working
+directory upward. Search stops at the first config file found, the git
+repository root, or the filesystem root.
 
-```yaml
-environment: staging
-version: 1.2.3
-db_host: localhost
-items:
-  - alpha
-  - bravo
-  - charlie
-log_file: file:data/results.jsonl
-```
+Arrays in config or input files become both comma-joined template values and
+array data sources. `file:` values become file-backed data sources. Scalars
+remain regular template variables.
 
-Arrays become data sources for `FOR item IN {{ items }}` — pass inline via `--input-json items='["a","b"]'` or define in YAML config. The `file:` prefix creates file-backed sources. Scalar values remain regular template variables. See [Data Sources](#data-sources) for details.
+### 8.3 Variable Name Requirements
 
-### Usage Examples
+User-provided variable names MUST match `/^[a-zA-Z_][a-zA-Z0-9_]*$/`.
 
-```bash
-# Set variables via CLI flags
-rundown run deploy.runbook.md --input environment=prod --input version=2.0.0
+The names `step`, `index`, and `context` are reserved case-insensitively.
+Reserved names MUST be rejected in frontmatter `inputs`, frontmatter `required`,
+explicit invocation inputs, input files, and config files. Reserved
+`RD_INPUT_*` variables are skipped with a warning.
 
-# Load variables from a file
-rundown run deploy.runbook.md --input-file production.yaml
+### 8.4 Undefined Variables
 
-# Combine sources (CLI flags override file values)
-rundown run deploy.runbook.md --input-file base.yaml --input environment=prod
-```
+Undefined variables and missing dotted paths are preserved as literal
+placeholders, such as `{{variable}}` or `{{context.parent.missing}}`. The runtime
+SHOULD emit one warning for each distinct undefined variable.
 
-### Built-in Variables
+### 8.5 Runtime Context Model
 
-Rundown sets the following built-in variables once per execution (unless marked dynamic per-step). PascalCase is canonical; lowercase aliases `step` and `index` are also accepted.
+The runtime exposes canonical namespaced context paths.
 
-| Variable | Example Value | Description |
-|----------|---------------|-------------|
-| `Date` | `2026-02-04` | Current date (YYYY-MM-DD) |
-| `DateTime` | `2026-02-04T10:30:00.000Z` | Full ISO 8601 timestamp |
-| `Year` | `2026` | Current year |
-| `Month` | `02` | Current month (01-12) |
-| `Day` | `04` | Current day (01-31) |
-| `Branch` | `feature/my-work` | Current git branch name (empty when not in git) |
-| `WorkPath` | `.rundown/work/feature-my-work` | Branch-isolated artifact directory (falls back to `.rundown/work` outside git). Default base directory for the `{{ path "..." }}` helper used in OUTPUTS expressions. |
-| `RunId` | `4a7f0c3e` | Unique-per-execution identifier (fresh 8-char hex per execution; each child in a delegation tree gets its own) |
-| `ContextId` | `a3b8c1d2` | Shared identity across a delegation tree. Scopes `{{ path "..." }}` helper output into `.rd-<ContextId>/` for context passing. Children inherit the parent's `ContextId` via `--input`. Overridable via `--input ContextId=<name>` for a meaningful identifier (e.g., `sprint-42`). |
-| `Step` | `3.1` | Current qualified step identifier (dynamic per step) |
-| `Index` | `3` | Current loop iteration number inside FOR (dynamic per iteration) |
-| `context.current.step` | `3.1` | Canonical current step identifier (dynamic) |
-| `context.current.substep` | `1` | Current substep number when in a substep (dynamic) |
-| `context.current.index` | `3` | Current loop iteration inside FOR (dynamic) |
-| `context.current.at` | `3.3.1` | Full execution position (`STEP.INDEX.SUBSTEP` inside a FOR loop, `STEP.SUBSTEP` otherwise) (dynamic) |
+| Path | Runtime meaning |
+| --- | --- |
+| `context.current.*` | Current step, substep, index, and display `at` path. |
+| `context.parent.*` | Nearest parent runbook structural context. |
+| `context.parent.vars.NAME` | Parent resolved variable. |
+| `context.ancestors.N.*` | Ancestor contexts; `0` is nearest parent. |
+| `context.vars.NAME` | Current variable namespace. |
 
-Static variables (`Date`, `DateTime`, `Year`, `Month`, `Day`, `Branch`, `WorkPath`, `RunId`, `ContextId`) can be overridden via `--input`. Dynamic variables (`Step`, `Index`, `context.current.*` and their lowercase aliases) reflect the current execution position and cannot be overridden. The variable name `context` is reserved.
+Parent context chain addressing is capped at 32 levels.
 
-**Plugin Variables:** When a runbook is resolved from a plugin source (e.g., `rundown:write-plan`), Rundown auto-injects additional variables using UPPER_SNAKE_CASE:
+<a id="built-in-variables"></a>
 
-| Variable | Description |
-|----------|-------------|
-| `CLAUDE_PLUGIN_ROOT` | Plugin installation directory |
+### 8.6 Built-In Variables
 
-Plugin variables sit in the precedence chain just below CLI flags and can be overridden via `--input`.
+PascalCase is canonical. Lowercase `step` and `index` aliases are accepted for
+dynamic current-frame values but remain reserved for user input.
 
-### Shell Environment
+| Variable | Rule |
+| --- | --- |
+| `Date`, `DateTime`, `Year`, `Month`, `Day` | Current date/time components. |
+| `Branch` | Current git branch, or empty outside git. |
+| `WorkPath` | Branch-isolated artifact directory; fallback `.rundown/work`; base for `{{ path "..." }}`. |
+| `RunId` | Fresh execution identifier for this runbook execution. |
+| `ContextId` | Shared identity across a delegation tree; scopes path helpers into `.rd-<ContextId>/`. |
+| `Step`, `Index` | Dynamic current step and iteration. |
+| `context.current.*` | Dynamic current structural context. |
+| `context.parent.*` | Parent structural context. |
+| `context.parent.vars.NAME` | Parent resolved variable. |
+| `context.ancestors.N.*` | Ancestor contexts. |
+| `context.vars.NAME` | Current variable namespace. |
 
-The built-in variables `WorkPath`, `ContextId`, and `RunId` are injected into each shell block's subprocess environment as `RD_WORK_PATH`, `RD_CONTEXT_ID`, and `RD_RUN_ID` respectively. These are injected after policy environment filtering using rundown-wins semantics (they are always present and cannot be blocked by user-supplied environment variables). The `RD_` prefix is reserved for rundown-injected environment variables; see also `RD_OUTPUTS_*` for file-backed output channels in [docs/spec/language.md §7](../spec/language.md#7-context-passing-outputs).
+Static built-ins MAY be overridden by higher-precedence sources. Dynamic
+built-ins MUST NOT be overridden. Plugin runbooks MAY receive upper-snake-case
+plugin variables such as `CLAUDE_PLUGIN_ROOT`.
 
-### Variable Name Requirements
+<a id="shell-environment"></a>
 
-Variable names must match the pattern `/^[a-zA-Z_][a-zA-Z0-9_]*$/`:
-- Must start with a letter or underscore
-- Can contain letters, digits, and underscores
-- Runtime-reserved names (`step`, `index`, `context`) are matched case-insensitively — any casing variant is reserved and cannot be overridden by user variables
+### 8.7 Shell Environment
 
-### Runtime Context Model
+Executable shell blocks receive Rundown environment variables after policy
+environment filtering.
 
-Runtime templating uses a canonical namespaced context model for nested runbooks:
-- `{{context.current.step}}`, `{{context.current.substep}}`, `{{context.current.index}}`, `{{context.current.at}}`
-- `{{context.parent.*}}` for nearest parent runbook context
-- `{{context.ancestors.0.*}}`, `{{context.ancestors.1.*}}`, ... for deeper ancestry (0 = nearest parent)
-- `{{context.vars.NAME}}` for user/config/frontmatter variables
+| Environment variable | Source variable |
+| --- | --- |
+| `RD_WORK_PATH` | `WorkPath` |
+| `RD_CONTEXT_ID` | `ContextId` |
+| `RD_RUN_ID` | `RunId` |
+| `RD_OUTPUTS_<VarName>` | Naked step/substep `OUTPUTS` entry. |
 
-Top-level aliases are retained for ergonomics:
-- `{{Step}}` / `{{step}}` always refer to the current runbook context
-- `{{Index}}` / `{{index}}` always refer to the current runbook context loop index
+Rundown-injected `RD_*` variables use Rundown-wins semantics: user-supplied
+environment variables MUST NOT block or override them.
 
-### Undefined Variables
+### 8.8 Template Persistence
 
-Undefined variables and missing dotted paths are preserved as literal placeholders (`{{variable}}`, `{{context.parent.missing}}`) rather than causing an error. A deduplicated warning is emitted to stderr for each undefined variable.
+`state.runbookSrc` stores raw runbook source, and `state.templateVars` stores the
+resolved static variable map. On resume, the runtime MUST re-apply FOR bounds
+and template placeholders from this frozen variable state so rendering remains
+deterministic.
 
-### Template Variable Persistence
+## 9. Security Integration
 
-`state.runbookSrc` stores raw runbook source, while `state.templateVars` stores the resolved variable map. On resume, FOR bounds and template placeholders are re-applied deterministically from this frozen variable state.
+The runtime delegates full policy semantics to
+[docs/reference/security.md](security.md). Runtime integration points are:
 
-Template variables are expanded before parsing and should not be confused with step identifiers:
-- `{{variable}}` - Template variable, expanded before parsing (e.g., `{{environment}}` becomes `production`)
-- Dotted paths are resolved consistently across startup substitution, runtime loop expansion, and runbook path expansion (for example `runbooks/focus-{{context.parent.index}}.runbook.md`). Runbook file paths use the same template variable expansion rules as step content.
+| Runtime action | Security requirement |
+| --- | --- |
+| Command execution | Command must pass run policy before spawning. |
+| File-backed data source load | Source path must pass containment and read-policy checks. |
+| Shell environment injection | User environment is filtered before Rundown `RD_*` injection. |
+| Sandbox execution | Supported OS sandbox applies read/write restrictions when enabled. |
 
----
+Security failures that affect execution MUST fail visibly. For data sources,
+policy denial MUST NOT produce silent zero-iteration success.
 
-## Security Policy
+<a id="runtime-identity-glossary"></a>
 
-Rundown enforces a security policy layer to control what commands runbooks can execute. See [docs/reference/security.md](security.md) for the full policy specification including default command allow/block/prompt behavior, sandbox enforcement, and the default write allowlist.
+## 10. Runtime Identity
 
-### Quick Reference
+Canonical runtime identity is `step + substep + iteration`.
 
-| Flag | Effect |
-|------|--------|
-| `--allow-run <cmds>` | Allow specific commands (comma-separated) |
-| `--allow-read <paths>` | Allow reading specific paths |
-| `--allow-write <paths>` | Allow writing to specific paths |
-| `--allow-env <vars>` | Allow specific environment variables |
-| `--allow-all` | Bypass all policy checks |
-| `--deny-all` | Block all commands not explicitly allowed |
-| `-y, --yes` | Auto-approve prompts |
-| `--non-interactive` | CI mode (auto-deny unlisted commands) |
-| `--policy <file>` | Use custom policy file |
-| `--trust-js-policy` | Trust an explicitly selected JS policy file and helper modules declared by policy config |
-| `--sandbox` | Enable OS-level filesystem sandbox |
-| `--no-sandbox` | Disable sandbox enforcement |
-| `--sandbox-strict` | Fail if sandbox is unavailable |
+| Identity component | Meaning |
+| --- | --- |
+| Step | Top-level runbook step id. |
+| Substep | Nested substep id, if active. |
+| Iteration | Current `FOR` iteration, if active. |
+| Frame | Internal `step|iteration` scope key. |
+| Entry | Monotonic re-entry counter for a frame. |
+| Completion key | `frame + entry + substep`. |
 
-Policy discovery is data-only by default: `.rundownrc`, `.rundownrc.json`, `.rundownrc.yaml`, `.rundownrc.yml`, or the `rundown` field in `package.json`. Executable `rundown.config.js/.cjs/.mjs` files are only loaded when passed via `--policy` together with `--trust-js-policy`. Helper modules declared by policy config are also executable code and are skipped unless `--trust-js-policy` is set; `--helpers` remains an explicit CLI opt-in.
+Re-entering a frame through `GOTO`, `RETRY`, or other control flow increments
+the entry counter. Completions from older entries MUST be rejected as stale.
 
-### Examples
+Claim ids are isolation-against-accident handles, not adversarial security
+capabilities. Any local process that can read workspace state or command output
+can observe and reuse them.
 
-```bash
-# Allow specific commands for this run
-rundown run deploy.runbook.md --allow-run docker,kubectl
+## 11. Conformance
 
-# Allow file operations
-rundown run backup.runbook.md --allow-read /var/log --allow-write /backup
+A conforming Rundown runtime MUST satisfy these requirements:
 
-# CI/CD: auto-approve with pre-approved commands
-rundown run test.runbook.md --yes --allow-run npm,jest
-
-# CI/CD: strict mode with no prompts
-rundown run test.runbook.md --non-interactive
-```
-
----
-
-## Runtime Identity Glossary
-
-- **Frame (internal):** Execution scope key `step|iteration` (for example `2|` or `2|3`).
-- **Entry (internal):** Monotonic re-entry counter for a frame (`1`, `2`, `3`, ...).
-- **Completion key (internal):** `frame + entry + substep`.
-- **Why both frame and entry:** Re-entering the same frame (for example via `GOTO` or `RETRY`) increments `entry`, so completions from older entries are rejected as stale.
+1. Preserve result, handler, and action as distinct runtime concepts.
+2. Execute shell code blocks only for executable info strings and derive results
+   from exit codes.
+3. Treat display-only prompts as non-executable.
+4. Track active loop state, current values, and iteration results explicitly.
+5. Enforce the 10,000-iteration cap for numeric and open-ended data-source loops.
+6. Record iteration results only for actions that specify accumulation.
+7. Preserve canonical runtime identity as `step + substep + iteration`.
+8. Reject stale frame-entry completions.
+9. Keep claimed delegated children out of `defaultStack`.
+10. Make claim-targeted commands fail closed when the claim cannot safely target
+    one live delegated child.
+11. Preserve variable source precedence exactly as specified.
+12. Reject or skip reserved variable names according to their source.
+13. Prevent user input from overriding dynamic variables.
+14. Inject Rundown `RD_*` environment variables with Rundown-wins semantics.
+15. Confine file-backed data sources to project-root-contained, policy-allowed
+    paths.
+16. Fail visibly for missing, denied, invalid, escaped, or drifted file-backed
+    data sources.
+17. Persist enough state to resume deterministically from `runbookSrc` and
+    `templateVars`.
+18. Never migrate, shim, adapt, rewrite, or resume incompatible persisted state.
