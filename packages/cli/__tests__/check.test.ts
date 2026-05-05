@@ -37,6 +37,28 @@ Do another thing.
     expect(result.stdout).toContain('2 steps');
   });
 
+  it('checks an absolute runbook path outside the current project', async () => {
+    const externalDir = fs.mkdtempSync(path.join(path.dirname(workspace.cwd), 'rd-external-'));
+    try {
+      const runbookPath = path.join(externalDir, 'external.runbook.md');
+      fs.writeFileSync(
+        runbookPath,
+        `## 1. External step
+- PASS COMPLETE
+
+Do something.
+`,
+      );
+
+      const result = await runCliInProcess(['check', runbookPath, '--text'], workspace);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('PASS:');
+    } finally {
+      fs.rmSync(externalDir, { recursive: true, force: true });
+    }
+  });
+
   it('outputs FAIL with all errors for invalid runbook', async () => {
     const runbookPath = path.join(workspace.cwd, 'invalid.runbook.md');
     fs.writeFileSync(

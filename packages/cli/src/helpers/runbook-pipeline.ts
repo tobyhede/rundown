@@ -494,8 +494,6 @@ export interface LoadAndParseSuccess {
   diagnostics: readonly ValidationDiagnostic[];
   /** Step/substep counts */
   stats: { steps: number; substeps: number };
-  /** Canonical runbook reference for events and artifact metadata */
-  runbookRef: RunbookRef;
 }
 
 /**
@@ -544,7 +542,6 @@ export async function loadAndParseRunbook(file: string, cwd: string): Promise<Lo
   }
 
   const { path: filePath, source } = resolved;
-  const runbookRef = buildRunbookRef(resolved, cwd);
 
   try {
     const rawContent = await fs.readFile(filePath, 'utf8');
@@ -574,7 +571,6 @@ export async function loadAndParseRunbook(file: string, cwd: string): Promise<Lo
       frontmatter,
       diagnostics,
       stats,
-      runbookRef,
     };
   } catch (error: unknown) {
     return {
@@ -617,7 +613,6 @@ export async function prepareRunbook(
   if (!parsed.ok) return parsed;
   const {
     filePath,
-    runbookRef,
     source,
     rawContent,
     runbook: rawRunbook,
@@ -625,6 +620,7 @@ export async function prepareRunbook(
     diagnostics,
     stats,
   } = parsed;
+  const runbookRef = buildRunbookRef({ path: filePath, source }, cwd);
 
   // Derive CLAUDE_PLUGIN_ROOT from resolved path when source is plugin
   let pluginRoot: string | undefined;
