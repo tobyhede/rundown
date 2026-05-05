@@ -1,4 +1,5 @@
 import * as fs from 'node:fs';
+import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
 import picomatch from 'picomatch';
 import type { ZodIssue } from 'zod';
@@ -118,7 +119,7 @@ export async function readArtifactManifest(
   const { workRoot, manifestPath: file } = manifestLocationForContext(options, contextId);
   let content: string;
   try {
-    content = readVerifiedUtf8FileSync(workRoot, file);
+    content = await readVerifiedUtf8File(workRoot, file);
   } catch (error) {
     if (isNodeErrorCode(error, 'ENOENT')) {
       return [];
@@ -375,16 +376,17 @@ function isExistingRegularContainedFile(workRoot: string, filePath: string): boo
   }
 }
 
-function readVerifiedUtf8FileSync(workRoot: string, filePath: string): string {
-  const fd = openVerifiedRegularFileSync(
-    workRoot,
-    filePath,
-    fs.constants.O_RDONLY | noFollowFlag(),
-  );
+async function readVerifiedUtf8File(workRoot: string, filePath: string): Promise<string> {
+  const handle = await fsp.open(filePath, fs.constants.O_RDONLY | noFollowFlag());
   try {
-    return fs.readFileSync(fd, 'utf8');
+    const stat = await handle.stat();
+    validateOpenedPathInsideRoot(workRoot, filePath, stat);
+    if (!stat.isFile()) {
+      throw new Error(ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE);
+    }
+    return await handle.readFile('utf8');
   } finally {
-    fs.closeSync(fd);
+    await handle.close().catch(() => undefined);
   }
 }
 
