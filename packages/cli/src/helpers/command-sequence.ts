@@ -455,8 +455,7 @@ function eventMatchesAssertion(event: CapturedTransition, assertion: StepAsserti
   if (assertion.command !== undefined && event.command !== assertion.command) return false;
   if (assertion.aggregated !== undefined && event.aggregated !== assertion.aggregated) return false;
   if (assertion.runbook !== undefined) {
-    const rb = event.runbook;
-    if (rb === undefined || !rb.path.endsWith(assertion.runbook)) {
+    if (!event.runbook?.path.endsWith(assertion.runbook)) {
       return false;
     }
   }

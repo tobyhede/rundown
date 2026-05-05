@@ -8,16 +8,19 @@ import { runbooksDir } from '@rundown-org/core';
 describe('resolveRunbookFile', () => {
   let testDir: string;
   let originalPluginRoot: string | undefined;
+  let originalBundledRunbooksPath: string | undefined;
 
   beforeEach(async () => {
     testDir = await fs.mkdtemp(path.join(os.tmpdir(), 'resolve-test-'));
     // Save original env to restore in afterEach
     originalPluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
+    originalBundledRunbooksPath = process.env.BUNDLED_RUNBOOKS_PATH;
   });
 
   afterEach(async () => {
     // Restore env BEFORE cleanup to prevent bleeding into other tests
     process.env.CLAUDE_PLUGIN_ROOT = originalPluginRoot;
+    process.env.BUNDLED_RUNBOOKS_PATH = originalBundledRunbooksPath;
     await fs.rm(testDir, { recursive: true, force: true });
   });
 
@@ -206,6 +209,21 @@ describe('resolveRunbookFile', () => {
       expect(result!.source).toBe('plugin');
     });
 
+    it('returns source "plugin" for absolute subdirectory path inside plugin runbooks', async () => {
+      const pluginDir = path.join(testDir, 'plugin/runbooks/planning/review');
+      const runbookPath = path.join(pluginDir, 'plugin.runbook.md');
+      await fs.mkdir(pluginDir, { recursive: true });
+      await fs.writeFile(runbookPath, '# Plugin');
+
+      process.env.CLAUDE_PLUGIN_ROOT = path.join(testDir, 'plugin');
+
+      const result = await resolveRunbookFile(testDir, runbookPath);
+
+      expect(result).not.toBeNull();
+      expect(result!.path).toBe(runbookPath);
+      expect(result!.source).toBe('plugin');
+    });
+
     it('returns source "project" for runbook relative to cwd', async () => {
       await fs.writeFile(path.join(testDir, 'relative.runbook.md'), '# Relative');
 
@@ -222,6 +240,42 @@ describe('resolveRunbookFile', () => {
       const result = await resolveRunbookFile(testDir, 'retry-success.runbook.md');
 
       expect(result).not.toBeNull();
+      expect(result!.source).toBe('bundled');
+    });
+
+    it('returns source "bundled" for absolute subdirectory path inside bundled runbooks', async () => {
+      delete process.env.CLAUDE_PLUGIN_ROOT;
+      const bundledDir = path.join(testDir, 'bundled-runbooks');
+      const bundledSubdir = path.join(bundledDir, 'delegation');
+      const runbookPath = path.join(bundledSubdir, 'delegation-child-pass.runbook.md');
+      await fs.mkdir(bundledSubdir, { recursive: true });
+      await fs.writeFile(runbookPath, '# Bundled');
+      process.env.BUNDLED_RUNBOOKS_PATH = bundledDir;
+
+      const result = await resolveRunbookFile(testDir, runbookPath);
+
+      expect(result).not.toBeNull();
+      expect(result!.path).toBe(runbookPath);
+      expect(result!.source).toBe('bundled');
+    });
+
+    it('keeps an absolute bundled path even when a project runbook has the same basename', async () => {
+      delete process.env.CLAUDE_PLUGIN_ROOT;
+      const projectDir = runbooksDir(testDir);
+      const bundledDir = path.join(testDir, 'bundled-runbooks');
+      const bundledSubdir = path.join(bundledDir, 'delegation');
+      const filename = 'delegation-child-pass.runbook.md';
+      const bundledPath = path.join(bundledSubdir, filename);
+      await fs.mkdir(projectDir, { recursive: true });
+      await fs.mkdir(bundledSubdir, { recursive: true });
+      await fs.writeFile(path.join(projectDir, filename), '# Project Override');
+      await fs.writeFile(bundledPath, '# Bundled');
+      process.env.BUNDLED_RUNBOOKS_PATH = bundledDir;
+
+      const result = await resolveRunbookFile(testDir, bundledPath);
+
+      expect(result).not.toBeNull();
+      expect(result!.path).toBe(bundledPath);
       expect(result!.source).toBe('bundled');
     });
 

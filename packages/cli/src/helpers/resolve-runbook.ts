@@ -61,6 +61,39 @@ function namespaceToSource(namespace: string): 'project' | 'plugin' | 'bundled' 
   return null;
 }
 
+function pathWithin(root: string, target: string): boolean {
+  const relativePath = path.relative(path.resolve(root), path.resolve(target));
+  return (
+    relativePath === '' ||
+    (!relativePath.startsWith(`..${path.sep}`) &&
+      relativePath !== '..' &&
+      !path.isAbsolute(relativePath))
+  );
+}
+
+async function resolveAbsolutePath(cwd: string, filename: string): Promise<ResolvedRunbook | null> {
+  try {
+    await fs.access(filename);
+  } catch {
+    return null;
+  }
+
+  if (pathWithin(runbooksDir(cwd), filename)) {
+    return { path: filename, source: 'project' };
+  }
+
+  const pluginRoot = getPluginRoot();
+  if (pluginRoot && pathWithin(path.join(pluginRoot, 'runbooks'), filename)) {
+    return { path: filename, source: 'plugin' };
+  }
+
+  if (pathWithin(getBundledRunbooksPath(), filename)) {
+    return { path: filename, source: 'bundled' };
+  }
+
+  return { path: filename, source: 'project' };
+}
+
 /**
  * Resolve runbook file by path (existing logic).
  * Search order:
@@ -74,6 +107,10 @@ function namespaceToSource(namespace: string): 'project' | 'plugin' | 'bundled' 
  * @returns Resolved runbook with path and source, or null if not found
  */
 async function resolveByPath(cwd: string, filename: string): Promise<ResolvedRunbook | null> {
+  if (path.isAbsolute(filename)) {
+    return resolveAbsolutePath(cwd, filename);
+  }
+
   // 1. Check project-local .rundown/runbooks/
   const localPath = path.join(runbooksDir(cwd), filename);
   try {
