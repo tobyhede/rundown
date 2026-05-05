@@ -6,9 +6,8 @@ import { RunbookStateSchema } from '../../src/schemas.js';
 import { RunbookStateManager, StaleRunbookStateError } from '../../src/runbook/index.js';
 
 const BASE_SCHEMA_STATE = {
-  id: 'r1',
-  runbook: 'x.md',
-  runbookPath: 'x.md',
+  id: 'wf_0123456789abcdef0123456789abcdef',
+  runbook: { source: 'project', path: 'x.runbook.md' },
   step: '1',
   stepName: 'x',
   retryCount: 0,
@@ -89,9 +88,8 @@ describe('RunbookStateManager.load() — stale state enforcement', () => {
   let manager: RunbookStateManager;
 
   const V1_STATE = {
-    id: 'wf-stale-test',
-    runbook: 'x.md',
-    runbookPath: 'x.md',
+    id: 'wf_11111111111111111111111111111111',
+    runbook: { source: 'project', path: 'x.runbook.md' },
     step: '1',
     stepName: 'x',
     retryCount: 0,
@@ -135,7 +133,7 @@ describe('RunbookStateManager.load() — stale state enforcement', () => {
   });
 
   it('returns null for missing state file', async () => {
-    const result = await manager.load('wf-does-not-exist');
+    const result = await manager.load('wf_00000000000000000000000000000009');
     expect(result).toBeNull();
   });
 

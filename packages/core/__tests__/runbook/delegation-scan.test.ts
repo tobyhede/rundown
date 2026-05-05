@@ -13,6 +13,13 @@ import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type { RunbookState, StepDelegation, DelegationLinkage } from '../../src/runbook/types.js';
 import { brandStoredOutputsForTest, brandEffectiveVarsForTest } from '../helpers/effective-vars.js';
 
+const PARENT_RUN_ID = 'wf_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const OTHER_RUN_ID = 'wf_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+const CHILD_RUN_ID = 'wf_cccccccccccccccccccccccccccccccc';
+const CHILD_RUN_ID_1 = 'wf_dddddddddddddddddddddddddddddddd';
+const CHILD_RUN_ID_2 = 'wf_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+const TARGET_RUN_ID = 'wf_ffffffffffffffffffffffffffffffff';
+
 describe('DelegationScanService', () => {
   let tmpDir: string;
   let manager: RunbookStateManager;
@@ -40,8 +47,7 @@ describe('DelegationScanService', () => {
   function makeState(id: string, overrides: Partial<RunbookState> = {}): RunbookState {
     return {
       id,
-      runbook: 'parent.md',
-      runbookPath: 'parent.md',
+      runbook: { source: 'project', path: 'parent.runbook.md' },
       step: '1',
       stepName: 'Main step',
       retryCount: 0,
@@ -71,7 +77,7 @@ describe('DelegationScanService', () => {
       const token = generateDelegationToken();
       const delegation = makeDelegation(token);
 
-      const state = makeState('run-parent', {
+      const state = makeState(PARENT_RUN_ID, {
         substepStates: [
           { id: '1', frameKey: buildFrameKey('1'), status: 'pending', delegation },
           { id: '2', frameKey: buildFrameKey('1'), status: 'pending' },
@@ -82,7 +88,7 @@ describe('DelegationScanService', () => {
       const result = await scanner.findByToken(token);
 
       expect(result).not.toBeNull();
-      expect(result!.parentState.id).toBe('run-parent');
+      expect(result!.parentState.id).toBe(PARENT_RUN_ID);
       expect(result!.substepId).toBe('1');
       expect(result!.delegation.tokenHash).toBe(delegation.tokenHash);
     });
@@ -92,7 +98,7 @@ describe('DelegationScanService', () => {
 
       // Write a state with a different token
       const otherToken = generateDelegationToken();
-      const state = makeState('run-other', {
+      const state = makeState(OTHER_RUN_ID, {
         substepStates: [
           {
             id: '1',
@@ -121,7 +127,7 @@ describe('DelegationScanService', () => {
         contextSnapshot: { vars: brandEffectiveVarsForTest({}), ancestors: [], step: '1' },
       };
 
-      const state = makeState('run-parent', {
+      const state = makeState(PARENT_RUN_ID, {
         step: '3',
         substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'pending', delegation }],
       });
@@ -140,7 +146,7 @@ describe('DelegationScanService', () => {
         contextSnapshot: { vars: brandEffectiveVarsForTest({}), ancestors: [] },
       };
 
-      const state = makeState('run-parent', {
+      const state = makeState(PARENT_RUN_ID, {
         step: '3',
         substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'pending', delegation }],
       });
@@ -160,19 +166,19 @@ describe('DelegationScanService', () => {
 
       const linkage: DelegationLinkage = {
         kind: 'delegation' as const,
-        parentRunId: 'parent-run',
+        parentRunId: PARENT_RUN_ID,
         parentStepId: '1',
         tokenHash,
       };
 
-      const childState = makeState('child-run', {
+      const childState = makeState(CHILD_RUN_ID, {
         parentLinkage: linkage,
       });
       await writeState(childState);
 
       const result = await scanner.findOrphanedChild(tokenHash);
       expect(result).not.toBeNull();
-      expect(result!.id).toBe('child-run');
+      expect(result!.id).toBe(CHILD_RUN_ID);
     });
 
     it('returns null when no orphaned child exists', async () => {
@@ -180,7 +186,7 @@ describe('DelegationScanService', () => {
       const tokenHash = hashDelegationToken(token);
 
       // Write an unrelated state
-      const state = makeState('unrelated-run');
+      const state = makeState(OTHER_RUN_ID);
       await writeState(state);
 
       const result = await scanner.findOrphanedChild(tokenHash);
@@ -193,20 +199,20 @@ describe('DelegationScanService', () => {
 
       const linkage1: DelegationLinkage = {
         kind: 'delegation' as const,
-        parentRunId: 'parent-run',
+        parentRunId: PARENT_RUN_ID,
         parentStepId: '1',
         tokenHash,
       };
 
       const linkage2: DelegationLinkage = {
         kind: 'delegation' as const,
-        parentRunId: 'parent-run',
+        parentRunId: PARENT_RUN_ID,
         parentStepId: '2',
         tokenHash,
       };
 
-      const child1 = makeState('child-1', { parentLinkage: linkage1 });
-      const child2 = makeState('child-2', { parentLinkage: linkage2 });
+      const child1 = makeState(CHILD_RUN_ID_1, { parentLinkage: linkage1 });
+      const child2 = makeState(CHILD_RUN_ID_2, { parentLinkage: linkage2 });
 
       await writeState(child1);
       await writeState(child2);
@@ -214,14 +220,14 @@ describe('DelegationScanService', () => {
       const result = await scanner.findOrphanedChild(tokenHash);
       expect(result).not.toBeNull();
       // Should return one of them (first match)
-      expect(['child-1', 'child-2']).toContain(result!.id);
+      expect([CHILD_RUN_ID_1, CHILD_RUN_ID_2]).toContain(result!.id);
     });
   });
 
   describe('edge cases', () => {
     it('findByToken handles state with no substepStates', async () => {
       const token = generateDelegationToken();
-      const state = makeState('run-no-substeps', {
+      const state = makeState(PARENT_RUN_ID, {
         substepStates: undefined,
       });
       await writeState(state);
@@ -232,7 +238,7 @@ describe('DelegationScanService', () => {
 
     it('findByToken handles state with empty substepStates array', async () => {
       const token = generateDelegationToken();
-      const state = makeState('run-empty-substeps', {
+      const state = makeState(PARENT_RUN_ID, {
         substepStates: [],
       });
       await writeState(state);
@@ -243,7 +249,7 @@ describe('DelegationScanService', () => {
 
     it('findByToken handles substep without delegation field', async () => {
       const token = generateDelegationToken();
-      const state = makeState('run-no-delegation', {
+      const state = makeState(PARENT_RUN_ID, {
         substepStates: [
           { id: '1', frameKey: buildFrameKey('1'), status: 'pending' },
           { id: '2', frameKey: buildFrameKey('1'), status: 'pending' },
@@ -259,7 +265,7 @@ describe('DelegationScanService', () => {
       const token1 = generateDelegationToken();
       const token2 = generateDelegationToken();
 
-      const state1 = makeState('run-1', {
+      const state1 = makeState(PARENT_RUN_ID, {
         substepStates: [
           {
             id: '1',
@@ -270,7 +276,7 @@ describe('DelegationScanService', () => {
         ],
       });
 
-      const state2 = makeState('run-2', {
+      const state2 = makeState(OTHER_RUN_ID, {
         substepStates: [
           {
             id: '1',
@@ -286,11 +292,11 @@ describe('DelegationScanService', () => {
 
       const result1 = await scanner.findByToken(token1);
       expect(result1).not.toBeNull();
-      expect(result1!.parentState.id).toBe('run-1');
+      expect(result1!.parentState.id).toBe(PARENT_RUN_ID);
 
       const result2 = await scanner.findByToken(token2);
       expect(result2).not.toBeNull();
-      expect(result2!.parentState.id).toBe('run-2');
+      expect(result2!.parentState.id).toBe(OTHER_RUN_ID);
     });
 
     it('findByToken scans large number of states efficiently', async () => {
@@ -299,7 +305,7 @@ describe('DelegationScanService', () => {
       // Write 50 states without the target token
       for (let i = 0; i < 50; i++) {
         const otherToken = generateDelegationToken();
-        const state = makeState(`run-${String(i)}`, {
+        const state = makeState(`wf_${String(i).padStart(32, '0')}`, {
           substepStates: [
             {
               id: '1',
@@ -313,7 +319,7 @@ describe('DelegationScanService', () => {
       }
 
       // Write one state with the target token
-      const targetState = makeState('run-target', {
+      const targetState = makeState(TARGET_RUN_ID, {
         substepStates: [
           {
             id: '1',
@@ -327,12 +333,12 @@ describe('DelegationScanService', () => {
 
       const result = await scanner.findByToken(targetToken);
       expect(result).not.toBeNull();
-      expect(result!.parentState.id).toBe('run-target');
+      expect(result!.parentState.id).toBe(TARGET_RUN_ID);
     });
 
     it('findOrphanedChild handles state with no delegation field', async () => {
       const tokenHash = hashDelegationToken(generateDelegationToken());
-      const state = makeState('run-no-delegation-linkage');
+      const state = makeState(PARENT_RUN_ID);
       await writeState(state);
 
       const result = await scanner.findOrphanedChild(tokenHash);
@@ -346,7 +352,7 @@ describe('DelegationScanService', () => {
         contextSnapshot: { vars: brandEffectiveVarsForTest({}), ancestors: [], step: '3' },
       };
 
-      const state = makeState('run-context-step', {
+      const state = makeState(PARENT_RUN_ID, {
         step: '5',
         substepStates: [
           { id: 'a', frameKey: buildFrameKey('5'), status: 'pending' },
@@ -378,7 +384,7 @@ describe('DelegationScanService', () => {
       // Add delegation to the 50th substep
       substeps[49] = { ...substeps[49], delegation: makeDelegation(token) };
 
-      const state = makeState('run-large-substeps', {
+      const state = makeState(PARENT_RUN_ID, {
         substepStates: substeps,
       });
       await writeState(state);

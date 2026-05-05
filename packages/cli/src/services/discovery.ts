@@ -3,7 +3,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { extractFrontmatter, nameFromFilename } from '@rundown-org/parser';
-import { runbooksDir } from '@rundown-org/core';
+import { runbooksDir, type RunbookSource } from '@rundown-org/core';
 import { getBundledRunbooksPath } from '../helpers/bundled-runbooks.js';
 import { getPluginRoot } from '../helpers/plugin-root.js';
 
@@ -30,7 +30,9 @@ export interface DiscoveredRunbook {
   /** Absolute path to the runbook file */
   path: string;
   /** Source directory where the runbook was found */
-  source: 'project' | 'plugin' | 'bundled';
+  source: RunbookSource;
+  /** Source root used to derive persisted runbook identity */
+  sourceRoot: string;
   /** Optional description from frontmatter */
   description?: string;
   /** Optional tags from frontmatter for filtering */
@@ -42,7 +44,8 @@ export interface DiscoveredRunbook {
  */
 interface SearchPath {
   path: string;
-  source: 'project' | 'plugin' | 'bundled';
+  source: RunbookSource;
+  sourceRoot: string;
 }
 
 /**
@@ -59,6 +62,7 @@ export function getSearchPaths(cwd: string): SearchPath[] {
   paths.push({
     path: projectRunbooksDir,
     source: 'project',
+    sourceRoot: cwd,
   });
 
   // Plugin runbooks directory (env var or sibling package discovery)
@@ -68,6 +72,7 @@ export function getSearchPaths(cwd: string): SearchPath[] {
     paths.push({
       path: pluginRunbooksDir,
       source: 'plugin',
+      sourceRoot: pluginRunbooksDir,
     });
   }
 
@@ -76,6 +81,7 @@ export function getSearchPaths(cwd: string): SearchPath[] {
   paths.push({
     path: bundledRunbooksDir,
     source: 'bundled',
+    sourceRoot: bundledRunbooksDir,
   });
 
   return paths;
@@ -91,7 +97,8 @@ export function getSearchPaths(cwd: string): SearchPath[] {
  */
 export async function scanDirectory(
   dirPath: string,
-  source: 'project' | 'plugin' | 'bundled',
+  source: RunbookSource,
+  sourceRoot: string,
 ): Promise<DiscoveredRunbook[]> {
   const runbooks: DiscoveredRunbook[] = [];
 
@@ -118,6 +125,7 @@ export async function scanDirectory(
               filenameStem,
               path: fullPath,
               source,
+              sourceRoot,
               description: frontmatter?.description,
               tags: frontmatter?.tags,
             });
@@ -144,8 +152,8 @@ export async function discoverRunbooks(cwd: string): Promise<DiscoveredRunbook[]
   const allRunbooks: DiscoveredRunbook[] = [];
   const seen = new Set<string>();
 
-  for (const { path: dirPath, source } of searchPaths) {
-    const runbooks = await scanDirectory(dirPath, source);
+  for (const { path: dirPath, source, sourceRoot } of searchPaths) {
+    const runbooks = await scanDirectory(dirPath, source, sourceRoot);
 
     for (const runbook of runbooks) {
       // Skip if already seen (project takes precedence over plugin)
@@ -173,8 +181,8 @@ export async function findRunbookByName(
 ): Promise<DiscoveredRunbook | null> {
   const searchPaths = getSearchPaths(cwd);
 
-  for (const { path: dirPath, source } of searchPaths) {
-    const runbooks = await scanDirectory(dirPath, source);
+  for (const { path: dirPath, source, sourceRoot } of searchPaths) {
+    const runbooks = await scanDirectory(dirPath, source, sourceRoot);
 
     const lookupSlug = toSlug(name);
     for (const runbook of runbooks) {
@@ -198,15 +206,15 @@ export async function findRunbookByName(
 export async function findRunbookByNameInSource(
   cwd: string,
   name: string,
-  targetSource: 'project' | 'plugin' | 'bundled',
+  targetSource: RunbookSource,
 ): Promise<DiscoveredRunbook | null> {
   const searchPaths = getSearchPaths(cwd);
 
-  for (const { path: dirPath, source } of searchPaths) {
+  for (const { path: dirPath, source, sourceRoot } of searchPaths) {
     // Only search in the specified source
     if (source !== targetSource) continue;
 
-    const runbooks = await scanDirectory(dirPath, source);
+    const runbooks = await scanDirectory(dirPath, source, sourceRoot);
 
     const lookupSlug = toSlug(name);
     for (const runbook of runbooks) {

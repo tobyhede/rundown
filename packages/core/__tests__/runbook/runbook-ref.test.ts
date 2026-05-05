@@ -11,6 +11,15 @@ describe('RunbookRefSchema', () => {
     expect(RunbookRefSchema.parse(ref)).toEqual(ref);
   });
 
+  it('accepts project refs under .rundown/runbooks', () => {
+    const ref = {
+      source: 'project',
+      path: '.rundown/runbooks/planning/review.runbook.md',
+    };
+
+    expect(RunbookRefSchema.parse(ref)).toEqual(ref);
+  });
+
   it.each([
     { source: 'external', path: 'planning/review.runbook.md' },
     { source: 'plugin', path: '' },
@@ -19,7 +28,6 @@ describe('RunbookRefSchema', () => {
     { source: 'plugin', path: 'planning//review.runbook.md' },
     { source: 'plugin', path: 'planning/review plan.runbook.md' },
     { source: 'plugin', path: 'planning/review.md' },
-    { source: 'project', path: '.rundown/runbooks/planning/review.runbook.md' },
   ])('rejects invalid runbook ref %#', (ref) => {
     expect(() => RunbookRefSchema.parse(ref)).toThrow(RUNBOOK_REF_ERROR_TEXT.INVALID_RUNBOOK_REF);
   });

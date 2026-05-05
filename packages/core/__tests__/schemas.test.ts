@@ -16,9 +16,8 @@ import { isJsonArrayStream } from '../src/runbook/types.js';
  * Note: step is now a string ("1", "ErrorHandler", etc.)
  */
 const createValidState = (overrides: Record<string, unknown> = {}) => ({
-  id: 'test-id',
-  runbook: 'test.md',
-  runbookPath: 'test.md',
+  id: 'wf_0123456789abcdef0123456789abcdef',
+  runbook: { source: 'project', path: 'test.runbook.md' },
   step: '1',
   stepName: 'Test Step',
   retryCount: 0,
@@ -112,6 +111,34 @@ describe('RunbookStateSchema - step name validation', () => {
 
   it('rejects non-string step', () => {
     const result = RunbookStateSchema.safeParse(createValidState({ step: 123 }));
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts structured canonical runbook refs and terminalAt', () => {
+    const result = RunbookStateSchema.safeParse(
+      createValidState({ terminalAt: '2025-01-01T00:01:00.000Z', lifecycle: 'completed' }),
+    );
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.runbook).toEqual({ source: 'project', path: 'test.runbook.md' });
+      expect(result.data.terminalAt).toBe('2025-01-01T00:01:00.000Z');
+    }
+  });
+
+  it('rejects legacy string runbook identity', () => {
+    const result = RunbookStateSchema.safeParse(createValidState({ runbook: 'test.runbook.md' }));
+
+    expect(result.success).toBe(false);
+  });
+
+  it.each([
+    'wf_short',
+    'wf_ABCDEF0123456789ABCDEF0123456789',
+    'plain_id',
+  ])('rejects invalid persisted run id %s', (id) => {
+    const result = RunbookStateSchema.safeParse(createValidState({ id }));
+
     expect(result.success).toBe(false);
   });
 });
@@ -352,27 +379,6 @@ describe('RunbookStateSchema frontmatterOutputs', () => {
 
   it('rejects frontmatterOutputs with non-string name field', () => {
     const state = createValidState({ frontmatterOutputs: [{ name: 42 }] });
-
-    expect(() => RunbookStateSchema.parse(state)).toThrow();
-  });
-});
-
-describe('RunbookStateSchema runbookRef', () => {
-  it('accepts a canonical optional runbookRef', () => {
-    const state = createValidState({
-      runbookRef: { source: 'plugin', path: 'planning/write-plan.runbook.md' },
-    });
-
-    expect(RunbookStateSchema.parse(state).runbookRef).toEqual({
-      source: 'plugin',
-      path: 'planning/write-plan.runbook.md',
-    });
-  });
-
-  it('rejects an invalid optional runbookRef', () => {
-    const state = createValidState({
-      runbookRef: { source: 'plugin', path: 'planning/write-plan.md' },
-    });
 
     expect(() => RunbookStateSchema.parse(state)).toThrow();
   });
@@ -777,7 +783,7 @@ describe('makeRunbookStateSchema — SEC1 nested snapshot var protection', () =>
               vars: {},
               ancestors: [
                 {
-                  runId: 'run-1',
+                  runId: 'wf_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
                   runbook: 'parent.md',
                   step: '1',
                   substep: null,

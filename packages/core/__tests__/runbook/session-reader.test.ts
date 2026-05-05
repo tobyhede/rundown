@@ -34,13 +34,16 @@ describe('readActiveRunScope', () => {
   });
 
   it('returns active WorkPath and ContextId from effective vars', async () => {
-    const state = await manager.create('test.md', mockRunbook, {
-      runbookPath: 'test.md',
-      templateVars: {
-        WorkPath: '.rundown/work',
-        ContextId: 'ctx-abc',
+    const state = await manager.create(
+      { source: 'project' as const, path: 'test.runbook.md' },
+      mockRunbook,
+      {
+        templateVars: {
+          WorkPath: '.rundown/work',
+          ContextId: 'ctx-abc',
+        },
       },
-    });
+    );
     await sessionService.pushRunbook(state.id);
 
     await expect(readActiveRunScope(testDir)).resolves.toEqual({
@@ -50,13 +53,16 @@ describe('readActiveRunScope', () => {
   });
 
   it('uses stored outputs over template vars', async () => {
-    const state = await manager.create('test.md', mockRunbook, {
-      runbookPath: 'test.md',
-      templateVars: {
-        WorkPath: '.rundown/work',
-        ContextId: 'ctx-template',
+    const state = await manager.create(
+      { source: 'project' as const, path: 'test.runbook.md' },
+      mockRunbook,
+      {
+        templateVars: {
+          WorkPath: '.rundown/work',
+          ContextId: 'ctx-template',
+        },
       },
-    });
+    );
     await manager.update(state.id, {
       variables: {
         WorkPath: '.rundown/work/output',

@@ -7,8 +7,8 @@
  * @module helpers/runbook-pipeline
  */
 
-import * as fsSync from 'node:fs';
 import * as fs from 'node:fs/promises';
+import * as fsSync from 'node:fs';
 import * as path from 'node:path';
 import {
   type RunbookStateManager,
@@ -22,12 +22,12 @@ import {
   type ExecutionEventEmitter,
   type ResolvedRunbook,
   type RunbookRef,
+  type RunbookSource,
   RunbookRefSchema,
   type DelegationLinkage,
   type ParentLinkage,
   type ClaimId,
   RUNS_DIR,
-  runbooksDir,
   DelegationScanService,
   DelegationLock,
   DelegationLockTimeoutError,
@@ -58,7 +58,6 @@ import type { ResolvedRunbook as ResolvedRunbookFile } from './resolve-runbook.j
 import { runExecutionLoop } from '../services/execution.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
-import { getBundledRunbooksPath } from './bundled-runbooks.js';
 import { FileSourcePolicyError, resolveVariables } from '../services/variable-discovery.js';
 import {
   substituteRunbookVariables,
@@ -105,6 +104,10 @@ export interface RunPipelineContext {
 export interface PreparedRunbook {
   /** Absolute path to the resolved runbook file */
   filePath: string;
+  /** Source where the runbook was discovered from */
+  source: RunbookSource;
+  /** Source root used to derive persisted runbook identity */
+  sourceRoot: string;
   /** Canonical runbook reference for events and artifact metadata */
   runbookRef: RunbookRef;
   /** Raw markdown content of the runbook file */
@@ -256,53 +259,11 @@ export function validateForVariables(
  * @returns Validated canonical runbook reference
  * @throws {Error} If the resolved file cannot be represented canonically
  */
-export function buildRunbookRef(resolved: ResolvedRunbookFile, cwd: string): RunbookRef {
-  const rootRelativePath = sourceRelativeRunbookPath(resolved, cwd);
-  return RunbookRefSchema.parse({
-    source: resolved.source,
-    path: toCanonicalRunbookRefPath(toPosixPath(rootRelativePath)),
-  });
+export function buildRunbookRef(resolved: ResolvedRunbookFile): RunbookRef {
+  return derivePersistedRunbookRef(resolved.path, resolved.source, resolved.sourceRoot);
 }
 
-function sourceRelativeRunbookPath(resolved: ResolvedRunbookFile, cwd: string): string {
-  switch (resolved.source) {
-    case 'project': {
-      const projectRunbooksRelative = pathRelativeWithin(runbooksDir(cwd), resolved.path);
-      return projectRunbooksRelative ?? pathRelativeRequired(cwd, resolved.path);
-    }
-    case 'plugin': {
-      const pluginRunbooksRoot = findRunbooksAncestor(resolved.path);
-      if (!pluginRunbooksRoot) {
-        throw new Error(`Plugin runbook is not beneath a runbooks directory: ${resolved.path}`);
-      }
-      return pathRelativeRequired(pluginRunbooksRoot, resolved.path);
-    }
-    case 'bundled':
-      return pathRelativeRequired(getBundledRunbooksPath(), resolved.path);
-    default: {
-      const _exhaustive: never = resolved.source;
-      throw new Error(`Unhandled runbook source: ${String(_exhaustive)}`);
-    }
-  }
-}
-
-function pathRelativeRequired(root: string, target: string): string {
-  const relativePath = pathRelativeWithin(root, target);
-  if (relativePath === null) {
-    throw new Error(`Resolved runbook path escapes source root: ${target}`);
-  }
-  return relativePath;
-}
-
-function pathRelativeWithin(root: string, target: string): string | null {
-  const relativePath = path.relative(resolveComparablePath(root), resolveComparablePath(target));
-  if (relativePath === '' || escapesRoot(relativePath)) {
-    return null;
-  }
-  return relativePath;
-}
-
-function resolveComparablePath(value: string): string {
+function realpathIfAvailable(value: string): string {
   try {
     return fsSync.realpathSync.native(value);
   } catch {
@@ -310,31 +271,30 @@ function resolveComparablePath(value: string): string {
   }
 }
 
-function escapesRoot(relativePath: string): boolean {
-  return (
-    relativePath === '..' ||
-    relativePath.startsWith(`..${path.sep}`) ||
-    path.isAbsolute(relativePath)
-  );
-}
-
-function findRunbooksAncestor(filePath: string): string | null {
-  let current = path.dirname(path.resolve(filePath));
-  let outermost: string | null = null;
-  for (;;) {
-    if (path.basename(current) === 'runbooks') {
-      outermost = current;
-    }
-    const parent = path.dirname(current);
-    if (parent === current) {
-      return outermost;
-    }
-    current = parent;
+function toPosixRelative(sourceRoot: string, filePath: string): string {
+  const root = realpathIfAvailable(sourceRoot);
+  const resolvedFile = realpathIfAvailable(filePath);
+  const relative = path.relative(root, resolvedFile).split(path.sep).join('/');
+  if (
+    relative.length === 0 ||
+    relative === '..' ||
+    relative.startsWith('../') ||
+    path.isAbsolute(relative)
+  ) {
+    throw new Error(`Resolved runbook path is outside ${sourceRoot}: ${filePath}`);
   }
+  return relative;
 }
 
-function toPosixPath(value: string): string {
-  return value.split(path.sep).join('/');
+function derivePersistedRunbookRef(
+  filePath: string,
+  source: RunbookSource,
+  sourceRoot: string,
+): RunbookRef {
+  return RunbookRefSchema.parse({
+    source,
+    path: toCanonicalRunbookRefPath(toPosixRelative(sourceRoot, filePath)),
+  });
 }
 
 function toCanonicalRunbookRefPath(value: string): string {
@@ -488,7 +448,11 @@ export interface LoadAndParseSuccess {
   /** Absolute path to the resolved runbook file */
   filePath: string;
   /** Source where the runbook was discovered from */
-  source: 'project' | 'plugin' | 'bundled';
+  source: RunbookSource;
+  /** Source root used to derive persisted runbook identity */
+  sourceRoot: string;
+  /** Canonical runbook reference for events and artifact metadata */
+  runbookRef: RunbookRef;
   /** Raw markdown content */
   rawContent: string;
   /** Parsed runbook AST (before variable substitution) */
@@ -509,7 +473,7 @@ export interface LoadAndParseSuccess {
 export interface LoadAndParseFailure {
   ok: false;
   error: string;
-  code: 'RUNBOOK_NOT_FOUND' | 'PARSE_ERROR';
+  code: 'RUNBOOK_NOT_FOUND' | 'PARSE_ERROR' | 'RUNBOOK_REF_RESOLUTION_ERROR';
   details: { runbook: string };
 }
 
@@ -546,7 +510,18 @@ export async function loadAndParseRunbook(file: string, cwd: string): Promise<Lo
     };
   }
 
-  const { path: filePath, source } = resolved;
+  const { path: filePath, source, sourceRoot } = resolved;
+  let runbookRef: RunbookRef;
+  try {
+    runbookRef = buildRunbookRef(resolved);
+  } catch (error) {
+    return {
+      ok: false,
+      error: getErrorMessage(error),
+      code: 'RUNBOOK_REF_RESOLUTION_ERROR',
+      details: { runbook: file },
+    };
+  }
 
   try {
     const rawContent = await fs.readFile(filePath, 'utf8');
@@ -571,6 +546,8 @@ export async function loadAndParseRunbook(file: string, cwd: string): Promise<Lo
       ok: true,
       filePath,
       source,
+      sourceRoot,
+      runbookRef,
       rawContent,
       runbook,
       frontmatter,
@@ -619,6 +596,8 @@ export async function prepareRunbook(
   const {
     filePath,
     source,
+    sourceRoot,
+    runbookRef,
     rawContent,
     runbook: rawRunbook,
     frontmatter,
@@ -626,28 +605,7 @@ export async function prepareRunbook(
     stats,
   } = parsed;
 
-  // Derive CLAUDE_PLUGIN_ROOT from resolved path when source is plugin
-  let runbookRef: RunbookRef;
-  let pluginRoot: string | undefined;
-  try {
-    runbookRef = buildRunbookRef({ path: filePath, source }, cwd);
-    if (source === 'plugin') {
-      const runbooksSep = `${path.sep}runbooks${path.sep}`;
-      const runbooksIdx = filePath.indexOf(runbooksSep);
-      if (runbooksIdx !== -1) {
-        pluginRoot = filePath.slice(0, runbooksIdx + 1); // include trailing separator
-      }
-    }
-  } catch (error) {
-    return {
-      ok: false,
-      error: getErrorMessage(error),
-      code: 'RUNBOOK_REF_RESOLUTION_ERROR',
-      details: { runbook: file },
-      stats,
-      diagnostics,
-    };
-  }
+  const pluginRoot = source === 'plugin' ? path.dirname(sourceRoot) : undefined;
 
   // Inherited user vars pass through untouched here. Context OUTPUTS are
   // inherited after variable resolution (stage 3.5 below), once the child's
@@ -818,6 +776,8 @@ export async function prepareRunbook(
     ok: true,
     prepared: {
       filePath,
+      source,
+      sourceRoot,
       runbookRef,
       rawContent,
       runbook,
@@ -859,9 +819,7 @@ async function launchRunbook(
   },
 ): Promise<RunbookStartResult> {
   const { output, manager, actorService, sessionService, lifecycleService, cwd } = ctx;
-  const { filePath, rawContent, runbook, mergedVariables } = prepared;
-
-  const runbookPath = path.relative(cwd, filePath);
+  const { rawContent, runbook, mergedVariables, runbookRef } = prepared;
 
   // Init phase: state creation through start-event emission. Failures here
   // produce a structured launch failure so callers (notably claimAndLaunch)
@@ -871,9 +829,7 @@ async function launchRunbook(
   let runbookSteps: ResolvedStep[];
   let emitter: ExecutionEventEmitter;
   try {
-    const state = await manager.create(options.runbookName, runbook, {
-      runbookPath,
-      runbookRef: prepared.runbookRef,
+    const state = await manager.create(runbookRef, runbook, {
       prompted: options.prompted,
       parentLinkage: options.parentLinkage,
       runbookSrc: rawContent,
@@ -919,7 +875,7 @@ async function launchRunbook(
     await manager.update(state.id, { lastAction: { type: 'START' } });
 
     // Create emitter bridged to unified output
-    emitter = createBridgedEmitter(state, output, prepared.runbookRef);
+    emitter = createBridgedEmitter(state, output);
 
     // Emit RUNBOOK_STARTED
     emitRunbookStarted(emitter, state, options.prompted);

@@ -300,7 +300,10 @@ describe('prune command', () => {
       const output = JSON.parse(result.stdout) as Record<string, unknown>[];
       expect(Array.isArray(output)).toBe(true);
       expect(output.length).toBe(1);
-      expect(output[0].runbook).toBe('runbooks/simple.runbook.md');
+      expect(output[0].runbook).toEqual({
+        source: 'project',
+        path: 'runbooks/simple.runbook.md',
+      });
       expect(output[0].status).toBe('complete');
     });
 
@@ -334,7 +337,10 @@ describe('prune command', () => {
       expect(result.exitCode).toBe(0);
       const output = JSON.parse(result.stdout) as Record<string, unknown>[];
       expect(output.length).toBe(1);
-      expect(output[0].runbook).toBe('runbooks/simple.runbook.md');
+      expect(output[0].runbook).toEqual({
+        source: 'project',
+        path: 'runbooks/simple.runbook.md',
+      });
 
       // State should still exist (dry-run)
       const statesAfter = await listRunbookStates(workspace);

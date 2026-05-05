@@ -337,6 +337,14 @@ describe('runExecutionLoop', () => {
   let mockManager: MockManagerLike;
   let mockEmitter: MockEmitterLike;
   const runbookId = 'test-run-123';
+  const runbookRef = { source: 'project' as const, path: 'test.runbook.md' };
+  const runningState = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
+    id: runbookId,
+    step: '1',
+    status: 'running',
+    runbook: runbookRef,
+    ...overrides,
+  });
   const steps: LooseStep[] = [
     {
       kind: 'command',
@@ -369,6 +377,9 @@ describe('runExecutionLoop', () => {
     }));
 
     mockedPolicyContext.isPolicyEnforced.mockReturnValue(false);
+    mockedPolicyContext.getPolicyEvaluator.mockReturnValue({
+      setRunbookPath: jest.fn(),
+    } as unknown as ReturnType<typeof policyContext.getPolicyEvaluator>);
     mockedPolicyContext.getSandboxOptions.mockReturnValue({ sandbox: true, sandboxStrict: false });
     (core.executeCommand as any).mockReset();
     (core.executeCommandWithPolicy as any).mockReset();
@@ -434,11 +445,7 @@ describe('runExecutionLoop', () => {
   });
 
   it('returns waiting if prompted mode is on', async () => {
-    mockManager.load.mockResolvedValue({
-      id: runbookId,
-      step: '1',
-      status: 'running',
-    });
+    mockManager.load.mockResolvedValue(runningState());
 
     const result = await runExecutionLoop(
       asManager(mockManager),
@@ -468,11 +475,7 @@ describe('runExecutionLoop', () => {
         transitions: { pass: { next: 'COMPLETE' } },
       },
     ];
-    mockManager.load.mockResolvedValue({
-      id: runbookId,
-      step: '1',
-      status: 'running',
-    });
+    mockManager.load.mockResolvedValue(runningState());
 
     const result = await runExecutionLoop(
       asManager(mockManager),
@@ -488,13 +491,13 @@ describe('runExecutionLoop', () => {
 
   it('executes command and advances to next step', async () => {
     mockManager.load
-      .mockResolvedValueOnce({ id: runbookId, step: '1', status: 'running' })
-      .mockResolvedValueOnce({ id: runbookId, step: '2', status: 'running' });
+      .mockResolvedValueOnce(runningState())
+      .mockResolvedValueOnce(runningState({ step: '2' }));
 
     jest.mocked(core.executeCommand).mockResolvedValue({ success: true, exitCode: 0 });
 
     mockActorService.sendAndSync.mockResolvedValue({
-      state: { id: runbookId, step: '2', status: 'running' },
+      state: runningState({ step: '2' }),
       snapshot: {
         status: 'active',
         value: '2',
@@ -530,16 +533,15 @@ describe('runExecutionLoop', () => {
     // paired triple. Asserting them here keeps a regression in the injection
     // gates at execution.ts (`if (typeof workPath === 'string') ...`) from
     // silently dropping one half of the pair without any test failing.
-    mockManager.load.mockResolvedValue({
-      id: runbookId,
-      step: '1',
-      status: 'running',
-      templateVars: {
-        WorkPath: '/tmp/work',
-        ContextId: 'ctx-abc',
-        RunId: 'run-123',
-      },
-    });
+    mockManager.load.mockResolvedValue(
+      runningState({
+        templateVars: {
+          WorkPath: '/tmp/work',
+          ContextId: 'ctx-abc',
+          RunId: 'run-123',
+        },
+      }),
+    );
 
     jest.mocked(core.executeCommand).mockResolvedValue({ success: true, exitCode: 0 });
     jest.mocked(core.executeCommandWithEnv).mockResolvedValue({ success: true, exitCode: 0 });
@@ -549,6 +551,7 @@ describe('runExecutionLoop', () => {
         id: runbookId,
         step: '1',
         status: 'done',
+        runbook: runbookRef,
         variables: {},
         templateVars: {
           WorkPath: '/tmp/work',
@@ -580,7 +583,7 @@ describe('runExecutionLoop', () => {
   });
 
   it('handles policy denial', async () => {
-    mockManager.load.mockResolvedValue({ id: runbookId, step: '1', status: 'running' });
+    mockManager.load.mockResolvedValue(runningState());
     jest.mocked(policyContext.isPolicyEnforced).mockReturnValue(true);
 
     // ExecutionResult requires `exitCode`; this fixture omits it because
@@ -610,7 +613,7 @@ describe('runExecutionLoop', () => {
   });
 
   it('stops with policy-denied when prepareIteration throws ForResolutionError policy-violation', async () => {
-    mockManager.load.mockResolvedValue({ id: runbookId, step: '1', status: 'running' });
+    mockManager.load.mockResolvedValue(runningState());
 
     (core.ForIterationService as unknown as jest.Mock).mockImplementation(() => {
       const prepareIteration = mockFn<(...args: unknown[]) => Promise<{ status: string }>>();
@@ -656,7 +659,7 @@ describe('runExecutionLoop', () => {
   });
 
   it('completes the runbook', async () => {
-    mockManager.load.mockResolvedValue({ id: runbookId, step: '1', status: 'running' });
+    mockManager.load.mockResolvedValue(runningState());
     jest.mocked(core.executeCommand).mockResolvedValue({ success: true, exitCode: 0 });
 
     mockActorService.sendAndSync.mockResolvedValue({
@@ -664,8 +667,8 @@ describe('runExecutionLoop', () => {
         id: runbookId,
         step: '1',
         status: 'done',
+        runbook: runbookRef,
         variables: {},
-        runbookPath: '/tmp/test.md',
       },
       snapshot: {
         status: 'done',
@@ -699,7 +702,7 @@ describe('runExecutionLoop', () => {
     // lastAction variant on the returned snapshot. runExecutionLoop should
     // emit ERROR_OCCURRED with the hook error's code + message before the
     // terminal RUNBOOK_STOPPED event.
-    mockManager.load.mockResolvedValue({ id: runbookId, step: '1', status: 'running' });
+    mockManager.load.mockResolvedValue(runningState());
     jest.mocked(core.executeCommand).mockResolvedValue({ success: false, exitCode: 1 });
 
     mockActorService.sendAndSync.mockResolvedValue({
@@ -708,8 +711,8 @@ describe('runExecutionLoop', () => {
         step: '1',
         status: 'done',
         lifecycle: 'stopped',
+        runbook: runbookRef,
         variables: {},
-        runbookPath: '/tmp/test.md',
       },
       snapshot: {
         status: 'done',
@@ -787,12 +790,11 @@ describe('runExecutionLoop', () => {
       },
     ];
 
-    mockManager.load.mockResolvedValue({
-      id: runbookId,
-      step: '1',
-      substep: '1',
-      status: 'running',
-    });
+    mockManager.load.mockResolvedValue(
+      runningState({
+        substep: '1',
+      }),
+    );
 
     const result = await runExecutionLoop(
       asManager(mockManager),
@@ -825,12 +827,11 @@ describe('runExecutionLoop', () => {
       },
     ];
 
-    mockManager.load.mockResolvedValue({
-      id: runbookId,
-      step: '1',
-      substep: '1',
-      status: 'running',
-    });
+    mockManager.load.mockResolvedValue(
+      runningState({
+        substep: '1',
+      }),
+    );
 
     await runExecutionLoop(
       asManager(mockManager),
@@ -869,12 +870,11 @@ describe('runExecutionLoop', () => {
       },
     ];
 
-    mockManager.load.mockResolvedValue({
-      id: runbookId,
-      step: '1',
-      substep: '1',
-      status: 'running',
-    });
+    mockManager.load.mockResolvedValue(
+      runningState({
+        substep: '1',
+      }),
+    );
 
     await runExecutionLoop(
       asManager(mockManager),
@@ -912,12 +912,11 @@ describe('runExecutionLoop', () => {
       },
     ];
 
-    mockManager.load.mockResolvedValue({
-      id: runbookId,
-      step: '1',
-      substep: '1',
-      status: 'running',
-    });
+    mockManager.load.mockResolvedValue(
+      runningState({
+        substep: '1',
+      }),
+    );
 
     await runExecutionLoop(
       asManager(mockManager),
@@ -957,12 +956,11 @@ describe('runExecutionLoop', () => {
       },
     ];
 
-    mockManager.load.mockResolvedValue({
-      id: runbookId,
-      step: '1',
-      substep: '1',
-      status: 'running',
-    });
+    mockManager.load.mockResolvedValue(
+      runningState({
+        substep: '1',
+      }),
+    );
 
     const result = await runExecutionLoop(
       asManager(mockManager),
@@ -1013,15 +1011,11 @@ describe('runExecutionLoop', () => {
       // so we need two sequential returns: step 1 (initial load) → step 2 (reload after transition).
       mockManager.load
         .mockResolvedValueOnce({
-          id: runbookId,
-          step: '1',
-          status: 'running',
+          ...runningState(),
           templateVars: { ContextId: 'ctx-unit' },
         })
         .mockResolvedValueOnce({
-          id: runbookId,
-          step: '2',
-          status: 'running',
+          ...runningState({ step: '2' }),
           templateVars: { ContextId: 'ctx-unit' },
         });
 
@@ -1033,6 +1027,7 @@ describe('runExecutionLoop', () => {
           id: runbookId,
           step: '2',
           status: 'running',
+          runbook: runbookRef,
           templateVars: { ContextId: 'ctx-unit' },
         },
         snapshot: {
@@ -1085,13 +1080,12 @@ describe('runExecutionLoop', () => {
       },
     ];
 
-    mockManager.load.mockResolvedValue({
-      id: runbookId,
-      step: '1',
-      substep: '1',
-      status: 'running',
-      substepStates: [],
-    });
+    mockManager.load.mockResolvedValue(
+      runningState({
+        substep: '1',
+        substepStates: [],
+      }),
+    );
 
     // inferAllDelegateSubsteps returns two targets
     jest.mocked(delegateInference.inferAllDelegateSubsteps).mockReturnValue([
@@ -1105,10 +1099,12 @@ describe('runExecutionLoop', () => {
       .mockResolvedValueOnce({
         path: '/project/.rundown/runbooks/child-a.runbook.md',
         source: 'project',
+        sourceRoot: '/project',
       })
       .mockResolvedValueOnce({
         path: '/project/.rundown/runbooks/child-b.runbook.md',
         source: 'project',
+        sourceRoot: '/project',
       });
 
     // createDelegation returns a token for each substep. The fixtures use
@@ -1205,13 +1201,12 @@ describe('runExecutionLoop', () => {
       },
     ];
 
-    mockManager.load.mockResolvedValue({
-      id: runbookId,
-      step: '1',
-      substep: '1',
-      status: 'running',
-      substepStates: [],
-    });
+    mockManager.load.mockResolvedValue(
+      runningState({
+        substep: '1',
+        substepStates: [],
+      }),
+    );
 
     const preIssued = [
       { id: '1.1', runbook: 'child-a.runbook.md', token: 'rdtk_retry_a' },
@@ -1268,13 +1263,12 @@ describe('runExecutionLoop', () => {
       },
     ];
 
-    mockManager.load.mockResolvedValue({
-      id: runbookId,
-      step: '1',
-      substep: '1',
-      status: 'running',
-      substepStates: [],
-    });
+    mockManager.load.mockResolvedValue(
+      runningState({
+        substep: '1',
+        substepStates: [],
+      }),
+    );
 
     // Snapshot with no pendingDelegateFrontier
     mockActorService.getContextSnapshot.mockResolvedValue({});
@@ -1286,6 +1280,7 @@ describe('runExecutionLoop', () => {
     jest.mocked(resolveRunbook.resolveRunbookFile).mockResolvedValue({
       path: '/project/.rundown/runbooks/child-a.runbook.md',
       source: 'project',
+      sourceRoot: '/project',
     });
 
     jest.mocked(core.createDelegation).mockReturnValue({
@@ -1354,20 +1349,19 @@ describe('runExecutionLoop', () => {
       },
     ];
 
-    mockManager.load.mockResolvedValue({
-      id: runbookId,
-      step: '1',
-      substep: '1',
-      status: 'running',
-      substepStates: [],
-      // Active runbook is itself a claimed child — guard should fire.
-      parentLinkage: {
-        kind: 'delegation',
-        parentRunId: 'parent-run-id',
-        parentStepId: '1',
-        tokenHash: `sha256:${'a'.repeat(64)}`,
-      },
-    });
+    mockManager.load.mockResolvedValue(
+      runningState({
+        substep: '1',
+        substepStates: [],
+        // Active runbook is itself a claimed child — guard should fire.
+        parentLinkage: {
+          kind: 'delegation',
+          parentRunId: 'parent-run-id',
+          parentStepId: '1',
+          tokenHash: `sha256:${'a'.repeat(64)}`,
+        },
+      }),
+    );
 
     jest
       .mocked(delegateInference.inferAllDelegateSubsteps)
@@ -1376,6 +1370,7 @@ describe('runExecutionLoop', () => {
     jest.mocked(resolveRunbook.resolveRunbookFile).mockResolvedValue({
       path: '/project/.rundown/runbooks/child-a.runbook.md',
       source: 'project',
+      sourceRoot: '/project',
     });
 
     // Real createDelegation enforces the guard — let it run rather than mock

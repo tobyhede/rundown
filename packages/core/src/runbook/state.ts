@@ -1,6 +1,7 @@
 // src/runbook/state.ts
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import { randomBytes } from 'node:crypto';
 import type { OutputDeclaration } from '@rundown-org/parser';
 import type { FrameKey } from './targeting.js';
 import type {
@@ -12,9 +13,10 @@ import type {
   ResolvedRunbook,
   ParentLinkage,
   TemplateVarValue,
+  Lifecycle,
 } from './types.js';
 import type { ClaimRecord } from './claim-id.js';
-import type { RunbookRef } from './runbook-ref.js';
+import { RunbookRefSchema, type RunbookRef } from './runbook-ref.js';
 import { makeRunbookStateSchema, SessionDataSchema } from '../schemas.js';
 import { isNodeError } from '../errors.js';
 import { logger } from '../logger.js';
@@ -24,6 +26,9 @@ import {
   sessionPath as _sessionPath,
   statePath as _statePath,
   LEGACY_SESSION_FILE,
+  RUN_ID_PATTERN,
+  assertRunId,
+  assertSafeId,
 } from '../paths.js';
 
 /** Current persisted state schema version. Bump whenever RunbookState shape changes incompatibly. */
@@ -65,11 +70,35 @@ export class StaleRunbookStateError extends Error {
   }
 }
 
-function generateId(): string {
-  const now = new Date();
-  const date = now.toISOString().slice(0, 10);
-  const random = Math.random().toString(36).slice(2, 8);
-  return `wf-${date}-${random}`;
+/**
+ * Generate a canonical Rundown run id.
+ *
+ * @returns A `wf_` id followed by 32 lowercase hex characters
+ */
+function generateRunId(): string {
+  return `wf_${randomBytes(16).toString('hex')}`;
+}
+
+function isTerminalLifecycle(
+  lifecycle: Lifecycle | undefined,
+): lifecycle is 'completed' | 'stopped' {
+  return lifecycle === 'completed' || lifecycle === 'stopped';
+}
+
+function applyTerminalAt(
+  existing: RunbookState,
+  candidate: RunbookState,
+  now: string,
+): RunbookState {
+  if (existing.terminalAt !== undefined) {
+    return { ...candidate, terminalAt: existing.terminalAt };
+  }
+
+  if (isTerminalLifecycle(candidate.lifecycle)) {
+    return { ...candidate, terminalAt: now };
+  }
+
+  return candidate;
 }
 
 /**
@@ -87,8 +116,7 @@ export interface SessionData {
 }
 
 interface CreateOptions {
-  readonly runbookPath: string;
-  readonly runbookRef?: RunbookRef;
+  readonly runId?: string;
   readonly prompted?: boolean;
   /** Parent linkage when this run is a child (delegation or inline). */
   readonly parentLinkage?: ParentLinkage;
@@ -195,26 +223,26 @@ export class RunbookStateManager {
   /**
    * Create a new runbook state and persist it to disk.
    *
-   * @param runbookFile - Path to the runbook source file
+   * @param runbookRef - Canonical source-root-relative runbook reference
    * @param runbook - The parsed runbook definition
    * @param options - Configuration including agentId, parent runbook info, prompted flag, and templateVars for template variable replacements
    * @returns The newly created RunbookState
    */
   async create(
-    runbookFile: string,
+    runbookRef: RunbookRef,
     runbook: Runbook | ResolvedRunbook,
-    options: CreateOptions,
+    options: CreateOptions = {},
   ): Promise<RunbookState> {
-    const id = generateId();
+    const id = options.runId ?? generateRunId();
+    assertRunId(id);
+    const canonicalRunbookRef = RunbookRefSchema.parse(runbookRef);
     const now = new Date().toISOString();
 
     const initialStep = runbook.steps[0];
 
     const state: RunbookState = {
       id,
-      runbook: runbookFile,
-      runbookPath: options.runbookPath,
-      runbookRef: options.runbookRef,
+      runbook: canonicalRunbookRef,
       title: runbook.title,
       description: runbook.description,
       step: initialStep.name,
@@ -312,19 +340,19 @@ export class RunbookStateManager {
   /**
    * Save a runbook state to disk.
    *
-   * Creates the state directory if it does not exist and writes the state
-   * as a JSON file, automatically updating the `updatedAt` timestamp.
+   * Creates the state directory if it does not exist and writes the state as a
+   * JSON file. Callers are responsible for setting `updatedAt` at the mutation
+   * boundary so returned state and persisted state have the same timestamp.
    *
    * @param state - The runbook state to persist
    */
   async save(state: RunbookState): Promise<void> {
     await fs.mkdir(this.stateDir, { recursive: true });
-    const updated: RunbookState = {
+    const persisted: RunbookState = {
       ...state,
       schemaVersion: CURRENT_SCHEMA_VERSION,
-      updatedAt: new Date().toISOString(),
     };
-    const content = JSON.stringify(updated, null, 2);
+    const content = JSON.stringify(persisted, null, 2);
     await fs.writeFile(this.statePath(state.id), content, { mode: 0o600 }); // Owner read/write only
   }
 
@@ -341,7 +369,9 @@ export class RunbookStateManager {
    */
   async update(
     id: string,
-    updates: Partial<Omit<RunbookState, 'id' | 'startedAt' | 'variables' | 'templateVars'>> & {
+    updates: Partial<
+      Omit<RunbookState, 'id' | 'startedAt' | 'variables' | 'templateVars' | 'terminalAt'>
+    > & {
       // Accept unbranded records on the update path; the manager re-mints
       // the brand inside the merge below. Internal callers (actor-service
       // sync, compiler reducers) hold the unbranded XState context shape
@@ -372,15 +402,19 @@ export class RunbookStateManager {
         }
       : restUpdates;
 
-    const updated: RunbookState = {
+    const now = new Date().toISOString();
+
+    const candidate: RunbookState = {
       ...existing,
       ...patchedRestUpdates,
       variables: brandStoredOutputs({ ...existing.variables, ...(updatesVariables ?? {}) }),
       ...(updatesTemplateVars !== undefined
         ? { templateVars: brandInitialTemplateVars(updatesTemplateVars) }
         : {}),
-      updatedAt: new Date().toISOString(),
+      updatedAt: now,
     };
+
+    const updated = applyTerminalAt(existing, candidate, now);
 
     await this.save(updated);
     return updated;
@@ -408,6 +442,38 @@ export class RunbookStateManager {
       // Use rm -rf semantics so a non-empty directory is removed cleanly.
       const runDir = this.statePath(id).replace(/\.json$/, '');
       await fs.rm(runDir, { recursive: true, force: true });
+    } catch (error) {
+      if (!isNodeError(error) || error.code !== 'ENOENT') {
+        throw error;
+      }
+    }
+  }
+
+  /**
+   * Delete a non-canonical but filename-safe run state without loading it.
+   *
+   * This is a prune-only escape hatch for pre-v1 dogfooding state files whose
+   * ids do not match {@link RUN_ID_PATTERN}. It does not migrate, parse, or
+   * otherwise adapt the state. Normal manager APIs continue to require canonical
+   * run ids before touching the filesystem.
+   *
+   * @param id - Filename-safe stale run id to remove
+   * @throws {Error} If `id` is canonical or unsafe for filename interpolation
+   */
+  async purgeNonCanonicalRunState(id: string): Promise<void> {
+    if (RUN_ID_PATTERN.test(id)) {
+      throw new Error('Invalid runId: expected non-canonical runId');
+    }
+    assertSafeId(id, 'runId');
+    try {
+      await fs.unlink(path.join(this.stateDir, `${id}.json`));
+    } catch (error) {
+      if (!isNodeError(error) || error.code !== 'ENOENT') {
+        throw error;
+      }
+    }
+    try {
+      await fs.rm(path.join(this.stateDir, id), { recursive: true, force: true });
     } catch (error) {
       if (!isNodeError(error) || error.code !== 'ENOENT') {
         throw error;

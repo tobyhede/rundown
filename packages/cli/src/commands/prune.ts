@@ -3,7 +3,12 @@
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Command } from 'commander';
-import { RunbookStateManager, SessionService } from '@rundown-org/core';
+import {
+  RUN_ID_PATTERN,
+  RunbookStateManager,
+  SessionService,
+  assertSafeId,
+} from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
@@ -92,12 +97,23 @@ export function registerPruneCommand(program: Command): void {
           // list() but can still be deleted. Treat them as inactive: prune with
           // --inactive or --all.
           const loadedIds = new Set(states.map((s) => s.id));
-          const staleIds = allIds.filter((id) => !loadedIds.has(id));
+          const staleIds = allIds.filter((id) => !loadedIds.has(id) && RUN_ID_PATTERN.test(id));
+          const nonCanonicalIds = allIds.filter((id) => {
+            if (RUN_ID_PATTERN.test(id)) return false;
+            try {
+              assertSafeId(id, 'runId');
+              return true;
+            } catch {
+              return false;
+            }
+          });
           const staleToDelete = (pruneInactive ?? options.all) ? staleIds : [];
+          const nonCanonicalToDelete = (pruneInactive ?? options.all) ? nonCanonicalIds : [];
 
           // Enrich items with status string for display
           const enrichedItems = toDelete.map((state) => ({
             ...state,
+            _displayRunbook: state.runbook.path,
             _status: getStatus(state, activeState, stashedId),
           }));
 
@@ -106,6 +122,7 @@ export function registerPruneCommand(program: Command): void {
             id: string;
             runbook: string;
             title: string | undefined;
+            _displayRunbook: string;
             _status: string;
           };
           type PruneRow = LoadedRow | StaleRow;
@@ -115,22 +132,34 @@ export function registerPruneCommand(program: Command): void {
             id,
             runbook: '(stale)',
             title: undefined,
+            _displayRunbook: '(stale)',
+            _status: 'stale',
+          }));
+          const nonCanonicalEnrichedItems: StaleRow[] = nonCanonicalToDelete.map((id) => ({
+            id,
+            runbook: '(stale)',
+            title: undefined,
+            _displayRunbook: '(stale)',
             _status: 'stale',
           }));
 
-          const allItems: PruneRow[] = [...enrichedItems, ...staleEnrichedItems];
+          const allItems: PruneRow[] = [
+            ...enrichedItems,
+            ...staleEnrichedItems,
+            ...nonCanonicalEnrichedItems,
+          ];
 
           // Define columns once for reuse
           const columns = [
             { header: 'ID', key: 'id' as const },
             { header: 'STATUS', key: (item: PruneRow) => item._status },
-            { header: 'RUNBOOK', key: 'runbook' as const },
+            { header: 'RUNBOOK', key: (item: PruneRow) => item._displayRunbook },
             { header: 'TITLE', key: (item: PruneRow) => (item.title ? `[${item.title}]` : '') },
           ];
 
           // JSON mapper to clean internal fields
           const jsonMapper = (item: PruneRow): Record<string, unknown> => {
-            const { _status, ...rest } = item as Record<string, unknown>;
+            const { _status, _displayRunbook, ...rest } = item as Record<string, unknown>;
             return { ...rest, status: _status };
           };
 
@@ -158,6 +187,9 @@ export function registerPruneCommand(program: Command): void {
           }
           for (const id of staleToDelete) {
             await manager.delete(id);
+          }
+          for (const id of nonCanonicalToDelete) {
+            await manager.purgeNonCanonicalRunState(id);
           }
 
           output.list(allItems, columns, { jsonMapper });

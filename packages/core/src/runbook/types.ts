@@ -709,10 +709,8 @@ export type Lifecycle = 'running' | 'completed' | 'stopped';
  */
 export interface RunbookState {
   readonly id: string;
-  readonly runbook: string; // runbook identifier (name or path)
-  readonly runbookPath: string; // repo-relative resolved file path
-  /** Canonical runbook reference for events and artifact metadata. */
-  readonly runbookRef?: RunbookRef;
+  /** Canonical source-root-relative runbook reference for this run. */
+  readonly runbook: RunbookRef;
   readonly title?: string;
   readonly description?: string;
   readonly step: string; // "1" or "ErrorHandler"
@@ -757,6 +755,8 @@ export interface RunbookState {
 
   readonly startedAt: string;
   readonly updatedAt: string;
+  /** Timestamp set exactly once when lifecycle first reaches completed or stopped. */
+  readonly terminalAt?: string;
 
   readonly prompted?: boolean;
   readonly lastResult?: 'pass' | 'fail';

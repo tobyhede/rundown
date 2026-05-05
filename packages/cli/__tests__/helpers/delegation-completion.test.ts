@@ -152,8 +152,7 @@ const { handleParentCompletion, extractParentLinkage } = await import(
 function makeState(id: string, overrides: Partial<RunbookState> = {}): RunbookState {
   const base: RunbookState = {
     id,
-    runbook: 'test.md',
-    runbookPath: '/tmp/test.md',
+    runbook: { source: 'project', path: 'test.runbook.md' },
     runbookSrc: '## 1. Step\n- PASS COMPLETE',
     step: '1',
     stepName: 'Step',

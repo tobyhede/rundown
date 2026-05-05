@@ -50,6 +50,7 @@ describe('stop command', () => {
       expect(stateAfter!.lastAction).toEqual({ type: 'STOP' });
       expect(stateAfter!.lastResult).toBe('fail');
       expect(stateAfter!.lifecycle).toBe('stopped');
+      expect(stateAfter!.terminalAt).toEqual(expect.any(String));
     });
   });
 

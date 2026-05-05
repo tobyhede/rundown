@@ -16,10 +16,14 @@ import {
   brandStoredOutputs,
 } from './runbook/effective-vars.js';
 import { getErrorMessage } from './errors.js';
+import { RUN_ID_PATTERN } from './paths.js';
 import { RunbookRefSchema } from './runbook/runbook-ref.js';
 
 /** Zod schema that parses strings and brands them as {@link FrameKey}. */
 const FrameKeySchema = z.string().transform((v) => v as FrameKey);
+
+/** Zod schema for persisted run ids. */
+const RunIdSchema = z.string().regex(RUN_ID_PATTERN, 'Invalid RunId');
 
 /** Zod schema that parses strings and brands them as {@link DelegationTokenHash}. */
 export const DelegationTokenHashSchema: z.ZodType<DelegationTokenHash, z.ZodTypeDef, string> = z
@@ -253,7 +257,7 @@ export const TemplateVarValueSchema: z.ZodType<TemplateVarValue> = z.union([
  * Zod schema for a single ancestor in the runbook lineage snapshot.
  */
 export const AncestorSnapshotSchema = z.object({
-  runId: z.string(),
+  runId: RunIdSchema,
   runbook: z.string(),
   step: z.string(),
   substep: z.string().nullable(),
@@ -301,7 +305,7 @@ export const StepDelegationSchema = z
     tokenHash: DelegationTokenHashSchema,
     childRunbookPath: z.string(),
     contextSnapshot: ContextSnapshotSchema,
-    childRunId: z.string().nullable(),
+    childRunId: RunIdSchema.nullable(),
     createdAt: z.string(),
     cancelledAt: z.string().nullable(),
     extraVars: z.record(z.string(), TemplateVarValueSchema).optional(),
@@ -344,9 +348,9 @@ export const ClaimIdSchema = z
 export const ClaimRecordSchema: z.ZodType<ClaimRecord, z.ZodTypeDef, unknown> = z.object({
   kind: z.literal('claim-record'),
   claimId: ClaimIdSchema,
-  childRunId: z.string().min(1),
+  childRunId: RunIdSchema,
   tokenHash: DelegationTokenHashSchema,
-  parentRunId: z.string().min(1),
+  parentRunId: RunIdSchema,
   parentStepId: z.string().min(1),
   parentStep: z.string().optional(),
   parentFrameKey: FrameKeySchema.optional(),
@@ -358,8 +362,8 @@ export const ClaimRecordSchema: z.ZodType<ClaimRecord, z.ZodTypeDef, unknown> = 
 /** Zod schema for `.rundown/session.json`. */
 export const SessionDataSchema = z
   .object({
-    defaultStack: z.array(z.string()).default([]),
-    stashedRunbookId: z.string().optional(),
+    defaultStack: z.array(RunIdSchema).default([]),
+    stashedRunbookId: RunIdSchema.optional(),
     claims: z.record(z.string(), ClaimRecordSchema).default({}),
   })
   .superRefine((session, ctx) => {
@@ -445,10 +449,8 @@ const ForStackEntrySchema = z.object({
  */
 export const RunbookStateSchema = z
   .object({
-    id: z.string(),
-    runbook: z.string(),
-    runbookPath: z.string(),
-    runbookRef: RunbookRefSchema.optional(),
+    id: RunIdSchema,
+    runbook: RunbookRefSchema,
     title: z.string().optional(),
     description: z.string().optional(),
     step: RunbookStepSchema, // "1" or "ErrorHandler"
@@ -474,7 +476,7 @@ export const RunbookStateSchema = z
       .discriminatedUnion('kind', [
         z.object({
           kind: z.literal('delegation'),
-          parentRunId: z.string(),
+          parentRunId: RunIdSchema,
           parentStepId: z.string(),
           tokenHash: DelegationTokenHashSchema,
           parentStep: z.string().optional(),
@@ -483,7 +485,7 @@ export const RunbookStateSchema = z
         }),
         z.object({
           kind: z.literal('inline'),
-          parentRunId: z.string(),
+          parentRunId: RunIdSchema,
           parentStepId: z.string(),
           parentStep: z.string().optional(),
           parentFrameKey: FrameKeySchema.optional(),
@@ -502,6 +504,7 @@ export const RunbookStateSchema = z
     iterationResults: z.array(z.enum(['pass', 'fail'])).optional(),
     startedAt: z.string(),
     updatedAt: z.string(),
+    terminalAt: z.string().datetime().optional(),
     // XState snapshot: intentionally not structurally validated. The persisted envelope
     // is opaque and version-unstable (see `.work/xstate-patterns/README.md`
     // type-check matrix — XState v5 does not expose a stable public shape for
@@ -644,7 +647,7 @@ export function makeTemplateVarValueSchema(projectRoot: string): z.ZodType<Templ
  */
 function makeAncestorSnapshotSchema(projectRoot: string): z.ZodTypeAny {
   return z.object({
-    runId: z.string(),
+    runId: RunIdSchema,
     runbook: z.string(),
     step: z.string(),
     substep: z.string().nullable(),
@@ -710,7 +713,7 @@ function makeStepDelegationSchema(projectRoot: string): z.ZodTypeAny {
       tokenHash: DelegationTokenHashSchema,
       childRunbookPath: z.string(),
       contextSnapshot: makeContextSnapshotSchema(projectRoot),
-      childRunId: z.string().nullable(),
+      childRunId: RunIdSchema.nullable(),
       createdAt: z.string(),
       cancelledAt: z.string().nullable(),
       extraVars: z.record(z.string(), TemplateVarValueSchema).optional(),

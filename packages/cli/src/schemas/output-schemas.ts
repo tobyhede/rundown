@@ -8,6 +8,7 @@
  */
 
 import { z } from 'zod';
+import { RunbookRefSchema } from '@rundown-org/core';
 
 // ============================================================================
 // Re-export from Core (Single Source of Truth)
@@ -92,7 +93,7 @@ export const PromptResponseSchema = z
 export const RunbookSchema = z
   .object({
     id: z.string().describe('Unique state file identifier'),
-    runbook: z.string().describe('Runbook filename'),
+    runbook: RunbookRefSchema.describe('Canonical runbook reference'),
     status: z.string().describe('Runbook status (active, stashed, completed, stale, or orphaned)'),
     step: z.string().optional().describe('Current step number'),
     total: z.number().optional().describe('Total number of steps'),

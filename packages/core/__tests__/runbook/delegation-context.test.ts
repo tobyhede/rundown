@@ -16,7 +16,6 @@ function makeMinimalState(overrides: Partial<RunbookState> = {}): RunbookState {
   return {
     id: 'run-1',
     runbook: 'parent.md',
-    runbookPath: 'parent.md',
     step: '1',
     stepName: 'Main step',
     retryCount: 0,

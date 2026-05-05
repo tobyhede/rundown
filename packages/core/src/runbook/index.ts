@@ -106,7 +106,6 @@ export {
   buildArtifactUri,
   parseExactArtifactUriParts,
   parseArtifactUri,
-  RUN_ID_PATTERN,
   type ArtifactPathOptions,
   type ArtifactIdentity,
   type ArtifactRef,

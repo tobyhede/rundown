@@ -9891,7 +9891,6 @@ echo "processing"
       let state: RunbookState = {
         id: 'test-run',
         runbook: 'parent.md',
-        runbookPath: 'parent.md',
         step: '1',
         stepName: 'Parent',
         retryCount: 0,
@@ -10502,7 +10501,6 @@ echo "processing"
       const baseState: RunbookState = {
         id: 'test-run',
         runbook: 'parent.md',
-        runbookPath: 'parent.md',
         step: '1',
         stepName: 'Parent',
         retryCount: 0,
