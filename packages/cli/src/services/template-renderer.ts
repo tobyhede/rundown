@@ -36,7 +36,12 @@ import {
   stepIdToString,
   RunbookSyntaxError,
 } from '@rundown-org/parser';
-import { invokeHelperSafely, isJsonArrayStream, type TemplateVarValue } from '@rundown-org/core';
+import {
+  assembleArtifactPath,
+  invokeHelperSafely,
+  isJsonArrayStream,
+  type TemplateVarValue,
+} from '@rundown-org/core';
 import type { StepVariables } from './execution-vars.js';
 import { getHelperRegistry } from './helper-registry.js';
 
@@ -91,6 +96,17 @@ const EXPLICIT_VAR_TEMPLATE_REGEX =
  */
 const HELPER_CALL_TEMPLATE_REGEX =
   /\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s+(?:([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)|"([^"]*)")\s*\}\}/g;
+
+/**
+ * Matches the built-in artifact path helper in inline template text.
+ *
+ * Mirrors the OUTPUTS evaluator syntax:
+ * - `{{ path "file.json" }}`
+ * - `{{ path "file.json" ctx=child-ctx }}`
+ * - `{{ path "file.json" ctx={{ childCtx }} }}`
+ */
+const PATH_HELPER_TEMPLATE_REGEX =
+  /\{\{\s*path\s+"([^"]+)"(?:\s+ctx=(\{\{[^}]*\}\}|[^\s}]+))?\s*\}\}/g;
 
 /**
  * Resolve a dotted path in an object using own-property traversal.
@@ -696,11 +712,52 @@ const SAFE_SHELL_VALUE = /^(?!-)(?!.*\.\.)[a-zA-Z0-9_./-]+$/;
  * @returns Helper result or original match
  */
 function resolveHelperCall(helperName: string, argValue: string, original: string): string {
+  if (helperName === 'path') return original;
   const registry = getHelperRegistry();
   const helper = registry.get(helperName);
   if (!helper) return original;
   const result = invokeHelperSafely(helperName, helper, argValue);
   return result ?? original;
+}
+
+/**
+ * Resolve the built-in `path` helper against a template variable frame.
+ *
+ * The helper is intentionally handled here, not in the user helper registry,
+ * so prompt text, command text, descriptions, and OUTPUTS all share the same
+ * reserved built-in semantics.
+ *
+ * @param filename - Artifact filename from `{{ path "filename" }}`
+ * @param ctxExpr - Optional raw `ctx=` expression
+ * @param variables - Template variables available at the render site
+ * @param original - Original helper call text to preserve on unresolved input
+ * @returns Assembled artifact path, or the original text when unresolved
+ */
+function resolvePathHelperCall(
+  filename: string,
+  ctxExpr: string | undefined,
+  variables: Record<string, unknown>,
+  original: string,
+): string {
+  const workPath = resolveTemplatePath('WorkPath', variables);
+  if (workPath === undefined) return original;
+
+  let contextId: string | undefined;
+  if (ctxExpr !== undefined) {
+    const trimmed = ctxExpr.trim();
+    contextId = trimmed.startsWith('{{') ? substituteText(trimmed, variables) : trimmed;
+    if (collectUnresolvedVariables(contextId).length > 0) return original;
+  } else {
+    contextId = resolveTemplatePath('ContextId', variables);
+  }
+
+  if (contextId === undefined) return original;
+
+  try {
+    return assembleArtifactPath(workPath, contextId, filename);
+  } catch {
+    return original;
+  }
 }
 
 /**
@@ -718,18 +775,19 @@ export function shellEscapeValue(value: string): string {
 /**
  * Substitute placeholders in text with optional escaping.
  *
- * Supports three placeholder forms (processed in order):
+ * Supports four placeholder forms (processed in order):
  * 1. `{{ ./VarName }}` — explicit variable lookup, bypasses helper registry
- * 2. `{{ helperName varRef }}` or `{{ helperName "literal" }}` — helper call
- * 3. `{{ identifier }}` — standard variable substitution
+ * 2. `{{ path "file.json" }}` — built-in artifact path helper
+ * 3. `{{ helperName varRef }}` or `{{ helperName "literal" }}` — helper call
+ * 4. `{{ identifier }}` — standard variable substitution
  *
  * Pass isolation: each pass operates on the full result string produced by the
  * previous pass. A variable value that itself contains `{{ helperName arg }}`
- * syntax will be processed by pass 2 after being substituted by pass 1. This is
+ * syntax will be processed by pass 3 after being substituted by pass 1. This is
  * benign in practice — variable values rarely contain helper call syntax — but
  * callers should be aware that variable values are not isolated from later passes.
  * Similarly, a value returned by a helper that contains `{{ VarName }}` syntax
- * will be processed by pass 3.
+ * will be processed by pass 4.
  *
  * @param text - Input text containing placeholders
  * @param variables - Variable map for substitution
@@ -748,7 +806,17 @@ export function substituteText(
     return escapeFn ? escapeFn(value) : value;
   });
 
-  // Pass 2: {{ helperName varRef }} or {{ helperName "literal" }}
+  // Pass 2: built-in {{ path "file" }} helper.
+  result = result.replace(
+    PATH_HELPER_TEMPLATE_REGEX,
+    (match, filename: string, ctxExpr: string | undefined) => {
+      const raw = resolvePathHelperCall(filename, ctxExpr, variables, match);
+      if (raw === match) return match;
+      return escapeFn ? escapeFn(raw) : raw;
+    },
+  );
+
+  // Pass 3: {{ helperName varRef }} or {{ helperName "literal" }}
   result = result.replace(
     HELPER_CALL_TEMPLATE_REGEX,
     (match, helperName: string, varRef: string | undefined, literal: string | undefined) => {
@@ -770,7 +838,7 @@ export function substituteText(
     },
   );
 
-  // Pass 3: {{ identifier }} standard variable substitution
+  // Pass 4: {{ identifier }} standard variable substitution
   result = result.replace(TEMPLATE_PATH_REGEX, (match, path: string) => {
     const value = resolveTemplatePath(path, variables);
     if (value === undefined) return match;

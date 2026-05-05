@@ -40,7 +40,16 @@ Read the plan at `{{ PlanPath }}`.
 - Changes include appropriate logging, metrics, or monitoring where observable behavior is touched
 
 
-## 4. Write the review
+## 4. Output Path
+- OUTPUTS
+  - ReviewPath {{ path "review-plan-risk-safety.json" }}
+- PASS CONTINUE
+- FAIL STOP
+
+{{ path "review-plan-risk-safety.json" }}
+
+
+## 5. Write the review
 - PASS CONTINUE
 - FAIL STOP
 
@@ -48,15 +57,11 @@ Write the review to the output path as JSON.
 Follow the review output schema.
 Ensure any validation issues have been resolved.
 
-```bash
-rdpath --file review-plan-risk-safety-{{ RunId }}.json
-```
 
-
-## 5. Check Schema
+## 6. Check Schema
 - PASS COMPLETE
-- FAIL GOTO 4
+- FAIL GOTO 5
 
 ```bash
-rdx --check "$(rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file review-plan-risk-safety-{{ RunId }}.json)"
+rdx --check "{{ ReviewPath }}"
 ```

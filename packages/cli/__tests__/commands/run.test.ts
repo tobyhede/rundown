@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { writeFile } from 'node:fs/promises';
 import {
   createTestWorkspace,
   runCliInProcess,
@@ -66,6 +67,30 @@ describe('start command', () => {
 
       expect(result.stdout).toContain('## 1.');
       expect(result.stdout).toContain('First step');
+    });
+
+    it('evaluates helpers in prompted step prompt text', async () => {
+      await writeFile(
+        workspace.runbookPath('helper-prompt.runbook.md'),
+        `# Helper Prompt Test
+
+## 1. Show path
+- PASS COMPLETE
+
+Resolved path: {{ path "review.json" }}
+`,
+      );
+
+      const result = await runCliInProcess(
+        'run --prompted runbooks/helper-prompt.runbook.md --text',
+        workspace,
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).not.toContain('{{ path "review.json" }}');
+      expect(result.stdout).toMatch(
+        /\.rundown\/work(?:\/[^/\s]+)?\/\.rd-[A-Za-z0-9_-]+\/\d{4}-\d{2}-\d{2}-review\.json/,
+      );
     });
 
     it('fails if file does not exist', async () => {
