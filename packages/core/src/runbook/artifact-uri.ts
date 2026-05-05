@@ -10,6 +10,7 @@ import { ARTIFACT_ERROR_TEXT } from './artifact-errors.js';
 export const RUN_ID_PATTERN = /^wf_[a-f0-9]{32}$/;
 const TEMPLATE_MARKER_PATTERN = /{{.*}}/;
 const BARE_BUILTIN_PLACEHOLDERS = new Set(['ContextId', 'RunId']);
+const SUPPORTED_SELECTOR_QUERY_KEYS = new Set(['status', 'runbook', 'source', 'latest']);
 
 type ArtifactQuery = Record<string, readonly string[] | undefined>;
 
@@ -296,6 +297,9 @@ function validateArtifactKey(key: string): void {
 function parseQuery(searchParams: URLSearchParams): Record<string, readonly string[]> {
   const query: Record<string, string[]> = {};
   for (const [name, value] of searchParams) {
+    if (!SUPPORTED_SELECTOR_QUERY_KEYS.has(name)) {
+      throw new Error(`Unsupported artifact URI query parameter: ${name}`);
+    }
     query[name] ??= [];
     query[name].push(value);
   }

@@ -74,6 +74,15 @@ describe('artifact URI utilities', () => {
     });
   });
 
+  it('rejects unsupported selector query parameter names', () => {
+    expect(() => parseArtifactUri(`${EXACT_URI}?stats=any`)).toThrow(
+      'Unsupported artifact URI query parameter: stats',
+    );
+    expect(() => parseArtifactUri('rd://artifacts/ctx1/runs/*/review.json?runbok=plan')).toThrow(
+      'Unsupported artifact URI query parameter: runbok',
+    );
+  });
+
   it('rejects invalid path shapes', () => {
     expect(() => parseArtifactUri(`rd://artifacts/ctx1/runs/${RUN_ID}/nested/review.json`)).toThrow(
       ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE,

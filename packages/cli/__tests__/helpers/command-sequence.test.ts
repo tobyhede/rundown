@@ -452,6 +452,19 @@ describe('matchStepAssertions', () => {
     expect(results[0].matched).toBe(true);
   });
 
+  it('rejects runbook suffix matches without a path segment boundary', () => {
+    const events = [
+      {
+        action: 'COMPLETE',
+        from: '1',
+        result: 'PASS' as const,
+        runbook: { source: 'project' as const, path: '/abs/my-child.runbook.md' },
+      },
+    ];
+    const results = matchStepAssertions([{ runbook: 'child.runbook.md' }], events);
+    expect(results[0].matched).toBe(false);
+  });
+
   it('assertion without runbook matches events regardless of their runbook field', () => {
     const events = [
       {

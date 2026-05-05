@@ -1,5 +1,4 @@
 import * as fs from 'node:fs';
-import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
 import picomatch from 'picomatch';
 import type { ZodIssue } from 'zod';
@@ -119,9 +118,7 @@ export async function readArtifactManifest(
   const { workRoot, manifestPath: file } = manifestLocationForContext(options, contextId);
   let content: string;
   try {
-    assertNoSymlinkSegments(workRoot, path.dirname(file), { allowMissingTail: true });
-    assertNoSymlinkSegments(workRoot, file, { allowMissingTail: false });
-    content = await fsp.readFile(file, 'utf8');
+    content = readVerifiedUtf8FileSync(workRoot, file);
   } catch (error) {
     if (isNodeErrorCode(error, 'ENOENT')) {
       return [];
@@ -273,14 +270,20 @@ function writeManifestLineSync(
   manifestPath: string,
   record: ArtifactManifestRecord,
 ): void {
-  assertNoSymlinkSegments(workRoot, path.dirname(manifestPath), { allowMissingTail: true });
-  fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
-  assertNoSymlinkSegments(workRoot, path.dirname(manifestPath), { allowMissingTail: false });
-  assertNoSymlinkSegments(workRoot, manifestPath, { allowMissingTail: true });
-  const noFollow = 'O_NOFOLLOW' in fs.constants ? fs.constants.O_NOFOLLOW : 0;
-  const flags = fs.constants.O_CREAT | fs.constants.O_APPEND | fs.constants.O_WRONLY | noFollow;
+  const manifestDir = path.dirname(manifestPath);
+  assertExistingAncestorsInsideRoot(workRoot, manifestDir);
+  fs.mkdirSync(manifestDir, { recursive: true });
+  assertVerifiedDirectoryInsideRoot(workRoot, manifestDir);
+
+  const flags =
+    fs.constants.O_CREAT | fs.constants.O_APPEND | fs.constants.O_WRONLY | noFollowFlag();
   const fd = fs.openSync(manifestPath, flags, 0o600);
   try {
+    const stat = fs.fstatSync(fd);
+    validateOpenedPathInsideRoot(workRoot, manifestPath, stat);
+    if (!stat.isFile()) {
+      throw new Error(ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE);
+    }
     const line = Buffer.from(`${JSON.stringify(canonicalManifestRecord(record))}\n`, 'utf8');
     const bytesWritten = fs.writeSync(fd, line, 0, line.length);
     if (bytesWritten !== line.length) {
@@ -311,7 +314,10 @@ function resolveContainedWorkRoot(options: ArtifactPathOptions): string {
   const cwdRoot = path.resolve(options.cwd);
   const workRoot = path.resolve(cwdRoot, options.workPath);
   assertContained(cwdRoot, workRoot);
-  assertNoSymlinkSegments(cwdRoot, workRoot, { allowMissingTail: true });
+  assertExistingAncestorsInsideRoot(cwdRoot, workRoot);
+  if (fs.existsSync(workRoot)) {
+    assertVerifiedDirectoryInsideRoot(cwdRoot, workRoot);
+  }
   return workRoot;
 }
 
@@ -322,11 +328,7 @@ function assertContained(root: string, candidate: string): void {
   }
 }
 
-function assertNoSymlinkSegments(
-  root: string,
-  candidate: string,
-  options: { readonly allowMissingTail: boolean },
-): void {
+function assertExistingAncestorsInsideRoot(root: string, candidate: string): void {
   const resolvedRoot = path.resolve(root);
   const resolvedCandidate = path.resolve(candidate);
   assertContained(resolvedRoot, resolvedCandidate);
@@ -341,12 +343,9 @@ function assertNoSymlinkSegments(
   for (const segment of segments) {
     current = path.join(current, segment);
     try {
-      const stat = fs.lstatSync(current);
-      if (stat.isSymbolicLink()) {
-        throw new Error(ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE);
-      }
+      assertVerifiedDirectoryInsideRoot(resolvedRoot, current);
     } catch (error) {
-      if (isNodeErrorCode(error, 'ENOENT') && options.allowMissingTail) {
+      if (isNodeErrorCode(error, 'ENOENT')) {
         return;
       }
       throw error;
@@ -355,18 +354,99 @@ function assertNoSymlinkSegments(
 }
 
 function isExistingRegularContainedFile(workRoot: string, filePath: string): boolean {
+  let fd: number | undefined;
   try {
-    assertNoSymlinkSegments(workRoot, filePath, { allowMissingTail: false });
-    return fs.lstatSync(filePath).isFile();
+    fd = openVerifiedRegularFileSync(workRoot, filePath, fs.constants.O_RDONLY | noFollowFlag());
+    return true;
   } catch (error) {
     if (
       isNodeErrorCode(error, 'ENOENT') ||
+      isNodeErrorCode(error, 'ENOTDIR') ||
+      isNodeErrorCode(error, 'ELOOP') ||
       (error instanceof Error && error.message === ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE)
     ) {
       return false;
     }
     throw error;
+  } finally {
+    if (fd !== undefined) {
+      fs.closeSync(fd);
+    }
   }
+}
+
+function readVerifiedUtf8FileSync(workRoot: string, filePath: string): string {
+  const fd = openVerifiedRegularFileSync(
+    workRoot,
+    filePath,
+    fs.constants.O_RDONLY | noFollowFlag(),
+  );
+  try {
+    return fs.readFileSync(fd, 'utf8');
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function openVerifiedRegularFileSync(workRoot: string, filePath: string, flags: number): number {
+  assertContained(path.resolve(workRoot), path.resolve(filePath));
+  const fd = fs.openSync(filePath, flags);
+  try {
+    const stat = fs.fstatSync(fd);
+    validateOpenedPathInsideRoot(workRoot, filePath, stat);
+    if (!stat.isFile()) {
+      throw new Error(ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE);
+    }
+    return fd;
+  } catch (error) {
+    fs.closeSync(fd);
+    throw error;
+  }
+}
+
+function assertVerifiedDirectoryInsideRoot(root: string, directoryPath: string): void {
+  assertContained(path.resolve(root), path.resolve(directoryPath));
+  let fd: number;
+  try {
+    fd = fs.openSync(directoryPath, fs.constants.O_RDONLY | directoryFlag() | noFollowFlag());
+  } catch (error) {
+    if (isNodeErrorCode(error, 'ELOOP') || isNodeErrorCode(error, 'ENOTDIR')) {
+      throw new Error(ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE);
+    }
+    throw error;
+  }
+  try {
+    const stat = fs.fstatSync(fd);
+    validateOpenedPathInsideRoot(root, directoryPath, stat);
+    if (!stat.isDirectory()) {
+      throw new Error(ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE);
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function validateOpenedPathInsideRoot(root: string, filePath: string, openedStat: fs.Stats): void {
+  const rootRealPath = fs.realpathSync(root);
+  const targetRealPath = fs.realpathSync(filePath);
+  assertContained(rootRealPath, targetRealPath);
+
+  const currentPathStat = fs.statSync(targetRealPath);
+  if (!sameFile(openedStat, currentPathStat)) {
+    throw new Error(ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE);
+  }
+}
+
+function sameFile(left: fs.Stats, right: fs.Stats): boolean {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+function noFollowFlag(): number {
+  return 'O_NOFOLLOW' in fs.constants ? fs.constants.O_NOFOLLOW : 0;
+}
+
+function directoryFlag(): number {
+  return 'O_DIRECTORY' in fs.constants ? fs.constants.O_DIRECTORY : 0;
 }
 
 function canonicalManifestRecord(record: ArtifactManifestRecord): ArtifactManifestRecord {

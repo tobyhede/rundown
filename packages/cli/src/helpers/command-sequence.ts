@@ -455,7 +455,10 @@ function eventMatchesAssertion(event: CapturedTransition, assertion: StepAsserti
   if (assertion.command !== undefined && event.command !== assertion.command) return false;
   if (assertion.aggregated !== undefined && event.aggregated !== assertion.aggregated) return false;
   if (assertion.runbook !== undefined) {
-    if (!event.runbook?.path.endsWith(assertion.runbook)) {
+    if (
+      event.runbook?.path !== assertion.runbook &&
+      event.runbook?.path.endsWith(`/${assertion.runbook}`) !== true
+    ) {
       return false;
     }
   }
