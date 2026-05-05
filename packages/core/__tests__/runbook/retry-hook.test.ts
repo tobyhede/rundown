@@ -132,6 +132,7 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
     const fixtureDelegation: StepDelegation = {
       tokenHash: HASH_TEST,
       childRunbookPath: 'child-1.md',
+      childRunbookRef: { source: 'project', path: 'child-1.md' },
       childRunId: null,
       createdAt: '2026-01-01T00:00:00.000Z',
       cancelledAt: null,
@@ -181,6 +182,7 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
     const delegation: StepDelegation = {
       tokenHash: HASH_NEW,
       childRunbookPath: 'child-1.md',
+      childRunbookRef: { source: 'project', path: 'child-1.md' },
       childRunId: null,
       createdAt: '2026-01-01T00:00:00.000Z',
       cancelledAt: null,
@@ -311,6 +313,7 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
     const staleDelegation: StepDelegation = {
       tokenHash: HASH_STALE,
       childRunbookPath: 'child-1.md',
+      childRunbookRef: { source: 'project', path: 'child-1.md' },
       childRunId: null,
       createdAt: '2026-01-01T00:00:00.000Z',
       cancelledAt: null,
@@ -397,6 +400,7 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
     const orphanDelegation: StepDelegation = {
       tokenHash: HASH_ORPHAN,
       childRunbookPath: 'child-99.md',
+      childRunbookRef: { source: 'project', path: 'child-99.md' },
       childRunId: null,
       createdAt: '2026-01-01T00:00:00.000Z',
       cancelledAt: null,
@@ -452,6 +456,7 @@ describe('runRetryHook routing on retryDelegation Result variants', () => {
     const delegation: StepDelegation = {
       tokenHash: HASH_NO_AT,
       childRunbookPath: 'child-1.md',
+      childRunbookRef: { source: 'project', path: 'child-1.md' },
       childRunId: null,
       createdAt: '2026-01-01T00:00:00.000Z',
       cancelledAt: null,

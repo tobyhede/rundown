@@ -368,8 +368,9 @@ dynamic current-frame values but remain reserved for user input.
 | --- | --- |
 | `Date`, `DateTime`, `Year`, `Month`, `Day` | Current date/time components. |
 | `Branch` | Current git branch, or empty outside git. |
-| `WorkPath` | Branch-isolated artifact directory; fallback `.rundown/work`; base for `{{ path "..." }}`. |
-| `RunId` | Fresh execution identifier for this runbook execution. |
+| `WorkPath` | Workspace artifact directory; fallback `.rundown/work`; base for `{{ path "..." }}`. |
+| `RunbookRef` | Canonical `{ source, path }` identity for the resolved runbook. Injected before template substitution. |
+| `RunId` | Fresh execution identifier for this runbook execution. Injected only when the runbook is started or claimed, not during variable discovery or `rd resolve`. |
 | `ContextId` | Shared identity across a delegation tree; scopes `{{ path "..." }}` into `.rd-<ContextId>/`. |
 | `Step`, `Index` | Dynamic current step and iteration. |
 | `context.current.*` | Dynamic current `step`, `substep`, `index`, and `at`. |
@@ -382,11 +383,14 @@ Static built-ins MAY be overridden by higher-precedence sources. Dynamic
 variables MUST NOT be overridden. Parent context chain addressing is capped at
 32 levels. Plugin runbooks MAY receive upper-snake-case plugin variables;
 `CLAUDE_PLUGIN_ROOT` identifies the plugin installation directory.
+Delegated children inherit the parent's `ContextId` and user variables, but MUST
+NOT inherit the parent's `RunId` or `RunbookRef`.
 
 ### 9.3 Shell Environment
 
-Executable shell blocks receive `RD_WORK_PATH`, `RD_CONTEXT_ID`, and `RD_RUN_ID`
-from `WorkPath`, `ContextId`, and `RunId`. These variables are injected after
+Executable shell blocks receive `RD_WORK_PATH`, `RD_CONTEXT_ID`, `RD_RUN_ID`,
+`RD_RUNBOOK_REF`, and `RD_RUNBOOK_SOURCE` from `WorkPath`, `ContextId`, `RunId`,
+`RunbookRef.path`, and `RunbookRef.source`. These variables are injected after
 policy environment filtering and use Rundown-wins semantics. The `RD_` prefix is
 reserved for Rundown-injected variables.
 

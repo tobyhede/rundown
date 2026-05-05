@@ -13,7 +13,7 @@ describe('DelegationLinkage extended fields', () => {
   function makeSchemaState(parentLinkage: Record<string, unknown>): Record<string, unknown> {
     return {
       id: 'run-child',
-      runbook: 'child.md',
+      runbook: { source: 'project', path: 'child.md' },
       runbookPath: '/tmp/child.md',
       runbookSrc: '## 1. Do\n- PASS COMPLETE\n\nDo it.',
       step: '1',
@@ -91,7 +91,7 @@ describe('parentLinkage discriminated union schema', () => {
   function makeBaseState(overrides: Record<string, unknown> = {}): Record<string, unknown> {
     return {
       id: 'run-child',
-      runbook: 'child.md',
+      runbook: { source: 'project', path: 'child.md' },
       runbookPath: '/tmp/child.md',
       runbookSrc: '## 1. Do\n- PASS COMPLETE\n\nDo it.',
       step: '1',
@@ -203,7 +203,7 @@ describe('frame identity derivation for propagation', () => {
   function makeState(overrides: Partial<RunbookState>): RunbookState {
     return {
       id: 'run-1',
-      runbook: 'test.md',
+      runbook: { source: 'project', path: 'test.md' },
       runbookPath: '/tmp/test.md',
       runbookSrc: '## 1. Step\n- PASS COMPLETE\n\nTest.',
       step: '1',

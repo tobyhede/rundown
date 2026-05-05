@@ -34,7 +34,7 @@ describe('readActiveRunScope', () => {
   });
 
   it('returns active WorkPath and ContextId from effective vars', async () => {
-    const state = await manager.create('test.md', mockRunbook, {
+    const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
       runbookPath: 'test.md',
       templateVars: {
         WorkPath: '.rundown/work',
@@ -50,7 +50,7 @@ describe('readActiveRunScope', () => {
   });
 
   it('uses stored outputs over template vars', async () => {
-    const state = await manager.create('test.md', mockRunbook, {
+    const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
       runbookPath: 'test.md',
       templateVars: {
         WorkPath: '.rundown/work',

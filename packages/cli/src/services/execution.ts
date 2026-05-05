@@ -61,7 +61,7 @@ import {
 import { isInternalRdCommand, executeRdCommandInternal } from './internal-commands.js';
 import type { StepVariables } from './execution-vars.js';
 import { inferAllDelegateSubsteps } from '../helpers/delegate-inference.js';
-import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
+import { buildRunbookRef, resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import {
   getPolicyEvaluator,
   getPolicyPrompter,
@@ -674,9 +674,8 @@ export async function runExecutionLoop(
     // Determine the active execution unit: substep if we're at one, otherwise the step.
     const itemToRender = resolveCurrentExecutionUnit(currentStep, currentState.substep);
 
-    // Resolve dynamic values for all data sources (array, file, range).
-    // The ForIterationService resolves currentValue before each iteration,
-    // replacing the previous file-only inline resolution.
+    // Resolve dynamic values for all FOR sources before each iteration.
+    // ForIterationService owns array, file, and range currentValue hydration.
     let iterResult: Awaited<ReturnType<typeof iterationService.prepareIteration>>;
     try {
       iterResult = await iterationService.prepareIteration(runbookId, steps);
@@ -876,12 +875,14 @@ export async function runExecutionLoop(
                 if (!childResolved) {
                   throw Errors.delegationRunbookNotFound(target.runbookRef);
                 }
+                const childRunbookRef = buildRunbookRef(childResolved);
 
                 const result = createDelegation(
                   {
                     state: threadedState,
                     stepId: target.stepId,
                     childRunbookPath: childResolved.path,
+                    childRunbookRef,
                     extraVars: undefined,
                     ancestors: [],
                     frameKey,
@@ -1001,10 +1002,15 @@ export async function runExecutionLoop(
     const rdInjected: Record<string, string> = { ...channels.env };
     const workPath = stepVars[BUILTIN_VARIABLES.WorkPath];
     const contextId = stepVars[BUILTIN_VARIABLES.ContextId];
-    const runId = stepVars[BUILTIN_VARIABLES.RunId];
     if (typeof workPath === 'string') rdInjected.RD_WORK_PATH = workPath;
     if (typeof contextId === 'string') rdInjected.RD_CONTEXT_ID = contextId;
-    if (typeof runId === 'string') rdInjected.RD_RUN_ID = runId;
+    const templateRunId = currentState.templateVars?.[BUILTIN_VARIABLES.RunId];
+    rdInjected.RD_RUN_ID =
+      typeof templateRunId === 'string' || typeof templateRunId === 'number'
+        ? String(templateRunId)
+        : currentState.id;
+    rdInjected.RD_RUNBOOK_REF = currentState.runbook.path;
+    rdInjected.RD_RUNBOOK_SOURCE = currentState.runbook.source;
 
     // Execute command (unchanged — still routed via internal vs spawn)
     const extracted = extractDisplayCommand(expandedCommandCode);
@@ -1170,7 +1176,7 @@ export function getStepRetryMax(item: Step | ResolvedStep | Substep): number {
  */
 export function buildMetadata(state: RunbookState): RunbookMetadata {
   return {
-    file: state.runbook,
+    file: state.runbook.path,
     state: `${RUNS_DIR}/${state.id}.json`,
     prompted: state.prompted ?? undefined,
   };

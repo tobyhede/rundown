@@ -23,7 +23,7 @@ echo done
 `;
     const state: Partial<RunbookState> = {
       id: 'test-id',
-      runbook: 'test.runbook.md',
+      runbook: { source: 'project', path: 'test.runbook.md' },
       runbookSrc,
     };
 
@@ -37,7 +37,7 @@ echo done
   it('should throw when runbookSrc is missing (corrupted state)', () => {
     const state: Partial<RunbookState> = {
       id: 'corrupted-id',
-      runbook: 'test.runbook.md',
+      runbook: { source: 'project', path: 'test.runbook.md' },
       // runbookSrc is undefined
     };
 
@@ -56,7 +56,7 @@ Deploy to {{ env }}.
 `;
     const state: Partial<RunbookState> = {
       id: 'template-id',
-      runbook: 'template.runbook.md',
+      runbook: { source: 'project', path: 'template.runbook.md' },
       runbookSrc,
       templateVars: brandInitialTemplateVarsForTest({ env: 'staging' }),
     };
@@ -71,7 +71,7 @@ Deploy to {{ env }}.
   it('should not attempt disk fallback', () => {
     const state: Partial<RunbookState> = {
       id: 'missing-src-id',
-      runbook: 'nonexistent.runbook.md',
+      runbook: { source: 'project', path: 'nonexistent.runbook.md' },
       // runbookSrc is undefined
     };
 

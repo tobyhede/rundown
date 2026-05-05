@@ -86,7 +86,7 @@ rd echo test
       };
 
       // Create runbook state
-      const state = await manager.create('test.runbook.md', runbook, {
+      const state = await manager.create({ source: 'project', path: 'test.runbook.md' }, runbook, {
         runbookPath: 'test.runbook.md',
         prompted: true,
       });

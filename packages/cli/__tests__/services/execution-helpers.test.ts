@@ -19,7 +19,7 @@ import type { ResolvedStep, OutputDeclaration, Substep } from '@rundown-org/pars
 function makeState(step: string, forStack: readonly ForContext[] = []): RunbookState {
   return {
     id: 'test-run',
-    runbook: 'test.md',
+    runbook: { source: 'project', path: 'test.md' },
     runbookPath: '/test.md',
     step,
     stepName: `Step ${step}`,

@@ -66,6 +66,7 @@ function makeInputs(overrides?: { substepStates?: readonly SubstepState[] }): {
   const defaultDelegation: StepDelegation = {
     tokenHash: HASH_TEST,
     childRunbookPath: 'child-1.md',
+    childRunbookRef: { source: 'project', path: 'child-1.md' },
     childRunId: null,
     createdAt: '2026-01-01T00:00:00.000Z',
     cancelledAt: null,
@@ -134,6 +135,7 @@ describe('retrySingleSubstep', () => {
     const newDelegation: StepDelegation = {
       tokenHash: HASH_NEW,
       childRunbookPath: 'child-1.md',
+      childRunbookRef: { source: 'project', path: 'child-1.md' },
       childRunId: null,
       createdAt: '2026-01-01T00:00:00.000Z',
       cancelledAt: null,
@@ -220,6 +222,7 @@ describe('retrySingleSubstep', () => {
     const delegationNoAt: StepDelegation = {
       tokenHash: HASH_NO_AT,
       childRunbookPath: 'child-1.md',
+      childRunbookRef: { source: 'project', path: 'child-1.md' },
       childRunId: null,
       createdAt: '2026-01-01T00:00:00.000Z',
       cancelledAt: null,
@@ -276,6 +279,7 @@ describe('retrySingleSubstep', () => {
     const newDelegation: StepDelegation = {
       tokenHash: HASH_NEW,
       childRunbookPath: 'child-1.md',
+      childRunbookRef: { source: 'project', path: 'child-1.md' },
       childRunId: null,
       createdAt: '2026-01-01T00:00:00.000Z',
       cancelledAt: null,

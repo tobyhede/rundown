@@ -17,7 +17,7 @@ import { isJsonArrayStream } from '../src/runbook/types.js';
  */
 const createValidState = (overrides: Record<string, unknown> = {}) => ({
   id: 'test-id',
-  runbook: 'test.md',
+  runbook: { source: 'project', path: 'test.md' },
   runbookPath: 'test.md',
   step: '1',
   stepName: 'Test Step',
@@ -357,22 +357,35 @@ describe('RunbookStateSchema frontmatterOutputs', () => {
   });
 });
 
-describe('RunbookStateSchema runbookRef', () => {
-  it('accepts a canonical optional runbookRef', () => {
+describe('RunbookStateSchema runbookRef cleanup', () => {
+  it('rejects the removed runbookRef field', () => {
     const state = createValidState({
-      runbookRef: { source: 'plugin', path: 'planning/write-plan.runbook.md' },
+      runbookRef: { source: 'project', path: 'ops/deploy.md' },
     });
 
-    expect(RunbookStateSchema.parse(state).runbookRef).toEqual({
-      source: 'plugin',
-      path: 'planning/write-plan.runbook.md',
+    expect(() => RunbookStateSchema.parse(state)).toThrow(/runbookRef/);
+  });
+});
+
+describe('RunbookStateSchema runbook identity', () => {
+  it('accepts persisted state with canonical RunbookRef runbook object', () => {
+    const state = createValidState({
+      runbook: { source: 'project', path: 'ops/deploy.md' },
+    });
+
+    expect(RunbookStateSchema.parse(state).runbook).toEqual({
+      source: 'project',
+      path: 'ops/deploy.md',
     });
   });
 
-  it('rejects an invalid optional runbookRef', () => {
-    const state = createValidState({
-      runbookRef: { source: 'plugin', path: 'planning/write-plan.md' },
-    });
+  it.each([
+    { source: 'project', path: '../deploy.md' },
+    { source: 'project', path: '/deploy.md' },
+    { source: 'project', path: 'ops\\deploy.md' },
+    { source: 'project', path: 'ops/deploy.txt' },
+  ])('rejects unsafe persisted runbook identity %#', (runbook) => {
+    const state = createValidState({ runbook });
 
     expect(() => RunbookStateSchema.parse(state)).toThrow();
   });
@@ -719,6 +732,7 @@ describe('makeRunbookStateSchema — SEC1 nested snapshot var protection', () =>
           delegation: {
             tokenHash: `sha256:${'a'.repeat(64)}`,
             childRunbookPath: '/project/child.md',
+            childRunbookRef: { source: 'project', path: 'child.md' },
             contextSnapshot: {
               vars: { items: escaping },
               ancestors: [],
@@ -746,6 +760,7 @@ describe('makeRunbookStateSchema — SEC1 nested snapshot var protection', () =>
           delegation: {
             tokenHash: `sha256:${'a'.repeat(64)}`,
             childRunbookPath: '/project/child.md',
+            childRunbookRef: { source: 'project', path: 'child.md' },
             contextSnapshot: {
               vars: { items: safe },
               ancestors: [],
@@ -773,6 +788,7 @@ describe('makeRunbookStateSchema — SEC1 nested snapshot var protection', () =>
           delegation: {
             tokenHash: `sha256:${'a'.repeat(64)}`,
             childRunbookPath: '/project/child.md',
+            childRunbookRef: { source: 'project', path: 'child.md' },
             contextSnapshot: {
               vars: {},
               ancestors: [

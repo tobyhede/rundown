@@ -10,6 +10,7 @@ function makeDelegation(overrides: Partial<StepDelegation> = {}): StepDelegation
   return {
     tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
     childRunbookPath: 'child.md',
+    childRunbookRef: { source: 'project', path: 'child.md' },
     contextSnapshot: { vars: brandEffectiveVarsForTest({}), ancestors: [] },
     childRunId: null,
     createdAt: '2026-02-27T10:00:00.000Z',
@@ -22,7 +23,7 @@ function makeDelegation(overrides: Partial<StepDelegation> = {}): StepDelegation
 function makeState(substepStates: SubstepState[]): RunbookState {
   return {
     id: 'run-1',
-    runbook: 'parent.md',
+    runbook: { source: 'project', path: 'parent.md' },
     runbookPath: 'parent.md',
     step: '1',
     stepName: 'Main step',

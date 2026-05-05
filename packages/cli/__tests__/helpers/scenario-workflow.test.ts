@@ -151,6 +151,7 @@ describe('loadScenarios', () => {
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/test/runbook.md',
       source: 'project',
+      sourceRoot: '/test',
     });
     setReadFileResolved('# No frontmatter');
     setExtractFrontmatter(null, '# No frontmatter');
@@ -168,6 +169,7 @@ describe('loadScenarios', () => {
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/test/runbook.md',
       source: 'project',
+      sourceRoot: '/test',
     });
     setReadFileResolved('---\nscenarios: bad\n---');
     setExtractFrontmatter({ scenarios: 'bad' }, '');
@@ -188,6 +190,7 @@ describe('loadScenarios', () => {
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/test/runbook.md',
       source: 'project',
+      sourceRoot: '/test',
     });
     setReadFileResolved('---\nname: test\n---');
     setExtractFrontmatter({ name: 'test' }, '');
@@ -213,6 +216,7 @@ describe('loadScenarios', () => {
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/test/runbook.md',
       source: 'project',
+      sourceRoot: '/test',
     });
     setReadFileResolved('---\nname: my-runbook\n---');
     setExtractFrontmatter({ name: 'my-runbook', scenarios }, '');
@@ -236,6 +240,7 @@ describe('loadScenarios', () => {
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/test/runbook.md',
       source: 'project',
+      sourceRoot: '/test',
     });
     setReadFileResolved('---\nscenarios:\n---');
     setExtractFrontmatter({}, '');

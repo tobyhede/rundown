@@ -12,6 +12,7 @@ import type {
   SubstepState,
   TemplateVarValue,
 } from './types.js';
+import type { RunbookRef } from './runbook-ref.js';
 
 /**
  * Options for aborting a delegation.
@@ -83,6 +84,8 @@ export interface DelegateOptions {
   readonly stepId: string;
   /** Path to the child runbook to delegate to. */
   readonly childRunbookPath: string;
+  /** Canonical persisted identity of the child runbook. */
+  readonly childRunbookRef: RunbookRef;
   /** Extra variables to merge into the context snapshot. */
   readonly extraVars?: Readonly<Record<string, TemplateVarValue>>;
   /** Ancestor chain built by the caller. */
@@ -208,7 +211,8 @@ export function createDelegation(
   options: DelegateOptions,
   steps: readonly ResolvedStep[],
 ): CreateDelegationResult {
-  const { state, stepId, childRunbookPath, extraVars, ancestors, frameKey } = options;
+  const { state, stepId, childRunbookPath, childRunbookRef, extraVars, ancestors, frameKey } =
+    options;
 
   // 0. Single-level delegation invariant: a claimed (delegated) child runbook
   //    may not issue further delegations. This guard runs before any other
@@ -328,6 +332,7 @@ export function createDelegation(
     token,
     tokenHash,
     childRunbookPath,
+    childRunbookRef,
     contextSnapshot,
     childRunId: null,
     createdAt: new Date().toISOString(),
@@ -676,6 +681,7 @@ export function retryDelegation(
       state: stateAfterAbort,
       stepId: stepIdForCreate,
       childRunbookPath: existingDelegation.childRunbookPath,
+      childRunbookRef: existingDelegation.childRunbookRef,
       ...(mergedExtraVars ? { extraVars: mergedExtraVars } : {}),
       ancestors: [],
       frameKey,

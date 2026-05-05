@@ -6,7 +6,7 @@ import { assertSafeId } from '../paths.js';
  */
 export const RUNBOOK_REF_ERROR_TEXT = {
   INVALID_RUNBOOK_REF:
-    'Invalid runbook: expected { source, path } with a source-root-relative .runbook.md path',
+    'Invalid runbook: expected { source, path } with a safe source-root-relative Markdown path',
 } as const;
 
 /**
@@ -27,7 +27,7 @@ export const RunbookSourceSchema = z.enum(RUNBOOK_SOURCES, {
 export type RunbookSource = z.infer<typeof RunbookSourceSchema>;
 
 /**
- * Validate a source-root-relative `.runbook.md` path.
+ * Validate a source-root-relative Markdown path.
  *
  * @param value - Path value to validate
  * @returns True when the path is canonical for a local runbook reference
@@ -37,7 +37,7 @@ function isValidRunbookPath(value: string): boolean {
     value.length === 0 ||
     value.startsWith('/') ||
     value.includes('\\') ||
-    !value.endsWith('.runbook.md')
+    !value.endsWith('.md')
   ) {
     return false;
   }
@@ -76,10 +76,7 @@ export const RunbookRefSchema = z
     },
   )
   .superRefine((ref, ctx) => {
-    if (
-      !isValidRunbookPath(ref.path) ||
-      (ref.source === 'project' && ref.path.startsWith('.rundown/runbooks/'))
-    ) {
+    if (!isValidRunbookPath(ref.path)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: RUNBOOK_REF_ERROR_TEXT.INVALID_RUNBOOK_REF,

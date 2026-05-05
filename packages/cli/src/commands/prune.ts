@@ -98,6 +98,7 @@ export function registerPruneCommand(program: Command): void {
           // Enrich items with status string for display
           const enrichedItems = toDelete.map((state) => ({
             ...state,
+            runbook: state.runbook.path,
             _status: getStatus(state, activeState, stashedId),
           }));
 

@@ -179,6 +179,7 @@ describe('StepDelegationSchema', () => {
   const validDelegation = {
     tokenHash: `sha256:${'a'.repeat(64)}`,
     childRunbookPath: 'child-runbook.md',
+    childRunbookRef: { source: 'project', path: 'child-runbook.md' },
     contextSnapshot: {
       vars: { env: 'staging' },
       ancestors: [],
@@ -411,6 +412,7 @@ describe('SubstepStateSchema backward compatibility', () => {
       delegation: {
         tokenHash: `sha256:${'b'.repeat(64)}`,
         childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
         contextSnapshot: { vars: {}, ancestors: [] },
         childRunId: null,
         createdAt: '2026-02-27T10:00:00.000Z',
@@ -430,6 +432,7 @@ describe('RunbookStateSchema round-trip with delegation', () => {
     const delegation = {
       tokenHash: `sha256:${'c'.repeat(64)}`,
       childRunbookPath: 'child.md',
+      childRunbookRef: { source: 'project', path: 'child.md' },
       contextSnapshot: {
         vars: { env: 'prod' },
         ancestors: [
@@ -579,7 +582,7 @@ describe('StatusResponseSchema with delegations', () => {
 function createMinimalRunbookState(overrides: Record<string, unknown> = {}) {
   return {
     id: 'test-id',
-    runbook: 'test.md',
+    runbook: { source: 'project', path: 'test.md' },
     runbookPath: 'test.md',
     step: '1',
     stepName: 'Test step',

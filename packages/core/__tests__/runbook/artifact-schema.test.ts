@@ -56,7 +56,7 @@ describe('artifact schemas', () => {
   it.each([
     'planning/review.runbook.md',
     { source: 'plugin', path: 'planning/review plan.runbook.md' },
-    { source: 'plugin', path: 'planning/review.md' },
+    { source: 'plugin', path: 'planning/review' },
     { source: 'plugin', path: '../review.runbook.md' },
     { source: 'external', path: 'planning/review.runbook.md' },
   ])('rejects non-canonical runbook values %#', (runbook) => {

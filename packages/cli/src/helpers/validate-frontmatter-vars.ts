@@ -9,7 +9,7 @@ import {
  *
  * Returns error diagnostics for:
  * - Duplicate output names within the outputs array
- * - Reserved runtime names (step, index, context — case-insensitive)
+ * - Reserved runtime names from the parser's shared reserved-name set
  *
  * @param outputs - Parsed output declarations from frontmatter, or undefined if absent
  * @returns Array of validation diagnostics (errors only)

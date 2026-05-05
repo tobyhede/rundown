@@ -18,6 +18,7 @@ describe('Result types', () => {
       delegation: {
         tokenHash: TEST_TOKEN_HASH,
         childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
         contextSnapshot: { vars: brandEffectiveVars({}), ancestors: [] },
         childRunId: null,
         createdAt: '2026-04-23T00:00:00.000Z',

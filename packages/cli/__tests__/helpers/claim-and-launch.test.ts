@@ -1,5 +1,15 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import type { RunbookRef, RunbookState, StepDelegation, TokenScanResult } from '@rundown-org/core';
+import type {
+  ClaimId,
+  ClaimRecord,
+  ClaimRunbookResult,
+  DelegationLinkage,
+  RunbookRef,
+  RunbookState,
+  SessionService,
+  StepDelegation,
+  TokenScanResult,
+} from '@rundown-org/core';
 import type { RunPipelineContext } from '../../src/helpers/runbook-pipeline.js';
 import type * as VariableDiscoveryModule from '../../src/services/variable-discovery.js';
 import { assertVariant } from './assert-variant.js';
@@ -15,6 +25,42 @@ const { isJsonArrayStream: realIsJsonArrayStream } = await import('@rundown-org/
 const MOCK_TOKEN_HASH = brandDelegationTokenHashForTest(`sha256:${'a'.repeat(64)}`);
 const DIFFERENT_TOKEN_HASH = brandDelegationTokenHashForTest(`sha256:${'b'.repeat(64)}`);
 const ORIGINAL_TOKEN_HASH = brandDelegationTokenHashForTest(`sha256:${'c'.repeat(64)}`);
+const TEST_CLAIM_ID = 'rdclm_abcdefghijklmnopqrstu1' as ClaimId;
+
+function claimRecord(childRunId: string, overrides: Partial<ClaimRecord> = {}): ClaimRecord {
+  return {
+    kind: 'claim-record',
+    claimId: TEST_CLAIM_ID,
+    childRunId,
+    tokenHash: MOCK_TOKEN_HASH,
+    parentRunId: 'run-1',
+    parentStepId: '1',
+    claimedAt: '2026-02-27T10:00:00.000Z',
+    updatedAt: '2026-02-27T10:00:00.000Z',
+    ...overrides,
+  };
+}
+
+function claimedRunbookResult(
+  childRunId: string,
+  overrides: Partial<ClaimRecord> = {},
+): ClaimRunbookResult {
+  return { status: 'claimed', claim: claimRecord(childRunId, overrides) };
+}
+
+function mockClaimRunbookSuccess(): jest.Mock<SessionService['claimRunbook']> {
+  return mockFn<SessionService['claimRunbook']>().mockImplementation(
+    async (childRunId: string, linkage: DelegationLinkage) =>
+      claimedRunbookResult(childRunId, {
+        tokenHash: linkage.tokenHash,
+        parentRunId: linkage.parentRunId,
+        parentStepId: linkage.parentStepId,
+        parentStep: linkage.parentStep,
+        parentFrameKey: linkage.parentFrameKey,
+        parentEntry: linkage.parentEntry,
+      }),
+  );
+}
 
 // Mock @rundown-org/core
 jest.unstable_mockModule('@rundown-org/core', () => ({
@@ -39,6 +85,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   RunbookRefSchema: {
     parse: jest.fn((ref: unknown) => ref),
   },
+  generateRunId: jest.fn(() => `wf_${'a'.repeat(32)}`),
   DELEGATION_TOKEN_PREFIX: 'rdtk_',
   DEFAULT_POLICY: {
     version: 1,
@@ -99,6 +146,8 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   ...mockErrorHelpers,
 }));
 
+const actualResolveRunbook = await import('../../src/helpers/resolve-runbook.js');
+
 // Mock @rundown-org/parser
 jest.unstable_mockModule('@rundown-org/parser', () => ({
   parseRunbookDocument: jest.fn(),
@@ -109,9 +158,20 @@ jest.unstable_mockModule('@rundown-org/parser', () => ({
     step.kind === 'substeps' || step.kind === 'for' || step.kind === 'prompted-for',
 }));
 
-// Mock resolve-runbook
+// Mock resolve-runbook discovery while delegating runbook-ref derivation to
+// the production implementation by default. Individual tests can still
+// override buildRunbookRef for error/mismatch cases.
 jest.unstable_mockModule('../../src/helpers/resolve-runbook', () => ({
+  ...actualResolveRunbook,
   resolveRunbookFile: jest.fn(),
+  resolveRunbookRef: jest.fn((_cwd: string, ref: RunbookRef) =>
+    Promise.resolve({
+      path: `/tmp/test/${ref.path}`,
+      source: ref.source,
+      sourceRoot: '/tmp/test',
+    }),
+  ),
+  buildRunbookRef: jest.fn(actualResolveRunbook.buildRunbookRef),
 }));
 
 // Mock execution service
@@ -149,6 +209,20 @@ jest.unstable_mockModule('../../src/services/variable-discovery', () => ({
     providedKeys: new Set(),
   }),
   RUNTIME_RESERVED_VARIABLES: new Set(['Date', 'DateTime', 'Year', 'Month', 'Day', 'WorkPath']),
+  BUILTIN_VARIABLES: {
+    Date: 'Date',
+    DateTime: 'DateTime',
+    Year: 'Year',
+    Month: 'Month',
+    Day: 'Day',
+    Branch: 'Branch',
+    WorkPath: 'WorkPath',
+    ContextId: 'ContextId',
+    Step: 'Step',
+    Index: 'Index',
+    RunbookRef: 'RunbookRef',
+    RunId: 'RunId',
+  },
 }));
 
 // Mock template-renderer
@@ -178,7 +252,9 @@ jest.unstable_mockModule('node:fs/promises', () => ({
 // Import after mocking
 const core = await import('@rundown-org/core');
 const parser = await import('@rundown-org/parser');
-const { resolveRunbookFile } = await import('../../src/helpers/resolve-runbook.js');
+const { resolveRunbookFile, resolveRunbookRef, buildRunbookRef } = await import(
+  '../../src/helpers/resolve-runbook.js'
+);
 const { resolveVariables } = await import('../../src/services/variable-discovery.js');
 const { substituteRunbookVariables, resolveForBounds, collectUnresolvedRunbookVariables } =
   await import('../../src/services/template-renderer.js');
@@ -213,11 +289,9 @@ function makeCtx(overrides: Record<string, unknown> = {}): RunPipelineContext {
     },
     actorService: {},
     sessionService: {
-      claimRunbook: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
-        status: 'claimed',
-        // cspell:disable-next-line
-        claim: { claimId: 'rdclm_abcdefghijklmnopqrstu1' },
-      }),
+      claimRunbook: mockClaimRunbookSuccess(),
+      findClaimForDelegation:
+        mockFn<SessionService['findClaimForDelegation']>().mockResolvedValue(null),
     },
     lifecycleService: {},
     cwd: '/tmp/test',
@@ -337,6 +411,14 @@ beforeEach(() => {
     iteration: undefined,
     frameKey: brandFrameKeyForTest('1'),
   });
+  jest.mocked(resolveRunbookRef).mockImplementation((_cwd: string, ref: RunbookRef) =>
+    Promise.resolve({
+      path: `/tmp/test/${ref.path}`,
+      source: ref.source,
+      sourceRoot: '/tmp/test',
+    }),
+  );
+  jest.mocked(buildRunbookRef).mockImplementation(actualResolveRunbook.buildRunbookRef);
   jest.mocked(validateOutputsDeclarations).mockReturnValue([]);
 });
 
@@ -421,6 +503,7 @@ describe('claimAndLaunch', () => {
           delegation: {
             tokenHash: MOCK_TOKEN_HASH,
             childRunbookPath: 'child.md',
+            childRunbookRef: { source: 'project', path: 'child.md' },
             childRunId: null,
             cancelledAt: '2026-02-28T00:00:00.000Z',
             contextSnapshot: { vars: {}, ancestors: [] },
@@ -471,6 +554,7 @@ describe('claimAndLaunch', () => {
           delegation: {
             tokenHash: MOCK_TOKEN_HASH,
             childRunbookPath: 'child.md',
+            childRunbookRef: { source: 'project', path: 'child.md' },
             childRunId: 'existing-child-run',
             cancelledAt: null,
             contextSnapshot: { vars: {}, ancestors: [] },
@@ -519,6 +603,7 @@ describe('claimAndLaunch', () => {
           delegation: {
             tokenHash: MOCK_TOKEN_HASH,
             childRunbookPath: 'child.md',
+            childRunbookRef: { source: 'project', path: 'child.md' },
             childRunId: null,
             cancelledAt: null,
             contextSnapshot: { vars: {}, ancestors: [] },
@@ -574,6 +659,183 @@ describe('claimAndLaunch', () => {
     );
   });
 
+  it('returns existing session claim when delegation has no linked child', async () => {
+    const parentState = {
+      id: 'run-1',
+      variables: {},
+      substepStates: [
+        {
+          id: '1',
+          status: 'pending',
+          frameKey: brandFrameKeyForTest('1'),
+          delegation: {
+            tokenHash: MOCK_TOKEN_HASH,
+            childRunbookPath: 'child.md',
+            childRunbookRef: { source: 'project', path: 'child.md' },
+            childRunId: null,
+            cancelledAt: null,
+            contextSnapshot: { vars: {}, ancestors: [] },
+            createdAt: '2026-02-27T10:00:00.000Z',
+          },
+        },
+      ],
+    };
+    const existingChildState = { id: 'existing-session-child', lifecycle: 'running' };
+    const findClaimForDelegation = mockFn<
+      SessionService['findClaimForDelegation']
+    >().mockResolvedValue(
+      claimRecord('existing-session-child', {
+        parentRunId: 'run-1',
+        parentStepId: '1',
+      }),
+    );
+    const claimRunbook = mockClaimRunbookSuccess();
+    const update = mockFn<() => Promise<void>>().mockResolvedValue(undefined);
+    const ctx = makeCtx({
+      manager: {
+        load: mockFn<(id: string) => Promise<unknown>>().mockImplementation(async (id) =>
+          id === 'existing-session-child' ? existingChildState : parentState,
+        ),
+        update,
+      },
+      sessionService: {
+        claimRunbook,
+        findClaimForDelegation,
+      },
+    });
+
+    mockScanService(
+      scanResult({
+        parentState,
+        stepId: '1',
+        substepId: '1',
+        delegation: parentState.substepStates[0].delegation,
+        frameKey: brandFrameKeyForTest('1'),
+      }),
+      null,
+    );
+    mockHappyDelegationLock();
+
+    // cspell:disable-next-line
+    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.childRunId).toBe('existing-session-child');
+      expect(result.loopResult).toBe('waiting');
+    }
+    expect(findClaimForDelegation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        parentRunId: 'run-1',
+        parentStepId: '1',
+        tokenHash: MOCK_TOKEN_HASH,
+      }),
+    );
+    expect(claimRunbook).toHaveBeenCalledWith(
+      'existing-session-child',
+      expect.objectContaining({
+        parentRunId: 'run-1',
+        parentStepId: '1',
+        tokenHash: MOCK_TOKEN_HASH,
+      }),
+    );
+    expect(update).toHaveBeenCalled();
+  });
+
+  it('surfaces linkage-mismatch when existing session claim child linkage diverges', async () => {
+    const parentState = {
+      id: 'run-1',
+      variables: {},
+      substepStates: [
+        {
+          id: '1',
+          status: 'pending',
+          frameKey: brandFrameKeyForTest('1'),
+          delegation: {
+            tokenHash: MOCK_TOKEN_HASH,
+            childRunbookPath: 'child.md',
+            childRunbookRef: { source: 'project', path: 'child.md' },
+            childRunId: null,
+            cancelledAt: null,
+            contextSnapshot: { vars: {}, ancestors: [] },
+            createdAt: '2026-02-27T10:00:00.000Z',
+          },
+        },
+      ],
+    };
+    const existingChildState = { id: 'existing-session-child', lifecycle: 'running' };
+    const findClaimForDelegation = mockFn<
+      SessionService['findClaimForDelegation']
+    >().mockResolvedValue(
+      claimRecord('existing-session-child', {
+        parentRunId: 'run-1',
+        parentStepId: '1',
+      }),
+    );
+    const incoming: DelegationLinkage = {
+      kind: 'delegation',
+      parentRunId: 'run-1',
+      parentStepId: '1',
+      tokenHash: MOCK_TOKEN_HASH,
+    };
+    const persisted: DelegationLinkage = {
+      kind: 'delegation',
+      parentRunId: 'different-run',
+      parentStepId: '1',
+      tokenHash: MOCK_TOKEN_HASH,
+    };
+    const claimRunbook = mockFn<SessionService['claimRunbook']>().mockResolvedValue({
+      status: 'linkage-mismatch',
+      childRunId: 'existing-session-child',
+      incoming,
+      persisted,
+    });
+    const update = mockFn<() => Promise<void>>().mockResolvedValue(undefined);
+    const ctx = makeCtx({
+      manager: {
+        load: mockFn<(id: string) => Promise<unknown>>().mockImplementation(async (id) =>
+          id === 'existing-session-child' ? existingChildState : parentState,
+        ),
+        update,
+      },
+      sessionService: {
+        claimRunbook,
+        findClaimForDelegation,
+      },
+    });
+
+    mockScanService(
+      scanResult({
+        parentState,
+        stepId: '1',
+        substepId: '1',
+        delegation: parentState.substepStates[0].delegation,
+        frameKey: brandFrameKeyForTest('1'),
+      }),
+      null,
+    );
+    mockHappyDelegationLock();
+
+    // cspell:disable-next-line
+    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      assertVariant(result, 'reason', 'linkage-mismatch');
+      expect(result.childRunId).toBe('existing-session-child');
+      expect(result.parentRunId).toBe('run-1');
+    }
+    expect(claimRunbook).toHaveBeenCalledWith(
+      'existing-session-child',
+      expect.objectContaining({
+        parentRunId: 'run-1',
+        parentStepId: '1',
+        tokenHash: MOCK_TOKEN_HASH,
+      }),
+    );
+    expect(update).not.toHaveBeenCalled();
+  });
+
   it('surfaces child-missing when claimRunbook reports the child state is gone', async () => {
     const parentState = {
       id: 'run-1',
@@ -585,6 +847,7 @@ describe('claimAndLaunch', () => {
           delegation: {
             tokenHash: MOCK_TOKEN_HASH,
             childRunbookPath: 'child.md',
+            childRunbookRef: { source: 'project', path: 'child.md' },
             childRunId: 'existing-child-run',
             cancelledAt: null,
             contextSnapshot: { vars: {}, ancestors: [] },
@@ -594,7 +857,7 @@ describe('claimAndLaunch', () => {
       ],
     };
 
-    const mockClaimRunbook = mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
+    const mockClaimRunbook = mockFn<SessionService['claimRunbook']>().mockResolvedValue({
       status: 'missing-child',
       childRunId: 'existing-child-run',
     });
@@ -640,6 +903,7 @@ describe('claimAndLaunch', () => {
           delegation: {
             tokenHash: MOCK_TOKEN_HASH,
             childRunbookPath: 'child.md',
+            childRunbookRef: { source: 'project', path: 'child.md' },
             childRunId: 'existing-child-run',
             cancelledAt: null,
             contextSnapshot: { vars: {}, ancestors: [] },
@@ -649,11 +913,23 @@ describe('claimAndLaunch', () => {
       ],
     };
 
-    const mockClaimRunbook = mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
+    const incoming: DelegationLinkage = {
+      kind: 'delegation',
+      parentRunId: 'run-1',
+      parentStepId: '1',
+      tokenHash: MOCK_TOKEN_HASH,
+    };
+    const persisted: DelegationLinkage = {
+      kind: 'delegation',
+      parentRunId: 'run-1',
+      parentStepId: '1',
+      tokenHash: DIFFERENT_TOKEN_HASH,
+    };
+    const mockClaimRunbook = mockFn<SessionService['claimRunbook']>().mockResolvedValue({
       status: 'linkage-mismatch',
       childRunId: 'existing-child-run',
-      incoming: { kind: 'delegation', tokenHash: MOCK_TOKEN_HASH },
-      persisted: { kind: 'delegation', tokenHash: DIFFERENT_TOKEN_HASH },
+      incoming,
+      persisted,
     });
 
     const ctx = makeCtx({
@@ -725,6 +1001,7 @@ describe('claimAndLaunch', () => {
           delegation: {
             tokenHash: MOCK_TOKEN_HASH,
             childRunbookPath: 'child.md',
+            childRunbookRef: { source: 'project', path: 'child.md' },
             childRunId: null,
             cancelledAt: null,
             contextSnapshot: { vars: {}, ancestors: [] },
@@ -775,6 +1052,7 @@ describe('claimAndLaunch', () => {
           delegation: {
             tokenHash: MOCK_TOKEN_HASH,
             childRunbookPath: 'child.md',
+            childRunbookRef: { source: 'project', path: 'child.md' },
             childRunId: null,
             cancelledAt: null,
             contextSnapshot: { vars: {}, ancestors: [] },
@@ -821,6 +1099,7 @@ describe('claimAndLaunch', () => {
           delegation: {
             tokenHash: MOCK_TOKEN_HASH,
             childRunbookPath: 'child.md',
+            childRunbookRef: { source: 'project', path: 'child.md' },
             childRunId: null,
             cancelledAt: null,
             contextSnapshot: { vars: {}, ancestors: [] },
@@ -873,6 +1152,7 @@ describe('claimAndLaunch', () => {
           delegation: {
             tokenHash: ORIGINAL_TOKEN_HASH,
             childRunbookPath: 'child.md',
+            childRunbookRef: { source: 'project', path: 'child.md' },
             childRunId: null,
             cancelledAt: null,
             contextSnapshot: { vars: {}, ancestors: [] },
@@ -906,6 +1186,7 @@ describe('claimAndLaunch', () => {
           delegation: {
             tokenHash: DIFFERENT_TOKEN_HASH,
             childRunbookPath: 'child.md',
+            childRunbookRef: { source: 'project', path: 'child.md' },
             childRunId: null,
             cancelledAt: null,
             contextSnapshot: { vars: {}, ancestors: [] },
@@ -975,6 +1256,7 @@ describe('claimAndLaunch', () => {
           delegation: {
             tokenHash: MOCK_TOKEN_HASH,
             childRunbookPath: 'child.md',
+            childRunbookRef: { source: 'project', path: 'child.md' },
             childRunId: null,
             cancelledAt: null,
             contextSnapshot: { vars: {}, ancestors: [] },
@@ -1010,6 +1292,7 @@ describe('claimAndLaunch', () => {
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/tmp/test/child.md',
       source: 'project',
+      sourceRoot: '/tmp/test',
     });
     // Cast through unknown: the parser fixture is a minimal stand-in
     // (real Runbook type carries many more fields than this test reads).
@@ -1050,11 +1333,7 @@ describe('claimAndLaunch', () => {
       title: 'Child',
     });
 
-    const mockClaimRunbook = mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
-      status: 'claimed',
-      // cspell:disable-next-line
-      claim: { claimId: 'rdclm_abcdefghijklmnopqrstu1' },
-    });
+    const mockClaimRunbook = mockClaimRunbookSuccess();
 
     const ctx = makeCtx({
       manager: {
@@ -1072,6 +1351,8 @@ describe('claimAndLaunch', () => {
       sessionService: {
         pushRunbook: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
         claimRunbook: mockClaimRunbook,
+        findClaimForDelegation:
+          mockFn<SessionService['findClaimForDelegation']>().mockResolvedValue(null),
       },
       lifecycleService: {
         ensureActiveEntry: mockFn<
@@ -1096,7 +1377,7 @@ describe('claimAndLaunch', () => {
     // Critical assertion: delegation linkage should use the delegation's stored
     // frameKey ('1|3'), NOT the parent's current frame ('1|5')
     expect(mockCreate).toHaveBeenCalledWith(
-      'child.md',
+      { source: 'project', path: 'child.md' },
       expect.anything(),
       expect.objectContaining({
         parentLinkage: expect.objectContaining({
@@ -1135,6 +1416,7 @@ describe('claimAndLaunch', () => {
           delegation: {
             tokenHash: MOCK_TOKEN_HASH,
             childRunbookPath: 'child.md',
+            childRunbookRef: { source: 'project', path: 'child.md' },
             childRunId: null,
             cancelledAt: null,
             contextSnapshot: { vars: {}, ancestors: [] },
@@ -1160,6 +1442,7 @@ describe('claimAndLaunch', () => {
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/tmp/test/child.md',
       source: 'project',
+      sourceRoot: '/tmp/test',
     });
     // Cast through unknown: minimal parser fixture (see frameKey linkage test).
     jest.mocked(parser.parseRunbookDocument).mockReturnValue({
@@ -1200,6 +1483,8 @@ describe('claimAndLaunch', () => {
       },
       sessionService: {
         pushRunbook: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
+        findClaimForDelegation:
+          mockFn<SessionService['findClaimForDelegation']>().mockResolvedValue(null),
       },
       lifecycleService: {
         ensureActiveEntry: mockFn<

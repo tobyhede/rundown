@@ -1,12 +1,14 @@
 import { describe, it, expect } from '@jest/globals';
 import {
   buildContextSnapshot,
+  extractInheritedUserVars,
   reconstituteContextVars,
   MAX_ANCESTOR_DEPTH,
 } from '../../src/runbook/delegation-context.js';
 import { mergeEffectiveVars } from '../../src/runbook/effective-vars.js';
 import type { AncestorSnapshot, ContextSnapshot, RunbookState } from '../../src/runbook/types.js';
 import {
+  brandEffectiveVarsForTest,
   brandInitialTemplateVarsForTest,
   brandStoredOutputsForTest,
 } from '../helpers/effective-vars.js';
@@ -15,7 +17,7 @@ import {
 function makeMinimalState(overrides: Partial<RunbookState> = {}): RunbookState {
   return {
     id: 'run-1',
-    runbook: 'parent.md',
+    runbook: { source: 'project', path: 'parent.md' },
     runbookPath: 'parent.md',
     step: '1',
     stepName: 'Main step',
@@ -495,6 +497,28 @@ describe('reconstituteContextVars', () => {
     const result = reconstituteContextVars(snapshot);
 
     expect(result['context.parent.vars.port']).toBe(8080);
+  });
+});
+
+describe('extractInheritedUserVars', () => {
+  it('filters runtime identity while preserving user variables and outputs', () => {
+    const snapshot = {
+      vars: brandEffectiveVarsForTest({
+        RunId: 'rd_parent',
+        RunbookRef: { source: 'project', path: 'parent.runbook.md' },
+        UserInput: 'ok',
+        OutputValue: 'published',
+        'context.parent.vars.UserInput': 'ignored',
+      }),
+      ancestors: [],
+      step: '1',
+    };
+
+    expect(extractInheritedUserVars(snapshot)).toEqual(
+      expect.objectContaining({ UserInput: 'ok', OutputValue: 'published' }),
+    );
+    expect(extractInheritedUserVars(snapshot)).not.toHaveProperty('RunId');
+    expect(extractInheritedUserVars(snapshot)).not.toHaveProperty('RunbookRef');
   });
 });
 

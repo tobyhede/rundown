@@ -14,7 +14,7 @@ import { parseStepIdFromString } from '@rundown-org/parser';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
-import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
+import { buildRunbookRef, resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import { getRunbookFromState } from '../helpers/runbook-loader.js';
 import { inferDelegationTarget, inferRunbookFromStep } from '../helpers/delegate-inference.js';
 import {
@@ -149,6 +149,7 @@ export function registerDelegateCommand(program: Command): void {
             throw Errors.delegationRunbookNotFound(resolvedRunbook);
           }
           const childPath = childResolved.path;
+          const childRunbookRef = buildRunbookRef(childResolved);
 
           // Parse extra vars through the standard normalization pipeline
           const rawVars = await collectCliFlags(
@@ -201,6 +202,7 @@ export function registerDelegateCommand(program: Command): void {
               state,
               stepId: resolvedStepId,
               childRunbookPath: childPath,
+              childRunbookRef,
               extraVars,
               ancestors: [],
               frameKey: activeFrameKey,

@@ -374,7 +374,7 @@ describe('executeGoto', () => {
   function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
     return {
       id: 'test-id',
-      runbook: 'test.md',
+      runbook: { source: 'project', path: 'test.md' },
       runbookPath: 'test.md',
       step: '1',
       stepName: 'Step 1',

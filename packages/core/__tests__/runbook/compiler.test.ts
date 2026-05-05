@@ -9890,7 +9890,7 @@ echo "processing"
       // Start from a minimal persistent state; createDelegation updates substepStates.
       let state: RunbookState = {
         id: 'test-run',
-        runbook: 'parent.md',
+        runbook: { source: 'project', path: 'parent.md' },
         runbookPath: 'parent.md',
         step: '1',
         stepName: 'Parent',
@@ -9909,6 +9909,7 @@ echo "processing"
             state,
             stepId: `1.${substepId}`,
             childRunbookPath: `child-${substepId}.md`,
+            childRunbookRef: { source: 'project', path: `child-${substepId}.md` },
             ancestors: [],
             frameKey,
           },
@@ -10501,7 +10502,7 @@ echo "processing"
       const frameKey = buildFrameKey('1', iteration);
       const baseState: RunbookState = {
         id: 'test-run',
-        runbook: 'parent.md',
+        runbook: { source: 'project', path: 'parent.md' },
         runbookPath: 'parent.md',
         step: '1',
         stepName: 'Parent',
@@ -10519,6 +10520,10 @@ echo "processing"
           state: baseState,
           stepId: `1.${substepId}`,
           childRunbookPath: `child-${substepId}-iter${String(iteration)}.md`,
+          childRunbookRef: {
+            source: 'project',
+            path: `child-${substepId}-iter${String(iteration)}.md`,
+          },
           ancestors: [],
           frameKey,
         },

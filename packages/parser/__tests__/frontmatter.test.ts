@@ -640,6 +640,19 @@ inputs:
     expect(diagnostics[0].message).toMatch(/__proto__.*not a valid identifier/i);
   });
 
+  it.each(['RunId', 'RunbookRef'])('rejects reserved runtime identity "%s" in inputs', (name) => {
+    const markdown = `---
+inputs:
+  - ${name}
+  - environment
+---
+# Test`;
+    const { frontmatter, diagnostics } = extractFrontmatter(markdown);
+    expect(frontmatter?.inputs).toEqual(['environment']);
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0].message).toMatch(new RegExp(`${name}.*reserved`, 'i'));
+  });
+
   it('treats vars: as unknown passthrough (not a known field)', () => {
     const markdown = `---
 vars:

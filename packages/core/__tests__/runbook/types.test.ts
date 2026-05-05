@@ -107,7 +107,7 @@ describe('RunbookState runbookSrc field', () => {
   it('should include runbookSrc field', () => {
     const state: RunbookState = {
       id: 'wf-2026-01-29-abc123',
-      runbook: 'test.runbook.md',
+      runbook: { source: 'project', path: 'test.runbook.md' },
       runbookPath: 'test.runbook.md',
       step: '1',
       stepName: 'Test step',

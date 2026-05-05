@@ -5,11 +5,11 @@ import {
   findConfigFile,
   parseVarFlag,
   loadVariablesFromFile,
+  BUILTIN_VARIABLES,
   getBuiltinVariables,
   resolveVariables,
   routeExtraVars,
   collectCliFlags,
-  sanitizeBranchName,
   setExecFileSyncImpl,
 } from '../../src/services/variable-discovery.js';
 import { execFileSync as nodeExecFileSync } from 'node:child_process';
@@ -93,8 +93,9 @@ describe('getBuiltinVariables', () => {
     expect(builtins).toHaveProperty('Day');
     expect(builtins).toHaveProperty('Branch');
     expect(builtins).toHaveProperty('WorkPath');
-    expect(builtins).toHaveProperty('RunId');
     expect(builtins).toHaveProperty('ContextId');
+    expect(builtins).not.toHaveProperty('RunId');
+    expect(builtins).not.toHaveProperty('RunbookRef');
   });
 
   it('should return Date in YYYY-MM-DD format', () => {
@@ -140,11 +141,11 @@ describe('getBuiltinVariables', () => {
     expect(builtins).toHaveProperty('Branch');
   });
 
-  it('should include sanitized branch in WorkPath when in git repo', () => {
+  it('should return fixed WorkPath even when in git repo', () => {
     setExecFileSyncImpl((() => 'feature/my-branch\n') as unknown as typeof nodeExecFileSync);
 
     const builtins = getBuiltinVariables();
-    expect(builtins.WorkPath).toBe(`${WORK_DIR}/feature-my-branch`);
+    expect(builtins.WorkPath).toBe(WORK_DIR);
     expect(builtins.Branch).toBe('feature/my-branch');
   });
 
@@ -166,17 +167,19 @@ describe('getBuiltinVariables', () => {
     expect(builtins.Branch).toBe('');
   });
 
-  it('should return RunId as alphanumeric string', () => {
+  it('should not generate RunId during variable discovery', () => {
     const builtins = getBuiltinVariables();
 
-    expect(builtins).toHaveProperty('RunId');
-    expect(builtins.RunId).toMatch(/^[a-f0-9]+$/);
-    expect(builtins.RunId).toHaveLength(8);
+    expect(builtins).not.toHaveProperty('RunId');
   });
 
-  it('should return unique RunId across calls', () => {
-    const ids = new Set(Array.from({ length: 100 }, () => getBuiltinVariables().RunId));
-    expect(ids.size).toBeGreaterThan(90);
+  it('registers runtime identity keys without emitting them as discovery builtins', () => {
+    const builtins = getBuiltinVariables();
+
+    expect(BUILTIN_VARIABLES.RunId).toBe('RunId');
+    expect(BUILTIN_VARIABLES.RunbookRef).toBe('RunbookRef');
+    expect(builtins).not.toHaveProperty(BUILTIN_VARIABLES.RunId);
+    expect(builtins).not.toHaveProperty(BUILTIN_VARIABLES.RunbookRef);
   });
 
   it('should return ContextId as 8-char alphanumeric string', () => {
@@ -493,6 +496,17 @@ describe('resolveVariables', () => {
 
     it('rejects reserved keys case-insensitively', async () => {
       await expect(resolveVariables({ input: ['INDEX=9'] }, tmpDir)).rejects.toThrow(
+        /reserved runtime variable/i,
+      );
+    });
+
+    it.each([
+      'RunId',
+      'runid',
+      'RunbookRef',
+      'RUNBOOKREF',
+    ])('rejects runtime identity key "%s"', async (name) => {
+      await expect(resolveVariables({ input: [`${name}=shadow`] }, tmpDir)).rejects.toThrow(
         /reserved runtime variable/i,
       );
     });
@@ -1282,63 +1296,5 @@ describe('collectCliFlags', () => {
   it('returns empty object when no flags provided', async () => {
     const result = await collectCliFlags({}, tmpDir);
     expect(result).toEqual({});
-  });
-});
-
-describe('sanitizeBranchName', () => {
-  it('should return empty string for empty input', () => {
-    expect(sanitizeBranchName('')).toBe('');
-  });
-
-  it('should pass through simple names unchanged', () => {
-    expect(sanitizeBranchName('main')).toBe('main');
-    expect(sanitizeBranchName('develop')).toBe('develop');
-  });
-
-  it('should replace slashes with hyphens', () => {
-    expect(sanitizeBranchName('feature/add-login')).toBe('feature-add-login');
-    expect(sanitizeBranchName('fix/bug/nested')).toBe('fix-bug-nested');
-  });
-
-  it('should strip invalid characters and append hash when lossy', () => {
-    const result = sanitizeBranchName('feature@branch!');
-    expect(result).toMatch(/^featurebranch-[a-f0-9]{8}$/);
-  });
-
-  it('should preserve dots in branch names', () => {
-    expect(sanitizeBranchName('my..branch')).toBe('my..branch');
-    expect(sanitizeBranchName('release/1.2.3')).toBe('release-1.2.3');
-  });
-
-  it('should collapse consecutive hyphens', () => {
-    expect(sanitizeBranchName('a//b')).toBe('a-b');
-    expect(sanitizeBranchName('a---b')).toBe('a-b');
-  });
-
-  it('should trim leading and trailing hyphens', () => {
-    expect(sanitizeBranchName('-leading')).toBe('leading');
-    expect(sanitizeBranchName('trailing-')).toBe('trailing');
-    expect(sanitizeBranchName('/scoped/')).toBe('scoped');
-  });
-
-  it('should produce distinct results for branches that previously collided', () => {
-    const a = sanitizeBranchName('release/1.2');
-    const b = sanitizeBranchName('release/12');
-    expect(a).not.toBe(b);
-    expect(a).toBe('release-1.2');
-    expect(b).toBe('release-12');
-  });
-
-  it('should return hash-only for non-ASCII-only branches', () => {
-    const a = sanitizeBranchName('功能');
-    const b = sanitizeBranchName('特性');
-    expect(a).toMatch(/^[a-f0-9]{8}$/);
-    expect(b).toMatch(/^[a-f0-9]{8}$/);
-    expect(a).not.toBe(b);
-  });
-
-  it('should produce deterministic output', () => {
-    expect(sanitizeBranchName('feature@branch')).toBe(sanitizeBranchName('feature@branch'));
-    expect(sanitizeBranchName('功能')).toBe(sanitizeBranchName('功能'));
   });
 });

@@ -1,6 +1,11 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { runbooksDir } from '@rundown-org/core';
+import {
+  runbooksDir,
+  RunbookRefSchema,
+  type RunbookRef,
+  type RunbookSource,
+} from '@rundown-org/core';
 import { findRunbookByName, findRunbookByNameInSource } from '../services/discovery.js';
 import { getBundledRunbooksPath } from './bundled-runbooks.js';
 import { getPluginRoot } from './plugin-root.js';
@@ -16,7 +21,9 @@ export interface ResolvedRunbook {
   /** Absolute path to the resolved runbook file */
   path: string;
   /** Source directory where the runbook was found */
-  source: 'project' | 'plugin' | 'bundled';
+  source: RunbookSource;
+  /** Source root used to derive persisted source-root-relative identity */
+  sourceRoot: string;
 }
 
 /**
@@ -53,7 +60,7 @@ export function parseIdentifier(identifier: string): ParsedIdentifier {
  * @param namespace - Namespace string
  * @returns Source type or null if namespace not recognized
  */
-function namespaceToSource(namespace: string): 'project' | 'plugin' | 'bundled' | null {
+function namespaceToSource(namespace: string): RunbookSource | null {
   if (namespace === 'rundown') {
     return 'plugin';
   }
@@ -61,14 +68,33 @@ function namespaceToSource(namespace: string): 'project' | 'plugin' | 'bundled' 
   return null;
 }
 
-function pathWithin(root: string, target: string): boolean {
-  const relativePath = path.relative(path.resolve(root), path.resolve(target));
+function isWithinResolvedRoot(root: string, target: string): boolean {
+  const relativePath = path.relative(root, target);
   return (
     relativePath === '' ||
     (!relativePath.startsWith(`..${path.sep}`) &&
       relativePath !== '..' &&
       !path.isAbsolute(relativePath))
   );
+}
+
+async function realpathOrResolve(filePath: string): Promise<string> {
+  try {
+    return await fs.realpath(filePath);
+  } catch {
+    return path.resolve(filePath);
+  }
+}
+
+async function pathUnderRoot(root: string, target: string): Promise<string | null> {
+  const [realRoot, realTarget] = await Promise.all([
+    realpathOrResolve(root),
+    realpathOrResolve(target),
+  ]);
+  if (!isWithinResolvedRoot(realRoot, realTarget)) {
+    return null;
+  }
+  return path.join(root, path.relative(realRoot, realTarget));
 }
 
 async function resolveAbsolutePath(cwd: string, filename: string): Promise<ResolvedRunbook | null> {
@@ -78,20 +104,36 @@ async function resolveAbsolutePath(cwd: string, filename: string): Promise<Resol
     return null;
   }
 
-  if (pathWithin(runbooksDir(cwd), filename)) {
-    return { path: filename, source: 'project' };
+  const projectRunbookPath = await pathUnderRoot(runbooksDir(cwd), filename);
+  if (projectRunbookPath) {
+    return { path: projectRunbookPath, source: 'project', sourceRoot: cwd };
   }
 
   const pluginRoot = getPluginRoot();
-  if (pluginRoot && pathWithin(path.join(pluginRoot, 'runbooks'), filename)) {
-    return { path: filename, source: 'plugin' };
+  const pluginRunbooksDir = pluginRoot ? path.join(pluginRoot, 'runbooks') : null;
+  if (pluginRunbooksDir) {
+    const pluginRunbookPath = await pathUnderRoot(pluginRunbooksDir, filename);
+    if (pluginRunbookPath) {
+      return { path: pluginRunbookPath, source: 'plugin', sourceRoot: pluginRunbooksDir };
+    }
   }
 
-  if (pathWithin(getBundledRunbooksPath(), filename)) {
-    return { path: filename, source: 'bundled' };
+  const bundledRunbooksDir = getBundledRunbooksPath();
+  const bundledRunbookPath = await pathUnderRoot(bundledRunbooksDir, filename);
+  if (bundledRunbookPath) {
+    return { path: bundledRunbookPath, source: 'bundled', sourceRoot: bundledRunbooksDir };
   }
 
-  return { path: filename, source: 'project' };
+  const projectPath = await pathUnderRoot(cwd, filename);
+  if (projectPath) {
+    return { path: projectPath, source: 'project', sourceRoot: cwd };
+  }
+
+  return {
+    path: filename,
+    source: 'project',
+    sourceRoot: path.dirname(path.resolve(filename)),
+  };
 }
 
 /**
@@ -115,7 +157,7 @@ async function resolveByPath(cwd: string, filename: string): Promise<ResolvedRun
   const localPath = path.join(runbooksDir(cwd), filename);
   try {
     await fs.access(localPath);
-    return { path: localPath, source: 'project' };
+    return { path: localPath, source: 'project', sourceRoot: cwd };
   } catch {
     /* not found */
   }
@@ -126,7 +168,7 @@ async function resolveByPath(cwd: string, filename: string): Promise<ResolvedRun
     const pluginPath = path.join(pluginRoot, 'runbooks', filename);
     try {
       await fs.access(pluginPath);
-      return { path: pluginPath, source: 'plugin' };
+      return { path: pluginPath, source: 'plugin', sourceRoot: path.join(pluginRoot, 'runbooks') };
     } catch {
       /* not found */
     }
@@ -136,7 +178,7 @@ async function resolveByPath(cwd: string, filename: string): Promise<ResolvedRun
   const relativePath = path.resolve(cwd, filename);
   try {
     await fs.access(relativePath);
-    return { path: relativePath, source: 'project' };
+    return { path: relativePath, source: 'project', sourceRoot: cwd };
   } catch {
     /* not found */
   }
@@ -145,7 +187,7 @@ async function resolveByPath(cwd: string, filename: string): Promise<ResolvedRun
   const bundledPath = path.join(getBundledRunbooksPath(), filename);
   try {
     await fs.access(bundledPath);
-    return { path: bundledPath, source: 'bundled' };
+    return { path: bundledPath, source: 'bundled', sourceRoot: getBundledRunbooksPath() };
   } catch {
     /* not found */
   }
@@ -206,7 +248,7 @@ export async function resolveRunbookFile(
       return null;
     }
     const discovered = await findRunbookByNameInSource(cwd, name, source);
-    return discovered ? { path: discovered.path, source: discovered.source } : null;
+    return discovered ? resolvedFromDiscovered(cwd, discovered) : null;
   }
 
   // Detect if identifier is path-based or name-based
@@ -220,12 +262,119 @@ export async function resolveRunbookFile(
     if (!name.includes('/') && name.endsWith('.runbook.md')) {
       const stem = name.replace(/\.runbook\.md$/, '');
       const discovered = await findRunbookByName(cwd, stem);
-      return discovered ? { path: discovered.path, source: discovered.source } : null;
+      return discovered ? resolvedFromDiscovered(cwd, discovered) : null;
     }
     return null;
   } else {
     // Name-based resolution: use discovery service
     const discovered = await findRunbookByName(cwd, name);
-    return discovered ? { path: discovered.path, source: discovered.source } : null;
+    return discovered ? resolvedFromDiscovered(cwd, discovered) : null;
   }
+}
+
+async function resolvedFromDiscovered(
+  cwd: string,
+  discovered: { path: string; source: RunbookSource },
+): Promise<ResolvedRunbook> {
+  const sourceRoot = sourceRootForDiscovered(cwd, discovered.source);
+  const normalizedPath = (await pathUnderRoot(sourceRoot, discovered.path)) ?? discovered.path;
+  return {
+    path: normalizedPath,
+    source: discovered.source,
+    sourceRoot,
+  };
+}
+
+function sourceRootForDiscovered(cwd: string, source: RunbookSource): string {
+  switch (source) {
+    case 'project':
+      return cwd;
+    case 'plugin': {
+      const pluginRoot = getPluginRoot();
+      if (!pluginRoot) {
+        throw new Error('Plugin runbook discovered without CLAUDE_PLUGIN_ROOT');
+      }
+      return path.join(pluginRoot, 'runbooks');
+    }
+    case 'bundled':
+      return getBundledRunbooksPath();
+    default: {
+      const _exhaustive: never = source;
+      return _exhaustive;
+    }
+  }
+}
+
+function toSourceRootRelativePath(filePath: string, sourceRoot: string): string {
+  const relative = path.relative(sourceRoot, filePath).split(path.sep).join('/');
+  if (
+    relative.length === 0 ||
+    relative === '..' ||
+    relative.startsWith('../') ||
+    path.isAbsolute(relative)
+  ) {
+    throw new Error(`Resolved runbook path is outside ${sourceRoot}: ${filePath}`);
+  }
+  return relative;
+}
+
+function derivePersistedRunbookRef(
+  filePath: string,
+  source: RunbookSource,
+  sourceRoot: string,
+): RunbookRef {
+  return RunbookRefSchema.parse({
+    source,
+    path: toSourceRootRelativePath(filePath, sourceRoot),
+  });
+}
+
+/**
+ * Build the canonical runtime runbook reference for a resolved runbook file.
+ *
+ * @param resolved - Filesystem resolution result carrying path, source, and source root
+ * @returns Canonical `RunbookRef` derived from the resolved file and validated by `RunbookRefSchema`
+ * @throws {Error} If the resolved file cannot be represented as a safe source-root-relative Markdown path
+ */
+export function buildRunbookRef(resolved: ResolvedRunbook): RunbookRef {
+  return derivePersistedRunbookRef(resolved.path, resolved.source, resolved.sourceRoot);
+}
+
+/**
+ * Resolve a persisted runbook reference back to a filesystem path.
+ *
+ * @param cwd - Current working directory for project runbooks
+ * @param runbookRef - Canonical persisted runbook identity
+ * @returns Resolved runbook file with source metadata, or null if missing
+ */
+export async function resolveRunbookRef(
+  cwd: string,
+  runbookRef: RunbookRef,
+): Promise<ResolvedRunbook | null> {
+  const canonical = RunbookRefSchema.parse(runbookRef);
+  const pluginRoot = getPluginRoot();
+  const pluginRunbooksDir = pluginRoot ? path.join(pluginRoot, 'runbooks') : null;
+  const bundledRunbooksDir = getBundledRunbooksPath();
+  const candidates =
+    canonical.source === 'project'
+      ? [{ sourceRoot: cwd, path: path.join(cwd, canonical.path) }]
+      : canonical.source === 'plugin'
+        ? pluginRunbooksDir
+          ? [{ sourceRoot: pluginRunbooksDir, path: path.join(pluginRunbooksDir, canonical.path) }]
+          : []
+        : [{ sourceRoot: bundledRunbooksDir, path: path.join(bundledRunbooksDir, canonical.path) }];
+
+  for (const candidate of candidates) {
+    try {
+      await fs.access(candidate.path);
+      return {
+        path: candidate.path,
+        source: canonical.source,
+        sourceRoot: candidate.sourceRoot,
+      };
+    } catch {
+      // Continue to next candidate.
+    }
+  }
+  return null;
 }

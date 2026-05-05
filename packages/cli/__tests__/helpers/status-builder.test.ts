@@ -80,7 +80,7 @@ const { buildInactiveStatus, buildStashedStatus, buildActiveStatus } = await imp
 function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
   const baseState: RunbookState = {
     id: 'test-id',
-    runbook: 'test.runbook.md',
+    runbook: { source: 'project', path: 'test.runbook.md' },
     runbookPath: 'test.runbook.md',
     step: '1',
     stepName: 'First Step',

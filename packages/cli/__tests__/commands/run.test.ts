@@ -49,7 +49,10 @@ describe('start command', () => {
 
       const state = await getActiveState(workspace);
       expect(state).not.toBeNull();
-      expect(state?.runbook).toBe('runbooks/simple.runbook.md');
+      expect(state?.runbook).toEqual({
+        source: 'project',
+        path: 'runbooks/simple.runbook.md',
+      });
     });
 
     it('initializes step=1 and retryCount=0', async () => {
@@ -113,10 +116,11 @@ Plugin task.
 
       expect(result.exitCode).toBe(0);
       const state = await getActiveState(workspace);
-      expect(state?.runbookRef).toEqual({
+      expect(state?.runbook).toEqual({
         source: 'plugin',
         path: 'planning/review/plugin-child.runbook.md',
       });
+      expect(Object.hasOwn(state ?? {}, 'runbookRef')).toBe(false);
     });
 
     it('stores bundled runbook refs relative to the bundled runbooks root for absolute paths', async () => {
@@ -145,10 +149,11 @@ Bundled task.
 
       expect(result.exitCode).toBe(0);
       const state = await getActiveState(workspace);
-      expect(state?.runbookRef).toEqual({
+      expect(state?.runbook).toEqual({
         source: 'bundled',
         path: 'delegation/bundled-child.runbook.md',
       });
+      expect(Object.hasOwn(state ?? {}, 'runbookRef')).toBe(false);
     });
 
     it('fails if file does not exist', async () => {

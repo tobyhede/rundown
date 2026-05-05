@@ -300,6 +300,7 @@ export const StepDelegationSchema = z
     token: z.string().regex(DELEGATION_TOKEN_PATTERN).optional(),
     tokenHash: DelegationTokenHashSchema,
     childRunbookPath: z.string(),
+    childRunbookRef: RunbookRefSchema,
     contextSnapshot: ContextSnapshotSchema,
     childRunId: z.string().nullable(),
     createdAt: z.string(),
@@ -443,12 +444,24 @@ const ForStackEntrySchema = z.object({
  * @see makeRunbookStateSchema for the branded variant.
  * @see ValidatedRunbookState for the post-parse brand contract.
  */
-export const RunbookStateSchema = z
+const RUNBOOK_REF_REMOVED_MESSAGE =
+  'RunbookState.runbookRef is no longer supported; use RunbookState.runbook.';
+
+function rejectRemovedRunbookRefField(value: Record<string, unknown>, ctx: z.RefinementCtx): void {
+  if (Object.hasOwn(value, 'runbookRef')) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: RUNBOOK_REF_REMOVED_MESSAGE,
+      path: ['runbookRef'],
+    });
+  }
+}
+
+const RunbookStateObjectSchema = z
   .object({
     id: z.string(),
-    runbook: z.string(),
+    runbook: RunbookRefSchema,
     runbookPath: z.string(),
-    runbookRef: RunbookRefSchema.optional(),
     title: z.string().optional(),
     description: z.string().optional(),
     step: RunbookStepSchema, // "1" or "ErrorHandler"
@@ -548,6 +561,16 @@ export const RunbookStateSchema = z
   // agentId, parentRunbookId) to survive schema validation without breaking existing
   // persisted state files. They are simply ignored in the typed result.
   .passthrough();
+
+/**
+ * Runbook state validation schema.
+ *
+ * Rejects the removed `runbookRef` field so callers use the canonical
+ * `runbook` identity instead.
+ */
+export const RunbookStateSchema = RunbookStateObjectSchema.superRefine(
+  rejectRemovedRunbookRefField,
+);
 
 /** Validated runbook state. Inferred from {@link RunbookStateSchema}. */
 export type ValidatedRunbookState = z.infer<typeof RunbookStateSchema>;
@@ -709,6 +732,7 @@ function makeStepDelegationSchema(projectRoot: string): z.ZodTypeAny {
       token: z.string().regex(DELEGATION_TOKEN_PATTERN).optional(),
       tokenHash: DelegationTokenHashSchema,
       childRunbookPath: z.string(),
+      childRunbookRef: RunbookRefSchema,
       contextSnapshot: makeContextSnapshotSchema(projectRoot),
       childRunId: z.string().nullable(),
       createdAt: z.string(),
@@ -761,7 +785,7 @@ function makeSubstepStateSchema(projectRoot: string): z.ZodTypeAny {
 export function makeRunbookStateSchema(projectRoot: string): z.ZodTypeAny {
   const VarsSchema = z.record(z.string(), makeTemplateVarValueSchema(projectRoot));
   const SubstepStateSchemaValidated = makeSubstepStateSchema(projectRoot);
-  return RunbookStateSchema.extend({
+  return RunbookStateObjectSchema.extend({
     // Brand at the parse seam: every persisted state that re-enters the
     // process via `state.load` flows through this schema, so applying
     // the brand here covers the entire load path. The matching write
@@ -771,5 +795,5 @@ export function makeRunbookStateSchema(projectRoot: string): z.ZodTypeAny {
     ),
     variables: z.record(z.string(), z.string()).transform((v) => brandStoredOutputs(v)),
     substepStates: z.array(SubstepStateSchemaValidated).optional(),
-  });
+  }).superRefine(rejectRemovedRunbookRefField);
 }

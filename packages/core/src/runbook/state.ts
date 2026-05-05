@@ -1,4 +1,5 @@
 // src/runbook/state.ts
+import { randomBytes } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type { OutputDeclaration } from '@rundown-org/parser';
@@ -65,11 +66,13 @@ export class StaleRunbookStateError extends Error {
   }
 }
 
-function generateId(): string {
-  const now = new Date();
-  const date = now.toISOString().slice(0, 10);
-  const random = Math.random().toString(36).slice(2, 8);
-  return `wf-${date}-${random}`;
+/**
+ * Generate a canonical Rundown run id.
+ *
+ * @returns A `wf_` id followed by 32 lowercase hex characters
+ */
+export function generateRunId(): string {
+  return `wf_${randomBytes(16).toString('hex')}`;
 }
 
 /**
@@ -88,7 +91,7 @@ export interface SessionData {
 
 interface CreateOptions {
   readonly runbookPath: string;
-  readonly runbookRef?: RunbookRef;
+  readonly runId?: string;
   readonly prompted?: boolean;
   /** Parent linkage when this run is a child (delegation or inline). */
   readonly parentLinkage?: ParentLinkage;
@@ -195,26 +198,25 @@ export class RunbookStateManager {
   /**
    * Create a new runbook state and persist it to disk.
    *
-   * @param runbookFile - Path to the runbook source file
+   * @param runbookRef - Canonical runbook identity
    * @param runbook - The parsed runbook definition
    * @param options - Configuration including agentId, parent runbook info, prompted flag, and templateVars for template variable replacements
    * @returns The newly created RunbookState
    */
   async create(
-    runbookFile: string,
+    runbookRef: RunbookRef,
     runbook: Runbook | ResolvedRunbook,
     options: CreateOptions,
   ): Promise<RunbookState> {
-    const id = generateId();
+    const id = options.runId ?? generateRunId();
     const now = new Date().toISOString();
 
     const initialStep = runbook.steps[0];
 
     const state: RunbookState = {
       id,
-      runbook: runbookFile,
+      runbook: runbookRef,
       runbookPath: options.runbookPath,
-      runbookRef: options.runbookRef,
       title: runbook.title,
       description: runbook.description,
       step: initialStep.name,

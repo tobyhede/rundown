@@ -1,5 +1,9 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import type {
+  ClaimId,
+  ClaimRecord,
+  ClaimRunbookResult,
+  DelegationLinkage,
   RunbookActorService,
   RunbookStateManager,
   SessionService,
@@ -17,7 +21,11 @@ import type {
   Transitions,
 } from '@rundown-org/parser';
 import type { OutputEmitter } from '../../src/services/output-emitter.js';
-import type { PreparedRunbook, RunPipelineContext } from '../../src/helpers/runbook-pipeline.js';
+import type {
+  PreparedRunbook,
+  RunPipelineContext,
+  RunnableRunbook,
+} from '../../src/helpers/runbook-pipeline.js';
 import { assertVariant } from './assert-variant.js';
 import { mockErrorHelpers } from './mock-error-helpers.js';
 import { makeRunPipelineContext } from './run-pipeline-context-helpers.js';
@@ -31,6 +39,42 @@ const { isJsonArrayStream: realIsJsonArrayStream, RunbookRefSchema: realRunbookR
   await import('@rundown-org/core');
 
 const MOCK_TOKEN_HASH = brandDelegationTokenHashForTest(`sha256:${'a'.repeat(64)}`);
+const TEST_CLAIM_ID = 'rdclm_abcdefghijklmnopqrstu1' as ClaimId;
+
+function claimRecord(childRunId: string, overrides: Partial<ClaimRecord> = {}): ClaimRecord {
+  return {
+    kind: 'claim-record',
+    claimId: TEST_CLAIM_ID,
+    childRunId,
+    tokenHash: MOCK_TOKEN_HASH,
+    parentRunId: 'parent-id',
+    parentStepId: '1',
+    claimedAt: '2026-02-27T10:00:00.000Z',
+    updatedAt: '2026-02-27T10:00:00.000Z',
+    ...overrides,
+  };
+}
+
+function claimedRunbookResult(
+  childRunId: string,
+  overrides: Partial<ClaimRecord> = {},
+): ClaimRunbookResult {
+  return { status: 'claimed', claim: claimRecord(childRunId, overrides) };
+}
+
+function mockClaimRunbookSuccess(): jest.Mock<SessionService['claimRunbook']> {
+  return mockFn<SessionService['claimRunbook']>().mockImplementation(
+    async (childRunId: string, linkage: DelegationLinkage) =>
+      claimedRunbookResult(childRunId, {
+        tokenHash: linkage.tokenHash,
+        parentRunId: linkage.parentRunId,
+        parentStepId: linkage.parentStepId,
+        parentStep: linkage.parentStep,
+        parentFrameKey: linkage.parentFrameKey,
+        parentEntry: linkage.parentEntry,
+      }),
+  );
+}
 
 // Mock @rundown-org/core
 jest.unstable_mockModule('@rundown-org/core', () => ({
@@ -55,6 +99,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   RunbookRefSchema: {
     parse: jest.fn((ref: unknown) => realRunbookRefSchema.parse(ref)),
   },
+  generateRunId: jest.fn(() => `wf_${'a'.repeat(32)}`),
   DELEGATION_TOKEN_PREFIX: 'rdtk_',
   DEFAULT_POLICY: {
     version: 1,
@@ -116,6 +161,8 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   ...mockErrorHelpers,
 }));
 
+const actualResolveRunbook = await import('../../src/helpers/resolve-runbook.js');
+
 // Mock @rundown-org/parser
 jest.unstable_mockModule('@rundown-org/parser', () => ({
   parseRunbookDocument: jest.fn(),
@@ -125,10 +172,17 @@ jest.unstable_mockModule('@rundown-org/parser', () => ({
     step.kind === 'substeps' || step.kind === 'for' || step.kind === 'prompted-for',
 }));
 
-// Mock resolve-runbook
-jest.unstable_mockModule('../../src/helpers/resolve-runbook', () => ({
-  resolveRunbookFile: jest.fn(),
-}));
+// Mock resolve-runbook discovery while delegating runbook-ref derivation to
+// the production implementation by default. Individual tests can still
+// override buildRunbookRef for error/mismatch cases.
+jest.unstable_mockModule('../../src/helpers/resolve-runbook', () => {
+  return {
+    ...actualResolveRunbook,
+    resolveRunbookFile: jest.fn(),
+    resolveRunbookRef: jest.fn(),
+    buildRunbookRef: jest.fn(actualResolveRunbook.buildRunbookRef),
+  };
+});
 
 // Mock execution service
 jest.unstable_mockModule('../../src/services/execution', () => ({
@@ -169,6 +223,18 @@ jest.unstable_mockModule('../../src/services/variable-discovery', () => ({
     }>
   >().mockResolvedValue({ vars: {}, warnings: [], providedKeys: new Set() }),
   RUNTIME_RESERVED_VARIABLES: new Set(['step', 'index', 'context']),
+  BUILTIN_VARIABLES: {
+    Date: 'Date',
+    DateTime: 'DateTime',
+    Year: 'Year',
+    Month: 'Month',
+    Day: 'Day',
+    Branch: 'Branch',
+    WorkPath: 'WorkPath',
+    RunId: 'RunId',
+    RunbookRef: 'RunbookRef',
+    ContextId: 'ContextId',
+  },
   isRuntimeReservedVariable: mockFn<(name: string) => boolean>().mockReturnValue(false),
 }));
 
@@ -200,7 +266,9 @@ jest.unstable_mockModule('node:fs/promises', () => ({
 // Import after mocking
 const core = await import('@rundown-org/core');
 const parser = await import('@rundown-org/parser');
-const { resolveRunbookFile } = await import('../../src/helpers/resolve-runbook.js');
+const { resolveRunbookFile, resolveRunbookRef, buildRunbookRef } = await import(
+  '../../src/helpers/resolve-runbook.js'
+);
 const { runExecutionLoop, buildStepVariables } = await import('../../src/services/execution.js');
 const { createBridgedEmitter } = await import('../../src/helpers/execution-emitter.js');
 const { FileSourcePolicyError, resolveVariables } = await import(
@@ -217,9 +285,13 @@ const { validateOutputsDeclarations } = await import(
   '../../src/helpers/validate-frontmatter-vars.js'
 );
 const fsPromises = await import('node:fs/promises');
-const { prepareRunbook, startRunbook, buildContextVars, buildTemplateVars } = await import(
-  '../../src/helpers/runbook-pipeline.js'
-);
+const {
+  prepareRunbook,
+  prepareRunnableRunbook,
+  startRunbook,
+  buildContextVars,
+  buildTemplateVars,
+} = await import('../../src/helpers/runbook-pipeline.js');
 const { setHelperRegistry, resetHelperRegistry } = await import(
   '../../src/services/helper-registry.js'
 );
@@ -227,7 +299,7 @@ const { setHelperRegistry, resetHelperRegistry } = await import(
 function makeState(id: string, overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     id,
-    runbook: 'test.md',
+    runbook: { source: 'project', path: 'test.md' },
     runbookPath: '/tmp/test.md',
     runbookSrc: '## 1. Step\n- PASS COMPLETE',
     step: '1',
@@ -379,6 +451,7 @@ beforeEach(() => {
   ).mockResolvedValue('# Test\n\n## 1. Step\n- PASS CONTINUE');
   jest.mocked(parser.parseRunbookDocument).mockReturnValue(mockParseResult());
   jest.mocked(core.hashDelegationToken).mockReturnValue(MOCK_TOKEN_HASH);
+  jest.mocked(core.generateRunId).mockReturnValue(`wf_${'a'.repeat(32)}`);
   jest.mocked(core.reconstituteContextVars).mockReturnValue({});
   jest.mocked(core.extractInheritedUserVars).mockReturnValue({});
   jest.mocked(core.deriveActiveFrame).mockReturnValue({
@@ -388,6 +461,14 @@ beforeEach(() => {
   });
   jest.mocked(core.isJsonArray).mockImplementation((v: unknown) => Array.isArray(v));
   jest.mocked(core.isJsonArrayStream).mockImplementation(realIsJsonArrayStream);
+  jest.mocked(buildRunbookRef).mockImplementation(actualResolveRunbook.buildRunbookRef);
+  jest.mocked(resolveRunbookRef).mockImplementation((_cwd: string, ref: RunbookRef) =>
+    Promise.resolve({
+      path: `/test/${ref.path}`,
+      source: ref.source,
+      sourceRoot: '/test',
+    }),
+  );
 });
 
 // validateSources was removed in the unified variable model refactoring.
@@ -409,6 +490,7 @@ describe('prepareRunbook', () => {
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/test/empty.md',
       source: 'project',
+      sourceRoot: '/test',
     });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
@@ -427,6 +509,7 @@ describe('prepareRunbook', () => {
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/test/good.md',
       source: 'project',
+      sourceRoot: '/test',
     });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
@@ -441,10 +524,56 @@ describe('prepareRunbook', () => {
     }
   });
 
+  it('prepares resolved runbooks with RunbookRef but without RunId', async () => {
+    jest.mocked(resolveRunbookFile).mockResolvedValue({
+      path: '/test/parent.runbook.md',
+      source: 'project',
+      sourceRoot: '/test',
+    });
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue(mockParseResult());
+
+    const result = await prepareRunbook('parent.runbook.md', {}, '/test');
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.prepared.mergedVariables.RunbookRef).toEqual({
+        source: 'project',
+        path: 'parent.runbook.md',
+      });
+      expect(result.prepared.mergedVariables).not.toHaveProperty('RunId');
+    }
+  });
+
+  it('prepares runnable runbooks with RunId before substitution', async () => {
+    jest.mocked(resolveRunbookFile).mockResolvedValue({
+      path: '/test/parent.runbook.md',
+      source: 'project',
+      sourceRoot: '/test',
+    });
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue(mockParseResult());
+
+    const result = await prepareRunnableRunbook('parent.runbook.md', {}, '/test');
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.prepared.runId).toMatch(/^wf_[a-f0-9]{32}$/);
+      expect(result.prepared.mergedVariables.RunId).toBe(result.prepared.runId);
+      expect(result.prepared.mergedVariables.RunbookRef).toEqual({
+        source: 'project',
+        path: 'parent.runbook.md',
+      });
+    }
+  });
+
   it('adds context.vars aliases to merged template variables', async () => {
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/test/good.md',
       source: 'project',
+      sourceRoot: '/test',
     });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
@@ -471,6 +600,7 @@ describe('prepareRunbook', () => {
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/test/child.md',
       source: 'project',
+      sourceRoot: '/test',
     });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
@@ -499,6 +629,7 @@ describe('prepareRunbook', () => {
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/test/child.md',
       source: 'project',
+      sourceRoot: '/test',
     });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
@@ -527,6 +658,7 @@ describe('prepareRunbook', () => {
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/test/good.md',
       source: 'project',
+      sourceRoot: '/test',
     });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
@@ -546,6 +678,7 @@ describe('prepareRunbook', () => {
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/test/missing-input.md',
       source: 'project',
+      sourceRoot: '/test',
     });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
@@ -577,6 +710,7 @@ describe('prepareRunbook', () => {
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/test/reserved.md',
       source: 'project',
+      sourceRoot: '/test',
     });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
@@ -587,7 +721,7 @@ describe('prepareRunbook', () => {
           {
             severity: 'error',
             message:
-              'Frontmatter "inputs[0]" — "context" is a reserved variable name (step, index, context — case-insensitive)',
+              'Frontmatter "inputs[0]" — "context" is a reserved variable name (step, index, context, runid, runbookref — case-insensitive)',
           },
         ],
       }),
@@ -626,6 +760,7 @@ describe('prepareRunbook', () => {
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/test/needs-var.md',
       source: 'project',
+      sourceRoot: '/test',
     });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
@@ -649,6 +784,7 @@ describe('prepareRunbook', () => {
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/test/needs-var.md',
       source: 'project',
+      sourceRoot: '/test',
     });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
@@ -672,6 +808,7 @@ describe('prepareRunbook', () => {
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/test/needs-date.md',
       source: 'project',
+      sourceRoot: '/test',
     });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
@@ -700,6 +837,7 @@ describe('prepareRunbook', () => {
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/test/sourced.md',
       source: 'project',
+      sourceRoot: '/test',
     });
     (parser.isSourced as jest.MockedFunction<typeof parser.isSourced>).mockReturnValue(true);
     (
@@ -730,6 +868,7 @@ describe('prepareRunbook', () => {
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/test/bad-for.md',
       source: 'project',
+      sourceRoot: '/test',
     });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
@@ -754,6 +893,7 @@ describe('prepareRunbook', () => {
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/test/for-bounds.md',
       source: 'project',
+      sourceRoot: '/test',
     });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
@@ -787,6 +927,7 @@ describe('prepareRunbook', () => {
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/test/good.md',
       source: 'project',
+      sourceRoot: '/test',
     });
     jest
       .mocked(resolveVariables)
@@ -813,6 +954,7 @@ describe('prepareRunbook', () => {
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/home/user/.claude/extensions/rundown-plugin/not-runbooks/child.runbook.md',
       source: 'plugin' as const,
+      sourceRoot: '/home/user/.claude/extensions/rundown-plugin/runbooks',
     });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
@@ -823,7 +965,8 @@ describe('prepareRunbook', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.code).toBe('RUNBOOK_REF_RESOLUTION_ERROR');
-      expect(result.error).toContain('not beneath a runbooks directory');
+      expect(result.error).toContain('outside');
+      expect(result.error).toContain('/home/user/.claude/extensions/rundown-plugin/runbooks');
       expect(result.details).toEqual({ runbook: 'rundown:child' });
     }
     expect(resolveVariables).not.toHaveBeenCalled();
@@ -833,6 +976,7 @@ describe('prepareRunbook', () => {
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/home/user/.claude/extensions/rundown-plugin/runbooks/write-plan.runbook.md',
       source: 'plugin' as const,
+      sourceRoot: '/home/user/.claude/extensions/rundown-plugin/runbooks',
     });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
@@ -854,6 +998,7 @@ describe('prepareRunbook', () => {
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/test/.rundown/runbooks/my-runbook.runbook.md',
       source: 'project' as const,
+      sourceRoot: '/test',
     });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
@@ -874,6 +1019,7 @@ describe('prepareRunbook', () => {
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/home/user/.claude/extensions/rundown-plugin/runbooks/write-plan.runbook.md',
       source: 'plugin' as const,
+      sourceRoot: '/home/user/.claude/extensions/rundown-plugin/runbooks',
     });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
@@ -900,6 +1046,7 @@ describe('prepareRunbook', () => {
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/test/.rundown/runbooks/ops/deploy.runbook.md',
       source: 'project' as const,
+      sourceRoot: '/test',
     });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
@@ -911,7 +1058,7 @@ describe('prepareRunbook', () => {
     if (result.ok) {
       expect(result.prepared.runbookRef).toEqual({
         source: 'project',
-        path: 'ops/deploy.runbook.md',
+        path: '.rundown/runbooks/ops/deploy.runbook.md',
       });
     }
   });
@@ -920,6 +1067,7 @@ describe('prepareRunbook', () => {
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/test/ops/direct.runbook.md',
       source: 'project' as const,
+      sourceRoot: '/test',
     });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
@@ -936,10 +1084,11 @@ describe('prepareRunbook', () => {
     }
   });
 
-  it('normalizes legacy .md project runbook refs to .runbook.md', async () => {
+  it('preserves legacy .md project runbook refs', async () => {
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/test/ops/legacy.md',
       source: 'project' as const,
+      sourceRoot: '/test',
     });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
@@ -951,7 +1100,7 @@ describe('prepareRunbook', () => {
     if (result.ok) {
       expect(result.prepared.runbookRef).toEqual({
         source: 'project',
-        path: 'ops/legacy.runbook.md',
+        path: 'ops/legacy.md',
       });
     }
   });
@@ -960,6 +1109,7 @@ describe('prepareRunbook', () => {
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/home/user/.claude/extensions/rundown-plugin/runbooks/planning/write-plan.runbook.md',
       source: 'plugin' as const,
+      sourceRoot: '/home/user/.claude/extensions/rundown-plugin/runbooks',
     });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
@@ -980,6 +1130,7 @@ describe('prepareRunbook', () => {
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/home/user/.claude/extensions/rundown-plugin/runbooks/team/runbooks/child.runbook.md',
       source: 'plugin' as const,
+      sourceRoot: '/home/user/.claude/extensions/rundown-plugin/runbooks',
     });
     (
       parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
@@ -996,6 +1147,34 @@ describe('prepareRunbook', () => {
     }
   });
 
+  it('sets RunbookRef from a nested plugin runbook path relative to plugin runbooks root', async () => {
+    const runbookRel = 'planning/review/review-plan-risk-safety.runbook.md';
+    jest.mocked(resolveRunbookFile).mockResolvedValue({
+      path: `/plugin/runbooks/${runbookRel}`,
+      source: 'plugin',
+      sourceRoot: '/plugin/runbooks',
+    });
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue(mockParseResult());
+
+    const result = await prepareRunbook(runbookRel, {}, '/workspace');
+
+    expect(result.ok).toBe(true);
+    expect(substituteRunbookVariables).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        RunbookRef: { source: 'plugin', path: runbookRel },
+      }),
+    );
+    expect(substituteRunbookVariables).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.not.objectContaining({
+        RunId: expect.anything(),
+      }),
+    );
+  });
+
   it('prepares source-root-relative bundled runbook refs', async () => {
     const originalBundledPath = process.env.BUNDLED_RUNBOOKS_PATH;
     process.env.BUNDLED_RUNBOOKS_PATH = '/repo/packages/cli/dist/runbooks';
@@ -1004,6 +1183,7 @@ describe('prepareRunbook', () => {
         jest.mocked(resolveRunbookFile).mockResolvedValue({
           path: '/repo/packages/cli/dist/runbooks/planning/review.runbook.md',
           source: 'bundled' as const,
+          sourceRoot: '/repo/packages/cli/dist/runbooks',
         });
         (
           parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
@@ -1062,12 +1242,18 @@ describe('startRunbook', () => {
       lifecycleService: { ensureActiveEntry: mockEnsureActiveEntry },
     });
 
-    const prepared: PreparedRunbook = {
+    const prepared: RunnableRunbook = {
       filePath: '/test/runbook.md',
+      source: 'project',
+      sourceRoot: '/test',
       runbookRef: { source: 'project', path: 'runbook.runbook.md' },
+      runId: `wf_${'b'.repeat(32)}`,
       rawContent: '# Test',
       runbook: { steps: [makeStep() as PreparedRunbook['runbook']['steps'][number]] },
-      mergedVariables: {},
+      mergedVariables: {
+        RunId: `wf_${'b'.repeat(32)}`,
+        RunbookRef: { source: 'project', path: 'runbook.runbook.md' },
+      },
       stats: { steps: 1, substeps: 0 },
       frontmatter: null,
     };
@@ -1079,12 +1265,16 @@ describe('startRunbook', () => {
       expect(result.loopResult).toBe('done');
     }
     expect(mockCreate).toHaveBeenCalledWith(
-      'runbook.md',
+      prepared.runbookRef,
       prepared.runbook,
       expect.objectContaining({
+        runId: prepared.runId,
         runbookPath: 'runbook.md',
-        runbookRef: prepared.runbookRef,
         runbookSrc: '# Test',
+        templateVars: expect.objectContaining({
+          RunId: prepared.runId,
+          RunbookRef: prepared.runbookRef,
+        }),
         frontmatterOutputs: [],
       }),
     );
@@ -1093,11 +1283,7 @@ describe('startRunbook', () => {
     const createBridgedEmitterMock = createBridgedEmitter as jest.MockedFunction<
       (...args: unknown[]) => unknown
     >;
-    expect(createBridgedEmitterMock.mock.calls).toContainEqual([
-      createdState,
-      ctx.output,
-      prepared.runbookRef,
-    ]);
+    expect(createBridgedEmitterMock.mock.calls).toContainEqual([createdState, ctx.output]);
   });
 
   it('seeds frontmatterOutputs from prepared.frontmatter.outputs to manager.create', async () => {
@@ -1123,11 +1309,7 @@ describe('startRunbook', () => {
       } as unknown as RunbookActorService,
       sessionService: {
         pushRunbook: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
-        claimRunbook: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
-          status: 'claimed',
-          // cspell:disable-next-line
-          claim: { claimId: 'rdclm_abcdefghijklmnopqrstu1' },
-        }),
+        claimRunbook: mockClaimRunbookSuccess(),
       } as unknown as SessionService,
       lifecycleService: makeLifecycle() as unknown as ExecutionLifecycleService,
       cwd: '/test',
@@ -1135,17 +1317,24 @@ describe('startRunbook', () => {
 
     const prepared = {
       filePath: '/test/runbook.md',
+      source: 'project',
+      sourceRoot: '/test',
+      runbookRef: { source: 'project', path: 'runbook.md' },
+      runId: `wf_${'c'.repeat(32)}`,
       rawContent: '# Test',
       runbook: { steps: [makeStep()] },
-      mergedVariables: {},
-      sources: {},
+      mergedVariables: {
+        RunId: `wf_${'c'.repeat(32)}`,
+        RunbookRef: { source: 'project', path: 'runbook.md' },
+      },
       frontmatter: { outputs: outputDecls },
-    } as unknown as PreparedRunbook;
+      stats: { steps: 1, substeps: 0 },
+    } as unknown as RunnableRunbook;
 
     await startRunbook(ctx, prepared, { file: 'runbook.md' });
 
     expect(mockCreate).toHaveBeenCalledWith(
-      'runbook.md',
+      prepared.runbookRef,
       prepared.runbook,
       expect.objectContaining({ frontmatterOutputs: outputDecls }),
     );
@@ -1182,11 +1371,7 @@ describe('startRunbook', () => {
       } as unknown as RunbookActorService,
       sessionService: {
         pushRunbook: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
-        claimRunbook: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
-          status: 'claimed',
-          // cspell:disable-next-line
-          claim: { claimId: 'rdclm_abcdefghijklmnopqrstu1' },
-        }),
+        claimRunbook: mockClaimRunbookSuccess(),
       } as unknown as SessionService,
       lifecycleService: makeLifecycle() as unknown as ExecutionLifecycleService,
       cwd: '/test',
@@ -1195,11 +1380,19 @@ describe('startRunbook', () => {
     const substeps = [{ id: 'a' }, { id: 'b' }];
     const prepared = {
       filePath: '/test/runbook.md',
+      source: 'project',
+      sourceRoot: '/test',
+      runbookRef: { source: 'project', path: 'runbook.md' },
+      runId: `wf_${'d'.repeat(32)}`,
       rawContent: '# Test',
       runbook: { steps: [makeStep({ substeps })] },
-      mergedVariables: {},
-      sources: {},
-    } as unknown as PreparedRunbook;
+      mergedVariables: {
+        RunId: `wf_${'d'.repeat(32)}`,
+        RunbookRef: { source: 'project', path: 'runbook.md' },
+      },
+      stats: { steps: 1, substeps: 2 },
+      frontmatter: null,
+    } as unknown as RunnableRunbook;
 
     const result = await startRunbook(ctx, prepared, { file: 'runbook.md' });
 
@@ -1219,7 +1412,10 @@ describe('claimAndLaunch', () => {
       output: {} as unknown as OutputEmitter,
       manager: {} as unknown as RunbookStateManager,
       actorService: {} as unknown as RunbookActorService,
-      sessionService: {} as unknown as SessionService,
+      sessionService: {
+        findClaimForDelegation:
+          mockFn<SessionService['findClaimForDelegation']>().mockResolvedValue(null),
+      } as unknown as SessionService,
       lifecycleService: {} as unknown as ExecutionLifecycleService,
       cwd: '/test',
     } satisfies RunPipelineContext;
@@ -1245,7 +1441,10 @@ describe('claimAndLaunch', () => {
       output: {} as unknown as OutputEmitter,
       manager: {} as unknown as RunbookStateManager,
       actorService: {} as unknown as RunbookActorService,
-      sessionService: {} as unknown as SessionService,
+      sessionService: {
+        findClaimForDelegation:
+          mockFn<SessionService['findClaimForDelegation']>().mockResolvedValue(null),
+      } as unknown as SessionService,
       lifecycleService: {} as unknown as ExecutionLifecycleService,
       cwd: '/test',
     } satisfies RunPipelineContext;
@@ -1264,6 +1463,7 @@ describe('claimAndLaunch', () => {
     const delegation = {
       tokenHash: MOCK_TOKEN_HASH,
       childRunbookPath: 'child.md',
+      childRunbookRef: { source: 'project', path: 'child.md' },
       contextSnapshot: { vars: {}, ancestors: [] },
       childRunId: 'existing-child-id',
       createdAt: new Date().toISOString(),
@@ -1307,11 +1507,7 @@ describe('claimAndLaunch', () => {
         }) as unknown as jest.MockedObject<DelegationLock>,
     );
 
-    const claimSpy = mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
-      status: 'claimed',
-      // cspell:disable-next-line
-      claim: { claimId: 'rdclm_abcdefghijklmnopqrstu1' },
-    });
+    const claimSpy = mockClaimRunbookSuccess();
     const ctx = {
       output: { status: jest.fn(), flush: jest.fn() } as unknown as OutputEmitter,
       manager: mockManager as unknown as RunbookStateManager,
@@ -1336,6 +1532,7 @@ describe('claimAndLaunch', () => {
     const delegation = {
       tokenHash: MOCK_TOKEN_HASH,
       childRunbookPath: 'child.md',
+      childRunbookRef: { source: 'project', path: 'child.md' },
       contextSnapshot: { vars: {}, ancestors: [] },
       childRunId: null,
       createdAt: new Date().toISOString(),
@@ -1383,7 +1580,10 @@ describe('claimAndLaunch', () => {
       output: {} as unknown as OutputEmitter,
       manager: mockManager as unknown as RunbookStateManager,
       actorService: {} as unknown as RunbookActorService,
-      sessionService: {} as unknown as SessionService,
+      sessionService: {
+        findClaimForDelegation:
+          mockFn<SessionService['findClaimForDelegation']>().mockResolvedValue(null),
+      } as unknown as SessionService,
       lifecycleService: {} as unknown as ExecutionLifecycleService,
       cwd: '/test',
     } satisfies RunPipelineContext;
@@ -1403,6 +1603,7 @@ describe('claimAndLaunch', () => {
     const delegation = {
       tokenHash,
       childRunbookPath: 'child.md',
+      childRunbookRef: { source: 'project', path: 'child.md' },
       contextSnapshot: { vars: {}, ancestors: [] },
       childRunId: null,
       createdAt: new Date().toISOString(),
@@ -1457,11 +1658,7 @@ describe('claimAndLaunch', () => {
         }) as unknown as jest.MockedObject<DelegationLock>,
     );
 
-    const claimSpy = mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
-      status: 'claimed',
-      // cspell:disable-next-line
-      claim: { claimId: 'rdclm_abcdefghijklmnopqrstu1' },
-    });
+    const claimSpy = mockClaimRunbookSuccess();
     const ctx = {
       output: { status: jest.fn(), flush: jest.fn() } as unknown as OutputEmitter,
       manager: mockManager as unknown as RunbookStateManager,
@@ -1486,6 +1683,7 @@ describe('claimAndLaunch', () => {
     const delegation = {
       tokenHash: MOCK_TOKEN_HASH,
       childRunbookPath: 'child.md',
+      childRunbookRef: { source: 'project', path: 'child.md' },
       contextSnapshot: { vars: {}, ancestors: [] },
       childRunId: 'existing-child-id',
       createdAt: new Date().toISOString(),
@@ -1529,12 +1727,7 @@ describe('claimAndLaunch', () => {
         }) as unknown as jest.MockedObject<DelegationLock>,
     );
 
-    const claimSpy = mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
-      status: 'claimed',
-      claim: {
-        claimId: 'rdclm_abcdefghijklmnopqrstu1',
-      },
-    });
+    const claimSpy = mockClaimRunbookSuccess();
     const mockSessionService = {
       claimRunbook: claimSpy,
     } as unknown as SessionService;
@@ -1563,6 +1756,7 @@ describe('claimAndLaunch', () => {
     const delegation = {
       tokenHash,
       childRunbookPath: 'child.md',
+      childRunbookRef: { source: 'project', path: 'child.md' },
       contextSnapshot: { vars: {}, ancestors: [] },
       childRunId: null,
       createdAt: new Date().toISOString(),
@@ -1579,13 +1773,14 @@ describe('claimAndLaunch', () => {
       ],
     });
 
+    const orphanLinkage: DelegationLinkage = {
+      kind: 'delegation',
+      parentRunId: 'parent-id',
+      parentStepId: '1',
+      tokenHash,
+    };
     const orphanState = makeState('orphan-id', {
-      parentLinkage: {
-        kind: 'delegation',
-        parentRunId: 'parent-id',
-        parentStepId: '1',
-        tokenHash,
-      },
+      parentLinkage: orphanLinkage,
     });
 
     const mockScanner = {
@@ -1618,10 +1813,10 @@ describe('claimAndLaunch', () => {
         }) as unknown as jest.MockedObject<DelegationLock>,
     );
 
-    const claimSpy = mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
+    const claimSpy = mockFn<SessionService['claimRunbook']>().mockResolvedValue({
       status: 'linkage-mismatch',
       childRunId: 'orphan-id',
-      persisted: orphanState.parentLinkage,
+      persisted: orphanLinkage,
       incoming: {
         kind: 'delegation',
         parentRunId: 'different-parent-id',
@@ -1659,6 +1854,7 @@ describe('claimAndLaunch', () => {
     const delegation = {
       tokenHash,
       childRunbookPath: 'child.md',
+      childRunbookRef: { source: 'project', path: 'child.md' },
       contextSnapshot: { vars: {}, ancestors: [] },
       childRunId: null,
       createdAt: new Date().toISOString(),
@@ -1691,6 +1887,7 @@ describe('claimAndLaunch', () => {
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/test/child.md',
       source: 'project',
+      sourceRoot: '/test',
     });
     jest.mocked(parser.parseRunbookDocument).mockReturnValue(mockParseResult());
     jest.mocked(core.reconstituteContextVars).mockReturnValue({});
@@ -1731,11 +1928,9 @@ describe('claimAndLaunch', () => {
       } as unknown as RunbookActorService,
       sessionService: {
         pushRunbook: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
-        claimRunbook: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
-          status: 'claimed',
-          // cspell:disable-next-line
-          claim: { claimId: 'rdclm_abcdefghijklmnopqrstu1' },
-        }),
+        claimRunbook: mockClaimRunbookSuccess(),
+        findClaimForDelegation:
+          mockFn<SessionService['findClaimForDelegation']>().mockResolvedValue(null),
       } as unknown as SessionService,
       lifecycleService: makeLifecycle() as unknown as ExecutionLifecycleService,
       cwd: '/test',
@@ -1751,7 +1946,7 @@ describe('claimAndLaunch', () => {
       expect(result.loopResult).toBe('waiting');
     }
     expect(mockCreate).toHaveBeenCalledWith(
-      'child.md',
+      { source: 'project', path: 'child.md' },
       expect.anything(),
       expect.objectContaining({
         parentLinkage: expect.objectContaining({
@@ -1768,6 +1963,7 @@ describe('claimAndLaunch', () => {
     const delegation = {
       tokenHash,
       childRunbookPath: 'child.md',
+      childRunbookRef: { source: 'project', path: 'child.md' },
       contextSnapshot: {
         vars: {
           RunId: 'parent-run',
@@ -1808,6 +2004,7 @@ describe('claimAndLaunch', () => {
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/test/child.md',
       source: 'project',
+      sourceRoot: '/test',
     });
     jest.mocked(parser.parseRunbookDocument).mockReturnValue(mockParseResult());
     jest.mocked(resolveVariables).mockResolvedValue({
@@ -1849,11 +2046,9 @@ describe('claimAndLaunch', () => {
       } as unknown as RunbookActorService,
       sessionService: {
         pushRunbook: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
-        claimRunbook: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
-          status: 'claimed',
-          // cspell:disable-next-line
-          claim: { claimId: 'rdclm_abcdefghijklmnopqrstu1' },
-        }),
+        claimRunbook: mockClaimRunbookSuccess(),
+        findClaimForDelegation:
+          mockFn<SessionService['findClaimForDelegation']>().mockResolvedValue(null),
       } as unknown as SessionService,
       lifecycleService: makeLifecycle() as unknown as ExecutionLifecycleService,
       cwd: '/test',
@@ -1889,6 +2084,7 @@ describe('claimAndLaunch', () => {
     const delegation = {
       tokenHash,
       childRunbookPath: 'child.md',
+      childRunbookRef: { source: 'project', path: 'child.md' },
       contextSnapshot: {
         vars: {
           ContextId: 'ctx-parent',
@@ -1929,6 +2125,7 @@ describe('claimAndLaunch', () => {
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/test/child.md',
       source: 'project',
+      sourceRoot: '/test',
     });
     jest.mocked(parser.parseRunbookDocument).mockReturnValue(mockParseResult());
     jest.mocked(core.extractInheritedUserVars).mockReturnValue({
@@ -1980,11 +2177,9 @@ describe('claimAndLaunch', () => {
       } as unknown as RunbookActorService,
       sessionService: {
         pushRunbook: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
-        claimRunbook: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
-          status: 'claimed',
-          // cspell:disable-next-line
-          claim: { claimId: 'rdclm_abcdefghijklmnopqrstu1' },
-        }),
+        claimRunbook: mockClaimRunbookSuccess(),
+        findClaimForDelegation:
+          mockFn<SessionService['findClaimForDelegation']>().mockResolvedValue(null),
       } as unknown as SessionService,
       lifecycleService: makeLifecycle() as unknown as ExecutionLifecycleService,
       cwd: '/test',
@@ -2013,6 +2208,7 @@ describe('claimAndLaunch', () => {
     const delegation = {
       tokenHash,
       childRunbookPath: 'missing.md',
+      childRunbookRef: { source: 'project', path: 'missing.md' },
       contextSnapshot: { vars: {}, ancestors: [] },
       childRunId: null,
       createdAt: new Date().toISOString(),
@@ -2042,7 +2238,7 @@ describe('claimAndLaunch', () => {
       .mocked(core.DelegationScanService)
       .mockImplementation(() => mockScanner as unknown as jest.MockedObject<DelegationScanService>);
 
-    jest.mocked(resolveRunbookFile).mockResolvedValue(null); // File not found
+    jest.mocked(resolveRunbookRef).mockResolvedValue(null); // File not found
 
     const mockManager = {
       load: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(parentState),
@@ -2064,7 +2260,10 @@ describe('claimAndLaunch', () => {
       output: {} as unknown as OutputEmitter,
       manager: mockManager as unknown as RunbookStateManager,
       actorService: {} as unknown as RunbookActorService,
-      sessionService: {} as unknown as SessionService,
+      sessionService: {
+        findClaimForDelegation:
+          mockFn<SessionService['findClaimForDelegation']>().mockResolvedValue(null),
+      } as unknown as SessionService,
       lifecycleService: {} as unknown as ExecutionLifecycleService,
       cwd: '/test',
     } satisfies RunPipelineContext;
@@ -2086,6 +2285,7 @@ describe('claimAndLaunch', () => {
     const delegation = {
       tokenHash,
       childRunbookPath: 'child.md',
+      childRunbookRef: { source: 'project', path: 'child.md' },
       contextSnapshot: { vars: {}, ancestors: [] },
       childRunId: null,
       createdAt: new Date().toISOString(),
@@ -2119,6 +2319,7 @@ describe('claimAndLaunch', () => {
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/test/child.md',
       source: 'project',
+      sourceRoot: '/test',
     });
     jest.mocked(parser.parseRunbookDocument).mockReturnValue(mockParseResult());
     jest.mocked(core.reconstituteContextVars).mockReturnValue({});
@@ -2158,11 +2359,9 @@ describe('claimAndLaunch', () => {
       } as unknown as RunbookActorService,
       sessionService: {
         pushRunbook: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
-        claimRunbook: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
-          status: 'claimed',
-          // cspell:disable-next-line
-          claim: { claimId: 'rdclm_abcdefghijklmnopqrstu1' },
-        }),
+        claimRunbook: mockClaimRunbookSuccess(),
+        findClaimForDelegation:
+          mockFn<SessionService['findClaimForDelegation']>().mockResolvedValue(null),
       } as unknown as SessionService,
       lifecycleService: makeLifecycle() as unknown as ExecutionLifecycleService,
       cwd: '/test',
@@ -2173,7 +2372,7 @@ describe('claimAndLaunch', () => {
     await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
 
     expect(mockCreate).toHaveBeenCalledWith(
-      'child.md',
+      { source: 'project', path: 'child.md' },
       expect.anything(),
       expect.objectContaining({
         prompted: true,

@@ -7,7 +7,7 @@ import { RunbookStateManager, StaleRunbookStateError } from '../../src/runbook/i
 
 const BASE_SCHEMA_STATE = {
   id: 'r1',
-  runbook: 'x.md',
+  runbook: { source: 'project', path: 'x.md' },
   runbookPath: 'x.md',
   step: '1',
   stepName: 'x',
@@ -142,7 +142,11 @@ describe('RunbookStateManager.load() — stale state enforcement', () => {
   it('loads valid v2 state successfully', async () => {
     const runsDir = path.join(tmpDir, '.rundown', 'runs');
     await fs.mkdir(runsDir, { recursive: true });
-    const v2State = { ...V1_STATE, schemaVersion: 2 };
+    const v2State = {
+      ...V1_STATE,
+      runbook: { source: 'project', path: 'x.md' },
+      schemaVersion: 2,
+    };
     await fs.writeFile(path.join(runsDir, `${v2State.id}.json`), JSON.stringify(v2State, null, 2));
 
     const result = await manager.load(v2State.id);

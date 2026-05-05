@@ -498,9 +498,15 @@ function isRunbookState(value: unknown): value is RunbookState {
     variables?: unknown;
     steps?: unknown;
   };
+  const runbook = state.runbook;
+  if (typeof runbook !== 'object' || runbook === null) return false;
+  const runbookRef = runbook as { source?: unknown; path?: unknown };
   return (
     typeof state.id === 'string' &&
-    typeof state.runbook === 'string' &&
+    (runbookRef.source === 'project' ||
+      runbookRef.source === 'plugin' ||
+      runbookRef.source === 'bundled') &&
+    typeof runbookRef.path === 'string' &&
     typeof state.runbookPath === 'string' &&
     typeof state.step === 'string' &&
     typeof state.stepName === 'string' &&

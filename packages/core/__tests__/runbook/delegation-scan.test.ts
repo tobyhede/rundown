@@ -40,7 +40,7 @@ describe('DelegationScanService', () => {
   function makeState(id: string, overrides: Partial<RunbookState> = {}): RunbookState {
     return {
       id,
-      runbook: 'parent.md',
+      runbook: { source: 'project', path: 'parent.md' },
       runbookPath: 'parent.md',
       step: '1',
       stepName: 'Main step',
@@ -59,6 +59,7 @@ describe('DelegationScanService', () => {
     return {
       tokenHash: hashDelegationToken(token),
       childRunbookPath: 'child.md',
+      childRunbookRef: { source: 'project', path: 'child.md' },
       contextSnapshot: { vars: brandEffectiveVarsForTest({ env: 'staging' }), ancestors: [] },
       childRunId: null,
       createdAt: '2026-02-27T10:00:00.000Z',

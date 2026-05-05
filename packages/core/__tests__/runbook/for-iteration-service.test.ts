@@ -54,7 +54,7 @@ const mockedIsStopped = isRunbookStopped as jest.MockedFunction<typeof isRunbook
 function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
   return {
     id: 'test-123',
-    runbook: 'test.md',
+    runbook: { source: 'project', path: 'test.md' },
     runbookPath: '/tmp/test.md',
     step: '1',
     stepName: 'Step 1',

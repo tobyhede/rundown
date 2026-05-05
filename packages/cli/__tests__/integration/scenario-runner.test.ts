@@ -287,12 +287,12 @@ async function executeScenario(
   const expectedName = filename.split('/').pop()!;
 
   const matchingStates = states.filter((s) => {
-    const runbookPath = s.runbook;
+    const runbookPath = s.runbook.path;
     return runbookPath.endsWith(expectedName);
   });
 
   if (matchingStates.length === 0) {
-    const allRunbookPaths = states.map((s) => s.runbook).join(', ');
+    const allRunbookPaths = states.map((s) => s.runbook.path).join(', ');
     throw new Error(`No state found for runbook ${filename}. Found paths: [${allRunbookPaths}]`);
   }
 

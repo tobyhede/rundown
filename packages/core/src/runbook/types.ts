@@ -439,6 +439,7 @@ export interface StepDelegation {
   readonly token?: string;
   readonly tokenHash: DelegationTokenHash;
   readonly childRunbookPath: string;
+  readonly childRunbookRef: RunbookRef;
   readonly contextSnapshot: ContextSnapshot;
   readonly childRunId: string | null;
   readonly createdAt: string;
@@ -709,10 +710,8 @@ export type Lifecycle = 'running' | 'completed' | 'stopped';
  */
 export interface RunbookState {
   readonly id: string;
-  readonly runbook: string; // runbook identifier (name or path)
+  readonly runbook: RunbookRef; // canonical persisted runbook identity
   readonly runbookPath: string; // repo-relative resolved file path
-  /** Canonical runbook reference for events and artifact metadata. */
-  readonly runbookRef?: RunbookRef;
   readonly title?: string;
   readonly description?: string;
   readonly step: string; // "1" or "ErrorHandler"

@@ -84,7 +84,7 @@ Active step.
       steps,
     };
 
-    const state = await manager.create('active.runbook.md', runbook, {
+    const state = await manager.create({ source: 'project', path: 'active.runbook.md' }, runbook, {
       runbookPath: 'active.runbook.md',
       prompted: true,
       templateVars: vars,

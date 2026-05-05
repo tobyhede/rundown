@@ -11,7 +11,7 @@ describe('createBridgedEmitter', () => {
   function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
     return {
       id: 'wf-test',
-      runbook: 'test-runbook',
+      runbook: { source: 'project', path: 'test-runbook.runbook.md' },
       runbookPath: 'test-runbook.runbook.md',
       step: '1',
       stepName: 'Step 1',
@@ -57,9 +57,12 @@ describe('createBridgedEmitter', () => {
     expect(event.runbookId).toBe('wf-test');
   });
 
-  it('adapts state runbook path into a canonical project runbook reference', () => {
+  it('emits the persisted project runbook reference', () => {
     const { output, executionEventFn } = makeOutput();
-    const state = makeState({ runbook: 'my-book', runbookPath: 'path/to/my-book.runbook.md' });
+    const state = makeState({
+      runbook: { source: 'project', path: 'path/to/my-book.runbook.md' },
+      runbookPath: 'path/to/my-book.runbook.md',
+    });
     const emitter = createBridgedEmitter(state, output as unknown as OutputEmitter);
 
     emitter.emit('RUNBOOK_STARTED', {
@@ -72,33 +75,11 @@ describe('createBridgedEmitter', () => {
     expect(event.runbook).toEqual({ source: 'project', path: 'path/to/my-book.runbook.md' });
   });
 
-  it('uses an explicit canonical runbook reference when provided', () => {
+  it('uses the persisted canonical runbook identity', () => {
     const { output, executionEventFn } = makeOutput();
     const state = makeState({
-      runbook: 'rundown:write-plan',
+      runbook: { source: 'plugin', path: 'planning/write-plan.runbook.md' },
       runbookPath: '../../plugin/runbooks/planning/write-plan.runbook.md',
-    });
-    const emitter = createBridgedEmitter(state, output as unknown as OutputEmitter, {
-      source: 'plugin',
-      path: 'planning/write-plan.runbook.md',
-    });
-
-    emitter.emit('RUNBOOK_STARTED', {
-      title: 'Test',
-      prompted: false,
-      statePath: '.rundown/runs/wf-test.json',
-    });
-
-    const event = executionEventFn.mock.calls[0]?.[0];
-    expect(event.runbook).toEqual({ source: 'plugin', path: 'planning/write-plan.runbook.md' });
-  });
-
-  it('uses a persisted canonical runbook reference when no explicit reference is provided', () => {
-    const { output, executionEventFn } = makeOutput();
-    const state = makeState({
-      runbook: 'rundown:write-plan',
-      runbookPath: '../../plugin/runbooks/planning/write-plan.runbook.md',
-      runbookRef: { source: 'plugin', path: 'planning/write-plan.runbook.md' },
     });
     const emitter = createBridgedEmitter(state, output as unknown as OutputEmitter);
 
@@ -112,10 +93,10 @@ describe('createBridgedEmitter', () => {
     expect(event.runbook).toEqual({ source: 'plugin', path: 'planning/write-plan.runbook.md' });
   });
 
-  it('falls back to the launch argument when persisted runbook path is not canonical', () => {
+  it('emits markdown paths without extension rewriting', () => {
     const { output, executionEventFn } = makeOutput();
     const state = makeState({
-      runbook: 'runbooks/substep-fail-any.md',
+      runbook: { source: 'project', path: 'runbooks/substep-fail-any.md' },
       runbookPath: '../../var/folders/test/runbooks/substep-fail-any.md',
     });
     const emitter = createBridgedEmitter(state, output as unknown as OutputEmitter);
@@ -129,7 +110,7 @@ describe('createBridgedEmitter', () => {
     const event = executionEventFn.mock.calls[0]?.[0];
     expect(event.runbook).toEqual({
       source: 'project',
-      path: 'runbooks/substep-fail-any.runbook.md',
+      path: 'runbooks/substep-fail-any.md',
     });
   });
 });

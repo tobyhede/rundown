@@ -45,7 +45,7 @@ function makeStepWithSubsteps(name: string, substeps: Substep[]): ResolvedStepWi
 function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
   return {
     id: 'test-run-id',
-    runbook: 'test.runbook.md',
+    runbook: { source: 'project', path: 'test.runbook.md' },
     runbookPath: 'test.runbook.md',
     step: '1',
     stepName: 'Step 1',
@@ -63,6 +63,7 @@ function makeActiveDelegation(): StepDelegation {
   return {
     tokenHash: brandDelegationTokenHashForTest(`sha256:${'a'.repeat(64)}`),
     childRunbookPath: 'child.runbook.md',
+    childRunbookRef: { source: 'project', path: 'child.runbook.md' },
     contextSnapshot: { vars: brandEffectiveVarsForTest(), ancestors: [] },
     childRunId: null,
     createdAt: new Date().toISOString(),

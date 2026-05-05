@@ -95,7 +95,7 @@ function makeTestSubstep(id: string): {
 export function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
   return {
     id: 'run-1',
-    runbook: 'parent.md',
+    runbook: { source: 'project', path: 'parent.md' },
     runbookPath: 'parent.md',
     step: '1',
     stepName: 'Main step',

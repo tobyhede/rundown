@@ -152,7 +152,7 @@ const { handleParentCompletion, extractParentLinkage } = await import(
 function makeState(id: string, overrides: Partial<RunbookState> = {}): RunbookState {
   const base: RunbookState = {
     id,
-    runbook: 'test.md',
+    runbook: { source: 'project', path: 'test.md' },
     runbookPath: '/tmp/test.md',
     runbookSrc: '## 1. Step\n- PASS COMPLETE',
     step: '1',
@@ -407,6 +407,7 @@ describe('handleParentCompletion', () => {
           delegation: {
             tokenHash: brandDelegationTokenHashForTest(`sha256:${'b'.repeat(64)}`),
             childRunbookPath: 'old-child.md',
+            childRunbookRef: { source: 'project', path: 'old-child.md' },
             contextSnapshot: { vars: brandEffectiveVarsForTest(), ancestors: [] },
             childRunId: 'old-child-run-id',
             createdAt: '2026-01-01T00:00:00.000Z',
@@ -458,6 +459,7 @@ describe('handleParentCompletion', () => {
           delegation: {
             tokenHash: brandDelegationTokenHashForTest(`sha256:${'a'.repeat(64)}`),
             childRunbookPath: 'child.md',
+            childRunbookRef: { source: 'project', path: 'child.md' },
             contextSnapshot: { vars: brandEffectiveVarsForTest(), ancestors: [] },
             childRunId: 'child-run-id',
             createdAt: '2026-02-27T10:00:00.000Z',

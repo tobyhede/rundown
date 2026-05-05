@@ -35,10 +35,14 @@ async function createLifecycleHarness(markdown: string): Promise<LifecycleHarnes
     description: 'Lifecycle test runbook',
     steps,
   };
-  const state = await manager.create('lifecycle-test.md', mockRunbookDef, {
-    runbookPath: 'lifecycle-test.md',
-    frontmatterOutputs: [],
-  });
+  const state = await manager.create(
+    { source: 'project', path: 'lifecycle-test.md' },
+    mockRunbookDef,
+    {
+      runbookPath: 'lifecycle-test.md',
+      frontmatterOutputs: [],
+    },
+  );
 
   const actor = await service.createActor(state.id, steps);
   if (!actor) throw new Error('createLifecycleHarness: actor creation failed');
@@ -83,7 +87,9 @@ describe('RunbookActorService', () => {
     });
 
     it('creates and starts actor from persisted state', async () => {
-      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
       const actor = await actorService.createActor(state.id, mockSteps);
       expect(actor).not.toBeNull();
     });
@@ -91,7 +97,9 @@ describe('RunbookActorService', () => {
 
   describe('updateFromActor', () => {
     it('extracts substep ID from flattened machine state (step::N::M)', async () => {
-      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
       const actor = mockActor({
         value: 'step::1::2',
         context: { variables: {}, retryCount: 0, substep: '2' },
@@ -103,7 +111,9 @@ describe('RunbookActorService', () => {
     });
 
     it('extracts step number from simple machine state (step::N)', async () => {
-      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
       const actor = mockActor({
         value: 'step::3',
         context: { variables: {}, retryCount: 0 },
@@ -128,7 +138,9 @@ describe('RunbookActorService', () => {
     });
 
     it('creates actor and syncs state without sending event', async () => {
-      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
       const result = await actorService.initializeState(state.id, mockSteps);
       expect(result).not.toBeNull();
       expect(result?.step).toBe('1');
@@ -142,7 +154,9 @@ describe('RunbookActorService', () => {
     });
 
     it('sends event, syncs state, and returns state + snapshot', async () => {
-      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
       const result = await actorService.sendAndSync(state.id, mockSteps, { type: 'PASS' });
 
       expect(result).not.toBeNull();
@@ -159,7 +173,9 @@ describe('RunbookActorService', () => {
 
   describe('FOR loop context via actor', () => {
     it('syncs FOR context fields from actor snapshot', async () => {
-      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
 
       const actor = mockActor({
         value: 'step::1',
@@ -198,7 +214,9 @@ describe('RunbookActorService', () => {
     });
 
     it('clears FOR fields when runbook completes', async () => {
-      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
 
       // First, set forStack
       await manager.update(state.id, {
@@ -240,7 +258,9 @@ describe('RunbookActorService', () => {
 
   describe('implicit ForContext filtering', () => {
     it('implicit ForContext entries are not persisted', async () => {
-      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
       const actor = mockActor({
         value: 'step::1::1',
         context: {
@@ -266,7 +286,9 @@ describe('RunbookActorService', () => {
     });
 
     it('iterationResults not persisted for implicit loops', async () => {
-      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
       const actor = mockActor({
         value: 'step::1::1',
         context: {
@@ -292,7 +314,9 @@ describe('RunbookActorService', () => {
     });
 
     it('explicit ForContext entries are persisted normally', async () => {
-      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
       const actor = mockActor({
         value: 'step::1::1',
         context: {
@@ -319,7 +343,9 @@ describe('RunbookActorService', () => {
     });
 
     it('iterationResults preserved after explicit FOR loop exits (empty forStack)', async () => {
-      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
       const actor = mockActor({
         value: 'step::2',
         context: {
@@ -348,7 +374,9 @@ describe('RunbookActorService', () => {
 
   describe('forStack persistence via actor', () => {
     it('persists forStack with variable source through actor update and reload', async () => {
-      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
 
       const actor = mockActor({
         value: 'step::1',
@@ -392,7 +420,9 @@ describe('RunbookActorService', () => {
     });
 
     it('persists forStack with variable source and snapshot through actor update and reload', async () => {
-      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
 
       const actor = mockActor({
         value: 'step::1',
@@ -457,7 +487,7 @@ describe('RunbookActorService', () => {
       };
 
       // Create with templateVars containing arrays
-      const state = await manager.create('test.md', mockRunbook, {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
         templateVars: templateVars,
       });
@@ -493,7 +523,7 @@ describe('RunbookActorService', () => {
     // compileRunbookToMachine(steps) without options — Cause #1 in the handoff.
 
     it('seeds compiler context.frontmatterOutputs from RunbookState.frontmatterOutputs', async () => {
-      const state = await manager.create('test.md', mockRunbook, {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
         frontmatterOutputs: [{ name: 'SomeVar' }],
       });
@@ -508,7 +538,7 @@ describe('RunbookActorService', () => {
     });
 
     it('defaults context.frontmatterOutputs to [] when no outputs declared at run time', async () => {
-      const state = await manager.create('test.md', mockRunbook, {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
       });
 
@@ -521,7 +551,7 @@ describe('RunbookActorService', () => {
     });
 
     it('throws for stale run state missing frontmatterOutputs field', async () => {
-      const state = await manager.create('test.md', mockRunbook, {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
         frontmatterOutputs: [],
       });
@@ -537,7 +567,7 @@ describe('RunbookActorService', () => {
     });
 
     it('seeds compiler context.templateVars from RunbookState.templateVars (flattened)', async () => {
-      const state = await manager.create('test.md', mockRunbook, {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
         templateVars: { SomeVar: 'hello', Items: ['a', 'b'] },
       });
@@ -564,7 +594,7 @@ describe('RunbookActorService', () => {
       // state load time; the stream itself is never read.
       const canonicalTestDir = await realpath(testDir);
       const stream = createJsonArrayStream(join(canonicalTestDir, 'data.jsonl'));
-      const state = await manager.create('test.md', mockRunbook, {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
         templateVars: {
           Region: 'us-east-1',
@@ -643,7 +673,7 @@ describe('RunbookActorService', () => {
     // wrote `variables` but never propagated `finalVars` out of the machine.
 
     it('persists context.finalVars to RunbookState.finalVars on STOPPED snapshot', async () => {
-      const state = await manager.create('test.md', mockRunbook, {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
         frontmatterOutputs: [{ name: 'Result' }],
         templateVars: { Result: 'failed-value' },
@@ -658,7 +688,7 @@ describe('RunbookActorService', () => {
     });
 
     it('persists context.finalVars to RunbookState.finalVars on COMPLETE snapshot', async () => {
-      const state = await manager.create('test.md', mockRunbook, {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
         frontmatterOutputs: [{ name: 'Result' }],
         templateVars: { Result: 'passed-value' },
@@ -670,7 +700,7 @@ describe('RunbookActorService', () => {
     });
 
     it('leaves RunbookState.finalVars undefined when no frontmatter outputs are declared', async () => {
-      const state = await manager.create('test.md', mockRunbook, {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
         frontmatterOutputs: [],
         // No frontmatterOutputs declared → context.finalVars stays {}
@@ -681,7 +711,7 @@ describe('RunbookActorService', () => {
     });
 
     it('leaves RunbookState.finalVars undefined when context.finalVars is empty on COMPLETE', async () => {
-      const state = await manager.create('test.md', mockRunbook, {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
         frontmatterOutputs: [], // No frontmatterOutputs declared → context.finalVars stays {}
       });
@@ -702,7 +732,9 @@ describe('RunbookActorService', () => {
       // the initial state's entry actions on every call — an observable side
       // effect callers of this method are not signing up for. We assert the
       // invariant directly by spying on XState's Actor.prototype.start.
-      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
       const xstate = await import('xstate');
       const startSpy = jest.spyOn(
         xstate.Actor.prototype as unknown as { start: () => void },
@@ -725,7 +757,9 @@ describe('RunbookActorService', () => {
       const frameKey = buildFrameKey('1');
       const substepStates: SubstepState[] = [{ id: '1', frameKey, status: 'done', result: 'pass' }];
 
-      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
       await manager.update(state.id, {
         substepStates,
         activeFrameKey: frameKey,
@@ -751,7 +785,9 @@ describe('RunbookActorService', () => {
         { id: '2', frameKey, status: 'pending' },
       ];
 
-      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
       await manager.update(state.id, {
         substepStates,
         activeFrameKey: frameKey,
@@ -782,7 +818,9 @@ describe('RunbookActorService', () => {
       const frameKey = buildFrameKey('1');
       const substepStates: SubstepState[] = [{ id: '1', frameKey, status: 'pending' }];
 
-      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
       await manager.update(state.id, { substepStates });
 
       // Snapshot without substepStates in context (e.g. a legacy snapshot path
@@ -809,7 +847,9 @@ describe('RunbookActorService', () => {
       const staleFrameKey = buildFrameKey('1', 1);
       const newFrameKey = buildFrameKey('1', 2);
 
-      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
       await manager.update(state.id, { activeFrameKey: staleFrameKey });
 
       const actor = mockActor({
@@ -836,7 +876,9 @@ describe('RunbookActorService', () => {
       // still mirrored — that signals the machine has left an active frame.)
       const frameKey = buildFrameKey('1');
 
-      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
       await manager.update(state.id, { activeFrameKey: frameKey });
 
       const actor = mockActor({

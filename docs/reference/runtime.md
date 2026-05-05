@@ -216,15 +216,15 @@ The session tracks top-level runs and delegated children separately.
 
 ```json
 {
-  "defaultStack": ["wf-2026-04-28-parent"],
+  "defaultStack": ["wf_11111111111111111111111111111111"],
   "stashedRunbookId": null,
   "claims": {
     "rdclm_F3J3n3d_f8fo0a0b1B2c3Q": {
       "kind": "claim-record",
       "claimId": "rdclm_F3J3n3d_f8fo0a0b1B2c3Q",
-      "childRunId": "wf-2026-04-28-child",
+      "childRunId": "wf_22222222222222222222222222222222",
       "tokenHash": "sha256:...",
-      "parentRunId": "wf-2026-04-28-parent",
+      "parentRunId": "wf_11111111111111111111111111111111",
       "parentStepId": "1.1",
       "parentFrameKey": "1|",
       "parentEntry": 1,
@@ -286,8 +286,11 @@ Each run state file stores enough information to resume deterministically.
 
 ```json
 {
-  "id": "wf-2024-01-07-abc123",
-  "runbook": "my-runbook.runbook.md",
+  "id": "wf_4b7f0c2d9e1a4b7f0c2d9e1a4b7f0c2d",
+  "runbook": {
+    "source": "project",
+    "path": ".rundown/runbooks/my-runbook.runbook.md"
+  },
   "runbookPath": ".rundown/runbooks/my-runbook.runbook.md",
   "title": "My Runbook",
   "description": "Runbook description",
@@ -312,6 +315,9 @@ Each run state file stores enough information to resume deterministically.
 
 | Field | Runtime requirement |
 | --- | --- |
+| `id` | Persisted run identifier generated at execution start. |
+| `runbook` | Canonical runbook identity object: `{ source, path }`, where `path` is a safe source-root-relative Markdown path. |
+| `runbookPath` | Display/execution file path relative to the current project when possible. |
 | `step`, `substep` | Current structural position. |
 | `retryCount` | User-visible retry count across retry sites. |
 | `variables` | Live variable space, including accumulated outputs. |
@@ -403,8 +409,9 @@ dynamic current-frame values but remain reserved for user input.
 | --- | --- |
 | `Date`, `DateTime`, `Year`, `Month`, `Day` | Current date/time components. |
 | `Branch` | Current git branch, or empty outside git. |
-| `WorkPath` | Branch-isolated artifact directory; fallback `.rundown/work`; base for `{{ path "..." }}`. |
-| `RunId` | Fresh execution identifier for this runbook execution. |
+| `WorkPath` | Workspace artifact directory; fallback `.rundown/work`; base for `{{ path "..." }}`. |
+| `RunbookRef` | Canonical `{ source, path }` identity for the resolved runbook. Injected during runbook preparation. |
+| `RunId` | Fresh execution identifier for this runbook execution. Injected only for runnable execution, not for discovery or `rd resolve`. |
 | `ContextId` | Shared identity across a delegation tree; scopes path helpers into `.rd-<ContextId>/`. |
 | `Step`, `Index` | Dynamic current step and iteration. |
 | `context.current.*` | Dynamic current structural context. |
@@ -416,6 +423,11 @@ dynamic current-frame values but remain reserved for user input.
 Static built-ins MAY be overridden by higher-precedence sources. Dynamic
 built-ins MUST NOT be overridden. Plugin runbooks MAY receive upper-snake-case
 plugin variables such as `CLAUDE_PLUGIN_ROOT`.
+
+`RunbookRef` is available before template substitution so runbooks can render
+their own canonical identity. `RunId` is minted later, when a run is actually
+started or claimed, so commands that only resolve variables MUST NOT emit or
+persist a synthetic `RunId`.
 
 <a id="shell-environment"></a>
 
@@ -429,6 +441,8 @@ environment filtering.
 | `RD_WORK_PATH` | `WorkPath` |
 | `RD_CONTEXT_ID` | `ContextId` |
 | `RD_RUN_ID` | `RunId` |
+| `RD_RUNBOOK_REF` | `RunbookRef.path` |
+| `RD_RUNBOOK_SOURCE` | `RunbookRef.source` |
 | `RD_OUTPUTS_<VarName>` | Naked step/substep `OUTPUTS` entry. |
 
 Rundown-injected `RD_*` variables use Rundown-wins semantics: user-supplied
@@ -440,6 +454,10 @@ environment variables MUST NOT block or override them.
 resolved static variable map. On resume, the runtime MUST re-apply FOR bounds
 and template placeholders from this frozen variable state so rendering remains
 deterministic.
+
+Delegated children inherit the parent's `ContextId` and user variables, but
+MUST NOT inherit the parent's `RunId` or `RunbookRef`. Each child receives a
+fresh `RunId` and the canonical `RunbookRef` for its own resolved runbook.
 
 ## 9. Security Integration
 

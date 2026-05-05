@@ -69,7 +69,7 @@ describe('stash command', () => {
 
     const afterState = await getActiveState(workspace);
     expect(afterState?.step).toBe(beforeState?.step);
-    expect(afterState?.runbook).toBe(beforeState?.runbook);
+    expect(afterState?.runbook).toEqual(beforeState?.runbook);
   });
 
   it('returns non-zero when another runbook is already stashed', async () => {
@@ -463,7 +463,7 @@ rd echo "hello"
 `;
     const state = {
       id: runbookId,
-      runbook: 'runbooks/simple.runbook.md',
+      runbook: { source: 'project', path: 'runbooks/simple.runbook.md' },
       runbookPath: join(workspace.cwd, 'runbooks', 'simple.runbook.md'),
       title: 'Test Runbook',
       step: 'NonExistentStep', // Step that doesn't exist in runbookSrc
@@ -497,7 +497,7 @@ rd echo "hello"
       JSON.stringify(
         {
           id: parentRunId,
-          runbook: 'parent.runbook.md',
+          runbook: { source: 'project', path: 'parent.runbook.md' },
           runbookPath: 'parent.runbook.md',
           title: 'Parent Runbook',
           step: '1',
@@ -530,7 +530,7 @@ rd echo "hello"
       JSON.stringify(
         {
           id: runbookId,
-          runbook: 'owned.runbook.md',
+          runbook: { source: 'project', path: 'owned.runbook.md' },
           runbookPath: 'owned.runbook.md',
           title: 'Test Runbook',
           step: '1',
