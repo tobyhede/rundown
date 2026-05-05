@@ -78,8 +78,8 @@ describe('artifact URI utilities', () => {
     expect(() => parseArtifactUri(`${EXACT_URI}?stats=any`)).toThrow(
       'Unsupported artifact URI query parameter: stats',
     );
-    expect(() => parseArtifactUri('rd://artifacts/ctx1/runs/*/review.json?runbok=plan')).toThrow(
-      'Unsupported artifact URI query parameter: runbok',
+    expect(() => parseArtifactUri('rd://artifacts/ctx1/runs/*/review.json?unknown=plan')).toThrow(
+      'Unsupported artifact URI query parameter: unknown',
     );
   });
 
