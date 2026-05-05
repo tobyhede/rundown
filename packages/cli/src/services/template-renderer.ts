@@ -792,6 +792,10 @@ function substituteCommand(
   variables: Record<string, unknown>,
 ): Command | undefined {
   if (!command) return undefined;
+  return substituteRequiredCommand(command, variables);
+}
+
+function substituteRequiredCommand(command: Command, variables: Record<string, unknown>): Command {
   return {
     ...command,
     code: substituteText(command.code, variables, shellEscapeValue),
@@ -835,40 +839,57 @@ function substituteSubstep(
  * @returns Step with all string fields expanded
  */
 function substituteStep(step: ResolvedStep, variables: Record<string, unknown>): ResolvedStep {
-  // Spread-first: preserve all fields (including aggregation, line, etc.)
-  // Override only the text fields that need substitution.
-  const substituted = {
-    ...step,
-    description: substituteText(step.description, variables),
-    prompt: step.prompt ? substituteText(step.prompt, variables) : step.prompt,
-  };
+  const description = substituteText(step.description, variables);
+  const prompt = step.prompt ? substituteText(step.prompt, variables) : step.prompt;
 
   // Handle kind-specific fields that contain text
   switch (step.kind) {
-    case 'base':
-      return substituted;
-    case 'command':
-      return {
-        ...substituted,
-        command: substituteCommand(step.command, variables)!,
-      } as ResolvedStep;
-    case 'substeps':
-      return {
-        ...substituted,
+    case 'base': {
+      const resolved = {
+        ...step,
+        description,
+        prompt,
+      } satisfies Extract<ResolvedStep, { kind: 'base' }>;
+      return resolved;
+    }
+    case 'command': {
+      const resolved = {
+        ...step,
+        description,
+        prompt,
+        command: substituteRequiredCommand(step.command, variables),
+      } satisfies Extract<ResolvedStep, { kind: 'command' }>;
+      return resolved;
+    }
+    case 'substeps': {
+      const resolved = {
+        ...step,
+        description,
+        prompt,
         substeps: step.substeps.map((ss) => substituteSubstep(ss, variables)),
-      } as ResolvedStep;
-    case 'for':
-      return {
-        ...substituted,
+      } satisfies Extract<ResolvedStep, { kind: 'substeps' }>;
+      return resolved;
+    }
+    case 'for': {
+      const resolved = {
+        ...step,
+        description,
+        prompt,
         substeps: step.substeps.map((ss) =>
           substituteSubstep(ss, variables, step.forClause.variable),
         ),
-      } as ResolvedStep;
-    case 'prompted-for':
-      return {
-        ...substituted,
+      } satisfies Extract<ResolvedStep, { kind: 'for' }>;
+      return resolved;
+    }
+    case 'prompted-for': {
+      const resolved = {
+        ...step,
+        description,
+        prompt,
         substeps: step.substeps.map((ss) => substituteSubstep(ss, variables, step.variable)),
-      } as ResolvedStep;
+      } satisfies Extract<ResolvedStep, { kind: 'prompted-for' }>;
+      return resolved;
+    }
   }
 }
 

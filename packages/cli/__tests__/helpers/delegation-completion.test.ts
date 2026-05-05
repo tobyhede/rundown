@@ -4,6 +4,7 @@ import {
   brandDelegationTokenHashForTest,
   brandEffectiveVarsForTest,
   brandFrameKeyForTest,
+  brandStoredOutputsForTest,
 } from './brand-helpers.js';
 import { mockFn } from './typed-mocks.js';
 import type {
@@ -149,7 +150,7 @@ const { handleParentCompletion, extractParentLinkage } = await import(
 );
 
 function makeState(id: string, overrides: Partial<RunbookState> = {}): RunbookState {
-  return {
+  const base: RunbookState = {
     id,
     runbook: 'test.md',
     runbookPath: '/tmp/test.md',
@@ -157,12 +158,12 @@ function makeState(id: string, overrides: Partial<RunbookState> = {}): RunbookSt
     step: '1',
     stepName: 'Step',
     retryCount: 0,
-    variables: {},
+    variables: brandStoredOutputsForTest(),
     steps: [{ id: '1', status: 'running' }],
     startedAt: '2026-02-27T10:00:00.000Z',
     updatedAt: '2026-02-27T10:00:00.000Z',
-    ...overrides,
-  } as RunbookState;
+  };
+  return { ...base, ...overrides };
 }
 
 function makeDelegationLinkage(overrides: Partial<DelegationLinkage> = {}): DelegationLinkage {

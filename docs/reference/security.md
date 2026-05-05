@@ -1,390 +1,422 @@
-# Security Policy
-
-Rundown includes a Deno-inspired security policy layer that provides explicit allowlist-based permission control for runbook execution.
+# Security Policy Specification
 
 The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "SHOULD NOT", "RECOMMENDED", "MAY", and "OPTIONAL" in normative policy sections of this document are to be interpreted as described in [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
 
-## Security Model
+## 1. Scope
 
-Rundown provides **two layers of security**:
+This document specifies Rundown security policy behavior for command execution, file access, environment access, policy configuration, CLI overrides, JavaScript policy trust, data source files, prompts, session grants, and OS sandbox enforcement.
 
-### Layer 1: Command Policy (All Platforms)
+Sections marked "non-normative" provide explanation, examples, or troubleshooting. All other sections are normative.
 
-The policy engine checks which commands are allowed to run. This layer:
+<a id="security-model"></a>
 
-- Blocks denied executables (rm, sudo, curl, etc.)
-- Allows approved executables (git, npm, tsc, etc.)
-- Can prompt for unknown commands
-- Parses complex shell commands including pipes, subshells, and backticks
+## 2. Terminology
 
-### Layer 2: Filesystem Sandbox (Linux/macOS)
+An **operation** is a requested command execution, file read, file write, or environment variable access.
 
-When sandboxing is enabled (default on supported platforms), Rundown uses OS-level mechanisms to enforce file access:
+A **policy document** is a data policy loaded from `.rundownrc`, `.rundownrc.json`, `.rundownrc.yaml`, `.rundownrc.yml`, the `rundown` field in `package.json`, or an explicitly selected policy file.
+
+A **JavaScript policy** is a `.js`, `.cjs`, or `.mjs` policy file. JavaScript policies are executable code.
+
+A **configured list** is an `allow` or `deny` list loaded from a policy document.
+
+A **CLI grant** is a permission supplied by command-line flags such as `--allow-run`, `--allow-read`, `--allow-write`, or `--allow-env`.
+
+A **session grant** is a memory-only permission created by an interactive prompt decision.
+
+The **policy mode** is one of `prompted`, `execute`, or `deny`.
+
+The **sandbox** is the optional OS-level filesystem enforcement layer used on supported Linux and macOS hosts.
+
+## 3. Threat Model (non-normative)
+
+Rundown security policy is designed to reduce risk when executable runbooks are evaluated on a user's machine.
+
+| Threat | Protection |
+|--------|------------|
+| Arbitrary command execution | Command allow and deny lists control which executables may run. |
+| Sensitive file access | Path policy and, when available, OS sandboxing restrict file reads and writes. |
+| Credential leakage | Environment variable policy can block secret-bearing names. |
+| Runbook tampering | Runbook overrides allow different trust levels for different file patterns. |
+| Shell injection | The policy tokenizer extracts executables from compound shell syntax where possible. |
+
+Trust boundaries:
+
+```text
+User
+  -> Policy evaluator
+  -> OS sandbox, when enabled and available
+  -> Runbook command
+```
+
+The user is trusted to approve prompts, configure policy files, and choose CLI overrides. A runbook is not inherently trusted.
+
+<a id="sandbox-usage"></a>
+
+## 4. Security Layers
+
+Rundown has two security layers.
+
+### 4.1 Command Policy
+
+The command policy layer applies on all platforms. It MUST evaluate command execution before spawning a process, and it MUST filter environment variables before passing them to that process. It MUST evaluate file read and write paths when Rundown itself mediates those paths, such as file-backed data source loading or sandbox option assembly. File access performed inside an already allowed process is enforced only by the sandbox layer when sandboxing is enabled and available.
+
+The command policy layer MUST parse supported shell syntax and check each extracted executable. Supported compound forms include pipelines, logical operators, command substitutions, backticks, redirects, and here-documents. Executable words that depend on runtime expansion and cannot be parsed statically MUST be treated as unlisted executables, after which the effective policy mode determines whether to prompt, allow, or deny.
+
+### 4.2 Filesystem Sandbox
+
+When enabled, the sandbox layer SHOULD enforce policy-derived file access restrictions at the OS level.
 
 | Platform | Mechanism | Requirement |
 |----------|-----------|-------------|
 | Linux | Landlock LSM | Kernel 5.13+ with Landlock enabled |
-| macOS | Seatbelt (sandbox-exec) | macOS 10.5+ |
-| Windows | Not supported | Use WSL |
+| macOS | Seatbelt (`sandbox-exec`) | macOS 10.5+ |
+| Windows | Not supported | Use WSL for Linux sandbox behavior |
 
-The sandbox enforces:
-- Read-only access to allowed paths
-- Read-write access to specific directories
-- Blocking of denied paths at the kernel level
+macOS Seatbelt MUST allow only required system and runtime paths plus policy-derived read and write roots. It MUST NOT grant blanket reads of `$HOME`.
 
-Platform-specific behavior:
-- macOS Seatbelt allows only system/runtime paths plus policy-derived read/write roots. It no longer grants blanket reads of `$HOME`.
-- Linux allow-path enforcement is available, but deny-path policies fail closed when the current backend cannot represent them safely.
+Linux allow-path enforcement MAY be used when representable by the backend. Linux deny-path rules that cannot be safely represented MUST fail closed.
 
-## Sandbox Usage
+## 5. Policy Discovery
 
-```bash
-# Enable sandboxing (default on supported platforms)
-rundown run <file> --sandbox
+<a id="policy-configuration"></a>
+<a id="config-file-locations"></a>
+When `--policy <file>` is supplied, Rundown MUST load that file directly. Explicit policy loading MUST NOT search other policy locations first.
 
-# Disable sandboxing (trust mode)
-rundown run <file> --no-sandbox
+When `--policy` is not supplied, Rundown MUST search for policy configuration in this order:
 
-# Fail if sandbox unavailable (strict mode)
-rundown run <file> --sandbox-strict
-```
-
-### Sandbox Limitations
-
-**Without sandbox (`--no-sandbox` or unsupported platform):**
-- File read/write policies are NOT enforced
-- Commands can access any file the user can access
-- Use only with trusted runbooks
-
-**Interpreter bypass:**
-Allowing interpreters (python, node, sh) grants unrestricted code execution.
-The sandbox limits file access, but the interpreter can execute arbitrary logic.
-
-## Overview
-
-The security policy layer enforces a **default-deny** model:
-
-- Commands not in the allowlist require user confirmation
-- Deny lists take precedence over allow lists
-- Granular control over commands, file access, and environment variables
-- Session grants provide temporary permissions without modifying config
-- CLI flags can override policy for specific runs
-
-## Threat Model
-
-The policy layer protects against:
-
-| Threat | Protection |
-|--------|------------|
-| Arbitrary command execution | Allowlist controls which commands can run |
-| Sensitive file access | Path patterns + OS sandbox restrict read/write operations |
-| Credential leakage | Environment variable filtering blocks secrets |
-| Runbook tampering | Per-runbook overrides allow different trust levels |
-| Command injection via backticks | Parser extracts and checks commands in backticks |
-
-### Trust Boundaries
-
-```text
-┌─────────────────────────────────────────────────────┐
-│                     User                            │
-│  - Approves permission prompts                      │
-│  - Configures policy files                          │
-│  - Uses CLI flags for temporary overrides           │
-└─────────────────────────────────────────────────────┘
-                         │
-                         ▼
-┌─────────────────────────────────────────────────────┐
-│                Policy Evaluator                      │
-│  - Checks commands against allow/deny lists         │
-│  - Applies runbook-specific overrides               │
-│  - Manages session grants                           │
-│  - Extracts commands from backticks and $()         │
-└─────────────────────────────────────────────────────┘
-                         │
-                         ▼
-┌─────────────────────────────────────────────────────┐
-│              OS-Level Sandbox                        │
-│  (Linux: Landlock | macOS: Seatbelt)                │
-│  - Enforces file read/write restrictions            │
-│  - Kernel-level enforcement (cannot be bypassed)    │
-└─────────────────────────────────────────────────────┘
-                         │
-                         ▼
-┌─────────────────────────────────────────────────────┐
-│                   Runbook                           │
-│  - Defines steps and commands                       │
-│  - Subject to policy restrictions                   │
-└─────────────────────────────────────────────────────┘
-```
-
-### Data Source File Security
-
-File-backed data sources (`--input items=file:data.txt`) are subject to security controls:
-
-- **Symlink resolution:** `fs.realpath()` resolves symlinks before path validation
-- **Path containment:** Resolved paths must stay within the project root directory
-- **Policy enforcement:** The resolved path is checked against the active `read` policy before it becomes a FOR-loop source
-- **Prompt behavior:** Promptable reads ask for permission in interactive mode and fail startup in non-interactive mode
-- **Blocked sources:** Paths escaping the project are omitted from variable discovery with a warning. A FOR loop depending on that omitted variable fails closed when the loop starts with `ForResolutionError('undefined-variable')`; a `JsonArrayStream` that later resolves outside the project root fails with `policy-violation`, never zero silent iterations.
-- **Drift detection:** File snapshots (size, mtime, SHA-256 of first 64 KiB) detect modification between iterations
-- **Iteration cap:** `MAX_FILE_ITERATIONS` (10,000) prevents runaway loops from unbounded file sources
-
-These controls are always active, independent of the sandbox layer.
-
-## Policy Configuration
-
-### Config File Locations
-
-Policy configuration is discovered in the following order (highest to lowest priority):
-
-1. `.rundownrc` (JSON or YAML)
+1. `.rundownrc`
 2. `.rundownrc.json`
-3. `.rundownrc.yaml` / `.rundownrc.yml`
-4. `package.json` (`rundown` field)
+3. `.rundownrc.yaml`
+4. `.rundownrc.yml`
+5. `package.json` `rundown` field
 
-### Executable JavaScript Policies
+When no policy configuration is found, Rundown MUST use the built-in default policy.
 
-JavaScript policy files are executable code. They are **not** auto-discovered.
+Invalid auto-discovered configuration MUST trigger a warning and fall back to the built-in default policy. A missing or invalid explicitly selected policy file MUST fail closed.
 
-- Supported only when explicitly passed with `--policy`
-- Require `--trust-js-policy`
-- Supported extensions: `.js`, `.cjs`, `.mjs`
+JavaScript policy files MUST NOT be auto-discovered.
 
-Examples:
+## 6. Policy Document Model
 
-```bash
-# Data-only policy file (recommended)
-rundown run deploy.runbook.md --policy ./.rundownrc.yaml
+A policy document contains a default policy and MAY contain runbook-specific
+overrides, persisted grants, and helper module declarations.
 
-# Executable policy file (explicit trust required)
-rundown run deploy.runbook.md --policy ./rundown.config.cjs --trust-js-policy
-```
+| Key | Requirement |
+|-----|-------------|
+| `version` | Schema version. Missing value defaults to `1`. |
+| `default` | Default policy applied to every runbook unless an override changes the effective policy. |
+| `overrides` | Ordered list of runbook-specific policy fragments. Missing value defaults to an empty list. |
+| `grants` | Ordered list of persisted user grants. Missing value defaults to an empty list. |
+| `helpers` | Optional helper module paths. Loading these modules requires `--trust-js-policy`. |
 
-Migration from `rundown.config.js`:
-- Move the policy object into `.rundownrc.yaml`, `.rundownrc.json`, or `package.json`
-- Keep JavaScript only if you intentionally need executable policy logic
-- If you keep JavaScript, require `--policy ... --trust-js-policy` in your workflow
+The `default` policy object contains these fields:
 
-### Schema Reference
+| Key | Requirement |
+|-----|-------------|
+| `mode` | One of `prompted`, `execute`, or `deny`. Missing value defaults to `prompted`. |
+| `run` | Command permission rules. Missing value defaults to empty `allow` and `deny` lists. |
+| `read` | File-read permission rules. Missing value defaults to empty `allow` and `deny` lists. |
+| `write` | File-write permission rules. Missing value defaults to empty `allow` and `deny` lists. |
+| `env` | Environment-variable permission rules. Missing value defaults to empty `allow` and `deny` lists. |
 
-```yaml
-# .rundownrc.yaml
-version: 1
+Each permission rule object contains:
 
-default:
-  # Policy mode: 'prompted' | 'execute' | 'deny'
-  mode: prompted
+| Key | Requirement |
+|-----|-------------|
+| `allow` | Ordered list of glob patterns that may allow matching operations. Missing value defaults to an empty list. |
+| `deny` | Ordered list of glob patterns that may deny matching operations. Missing value defaults to an empty list. |
 
-  # Command execution rules
-  run:
-    allow:
-      - git
-      - npm
-      - node
-    deny:
-      - sudo
-      - rm
+Each override contains a `runbook` glob and MAY contain `mode`, `run`, `read`,
+`write`, or `env`. Each persisted grant contains `type`, `pattern`, optional
+`runbook`, optional `grantedAt`, and `scope`.
 
-  # File read rules (supports {repo}, {tmp} placeholders)
-  read:
-    allow:
-      - "{repo}/**"
-      - "{tmp}/**"
-    deny:
-      - "**/.env"
-      - "**/credentials.json"
+Pattern matching uses picomatch-compatible glob syntax.
 
-  # File write rules
-  write:
-    allow:
-      - "{repo}/.claude/**"
-      - "{repo}/dist/**"
-    deny:
-      - "**/.env"
+Path patterns MAY use these placeholders:
 
-  # Environment variable rules (supports glob patterns)
-  env:
-    allow:
-      - PATH
-      - HOME
-      - NODE_ENV
-      - npm_*
-    deny:
-      - "*_TOKEN"
-      - "*_SECRET"
-      - AWS_*
+| Placeholder | Resolves To |
+|-------------|-------------|
+| `{repo}` | Repository root, defaulting to `process.cwd()` |
+| `{tmp}` | System temporary directory, such as `/tmp` or `%TEMP%` |
 
-# Runbook-specific overrides
-overrides:
-  - runbook: "deploy/*.runbook.md"
-    mode: execute  # Trusted deployment scripts
-    run:
-      allow:
-        - docker
-        - kubectl
+Command `run` patterns match executable names. File `read` and `write` patterns match resolved paths. Environment `env` patterns match variable names.
 
-# Persisted grants
-grants:
-  - type: run
-    pattern: curl
-    scope: permanent
-```
+Runbook override patterns MUST be matched against runbook file paths. A matching override mode replaces the default mode for that runbook. Matching override permission rules are appended to the default permission rules for that runbook.
 
-### Default Policy
+## 7. Effective Policy Assembly
 
-When no configuration file is found, Rundown uses built-in defaults:
+The effective policy for a run MUST be assembled from:
 
-**Allowed commands:**
+1. The selected policy document, or the built-in default policy when no document is found.
+2. Any matching runbook overrides. Override modes replace the effective mode, and override permission lists are appended to the default permission lists.
+3. Persisted grants from the policy document. Persisted grants are appended to the effective allow lists for their permission type.
+4. CLI options for the current invocation.
+5. Session grants created during interactive prompts.
+
+The built-in policy mode is `prompted`.
+
+<a id="default-policy"></a>
+
+### 7.1 Built-In Default Policy
+
+When no configuration file is found, Rundown uses the built-in default policy.
+
+Allowed commands:
+
 - Version control: `git`
 - Node.js ecosystem: `node`, `npm`, `npx`, `pnpm`, `yarn`, `bun`
 - Build tools: `tsc`, `esbuild`, `vite`, `webpack`, `rollup`
 - Linting: `eslint`, `prettier`, `biome`
 - Testing: `jest`, `vitest`, `mocha`, `playwright`, `cypress`
 - Other languages: `python`, `python3`, `pip`, `pip3`, `go`, `cargo`, `rustc`, `make`, `cmake`
-- Rundown: `rd`, `rundown`
+- Rundown: `rd`, `rundown`, `rdpath`, `rdx`
 
-**Denied commands:**
+Denied commands:
+
 - System administration: `sudo`, `su`, `passwd`, `useradd`, `usermod`, `userdel`, `chown`, `chmod`
 - Network tools: `curl`, `wget`, `nc`, `netcat`, `ncat`, `ssh`, `scp`, `sftp`, `rsync`
 - Destructive operations: `rm`, `rmdir`, `mv`, `dd`, `mkfs`, `fdisk`, `parted`
 - Process control: `kill`, `killall`, `pkill`
 - Container tools: `docker`, `podman`, `kubectl`, `helm`
 
-**Default file access:**
+Default file access:
+
 - Read allow: `{repo}/**`, `{tmp}/**`
 - Read deny: `**/.env`, `**/.env.*`, `**/credentials.json`, `**/*secret*`, `**/*password*`, `**/id_rsa`, `**/id_ed25519`, `**/*.pem`, `**/*.key`
-- Write allow: `{repo}/.claude/**`, `{repo}/.rundown/contexts/**`, `{repo}/node_modules/**`, `{repo}/dist/**`, `{repo}/build/**`, `{repo}/.next/**`, `{tmp}/**`
-- Write deny: `**/.env`, `**/.env.*`, `**/credentials.json`, `**/*secret*`, `**/*password*`
+- Write allow: `{repo}/.claude/**`, `{repo}/.rundown/runs/**`, `{repo}/.rundown/locks/**`, `{repo}/.rundown/contexts/**`, `{repo}/.rundown/session.json`, `{repo}/.rundown/work/**`, `{repo}/node_modules/**`, `{repo}/dist/**`, `{repo}/build/**`, `{repo}/.next/**`, `{tmp}/**`
+- Write deny: `**/.env`, `**/.env.*`, `**/credentials.json`, `**/*secret*`, `**/*password*`, `{repo}/.rundown/config.yaml`
 
-**Note:** Read deny includes SSH keys and certificates (`id_rsa`, `id_ed25519`, `*.pem`, `*.key`) to prevent credential exfiltration, but write deny does not include these patterns to allow key generation workflows.
+Read deny includes SSH keys and certificates (`id_rsa`, `id_ed25519`, `*.pem`, `*.key`) to reduce credential exfiltration risk. Write deny does not include those patterns so key generation workflows can write new keys when otherwise allowed.
 
-**Allowed environment variables:**
+Allowed environment variables:
+
 - System: `PATH`, `HOME`, `USER`, `SHELL`, `TERM`, `LANG`, `LC_*`, `TMPDIR`, `TMP`, `TEMP`
 - Development: `CI`, `NODE_ENV`, `DEBUG`, `npm_*`, `RUNDOWN_*`
 
-**Denied environment variables:**
-- Tokens/secrets: `*_TOKEN`, `*_KEY`, `*_SECRET`, `*_PASSWORD`, `*_CREDENTIAL`
+Denied environment variables:
+
+- Tokens and secrets: `*_TOKEN`, `*_KEY`, `*_SECRET`, `*_PASSWORD`, `*_CREDENTIAL`
 - Cloud credentials: `AWS_*`, `GCP_*`, `AZURE_*`, `GOOGLE_*`
 - Infrastructure: `KUBECONFIG`, `DOCKER_*`, `SSH_*`, `GPG_*`
 - Specific tokens: `GITHUB_TOKEN`, `GITLAB_TOKEN`, `NPM_TOKEN`
 
-## Policy Modes
+<a id="allowdeny-lists"></a>
+
+## 8. Policy Decisions
+
+Policy decisions MUST use this precedence order:
+
+1. `--deny-all`
+2. `--allow-all`
+3. CLI grants
+4. Session grants
+5. Configured deny lists
+6. Configured allow lists
+7. Policy mode
+
+`--deny-all` MUST take precedence over `--allow-all` when both are supplied.
+
+CLI grants and session grants MUST be evaluated before configured deny and allow lists.
+
+Configured deny lists MUST take precedence over configured allow lists.
+
+The policy mode MUST be consulted only after no earlier rule decides the operation.
+
+<a id="policy-modes"></a>
+
+### 8.1 Policy Modes
 
 | Mode | Behavior |
 |------|----------|
-| `prompted` (default) | Ask user for permission on unlisted commands |
-| `execute` | Allow all commands without prompting |
-| `deny` | Block all unlisted commands without prompting |
+| `prompted` | Prompt for unlisted operations when interactive. |
+| `execute` | Allow unlisted operations. |
+| `deny` | Deny unlisted operations. |
 
-### Mode Selection
+The built-in default mode is `prompted`. In `prompted` mode, unlisted operations MUST prompt when the process is interactive. Prompt-required decisions MUST fail closed when the process is non-interactive.
 
-```bash
-# Use prompted mode (default)
-rundown run deploy.runbook.md
+## 9. CLI Overrides
 
-# Trust mode - skip all policy checks
-rundown run deploy.runbook.md --allow-all
-
-# Strict mode - block everything not explicitly allowed
-rundown run deploy.runbook.md --deny-all
-```
-
-## Allow/Deny Lists
-
-Pattern matching uses [picomatch](https://github.com/micromatch/picomatch) for glob syntax. Command parsing uses Rundown's policy tokenizer to extract executables from shell commands, including pipelines, redirects, command substitutions, and here-documents. Executable words that depend on runtime expansion are treated as dynamic and fail closed unless trust mode is enabled.
-
-### Command Execution (run)
-
-Commands are matched by their executable name:
-
-```yaml
-run:
-  allow:
-    - git        # Matches: git status, git push, etc.
-    - npm        # Matches: npm install, npm test
-  deny:
-    - sudo       # Blocks: sudo anything
-```
-
-For piped commands, shell wrappers, and logical operators, all executables are extracted and checked:
-
-```bash
-git log | grep fix        # Both 'git' and 'grep' must be allowed
-sh -c "npm install"       # 'sh' and 'npm' must be allowed
-npm test && npm build     # 'npm' must be allowed
-```
-
-### File Access (read/write)
-
-Path patterns support glob syntax with special placeholders:
-
-| Placeholder | Resolves To |
-|-------------|-------------|
-| `{repo}` | Repository root (defaults to `process.cwd()`) |
-| `{tmp}` | System temporary directory (e.g., `/tmp` on Unix, `%TEMP%` on Windows) |
-
-```yaml
-read:
-  allow:
-    - "{repo}/**"        # All files in repo
-    - "{tmp}/rundown-*"  # Temp files with prefix
-  deny:
-    - "**/.env"          # All .env files
-    - "**/secrets/**"    # Any secrets directory
-```
-
-### Environment Variables (env)
-
-Variable names support glob patterns:
-
-```yaml
-env:
-  allow:
-    - PATH
-    - NODE_ENV
-    - npm_*              # All npm_ prefixed vars
-    - RUNDOWN_*          # All Rundown vars
-  deny:
-    - "*_TOKEN"          # Any token
-    - "*_SECRET"         # Any secret
-    - AWS_*              # All AWS credentials
-```
-
-## CLI Options
+<a id="cli-options"></a>
+CLI overrides apply only to the current invocation unless they create a session grant through an interactive prompt.
 
 | Option | Description |
 |--------|-------------|
-| `--allow-run <cmds>` | Allow specific commands (comma-separated) |
-| `--allow-read <paths>` | Allow reading specific paths (comma-separated) |
-| `--allow-write <paths>` | Allow writing to specific paths (comma-separated) |
-| `--allow-env <vars>` | Allow specific environment variables (comma-separated) |
-| `--allow-all` | Bypass all policy checks (trust mode) |
-| `--deny-all` | Block all operations not explicitly allowed |
-| `--policy <file>` | Use a specific policy configuration file |
-| `--trust-js-policy` | Trust an explicitly selected executable JS policy file and helper modules declared by policy config |
-| `-y, --yes` | Skip confirmation prompts (auto-approve) |
-| `--non-interactive` | Non-interactive mode (auto-deny, CI-friendly) |
-| `--sandbox` | Enable OS-level sandbox (default on supported platforms) |
-| `--no-sandbox` | Disable sandbox enforcement |
-| `--sandbox-strict` | Fail if sandbox is unavailable |
+| `--allow-run <cmds>` | Allow specific commands, comma-separated. |
+| `--allow-read <paths>` | Allow reading specific paths, comma-separated. |
+| `--allow-write <paths>` | Allow writing specific paths, comma-separated. |
+| `--allow-env <vars>` | Allow specific environment variables, comma-separated. |
+| `--allow-all` | Bypass policy checks and disable sandboxing. |
+| `--deny-all` | Deny all operations; wins over `--allow-all` and all grants. |
+| `--policy <file>` | Load a specific policy file directly. |
+| `--trust-js-policy` | Trust an explicitly selected JavaScript policy and config-declared helper modules. |
+| `-y, --yes` | Skip confirmation prompts by approving promptable operations. |
+| `--non-interactive` | Disable prompts; prompt-required decisions fail closed. |
+| `--sandbox` | Enable OS-level sandboxing. |
+| `--no-sandbox` | Disable OS-level sandboxing. |
+| `--sandbox-strict` | Fail closed if sandboxing is unavailable. |
 
-**Note:** If both `--allow-all` and `--deny-all` are specified, `--deny-all` takes precedence.
+`--allow-all` MUST imply `--no-sandbox`.
 
-**Note:** `--allow-all` implies `--no-sandbox` (trust mode bypasses all enforcement).
+`--deny-all` MUST win over `--allow-all`.
 
-**Note:** Helper modules declared by `.rundownrc`, `.rundownrc.json`, `.rundownrc.yaml`, `.rundownrc.yml`, or `package.json` are executable JavaScript and are skipped unless `--trust-js-policy` is set. Helper modules passed directly with `--helpers` are treated as explicit CLI opt-in.
+`--helpers` is an explicit CLI opt-in for helper modules. Helper modules supplied through `--helpers` are not treated as auto-discovered configuration.
 
-### Precedence Order
+## 10. Sandbox Enforcement
 
-Permissions are evaluated in this order (first match wins):
+The sandbox MUST be enabled by default unless `--no-sandbox` or `--allow-all` is supplied.
 
-1. **CLI grants** (`--allow-run`, etc.) - highest priority
-2. **Session grants** (user-approved during prompts)
-3. **Deny list** - if matched, operation is blocked
-4. **Allow list** - if matched, operation is allowed
-5. **Policy mode** - `prompted`, `execute`, or `deny`
+`--allow-all` MUST disable sandboxing.
 
-### Examples
+When sandboxing is enabled but unavailable, Rundown MUST warn and execute unsandboxed unless `--sandbox-strict` is supplied.
+
+With `--sandbox-strict`, unavailable sandboxing MUST fail closed and MUST NOT execute the command.
+
+When the Linux sandbox backend cannot safely represent effective deny-path rules, Rundown MUST fail closed instead of silently weakening policy.
+
+When sandboxing is disabled with `--no-sandbox`, file read and write policy still applies in the policy evaluator, but OS-level enforcement does not apply. Commands can access any file the user account can access if the command itself bypasses or exceeds the evaluator's visibility.
+
+Allowing interpreters such as `python`, `node`, or `sh` grants broad code execution. The sandbox can restrict file access, but it does not make interpreter logic safe.
+
+## 11. Data Source File Security
+
+File-backed data sources use `file:` values, such as `--input items=file:data.jsonl`, and are used by `FOR variable IN {{ source }}` loops.
+
+File-backed data sources MUST resolve symlinks before validation.
+
+Resolved data source paths MUST remain inside the project root. Traversal or symlink escape outside the project root MUST fail visibly.
+
+Resolved data source paths MUST pass the active read policy before execution or iteration starts. Promptable reads MAY ask for permission in interactive mode and MUST fail closed in non-interactive mode.
+
+Rundown MUST detect data source drift between iterations. Drift includes material changes to the file snapshot, such as size, mtime, or sampled content hash changes. Drift MUST fail visibly.
+
+Missing, denied, invalid, escaped, or drifted data sources MUST NOT produce silent zero-iteration loops. They MUST fail visibly before or during loop execution.
+
+File-backed data source controls MUST apply independently of the sandbox layer.
+
+Implementations SHOULD cap file-backed iteration to prevent runaway loops. The current cap is `MAX_FILE_ITERATIONS` at 10,000 iterations.
+
+## 12. JavaScript Policy and Helper Trust
+
+<a id="executable-javascript-policies"></a>
+JavaScript, CommonJS, and ES module policy files are executable code. Files ending in `.js`, `.cjs`, or `.mjs` MUST be treated as JavaScript policies.
+
+JavaScript policies MUST NOT be auto-discovered.
+
+JavaScript policies MUST be loaded only when both conditions are true:
+
+1. The file is explicitly selected with `--policy <file>`.
+2. `--trust-js-policy` is supplied.
+
+If a JavaScript policy is explicitly selected without `--trust-js-policy`, Rundown MUST fail closed.
+
+Helper modules declared by policy configuration are executable code. Config-declared helper modules MUST be skipped unless `--trust-js-policy` is supplied.
+
+Helper modules passed directly through `--helpers` are allowed only because `--helpers` is an explicit CLI opt-in.
+
+## 13. Prompts, Session Grants, and Non-Interactive Mode
+
+In interactive prompted mode, unlisted operations MUST ask the user for a decision.
+
+Prompt decisions MAY create session grants with these scopes:
+
+| Option | Effect |
+|--------|--------|
+| Allow once | Allow one operation. |
+| Allow for this session | Remember the operation until the runbook or process ends. |
+| Allow all of this type for this session | Allow all operations of that type until the runbook or process ends. |
+| Deny once | Deny one operation. |
+| Deny all of this type for this session | Deny all operations of that type until the runbook or process ends. |
+
+Session grants MUST be memory-only. They MUST NOT persist to disk. They MUST be cleared when the runbook completes, the CLI process exits, or the user explicitly resets them.
+
+When `--non-interactive` is supplied, or when the process is detected as non-interactive, prompts MUST NOT be shown. Any decision that would require a prompt MUST fail closed unless allowed by an earlier precedence rule.
+
+`-y` or `--yes` MAY approve promptable operations without showing a prompt. It MUST NOT override `--deny-all`, configured deny rules, or other earlier denial decisions.
+
+<a id="fallback-behavior"></a>
+
+## 14. Failure Semantics
+
+| Case | Behavior |
+|------|----------|
+| No policy config found | Use built-in defaults. |
+| Invalid auto-discovered config | Warn and use built-in defaults. |
+| Missing or invalid explicit `--policy` config | Fail closed. |
+| JavaScript policy without `--trust-js-policy` | Fail closed. |
+| Config-declared helper without `--trust-js-policy` | Skip helper. |
+| Not parseable command | Fail closed unless `--allow-all` is active. |
+| Dynamic executable word | Treat as an unlisted operation; policy mode determines whether to prompt, allow, or deny. |
+| Unlisted operation in interactive prompted mode | Prompt. |
+| Unlisted operation requiring prompt in non-interactive mode | Fail closed. |
+| `--allow-all` and `--deny-all` both supplied | `--deny-all` wins. |
+| Sandbox unavailable with default sandboxing | Warn and run unsandboxed. |
+| Sandbox unavailable with `--sandbox-strict` | Fail closed. |
+| Linux deny-path rules cannot be safely represented | Fail closed. |
+| Missing data source file | Fail visibly. |
+| Denied data source file | Fail visibly. |
+| Invalid data source file | Fail visibly. |
+| Data source escapes project root | Fail visibly. |
+| Data source drift detected | Fail visibly. |
+
+## 15. Examples (non-normative)
+
+### 15.1 Policy Files
+
+```bash
+# Data-only policy file
+rundown run deploy.runbook.md --policy ./.rundownrc.yaml
+
+# Executable policy file
+rundown run deploy.runbook.md --policy ./rundown.config.cjs --trust-js-policy
+```
+
+Migration from `rundown.config.js`:
+
+- Move the policy object into `.rundownrc.yaml`, `.rundownrc.json`, or `package.json` when executable logic is not needed.
+- Keep JavaScript only when executable policy logic is intentional.
+- Require `--policy ... --trust-js-policy` in workflows that keep JavaScript policy files.
+
+### 15.2 Command, File, and Environment Rules
+
+```yaml
+version: 1
+default:
+  mode: prompted
+  run:
+    allow:
+      - git
+      - npm
+    deny:
+      - sudo
+  read:
+    allow:
+      - "{repo}/**"
+      - "{tmp}/rundown-*"
+    deny:
+      - "**/.env"
+      - "**/secrets/**"
+  env:
+    allow:
+      - PATH
+      - NODE_ENV
+      - npm_*
+      - RUNDOWN_*
+    deny:
+      - "*_TOKEN"
+      - "*_SECRET"
+      - AWS_*
+```
+
+For compound commands, every extracted executable must be allowed:
+
+```bash
+git log | grep fix
+sh -c "npm install"
+npm test && npm run build
+```
+
+### 15.3 CLI Overrides
 
 ```bash
 # Allow specific commands for this run
@@ -393,26 +425,20 @@ rundown run deploy.runbook.md --allow-run docker,kubectl
 # Allow file operations
 rundown run backup.runbook.md --allow-read /var/log --allow-write /backup
 
-# CI/CD: auto-approve with pre-approved commands
-rundown run test.runbook.md --yes --allow-run npm,jest
+# Prompted mode with default policy
+rundown run deploy.runbook.md
 
-# CI/CD: strict mode with no prompts
+# Strict mode with no prompts
 rundown run test.runbook.md --non-interactive
 
-# Use custom policy file
-rundown run deploy.runbook.md --policy ./ci-policy.yaml
-
-# Use executable JS policy file (explicit trust required)
-rundown run deploy.runbook.md --policy ./rundown.config.cjs --trust-js-policy
+# Trust mode for a controlled environment
+rundown run deploy.runbook.md --allow-all
 ```
 
-## Runbook Overrides
-
-Different runbooks can have different trust levels:
+### 15.4 Runbook Overrides
 
 ```yaml
 overrides:
-  # Trust deployment scripts
   - runbook: "deploy/**/*.runbook.md"
     mode: execute
     run:
@@ -421,11 +447,9 @@ overrides:
         - kubectl
         - helm
 
-  # Strict mode for untrusted runbooks
   - runbook: "community/**/*.runbook.md"
     mode: deny
 
-  # Additional permissions for specific runbook
   - runbook: "backup.runbook.md"
     run:
       allow:
@@ -433,70 +457,24 @@ overrides:
         - tar
 ```
 
-Override patterns use glob matching against runbook file paths.
-
-## Session Grants
-
-When prompted for permission, users can choose grant scope:
-
-| Option | Effect |
-|--------|--------|
-| Allow once | Single operation only |
-| Allow for this session | Remembered until runbook completes |
-| Allow all [type] for this session | Allow all operations of that type |
-| Deny once | Single denial |
-| Deny all [type] for this session | Block all operations of that type |
-
-Session grants are **memory-only** and do not persist to disk. They are cleared when:
-
-- The runbook completes
-- The CLI process exits
-- The user explicitly resets them
-
-## Best Practices
-
-### Principle of Least Privilege
-
-1. Start with the default policy and add specific permissions as needed
-2. Use `--allow-run` for one-off operations rather than modifying config
-3. Prefer `prompted` mode over `execute` for production runbooks
-
-### Repository-Specific Configurations
-
-Create `.rundownrc.yaml` in your repository with project-specific allowlists:
-
-```yaml
-version: 1
-default:
-  mode: prompted
-  run:
-    allow:
-      - turbo      # Project uses Turborepo
-      - prisma     # Database migrations
-```
-
-### CI/CD Considerations
-
-For CI environments:
+### 15.5 CI
 
 ```bash
-# Option 1: Pre-approve known commands
+# Pre-approve known commands
 rundown run test.runbook.md --yes --allow-run npm,jest,eslint
 
-# Option 2: Use non-interactive mode with policy file
+# Use non-interactive mode with a policy file
 rundown run test.runbook.md --non-interactive --policy ./ci-policy.yaml
 
-# Option 3: Trust mode for controlled CI environment
+# Trust mode for a controlled CI environment
 rundown run deploy.runbook.md --allow-all
 ```
-
-Create a dedicated CI policy file:
 
 ```yaml
 # ci-policy.yaml
 version: 1
 default:
-  mode: execute  # No prompts in CI
+  mode: execute
   run:
     allow:
       - npm
@@ -510,73 +488,52 @@ default:
       - wget
 ```
 
-### Auditing
+## 16. Troubleshooting (non-normative)
 
-Review your policy configuration periodically:
+<a id="sandbox-troubleshooting"></a>
 
-1. Check for overly permissive `allow` patterns
-2. Ensure `deny` lists include sensitive operations
-3. Review runbook overrides for appropriate trust levels
-4. Monitor session grants during development
-
-## Sandbox Troubleshooting
-
-### Linux: Checking Landlock Availability
+### 16.1 Linux Landlock
 
 ```bash
-# Check if Landlock is enabled in kernel
+# Check whether Landlock is enabled in the kernel
 cat /sys/kernel/security/lsm
-# Output should include 'landlock'
 
-# Check kernel version (requires 5.13+)
+# Check kernel version; Landlock requires 5.13+
 uname -r
 ```
 
-If Landlock is not available:
-- Upgrade to Linux kernel 5.13 or later
-- Ensure CONFIG_SECURITY_LANDLOCK is enabled in kernel config
-- Install a Landlock wrapper like [landrun](https://github.com/Zouuup/landrun) (v0.1.0 or later recommended)
+If Landlock is unavailable, upgrade to Linux kernel 5.13 or later, ensure `CONFIG_SECURITY_LANDLOCK` is enabled, or install a Landlock wrapper such as `landrun` v0.1.0 or later.
 
-### macOS: Seatbelt Permissions
-
-The `sandbox-exec` command is built into macOS but may require adjustments:
+### 16.2 macOS Seatbelt
 
 ```bash
-# Verify sandbox-exec exists
 which sandbox-exec
-# Should output: /usr/bin/sandbox-exec
 ```
 
-Common issues:
-- **SIP restrictions**: System Integrity Protection may block certain sandbox operations
-- **Entitlements**: Some apps may need specific entitlements for sandbox access
+`sandbox-exec` should resolve to `/usr/bin/sandbox-exec`. If sandbox-protected commands fail unexpectedly, check whether System Integrity Protection or application entitlements affect the command.
 
-### Fallback Behavior
-
-When sandbox is unavailable:
+### 16.3 Sandbox Fallbacks
 
 | Scenario | Behavior |
 |----------|----------|
-| `--sandbox` (default) | Falls back to unsandboxed with warning |
-| `--sandbox-strict` | Fails with error, command not executed |
-| `--no-sandbox` | Executes without sandbox, no warning |
+| `--sandbox` or default sandboxing | Falls back to unsandboxed execution with a warning when the sandbox is unavailable. |
+| `--sandbox-strict` | Fails with an error and does not execute the command when the sandbox is unavailable. |
+| `--no-sandbox` | Executes without sandboxing and does not warn about sandbox availability. |
 
-Linux deny-path note:
-- If the effective policy contains deny-path rules that the Linux backend cannot enforce safely, Rundown blocks execution instead of silently weakening policy.
-- To proceed in that case, disable sandboxing only for trusted runs with `--no-sandbox`.
+Linux deny-path note: if the effective policy contains deny-path rules that the Linux backend cannot enforce safely, Rundown blocks execution instead of silently weakening policy. For trusted runs only, disable sandboxing with `--no-sandbox`.
 
-### Debugging Sandbox Issues
-
-To debug sandbox-related issues:
+### 16.4 Debugging Sandbox Issues
 
 ```bash
-# Run with sandbox strict to see if sandbox is available
+# Require sandbox availability
 rundown run test.runbook.md --sandbox-strict
 
-# If it fails, check availability:
-# Linux: cat /sys/kernel/security/lsm
-# macOS: which sandbox-exec
-
-# Disable sandbox for trusted runbooks
+# Disable sandbox for a trusted runbook
 rundown run trusted.runbook.md --no-sandbox
 ```
+
+## 17. Conformance
+
+An implementation conforms to this specification when it follows the normative requirements in sections 1, 2, 4 through 14, and 17.
+
+Documentation, examples, and troubleshooting sections are non-normative and MUST NOT override normative requirements.

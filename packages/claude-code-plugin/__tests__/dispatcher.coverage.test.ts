@@ -4,6 +4,7 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import type { injectContext } from '../src/context.js';
 import type { executeGate } from '../src/gate-loader.js';
+import type { GateConfig, RundownPluginConfig } from '../src/shared/index.js';
 
 // Mock only what is necessary and external to the logic we want to test
 const mockInjectContext = jest.fn() as jest.MockedFunction<typeof injectContext>;
@@ -28,6 +29,10 @@ jest.unstable_mockModule('../src/workflow/context.js', () => ({
 const { dispatch, gateMatchesFilePattern } = await import('../src/dispatcher.js');
 const { Session } = await import('../src/session.js');
 const { detectSyntheticEvents } = await import('../src/synthetic-events/detector.js');
+
+function malformedGateConfig(filePatterns: unknown[]): GateConfig {
+  return { file_patterns: filePatterns as string[] };
+}
 
 describe('Dispatcher Coverage Extensions', () => {
   let testDir: string;
@@ -98,11 +103,11 @@ describe('Dispatcher Coverage Extensions', () => {
 
   describe('gateMatchesFilePattern coverage', () => {
     it('covers path jail and error handling', async () => {
-      const config = { file_patterns: ['**/*.ts'] } as any;
+      const config = { file_patterns: ['**/*.ts'] } satisfies GateConfig;
       expect(await gateMatchesFilePattern(config, '/outside/path.ts', testDir)).toBe(false);
-      expect(
-        await gateMatchesFilePattern({ file_patterns: [null as any] }, 'test.ts', testDir),
-      ).toBe(false);
+      expect(await gateMatchesFilePattern(malformedGateConfig([null]), 'test.ts', testDir)).toBe(
+        false,
+      );
     });
   });
 
@@ -113,10 +118,8 @@ describe('Dispatcher Coverage Extensions', () => {
       expect(res1.context).toBeDefined();
 
       // Config with missing hook
-      await fs.writeFile(
-        path.join(testDir, 'rundown-plugin.json'),
-        JSON.stringify({ hooks: {}, gates: {} }),
-      );
+      const emptyConfig = { hooks: {}, gates: {} } satisfies RundownPluginConfig;
+      await fs.writeFile(path.join(testDir, 'rundown-plugin.json'), JSON.stringify(emptyConfig));
       const res2 = await dispatch({ hook_event_name: 'UserPromptSubmit', cwd: testDir });
       expect(res2.context).toBeDefined();
 
@@ -124,7 +127,7 @@ describe('Dispatcher Coverage Extensions', () => {
       const config3 = {
         hooks: { PostToolUse: { enabled_tools: ['Write'], gates: ['g1'] } },
         gates: { g1: { command: 'echo' } },
-      };
+      } satisfies RundownPluginConfig;
       await fs.writeFile(path.join(testDir, 'rundown-plugin.json'), JSON.stringify(config3));
       const res3 = await dispatch({
         hook_event_name: 'PostToolUse',
@@ -137,7 +140,7 @@ describe('Dispatcher Coverage Extensions', () => {
       const configKeyword = {
         hooks: { UserPromptSubmit: { gates: ['g1'] } },
         gates: { g1: { command: 'echo', keywords: ['important'] } },
-      };
+      } satisfies RundownPluginConfig;
       await fs.writeFile(path.join(testDir, 'rundown-plugin.json'), JSON.stringify(configKeyword));
       const resKeyword = await dispatch({
         hook_event_name: 'UserPromptSubmit',
@@ -150,7 +153,7 @@ describe('Dispatcher Coverage Extensions', () => {
       const configPattern = {
         hooks: { PostToolUse: { gates: ['g1'] } },
         gates: { g1: { command: 'echo', file_patterns: ['src/**'] } },
-      };
+      } satisfies RundownPluginConfig;
       await fs.writeFile(path.join(testDir, 'rundown-plugin.json'), JSON.stringify(configPattern));
       const resPattern = await dispatch({
         hook_event_name: 'PostToolUse',
@@ -163,7 +166,7 @@ describe('Dispatcher Coverage Extensions', () => {
       const config5 = {
         hooks: { UserPromptSubmit: { gates: ['g1'] } },
         gates: { g1: { command: 'echo', on_pass: 'g2' }, g2: { command: 'echo' } },
-      };
+      } satisfies RundownPluginConfig;
       await fs.writeFile(path.join(testDir, 'rundown-plugin.json'), JSON.stringify(config5));
       const res5 = await dispatch({ hook_event_name: 'UserPromptSubmit', cwd: testDir });
       expect(res5).toBeDefined();
@@ -175,7 +178,7 @@ describe('Dispatcher Coverage Extensions', () => {
         gates: {
           g1: { command: 'echo', on_pass: 'g1' }, // Self-chain
         },
-      };
+      } satisfies RundownPluginConfig;
       await fs.writeFile(path.join(testDir, 'rundown-plugin.json'), JSON.stringify(config));
       const res = await dispatch({ hook_event_name: 'UserPromptSubmit', cwd: testDir });
       expect(res.blockReason).toContain('Exceeded max gate chain depth');
