@@ -12,6 +12,7 @@ import {
   type HookConfig,
   type GateConfig,
 } from '../src/shared/index.js';
+import { Session } from '../src/session.js';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -1099,6 +1100,41 @@ describe('Dispatcher - Additional Edge Cases', () => {
     expect(result.context).toContain('gate 1 passed');
     expect(result.context).not.toContain('gate 3 should not run');
     expect(result.blockReason).toBeDefined();
+  });
+
+  test('dispatch records session metadata before blocking gates run', async () => {
+    const mockConfig = {
+      gates: {
+        'blocking-gate': {
+          command: 'exit 1',
+          on_fail: 'BLOCK',
+        },
+      },
+      hooks: {
+        PostToolUse: {
+          gates: ['blocking-gate'],
+        },
+      },
+    };
+
+    await fs.writeFile(
+      path.join(testDir, 'rundown-plugin.json'),
+      JSON.stringify(mockConfig, null, 2),
+    );
+
+    const input: HookInput = {
+      hook_event_name: 'PostToolUse',
+      cwd: testDir,
+      tool_name: 'Edit',
+      tool_input: { file_path: 'src/blocked.ts' },
+    };
+
+    const result = await dispatch(input);
+    const session = new Session(testDir);
+
+    expect(result.blockReason).toBeDefined();
+    expect(await session.contains('edited_files', 'src/blocked.ts')).toBe(true);
+    expect(await session.contains('file_extensions', 'ts')).toBe(true);
   });
 
   test('dispatch handles missing config gracefully', async () => {
