@@ -119,6 +119,15 @@ describe('artifact URI utilities', () => {
     );
   });
 
+  it.each([
+    '../outside',
+    path.resolve('/outside'),
+  ])('rejects work paths that escape cwd: %s', (workPath) => {
+    expect(() => artifactUriToPath(EXACT_URI, { cwd: '/repo', workPath })).toThrow(
+      ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE,
+    );
+  });
+
   it('rejects unsupported selector shapes and template placeholders', () => {
     expect(() => parseArtifactUri('rd://artifacts/*/runs/*/review.json')).toThrow(
       ARTIFACT_ERROR_TEXT.CROSS_CONTEXT_WILDCARD,

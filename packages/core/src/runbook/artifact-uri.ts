@@ -2,7 +2,10 @@ import * as path from 'node:path';
 import { assertSafeId } from '../paths.js';
 import { ARTIFACT_ERROR_TEXT } from './artifact-errors.js';
 
-const RUN_ID_PATTERN = /^wf_[a-f0-9]{32}$/;
+/**
+ * Concrete run identifier syntax used by artifact producer URIs and metadata.
+ */
+export const RUN_ID_PATTERN = /^wf_[a-f0-9]{32}$/;
 const TEMPLATE_MARKER_PATTERN = /{{.*}}/;
 const BARE_BUILTIN_PLACEHOLDERS = new Set(['ContextId', 'RunId']);
 
@@ -143,7 +146,17 @@ export function artifactUriToPath(uri: string, options: ArtifactPathOptions): st
     throw new Error(ARTIFACT_ERROR_TEXT.URI_MUST_BE_EXACT);
   }
 
+  if (path.isAbsolute(options.workPath)) {
+    throw new Error(ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE);
+  }
+
   const workRoot = path.resolve(options.cwd, options.workPath);
+  const cwdRoot = path.resolve(options.cwd);
+  const workRelativeToCwd = path.relative(cwdRoot, workRoot);
+  if (escapesRoot(workRelativeToCwd)) {
+    throw new Error(ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE);
+  }
+
   const artifactPath = path.resolve(
     workRoot,
     `.rd-${identity.contextId}`,
@@ -153,7 +166,7 @@ export function artifactUriToPath(uri: string, options: ArtifactPathOptions): st
   );
 
   const relative = path.relative(workRoot, artifactPath);
-  if (relative.startsWith('..') || path.isAbsolute(relative)) {
+  if (escapesRoot(relative)) {
     throw new Error(ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE);
   }
 
@@ -173,6 +186,14 @@ function parseArtifactUrl(uri: string): URL {
   }
 
   return url;
+}
+
+function escapesRoot(relativePath: string): boolean {
+  return (
+    relativePath === '..' ||
+    relativePath.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relativePath)
+  );
 }
 
 function parseArtifactPath(url: URL): ArtifactIdentity {
@@ -228,6 +249,16 @@ function validateConcreteRunId(runId: string): void {
   if (!RUN_ID_PATTERN.test(runId)) {
     throw new Error(ARTIFACT_ERROR_TEXT.INVALID_RUN_ID);
   }
+}
+
+/**
+ * Validate that a run id names one concrete run.
+ *
+ * @param runId - Candidate run identifier
+ * @throws {Error} When the run id is not `wf_` plus 32 lowercase hex characters
+ */
+export function assertConcreteRunId(runId: string): void {
+  validateConcreteRunId(runId);
 }
 
 function validateArtifactKey(key: string): void {

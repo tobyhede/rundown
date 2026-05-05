@@ -2,7 +2,11 @@ import { z } from 'zod';
 import { getErrorMessage } from '../errors.js';
 import { assertSafeId } from '../paths.js';
 import { ARTIFACT_ERROR_TEXT } from './artifact-errors.js';
-import { parseExactArtifactUriParts } from './artifact-uri.js';
+import {
+  assertConcreteRunId,
+  buildArtifactUri,
+  parseExactArtifactUriParts,
+} from './artifact-uri.js';
 import { RunbookRefSchema } from './runbook-ref.js';
 
 /**
@@ -32,7 +36,7 @@ const ContextIdSchema = z.string().superRefine((value, ctx) => {
 
 const RunIdSchema = z.string().superRefine((value, ctx) => {
   try {
-    assertSafeId(value, 'runId');
+    assertConcreteRunId(value);
   } catch (error) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -70,6 +74,15 @@ export const ArtifactRecordSchema = ArtifactMetadataSchema.extend({
 }).superRefine((record, ctx) => {
   const identity = parseExactArtifactUriParts(record.uri);
   if (identity === null) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: ARTIFACT_ERROR_TEXT.URI_MUST_BE_EXACT,
+      path: ['uri'],
+    });
+    return;
+  }
+
+  if (record.uri !== buildArtifactUri(identity)) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: ARTIFACT_ERROR_TEXT.URI_MUST_BE_EXACT,

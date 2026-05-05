@@ -1,6 +1,10 @@
 import { describe, expect, it } from '@jest/globals';
 import { ARTIFACT_ERROR_TEXT } from '../../src/runbook/artifact-errors.js';
-import { ArtifactKeySchema, ArtifactRecordSchema } from '../../src/runbook/artifact-schema.js';
+import {
+  ArtifactKeySchema,
+  ArtifactMetadataSchema,
+  ArtifactRecordSchema,
+} from '../../src/runbook/artifact-schema.js';
 import { RUNBOOK_REF_ERROR_TEXT, RunbookRefSchema } from '../../src/runbook/runbook-ref.js';
 
 const RUN_ID = 'wf_0123456789abcdef0123456789abcdef';
@@ -65,6 +69,26 @@ describe('artifact schemas', () => {
     expect(() => ArtifactRecordSchema.parse({ ...VALID_RECORD, contextId: '../escape' })).toThrow(
       /Invalid contextId/,
     );
+  });
+
+  it('rejects non-concrete top-level run ids in metadata and records', () => {
+    const invalidMetadata = { ...VALID_RECORD, runId: 'plain_id' };
+
+    expect(() => ArtifactMetadataSchema.parse(invalidMetadata)).toThrow(
+      ARTIFACT_ERROR_TEXT.INVALID_RUN_ID,
+    );
+    expect(() => ArtifactRecordSchema.parse(invalidMetadata)).toThrow(
+      ARTIFACT_ERROR_TEXT.INVALID_RUN_ID,
+    );
+  });
+
+  it('rejects identity-equivalent non-canonical URI spelling', () => {
+    expect(() =>
+      ArtifactRecordSchema.parse({
+        ...VALID_RECORD,
+        uri: `rd://artifacts/%63tx1/runs/${RUN_ID}/review.json`,
+      }),
+    ).toThrow(ARTIFACT_ERROR_TEXT.URI_MUST_BE_EXACT);
   });
 
   it('rejects uri/top-level field mismatches', () => {

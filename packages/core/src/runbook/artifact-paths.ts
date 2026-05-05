@@ -13,7 +13,7 @@
 import * as path from 'node:path';
 import { assertSafeId, SAFE_ID_PATTERN } from '../paths.js';
 
-/** Valid context identifier: alphanumeric, hyphens, underscores. */
+/** Valid context identifier: alphanumeric, dots, hyphens, underscores. */
 export const VALID_CTX = SAFE_ID_PATTERN;
 
 /** Valid artifact filename: alphanumeric, dots, hyphens, underscores. */

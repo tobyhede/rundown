@@ -71,4 +71,46 @@ describe('createBridgedEmitter', () => {
     const event = executionEventFn.mock.calls[0]?.[0];
     expect(event.runbook).toEqual({ source: 'project', path: 'path/to/my-book.runbook.md' });
   });
+
+  it('uses an explicit canonical runbook reference when provided', () => {
+    const { output, executionEventFn } = makeOutput();
+    const state = makeState({
+      runbook: 'rundown:write-plan',
+      runbookPath: '../../plugin/runbooks/planning/write-plan.runbook.md',
+    });
+    const emitter = createBridgedEmitter(state, output as unknown as OutputEmitter, {
+      source: 'plugin',
+      path: 'planning/write-plan.runbook.md',
+    });
+
+    emitter.emit('RUNBOOK_STARTED', {
+      title: 'Test',
+      prompted: false,
+      statePath: '.rundown/runs/wf-test.json',
+    });
+
+    const event = executionEventFn.mock.calls[0]?.[0];
+    expect(event.runbook).toEqual({ source: 'plugin', path: 'planning/write-plan.runbook.md' });
+  });
+
+  it('falls back to the launch argument when persisted runbook path is not canonical', () => {
+    const { output, executionEventFn } = makeOutput();
+    const state = makeState({
+      runbook: 'runbooks/substep-fail-any.md',
+      runbookPath: '../../var/folders/test/runbooks/substep-fail-any.md',
+    });
+    const emitter = createBridgedEmitter(state, output as unknown as OutputEmitter);
+
+    emitter.emit('RUNBOOK_STARTED', {
+      title: 'Test',
+      prompted: false,
+      statePath: '.rundown/runs/wf-test.json',
+    });
+
+    const event = executionEventFn.mock.calls[0]?.[0];
+    expect(event.runbook).toEqual({
+      source: 'project',
+      path: 'runbooks/substep-fail-any.runbook.md',
+    });
+  });
 });

@@ -102,9 +102,11 @@ export {
 export { ARTIFACT_ERROR_TEXT, formatArtifactManifestLineError } from './artifact-errors.js';
 export {
   artifactUriToPath,
+  assertConcreteRunId,
   buildArtifactUri,
   parseExactArtifactUriParts,
   parseArtifactUri,
+  RUN_ID_PATTERN,
   type ArtifactPathOptions,
   type ArtifactIdentity,
   type ArtifactRef,

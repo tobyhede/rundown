@@ -49,6 +49,10 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   ),
   parseStepIdFromString: jest.fn(),
   RUNS_DIR: '.rundown/runs',
+  runbooksDir: jest.fn((cwd: string) => `${cwd}/.rundown/runbooks`),
+  RunbookRefSchema: {
+    parse: jest.fn((ref: unknown) => ref),
+  },
   DELEGATION_TOKEN_PREFIX: 'rdtk_',
   DEFAULT_POLICY: {
     version: 1,
@@ -335,9 +339,13 @@ beforeEach(() => {
         `${step}${iteration != null ? `.${String(iteration)}` : ''}${substep ? `.${substep}` : ''}`,
     );
   jest.mocked(core.getActiveForContext).mockReturnValue(undefined);
+  jest.mocked(core.runbooksDir).mockImplementation((cwd: string) => `${cwd}/.rundown/runbooks`);
   jest
     .mocked(createBridgedEmitter)
     .mockReturnValue({ emit: jest.fn() } as unknown as ReturnType<typeof createBridgedEmitter>);
+  jest
+    .mocked(core.RunbookRefSchema.parse)
+    .mockImplementation((ref: unknown) => ref as ReturnType<typeof core.RunbookRefSchema.parse>);
   jest.mocked(resolveVariables).mockResolvedValue({
     vars: {},
     sources: {},
@@ -864,6 +872,120 @@ describe('prepareRunbook', () => {
       }),
     );
   });
+
+  it('prepares source-root-relative project runbook refs for project runbook directories', async () => {
+    jest.mocked(resolveRunbookFile).mockResolvedValue({
+      path: '/test/.rundown/runbooks/ops/deploy.runbook.md',
+      source: 'project' as const,
+    });
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue(mockParseResult());
+
+    const result = await prepareRunbook('deploy', {}, '/test');
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.prepared.runbookRef).toEqual({
+        source: 'project',
+        path: 'ops/deploy.runbook.md',
+      });
+    }
+  });
+
+  it('prepares cwd-relative project runbook refs for directly run files', async () => {
+    jest.mocked(resolveRunbookFile).mockResolvedValue({
+      path: '/test/ops/direct.runbook.md',
+      source: 'project' as const,
+    });
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue(mockParseResult());
+
+    const result = await prepareRunbook('ops/direct.runbook.md', {}, '/test');
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.prepared.runbookRef).toEqual({
+        source: 'project',
+        path: 'ops/direct.runbook.md',
+      });
+    }
+  });
+
+  it('normalizes legacy .md project runbook refs to .runbook.md', async () => {
+    jest.mocked(resolveRunbookFile).mockResolvedValue({
+      path: '/test/ops/legacy.md',
+      source: 'project' as const,
+    });
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue(mockParseResult());
+
+    const result = await prepareRunbook('ops/legacy.md', {}, '/test');
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.prepared.runbookRef).toEqual({
+        source: 'project',
+        path: 'ops/legacy.runbook.md',
+      });
+    }
+  });
+
+  it('prepares source-root-relative plugin runbook refs', async () => {
+    jest.mocked(resolveRunbookFile).mockResolvedValue({
+      path: '/home/user/.claude/extensions/rundown-plugin/runbooks/planning/write-plan.runbook.md',
+      source: 'plugin' as const,
+    });
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue(mockParseResult());
+
+    const result = await prepareRunbook('rundown:write-plan', {}, '/test');
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.prepared.runbookRef).toEqual({
+        source: 'plugin',
+        path: 'planning/write-plan.runbook.md',
+      });
+    }
+  });
+
+  it('prepares source-root-relative bundled runbook refs', async () => {
+    const originalBundledPath = process.env.BUNDLED_RUNBOOKS_PATH;
+    process.env.BUNDLED_RUNBOOKS_PATH = '/repo/packages/cli/dist/runbooks';
+    let result: Awaited<ReturnType<typeof prepareRunbook>> | null = null;
+    try {
+      jest.mocked(resolveRunbookFile).mockResolvedValue({
+        path: '/repo/packages/cli/dist/runbooks/planning/review.runbook.md',
+        source: 'bundled' as const,
+      });
+      (
+        parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+      ).mockReturnValue(mockParseResult());
+
+      result = await prepareRunbook('review', {}, '/test');
+    } finally {
+      if (originalBundledPath === undefined) {
+        delete process.env.BUNDLED_RUNBOOKS_PATH;
+      } else {
+        process.env.BUNDLED_RUNBOOKS_PATH = originalBundledPath;
+      }
+    }
+
+    if (result === null) {
+      throw new Error('prepareRunbook did not return a result');
+    }
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.prepared.runbookRef).toEqual({
+        source: 'bundled',
+        path: 'planning/review.runbook.md',
+      });
+    }
+  });
 });
 
 describe('startRunbook', () => {
@@ -901,6 +1023,7 @@ describe('startRunbook', () => {
 
     const prepared: PreparedRunbook = {
       filePath: '/test/runbook.md',
+      runbookRef: { source: 'project', path: 'runbook.runbook.md' },
       rawContent: '# Test',
       runbook: { steps: [makeStep() as PreparedRunbook['runbook']['steps'][number]] },
       mergedVariables: {},
@@ -925,6 +1048,11 @@ describe('startRunbook', () => {
     );
     expect(mockInitState).toHaveBeenCalled();
     expect(mockPushRunbook).toHaveBeenCalled();
+    expect(createBridgedEmitter).toHaveBeenCalledWith(
+      createdState,
+      ctx.output,
+      prepared.runbookRef,
+    );
   });
 
   it('seeds frontmatterOutputs from prepared.frontmatter.outputs to manager.create', async () => {
