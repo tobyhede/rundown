@@ -99,6 +99,46 @@ export {
   VALID_CTX,
   VALID_FILE,
 } from './artifact-paths.js';
+export { ARTIFACT_ERROR_TEXT, formatArtifactManifestLineError } from './artifact-errors.js';
+export {
+  artifactUriToPath,
+  assertConcreteRunId,
+  buildArtifactUri,
+  parseExactArtifactUriParts,
+  parseArtifactUri,
+  RUN_ID_PATTERN,
+  type ArtifactPathOptions,
+  type ArtifactIdentity,
+  type ArtifactRef,
+  type ExactArtifactRef,
+  type SelectorArtifactRef,
+} from './artifact-uri.js';
+export {
+  RUNBOOK_REF_ERROR_TEXT,
+  RunbookRefSchema,
+  RunbookSourceSchema,
+  type RunbookRef,
+  type RunbookSource,
+} from './runbook-ref.js';
+export {
+  ArtifactKeySchema,
+  ArtifactMetadataSchema,
+  ArtifactRecordSchema,
+  type ArtifactKey,
+  type ArtifactMetadata,
+  type ArtifactRecord,
+} from './artifact-schema.js';
+export {
+  appendArtifactManifestRecord,
+  appendArtifactManifestRecordSync,
+  coalesceManifestRecords,
+  findArtifactMatches,
+  manifestPathForContext,
+  readArtifactManifest,
+  type ArtifactManifestRecord,
+  type ArtifactSelectorMatch,
+  type FindArtifactOptions,
+} from './artifact-manifest.js';
 export {
   buildExecutionFrame,
   evaluateFrontmatterOutputDeclarations,

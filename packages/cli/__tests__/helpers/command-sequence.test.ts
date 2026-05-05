@@ -248,11 +248,28 @@ describe('parseJsonLines', () => {
     expect(result.terminal).toBeNull();
   });
 
-  it('captures runbook envelope field from step_transitioned event', () => {
+  it('captures valid runbook envelope field from step_transitioned event', () => {
+    const stdout =
+      '{"type":"step_transitioned","action":"COMPLETE","from":"1","at":"1","result":"PASS","runbook":{"source":"project","path":"child.runbook.md"}}\n';
+    const result = parseJsonLines(stdout);
+    expect(result.transitions[0].runbook).toEqual({
+      source: 'project',
+      path: 'child.runbook.md',
+    });
+  });
+
+  it('drops malformed runbook envelope fields before assertion matching', () => {
     const stdout =
       '{"type":"step_transitioned","action":"COMPLETE","from":"1","at":"1","result":"PASS","runbook":{"path":"/abs/child.runbook.md","name":"child"}}\n';
     const result = parseJsonLines(stdout);
-    expect(result.transitions[0].runbook).toEqual({ path: '/abs/child.runbook.md', name: 'child' });
+
+    expect(result.transitions[0].runbook).toBeUndefined();
+    expect(() =>
+      matchStepAssertions([{ runbook: 'child.runbook.md' }], result.transitions),
+    ).not.toThrow();
+    expect(
+      matchStepAssertions([{ runbook: 'child.runbook.md' }], result.transitions)[0].matched,
+    ).toBe(false);
   });
 
   it('captures parentStepId envelope field from step_transitioned event', () => {
@@ -386,7 +403,7 @@ describe('matchStepAssertions', () => {
         action: 'COMPLETE',
         from: '1',
         result: 'PASS' as const,
-        runbook: { path: '/abs/child.runbook.md' },
+        runbook: { source: 'project' as const, path: '/abs/child.runbook.md' },
       },
     ];
     const results = matchStepAssertions(
@@ -396,40 +413,26 @@ describe('matchStepAssertions', () => {
     expect(results[0].matched).toBe(true);
   });
 
-  it('matches runbook filter by name suffix when path absent', () => {
-    const events = [
-      {
-        action: 'COMPLETE',
-        from: '1',
-        result: 'PASS' as const,
-        runbook: { name: 'child.runbook.md' },
-      },
-    ];
-    const results = matchStepAssertions([{ runbook: 'child.runbook.md' }], events);
-    expect(results[0].matched).toBe(true);
-  });
-
   it('rejects runbook filter when path does not match', () => {
     const events = [
       {
         action: 'COMPLETE',
         from: '1',
         result: 'PASS' as const,
-        runbook: { path: '/abs/parent.runbook.md' },
+        runbook: { source: 'project' as const, path: '/abs/parent.runbook.md' },
       },
     ];
     const results = matchStepAssertions([{ runbook: 'child.runbook.md' }], events);
     expect(results[0].matched).toBe(false);
   });
 
-  it('rejects runbook filter when path does not match even if name matches', () => {
-    // path takes precedence when present — name is not a fallback matcher alongside path
+  it('rejects runbook filter when canonical path does not match', () => {
     const events = [
       {
         action: 'COMPLETE',
         from: '1',
         result: 'PASS' as const,
-        runbook: { path: '/abs/parent.runbook.md', name: 'child.runbook.md' },
+        runbook: { source: 'project' as const, path: '/abs/parent.runbook.md' },
       },
     ];
     const results = matchStepAssertions([{ runbook: 'child.runbook.md' }], events);
@@ -442,11 +445,24 @@ describe('matchStepAssertions', () => {
         action: 'COMPLETE',
         from: '1',
         result: 'PASS' as const,
-        runbook: { path: '/abs/delegation/child.runbook.md' },
+        runbook: { source: 'project' as const, path: '/abs/delegation/child.runbook.md' },
       },
     ];
     const results = matchStepAssertions([{ runbook: 'child.runbook.md' }], events);
     expect(results[0].matched).toBe(true);
+  });
+
+  it('rejects runbook suffix matches without a path segment boundary', () => {
+    const events = [
+      {
+        action: 'COMPLETE',
+        from: '1',
+        result: 'PASS' as const,
+        runbook: { source: 'project' as const, path: '/abs/my-child.runbook.md' },
+      },
+    ];
+    const results = matchStepAssertions([{ runbook: 'child.runbook.md' }], events);
+    expect(results[0].matched).toBe(false);
   });
 
   it('assertion without runbook matches events regardless of their runbook field', () => {
@@ -455,7 +471,7 @@ describe('matchStepAssertions', () => {
         action: 'COMPLETE',
         from: '1',
         result: 'PASS' as const,
-        runbook: { path: '/abs/anything.runbook.md' },
+        runbook: { source: 'project' as const, path: '/abs/anything.runbook.md' },
       },
     ];
     const results = matchStepAssertions([{ action: 'COMPLETE' }], events);
@@ -468,13 +484,13 @@ describe('matchStepAssertions', () => {
         action: 'COMPLETE',
         from: '1',
         result: 'PASS' as const,
-        runbook: { path: '/abs/child.runbook.md' },
+        runbook: { source: 'project' as const, path: '/abs/child.runbook.md' },
       },
       {
         action: 'COMPLETE',
         from: '1',
         result: 'PASS' as const,
-        runbook: { path: '/abs/parent.runbook.md' },
+        runbook: { source: 'project' as const, path: '/abs/parent.runbook.md' },
       },
     ];
     const assertions: StepAssertion[] = [

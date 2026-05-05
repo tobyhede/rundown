@@ -24,7 +24,10 @@ import { formatTransitionAction } from '../../runbook/transition-kernel.js';
  *
  * @example
  * ```typescript
- * const emitter = new ExecutionEventEmitter('wf-123', { name: 'my-runbook' });
+ * const emitter = new ExecutionEventEmitter('wf-123', {
+ *   source: 'project',
+ *   path: 'my-runbook.runbook.md',
+ * });
  * const subscriber = new CLISubscriber();
  * emitter.subscribe((event) => subscriber.handle(event));
  * ```
@@ -87,9 +90,9 @@ export class CLISubscriber {
   private handleRunbookStarted(event: RunbookEventV1 & { type: 'RUNBOOK_STARTED' }): void {
     const { payload, runbook } = event;
 
-    // Print metadata - use runbook name/path for file, statePath for state
+    // Print metadata - use canonical runbook path for file, statePath for state
     const meta: RunbookMetadata = {
-      file: runbook.name ?? runbook.path ?? 'unknown',
+      file: runbook.path,
       state: payload.statePath,
       prompted: payload.prompted,
     };

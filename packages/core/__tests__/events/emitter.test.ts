@@ -4,7 +4,7 @@ import type { RunbookEventV1, RunbookRef } from '../../src/events/types.js';
 
 describe('ExecutionEventEmitter', () => {
   let emitter: ExecutionEventEmitter;
-  const runbook: RunbookRef = { name: 'test', path: 'test.md' };
+  const runbook: RunbookRef = { source: 'project', path: 'test.runbook.md' };
 
   beforeEach(() => {
     emitter = new ExecutionEventEmitter('wf-test-123', runbook);

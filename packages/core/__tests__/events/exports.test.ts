@@ -16,7 +16,7 @@ describe('core exports', () => {
       type: 'STEP_TRANSITIONED',
       ts: new Date().toISOString(),
       runbookId: 'test',
-      runbook: { name: 'test' },
+      runbook: { source: 'project', path: 'test.runbook.md' },
       seq: 1,
       payload: {
         action: 'CONTINUE',

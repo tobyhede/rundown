@@ -28,11 +28,11 @@ scenarios:
           result: PASS
           aggregated: true
         # Root aggregation (after root resumes with 1.2 local)
-        - runbook: /nested-runbook-defer-propagation.runbook.md
+        - runbook: nested-runbook-defer-propagation.runbook.md
           from: "1.1"
           action: DEFER
           result: PASS
-        - runbook: /nested-runbook-defer-propagation.runbook.md
+        - runbook: nested-runbook-defer-propagation.runbook.md
           from: "1.2"
           action: COMPLETE
           result: PASS

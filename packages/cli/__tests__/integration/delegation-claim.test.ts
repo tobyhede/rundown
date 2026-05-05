@@ -84,6 +84,43 @@ describe('Delegation claim integration', () => {
     expect(result.exitCode).toBe(0);
   });
 
+  it('claims a delegated child resolved from the bundled runbooks directory', async () => {
+    const parentContent = `# Parent
+
+## 1. Parent work
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+### 1.1 Bundled child
+
+- delegation-child-pass.runbook.md
+`;
+    await writeFile(join(workspace.cwd, 'parent-bundled-child.runbook.md'), parentContent);
+
+    let result = runCli('run parent-bundled-child.runbook.md', workspace);
+    expect(result.exitCode).toBe(0);
+
+    result = runCli('delegate --step 1.1', workspace);
+    expect(result.exitCode).toBe(0);
+    const delegateOutput = JSON.parse(result.stdout) as { token?: string; runbook?: string };
+    expect(delegateOutput.runbook).toBe('delegation-child-pass.runbook.md');
+    expect(delegateOutput.token).toBeDefined();
+
+    result = runCli(`claim ${delegateOutput.token!}`, workspace);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout + result.stderr).not.toContain(
+      'Resolved runbook path escapes source root',
+    );
+
+    const outputLines = result.stdout.trim().split('\n');
+    const claimOutput = JSON.parse(outputLines[outputLines.length - 1]) as {
+      action?: string;
+      runbook?: string;
+    };
+    expect(claimOutput.action).toBe('claimed');
+    expect(claimOutput.runbook).toContain('delegation-child-pass.runbook.md');
+  });
+
   it('idempotent re-claim returns same child run', async () => {
     await writeParentRunbook();
     await writeChildRunbook();

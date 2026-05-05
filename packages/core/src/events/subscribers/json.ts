@@ -77,7 +77,7 @@ export class JSONSubscriber {
     return {
       kind: 'execution_summary' as const,
       runbookId: startedEvent?.runbookId,
-      runbook: startedEvent?.runbook.path ?? startedEvent?.runbook.name,
+      runbook: startedEvent?.runbook.path,
       status,
       stepsExecuted: transitions.length,
       commandsRun: commands.length,

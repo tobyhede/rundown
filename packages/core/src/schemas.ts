@@ -16,6 +16,7 @@ import {
   brandStoredOutputs,
 } from './runbook/effective-vars.js';
 import { getErrorMessage } from './errors.js';
+import { RunbookRefSchema } from './runbook/runbook-ref.js';
 
 /** Zod schema that parses strings and brands them as {@link FrameKey}. */
 const FrameKeySchema = z.string().transform((v) => v as FrameKey);
@@ -447,6 +448,7 @@ export const RunbookStateSchema = z
     id: z.string(),
     runbook: z.string(),
     runbookPath: z.string(),
+    runbookRef: RunbookRefSchema.optional(),
     title: z.string().optional(),
     description: z.string().optional(),
     step: RunbookStepSchema, // "1" or "ErrorHandler"

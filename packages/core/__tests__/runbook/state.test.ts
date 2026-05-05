@@ -239,6 +239,21 @@ describe('RunbookStateManager', () => {
     });
   });
 
+  describe('create with runbookRef', () => {
+    it('persists a canonical runbookRef through create/load round-trip', async () => {
+      const runbookRef = { source: 'plugin' as const, path: 'planning/write-plan.runbook.md' };
+      const state = await manager.create('rundown:write-plan', mockRunbook, {
+        runbookPath: '../../plugin/runbooks/planning/write-plan.runbook.md',
+        runbookRef,
+      });
+
+      expect(state.runbookRef).toEqual(runbookRef);
+
+      const loaded = await manager.load(state.id);
+      expect(loaded?.runbookRef).toEqual(runbookRef);
+    });
+  });
+
   describe('List and delete operations', () => {
     it('list returns all runbook states', async () => {
       await manager.create('one.md', mockRunbook, { runbookPath: 'one.md' });

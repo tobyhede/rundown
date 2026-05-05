@@ -39,7 +39,7 @@ function envelope() {
     v: '1' as const,
     ts: new Date().toISOString(),
     runbookId: 'test-id',
-    runbook: { name: 'test', path: '/test.md' },
+    runbook: { source: 'project' as const, path: 'test.runbook.md' },
     seq: 1,
   };
 }

@@ -50,11 +50,10 @@ export {
 export { invokeHelperSafely, resetHelperInvokeWarnings } from './runbook/helper-invoke.js';
 
 // Events module (domain types for execution events)
-// Re-export RunbookRef explicitly from events to resolve the naming collision
-// with the parser's RunbookRef (template variable reference in runbook lists).
-// The event RunbookRef is the primary public API; parser consumers should
-// import RunbookRef directly from @rundown-org/parser.
-export type { RunbookRef } from './events/types.js';
+// Root RunbookRef is the canonical local-disk runbook reference from
+// runbook-ref.ts. Execution events reuse it; the parser package still has a
+// separate RunbookRef for unresolved template variables in runbook lists.
+export type { RunbookRef } from './runbook/runbook-ref.js';
 export * from './events/index.js';
 
 // CLI output module

@@ -2,6 +2,7 @@
 import type { OutputDeclaration } from '@rundown-org/parser';
 import type { DelegationTokenHash } from './delegation-token.js';
 import type { EffectiveVars, InitialTemplateVars, StoredOutputs } from './effective-vars.js';
+import type { RunbookRef } from './runbook-ref.js';
 import type { FrameKey } from './targeting.js';
 
 // Re-export parser types needed by core package consumers
@@ -710,6 +711,8 @@ export interface RunbookState {
   readonly id: string;
   readonly runbook: string; // runbook identifier (name or path)
   readonly runbookPath: string; // repo-relative resolved file path
+  /** Canonical runbook reference for events and artifact metadata. */
+  readonly runbookRef?: RunbookRef;
   readonly title?: string;
   readonly description?: string;
   readonly step: string; // "1" or "ErrorHandler"

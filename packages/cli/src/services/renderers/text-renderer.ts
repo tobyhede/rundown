@@ -689,7 +689,7 @@ export class TextRenderer implements OutputRenderer {
     const { payload, runbook } = event;
     printMetadata(
       {
-        file: runbook.name ?? runbook.path ?? 'unknown',
+        file: runbook.path,
         state: payload.statePath,
         prompted: payload.prompted,
       },

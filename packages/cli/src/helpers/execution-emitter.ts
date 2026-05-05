@@ -7,7 +7,12 @@
  * @module helpers/execution-emitter
  */
 
-import { ExecutionEventEmitter, type RunbookState } from '@rundown-org/core';
+import {
+  ExecutionEventEmitter,
+  RunbookRefSchema,
+  type RunbookRef,
+  type RunbookState,
+} from '@rundown-org/core';
 import type { OutputEmitter } from '../services/output-emitter.js';
 
 /**
@@ -19,6 +24,7 @@ import type { OutputEmitter } from '../services/output-emitter.js';
  *
  * @param runbookState - The runbook state to create the emitter for
  * @param output - The OutputEmitter to bridge events to
+ * @param runbookRef - Optional canonical runbook reference derived at preparation time
  * @returns The ExecutionEventEmitter configured with event bridging
  *
  * @example
@@ -30,11 +36,12 @@ import type { OutputEmitter } from '../services/output-emitter.js';
 export function createBridgedEmitter(
   runbookState: RunbookState,
   output: OutputEmitter,
+  runbookRef?: RunbookRef,
 ): ExecutionEventEmitter {
-  const emitter = new ExecutionEventEmitter(runbookState.id, {
-    name: runbookState.runbook,
-    path: runbookState.runbookPath,
-  });
+  const emitter = new ExecutionEventEmitter(
+    runbookState.id,
+    resolveRunbookRef(runbookState, runbookRef),
+  );
 
   // Bridge execution events to the unified output system
   emitter.subscribe((event) => {
@@ -42,4 +49,41 @@ export function createBridgedEmitter(
   });
 
   return emitter;
+}
+
+function resolveRunbookRef(runbookState: RunbookState, runbookRef?: RunbookRef): RunbookRef {
+  return runbookRef
+    ? RunbookRefSchema.parse(runbookRef)
+    : runbookState.runbookRef
+      ? RunbookRefSchema.parse(runbookState.runbookRef)
+      : createFallbackProjectRunbookRef(runbookState);
+}
+
+function createFallbackProjectRunbookRef(runbookState: RunbookState): RunbookRef {
+  for (const candidate of [runbookState.runbookPath, runbookState.runbook]) {
+    const ref = {
+      source: 'project' as const,
+      path: toCanonicalRunbookRefPath(candidate),
+    };
+    const result = RunbookRefSchema.safeParse(ref);
+    if (result.success) {
+      return result.data;
+    }
+  }
+
+  return RunbookRefSchema.parse({
+    source: 'project',
+    path: toCanonicalRunbookRefPath(runbookState.runbookPath),
+  });
+}
+
+function toCanonicalRunbookRefPath(value: string): string {
+  const normalized = value.startsWith('./') ? value.slice(2) : value;
+  if (normalized.endsWith('.runbook.md')) {
+    return normalized;
+  }
+  if (normalized.endsWith('.md')) {
+    return `${normalized.slice(0, -'.md'.length)}.runbook.md`;
+  }
+  return normalized;
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import type { RunbookState, StepDelegation, TokenScanResult } from '@rundown-org/core';
+import type { RunbookRef, RunbookState, StepDelegation, TokenScanResult } from '@rundown-org/core';
 import type { RunPipelineContext } from '../../src/helpers/runbook-pipeline.js';
 import type * as VariableDiscoveryModule from '../../src/services/variable-discovery.js';
 import { assertVariant } from './assert-variant.js';
@@ -35,6 +35,10 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   ),
   parseStepIdFromString: jest.fn(),
   RUNS_DIR: '.rundown/runs',
+  runbooksDir: jest.fn((cwd: string) => `${cwd}/.rundown/runbooks`),
+  RunbookRefSchema: {
+    parse: jest.fn((ref: unknown) => ref),
+  },
   DELEGATION_TOKEN_PREFIX: 'rdtk_',
   DEFAULT_POLICY: {
     version: 1,
@@ -308,6 +312,11 @@ function mockHappyDelegationLock(): {
 beforeEach(() => {
   jest.resetAllMocks();
   // Restore defaults after reset
+  jest.mocked(core.runbooksDir).mockImplementation((cwd: string) => `${cwd}/.rundown/runbooks`);
+  const runbookRefSchemaMock = core.RunbookRefSchema as unknown as {
+    parse: jest.MockedFunction<(ref: unknown) => RunbookRef>;
+  };
+  runbookRefSchemaMock.parse.mockImplementation((ref: unknown) => ref as RunbookRef);
   jest.mocked(core.hashDelegationToken).mockReturnValue(MOCK_TOKEN_HASH);
   jest.mocked(core.truncateDelegationToken).mockImplementation((token: string) => {
     const prefix = 'rdtk_';
@@ -999,7 +1008,7 @@ describe('claimAndLaunch', () => {
 
     // Set up prepareRunbook mocks (resetAllMocks clears these)
     jest.mocked(resolveRunbookFile).mockResolvedValue({
-      path: '/test/child.md',
+      path: '/tmp/test/child.md',
       source: 'project',
     });
     // Cast through unknown: the parser fixture is a minimal stand-in
@@ -1149,7 +1158,7 @@ describe('claimAndLaunch', () => {
     const { release: mockRelease } = mockHappyDelegationLock();
 
     jest.mocked(resolveRunbookFile).mockResolvedValue({
-      path: '/test/child.md',
+      path: '/tmp/test/child.md',
       source: 'project',
     });
     // Cast through unknown: minimal parser fixture (see frameKey linkage test).

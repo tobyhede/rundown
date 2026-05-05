@@ -357,6 +357,27 @@ describe('RunbookStateSchema frontmatterOutputs', () => {
   });
 });
 
+describe('RunbookStateSchema runbookRef', () => {
+  it('accepts a canonical optional runbookRef', () => {
+    const state = createValidState({
+      runbookRef: { source: 'plugin', path: 'planning/write-plan.runbook.md' },
+    });
+
+    expect(RunbookStateSchema.parse(state).runbookRef).toEqual({
+      source: 'plugin',
+      path: 'planning/write-plan.runbook.md',
+    });
+  });
+
+  it('rejects an invalid optional runbookRef', () => {
+    const state = createValidState({
+      runbookRef: { source: 'plugin', path: 'planning/write-plan.md' },
+    });
+
+    expect(() => RunbookStateSchema.parse(state)).toThrow();
+  });
+});
+
 describe('RunbookStateSchema sources field', () => {
   it('passes through unknown fields via passthrough', () => {
     const state = createValidState({

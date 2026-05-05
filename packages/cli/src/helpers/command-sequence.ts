@@ -8,6 +8,7 @@
  */
 
 import { spawn } from 'node:child_process';
+import { RunbookRefSchema, type RunbookRef } from '@rundown-org/core';
 import { parse as shellParse } from 'shell-quote';
 import type { ErrorAssertion, StepAssertion } from '../schemas/scenarios.js';
 
@@ -26,7 +27,7 @@ export interface CapturedTransition {
   /** Whether this transition resulted from aggregation (deferred result evaluation). */
   aggregated?: boolean;
   /** Runbook that produced this transition (from event envelope). */
-  runbook?: { name?: string; path?: string };
+  runbook?: RunbookRef;
   /** Present for delegated/nested child runs — identifies the delegating parent step. */
   parentStepId?: string;
 }
@@ -319,6 +320,7 @@ function processJsonObject(
 
   // Streamed execution event lines have a `type` field
   if (obj.type === 'step_transitioned') {
+    const parsedRunbook = RunbookRefSchema.safeParse(obj.runbook);
     transitions.push({
       action: obj.action as string,
       from: obj.from as string,
@@ -326,7 +328,7 @@ function processJsonObject(
       result: obj.result as 'PASS' | 'FAIL',
       command: obj.command as string | undefined,
       aggregated: obj.aggregated === true ? true : undefined,
-      runbook: obj.runbook as { name?: string; path?: string } | undefined,
+      runbook: parsedRunbook.success ? parsedRunbook.data : undefined,
       parentStepId: typeof obj.parentStepId === 'string' ? obj.parentStepId : undefined,
     });
   } else if (obj.type === 'runbook_completed') {
@@ -453,12 +455,10 @@ function eventMatchesAssertion(event: CapturedTransition, assertion: StepAsserti
   if (assertion.command !== undefined && event.command !== assertion.command) return false;
   if (assertion.aggregated !== undefined && event.aggregated !== assertion.aggregated) return false;
   if (assertion.runbook !== undefined) {
-    const rb = event.runbook;
-    if (rb?.path !== undefined) {
-      if (!rb.path.endsWith(assertion.runbook)) return false;
-    } else if (rb?.name !== undefined) {
-      if (!rb.name.endsWith(assertion.runbook)) return false;
-    } else {
+    if (
+      event.runbook?.path !== assertion.runbook &&
+      event.runbook?.path.endsWith(`/${assertion.runbook}`) !== true
+    ) {
       return false;
     }
   }

@@ -23,7 +23,7 @@ describe('CLISubscriber', () => {
       type,
       ts: new Date().toISOString(),
       runbookId: 'wf-test',
-      runbook: { name: 'test' },
+      runbook: { source: 'project', path: 'test.runbook.md' },
       seq: 1,
       payload,
     }) as Extract<RunbookEventV1, { type: T }>;

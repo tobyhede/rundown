@@ -14,7 +14,10 @@ export type EventSubscriber = (event: RunbookEventV1) => void;
  *
  * @example
  * ```typescript
- * const emitter = new ExecutionEventEmitter('wf-123', { name: 'my-runbook' });
+ * const emitter = new ExecutionEventEmitter('wf-123', {
+ *   source: 'project',
+ *   path: 'my-runbook.runbook.md',
+ * });
  * const unsub = emitter.subscribe((event) => console.log(event.type));
  *
  * emitter.emit('RUNBOOK_STARTED', {
@@ -36,7 +39,7 @@ export class ExecutionEventEmitter {
    * Create a new event emitter for a runbook execution.
    *
    * @param runbookId - Unique identifier for this runbook execution
-   * @param runbook - Runbook identification (name and/or path)
+   * @param runbook - Canonical local-disk runbook reference
    */
   constructor(
     private readonly runbookId: string,

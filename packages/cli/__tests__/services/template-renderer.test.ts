@@ -1901,6 +1901,41 @@ describe('substituteText with HelperRegistry', () => {
     expect(substituteText('{{ upper "hello world" }}', {})).toBe('HELLO WORLD');
   });
 
+  it('renders built-in path helper with default context', () => {
+    expect(
+      substituteText('Artifact: {{ path "review.json" }}', {
+        WorkPath: '.rundown/work/demo',
+        ContextId: 'ctx-123',
+      }),
+    ).toMatch(/^Artifact: \.rundown\/work\/demo\/\.rd-ctx-123\/\d{4}-\d{2}-\d{2}-review\.json$/);
+  });
+
+  it('preserves built-in path helper when required variables are missing', () => {
+    expect(substituteText('{{ path "review.json" }}', {})).toBe('{{ path "review.json" }}');
+    expect(substituteText('{{ path "review.json" }}', { WorkPath: '.rundown/work/demo' })).toBe(
+      '{{ path "review.json" }}',
+    );
+  });
+
+  it('renders built-in path helper with ctx template override', () => {
+    expect(
+      substituteText('{{ path "review.json" ctx={{ childCtx }} }}', {
+        WorkPath: '.rundown/work/demo',
+        ContextId: 'parent',
+        childCtx: 'child-123',
+      }),
+    ).toMatch(/^\.rundown\/work\/demo\/\.rd-child-123\/\d{4}-\d{2}-\d{2}-review\.json$/);
+  });
+
+  it('renders built-in path helper with bare literal ctx override', () => {
+    expect(
+      substituteText('{{ path "review.json" ctx=alt-ctx }}', {
+        WorkPath: '.rundown/work/demo',
+        ContextId: 'parent',
+      }),
+    ).toMatch(/^\.rundown\/work\/demo\/\.rd-alt-ctx\/\d{4}-\d{2}-\d{2}-review\.json$/);
+  });
+
   it('calls helper with dotted variable path argument', () => {
     expect(substituteText('{{ slug item.title }}', { item: { title: 'Hello World' } })).toBe(
       'hello-world',
@@ -1927,6 +1962,10 @@ describe('substituteText with HelperRegistry', () => {
 
   it('{{ ./VarName }} bypasses helper registry and resolves variable directly', () => {
     expect(substituteText('{{ ./upper }}', { upper: 'plain value' })).toBe('plain value');
+  });
+
+  it('{{ ./path }} bypasses built-in path helper and resolves variable directly', () => {
+    expect(substituteText('{{ ./path }}', { path: 'plain value' })).toBe('plain value');
   });
 
   it('{{ ./VarName }} preserves literal when variable not defined', () => {
@@ -1974,11 +2013,29 @@ describe('substituteText with HelperRegistry', () => {
     expect(expandLoopVariables('{{ upper batch }}', { batch: 'hello' })).toBe('HELLO');
   });
 
+  it('expandLoopVariables dispatches built-in path helper calls', () => {
+    expect(
+      expandLoopVariables('{{ path "review.json" }}', {
+        WorkPath: '.rundown/work/demo',
+        ContextId: 'ctx-123',
+      }),
+    ).toMatch(/^\.rundown\/work\/demo\/\.rd-ctx-123\/\d{4}-\d{2}-\d{2}-review\.json$/);
+  });
+
   it('expandLoopVariablesForCommand dispatches helper calls with shell escaping', () => {
     setHelperRegistry(new Map([['loud', (v: string) => `${v} world; rm -rf /`]]));
     expect(expandLoopVariablesForCommand('echo {{ loud batch }}', { batch: 'hello' })).toBe(
       "echo 'hello world; rm -rf /'",
     );
+  });
+
+  it('expandLoopVariablesForCommand dispatches built-in path helper calls with shell escaping', () => {
+    expect(
+      expandLoopVariablesForCommand('cat {{ path "review.json" }}', {
+        WorkPath: '.rundown/work/demo path',
+        ContextId: 'ctx-123',
+      }),
+    ).toMatch(/^cat '\.rundown\/work\/demo path\/\.rd-ctx-123\/\d{4}-\d{2}-\d{2}-review\.json'$/);
   });
 });
 

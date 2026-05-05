@@ -34,7 +34,7 @@ function envelope(seq: number) {
     v: '1' as const,
     ts: '2026-04-23T00:00:00.000Z',
     runbookId: 'wf-2026-04-23-abcdef',
-    runbook: { name: 'test.runbook.md', path: '/test.runbook.md' },
+    runbook: { source: 'project' as const, path: 'test.runbook.md' },
     seq,
   };
 }

@@ -1,6 +1,7 @@
 import { describe, it, expect, jest } from '@jest/globals';
 import {
   isNodeError,
+  isNodeErrorCode,
   isError,
   getErrorMessage,
   isFileNotFoundError,
@@ -26,6 +27,20 @@ describe('isNodeError', () => {
   it('returns false for null and undefined', () => {
     expect(isNodeError(null)).toBe(false);
     expect(isNodeError(undefined)).toBe(false);
+  });
+});
+
+describe('isNodeErrorCode', () => {
+  it('matches Error code values exactly', () => {
+    const error = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+
+    expect(isNodeErrorCode(error, 'ENOENT')).toBe(true);
+    expect(isNodeErrorCode(error, 'EACCES')).toBe(false);
+  });
+
+  it('returns false for non-Error errno-shaped values', () => {
+    expect(isNodeErrorCode({ code: 'ENOENT' }, 'ENOENT')).toBe(false);
+    expect(isNodeErrorCode(null, 'ENOENT')).toBe(false);
   });
 });
 

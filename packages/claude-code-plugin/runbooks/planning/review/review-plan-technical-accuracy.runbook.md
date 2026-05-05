@@ -37,21 +37,27 @@ Read the plan at `{{ PlanPath }}`.
 - Proposed changes follow the project's established patterns and conventions
 
 
-## 4. Write the review
+## 4. Output Path
+- OUTPUTS
+  - ReviewPath {{ path "review-plan-technical-accuracy.json" }}
+- PASS CONTINUE
+- FAIL STOP
+
+{{ path "review-plan-technical-accuracy.json" }}
+
+
+## 5. Write the review
 - PASS CONTINUE
 - FAIL STOP
 
 Write the review to the output path as JSON.
 Follow the review output schema.
 
-```bash
-rdpath --file review-plan-technical-accuracy-{{ RunId }}.json
-```
 
-## 5. Check Schema
+## 6. Check Schema
 - PASS COMPLETE
-- FAIL GOTO 4
+- FAIL GOTO 5
 
 ```bash
-rdx --check "$(rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file review-plan-technical-accuracy-{{ RunId }}.json)"
+rdx --check {{ ReviewPath }}
 ```

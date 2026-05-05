@@ -11,12 +11,13 @@
  */
 
 import * as path from 'node:path';
+import { assertSafeId, SAFE_ID_PATTERN } from '../paths.js';
 
-/** Valid context identifier: alphanumeric, hyphens, underscores. */
-export const VALID_CTX = /^[a-zA-Z0-9_-]+$/;
+/** Valid context identifier: alphanumeric, dots, hyphens, underscores. */
+export const VALID_CTX = SAFE_ID_PATTERN;
 
 /** Valid artifact filename: alphanumeric, dots, hyphens, underscores. */
-export const VALID_FILE = /^[a-zA-Z0-9._-]+$/;
+export const VALID_FILE = SAFE_ID_PATTERN;
 
 /**
  * Validate a context identifier.
@@ -25,9 +26,7 @@ export const VALID_FILE = /^[a-zA-Z0-9._-]+$/;
  * @throws {Error} When ctx contains invalid characters
  */
 export function validateArtifactCtx(ctx: string): void {
-  if (!VALID_CTX.test(ctx)) {
-    throw new Error(`Invalid ctx: must match ${VALID_CTX.source}`);
-  }
+  assertSafeId(ctx, 'ctx');
 }
 
 /**
@@ -45,9 +44,7 @@ export function validateArtifactCtx(ctx: string): void {
  */
 export function assembleArtifactPath(dir: string, ctx: string, file: string): string {
   validateArtifactCtx(ctx);
-  if (file === '..' || file === '.' || !VALID_FILE.test(file)) {
-    throw new Error(`Invalid file: must match ${VALID_FILE.source}`);
-  }
+  assertSafeId(file, 'file');
   const date = new Date().toISOString().slice(0, 10);
   return path.join(dir, `.rd-${ctx}`, `${date}-${file}`);
 }
