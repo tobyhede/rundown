@@ -1049,11 +1049,14 @@ describe('startRunbook', () => {
     );
     expect(mockInitState).toHaveBeenCalled();
     expect(mockPushRunbook).toHaveBeenCalled();
-    expect(createBridgedEmitter).toHaveBeenCalledWith(
+    const createBridgedEmitterMock = createBridgedEmitter as jest.MockedFunction<
+      (...args: unknown[]) => unknown
+    >;
+    expect(createBridgedEmitterMock.mock.calls).toContainEqual([
       createdState,
       ctx.output,
       prepared.runbookRef,
-    );
+    ]);
   });
 
   it('seeds frontmatterOutputs from prepared.frontmatter.outputs to manager.create', async () => {
