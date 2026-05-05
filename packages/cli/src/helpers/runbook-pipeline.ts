@@ -860,6 +860,7 @@ async function launchRunbook(
   try {
     const state = await manager.create(options.runbookName, runbook, {
       runbookPath,
+      runbookRef: prepared.runbookRef,
       prompted: options.prompted,
       parentLinkage: options.parentLinkage,
       runbookSrc: rawContent,

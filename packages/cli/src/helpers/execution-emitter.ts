@@ -40,7 +40,7 @@ export function createBridgedEmitter(
 ): ExecutionEventEmitter {
   const emitter = new ExecutionEventEmitter(
     runbookState.id,
-    runbookRef ? RunbookRefSchema.parse(runbookRef) : createFallbackProjectRunbookRef(runbookState),
+    resolveRunbookRef(runbookState, runbookRef),
   );
 
   // Bridge execution events to the unified output system
@@ -49,6 +49,14 @@ export function createBridgedEmitter(
   });
 
   return emitter;
+}
+
+function resolveRunbookRef(runbookState: RunbookState, runbookRef?: RunbookRef): RunbookRef {
+  return runbookRef
+    ? RunbookRefSchema.parse(runbookRef)
+    : runbookState.runbookRef
+      ? RunbookRefSchema.parse(runbookState.runbookRef)
+      : createFallbackProjectRunbookRef(runbookState);
 }
 
 function createFallbackProjectRunbookRef(runbookState: RunbookState): RunbookRef {

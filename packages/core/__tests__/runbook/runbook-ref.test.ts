@@ -19,6 +19,7 @@ describe('RunbookRefSchema', () => {
     { source: 'plugin', path: 'planning//review.runbook.md' },
     { source: 'plugin', path: 'planning/review plan.runbook.md' },
     { source: 'plugin', path: 'planning/review.md' },
+    { source: 'project', path: '.rundown/runbooks/planning/review.runbook.md' },
   ])('rejects invalid runbook ref %#', (ref) => {
     expect(() => RunbookRefSchema.parse(ref)).toThrow(RUNBOOK_REF_ERROR_TEXT.INVALID_RUNBOOK_REF);
   });

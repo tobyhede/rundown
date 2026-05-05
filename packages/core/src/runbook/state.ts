@@ -14,6 +14,7 @@ import type {
   TemplateVarValue,
 } from './types.js';
 import type { ClaimRecord } from './claim-id.js';
+import type { RunbookRef } from './runbook-ref.js';
 import { makeRunbookStateSchema, SessionDataSchema } from '../schemas.js';
 import { isNodeError } from '../errors.js';
 import { logger } from '../logger.js';
@@ -87,6 +88,7 @@ export interface SessionData {
 
 interface CreateOptions {
   readonly runbookPath: string;
+  readonly runbookRef?: RunbookRef;
   readonly prompted?: boolean;
   /** Parent linkage when this run is a child (delegation or inline). */
   readonly parentLinkage?: ParentLinkage;
@@ -212,6 +214,7 @@ export class RunbookStateManager {
       id,
       runbook: runbookFile,
       runbookPath: options.runbookPath,
+      runbookRef: options.runbookRef,
       title: runbook.title,
       description: runbook.description,
       step: initialStep.name,

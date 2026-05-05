@@ -1042,6 +1042,7 @@ describe('startRunbook', () => {
       prepared.runbook,
       expect.objectContaining({
         runbookPath: 'runbook.md',
+        runbookRef: prepared.runbookRef,
         runbookSrc: '# Test',
         frontmatterOutputs: [],
       }),

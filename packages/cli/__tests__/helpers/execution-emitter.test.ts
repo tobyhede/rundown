@@ -93,6 +93,25 @@ describe('createBridgedEmitter', () => {
     expect(event.runbook).toEqual({ source: 'plugin', path: 'planning/write-plan.runbook.md' });
   });
 
+  it('uses a persisted canonical runbook reference when no explicit reference is provided', () => {
+    const { output, executionEventFn } = makeOutput();
+    const state = makeState({
+      runbook: 'rundown:write-plan',
+      runbookPath: '../../plugin/runbooks/planning/write-plan.runbook.md',
+      runbookRef: { source: 'plugin', path: 'planning/write-plan.runbook.md' },
+    });
+    const emitter = createBridgedEmitter(state, output as unknown as OutputEmitter);
+
+    emitter.emit('RUNBOOK_STARTED', {
+      title: 'Test',
+      prompted: false,
+      statePath: '.rundown/runs/wf-test.json',
+    });
+
+    const event = executionEventFn.mock.calls[0]?.[0];
+    expect(event.runbook).toEqual({ source: 'plugin', path: 'planning/write-plan.runbook.md' });
+  });
+
   it('falls back to the launch argument when persisted runbook path is not canonical', () => {
     const { output, executionEventFn } = makeOutput();
     const state = makeState({
