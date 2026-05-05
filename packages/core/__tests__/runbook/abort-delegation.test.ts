@@ -21,9 +21,8 @@ function makeDelegation(overrides: Partial<StepDelegation> = {}): StepDelegation
 /** Helper: create minimal RunbookState for testing. */
 function makeState(substepStates: SubstepState[]): RunbookState {
   return {
-    id: 'run-1',
-    runbook: 'parent.md',
-    runbookPath: 'parent.md',
+    id: 'wf_0123456789abcdef0123456789abcdef',
+    runbook: { source: 'project', path: 'parent.runbook.md' },
     step: '1',
     stepName: 'Main step',
     retryCount: 0,
@@ -78,7 +77,7 @@ describe('abortDelegation', () => {
   });
 
   it('returns needs_force when delegation is claimed without force', () => {
-    const delegation = makeDelegation({ childRunId: 'child-run-1' });
+    const delegation = makeDelegation({ childRunId: 'wf_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' });
     const state = makeState([
       { id: '1', frameKey: buildFrameKey('1'), status: 'pending', delegation },
     ]);
@@ -91,12 +90,12 @@ describe('abortDelegation', () => {
 
     expect(result.status).toBe('needs_force');
     if (result.status === 'needs_force') {
-      expect(result.childRunId).toBe('child-run-1');
+      expect(result.childRunId).toBe('wf_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
     }
   });
 
   it('cancels a claimed delegation when force=true', () => {
-    const delegation = makeDelegation({ childRunId: 'child-run-1' });
+    const delegation = makeDelegation({ childRunId: 'wf_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' });
     const state = makeState([
       { id: '1', frameKey: buildFrameKey('1'), status: 'pending', delegation },
     ]);

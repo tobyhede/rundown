@@ -49,7 +49,7 @@ describe('start command', () => {
 
       const state = await getActiveState(workspace);
       expect(state).not.toBeNull();
-      expect(state?.runbook).toBe('runbooks/simple.runbook.md');
+      expect(state?.runbook).toEqual({ source: 'project', path: 'runbooks/simple.runbook.md' });
     });
 
     it('initializes step=1 and retryCount=0', async () => {

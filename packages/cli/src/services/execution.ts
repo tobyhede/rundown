@@ -1024,7 +1024,7 @@ export async function runExecutionLoop(
         execResult = await executeCommandWithPolicyCheck(
           expandedCommandCode,
           cwd,
-          currentState.runbookPath,
+          currentState.runbook.path,
           rdInjected,
         );
       }
@@ -1032,7 +1032,7 @@ export async function runExecutionLoop(
       execResult = await executeCommandWithPolicyCheck(
         expandedCommandCode,
         cwd,
-        currentState.runbookPath,
+        currentState.runbook.path,
         rdInjected,
       );
     }
@@ -1170,7 +1170,7 @@ export function getStepRetryMax(item: Step | ResolvedStep | Substep): number {
  */
 export function buildMetadata(state: RunbookState): RunbookMetadata {
   return {
-    file: state.runbook,
+    file: state.runbook.path,
     state: `${RUNS_DIR}/${state.id}.json`,
     prompted: state.prompted ?? undefined,
   };

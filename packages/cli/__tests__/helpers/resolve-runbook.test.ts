@@ -222,6 +222,7 @@ describe('resolveRunbookFile', () => {
       expect(result).not.toBeNull();
       expect(result!.path).toBe(runbookPath);
       expect(result!.source).toBe('plugin');
+      expect(result!.sourceRoot).toBe(path.join(testDir, 'plugin/runbooks'));
     });
 
     it('returns source "project" for runbook relative to cwd', async () => {
@@ -257,6 +258,7 @@ describe('resolveRunbookFile', () => {
       expect(result).not.toBeNull();
       expect(result!.path).toBe(runbookPath);
       expect(result!.source).toBe('bundled');
+      expect(result!.sourceRoot).toBe(bundledDir);
     });
 
     it('keeps an absolute bundled path even when a project runbook has the same basename', async () => {
@@ -277,6 +279,7 @@ describe('resolveRunbookFile', () => {
       expect(result).not.toBeNull();
       expect(result!.path).toBe(bundledPath);
       expect(result!.source).toBe('bundled');
+      expect(result!.sourceRoot).toBe(bundledDir);
     });
 
     it('returns source "plugin" for namespaced resolution', async () => {

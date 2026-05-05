@@ -263,6 +263,21 @@ describe('prune command', () => {
       const statesAfter = await listRunbookStates(workspace);
       expect(statesAfter.length).toBe(0);
     });
+
+    it('skips raw state files that cannot be loaded', async () => {
+      const canonicalCorruptId = 'wf_00000000000000000000000000000000';
+      const nonCanonicalId = 'wf-legacy-local-dev';
+      await writeFile(join(workspace.statePath(), `${canonicalCorruptId}.json`), '{');
+      await writeFile(join(workspace.statePath(), `${nonCanonicalId}.json`), '{');
+
+      const result = await runCliInProcess('prune --all', workspace);
+
+      expect(result.exitCode).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual([]);
+      await expect(listRunbookStates(workspace)).resolves.toEqual(
+        expect.arrayContaining([`${canonicalCorruptId}.json`, `${nonCanonicalId}.json`]),
+      );
+    });
   });
 
   describe('--dry-run flag', () => {
@@ -300,7 +315,10 @@ describe('prune command', () => {
       const output = JSON.parse(result.stdout) as Record<string, unknown>[];
       expect(Array.isArray(output)).toBe(true);
       expect(output.length).toBe(1);
-      expect(output[0].runbook).toBe('runbooks/simple.runbook.md');
+      expect(output[0].runbook).toEqual({
+        source: 'project',
+        path: 'runbooks/simple.runbook.md',
+      });
       expect(output[0].status).toBe('complete');
     });
 
@@ -334,7 +352,10 @@ describe('prune command', () => {
       expect(result.exitCode).toBe(0);
       const output = JSON.parse(result.stdout) as Record<string, unknown>[];
       expect(output.length).toBe(1);
-      expect(output[0].runbook).toBe('runbooks/simple.runbook.md');
+      expect(output[0].runbook).toEqual({
+        source: 'project',
+        path: 'runbooks/simple.runbook.md',
+      });
 
       // State should still exist (dry-run)
       const statesAfter = await listRunbookStates(workspace);

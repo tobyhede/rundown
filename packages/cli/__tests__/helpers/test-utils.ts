@@ -35,7 +35,7 @@ export function getCliPath(): string {
 export interface TestWorkspace {
   cwd: string;
   cleanup: () => Promise<void>;
-  runbookPath: (name: string) => string;
+  runbookFilePath: (name: string) => string;
   statePath: () => string;
   sessionPath: () => string;
   /** Project-local runbook destination (`.rundown/runbooks/`). */
@@ -104,7 +104,7 @@ export async function createTestWorkspace(opts?: { fixtureDir?: string }): Promi
   return {
     cwd: tempDir,
     cleanup: () => rm(tempDir, { recursive: true, force: true }),
-    runbookPath: (name: string) => join(rootRunbooksDir, name),
+    runbookFilePath: (name: string) => join(rootRunbooksDir, name),
     statePath: () => runsDir(tempDir),
     sessionPath: () => _sessionPath(tempDir),
     runbooksDir: () => runbooksDir(tempDir),
@@ -491,17 +491,19 @@ function isRunbookState(value: unknown): value is RunbookState {
   const state = value as {
     id?: unknown;
     runbook?: unknown;
-    runbookPath?: unknown;
     step?: unknown;
     stepName?: unknown;
     retryCount?: unknown;
     variables?: unknown;
     steps?: unknown;
   };
+  const runbook = state.runbook as { source?: unknown; path?: unknown } | undefined;
   return (
     typeof state.id === 'string' &&
-    typeof state.runbook === 'string' &&
-    typeof state.runbookPath === 'string' &&
+    typeof runbook === 'object' &&
+    runbook !== null &&
+    typeof runbook.source === 'string' &&
+    typeof runbook.path === 'string' &&
     typeof state.step === 'string' &&
     typeof state.stepName === 'string' &&
     typeof state.retryCount === 'number' &&

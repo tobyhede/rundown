@@ -44,7 +44,7 @@ rd echo --result pass
 \`\`\`
 `;
 
-      writeFileSync(workspace.runbookPath('test.runbook.md'), runbook);
+      writeFileSync(workspace.runbookFilePath('test.runbook.md'), runbook);
 
       const result = runCli('run runbooks/test.runbook.md --text', workspace);
 
@@ -93,7 +93,7 @@ rd echo --result pass
 \`\`\`
 `;
 
-      writeFileSync(workspace.runbookPath('test.runbook.md'), runbook);
+      writeFileSync(workspace.runbookFilePath('test.runbook.md'), runbook);
 
       const result = runCli('run runbooks/test.runbook.md --text', workspace);
 
@@ -122,7 +122,7 @@ rd echo --result pass
 \`\`\`
 `;
 
-      writeFileSync(workspace.runbookPath('test.runbook.md'), runbook);
+      writeFileSync(workspace.runbookFilePath('test.runbook.md'), runbook);
 
       const result = runCli('run runbooks/test.runbook.md --text', workspace);
 
@@ -173,7 +173,7 @@ rd echo --result pass
 \`\`\`
 `;
 
-      writeFileSync(workspace.runbookPath('substeps-continue.runbook.md'), runbook);
+      writeFileSync(workspace.runbookFilePath('substeps-continue.runbook.md'), runbook);
 
       const result = runCli('run runbooks/substeps-continue.runbook.md --text', workspace);
 
@@ -213,7 +213,7 @@ rd echo --result pass
 \`\`\`
 `;
 
-      writeFileSync(workspace.runbookPath('substep-goto.runbook.md'), runbook);
+      writeFileSync(workspace.runbookFilePath('substep-goto.runbook.md'), runbook);
 
       const result = runCli('run runbooks/substep-goto.runbook.md --text', workspace);
 

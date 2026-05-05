@@ -62,8 +62,9 @@ describe('pass command', () => {
       await runCliInProcess('pass --text', workspace);
 
       const states = await getAllStates(workspace);
-      const state = states.find((s) => s.runbook === 'runbooks/simple.runbook.md');
+      const state = states.find((s) => s.runbook.path === 'runbooks/simple.runbook.md');
       expect(state?.lifecycle).toBe('completed');
+      expect(state?.terminalAt).toEqual(expect.any(String));
     });
   });
 
@@ -148,8 +149,9 @@ This step stops on pass.
       await runCliInProcess('pass --text', workspace);
 
       const states = await getAllStates(workspace);
-      const state = states.find((s) => s.runbook === 'runbooks/stop-on-pass.md');
+      const state = states.find((s) => s.runbook.path === 'runbooks/stop-on-pass.runbook.md');
       expect(state?.lifecycle).toBe('stopped');
+      expect(state?.terminalAt).toEqual(expect.any(String));
     });
   });
 
@@ -292,7 +294,7 @@ Do child work.
       const claimId2 = child2Output.claim_id;
 
       const anonymousActive = await getActiveState(workspace);
-      expect(anonymousActive?.runbook).toBe('runbooks/parent.runbook.md');
+      expect(anonymousActive?.runbook.path).toBe('runbooks/parent.runbook.md');
 
       let status = await runCliInProcess(['status', '--claim-id', claimId1], workspace);
       expect(JSON.parse(status.stdout).state).toContain(child1Id);
@@ -404,7 +406,7 @@ Do work.
 
       // Should now be on parent
       result = await runCliInProcess('status --text', workspace);
-      expect(result.stdout).toContain('parent.md');
+      expect(result.stdout).toContain('parent.runbook.md');
     });
   });
 
@@ -424,7 +426,7 @@ This step stops on pass.
       await runCliInProcess('pass --text', workspace);
 
       const states = await getAllStates(workspace);
-      const state = states.find((s) => s.runbook === 'runbooks/stop-on-pass.md');
+      const state = states.find((s) => s.runbook.path === 'runbooks/stop-on-pass.runbook.md');
 
       // lastResult should reflect user's choice (pass), not transition outcome
       expect(state?.lastResult).toBe('pass');

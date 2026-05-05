@@ -1,23 +1,11 @@
 // packages/cli/src/commands/prune.ts
 
-import { readdir } from 'node:fs/promises';
-import { join } from 'node:path';
 import type { Command } from 'commander';
 import { RunbookStateManager, SessionService } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { getStatus } from '../helpers/status.js';
-
-async function listAllRunIds(cwd: string): Promise<string[]> {
-  try {
-    const runsDir = join(cwd, '.rundown', 'runs');
-    const files = await readdir(runsDir);
-    return files.filter((f) => f.endsWith('.json')).map((f) => f.replace('.json', ''));
-  } catch {
-    return [];
-  }
-}
 
 interface PruneOptions {
   dryRun?: boolean;
@@ -41,7 +29,7 @@ export function registerPruneCommand(program: Command): void {
     .option('--completed', 'Prune successfully completed runbook state')
     .option('--stopped', 'Prune stopped (aborted/failed) runbook state')
     .option('--active', 'Prune active runbook state')
-    .option('--inactive', 'Prune inactive (orphaned) runbook state')
+    .option('--inactive', 'Prune inactive runbook state')
     .option('--all', 'Prune all runbook state')
     .option('--text', 'Output as human-readable text')
     .action(async (options: PruneOptions) => {
@@ -53,7 +41,6 @@ export function registerPruneCommand(program: Command): void {
           const manager = new RunbookStateManager(cwd);
           const sessionService = new SessionService(manager);
           const states = await manager.list();
-          const allIds = await listAllRunIds(cwd);
           let activeState: Awaited<ReturnType<typeof sessionService.getActive>>;
           try {
             activeState = await sessionService.getActive();
@@ -88,49 +75,28 @@ export function registerPruneCommand(program: Command): void {
             return false;
           });
 
-          // Stale files (skipped by list() due to schema version mismatch) are invisible to
-          // list() but can still be deleted. Treat them as inactive: prune with
-          // --inactive or --all.
-          const loadedIds = new Set(states.map((s) => s.id));
-          const staleIds = allIds.filter((id) => !loadedIds.has(id));
-          const staleToDelete = (pruneInactive ?? options.all) ? staleIds : [];
-
           // Enrich items with status string for display
           const enrichedItems = toDelete.map((state) => ({
             ...state,
+            _displayRunbook: state.runbook.path,
             _status: getStatus(state, activeState, stashedId),
           }));
 
           type LoadedRow = (typeof enrichedItems)[0];
-          type StaleRow = {
-            id: string;
-            runbook: string;
-            title: string | undefined;
-            _status: string;
-          };
-          type PruneRow = LoadedRow | StaleRow;
-
-          // Stale items carry only the fields needed for display and JSON output
-          const staleEnrichedItems: StaleRow[] = staleToDelete.map((id) => ({
-            id,
-            runbook: '(stale)',
-            title: undefined,
-            _status: 'stale',
-          }));
-
-          const allItems: PruneRow[] = [...enrichedItems, ...staleEnrichedItems];
+          type PruneRow = LoadedRow;
+          const allItems: PruneRow[] = enrichedItems;
 
           // Define columns once for reuse
           const columns = [
             { header: 'ID', key: 'id' as const },
             { header: 'STATUS', key: (item: PruneRow) => item._status },
-            { header: 'RUNBOOK', key: 'runbook' as const },
+            { header: 'RUNBOOK', key: (item: PruneRow) => item._displayRunbook },
             { header: 'TITLE', key: (item: PruneRow) => (item.title ? `[${item.title}]` : '') },
           ];
 
           // JSON mapper to clean internal fields
           const jsonMapper = (item: PruneRow): Record<string, unknown> => {
-            const { _status, ...rest } = item as Record<string, unknown>;
+            const { _status, _displayRunbook, ...rest } = item as Record<string, unknown>;
             return { ...rest, status: _status };
           };
 
@@ -155,9 +121,6 @@ export function registerPruneCommand(program: Command): void {
           // Perform deletion
           for (const state of toDelete) {
             await manager.delete(state.id);
-          }
-          for (const id of staleToDelete) {
-            await manager.delete(id);
           }
 
           output.list(allItems, columns, { jsonMapper });

@@ -34,7 +34,7 @@ describe('output format integration tests', () => {
         workspace,
       );
 
-      expect(result.stdout).toMatch(/wf-\d{4}-\d{2}-\d{2}/);
+      expect(result.stdout).toMatch(/wf_[a-f0-9]{32}/);
     });
 
     it('shows first step details in action block', async () => {
@@ -164,7 +164,7 @@ describe('output format integration tests', () => {
       const result = await runCliInProcess('status --text', workspace);
 
       expect(result.stdout).toContain('State:');
-      expect(result.stdout).toMatch(/wf-\d{4}-\d{2}-\d{2}/);
+      expect(result.stdout).toMatch(/wf_[a-f0-9]{32}/);
     });
 
     it('shows current step block', async () => {
@@ -191,7 +191,7 @@ describe('output format integration tests', () => {
     it('includes runbook ID in output', async () => {
       const result = await runCliInProcess('stop --text', workspace);
 
-      expect(result.stdout).toMatch(/wf-\d{4}-\d{2}-\d{2}/);
+      expect(result.stdout).toMatch(/wf_[a-f0-9]{32}/);
     });
 
     it('shows confirmation message', async () => {

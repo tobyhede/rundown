@@ -18,6 +18,27 @@ export const RUNDOWN_DIR = '.rundown';
 export const SAFE_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
 
 /**
+ * Canonical persisted run id shape.
+ *
+ * Run ids double as filenames under `.rundown/runs`, so this pattern is
+ * intentionally stricter than {@link SAFE_ID_PATTERN}.
+ */
+export const RUN_ID_PATTERN = /^wf_[a-f0-9]{32}$/;
+
+/**
+ * Validate a canonical Rundown run id.
+ *
+ * @param value - Candidate run id to validate
+ * @param field - Field label used in the thrown error message
+ * @throws {Error} If `value` is not `wf_` followed by 32 lowercase hex characters
+ */
+export function assertRunId(value: string, field = 'RunId'): void {
+  if (!RUN_ID_PATTERN.test(value)) {
+    throw new Error(`Invalid ${field}: expected wf_<32 lowercase hex chars>`);
+  }
+}
+
+/**
  * Validate that a user-supplied id is safe to interpolate into a filename.
  *
  * Rejects empty strings, `.`, `..`, and any value containing characters
@@ -112,12 +133,12 @@ export const contextsDir = (cwd: string): string => path.join(cwd, CONTEXTS_DIR)
  * Absolute path to a specific runbook state file.
  *
  * @param cwd - Project root directory
- * @param id - Runbook execution ID (must match `[A-Za-z0-9._-]+`)
+ * @param id - Runbook execution ID (must match `wf_<32 lowercase hex chars>`)
  * @returns Path to `.rundown/runs/<id>.json`
- * @throws {Error} If `id` contains path separators, `..`, or is otherwise unsafe
+ * @throws {Error} If `id` is not a canonical run id
  */
 export const statePath = (cwd: string, id: string): string => {
-  assertSafeId(id, 'id');
+  assertRunId(id);
   return path.join(cwd, RUNS_DIR, `${id}.json`);
 };
 
@@ -134,12 +155,12 @@ export const LEGACY_SESSION_FILE = '.claude/rundown/session.json';
  * Lock path: `.rundown/locks/run-<parentRunId>.delegation.lock`
  *
  * @param cwd - Project root directory
- * @param runId - Parent run ID to lock (must match `[A-Za-z0-9._-]+`)
+ * @param runId - Parent run ID to lock (must match `wf_<32 lowercase hex chars>`)
  * @returns Path to the lock file
- * @throws {Error} If `runId` contains path separators, `..`, or is otherwise unsafe
+ * @throws {Error} If `runId` is not a canonical run id
  */
 export const delegationLockPath = (cwd: string, runId: string): string => {
-  assertSafeId(runId, 'runId');
+  assertRunId(runId);
   return path.join(cwd, LOCKS_DIR, `run-${runId}.delegation.lock`);
 };
 

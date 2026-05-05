@@ -9,7 +9,7 @@ function makeWorkspace(cwd: string): TestWorkspace {
   return {
     cwd,
     cleanup: async () => undefined,
-    runbookPath: () => '',
+    runbookFilePath: () => '',
     statePath: () => '',
     sessionPath: () => '',
     runbooksDir: () => '',

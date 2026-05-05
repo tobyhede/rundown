@@ -85,13 +85,14 @@ export function registerLsCommand(program: Command): void {
             states.map(async (state) => {
               const status = getStatus(state, active, stashedId);
 
-              const totalSteps = await getStepTotal(cwd, state.runbook);
+              const totalSteps = await getStepTotal(cwd, state.runbook.path);
               const displayStep = state.step;
 
               return {
                 ...state,
                 _status: status,
                 _displayStep: `${displayStep}/${String(totalSteps)}`,
+                _displayRunbook: state.runbook.path,
                 _step: displayStep,
                 _total: totalSteps,
               };
@@ -105,7 +106,7 @@ export function registerLsCommand(program: Command): void {
               { header: 'ID', key: (s) => s.id.slice(0, 8) },
               { header: 'STATUS', key: (s) => s._status },
               { header: 'STEP', key: (s) => s._displayStep },
-              { header: 'RUNBOOK', key: 'runbook' },
+              { header: 'RUNBOOK', key: (s) => s._displayRunbook },
               { header: 'TITLE', key: (s) => s.title ?? '' },
             ],
             {
@@ -113,7 +114,7 @@ export function registerLsCommand(program: Command): void {
                 'No active runbooks.\nRun "rundown ls --all" to see available runbooks.',
               jsonMapper: (s) => {
                 // Include status, step, total per docs/spec/cli-output.md
-                const { _status, _displayStep: _, _step, _total, ...original } = s;
+                const { _status, _displayStep: _, _displayRunbook, _step, _total, ...original } = s;
                 return {
                   ...original,
                   status: _status,

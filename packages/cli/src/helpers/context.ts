@@ -18,12 +18,12 @@ export function getCwd(): string {
  * Named steps (like "RECOVER") are excluded from the count.
  *
  * @param cwd - Current working directory
- * @param runbookPath - Path to the runbook file
+ * @param runbookFile - Path to the runbook file
  * @returns Numbered step count or 0 on error
  */
-export async function getStepTotal(cwd: string, runbookPath: string): Promise<number> {
+export async function getStepTotal(cwd: string, runbookFile: string): Promise<number> {
   try {
-    const resolved = await resolveRunbookFile(cwd, runbookPath);
+    const resolved = await resolveRunbookFile(cwd, runbookFile);
     if (!resolved) return 0;
     const content = await fs.readFile(resolved.path, 'utf8');
     const steps = parseRunbook(content);

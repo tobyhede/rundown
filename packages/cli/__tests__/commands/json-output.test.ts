@@ -43,7 +43,7 @@ prompt: Wait
       expect(Array.isArray(output)).toBe(true);
       expect(output).toHaveLength(1);
       expect(output[0]).toHaveProperty('id');
-      expect(output[0]).toHaveProperty('runbook', 'test.runbook.md');
+      expect(output[0]).toHaveProperty('runbook', { source: 'project', path: 'test.runbook.md' });
       expect(output[0]).toHaveProperty('step', 'Step');
       // Should not contain internal props like _status
       expect(output[0]).not.toHaveProperty('_status');

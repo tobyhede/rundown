@@ -90,7 +90,7 @@ Second step.
 
       expect(result.exitCode).toBe(0);
       const state = await getActiveState(workspace);
-      expect(state?.runbook).toBe('goto-start.runbook.md');
+      expect(state?.runbook).toEqual({ source: 'project', path: 'goto-start.runbook.md' });
       expect(state?.step).toBe('2');
     });
 
@@ -129,7 +129,7 @@ Second step.
       // Child should inherit prompted flag from parent
       const state = await readRunbookState(workspace, String(childRunId));
       expect(state?.prompted).toBe(true);
-      expect(state?.runbook).toContain('with-commands');
+      expect(state?.runbook.path).toContain('with-commands');
     });
   });
 

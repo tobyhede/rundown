@@ -76,10 +76,7 @@ export const RunbookRefSchema = z
     },
   )
   .superRefine((ref, ctx) => {
-    if (
-      !isValidRunbookPath(ref.path) ||
-      (ref.source === 'project' && ref.path.startsWith('.rundown/runbooks/'))
-    ) {
+    if (!isValidRunbookPath(ref.path)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: RUNBOOK_REF_ERROR_TEXT.INVALID_RUNBOOK_REF,

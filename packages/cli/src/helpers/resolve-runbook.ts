@@ -1,6 +1,6 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { runbooksDir } from '@rundown-org/core';
+import { runbooksDir, type RunbookSource } from '@rundown-org/core';
 import { findRunbookByName, findRunbookByNameInSource } from '../services/discovery.js';
 import { getBundledRunbooksPath } from './bundled-runbooks.js';
 import { getPluginRoot } from './plugin-root.js';
@@ -16,7 +16,9 @@ export interface ResolvedRunbook {
   /** Absolute path to the resolved runbook file */
   path: string;
   /** Source directory where the runbook was found */
-  source: 'project' | 'plugin' | 'bundled';
+  source: RunbookSource;
+  /** Source root used to derive persisted runbook identity */
+  sourceRoot: string;
 }
 
 /**
@@ -53,7 +55,7 @@ export function parseIdentifier(identifier: string): ParsedIdentifier {
  * @param namespace - Namespace string
  * @returns Source type or null if namespace not recognized
  */
-function namespaceToSource(namespace: string): 'project' | 'plugin' | 'bundled' | null {
+function namespaceToSource(namespace: string): RunbookSource | null {
   if (namespace === 'rundown') {
     return 'plugin';
   }
@@ -78,20 +80,23 @@ async function resolveAbsolutePath(cwd: string, filename: string): Promise<Resol
     return null;
   }
 
-  if (pathWithin(runbooksDir(cwd), filename)) {
-    return { path: filename, source: 'project' };
+  const projectRunbooksDir = runbooksDir(cwd);
+  if (pathWithin(projectRunbooksDir, filename)) {
+    return { path: filename, source: 'project', sourceRoot: cwd };
   }
 
   const pluginRoot = getPluginRoot();
-  if (pluginRoot && pathWithin(path.join(pluginRoot, 'runbooks'), filename)) {
-    return { path: filename, source: 'plugin' };
+  const pluginRunbooksDir = pluginRoot ? path.join(pluginRoot, 'runbooks') : null;
+  if (pluginRunbooksDir && pathWithin(pluginRunbooksDir, filename)) {
+    return { path: filename, source: 'plugin', sourceRoot: pluginRunbooksDir };
   }
 
-  if (pathWithin(getBundledRunbooksPath(), filename)) {
-    return { path: filename, source: 'bundled' };
+  const bundledRunbooksDir = getBundledRunbooksPath();
+  if (pathWithin(bundledRunbooksDir, filename)) {
+    return { path: filename, source: 'bundled', sourceRoot: bundledRunbooksDir };
   }
 
-  return { path: filename, source: 'project' };
+  return { path: filename, source: 'project', sourceRoot: cwd };
 }
 
 /**
@@ -115,7 +120,7 @@ async function resolveByPath(cwd: string, filename: string): Promise<ResolvedRun
   const localPath = path.join(runbooksDir(cwd), filename);
   try {
     await fs.access(localPath);
-    return { path: localPath, source: 'project' };
+    return { path: localPath, source: 'project', sourceRoot: cwd };
   } catch {
     /* not found */
   }
@@ -123,10 +128,11 @@ async function resolveByPath(cwd: string, filename: string): Promise<ResolvedRun
   // 2. Check plugin runbooks directory (env var or sibling package discovery)
   const pluginRoot = getPluginRoot();
   if (pluginRoot) {
-    const pluginPath = path.join(pluginRoot, 'runbooks', filename);
+    const pluginRunbooksDir = path.join(pluginRoot, 'runbooks');
+    const pluginPath = path.join(pluginRunbooksDir, filename);
     try {
       await fs.access(pluginPath);
-      return { path: pluginPath, source: 'plugin' };
+      return { path: pluginPath, source: 'plugin', sourceRoot: pluginRunbooksDir };
     } catch {
       /* not found */
     }
@@ -136,16 +142,17 @@ async function resolveByPath(cwd: string, filename: string): Promise<ResolvedRun
   const relativePath = path.resolve(cwd, filename);
   try {
     await fs.access(relativePath);
-    return { path: relativePath, source: 'project' };
+    return { path: relativePath, source: 'project', sourceRoot: cwd };
   } catch {
     /* not found */
   }
 
   // 4. Check bundled runbooks (lowest priority)
-  const bundledPath = path.join(getBundledRunbooksPath(), filename);
+  const bundledRunbooksDir = getBundledRunbooksPath();
+  const bundledPath = path.join(bundledRunbooksDir, filename);
   try {
     await fs.access(bundledPath);
-    return { path: bundledPath, source: 'bundled' };
+    return { path: bundledPath, source: 'bundled', sourceRoot: bundledRunbooksDir };
   } catch {
     /* not found */
   }
@@ -206,7 +213,9 @@ export async function resolveRunbookFile(
       return null;
     }
     const discovered = await findRunbookByNameInSource(cwd, name, source);
-    return discovered ? { path: discovered.path, source: discovered.source } : null;
+    return discovered
+      ? { path: discovered.path, source: discovered.source, sourceRoot: discovered.sourceRoot }
+      : null;
   }
 
   // Detect if identifier is path-based or name-based
@@ -220,12 +229,16 @@ export async function resolveRunbookFile(
     if (!name.includes('/') && name.endsWith('.runbook.md')) {
       const stem = name.replace(/\.runbook\.md$/, '');
       const discovered = await findRunbookByName(cwd, stem);
-      return discovered ? { path: discovered.path, source: discovered.source } : null;
+      return discovered
+        ? { path: discovered.path, source: discovered.source, sourceRoot: discovered.sourceRoot }
+        : null;
     }
     return null;
   } else {
     // Name-based resolution: use discovery service
     const discovered = await findRunbookByName(cwd, name);
-    return discovered ? { path: discovered.path, source: discovered.source } : null;
+    return discovered
+      ? { path: discovered.path, source: discovered.source, sourceRoot: discovered.sourceRoot }
+      : null;
   }
 }

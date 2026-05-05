@@ -32,60 +32,60 @@ describe('DelegationLock', () => {
   });
 
   it('acquires and releases a lock', async () => {
-    await lock.acquire('run-1');
+    await lock.acquire('wf_00000000000000000000000000000001');
 
     // Lock file should exist with pid and timestamp
-    const lockPath = delegationLockPath(tmpDir, 'run-1');
+    const lockPath = delegationLockPath(tmpDir, 'wf_00000000000000000000000000000001');
     const content = JSON.parse(await fs.readFile(lockPath, 'utf8'));
     expect(content.pid).toBe(process.pid);
     expect(content.created_at).toBeDefined();
 
-    await lock.release('run-1');
+    await lock.release('wf_00000000000000000000000000000001');
 
     // Lock file should be gone
     await expect(fs.access(lockPath)).rejects.toThrow();
   });
 
   it('creates lock file with owner-only permissions (0o600)', async () => {
-    await lock.acquire('run-perms');
+    await lock.acquire('wf_00000000000000000000000000000002');
 
-    const lockPath = delegationLockPath(tmpDir, 'run-perms');
+    const lockPath = delegationLockPath(tmpDir, 'wf_00000000000000000000000000000002');
     const stat = await fs.stat(lockPath);
     const fileMode = stat.mode & 0o777;
     expect(fileMode).toBe(0o600);
 
-    await lock.release('run-perms');
+    await lock.release('wf_00000000000000000000000000000002');
   });
 
   it('creates lock directory with owner-only permissions (0o700)', async () => {
-    await lock.acquire('run-dir-perms');
+    await lock.acquire('wf_00000000000000000000000000000003');
 
     const lockDir = locksDir(tmpDir);
     const stat = await fs.stat(lockDir);
     const dirMode = stat.mode & 0o777;
     expect(dirMode).toBe(0o700);
 
-    await lock.release('run-dir-perms');
+    await lock.release('wf_00000000000000000000000000000003');
   });
 
   it('second acquire blocks then succeeds after release', async () => {
-    await lock.acquire('run-2');
+    await lock.acquire('wf_00000000000000000000000000000004');
 
     // Schedule release after 100ms
     setTimeout(() => {
-      void lock.release('run-2');
+      void lock.release('wf_00000000000000000000000000000004');
     }, 100);
 
     // Second acquire should wait and then succeed
-    await lock.acquire('run-2');
+    await lock.acquire('wf_00000000000000000000000000000004');
 
     // Clean up
-    await lock.release('run-2');
+    await lock.release('wf_00000000000000000000000000000004');
   });
 
   it('release is idempotent', async () => {
     // Releasing a non-existent lock should not throw
-    await expect(lock.release('nonexistent-run')).resolves.toBeUndefined();
+    await expect(lock.release('wf_00000000000000000000000000000005')).resolves.toBeUndefined();
   });
 
   it('reclaims stale lock from dead PID', async () => {
@@ -93,7 +93,7 @@ describe('DelegationLock', () => {
     const lockDir = locksDir(tmpDir);
     await fs.mkdir(lockDir, { recursive: true });
 
-    const lockPath = delegationLockPath(tmpDir, 'run-stale');
+    const lockPath = delegationLockPath(tmpDir, 'wf_00000000000000000000000000000006');
     const staleLock = {
       pid: findDeadPid(),
       created_at: new Date(Date.now() - 120_000).toISOString(), // 2 minutes ago
@@ -101,42 +101,42 @@ describe('DelegationLock', () => {
     await fs.writeFile(lockPath, JSON.stringify(staleLock));
 
     // Should reclaim the stale lock and acquire
-    await lock.acquire('run-stale');
+    await lock.acquire('wf_00000000000000000000000000000006');
 
     // Verify our process now owns the lock
     const content = JSON.parse(await fs.readFile(lockPath, 'utf8'));
     expect(content.pid).toBe(process.pid);
 
-    await lock.release('run-stale');
+    await lock.release('wf_00000000000000000000000000000006');
   });
 
   it('reclaims corrupted lock file (non-JSON content)', async () => {
     const lockDir = locksDir(tmpDir);
     await fs.mkdir(lockDir, { recursive: true });
 
-    const lockPath = delegationLockPath(tmpDir, 'run-corrupt');
+    const lockPath = delegationLockPath(tmpDir, 'wf_00000000000000000000000000000007');
     await fs.writeFile(lockPath, 'NOT VALID JSON {{{');
 
     // Should reclaim the corrupted lock and acquire
-    await lock.acquire('run-corrupt');
+    await lock.acquire('wf_00000000000000000000000000000007');
 
     // Verify our process now owns the lock
     const content = JSON.parse(await fs.readFile(lockPath, 'utf8'));
     expect(content.pid).toBe(process.pid);
 
-    await lock.release('run-corrupt');
+    await lock.release('wf_00000000000000000000000000000007');
   });
 
   it('times out with typed DelegationLockTimeoutError when held by alive process', async () => {
     // Acquire the lock with current process
-    await lock.acquire('run-timeout');
+    await lock.acquire('wf_00000000000000000000000000000008');
 
     // Create a second lock instance — should time out because current process is alive
     const lock2 = new DelegationLock(tmpDir);
 
     let captured: unknown;
     try {
-      await lock2.acquire('run-timeout');
+      await lock2.acquire('wf_00000000000000000000000000000008');
     } catch (err) {
       captured = err;
     }
@@ -144,39 +144,43 @@ describe('DelegationLock', () => {
     expect(captured).toBeInstanceOf(DelegationLockTimeoutError);
     expect(captured).toBeInstanceOf(FileLockTimeoutError); // hierarchy preserved
     if (captured instanceof DelegationLockTimeoutError) {
-      expect(captured.parentRunId).toBe('run-timeout');
-      expect(captured.lockFile).toBe(delegationLockPath(tmpDir, 'run-timeout'));
-      expect(captured.message).toMatch(/Delegation lock timeout for run run-timeout/);
+      expect(captured.parentRunId).toBe('wf_00000000000000000000000000000008');
+      expect(captured.lockFile).toBe(
+        delegationLockPath(tmpDir, 'wf_00000000000000000000000000000008'),
+      );
+      expect(captured.message).toMatch(
+        /Delegation lock timeout for run wf_00000000000000000000000000000008/,
+      );
     }
 
-    await lock.release('run-timeout');
+    await lock.release('wf_00000000000000000000000000000008');
   }, 10_000);
 
   it('handles concurrent acquire attempts with retries', async () => {
-    await lock.acquire('run-concurrent');
+    await lock.acquire('wf_00000000000000000000000000000009');
 
     // Schedule release after a short delay
     setTimeout(() => {
-      void lock.release('run-concurrent');
+      void lock.release('wf_00000000000000000000000000000009');
     }, 200);
 
     // Second lock should retry and eventually acquire
     const lock2 = new DelegationLock(tmpDir);
-    await lock2.acquire('run-concurrent');
+    await lock2.acquire('wf_00000000000000000000000000000009');
 
     // Verify lock2 now owns the lock
-    const lockPath = delegationLockPath(tmpDir, 'run-concurrent');
+    const lockPath = delegationLockPath(tmpDir, 'wf_00000000000000000000000000000009');
     const content = JSON.parse(await fs.readFile(lockPath, 'utf8'));
     expect(content.pid).toBe(process.pid);
 
-    await lock2.release('run-concurrent');
+    await lock2.release('wf_00000000000000000000000000000009');
   });
 
   it('reclaims lock held by a dead process regardless of age', async () => {
     const lockDir = locksDir(tmpDir);
     await fs.mkdir(lockDir, { recursive: true });
 
-    const lockPath = delegationLockPath(tmpDir, 'run-dead-owner');
+    const lockPath = delegationLockPath(tmpDir, 'wf_0000000000000000000000000000000a');
     // PID 999999999 is beyond any valid PID on macOS/Linux so kill(pid,0) → ESRCH.
     const deadPid = 999999999;
     const staleLock = {
@@ -185,14 +189,14 @@ describe('DelegationLock', () => {
     };
     await fs.writeFile(lockPath, JSON.stringify(staleLock));
 
-    await lock.acquire('run-dead-owner');
+    await lock.acquire('wf_0000000000000000000000000000000a');
 
     const content = JSON.parse(await fs.readFile(lockPath, 'utf8'));
     expect(content.pid).toBe(process.pid);
     const age = Date.now() - new Date(content.created_at).getTime();
     expect(age).toBeLessThan(1000);
 
-    await lock.release('run-dead-owner');
+    await lock.release('wf_0000000000000000000000000000000a');
   });
 
   it('handles lock file disappearing between check and read (race condition)', async () => {
@@ -201,14 +205,14 @@ describe('DelegationLock', () => {
     const lockDir = locksDir(tmpDir);
     await fs.mkdir(lockDir, { recursive: true });
 
-    const lockPath = delegationLockPath(tmpDir, 'run-vanish');
+    const lockPath = delegationLockPath(tmpDir, 'wf_0000000000000000000000000000000b');
     await fs.writeFile(
       lockPath,
       JSON.stringify({ pid: findDeadPid(), created_at: new Date().toISOString() }),
     );
 
     // Start acquire, then delete the lock file to simulate race
-    const acquirePromise = lock.acquire('run-vanish');
+    const acquirePromise = lock.acquire('wf_0000000000000000000000000000000b');
 
     // Wait briefly for the first retry to hit
     await new Promise((resolve) => setTimeout(resolve, 80));
@@ -221,59 +225,59 @@ describe('DelegationLock', () => {
     // Should eventually succeed (acquire handles vanishing lock gracefully)
     await acquirePromise;
 
-    await lock.release('run-vanish');
+    await lock.release('wf_0000000000000000000000000000000b');
   });
 
   it('handles empty lock file (0 bytes)', async () => {
     const lockDir = locksDir(tmpDir);
     await fs.mkdir(lockDir, { recursive: true });
 
-    const lockPath = delegationLockPath(tmpDir, 'run-empty');
+    const lockPath = delegationLockPath(tmpDir, 'wf_0000000000000000000000000000000c');
     await fs.writeFile(lockPath, '');
 
     // Should reclaim the empty (corrupted) lock
-    await lock.acquire('run-empty');
+    await lock.acquire('wf_0000000000000000000000000000000c');
 
     const content = JSON.parse(await fs.readFile(lockPath, 'utf8'));
     expect(content.pid).toBe(process.pid);
 
-    await lock.release('run-empty');
+    await lock.release('wf_0000000000000000000000000000000c');
   });
 
   it('multiple sequential acquire-release cycles work correctly', async () => {
     // Test that lock state is properly reset between cycles
     for (let i = 0; i < 5; i++) {
-      await lock.acquire('run-cycle');
-      await lock.release('run-cycle');
+      await lock.acquire('wf_0000000000000000000000000000000d');
+      await lock.release('wf_0000000000000000000000000000000d');
     }
 
     // Final acquire should succeed
-    await lock.acquire('run-cycle');
-    await lock.release('run-cycle');
+    await lock.acquire('wf_0000000000000000000000000000000d');
+    await lock.release('wf_0000000000000000000000000000000d');
 
     // Verify lock file is gone
-    const lockPath = delegationLockPath(tmpDir, 'run-cycle');
+    const lockPath = delegationLockPath(tmpDir, 'wf_0000000000000000000000000000000d');
     await expect(fs.access(lockPath)).rejects.toThrow();
   });
 
   it('different run IDs have independent locks', async () => {
     // Acquire locks for multiple different runs
-    await lock.acquire('run-a');
-    await lock.acquire('run-b');
-    await lock.acquire('run-c');
+    await lock.acquire('wf_0000000000000000000000000000000e');
+    await lock.acquire('wf_0000000000000000000000000000000f');
+    await lock.acquire('wf_00000000000000000000000000000010');
 
     // All should coexist
-    const lockA = delegationLockPath(tmpDir, 'run-a');
-    const lockB = delegationLockPath(tmpDir, 'run-b');
-    const lockC = delegationLockPath(tmpDir, 'run-c');
+    const lockA = delegationLockPath(tmpDir, 'wf_0000000000000000000000000000000e');
+    const lockB = delegationLockPath(tmpDir, 'wf_0000000000000000000000000000000f');
+    const lockC = delegationLockPath(tmpDir, 'wf_00000000000000000000000000000010');
 
     await expect(fs.access(lockA)).resolves.toBeUndefined();
     await expect(fs.access(lockB)).resolves.toBeUndefined();
     await expect(fs.access(lockC)).resolves.toBeUndefined();
 
     // Release all
-    await lock.release('run-a');
-    await lock.release('run-b');
-    await lock.release('run-c');
+    await lock.release('wf_0000000000000000000000000000000e');
+    await lock.release('wf_0000000000000000000000000000000f');
+    await lock.release('wf_00000000000000000000000000000010');
   });
 });

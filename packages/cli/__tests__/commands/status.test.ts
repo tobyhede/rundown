@@ -57,7 +57,7 @@ describe('status command', () => {
     const result = await runCliInProcess('status --text', workspace);
 
     expect(result.stdout).toContain('State:');
-    expect(result.stdout).toMatch(/wf-\d{4}-\d{2}-\d{2}/);
+    expect(result.stdout).toMatch(/wf_[a-f0-9]{32}/);
   });
 
   it('outputs "No active runbook" when none', async () => {
@@ -241,7 +241,7 @@ describe('claim-id delegated children', () => {
     expect(JSON.parse(status.stdout)).toEqual(
       expect.objectContaining({ active: false, stashed: true }),
     );
-    expect(status.stdout).toContain('child-secret.md');
+    expect(status.stdout).toContain('child-secret.runbook.md');
     // Plain status must not leak claim-scoped variables: only `--claim-id`
     // callers see them (asserted positively in the next test).
     expect(status.stdout).not.toContain('top-secret-input');
@@ -257,7 +257,7 @@ describe('claim-id delegated children', () => {
     expect(status.exitCode).toBe(0);
     expect(output.active).toBe(true);
     expect(output.stashed).toBe(true);
-    expect(output.file).toContain('child-secret.md');
+    expect(output.file).toContain('child-secret.runbook.md');
     expect(output.state).toContain(childRunId);
     expect(output.parentLinkage).toEqual(
       expect.objectContaining({
@@ -403,10 +403,14 @@ describe('complete command', () => {
 
   it('marks runbook as complete', async () => {
     await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+    const stateBefore = await getActiveState(workspace);
 
     const result = await runCliInProcess('complete --text', workspace);
 
     expect(result.stdout).toContain('COMPLETE');
+    const stateAfter = await readRunbookState(workspace, stateBefore!.id);
+    expect(stateAfter!.lifecycle).toBe('completed');
+    expect(stateAfter!.terminalAt).toEqual(expect.any(String));
   });
 
   it('clears active runbook', async () => {
@@ -529,6 +533,7 @@ Do work.
 
     const childState = await readRunbookState(workspace, String(childRunId));
     expect(childState?.lifecycle).toBe('completed');
+    expect(childState?.terminalAt).toEqual(expect.any(String));
 
     const updatedParent = await readRunbookState(workspace, parentState!.id);
     expect(updatedParent?.step).toBe('2');

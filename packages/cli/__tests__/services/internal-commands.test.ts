@@ -86,10 +86,13 @@ rd echo test
       };
 
       // Create runbook state
-      const state = await manager.create('test.runbook.md', runbook, {
-        runbookPath: 'test.runbook.md',
-        prompted: true,
-      });
+      const state = await manager.create(
+        { source: 'project', path: '.rundown/runbooks/test.runbook.md' },
+        runbook,
+        {
+          prompted: true,
+        },
+      );
 
       // Push to make it active
       const sessionService = new SessionService(manager);

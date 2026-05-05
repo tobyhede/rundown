@@ -45,8 +45,7 @@ function makeStepWithSubsteps(name: string, substeps: Substep[]): ResolvedStepWi
 function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
   return {
     id: 'test-run-id',
-    runbook: 'test.runbook.md',
-    runbookPath: 'test.runbook.md',
+    runbook: { source: 'project', path: 'test.runbook.md' },
     step: '1',
     stepName: 'Step 1',
     retryCount: 0,

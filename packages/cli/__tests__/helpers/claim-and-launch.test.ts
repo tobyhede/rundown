@@ -1010,6 +1010,7 @@ describe('claimAndLaunch', () => {
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/tmp/test/child.md',
       source: 'project',
+      sourceRoot: '/tmp/test',
     });
     // Cast through unknown: the parser fixture is a minimal stand-in
     // (real Runbook type carries many more fields than this test reads).
@@ -1096,7 +1097,7 @@ describe('claimAndLaunch', () => {
     // Critical assertion: delegation linkage should use the delegation's stored
     // frameKey ('1|3'), NOT the parent's current frame ('1|5')
     expect(mockCreate).toHaveBeenCalledWith(
-      'child.md',
+      { source: 'project', path: 'child.runbook.md' },
       expect.anything(),
       expect.objectContaining({
         parentLinkage: expect.objectContaining({
@@ -1160,6 +1161,7 @@ describe('claimAndLaunch', () => {
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/tmp/test/child.md',
       source: 'project',
+      sourceRoot: '/tmp/test',
     });
     // Cast through unknown: minimal parser fixture (see frameKey linkage test).
     jest.mocked(parser.parseRunbookDocument).mockReturnValue({

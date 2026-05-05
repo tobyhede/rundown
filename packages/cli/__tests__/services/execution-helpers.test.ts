@@ -8,7 +8,11 @@
 // the full execution loop.
 
 import { describe, it, expect } from '@jest/globals';
-import { deriveOutputScope, extractUnitOutputs } from '../../src/services/execution.js';
+import {
+  buildMetadata,
+  deriveOutputScope,
+  extractUnitOutputs,
+} from '../../src/services/execution.js';
 import type { RunbookState, ForContext } from '@rundown-org/core';
 import type { ResolvedStep, OutputDeclaration, Substep } from '@rundown-org/parser';
 
@@ -18,9 +22,8 @@ import type { ResolvedStep, OutputDeclaration, Substep } from '@rundown-org/pars
 
 function makeState(step: string, forStack: readonly ForContext[] = []): RunbookState {
   return {
-    id: 'test-run',
-    runbook: 'test.md',
-    runbookPath: '/test.md',
+    id: 'wf_0123456789abcdef0123456789abcdef',
+    runbook: { source: 'project', path: 'test.runbook.md' },
     step,
     stepName: `Step ${step}`,
     retryCount: 0,
@@ -91,6 +94,21 @@ function makeSubstepsStep(
 // ---------------------------------------------------------------------------
 
 describe('deriveOutputScope', () => {
+  it('builds metadata from canonical runbook path', () => {
+    const state = makeState('1', []);
+    const metadata = buildMetadata({
+      ...state,
+      id: 'wf_0123456789abcdef0123456789abcdef',
+      runbook: { source: 'plugin', path: 'planning/review/review-plan.runbook.md' },
+    });
+
+    expect(metadata).toEqual({
+      file: 'planning/review/review-plan.runbook.md',
+      state: '.rundown/runs/wf_0123456789abcdef0123456789abcdef.json',
+      prompted: undefined,
+    });
+  });
+
   describe('step only (isSubstep=false)', () => {
     it('returns only stepId when no substep and no FOR stack', () => {
       const state = makeState('1');
