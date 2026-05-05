@@ -27,7 +27,8 @@ import { brandDelegationTokenHashForTest } from './brand-helpers.js';
 // Capture the real isJsonArrayStream before the mock is registered.
 // jest.unstable_mockModule does NOT hoist (unlike jest.mock), so this top-level
 // await executes first and always captures the real branded implementation.
-const { isJsonArrayStream: realIsJsonArrayStream } = await import('@rundown-org/core');
+const { isJsonArrayStream: realIsJsonArrayStream, RunbookRefSchema: realRunbookRefSchema } =
+  await import('@rundown-org/core');
 
 const MOCK_TOKEN_HASH = brandDelegationTokenHashForTest(`sha256:${'a'.repeat(64)}`);
 
@@ -52,7 +53,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   RUNS_DIR: '.rundown/runs',
   runbooksDir: jest.fn((cwd: string) => `${cwd}/.rundown/runbooks`),
   RunbookRefSchema: {
-    parse: jest.fn((ref: unknown) => ref),
+    parse: jest.fn((ref: unknown) => realRunbookRefSchema.parse(ref)),
   },
   DELEGATION_TOKEN_PREFIX: 'rdtk_',
   DEFAULT_POLICY: {
@@ -347,7 +348,7 @@ beforeEach(() => {
   const runbookRefSchemaMock = core.RunbookRefSchema as unknown as {
     parse: jest.MockedFunction<(ref: unknown) => RunbookRef>;
   };
-  runbookRefSchemaMock.parse.mockImplementation((ref: unknown) => ref as RunbookRef);
+  runbookRefSchemaMock.parse.mockImplementation((ref: unknown) => realRunbookRefSchema.parse(ref));
   jest.mocked(resolveVariables).mockResolvedValue({
     vars: {},
     sources: {},
@@ -808,6 +809,26 @@ describe('prepareRunbook', () => {
     }
   });
 
+  it('returns a structured failure when canonical runbook ref resolution fails', async () => {
+    jest.mocked(resolveRunbookFile).mockResolvedValue({
+      path: '/home/user/.claude/extensions/rundown-plugin/not-runbooks/child.runbook.md',
+      source: 'plugin' as const,
+    });
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue(mockParseResult());
+
+    const result = await prepareRunbook('rundown:child', {}, '/test');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('RUNBOOK_REF_RESOLUTION_ERROR');
+      expect(result.error).toContain('not beneath a runbooks directory');
+      expect(result.details).toEqual({ runbook: 'rundown:child' });
+    }
+    expect(resolveVariables).not.toHaveBeenCalled();
+  });
+
   it('injects CLAUDE_PLUGIN_ROOT when runbook resolves from plugin source', async () => {
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/home/user/.claude/extensions/rundown-plugin/runbooks/write-plan.runbook.md',
@@ -951,6 +972,26 @@ describe('prepareRunbook', () => {
       expect(result.prepared.runbookRef).toEqual({
         source: 'plugin',
         path: 'planning/write-plan.runbook.md',
+      });
+    }
+  });
+
+  it('uses the outermost runbooks directory for nested plugin runbook refs', async () => {
+    jest.mocked(resolveRunbookFile).mockResolvedValue({
+      path: '/home/user/.claude/extensions/rundown-plugin/runbooks/team/runbooks/child.runbook.md',
+      source: 'plugin' as const,
+    });
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue(mockParseResult());
+
+    const result = await prepareRunbook('rundown:child', {}, '/test');
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.prepared.runbookRef).toEqual({
+        source: 'plugin',
+        path: 'team/runbooks/child.runbook.md',
       });
     }
   });

@@ -8,7 +8,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import type { RunbookRef } from '@rundown-org/core';
+import { RunbookRefSchema, type RunbookRef } from '@rundown-org/core';
 import { parse as shellParse } from 'shell-quote';
 import type { ErrorAssertion, StepAssertion } from '../schemas/scenarios.js';
 
@@ -320,6 +320,7 @@ function processJsonObject(
 
   // Streamed execution event lines have a `type` field
   if (obj.type === 'step_transitioned') {
+    const parsedRunbook = RunbookRefSchema.safeParse(obj.runbook);
     transitions.push({
       action: obj.action as string,
       from: obj.from as string,
@@ -327,7 +328,7 @@ function processJsonObject(
       result: obj.result as 'PASS' | 'FAIL',
       command: obj.command as string | undefined,
       aggregated: obj.aggregated === true ? true : undefined,
-      runbook: obj.runbook as RunbookRef | undefined,
+      runbook: parsedRunbook.success ? parsedRunbook.data : undefined,
       parentStepId: typeof obj.parentStepId === 'string' ? obj.parentStepId : undefined,
     });
   } else if (obj.type === 'runbook_completed') {
@@ -455,9 +456,7 @@ function eventMatchesAssertion(event: CapturedTransition, assertion: StepAsserti
   if (assertion.aggregated !== undefined && event.aggregated !== assertion.aggregated) return false;
   if (assertion.runbook !== undefined) {
     const rb = event.runbook;
-    if (rb !== undefined) {
-      if (!rb.path.endsWith(assertion.runbook)) return false;
-    } else {
+    if (rb === undefined || !rb.path.endsWith(assertion.runbook)) {
       return false;
     }
   }

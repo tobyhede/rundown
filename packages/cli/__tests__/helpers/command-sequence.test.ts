@@ -248,11 +248,28 @@ describe('parseJsonLines', () => {
     expect(result.terminal).toBeNull();
   });
 
-  it('captures runbook envelope field from step_transitioned event', () => {
+  it('captures valid runbook envelope field from step_transitioned event', () => {
+    const stdout =
+      '{"type":"step_transitioned","action":"COMPLETE","from":"1","at":"1","result":"PASS","runbook":{"source":"project","path":"child.runbook.md"}}\n';
+    const result = parseJsonLines(stdout);
+    expect(result.transitions[0].runbook).toEqual({
+      source: 'project',
+      path: 'child.runbook.md',
+    });
+  });
+
+  it('drops malformed runbook envelope fields before assertion matching', () => {
     const stdout =
       '{"type":"step_transitioned","action":"COMPLETE","from":"1","at":"1","result":"PASS","runbook":{"path":"/abs/child.runbook.md","name":"child"}}\n';
     const result = parseJsonLines(stdout);
-    expect(result.transitions[0].runbook).toEqual({ path: '/abs/child.runbook.md', name: 'child' });
+
+    expect(result.transitions[0].runbook).toBeUndefined();
+    expect(() =>
+      matchStepAssertions([{ runbook: 'child.runbook.md' }], result.transitions),
+    ).not.toThrow();
+    expect(
+      matchStepAssertions([{ runbook: 'child.runbook.md' }], result.transitions)[0].matched,
+    ).toBe(false);
   });
 
   it('captures parentStepId envelope field from step_transitioned event', () => {

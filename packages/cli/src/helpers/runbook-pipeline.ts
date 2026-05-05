@@ -320,13 +320,14 @@ function escapesRoot(relativePath: string): boolean {
 
 function findRunbooksAncestor(filePath: string): string | null {
   let current = path.dirname(path.resolve(filePath));
+  let outermost: string | null = null;
   for (;;) {
     if (path.basename(current) === 'runbooks') {
-      return current;
+      outermost = current;
     }
     const parent = path.dirname(current);
     if (parent === current) {
-      return null;
+      return outermost;
     }
     current = parent;
   }
@@ -435,7 +436,11 @@ interface PrepareFailureBase {
 /** Failure result from {@link prepareRunbook}. */
 export type PrepareFailure =
   | (PrepareFailureBase & {
-      readonly code: 'RUNBOOK_NOT_FOUND' | 'PARSE_ERROR' | 'VARIABLE_RESOLUTION_ERROR';
+      readonly code:
+        | 'RUNBOOK_NOT_FOUND'
+        | 'PARSE_ERROR'
+        | 'RUNBOOK_REF_RESOLUTION_ERROR'
+        | 'VARIABLE_RESOLUTION_ERROR';
       readonly details: { readonly runbook: string };
     })
   | (PrepareFailureBase & {
@@ -620,16 +625,28 @@ export async function prepareRunbook(
     diagnostics,
     stats,
   } = parsed;
-  const runbookRef = buildRunbookRef({ path: filePath, source }, cwd);
 
   // Derive CLAUDE_PLUGIN_ROOT from resolved path when source is plugin
+  let runbookRef: RunbookRef;
   let pluginRoot: string | undefined;
-  if (source === 'plugin') {
-    const runbooksSep = `${path.sep}runbooks${path.sep}`;
-    const runbooksIdx = filePath.indexOf(runbooksSep);
-    if (runbooksIdx !== -1) {
-      pluginRoot = filePath.slice(0, runbooksIdx + 1); // include trailing separator
+  try {
+    runbookRef = buildRunbookRef({ path: filePath, source }, cwd);
+    if (source === 'plugin') {
+      const runbooksSep = `${path.sep}runbooks${path.sep}`;
+      const runbooksIdx = filePath.indexOf(runbooksSep);
+      if (runbooksIdx !== -1) {
+        pluginRoot = filePath.slice(0, runbooksIdx + 1); // include trailing separator
+      }
     }
+  } catch (error) {
+    return {
+      ok: false,
+      error: getErrorMessage(error),
+      code: 'RUNBOOK_REF_RESOLUTION_ERROR',
+      details: { runbook: file },
+      stats,
+      diagnostics,
+    };
   }
 
   // Inherited user vars pass through untouched here. Context OUTPUTS are

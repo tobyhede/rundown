@@ -3,6 +3,7 @@ import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
 import picomatch from 'picomatch';
 import type { ZodIssue } from 'zod';
+import { isNodeErrorCode } from '../errors.js';
 import { assertSafeId } from '../paths.js';
 import { ARTIFACT_ERROR_TEXT, formatArtifactManifestLineError } from './artifact-errors.js';
 import { ArtifactRecordSchema, type ArtifactRecord } from './artifact-schema.js';
@@ -319,10 +320,6 @@ function assertContained(root: string, candidate: string): void {
   if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
     throw new Error(ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE);
   }
-}
-
-function isNodeErrorCode(error: unknown, code: string): boolean {
-  return typeof error === 'object' && error !== null && 'code' in error && error.code === code;
 }
 
 function assertNoSymlinkSegments(

@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { isNodeErrorCode } from '../errors.js';
 import { assertSafeId } from '../paths.js';
 import { ARTIFACT_ERROR_TEXT } from './artifact-errors.js';
 
@@ -221,10 +222,6 @@ function assertNoSymlinkSegments(root: string, candidate: string): void {
       throw error;
     }
   }
-}
-
-function isNodeErrorCode(error: unknown, code: string): boolean {
-  return typeof error === 'object' && error !== null && 'code' in error && error.code === code;
 }
 
 function parseArtifactPath(url: URL): ArtifactIdentity {

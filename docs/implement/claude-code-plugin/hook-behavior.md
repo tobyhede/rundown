@@ -35,9 +35,11 @@ Everything else is support code around that core:
 - optional config gates
 - compatibility hooks for additional Claude events
 
-If the goal is to make the runtime more Codex-compatible, the right simplification is to keep the delegation core and treat the rest as optional host adapters rather than required behavior.
+If the goal is to make the runtime more Codex-compatible (Codex here means a planned host-agnostic runtime / minimal execution environment), the right simplification is to keep the delegation core and treat the rest as optional host adapters rather than required behavior.
 
 ## Hook Matrix
+
+Note: This matrix includes hooks fired directly by Claude Code and synthetic lifecycle events generated internally by the dispatcher. Synthetic rows such as `SlashCommandStart`, `SlashCommandEnd`, and `SkillEnd` model lifecycle transitions rather than external hook invocations.
 
 | Hook | Current behavior | Essential? | Notes |
 |------|------------------|------------|-------|
@@ -85,12 +87,13 @@ If the goal is “keep Rundown working with the current Claude workflow,” thes
 - `SlashCommandStart` handling, because it starts runbooks from slash-command frontmatter.
 - `SkillStart` handling, because it starts runbooks from skill frontmatter.
 - `PreToolUse` delegation detection, because it injects claim instructions for child agents.
+- `SubagentStart` handling, because it provides agent-scoped context injection.
 - `SubagentStop` handling, because it resolves delegated child completion and command-scoped context.
 - `UserPromptSubmit` and `Stop`, because they connect the synthetic command lifecycle.
-- `PostToolUse`, because it closes synthetic skill lifecycle and records edited files.
+- `PostToolUse`, because it closes synthetic skill lifecycle and records edited files and extensions.
 - The shared dispatcher and context injection pipeline, because they are the common execution path for everything above.
 
-If the goal is “simplify for Codex compatibility,” the essential runtime narrows further:
+If the goal is “simplify for Codex compatibility” for that host-agnostic runtime target, the essential runtime narrows further:
 
 - `PreToolUse` delegation dispatch
 - `SubagentStop` delegated child completion and agent-scoped context injection

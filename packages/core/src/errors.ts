@@ -45,6 +45,17 @@ export function isNodeError(error: unknown): error is NodeJS.ErrnoException {
 }
 
 /**
+ * Check whether a value is a Node.js system error with a specific error code.
+ *
+ * @param error - The value to check
+ * @param code - Expected Node.js error code such as `ENOENT` or `EACCES`
+ * @returns True when the value is a NodeJS.ErrnoException with the exact code
+ */
+export function isNodeErrorCode(error: unknown, code: string): boolean {
+  return isNodeError(error) && error.code === code;
+}
+
+/**
  * Extract error message safely.
  *
  * Returns the error's message property if it is an Error instance,

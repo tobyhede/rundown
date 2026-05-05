@@ -5,6 +5,7 @@ Reference for replicating Rundown's CI / linting / quality stack in another Type
 ## Tooling
 
 ### Lint & format
+
 | Tool | Version | Role |
 |---|---|---|
 | [Biome](https://biomejs.dev) | 2.4.12 | Formatter + fast (non-type-aware) linter. Single config (`biome.json`) replaces Prettier + base ESLint rules. |
@@ -16,12 +17,14 @@ Reference for replicating Rundown's CI / linting / quality stack in another Type
 **Split rationale:** Biome handles fast syntactic/style rules; ESLint owns the slow type-aware rules. They don't overlap, so you don't fight conflicting fixers.
 
 ### Spell & docs
+
 | Tool | Role |
 |---|---|
 | [cspell](https://cspell.org) 10 | Spell check `src/`, tests, docs, runbooks. Project dictionary at `cspell-dictionary.txt`. |
 | [markdownlint-cli2](https://github.com/DavidAnson/markdownlint-cli2) | Markdown lint config exists (`.markdownlint-cli2.yaml`) but is not yet wired to CI. |
 
 ### Tests & coverage
+
 | Tool | Role |
 |---|---|
 | Jest | Unit, integration, property tests (per-package). |
@@ -30,6 +33,7 @@ Reference for replicating Rundown's CI / linting / quality stack in another Type
 | Codecov | Coverage upload (LCOV from each package). |
 
 ### Security
+
 | Tool | Role |
 |---|---|
 | [CodeQL](https://codeql.github.com) | `javascript-typescript` + `security-extended` queries; PRs + weekly cron. |
@@ -37,12 +41,14 @@ Reference for replicating Rundown's CI / linting / quality stack in another Type
 | Dependabot | Dependency update PRs (`.github/dependabot.yml`). |
 
 ### Pre-commit
+
 | Tool | Role |
 |---|---|
 | [husky](https://typicode.github.io/husky) 9 | Manages git hooks. |
 | [lint-staged](https://github.com/lint-staged/lint-staged) 16 | Runs Biome format + lint on staged files only. |
 
 ### Release
+
 | Tool | Role |
 |---|---|
 | [Changesets](https://github.com/changesets/changesets) | Versioning + changelog + npm publish (with provenance). |
@@ -52,7 +58,7 @@ Reference for replicating Rundown's CI / linting / quality stack in another Type
 
 The local equivalent of CI is `npm run verify`:
 
-```
+```text
 verify = check:format → check:spell → check:lint:fast → check:lint:typed → build → check:types → test
 ```
 
@@ -75,11 +81,12 @@ Per-step scripts:
 All actions are SHA-pinned with a version comment for supply-chain safety. Node version comes from `.nvmrc` or hardcoded `24`.
 
 ### `ci.yml` — main pipeline
+
 Triggers: push to `main`, PR to `main`, manual.
 
 Node matrix: `[24]` on PRs, `[24, 25]` on `main`/manual.
 
-```
+```text
 quality-checks ─┐
 complexity-checks ┤  (independent, fast feedback)
                   │
@@ -104,18 +111,23 @@ setup-build ──────┼─→ lint-typed
 **Pattern:** build once, fan out. The `setup-build` job uploads artifacts and downstream jobs download them — saves rebuilding 5× across `lint-typed`, `test`, `perf`, `scenarios`, `playwright`.
 
 ### `codeql.yml` — code scanning
+
 Triggers: push, PR, weekly `0 6 * * 1`. Single job: init → autobuild → analyze with `security-extended`.
 
 ### `osv-scanner.yml` — dependency vulnerabilities
+
 Triggers: lockfile changes (push/PR) + daily `0 5 * * *`. Scans `package-lock.json`, uploads SARIF (`continue-on-error: true` so a finding doesn't block; results visible in Code Scanning).
 
 ### `mutation.yml` — mutation tests
+
 Triggers: manual + weekly `0 6 * * 1`. Matrix per package, 60-min timeout. Caches Stryker incremental file (`reports/stryker-incremental.json`) keyed by SHA with `restore-keys` fallback. Reports retained 30 days.
 
 ### `plugin-smoke-test.yml` — path-filtered
+
 Triggers: changes under `packages/claude-code-plugin/**`. Linux + macOS smoke tests, plus dependent perf and coverage jobs.
 
 ### `release.yml` — publish
+
 Triggers: push to `main`. Build → `npm test` → [Changesets action](https://github.com/changesets/action) opens "Version Packages" PR or publishes with `--provenance`. Permissions: `contents:write`, `pull-requests:write`, `id-token:write` (for npm provenance).
 
 ## Patterns worth copying

@@ -1,5 +1,3 @@
-
-
 # list of languages for which language servers are started; choose from:
 #   al                  ansible             bash                clojure             cpp
 #   cpp_ccls            crystal             csharp              csharp_omnisharp    dart
