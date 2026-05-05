@@ -129,6 +129,17 @@ export {
   type ArtifactRecord,
 } from './artifact-schema.js';
 export {
+  appendArtifactManifestRecord,
+  appendArtifactManifestRecordSync,
+  coalesceManifestRecords,
+  findArtifactMatches,
+  manifestPathForContext,
+  readArtifactManifest,
+  type ArtifactManifestRecord,
+  type ArtifactSelectorMatch,
+  type FindArtifactOptions,
+} from './artifact-manifest.js';
+export {
   buildExecutionFrame,
   evaluateFrontmatterOutputDeclarations,
   evaluateOutputExpression,
