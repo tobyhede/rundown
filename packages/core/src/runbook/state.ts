@@ -26,9 +26,7 @@ import {
   sessionPath as _sessionPath,
   statePath as _statePath,
   LEGACY_SESSION_FILE,
-  RUN_ID_PATTERN,
   assertRunId,
-  assertSafeId,
 } from '../paths.js';
 
 /** Current persisted state schema version. Bump whenever RunbookState shape changes incompatibly. */
@@ -442,38 +440,6 @@ export class RunbookStateManager {
       // Use rm -rf semantics so a non-empty directory is removed cleanly.
       const runDir = this.statePath(id).replace(/\.json$/, '');
       await fs.rm(runDir, { recursive: true, force: true });
-    } catch (error) {
-      if (!isNodeError(error) || error.code !== 'ENOENT') {
-        throw error;
-      }
-    }
-  }
-
-  /**
-   * Delete a non-canonical but filename-safe run state without loading it.
-   *
-   * This is a prune-only escape hatch for pre-v1 dogfooding state files whose
-   * ids do not match {@link RUN_ID_PATTERN}. It does not migrate, parse, or
-   * otherwise adapt the state. Normal manager APIs continue to require canonical
-   * run ids before touching the filesystem.
-   *
-   * @param id - Filename-safe stale run id to remove
-   * @throws {Error} If `id` is canonical or unsafe for filename interpolation
-   */
-  async purgeNonCanonicalRunState(id: string): Promise<void> {
-    if (RUN_ID_PATTERN.test(id)) {
-      throw new Error('Invalid runId: expected non-canonical runId');
-    }
-    assertSafeId(id, 'runId');
-    try {
-      await fs.unlink(path.join(this.stateDir, `${id}.json`));
-    } catch (error) {
-      if (!isNodeError(error) || error.code !== 'ENOENT') {
-        throw error;
-      }
-    }
-    try {
-      await fs.rm(path.join(this.stateDir, id), { recursive: true, force: true });
     } catch (error) {
       if (!isNodeError(error) || error.code !== 'ENOENT') {
         throw error;

@@ -263,6 +263,21 @@ describe('prune command', () => {
       const statesAfter = await listRunbookStates(workspace);
       expect(statesAfter.length).toBe(0);
     });
+
+    it('skips raw state files that cannot be loaded', async () => {
+      const canonicalCorruptId = 'wf_00000000000000000000000000000000';
+      const nonCanonicalId = 'wf-legacy-local-dev';
+      await writeFile(join(workspace.statePath(), `${canonicalCorruptId}.json`), '{');
+      await writeFile(join(workspace.statePath(), `${nonCanonicalId}.json`), '{');
+
+      const result = await runCliInProcess('prune --all', workspace);
+
+      expect(result.exitCode).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual([]);
+      await expect(listRunbookStates(workspace)).resolves.toEqual(
+        expect.arrayContaining([`${canonicalCorruptId}.json`, `${nonCanonicalId}.json`]),
+      );
+    });
   });
 
   describe('--dry-run flag', () => {

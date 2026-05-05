@@ -94,7 +94,7 @@ export const RunbookSchema = z
   .object({
     id: z.string().describe('Unique state file identifier'),
     runbook: RunbookRefSchema.describe('Canonical runbook reference'),
-    status: z.string().describe('Runbook status (active, stashed, completed, stale, or orphaned)'),
+    status: z.string().describe('Runbook status (active, stashed, complete, stopped, inactive)'),
     step: z.string().optional().describe('Current step number'),
     total: z.number().optional().describe('Total number of steps'),
     title: z.string().optional().describe('Runbook title from metadata'),

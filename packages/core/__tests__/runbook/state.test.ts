@@ -245,35 +245,6 @@ describe('RunbookStateManager', () => {
     });
   });
 
-  describe('non-canonical state cleanup', () => {
-    it('purges safe legacy run ids without loading or validating state', async () => {
-      const legacyId = 'wf-2026-05-04-abc123';
-      const stateFile = join(testDir, '.rundown', 'runs', `${legacyId}.json`);
-      const outputDir = join(testDir, '.rundown', 'runs', legacyId);
-      await fs.mkdir(outputDir, { recursive: true });
-      await fs.writeFile(stateFile, '{ this is not json');
-      await fs.writeFile(join(outputDir, 'stdout.txt'), 'legacy output');
-
-      await expect(manager.load(legacyId)).rejects.toThrow('Invalid RunId');
-      await expect(manager.delete(legacyId)).rejects.toThrow('Invalid RunId');
-
-      await manager.purgeNonCanonicalRunState(legacyId);
-
-      await expect(fs.access(stateFile)).rejects.toThrow();
-      await expect(fs.access(outputDir)).rejects.toThrow();
-    });
-
-    it('rejects unsafe ids in non-canonical cleanup', async () => {
-      await expect(manager.purgeNonCanonicalRunState('../escape')).rejects.toThrow('Invalid runId');
-    });
-
-    it('rejects canonical run ids in non-canonical cleanup', async () => {
-      await expect(manager.purgeNonCanonicalRunState(VALID_RUN_ID)).rejects.toThrow(
-        'expected non-canonical runId',
-      );
-    });
-  });
-
   describe('getChildRunbookResult', () => {
     it('should return pass when child has lifecycle completed', async () => {
       const child = await manager.create(

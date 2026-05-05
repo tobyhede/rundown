@@ -33,8 +33,11 @@ Authoritative TypeScript types: `packages/core/src/output/schema.ts`
 ```json
 {
   "id": "string",      // State file identifier
-  "runbook": "string", // Runbook filename
-  "status": "string",  // active, stashed, completed, stale, orphaned
+  "runbook": {         // Canonical runbook reference
+    "source": "project",
+    "path": "runbooks/deploy.runbook.md"
+  },
+  "status": "string",  // active, stashed, complete, stopped, inactive
   "step": "string",    // (optional) Current step position
   "total": number,     // (optional) Total steps
   "title": "string"    // (optional) Runbook title
@@ -470,15 +473,16 @@ No stashed runbook to restore.
 
 ## prune
 
-Prune uses the same `Runbook` format as `ls`, with status values like "stale" or "orphaned".
+Prune uses the same loaded `Runbook` format as `ls`. Raw state files that cannot
+be loaded as current v1 run state are ignored.
 
 ### `rd prune --dry-run`
 
 **Text:**
 ```text
 ID        STATUS     RUNBOOK                    TITLE
-abc123    stale      old-deploy.runbook.md      Old Deploy
-def456    orphaned   missing.runbook.md
+abc123    complete   deploy.runbook.md          Deploy
+def456    inactive   audit.runbook.md           Audit
 ```
 
 **JSON:**
@@ -486,14 +490,21 @@ def456    orphaned   missing.runbook.md
 [
   {
     "id": "abc123",
-    "status": "stale",
-    "runbook": "old-deploy.runbook.md",
-    "title": "Old Deploy"
+    "status": "complete",
+    "runbook": {
+      "source": "project",
+      "path": "runbooks/deploy.runbook.md"
+    },
+    "title": "Deploy"
   },
   {
     "id": "def456",
-    "status": "orphaned",
-    "runbook": "missing.runbook.md"
+    "status": "inactive",
+    "runbook": {
+      "source": "project",
+      "path": "runbooks/audit.runbook.md"
+    },
+    "title": "Audit"
   }
 ]
 ```
@@ -504,7 +515,9 @@ Both dry-run and actual prune output the same format.
 
 **Text:**
 ```text
-Pruned 2 stale state files.
+ID        STATUS     RUNBOOK                    TITLE
+abc123    complete   deploy.runbook.md          Deploy
+def456    inactive   audit.runbook.md           Audit
 ```
 
 **JSON:**
@@ -512,14 +525,21 @@ Pruned 2 stale state files.
 [
   {
     "id": "abc123",
-    "status": "stale",
-    "runbook": "old-deploy.runbook.md",
-    "title": "Old Deploy"
+    "status": "complete",
+    "runbook": {
+      "source": "project",
+      "path": "runbooks/deploy.runbook.md"
+    },
+    "title": "Deploy"
   },
   {
     "id": "def456",
-    "status": "orphaned",
-    "runbook": "missing.runbook.md"
+    "status": "inactive",
+    "runbook": {
+      "source": "project",
+      "path": "runbooks/audit.runbook.md"
+    },
+    "title": "Audit"
   }
 ]
 ```
