@@ -42,7 +42,16 @@ Read the plan at `{{ PlanPath }}`.
 - Explicitly deferred work or known limitations are documented and tracked
 
 
-## 4. Write the review
+## 4. Output Path
+- OUTPUTS
+  - ReviewPath {{ path "review-plan-structural-integrity.json" }}
+- PASS CONTINUE
+- FAIL STOP
+
+{{ path "review-plan-structural-integrity.json" }}
+
+
+## 5. Write the review
 - PASS CONTINUE
 - FAIL STOP
 
@@ -50,15 +59,11 @@ Write the review to the output path as JSON.
 Follow the review output schema.
 Ensure any validation issues have been resolved.
 
-```bash
-rdpath --file review-plan-structural-integrity-{{ RunId }}.json
-```
 
-
-## 5. Check Schema
+## 6. Check Schema
 - PASS COMPLETE
-- FAIL GOTO 4
+- FAIL GOTO 5
 
 ```bash
-rdx --check "$(rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file review-plan-structural-integrity-{{ RunId }}.json)"
+rdx --check "{{ ReviewPath }}"
 ```

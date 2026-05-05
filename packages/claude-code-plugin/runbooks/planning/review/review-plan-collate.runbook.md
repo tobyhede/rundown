@@ -44,24 +44,27 @@ Deduplicate equivalent findings — when multiple reviews identify the same issu
 The combined context may influence recommended actions.
 
 
-## 4. Write the collated review
+## 4. Output Path
 - OUTPUTS
   - ReviewPlanPath {{ path "review-plan-collated.json" }}
+- PASS CONTINUE
+- FAIL STOP
+
+{{ path "review-plan-collated.json" }}
+
+
+## 5. Write the collated review
 - PASS CONTINUE
 - FAIL STOP
 
 Write the collated review to the output path as JSON.
 Follow the review output schema.
 
-```bash
-rdpath --file review-plan-collated.json
-```
 
-
-## 5. Check Schema
+## 6. Check Schema
 - PASS COMPLETE
-- FAIL GOTO 4
+- FAIL GOTO 5
 
 ```bash
-rdx --check "$(rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file review-plan-collated.json)"
+rdx --check "{{ ReviewPlanPath }}"
 ```

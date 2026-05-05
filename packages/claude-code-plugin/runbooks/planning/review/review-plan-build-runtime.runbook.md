@@ -38,7 +38,16 @@ Read the plan at `{{ PlanPath }}`.
 - Changes won't break CI/CD pipelines and any pipeline modifications are included
 
 
-## 4. Write the review
+## 4. Output Path
+- OUTPUTS
+  - ReviewPath {{ path "review-plan-build-runtime.json" }}
+- PASS CONTINUE
+- FAIL STOP
+
+{{ path "review-plan-build-runtime.json" }}
+
+
+## 5. Write the review
 - PASS CONTINUE
 - FAIL STOP
 
@@ -46,15 +55,11 @@ Write the review to the output path as JSON.
 Follow the review output schema.
 Ensure any validation issues have been resolved.
 
-```bash
-rdpath --file review-plan-build-runtime-{{ RunId }}.json
-```
 
-
-## 5. Check Schema
+## 6. Check Schema
 - PASS COMPLETE
-- FAIL GOTO 4
+- FAIL GOTO 5
 
 ```bash
-rdx --check "$(rdpath --dir {{ WorkPath }} --ctx {{ ContextId }} --file review-plan-build-runtime-{{ RunId }}.json)"
+rdx --check "{{ ReviewPath }}"
 ```
