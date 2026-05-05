@@ -18,6 +18,7 @@ program
   .name('rdpath')
   .description('Assemble artifact paths with optional context scoping')
   .enablePositionalOptions()
+  .helpCommand(false)
   .option('--dir <path>', 'Base directory (defaults to $RD_WORK_PATH)')
   .option('--ctx <id>', 'Context scope (defaults to $RD_CONTEXT_ID)');
 
