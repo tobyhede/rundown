@@ -95,9 +95,8 @@ export async function appendArtifactManifestRecord(
   options: ArtifactPathOptions,
   record: unknown,
 ): Promise<void> {
-  const parsed = ArtifactRecordSchema.parse(record);
-  const location = manifestLocationForContext(options, parsed.contextId);
-  writeManifestLineSync(location.workRoot, location.manifestPath, parsed);
+  await Promise.resolve();
+  appendArtifactManifestRecordSync(options, record);
 }
 
 /**
@@ -263,8 +262,7 @@ export async function findArtifactMatches(
     });
   }
 
-  const latestMatches =
-    selector.query.latest?.includes('true') === true ? latestByGroup(matches) : matches;
+  const latestMatches = selector.query.latest?.includes('true') ? latestByGroup(matches) : matches;
 
   return latestMatches.sort((left, right) => left.record.uri.localeCompare(right.record.uri));
 }

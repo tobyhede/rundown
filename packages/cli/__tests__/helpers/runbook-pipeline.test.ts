@@ -7,6 +7,7 @@ import type {
   DelegationScanService,
   DelegationLock,
   RunbookState,
+  RunbookRef,
 } from '@rundown-org/core';
 import type {
   ParsedForClause,
@@ -343,9 +344,10 @@ beforeEach(() => {
   jest
     .mocked(createBridgedEmitter)
     .mockReturnValue({ emit: jest.fn() } as unknown as ReturnType<typeof createBridgedEmitter>);
-  jest
-    .mocked(core.RunbookRefSchema.parse)
-    .mockImplementation((ref: unknown) => ref as ReturnType<typeof core.RunbookRefSchema.parse>);
+  const runbookRefSchemaMock = core.RunbookRefSchema as unknown as {
+    parse: jest.MockedFunction<(ref: unknown) => RunbookRef>;
+  };
+  runbookRefSchemaMock.parse.mockImplementation((ref: unknown) => ref as RunbookRef);
   jest.mocked(resolveVariables).mockResolvedValue({
     vars: {},
     sources: {},
@@ -956,28 +958,26 @@ describe('prepareRunbook', () => {
   it('prepares source-root-relative bundled runbook refs', async () => {
     const originalBundledPath = process.env.BUNDLED_RUNBOOKS_PATH;
     process.env.BUNDLED_RUNBOOKS_PATH = '/repo/packages/cli/dist/runbooks';
-    let result: Awaited<ReturnType<typeof prepareRunbook>> | null = null;
-    try {
-      jest.mocked(resolveRunbookFile).mockResolvedValue({
-        path: '/repo/packages/cli/dist/runbooks/planning/review.runbook.md',
-        source: 'bundled' as const,
-      });
-      (
-        parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
-      ).mockReturnValue(mockParseResult());
+    const result = await (async (): ReturnType<typeof prepareRunbook> => {
+      try {
+        jest.mocked(resolveRunbookFile).mockResolvedValue({
+          path: '/repo/packages/cli/dist/runbooks/planning/review.runbook.md',
+          source: 'bundled' as const,
+        });
+        (
+          parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+        ).mockReturnValue(mockParseResult());
 
-      result = await prepareRunbook('review', {}, '/test');
-    } finally {
-      if (originalBundledPath === undefined) {
-        delete process.env.BUNDLED_RUNBOOKS_PATH;
-      } else {
-        process.env.BUNDLED_RUNBOOKS_PATH = originalBundledPath;
+        return await prepareRunbook('review', {}, '/test');
+      } finally {
+        if (originalBundledPath === undefined) {
+          delete process.env.BUNDLED_RUNBOOKS_PATH;
+        } else {
+          process.env.BUNDLED_RUNBOOKS_PATH = originalBundledPath;
+        }
       }
-    }
+    })();
 
-    if (result === null) {
-      throw new Error('prepareRunbook did not return a result');
-    }
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.prepared.runbookRef).toEqual({

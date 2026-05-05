@@ -104,7 +104,7 @@ describe('artifact URI utilities', () => {
     '.',
     '..',
     'nested/review.json',
-    'nested%2Freview.json',
+    encodeURIComponent('nested/review.json'),
     'with spaces.json',
   ])('rejects invalid artifact key %s', (key) => {
     expect(() => buildArtifactUri({ contextId: 'ctx1', runId: RUN_ID, key })).toThrow(

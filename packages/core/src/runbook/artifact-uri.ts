@@ -10,6 +10,8 @@ export const RUN_ID_PATTERN = /^wf_[a-f0-9]{32}$/;
 const TEMPLATE_MARKER_PATTERN = /{{.*}}/;
 const BARE_BUILTIN_PLACEHOLDERS = new Set(['ContextId', 'RunId']);
 
+type ArtifactQuery = Record<string, readonly string[] | undefined>;
+
 /**
  * Identity fields that uniquely address a concrete artifact.
  */
@@ -29,7 +31,7 @@ export interface ExactArtifactRef extends ArtifactIdentity {
   /** Discriminator for producer URIs that point to one exact artifact. */
   readonly kind: 'exact';
   /** Parsed query parameters. Always empty for exact refs. */
-  readonly query: Record<string, readonly string[]>;
+  readonly query: ArtifactQuery;
 }
 
 /**
@@ -39,7 +41,7 @@ export interface SelectorArtifactRef extends ArtifactIdentity {
   /** Discriminator for artifact search selectors. */
   readonly kind: 'selector';
   /** Parsed query parameters, grouped by key in source order. */
-  readonly query: Record<string, readonly string[]>;
+  readonly query: ArtifactQuery;
 }
 
 /**

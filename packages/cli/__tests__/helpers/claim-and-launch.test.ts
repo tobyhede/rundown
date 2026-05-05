@@ -1,5 +1,5 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import type { RunbookState, StepDelegation, TokenScanResult } from '@rundown-org/core';
+import type { RunbookRef, RunbookState, StepDelegation, TokenScanResult } from '@rundown-org/core';
 import type { RunPipelineContext } from '../../src/helpers/runbook-pipeline.js';
 import type * as VariableDiscoveryModule from '../../src/services/variable-discovery.js';
 import { assertVariant } from './assert-variant.js';
@@ -313,9 +313,10 @@ beforeEach(() => {
   jest.resetAllMocks();
   // Restore defaults after reset
   jest.mocked(core.runbooksDir).mockImplementation((cwd: string) => `${cwd}/.rundown/runbooks`);
-  jest
-    .mocked(core.RunbookRefSchema.parse)
-    .mockImplementation((ref: unknown) => ref as ReturnType<typeof core.RunbookRefSchema.parse>);
+  const runbookRefSchemaMock = core.RunbookRefSchema as unknown as {
+    parse: jest.MockedFunction<(ref: unknown) => RunbookRef>;
+  };
+  runbookRefSchemaMock.parse.mockImplementation((ref: unknown) => ref as RunbookRef);
   jest.mocked(core.hashDelegationToken).mockReturnValue(MOCK_TOKEN_HASH);
   jest.mocked(core.truncateDelegationToken).mockImplementation((token: string) => {
     const prefix = 'rdtk_';

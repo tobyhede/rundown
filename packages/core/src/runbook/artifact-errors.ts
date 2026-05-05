@@ -31,5 +31,5 @@ export function formatArtifactManifestLineError(
   lineNumber: number,
   reason: string,
 ): string {
-  return `${manifestPath}:${lineNumber}: ${reason}`;
+  return `${manifestPath}:${String(lineNumber)}: ${reason}`;
 }

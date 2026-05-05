@@ -212,20 +212,20 @@ describe('artifact manifest storage', () => {
     const cwd = await tempCwd();
     const options = optionsFor(cwd);
 
-    expect(() =>
-      appendArtifactManifestRecordSync(options, { ...record, contextId: '../escape' }),
-    ).toThrow(/Invalid contextId/);
+    expect(() => {
+      appendArtifactManifestRecordSync(options, { ...record, contextId: '../escape' });
+    }).toThrow(/Invalid contextId/);
     await expect(
       appendArtifactManifestRecord(options, { ...record, contextId: 'ctx/slash' }),
     ).rejects.toThrow(/Invalid contextId/);
-    expect(() =>
-      appendArtifactManifestRecordSync(options, { ...record, runId: SECOND_RUN_ID }),
-    ).toThrow(ARTIFACT_ERROR_TEXT.URI_RUN_ID_MISMATCH);
+    expect(() => {
+      appendArtifactManifestRecordSync(options, { ...record, runId: SECOND_RUN_ID });
+    }).toThrow(ARTIFACT_ERROR_TEXT.URI_RUN_ID_MISMATCH);
     await expect(
       appendArtifactManifestRecord(options, {
         ...record,
         key: 'nested/review.json',
-        uri: `rd://artifacts/ctx1/runs/${RUN_ID}/nested%2Freview.json`,
+        uri: `rd://artifacts/ctx1/runs/${RUN_ID}/${encodeURIComponent('nested/review.json')}`,
       }),
     ).rejects.toThrow(/Invalid ArtifactKey/);
     await expect(readArtifactManifest(options, '../escape')).rejects.toThrow(/Invalid contextId/);
@@ -251,9 +251,9 @@ describe('artifact manifest storage', () => {
       throw error;
     }
 
-    expect(() => appendArtifactManifestRecordSync(optionsFor(cwd), record)).toThrow(
-      ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE,
-    );
+    expect(() => {
+      appendArtifactManifestRecordSync(optionsFor(cwd), record);
+    }).toThrow(ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE);
     expect(fs.existsSync(path.join(outside, 'manifest.jsonl'))).toBe(false);
   });
 
@@ -275,9 +275,9 @@ describe('artifact manifest storage', () => {
       throw error;
     }
 
-    expect(() => appendArtifactManifestRecordSync(optionsFor(cwd), record)).toThrow(
-      ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE,
-    );
+    expect(() => {
+      appendArtifactManifestRecordSync(optionsFor(cwd), record);
+    }).toThrow(ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE);
     expect(fs.existsSync(path.join(outside, '.rd-ctx1/manifest.jsonl'))).toBe(false);
   });
 });

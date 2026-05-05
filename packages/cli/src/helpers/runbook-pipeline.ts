@@ -320,7 +320,7 @@ function escapesRoot(relativePath: string): boolean {
 
 function findRunbooksAncestor(filePath: string): string | null {
   let current = path.dirname(path.resolve(filePath));
-  while (true) {
+  for (;;) {
     if (path.basename(current) === 'runbooks') {
       return current;
     }
