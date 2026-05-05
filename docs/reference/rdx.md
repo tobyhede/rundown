@@ -5,7 +5,7 @@ shipped with `@rundown-org/claude-code-plugin`. It defines the input contract,
 schema discovery and validation behavior, the structural rendering rules used
 to convert JSON to Markdown, output destinations, and exit semantics. For the
 authoring runbook surface and CLI conventions, see
-[docs/reference/cli.md](cli.md). For schema-design guidance for new schema
+[docs/reference/cli-help.md](cli-help.md). For schema-design guidance for new schema
 modules, see
 [docs/implement/claude-code-plugin/schema-design.md](../implement/claude-code-plugin/schema-design.md).
 
@@ -268,7 +268,7 @@ For non-object inputs:
 
 | Top-level type | Output |
 | --- | --- |
-| `null` or `undefined` | A single newline. |
+| `null` | A single newline. |
 | `string` | The string followed by a newline. |
 | `number`, `boolean` | The stringified value followed by a newline. |
 | Array | Result of array rendering at heading depth 1 with no number prefix. |
@@ -279,7 +279,7 @@ When rendering a value at a given heading depth:
 
 | JSON type | Rendered as |
 | --- | --- |
-| `null` or `undefined` | Omitted entirely. |
+| `null` | Omitted entirely. |
 | `string` | Paragraph followed by a blank line. |
 | `number`, `boolean` | Stringified paragraph followed by a blank line. |
 | Array of named objects | Numbered sections (see [§7.3](#73-named-object-arrays)). |
@@ -402,8 +402,9 @@ The `--output` flag MUST have no effect in `--check` mode.
 
 ## 9. Failure Modes
 
-`rdx` MUST exit with status `1` and write a single-line error to stderr,
-prefixed by `error: `, in each of the following cases.
+`rdx` MUST exit with status `1` and write stderr errors prefixed by `error:`.
+Non-validation failures MUST be single-line. Validation failures MUST emit the
+single-line summary shown below, followed by one or more indented issue lines.
 
 | Case | Error message form |
 | --- | --- |
@@ -414,7 +415,7 @@ prefixed by `error: `, in each of the following cases.
 | Resolved schema name not in registry | `error: Unknown schema: <name>` |
 | Schema name fails the format check | `error: Invalid schema name: <name>` |
 | `--check` supplied with no discoverable schema | `error: --check requires a schema (use $schema in JSON or --schema flag)` |
-| Validation failure | `error: schema validation failed (<schema>)` followed by indented issue lines |
+| Validation failure | `error: schema validation failed (<schema>)` followed by issue lines indented by two spaces |
 | Output file write failure | `error: <message>` |
 
 In render mode, the absence of a schema MUST emit the warning

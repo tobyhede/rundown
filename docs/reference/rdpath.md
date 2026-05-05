@@ -150,7 +150,7 @@ This rule mirrors the runtime's no-migration contract; see
 | Required | Yes, for `find`. |
 | Form | A glob pattern relative to the resolved scope directory. |
 | Absolute paths | Patterns satisfying `path.isAbsolute` MUST be rejected with `error: Invalid pattern: must be relative to the target directory`. |
-| Traversal | Patterns matching `(?:^|[/\\])\.\.(?:$|[/\\])` MUST be rejected with `error: Invalid pattern: must not contain ".." path segments`. |
+| Traversal | Patterns matching <code>(?:^&#124;[/\\])\.\.(?:$&#124;[/\\])</code> MUST be rejected with `error: Invalid pattern: must not contain ".." path segments`. |
 
 ### 6.5 `--allow-empty`
 
