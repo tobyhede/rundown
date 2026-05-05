@@ -411,7 +411,7 @@ single-line summary shown below, followed by one or more indented issue lines.
 | Input file missing | `error: file not found: <file>` |
 | Input file unreadable | `error: cannot read <file>: <message>` |
 | Input file is not valid JSON | `error: invalid JSON in <file>: <message>` |
-| Embedded `$schema` URI does not parse to a registered name | `error: unrecognized schema: <raw>` |
+| Embedded `$schema` value is neither a recognized Rundown schema URI nor a valid bare schema name | `error: unrecognized schema: <raw>` |
 | Resolved schema name not in registry | `error: Unknown schema: <name>` |
 | Schema name fails the format check | `error: Invalid schema name: <name>` |
 | `--check` supplied with no discoverable schema | `error: --check requires a schema (use $schema in JSON or --schema flag)` |
@@ -431,8 +431,8 @@ without validation. The warning MUST NOT cause a non-zero exit.
 3. Strip the `$schema` field from object inputs and capture the raw value.
 4. Resolve the effective schema name per [§5.3](#53-resolution-precedence).
 5. If the input contained a `$schema` value that did not parse to a name
-   accepted by [§5.1](#51-schema-uri-format) and `--schema` did not select a
-   schema, fail closed.
+   accepted by [§5.1](#51-schema-uri-format) or [§5.2](#52-bare-schema-names),
+   and `--schema` did not select a schema, fail closed.
 6. If no schema is selected, behave per [§5.6](#56-no-schema-discovered).
 7. If a schema is selected, load the validator from the registry and validate
    the stripped input.
