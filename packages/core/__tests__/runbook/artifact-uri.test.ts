@@ -1,4 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
+import * as fsp from 'node:fs/promises';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import { ARTIFACT_ERROR_TEXT } from '../../src/runbook/artifact-errors.js';
 import {
@@ -126,6 +128,36 @@ describe('artifact URI utilities', () => {
     expect(() => artifactUriToPath(EXACT_URI, { cwd: '/repo', workPath })).toThrow(
       ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE,
     );
+  });
+
+  it('rejects symlinked work path segments', async () => {
+    const cwd = await fsp.mkdtemp(path.join(os.tmpdir(), 'artifact-uri-'));
+    const outside = await fsp.mkdtemp(path.join(os.tmpdir(), 'artifact-uri-outside-'));
+    try {
+      await fsp.mkdir(path.join(cwd, '.rundown'), { recursive: true });
+      try {
+        await fsp.symlink(outside, path.join(cwd, '.rundown/work'), 'dir');
+      } catch (error) {
+        if (
+          typeof error === 'object' &&
+          error !== null &&
+          'code' in error &&
+          error.code === 'EPERM'
+        ) {
+          return;
+        }
+        throw error;
+      }
+
+      expect(() => artifactUriToPath(EXACT_URI, { cwd, workPath: '.rundown/work' })).toThrow(
+        ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE,
+      );
+    } finally {
+      await Promise.all([
+        fsp.rm(cwd, { force: true, recursive: true }),
+        fsp.rm(outside, { force: true, recursive: true }),
+      ]);
+    }
   });
 
   it('rejects unsupported selector shapes and template placeholders', () => {

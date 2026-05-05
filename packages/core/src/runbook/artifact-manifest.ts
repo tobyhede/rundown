@@ -231,7 +231,15 @@ export async function findArtifactMatches(
       continue;
     }
 
-    const artifactPath = artifactUriToPath(record.uri, options);
+    let artifactPath: string;
+    try {
+      artifactPath = artifactUriToPath(record.uri, options);
+    } catch (error) {
+      if (error instanceof Error && error.message === ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE) {
+        continue;
+      }
+      throw error;
+    }
     const workRoot = resolveContainedWorkRoot(options);
     if (!isExistingRegularContainedFile(workRoot, artifactPath)) {
       continue;
@@ -304,6 +312,7 @@ function resolveContainedWorkRoot(options: ArtifactPathOptions): string {
   const cwdRoot = path.resolve(options.cwd);
   const workRoot = path.resolve(cwdRoot, options.workPath);
   assertContained(cwdRoot, workRoot);
+  assertNoSymlinkSegments(cwdRoot, workRoot, { allowMissingTail: true });
   return workRoot;
 }
 

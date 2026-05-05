@@ -1,3 +1,4 @@
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { assertSafeId } from '../paths.js';
 import { ARTIFACT_ERROR_TEXT } from './artifact-errors.js';
@@ -156,6 +157,7 @@ export function artifactUriToPath(uri: string, options: ArtifactPathOptions): st
   if (escapesRoot(workRelativeToCwd)) {
     throw new Error(ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE);
   }
+  assertNoSymlinkSegments(cwdRoot, workRoot);
 
   const artifactPath = path.resolve(
     workRoot,
@@ -169,6 +171,7 @@ export function artifactUriToPath(uri: string, options: ArtifactPathOptions): st
   if (escapesRoot(relative)) {
     throw new Error(ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE);
   }
+  assertNoSymlinkSegments(cwdRoot, artifactPath);
 
   return artifactPath;
 }
@@ -194,6 +197,32 @@ function escapesRoot(relativePath: string): boolean {
     relativePath.startsWith(`..${path.sep}`) ||
     path.isAbsolute(relativePath)
   );
+}
+
+function assertNoSymlinkSegments(root: string, candidate: string): void {
+  const relative = path.relative(root, candidate);
+  if (relative === '') {
+    return;
+  }
+
+  let current = root;
+  for (const segment of relative.split(path.sep)) {
+    current = path.join(current, segment);
+    try {
+      if (fs.lstatSync(current).isSymbolicLink()) {
+        throw new Error(ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE);
+      }
+    } catch (error) {
+      if (isNodeErrorCode(error, 'ENOENT')) {
+        return;
+      }
+      throw error;
+    }
+  }
+}
+
+function isNodeErrorCode(error: unknown, code: string): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === code;
 }
 
 function parseArtifactPath(url: URL): ArtifactIdentity {

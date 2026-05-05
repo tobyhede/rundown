@@ -256,6 +256,30 @@ describe('artifact manifest storage', () => {
     );
     expect(fs.existsSync(path.join(outside, 'manifest.jsonl'))).toBe(false);
   });
+
+  it('rejects symlinked work roots before writing manifests', async () => {
+    const cwd = await tempCwd();
+    const outside = await tempCwd();
+    await fsp.mkdir(path.join(cwd, '.rundown'), { recursive: true });
+    try {
+      await fsp.symlink(outside, path.join(cwd, '.rundown/work'), 'dir');
+    } catch (error) {
+      if (
+        typeof error === 'object' &&
+        error !== null &&
+        'code' in error &&
+        error.code === 'EPERM'
+      ) {
+        return;
+      }
+      throw error;
+    }
+
+    expect(() => appendArtifactManifestRecordSync(optionsFor(cwd), record)).toThrow(
+      ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE,
+    );
+    expect(fs.existsSync(path.join(outside, '.rd-ctx1/manifest.jsonl'))).toBe(false);
+  });
 });
 
 describe('artifact selector resolution', () => {
