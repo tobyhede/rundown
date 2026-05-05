@@ -96,8 +96,9 @@ cases:
       - rd pass   # 1. Find plan → CONTINUE
       - rd pass   # 2. Read the output schema → CONTINUE
       - rd pass   # 3. Is the plan technically accurate? → CONTINUE
-      - rd pass   # 4. Write the review → CONTINUE
-      - rd pass   # 5. Check Schema → COMPLETE
+      - rd pass   # 4. Output Path → CONTINUE
+      - rd pass   # 5. Write the review → CONTINUE
+      - rd pass   # 6. Check Schema → COMPLETE
     result: COMPLETE
 
   review-tech-find-fail:
@@ -116,33 +117,36 @@ cases:
       - rd pass   # 1. Find plan → CONTINUE
       - rd pass   # 2. Read the output schema → CONTINUE
       - rd fail   # 3. Is the plan technically accurate? → CONTINUE (FAIL CONTINUE)
-      - rd pass   # 4. Write the review → CONTINUE
-      - rd pass   # 5. Check Schema → COMPLETE
+      - rd pass   # 4. Output Path → CONTINUE
+      - rd pass   # 5. Write the review → CONTINUE
+      - rd pass   # 6. Check Schema → COMPLETE
     result: COMPLETE
 
   review-tech-write-fail:
-    description: Write review fails at step 4 — stops
+    description: Write review fails at step 5 — stops
     file: runbooks/planning/review/review-plan-technical-accuracy.runbook.md
     commands:
       - rd run --prompted review-plan-technical-accuracy.runbook.md
       - rd pass   # 1. Find plan → CONTINUE
       - rd pass   # 2. Read the output schema → CONTINUE
       - rd pass   # 3. Is the plan technically accurate? → CONTINUE
-      - rd fail   # 4. Write the review → STOP
+      - rd pass   # 4. Output Path → CONTINUE
+      - rd fail   # 5. Write the review → STOP
     result: STOP
 
   review-tech-schema-fail-then-pass:
-    description: Schema check fails, GOTO 4 to revise, then passes — completes
+    description: Schema check fails, GOTO 5 to revise, then passes — completes
     file: runbooks/planning/review/review-plan-technical-accuracy.runbook.md
     commands:
       - rd run --prompted review-plan-technical-accuracy.runbook.md
       - rd pass   # 1. Find plan → CONTINUE
       - rd pass   # 2. Read the output schema → CONTINUE
       - rd pass   # 3. Is the plan technically accurate? → CONTINUE
-      - rd pass   # 4. Write the review → CONTINUE
-      - rd fail   # 5. Check Schema → GOTO 4
-      - rd pass   # 4. Write the review (revision) → CONTINUE
-      - rd pass   # 5. Check Schema (retry) → COMPLETE
+      - rd pass   # 4. Output Path → CONTINUE
+      - rd pass   # 5. Write the review → CONTINUE
+      - rd fail   # 6. Check Schema → GOTO 5
+      - rd pass   # 5. Write the review (revision) → CONTINUE
+      - rd pass   # 6. Check Schema (retry) → COMPLETE
     result: COMPLETE
 
   # --- review-plan-structural-integrity: 5 cases ---
@@ -155,8 +159,9 @@ cases:
       - rd pass   # 1. Find plan → CONTINUE
       - rd pass   # 2. Read the output schema → CONTINUE
       - rd pass   # 3. Is the plan structurally sound? → CONTINUE
-      - rd pass   # 4. Write the review → CONTINUE
-      - rd pass   # 5. Check Schema → COMPLETE
+      - rd pass   # 4. Output Path → CONTINUE
+      - rd pass   # 5. Write the review → CONTINUE
+      - rd pass   # 6. Check Schema → COMPLETE
     result: COMPLETE
 
   review-struct-find-fail:
@@ -175,33 +180,36 @@ cases:
       - rd pass   # 1. Find plan → CONTINUE
       - rd pass   # 2. Read the output schema → CONTINUE
       - rd fail   # 3. Is the plan structurally sound? → CONTINUE (FAIL CONTINUE)
-      - rd pass   # 4. Write the review → CONTINUE
-      - rd pass   # 5. Check Schema → COMPLETE
+      - rd pass   # 4. Output Path → CONTINUE
+      - rd pass   # 5. Write the review → CONTINUE
+      - rd pass   # 6. Check Schema → COMPLETE
     result: COMPLETE
 
   review-struct-write-fail:
-    description: Write review fails at step 4 — stops
+    description: Write review fails at step 5 — stops
     file: runbooks/planning/review/review-plan-structural-integrity.runbook.md
     commands:
       - rd run --prompted review-plan-structural-integrity.runbook.md
       - rd pass   # 1. Find plan → CONTINUE
       - rd pass   # 2. Read the output schema → CONTINUE
       - rd pass   # 3. Is the plan structurally sound? → CONTINUE
-      - rd fail   # 4. Write the review → STOP
+      - rd pass   # 4. Output Path → CONTINUE
+      - rd fail   # 5. Write the review → STOP
     result: STOP
 
   review-struct-schema-fail-then-pass:
-    description: Schema check fails, GOTO 4 to revise, then passes — completes
+    description: Schema check fails, GOTO 5 to revise, then passes — completes
     file: runbooks/planning/review/review-plan-structural-integrity.runbook.md
     commands:
       - rd run --prompted review-plan-structural-integrity.runbook.md
       - rd pass   # 1. Find plan → CONTINUE
       - rd pass   # 2. Read the output schema → CONTINUE
       - rd pass   # 3. Is the plan structurally sound? → CONTINUE
-      - rd pass   # 4. Write the review → CONTINUE
-      - rd fail   # 5. Check Schema → GOTO 4
-      - rd pass   # 4. Write the review (revision) → CONTINUE
-      - rd pass   # 5. Check Schema (retry) → COMPLETE
+      - rd pass   # 4. Output Path → CONTINUE
+      - rd pass   # 5. Write the review → CONTINUE
+      - rd fail   # 6. Check Schema → GOTO 5
+      - rd pass   # 5. Write the review (revision) → CONTINUE
+      - rd pass   # 6. Check Schema (retry) → COMPLETE
     result: COMPLETE
 
   # --- review-plan-build-runtime: 5 cases ---
@@ -214,8 +222,9 @@ cases:
       - rd pass   # 1. Find plan → CONTINUE
       - rd pass   # 2. Read the output schema → CONTINUE
       - rd pass   # 3. Are build and runtime concerns addressed? → CONTINUE
-      - rd pass   # 4. Write the review → CONTINUE
-      - rd pass   # 5. Check Schema → COMPLETE
+      - rd pass   # 4. Output Path → CONTINUE
+      - rd pass   # 5. Write the review → CONTINUE
+      - rd pass   # 6. Check Schema → COMPLETE
     result: COMPLETE
 
   review-build-find-fail:
@@ -234,33 +243,36 @@ cases:
       - rd pass   # 1. Find plan → CONTINUE
       - rd pass   # 2. Read the output schema → CONTINUE
       - rd fail   # 3. Are build and runtime concerns addressed? → CONTINUE (FAIL CONTINUE)
-      - rd pass   # 4. Write the review → CONTINUE
-      - rd pass   # 5. Check Schema → COMPLETE
+      - rd pass   # 4. Output Path → CONTINUE
+      - rd pass   # 5. Write the review → CONTINUE
+      - rd pass   # 6. Check Schema → COMPLETE
     result: COMPLETE
 
   review-build-write-fail:
-    description: Write review fails at step 4 — stops
+    description: Write review fails at step 5 — stops
     file: runbooks/planning/review/review-plan-build-runtime.runbook.md
     commands:
       - rd run --prompted review-plan-build-runtime.runbook.md
       - rd pass   # 1. Find plan → CONTINUE
       - rd pass   # 2. Read the output schema → CONTINUE
       - rd pass   # 3. Are build and runtime concerns addressed? → CONTINUE
-      - rd fail   # 4. Write the review → STOP
+      - rd pass   # 4. Output Path → CONTINUE
+      - rd fail   # 5. Write the review → STOP
     result: STOP
 
   review-build-schema-fail-then-pass:
-    description: Schema check fails, GOTO 4 to revise, then passes — completes
+    description: Schema check fails, GOTO 5 to revise, then passes — completes
     file: runbooks/planning/review/review-plan-build-runtime.runbook.md
     commands:
       - rd run --prompted review-plan-build-runtime.runbook.md
       - rd pass   # 1. Find plan → CONTINUE
       - rd pass   # 2. Read the output schema → CONTINUE
       - rd pass   # 3. Are build and runtime concerns addressed? → CONTINUE
-      - rd pass   # 4. Write the review → CONTINUE
-      - rd fail   # 5. Check Schema → GOTO 4
-      - rd pass   # 4. Write the review (revision) → CONTINUE
-      - rd pass   # 5. Check Schema (retry) → COMPLETE
+      - rd pass   # 4. Output Path → CONTINUE
+      - rd pass   # 5. Write the review → CONTINUE
+      - rd fail   # 6. Check Schema → GOTO 5
+      - rd pass   # 5. Write the review (revision) → CONTINUE
+      - rd pass   # 6. Check Schema (retry) → COMPLETE
     result: COMPLETE
 
   # --- review-plan-risk-safety: 5 cases ---
@@ -273,8 +285,9 @@ cases:
       - rd pass   # 1. Find plan → CONTINUE
       - rd pass   # 2. Read the output schema → CONTINUE
       - rd pass   # 3. Is the plan safe and risk-free? → CONTINUE
-      - rd pass   # 4. Write the review → CONTINUE
-      - rd pass   # 5. Check Schema → COMPLETE
+      - rd pass   # 4. Output Path → CONTINUE
+      - rd pass   # 5. Write the review → CONTINUE
+      - rd pass   # 6. Check Schema → COMPLETE
     result: COMPLETE
 
   review-risk-find-fail:
@@ -293,33 +306,36 @@ cases:
       - rd pass   # 1. Find plan → CONTINUE
       - rd pass   # 2. Read the output schema → CONTINUE
       - rd fail   # 3. Is the plan safe and risk-free? → CONTINUE (FAIL CONTINUE)
-      - rd pass   # 4. Write the review → CONTINUE
-      - rd pass   # 5. Check Schema → COMPLETE
+      - rd pass   # 4. Output Path → CONTINUE
+      - rd pass   # 5. Write the review → CONTINUE
+      - rd pass   # 6. Check Schema → COMPLETE
     result: COMPLETE
 
   review-risk-write-fail:
-    description: Write review fails at step 4 — stops
+    description: Write review fails at step 5 — stops
     file: runbooks/planning/review/review-plan-risk-safety.runbook.md
     commands:
       - rd run --prompted review-plan-risk-safety.runbook.md
       - rd pass   # 1. Find plan → CONTINUE
       - rd pass   # 2. Read the output schema → CONTINUE
       - rd pass   # 3. Is the plan safe and risk-free? → CONTINUE
-      - rd fail   # 4. Write the review → STOP
+      - rd pass   # 4. Output Path → CONTINUE
+      - rd fail   # 5. Write the review → STOP
     result: STOP
 
   review-risk-schema-fail-then-pass:
-    description: Schema check fails, GOTO 4 to revise, then passes — completes
+    description: Schema check fails, GOTO 5 to revise, then passes — completes
     file: runbooks/planning/review/review-plan-risk-safety.runbook.md
     commands:
       - rd run --prompted review-plan-risk-safety.runbook.md
       - rd pass   # 1. Find plan → CONTINUE
       - rd pass   # 2. Read the output schema → CONTINUE
       - rd pass   # 3. Is the plan safe and risk-free? → CONTINUE
-      - rd pass   # 4. Write the review → CONTINUE
-      - rd fail   # 5. Check Schema → GOTO 4
-      - rd pass   # 4. Write the review (revision) → CONTINUE
-      - rd pass   # 5. Check Schema (retry) → COMPLETE
+      - rd pass   # 4. Output Path → CONTINUE
+      - rd pass   # 5. Write the review → CONTINUE
+      - rd fail   # 6. Check Schema → GOTO 5
+      - rd pass   # 5. Write the review (revision) → CONTINUE
+      - rd pass   # 6. Check Schema (retry) → COMPLETE
     result: COMPLETE
 
   # --- review-plan-collate: 5 cases ---
@@ -332,8 +348,9 @@ cases:
       - rd pass   # 1. Find reviews → CONTINUE
       - rd pass   # 2. Read the output schema → CONTINUE
       - rd pass   # 3. Collate the review findings → CONTINUE
-      - rd pass   # 4. Write the collated review → CONTINUE
-      - rd pass   # 5. Check Schema → COMPLETE
+      - rd pass   # 4. Output Path → CONTINUE
+      - rd pass   # 5. Write the collated review → CONTINUE
+      - rd pass   # 6. Check Schema → COMPLETE
     result: COMPLETE
 
   collate-no-reviews-found:
@@ -355,26 +372,28 @@ cases:
     result: STOP
 
   collate-write-fail:
-    description: Write collated review fails at step 4 — stops
+    description: Write collated review fails at step 5 — stops
     file: runbooks/planning/review/review-plan-collate.runbook.md
     commands:
       - rd run --prompted review-plan-collate.runbook.md
       - rd pass   # 1. Find reviews → CONTINUE
       - rd pass   # 2. Read the output schema → CONTINUE
       - rd pass   # 3. Collate the review findings → CONTINUE
-      - rd fail   # 4. Write the collated review → STOP
+      - rd pass   # 4. Output Path → CONTINUE
+      - rd fail   # 5. Write the collated review → STOP
     result: STOP
 
   collate-schema-fail-then-pass:
-    description: Schema check fails, GOTO 4 to revise, then passes — completes
+    description: Schema check fails, GOTO 5 to revise, then passes — completes
     file: runbooks/planning/review/review-plan-collate.runbook.md
     commands:
       - rd run --prompted review-plan-collate.runbook.md
       - rd pass   # 1. Find reviews → CONTINUE
       - rd pass   # 2. Read the output schema → CONTINUE
       - rd pass   # 3. Collate the review findings → CONTINUE
-      - rd pass   # 4. Write the collated review → CONTINUE
-      - rd fail   # 5. Check Schema → GOTO 4
-      - rd pass   # 4. Write the collated review (revision) → CONTINUE
-      - rd pass   # 5. Check Schema (retry) → COMPLETE
+      - rd pass   # 4. Output Path → CONTINUE
+      - rd pass   # 5. Write the collated review → CONTINUE
+      - rd fail   # 6. Check Schema → GOTO 5
+      - rd pass   # 5. Write the collated review (revision) → CONTINUE
+      - rd pass   # 6. Check Schema (retry) → COMPLETE
     result: COMPLETE
