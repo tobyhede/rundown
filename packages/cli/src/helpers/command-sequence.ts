@@ -8,6 +8,7 @@
  */
 
 import { spawn } from 'node:child_process';
+import type { RunbookRef } from '@rundown-org/core';
 import { parse as shellParse } from 'shell-quote';
 import type { ErrorAssertion, StepAssertion } from '../schemas/scenarios.js';
 
@@ -26,7 +27,7 @@ export interface CapturedTransition {
   /** Whether this transition resulted from aggregation (deferred result evaluation). */
   aggregated?: boolean;
   /** Runbook that produced this transition (from event envelope). */
-  runbook?: { name?: string; path?: string };
+  runbook?: RunbookRef;
   /** Present for delegated/nested child runs — identifies the delegating parent step. */
   parentStepId?: string;
 }
@@ -326,7 +327,7 @@ function processJsonObject(
       result: obj.result as 'PASS' | 'FAIL',
       command: obj.command as string | undefined,
       aggregated: obj.aggregated === true ? true : undefined,
-      runbook: obj.runbook as { name?: string; path?: string } | undefined,
+      runbook: obj.runbook as RunbookRef | undefined,
       parentStepId: typeof obj.parentStepId === 'string' ? obj.parentStepId : undefined,
     });
   } else if (obj.type === 'runbook_completed') {
@@ -454,10 +455,8 @@ function eventMatchesAssertion(event: CapturedTransition, assertion: StepAsserti
   if (assertion.aggregated !== undefined && event.aggregated !== assertion.aggregated) return false;
   if (assertion.runbook !== undefined) {
     const rb = event.runbook;
-    if (rb?.path !== undefined) {
+    if (rb !== undefined) {
       if (!rb.path.endsWith(assertion.runbook)) return false;
-    } else if (rb?.name !== undefined) {
-      if (!rb.name.endsWith(assertion.runbook)) return false;
     } else {
       return false;
     }

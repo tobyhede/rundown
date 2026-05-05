@@ -4,7 +4,10 @@ import { ExecutionEventEmitter, JSONSubscriber } from '@rundown-org/core';
 
 describe('event output integration', () => {
   it('JSONSubscriber captures all event types', () => {
-    const emitter = new ExecutionEventEmitter('wf-test', { name: 'test' });
+    const emitter = new ExecutionEventEmitter('wf-test', {
+      source: 'project',
+      path: 'test.runbook.md',
+    });
     const subscriber = new JSONSubscriber();
     emitter.subscribe(subscriber.handle);
 
@@ -60,7 +63,10 @@ describe('event output integration', () => {
   });
 
   it('counts failed commands correctly', () => {
-    const emitter = new ExecutionEventEmitter('wf-test', { name: 'test' });
+    const emitter = new ExecutionEventEmitter('wf-test', {
+      source: 'project',
+      path: 'test.runbook.md',
+    });
     const subscriber = new JSONSubscriber();
     emitter.subscribe(subscriber.handle);
 
@@ -86,7 +92,10 @@ describe('event output integration', () => {
   });
 
   it('tracks policy denied commands', () => {
-    const emitter = new ExecutionEventEmitter('wf-test', { name: 'test' });
+    const emitter = new ExecutionEventEmitter('wf-test', {
+      source: 'project',
+      path: 'test.runbook.md',
+    });
     const subscriber = new JSONSubscriber();
     emitter.subscribe(subscriber.handle);
 
@@ -117,7 +126,10 @@ describe('event output integration', () => {
   });
 
   it('tracks event sequence numbers', () => {
-    const emitter = new ExecutionEventEmitter('wf-test', { name: 'test' });
+    const emitter = new ExecutionEventEmitter('wf-test', {
+      source: 'project',
+      path: 'test.runbook.md',
+    });
     const subscriber = new JSONSubscriber();
     emitter.subscribe(subscriber.handle);
 
@@ -140,7 +152,10 @@ describe('event output integration', () => {
   });
 
   it('includes ISO timestamps on all events', () => {
-    const emitter = new ExecutionEventEmitter('wf-test', { name: 'test' });
+    const emitter = new ExecutionEventEmitter('wf-test', {
+      source: 'project',
+      path: 'test.runbook.md',
+    });
     const subscriber = new JSONSubscriber();
     emitter.subscribe(subscriber.handle);
 

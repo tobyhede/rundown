@@ -12,7 +12,7 @@ describe('RunbookEventV1 types', () => {
       type: 'RUNBOOK_STARTED',
       ts: '2026-01-21T00:00:00.000Z',
       runbookId: 'wf-2026-01-21-abc123',
-      runbook: { name: 'test', path: '.rundown/runbooks/test.md' },
+      runbook: { source: 'project', path: 'test.runbook.md' },
       seq: 1,
       payload: {
         title: 'Test Runbook',
@@ -30,7 +30,7 @@ describe('RunbookEventV1 types', () => {
       type: 'STEP_TRANSITIONED',
       ts: '2026-01-21T00:00:00.000Z',
       runbookId: 'wf-2026-01-21-abc123',
-      runbook: { name: 'test', path: '.rundown/runbooks/test.md' },
+      runbook: { source: 'project', path: 'test.runbook.md' },
       seq: 2,
       payload: {
         action: 'CONTINUE',

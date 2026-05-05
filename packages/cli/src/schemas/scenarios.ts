@@ -8,7 +8,7 @@ import { z } from 'zod';
  * YAML's tendency to parse `1.10` as a float.
  *
  * The `runbook` field is matched as a suffix against the transition's
- * `runbook.path` (falling back to `runbook.name`). For example,
+ * the canonical event `runbook.path`. For example,
  * `"child.runbook.md"` matches `"/abs/path/child.runbook.md"`.
  */
 export const StepAssertionSchema = z.object({

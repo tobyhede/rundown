@@ -19,7 +19,7 @@ describe('JSONSubscriber', () => {
       type,
       ts: new Date().toISOString(),
       runbookId: 'wf-test',
-      runbook: { name: 'test', path: 'test.md' },
+      runbook: { source: 'project', path: 'test.runbook.md' },
       seq,
       payload,
     }) as Extract<RunbookEventV1, { type: T }>;
@@ -230,7 +230,7 @@ describe('JSONSubscriber', () => {
     const summary = subscriber.getSummary();
     expect(summary.status).toBe('running');
     expect(summary.runbookId).toBe('wf-test');
-    expect(summary.runbook).toBe('test.md');
+    expect(summary.runbook).toBe('test.runbook.md');
     expect(summary.finalPosition).toBeUndefined();
     expect(summary.message).toBeUndefined();
   });

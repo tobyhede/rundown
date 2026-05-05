@@ -19,7 +19,10 @@ describe('Subscriber method binding', () => {
       // This test verifies that passing jsonSubscriber.handle directly
       // to emitter.subscribe() works correctly - the handle method must
       // retain access to this.events to push events.
-      const emitter = new ExecutionEventEmitter('wf-test', { name: 'test', path: 'test.md' });
+      const emitter = new ExecutionEventEmitter('wf-test', {
+        source: 'project',
+        path: 'test.runbook.md',
+      });
       const jsonSubscriber = new JSONSubscriber();
 
       // Pass handle directly as callback - this is how fail.ts uses it
@@ -36,7 +39,10 @@ describe('Subscriber method binding', () => {
     });
 
     it('collects multiple events when handle is passed as callback', () => {
-      const emitter = new ExecutionEventEmitter('wf-test', { name: 'test', path: 'test.md' });
+      const emitter = new ExecutionEventEmitter('wf-test', {
+        source: 'project',
+        path: 'test.runbook.md',
+      });
       const jsonSubscriber = new JSONSubscriber();
 
       emitter.subscribe(jsonSubscriber.handle);
@@ -66,7 +72,10 @@ describe('Subscriber method binding', () => {
       // This test verifies that passing cliSubscriber.handle directly
       // to emitter.subscribe() works correctly - the handle method must
       // retain access to this.writer and this.handleXxx methods.
-      const emitter = new ExecutionEventEmitter('wf-test', { name: 'test', path: 'test.md' });
+      const emitter = new ExecutionEventEmitter('wf-test', {
+        source: 'project',
+        path: 'test.runbook.md',
+      });
       const output: string[] = [];
       const mockWriter = {
         writeLine: (text?: string) => {
@@ -104,7 +113,10 @@ describe('Subscriber method binding', () => {
     });
 
     it('handles multiple event types when handle is passed as callback', () => {
-      const emitter = new ExecutionEventEmitter('wf-test', { name: 'test', path: 'test.md' });
+      const emitter = new ExecutionEventEmitter('wf-test', {
+        source: 'project',
+        path: 'test.runbook.md',
+      });
       const output: string[] = [];
       const mockWriter = {
         writeLine: (text?: string) => {

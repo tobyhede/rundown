@@ -32,7 +32,7 @@ export function createBridgedEmitter(
   output: OutputEmitter,
 ): ExecutionEventEmitter {
   const emitter = new ExecutionEventEmitter(runbookState.id, {
-    name: runbookState.runbook,
+    source: 'project',
     path: runbookState.runbookPath,
   });
 

@@ -12,7 +12,7 @@ describe('createBridgedEmitter', () => {
     return {
       id: 'wf-test',
       runbook: 'test-runbook',
-      runbookPath: 'test-runbook.md',
+      runbookPath: 'test-runbook.runbook.md',
       step: '1',
       stepName: 'Step 1',
       retryCount: 0,
@@ -57,9 +57,9 @@ describe('createBridgedEmitter', () => {
     expect(event.runbookId).toBe('wf-test');
   });
 
-  it('uses runbook name and path from state', () => {
+  it('adapts state runbook path into a canonical project runbook reference', () => {
     const { output, executionEventFn } = makeOutput();
-    const state = makeState({ runbook: 'my-book', runbookPath: 'path/to/my-book.md' });
+    const state = makeState({ runbook: 'my-book', runbookPath: 'path/to/my-book.runbook.md' });
     const emitter = createBridgedEmitter(state, output as unknown as OutputEmitter);
 
     emitter.emit('RUNBOOK_STARTED', {
@@ -69,6 +69,6 @@ describe('createBridgedEmitter', () => {
     });
 
     const event = executionEventFn.mock.calls[0]?.[0];
-    expect(event.runbook).toEqual({ name: 'my-book', path: 'path/to/my-book.md' });
+    expect(event.runbook).toEqual({ source: 'project', path: 'path/to/my-book.runbook.md' });
   });
 });

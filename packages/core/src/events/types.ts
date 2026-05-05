@@ -1,16 +1,10 @@
 import type { StepPosition } from '../cli/types.js';
+import type { RunbookRef } from '../runbook/runbook-ref.js';
 import type { ActionType } from '../runbook/transition-kernel.js';
 
 // Re-export StepPosition for backwards compatibility and event payload typing
 export type { StepPosition };
-
-/**
- * Runbook identification in events.
- */
-export interface RunbookRef {
-  readonly name?: string;
-  readonly path?: string;
-}
+export type { RunbookRef };
 
 /**
  * Base envelope fields present on every event.
