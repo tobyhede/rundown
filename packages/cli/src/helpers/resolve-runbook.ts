@@ -80,20 +80,23 @@ async function resolveAbsolutePath(cwd: string, filename: string): Promise<Resol
     return null;
   }
 
-  if (pathWithin(runbooksDir(cwd), filename)) {
-    return { path: filename, source: 'project' };
+  const projectRunbooksDir = runbooksDir(cwd);
+  if (pathWithin(projectRunbooksDir, filename)) {
+    return { path: filename, source: 'project', sourceRoot: cwd };
   }
 
   const pluginRoot = getPluginRoot();
-  if (pluginRoot && pathWithin(path.join(pluginRoot, 'runbooks'), filename)) {
-    return { path: filename, source: 'plugin' };
+  const pluginRunbooksDir = pluginRoot ? path.join(pluginRoot, 'runbooks') : null;
+  if (pluginRunbooksDir && pathWithin(pluginRunbooksDir, filename)) {
+    return { path: filename, source: 'plugin', sourceRoot: pluginRunbooksDir };
   }
 
-  if (pathWithin(getBundledRunbooksPath(), filename)) {
-    return { path: filename, source: 'bundled' };
+  const bundledRunbooksDir = getBundledRunbooksPath();
+  if (pathWithin(bundledRunbooksDir, filename)) {
+    return { path: filename, source: 'bundled', sourceRoot: bundledRunbooksDir };
   }
 
-  return { path: filename, source: 'project' };
+  return { path: filename, source: 'project', sourceRoot: cwd };
 }
 
 /**
