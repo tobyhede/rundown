@@ -47,7 +47,7 @@ evaluator, or the file formats consumed by tools that read paths emitted by
 | Package | The tool MUST be packaged as `@rundown-org/claude-code-plugin`. |
 | Binary | The tool MUST be exposed as `rdpath`. |
 | Subcommand surface | The tool MUST expose exactly the subcommands defined in [§4](#4-subcommand-surface). |
-| Output streams | Successful output MUST be written to stdout. Errors MUST be written to stderr with the prefix `error: `. |
+| Output streams | Successful output MUST be written to stdout. Errors MUST be written to stderr with the prefix `error:` followed by a single space. |
 
 <a id="4-subcommand-surface"></a>
 
@@ -253,7 +253,7 @@ and the data-source resolution rule in
 The "exit `1` on empty" behavior is intentional and supports runbook flow
 control: a step's `PASS CONTINUE` / `FAIL` handler can branch on whether any
 matching files exist. An empty stderr distinguishes "zero matches" from a real
-error, which always writes to stderr with the `error: ` prefix.
+error, which always writes to stderr with the `error:` prefix.
 
 ## 10. Output Format
 
