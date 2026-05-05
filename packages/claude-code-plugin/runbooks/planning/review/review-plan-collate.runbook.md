@@ -66,5 +66,5 @@ Follow the review output schema.
 - FAIL GOTO 5
 
 ```bash
-rdx --check "{{ ReviewPlanPath }}"
+rdx --check {{ ReviewPlanPath }}
 ```

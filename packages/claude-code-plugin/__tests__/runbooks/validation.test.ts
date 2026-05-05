@@ -67,4 +67,16 @@ describe('Built-in Runbook Validation', () => {
       expect(runbook.steps.length).toBeGreaterThan(0);
     });
   });
+
+  it('does not double-quote rdx path templates in command blocks', () => {
+    const offenders = runbookEntries
+      .map(([relativePath, runbookPath]) => ({
+        relativePath,
+        content: readFileSync(runbookPath, 'utf-8'),
+      }))
+      .filter(({ content }) => /rdx --check\s+"{{\s*[^}]+\s*}}"/.test(content))
+      .map(({ relativePath }) => relativePath);
+
+    expect(offenders).toEqual([]);
+  });
 });
