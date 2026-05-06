@@ -650,7 +650,8 @@ inputs:
     const { frontmatter, diagnostics } = extractFrontmatter(markdown);
     expect(frontmatter?.inputs).toEqual(['environment']);
     expect(diagnostics).toHaveLength(1);
-    expect(diagnostics[0].message).toMatch(new RegExp(`${name}.*reserved`, 'i'));
+    expect(diagnostics[0].message).toContain(name);
+    expect(diagnostics[0].message).toMatch(/reserved/i);
   });
 
   it('treats vars: as unknown passthrough (not a known field)', () => {

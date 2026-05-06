@@ -6,8 +6,9 @@ import { RunbookStateManager } from '../../src/runbook/state.js';
 import { SessionService } from '../../src/runbook/session-service.js';
 import { assertClaimId } from '../../src/runbook/claim-id.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
-import type { Step, Runbook } from '../../src/runbook/types.js';
+import type { Step, Runbook, RunId } from '../../src/runbook/types.js';
 import { makeBaseStep } from '../helpers/step-factories.js';
+import { brandRunIdForTest } from '../helpers/effective-vars.js';
 
 describe('SessionService', () => {
   let testDir: string;
@@ -150,7 +151,7 @@ describe('SessionService', () => {
 
   describe('claim-id runbook targeting', () => {
     const linkageFor = (
-      parentId: string,
+      parentId: RunId,
       fill: string,
     ): Parameters<SessionService['claimRunbook']>[1] => ({
       kind: 'delegation' as const,
@@ -230,7 +231,8 @@ describe('SessionService', () => {
       );
       const first = assertClaimed(await sessionService.claimRunbook(existingChild.id, linkage));
 
-      const second = assertClaimed(await sessionService.claimRunbook('missing-new-child', linkage));
+      const missingChildId = brandRunIdForTest(`rd_${'f'.repeat(32)}`);
+      const second = assertClaimed(await sessionService.claimRunbook(missingChildId, linkage));
 
       expect(second.claim.claimId).toBe(first.claim.claimId);
       expect(second.claim.childRunId).toBe(existingChild.id);

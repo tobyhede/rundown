@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { RUN_ID_PATTERN } from '@rundown-org/core';
 import { createTestWorkspace, runCliInProcess, type TestWorkspace } from '../helpers/test-utils.js';
 
-const RUN_ID_PATTERN = /rd_[a-f0-9]{32}/;
-
 function expectRunId(text: string): void {
-  expect(text).toMatch(new RegExp(`\\b${RUN_ID_PATTERN.source}\\b`));
+  const unanchoredRunIdSource = RUN_ID_PATTERN.source.replace(/^\^/, '').replace(/\$$/, '');
+  expect(text).toMatch(new RegExp(`\\b${unanchoredRunIdSource}\\b`));
 }
 
 describe('output format integration tests', () => {

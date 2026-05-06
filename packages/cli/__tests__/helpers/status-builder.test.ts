@@ -3,6 +3,7 @@ import { mockErrorHelpers } from './mock-error-helpers.js';
 import {
   brandDelegationTokenHashForTest,
   brandInitialTemplateVarsForTest,
+  brandRunIdForTest,
   brandStoredOutputsForTest,
 } from './brand-helpers.js';
 import { mockFn } from './typed-mocks.js';
@@ -10,6 +11,9 @@ import { mockFn } from './typed-mocks.js';
 import type * as CoreModule from '@rundown-org/core';
 import type { BaseStep, ResolvedStep } from '@rundown-org/parser';
 import type * as ExecutionModule from '../../src/services/execution.js';
+
+const PARENT_RUN_ID = brandRunIdForTest(`rd_${'9'.repeat(32)}`);
+const SECOND_PARENT_RUN_ID = brandRunIdForTest(`rd_${'a'.repeat(32)}`);
 
 // Mock @rundown-org/core
 jest.unstable_mockModule('@rundown-org/core', () => {
@@ -287,7 +291,7 @@ describe('parentLinkage projection', () => {
         tokenHash: brandDelegationTokenHashForTest(
           'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
         ),
-        parentRunId: 'parent-run-1',
+        parentRunId: PARENT_RUN_ID,
         parentStepId: '1.1',
         parentStep: '1',
       },
@@ -298,7 +302,7 @@ describe('parentLinkage projection', () => {
     expect(result.parentLinkage).toEqual({
       kind: 'delegation',
       tokenHash: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
-      parentRunId: 'parent-run-1',
+      parentRunId: PARENT_RUN_ID,
       parentStepId: '1.1',
       parentStep: '1',
     });
@@ -308,7 +312,7 @@ describe('parentLinkage projection', () => {
     const state = makeState({
       parentLinkage: {
         kind: 'inline',
-        parentRunId: 'parent-run-1',
+        parentRunId: PARENT_RUN_ID,
         parentStepId: '1.1',
       },
     });
@@ -317,7 +321,7 @@ describe('parentLinkage projection', () => {
 
     expect(result.parentLinkage).toEqual({
       kind: 'inline',
-      parentRunId: 'parent-run-1',
+      parentRunId: PARENT_RUN_ID,
       parentStepId: '1.1',
     });
     expect(result.parentLinkage).not.toHaveProperty('tokenHash');
@@ -338,7 +342,7 @@ describe('parentLinkage projection', () => {
         tokenHash: brandDelegationTokenHashForTest(
           'sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210',
         ),
-        parentRunId: 'parent-run-2',
+        parentRunId: SECOND_PARENT_RUN_ID,
         parentStepId: '2.1',
       },
     });
@@ -348,7 +352,7 @@ describe('parentLinkage projection', () => {
     expect(result.parentLinkage).toEqual({
       kind: 'delegation',
       tokenHash: 'sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210',
-      parentRunId: 'parent-run-2',
+      parentRunId: SECOND_PARENT_RUN_ID,
       parentStepId: '2.1',
     });
   });

@@ -34,6 +34,8 @@ import { mockFn } from '../helpers/typed-mocks.js';
 type CheckPathFn = PolicyEvaluator['checkPath'];
 type RequestPermissionFn = PolicyPrompter['requestPermission'];
 
+const RESERVED_IDENTITY_KEYS = [BUILTIN_VARIABLES.RunId, BUILTIN_VARIABLES.RunbookRef] as const;
+
 describe('parseVarFlag', () => {
   it('should parse key=value format', () => {
     expect(parseVarFlag('test_command=npm test')).toEqual({
@@ -505,10 +507,47 @@ describe('resolveVariables', () => {
       'runid',
       'RunbookRef',
       'RUNBOOKREF',
-    ])('rejects runtime identity key "%s"', async (name) => {
+    ])('rejects runtime identity key "%s" from --input', async (name) => {
       await expect(resolveVariables({ input: [`${name}=shadow`] }, tmpDir)).rejects.toThrow(
         /reserved runtime variable/i,
       );
+    });
+
+    it.each(
+      RESERVED_IDENTITY_KEYS,
+    )('rejects runtime identity key "%s" from --input-json', async (name) => {
+      await expect(resolveVariables({ inputJson: [`${name}="shadow"`] }, tmpDir)).rejects.toThrow(
+        /reserved runtime variable/i,
+      );
+    });
+
+    it.each(
+      RESERVED_IDENTITY_KEYS,
+    )('rejects runtime identity key "%s" from --input-file', async (name) => {
+      const varFile = path.join(tmpDir, `${name}.yaml`);
+      await fs.writeFile(varFile, `${name}: shadow\n`);
+
+      await expect(resolveVariables({ inputFile: [varFile] }, tmpDir)).rejects.toThrow(
+        /reserved runtime variable/i,
+      );
+    });
+
+    it.each(
+      RESERVED_IDENTITY_KEYS,
+    )('ignores runtime identity key "%s" from RD_INPUT_*', async (name) => {
+      const envKey = `RD_INPUT_${name}`;
+      process.env[envKey] = 'shadow';
+
+      try {
+        const result = await resolveVariables({}, tmpDir);
+
+        expect(result.vars[name]).toBeUndefined();
+        expect(result.warnings.some((w) => w.includes(envKey) && w.includes('reserved'))).toBe(
+          true,
+        );
+      } finally {
+        delete process.env[envKey];
+      }
     });
 
     it('reports all reserved key violations in a single error', async () => {

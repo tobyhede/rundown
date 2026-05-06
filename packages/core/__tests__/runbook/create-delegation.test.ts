@@ -11,6 +11,7 @@ import type { ResolvedStep, AncestorSnapshot, StepDelegation } from '../../src/r
 import {
   brandEffectiveVarsForTest,
   brandInitialTemplateVarsForTest,
+  brandRunIdForTest,
 } from '../helpers/effective-vars.js';
 import {
   DEFAULT_TRANSITIONS,
@@ -20,6 +21,11 @@ import {
   makeState,
   makeSteps,
 } from './delegation-service-fixtures.js';
+
+const CLAIMED_RUN_ID = brandRunIdForTest(`rd_${'4'.repeat(32)}`);
+const COMPLETED_RUN_ID = brandRunIdForTest(`rd_${'5'.repeat(32)}`);
+const ANCESTOR_RUN_ID = brandRunIdForTest(`rd_${'6'.repeat(32)}`);
+const PARENT_RUN_ID = brandRunIdForTest(`rd_${'7'.repeat(32)}`);
 
 describe('createDelegation', () => {
   it('succeeds on a step with substeps', () => {
@@ -237,7 +243,7 @@ describe('createDelegation', () => {
       childRunbookPath: 'other-child.md',
       childRunbookRef: { source: 'project', path: 'other-child.md' },
       contextSnapshot: { vars: brandEffectiveVarsForTest({}), ancestors: [] },
-      childRunId: 'run_123',
+      childRunId: CLAIMED_RUN_ID,
       createdAt: '2026-02-27T10:00:00.000Z',
       cancelledAt: null,
     };
@@ -341,7 +347,7 @@ describe('createDelegation', () => {
   it('includes provided ancestors in snapshot', () => {
     const ancestors: readonly AncestorSnapshot[] = [
       {
-        runId: 'grandparent-1',
+        runId: ANCESTOR_RUN_ID,
         runbook: 'grandparent.md',
         step: '1',
         substep: null,
@@ -366,7 +372,7 @@ describe('createDelegation', () => {
     if (result.status !== 'created') return;
 
     expect(result.delegation.contextSnapshot.ancestors).toHaveLength(1);
-    expect(result.delegation.contextSnapshot.ancestors[0].runId).toBe('grandparent-1');
+    expect(result.delegation.contextSnapshot.ancestors[0].runId).toBe(ANCESTOR_RUN_ID);
   });
 
   it('merges extra vars into snapshot vars', () => {
@@ -732,7 +738,7 @@ describe('createDelegation', () => {
       childRunbookPath: 'old-child.md',
       childRunbookRef: { source: 'project', path: 'old-child.md' },
       contextSnapshot: { vars: brandEffectiveVarsForTest({}), ancestors: [] },
-      childRunId: 'completed-run-123',
+      childRunId: COMPLETED_RUN_ID,
       createdAt: '2026-02-27T10:00:00.000Z',
       cancelledAt: null,
     };
@@ -940,7 +946,7 @@ describe('createDelegation', () => {
 
   it('handles ancestors with empty vars', () => {
     const ancestor: AncestorSnapshot = {
-      runId: 'anc-1',
+      runId: ANCESTOR_RUN_ID,
       runbook: 'ancestor.md',
       step: '2',
       substep: null,
@@ -1176,7 +1182,7 @@ describe('createDelegation', () => {
       const state = makeState({
         parentLinkage: {
           kind: 'delegation',
-          parentRunId: 'parent-run-id',
+          parentRunId: PARENT_RUN_ID,
           parentStepId: '1',
           tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
         },
@@ -1196,7 +1202,7 @@ describe('createDelegation', () => {
 
       expect(result.status).toBe('parent_is_delegated');
       if (result.status !== 'parent_is_delegated') return;
-      expect(result.parentRunId).toBe('parent-run-id');
+      expect(result.parentRunId).toBe(PARENT_RUN_ID);
       expect(result.error.code).toBe('RD-819');
       expect(result.error.message).toMatch(/nested delegation forbidden/i);
     });
@@ -1227,7 +1233,7 @@ describe('createDelegation', () => {
       const state = makeState({
         parentLinkage: {
           kind: 'inline',
-          parentRunId: 'parent-run-id',
+          parentRunId: PARENT_RUN_ID,
           parentStepId: '1',
         },
       });

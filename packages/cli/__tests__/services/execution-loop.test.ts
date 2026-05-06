@@ -94,6 +94,7 @@ jest.unstable_mockModule('@rundown-org/core', () => {
     executeCommand: jest.fn(),
     executeCommandWithEnv: (jest.fn() as any).mockResolvedValue({ success: true, exitCode: 0 }),
     executeCommandWithPolicy: jest.fn(),
+    assertRunId: jest.fn((value: string) => value),
     evaluatePassCondition: jest.fn(),
     evaluateFailCondition: jest.fn(),
     extractLastAction: jest.fn((snapshot: any) => snapshot?.context?.lastAction),

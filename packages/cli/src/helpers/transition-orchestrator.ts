@@ -1,5 +1,6 @@
 import {
   asTerminalSnapshotOrDefault,
+  assertRunId,
   buildStepPosition,
   countNumberedSteps,
   derivePositionAt,
@@ -16,6 +17,7 @@ import {
   type RunbookState,
   type RunbookStateManager,
   type RunbookStoppedPayload,
+  type RunId,
   type SessionService,
   type ResolvedStep,
   type StepPosition,
@@ -140,7 +142,7 @@ function buildTransitionPositions(
 async function applyTerminalSideEffects(
   sessionService: SessionService,
   policy: TerminalSideEffectsPolicy,
-  runbookId: string,
+  runbookId: RunId,
 ): Promise<void> {
   if (policy.releaseRunbook) {
     await sessionService.releaseRunbook(runbookId);
@@ -229,7 +231,7 @@ export async function orchestrateTransition(
       finalPosition: positions.to,
     });
 
-    await applyTerminalSideEffects(sessionService, policy.onComplete, runbookId);
+    await applyTerminalSideEffects(sessionService, policy.onComplete, assertRunId(runbookId));
     return { status: 'done', action: actionType, from: fromStr, at: atStr, message };
   }
 
@@ -247,7 +249,7 @@ export async function orchestrateTransition(
       reason: 'fail_transition',
     });
 
-    await applyTerminalSideEffects(sessionService, policy.onStopped, runbookId);
+    await applyTerminalSideEffects(sessionService, policy.onStopped, assertRunId(runbookId));
     return { status: 'stopped', action: actionType, from: fromStr, at: atStr, message };
   }
 

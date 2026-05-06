@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import type { DelegationTokenHash } from './delegation-token.js';
+import type { RunId } from './run-id.js';
 import type { FrameKey } from './targeting.js';
 import type { DelegationLinkage, ParentLinkageBase, RunbookState } from './types.js';
 
@@ -21,7 +22,7 @@ export interface ClaimRecord {
   /** Stable command-targeting handle returned by rd claim. */
   readonly claimId: ClaimId;
   /** Child runbook state id controlled by this claim. */
-  readonly childRunId: string;
+  readonly childRunId: RunId;
   /** Hash of the delegation token that produced this claimed child. */
   readonly tokenHash: DelegationTokenHash;
   /** Parent runbook state id that delegated the child. */
@@ -61,15 +62,15 @@ export interface ClaimRecord {
  */
 export type ClaimRunbookResult =
   | { readonly status: 'claimed'; readonly claim: ClaimRecord }
-  | { readonly status: 'missing-child'; readonly childRunId: string }
+  | { readonly status: 'missing-child'; readonly childRunId: RunId }
   | {
       readonly status: 'terminal-child';
-      readonly childRunId: string;
+      readonly childRunId: RunId;
       readonly lifecycle: 'completed' | 'stopped';
     }
   | {
       readonly status: 'linkage-mismatch';
-      readonly childRunId: string;
+      readonly childRunId: RunId;
       readonly incoming: DelegationLinkage;
       readonly persisted: RunbookState['parentLinkage'];
     };
@@ -134,7 +135,7 @@ export function generateClaimId(): ClaimId {
  */
 export function createClaimRecord(
   claimId: ClaimId,
-  childRunId: string,
+  childRunId: RunId,
   linkage: DelegationLinkage,
   now: string,
 ): ClaimRecord {

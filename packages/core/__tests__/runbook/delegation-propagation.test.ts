@@ -7,11 +7,11 @@ import {
 } from '../../src/runbook/targeting.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 import type { DelegationLinkage, RunbookState } from '../../src/runbook/types.js';
-import { brandStoredOutputsForTest } from '../helpers/effective-vars.js';
+import { brandRunIdForTest, brandStoredOutputsForTest } from '../helpers/effective-vars.js';
 
-const CHILD_RUN_ID = `rd_${'1'.repeat(32)}`;
-const PARENT_RUN_ID = `rd_${'2'.repeat(32)}`;
-const LOCAL_RUN_ID = `rd_${'3'.repeat(32)}` as RunbookState['id'];
+const CHILD_RUN_ID = brandRunIdForTest(`rd_${'1'.repeat(32)}`);
+const PARENT_RUN_ID = brandRunIdForTest(`rd_${'2'.repeat(32)}`);
+const LOCAL_RUN_ID = brandRunIdForTest(`rd_${'3'.repeat(32)}`);
 
 describe('DelegationLinkage extended fields', () => {
   function makeSchemaState(parentLinkage: Record<string, unknown>): Record<string, unknown> {

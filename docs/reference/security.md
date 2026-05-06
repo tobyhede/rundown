@@ -187,6 +187,13 @@ Default file access:
 - Write allow: `{repo}/.claude/**`, `{repo}/.rundown/runs/**`, `{repo}/.rundown/locks/**`, `{repo}/.rundown/contexts/**`, `{repo}/.rundown/session.json`, `{repo}/.rundown/work/**`, `{repo}/node_modules/**`, `{repo}/dist/**`, `{repo}/build/**`, `{repo}/.next/**`, `{tmp}/**`
 - Write deny: `**/.env`, `**/.env.*`, `**/credentials.json`, `**/*secret*`, `**/*password*`, `{repo}/.rundown/config.yaml`
 
+The default `WorkPath` built-in resolves to the project-shared
+`.rundown/work` directory. Rundown does not add branch- or run-derived suffixes
+to that base path. Workflows that need separation should use the `ContextId`
+scope (`.rundown/work/.rd-<ContextId>/`) or run-scoped artifact paths below that
+context; the default policy intentionally grants the full `.rundown/work/**`
+tree so those scoped paths remain writable.
+
 Read deny includes SSH keys and certificates (`id_rsa`, `id_ed25519`, `*.pem`, `*.key`) to reduce credential exfiltration risk. Write deny does not include those patterns so key generation workflows can write new keys when otherwise allowed.
 
 Allowed environment variables:

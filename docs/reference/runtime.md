@@ -409,7 +409,7 @@ dynamic current-frame values but remain reserved for user input.
 | --- | --- |
 | `Date`, `DateTime`, `Year`, `Month`, `Day` | Current date/time components. |
 | `Branch` | Current git branch, or empty outside git. |
-| `WorkPath` | Workspace artifact directory; fallback `.rundown/work`; base for `{{ path "..." }}`. |
+| `WorkPath` | Fixed default artifact base `.rundown/work`; base for `{{ path "..." }}`. |
 | `RunbookRef` | Canonical `{ source, path }` identity for the resolved runbook. Injected during runbook preparation. |
 | `RunId` | Fresh execution identifier for this runbook execution. Injected only for runnable execution, not for discovery or `rd resolve`. |
 | `ContextId` | Shared identity across a delegation tree; scopes path helpers into `.rd-<ContextId>/`. |
@@ -423,6 +423,12 @@ dynamic current-frame values but remain reserved for user input.
 Static built-ins MAY be overridden by higher-precedence sources. Dynamic
 built-ins MUST NOT be overridden. Plugin runbooks MAY receive upper-snake-case
 plugin variables such as `CLAUDE_PLUGIN_ROOT`.
+
+The default `WorkPath` value is shared at the project level and does not include
+a branch, run, or checkout suffix. Use `ContextId` with `{{ path "..." }}` or
+`rdpath --ctx` for workflow isolation inside `.rundown/work/.rd-<ContextId>/`;
+run-scoped artifact helpers add `runs/<RunId>/` below that context directory
+when a per-run location is required.
 
 `RunbookRef` is available before template substitution so runbooks can render
 their own canonical identity. `RunId` is minted later, when a run is actually

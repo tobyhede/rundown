@@ -10,9 +10,13 @@ import type {
 } from '@rundown-org/core';
 import { assertClaimId } from '@rundown-org/core';
 import type { OutputEmitter } from '../../src/services/output-emitter.js';
-import { brandDelegationTokenHashForTest } from './brand-helpers.js';
+import { brandDelegationTokenHashForTest, brandRunIdForTest } from './brand-helpers.js';
 import { mockErrorHelpers } from './mock-error-helpers.js';
 import { mockFn } from './typed-mocks.js';
+
+const DEFAULT_RUNBOOK_ID = brandRunIdForTest(`rd_${'6'.repeat(32)}`);
+const PARENT_RUNBOOK_ID = brandRunIdForTest(`rd_${'7'.repeat(32)}`);
+const CLAIMED_RUNBOOK_ID = brandRunIdForTest(`rd_${'8'.repeat(32)}`);
 
 // Mock @rundown-org/core
 jest.unstable_mockModule('@rundown-org/core', () => ({
@@ -492,13 +496,13 @@ describe('resolveTerminalReleaseModeForRunbook', () => {
   it('uses stack-pop for default-stack runbooks', async () => {
     const loadSession = mockFn<RunbookStateManager['loadSession']>();
     loadSession.mockResolvedValue({
-      defaultStack: ['runbook-a'],
+      defaultStack: [DEFAULT_RUNBOOK_ID],
       claims: {},
     });
 
     const mode = await resolveTerminalReleaseModeForRunbook(
       { loadSession } as unknown as RunbookStateManager,
-      'runbook-a',
+      DEFAULT_RUNBOOK_ID,
     );
 
     expect(mode).toBe('stack-pop');
@@ -507,13 +511,13 @@ describe('resolveTerminalReleaseModeForRunbook', () => {
   it('uses release-runbook for claim-targeted runbooks', async () => {
     const loadSession = mockFn<RunbookStateManager['loadSession']>();
     loadSession.mockResolvedValue({
-      defaultStack: ['parent-runbook'],
+      defaultStack: [PARENT_RUNBOOK_ID],
       claims: {
         rdclm_abcdefghijklmnopqrstu1: {
           kind: 'claim-record',
           claimId: assertClaimId('rdclm_abcdefghijklmnopqrstu1'),
-          childRunId: 'claimed-runbook',
-          parentRunId: 'parent-runbook',
+          childRunId: CLAIMED_RUNBOOK_ID,
+          parentRunId: PARENT_RUNBOOK_ID,
           parentStepId: '1.1',
           tokenHash: brandDelegationTokenHashForTest(
             'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
@@ -526,7 +530,7 @@ describe('resolveTerminalReleaseModeForRunbook', () => {
 
     const mode = await resolveTerminalReleaseModeForRunbook(
       { loadSession } as unknown as RunbookStateManager,
-      'claimed-runbook',
+      CLAIMED_RUNBOOK_ID,
     );
 
     expect(mode).toBe('release-runbook');

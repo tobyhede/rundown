@@ -163,7 +163,7 @@ export interface RunbookStartFailure {
 
 /** Result of starting a runbook execution loop via {@link startRunbook}. */
 export type RunbookStartResult =
-  | { ok: true; loopResult: 'done' | 'stopped' | 'waiting'; stateId: string }
+  | { ok: true; loopResult: 'done' | 'stopped' | 'waiting'; stateId: RunId }
   | RunbookStartFailure;
 
 type LaunchSessionActivation = { readonly kind: 'default-stack' } | { readonly kind: 'none' };
@@ -238,11 +238,11 @@ export type ClaimResult =
       /** Discriminator indicating success. */
       ok: true;
       /** Unique identifier of the launched (or idempotently returned) child run. */
-      childRunId: string;
+      childRunId: RunId;
       /** Claim id for explicit child targeting. */
       claimId: ClaimId;
       /** Unique identifier of the parent run that owns the delegation. */
-      parentRunId: string;
+      parentRunId: RunId;
       /** Step (or substep) ID on the parent that holds the delegation. */
       stepId: string;
       /** Terminal state of the child execution loop. */
@@ -995,7 +995,7 @@ async function launchRunbook(
     prompted: boolean;
     parentLinkage?: ParentLinkage;
     sessionActivation?: LaunchSessionActivation;
-    afterInit?: (stateId: string) => Promise<void>;
+    afterInit?: (stateId: RunId) => Promise<void>;
   },
 ): Promise<RunbookStartResult> {
   const { output, manager, actorService, sessionService, lifecycleService, cwd } = ctx;
@@ -1007,7 +1007,7 @@ async function launchRunbook(
   // produce a structured launch failure so callers (notably claimAndLaunch)
   // can release locks and report cleanly. The loop itself is outside the
   // try/catch — loop failures still propagate as exceptions.
-  let stateId: string;
+  let stateId: RunId;
   let runbookSteps: ResolvedStep[];
   let emitter: ExecutionEventEmitter;
   try {
@@ -1111,7 +1111,7 @@ export async function startRunbook(
     file: string;
     prompted?: boolean;
     parentLinkage?: ParentLinkage;
-    afterInit?: (stateId: string) => Promise<void>;
+    afterInit?: (stateId: RunId) => Promise<void>;
   },
 ): Promise<RunbookStartResult> {
   return launchRunbook(ctx, prepared, {
@@ -1152,9 +1152,9 @@ export function inferEntryFromState(state: RunbookState, frameKey: FrameKey): nu
  */
 async function updateStepDelegationChildRunId(
   manager: RunbookStateManager,
-  runId: string,
+  runId: RunId,
   substepId: string,
-  childRunId: string,
+  childRunId: RunId,
   tokenHash?: string,
 ): Promise<void> {
   const state = await manager.load(runId);
@@ -1179,11 +1179,11 @@ async function updateStepDelegationChildRunId(
 
 /** Outcome of {@link claimChildForPipeline}. */
 type ClaimChildResult =
-  | { readonly ok: true; readonly claimId: ClaimId; readonly childRunId: string }
+  | { readonly ok: true; readonly claimId: ClaimId; readonly childRunId: RunId }
   | {
       readonly ok: false;
       readonly reason: 'child-missing' | 'delegation-resolved' | 'linkage-mismatch';
-      readonly childRunId: string;
+      readonly childRunId: RunId;
     };
 
 /**
@@ -1203,7 +1203,7 @@ type ClaimChildResult =
  */
 async function claimChildForPipeline(
   ctx: RunPipelineContext,
-  childRunId: string,
+  childRunId: RunId,
   linkage: DelegationLinkage,
 ): Promise<ClaimChildResult> {
   const claim = await ctx.sessionService.claimRunbook(childRunId, linkage);
@@ -1302,9 +1302,9 @@ function emitClaimedOutput(
 function buildClaimedPayload(args: {
   readonly truncatedToken: string;
   readonly claimId: ClaimId;
-  readonly childRunId: string;
+  readonly childRunId: RunId;
   readonly childRunbookPath: string;
-  readonly parentRunId: string;
+  readonly parentRunId: RunId;
   readonly parentStepAt: string | undefined;
 }): ClaimedOutputPayload {
   return {
@@ -1322,9 +1322,9 @@ function emitClaimedSuccess(args: {
   readonly output: OutputEmitter;
   readonly truncatedToken: string;
   readonly claimId: ClaimId;
-  readonly childRunId: string;
+  readonly childRunId: RunId;
   readonly childRunbookPath: string;
-  readonly parentRunId: string;
+  readonly parentRunId: RunId;
   readonly stepId: string;
   readonly parentStepAt: string | undefined;
   readonly loopResult: 'done' | 'stopped' | 'waiting';
@@ -1656,7 +1656,7 @@ export async function claimAndLaunch(
     const parentPrompted = freshParent.prompted ?? false;
 
     // 4g. Launch child runbook
-    let capturedChildRunId: string | undefined;
+    let capturedChildRunId: RunId | undefined;
     let capturedClaimId: ClaimId | undefined;
     // Captures a write-side claim invariant violation in `afterInit` so we
     // can surface it as a structured launch-failed result instead of an

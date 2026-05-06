@@ -369,7 +369,7 @@ dynamic current-frame values but remain reserved for user input.
 | --- | --- |
 | `Date`, `DateTime`, `Year`, `Month`, `Day` | Current date/time components. |
 | `Branch` | Current git branch, or empty outside git. |
-| `WorkPath` | Workspace artifact directory; fallback `.rundown/work`; base for `{{ path "..." }}`. |
+| `WorkPath` | Fixed default artifact base `.rundown/work`; base for `{{ path "..." }}`. |
 | `RunbookRef` | Canonical `{ source, path }` identity for the resolved runbook. Injected before template substitution. |
 | `RunId` | Fresh execution identifier for this runbook execution. Injected only when the runbook is started or claimed, not during variable discovery or `rd resolve`. |
 | `ContextId` | Shared identity across a delegation tree; scopes `{{ path "..." }}` into `.rd-<ContextId>/`. |
@@ -386,6 +386,11 @@ variables MUST NOT be overridden. Parent context chain addressing is capped at
 `CLAUDE_PLUGIN_ROOT` identifies the plugin installation directory.
 Delegated children inherit the parent's `ContextId` and user variables, but MUST
 NOT inherit the parent's `RunId` or `RunbookRef`.
+
+The default `WorkPath` is project-shared and MUST NOT be derived from the git
+branch, checkout path, or run id. Isolation for `{{ path "..." }}` is provided by
+`ContextId` (`.rd-<ContextId>/`), with run-scoped artifact locations adding the
+current `RunId` below that context when needed.
 
 ### 9.3 Shell Environment
 

@@ -13,6 +13,9 @@ import {
   makeState,
   makeSteps,
 } from './delegation-service-fixtures.js';
+import { brandRunIdForTest } from '../helpers/effective-vars.js';
+
+const CHILD_RUN_ID = brandRunIdForTest(`rd_${'d'.repeat(32)}`);
 
 describe('retryDelegation', () => {
   it('returns { status: "retried" } with a fresh token on success', () => {
@@ -150,7 +153,7 @@ describe('retryDelegation', () => {
             ...ss,
             status: 'done' as const,
             result: 'fail' as const,
-            delegation: { ...ss.delegation, childRunId: 'child-run-1' },
+            delegation: { ...ss.delegation, childRunId: CHILD_RUN_ID },
           }
         : ss,
     );

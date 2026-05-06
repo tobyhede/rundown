@@ -443,7 +443,7 @@ export interface StepDelegation {
   readonly childRunbookPath: string;
   readonly childRunbookRef: RunbookRef;
   readonly contextSnapshot: ContextSnapshot;
-  readonly childRunId: string | null;
+  readonly childRunId: RunId | null;
   readonly createdAt: string;
   readonly cancelledAt: string | null;
   /**
@@ -485,7 +485,7 @@ export interface ContextSnapshot {
 
 /** Single ancestor in the runbook lineage snapshot. */
 export interface AncestorSnapshot {
-  readonly runId: string;
+  readonly runId: RunId;
   readonly runbook: string;
   readonly step: string;
   readonly substep: string | null;
@@ -504,7 +504,7 @@ export interface AncestorSnapshot {
  * propagate a child's terminal result back to the parent substep.
  */
 export interface ParentLinkageBase {
-  readonly parentRunId: string;
+  readonly parentRunId: RunId;
   readonly parentStepId: string;
   /** Parent's step name at link time (e.g., "1"). */
   readonly parentStep?: string;

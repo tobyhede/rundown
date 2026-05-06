@@ -11,6 +11,7 @@
  */
 
 import type { RunbookStateManager } from './state.js';
+import type { RunId } from './run-id.js';
 import { SessionLock } from './session-lock.js';
 import {
   createClaimRecord,
@@ -24,12 +25,12 @@ import type { DelegationLinkage, RunbookState } from './types.js';
 
 /** Result of removing a runbook from session targeting structures. */
 export type ReleaseRunbookResult =
-  | { readonly status: 'not-found'; readonly runbookId: string }
+  | { readonly status: 'not-found'; readonly runbookId: RunId }
   | {
       readonly status: 'released';
-      readonly runbookId: string;
+      readonly runbookId: RunId;
       readonly removedFromDefaultStack: boolean;
-      readonly nextDefaultRunbookId: string | null;
+      readonly nextDefaultRunbookId: RunId | null;
     };
 
 /**
@@ -117,7 +118,7 @@ export class SessionService {
 
   private findClaimByChildRunId(
     claims: Record<string, ClaimRecord>,
-    childRunId: string,
+    childRunId: RunId,
   ): ClaimRecord | undefined {
     return Object.values(claims).find((claim) => claim.childRunId === childRunId);
   }
@@ -156,7 +157,7 @@ export class SessionService {
    *
    * @param id - The runbook state ID to push
    */
-  async pushRunbook(id: string): Promise<void> {
+  async pushRunbook(id: RunId): Promise<void> {
     await this.withLock(async () => {
       const session = await this.manager.loadSession();
       session.defaultStack.push(id);
@@ -194,7 +195,7 @@ export class SessionService {
    * @returns A claim record on success, or a failure variant when the child is
    *   missing, terminal, or its persisted linkage diverges from `linkage`.
    */
-  async claimRunbook(childRunId: string, linkage: DelegationLinkage): Promise<ClaimRunbookResult> {
+  async claimRunbook(childRunId: RunId, linkage: DelegationLinkage): Promise<ClaimRunbookResult> {
     return this.withLock(async () => {
       const session = await this.manager.loadSession();
       const now = new Date().toISOString();
@@ -316,7 +317,7 @@ export class SessionService {
    * @param runbookId - Runbook id to release
    * @returns Structured release result
    */
-  async releaseRunbook(runbookId: string): Promise<ReleaseRunbookResult> {
+  async releaseRunbook(runbookId: RunId): Promise<ReleaseRunbookResult> {
     return this.withLock(() => this.releaseRunbookLocked(runbookId));
   }
 
@@ -326,7 +327,7 @@ export class SessionService {
    * @param runbookId - Runbook id to release from session targeting structures
    * @returns Structured release result describing what was removed
    */
-  private async releaseRunbookLocked(runbookId: string): Promise<ReleaseRunbookResult> {
+  private async releaseRunbookLocked(runbookId: RunId): Promise<ReleaseRunbookResult> {
     const session = await this.manager.loadSession();
 
     const originalDefaultStackLength = session.defaultStack.length;
@@ -367,7 +368,7 @@ export class SessionService {
    *
    * @returns The new active runbook ID (parent), or null if the stack is empty
    */
-  async popRunbook(): Promise<string | null> {
+  async popRunbook(): Promise<RunId | null> {
     return this.withLock(async () => {
       const session = await this.manager.loadSession();
       const topId = session.defaultStack[session.defaultStack.length - 1];
@@ -411,7 +412,7 @@ export class SessionService {
    * @param runbookId - Runbook id to move into the single session stash slot
    * @returns The stashed runbook id, or null if no slot is available or the runbook was not targeted
    */
-  async stashRunbook(runbookId: string): Promise<string | null> {
+  async stashRunbook(runbookId: RunId): Promise<RunId | null> {
     return this.withLock(async () => {
       const session = await this.manager.loadSession();
       if (session.stashedRunbookId) return null;
@@ -515,7 +516,7 @@ export class SessionService {
    *
    * @returns The stashed runbook ID, or null if nothing is stashed
    */
-  async getStashedRunbookId(): Promise<string | null> {
+  async getStashedRunbookId(): Promise<RunId | null> {
     const session = await this.manager.loadSession();
     return session.stashedRunbookId ?? null;
   }

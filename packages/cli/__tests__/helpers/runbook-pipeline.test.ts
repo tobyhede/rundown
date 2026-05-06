@@ -43,14 +43,17 @@ const MOCK_TOKEN_HASH = brandDelegationTokenHashForTest(`sha256:${'a'.repeat(64)
 const TEST_CLAIM_ID = 'rdclm_abcdefghijklmnopqrstu1' as ClaimId;
 const RUN_ID_PATTERN = /^rd_[a-f0-9]{32}$/;
 const MOCK_RUN_ID = brandRunIdForTest(`rd_${'a'.repeat(32)}`);
+const PARENT_RUN_ID = brandRunIdForTest(`rd_${'b'.repeat(32)}`);
+const DIFFERENT_PARENT_RUN_ID = brandRunIdForTest(`rd_${'c'.repeat(32)}`);
+const ORPHAN_RUN_ID = brandRunIdForTest(`rd_${'d'.repeat(32)}`);
 
-function claimRecord(childRunId: string, overrides: Partial<ClaimRecord> = {}): ClaimRecord {
+function claimRecord(childRunId: RunId, overrides: Partial<ClaimRecord> = {}): ClaimRecord {
   return {
     kind: 'claim-record',
     claimId: TEST_CLAIM_ID,
     childRunId,
     tokenHash: MOCK_TOKEN_HASH,
-    parentRunId: 'parent-id',
+    parentRunId: PARENT_RUN_ID,
     parentStepId: '1',
     claimedAt: '2026-02-27T10:00:00.000Z',
     updatedAt: '2026-02-27T10:00:00.000Z',
@@ -59,7 +62,7 @@ function claimRecord(childRunId: string, overrides: Partial<ClaimRecord> = {}): 
 }
 
 function claimedRunbookResult(
-  childRunId: string,
+  childRunId: RunId,
   overrides: Partial<ClaimRecord> = {},
 ): ClaimRunbookResult {
   return { status: 'claimed', claim: claimRecord(childRunId, overrides) };
@@ -67,7 +70,7 @@ function claimedRunbookResult(
 
 function mockClaimRunbookSuccess(): jest.Mock<SessionService['claimRunbook']> {
   return mockFn<SessionService['claimRunbook']>().mockImplementation(
-    async (childRunId: string, linkage: DelegationLinkage) =>
+    async (childRunId: RunId, linkage: DelegationLinkage) =>
       claimedRunbookResult(childRunId, {
         tokenHash: linkage.tokenHash,
         parentRunId: linkage.parentRunId,
@@ -1576,7 +1579,7 @@ describe('claimAndLaunch', () => {
       cancelledAt: null,
     };
 
-    const parentState = makeState('parent-id', {
+    const parentState = makeState(PARENT_RUN_ID, {
       substepStates: [
         {
           id: '1',
@@ -1645,7 +1648,7 @@ describe('claimAndLaunch', () => {
       cancelledAt: new Date().toISOString(),
     };
 
-    const parentState = makeState('parent-id', {
+    const parentState = makeState(PARENT_RUN_ID, {
       substepStates: [
         {
           id: '1',
@@ -1716,7 +1719,7 @@ describe('claimAndLaunch', () => {
       cancelledAt: null,
     };
 
-    const parentState = makeState('parent-id', {
+    const parentState = makeState(PARENT_RUN_ID, {
       substepStates: [
         {
           id: '1',
@@ -1726,9 +1729,9 @@ describe('claimAndLaunch', () => {
       ],
     });
 
-    const orphanState = makeState('orphan-id', {
+    const orphanState = makeState(ORPHAN_RUN_ID, {
       delegation: {
-        parentRunId: 'parent-id',
+        parentRunId: PARENT_RUN_ID,
         parentStepId: '1',
         tokenHash,
       },
@@ -1780,7 +1783,7 @@ describe('claimAndLaunch', () => {
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.childRunId).toBe('orphan-id');
+      expect(result.childRunId).toBe(ORPHAN_RUN_ID);
     }
     expect(mockManager.update).toHaveBeenCalled();
   });
@@ -1796,7 +1799,7 @@ describe('claimAndLaunch', () => {
       cancelledAt: null,
     };
 
-    const parentState = makeState('parent-id', {
+    const parentState = makeState(PARENT_RUN_ID, {
       substepStates: [
         {
           id: '1',
@@ -1869,7 +1872,7 @@ describe('claimAndLaunch', () => {
       cancelledAt: null,
     };
 
-    const parentState = makeState('parent-id', {
+    const parentState = makeState(PARENT_RUN_ID, {
       substepStates: [
         {
           id: '1',
@@ -1881,11 +1884,11 @@ describe('claimAndLaunch', () => {
 
     const orphanLinkage: DelegationLinkage = {
       kind: 'delegation',
-      parentRunId: 'parent-id',
+      parentRunId: PARENT_RUN_ID,
       parentStepId: '1',
       tokenHash,
     };
-    const orphanState = makeState('orphan-id', {
+    const orphanState = makeState(ORPHAN_RUN_ID, {
       parentLinkage: orphanLinkage,
     });
 
@@ -1921,11 +1924,11 @@ describe('claimAndLaunch', () => {
 
     const claimSpy = mockFn<SessionService['claimRunbook']>().mockResolvedValue({
       status: 'linkage-mismatch',
-      childRunId: 'orphan-id',
+      childRunId: ORPHAN_RUN_ID,
       persisted: orphanLinkage,
       incoming: {
         kind: 'delegation',
-        parentRunId: 'different-parent-id',
+        parentRunId: DIFFERENT_PARENT_RUN_ID,
         parentStepId: '1',
         tokenHash,
       },
@@ -1950,7 +1953,7 @@ describe('claimAndLaunch', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       assertVariant(result, 'reason', 'linkage-mismatch');
-      expect(result.childRunId).toBe('orphan-id');
+      expect(result.childRunId).toBe(ORPHAN_RUN_ID);
     }
     expect(mockManager.update).not.toHaveBeenCalled();
   });
@@ -1967,7 +1970,7 @@ describe('claimAndLaunch', () => {
       cancelledAt: null,
     };
 
-    const parentState = makeState('parent-id', {
+    const parentState = makeState(PARENT_RUN_ID, {
       substepStates: [
         {
           id: '1',
@@ -2057,7 +2060,7 @@ describe('claimAndLaunch', () => {
       expect.objectContaining({
         parentLinkage: expect.objectContaining({
           kind: 'delegation',
-          parentRunId: 'parent-id',
+          parentRunId: PARENT_RUN_ID,
           tokenHash,
         }),
       }),
@@ -2084,7 +2087,7 @@ describe('claimAndLaunch', () => {
       cancelledAt: null,
     };
 
-    const parentState = makeState('parent-id', {
+    const parentState = makeState(PARENT_RUN_ID, {
       substepStates: [
         {
           id: '1',
@@ -2205,7 +2208,7 @@ describe('claimAndLaunch', () => {
       cancelledAt: null,
     };
 
-    const parentState = makeState('parent-id', {
+    const parentState = makeState(PARENT_RUN_ID, {
       substepStates: [
         {
           id: '1',
@@ -2321,7 +2324,7 @@ describe('claimAndLaunch', () => {
       cancelledAt: null,
     };
 
-    const parentState = makeState('parent-id', {
+    const parentState = makeState(PARENT_RUN_ID, {
       substepStates: [
         {
           id: '1',
@@ -2402,7 +2405,7 @@ describe('claimAndLaunch', () => {
       cancelledAt: null,
     };
 
-    const parentState = makeState('parent-id', {
+    const parentState = makeState(PARENT_RUN_ID, {
       prompted: true,
       substepStates: [
         {

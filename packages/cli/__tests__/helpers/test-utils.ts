@@ -12,6 +12,7 @@ import {
   setWriter,
   ConsoleWriter,
   getErrorMessage,
+  RUNBOOK_SOURCES,
   runsDir,
   sessionPath as _sessionPath,
   runbooksDir,
@@ -501,11 +502,12 @@ function isRunbookState(value: unknown): value is RunbookState {
   const runbook = state.runbook;
   if (typeof runbook !== 'object' || runbook === null) return false;
   const runbookRef = runbook as { source?: unknown; path?: unknown };
+  const hasKnownSource =
+    typeof runbookRef.source === 'string' &&
+    (RUNBOOK_SOURCES as readonly string[]).includes(runbookRef.source);
   return (
     typeof state.id === 'string' &&
-    (runbookRef.source === 'project' ||
-      runbookRef.source === 'plugin' ||
-      runbookRef.source === 'bundled') &&
+    hasKnownSource &&
     typeof runbookRef.path === 'string' &&
     typeof state.runbookPath === 'string' &&
     typeof state.step === 'string' &&

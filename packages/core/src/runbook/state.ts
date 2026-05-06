@@ -83,9 +83,9 @@ export function generateRunId(): RunId {
  */
 export interface SessionData {
   /** Active runbook stack for default targeting. */
-  defaultStack: string[];
+  defaultStack: RunId[];
   /** ID of a temporarily stashed runbook, if any. */
-  stashedRunbookId?: string;
+  stashedRunbookId?: RunId;
   /** Explicit claim-id records for delegated child runbook targeting. */
   claims: Record<string, ClaimRecord>;
 }

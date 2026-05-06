@@ -1,5 +1,6 @@
 import {
   type RunbookStateManager,
+  type RunId,
   type SessionService,
   StaleRunbookStateError,
   isError,
@@ -29,7 +30,7 @@ export function isRecoverableActiveStackError(error: Error): boolean {
 export async function cleanupOrphanedActiveStack(
   manager: RunbookStateManager,
   sessionService: SessionService,
-): Promise<string | null> {
+): Promise<RunId | null> {
   const session = await manager.loadSession();
   const orphanId = session.defaultStack[session.defaultStack.length - 1];
   if (!orphanId) {

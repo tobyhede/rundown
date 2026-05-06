@@ -2,6 +2,7 @@
 
 import * as fs from 'node:fs/promises';
 import {
+  assertRunId,
   buildStepPosition,
   deriveExecutionAt,
   buildCompletionKey,
@@ -345,7 +346,7 @@ async function applyExecutionTerminalRelease(
   mode: ExecutionTerminalReleaseMode,
 ): Promise<void> {
   if (mode === 'release-runbook') {
-    await sessionService.releaseRunbook(runbookId);
+    await sessionService.releaseRunbook(assertRunId(runbookId));
     return;
   }
   await sessionService.popRunbook();

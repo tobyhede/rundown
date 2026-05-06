@@ -6,7 +6,12 @@ import type {
   Substep,
   Transitions,
 } from '@rundown-org/parser';
-import type { RunbookState, SubstepState, StepDelegation } from '@rundown-org/core';
+import {
+  RUN_ID_PATTERN,
+  type RunbookState,
+  type SubstepState,
+  type StepDelegation,
+} from '@rundown-org/core';
 import {
   inferDelegationTarget,
   inferRunbookFromStep,
@@ -16,6 +21,7 @@ import {
   brandDelegationTokenHashForTest,
   brandEffectiveVarsForTest,
   brandFrameKeyForTest,
+  brandRunIdForTest,
   brandStoredOutputsForTest,
 } from './brand-helpers.js';
 
@@ -43,10 +49,16 @@ function makeStepWithSubsteps(name: string, substeps: Substep[]): ResolvedStepWi
 
 /** Build a minimal RunbookState for testing. */
 function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
+  const {
+    runbook: overrideRunbook,
+    runbookPath: overrideRunbookPath,
+    ...stateOverrides
+  } = overrides;
+  const runbook = overrideRunbook ?? { source: 'project' as const, path: 'test.runbook.md' };
   return {
-    id: 'test-run-id' as RunbookState['id'],
-    runbook: { source: 'project', path: 'test.runbook.md' },
-    runbookPath: 'test.runbook.md',
+    id: brandRunIdForTest(`rd_${'a'.repeat(32)}`),
+    runbook,
+    runbookPath: overrideRunbookPath ?? runbook.path,
     step: '1',
     stepName: 'Step 1',
     retryCount: 0,
@@ -54,7 +66,7 @@ function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
     steps: [],
     startedAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
-    ...overrides,
+    ...stateOverrides,
   };
 }
 
@@ -88,6 +100,16 @@ function makeStepWithFor(
 }
 
 describe('inferDelegationTarget', () => {
+  it('builds states with a canonical run id', () => {
+    expect(RUN_ID_PATTERN.test(makeState().id)).toBe(true);
+  });
+
+  it('derives runbookPath from an overridden runbook reference', () => {
+    const state = makeState({ runbook: { source: 'plugin', path: 'plugin-child.runbook.md' } });
+
+    expect(state.runbookPath).toBe('plugin-child.runbook.md');
+  });
+
   it('returns first pending substep with runbook reference', () => {
     const substeps = [
       makeSubstep({ id: '1', description: 'First', runbooks: ['child.runbook.md'] }),
