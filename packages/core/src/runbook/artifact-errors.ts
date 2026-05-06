@@ -7,7 +7,7 @@ export const ARTIFACT_ERROR_TEXT = {
   RECURSIVE_WILDCARD: 'Recursive artifact URI wildcards are not supported in v1',
   UNRESOLVED_TEMPLATE_MARKER: 'Artifact URI contains unresolved template marker',
   BARE_BUILTIN_PLACEHOLDER: 'Artifact URI contains bare built-in placeholder',
-  INVALID_RUN_ID: 'Invalid RunId: expected wf_<32 lowercase hex chars>',
+  INVALID_RUN_ID: 'Invalid RunId: expected rd_<32 lowercase hex chars>',
   INVALID_URI_FRAGMENT: 'Artifact URI fragments are not supported',
   URI_MUST_BE_EXACT: 'uri must be an exact artifact URI',
   URI_CONTEXT_MISMATCH: 'uri contextId does not match contextId',

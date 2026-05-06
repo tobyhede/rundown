@@ -17,6 +17,7 @@ import { execFileSync as nodeExecFileSync } from 'node:child_process';
 import * as yaml from 'js-yaml';
 import {
   createJsonArrayStream,
+  generateRunId,
   isJsonValue,
   type JsonArray,
   type JsonObject,
@@ -308,7 +309,7 @@ export function getBuiltinVariables(): Record<string, string> {
     [BUILTIN_VARIABLES.Day]: String(now.getUTCDate()).padStart(2, '0'), // DD (01-31, UTC)
     [BUILTIN_VARIABLES.Branch]: branch ?? '', // Raw git branch name (empty when not in git)
     [BUILTIN_VARIABLES.WorkPath]: computeWorkPath(branch), // Branch-isolated artifact directory
-    [BUILTIN_VARIABLES.RunId]: randomBytes(4).toString('hex'), // 8-char hex
+    [BUILTIN_VARIABLES.RunId]: generateRunId(), // Concrete run ID
     [BUILTIN_VARIABLES.ContextId]: randomBytes(4).toString('hex'), // 8-char hex
   };
 }

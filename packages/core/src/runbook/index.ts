@@ -13,7 +13,12 @@ export * from './step-utils.js';
 export * from './targeting.js';
 export * from './claim-id.js';
 export * from './transition-kernel.js';
-export { RunbookStateManager, StaleRunbookStateError, type SessionData } from './state.js';
+export {
+  generateRunId,
+  RunbookStateManager,
+  StaleRunbookStateError,
+  type SessionData,
+} from './state.js';
 export { SessionService, type ReleaseRunbookResult } from './session-service.js';
 export { readActiveRunScope, type ActiveRunScope } from './session-reader.js';
 export { ExecutionLifecycleService } from './execution-lifecycle-service.js';

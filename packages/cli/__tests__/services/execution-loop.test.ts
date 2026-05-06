@@ -244,6 +244,7 @@ jest.unstable_mockModule('@rundown-org/core', () => {
     CONFIG_FILE: '.rundown/config.yaml',
     isJsonValue: jest.fn((v: unknown) => v != null),
     createJsonArrayStream: jest.fn(),
+    generateRunId: jest.fn(() => 'rd_0123456789abcdef0123456789abcdef'),
     createDelegation: jest.fn(),
     Errors: RealErrors,
     RundownError: RealRundownError,

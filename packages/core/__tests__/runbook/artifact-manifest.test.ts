@@ -18,9 +18,9 @@ import {
 } from '../../src/runbook/artifact-manifest.js';
 import type { ArtifactPathOptions } from '../../src/runbook/artifact-uri.js';
 
-const RUN_ID = 'wf_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
-const SECOND_RUN_ID = 'wf_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
-const THIRD_RUN_ID = 'wf_cccccccccccccccccccccccccccccccc';
+const RUN_ID = 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const SECOND_RUN_ID = 'rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+const THIRD_RUN_ID = 'rd_cccccccccccccccccccccccccccccccc';
 
 const record = {
   uri: `rd://artifacts/ctx1/runs/${RUN_ID}/review.json`,
@@ -291,14 +291,14 @@ describe('artifact selector resolution', () => {
     const newer = withRunId(THIRD_RUN_ID, {
       timestamp: '2026-05-04T03:25:24.000Z',
     });
-    const wrongRunbook = withRunId('wf_dddddddddddddddddddddddddddddddd', {
+    const wrongRunbook = withRunId('rd_dddddddddddddddddddddddddddddddd', {
       runbook: { source: 'plugin', path: 'ops/deploy.runbook.md' },
       timestamp: '2026-05-04T03:30:24.000Z',
     });
-    const incomplete = withRunId('wf_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', {
+    const incomplete = withRunId('rd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', {
       timestamp: '2026-05-04T03:35:24.000Z',
     });
-    const missingFile = withRunId('wf_ffffffffffffffffffffffffffffffff', {
+    const missingFile = withRunId('rd_ffffffffffffffffffffffffffffffff', {
       timestamp: '2026-05-04T03:40:24.000Z',
     });
     await writeManifest(cwd, [older, newer, wrongRunbook, incomplete, missingFile]);

@@ -99,7 +99,7 @@ onboarding        plugin   New hire setup                 hr, setup
 **Text:**
 ```text
 File:     runbooks/deploy.runbook.md
-State:    .rundown/runs/wf-2026-01-26-abc123.json
+State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
 Prompt:   Yes
 
 ## 1. First Step
@@ -113,7 +113,7 @@ Step description here.
   "active": true,
   "stashed": false,
   "file": "runbooks/deploy.runbook.md",
-  "state": ".rundown/runs/wf-2026-01-26-abc123.json",
+  "state": ".rundown/runs/rd_0123456789abcdef0123456789abcdef.json",
   "prompted": true,
   "position": { "current": "1", "total": 3 },
   "step": { "name": "1", "description": "First Step" }
@@ -148,7 +148,7 @@ Same output shape as active `rd status`, but resolves the delegated child identi
 **Text:**
 ```text
 File:     runbooks/deploy.runbook.md
-State:    .rundown/runs/wf-2026-01-26-abc123.json
+State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
 
 Action:   START
 
@@ -167,7 +167,7 @@ Runbook:  COMPLETE
 {
   "action": "complete",
   "file": "runbooks/deploy.runbook.md",
-  "state": ".rundown/runs/wf-2026-01-26-abc123.json",
+  "state": ".rundown/runs/rd_0123456789abcdef0123456789abcdef.json",
   "position": { "current": "1", "total": 1 }
 }
 ```
@@ -191,9 +191,9 @@ CLAIMED: Claimed rdtk_abcd... -> child.runbook.md
   "action": "claimed",
   "token": "rdtk_abcd...",
   "claim_id": "rdclm_F3J3n3d_f8fo0a0b1B2c3Q",
-  "run_id": "wf-2026-01-26-child",
+  "run_id": "rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   "runbook": "child.runbook.md",
-  "parent_run_id": "wf-2026-01-26-parent",
+  "parent_run_id": "rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "parent_step": "1.1"
 }
 ```
@@ -211,7 +211,7 @@ The `action` field shows the transition (e.g., "CONTINUE" to next step, "GOTO 3"
 **Text:**
 ```text
 File:     runbooks/deploy.runbook.md
-State:    .rundown/runs/wf-2026-01-26-abc123.json
+State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
 
 ─── 2 ──────────────────────────────────────────
 
@@ -229,7 +229,7 @@ Next step description.
 {
   "action": "CONTINUE",
   "file": "runbooks/deploy.runbook.md",
-  "state": ".rundown/runs/wf-2026-01-26-abc123.json",
+  "state": ".rundown/runs/rd_0123456789abcdef0123456789abcdef.json",
   "from": { "current": "1", "total": 3 },
   "to": { "current": "2", "total": 3 }
 }
@@ -250,7 +250,7 @@ The `action` field shows the transition (e.g., "RETRY (1/3)" for retry, "STOP" f
 **Text:**
 ```text
 File:     runbooks/deploy.runbook.md
-State:    .rundown/runs/wf-2026-01-26-abc123.json
+State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
 
 Action:   RETRY (1/3)
 At:       1/3
@@ -265,7 +265,7 @@ Step description.
 {
   "action": "RETRY (1/3)",
   "file": "runbooks/deploy.runbook.md",
-  "state": ".rundown/runs/wf-2026-01-26-abc123.json",
+  "state": ".rundown/runs/rd_0123456789abcdef0123456789abcdef.json",
   "to": { "current": "1", "total": 3 }
 }
 ```
@@ -275,7 +275,7 @@ Step description.
 **Text:**
 ```text
 File:     runbooks/deploy.runbook.md
-State:    .rundown/runs/wf-2026-01-26-abc123.json
+State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
 
 Runbook:  STOP
 ```
@@ -285,7 +285,7 @@ Runbook:  STOP
 {
   "action": "STOP",
   "file": "runbooks/deploy.runbook.md",
-  "state": ".rundown/runs/wf-2026-01-26-abc123.json",
+  "state": ".rundown/runs/rd_0123456789abcdef0123456789abcdef.json",
   "stopped": true
 }
 ```
@@ -305,7 +305,7 @@ The `action` field is combined (e.g., "GOTO 3"), not a separate `target` field.
 **Text:**
 ```text
 File:     runbooks/deploy.runbook.md
-State:    .rundown/runs/wf-2026-01-26-abc123.json
+State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
 
 ─── 3 ──────────────────────────────────────────
 
@@ -323,7 +323,7 @@ Step description.
 {
   "action": "GOTO 3",
   "file": "runbooks/deploy.runbook.md",
-  "state": ".rundown/runs/wf-2026-01-26-abc123.json",
+  "state": ".rundown/runs/rd_0123456789abcdef0123456789abcdef.json",
   "from": { "current": "1", "total": 5 },
   "to": { "current": "3", "total": 5 }
 }
@@ -340,7 +340,7 @@ Uses `action: "stop"` (command-name action). Stopping sets a non-zero exit code.
 **Text:**
 ```text
 File:     runbooks/deploy.runbook.md
-State:    .rundown/runs/wf-2026-01-26-abc123.json
+State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
 
 Runbook:  STOP
 ```
@@ -351,7 +351,7 @@ Runbook:  STOP
   "action": "stop",
   "message": "User requested stop",
   "file": "runbooks/deploy.runbook.md",
-  "state": ".rundown/runs/wf-2026-01-26-abc123.json"
+  "state": ".rundown/runs/rd_0123456789abcdef0123456789abcdef.json"
 }
 ```
 
@@ -364,7 +364,7 @@ Runbook:  STOP
 **Text:**
 ```text
 File:     runbooks/deploy.runbook.md
-State:    .rundown/runs/wf-2026-01-26-abc123.json
+State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
 
 Runbook:  COMPLETE
 ```
@@ -375,7 +375,7 @@ Runbook:  COMPLETE
   "action": "complete",
   "message": "Deployment finished",
   "file": "runbooks/deploy.runbook.md",
-  "state": ".rundown/runs/wf-2026-01-26-abc123.json"
+  "state": ".rundown/runs/rd_0123456789abcdef0123456789abcdef.json"
 }
 ```
 
@@ -390,7 +390,7 @@ Uses `action: "stash"` (command-name action).
 **Text:**
 ```text
 File:     runbooks/deploy.runbook.md
-State:    .rundown/runs/wf-2026-01-26-abc123.json
+State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
 Prompt:   Yes
 
 Step:     1/3
@@ -403,7 +403,7 @@ Runbook:  STASHED
 {
   "action": "stash",
   "file": "runbooks/deploy.runbook.md",
-  "state": ".rundown/runs/wf-2026-01-26-abc123.json",
+  "state": ".rundown/runs/rd_0123456789abcdef0123456789abcdef.json",
   "prompted": true,
   "position": { "current": "1", "total": 3 }
 }
@@ -424,7 +424,7 @@ Uses `action: "pop"` (command-name action).
 **Text:**
 ```text
 File:     runbooks/deploy.runbook.md
-State:    .rundown/runs/wf-2026-01-26-abc123.json
+State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
 Prompt:   Yes
 
 Action:   PASS
@@ -440,7 +440,7 @@ Step description.
 {
   "action": "pop",
   "file": "runbooks/deploy.runbook.md",
-  "state": ".rundown/runs/wf-2026-01-26-abc123.json",
+  "state": ".rundown/runs/rd_0123456789abcdef0123456789abcdef.json",
   "prompted": true,
   "position": { "current": "2", "total": 3 },
   "step": { "name": "2", "description": "Second Step" }

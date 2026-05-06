@@ -162,7 +162,7 @@ describe('delegate command', () => {
       const substepStates = state?.substepStates as Array<Record<string, unknown>> | undefined;
       const ss1 = substepStates?.find((ss) => ss.id === '1');
       const delegation = ss1?.delegation as Record<string, unknown>;
-      expect(delegation.childRunId).toEqual(expect.stringMatching(/^wf-/));
+      expect(delegation.childRunId).toEqual(expect.stringMatching(/^rd_[a-f0-9]{32}$/));
       expect(delegation.tokenHash).toEqual(expect.stringMatching(/^sha256:[a-f0-9]{64}$/));
       expect(delegation.token).toBeUndefined();
 

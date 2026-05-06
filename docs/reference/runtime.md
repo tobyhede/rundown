@@ -216,15 +216,15 @@ The session tracks top-level runs and delegated children separately.
 
 ```json
 {
-  "defaultStack": ["wf-2026-04-28-parent"],
+  "defaultStack": ["rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
   "stashedRunbookId": null,
   "claims": {
     "rdclm_F3J3n3d_f8fo0a0b1B2c3Q": {
       "kind": "claim-record",
       "claimId": "rdclm_F3J3n3d_f8fo0a0b1B2c3Q",
-      "childRunId": "wf-2026-04-28-child",
+      "childRunId": "rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "tokenHash": "sha256:...",
-      "parentRunId": "wf-2026-04-28-parent",
+      "parentRunId": "rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "parentStepId": "1.1",
       "parentFrameKey": "1|",
       "parentEntry": 1,
@@ -286,7 +286,7 @@ Each run state file stores enough information to resume deterministically.
 
 ```json
 {
-  "id": "wf-2024-01-07-abc123",
+  "id": "rd_0123456789abcdef0123456789abcdef",
   "runbook": "my-runbook.runbook.md",
   "runbookPath": ".rundown/runbooks/my-runbook.runbook.md",
   "title": "My Runbook",

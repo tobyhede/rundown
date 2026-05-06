@@ -166,12 +166,11 @@ describe('getBuiltinVariables', () => {
     expect(builtins.Branch).toBe('');
   });
 
-  it('should return RunId as alphanumeric string', () => {
+  it('should return RunId as canonical concrete run id', () => {
     const builtins = getBuiltinVariables();
 
     expect(builtins).toHaveProperty('RunId');
-    expect(builtins.RunId).toMatch(/^[a-f0-9]+$/);
-    expect(builtins.RunId).toHaveLength(8);
+    expect(builtins.RunId).toMatch(/^rd_[a-f0-9]{32}$/);
   });
 
   it('should return unique RunId across calls', () => {

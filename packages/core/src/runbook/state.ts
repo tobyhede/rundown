@@ -1,4 +1,5 @@
 // src/runbook/state.ts
+import { randomBytes } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type { OutputDeclaration } from '@rundown-org/parser';
@@ -65,11 +66,13 @@ export class StaleRunbookStateError extends Error {
   }
 }
 
-function generateId(): string {
-  const now = new Date();
-  const date = now.toISOString().slice(0, 10);
-  const random = Math.random().toString(36).slice(2, 8);
-  return `wf-${date}-${random}`;
+/**
+ * Generate a concrete Rundown run identifier.
+ *
+ * @returns Run ID in canonical `rd_<32 lowercase hex>` form
+ */
+export function generateRunId(): string {
+  return `rd_${randomBytes(16).toString('hex')}`;
 }
 
 /**
@@ -205,7 +208,7 @@ export class RunbookStateManager {
     runbook: Runbook | ResolvedRunbook,
     options: CreateOptions,
   ): Promise<RunbookState> {
-    const id = generateId();
+    const id = generateRunId();
     const now = new Date().toISOString();
 
     const initialStep = runbook.steps[0];
@@ -245,7 +248,7 @@ export class RunbookStateManager {
   /**
    * Load a runbook state from disk by ID.
    *
-   * @param id - The runbook state ID (e.g., 'wf-2025-01-12-abc123')
+   * @param id - The runbook state ID (e.g., 'rd_0123456789abcdef0123456789abcdef')
    * @returns The loaded RunbookState, or null if file not found
    * @throws {Error} If the state file exists but fails schema validation (stale state)
    * @throws {Error} If the runbook state uses deprecated dynamic-step snapshots
