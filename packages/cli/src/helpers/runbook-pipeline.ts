@@ -21,7 +21,6 @@ import {
   type ExecutionEventEmitter,
   type ResolvedRunbook,
   type RunbookRef,
-  RunbookRefSchema,
   type RunbookSource,
   type RunId,
   type DelegationLinkage,
@@ -563,17 +562,7 @@ export async function loadAndParseResolvedRunbook(
 ): Promise<LoadAndParseResult> {
   const { resolved, displayName } = request;
   const { path: filePath, source, sourceRoot } = resolved;
-  let runbookRef: RunbookRef;
-  try {
-    runbookRef = RunbookRefSchema.parse(request.runbookRef);
-  } catch (error: unknown) {
-    return {
-      ok: false,
-      error: getErrorMessage(error),
-      code: 'RUNBOOK_REF_RESOLUTION_ERROR',
-      details: { runbook: displayName },
-    };
-  }
+  const runbookRef = request.runbookRef;
 
   let derivedRunbookRef: RunbookRef;
   try {
@@ -948,11 +937,10 @@ async function prepareLoadedRunbook(
   };
 
   if (identity.kind === 'runnable') {
-    const runnableTemplateVars = withRunnableVariables(preparedTemplateVars, identity.runId);
     const prepared: RunnableRunbook = {
       ...preparedBaseFields,
       runId: identity.runId,
-      mergedVariables: runnableTemplateVars,
+      mergedVariables: templateVars as RunnableTemplateVariables,
     };
 
     return {
@@ -1611,8 +1599,18 @@ export async function claimAndLaunch(
     // 4f. Prepare child runbook from persisted source identity
     const childRunbookRef = freshDelegation.childRunbookRef;
     const childDisplayPath = freshDelegation.childRunbookPath;
-    const childResolved = await resolveRunbookRef(cwd, childRunbookRef);
-    if (!childResolved) {
+    const childResolution = await resolveRunbookRef(cwd, childRunbookRef);
+    if (!childResolution.ok) {
+      if (childResolution.reason === 'plugin-context-missing') {
+        return {
+          ok: false,
+          reason: 'prepare-failed',
+          runbook: childDisplayPath,
+          code: 'RUNBOOK_REF_RESOLUTION_ERROR',
+          cause: `Plugin runbook context is unavailable for ${childRunbookRef.source}:${childRunbookRef.path}. Set CLAUDE_PLUGIN_ROOT or install the Rundown Claude Code plugin alongside the CLI.`,
+          details: { runbook: childDisplayPath },
+        };
+      }
       return {
         ok: false,
         reason: 'prepare-failed',
@@ -1622,6 +1620,7 @@ export async function claimAndLaunch(
         details: { runbook: childDisplayPath },
       };
     }
+    const childResolved = childResolution.resolved;
 
     const prepResult = await prepareResolvedRunnableRunbook(
       {

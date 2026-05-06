@@ -406,11 +406,14 @@ describe('resolveRunbookFile', () => {
         });
 
         const rehydrated = await resolveRunbookRef(testDir, runbookRef);
-        expect(rehydrated).toMatchObject({
-          path: filePath,
-          source: 'external',
-          sourceRoot: externalDir,
-        });
+        expect(rehydrated.ok).toBe(true);
+        if (rehydrated.ok) {
+          expect(rehydrated.resolved).toMatchObject({
+            path: filePath,
+            source: 'external',
+            sourceRoot: externalDir,
+          });
+        }
       } finally {
         await fs.rm(externalDir, { recursive: true, force: true });
       }
@@ -426,14 +429,30 @@ describe('resolveRunbookFile', () => {
         path: '.rundown/runbooks/ops/deploy.md',
       });
 
-      expect(result).toMatchObject({
-        path: filePath,
-        source: 'project',
-        sourceRoot: testDir,
-      });
-      expect(buildRunbookRef(result!)).toEqual({
-        source: 'project',
-        path: '.rundown/runbooks/ops/deploy.md',
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.resolved).toMatchObject({
+          path: filePath,
+          source: 'project',
+          sourceRoot: testDir,
+        });
+        expect(buildRunbookRef(result.resolved)).toEqual({
+          source: 'project',
+          path: '.rundown/runbooks/ops/deploy.md',
+        });
+      }
+    });
+
+    it('reports missing plugin files when plugin context is available', async () => {
+      process.env.CLAUDE_PLUGIN_ROOT = path.join(testDir, 'plugin');
+      const runbookRef = { source: 'plugin' as const, path: 'planning/write-plan.runbook.md' };
+
+      const result = await resolveRunbookRef(testDir, runbookRef);
+
+      expect(result).toEqual({
+        ok: false,
+        reason: 'file-missing',
+        runbookRef,
       });
     });
   });

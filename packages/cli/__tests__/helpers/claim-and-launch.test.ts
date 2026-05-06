@@ -166,9 +166,12 @@ jest.unstable_mockModule('../../src/helpers/resolve-runbook', () => ({
   resolveRunbookFile: jest.fn(),
   resolveRunbookRef: jest.fn((_cwd: string, ref: RunbookRef) =>
     Promise.resolve({
-      path: `/tmp/test/${ref.path}`,
-      source: ref.source,
-      sourceRoot: '/tmp/test',
+      ok: true,
+      resolved: {
+        path: `/tmp/test/${ref.path}`,
+        source: ref.source,
+        sourceRoot: '/tmp/test',
+      },
     }),
   ),
   buildRunbookRef: jest.fn(actualResolveRunbook.buildRunbookRef),
@@ -413,9 +416,12 @@ beforeEach(() => {
   });
   jest.mocked(resolveRunbookRef).mockImplementation((_cwd: string, ref: RunbookRef) =>
     Promise.resolve({
-      path: `/tmp/test/${ref.path}`,
-      source: ref.source,
-      sourceRoot: '/tmp/test',
+      ok: true,
+      resolved: {
+        path: `/tmp/test/${ref.path}`,
+        source: ref.source,
+        sourceRoot: '/tmp/test',
+      },
     }),
   );
   jest.mocked(buildRunbookRef).mockImplementation(actualResolveRunbook.buildRunbookRef);

@@ -1,5 +1,5 @@
 import { describe, it, expect, jest } from '@jest/globals';
-import { ExecutionEventEmitter, type RunbookState } from '@rundown-org/core';
+import { ExecutionEventEmitter, RunbookRefSchema, type RunbookState } from '@rundown-org/core';
 import type { OutputEmitter } from '../../src/services/output-emitter.js';
 import { brandStoredOutputsForTest } from './brand-helpers.js';
 
@@ -39,6 +39,19 @@ describe('createBridgedEmitter', () => {
     const { output } = makeOutput();
     const emitter = createBridgedEmitter(makeState(), output as unknown as OutputEmitter);
     expect(emitter).toBeInstanceOf(ExecutionEventEmitter);
+  });
+
+  it('trusts the runbook ref already validated on state load', () => {
+    const parseSpy = jest.spyOn(RunbookRefSchema, 'parse');
+    const { output } = makeOutput();
+
+    try {
+      createBridgedEmitter(makeState(), output as unknown as OutputEmitter);
+
+      expect(parseSpy).not.toHaveBeenCalled();
+    } finally {
+      parseSpy.mockRestore();
+    }
   });
 
   it('forwards emitted events to output.executionEvent()', () => {

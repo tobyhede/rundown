@@ -29,6 +29,31 @@ export interface ResolvedRunbook {
 }
 
 /**
+ * Successful re-resolution of a persisted runbook reference.
+ */
+export interface ResolveRunbookRefSuccess {
+  /** Discriminator for successful resolution */
+  readonly ok: true;
+  /** Filesystem path and source metadata for the persisted runbook reference */
+  readonly resolved: ResolvedRunbook;
+}
+
+/**
+ * Failure while re-resolving a persisted runbook reference.
+ */
+export interface ResolveRunbookRefFailure {
+  /** Discriminator for failed resolution */
+  readonly ok: false;
+  /** Whether resolution failed because plugin context was unavailable or the file was missing */
+  readonly reason: 'plugin-context-missing' | 'file-missing';
+  /** Persisted runbook reference that could not be re-resolved */
+  readonly runbookRef: RunbookRef;
+}
+
+/** Result of re-resolving a persisted runbook reference. */
+export type ResolveRunbookRefResult = ResolveRunbookRefSuccess | ResolveRunbookRefFailure;
+
+/**
  * Parsed runbook identifier with optional namespace.
  */
 export interface ParsedIdentifier {
@@ -355,49 +380,76 @@ export function buildRunbookRef(resolved: ResolvedRunbook): RunbookRef {
  *
  * @param cwd - Current working directory for project runbooks
  * @param runbookRef - Canonical persisted runbook identity
- * @returns Resolved runbook file with source metadata, or null if missing
+ * @returns Typed success with source metadata, or typed failure describing why resolution failed
  */
 export async function resolveRunbookRef(
   cwd: string,
   runbookRef: RunbookRef,
-): Promise<ResolvedRunbook | null> {
-  const canonical = RunbookRefSchema.parse(runbookRef);
-  if (canonical.source === 'external') {
-    try {
-      await fs.access(canonical.path);
-      return {
-        path: canonical.path,
-        source: canonical.source,
-        sourceRoot: path.dirname(canonical.path),
-      };
-    } catch {
-      return null;
+): Promise<ResolveRunbookRefResult> {
+  const canonical = runbookRef;
+  switch (canonical.source) {
+    case 'external':
+      try {
+        // External refs intentionally trust a normalized absolute path only.
+        // Persistence does not bind file contents, so replacing the file between
+        // delegation and claim is outside the current integrity model.
+        await fs.access(canonical.path);
+        return {
+          ok: true,
+          resolved: {
+            path: canonical.path,
+            source: canonical.source,
+            sourceRoot: path.dirname(canonical.path),
+          },
+        };
+      } catch {
+        return { ok: false, reason: 'file-missing', runbookRef: canonical };
+      }
+    case 'project':
+      return resolveRunbookRefCandidates(canonical, [
+        { sourceRoot: cwd, path: path.join(cwd, canonical.path) },
+      ]);
+    case 'plugin': {
+      const pluginRoot = getPluginRoot();
+      if (!pluginRoot) {
+        return { ok: false, reason: 'plugin-context-missing', runbookRef: canonical };
+      }
+      const pluginRunbooksDir = path.join(pluginRoot, 'runbooks');
+      return resolveRunbookRefCandidates(canonical, [
+        { sourceRoot: pluginRunbooksDir, path: path.join(pluginRunbooksDir, canonical.path) },
+      ]);
+    }
+    case 'bundled': {
+      const bundledRunbooksDir = getBundledRunbooksPath();
+      return resolveRunbookRefCandidates(canonical, [
+        { sourceRoot: bundledRunbooksDir, path: path.join(bundledRunbooksDir, canonical.path) },
+      ]);
+    }
+    default: {
+      const _exhaustive: never = canonical.source;
+      return _exhaustive;
     }
   }
+}
 
-  const pluginRoot = getPluginRoot();
-  const pluginRunbooksDir = pluginRoot ? path.join(pluginRoot, 'runbooks') : null;
-  const bundledRunbooksDir = getBundledRunbooksPath();
-  const candidates =
-    canonical.source === 'project'
-      ? [{ sourceRoot: cwd, path: path.join(cwd, canonical.path) }]
-      : canonical.source === 'plugin'
-        ? pluginRunbooksDir
-          ? [{ sourceRoot: pluginRunbooksDir, path: path.join(pluginRunbooksDir, canonical.path) }]
-          : []
-        : [{ sourceRoot: bundledRunbooksDir, path: path.join(bundledRunbooksDir, canonical.path) }];
-
+async function resolveRunbookRefCandidates(
+  runbookRef: RunbookRef,
+  candidates: readonly { readonly sourceRoot: string; readonly path: string }[],
+): Promise<ResolveRunbookRefResult> {
   for (const candidate of candidates) {
     try {
       await fs.access(candidate.path);
       return {
-        path: candidate.path,
-        source: canonical.source,
-        sourceRoot: candidate.sourceRoot,
+        ok: true,
+        resolved: {
+          path: candidate.path,
+          source: runbookRef.source,
+          sourceRoot: candidate.sourceRoot,
+        },
       };
     } catch {
       // Continue to next candidate.
     }
   }
-  return null;
+  return { ok: false, reason: 'file-missing', runbookRef };
 }

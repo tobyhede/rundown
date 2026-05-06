@@ -468,9 +468,12 @@ beforeEach(() => {
   jest.mocked(buildRunbookRef).mockImplementation(actualResolveRunbook.buildRunbookRef);
   jest.mocked(resolveRunbookRef).mockImplementation((_cwd: string, ref: RunbookRef) =>
     Promise.resolve({
-      path: `/test/${ref.path}`,
-      source: ref.source,
-      sourceRoot: '/test',
+      ok: true,
+      resolved: {
+        path: `/test/${ref.path}`,
+        source: ref.source,
+        sourceRoot: '/test',
+      },
     }),
   );
 });
@@ -582,6 +585,30 @@ describe('prepareRunbook', () => {
     }
   });
 
+  it('does not re-parse the requested runbook ref for an already-resolved runbook', async () => {
+    const runbookRefSchemaMock = core.RunbookRefSchema as unknown as {
+      parse: jest.MockedFunction<(ref: unknown) => RunbookRef>;
+    };
+    runbookRefSchemaMock.parse.mockClear();
+
+    const result = await loadAndParseResolvedRunbook({
+      resolved: {
+        path: '/test/child.runbook.md',
+        source: 'project',
+        sourceRoot: '/test',
+      },
+      runbookRef: { source: 'project', path: 'child.runbook.md' },
+      displayName: 'child',
+    });
+
+    expect(result.ok).toBe(true);
+    expect(runbookRefSchemaMock.parse).toHaveBeenCalledTimes(1);
+    expect(runbookRefSchemaMock.parse).toHaveBeenCalledWith({
+      source: 'project',
+      path: 'child.runbook.md',
+    });
+  });
+
   it('returns a structured failure when resolved identity does not match request identity', async () => {
     const result = await loadAndParseResolvedRunbook({
       resolved: {
@@ -626,6 +653,25 @@ describe('prepareRunbook', () => {
         source: 'project',
         path: 'parent.runbook.md',
       });
+    }
+  });
+
+  it('stores the same runnable template variables used for substitution', async () => {
+    jest.mocked(resolveRunbookFile).mockResolvedValue({
+      path: '/test/parent.runbook.md',
+      source: 'project',
+      sourceRoot: '/test',
+    });
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue(mockParseResult());
+
+    const result = await prepareRunnableRunbook('parent.runbook.md', {}, '/test');
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const substitutedVars = jest.mocked(substituteRunbookVariables).mock.calls[0]?.[1];
+      expect(result.prepared.mergedVariables).toBe(substitutedVars);
     }
   });
 
@@ -2298,7 +2344,11 @@ describe('claimAndLaunch', () => {
       .mocked(core.DelegationScanService)
       .mockImplementation(() => mockScanner as unknown as jest.MockedObject<DelegationScanService>);
 
-    jest.mocked(resolveRunbookRef).mockResolvedValue(null); // File not found
+    jest.mocked(resolveRunbookRef).mockResolvedValue({
+      ok: false,
+      reason: 'file-missing',
+      runbookRef: { source: 'project', path: 'missing.md' },
+    });
 
     const mockManager = {
       load: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(parentState),
