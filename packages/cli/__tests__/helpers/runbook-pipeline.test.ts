@@ -1103,6 +1103,31 @@ describe('prepareRunbook', () => {
     );
   });
 
+  it('injects CLAUDE_PLUGIN_ROOT with forward slashes for Windows plugin paths', async () => {
+    jest.mocked(resolveRunbookFile).mockResolvedValue({
+      path: String.raw`C:\Users\agent\.claude\extensions\rundown-plugin\runbooks\write-plan.runbook.md`,
+      source: 'plugin' as const,
+      sourceRoot: String.raw`C:\Users\agent\.claude\extensions\rundown-plugin\runbooks`,
+    });
+    jest.mocked(buildRunbookRef).mockReturnValue({
+      source: 'plugin',
+      path: 'write-plan.runbook.md',
+    });
+    (
+      parser.parseRunbookDocument as jest.MockedFunction<typeof parser.parseRunbookDocument>
+    ).mockReturnValue(mockParseResult());
+
+    const result = await prepareRunbook('rundown:write-plan', {}, '/test');
+
+    expect(result.ok).toBe(true);
+    expect(substituteRunbookVariables).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        CLAUDE_PLUGIN_ROOT: 'C:/Users/agent/.claude/extensions/rundown-plugin/',
+      }),
+    );
+  });
+
   it('does not inject CLAUDE_PLUGIN_ROOT when runbook resolves from project source', async () => {
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/test/.rundown/runbooks/my-runbook.runbook.md',

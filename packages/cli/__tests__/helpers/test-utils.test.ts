@@ -414,6 +414,29 @@ describe('readRunbookState', () => {
       await workspace.cleanup();
     }
   });
+
+  it('rejects persisted states whose ids are not canonical run ids', async () => {
+    const workspace = await createTestWorkspace({ fixtureDir: 'snapshots' });
+    try {
+      const state = {
+        id: 'wf_legacy',
+        runbook: { source: 'project', path: 'legacy.runbook.md' },
+        runbookPath: 'legacy.runbook.md',
+        step: '1',
+        stepName: 'Legacy step',
+        retryCount: 0,
+        variables: {},
+        steps: [],
+        startedAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      };
+      await writeFile(join(workspace.statePath(), 'wf_legacy.json'), JSON.stringify(state));
+
+      await expect(readRunbookState(workspace, 'wf_legacy')).resolves.toBeNull();
+    } finally {
+      await workspace.cleanup();
+    }
+  });
 });
 
 describe('createTestWorkspace fixtureDir option', () => {

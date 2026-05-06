@@ -34,7 +34,12 @@ import { mockFn } from '../helpers/typed-mocks.js';
 type CheckPathFn = PolicyEvaluator['checkPath'];
 type RequestPermissionFn = PolicyPrompter['requestPermission'];
 
-const RESERVED_IDENTITY_KEYS = [BUILTIN_VARIABLES.RunId, BUILTIN_VARIABLES.RunbookRef] as const;
+const RESERVED_IDENTITY_KEY_VARIANTS = [
+  BUILTIN_VARIABLES.RunId,
+  'runid',
+  BUILTIN_VARIABLES.RunbookRef,
+  'RUNBOOKREF',
+] as const;
 
 describe('parseVarFlag', () => {
   it('should parse key=value format', () => {
@@ -502,19 +507,16 @@ describe('resolveVariables', () => {
       );
     });
 
-    it.each([
-      'RunId',
-      'runid',
-      'RunbookRef',
-      'RUNBOOKREF',
-    ])('rejects runtime identity key "%s" from --input', async (name) => {
+    it.each(
+      RESERVED_IDENTITY_KEY_VARIANTS,
+    )('rejects runtime identity key "%s" from --input', async (name) => {
       await expect(resolveVariables({ input: [`${name}=shadow`] }, tmpDir)).rejects.toThrow(
         /reserved runtime variable/i,
       );
     });
 
     it.each(
-      RESERVED_IDENTITY_KEYS,
+      RESERVED_IDENTITY_KEY_VARIANTS,
     )('rejects runtime identity key "%s" from --input-json', async (name) => {
       await expect(resolveVariables({ inputJson: [`${name}="shadow"`] }, tmpDir)).rejects.toThrow(
         /reserved runtime variable/i,
@@ -522,7 +524,7 @@ describe('resolveVariables', () => {
     });
 
     it.each(
-      RESERVED_IDENTITY_KEYS,
+      RESERVED_IDENTITY_KEY_VARIANTS,
     )('rejects runtime identity key "%s" from --input-file', async (name) => {
       const varFile = path.join(tmpDir, `${name}.yaml`);
       await fs.writeFile(varFile, `${name}: shadow\n`);
@@ -533,7 +535,7 @@ describe('resolveVariables', () => {
     });
 
     it.each(
-      RESERVED_IDENTITY_KEYS,
+      RESERVED_IDENTITY_KEY_VARIANTS,
     )('ignores runtime identity key "%s" from RD_INPUT_*', async (name) => {
       const envKey = `RD_INPUT_${name}`;
       process.env[envKey] = 'shadow';

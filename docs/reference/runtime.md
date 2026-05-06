@@ -316,7 +316,7 @@ Each run state file stores enough information to resume deterministically.
 | Field | Runtime requirement |
 | --- | --- |
 | `id` | Persisted run identifier generated at execution start. |
-| `runbook` | Canonical runbook identity object: `{ source, path }`, where `path` is a safe source-root-relative Markdown path. |
+| `runbook` | Canonical runbook identity object: `{ source, path }`, where `source` is `project`, `plugin`, `bundled`, or `external`, and `path` is a safe source-root-relative Markdown path. |
 | `runbookPath` | Display/execution file path relative to the current project when possible. |
 | `step`, `substep` | Current structural position. |
 | `retryCount` | User-visible retry count across retry sites. |
@@ -448,7 +448,7 @@ environment filtering.
 | `RD_CONTEXT_ID` | `ContextId` |
 | `RD_RUN_ID` | `RunId` |
 | `RD_RUNBOOK_REF` | `RunbookRef.path` |
-| `RD_RUNBOOK_SOURCE` | `RunbookRef.source` |
+| `RD_RUNBOOK_SOURCE` | `RunbookRef.source` (`project`, `plugin`, `bundled`, or `external`) |
 | `RD_OUTPUTS_<VarName>` | Naked step/substep `OUTPUTS` entry. |
 
 Rundown-injected `RD_*` variables use Rundown-wins semantics: user-supplied

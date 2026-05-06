@@ -152,6 +152,13 @@ export interface RunnableRunbook extends PreparedRunbook {
   readonly mergedVariables: RunnableTemplateVariables;
 }
 
+function deriveClaudePluginRoot(sourceRoot: string): string {
+  const normalized = sourceRoot.replace(/\\/g, '/').replace(/\/+$/, '');
+  const lastSlash = normalized.lastIndexOf('/');
+  const pluginRoot = lastSlash >= 0 ? normalized.slice(0, lastSlash) : '.';
+  return `${pluginRoot}/`;
+}
+
 /** Failure produced while initializing a runbook launch. */
 export interface RunbookStartFailure {
   ok: false;
@@ -753,7 +760,7 @@ async function prepareLoadedRunbook(
     stats,
   } = parsed;
 
-  const pluginRoot = source === 'plugin' ? `${path.dirname(sourceRoot)}${path.sep}` : undefined;
+  const pluginRoot = source === 'plugin' ? deriveClaudePluginRoot(sourceRoot) : undefined;
 
   // Inherited user vars pass through untouched here. Context OUTPUTS are
   // inherited after variable resolution (stage 3.5 below), once the child's

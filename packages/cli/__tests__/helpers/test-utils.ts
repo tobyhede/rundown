@@ -13,6 +13,7 @@ import {
   ConsoleWriter,
   getErrorMessage,
   RUNBOOK_SOURCES,
+  isRunId,
   runsDir,
   sessionPath as _sessionPath,
   runbooksDir,
@@ -506,7 +507,7 @@ function isRunbookState(value: unknown): value is RunbookState {
     typeof runbookRef.source === 'string' &&
     (RUNBOOK_SOURCES as readonly string[]).includes(runbookRef.source);
   return (
-    typeof state.id === 'string' &&
+    isRunId(state.id) &&
     hasKnownSource &&
     typeof runbookRef.path === 'string' &&
     typeof state.runbookPath === 'string' &&

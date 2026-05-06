@@ -377,7 +377,7 @@ describe('executeGoto', () => {
   // fields; tests exercise only the specific fields each path consults.
   function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
     return {
-      id: 'test-id' as RunbookState['id'],
+      id: DEFAULT_RUNBOOK_ID,
       runbook: { source: 'project', path: 'test.md' },
       runbookPath: 'test.md',
       step: '1',

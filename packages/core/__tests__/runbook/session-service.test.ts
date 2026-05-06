@@ -394,6 +394,35 @@ describe('SessionService', () => {
       }
     });
 
+    it('claimRunbook refuses to refresh an existing child claim with different linkage', async () => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const originalLinkage = linkageFor(parent.id, '5');
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: originalLinkage,
+      });
+      const first = assertClaimed(await sessionService.claimRunbook(child.id, originalLinkage));
+
+      const incomingLinkage = linkageFor(parent.id, '6');
+      await manager.update(child.id, { parentLinkage: incomingLinkage });
+
+      const result = await sessionService.claimRunbook(child.id, incomingLinkage);
+
+      expect(result.status).toBe('linkage-mismatch');
+      if (result.status === 'linkage-mismatch') {
+        expect(result.childRunId).toBe(child.id);
+        expect(result.incoming).toBe(incomingLinkage);
+        expect(result.persisted).toEqual({
+          kind: 'delegation',
+          parentRunId: first.claim.parentRunId,
+          parentStepId: first.claim.parentStepId,
+          tokenHash: first.claim.tokenHash,
+        });
+      }
+    });
+
     it('claimRunbook refuses when child has no parent linkage at all', async () => {
       const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
         runbookPath: 'parent.md',

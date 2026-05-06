@@ -57,6 +57,18 @@ function linkageMatchesLinkage(
   );
 }
 
+function claimRecordToDelegationLinkage(claim: ClaimRecord): DelegationLinkage {
+  return {
+    kind: 'delegation',
+    parentRunId: claim.parentRunId,
+    parentStepId: claim.parentStepId,
+    tokenHash: claim.tokenHash,
+    ...(claim.parentStep !== undefined ? { parentStep: claim.parentStep } : {}),
+    ...(claim.parentFrameKey !== undefined ? { parentFrameKey: claim.parentFrameKey } : {}),
+    ...(claim.parentEntry !== undefined ? { parentEntry: claim.parentEntry } : {}),
+  };
+}
+
 /**
  * True when `linkage` is a delegation linkage that matches `claim`'s parent run / step / token hash.
  * Used to verify a child runbook's parentLinkage genuinely originated from the supplied claim record.
@@ -244,6 +256,15 @@ export class SessionService {
 
       const existing = this.findClaimByChildRunId(session.claims, childRunId);
       if (existing !== undefined) {
+        const existingLinkage = claimRecordToDelegationLinkage(existing);
+        if (!linkageMatchesLinkage(existingLinkage, linkage)) {
+          return {
+            status: 'linkage-mismatch',
+            childRunId,
+            incoming: linkage,
+            persisted: existingLinkage,
+          };
+        }
         const refreshed = { ...existing, updatedAt: now };
         session.claims[existing.claimId] = refreshed;
         await this.manager.saveSession(session);

@@ -14,6 +14,7 @@ import type * as ExecutionModule from '../../src/services/execution.js';
 
 const PARENT_RUN_ID = brandRunIdForTest(`rd_${'9'.repeat(32)}`);
 const SECOND_PARENT_RUN_ID = brandRunIdForTest(`rd_${'a'.repeat(32)}`);
+const DEFAULT_RUN_ID = brandRunIdForTest(`rd_${'b'.repeat(32)}`);
 
 // Mock @rundown-org/core
 jest.unstable_mockModule('@rundown-org/core', () => {
@@ -83,7 +84,7 @@ const { buildInactiveStatus, buildStashedStatus, buildActiveStatus } = await imp
 
 function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
   const baseState: RunbookState = {
-    id: 'test-id' as RunbookState['id'],
+    id: DEFAULT_RUN_ID,
     runbook: { source: 'project', path: 'test.runbook.md' },
     runbookPath: 'test.runbook.md',
     step: '1',
