@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import {
   createTestWorkspace,
   createRunbook,
@@ -403,6 +403,44 @@ describe('DELEGATE backward compatibility — manual rd delegate --step alongsid
     const ss2 = substepStates?.find((ss) => ss.id === '2');
     expect(ss1?.delegation).toBeDefined();
     expect(ss2?.delegation).toBeUndefined();
+  });
+
+  it('claims an explicit absolute child runbook outside the current project', async () => {
+    await writeDelegateRunbook();
+    const externalDir = await mkdtemp(join(dirname(workspace.cwd), 'rd-external-child-'));
+    try {
+      const externalChildPath = join(externalDir, 'external-child.runbook.md');
+      await writeFile(
+        externalChildPath,
+        createRunbook({
+          title: 'External Child',
+          steps: [{ title: 'Do work', pass: 'COMPLETE', command: 'rd echo --result pass' }],
+        }),
+      );
+
+      const start = await runCliInProcess(
+        'run --prompted runbooks/parent.runbook.md --text',
+        workspace,
+      );
+      expect(start.exitCode).toBe(0);
+
+      const manual = await runCliInProcess(
+        ['delegate', externalChildPath, '--step', '1.1'],
+        workspace,
+      );
+      expect(manual.exitCode).toBe(0);
+      const delegateOutput = JSON.parse(manual.stdout) as Record<string, unknown>;
+      const token = String(delegateOutput.token);
+      expect(token.startsWith('rdtk_')).toBe(true);
+
+      const claim = await runCliInProcess(['claim', token], workspace);
+      expect(claim.exitCode).toBe(0);
+      const claimOutput = findActionOutput(claim.stdout);
+      expect(claimOutput).not.toBeNull();
+      expect(claimOutput!.runbook).toBe(externalChildPath);
+    } finally {
+      await rm(externalDir, { recursive: true, force: true });
+    }
   });
 
   it('after auto-delegation, rd delegate --step on a remaining substep is rejected with already-delegated error', async () => {

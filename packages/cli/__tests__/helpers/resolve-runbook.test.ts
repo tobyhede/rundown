@@ -386,6 +386,36 @@ describe('resolveRunbookFile', () => {
       });
     });
 
+    it('re-resolves absolute external runbook refs to the original file path', async () => {
+      const externalDir = await fs.mkdtemp(path.join(path.dirname(testDir), 'external-runbook-'));
+      try {
+        const filePath = path.join(externalDir, 'external-child.runbook.md');
+        await fs.writeFile(filePath, '# External Child');
+
+        const resolved = await resolveRunbookFile(testDir, filePath);
+
+        expect(resolved).toMatchObject({
+          path: filePath,
+          source: 'external',
+          sourceRoot: externalDir,
+        });
+        const runbookRef = buildRunbookRef(resolved!);
+        expect(runbookRef).toEqual({
+          source: 'external',
+          path: filePath,
+        });
+
+        const rehydrated = await resolveRunbookRef(testDir, runbookRef);
+        expect(rehydrated).toMatchObject({
+          path: filePath,
+          source: 'external',
+          sourceRoot: externalDir,
+        });
+      } finally {
+        await fs.rm(externalDir, { recursive: true, force: true });
+      }
+    });
+
     it('re-resolves persisted refs to the exact Markdown file path', async () => {
       const filePath = path.join(testDir, '.rundown/runbooks/ops/deploy.md');
       await fs.mkdir(path.dirname(filePath), { recursive: true });

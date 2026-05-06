@@ -10,6 +10,8 @@ import { findRunbookByName, findRunbookByNameInSource } from '../services/discov
 import { getBundledRunbooksPath } from './bundled-runbooks.js';
 import { getPluginRoot } from './plugin-root.js';
 
+type DiscoverableRunbookSource = Exclude<RunbookSource, 'external'>;
+
 /**
  * Result of resolving a runbook file, including its source.
  *
@@ -60,7 +62,7 @@ export function parseIdentifier(identifier: string): ParsedIdentifier {
  * @param namespace - Namespace string
  * @returns Source type or null if namespace not recognized
  */
-function namespaceToSource(namespace: string): RunbookSource | null {
+function namespaceToSource(namespace: string): DiscoverableRunbookSource | null {
   if (namespace === 'rundown') {
     return 'plugin';
   }
@@ -98,13 +100,14 @@ async function pathUnderRoot(root: string, target: string): Promise<string | nul
 }
 
 async function resolveAbsolutePath(cwd: string, filename: string): Promise<ResolvedRunbook | null> {
+  const absoluteFilename = path.resolve(filename);
   try {
-    await fs.access(filename);
+    await fs.access(absoluteFilename);
   } catch {
     return null;
   }
 
-  const projectRunbookPath = await pathUnderRoot(runbooksDir(cwd), filename);
+  const projectRunbookPath = await pathUnderRoot(runbooksDir(cwd), absoluteFilename);
   if (projectRunbookPath) {
     return { path: projectRunbookPath, source: 'project', sourceRoot: cwd };
   }
@@ -112,27 +115,27 @@ async function resolveAbsolutePath(cwd: string, filename: string): Promise<Resol
   const pluginRoot = getPluginRoot();
   const pluginRunbooksDir = pluginRoot ? path.join(pluginRoot, 'runbooks') : null;
   if (pluginRunbooksDir) {
-    const pluginRunbookPath = await pathUnderRoot(pluginRunbooksDir, filename);
+    const pluginRunbookPath = await pathUnderRoot(pluginRunbooksDir, absoluteFilename);
     if (pluginRunbookPath) {
       return { path: pluginRunbookPath, source: 'plugin', sourceRoot: pluginRunbooksDir };
     }
   }
 
   const bundledRunbooksDir = getBundledRunbooksPath();
-  const bundledRunbookPath = await pathUnderRoot(bundledRunbooksDir, filename);
+  const bundledRunbookPath = await pathUnderRoot(bundledRunbooksDir, absoluteFilename);
   if (bundledRunbookPath) {
     return { path: bundledRunbookPath, source: 'bundled', sourceRoot: bundledRunbooksDir };
   }
 
-  const projectPath = await pathUnderRoot(cwd, filename);
+  const projectPath = await pathUnderRoot(cwd, absoluteFilename);
   if (projectPath) {
     return { path: projectPath, source: 'project', sourceRoot: cwd };
   }
 
   return {
-    path: filename,
-    source: 'project',
-    sourceRoot: path.dirname(path.resolve(filename)),
+    path: absoluteFilename,
+    source: 'external',
+    sourceRoot: path.dirname(absoluteFilename),
   };
 }
 
@@ -274,7 +277,7 @@ export async function resolveRunbookFile(
 
 async function resolvedFromDiscovered(
   cwd: string,
-  discovered: { path: string; source: RunbookSource },
+  discovered: { path: string; source: DiscoverableRunbookSource },
 ): Promise<ResolvedRunbook> {
   const sourceRoot = sourceRootForDiscovered(cwd, discovered.source);
   const normalizedPath = (await pathUnderRoot(sourceRoot, discovered.path)) ?? discovered.path;
@@ -285,7 +288,7 @@ async function resolvedFromDiscovered(
   };
 }
 
-function sourceRootForDiscovered(cwd: string, source: RunbookSource): string {
+function sourceRootForDiscovered(cwd: string, source: DiscoverableRunbookSource): string {
   switch (source) {
     case 'project':
       return cwd;
@@ -323,6 +326,13 @@ function derivePersistedRunbookRef(
   source: RunbookSource,
   sourceRoot: string,
 ): RunbookRef {
+  if (source === 'external') {
+    return RunbookRefSchema.parse({
+      source,
+      path: filePath,
+    });
+  }
+
   return RunbookRefSchema.parse({
     source,
     path: toSourceRootRelativePath(filePath, sourceRoot),
@@ -352,6 +362,19 @@ export async function resolveRunbookRef(
   runbookRef: RunbookRef,
 ): Promise<ResolvedRunbook | null> {
   const canonical = RunbookRefSchema.parse(runbookRef);
+  if (canonical.source === 'external') {
+    try {
+      await fs.access(canonical.path);
+      return {
+        path: canonical.path,
+        source: canonical.source,
+        sourceRoot: path.dirname(canonical.path),
+      };
+    } catch {
+      return null;
+    }
+  }
+
   const pluginRoot = getPluginRoot();
   const pluginRunbooksDir = pluginRoot ? path.join(pluginRoot, 'runbooks') : null;
   const bundledRunbooksDir = getBundledRunbooksPath();

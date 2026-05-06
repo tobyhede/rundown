@@ -1,3 +1,4 @@
+import * as path from 'node:path';
 import { z } from 'zod';
 import { assertSafeId } from '../paths.js';
 
@@ -6,13 +7,13 @@ import { assertSafeId } from '../paths.js';
  */
 export const RUNBOOK_REF_ERROR_TEXT = {
   INVALID_RUNBOOK_REF:
-    'Invalid runbook: expected { source, path } with a safe source-root-relative Markdown path',
+    'Invalid runbook: expected { source, path } with a safe source-root-relative Markdown path or normalized absolute external Markdown path',
 } as const;
 
 /**
  * Supported source roots for local-disk runbook references.
  */
-export const RUNBOOK_SOURCES = ['project', 'plugin', 'bundled'] as const;
+export const RUNBOOK_SOURCES = ['project', 'plugin', 'bundled', 'external'] as const;
 
 /**
  * Zod schema for a supported runbook source root.
@@ -32,7 +33,7 @@ export type RunbookSource = z.infer<typeof RunbookSourceSchema>;
  * @param value - Path value to validate
  * @returns True when the path is canonical for a local runbook reference
  */
-function isValidRunbookPath(value: string): boolean {
+function isValidSourceRootRelativeRunbookPath(value: string): boolean {
   if (
     value.length === 0 ||
     value.startsWith('/') ||
@@ -59,6 +60,28 @@ function isValidRunbookPath(value: string): boolean {
 }
 
 /**
+ * Validate a normalized absolute Markdown path for an external runbook.
+ *
+ * @param value - Path value to validate
+ * @returns True when the path can be persisted and rehydrated directly
+ */
+function isValidExternalRunbookPath(value: string): boolean {
+  if (
+    value.length === 0 ||
+    !path.isAbsolute(value) ||
+    value.includes('\0') ||
+    !value.endsWith('.md') ||
+    path.normalize(value) !== value
+  ) {
+    return false;
+  }
+
+  const root = path.parse(value).root;
+  const segments = value.slice(root.length).split(path.sep);
+  return !segments.some((segment) => segment.length === 0 || segment === '.' || segment === '..');
+}
+
+/**
  * Zod schema for canonical local-disk runbook references.
  */
 export const RunbookRefSchema = z
@@ -76,7 +99,11 @@ export const RunbookRefSchema = z
     },
   )
   .superRefine((ref, ctx) => {
-    if (!isValidRunbookPath(ref.path)) {
+    const validPath =
+      ref.source === 'external'
+        ? isValidExternalRunbookPath(ref.path)
+        : isValidSourceRootRelativeRunbookPath(ref.path);
+    if (!validPath) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: RUNBOOK_REF_ERROR_TEXT.INVALID_RUNBOOK_REF,
