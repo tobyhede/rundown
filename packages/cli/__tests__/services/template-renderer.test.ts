@@ -1,5 +1,8 @@
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import { parseRunbookDocument } from '@rundown-org/core';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import * as path from 'node:path';
+import { parseRunbookDocument, readArtifactManifest } from '@rundown-org/core';
 import type {
   Runbook,
   Step,
@@ -31,6 +34,15 @@ import {
   assertStepWithCommand,
   parseResolvedRunbook,
 } from '../helpers/parse-helpers.js';
+
+const RUN_ID = 'rd_0123456789abcdef0123456789abcdef';
+const RUNBOOK_REF = {
+  source: 'plugin',
+  path: 'planning/review/review-plan-risk-safety.runbook.md',
+} as const;
+const DEFAULT_TEMPLATE_HELPER_OPTIONS = {
+  cwd: path.join(tmpdir(), `rd-template-renderer-${process.pid}`),
+};
 
 describe('expandLoopVariables', () => {
   it('should expand named loop variable', () => {
@@ -238,6 +250,123 @@ describe('substituteRunbookVariables', () => {
     const step = result.steps[0];
     assertStepWithCommand(step);
     expect(step.command.code).toBe('git checkout {{BRANCH}}');
+  });
+
+  it('renders path helper in command text and records a manifest row', async () => {
+    const cwd = await mkdtemp(path.join(tmpdir(), 'rd-template-'));
+    try {
+      const runbook = parseResolvedRunbook(
+        "# Test\n\n## 1. Produce\n\n```bash\nprintf '{}' > '{{ path \"review.json\" }}'\n```",
+      );
+      const variables = {
+        WorkPath: '.rundown/work',
+        ContextId: 'ctx1',
+        RunId: 'rd_0123456789abcdef0123456789abcdef',
+        RunbookRef: {
+          source: 'plugin',
+          path: 'planning/review/review-plan-risk-safety.runbook.md',
+        },
+      };
+
+      const result = substituteRunbookVariables(runbook, variables, { cwd });
+      const step = result.steps[0];
+      assertStepWithCommand(step);
+      const expectedPath = path.join(
+        cwd,
+        '.rundown/work/.rd-ctx1/runs/rd_0123456789abcdef0123456789abcdef/review.json',
+      );
+      expect(step.command.code).toBe(`printf '{}' > '${expectedPath}'`);
+
+      const records = await readArtifactManifest({ cwd, workPath: variables.WorkPath }, 'ctx1');
+      expect(records).toEqual([
+        expect.objectContaining({
+          uri: 'rd://artifacts/ctx1/runs/rd_0123456789abcdef0123456789abcdef/review.json',
+          runId: variables.RunId,
+          contextId: variables.ContextId,
+          runbook: variables.RunbookRef,
+          key: 'review.json',
+          timestamp: expect.any(String),
+        }),
+      ]);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('renders path helper in prompt text and records a manifest row', async () => {
+    const cwd = await mkdtemp(path.join(tmpdir(), 'rd-template-'));
+    try {
+      const runbook = parseResolvedRunbook(
+        '# Test\n\n## 1. Confirm\n\n> Review {{ path "review.json" }}\n',
+      );
+      const variables = {
+        WorkPath: '.rundown/work',
+        ContextId: 'ctx1',
+        RunId: 'rd_0123456789abcdef0123456789abcdef',
+        RunbookRef: {
+          source: 'plugin',
+          path: 'planning/review/review-plan-risk-safety.runbook.md',
+        },
+      };
+
+      const result = substituteRunbookVariables(runbook, variables, { cwd });
+      const expectedPath = path.join(
+        cwd,
+        '.rundown/work/.rd-ctx1/runs/rd_0123456789abcdef0123456789abcdef/review.json',
+      );
+      expect(result.steps[0].prompt).toContain(expectedPath);
+
+      const records = await readArtifactManifest({ cwd, workPath: variables.WorkPath }, 'ctx1');
+      expect(records).toEqual([
+        expect.objectContaining({
+          uri: 'rd://artifacts/ctx1/runs/rd_0123456789abcdef0123456789abcdef/review.json',
+          runId: variables.RunId,
+          contextId: variables.ContextId,
+          runbook: variables.RunbookRef,
+          key: 'review.json',
+          timestamp: expect.any(String),
+        }),
+      ]);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('renders artifact helper to an exact URI and records a manifest row', async () => {
+    const cwd = await mkdtemp(path.join(tmpdir(), 'rd-template-'));
+    try {
+      const runbook = parseResolvedRunbook(
+        '# Test\n\n## 1. Report\n\n> Artifact {{ artifact "review.json" }}\n',
+      );
+      const variables = {
+        WorkPath: '.rundown/work',
+        ContextId: 'ctx1',
+        RunId: 'rd_0123456789abcdef0123456789abcdef',
+        RunbookRef: {
+          source: 'plugin',
+          path: 'planning/review/review-plan-risk-safety.runbook.md',
+        },
+      };
+
+      const result = substituteRunbookVariables(runbook, variables, { cwd });
+      expect(result.steps[0].prompt).toContain(
+        'rd://artifacts/ctx1/runs/rd_0123456789abcdef0123456789abcdef/review.json',
+      );
+
+      const records = await readArtifactManifest({ cwd, workPath: variables.WorkPath }, 'ctx1');
+      expect(records).toEqual([
+        expect.objectContaining({
+          uri: 'rd://artifacts/ctx1/runs/rd_0123456789abcdef0123456789abcdef/review.json',
+          runId: variables.RunId,
+          contextId: variables.ContextId,
+          runbook: variables.RunbookRef,
+          key: 'review.json',
+          timestamp: expect.any(String),
+        }),
+      ]);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
   });
 
   it('should substitute runbook title', () => {
@@ -1903,11 +2032,18 @@ describe('substituteText with HelperRegistry', () => {
 
   it('renders built-in path helper with default context', () => {
     expect(
-      substituteText('Artifact: {{ path "review.json" }}', {
-        WorkPath: '.rundown/work/demo',
-        ContextId: 'ctx-123',
-      }),
-    ).toMatch(/^Artifact: \.rundown\/work\/demo\/\.rd-ctx-123\/\d{4}-\d{2}-\d{2}-review\.json$/);
+      substituteText(
+        'Artifact: {{ path "review.json" }}',
+        {
+          WorkPath: '.rundown/work/demo',
+          ContextId: 'ctx-123',
+          RunId: RUN_ID,
+          RunbookRef: RUNBOOK_REF,
+        },
+        undefined,
+        DEFAULT_TEMPLATE_HELPER_OPTIONS,
+      ),
+    ).toContain(`.rundown/work/demo/.rd-ctx-123/runs/${RUN_ID}/review.json`);
   });
 
   it('preserves built-in path helper when required variables are missing', () => {
@@ -1917,23 +2053,23 @@ describe('substituteText with HelperRegistry', () => {
     );
   });
 
-  it('renders built-in path helper with ctx template override', () => {
+  it('preserves legacy path helper ctx template override as literal text', () => {
     expect(
       substituteText('{{ path "review.json" ctx={{ childCtx }} }}', {
         WorkPath: '.rundown/work/demo',
         ContextId: 'parent',
         childCtx: 'child-123',
       }),
-    ).toMatch(/^\.rundown\/work\/demo\/\.rd-child-123\/\d{4}-\d{2}-\d{2}-review\.json$/);
+    ).toBe('{{ path "review.json" ctx=child-123 }}');
   });
 
-  it('renders built-in path helper with bare literal ctx override', () => {
+  it('preserves legacy path helper bare ctx override as literal text', () => {
     expect(
       substituteText('{{ path "review.json" ctx=alt-ctx }}', {
         WorkPath: '.rundown/work/demo',
         ContextId: 'parent',
       }),
-    ).toMatch(/^\.rundown\/work\/demo\/\.rd-alt-ctx\/\d{4}-\d{2}-\d{2}-review\.json$/);
+    ).toBe('{{ path "review.json" ctx=alt-ctx }}');
   });
 
   it('calls helper with dotted variable path argument', () => {
@@ -2015,11 +2151,17 @@ describe('substituteText with HelperRegistry', () => {
 
   it('expandLoopVariables dispatches built-in path helper calls', () => {
     expect(
-      expandLoopVariables('{{ path "review.json" }}', {
-        WorkPath: '.rundown/work/demo',
-        ContextId: 'ctx-123',
-      }),
-    ).toMatch(/^\.rundown\/work\/demo\/\.rd-ctx-123\/\d{4}-\d{2}-\d{2}-review\.json$/);
+      expandLoopVariables(
+        '{{ path "review.json" }}',
+        {
+          WorkPath: '.rundown/work/demo',
+          ContextId: 'ctx-123',
+          RunId: RUN_ID,
+          RunbookRef: RUNBOOK_REF,
+        },
+        DEFAULT_TEMPLATE_HELPER_OPTIONS,
+      ),
+    ).toContain(`.rundown/work/demo/.rd-ctx-123/runs/${RUN_ID}/review.json`);
   });
 
   it('expandLoopVariablesForCommand dispatches helper calls with shell escaping', () => {
@@ -2031,11 +2173,17 @@ describe('substituteText with HelperRegistry', () => {
 
   it('expandLoopVariablesForCommand dispatches built-in path helper calls with shell escaping', () => {
     expect(
-      expandLoopVariablesForCommand('cat {{ path "review.json" }}', {
-        WorkPath: '.rundown/work/demo path',
-        ContextId: 'ctx-123',
-      }),
-    ).toMatch(/^cat '\.rundown\/work\/demo path\/\.rd-ctx-123\/\d{4}-\d{2}-\d{2}-review\.json'$/);
+      expandLoopVariablesForCommand(
+        'cat {{ path "review.json" }}',
+        {
+          WorkPath: '.rundown/work/demo path',
+          ContextId: 'ctx-123',
+          RunId: RUN_ID,
+          RunbookRef: RUNBOOK_REF,
+        },
+        DEFAULT_TEMPLATE_HELPER_OPTIONS,
+      ),
+    ).toContain(`.rundown/work/demo path/.rd-ctx-123/runs/${RUN_ID}/review.json`);
   });
 });
 

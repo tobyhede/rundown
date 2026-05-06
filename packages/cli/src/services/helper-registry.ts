@@ -25,7 +25,7 @@ export type HelperRegistry = ReadonlyMap<string, (value: string) => string>;
  * future built-in that uses `{{ name arg }}` syntax in template bodies must be
  * added here, or a same-named user helper will intercept calls to it.
  */
-const RESERVED_HELPER_NAMES = new Set(['path']);
+const RESERVED_HELPER_NAMES = new Set(['artifact', 'path']);
 
 /**
  * Validate a helper module path is within the project root.
@@ -96,8 +96,8 @@ export async function validateHelperPath(
  * Load all helper modules from the given list of paths.
  *
  * Each module is loaded via dynamic `import()`. Named function exports become
- * helpers. Non-function exports, async functions, and the reserved name `path`
- * are skipped with a warning. Module load failures are warned and skipped.
+ * helpers. Non-function exports, async functions, and reserved built-in helper
+ * names are skipped with a warning. Module load failures are warned and skipped.
  *
  * @param paths - Absolute or project-relative paths to JS/ESM modules
  * @param cwd - Working directory for resolving relative paths

@@ -239,6 +239,22 @@ jest.unstable_mockModule('@rundown-org/core', () => {
       const date = new Date().toISOString().slice(0, 10);
       return `${dir}/.rd-${ctx}/${date}-${file}`;
     }),
+    applyRunArtifactHelper: jest.fn(
+      (
+        kind: 'artifact' | 'path',
+        key: string,
+        frame: Record<string, unknown>,
+        options: { cwd: string },
+      ) => {
+        const contextId = String(frame.ContextId ?? 'ctx');
+        const runId = String(frame.RunId ?? 'rd_0123456789abcdef0123456789abcdef');
+        const workPath = String(frame.WorkPath ?? '.rundown/work');
+        const uri = `rd://artifacts/${contextId}/runs/${runId}/${key}`;
+        return kind === 'artifact'
+          ? uri
+          : `${options.cwd}/${workPath}/.rd-${contextId}/runs/${runId}/${key}`;
+      },
+    ),
     ...mockErrorHelpers,
     RUNS_DIR: '.rundown/runs',
     WORK_DIR: '.rundown/work',

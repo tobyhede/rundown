@@ -1,10 +1,15 @@
 import type { OutputDeclaration } from '@rundown-org/parser';
+import { mkdirSync } from 'node:fs';
+import * as path from 'node:path';
 import { mergeEffectiveVars } from './effective-vars.js';
 import type { ForContext, JsonValue, TemplateVarValue } from './types.js';
 import { assertResolvedVariableForContext, isJsonArrayStream } from './types.js';
 import { deriveExecutionAt } from './targeting.js';
-import { assembleArtifactPath, VALID_CTX } from './artifact-paths.js';
+import { assembleRunArtifactPath } from './artifact-paths.js';
+import { appendArtifactManifestRecordSync } from './artifact-manifest.js';
+import { buildArtifactUri } from './artifact-uri.js';
 import { invokeHelperSafely } from './helper-invoke.js';
+import { RunbookRefSchema, type RunbookRef } from './runbook-ref.js';
 import { logger } from '../logger.js';
 
 /**
@@ -17,6 +22,12 @@ export type OutputValue = JsonValue;
 
 /** Readonly variable frame passed to OUTPUTS expression evaluation. */
 export type OutputVars = Readonly<Record<string, OutputValue>>;
+
+/** Options required for evaluating helpers with filesystem side effects. */
+export interface EvaluateOutputOptions {
+  /** Project root used to resolve work paths and append artifact manifest rows. */
+  readonly cwd: string;
+}
 
 /**
  * Module-private nominal brand applied to the output of {@link flattenTemplateVars}.
@@ -101,7 +112,8 @@ export function resetHelperRegistry(): void {
 
 const TEMPLATE_PATH_REGEX =
   /{{\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)\s*}}/g;
-const PATH_HELPER_REGEX = /^\{\{\s*path\s+"([^"]+)"(?:\s+ctx=(\{\{[^}]*\}\}|[^\s}]+))?\s*\}\}$/;
+const PATH_HELPER_REGEX = /^\{\{\s*path\s+"([^"]+)"\s*\}\}$/;
+const ARTIFACT_HELPER_REGEX = /^\{\{\s*artifact\s+"([^"]+)"\s*\}\}$/;
 
 /**
  * Matches `{{ ./VarName }}` — explicit variable lookup escape hatch.
@@ -181,6 +193,69 @@ function expandOutputVariables(text: string, variables: OutputVars): string {
   });
 }
 
+function requireOutputString(name: string, variables: OutputVars): string {
+  const value = resolveOutputPath(name, variables);
+  if (!value) {
+    throw new Error(`evaluateOutputExpression: ${name} variable is not defined`);
+  }
+  return value;
+}
+
+function requireRunbookRef(variables: OutputVars): RunbookRef {
+  const parsed = RunbookRefSchema.safeParse(variables.RunbookRef);
+  if (!parsed.success) {
+    throw new Error('evaluateOutputExpression: RunbookRef variable is not defined or invalid');
+  }
+  return parsed.data;
+}
+
+/**
+ * Apply a built-in artifact-producing helper against an OUTPUTS/runtime frame.
+ *
+ * Both `artifact` and `path` helpers intentionally append a manifest row. The
+ * local-path variant also creates the artifact parent directory synchronously so
+ * the returned path is immediately writable by shell commands.
+ *
+ * @param kind - Helper kind to evaluate
+ * @param key - Artifact key / filename segment from the helper call
+ * @param frame - Variable frame containing WorkPath, ContextId, RunId, and RunbookRef
+ * @param options - Filesystem options for path resolution and manifest append
+ * @returns Canonical artifact URI for `artifact`, local artifact path for `path`
+ * @throws {Error} When required variables are missing or invalid
+ */
+export function applyRunArtifactHelper(
+  kind: 'artifact' | 'path',
+  key: string,
+  frame: OutputVars,
+  options: EvaluateOutputOptions,
+): string {
+  const workPath = requireOutputString('WorkPath', frame);
+  const contextId = requireOutputString('ContextId', frame);
+  const runId = requireOutputString('RunId', frame);
+  const runbookRef = requireRunbookRef(frame);
+  const uri = buildArtifactUri({ contextId, runId, key });
+
+  let rendered = uri;
+  if (kind === 'path') {
+    rendered = assembleRunArtifactPath({ cwd: options.cwd, workPath }, contextId, runId, key);
+    mkdirSync(path.dirname(rendered), { recursive: true });
+  }
+
+  appendArtifactManifestRecordSync(
+    { cwd: options.cwd, workPath },
+    {
+      uri,
+      runId,
+      contextId,
+      runbook: runbookRef,
+      key,
+      timestamp: new Date().toISOString(),
+    },
+  );
+
+  return rendered;
+}
+
 function hasUnresolvedTemplateReferences(text: string, variables: OutputVars): boolean {
   const regex = new RegExp(TEMPLATE_PATH_REGEX.source, 'g');
   let match: RegExpExecArray | null = regex.exec(text);
@@ -240,61 +315,43 @@ function tryDispatchHelper(trimmed: string, variables: OutputVars): string | nul
  * Evaluate a single OUTPUTS expression against the supplied variable frame.
  *
  * Supported forms (evaluated in order):
- * 1. `{{ path "file.json" }}` — built-in path helper (optional `ctx=` suffix)
- * 2. `{{ ./VarName }}` — explicit variable lookup; throws if not found in frame
- * 3. `{{ helperName varRef }}` — registered helper called with a variable value
- * 4. `{{ helperName "literal" }}` — registered helper called with a string literal
- * 5. `"quoted literal"` — may contain `{{ template }}` references expanded inline
- * 6. `{{ template }}` — template reference expanded against the variable frame
- * 7. `bare_Identifier` — direct variable lookup; throws if not found in frame
+ * 1. `{{ artifact "file.json" }}` — built-in artifact URI helper
+ * 2. `{{ path "file.json" }}` — built-in run-scoped artifact path helper
+ * 3. `{{ ./VarName }}` — explicit variable lookup; throws if not found in frame
+ * 4. `{{ helperName varRef }}` — registered helper called with a variable value
+ * 5. `{{ helperName "literal" }}` — registered helper called with a string literal
+ * 6. `"quoted literal"` — may contain `{{ template }}` references expanded inline
+ * 7. `{{ template }}` — template reference expanded against the variable frame
+ * 8. `bare_Identifier` — direct variable lookup; throws if not found in frame
  *
  * For forms 3–4, if the helper throws the expression returns the original literal
  * text (best-effort; the error is logged as a warning).
  *
  * @param expr - Raw expression text from the runbook source
  * @param variables - Variable frame used to resolve references
+ * @param options - Filesystem options used by artifact-producing helpers
  * @returns Rendered string value
- * @throws {Error} If the `path` helper is used but `WorkPath` is missing from `variables`
- * @throws {Error} If the `path` helper is used without `ctx=` and `ContextId` is missing from `variables`
- * @throws {Error} If `ctx=` expands to a value that is not a valid ContextId identifier
- * @throws {Error} Propagated from {@link assembleArtifactPath} (e.g. invalid `WorkPath` / `contextId`)
+ * @throws {Error} If an artifact-producing helper is used but required variables are missing
  * @throws {Error} If an explicit variable lookup `{{ ./VarName }}` references a variable not in the output frame
  * @throws {Error} If a `{{ helperName varRef }}` form references a variable not in the output frame
  * @throws {Error} If the template reference has unresolved variables after expansion
  * @throws {Error} If a bare identifier is not defined in the output frame
  */
-export function evaluateOutputExpression(expr: string, variables: OutputVars): string {
+export function evaluateOutputExpression(
+  expr: string,
+  variables: OutputVars,
+  options: EvaluateOutputOptions,
+): string {
   const trimmed = expr.trim();
+
+  const artifactMatch = ARTIFACT_HELPER_REGEX.exec(trimmed);
+  if (artifactMatch) {
+    return applyRunArtifactHelper('artifact', artifactMatch[1], variables, options);
+  }
 
   const pathMatch = PATH_HELPER_REGEX.exec(trimmed);
   if (pathMatch) {
-    const filename = pathMatch[1];
-    const workPath = resolveOutputPath('WorkPath', variables);
-    if (!workPath) {
-      throw new Error('evaluateOutputExpression: WorkPath variable is not defined');
-    }
-
-    let contextId: string;
-    if (pathMatch[2]) {
-      const ctxExpr = pathMatch[2].trim();
-      const expanded = ctxExpr.startsWith('{{')
-        ? expandOutputVariables(ctxExpr, variables)
-        : ctxExpr; // bare ctx_ref literal — pass through directly
-      if (!VALID_CTX.test(expanded)) {
-        throw new Error(
-          `evaluateOutputExpression: ctx=${ctxExpr} expanded to "${expanded}", which is not a valid ContextId.`,
-        );
-      }
-      contextId = expanded;
-    } else {
-      const resolved = resolveOutputPath('ContextId', variables);
-      if (!resolved) {
-        throw new Error('evaluateOutputExpression: ContextId variable is not defined');
-      }
-      contextId = resolved;
-    }
-
-    return assembleArtifactPath(workPath, contextId, filename);
+    return applyRunArtifactHelper('path', pathMatch[1], variables, options);
   }
 
   // 2. Explicit variable lookup: {{ ./VarName }} — bypasses helper registry
@@ -371,12 +428,14 @@ export function evaluateOutputExpression(expr: string, variables: OutputVars): s
  *
  * @param outputs - Declarations parsed from the step's OUTPUTS block
  * @param vars - Variable frame for expression evaluation
+ * @param options - Filesystem options used by artifact-producing helpers
  * @returns Map of output name to rendered value; failed expression entries
  *   are omitted with a warning, naked entries are omitted silently
  */
 export function evaluateStepOutputDeclarations(
   outputs: readonly OutputDeclaration[],
   vars: OutputVars,
+  options: EvaluateOutputOptions,
 ): Record<string, string> {
   const evaluated: Record<string, string> = {};
 
@@ -387,7 +446,7 @@ export function evaluateStepOutputDeclarations(
       continue;
     }
     try {
-      evaluated[output.name] = evaluateOutputExpression(output.value, vars);
+      evaluated[output.name] = evaluateOutputExpression(output.value, vars, options);
     } catch (error) {
       void logger.warn('evaluateStepOutputDeclarations: failed to evaluate output', {
         name: output.name,
@@ -406,19 +465,21 @@ export function evaluateStepOutputDeclarations(
  *
  * @param outputs - Frontmatter `outputs:` declarations
  * @param vars - Variable frame at the terminal transition
+ * @param options - Filesystem options used by artifact-producing helpers
  * @returns Map of output name to rendered value; failed entries and
  *   naked entries whose referenced var is absent are omitted
  */
 export function evaluateFrontmatterOutputDeclarations(
   outputs: readonly OutputDeclaration[],
   vars: OutputVars,
+  options: EvaluateOutputOptions,
 ): Record<string, string> {
   const evaluated: Record<string, string> = {};
 
   for (const output of outputs) {
     try {
       if (output.value !== undefined) {
-        evaluated[output.name] = evaluateOutputExpression(output.value, vars);
+        evaluated[output.name] = evaluateOutputExpression(output.value, vars, options);
         continue;
       }
 

@@ -108,6 +108,7 @@ export {
 } from './delegation-context.js';
 export {
   assembleArtifactPath,
+  assembleRunArtifactPath,
   validateArtifactCtx,
   VALID_CTX,
   VALID_FILE,
@@ -152,6 +153,7 @@ export {
   type FindArtifactOptions,
 } from './artifact-manifest.js';
 export {
+  applyRunArtifactHelper,
   buildExecutionFrame,
   evaluateFrontmatterOutputDeclarations,
   evaluateOutputExpression,
@@ -160,6 +162,7 @@ export {
   setHelperRegistry,
   getHelperRegistry,
   resetHelperRegistry,
+  type EvaluateOutputOptions,
   type FlattenedTemplateVars,
   type OutputFrameState,
   type OutputCursor,

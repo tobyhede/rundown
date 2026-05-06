@@ -28,6 +28,7 @@ import {
   buildExecutionFrame,
   evaluateFrontmatterOutputDeclarations,
   evaluateStepOutputDeclarations,
+  type EvaluateOutputOptions,
   type FlattenedTemplateVars,
   type OutputVars,
 } from './output-evaluator.js';
@@ -84,7 +85,11 @@ export const runbookSetup = setup({
           stepName: params.stepName,
           substepId,
         });
-        const evaluated = evaluateStepOutputDeclarations(params.outputs, frame);
+        const evaluated = evaluateStepOutputDeclarations(
+          params.outputs,
+          frame,
+          params.evaluationOptions,
+        );
         return { ...context.variables, ...evaluated };
       },
     }),
@@ -105,7 +110,11 @@ export const runbookSetup = setup({
           stepName: params.stepName ?? '',
           substepId: params.substepId,
         });
-        return evaluateFrontmatterOutputDeclarations(context.frontmatterOutputs, frame);
+        return evaluateFrontmatterOutputDeclarations(
+          context.frontmatterOutputs,
+          frame,
+          params.evaluationOptions,
+        );
       },
     }),
   },
@@ -143,6 +152,16 @@ type RunbookAlwaysEntry = Extract<
   NonNullable<RunbookStateConfig['always']>,
   readonly unknown[]
 >[number];
+
+function withEvaluationOptions<T extends object>(
+  params: T,
+  evaluationOptions: EvaluateOutputOptions,
+): T & { readonly evaluationOptions: EvaluateOutputOptions } {
+  return Object.defineProperty({ ...params }, 'evaluationOptions', {
+    value: evaluationOptions,
+    enumerable: false,
+  }) as T & { readonly evaluationOptions: EvaluateOutputOptions };
+}
 
 /**
  * Safety limit for file-backed data sources with open iteration windows.
@@ -714,6 +733,7 @@ function buildTransition(
   stepName: string,
   substepId: string | undefined,
   steps: ResolvedStep[],
+  evaluationOptions: EvaluateOutputOptions,
 ): TransitionConfig {
   const { retry, action, kind } = transition;
   // Normalize kind to pass/fail for iteration result recording
@@ -726,7 +746,7 @@ function buildTransition(
   }
 
   // No retry: execute action directly
-  return buildActionTransition(action, stepName, substepId, steps, resultKind);
+  return buildActionTransition(action, stepName, substepId, steps, resultKind, evaluationOptions);
 }
 
 /**
@@ -895,6 +915,7 @@ function buildParentExitAssign(
 function buildParentStateConfig(
   config: ParentStateConfig,
   steps: ResolvedStep[],
+  evaluationOptions: EvaluateOutputOptions,
 ): RunbookStateConfig {
   const parentStep = config.parentStep;
   const stepName = config.stepName;
@@ -1669,7 +1690,7 @@ function buildParentStateConfig(
 
   return {
     always: always.map((transition) =>
-      decorateParentTransition(transition, stepName, parentStep.outputs),
+      decorateParentTransition(transition, stepName, parentStep.outputs, evaluationOptions),
     ),
   } satisfies RunbookStateConfig;
 }
@@ -1698,6 +1719,7 @@ function decorateParentTransition<T extends RunbookAlwaysEntry & object>(
   transition: T,
   stepName: string,
   outputs: readonly OutputDeclaration[] | undefined,
+  evaluationOptions: EvaluateOutputOptions,
 ): T {
   const extra: RunbookAction[] = [];
   const target = typeof transition.target === 'string' ? transition.target : undefined;
@@ -1708,12 +1730,18 @@ function decorateParentTransition<T extends RunbookAlwaysEntry & object>(
 
   if (exitsParent && outputs && outputs.length > 0) {
     extra.push(
-      actionRef('storeStepOutputs', {
-        outputs,
-        stepName,
-        useCompletedSubstep: true,
-        useCompletedForContext: true,
-      }),
+      actionRef(
+        'storeStepOutputs',
+        withEvaluationOptions(
+          {
+            outputs,
+            stepName,
+            useCompletedSubstep: true,
+            useCompletedForContext: true,
+          },
+          evaluationOptions,
+        ),
+      ),
     );
   }
 
@@ -1745,6 +1773,7 @@ function buildRetryStateConfig(
   substepId: string | undefined,
   steps: ResolvedStep[],
   resultKind: 'pass' | 'fail',
+  evaluationOptions: EvaluateOutputOptions,
 ): RunbookStateConfig {
   const exhaustedTransition = buildActionTransition(
     transition.action,
@@ -1752,6 +1781,7 @@ function buildRetryStateConfig(
     substepId,
     steps,
     resultKind,
+    evaluationOptions,
   );
   const rawEntries = Array.isArray(exhaustedTransition)
     ? exhaustedTransition
@@ -2179,6 +2209,7 @@ function buildActionTransition(
   substepId: string | undefined,
   steps: ResolvedStep[],
   kind: 'pass' | 'fail',
+  evaluationOptions: EvaluateOutputOptions,
 ): TransitionConfig {
   const resultKind: 'pass' | 'fail' = kind === 'fail' ? 'fail' : 'pass';
 
@@ -2215,7 +2246,19 @@ function buildActionTransition(
 
   const extra: RunbookAction[] = [];
   if (unitOutputs.length > 0) {
-    extra.push(actionRef('storeStepOutputs', { outputs: unitOutputs, stepName, substepId }));
+    extra.push(
+      actionRef(
+        'storeStepOutputs',
+        withEvaluationOptions(
+          {
+            outputs: unitOutputs,
+            stepName,
+            substepId,
+          },
+          evaluationOptions,
+        ),
+      ),
+    );
   }
 
   // When a substep bypasses the parent aggregation state by transitioning directly
@@ -2230,7 +2273,19 @@ function buildActionTransition(
       target !== formatStateId(stepName) &&
       !target.startsWith(`${formatStateId(stepName)}::`);
     if (exitsParent && parentOutputs && parentOutputs.length > 0) {
-      extra.push(actionRef('storeStepOutputs', { outputs: parentOutputs, stepName, substepId }));
+      extra.push(
+        actionRef(
+          'storeStepOutputs',
+          withEvaluationOptions(
+            {
+              outputs: parentOutputs,
+              stepName,
+              substepId,
+            },
+            evaluationOptions,
+          ),
+        ),
+      );
     }
   }
 
@@ -2356,6 +2411,7 @@ function checkedStateInsert(
  * @param steps - The parsed runbook steps to compile
  * @param options - Optional compilation inputs
  * @param options.templateVars - Seeded template variables for OUTPUTS evaluation
+ * @param options.evaluationOptions - Filesystem options used by artifact-producing OUTPUTS helpers
  * @param options.frontmatterOutputs - Frontmatter `outputs:` declarations. Callers that pass a
  *   value loaded from persisted {@link RunbookState} must validate that the field is not `undefined`
  *   before calling (stale run states pre-dating the OUTPUTS feature will have it absent); the
@@ -2377,10 +2433,12 @@ export function compileRunbookToMachine(
   options?: {
     templateVars?: FlattenedTemplateVars;
     frontmatterOutputs?: readonly OutputDeclaration[];
+    evaluationOptions?: EvaluateOutputOptions;
     substepStates?: readonly SubstepState[];
     activeFrameKey?: FrameKey;
   },
 ) {
+  const evaluationOptions = options?.evaluationOptions ?? { cwd: process.cwd() };
   const states: Record<string, RunbookStateConfig> = {};
 
   // Build a flat list of all states to generate GOTO transitions
@@ -2423,7 +2481,7 @@ export function compileRunbookToMachine(
       checkedStateInsert(
         states,
         config.id,
-        runbookSetup.createStateConfig(buildParentStateConfig(config, steps)),
+        runbookSetup.createStateConfig(buildParentStateConfig(config, steps, evaluationOptions)),
       );
       return;
     }
@@ -2589,6 +2647,7 @@ export function compileRunbookToMachine(
             config.stepName,
             config.substepId,
             steps,
+            evaluationOptions,
           ),
           FAIL: buildTransition(
             config.transitions.fail,
@@ -2596,6 +2655,7 @@ export function compileRunbookToMachine(
             config.stepName,
             config.substepId,
             steps,
+            evaluationOptions,
           ),
           RETRY: {
             actions: runbookSetup.assign({
@@ -2624,6 +2684,7 @@ export function compileRunbookToMachine(
             config.substepId,
             steps,
             'pass',
+            evaluationOptions,
           ),
         ),
       );
@@ -2640,6 +2701,7 @@ export function compileRunbookToMachine(
             config.substepId,
             steps,
             'fail',
+            evaluationOptions,
           ),
         ),
       );
@@ -2699,7 +2761,7 @@ export function compileRunbookToMachine(
       COMPLETE: {
         type: 'final',
         entry: [
-          actionRef('storeFrontmatterOutputs', {}),
+          actionRef('storeFrontmatterOutputs', withEvaluationOptions({}, evaluationOptions)),
           runbookSetup.assign({
             lifecycle: () => 'completed' as const,
           }),
@@ -2709,7 +2771,7 @@ export function compileRunbookToMachine(
       STOPPED: {
         type: 'final',
         entry: [
-          actionRef('storeFrontmatterOutputs', {}),
+          actionRef('storeFrontmatterOutputs', withEvaluationOptions({}, evaluationOptions)),
           runbookSetup.assign({
             lifecycle: () => 'stopped' as const,
           }),

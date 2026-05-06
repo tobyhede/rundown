@@ -12,6 +12,7 @@
 
 import * as path from 'node:path';
 import { assertSafeId, SAFE_ID_PATTERN } from '../paths.js';
+import { artifactUriToPath, buildArtifactUri, type ArtifactPathOptions } from './artifact-uri.js';
 
 /** Valid context identifier: alphanumeric, dots, hyphens, underscores. */
 export const VALID_CTX = SAFE_ID_PATTERN;
@@ -47,4 +48,26 @@ export function assembleArtifactPath(dir: string, ctx: string, file: string): st
   assertSafeId(file, 'file');
   const date = new Date().toISOString().slice(0, 10);
   return path.join(dir, `.rd-${ctx}`, `${date}-${file}`);
+}
+
+/**
+ * Assemble a run-scoped artifact path for a canonical artifact key.
+ *
+ * Produces: `<workPath>/.rd-<contextId>/runs/<runId>/<key>` resolved under
+ * the provided project root.
+ *
+ * @param options - Project root and work directory options
+ * @param contextId - Context identifier that owns the artifact
+ * @param runId - Concrete run identifier
+ * @param key - Artifact key / filename segment
+ * @returns Absolute local path for the run-scoped artifact
+ * @throws {Error} When any identity segment or path option is invalid
+ */
+export function assembleRunArtifactPath(
+  options: ArtifactPathOptions,
+  contextId: string,
+  runId: string,
+  key: string,
+): string {
+  return artifactUriToPath(buildArtifactUri({ contextId, runId, key }), options);
 }
