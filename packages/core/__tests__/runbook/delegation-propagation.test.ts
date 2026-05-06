@@ -9,10 +9,14 @@ import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js
 import type { DelegationLinkage, RunbookState } from '../../src/runbook/types.js';
 import { brandStoredOutputsForTest } from '../helpers/effective-vars.js';
 
+const CHILD_RUN_ID = `rd_${'1'.repeat(32)}`;
+const PARENT_RUN_ID = `rd_${'2'.repeat(32)}`;
+const LOCAL_RUN_ID = `rd_${'3'.repeat(32)}` as RunbookState['id'];
+
 describe('DelegationLinkage extended fields', () => {
   function makeSchemaState(parentLinkage: Record<string, unknown>): Record<string, unknown> {
     return {
-      id: 'run-child',
+      id: CHILD_RUN_ID,
       runbook: { source: 'project', path: 'child.md' },
       runbookPath: '/tmp/child.md',
       runbookSrc: '## 1. Do\n- PASS COMPLETE\n\nDo it.',
@@ -30,7 +34,7 @@ describe('DelegationLinkage extended fields', () => {
   it('schema accepts delegation linkage with extended fields', () => {
     const state = makeSchemaState({
       kind: 'delegation',
-      parentRunId: 'run-parent',
+      parentRunId: PARENT_RUN_ID,
       parentStepId: '1',
       tokenHash: `sha256:${'a'.repeat(64)}`,
       parentStep: '1',
@@ -45,7 +49,7 @@ describe('DelegationLinkage extended fields', () => {
   it('schema accepts delegation linkage without extended fields', () => {
     const state = makeSchemaState({
       kind: 'delegation',
-      parentRunId: 'run-parent',
+      parentRunId: PARENT_RUN_ID,
       parentStepId: '1',
       tokenHash: `sha256:${'b'.repeat(64)}`,
     });
@@ -57,7 +61,7 @@ describe('DelegationLinkage extended fields', () => {
   it('schema rejects non-positive parentEntry', () => {
     const state = makeSchemaState({
       kind: 'delegation',
-      parentRunId: 'run-parent',
+      parentRunId: PARENT_RUN_ID,
       parentStepId: '1',
       tokenHash: `sha256:${'c'.repeat(64)}`,
       parentEntry: 0,
@@ -72,12 +76,12 @@ describe('DelegationLinkage type shape', () => {
   it('returns true when parentLinkage field is present', () => {
     const linkage: DelegationLinkage = {
       kind: 'delegation',
-      parentRunId: 'run-parent',
+      parentRunId: PARENT_RUN_ID,
       parentStepId: '1',
       tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
     };
     expect(linkage).toBeDefined();
-    expect(linkage.parentRunId).toBe('run-parent');
+    expect(linkage.parentRunId).toBe(PARENT_RUN_ID);
     expect(linkage.kind).toBe('delegation');
   });
 
@@ -90,7 +94,7 @@ describe('DelegationLinkage type shape', () => {
 describe('parentLinkage discriminated union schema', () => {
   function makeBaseState(overrides: Record<string, unknown> = {}): Record<string, unknown> {
     return {
-      id: 'run-child',
+      id: CHILD_RUN_ID,
       runbook: { source: 'project', path: 'child.md' },
       runbookPath: '/tmp/child.md',
       runbookSrc: '## 1. Do\n- PASS COMPLETE\n\nDo it.',
@@ -109,7 +113,7 @@ describe('parentLinkage discriminated union schema', () => {
     const state = makeBaseState({
       parentLinkage: {
         kind: 'delegation',
-        parentRunId: 'run-parent',
+        parentRunId: PARENT_RUN_ID,
         parentStepId: '1',
         tokenHash: `sha256:${'a'.repeat(64)}`,
         parentStep: '1',
@@ -131,7 +135,7 @@ describe('parentLinkage discriminated union schema', () => {
     const state = makeBaseState({
       parentLinkage: {
         kind: 'inline',
-        parentRunId: 'run-parent',
+        parentRunId: PARENT_RUN_ID,
         parentStepId: '2',
         parentStep: '1',
         parentFrameKey: '1|',
@@ -152,7 +156,7 @@ describe('parentLinkage discriminated union schema', () => {
     const state = makeBaseState({
       parentLinkage: {
         kind: 'bogus',
-        parentRunId: 'run-parent',
+        parentRunId: PARENT_RUN_ID,
         parentStepId: '1',
       },
     });
@@ -166,7 +170,7 @@ describe('parentLinkage discriminated union schema', () => {
     // State with only the old field should have no parentLinkage in the typed result.
     const state = makeBaseState({
       delegation: {
-        parentRunId: 'run-parent',
+        parentRunId: PARENT_RUN_ID,
         parentStepId: '1',
         tokenHash: `sha256:${'a'.repeat(64)}`,
       },
@@ -185,7 +189,7 @@ describe('parentLinkage discriminated union schema', () => {
     const state = makeBaseState({
       inlineLinkage: {
         kind: 'inline',
-        parentRunId: 'run-parent',
+        parentRunId: PARENT_RUN_ID,
         parentStepId: '1',
       },
     });
@@ -202,7 +206,7 @@ describe('parentLinkage discriminated union schema', () => {
 describe('frame identity derivation for propagation', () => {
   function makeState(overrides: Partial<RunbookState>): RunbookState {
     return {
-      id: 'run-1' as RunbookState['id'],
+      id: LOCAL_RUN_ID,
       runbook: { source: 'project', path: 'test.md' },
       runbookPath: '/tmp/test.md',
       runbookSrc: '## 1. Step\n- PASS COMPLETE\n\nTest.',
@@ -255,7 +259,7 @@ describe('frame identity derivation for propagation', () => {
   it('uses stored parentFrameKey when available', () => {
     const linkage: DelegationLinkage = {
       kind: 'delegation',
-      parentRunId: 'run-parent',
+      parentRunId: PARENT_RUN_ID,
       parentStepId: '1',
       tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
       parentStep: '1',
@@ -274,7 +278,7 @@ describe('frame identity derivation for propagation', () => {
   it('falls back to deriveActiveFrame when parentFrameKey absent', () => {
     const linkage: DelegationLinkage = {
       kind: 'delegation',
-      parentRunId: 'run-parent',
+      parentRunId: PARENT_RUN_ID,
       parentStepId: '2',
       tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
       // No parentFrameKey, parentEntry — legacy linkage

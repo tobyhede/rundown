@@ -5,8 +5,11 @@ import * as path from 'node:path';
 import { RunbookStateSchema } from '../../src/schemas.js';
 import { RunbookStateManager, StaleRunbookStateError } from '../../src/runbook/index.js';
 
+const BASE_RUN_ID = `rd_${'1'.repeat(32)}`;
+const STALE_RUN_ID = `rd_${'2'.repeat(32)}`;
+
 const BASE_SCHEMA_STATE = {
-  id: 'r1',
+  id: BASE_RUN_ID,
   runbook: { source: 'project', path: 'x.md' },
   runbookPath: 'x.md',
   step: '1',
@@ -89,7 +92,7 @@ describe('RunbookStateManager.load() — stale state enforcement', () => {
   let manager: RunbookStateManager;
 
   const V1_STATE = {
-    id: 'wf-stale-test',
+    id: STALE_RUN_ID,
     runbook: 'x.md',
     runbookPath: 'x.md',
     step: '1',

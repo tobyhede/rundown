@@ -766,7 +766,7 @@ describe('runExecutionLoop', () => {
         message: 'Success',
       }),
     );
-    expect(mockSessionService.releaseRunbook).toHaveBeenCalledWith('test-run-123');
+    expect(mockSessionService.releaseRunbook).toHaveBeenCalledWith(runbookId);
     expect(mockSessionService.popRunbook).not.toHaveBeenCalled();
   });
 
