@@ -91,7 +91,7 @@ export function registerPruneCommand(program: Command): void {
           // Stale files (skipped by list() due to schema version mismatch) are invisible to
           // list() but can still be deleted. Treat them as inactive: prune with
           // --inactive or --all.
-          const loadedIds = new Set(states.map((s) => s.id));
+          const loadedIds = new Set<string>(states.map((s) => s.id));
           const staleIds = allIds.filter((id) => !loadedIds.has(id));
           const staleToDelete = (pruneInactive ?? options.all) ? staleIds : [];
 

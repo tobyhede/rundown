@@ -24,12 +24,12 @@ import type { DelegationLinkage, RunbookState } from './types.js';
 
 /** Result of removing a runbook from session targeting structures. */
 export type ReleaseRunbookResult =
-  | { readonly status: 'not-found'; readonly runbookId: RunbookState['id'] }
+  | { readonly status: 'not-found'; readonly runbookId: string }
   | {
       readonly status: 'released';
-      readonly runbookId: RunbookState['id'];
+      readonly runbookId: string;
       readonly removedFromDefaultStack: boolean;
-      readonly nextDefaultRunbookId: RunbookState['id'] | null;
+      readonly nextDefaultRunbookId: string | null;
     };
 
 /**
@@ -117,7 +117,7 @@ export class SessionService {
 
   private findClaimByChildRunId(
     claims: Record<string, ClaimRecord>,
-    childRunId: RunbookState['id'],
+    childRunId: string,
   ): ClaimRecord | undefined {
     return Object.values(claims).find((claim) => claim.childRunId === childRunId);
   }
@@ -194,10 +194,7 @@ export class SessionService {
    * @returns A claim record on success, or a failure variant when the child is
    *   missing or its persisted linkage diverges from `linkage`.
    */
-  async claimRunbook(
-    childRunId: RunbookState['id'],
-    linkage: DelegationLinkage,
-  ): Promise<ClaimRunbookResult> {
+  async claimRunbook(childRunId: string, linkage: DelegationLinkage): Promise<ClaimRunbookResult> {
     return this.withLock(async () => {
       const childState = await this.manager.load(childRunId);
       if (!childState) {
@@ -309,7 +306,7 @@ export class SessionService {
    * @param runbookId - Runbook id to release
    * @returns Structured release result
    */
-  async releaseRunbook(runbookId: RunbookState['id']): Promise<ReleaseRunbookResult> {
+  async releaseRunbook(runbookId: string): Promise<ReleaseRunbookResult> {
     return this.withLock(() => this.releaseRunbookLocked(runbookId));
   }
 
@@ -319,7 +316,7 @@ export class SessionService {
    * @param runbookId - Runbook id to release from session targeting structures
    * @returns Structured release result describing what was removed
    */
-  private async releaseRunbookLocked(runbookId: RunbookState['id']): Promise<ReleaseRunbookResult> {
+  private async releaseRunbookLocked(runbookId: string): Promise<ReleaseRunbookResult> {
     const session = await this.manager.loadSession();
 
     const originalDefaultStackLength = session.defaultStack.length;
@@ -404,7 +401,7 @@ export class SessionService {
    * @param runbookId - Runbook id to move into the single session stash slot
    * @returns The stashed runbook id, or null if no slot is available or the runbook was not targeted
    */
-  async stashRunbook(runbookId: RunbookState['id']): Promise<string | null> {
+  async stashRunbook(runbookId: string): Promise<string | null> {
     return this.withLock(async () => {
       const session = await this.manager.loadSession();
       if (session.stashedRunbookId) return null;

@@ -3,12 +3,12 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { isError } from '../../src/errors.js';
-import { RunbookStateManager } from '../../src/runbook/state.js';
+import { generateRunId, RunbookStateManager } from '../../src/runbook/state.js';
 import { statePath as _statePath } from '../../src/paths.js';
 import { SessionService } from '../../src/runbook/session-service.js';
 import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
-import type { Step, Runbook } from '../../src/runbook/types.js';
+import type { Step, Runbook, RunId } from '../../src/runbook/types.js';
 import { makeBaseStep, makeSubstep } from '../helpers/step-factories.js';
 
 describe('RunbookStateManager', () => {
@@ -32,6 +32,31 @@ describe('RunbookStateManager', () => {
 
   afterEach(async () => {
     await rm(testDir, { recursive: true, force: true });
+  });
+
+  describe('run id identity', () => {
+    it('generates canonical branded Rundown run ids', () => {
+      const runId = generateRunId();
+      const branded: RunId = runId;
+
+      expect(branded).toMatch(/^rd_[a-f0-9]{32}$/);
+    });
+
+    it('brands RunbookState.id on create/load round trip', async () => {
+      const state = await manager.create(
+        { source: 'project', path: 'test.runbook.md' },
+        mockRunbook,
+        {
+          runbookPath: 'test.runbook.md',
+        },
+      );
+
+      const loaded = await manager.load(state.id);
+      const branded: RunId = loaded!.id;
+
+      expect(branded).toBe(state.id);
+      expect(branded).toMatch(/^rd_[a-f0-9]{32}$/);
+    });
   });
 
   describe('getChildRunbookResult', () => {

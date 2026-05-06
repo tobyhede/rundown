@@ -450,7 +450,7 @@ describe('pop command', () => {
   it('outputs error when step not found in runbook', async () => {
     // Create a state file with a step that doesn't exist in the runbook
     // runbookSrc must be present for pop to read from stored content
-    const runbookId = 'wf-2025-01-28-test01';
+    const runbookId = `rd_${'3'.repeat(32)}`;
     const stateFile = join(workspace.statePath(), `${runbookId}.json`);
     const runbookSrc = `# Test Runbook
 
@@ -490,8 +490,8 @@ rd echo "hello"
   });
 
   it('restores a claimed stash using captured claim provenance', async () => {
-    const runbookId = 'wf-2025-01-28-owned01';
-    const parentRunId = 'wf-2025-01-28-parent01';
+    const runbookId = `rd_${'4'.repeat(32)}`;
+    const parentRunId = `rd_${'5'.repeat(32)}`;
     await writeFile(
       join(workspace.statePath(), `${parentRunId}.json`),
       JSON.stringify(

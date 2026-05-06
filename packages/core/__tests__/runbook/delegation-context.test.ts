@@ -16,7 +16,7 @@ import {
 /** Helper: create minimal RunbookState for buildContextSnapshot tests. */
 function makeMinimalState(overrides: Partial<RunbookState> = {}): RunbookState {
   return {
-    id: 'run-1',
+    id: 'run-1' as RunbookState['id'],
     runbook: { source: 'project', path: 'parent.md' },
     runbookPath: 'parent.md',
     step: '1',

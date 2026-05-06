@@ -83,7 +83,7 @@ export type BuildGotoContextResult =
  */
 export async function resolveTerminalReleaseModeForRunbook(
   manager: RunbookStateManager,
-  runbookId: RunbookState['id'],
+  runbookId: string,
 ): Promise<ExecutionTerminalReleaseMode> {
   const session = await manager.loadSession();
   const claimed = Object.values(session.claims).some((claim) => claim.childRunId === runbookId);

@@ -21,7 +21,7 @@ export interface ClaimRecord {
   /** Stable command-targeting handle returned by rd claim. */
   readonly claimId: ClaimId;
   /** Child runbook state id controlled by this claim. */
-  readonly childRunId: RunbookState['id'];
+  readonly childRunId: string;
   /** Hash of the delegation token that produced this claimed child. */
   readonly tokenHash: DelegationTokenHash;
   /** Parent runbook state id that delegated the child. */
@@ -58,10 +58,10 @@ export interface ClaimRecord {
  */
 export type ClaimRunbookResult =
   | { readonly status: 'claimed'; readonly claim: ClaimRecord }
-  | { readonly status: 'missing-child'; readonly childRunId: RunbookState['id'] }
+  | { readonly status: 'missing-child'; readonly childRunId: string }
   | {
       readonly status: 'linkage-mismatch';
-      readonly childRunId: RunbookState['id'];
+      readonly childRunId: string;
       readonly incoming: DelegationLinkage;
       readonly persisted: RunbookState['parentLinkage'];
     };
@@ -126,7 +126,7 @@ export function generateClaimId(): ClaimId {
  */
 export function createClaimRecord(
   claimId: ClaimId,
-  childRunId: RunbookState['id'],
+  childRunId: string,
   linkage: DelegationLinkage,
   now: string,
 ): ClaimRecord {

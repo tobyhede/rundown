@@ -20,6 +20,7 @@ import { makeRunbookStateSchema, SessionDataSchema } from '../schemas.js';
 import { isNodeError } from '../errors.js';
 import { logger } from '../logger.js';
 import { brandInitialTemplateVars, brandStoredOutputs } from './effective-vars.js';
+import { assertRunId, RUN_ID_PREFIX, type RunId } from './run-id.js';
 import {
   runsDir as _runsDir,
   sessionPath as _sessionPath,
@@ -71,8 +72,8 @@ export class StaleRunbookStateError extends Error {
  *
  * @returns Run ID in canonical `rd_<32 lowercase hex>` form
  */
-export function generateRunId(): string {
-  return `rd_${randomBytes(16).toString('hex')}`;
+export function generateRunId(): RunId {
+  return assertRunId(`${RUN_ID_PREFIX}${randomBytes(16).toString('hex')}`);
 }
 
 /**
@@ -91,7 +92,7 @@ export interface SessionData {
 
 interface CreateOptions {
   readonly runbookPath: string;
-  readonly runId?: string;
+  readonly runId?: RunId;
   readonly prompted?: boolean;
   /** Parent linkage when this run is a child (delegation or inline). */
   readonly parentLinkage?: ParentLinkage;

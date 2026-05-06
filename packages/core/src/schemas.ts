@@ -10,6 +10,7 @@ import { CLAIM_ID_PATTERN, type ClaimId, type ClaimRecord } from './runbook/clai
 import type { FrameKey } from './runbook/targeting.js';
 import { createJsonArrayStream } from './runbook/types.js';
 import type { JsonValue, TemplateVarValue } from './runbook/types.js';
+import { RUN_ID_PATTERN, type RunId, type runIdBrand } from './runbook/run-id.js';
 import {
   brandEffectiveVars,
   brandInitialTemplateVars,
@@ -20,6 +21,16 @@ import { RunbookRefSchema } from './runbook/runbook-ref.js';
 
 /** Zod schema that parses strings and brands them as {@link FrameKey}. */
 const FrameKeySchema = z.string().transform((v) => v as FrameKey);
+
+/** Zod schema that parses strings and brands them as {@link RunId}. */
+export const RunIdSchema = z
+  .string()
+  .regex(RUN_ID_PATTERN)
+  .transform((value) => value as RunId);
+
+// Keeps the unique-symbol run-id brand nameable in declaration emit for
+// exported schemas inferred from RunIdSchema. This is type-only.
+type _RunIdBrandForDeclarationEmit = typeof runIdBrand;
 
 /** Zod schema that parses strings and brands them as {@link DelegationTokenHash}. */
 export const DelegationTokenHashSchema: z.ZodType<DelegationTokenHash, z.ZodTypeDef, string> = z
@@ -253,7 +264,7 @@ export const TemplateVarValueSchema: z.ZodType<TemplateVarValue> = z.union([
  * Zod schema for a single ancestor in the runbook lineage snapshot.
  */
 export const AncestorSnapshotSchema = z.object({
-  runId: z.string(),
+  runId: RunIdSchema,
   runbook: z.string(),
   step: z.string(),
   substep: z.string().nullable(),
@@ -302,7 +313,7 @@ export const StepDelegationSchema = z
     childRunbookPath: z.string(),
     childRunbookRef: RunbookRefSchema,
     contextSnapshot: ContextSnapshotSchema,
-    childRunId: z.string().nullable(),
+    childRunId: RunIdSchema.nullable(),
     createdAt: z.string(),
     cancelledAt: z.string().nullable(),
     extraVars: z.record(z.string(), TemplateVarValueSchema).optional(),
@@ -345,9 +356,9 @@ export const ClaimIdSchema = z
 export const ClaimRecordSchema: z.ZodType<ClaimRecord, z.ZodTypeDef, unknown> = z.object({
   kind: z.literal('claim-record'),
   claimId: ClaimIdSchema,
-  childRunId: z.string().min(1),
+  childRunId: RunIdSchema,
   tokenHash: DelegationTokenHashSchema,
-  parentRunId: z.string().min(1),
+  parentRunId: RunIdSchema,
   parentStepId: z.string().min(1),
   parentStep: z.string().optional(),
   parentFrameKey: FrameKeySchema.optional(),
@@ -359,8 +370,8 @@ export const ClaimRecordSchema: z.ZodType<ClaimRecord, z.ZodTypeDef, unknown> = 
 /** Zod schema for `.rundown/session.json`. */
 export const SessionDataSchema = z
   .object({
-    defaultStack: z.array(z.string()).default([]),
-    stashedRunbookId: z.string().optional(),
+    defaultStack: z.array(RunIdSchema).default([]),
+    stashedRunbookId: RunIdSchema.optional(),
     claims: z.record(z.string(), ClaimRecordSchema).default({}),
   })
   .superRefine((session, ctx) => {
@@ -459,7 +470,7 @@ function rejectRemovedRunbookRefField(value: Record<string, unknown>, ctx: z.Ref
 
 const RunbookStateObjectSchema = z
   .object({
-    id: z.string(),
+    id: RunIdSchema,
     runbook: RunbookRefSchema,
     runbookPath: z.string(),
     title: z.string().optional(),
@@ -487,7 +498,7 @@ const RunbookStateObjectSchema = z
       .discriminatedUnion('kind', [
         z.object({
           kind: z.literal('delegation'),
-          parentRunId: z.string(),
+          parentRunId: RunIdSchema,
           parentStepId: z.string(),
           tokenHash: DelegationTokenHashSchema,
           parentStep: z.string().optional(),
@@ -496,7 +507,7 @@ const RunbookStateObjectSchema = z
         }),
         z.object({
           kind: z.literal('inline'),
-          parentRunId: z.string(),
+          parentRunId: RunIdSchema,
           parentStepId: z.string(),
           parentStep: z.string().optional(),
           parentFrameKey: FrameKeySchema.optional(),
@@ -667,7 +678,7 @@ export function makeTemplateVarValueSchema(projectRoot: string): z.ZodType<Templ
  */
 function makeAncestorSnapshotSchema(projectRoot: string): z.ZodTypeAny {
   return z.object({
-    runId: z.string(),
+    runId: RunIdSchema,
     runbook: z.string(),
     step: z.string(),
     substep: z.string().nullable(),
@@ -734,7 +745,7 @@ function makeStepDelegationSchema(projectRoot: string): z.ZodTypeAny {
       childRunbookPath: z.string(),
       childRunbookRef: RunbookRefSchema,
       contextSnapshot: makeContextSnapshotSchema(projectRoot),
-      childRunId: z.string().nullable(),
+      childRunId: RunIdSchema.nullable(),
       createdAt: z.string(),
       cancelledAt: z.string().nullable(),
       extraVars: z.record(z.string(), TemplateVarValueSchema).optional(),

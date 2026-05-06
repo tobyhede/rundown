@@ -94,7 +94,7 @@ function makeTestSubstep(id: string): {
 /** Helper: create minimal RunbookState for testing. */
 export function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
   return {
-    id: 'run-1',
+    id: 'run-1' as RunbookState['id'],
     runbook: { source: 'project', path: 'parent.md' },
     runbookPath: 'parent.md',
     step: '1',

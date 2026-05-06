@@ -1004,11 +1004,7 @@ export async function runExecutionLoop(
     const contextId = stepVars[BUILTIN_VARIABLES.ContextId];
     if (typeof workPath === 'string') rdInjected.RD_WORK_PATH = workPath;
     if (typeof contextId === 'string') rdInjected.RD_CONTEXT_ID = contextId;
-    const templateRunId = currentState.templateVars?.[BUILTIN_VARIABLES.RunId];
-    rdInjected.RD_RUN_ID =
-      typeof templateRunId === 'string' || typeof templateRunId === 'number'
-        ? String(templateRunId)
-        : currentState.id;
+    rdInjected.RD_RUN_ID = currentState.id;
     rdInjected.RD_RUNBOOK_REF = currentState.runbook.path;
     rdInjected.RD_RUNBOOK_SOURCE = currentState.runbook.source;
 

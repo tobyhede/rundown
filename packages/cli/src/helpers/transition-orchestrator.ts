@@ -140,7 +140,7 @@ function buildTransitionPositions(
 async function applyTerminalSideEffects(
   sessionService: SessionService,
   policy: TerminalSideEffectsPolicy,
-  runbookId: RunbookState['id'],
+  runbookId: string,
 ): Promise<void> {
   if (policy.releaseRunbook) {
     await sessionService.releaseRunbook(runbookId);

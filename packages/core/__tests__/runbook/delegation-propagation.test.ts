@@ -202,7 +202,7 @@ describe('parentLinkage discriminated union schema', () => {
 describe('frame identity derivation for propagation', () => {
   function makeState(overrides: Partial<RunbookState>): RunbookState {
     return {
-      id: 'run-1',
+      id: 'run-1' as RunbookState['id'],
       runbook: { source: 'project', path: 'test.md' },
       runbookPath: '/tmp/test.md',
       runbookSrc: '## 1. Step\n- PASS COMPLETE\n\nTest.',

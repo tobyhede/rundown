@@ -344,7 +344,7 @@ const asSteps = (s: readonly LooseStep[]): ResolvedStepType[] => s as unknown as
 describe('runExecutionLoop', () => {
   let mockManager: MockManagerLike;
   let mockEmitter: MockEmitterLike;
-  const runbookId = 'test-run-123';
+  const runbookId = `rd_${'1'.repeat(32)}`;
   const steps: LooseStep[] = [
     {
       kind: 'command',
@@ -543,7 +543,7 @@ describe('runExecutionLoop', () => {
     expect(core.executeCommandWithEnv).toHaveBeenCalled();
   });
 
-  it('injects RD env from template vars and persisted runbook identity', async () => {
+  it('injects canonical RD_RUN_ID from template vars and persisted runbook identity', async () => {
     // Downstream tools (e.g. rdpath) treat these env vars as a structurally
     // paired triple. Asserting them here keeps a regression in the injection
     // gates at execution.ts (`if (typeof workPath === 'string') ...`) from

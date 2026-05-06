@@ -22,7 +22,7 @@ function makeDelegation(overrides: Partial<StepDelegation> = {}): StepDelegation
 /** Helper: create minimal RunbookState for testing. */
 function makeState(substepStates: SubstepState[]): RunbookState {
   return {
-    id: 'run-1',
+    id: 'run-1' as RunbookState['id'],
     runbook: { source: 'project', path: 'parent.md' },
     runbookPath: 'parent.md',
     step: '1',

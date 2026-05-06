@@ -10,7 +10,7 @@ type ExecutionEvent = Parameters<OutputEmitter['executionEvent']>[0];
 describe('createBridgedEmitter', () => {
   function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
     return {
-      id: 'wf-test',
+      id: 'wf-test' as RunbookState['id'],
       runbook: { source: 'project', path: 'test-runbook.runbook.md' },
       runbookPath: 'test-runbook.runbook.md',
       step: '1',

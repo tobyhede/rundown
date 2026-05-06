@@ -3,6 +3,7 @@ import type { OutputDeclaration } from '@rundown-org/parser';
 import type { DelegationTokenHash } from './delegation-token.js';
 import type { EffectiveVars, InitialTemplateVars, StoredOutputs } from './effective-vars.js';
 import type { RunbookRef } from './runbook-ref.js';
+import type { RunId } from './run-id.js';
 import type { FrameKey } from './targeting.js';
 
 // Re-export parser types needed by core package consumers
@@ -15,6 +16,7 @@ import type { FrameKey } from './targeting.js';
  * @see `@rundown-org/parser` Step
  */
 export type { Step } from '@rundown-org/parser';
+export type { RunId } from './run-id.js';
 
 /** Prompt-only or empty step — no command, no substeps. */
 export type { BaseStep } from '@rundown-org/parser';
@@ -709,7 +711,7 @@ export type Lifecycle = 'running' | 'completed' | 'stopped';
  * Runbook execution state (persisted)
  */
 export interface RunbookState {
-  readonly id: string;
+  readonly id: RunId;
   readonly runbook: RunbookRef; // canonical persisted runbook identity
   readonly runbookPath: string; // repo-relative resolved file path
   readonly title?: string;

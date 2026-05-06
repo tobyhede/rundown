@@ -12,6 +12,7 @@ import type {
   DelegationLock,
   RunbookState,
   RunbookRef,
+  RunId,
 } from '@rundown-org/core';
 import type {
   ParsedForClause,
@@ -30,7 +31,7 @@ import { assertVariant } from './assert-variant.js';
 import { mockErrorHelpers } from './mock-error-helpers.js';
 import { makeRunPipelineContext } from './run-pipeline-context-helpers.js';
 import { mockFn } from './typed-mocks.js';
-import { brandDelegationTokenHashForTest } from './brand-helpers.js';
+import { brandDelegationTokenHashForTest, brandRunIdForTest } from './brand-helpers.js';
 
 // Capture the real isJsonArrayStream before the mock is registered.
 // jest.unstable_mockModule does NOT hoist (unlike jest.mock), so this top-level
@@ -40,6 +41,8 @@ const { isJsonArrayStream: realIsJsonArrayStream, RunbookRefSchema: realRunbookR
 
 const MOCK_TOKEN_HASH = brandDelegationTokenHashForTest(`sha256:${'a'.repeat(64)}`);
 const TEST_CLAIM_ID = 'rdclm_abcdefghijklmnopqrstu1' as ClaimId;
+const RUN_ID_PATTERN = /^rd_[a-f0-9]{32}$/;
+const MOCK_RUN_ID = brandRunIdForTest(`rd_${'a'.repeat(32)}`);
 
 function claimRecord(childRunId: string, overrides: Partial<ClaimRecord> = {}): ClaimRecord {
   return {
@@ -452,7 +455,7 @@ beforeEach(() => {
   ).mockResolvedValue('# Test\n\n## 1. Step\n- PASS CONTINUE');
   jest.mocked(parser.parseRunbookDocument).mockReturnValue(mockParseResult());
   jest.mocked(core.hashDelegationToken).mockReturnValue(MOCK_TOKEN_HASH);
-  jest.mocked(core.generateRunId).mockReturnValue(`rd_${'a'.repeat(32)}`);
+  jest.mocked(core.generateRunId).mockReturnValue(MOCK_RUN_ID);
   jest.mocked(core.reconstituteContextVars).mockReturnValue({});
   jest.mocked(core.extractInheritedUserVars).mockReturnValue({});
   jest.mocked(core.deriveActiveFrame).mockReturnValue({
@@ -614,8 +617,11 @@ describe('prepareRunbook', () => {
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.prepared.runId).toMatch(/^rd_[a-f0-9]{32}$/);
-      expect(result.prepared.mergedVariables.RunId).toBe(result.prepared.runId);
+      const runnableRunId: RunId = result.prepared.runId;
+      const templateRunId: RunId = result.prepared.mergedVariables.RunId;
+
+      expect(runnableRunId).toMatch(RUN_ID_PATTERN);
+      expect(templateRunId).toBe(runnableRunId);
       expect(result.prepared.mergedVariables.RunbookRef).toEqual({
         source: 'project',
         path: 'parent.runbook.md',
@@ -1301,11 +1307,11 @@ describe('startRunbook', () => {
       source: 'project',
       sourceRoot: '/test',
       runbookRef: { source: 'project', path: 'runbook.runbook.md' },
-      runId: `rd_${'b'.repeat(32)}`,
+      runId: brandRunIdForTest(`rd_${'b'.repeat(32)}`),
       rawContent: '# Test',
       runbook: { steps: [makeStep() as PreparedRunbook['runbook']['steps'][number]] },
       mergedVariables: {
-        RunId: `rd_${'b'.repeat(32)}`,
+        RunId: brandRunIdForTest(`rd_${'b'.repeat(32)}`),
         RunbookRef: { source: 'project', path: 'runbook.runbook.md' },
       },
       stats: { steps: 1, substeps: 0 },

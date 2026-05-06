@@ -23,6 +23,7 @@ import {
   type RunbookRef,
   RunbookRefSchema,
   type RunbookSource,
+  type RunId,
   type DelegationLinkage,
   type ParentLinkage,
   type ClaimId,
@@ -111,7 +112,7 @@ export type PreparedTemplateVariables = Record<string, TemplateVarValue> & {
 /** Template variables available to a runnable runbook execution. */
 export type RunnableTemplateVariables = PreparedTemplateVariables & {
   /** Fresh execution identifier for this run. */
-  readonly RunId: string;
+  readonly RunId: RunId;
 };
 
 /**
@@ -148,7 +149,7 @@ export interface PreparedRunbook {
  * accept this type. `runId` must be passed into `RunbookStateManager.create()`.
  */
 export interface RunnableRunbook extends PreparedRunbook {
-  readonly runId: string;
+  readonly runId: RunId;
   readonly mergedVariables: RunnableTemplateVariables;
 }
 
@@ -358,7 +359,7 @@ function withPreparedVariables(
 
 function withRunnableVariables(
   variables: PreparedTemplateVariables,
-  runId: string,
+  runId: RunId,
 ): RunnableTemplateVariables {
   return {
     ...variables,
@@ -724,7 +725,7 @@ export async function prepareResolvedRunnableRunbook(
 }
 
 type PreparedIdentity = { readonly kind: 'prepared' };
-type RunnableIdentity = { readonly kind: 'runnable'; readonly runId: string };
+type RunnableIdentity = { readonly kind: 'runnable'; readonly runId: RunId };
 
 function prepareLoadedRunbook(
   parsed: LoadAndParseResult,

@@ -1,8 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { createTestWorkspace, runCliInProcess, type TestWorkspace } from '../helpers/test-utils.js';
 
+const RUN_ID_PATTERN = /rd_[a-f0-9]{32}/;
+
 function expectRunId(text: string): void {
-  expect(text).toMatch(/\brd_[a-f0-9]{32}\b/);
+  expect(text).toMatch(new RegExp(`\\b${RUN_ID_PATTERN.source}\\b`));
 }
 
 describe('output format integration tests', () => {

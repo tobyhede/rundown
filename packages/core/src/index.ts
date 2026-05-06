@@ -9,6 +9,7 @@ export {
   SessionStateSchema,
   type ValidatedSessionState,
   RunbookStateSchema,
+  RunIdSchema,
   type ValidatedRunbookState,
   // Schema-first exports
   StepIdSchema,

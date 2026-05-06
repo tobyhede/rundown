@@ -11,6 +11,13 @@ export {
 export * from './step-id.js';
 export * from './step-utils.js';
 export * from './targeting.js';
+export {
+  assertRunId,
+  isRunId,
+  RUN_ID_PATTERN,
+  RUN_ID_PREFIX,
+  type RunId,
+} from './run-id.js';
 export * from './claim-id.js';
 export * from './transition-kernel.js';
 export {
@@ -111,7 +118,6 @@ export {
   buildArtifactUri,
   parseExactArtifactUriParts,
   parseArtifactUri,
-  RUN_ID_PATTERN,
   type ArtifactPathOptions,
   type ArtifactIdentity,
   type ArtifactRef,

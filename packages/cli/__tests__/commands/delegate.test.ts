@@ -371,7 +371,7 @@ describe('delegate command', () => {
             ...state,
             parentLinkage: {
               kind: 'delegation',
-              parentRunId: 'parent-run-id',
+              parentRunId: `rd_${'9'.repeat(32)}`,
               parentStepId: '1',
               tokenHash: `sha256:${'a'.repeat(64)}`,
             },

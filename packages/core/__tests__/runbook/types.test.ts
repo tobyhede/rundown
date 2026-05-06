@@ -106,7 +106,7 @@ describe('Substep interface', () => {
 describe('RunbookState runbookSrc field', () => {
   it('should include runbookSrc field', () => {
     const state: RunbookState = {
-      id: 'wf-2026-01-29-abc123',
+      id: 'wf-2026-01-29-abc123' as RunbookState['id'],
       runbook: { source: 'project', path: 'test.runbook.md' },
       runbookPath: 'test.runbook.md',
       step: '1',
