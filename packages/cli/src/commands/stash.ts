@@ -52,7 +52,7 @@ export function registerStashCommand(program: Command): void {
           }
           const state = active.state;
 
-          const totalSteps = await getStepTotal(cwd, state.runbook.path);
+          const totalSteps = await getStepTotal(cwd, state.runbook);
 
           // Stash the runbook
           const stashedId = await sessionService.stashRunbook(state.id);

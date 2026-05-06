@@ -86,7 +86,7 @@ export function registerLsCommand(program: Command): void {
               const status = getStatus(state, active, stashedId);
 
               const runbookPath = state.runbook.path;
-              const totalSteps = await getStepTotal(cwd, runbookPath);
+              const totalSteps = await getStepTotal(cwd, state.runbook);
               const displayStep = state.step;
 
               return {

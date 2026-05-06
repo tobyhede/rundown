@@ -816,10 +816,15 @@ async function prepareLoadedRunbook(
   }
   const baseTemplateVars = buildTemplateVars(mergedVariables, options);
   const preparedTemplateVars = withPreparedVariables(baseTemplateVars, runbookRef);
-  const templateVars =
+  const templateScope =
     identity.kind === 'runnable'
-      ? withRunnableVariables(preparedTemplateVars, identity.runId)
-      : preparedTemplateVars;
+      ? {
+          kind: 'runnable' as const,
+          runId: identity.runId,
+          vars: withRunnableVariables(preparedTemplateVars, identity.runId),
+        }
+      : { kind: 'prepared' as const, vars: preparedTemplateVars };
+  const templateVars = templateScope.vars;
 
   // Bail early if there are structural errors — don't pass a broken AST to transform passes
   // This must run before the missing-required check so that malformed `required` entries
@@ -936,11 +941,11 @@ async function prepareLoadedRunbook(
     frontmatter,
   };
 
-  if (identity.kind === 'runnable') {
+  if (templateScope.kind === 'runnable') {
     const prepared: RunnableRunbook = {
       ...preparedBaseFields,
-      runId: identity.runId,
-      mergedVariables: templateVars as RunnableTemplateVariables,
+      runId: templateScope.runId,
+      mergedVariables: templateScope.vars,
     };
 
     return {
@@ -1181,6 +1186,21 @@ type ClaimChildResult =
       readonly childRunId: string;
     };
 
+/**
+ * Claim or refresh a delegated child through {@link SessionService.claimRunbook}.
+ *
+ * `claimRunbook` owns the idempotent delegation contract: for a matching
+ * parent linkage it refreshes an existing claim before validating the incoming
+ * child id, and returns discriminated failures for missing, terminal, or
+ * linkage-divergent children. The 4b already-linked branch in
+ * {@link claimAndLaunch} intentionally relies on those source-of-truth
+ * semantics instead of re-loading the child locally.
+ *
+ * @param ctx - Run pipeline context carrying the session service
+ * @param childRunId - Child run id linked from the delegation or orphan scan
+ * @param linkage - Fresh linkage rebuilt from token-validated parent state
+ * @returns Claim id and child id on success, or a mapped failure variant
+ */
 async function claimChildForPipeline(
   ctx: RunPipelineContext,
   childRunId: string,
