@@ -57,7 +57,7 @@ describe('status command', () => {
     const result = await runCliInProcess('status --text', workspace);
 
     expect(result.stdout).toContain('State:');
-    expect(result.stdout).toMatch(/wf_[a-f0-9]{32}/);
+    expect(result.stdout).toMatch(/rd_[a-f0-9]{32}/);
   });
 
   it('outputs "No active runbook" when none', async () => {

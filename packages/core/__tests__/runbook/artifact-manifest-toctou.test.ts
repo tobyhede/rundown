@@ -28,8 +28,8 @@ jest.unstable_mockModule('node:fs', () => ({
 const { appendArtifactManifestRecordSync, findArtifactMatches, readArtifactManifest } =
   await import('../../src/runbook/artifact-manifest.js');
 
-const RUN_ID = 'wf_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
-const SECOND_RUN_ID = 'wf_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+const RUN_ID = 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const SECOND_RUN_ID = 'rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 
 const record = {
   uri: `rd://artifacts/ctx1/runs/${RUN_ID}/review.json`,

@@ -99,7 +99,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   RunbookRefSchema: {
     parse: jest.fn((ref: unknown) => realRunbookRefSchema.parse(ref)),
   },
-  generateRunId: jest.fn(() => `wf_${'a'.repeat(32)}`),
+  generateRunId: jest.fn(() => `rd_${'a'.repeat(32)}`),
   DELEGATION_TOKEN_PREFIX: 'rdtk_',
   DEFAULT_POLICY: {
     version: 1,
@@ -288,6 +288,7 @@ const fsPromises = await import('node:fs/promises');
 const {
   prepareRunbook,
   prepareRunnableRunbook,
+  loadAndParseResolvedRunbook,
   startRunbook,
   buildContextVars,
   buildTemplateVars,
@@ -451,7 +452,7 @@ beforeEach(() => {
   ).mockResolvedValue('# Test\n\n## 1. Step\n- PASS CONTINUE');
   jest.mocked(parser.parseRunbookDocument).mockReturnValue(mockParseResult());
   jest.mocked(core.hashDelegationToken).mockReturnValue(MOCK_TOKEN_HASH);
-  jest.mocked(core.generateRunId).mockReturnValue(`wf_${'a'.repeat(32)}`);
+  jest.mocked(core.generateRunId).mockReturnValue(`rd_${'a'.repeat(32)}`);
   jest.mocked(core.reconstituteContextVars).mockReturnValue({});
   jest.mocked(core.extractInheritedUserVars).mockReturnValue({});
   jest.mocked(core.deriveActiveFrame).mockReturnValue({
@@ -546,6 +547,59 @@ describe('prepareRunbook', () => {
     }
   });
 
+  it('loads resolved runbooks when request identity property order differs', async () => {
+    const pathFirstRunbookRef: RunbookRef = {
+      path: 'child.runbook.md',
+      source: 'project',
+    };
+    const runbookRefSchemaMock = core.RunbookRefSchema as unknown as {
+      parse: jest.MockedFunction<(ref: unknown) => RunbookRef>;
+    };
+    runbookRefSchemaMock.parse.mockImplementationOnce((ref: unknown) => {
+      realRunbookRefSchema.parse(ref);
+      return pathFirstRunbookRef;
+    });
+
+    const result = await loadAndParseResolvedRunbook({
+      resolved: {
+        path: '/test/child.runbook.md',
+        source: 'project',
+        sourceRoot: '/test',
+      },
+      runbookRef: { source: 'project', path: 'child.runbook.md' },
+      displayName: 'child',
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.runbookRef).toEqual({
+        source: 'project',
+        path: 'child.runbook.md',
+      });
+    }
+  });
+
+  it('returns a structured failure when resolved identity does not match request identity', async () => {
+    const result = await loadAndParseResolvedRunbook({
+      resolved: {
+        path: '/test/child.runbook.md',
+        source: 'project',
+        sourceRoot: '/test',
+      },
+      runbookRef: { source: 'project', path: 'parent.runbook.md' },
+      displayName: 'child',
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('RUNBOOK_REF_RESOLUTION_ERROR');
+      expect(result.error).toContain('project:child.runbook.md');
+      expect(result.error).toContain('project:parent.runbook.md');
+      expect(result.details).toEqual({ runbook: 'child' });
+    }
+    expect(fsPromises.readFile).not.toHaveBeenCalled();
+  });
+
   it('prepares runnable runbooks with RunId before substitution', async () => {
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/test/parent.runbook.md',
@@ -560,7 +614,7 @@ describe('prepareRunbook', () => {
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.prepared.runId).toMatch(/^wf_[a-f0-9]{32}$/);
+      expect(result.prepared.runId).toMatch(/^rd_[a-f0-9]{32}$/);
       expect(result.prepared.mergedVariables.RunId).toBe(result.prepared.runId);
       expect(result.prepared.mergedVariables.RunbookRef).toEqual({
         source: 'project',
@@ -1247,11 +1301,11 @@ describe('startRunbook', () => {
       source: 'project',
       sourceRoot: '/test',
       runbookRef: { source: 'project', path: 'runbook.runbook.md' },
-      runId: `wf_${'b'.repeat(32)}`,
+      runId: `rd_${'b'.repeat(32)}`,
       rawContent: '# Test',
       runbook: { steps: [makeStep() as PreparedRunbook['runbook']['steps'][number]] },
       mergedVariables: {
-        RunId: `wf_${'b'.repeat(32)}`,
+        RunId: `rd_${'b'.repeat(32)}`,
         RunbookRef: { source: 'project', path: 'runbook.runbook.md' },
       },
       stats: { steps: 1, substeps: 0 },
@@ -1320,11 +1374,11 @@ describe('startRunbook', () => {
       source: 'project',
       sourceRoot: '/test',
       runbookRef: { source: 'project', path: 'runbook.md' },
-      runId: `wf_${'c'.repeat(32)}`,
+      runId: `rd_${'c'.repeat(32)}`,
       rawContent: '# Test',
       runbook: { steps: [makeStep()] },
       mergedVariables: {
-        RunId: `wf_${'c'.repeat(32)}`,
+        RunId: `rd_${'c'.repeat(32)}`,
         RunbookRef: { source: 'project', path: 'runbook.md' },
       },
       frontmatter: { outputs: outputDecls },
@@ -1383,11 +1437,11 @@ describe('startRunbook', () => {
       source: 'project',
       sourceRoot: '/test',
       runbookRef: { source: 'project', path: 'runbook.md' },
-      runId: `wf_${'d'.repeat(32)}`,
+      runId: `rd_${'d'.repeat(32)}`,
       rawContent: '# Test',
       runbook: { steps: [makeStep({ substeps })] },
       mergedVariables: {
-        RunId: `wf_${'d'.repeat(32)}`,
+        RunId: `rd_${'d'.repeat(32)}`,
         RunbookRef: { source: 'project', path: 'runbook.md' },
       },
       stats: { steps: 1, substeps: 2 },

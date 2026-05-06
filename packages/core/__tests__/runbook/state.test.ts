@@ -265,6 +265,14 @@ describe('RunbookStateManager', () => {
   });
 
   describe('create with prompted flag', () => {
+    it('generates canonical rd-prefixed run ids', async () => {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
+
+      expect(state.id).toMatch(/^rd_[a-f0-9]{32}$/);
+    });
+
     it('defaults to auto mode (prompted undefined)', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',

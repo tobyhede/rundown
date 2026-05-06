@@ -10,7 +10,7 @@ import {
   parseExactArtifactUriParts,
 } from '../../src/runbook/artifact-uri.js';
 
-const RUN_ID = 'wf_0123456789abcdef0123456789abcdef';
+const RUN_ID = 'rd_0123456789abcdef0123456789abcdef';
 const EXACT_URI = `rd://artifacts/ctx1/runs/${RUN_ID}/review.json`;
 
 describe('artifact URI utilities', () => {
@@ -99,8 +99,9 @@ describe('artifact URI utilities', () => {
   });
 
   it.each([
-    'wf_short',
-    'wf_0123456789abcdef0123456789ABCDEF',
+    'rd_short',
+    'rd_0123456789abcdef0123456789ABCDEF',
+    'wf_0123456789abcdef0123456789abcdef',
     'plain_id',
   ])('rejects invalid concrete run id %s', (runId) => {
     expect(() => parseArtifactUri(`rd://artifacts/ctx1/runs/${runId}/review.json`)).toThrow(
@@ -125,7 +126,7 @@ describe('artifact URI utilities', () => {
     expect(artifactUriToPath(EXACT_URI, { cwd: '/repo', workPath: '.rundown/work' })).toBe(
       path.join(
         '/repo',
-        '.rundown/work/.rd-ctx1/runs/wf_0123456789abcdef0123456789abcdef/review.json',
+        '.rundown/work/.rd-ctx1/runs/rd_0123456789abcdef0123456789abcdef/review.json',
       ),
     );
   });

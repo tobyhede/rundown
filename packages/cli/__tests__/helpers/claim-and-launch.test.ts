@@ -85,7 +85,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   RunbookRefSchema: {
     parse: jest.fn((ref: unknown) => ref),
   },
-  generateRunId: jest.fn(() => `wf_${'a'.repeat(32)}`),
+  generateRunId: jest.fn(() => `rd_${'a'.repeat(32)}`),
   DELEGATION_TOKEN_PREFIX: 'rdtk_',
   DEFAULT_POLICY: {
     version: 1,

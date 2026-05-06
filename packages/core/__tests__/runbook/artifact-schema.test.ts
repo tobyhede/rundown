@@ -7,7 +7,7 @@ import {
 } from '../../src/runbook/artifact-schema.js';
 import { RUNBOOK_REF_ERROR_TEXT, RunbookRefSchema } from '../../src/runbook/runbook-ref.js';
 
-const RUN_ID = 'wf_0123456789abcdef0123456789abcdef';
+const RUN_ID = 'rd_0123456789abcdef0123456789abcdef';
 const URI = `rd://artifacts/ctx1/runs/${RUN_ID}/review.json`;
 const VALID_RECORD = {
   uri: URI,
@@ -98,7 +98,7 @@ describe('artifact schemas', () => {
     expect(() =>
       ArtifactRecordSchema.parse({
         ...VALID_RECORD,
-        runId: 'wf_ffffffffffffffffffffffffffffffff',
+        runId: 'rd_ffffffffffffffffffffffffffffffff',
       }),
     ).toThrow(ARTIFACT_ERROR_TEXT.URI_RUN_ID_MISMATCH);
     expect(() => ArtifactRecordSchema.parse({ ...VALID_RECORD, key: 'other.json' })).toThrow(

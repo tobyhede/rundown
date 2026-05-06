@@ -67,12 +67,12 @@ export class StaleRunbookStateError extends Error {
 }
 
 /**
- * Generate a canonical Rundown run id.
+ * Generate a concrete Rundown run identifier.
  *
- * @returns A `wf_` id followed by 32 lowercase hex characters
+ * @returns Run ID in canonical `rd_<32 lowercase hex>` form
  */
 export function generateRunId(): string {
-  return `wf_${randomBytes(16).toString('hex')}`;
+  return `rd_${randomBytes(16).toString('hex')}`;
 }
 
 /**
@@ -247,7 +247,7 @@ export class RunbookStateManager {
   /**
    * Load a runbook state from disk by ID.
    *
-   * @param id - The runbook state ID (e.g., 'wf-2025-01-12-abc123')
+   * @param id - The runbook state ID (e.g., 'rd_0123456789abcdef0123456789abcdef')
    * @returns The loaded RunbookState, or null if file not found
    * @throws {Error} If the state file exists but fails schema validation (stale state)
    * @throws {Error} If the runbook state uses deprecated dynamic-step snapshots
