@@ -15,6 +15,14 @@
  */
 
 /**
+ * Canonical runtime identity built-ins that belong to each individual runbook
+ * execution and must not be inherited from a parent delegation context.
+ */
+export const IDENTITY_OWNED_BUILTINS = ['RunId', 'RunbookRef'] as const;
+
+const IDENTITY_OWNED_RESERVED_NAMES = IDENTITY_OWNED_BUILTINS.map((name) => name.toLowerCase());
+
+/**
  * Canonical reserved set (lowercased). Re-exported by the CLI as
  * `RUNTIME_RESERVED_VARIABLES` to keep one source of truth across packages.
  */
@@ -22,8 +30,7 @@ export const RESERVED_TEMPLATE_NAMES: ReadonlySet<string> = new Set([
   'step',
   'index',
   'context',
-  'runid',
-  'runbookref',
+  ...IDENTITY_OWNED_RESERVED_NAMES,
 ]);
 
 /**

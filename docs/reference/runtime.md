@@ -373,10 +373,10 @@ remain regular template variables.
 
 User-provided variable names MUST match `/^[a-zA-Z_][a-zA-Z0-9_]*$/`.
 
-The names `step`, `index`, and `context` are reserved case-insensitively.
-Reserved names MUST be rejected in frontmatter `inputs`, frontmatter `required`,
-explicit invocation inputs, input files, and config files. Reserved
-`RD_INPUT_*` variables are skipped with a warning.
+The names `step`, `index`, `context`, `runid`, and `runbookref` are reserved
+case-insensitively. Reserved names MUST be rejected in frontmatter `inputs`,
+frontmatter `required`, explicit invocation inputs, input files, and config
+files. Reserved `RD_INPUT_*` variables are skipped with a warning.
 
 ### 8.4 Undefined Variables
 

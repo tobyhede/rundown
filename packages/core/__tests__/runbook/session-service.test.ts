@@ -215,6 +215,29 @@ describe('SessionService', () => {
       expect(second.claim.updatedAt >= first.claim.updatedAt).toBe(true);
     });
 
+    it('refreshes an existing delegation claim before treating a new child id as claimable', async () => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const linkage = linkageFor(parent.id, '9');
+      const existingChild = await manager.create(
+        { source: 'project', path: 'existing-child.md' },
+        mockRunbook,
+        {
+          runbookPath: 'existing-child.md',
+          parentLinkage: linkage,
+        },
+      );
+      const first = assertClaimed(await sessionService.claimRunbook(existingChild.id, linkage));
+
+      const second = assertClaimed(await sessionService.claimRunbook('missing-new-child', linkage));
+
+      expect(second.claim.claimId).toBe(first.claim.claimId);
+      expect(second.claim.childRunId).toBe(existingChild.id);
+      expect(second.claim.claimedAt).toBe(first.claim.claimedAt);
+      expect(second.claim.updatedAt >= first.claim.updatedAt).toBe(true);
+    });
+
     it('returns missing for an unknown claim id', async () => {
       const resolved = await sessionService.getActiveForClaimId(
         assertClaimId('rdclm_abcdefghijklmnopqrstu1'),

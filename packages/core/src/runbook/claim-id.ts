@@ -47,6 +47,9 @@ export interface ClaimRecord {
  *   freshly created or idempotently refreshed record.
  * - `missing-child` — Transient failure: the child run state file is absent
  *   on disk. May be recoverable by pruning + restarting the parent.
+ * - `terminal-child` — The child run exists but is already completed or
+ *   stopped, so the delegation should be treated as resolved rather than
+ *   claimed again.
  * - `linkage-mismatch` — Corruption signal: the child's persisted
  *   `parentLinkage` disagrees with the freshly token-validated `incoming`
  *   linkage on at least one identifying field (`parentRunId`,
@@ -59,6 +62,11 @@ export interface ClaimRecord {
 export type ClaimRunbookResult =
   | { readonly status: 'claimed'; readonly claim: ClaimRecord }
   | { readonly status: 'missing-child'; readonly childRunId: string }
+  | {
+      readonly status: 'terminal-child';
+      readonly childRunId: string;
+      readonly lifecycle: 'completed' | 'stopped';
+    }
   | {
       readonly status: 'linkage-mismatch';
       readonly childRunId: string;

@@ -1177,7 +1177,7 @@ type ClaimChildResult =
   | { readonly ok: true; readonly claimId: ClaimId; readonly childRunId: string }
   | {
       readonly ok: false;
-      readonly reason: 'child-missing' | 'linkage-mismatch';
+      readonly reason: 'child-missing' | 'delegation-resolved' | 'linkage-mismatch';
       readonly childRunId: string;
     };
 
@@ -1196,6 +1196,8 @@ async function claimChildForPipeline(
       };
     case 'missing-child':
       return { ok: false, reason: 'child-missing', childRunId: claim.childRunId };
+    case 'terminal-child':
+      return { ok: false, reason: 'delegation-resolved', childRunId: claim.childRunId };
     case 'linkage-mismatch':
       return { ok: false, reason: 'linkage-mismatch', childRunId: claim.childRunId };
     default: {
@@ -1427,27 +1429,6 @@ export async function claimAndLaunch(
 
     // 4b. Idempotent return if already claimed
     if (freshDelegation.childRunId) {
-      const existingChild = await manager.load(freshDelegation.childRunId);
-      if (!existingChild) {
-        // Parent points at a child run that no longer exists on disk. Fail
-        // closed rather than minting a claim against a missing run.
-        return {
-          ok: false,
-          reason: 'child-missing',
-          parentRunId: freshParent.id,
-          stepId,
-          childRunId: freshDelegation.childRunId,
-        };
-      }
-      if (existingChild.lifecycle === 'completed' || existingChild.lifecycle === 'stopped') {
-        return {
-          ok: false,
-          reason: 'delegation-resolved',
-          parentRunId: freshParent.id,
-          stepId,
-          childRunId: freshDelegation.childRunId,
-        };
-      }
       const delegationFrameKey = freshSubstep.frameKey;
       const freshLinkage: DelegationLinkage = {
         kind: 'delegation',
@@ -1469,7 +1450,7 @@ export async function claimAndLaunch(
       return emitClaimedSuccess({
         output,
         truncatedToken,
-        childRunId: freshDelegation.childRunId,
+        childRunId: claimResult.childRunId,
         claimId: claimResult.claimId,
         childRunbookPath: freshDelegation.childRunbookPath,
         parentRunId: freshParent.id,

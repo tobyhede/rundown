@@ -1,4 +1,5 @@
 import { describe, it, expect } from '@jest/globals';
+import { IDENTITY_OWNED_BUILTINS } from '@rundown-org/parser';
 import {
   buildContextSnapshot,
   extractInheritedUserVars,
@@ -519,6 +520,23 @@ describe('extractInheritedUserVars', () => {
     );
     expect(extractInheritedUserVars(snapshot)).not.toHaveProperty('RunId');
     expect(extractInheritedUserVars(snapshot)).not.toHaveProperty('RunbookRef');
+  });
+
+  it('filters every parser-declared identity-owned built-in', () => {
+    expect(IDENTITY_OWNED_BUILTINS).toEqual(['RunId', 'RunbookRef']);
+
+    const snapshot = {
+      vars: brandEffectiveVarsForTest({
+        ...Object.fromEntries(IDENTITY_OWNED_BUILTINS.map((key) => [key, `parent-${key}`])),
+        UserInput: 'ok',
+      }),
+      ancestors: [],
+      step: '1',
+    };
+
+    const inherited = extractInheritedUserVars(snapshot);
+
+    expect(inherited).toEqual({ UserInput: 'ok' });
   });
 });
 

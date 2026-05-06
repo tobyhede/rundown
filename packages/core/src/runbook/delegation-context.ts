@@ -1,9 +1,12 @@
+import { IDENTITY_OWNED_BUILTINS } from '@rundown-org/parser';
 import { mergeEffectiveVars } from './effective-vars.js';
 import type { AncestorSnapshot, ContextSnapshot, RunbookState, TemplateVarValue } from './types.js';
 import { getActiveForContext, deriveExecutionAt } from './targeting.js';
 
 /** Maximum depth for parent context chain addressing. */
 export const MAX_ANCESTOR_DEPTH = 32;
+
+const IDENTITY_OWNED_BUILTIN_SET = new Set<string>(IDENTITY_OWNED_BUILTINS);
 
 /**
  * Reconstitute inherited context variables from a frozen delegation snapshot.
@@ -180,7 +183,7 @@ export function extractInheritedUserVars(
 ): Record<string, TemplateVarValue> {
   const result: Record<string, TemplateVarValue> = {};
   for (const [key, value] of Object.entries(snapshot.vars)) {
-    if (!key.startsWith('context.') && key !== 'RunId' && key !== 'RunbookRef') {
+    if (!key.startsWith('context.') && !IDENTITY_OWNED_BUILTIN_SET.has(key)) {
       result[key] = value;
     }
   }

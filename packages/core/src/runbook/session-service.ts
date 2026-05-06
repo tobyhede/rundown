@@ -192,38 +192,24 @@ export class SessionService {
    * @param linkage - Delegation linkage to record in the claim. Caller must build
    *   this from freshly token-validated parent state.
    * @returns A claim record on success, or a failure variant when the child is
-   *   missing or its persisted linkage diverges from `linkage`.
+   *   missing, terminal, or its persisted linkage diverges from `linkage`.
    */
   async claimRunbook(childRunId: string, linkage: DelegationLinkage): Promise<ClaimRunbookResult> {
     return this.withLock(async () => {
-      const childState = await this.manager.load(childRunId);
-      if (!childState) {
-        return { status: 'missing-child', childRunId };
-      }
-      if (!linkageMatchesLinkage(childState.parentLinkage, linkage)) {
-        return {
-          status: 'linkage-mismatch',
-          childRunId,
-          incoming: linkage,
-          persisted: childState.parentLinkage,
-        };
-      }
-
       const session = await this.manager.loadSession();
       const now = new Date().toISOString();
-      const existing = this.findClaimByChildRunId(session.claims, childRunId);
-      if (existing !== undefined) {
-        const refreshed = { ...existing, updatedAt: now };
-        session.claims[existing.claimId] = refreshed;
-        await this.manager.saveSession(session);
-        return { status: 'claimed', claim: refreshed };
-      }
-
       const existingForDelegation = this.findClaimByDelegationLinkage(session.claims, linkage);
       if (existingForDelegation !== undefined) {
         const existingState = await this.manager.load(existingForDelegation.childRunId);
         if (!existingState) {
           return { status: 'missing-child', childRunId: existingForDelegation.childRunId };
+        }
+        if (existingState.lifecycle === 'completed' || existingState.lifecycle === 'stopped') {
+          return {
+            status: 'terminal-child',
+            childRunId: existingForDelegation.childRunId,
+            lifecycle: existingState.lifecycle,
+          };
         }
         if (!linkageMatchesLinkage(existingState.parentLinkage, linkage)) {
           return {
@@ -235,6 +221,30 @@ export class SessionService {
         }
         const refreshed = { ...existingForDelegation, updatedAt: now };
         session.claims[existingForDelegation.claimId] = refreshed;
+        await this.manager.saveSession(session);
+        return { status: 'claimed', claim: refreshed };
+      }
+
+      const childState = await this.manager.load(childRunId);
+      if (!childState) {
+        return { status: 'missing-child', childRunId };
+      }
+      if (childState.lifecycle === 'completed' || childState.lifecycle === 'stopped') {
+        return { status: 'terminal-child', childRunId, lifecycle: childState.lifecycle };
+      }
+      if (!linkageMatchesLinkage(childState.parentLinkage, linkage)) {
+        return {
+          status: 'linkage-mismatch',
+          childRunId,
+          incoming: linkage,
+          persisted: childState.parentLinkage,
+        };
+      }
+
+      const existing = this.findClaimByChildRunId(session.claims, childRunId);
+      if (existing !== undefined) {
+        const refreshed = { ...existing, updatedAt: now };
+        session.claims[existing.claimId] = refreshed;
         await this.manager.saveSession(session);
         return { status: 'claimed', claim: refreshed };
       }

@@ -23,6 +23,9 @@ describe('RunbookRefSchema', () => {
   it.each([
     { source: 'external', path: 'planning/review.md' },
     { source: 'external', path: '/tmp/foo\0.md' },
+    { source: 'external', path: '/tmp/foo\nbar.md' },
+    { source: 'external', path: '/tmp/foo\rbar.md' },
+    { source: 'external', path: '/tmp/foo\\bar.md' },
     { source: 'external', path: '/tmp/../bar.md' },
     { source: 'external', path: '/tmp/./bar.md' },
     { source: 'external', path: '/tmp//bar.md' },

@@ -59,8 +59,9 @@ Frontmatter is an open YAML object; unknown fields MUST be preserved.
 | `outputs` | output declaration array | Terminal outputs captured at run completion. |
 
 Input and required names MUST match `/^[a-zA-Z_][a-zA-Z0-9_]*$/`. `step`,
-`index`, and `context` are reserved case-insensitively and MUST NOT appear in
-`inputs` or `required`. Missing required variables are resolution errors.
+`index`, `context`, `runid`, and `runbookref` are reserved case-insensitively
+and MUST NOT appear in `inputs` or `required`. Missing required variables are
+resolution errors.
 
 ### 3.2 Heading Hierarchy
 
@@ -337,11 +338,11 @@ expand against the current runtime frame.
 
 ### 9.1 Variable Names and Precedence
 
-`step`, `index`, and `context` are reserved case-insensitively and MUST NOT be
-overridden by user variables. Reserved names are rejected in frontmatter
-`inputs`, frontmatter `required`, explicit invocation inputs, input files, and
-configuration files. Reserved `RD_INPUT_*` environment variables are skipped
-with a warning.
+`step`, `index`, `context`, `runid`, and `runbookref` are reserved
+case-insensitively and MUST NOT be overridden by user variables. Reserved names
+are rejected in frontmatter `inputs`, frontmatter `required`, explicit
+invocation inputs, input files, and configuration files. Reserved `RD_INPUT_*`
+environment variables are skipped with a warning.
 
 Precedence, highest first:
 

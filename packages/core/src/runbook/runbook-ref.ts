@@ -69,7 +69,8 @@ function isValidExternalRunbookPath(value: string): boolean {
   if (
     value.length === 0 ||
     !path.isAbsolute(value) ||
-    value.includes('\0') ||
+    value.includes('\\') ||
+    /[\r\n\0]/.test(value) ||
     !value.endsWith('.md') ||
     path.normalize(value) !== value
   ) {
