@@ -93,14 +93,15 @@ Active step.
   }
 
   async function setupStaleActiveRunbook(cwd: string): Promise<void> {
+    const runId = 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
     const runsDir = path.join(cwd, '.rundown', 'runs');
     await fs.mkdir(runsDir, { recursive: true });
     await fs.writeFile(
       path.join(cwd, '.rundown', 'session.json'),
-      JSON.stringify({ defaultStack: ['wf-stale-1'] }, null, 2),
+      JSON.stringify({ defaultStack: [runId] }, null, 2),
     );
     await fs.writeFile(
-      path.join(runsDir, 'wf-stale-1.json'),
+      path.join(runsDir, `${runId}.json`),
       JSON.stringify({ schemaVersion: 1 }, null, 2),
     );
   }
