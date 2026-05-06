@@ -80,6 +80,16 @@ describe('loadHelperModules', () => {
     warnSpy.mockRestore();
   });
 
+  it('rejects "artifact" as a helper name with a warning', async () => {
+    const helperFile = path.join(tmpDir, 'bad-artifact.mjs');
+    await fs.writeFile(helperFile, 'export function artifact(v) { return v; }');
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const registry = await loadHelperModules([helperFile], tmpDir, tmpDir);
+    expect(registry.has('artifact')).toBe(false);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('"artifact" is reserved'));
+    warnSpy.mockRestore();
+  });
+
   it('skips non-function exports with a warning', async () => {
     const helperFile = path.join(tmpDir, 'mixed.mjs');
     await fs.writeFile(

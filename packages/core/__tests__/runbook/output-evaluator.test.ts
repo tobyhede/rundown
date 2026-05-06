@@ -1,29 +1,159 @@
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import * as path from 'node:path';
 import type { OutputDeclaration } from '@rundown-org/parser';
 import { createJsonArrayStream } from '../../src/runbook/types.js';
 import type { ForContext, TemplateVarValue } from '../../src/runbook/types.js';
+import { readArtifactManifest } from '../../src/runbook/artifact-manifest.js';
 import {
   buildExecutionFrame,
-  evaluateFrontmatterOutputDeclarations,
-  evaluateOutputExpression,
-  evaluateStepOutputDeclarations,
+  evaluateFrontmatterOutputDeclarations as evaluateFrontmatterOutputDeclarationsRaw,
+  evaluateOutputExpression as evaluateOutputExpressionRaw,
+  evaluateStepOutputDeclarations as evaluateStepOutputDeclarationsRaw,
   flattenTemplateVars,
   setHelperRegistry,
   resetHelperRegistry,
+  type EvaluateOutputOptions,
+  type OutputVars,
 } from '../../src/runbook/output-evaluator.js';
 import { resetHelperInvokeWarnings } from '../../src/runbook/helper-invoke.js';
 
+const DEFAULT_EVALUATE_OPTIONS = {
+  cwd: path.join(tmpdir(), `rd-output-evaluator-${process.pid}`),
+} satisfies EvaluateOutputOptions;
+
+function evaluateOutputExpression(
+  expr: string,
+  variables: OutputVars,
+  options: EvaluateOutputOptions = DEFAULT_EVALUATE_OPTIONS,
+): string {
+  return evaluateOutputExpressionRaw(expr, variables, options);
+}
+
+function evaluateStepOutputDeclarations(
+  outputs: readonly OutputDeclaration[],
+  vars: OutputVars,
+  options: EvaluateOutputOptions = DEFAULT_EVALUATE_OPTIONS,
+): Record<string, string> {
+  return evaluateStepOutputDeclarationsRaw(outputs, vars, options);
+}
+
+function evaluateFrontmatterOutputDeclarations(
+  outputs: readonly OutputDeclaration[],
+  vars: OutputVars,
+  options: EvaluateOutputOptions = DEFAULT_EVALUATE_OPTIONS,
+): Record<string, string> {
+  return evaluateFrontmatterOutputDeclarationsRaw(outputs, vars, options);
+}
+
+const RUN_OUTPUT_VARS = {
+  WorkPath: '.rundown/work/demo',
+  ContextId: 'ctx-abc',
+  RunId: 'rd_0123456789abcdef0123456789abcdef',
+  RunbookRef: {
+    source: 'plugin',
+    path: 'planning/review/review-plan-risk-safety.runbook.md',
+  },
+} as const satisfies OutputVars;
+
 describe('evaluateOutputExpression', () => {
   it('supports path helper, quoted literal, template reference, and bare identifier forms', () => {
-    expect(
-      evaluateOutputExpression('{{ path "plan.json" }}', {
-        WorkPath: '.rundown/work/demo',
-        ContextId: 'ctx-abc',
-      }),
-    ).toMatch(/^\.rundown\/work\/demo\/\.rd-ctx-abc\/\d{4}-\d{2}-\d{2}-plan\.json$/);
+    expect(evaluateOutputExpression('{{ path "plan.json" }}', RUN_OUTPUT_VARS)).toContain(
+      '.rundown/work/demo/.rd-ctx-abc/runs/rd_0123456789abcdef0123456789abcdef/plan.json',
+    );
     expect(evaluateOutputExpression('"literal"', {})).toBe('literal');
     expect(evaluateOutputExpression('{{ Region }}', { Region: 'us-east-1' })).toBe('us-east-1');
     expect(evaluateOutputExpression('PlanPath', { PlanPath: '/tmp/plan.md' })).toBe('/tmp/plan.md');
+  });
+
+  it('evaluates artifact helper to an exact URI', async () => {
+    const cwd = await mkdtemp(path.join(tmpdir(), 'rd-helper-'));
+    try {
+      expect(
+        evaluateOutputExpression(
+          '{{ artifact "review.json" }}',
+          {
+            WorkPath: '.rundown/work',
+            ContextId: 'ctx1',
+            RunId: 'rd_0123456789abcdef0123456789abcdef',
+            RunbookRef: {
+              source: 'plugin',
+              path: 'planning/review/review-plan-risk-safety.runbook.md',
+            },
+          },
+          { cwd },
+        ),
+      ).toBe('rd://artifacts/ctx1/runs/rd_0123456789abcdef0123456789abcdef/review.json');
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('evaluates path helper to run-scoped artifact path', async () => {
+    const cwd = await mkdtemp(path.join(tmpdir(), 'rd-helper-'));
+    try {
+      expect(
+        evaluateOutputExpression(
+          '{{ path "review.json" }}',
+          {
+            WorkPath: '.rundown/work',
+            ContextId: 'ctx1',
+            RunId: 'rd_0123456789abcdef0123456789abcdef',
+            RunbookRef: {
+              source: 'plugin',
+              path: 'planning/review/review-plan-risk-safety.runbook.md',
+            },
+          },
+          { cwd },
+        ),
+      ).toContain('.rundown/work/.rd-ctx1/runs/rd_0123456789abcdef0123456789abcdef/review.json');
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('records manifest rows when helpers are evaluated', async () => {
+    const cwd = await mkdtemp(path.join(tmpdir(), 'rd-helper-'));
+    try {
+      const vars = {
+        WorkPath: '.rundown/work',
+        ContextId: 'ctx1',
+        RunId: 'rd_0123456789abcdef0123456789abcdef',
+        RunbookRef: {
+          source: 'plugin',
+          path: 'planning/review/review-plan-risk-safety.runbook.md',
+        },
+      };
+
+      const reviewUri = evaluateOutputExpression('{{ artifact "review.json" }}', vars, { cwd });
+      evaluateOutputExpression('{{ path "summary.md" }}', vars, { cwd });
+
+      const records = await readArtifactManifest({ cwd, workPath: vars.WorkPath }, 'ctx1');
+      expect(records).toHaveLength(2);
+      expect(records).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            uri: reviewUri,
+            runId: vars.RunId,
+            contextId: vars.ContextId,
+            runbook: vars.RunbookRef,
+            key: 'review.json',
+            timestamp: expect.any(String),
+          }),
+          expect.objectContaining({
+            uri: 'rd://artifacts/ctx1/runs/rd_0123456789abcdef0123456789abcdef/summary.md',
+            runId: vars.RunId,
+            contextId: vars.ContextId,
+            runbook: vars.RunbookRef,
+            key: 'summary.md',
+            timestamp: expect.any(String),
+          }),
+        ]),
+      );
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
   });
 
   it('renders booleans and null the same way the CLI wrapper does today', () => {
@@ -49,32 +179,20 @@ describe('evaluateOutputExpression', () => {
     ).toThrow(/ContextId/);
   });
 
-  it('throws when ctx= expands to a value that is not a valid ContextId', () => {
-    expect(() =>
-      evaluateOutputExpression('{{ path "plan.json" ctx={{ Bad }} }}', {
-        WorkPath: '.rundown/work/demo',
-        Bad: 'not a valid id',
-      }),
-    ).toThrow(/valid ContextId/);
-  });
-
-  it('honours ctx= override with a nested Handlebars expression', () => {
+  it('preserves legacy ctx= path helper syntax as literal text', () => {
     expect(
       evaluateOutputExpression('{{ path "plan.json" ctx={{ childCtx }} }}', {
         WorkPath: '.rundown/work/demo',
         ContextId: 'parent',
         childCtx: 'child-123',
       }),
-    ).toMatch(/\.rd-child-123\/.*-plan\.json$/);
-  });
-
-  it('honours ctx= override with a bare literal containing hyphens', () => {
+    ).toBe('{{ path "plan.json" ctx=child-123 }}');
     expect(
       evaluateOutputExpression('{{ path "plan.json" ctx=alt-ctx }}', {
         WorkPath: '.rundown/work/demo',
         ContextId: 'parent',
       }),
-    ).toMatch(/\.rd-alt-ctx\/.*-plan\.json$/);
+    ).toBe('{{ path "plan.json" ctx=alt-ctx }}');
   });
 
   it('expands template references inside quoted strings', () => {
@@ -542,12 +660,9 @@ describe('evaluateOutputExpression with HelperRegistry', () => {
   });
 
   it('path built-in still takes priority over user helpers', () => {
-    expect(
-      evaluateOutputExpression('{{ path "plan.json" }}', {
-        WorkPath: '.rundown/work/demo',
-        ContextId: 'ctx-abc',
-      }),
-    ).toMatch(/plan\.json$/);
+    expect(evaluateOutputExpression('{{ path "plan.json" }}', RUN_OUTPUT_VARS)).toContain(
+      '/runs/rd_0123456789abcdef0123456789abcdef/plan.json',
+    );
   });
 });
 

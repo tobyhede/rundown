@@ -139,6 +139,7 @@ export class RunbookActorService {
     }
     return compileRunbookToMachine(steps, {
       templateVars: flattenTemplateVars(state.templateVars ?? {}),
+      evaluationOptions: { cwd: this.manager.cwd },
       frontmatterOutputs: state.frontmatterOutputs,
       substepStates: state.substepStates,
       activeFrameKey: state.activeFrameKey,

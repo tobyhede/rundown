@@ -811,11 +811,18 @@ export async function runExecutionLoop(
       currentStep.kind === 'for' ? currentStep.forClause : undefined,
       mergedTemplateVars,
     );
-    const expandedDescription = expandLoopVariables(itemToRender.description, stepVars);
+    const helperOptions = { cwd };
+    const expandedDescription = expandLoopVariables(
+      itemToRender.description,
+      stepVars,
+      helperOptions,
+    );
     // For prompted-for substeps, fall back to the step-level prompt (the reconstructed FOR text)
     const rawPrompt =
       itemToRender.prompt ?? (currentStep.kind === 'prompted-for' ? currentStep.prompt : undefined);
-    const expandedPrompt = rawPrompt ? expandLoopVariables(rawPrompt, stepVars) : rawPrompt;
+    const expandedPrompt = rawPrompt
+      ? expandLoopVariables(rawPrompt, stepVars, helperOptions)
+      : rawPrompt;
 
     // Emit STEP_ENTERED event
     const stepPosition = buildStepPosition(
@@ -958,7 +965,7 @@ export async function runExecutionLoop(
       prompt: expandedPrompt,
       hasCommand: !!command,
       commandCode: command?.code
-        ? expandLoopVariablesForCommand(command.code, stepVars)
+        ? expandLoopVariablesForCommand(command.code, stepVars, helperOptions)
         : command?.code,
       commandLang: command?.lang,
       isSubstep,
@@ -979,7 +986,11 @@ export async function runExecutionLoop(
     }
 
     // Expand command code for execution (after guard — command is guaranteed)
-    const expandedCommandCode = expandLoopVariablesForCommand(command.code, stepVars);
+    const expandedCommandCode = expandLoopVariablesForCommand(
+      command.code,
+      stepVars,
+      helperOptions,
+    );
 
     // --- Output capture: pre-spawn ---------------------------------------
     const substepId = isSubstep ? itemToRender.id : undefined;
