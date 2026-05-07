@@ -3,6 +3,7 @@
 import * as fs from 'node:fs/promises';
 import {
   assertRunId,
+  type RunId,
   buildStepPosition,
   deriveExecutionAt,
   buildCompletionKey,
@@ -342,11 +343,11 @@ export interface ExecutionLoopOptions {
 
 async function applyExecutionTerminalRelease(
   sessionService: SessionService,
-  runbookId: string,
+  runbookId: RunId,
   mode: ExecutionTerminalReleaseMode,
 ): Promise<void> {
   if (mode === 'release-runbook') {
-    await sessionService.releaseRunbook(assertRunId(runbookId));
+    await sessionService.releaseRunbook(runbookId);
     return;
   }
   await sessionService.popRunbook();
@@ -633,13 +634,14 @@ export async function drainResolvedCompletions({
  */
 export async function runExecutionLoop(
   manager: RunbookStateManager,
-  runbookId: string,
+  runbookIdRaw: string,
   steps: ResolvedStep[],
   cwd: string,
   prompted: boolean,
   emitter: ExecutionEventEmitter,
   options: ExecutionLoopOptions = {},
 ): Promise<'done' | 'stopped' | 'waiting'> {
+  const runbookId: RunId = assertRunId(runbookIdRaw);
   const state = await manager.load(runbookId);
   if (!state) return 'stopped';
 
