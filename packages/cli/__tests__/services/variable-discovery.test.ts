@@ -538,6 +538,7 @@ describe('resolveVariables', () => {
       RESERVED_IDENTITY_KEY_VARIANTS,
     )('ignores runtime identity key "%s" from RD_INPUT_*', async (name) => {
       const envKey = `RD_INPUT_${name}`;
+      const previous = process.env[envKey];
       process.env[envKey] = 'shadow';
 
       try {
@@ -553,7 +554,11 @@ describe('resolveVariables', () => {
           true,
         );
       } finally {
-        delete process.env[envKey];
+        if (previous === undefined) {
+          delete process.env[envKey];
+        } else {
+          process.env[envKey] = previous;
+        }
       }
     });
 
