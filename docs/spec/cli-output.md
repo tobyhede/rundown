@@ -41,6 +41,56 @@ Authoritative TypeScript types: `packages/core/src/output/schema.ts`
 }
 ```
 
+**RunbookRef** - Resolved runbook identity stored on artifact records:
+
+```json
+{
+  "source": "project",
+  "path": "planning/write-plan.runbook.md"
+}
+```
+
+`source` is one of `project`, `plugin`, `bundled`, or `external`.
+
+**ArtifactRecord** - Structured artifact value and manifest row shape:
+
+```json
+{
+  "uri": "rd://artifacts/ctx1/runs/rd_0123456789abcdef0123456789abcdef/plan.json",
+  "runId": "rd_0123456789abcdef0123456789abcdef",
+  "contextId": "ctx1",
+  "runbook": {
+    "source": "project",
+    "path": "planning/write-plan.runbook.md"
+  },
+  "key": "plan.json",
+  "timestamp": "2026-05-07T00:00:00.000Z"
+}
+```
+
+**ArtifactMap** - Object keyed by artifact variable name. Values are either `ArtifactRecord` or `ArtifactRecord[]`:
+
+```json
+{
+  "PlanPath": {
+    "uri": "rd://artifacts/ctx1/runs/rd_0123456789abcdef0123456789abcdef/plan.json",
+    "runId": "rd_0123456789abcdef0123456789abcdef",
+    "contextId": "ctx1",
+    "runbook": {
+      "source": "project",
+      "path": "planning/write-plan.runbook.md"
+    },
+    "key": "plan.json",
+    "timestamp": "2026-05-07T00:00:00.000Z"
+  },
+  "Reviews": []
+}
+```
+
+Empty wildcard results are represented as `[]`. Required current-unit artifact fields use `{}` when empty. Optional accumulated artifact fields are omitted when empty. `null` is not used as an absence marker.
+
+Future schema tests should assert that active current-unit fields use empty containers when empty, optional accumulated fields are omitted when empty, inactive status omits artifact fields, and `rd run` JSON output remains newline-delimited event objects.
+
 ---
 
 ## ls
@@ -116,9 +166,25 @@ Step description here.
   "state": ".rundown/runs/rd_0123456789abcdef0123456789abcdef.json",
   "prompted": true,
   "position": { "current": "1", "total": 3 },
-  "step": { "name": "1", "description": "First Step" }
+  "step": { "name": "1", "description": "First Step" },
+  "artifacts": {},
+  "artifactVars": {
+    "PlanPath": {
+      "uri": "rd://artifacts/ctx1/runs/rd_0123456789abcdef0123456789abcdef/plan.json",
+      "runId": "rd_0123456789abcdef0123456789abcdef",
+      "contextId": "ctx1",
+      "runbook": {
+        "source": "project",
+        "path": "planning/write-plan.runbook.md"
+      },
+      "key": "plan.json",
+      "timestamp": "2026-05-07T00:00:00.000Z"
+    }
+  }
 }
 ```
+
+`artifacts` is required for active status responses and contains the active step/substep working set. It is `{}` when the active execution unit has no artifacts. `artifactVars` contains the accumulated persisted artifact variable map and is omitted when there are no accumulated artifact variables.
 
 ### `rd status` (no active runbook)
 
@@ -134,6 +200,8 @@ No active runbook.
   "stashed": false
 }
 ```
+
+Inactive status responses omit both `artifacts` and `artifactVars`.
 
 ### `rd status --claim-id <claim_id>`
 
@@ -163,14 +231,30 @@ Runbook:  COMPLETE
 ```
 
 **JSON:**
-```json
-{
-  "action": "complete",
-  "file": "runbooks/deploy.runbook.md",
-  "state": ".rundown/runs/rd_0123456789abcdef0123456789abcdef.json",
-  "position": { "current": "1", "total": 1 }
-}
+
+`rd run` emits newline-delimited JSON events. Each line is one JSON object. Event type names are lowercase snake_case, and event payload fields are flattened onto the JSONL object alongside envelope fields such as `timestamp`, `runbookId`, `runbook`, and `seq`. The final line is a terminal lifecycle event.
+
+```jsonl
+{"type":"runbook_started","prompted":false,"statePath":".rundown/runs/rd_0123456789abcdef0123456789abcdef.json","timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":1}
+{"type":"step_entered","position":{"current":"1","total":1},"stepName":"1","description":"First Step","hasCommand":true,"commandCode":"echo \"hello\"","commandLang":"bash","isSubstep":false,"prompted":false,"artifacts":{},"timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":2}
+{"type":"command_started","command":"echo \"hello\"","displayCommand":"echo \"hello\"","position":{"current":"1","total":1},"timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":3}
+{"type":"command_completed","command":"echo \"hello\"","success":true,"exitCode":0,"position":{"current":"1","total":1},"timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":4}
+{"type":"runbook_completed","finalPosition":{"current":"1","total":1},"timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":5}
 ```
+
+The internal event payload field is `STEP_ENTERED.payload.artifacts`; the CLI JSONL field is flattened as `artifacts` on the `step_entered` line. `artifacts` is required and contains only the entered step/substep's working set. It is `{}` when that execution unit has no `ARTIFACTS` directive. It is not the full accumulated `artifactVars` map.
+
+Runtime command text is rendered once per execution. The exact rendered string is reused for the flattened `step_entered.commandCode` field and actual command execution.
+
+### `STEP_ENTERED` with artifacts
+
+```jsonl
+{"type":"step_entered","position":{"current":"2","total":4},"stepName":"2","description":"Write plan","hasCommand":true,"commandCode":"printf '%s\n' '/project/.rundown/work/.rd-ctx1/runs/rd_0123456789abcdef0123456789abcdef/plan.json'","commandLang":"bash","isSubstep":false,"prompted":false,"artifacts":{"PlanPath":{"uri":"rd://artifacts/ctx1/runs/rd_0123456789abcdef0123456789abcdef/plan.json","runId":"rd_0123456789abcdef0123456789abcdef","contextId":"ctx1","runbook":{"source":"project","path":"planning/write-plan.runbook.md"},"key":"plan.json","timestamp":"2026-05-07T00:00:00.000Z"},"Reviews":[]},"timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"planning/write-plan.runbook.md"},"seq":2}
+```
+
+`Reviews: []` is a meaningful empty wildcard result and must be preserved in JSON output.
+
+Text output remains human-readable and does not print raw artifact JSON by default. Artifact values may appear in rendered prompt or command text when authors reference them directly or through helpers. JSON output is the authoritative interface for artifact identity and provenance.
 
 ---
 

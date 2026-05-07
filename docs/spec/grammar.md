@@ -58,26 +58,31 @@ tag            ::= text
 input_list     ::= ( ws "- " variable_name newline )+
 required_list  ::= ( ws "- " variable_name newline )+
 inline_sequence ::= "[" variable_name ( "," variable_name )* "]"
-output_fm_list ::= ( ws "- " quoted_output_entry newline
-                   | ws "- " output_entry newline )+
+output_fm_list   ::= ( ws "- " quoted_output_fm_entry newline
+                     | ws "- " output_fm_entry newline )+
+output_fm_entry  ::= variable_name ( ws output_value )?
+quoted_output_fm_entry ::= quoted_string
 ```
 
 Public frontmatter keys are case-insensitive (`inputs:`, `INPUTS:`, and `Inputs:` are equivalent); unknown keys are preserved with their original casing. All fields are optional.
 
 `inputs:` declares variable names only. Runtime values come from CLI flags, config, environment bridge variables, or delegation inheritance. Each name must match `variable_name` and must not be [reserved](#reserved-variable-names). `required:` entries must also be declared in `inputs:`. Both block YAML sequences and inline YAML sequences such as `inputs: [PlanPath]` are valid.
 
-`outputs:` uses the same entry grammar as [OUTPUTS directives](#context-directives). Quote entries that contain template expressions in YAML:
+`outputs:` declares terminal runbook outputs evaluated at run completion. A frontmatter output entry may be name-only or may include an expression value. Quote entries that contain template expressions in YAML:
 
 ```yaml
 outputs:
   - Result
-  - 'PlanPath {{ path "plan.json" }}'
+  - 'PlanPath {{ path PlanPath }}'
 ```
+
+Frontmatter `outputs:` is separate from step/substep `OUTPUTS`. Frontmatter expression behavior remains valid; step/substep `OUTPUTS` entries are name-only.
 
 ## Steps
 
 ```ebnf
 step ::= "## " step_id separator? text? newline
+         artifacts_directive?
          outputs_directive?
          for_clause?
          delegate_annotation?
@@ -86,12 +91,13 @@ step ::= "## " step_id separator? text? newline
          body?
 ```
 
-Content must appear in the order shown: OUTPUTS, FOR, DELEGATE, transitions, prompt, body.
+Content must appear in the order shown: ARTIFACTS, OUTPUTS, FOR, DELEGATE, transitions, prompt, body.
 
 ## Substeps
 
 ```ebnf
 substep ::= "### " substep_id separator? text? newline
+            artifacts_directive?
             outputs_directive?
             delegate_annotation?
             transition*
@@ -104,25 +110,31 @@ Substeps cannot contain nested substeps. See [docs/spec/language.md §1.1](langu
 ## Context Directives
 
 ```ebnf
+artifacts_directive ::= "- ARTIFACTS" newline artifact_list
+artifact_list       ::= ( ws "- " artifact_entry newline )+
+artifact_entry      ::= variable_name ws quoted_artifact_key
+quoted_artifact_key ::= '"' artifact_key '"'
+artifact_key        ::= exact_artifact_key | wildcard_artifact_key
+exact_artifact_key  ::= [A-Za-z0-9._-]+
+wildcard_artifact_key ::= [A-Za-z0-9._*?-]+
+
 outputs_directive ::= "- OUTPUTS" newline output_list
 output_list       ::= ( ws "- " output_entry newline )+
-output_entry      ::= variable_name ( ws output_value )?
-quoted_output_entry ::= quoted_string
+output_entry      ::= variable_name
+
 output_value      ::= helper_call | template_variable | quoted_string | variable_name
 helper_call       ::= "{{" ws? variable_name ( ws helper_argument )+ ws? "}}"
 helper_argument   ::= quoted_string | variable_path | keyed_argument
 keyed_argument    ::= variable_name "=" ( quoted_string | variable_path | ctx_ref )
 ```
 
-A step or substep may declare at most one OUTPUTS directive. Duplicate directives on the same target are rejected. The `- INPUTS` directive has been removed — use the frontmatter `inputs:` field to declare variable names.
+A step or substep may declare at most one `ARTIFACTS` directive and at most one `OUTPUTS` directive. Duplicate directives on the same target are rejected. `ARTIFACTS` is valid only on steps and substeps; it is not a frontmatter field.
 
-OUTPUTS declares values to inject into the runbook's live variable space
-after step completion. An entry may be a **naked declaration** (name only)
-or carry a value expression. Naked entries at step / substep level activate
-a file-backed channel: Rundown creates an empty file whose path is composed
-from the active scope tiers (step id, optional substep id, optional FOR
-iteration index) followed by `<VarName>` and exports its absolute path as
-`RD_OUTPUTS_<VarName>` to the spawned command. The three possible paths are:
+`ARTIFACTS` declares the current execution unit's artifact working set. Each entry maps a variable name to a quoted artifact key. The variable name must match `variable_name` and must not be a [reserved variable name](#reserved-variable-names). Duplicate names in one `ARTIFACTS` block are syntax errors.
+
+Artifact keys are quoted literals. Template markers are not expanded inside keys. Exact keys use `exact_artifact_key`; wildcard keys use `wildcard_artifact_key` and contain `*` or `?`. Empty keys, `.`, `..`, slashes, absolute paths, traversal, and recursive `**` are invalid.
+
+`OUTPUTS` at step/substep level declares name-only command output channels. Expression-form step/substep `OUTPUTS` entries are parse errors. Naked entries activate a file-backed channel: Rundown creates an empty file whose path is composed from the active scope tiers (step id, optional substep id, optional FOR iteration index) followed by `<VarName>` and exports its absolute path as `RD_OUTPUTS_<VarName>` to the spawned command. The three possible paths are:
 
 | Scope | Path |
 |---|---|
@@ -130,14 +142,9 @@ iteration index) followed by `<VarName>` and exports its absolute path as
 | Substep | `.rundown/runs/<runId>/outputs/<stepId>/<substepId>/<VarName>` |
 | FOR iteration (in substep) | `.rundown/runs/<runId>/outputs/<stepId>/<substepId>/<iteration>/<VarName>` |
 
-See [docs/spec/language.md §7.1](language.md#71-outputs). Expression-form output values
-may be Handlebars helper calls (`{{ path "file.json" }}`), template variable
-references (`{{ VarName }}`), quoted literals (`"value"`), or bare variable
-references (`VarName`).
+See [docs/spec/language.md §10.1](language.md#101-step-outputs).
 
-Variable names in OUTPUTS must match `variable_name` and must not be [reserved variable names](#reserved-variable-names).
-
-The `path` helper call `{{ path "file.json" }}` is syntactic sugar for the CLI form `rdpath --dir WorkPath --ctx ContextId --file file.json`. The optional `ctx=` argument (`{{ path "file.json" ctx=alt-ctx }}`) overrides the default `ContextId`. Filenames must match the [`filename`](#lexical-rules) production; context identifiers must match [`ctx_ref`](#lexical-rules). See [docs/reference/rdpath.md](../reference/rdpath.md) for the full path-assembly contract.
+The `path` helper call `{{ path "file.json" }}` is valid in frontmatter `outputs:` and rendered content. For literal filenames it is syntactic sugar for the CLI form `rdpath --dir WorkPath --ctx ContextId --file file.json`. The optional `ctx=` argument (`{{ path "file.json" ctx=alt-ctx }}`) overrides the default `ContextId`. Filenames must match the [`filename`](#lexical-rules) production; context identifiers must match [`ctx_ref`](#lexical-rules). See [docs/reference/rdpath.md](../reference/rdpath.md) for the full path-assembly contract.
 
 ## Identifiers
 
@@ -223,7 +230,7 @@ Aggregation modifiers must pair complementarily: `PASS ALL` + `FAIL ANY` (pessim
 
 **Default transitions:** When no transitions are authored, the parser supplies `PASS CONTINUE`, `FAIL STOP`. Substeps under aggregation or with runbook delegation default to `PASS DEFER`, `FAIL DEFER`.
 
-**Disambiguation:** A `-`-prefixed bullet inside a step is resolved by priority: (1) context directive (`- OUTPUTS` as exact, case-sensitive list-item text with no trailing content), (2) FOR clause (`FOR` keyword), (3) DELEGATE annotation (`- DELEGATE` as exact, case-sensitive list-item text with no trailing content), (4) transition (`PASS`, `FAIL`, `YES`, `NO`, or standalone `DEFER`), (5) runbook reference (`.runbook.md` suffix), (6) prompt text. A bullet whose text merely contains `OUTPUTS` or `DELEGATE` inside prose, or uses a different case (e.g., `Outputs`, `delegate`), falls through to normal list semantics.
+**Disambiguation:** A `-`-prefixed bullet inside a step is resolved by priority: (1) `ARTIFACTS` directive (`- ARTIFACTS` as exact, case-sensitive list-item text with no trailing content), (2) `OUTPUTS` directive (`- OUTPUTS` as exact, case-sensitive list-item text with no trailing content), (3) FOR clause (`FOR` keyword), (4) DELEGATE annotation (`- DELEGATE` as exact, case-sensitive list-item text with no trailing content), (5) transition (`PASS`, `FAIL`, `YES`, `NO`, or standalone `DEFER`), (6) runbook reference (`.runbook.md` suffix), (7) prompt text. A bullet whose text merely contains `ARTIFACTS`, `OUTPUTS`, or `DELEGATE` inside prose, or uses a different case (for example `Artifacts`, `Outputs`, `delegate`), falls through to normal list semantics.
 
 ## Actions
 
@@ -335,7 +342,7 @@ These reserved words apply to step identifiers, action keywords, and transition 
 
 ## Reserved Variable Names
 
-The following names are reserved for runtime context resolution and cannot be used as variable identifiers in `OUTPUTS`, frontmatter `inputs:` / `required:`, `--input` CLI flags, `--input-file` contents, `.rundown/config.yaml`, or `RD_INPUT_*` environment variables:
+The following names are reserved for runtime context resolution and cannot be used as variable identifiers in `ARTIFACTS`, step/substep `OUTPUTS`, frontmatter `inputs:` / `required:`, `--input` CLI flags, `--input-file` contents, `.rundown/config.yaml`, or `RD_INPUT_*` environment variables:
 
 - `step`
 - `index`
@@ -364,3 +371,5 @@ content          ::= (* opaque code block content *)
 Upper bounds: step identifiers are capped at 999,999; FOR loop bounds at 10,000.
 
 `filename` and `ctx_ref` source from `VALID_FILE` and `VALID_CTX` in `packages/core/src/runbook/artifact-paths.ts`. They constrain the arguments of the [`path`](#context-directives) helper used in OUTPUTS and the underlying `rdpath` CLI.
+
+`exact_artifact_key` shares the safe artifact key character set used by `filename`, but exact artifact keys identify manifest entries rather than path-helper output files. `wildcard_artifact_key` permits `*` and `?` for manifest lookup. Artifact keys reject slashes, traversal, empty keys, `.`, `..`, and recursive `**`.
