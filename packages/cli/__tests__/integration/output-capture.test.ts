@@ -28,12 +28,12 @@ printf 'v1.2.3' > "$RD_OUTPUTS_Version"
 
 ## 2. Echo captured
 - OUTPUTS
-  - Echoed {{ Version }}
+  - Echoed
 - PASS COMPLETE
 - FAIL STOP
 
 \`\`\`sh
-rd echo --result pass
+printf '{{ Version }}' > "$RD_OUTPUTS_Echoed"
 \`\`\`
 `;
 
@@ -70,7 +70,7 @@ describe('output capture — file-backed naked OUTPUTS at step level', () => {
     expect(states).toHaveLength(1);
     const state = states[0] as { id: string; variables?: Record<string, unknown> };
     expect(state.variables?.Version).toBe('v1.2.3');
-    // Step 2's expression-form OUTPUTS pulls the captured value through
+    // Step 2 writes the captured value into its own naked OUTPUTS channel.
     expect(state.variables?.Echoed).toBe('v1.2.3');
   });
 
@@ -111,17 +111,17 @@ rd echo internal-value
 
 ## 2. Echo captured
 - OUTPUTS
-  - Echoed {{ Message }}
+  - Echoed
 - PASS COMPLETE
 - FAIL STOP
 
 \`\`\`sh
-rd echo --result pass
+printf '{{ Message }}' > "$RD_OUTPUTS_Echoed"
 \`\`\`
 `;
     await writeFile(join(workspace.cwd, 'internal-rd.runbook.md'), RUNBOOK);
 
-    const result = runCli('run internal-rd.runbook.md', workspace);
+    const result = runCli('run internal-rd.runbook.md --allow-all', workspace);
     expect(result.exitCode).toBe(0);
 
     const states = await getAllRunbookStates(workspace);
@@ -303,7 +303,7 @@ echo "hello" > "$RD_OUTPUTS_Greeting"
     expect(state.variables?.Greeting).toBe('hello');
   });
 
-  it('mixes naked and expression forms in a single OUTPUTS block', async () => {
+  it('captures multiple naked outputs in a single OUTPUTS block', async () => {
     const RUNBOOK = `---
 name: mixed-capture
 ---
@@ -312,12 +312,13 @@ name: mixed-capture
 ## 1. Capture and tag
 - OUTPUTS
   - DeployUrl
-  - Tag "{{ RunId }}-staging"
+  - Tag
 - PASS COMPLETE
 - FAIL STOP
 
 \`\`\`sh
 printf 'https://example.test' > "$RD_OUTPUTS_DeployUrl"
+printf '{{ RunId }}-staging' > "$RD_OUTPUTS_Tag"
 \`\`\`
 `;
     await writeFile(join(workspace.cwd, 'mixed.runbook.md'), RUNBOOK);
@@ -326,7 +327,7 @@ printf 'https://example.test' > "$RD_OUTPUTS_DeployUrl"
     const states = await getAllRunbookStates(workspace);
     const state = states[0] as { variables?: Record<string, unknown> };
     expect(state.variables?.DeployUrl).toBe('https://example.test');
-    // Tag is expression-form; RunId is an 8-hex generated id
+    // Tag is rendered in the command body; RunId is a generated id
     expect(typeof state.variables?.Tag).toBe('string');
     expect(state.variables?.Tag as string).toMatch(/-staging$/);
   });

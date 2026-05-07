@@ -21,22 +21,22 @@ name: chained-outputs-test
 
 ## 1. Produce first
 - OUTPUTS
-  - First "value-one"
+  - First
 - PASS CONTINUE
 - FAIL STOP
 
 \`\`\`sh
-rd echo --result pass
+printf 'value-one' > "$RD_OUTPUTS_First"
 \`\`\`
 
 ## 2. Consume first, produce second
 - OUTPUTS
-  - Second {{First}}
+  - Second
 - PASS COMPLETE
 - FAIL STOP
 
 \`\`\`sh
-rd echo --result pass
+printf '{{First}}' > "$RD_OUTPUTS_Second"
 \`\`\`
 `;
 
@@ -53,7 +53,7 @@ describe('chained OUTPUTS — execution-loop path', () => {
   });
 
   it('step 2 OUTPUTS sees First from step 1 via state.variables', async () => {
-    const result = runCli('run chained.runbook.md', workspace);
+    const result = runCli('run chained.runbook.md --allow-all', workspace);
     expect(result.exitCode).toBe(0);
 
     const states = await getAllRunbookStates(workspace);
@@ -85,27 +85,27 @@ name: outputs-overwrite-test
 
 ## 1. Set initial
 - OUTPUTS
-  - Counter "one"
+  - Counter
 - PASS CONTINUE
 - FAIL STOP
 
 \`\`\`sh
-rd echo --result pass
+printf 'one' > "$RD_OUTPUTS_Counter"
 \`\`\`
 
 ## 2. Overwrite + complete
 - OUTPUTS
-  - Counter "two"
+  - Counter
 - PASS COMPLETE
 - FAIL STOP
 
 \`\`\`sh
-rd echo --result pass
+printf 'two' > "$RD_OUTPUTS_Counter"
 \`\`\`
 `;
     await writeFile(join(workspace.cwd, 'overwrite.runbook.md'), OVERWRITE_RUNBOOK);
 
-    const result = runCli('run overwrite.runbook.md', workspace);
+    const result = runCli('run overwrite.runbook.md --allow-all', workspace);
     expect(result.exitCode).toBe(0);
 
     const states = await getAllRunbookStates(workspace);

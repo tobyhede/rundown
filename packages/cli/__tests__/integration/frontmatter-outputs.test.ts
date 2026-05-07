@@ -343,23 +343,18 @@ outputs:
 
 ## 1. Produce then complete
 - OUTPUTS
-  - BuiltVar "step-value"
+  - BuiltVar
 - PASS COMPLETE
 - FAIL STOP
 
-Waiting for manual pass.
+\`\`\`sh
+printf 'step-value' > "$RD_OUTPUTS_BuiltVar"
+\`\`\`
 `;
     await writeFile(join(workspace.cwd, 'final-step.runbook.md'), RUNBOOK);
 
-    // Start — pauses at step 1 (no command block, prose only).
-    const startResult = runCli('run final-step.runbook.md', workspace);
-    expect(startResult.exitCode).toBe(0);
-
-    // Manual pass drives the transitions.ts path. Step OUTPUTS writes BuiltVar
-    // during the transition; frontmatter outputs must then see it when computing
-    // finalVars at completion.
-    const passResult = runCli('pass', workspace);
-    expect(passResult.exitCode).toBe(0);
+    const result = runCli('run final-step.runbook.md --allow-all', workspace);
+    expect(result.exitCode).toBe(0);
 
     const states = await getAllRunbookStates(workspace);
     const state = states[0] as {

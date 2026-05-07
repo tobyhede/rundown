@@ -100,8 +100,10 @@ Declares values to publish into the run's live variable space after a step PASSe
 
 ```markdown
 ## 7. Output Path
+- ARTIFACTS
+  - PlanPath "plan.json"
 - OUTPUTS
-  - PlanPath {{ path "plan.json" }}
+  - PlanPath
 - PASS CONTINUE
 - FAIL STOP
 ```

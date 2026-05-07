@@ -1,12 +1,12 @@
 // Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
 
 exports[`scenario output snapshots delegation-outputs JSON 1`] = `
-"=== command: rd run snapshot-delegation-outputs.runbook.md ===
+"=== command: rd run snapshot-delegation-outputs.runbook.md --allow-all ===
 {"type":"runbook_started","title":"Delegation with Outputs","prompted":false,"statePath":".rundown/runs/<runbookId>.json","timestamp":"<timestamp>","runbookId":"<runbookId>","runbook":{"source":"project","path":".rundown/runbooks/snapshot-delegation-outputs.runbook.md"},"seq":1}
-{"type":"step_entered","position":{"current":"1","total":2},"stepName":"1","description":"Set message","hasCommand":true,"commandCode":"rd echo --result pass","commandLang":"bash","isSubstep":false,"prompted":false,"timestamp":"<timestamp>","runbookId":"<runbookId>","runbook":{"source":"project","path":".rundown/runbooks/snapshot-delegation-outputs.runbook.md"},"seq":2}
-{"type":"command_started","command":"rd echo --result pass","displayCommand":"rd echo --result pass","position":{"current":"1","total":2},"timestamp":"<timestamp>","runbookId":"<runbookId>","runbook":{"source":"project","path":".rundown/runbooks/snapshot-delegation-outputs.runbook.md"},"seq":3}
-{"type":"command_completed","command":"rd echo --result pass","success":true,"exitCode":0,"position":{"current":"1","total":2},"timestamp":"<timestamp>","runbookId":"<runbookId>","runbook":{"source":"project","path":".rundown/runbooks/snapshot-delegation-outputs.runbook.md"},"seq":4}
-{"type":"step_transitioned","action":"CONTINUE","from":"1","at":"2.1","result":"PASS","command":"rd echo --result pass","timestamp":"<timestamp>","runbookId":"<runbookId>","runbook":{"source":"project","path":".rundown/runbooks/snapshot-delegation-outputs.runbook.md"},"seq":5}
+{"type":"step_entered","position":{"current":"1","total":2},"stepName":"1","description":"Set message","hasCommand":true,"commandCode":"printf '%s' 'hello from snapshot parent' > \\"$RD_OUTPUTS_Message\\"","commandLang":"bash","isSubstep":false,"prompted":false,"timestamp":"<timestamp>","runbookId":"<runbookId>","runbook":{"source":"project","path":".rundown/runbooks/snapshot-delegation-outputs.runbook.md"},"seq":2}
+{"type":"command_started","command":"printf '%s' 'hello from snapshot parent' > \\"$RD_OUTPUTS_Message\\"","displayCommand":"printf '%s' 'hello from snapshot parent' > \\"$RD_OUTPUTS_Message\\"","position":{"current":"1","total":2},"timestamp":"<timestamp>","runbookId":"<runbookId>","runbook":{"source":"project","path":".rundown/runbooks/snapshot-delegation-outputs.runbook.md"},"seq":3}
+{"type":"command_completed","command":"printf '%s' 'hello from snapshot parent' > \\"$RD_OUTPUTS_Message\\"","success":true,"exitCode":0,"position":{"current":"1","total":2},"timestamp":"<timestamp>","runbookId":"<runbookId>","runbook":{"source":"project","path":".rundown/runbooks/snapshot-delegation-outputs.runbook.md"},"seq":4}
+{"type":"step_transitioned","action":"CONTINUE","from":"1","at":"2.1","result":"PASS","command":"printf '%s' 'hello from snapshot parent' > \\"$RD_OUTPUTS_Message\\"","timestamp":"<timestamp>","runbookId":"<runbookId>","runbook":{"source":"project","path":".rundown/runbooks/snapshot-delegation-outputs.runbook.md"},"seq":5}
 {"type":"step_entered","position":{"current":"2","total":2,"substep":"1"},"stepName":"1","description":"Child task","prompt":"Delegated to child runbook.","hasCommand":false,"isSubstep":true,"prompted":false,"timestamp":"<timestamp>","runbookId":"<runbookId>","runbook":{"source":"project","path":".rundown/runbooks/snapshot-delegation-outputs.runbook.md"},"seq":6}
 
 === command: rd delegate snapshot-child.runbook.md --step 2.1 ===
@@ -28,20 +28,20 @@ exports[`scenario output snapshots delegation-outputs JSON 1`] = `
 `;
 
 exports[`scenario output snapshots delegation-outputs text 1`] = `
-"=== command: rd run snapshot-delegation-outputs.runbook.md --text ===
+"=== command: rd run snapshot-delegation-outputs.runbook.md --allow-all --text ===
 File:     .rundown/runbooks/snapshot-delegation-outputs.runbook.md
 State:    .rundown/runs/<runbookId>.json
 Action:   START
 
 ## 1. Set message
 
-$ rd echo --result pass
+$ printf '%s' 'hello from snapshot parent' > "$RD_OUTPUTS_Message"
 
 
 ─── 2.1 ──────────────────────────────────────────
 Action:   CONTINUE
 From:     1
-Command:  rd echo --result pass
+Command:  printf '%s' 'hello from snapshot parent' > "$RD_OUTPUTS_Message"
 Result:   PASS
 At:       2.1
 

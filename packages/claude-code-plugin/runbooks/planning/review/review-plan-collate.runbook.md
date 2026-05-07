@@ -45,8 +45,10 @@ The combined context may influence recommended actions.
 
 
 ## 4. Output Path
+- ARTIFACTS
+  - ReviewPlanPath "review-plan-collated.json"
 - OUTPUTS
-  - ReviewPlanPath {{ path "review-plan-collated.json" }}
+  - ReviewPlanPath
 - PASS CONTINUE
 - FAIL STOP
 

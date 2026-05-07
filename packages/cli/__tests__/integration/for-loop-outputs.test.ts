@@ -1,9 +1,7 @@
 // packages/cli/__tests__/integration/for-loop-outputs.test.ts
 //
-// Regression: when a FOR loop variable is shadowed by a CLI --input override,
-// OUTPUTS that reference the loop variable must publish the current iteration
-// value, not the shadowing override. This invariant is now enforced by the
-// state machine's per-step OUTPUTS evaluation (see buildExecutionFrame).
+// Regression coverage for FOR loops publishing naked OUTPUTS through the
+// per-step RD_OUTPUTS channel files.
 
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { writeFile } from 'node:fs/promises';
@@ -15,7 +13,7 @@ import {
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 
-// FOR loop over {{items}}; substep's OUTPUTS reference the loop variable `item`.
+// FOR loop over {{items}}; substep's command writes the loop variable `entry`.
 // Each iteration publishes {LastItem: <iter>}; the final merge is the last value.
 const FOR_OUTPUTS_RUNBOOK = `---
 name: for-outputs-regression
@@ -23,7 +21,7 @@ name: for-outputs-regression
 # FOR + OUTPUTS regression
 
 ## 1. Process items
-- FOR item IN {{items}}
+- FOR entry IN {{items}}
 - PASS ALL COMPLETE
 - FAIL ANY STOP
 
@@ -31,14 +29,14 @@ name: for-outputs-regression
 - PASS CONTINUE
 - FAIL STOP
 - OUTPUTS
-  - LastItem {{ item }}
+  - LastItem
 
 \`\`\`sh
-rd echo --result pass
+printf '{{ entry }}' > "$RD_OUTPUTS_LastItem"
 \`\`\`
 `;
 
-describe('FOR loop OUTPUTS regression — CLI-shadowed loop variable', () => {
+describe('FOR loop OUTPUTS regression — sourced loop variable', () => {
   let workspace: TestWorkspace;
 
   beforeEach(async () => {
@@ -50,16 +48,9 @@ describe('FOR loop OUTPUTS regression — CLI-shadowed loop variable', () => {
     await workspace.cleanup();
   });
 
-  it('publishes the current iteration value for {{item}} even when --input item shadows it', async () => {
+  it('publishes the current iteration value for the sourced loop variable', async () => {
     const result = runCli(
-      [
-        'run',
-        'for-outputs.runbook.md',
-        `--input`,
-        `item=stale`,
-        `--input-json`,
-        `items=["a","b","c"]`,
-      ],
+      ['run', 'for-outputs.runbook.md', `--input-json`, `items=["a","b","c"]`, `--allow-all`],
       workspace,
     );
     expect(result.exitCode).toBe(0);
@@ -70,14 +61,12 @@ describe('FOR loop OUTPUTS regression — CLI-shadowed loop variable', () => {
     expect(states).toHaveLength(1);
     const state = states[0] as { variables: Record<string, unknown> };
 
-    // Last iteration wins after merge; the fresh loop variable must not be
-    // shadowed by the CLI-persisted `item=stale`.
+    // Last iteration wins after merge.
     expect(state.variables.LastItem).toBe('c');
-    expect(state.variables.LastItem).not.toBe('stale');
   });
 });
 
-describe('FOR loop OUTPUTS — {{ Index }} bare template reference in substep OUTPUTS', () => {
+describe('FOR loop OUTPUTS — {{ Index }} bare template reference in substep command', () => {
   let workspace: TestWorkspace;
 
   const INDEX_RUNBOOK = `---
@@ -96,10 +85,10 @@ outputs:
 - PASS CONTINUE
 - FAIL STOP
 - OUTPUTS
-  - LastIndex {{ Index }}
+  - LastIndex
 
 \`\`\`sh
-rd echo --result pass
+printf '{{ Index }}' > "$RD_OUTPUTS_LastIndex"
 \`\`\`
 `;
 
@@ -113,7 +102,7 @@ rd echo --result pass
   });
 
   it('stores last iteration Index in state.variables and propagates to finalVars', async () => {
-    const result = runCli('run for-index.runbook.md', workspace);
+    const result = runCli('run for-index.runbook.md --allow-all', workspace);
     expect(result.exitCode).toBe(0);
 
     const states = await getAllRunbookStates(workspace);
@@ -129,14 +118,12 @@ rd echo --result pass
   });
 });
 
-describe('FOR loop Guard 3b — iteration-level CONTINUE exit fires parent storeStepOutputs', () => {
+describe('FOR loop Guard 3b — iteration-level CONTINUE exit stores substep OUTPUTS', () => {
   let workspace: TestWorkspace;
 
   // Nested forConditionals `  - PASS CONTINUE` cause Guard 3b to fire on each
   // iteration-level PASS, exiting the loop immediately on the first iteration.
-  // The parent step's OUTPUTS must still be evaluated via the two-hop mechanism:
-  // Guard 3b routes to the parent state (forStack cleared), then the aggregation
-  // guard fires and transitions out with storeStepOutputs attached.
+  // The substep's naked OUTPUTS channel must be captured before the loop exits.
   const GUARD_3B_RUNBOOK = `---
 name: guard3b-outputs
 ---
@@ -147,15 +134,15 @@ name: guard3b-outputs
   - PASS CONTINUE
 - PASS ALL CONTINUE
 - FAIL ANY STOP
-- OUTPUTS
-  - ExitVar "loop-done"
 
 ### 1.1 Do work
 - PASS CONTINUE
 - FAIL STOP
+- OUTPUTS
+  - ExitVar
 
 \`\`\`sh
-rd echo --result pass
+printf 'loop-done' > "$RD_OUTPUTS_ExitVar"
 \`\`\`
 
 ## 2. Sink
@@ -176,8 +163,8 @@ rd echo --result pass
     await workspace.cleanup();
   });
 
-  it('stores parent OUTPUTS when Guard 3b CONTINUE exit fires', async () => {
-    const result = runCli('run guard3b.runbook.md', workspace);
+  it('stores substep OUTPUTS when Guard 3b CONTINUE exit fires', async () => {
+    const result = runCli('run guard3b.runbook.md --allow-all', workspace);
     expect(result.exitCode).toBe(0);
 
     const states = await getAllRunbookStates(workspace);

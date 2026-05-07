@@ -39,8 +39,10 @@ Read the plan at `{{ PlanPath }}`.
 
 
 ## 4. Output Path
+- ARTIFACTS
+  - ReviewPath "review-plan-build-runtime.json"
 - OUTPUTS
-  - ReviewPath {{ path "review-plan-build-runtime.json" }}
+  - ReviewPath
 - PASS CONTINUE
 - FAIL STOP
 

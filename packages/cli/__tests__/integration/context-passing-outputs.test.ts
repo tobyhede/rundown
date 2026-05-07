@@ -20,7 +20,11 @@ name: context-passing-test
 - PASS CONTINUE
 - FAIL CONTINUE
 - OUTPUTS
-  - Message "hello from step 1"
+  - Message
+
+\`\`\`sh
+printf 'hello from step 1' > "$RD_OUTPUTS_Message"
+\`\`\`
 
 ## 2. Consume input
 - PASS COMPLETE
@@ -43,16 +47,14 @@ describe('OUTPUTS→INPUTS round-trip', () => {
 
   it('step 1 PASS stores OUTPUTS; step 2 INPUTS injected into templateVars → description substituted', async () => {
     // Start runbook (prompted mode)
-    const start = runCli('run --prompted test.runbook.md', workspace);
+    const start = runCli('run test.runbook.md --allow-all', workspace);
     expect(start.exitCode).toBe(0);
 
-    // Pass step 1 — OUTPUTS writes { Message: "hello from step 1" } to state.variables
-    const pass1 = runCli('pass', workspace);
-    expect(pass1.exitCode).toBe(0);
-
-    // Parse events from the pass1 response — should include STEP_ENTERED for step 2
-    const events1 = parseJsonOutput(pass1.stdout);
-    const step2Entered = events1.find((e) => e.type === 'step_entered' && e.position != null);
+    // Parse events from the run response — should include STEP_ENTERED for step 2
+    const events1 = parseJsonOutput(start.stdout);
+    const step2Entered = events1.find(
+      (e) => e.type === 'step_entered' && (e.position as { current?: string }).current === '2',
+    );
 
     // Step 2's prompt (prose body) should have {{Message}} substituted with "hello from step 1"
     expect(step2Entered).toBeDefined();
@@ -69,14 +71,19 @@ describe('OUTPUTS→INPUTS round-trip', () => {
   });
 
   it('step 1 FAIL stores OUTPUTS; step 2 prompt is substituted from state.variables', async () => {
-    const start = runCli('run --prompted test.runbook.md', workspace);
-    expect(start.exitCode).toBe(0);
+    const FAIL_RUNBOOK = CONTEXT_PASSING_RUNBOOK.replace(
+      'printf \'hello from step 1\' > "$RD_OUTPUTS_Message"',
+      'printf \'hello from step 1\' > "$RD_OUTPUTS_Message"\nexit 1',
+    );
+    await writeFile(join(workspace.cwd, 'test.runbook.md'), FAIL_RUNBOOK);
 
-    const fail1 = runCli('fail', workspace);
+    const fail1 = runCli('run test.runbook.md --allow-all', workspace);
     expect(fail1.exitCode).toBe(0);
 
     const events1 = parseJsonOutput(fail1.stdout);
-    const step2Entered = events1.find((e) => e.type === 'step_entered' && e.position != null);
+    const step2Entered = events1.find(
+      (e) => e.type === 'step_entered' && (e.position as { current?: string }).current === '2',
+    );
 
     expect(step2Entered).toBeDefined();
     expect(step2Entered?.prompt).toContain('hello from step 1');
@@ -96,10 +103,10 @@ name: auto-exec-context-test
 - PASS CONTINUE
 - FAIL STOP
 - OUTPUTS
-  - Message "hello-auto"
+  - Message
 
 \`\`\`sh
-rd echo --result pass
+printf 'hello-auto' > "$RD_OUTPUTS_Message"
 \`\`\`
 
 ## 2. Consume input
@@ -121,7 +128,7 @@ The message is: {{Message}}
   it('auto-executed step 1 stores OUTPUTS; step 2 INPUTS injected into description', async () => {
     // Run without --prompted: step 1 auto-executes (rd echo --result pass)
     // Step 2 has no command, so execution pauses waiting for prompt
-    const result = runCli('run auto-exec.runbook.md', workspace);
+    const result = runCli('run auto-exec.runbook.md --allow-all', workspace);
     expect(result.exitCode).toBe(0);
 
     // OUTPUTS now go to state.variables (not outputs.json).
@@ -150,9 +157,10 @@ name: auto-fail-test
 - PASS CONTINUE
 - FAIL CONTINUE
 - OUTPUTS
-  - Tag "should-appear-on-fail"
+  - Tag
 
 \`\`\`sh
+printf 'should-appear-on-fail' > "$RD_OUTPUTS_Tag"
 rd echo --result fail
 \`\`\`
 
@@ -164,7 +172,7 @@ Value: {{Tag}}
 `;
     await writeFile(join(workspace.cwd, 'auto-fail.runbook.md'), FAIL_RUNBOOK);
 
-    const result = runCli('run auto-fail.runbook.md', workspace);
+    const result = runCli('run auto-fail.runbook.md --allow-all', workspace);
     expect(result.exitCode).toBe(0);
 
     const states = await getAllRunbookStates(workspace);
@@ -179,7 +187,7 @@ Value: {{Tag}}
   });
 });
 
-describe('OUTPUTS expression evaluation — per-step runtime frame', () => {
+describe('OUTPUTS capture — per-step rendered command frame', () => {
   let workspace: TestWorkspace;
 
   const STEP_FRAME_RUNBOOK = `---
@@ -191,11 +199,12 @@ name: step-frame-test
 - PASS CONTINUE
 - FAIL STOP
 - OUTPUTS
-  - Tag {{ Step }}
-  - At {{ context.current.step }}
+  - Tag
+  - At
 
 \`\`\`sh
-rd echo --result pass
+printf '{{ Step }}' > "$RD_OUTPUTS_Tag"
+printf '{{ context.current.step }}' > "$RD_OUTPUTS_At"
 \`\`\`
 
 ## 2. Sink
@@ -216,8 +225,8 @@ rd echo --result pass
     await workspace.cleanup();
   });
 
-  it('OUTPUTS expression resolves {{Step}} using the per-step runtime frame', async () => {
-    const result = runCli('run step-frame.runbook.md', workspace);
+  it('OUTPUTS capture can use rendered {{Step}} values from the command frame', async () => {
+    const result = runCli('run step-frame.runbook.md --allow-all', workspace);
     expect(result.exitCode).toBe(0);
 
     const states = await getAllRunbookStates(workspace);
@@ -227,19 +236,19 @@ rd echo --result pass
   });
 });
 
-describe('OUTPUTS path helper — ctx-scoped workspace path', () => {
+describe('frontmatter OUTPUTS path helper — ctx-scoped workspace path', () => {
   let workspace: TestWorkspace;
 
   const PATH_HELPER_RUNBOOK = `---
 name: path-helper-test
+outputs:
+  - ArtifactPath {{ path "report.json" ctx=test123 }}
 ---
 # Path Helper Test
 
-## 1. Record artifact path
+## 1. Complete
 - PASS COMPLETE
 - FAIL STOP
-- OUTPUTS
-  - ArtifactPath {{ path "report.json" ctx=test123 }}
 
 \`\`\`sh
 rd echo --result pass
@@ -255,17 +264,17 @@ rd echo --result pass
     await workspace.cleanup();
   });
 
-  it('resolves path helper to a ctx-scoped workspace path stored in state.variables', async () => {
+  it('resolves path helper to a ctx-scoped workspace path stored in state.finalVars', async () => {
     const result = runCli('run path-helper.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
 
     const states = await getAllRunbookStates(workspace);
     expect(states).toHaveLength(1);
-    const state = states[0] as { variables?: Record<string, unknown> };
+    const state = states[0] as { finalVars?: Record<string, unknown> };
 
     // Non-git workspaces: WorkPath = .rundown/work (no branch suffix)
     // ctx=test123 adds .rd-test123/ subdirectory; file gets YYYY-MM-DD prefix
-    expect(state.variables?.ArtifactPath).toMatch(
+    expect(state.finalVars?.ArtifactPath).toMatch(
       /^\.rundown\/work\/\.rd-test123\/\d{4}-\d{2}-\d{2}-report\.json$/,
     );
   });

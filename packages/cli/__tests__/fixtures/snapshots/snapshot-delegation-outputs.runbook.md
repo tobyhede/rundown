@@ -11,7 +11,7 @@ description: Step 1 sets Message via OUTPUTS, then step 2 delegates substep 2.1 
   - Message
 
 ```bash
-echo -n 'hello from snapshot parent' > "$RD_OUTPUTS_Message"
+printf '%s' 'hello from snapshot parent' > "$RD_OUTPUTS_Message"
 ```
 
 ## 2. Delegate work

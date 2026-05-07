@@ -15,11 +15,11 @@ async function runDelegationSequence(workspace: TestWorkspace, format: Format): 
 
   // 1. Start the parent runbook.
   const parent = await runCliInProcess(
-    ['run', 'snapshot-delegation-outputs.runbook.md', ...textFlag],
+    ['run', 'snapshot-delegation-outputs.runbook.md', '--allow-all', ...textFlag],
     workspace,
   );
   blocks.push(
-    `=== command: rd run snapshot-delegation-outputs.runbook.md${
+    `=== command: rd run snapshot-delegation-outputs.runbook.md --allow-all${
       format === 'text' ? ' --text' : ''
     } ===\n${parent.stdout}`,
   );
