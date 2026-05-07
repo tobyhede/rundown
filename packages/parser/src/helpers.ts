@@ -1139,7 +1139,7 @@ export function parseFrontmatterOutputDeclaration(text: string): OutputDeclarati
  * because the regex character class doesn't distinguish single from double, so
  * `**` is filtered explicitly here.
  */
-const RECURSIVE_GLOB_RE = /\*\*/;
+const RECURSIVE_GLOB = '**';
 
 /** Disallowed literal keys per docs/spec/grammar.md `artifact_key` lexical rules. */
 const FORBIDDEN_LITERAL_KEYS: ReadonlySet<string> = new Set(['', '.', '..']);
@@ -1185,13 +1185,13 @@ export function parseArtifactDeclaration(text: string): ArtifactDeclaration | nu
   if (!NAMED_IDENTIFIER_PATTERN.test(name)) return null;
 
   const rawKey = trimmed.slice(spaceIdx).trim();
-  if (rawKey.length < 2 || rawKey[0] !== '"' || rawKey[rawKey.length - 1] !== '"') {
+  if (rawKey.length < 2 || !rawKey.startsWith('"') || !rawKey.endsWith('"')) {
     return null;
   }
 
   const key = rawKey.slice(1, -1);
   if (FORBIDDEN_LITERAL_KEYS.has(key)) return null;
-  if (RECURSIVE_GLOB_RE.test(key)) return null;
+  if (key.includes(RECURSIVE_GLOB)) return null;
 
   if (isWildcardArtifactKey(key)) {
     if (!WILDCARD_ARTIFACT_KEY_PATTERN.test(key)) return null;
