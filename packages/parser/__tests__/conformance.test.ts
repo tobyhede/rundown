@@ -189,4 +189,51 @@ printf 'inner-value' > $RD_OUTPUTS_Inner
       ]);
     });
   });
+
+  describe('Conformance — step-level ARTIFACTS', () => {
+    it('accepts the design-spec example (exact + wildcard)', () => {
+      const md = `## 1. Write plan
+- ARTIFACTS
+  - PlanPath "plan.json"
+  - Reviews "*-reviews.json"
+- PASS CONTINUE
+- FAIL STOP
+
+\`\`\`bash
+echo "writing plan"
+\`\`\`
+`;
+      const { runbook, diagnostics } = parseRunbookDocument(md);
+      const errors = diagnostics.filter((d) => d.severity === 'error');
+      expect(errors).toEqual([]);
+      expect(runbook.steps[0].artifacts).toEqual([
+        { name: 'PlanPath', key: 'plan.json', kind: 'exact' },
+        { name: 'Reviews', key: '*-reviews.json', kind: 'wildcard' },
+      ]);
+    });
+  });
+
+  describe('Conformance — substep-level ARTIFACTS', () => {
+    it('accepts ARTIFACTS on a substep', () => {
+      const md = `## 1. Parent
+
+### 1.1 Capture
+- ARTIFACTS
+  - InnerPath "inner.json"
+- PASS DEFER
+- FAIL DEFER
+
+\`\`\`bash
+echo "capture"
+\`\`\`
+`;
+      const { runbook, diagnostics } = parseRunbookDocument(md);
+      const errors = diagnostics.filter((d) => d.severity === 'error');
+      expect(errors).toEqual([]);
+      const step = runbook.steps[0];
+      expect('substeps' in step ? step.substeps[0].artifacts : undefined).toEqual([
+        { name: 'InnerPath', key: 'inner.json', kind: 'exact' },
+      ]);
+    });
+  });
 });
