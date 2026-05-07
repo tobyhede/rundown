@@ -1,7 +1,11 @@
 import { describe, it, expect } from '@jest/globals';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import * as path from 'node:path';
 import { createActor } from 'xstate';
 import { compileRunbookToMachine, MAX_FILE_ITERATIONS } from '../../src/runbook/compiler.js';
 import type { RunbookContext } from '../../src/runbook/compiler.js';
+import { readArtifactManifest } from '../../src/runbook/artifact-manifest.js';
 import type {
   ResolvedStep,
   BaseStep,
@@ -8761,6 +8765,44 @@ echo "processing"
       expect(snapshot.value).toBe('STOPPED');
       expect(snapshot.context.variables).toMatchObject({ Result: 'failed-value' });
       expect(snapshot.context.finalVars).toEqual({ Result: 'failed-value' });
+    });
+
+    it('does not fall back to process cwd for artifact OUTPUTS without evaluation options', async () => {
+      const cwd = await mkdtemp(path.join(tmpdir(), 'rd-compiler-no-eval-options-'));
+      const previousCwd = process.cwd();
+      process.chdir(cwd);
+      try {
+        const runId = 'rd_0123456789abcdef0123456789abcdef';
+        const steps = createRunbook(`## 1. Produce
+- PASS COMPLETE
+- FAIL STOP
+- OUTPUTS
+  - ArtifactPath {{ path "review.json" }}
+`);
+
+        const machine = compileRunbookToMachine(steps, {
+          templateVars: brandFlattenedTemplateVarsForTest({
+            WorkPath: '.rundown/work',
+            ContextId: 'ctx1',
+            RunId: runId,
+            RunbookRef: {
+              source: 'plugin',
+              path: 'planning/review/review-plan-risk-safety.runbook.md',
+            },
+          }),
+        });
+        const actor = createActor(machine);
+        actor.start();
+        actor.send({ type: 'PASS' });
+
+        expect(actor.getSnapshot().context.variables).not.toHaveProperty('ArtifactPath');
+        await expect(
+          readArtifactManifest({ cwd, workPath: '.rundown/work' }, 'ctx1'),
+        ).resolves.toEqual([]);
+      } finally {
+        process.chdir(previousCwd);
+        await rm(cwd, { recursive: true, force: true });
+      }
     });
 
     it('decorates parent-step exit transitions with storeStepOutputs only (not storeFrontmatterOutputs)', () => {

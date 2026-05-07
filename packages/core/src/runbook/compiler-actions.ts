@@ -23,8 +23,8 @@ export interface ActionDefs {
   readonly storeStepOutputs: {
     /** OUTPUTS declarations authored on the exiting step or substep. */
     outputs: readonly OutputDeclaration[];
-    /** Filesystem options used by artifact-producing OUTPUTS helpers. */
-    evaluationOptions: EvaluateOutputOptions;
+    /** Filesystem options used by artifact-producing OUTPUTS helpers, when available. */
+    evaluationOptions?: EvaluateOutputOptions;
     /** Parent step name used to build the OUTPUTS execution frame. */
     stepName: string;
     /** Substep id when evaluating substep-level OUTPUTS; omitted for step-level evaluation. */
@@ -44,8 +44,8 @@ export interface ActionDefs {
   };
   /** Evaluates frontmatter OUTPUTS declarations and persists the result into terminal finalVars. */
   readonly storeFrontmatterOutputs: {
-    /** Filesystem options used by artifact-producing OUTPUTS helpers. */
-    evaluationOptions: EvaluateOutputOptions;
+    /** Filesystem options used by artifact-producing OUTPUTS helpers, when available. */
+    evaluationOptions?: EvaluateOutputOptions;
     /** Step name for non-terminal evaluation contexts; omitted at terminal entry. */
     stepName?: string;
     /** Substep id for non-terminal evaluation contexts; omitted at terminal entry. */

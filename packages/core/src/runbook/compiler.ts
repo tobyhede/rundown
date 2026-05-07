@@ -155,12 +155,16 @@ type RunbookAlwaysEntry = Extract<
 
 function withEvaluationOptions<T extends object>(
   params: T,
-  evaluationOptions: EvaluateOutputOptions,
-): T & { readonly evaluationOptions: EvaluateOutputOptions } {
-  return Object.defineProperty({ ...params }, 'evaluationOptions', {
+  evaluationOptions: EvaluateOutputOptions | undefined,
+): T & { readonly evaluationOptions?: EvaluateOutputOptions } {
+  const withOptions = { ...params };
+  if (evaluationOptions === undefined) {
+    return withOptions;
+  }
+  return Object.defineProperty(withOptions, 'evaluationOptions', {
     value: evaluationOptions,
     enumerable: false,
-  }) as T & { readonly evaluationOptions: EvaluateOutputOptions };
+  });
 }
 
 /**
@@ -734,7 +738,7 @@ function buildTransition(
   stepName: string,
   substepId: string | undefined,
   steps: ResolvedStep[],
-  evaluationOptions: EvaluateOutputOptions,
+  evaluationOptions: EvaluateOutputOptions | undefined,
 ): TransitionConfig {
   const { retry, action, kind } = transition;
   // Normalize kind to pass/fail for iteration result recording
@@ -917,7 +921,7 @@ function buildParentExitAssign(
 function buildParentStateConfig(
   config: ParentStateConfig,
   steps: ResolvedStep[],
-  evaluationOptions: EvaluateOutputOptions,
+  evaluationOptions: EvaluateOutputOptions | undefined,
 ): RunbookStateConfig {
   const parentStep = config.parentStep;
   const stepName = config.stepName;
@@ -1722,7 +1726,7 @@ function decorateParentTransition<T extends RunbookAlwaysEntry & object>(
   transition: T,
   stepName: string,
   outputs: readonly OutputDeclaration[] | undefined,
-  evaluationOptions: EvaluateOutputOptions,
+  evaluationOptions: EvaluateOutputOptions | undefined,
 ): T {
   const extra: RunbookAction[] = [];
   const target = typeof transition.target === 'string' ? transition.target : undefined;
@@ -1777,7 +1781,7 @@ function buildRetryStateConfig(
   substepId: string | undefined,
   steps: ResolvedStep[],
   resultKind: 'pass' | 'fail',
-  evaluationOptions: EvaluateOutputOptions,
+  evaluationOptions: EvaluateOutputOptions | undefined,
 ): RunbookStateConfig {
   const exhaustedTransition = buildActionTransition(
     transition.action,
@@ -2214,7 +2218,7 @@ function buildActionTransition(
   substepId: string | undefined,
   steps: ResolvedStep[],
   kind: 'pass' | 'fail',
-  evaluationOptions: EvaluateOutputOptions,
+  evaluationOptions: EvaluateOutputOptions | undefined,
 ): TransitionConfig {
   const resultKind: 'pass' | 'fail' = kind === 'fail' ? 'fail' : 'pass';
 
@@ -2416,7 +2420,8 @@ function checkedStateInsert(
  * @param steps - The parsed runbook steps to compile
  * @param options - Optional compilation inputs
  * @param options.templateVars - Seeded template variables for OUTPUTS evaluation
- * @param options.evaluationOptions - Filesystem options used by artifact-producing OUTPUTS helpers
+ * @param options.evaluationOptions - Filesystem options used by artifact-producing OUTPUTS helpers.
+ *   If omitted, artifact-producing helpers fail closed instead of writing under `process.cwd()`.
  * @param options.frontmatterOutputs - Frontmatter `outputs:` declarations. Callers that pass a
  *   value loaded from persisted {@link RunbookState} must validate that the field is not `undefined`
  *   before calling (stale run states pre-dating the OUTPUTS feature will have it absent); the
@@ -2443,7 +2448,7 @@ export function compileRunbookToMachine(
     activeFrameKey?: FrameKey;
   },
 ) {
-  const evaluationOptions = options?.evaluationOptions ?? { cwd: process.cwd() };
+  const evaluationOptions = options?.evaluationOptions;
   const states: Record<string, RunbookStateConfig> = {};
 
   // Build a flat list of all states to generate GOTO transitions

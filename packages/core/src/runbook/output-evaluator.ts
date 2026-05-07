@@ -209,6 +209,17 @@ function requireRunbookRef(variables: OutputVars): RunbookRef {
   return parsed.data;
 }
 
+function requireEvaluateOutputOptions(
+  options: EvaluateOutputOptions | undefined,
+): EvaluateOutputOptions {
+  if (options === undefined) {
+    throw new Error(
+      'evaluateOutputExpression: artifact-producing helpers require explicit evaluation options',
+    );
+  }
+  return options;
+}
+
 /**
  * Apply a built-in artifact-producing helper against an OUTPUTS/runtime frame.
  *
@@ -331,7 +342,7 @@ function tryDispatchHelper(trimmed: string, variables: OutputVars): string | nul
  * @param variables - Variable frame used to resolve references
  * @param options - Filesystem options used by artifact-producing helpers
  * @returns Rendered string value
- * @throws {Error} If an artifact-producing helper is used but required variables are missing
+ * @throws {Error} If an artifact-producing helper is used but options or required variables are missing
  * @throws {Error} If an explicit variable lookup `{{ ./VarName }}` references a variable not in the output frame
  * @throws {Error} If a `{{ helperName varRef }}` form references a variable not in the output frame
  * @throws {Error} If the template reference has unresolved variables after expansion
@@ -340,18 +351,28 @@ function tryDispatchHelper(trimmed: string, variables: OutputVars): string | nul
 export function evaluateOutputExpression(
   expr: string,
   variables: OutputVars,
-  options: EvaluateOutputOptions,
+  options?: EvaluateOutputOptions,
 ): string {
   const trimmed = expr.trim();
 
   const artifactMatch = ARTIFACT_HELPER_REGEX.exec(trimmed);
   if (artifactMatch) {
-    return applyRunArtifactHelper('artifact', artifactMatch[1], variables, options);
+    return applyRunArtifactHelper(
+      'artifact',
+      artifactMatch[1],
+      variables,
+      requireEvaluateOutputOptions(options),
+    );
   }
 
   const pathMatch = PATH_HELPER_REGEX.exec(trimmed);
   if (pathMatch) {
-    return applyRunArtifactHelper('path', pathMatch[1], variables, options);
+    return applyRunArtifactHelper(
+      'path',
+      pathMatch[1],
+      variables,
+      requireEvaluateOutputOptions(options),
+    );
   }
 
   // 2. Explicit variable lookup: {{ ./VarName }} — bypasses helper registry
@@ -435,7 +456,7 @@ export function evaluateOutputExpression(
 export function evaluateStepOutputDeclarations(
   outputs: readonly OutputDeclaration[],
   vars: OutputVars,
-  options: EvaluateOutputOptions,
+  options?: EvaluateOutputOptions,
 ): Record<string, string> {
   const evaluated: Record<string, string> = {};
 
@@ -472,7 +493,7 @@ export function evaluateStepOutputDeclarations(
 export function evaluateFrontmatterOutputDeclarations(
   outputs: readonly OutputDeclaration[],
   vars: OutputVars,
-  options: EvaluateOutputOptions,
+  options?: EvaluateOutputOptions,
 ): Record<string, string> {
   const evaluated: Record<string, string> = {};
 
