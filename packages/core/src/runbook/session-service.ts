@@ -407,7 +407,7 @@ export class SessionService {
    *
    * @returns The stashed runbook ID, or null if no runbook was active or a stash already exists
    */
-  async stash(): Promise<string | null> {
+  async stash(): Promise<RunId | null> {
     return this.withLock(async () => {
       const session = await this.manager.loadSession();
 
