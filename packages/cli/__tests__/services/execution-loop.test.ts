@@ -510,8 +510,6 @@ describe('runExecutionLoop', () => {
       .mockResolvedValueOnce(makeLoopState('1'))
       .mockResolvedValueOnce(makeLoopState('2'));
 
-    jest.mocked(core.executeCommand).mockResolvedValue({ success: true, exitCode: 0 });
-
     mockActorService.sendAndSync.mockResolvedValue({
       state: makeLoopState('2'),
       snapshot: {
