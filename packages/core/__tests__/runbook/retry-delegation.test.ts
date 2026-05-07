@@ -51,7 +51,7 @@ describe('retryDelegation', () => {
     expect(result.tokenHash).not.toBe(initial.tokenHash);
     expect(result.token.startsWith(TOKEN_PREFIX)).toBe(true);
     // childRunbookRef must be preserved verbatim across retry — the operator
-    // did not respecify the child runbook, so the canonical RunbookRef captured
+    // did not pass a new child runbook, so the canonical RunbookRef captured
     // at original delegation time must round-trip into the replacement.
     expect(result.delegation.childRunbookRef).toEqual({
       source: 'project',
@@ -95,7 +95,7 @@ describe('retryDelegation', () => {
     expect(result.status).toBe('retried');
     if (result.status !== 'retried') return;
     // childRunbookRef must be preserved verbatim across retry — the operator
-    // did not respecify the child runbook, so the canonical RunbookRef captured
+    // did not pass a new child runbook, so the canonical RunbookRef captured
     // at original delegation time must round-trip into the replacement.
     expect(result.delegation.childRunbookRef).toEqual({
       source: 'project',
@@ -139,7 +139,7 @@ describe('retryDelegation', () => {
     expect(result.status).toBe('retried');
     if (result.status !== 'retried') return;
     // childRunbookRef must be preserved verbatim across retry — the operator
-    // did not respecify the child runbook, so the canonical RunbookRef captured
+    // did not pass a new child runbook, so the canonical RunbookRef captured
     // at original delegation time must round-trip into the replacement.
     expect(result.delegation.childRunbookRef).toEqual({
       source: 'project',
