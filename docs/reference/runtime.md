@@ -316,7 +316,7 @@ Each run state file stores enough information to resume deterministically.
 | Field | Runtime requirement |
 | --- | --- |
 | `id` | Persisted run identifier generated at execution start. |
-| `runbook` | Canonical runbook identity object: `{ source, path }`, where `source` is `project`, `plugin`, `bundled`, or `external`, and `path` is a safe source-root-relative Markdown path. |
+| `runbook` | Canonical runbook identity object: `{ source, path }`, where `source` is `project`, `plugin`, `bundled`, or `external`. For `project`, `plugin`, and `bundled` sources, `path` is a source-root-relative Markdown path. For `external` sources, `path` is a normalized absolute filesystem path. |
 | `runbookPath` | Display/execution file path relative to the current project when possible. |
 | `step`, `substep` | Current structural position. |
 | `retryCount` | User-visible retry count across retry sites. |
