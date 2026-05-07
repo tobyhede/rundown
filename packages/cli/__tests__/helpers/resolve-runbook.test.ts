@@ -462,22 +462,23 @@ describe('buildRunbookRef', () => {
   it('rejects a symlinked runbook that escapes the source root', async () => {
     const realDir = await fs.mkdtemp(path.join(os.tmpdir(), 'real-'));
     const sourceRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'src-'));
+    try {
+      // Real file lives outside sourceRoot
+      const realFile = path.join(realDir, 'escaped.runbook.md');
+      await fs.writeFile(realFile, '# Escaped');
 
-    // Real file lives outside sourceRoot
-    const realFile = path.join(realDir, 'escaped.runbook.md');
-    await fs.writeFile(realFile, '# Escaped');
+      // Symlink lives inside sourceRoot but resolves outside
+      const symlinkInside = path.join(sourceRoot, 'inside.runbook.md');
+      await fs.symlink(realFile, symlinkInside);
 
-    // Symlink lives inside sourceRoot but resolves outside
-    const symlinkInside = path.join(sourceRoot, 'inside.runbook.md');
-    await fs.symlink(realFile, symlinkInside);
-
-    // buildRunbookRef should reject because realpath(symlinkInside) is not under sourceRoot
-    await expect(
-      buildRunbookRef({ path: symlinkInside, source: 'project', sourceRoot }),
-    ).rejects.toThrow(/outside/i);
-
-    await fs.rm(realDir, { recursive: true, force: true });
-    await fs.rm(sourceRoot, { recursive: true, force: true });
+      // buildRunbookRef should reject because realpath(symlinkInside) is not under sourceRoot
+      await expect(
+        buildRunbookRef({ path: symlinkInside, source: 'project', sourceRoot }),
+      ).rejects.toThrow(/outside/i);
+    } finally {
+      await fs.rm(realDir, { recursive: true, force: true });
+      await fs.rm(sourceRoot, { recursive: true, force: true });
+    }
   });
 });
 
