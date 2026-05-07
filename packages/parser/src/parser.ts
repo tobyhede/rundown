@@ -785,8 +785,12 @@ function handleOutputsDirective(node: ListItem, ctx: ActiveStepContext): typeof 
     const text = extractText(paragraph);
     const decl = parseStepOutputDeclaration(text);
     if (!decl) {
+      const hasWhitespace = /\s/.test(text.trim());
+      const reason = hasWhitespace
+        ? 'expression-form step/substep OUTPUTS entries are not allowed; use the name-only form (e.g., "  - PlanPath") and pair with `- ARTIFACTS` if you need an artifact alias'
+        : 'expected a name (e.g., "Version") matching the variable-name pattern';
       throw new RunbookSyntaxError(
-        `Invalid OUTPUTS declaration in ${targetLabel}${formatLineNum(item)}: "${text.trim()}" — expected a name (e.g., "Version") or "Name value" (e.g., "PlanPath {{ path \\"plan.json\\" }}")`,
+        `Invalid OUTPUTS declaration in ${targetLabel}${formatLineNum(item)}: "${text.trim()}" — ${reason}`,
       );
     }
     if (isReservedTemplateName(decl.name)) {

@@ -1081,33 +1081,25 @@ export function parseOutputDeclaration(text: string): OutputDeclaration | null {
 /**
  * Parse a step or substep OUTPUTS declaration entry.
  *
- * Accepts both naked form (name only — declares a file-backed output channel)
- * and expression form (`PlanPath {{ path "plan.json" }}`). Step-level naked
- * outputs are activated by the executor: a file is pre-created at
- * `.rundown/runs/<runId>/outputs/<stepId>/<VarName>` and the path is exported
- * as `RD_OUTPUTS_<VarName>` to the spawned shell.
+ * Step/substep OUTPUTS entries are name-only as of the ARTIFACTS directive
+ * design (see docs/spec/language.md §10.2 Step OUTPUTS). Expression-form
+ * entries (`PlanPath {{ path "plan.json" }}`, `Tag "{{ RunId }}-staging"`,
+ * `CopyOf OtherVar`) are parse errors and produce `null` here so the caller
+ * can wrap the rejection in a RunbookSyntaxError with line context.
  *
- * Mirrors {@link parseFrontmatterOutputDeclaration}. The two functions
- * intentionally diverge in semantics (frontmatter naked = export by name from
- * live vars; step naked = file-backed channel) but share grammar.
+ * Frontmatter `outputs:` retains expression-form behavior; that path uses
+ * {@link parseFrontmatterOutputDeclaration}.
  *
  * @param text - Raw declaration text from the OUTPUTS block list item
- * @returns Parsed OutputDeclaration, or null when the text is empty / invalid
+ * @returns Parsed naked OutputDeclaration, or null when the text is empty,
+ *   contains an invalid identifier, or is in expression form.
  */
 export function parseStepOutputDeclaration(text: string): OutputDeclaration | null {
   const trimmed = text.trim();
   if (!trimmed) return null;
-
-  const spaceIdx = trimmed.search(/\s/);
-  if (spaceIdx === -1) {
-    // Naked form: just a name, no value expression
-    const name = trimmed;
-    if (!NAMED_IDENTIFIER_PATTERN.test(name)) return null;
-    return { name };
-  }
-
-  // With-value form: delegate to the existing expression-form parser
-  return parseOutputDeclaration(text);
+  if (/\s/.test(trimmed)) return null;
+  if (!NAMED_IDENTIFIER_PATTERN.test(trimmed)) return null;
+  return { name: trimmed };
 }
 
 /**

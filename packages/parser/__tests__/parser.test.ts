@@ -1448,32 +1448,32 @@ echo hi
 describe('INPUTS/OUTPUTS ordering violations', () => {
   describe('OUTPUTS after body content', () => {
     it('rejects OUTPUTS after prompt text', () => {
-      const md = `## 1 Step\n\nSome text.\n\n- OUTPUTS\n  - Foo {{ "bar" }}\n`;
+      const md = `## 1 Step\n\nSome text.\n\n- OUTPUTS\n  - Foo\n`;
       expect(() => parseRunbook(md)).toThrow(/OUTPUTS.*must appear before/);
     });
 
     it('rejects OUTPUTS after fenced code block', () => {
-      const md = `## 1 Step\n\n\`\`\`bash\necho hi\n\`\`\`\n\n- OUTPUTS\n  - Foo {{ "bar" }}\n`;
+      const md = `## 1 Step\n\n\`\`\`bash\necho hi\n\`\`\`\n\n- OUTPUTS\n  - Foo\n`;
       expect(() => parseRunbook(md)).toThrow(/OUTPUTS.*must appear before/);
     });
 
     it('rejects OUTPUTS after prompt text in substep', () => {
-      const md = `## 1 Step\n\n### 1.1 Sub\n\nSome text.\n\n- OUTPUTS\n  - Foo {{ "bar" }}\n`;
+      const md = `## 1 Step\n\n### 1.1 Sub\n\nSome text.\n\n- OUTPUTS\n  - Foo\n`;
       expect(() => parseRunbook(md)).toThrow(/OUTPUTS.*must appear before/);
     });
 
     it('rejects OUTPUTS after code block in substep', () => {
-      const md = `## 1 Step\n\n### 1.1 Sub\n\n\`\`\`bash\necho hi\n\`\`\`\n\n- OUTPUTS\n  - Foo {{ "bar" }}\n`;
+      const md = `## 1 Step\n\n### 1.1 Sub\n\n\`\`\`bash\necho hi\n\`\`\`\n\n- OUTPUTS\n  - Foo\n`;
       expect(() => parseRunbook(md)).toThrow(/OUTPUTS.*must appear before/);
     });
 
     it('rejects OUTPUTS after non-runbook bullet prose', () => {
-      const md = `## 1 Step\n- some note\n\n- OUTPUTS\n  - Foo {{ "bar" }}\n`;
+      const md = `## 1 Step\n- some note\n\n- OUTPUTS\n  - Foo\n`;
       expect(() => parseRunbook(md)).toThrow(/OUTPUTS.*must appear before/);
     });
 
     it('rejects OUTPUTS after non-runbook bullet prose in substep', () => {
-      const md = `## 1 Step\n\n### 1.1 Sub\n- some note\n\n- OUTPUTS\n  - Foo {{ "bar" }}\n`;
+      const md = `## 1 Step\n\n### 1.1 Sub\n- some note\n\n- OUTPUTS\n  - Foo\n`;
       expect(() => parseRunbook(md)).toThrow(/OUTPUTS.*must appear before/);
     });
   });
@@ -1576,12 +1576,12 @@ describe('INPUTS/OUTPUTS ordering violations', () => {
     });
 
     it('allows OUTPUTS after transitions', () => {
-      const md = `## 1 Step\n- PASS CONTINUE\n- OUTPUTS\n  - Foo {{ "bar" }}\n`;
+      const md = `## 1 Step\n- PASS CONTINUE\n- OUTPUTS\n  - Foo\n`;
       expect(() => parseRunbook(md)).not.toThrow();
     });
 
     it('emits removal diagnostic for interleaved transitions and INPUTS directive', () => {
-      const md = `## 1 Step\n- PASS CONTINUE\n- OUTPUTS\n  - Foo {{ "bar" }}\n- FAIL CONTINUE\n- INPUTS\n  - Bar\n`;
+      const md = `## 1 Step\n- PASS CONTINUE\n- OUTPUTS\n  - Foo\n- FAIL CONTINUE\n- INPUTS\n  - Bar\n`;
       const result = parseRunbookDocument(md);
       expect(
         result.diagnostics.some((d) =>
@@ -3547,7 +3547,7 @@ describe('OUTPUTS nested under runbook-list entry', () => {
     const md = `## 1 Step
 - child.runbook.md
   - OUTPUTS
-    - PlanPath {{ path "plan.json" }}
+    - PlanPath
 `;
     const result = parseRunbookDocument(md);
     expect(result.diagnostics.filter((d) => d.severity === 'error')).toHaveLength(0);
@@ -3556,9 +3556,7 @@ describe('OUTPUTS nested under runbook-list entry', () => {
       throw new Error(`expected substeps-kind step, got ${step.kind}`);
     }
     expect(step.substeps).toHaveLength(1);
-    expect(step.substeps[0].outputs).toEqual([
-      { name: 'PlanPath', value: '{{ path "plan.json" }}' },
-    ]);
+    expect(step.substeps[0].outputs).toEqual([{ name: 'PlanPath' }]);
   });
 
   it('still rejects OUTPUTS after prose prompt text under a runbook-list entry', () => {
@@ -3566,7 +3564,7 @@ describe('OUTPUTS nested under runbook-list entry', () => {
 - child.runbook.md
   - some prose note
   - OUTPUTS
-    - PlanPath {{ path "plan.json" }}
+    - PlanPath
 `;
     expect(() => parseRunbookDocument(md)).toThrow(/OUTPUTS.*must appear before/);
   });

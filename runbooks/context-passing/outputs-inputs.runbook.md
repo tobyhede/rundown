@@ -26,7 +26,11 @@ scenarios:
 - PASS CONTINUE
 - FAIL CONTINUE
 - OUTPUTS
-  - Message "hello from step 1"
+  - Message
+
+```bash
+echo -n 'hello from step 1' > "$RD_OUTPUTS_Message"
+```
 
 ## 2. Consume input
 - PASS COMPLETE

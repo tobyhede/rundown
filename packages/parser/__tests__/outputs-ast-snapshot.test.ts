@@ -1,6 +1,6 @@
 /**
  * Snapshot tests locking the parsed AST shape for runbooks that use
- * naked-form and expression-form OUTPUTS at both step and substep level.
+ * name-only OUTPUTS at both step and substep level.
  *
  * These snapshots serve as a regression guard: any change to how the parser
  * handles OUTPUTS declarations will produce a snapshot diff, forcing explicit
@@ -15,7 +15,7 @@ describe('OUTPUTS AST shape — snapshot', () => {
     const md = `## 1. Capture
 - OUTPUTS
   - Version
-  - Tag "{{ RunId }}-staging"
+  - Tag
 - PASS CONTINUE
 - FAIL STOP
 
@@ -45,7 +45,7 @@ describe('OUTPUTS AST shape — snapshot', () => {
     expect(outputs).toMatchSnapshot();
   });
 
-  it('locks the full step AST for a step bearing mixed naked + expression OUTPUTS', () => {
+  it('locks the full step AST for multiple name-only OUTPUTS', () => {
     const md = `## 1. Deploy
 - OUTPUTS
   - DeployUrl
