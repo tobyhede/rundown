@@ -37,9 +37,10 @@ import {
   RunbookSyntaxError,
 } from '@rundown-org/parser';
 import {
-  assembleArtifactPath,
+  applyRunArtifactHelper,
   invokeHelperSafely,
   isJsonArrayStream,
+  type EvaluateOutputOptions,
   type TemplateVarValue,
 } from '@rundown-org/core';
 import type { StepVariables } from './execution-vars.js';
@@ -99,14 +100,13 @@ const HELPER_CALL_TEMPLATE_REGEX =
 
 /**
  * Matches the built-in artifact path helper in inline template text.
- *
- * Mirrors the OUTPUTS evaluator syntax:
- * - `{{ path "file.json" }}`
- * - `{{ path "file.json" ctx=child-ctx }}`
- * - `{{ path "file.json" ctx={{ childCtx }} }}`
  */
-const PATH_HELPER_TEMPLATE_REGEX =
-  /\{\{\s*path\s+"([^"]+)"(?:\s+ctx=(\{\{[^}]*\}\}|[^\s}]+))?\s*\}\}/g;
+const PATH_HELPER_TEMPLATE_REGEX = /\{\{\s*path\s+"([^"]+)"\s*\}\}/g;
+
+/** Matches the built-in artifact URI helper in inline template text. */
+const ARTIFACT_HELPER_TEMPLATE_REGEX = /\{\{\s*artifact\s+"([^"]+)"\s*\}\}/g;
+
+type TemplateHelperOptions = EvaluateOutputOptions;
 
 /**
  * Resolve a dotted path in an object using own-property traversal.
@@ -221,10 +221,15 @@ function resolveTemplatePath(path: string, variables: Record<string, unknown>): 
  *
  * @param text - Input text that may contain placeholders
  * @param variables - Runtime/template variables for substitution (typed `StepVariables` at the call boundary)
+ * @param helperOptions - Filesystem options for artifact-producing helpers
  * @returns Expanded text with unresolved placeholders preserved
  */
-export function expandLoopVariables(text: string, variables: Readonly<StepVariables>): string {
-  return substituteText(text, variables);
+export function expandLoopVariables(
+  text: string,
+  variables: Readonly<StepVariables>,
+  helperOptions?: TemplateHelperOptions,
+): string {
+  return substituteText(text, variables, undefined, helperOptions);
 }
 
 // ─── FOR clause bound resolution ─────────────────────────────────────────────
@@ -712,7 +717,7 @@ const SAFE_SHELL_VALUE = /^(?!-)(?!.*\.\.)[a-zA-Z0-9_./-]+$/;
  * @returns Helper result or original match
  */
 function resolveHelperCall(helperName: string, argValue: string, original: string): string {
-  if (helperName === 'path') return original;
+  if (helperName === 'artifact' || helperName === 'path') return original;
   const registry = getHelperRegistry();
   const helper = registry.get(helperName);
   if (!helper) return original;
@@ -721,43 +726,36 @@ function resolveHelperCall(helperName: string, argValue: string, original: strin
 }
 
 /**
- * Resolve the built-in `path` helper against a template variable frame.
+ * Resolve a built-in artifact-producing helper against a template variable frame.
  *
  * The helper is intentionally handled here, not in the user helper registry,
  * so prompt text, command text, descriptions, and OUTPUTS all share the same
  * reserved built-in semantics.
  *
- * @param filename - Artifact filename from `{{ path "filename" }}`
- * @param ctxExpr - Optional raw `ctx=` expression
+ * Fail-closed: when `helperOptions` is provided, errors from
+ * `applyRunArtifactHelper` (missing required frame variables, invalid artifact
+ * key, manifest write failure) propagate to the caller. Returning the original
+ * placeholder text is reserved for the case where helper resolution is
+ * intentionally disabled (`helperOptions === undefined`, e.g. AST walks at
+ * startup before runtime variables are available).
+ *
+ * @param kind - Helper kind to resolve
+ * @param key - Artifact key from the helper call
  * @param variables - Template variables available at the render site
- * @param original - Original helper call text to preserve on unresolved input
- * @returns Assembled artifact path, or the original text when unresolved
+ * @param helperOptions - Filesystem options for path resolution and manifest writes
+ * @param original - Original helper call text to preserve when resolution is disabled
+ * @returns Artifact URI/local path, or `original` when `helperOptions` is undefined
+ * @throws {Error} When `helperOptions` is provided and helper resolution fails
  */
-function resolvePathHelperCall(
-  filename: string,
-  ctxExpr: string | undefined,
+function resolveRunArtifactHelperCall(
+  kind: 'artifact' | 'path',
+  key: string,
   variables: Record<string, unknown>,
+  helperOptions: TemplateHelperOptions | undefined,
   original: string,
 ): string {
-  const workPath = resolveTemplatePath('WorkPath', variables);
-  if (workPath === undefined) return original;
-
-  let contextId: string | undefined;
-  if (ctxExpr !== undefined) {
-    const trimmed = ctxExpr.trim();
-    contextId = trimmed.startsWith('{{') ? substituteText(trimmed, variables) : trimmed;
-    if (collectUnresolvedVariables(contextId).length > 0) return original;
-  } else {
-    contextId = resolveTemplatePath('ContextId', variables);
-  }
-
-  if (contextId === undefined) return original;
-
-  try {
-    return assembleArtifactPath(workPath, contextId, filename);
-  } catch {
-    return original;
-  }
+  if (helperOptions === undefined) return original;
+  return applyRunArtifactHelper(kind, key, variables, helperOptions);
 }
 
 /**
@@ -777,7 +775,7 @@ export function shellEscapeValue(value: string): string {
  *
  * Supports four placeholder forms (processed in order):
  * 1. `{{ ./VarName }}` — explicit variable lookup, bypasses helper registry
- * 2. `{{ path "file.json" }}` — built-in artifact path helper
+ * 2. `{{ artifact "file.json" }}` / `{{ path "file.json" }}` — built-in artifact helpers
  * 3. `{{ helperName varRef }}` or `{{ helperName "literal" }}` — helper call
  * 4. `{{ identifier }}` — standard variable substitution
  *
@@ -792,12 +790,14 @@ export function shellEscapeValue(value: string): string {
  * @param text - Input text containing placeholders
  * @param variables - Variable map for substitution
  * @param escapeFn - Optional escape function for resolved values
+ * @param helperOptions - Filesystem options for artifact-producing helpers
  * @returns Text with resolved placeholders substituted
  */
 export function substituteText(
   text: string,
   variables: Record<string, unknown>,
   escapeFn?: (value: string) => string,
+  helperOptions?: TemplateHelperOptions,
 ): string {
   // Pass 1: {{ ./VarName }} explicit variable lookup, bypasses helper registry
   let result = text.replace(EXPLICIT_VAR_TEMPLATE_REGEX, (match, varPath: string) => {
@@ -806,15 +806,18 @@ export function substituteText(
     return escapeFn ? escapeFn(value) : value;
   });
 
-  // Pass 2: built-in {{ path "file" }} helper.
-  result = result.replace(
-    PATH_HELPER_TEMPLATE_REGEX,
-    (match, filename: string, ctxExpr: string | undefined) => {
-      const raw = resolvePathHelperCall(filename, ctxExpr, variables, match);
-      if (raw === match) return match;
-      return escapeFn ? escapeFn(raw) : raw;
-    },
-  );
+  // Pass 2: built-in artifact-producing helpers.
+  result = result.replace(ARTIFACT_HELPER_TEMPLATE_REGEX, (match, key: string) => {
+    const raw = resolveRunArtifactHelperCall('artifact', key, variables, helperOptions, match);
+    if (raw === match) return match;
+    return escapeFn ? escapeFn(raw) : raw;
+  });
+
+  result = result.replace(PATH_HELPER_TEMPLATE_REGEX, (match, key: string) => {
+    const raw = resolveRunArtifactHelperCall('path', key, variables, helperOptions, match);
+    if (raw === match) return match;
+    return escapeFn ? escapeFn(raw) : raw;
+  });
 
   // Pass 3: {{ helperName varRef }} or {{ helperName "literal" }}
   result = result.replace(
@@ -853,20 +856,34 @@ export function substituteText(
  *
  * @param command - Parsed command block, if present
  * @param variables - Variable map for substitution
+ * @param helperOptions - Filesystem options for artifact-producing helpers
  * @returns Command with code expanded and shell-escaped, or undefined
  */
 function substituteCommand(
   command: Command | undefined,
   variables: Record<string, unknown>,
+  helperOptions?: TemplateHelperOptions,
 ): Command | undefined {
   if (!command) return undefined;
-  return substituteRequiredCommand(command, variables);
+  return substituteRequiredCommand(command, variables, helperOptions);
 }
 
-function substituteRequiredCommand(command: Command, variables: Record<string, unknown>): Command {
+/**
+ * Substitute template variables in a guaranteed command, applying shell escaping.
+ *
+ * @param command - Parsed command block (required)
+ * @param variables - Variable map for substitution
+ * @param helperOptions - Filesystem options for artifact-producing helpers
+ * @returns Command with code expanded and shell-escaped
+ */
+function substituteRequiredCommand(
+  command: Command,
+  variables: Record<string, unknown>,
+  helperOptions?: TemplateHelperOptions,
+): Command {
   return {
     ...command,
-    code: substituteText(command.code, variables, shellEscapeValue),
+    code: substituteText(command.code, variables, shellEscapeValue, helperOptions),
   };
 }
 
@@ -875,26 +892,30 @@ function substituteRequiredCommand(command: Command, variables: Record<string, u
  *
  * @param substep - Parsed substep node
  * @param variables - Variable map for substitution
+ * @param helperOptions - Filesystem options for artifact-producing helpers
  * @param forVariable - FOR loop variable name — runbook paths scoped to it are skipped
  * @returns Substep with all string fields expanded
  */
 function substituteSubstep(
   substep: Substep,
   variables: Record<string, unknown>,
+  helperOptions?: TemplateHelperOptions,
   forVariable?: string,
 ): Substep {
   return {
     ...substep,
-    description: substituteText(substep.description, variables),
-    prompt: substep.prompt ? substituteText(substep.prompt, variables) : substep.prompt,
-    command: substituteCommand(substep.command, variables),
+    description: substituteText(substep.description, variables, undefined, helperOptions),
+    prompt: substep.prompt
+      ? substituteText(substep.prompt, variables, undefined, helperOptions)
+      : substep.prompt,
+    command: substituteCommand(substep.command, variables, helperOptions),
     runbooks: substep.runbooks?.map((runbookPath) => {
       // Skip substitution for FOR-scoped runbook placeholders — they must remain
       // opaque until iteration time to prevent outer-scope variable capture
       if (forVariable && isForScoped(extractRefFromPlaceholder(runbookPath), forVariable)) {
         return runbookPath;
       }
-      return substituteText(runbookPath, variables);
+      return substituteText(runbookPath, variables, undefined, helperOptions);
     }),
   };
 }
@@ -904,11 +925,18 @@ function substituteSubstep(
  *
  * @param step - Parsed step node
  * @param variables - Variable map for substitution
+ * @param helperOptions - Filesystem options for artifact-producing helpers
  * @returns Step with all string fields expanded
  */
-function substituteStep(step: ResolvedStep, variables: Record<string, unknown>): ResolvedStep {
-  const description = substituteText(step.description, variables);
-  const prompt = step.prompt ? substituteText(step.prompt, variables) : step.prompt;
+function substituteStep(
+  step: ResolvedStep,
+  variables: Record<string, unknown>,
+  helperOptions?: TemplateHelperOptions,
+): ResolvedStep {
+  const description = substituteText(step.description, variables, undefined, helperOptions);
+  const prompt = step.prompt
+    ? substituteText(step.prompt, variables, undefined, helperOptions)
+    : step.prompt;
 
   // Handle kind-specific fields that contain text
   switch (step.kind) {
@@ -925,7 +953,7 @@ function substituteStep(step: ResolvedStep, variables: Record<string, unknown>):
         ...step,
         description,
         prompt,
-        command: substituteRequiredCommand(step.command, variables),
+        command: substituteRequiredCommand(step.command, variables, helperOptions),
       } satisfies Extract<ResolvedStep, { kind: 'command' }>;
       return resolved;
     }
@@ -934,7 +962,7 @@ function substituteStep(step: ResolvedStep, variables: Record<string, unknown>):
         ...step,
         description,
         prompt,
-        substeps: step.substeps.map((ss) => substituteSubstep(ss, variables)),
+        substeps: step.substeps.map((ss) => substituteSubstep(ss, variables, helperOptions)),
       } satisfies Extract<ResolvedStep, { kind: 'substeps' }>;
       return resolved;
     }
@@ -944,7 +972,7 @@ function substituteStep(step: ResolvedStep, variables: Record<string, unknown>):
         description,
         prompt,
         substeps: step.substeps.map((ss) =>
-          substituteSubstep(ss, variables, step.forClause.variable),
+          substituteSubstep(ss, variables, helperOptions, step.forClause.variable),
         ),
       } satisfies Extract<ResolvedStep, { kind: 'for' }>;
       return resolved;
@@ -954,7 +982,9 @@ function substituteStep(step: ResolvedStep, variables: Record<string, unknown>):
         ...step,
         description,
         prompt,
-        substeps: step.substeps.map((ss) => substituteSubstep(ss, variables, step.variable)),
+        substeps: step.substeps.map((ss) =>
+          substituteSubstep(ss, variables, helperOptions, step.variable),
+        ),
       } satisfies Extract<ResolvedStep, { kind: 'prompted-for' }>;
       return resolved;
     }
@@ -968,19 +998,23 @@ function substituteStep(step: ResolvedStep, variables: Record<string, unknown>):
  *
  * @param runbook - Parsed runbook AST
  * @param variables - Variable map for substitution
+ * @param helperOptions - Filesystem options for artifact-producing helpers
  * @returns New runbook AST with substitutions applied
  */
 export function substituteRunbookVariables(
   runbook: ResolvedRunbook,
   variables: Record<string, unknown>,
+  helperOptions?: TemplateHelperOptions,
 ): ResolvedRunbook {
   return {
     ...runbook,
-    title: runbook.title ? substituteText(runbook.title, variables) : runbook.title,
+    title: runbook.title
+      ? substituteText(runbook.title, variables, undefined, helperOptions)
+      : runbook.title,
     description: runbook.description
-      ? substituteText(runbook.description, variables)
+      ? substituteText(runbook.description, variables, undefined, helperOptions)
       : runbook.description,
-    steps: runbook.steps.map((step) => substituteStep(step, variables)),
+    steps: runbook.steps.map((step) => substituteStep(step, variables, helperOptions)),
   };
 }
 
@@ -1186,11 +1220,13 @@ export function warnUnresolvedRunbookVariables(runbook: ResolvedRunbook): string
  *
  * @param text - Command text containing placeholders
  * @param variables - Runtime/template variable map (typed `StepVariables` at the call boundary)
+ * @param helperOptions - Filesystem options for artifact-producing helpers
  * @returns Command text with resolved placeholders shell-escaped
  */
 export function expandLoopVariablesForCommand(
   text: string,
   variables: Readonly<StepVariables>,
+  helperOptions?: TemplateHelperOptions,
 ): string {
-  return substituteText(text, variables, shellEscapeValue);
+  return substituteText(text, variables, shellEscapeValue, helperOptions);
 }

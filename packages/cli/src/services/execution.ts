@@ -811,11 +811,18 @@ export async function runExecutionLoop(
       currentStep.kind === 'for' ? currentStep.forClause : undefined,
       mergedTemplateVars,
     );
-    const expandedDescription = expandLoopVariables(itemToRender.description, stepVars);
+    const helperOptions = { cwd };
+    const expandedDescription = expandLoopVariables(
+      itemToRender.description,
+      stepVars,
+      helperOptions,
+    );
     // For prompted-for substeps, fall back to the step-level prompt (the reconstructed FOR text)
     const rawPrompt =
       itemToRender.prompt ?? (currentStep.kind === 'prompted-for' ? currentStep.prompt : undefined);
-    const expandedPrompt = rawPrompt ? expandLoopVariables(rawPrompt, stepVars) : rawPrompt;
+    const expandedPrompt = rawPrompt
+      ? expandLoopVariables(rawPrompt, stepVars, helperOptions)
+      : rawPrompt;
 
     // Emit STEP_ENTERED event
     const stepPosition = buildStepPosition(
@@ -951,15 +958,19 @@ export async function runExecutionLoop(
       }
     }
 
+    // Expand once: artifact-producing helpers in command code append a manifest
+    // row per call, so a second expansion would duplicate the entries.
+    const expandedCommandCode = command
+      ? expandLoopVariablesForCommand(command.code, stepVars, helperOptions)
+      : undefined;
+
     emitter.emit('STEP_ENTERED', {
       position: stepPosition,
       stepName: isSubstep ? itemToRender.id : itemToRender.name,
       description: expandedDescription,
       prompt: expandedPrompt,
       hasCommand: !!command,
-      commandCode: command?.code
-        ? expandLoopVariablesForCommand(command.code, stepVars)
-        : command?.code,
+      commandCode: expandedCommandCode,
       commandLang: command?.lang,
       isSubstep,
       prompted: prompted || stepIsPrompted,
@@ -974,12 +985,9 @@ export async function runExecutionLoop(
 
     // If CLI prompted mode, per-step prompted FOR, OR no command
     // Use itemToRender which may be a substep with its own command
-    if (prompted || stepIsPrompted || !command) {
+    if (prompted || stepIsPrompted || expandedCommandCode === undefined) {
       return 'waiting';
     }
-
-    // Expand command code for execution (after guard — command is guaranteed)
-    const expandedCommandCode = expandLoopVariablesForCommand(command.code, stepVars);
 
     // --- Output capture: pre-spawn ---------------------------------------
     const substepId = isSubstep ? itemToRender.id : undefined;

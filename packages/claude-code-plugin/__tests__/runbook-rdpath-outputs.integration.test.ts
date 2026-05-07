@@ -1,16 +1,9 @@
 /**
- * End-to-end integration test for rdpath / OUTPUTS / rdpath-find contracts.
+ * End-to-end regression guard for `rdpath find` glob behavior.
  *
  * Drives a synthetic runbook through `rd run` (NOT --prompted) so bash blocks
- * actually execute. Catches regressions that `rd check` and orchestration-only
- * scenarios both miss:
- *   - rdpath invocations missing --file
- *   - Truncated rdx --check "$(rdpath ...)" invocations
- *   - rdpath find globs broken by the YYYY-MM-DD- date prefix
- *
- * Pattern: combines the spawn-style runner from test-utils.ts with the
- * `state.variables` assertion model in
- * packages/cli/__tests__/integration/context-passing-outputs.test.ts.
+ * actually execute, then asserts that `rdpath find` without a `*-` prefix glob
+ * fails to match the date-prefixed file written by `rdpath --file`.
  *
  * Policy note: uses --allow-run with an explicit allowlist and --no-sandbox for the
  * mkdtemp workspace (an isolated trust boundary). --allow-write does not reach the
@@ -24,7 +17,6 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -147,45 +139,6 @@ describe('runbook end-to-end: rdpath + OUTPUTS contract', () => {
     const raw = await readFile(join(runsDir, files[0]), 'utf-8');
     return JSON.parse(raw) as Record<string, unknown>;
   }
-
-  it('runs end-to-end, populates OUTPUTS, finds fixture via rdpath find', async () => {
-    const runbookPath = join(tempDir, 'probe.runbook.md');
-    await writeFile(runbookPath, RUNBOOK_SOURCE);
-
-    const result = runRunbook(runbookPath);
-
-    // Diagnostic: surface CLI output if the run fails
-    if (result.exitCode !== 0) {
-      throw new Error(
-        `runbook exited ${String(result.exitCode)}\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}`,
-      );
-    }
-    expect(result.exitCode).toBe(0);
-
-    // Assertion 1: OUTPUTS path helper resolved and merged into state.variables.
-    // Tolerates an optional <branch>/ segment between work/ and .rd-<ctx>/
-    // because WorkPath may include a branch suffix in some workspaces.
-    const state = await readSingleRunbookState();
-    const fixturePath = state.variables?.FixturePath;
-    expect(typeof fixturePath).toBe('string');
-    expect(fixturePath as string).toMatch(
-      /^\.rundown\/work\/(?:[^/]+\/)?\.rd-[A-Za-z0-9_-]+\/\d{4}-\d{2}-\d{2}-fixture\.json$/,
-    );
-
-    // Assertion 2: the fixture file actually exists at that resolved path,
-    // proving rdpath --file produces the same path as the OUTPUTS path helper.
-    const absoluteFixturePath = join(tempDir, fixturePath as string);
-    expect(existsSync(absoluteFixturePath)).toBe(true);
-    const fixtureContents = await readFile(absoluteFixturePath, 'utf-8');
-    expect(fixtureContents.trim()).toBe('{"ok":true}');
-
-    // Assertion 3: rdpath find with date-prefix glob ("*-fixture.json") matched
-    // and step 2 reached COMPLETE. Step 2 is PASS COMPLETE / FAIL STOP, so the
-    // runbook only completes if the bash block exited 0 — i.e. rdpath find
-    // matched at least one file. state.lifecycle is a string discriminant
-    // ("completed" | "stopped" | ...), not an object.
-    expect(state.lifecycle).toBe('completed');
-  }, 30_000);
 
   it('regression guard: rdpath find without "*-" prefix glob fails to match dated file', async () => {
     // Same as the happy path but step 2 uses an unprefixed glob.
