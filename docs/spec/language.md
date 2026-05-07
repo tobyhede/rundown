@@ -26,7 +26,10 @@ interpreted as described in [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
 | Result | Execution outcome: `PASS` or `FAIL`. |
 | Handler | A transition mapping a result to an action. |
 | Action | Control-flow effect such as `CONTINUE`, `STOP`, or `GOTO`. |
-| Directive | Structural bullet: `OUTPUTS`, `FOR`, or `DELEGATE`. |
+| Directive | Structural bullet: `ARTIFACTS`, `OUTPUTS`, `FOR`, or `DELEGATE`. |
+| Artifact manifest | Context-scoped JSONL file at `<WorkPath>/.rd-<ContextId>/manifest.jsonl`. |
+| ArtifactRecord | The only structured artifact variable value; one manifest row with artifact URI, run identity, runbook identity, key, and timestamp. |
+| Artifact working set | The current step/substep's resolved `ARTIFACTS` aliases for the active execution unit. |
 
 ## 3. Document Model
 
@@ -91,12 +94,13 @@ Reserved identifiers, matched exactly and case-sensitively: `NEXT`, `CONTINUE`,
 
 Step and substep content MUST appear in this order:
 
-1. `OUTPUTS` directive.
-2. `FOR` directive.
-3. `DELEGATE` directive.
-4. Transitions.
-5. Prompt text.
-6. Body.
+1. `ARTIFACTS` directive.
+2. `OUTPUTS` directive.
+3. `FOR` directive.
+4. `DELEGATE` directive.
+5. Transitions.
+6. Prompt text.
+7. Body.
 
 Each item is optional except the step heading itself. Misordered content is
 invalid.
@@ -392,7 +396,17 @@ branch, checkout path, or run id. Isolation for `{{ path "..." }}` is provided b
 `ContextId` (`.rd-<ContextId>/`), with run-scoped artifact locations adding the
 current `RunId` below that context when needed.
 
-### 9.3 Shell Environment
+### 9.3 Artifact Rendering Helpers
+
+Helpers are render-only. The `path` and `artifact` helpers MUST NOT append manifest rows, create artifact records, or mutate runbook state. Only `ARTIFACTS` resolution writes exact manifest rows.
+
+Rendering an `ArtifactRecord` directly yields its `uri`. Rendering an `ArtifactRecord[]` directly yields a JSON array of artifact URIs. An empty artifact array renders as `[]`.
+
+`{{ path ArtifactName }}` renders the contained local filesystem path for an `ArtifactRecord`. For an `ArtifactRecord[]`, it renders a JSON array of contained local filesystem paths. `{{ artifact ArtifactName }}` renders artifact URI values with the same scalar or array shape.
+
+Runtime command rendering MUST render command text once per execution and reuse that exact rendered string for both `STEP_ENTERED.commandCode` and actual execution.
+
+### 9.4 Shell Environment
 
 Executable shell blocks receive `RD_WORK_PATH`, `RD_CONTEXT_ID`, `RD_RUN_ID`,
 `RD_RUNBOOK_REF`, and `RD_RUNBOOK_SOURCE` from `WorkPath`, `ContextId`, `RunId`,
@@ -405,34 +419,76 @@ reserved for Rundown-injected variables.
 
 ## 10. Context Passing
 
-Context passing uses step `OUTPUTS`, frontmatter `outputs`, and delegation
-inheritance.
+Context passing uses step `ARTIFACTS`, step `OUTPUTS`, frontmatter `outputs`,
+and delegation inheritance.
+
+### 10.1 Step `ARTIFACTS`
+
+`ARTIFACTS` declares artifact aliases for the step or substep being entered. It is an execution-unit directive only; it is valid on steps and substeps and is not valid in frontmatter.
+
+Rules:
+
+| Rule | Requirement |
+| --- | --- |
+| Cardinality | At most one `ARTIFACTS` directive per step or substep. |
+| Ordering | MUST be the first directive after the heading. |
+| Names | MUST match variable-name rules and MUST NOT be reserved runtime names, case-insensitively. |
+| Keys | MUST be quoted artifact key literals; templates are not expanded inside keys. |
+| Scope | Applies only to the declaring step or substep's current execution-unit working set. |
+| Persistence | Writes resolved values to persisted `artifactVars`, not to string-only `state.variables`. |
+| Same-block resolution | Exact declarations resolve first, then wildcard declarations. |
+
+Exact declarations create or reuse one `ArtifactRecord` for the current run and key. Wildcard declarations read the same-context artifact manifest, coalesce duplicate rows, filter by run eligibility and file existence, and produce an `ArtifactRecord[]`. Empty wildcard results are meaningful and render as `[]`.
+
+Wildcard matching includes current-run active records when the artifact file exists. Records from other runs are eligible only when their run state is completed and has `terminalAt`. Matching is across runbooks in the same `ContextId`; the current runbook identity is metadata and is not an implicit wildcard filter.
+
+Manifest coalescing identity is `contextId`, `runId`, `runbook.source`, `runbook.path`, and `key`. The newest `timestamp` wins. If timestamps tie, the later manifest row wins.
+
+`ArtifactRecord` is the only structured artifact value:
+
+```json
+{
+  "uri": "rd://artifacts/ctx1/runs/rd_0123456789abcdef0123456789abcdef/plan.json",
+  "runId": "rd_0123456789abcdef0123456789abcdef",
+  "contextId": "ctx1",
+  "runbook": {
+    "source": "project",
+    "path": "planning/write-plan.runbook.md"
+  },
+  "key": "plan.json",
+  "timestamp": "2026-05-07T00:00:00.000Z"
+}
+```
+
+Persisted runbook state stores artifact variables separately from command outputs:
+
+```text
+templateVars < artifactVars < variables < extraVars
+```
+
+`state.variables` remains string-only command `OUTPUTS`. `artifactVars` stores `ArtifactRecord` or `ArtifactRecord[]` values. Effective rendering and delegation contexts merge `templateVars`, `artifactVars`, `variables`, and `extraVars` in the order shown, so same-name `OUTPUTS` values mask artifact aliases after command completion without deleting the stored artifact value.
+
+Same-name `ARTIFACTS` and `OUTPUTS` declarations are allowed. `ARTIFACTS` writes `artifactVars` at step/substep entry. `OUTPUTS` writes `state.variables` after command completion and wins in the merged effective variable context because `variables` has higher precedence than `artifactVars`.
 
 <a id="71-outputs"></a>
 
-### 10.1 Step `OUTPUTS`
+### 10.2 Step OUTPUTS
 
-`OUTPUTS` declares values to merge into the live variable space after a step or
-substep completes.
+`OUTPUTS` declares name-only command output channels to merge into the live variable space after a step or substep completes.
 
 Rules:
 
 | Rule | Requirement |
 | --- | --- |
 | Cardinality | At most one `OUTPUTS` directive per step or substep. |
-| Ordering | MUST be the first directive after the heading. |
+| Ordering | MUST follow `ARTIFACTS` when present and MUST precede `FOR`, `DELEGATE`, transitions, prompt, and body. |
 | Names | MUST NOT be reserved runtime names, case-insensitively. |
-| Timing | Evaluated on both `PASS` and `FAIL` transitions. |
-| Forms | Handlebars expression, quoted literal with templates, bare variable reference, or naked file-backed entry. |
-| Merge | Adds new keys and overwrites same-name live variables. |
-| Failure | Failed expressions are omitted and logged; transition is not rolled back. |
+| Forms | Step/substep entries are name-only. Expression-form step/substep `OUTPUTS` entries are parse errors. |
+| Timing | File-backed values are read and merged after command completion. |
+| Merge | Adds new keys to string-only `state.variables` and overwrites same-name string variables. |
 | Status visibility | The merged variable space is exposed in status output as `vars`. |
 
-A naked entry is only a variable name. It activates a file-backed channel:
-Rundown creates a writable UTF-8 file, injects `RD_OUTPUTS_<VarName>` with its
-absolute path, then reads, trims, and merges the file content after command exit.
-Missing, empty, or non-UTF-8 content is omitted. Naked and expression forms MAY
-mix in one `OUTPUTS` block.
+A name-only entry activates a file-backed channel: Rundown creates a writable UTF-8 file, injects `RD_OUTPUTS_<VarName>` with its absolute path, then reads, trims, and merges the file content after command exit. Missing, empty, or non-UTF-8 content is omitted.
 
 File-backed output path scopes:
 
@@ -442,25 +498,27 @@ File-backed output path scopes:
 | Substep | `.rundown/runs/<runId>/outputs/<stepId>/<substepId>/<VarName>` |
 | `FOR` iteration | `.rundown/runs/<runId>/outputs/<stepId>/<substepId>/<iteration>/<VarName>` |
 
-`RD_OUTPUTS_*` is injected after policy filtering and cannot be blocked or
-overridden by user environment variables. Expression-form entries do not create
-files or environment variables.
+`RD_OUTPUTS_*` is injected after policy filtering and cannot be blocked or overridden by user environment variables. Step/substep `OUTPUTS` does not create artifact records and does not write `artifactVars`.
 
-The removed `INPUTS` step directive is invalid; use frontmatter `inputs`.
+### 10.3 Frontmatter outputs
 
-### 10.2 Frontmatter `outputs`
+Frontmatter `outputs` is evaluated at terminal `COMPLETE` or `STOPPED` transition against the merged effective variable context. Entries may be name-only or may include expression values. Name-only frontmatter entries read variables by name and do not create file-backed channels.
 
-Frontmatter `outputs` is evaluated at terminal `COMPLETE` or `STOPPED`
-transition against the merged variable space. Entries use the same declaration
-grammar as step `OUTPUTS`, except naked frontmatter entries read variables by
-name and do not create file-backed channels. Results are written to final run
-state and forwarded from child runbooks to parent live variables on completion.
+Frontmatter `outputs:` expression behavior is separate from step/substep `OUTPUTS`. A frontmatter output may export an artifact variable by name through normal variable flow; no artifact-specific frontmatter syntax is needed. For example, if `PlanPath` resolves to an `ArtifactRecord`, `outputs: [PlanPath]` exports that value through the established context-passing path.
 
-### 10.3 Delegation Inheritance
+Results are written to final run state and forwarded from child runbooks to parent live variables on completion.
 
-Delegated children inherit the parent's `ContextId` and non-context template
-variables. Step outputs accumulate during execution; terminal frontmatter
-outputs propagate back to the parent.
+### 10.4 Delegation Inheritance
+
+Delegated children inherit the parent's `ContextId` and non-context template variables. They do not inherit the parent's `RunId` or `RunbookRef`.
+
+Effective delegation variables use the same merge order as rendering:
+
+```text
+templateVars < artifactVars < variables < extraVars
+```
+
+Step `OUTPUTS` accumulate during execution in `state.variables`. Step `ARTIFACTS` accumulate in `artifactVars`. Terminal frontmatter `outputs` propagate selected values, including artifact values, back to the parent through normal variable flow.
 
 ## 11. Conformance
 
@@ -488,6 +546,14 @@ In particular:
 19. `GOTO` to a `FOR` target without `AT` enters at the target loop's start value.
 20. Delegation retry must cancel and reissue every delegated substep in the active frame.
 21. Naked `OUTPUTS` entries alone create `RD_OUTPUTS_<VarName>`.
+22. At most one `ARTIFACTS` directive is allowed per step or substep.
+23. `ARTIFACTS` must be ordered before `OUTPUTS` and all other step content.
+24. `ARTIFACTS` is invalid in frontmatter.
+25. Duplicate aliases in one `ARTIFACTS` block are invalid.
+26. Artifact keys must be quoted safe artifact key literals.
+27. Step/substep `OUTPUTS` entries must be name-only; expression-form entries are invalid.
+28. Empty wildcard artifact results are valid values and must not be collapsed to absence.
+29. Parser conformance fixtures for `ARTIFACTS` should cover valid exact declarations, valid wildcard declarations, duplicate aliases, invalid keys, misplaced directives, frontmatter misuse, and expression-form step/substep `OUTPUTS`.
 
 ## 12. Compatibility
 
@@ -501,3 +567,5 @@ incompatible, implementations SHOULD require the user to complete, stop, or
 prune the run and restart from the source document. See
 [runtime recovery](../reference/runtime.md#stale-persisted-state--no-migration)
 for operational details.
+
+Adding persisted `artifactVars` is a `RunbookState` schema/version change. Stale active state from versions without compatible artifact state MUST be rejected and surfaced to the user for completion, stopping, or pruning. Implementations MUST NOT migrate or shim older persisted state into the new artifact-aware shape.
