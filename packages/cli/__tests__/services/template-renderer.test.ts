@@ -366,6 +366,42 @@ describe('substituteRunbookVariables', () => {
     }
   });
 
+  it('preserves the helper placeholder when helperOptions is omitted (startup AST walk)', () => {
+    const runbook = parseResolvedRunbook(
+      '# Test\n\n## 1. Confirm\n\n> Review {{ path "review.json" }}\n',
+    );
+    const result = substituteRunbookVariables(runbook, {
+      WorkPath: '.rundown/work',
+      ContextId: 'ctx1',
+      RunId: RUN_ID,
+      RunbookRef: RUNBOOK_REF,
+    });
+    expect(result.steps[0].prompt).toContain('{{ path "review.json" }}');
+  });
+
+  it('propagates helper resolution failures when helperOptions is provided', async () => {
+    const cwd = await mkdtemp(path.join(tmpdir(), 'rd-template-'));
+    try {
+      const runbook = parseResolvedRunbook(
+        '# Test\n\n## 1. Confirm\n\n> Review {{ artifact "../escape" }}\n',
+      );
+      expect(() =>
+        substituteRunbookVariables(
+          runbook,
+          {
+            WorkPath: '.rundown/work',
+            ContextId: 'ctx1',
+            RunId: RUN_ID,
+            RunbookRef: RUNBOOK_REF,
+          },
+          { cwd },
+        ),
+      ).toThrow(/Invalid ArtifactKey/);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it('should substitute runbook title', () => {
     const rawMarkdown = '# {{project}} Runbook\n\n## 1. Start\n\nGo.';
     const runbook = parseResolvedRunbook(rawMarkdown);

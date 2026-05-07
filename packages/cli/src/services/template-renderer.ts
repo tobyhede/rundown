@@ -41,7 +41,6 @@ import {
   invokeHelperSafely,
   isJsonArrayStream,
   type EvaluateOutputOptions,
-  type OutputVars,
   type TemplateVarValue,
 } from '@rundown-org/core';
 import type { StepVariables } from './execution-vars.js';
@@ -733,12 +732,20 @@ function resolveHelperCall(helperName: string, argValue: string, original: strin
  * so prompt text, command text, descriptions, and OUTPUTS all share the same
  * reserved built-in semantics.
  *
+ * Fail-closed: when `helperOptions` is provided, errors from
+ * `applyRunArtifactHelper` (missing required frame variables, invalid artifact
+ * key, manifest write failure) propagate to the caller. Returning the original
+ * placeholder text is reserved for the case where helper resolution is
+ * intentionally disabled (`helperOptions === undefined`, e.g. AST walks at
+ * startup before runtime variables are available).
+ *
  * @param kind - Helper kind to resolve
  * @param key - Artifact key from the helper call
  * @param variables - Template variables available at the render site
  * @param helperOptions - Filesystem options for path resolution and manifest writes
- * @param original - Original helper call text to preserve on unresolved input
- * @returns Artifact URI/local path, or the original text when unresolved
+ * @param original - Original helper call text to preserve when resolution is disabled
+ * @returns Artifact URI/local path, or `original` when `helperOptions` is undefined
+ * @throws {Error} When `helperOptions` is provided and helper resolution fails
  */
 function resolveRunArtifactHelperCall(
   kind: 'artifact' | 'path',
@@ -748,11 +755,7 @@ function resolveRunArtifactHelperCall(
   original: string,
 ): string {
   if (helperOptions === undefined) return original;
-  try {
-    return applyRunArtifactHelper(kind, key, variables as OutputVars, helperOptions);
-  } catch {
-    return original;
-  }
+  return applyRunArtifactHelper(kind, key, variables, helperOptions);
 }
 
 /**

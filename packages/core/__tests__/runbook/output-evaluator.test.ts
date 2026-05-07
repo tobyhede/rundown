@@ -174,6 +174,41 @@ describe('evaluateOutputExpression', () => {
     }
   });
 
+  it.each([
+    ['../secret', 'parent traversal'],
+    ['/etc/passwd', 'absolute path'],
+    ['folder/../../evil', 'embedded traversal'],
+    ['..\\windows', 'backslash separator'],
+    ['nested/review.json', 'forward slash separator'],
+    ['..', 'literal dot-dot'],
+    ['.', 'literal dot'],
+  ])('rejects malicious artifact key %p (%s) and writes no manifest row', async (key) => {
+    const cwd = await mkdtemp(path.join(tmpdir(), 'rd-helper-'));
+    try {
+      const vars = {
+        WorkPath: '.rundown/work',
+        ContextId: 'ctx1',
+        RunId: 'rd_0123456789abcdef0123456789abcdef',
+        RunbookRef: {
+          source: 'plugin',
+          path: 'planning/review/review-plan-risk-safety.runbook.md',
+        },
+      };
+
+      expect(() => evaluateOutputExpression(`{{ artifact "${key}" }}`, vars, { cwd })).toThrow(
+        /Invalid ArtifactKey/,
+      );
+      expect(() => evaluateOutputExpression(`{{ path "${key}" }}`, vars, { cwd })).toThrow(
+        /Invalid ArtifactKey/,
+      );
+
+      const records = await readArtifactManifest({ cwd, workPath: vars.WorkPath }, 'ctx1');
+      expect(records).toEqual([]);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it('renders booleans and null the same way the CLI wrapper does today', () => {
     expect(evaluateOutputExpression('{{ enabled }}', { enabled: false })).toBe('false');
     expect(evaluateOutputExpression('{{ nullable }}', { nullable: null })).toBe('null');

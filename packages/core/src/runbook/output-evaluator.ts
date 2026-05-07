@@ -165,7 +165,10 @@ function renderOutputValue(value: unknown): string {
   return JSON.stringify(value);
 }
 
-function resolveOutputPath(path: string, variables: OutputVars): string | undefined {
+function resolveOutputPath(
+  path: string,
+  variables: Readonly<Record<string, unknown>>,
+): string | undefined {
   if (Object.hasOwn(variables, path)) {
     return renderOutputValue(variables[path]);
   }
@@ -195,7 +198,7 @@ function expandOutputVariables(text: string, variables: OutputVars): string {
   });
 }
 
-function requireOutputString(name: string, variables: OutputVars): string {
+function requireOutputString(name: string, variables: Readonly<Record<string, unknown>>): string {
   const value = resolveOutputPath(name, variables);
   if (!value) {
     throw new Error(`evaluateOutputExpression: ${name} variable is not defined`);
@@ -203,7 +206,7 @@ function requireOutputString(name: string, variables: OutputVars): string {
   return value;
 }
 
-function requireRunbookRef(variables: OutputVars): RunbookRef {
+function requireRunbookRef(variables: Readonly<Record<string, unknown>>): RunbookRef {
   const parsed = RunbookRefSchema.safeParse(variables.RunbookRef);
   if (!parsed.success) {
     throw new Error('evaluateOutputExpression: RunbookRef variable is not defined or invalid');
@@ -229,17 +232,23 @@ function requireEvaluateOutputOptions(
  * local-path variant also creates the artifact parent directory synchronously so
  * the returned path is immediately writable by shell commands.
  *
+ * Accepts an unconstrained record because the helper validates each required
+ * frame field internally (`requireOutputString` / `requireRunbookRef`) and
+ * throws on missing or malformed entries. Callers that already hold a typed
+ * `OutputVars` (a subtype) pass through unchanged.
+ *
  * @param kind - Helper kind to evaluate
  * @param key - Artifact key / filename segment from the helper call
  * @param frame - Variable frame containing WorkPath, ContextId, RunId, and RunbookRef
  * @param options - Filesystem options for path resolution and manifest append
  * @returns Canonical artifact URI for `artifact`, local artifact path for `path`
- * @throws {Error} When required variables are missing or invalid
+ * @throws {Error} When required variables are missing or invalid, or when the
+ *   artifact key fails identity validation.
  */
 export function applyRunArtifactHelper(
   kind: 'artifact' | 'path',
   key: string,
-  frame: OutputVars,
+  frame: Readonly<Record<string, unknown>>,
   options: EvaluateOutputOptions,
 ): string {
   const workPath = requireOutputString('WorkPath', frame);
