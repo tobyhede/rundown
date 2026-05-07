@@ -40,9 +40,6 @@ const RUNBOOK_REF = {
   source: 'plugin',
   path: 'planning/review/review-plan-risk-safety.runbook.md',
 } as const;
-const DEFAULT_TEMPLATE_HELPER_OPTIONS = {
-  cwd: path.join(tmpdir(), `rd-template-renderer-${String(process.pid)}`),
-};
 
 describe('expandLoopVariables', () => {
   it('should expand named loop variable', () => {
@@ -2030,20 +2027,25 @@ describe('substituteText with HelperRegistry', () => {
     expect(substituteText('{{ upper "hello world" }}', {})).toBe('HELLO WORLD');
   });
 
-  it('renders built-in path helper with default context', () => {
-    expect(
-      substituteText(
-        'Artifact: {{ path "review.json" }}',
-        {
-          WorkPath: '.rundown/work/demo',
-          ContextId: 'ctx-123',
-          RunId: RUN_ID,
-          RunbookRef: RUNBOOK_REF,
-        },
-        undefined,
-        DEFAULT_TEMPLATE_HELPER_OPTIONS,
-      ),
-    ).toContain(`.rundown/work/demo/.rd-ctx-123/runs/${RUN_ID}/review.json`);
+  it('renders built-in path helper with default context', async () => {
+    const cwd = await mkdtemp(path.join(tmpdir(), 'rd-template-renderer-'));
+    try {
+      expect(
+        substituteText(
+          'Artifact: {{ path "review.json" }}',
+          {
+            WorkPath: '.rundown/work/demo',
+            ContextId: 'ctx-123',
+            RunId: RUN_ID,
+            RunbookRef: RUNBOOK_REF,
+          },
+          undefined,
+          { cwd },
+        ),
+      ).toContain(`.rundown/work/demo/.rd-ctx-123/runs/${RUN_ID}/review.json`);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
   });
 
   it('preserves built-in path helper when required variables are missing', () => {
@@ -2149,19 +2151,24 @@ describe('substituteText with HelperRegistry', () => {
     expect(expandLoopVariables('{{ upper batch }}', { batch: 'hello' })).toBe('HELLO');
   });
 
-  it('expandLoopVariables dispatches built-in path helper calls', () => {
-    expect(
-      expandLoopVariables(
-        '{{ path "review.json" }}',
-        {
-          WorkPath: '.rundown/work/demo',
-          ContextId: 'ctx-123',
-          RunId: RUN_ID,
-          RunbookRef: RUNBOOK_REF,
-        },
-        DEFAULT_TEMPLATE_HELPER_OPTIONS,
-      ),
-    ).toContain(`.rundown/work/demo/.rd-ctx-123/runs/${RUN_ID}/review.json`);
+  it('expandLoopVariables dispatches built-in path helper calls', async () => {
+    const cwd = await mkdtemp(path.join(tmpdir(), 'rd-template-renderer-'));
+    try {
+      expect(
+        expandLoopVariables(
+          '{{ path "review.json" }}',
+          {
+            WorkPath: '.rundown/work/demo',
+            ContextId: 'ctx-123',
+            RunId: RUN_ID,
+            RunbookRef: RUNBOOK_REF,
+          },
+          { cwd },
+        ),
+      ).toContain(`.rundown/work/demo/.rd-ctx-123/runs/${RUN_ID}/review.json`);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
   });
 
   it('expandLoopVariablesForCommand dispatches helper calls with shell escaping', () => {
@@ -2171,19 +2178,24 @@ describe('substituteText with HelperRegistry', () => {
     );
   });
 
-  it('expandLoopVariablesForCommand dispatches built-in path helper calls with shell escaping', () => {
-    expect(
-      expandLoopVariablesForCommand(
-        'cat {{ path "review.json" }}',
-        {
-          WorkPath: '.rundown/work/demo path',
-          ContextId: 'ctx-123',
-          RunId: RUN_ID,
-          RunbookRef: RUNBOOK_REF,
-        },
-        DEFAULT_TEMPLATE_HELPER_OPTIONS,
-      ),
-    ).toContain(`.rundown/work/demo path/.rd-ctx-123/runs/${RUN_ID}/review.json`);
+  it('expandLoopVariablesForCommand dispatches built-in path helper calls with shell escaping', async () => {
+    const cwd = await mkdtemp(path.join(tmpdir(), 'rd-template-renderer-'));
+    try {
+      expect(
+        expandLoopVariablesForCommand(
+          'cat {{ path "review.json" }}',
+          {
+            WorkPath: '.rundown/work/demo path',
+            ContextId: 'ctx-123',
+            RunId: RUN_ID,
+            RunbookRef: RUNBOOK_REF,
+          },
+          { cwd },
+        ),
+      ).toContain(`.rundown/work/demo path/.rd-ctx-123/runs/${RUN_ID}/review.json`);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
   });
 });
 

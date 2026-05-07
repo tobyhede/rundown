@@ -19,14 +19,32 @@ import {
 } from '../../src/runbook/output-evaluator.js';
 import { resetHelperInvokeWarnings } from '../../src/runbook/helper-invoke.js';
 
-const DEFAULT_EVALUATE_OPTIONS = {
-  cwd: path.join(tmpdir(), `rd-output-evaluator-${String(process.pid)}`),
-} satisfies EvaluateOutputOptions;
+let defaultEvaluateOptions: EvaluateOutputOptions | undefined;
+
+beforeEach(async () => {
+  defaultEvaluateOptions = {
+    cwd: await mkdtemp(path.join(tmpdir(), 'rd-output-evaluator-')),
+  };
+});
+
+afterEach(async () => {
+  if (defaultEvaluateOptions) {
+    await rm(defaultEvaluateOptions.cwd, { recursive: true, force: true });
+    defaultEvaluateOptions = undefined;
+  }
+});
+
+function getDefaultEvaluateOptions(): EvaluateOutputOptions {
+  if (!defaultEvaluateOptions) {
+    throw new Error('Default evaluate options were not initialized');
+  }
+  return defaultEvaluateOptions;
+}
 
 function evaluateOutputExpression(
   expr: string,
   variables: OutputVars,
-  options: EvaluateOutputOptions = DEFAULT_EVALUATE_OPTIONS,
+  options: EvaluateOutputOptions = getDefaultEvaluateOptions(),
 ): string {
   return evaluateOutputExpressionRaw(expr, variables, options);
 }
@@ -34,7 +52,7 @@ function evaluateOutputExpression(
 function evaluateStepOutputDeclarations(
   outputs: readonly OutputDeclaration[],
   vars: OutputVars,
-  options: EvaluateOutputOptions = DEFAULT_EVALUATE_OPTIONS,
+  options: EvaluateOutputOptions = getDefaultEvaluateOptions(),
 ): Record<string, string> {
   return evaluateStepOutputDeclarationsRaw(outputs, vars, options);
 }
@@ -42,7 +60,7 @@ function evaluateStepOutputDeclarations(
 function evaluateFrontmatterOutputDeclarations(
   outputs: readonly OutputDeclaration[],
   vars: OutputVars,
-  options: EvaluateOutputOptions = DEFAULT_EVALUATE_OPTIONS,
+  options: EvaluateOutputOptions = getDefaultEvaluateOptions(),
 ): Record<string, string> {
   return evaluateFrontmatterOutputDeclarationsRaw(outputs, vars, options);
 }
