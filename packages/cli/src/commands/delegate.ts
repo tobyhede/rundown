@@ -149,7 +149,7 @@ export function registerDelegateCommand(program: Command): void {
             throw Errors.delegationRunbookNotFound(resolvedRunbook);
           }
           const childPath = childResolved.path;
-          const childRunbookRef = buildRunbookRef(childResolved);
+          const childRunbookRef = await buildRunbookRef(childResolved);
 
           // Parse extra vars through the standard normalization pipeline
           const rawVars = await collectCliFlags(

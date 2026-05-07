@@ -541,7 +541,7 @@ export async function loadAndParseRunbook(file: string, cwd: string): Promise<Lo
 
   let runbookRef: RunbookRef;
   try {
-    runbookRef = buildRunbookRef(resolved);
+    runbookRef = await buildRunbookRef(resolved);
   } catch (error: unknown) {
     return {
       ok: false,
@@ -573,7 +573,7 @@ export async function loadAndParseResolvedRunbook(
 
   let derivedRunbookRef: RunbookRef;
   try {
-    derivedRunbookRef = buildRunbookRef({ path: filePath, source, sourceRoot });
+    derivedRunbookRef = await buildRunbookRef({ path: filePath, source, sourceRoot });
   } catch (error: unknown) {
     return {
       ok: false,

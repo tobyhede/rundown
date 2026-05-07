@@ -333,7 +333,7 @@ describe('resolveRunbookFile', () => {
       expect(result).not.toBeNull();
       expect(result!.source).toBe('plugin');
       expect(result!.sourceRoot).toBe(pluginRunbooksDir);
-      expect(buildRunbookRef(result!)).toEqual({ source: 'plugin', path: runbookRef });
+      expect(await buildRunbookRef(result!)).toEqual({ source: 'plugin', path: runbookRef });
     });
 
     it('keeps project-local runbook refs project-root-relative', async () => {
@@ -346,7 +346,7 @@ describe('resolveRunbookFile', () => {
       expect(result).not.toBeNull();
       expect(result!.source).toBe('project');
       expect(result!.sourceRoot).toBe(testDir);
-      expect(buildRunbookRef(result!)).toEqual({
+      expect(await buildRunbookRef(result!)).toEqual({
         source: 'project',
         path: '.rundown/runbooks/ops/deploy.runbook.md',
       });
@@ -363,7 +363,7 @@ describe('resolveRunbookFile', () => {
         source: 'project',
         sourceRoot: testDir,
       });
-      expect(buildRunbookRef(result!)).toEqual({
+      expect(await buildRunbookRef(result!)).toEqual({
         source: 'project',
         path: '.rundown/runbooks/ops/deploy.md',
       });
@@ -380,7 +380,7 @@ describe('resolveRunbookFile', () => {
         source: 'project',
         sourceRoot: testDir,
       });
-      expect(buildRunbookRef(result!)).toEqual({
+      expect(await buildRunbookRef(result!)).toEqual({
         source: 'project',
         path: 'scratch/deploy.md',
       });
@@ -399,7 +399,7 @@ describe('resolveRunbookFile', () => {
           source: 'external',
           sourceRoot: externalDir,
         });
-        const runbookRef = buildRunbookRef(resolved!);
+        const runbookRef = await buildRunbookRef(resolved!);
         expect(runbookRef).toEqual({
           source: 'external',
           path: filePath,
@@ -436,7 +436,7 @@ describe('resolveRunbookFile', () => {
           source: 'project',
           sourceRoot: testDir,
         });
-        expect(buildRunbookRef(result.resolved)).toEqual({
+        expect(await buildRunbookRef(result.resolved)).toEqual({
           source: 'project',
           path: '.rundown/runbooks/ops/deploy.md',
         });
@@ -455,6 +455,29 @@ describe('resolveRunbookFile', () => {
         runbookRef,
       });
     });
+  });
+});
+
+describe('buildRunbookRef', () => {
+  it('rejects a symlinked runbook that escapes the source root', async () => {
+    const realDir = await fs.mkdtemp(path.join(os.tmpdir(), 'real-'));
+    const sourceRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'src-'));
+
+    // Real file lives outside sourceRoot
+    const realFile = path.join(realDir, 'escaped.runbook.md');
+    await fs.writeFile(realFile, '# Escaped');
+
+    // Symlink lives inside sourceRoot but resolves outside
+    const symlinkInside = path.join(sourceRoot, 'inside.runbook.md');
+    await fs.symlink(realFile, symlinkInside);
+
+    // buildRunbookRef should reject because realpath(symlinkInside) is not under sourceRoot
+    await expect(
+      buildRunbookRef({ path: symlinkInside, source: 'project', sourceRoot }),
+    ).rejects.toThrow(/outside/i);
+
+    await fs.rm(realDir, { recursive: true, force: true });
+    await fs.rm(sourceRoot, { recursive: true, force: true });
   });
 });
 

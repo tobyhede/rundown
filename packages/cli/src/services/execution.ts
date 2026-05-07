@@ -876,7 +876,7 @@ export async function runExecutionLoop(
                 if (!childResolved) {
                   throw Errors.delegationRunbookNotFound(target.runbookRef);
                 }
-                const childRunbookRef = buildRunbookRef(childResolved);
+                const childRunbookRef = await buildRunbookRef(childResolved);
 
                 const result = createDelegation(
                   {

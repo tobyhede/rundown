@@ -1109,7 +1109,7 @@ describe('prepareRunbook', () => {
       source: 'plugin' as const,
       sourceRoot: String.raw`C:\Users\agent\.claude\extensions\rundown-plugin\runbooks`,
     });
-    jest.mocked(buildRunbookRef).mockReturnValue({
+    jest.mocked(buildRunbookRef).mockResolvedValue({
       source: 'plugin',
       path: 'write-plan.runbook.md',
     });

@@ -333,8 +333,12 @@ function sourceRootForDiscovered(cwd: string, source: DiscoverableRunbookSource)
   }
 }
 
-function toSourceRootRelativePath(filePath: string, sourceRoot: string): string {
-  const relative = path.relative(sourceRoot, filePath).split(path.sep).join('/');
+async function toSourceRootRelativePath(filePath: string, sourceRoot: string): Promise<string> {
+  const safePath = await pathUnderRoot(sourceRoot, filePath);
+  if (safePath === null) {
+    throw new Error(`Resolved runbook path is outside ${sourceRoot}: ${filePath}`);
+  }
+  const relative = path.relative(sourceRoot, safePath).split(path.sep).join('/');
   if (
     relative.length === 0 ||
     relative === '..' ||
@@ -346,11 +350,11 @@ function toSourceRootRelativePath(filePath: string, sourceRoot: string): string 
   return relative;
 }
 
-function derivePersistedRunbookRef(
+async function derivePersistedRunbookRef(
   filePath: string,
   source: RunbookSource,
   sourceRoot: string,
-): RunbookRef {
+): Promise<RunbookRef> {
   if (source === 'external') {
     return RunbookRefSchema.parse({
       source,
@@ -360,7 +364,7 @@ function derivePersistedRunbookRef(
 
   return RunbookRefSchema.parse({
     source,
-    path: toSourceRootRelativePath(filePath, sourceRoot),
+    path: await toSourceRootRelativePath(filePath, sourceRoot),
   });
 }
 
@@ -371,7 +375,7 @@ function derivePersistedRunbookRef(
  * @returns Canonical `RunbookRef` derived from the resolved file and validated by `RunbookRefSchema`
  * @throws {Error} If the resolved file cannot be represented as a safe source-root-relative Markdown path
  */
-export function buildRunbookRef(resolved: ResolvedRunbook): RunbookRef {
+export async function buildRunbookRef(resolved: ResolvedRunbook): Promise<RunbookRef> {
   return derivePersistedRunbookRef(resolved.path, resolved.source, resolved.sourceRoot);
 }
 
