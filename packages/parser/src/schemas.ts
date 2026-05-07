@@ -312,18 +312,40 @@ export const EXACT_ARTIFACT_KEY_PATTERN = /^[A-Za-z0-9._-]+$/;
 export const WILDCARD_ARTIFACT_KEY_PATTERN = /^[A-Za-z0-9._*?-]+$/;
 
 /**
- * Zod schema for `ArtifactDeclaration`.
- *
- * Validates the shape of one parsed artifact alias entry. The `key` field is a
- * literal string and is not template-expanded; the schema does not enforce
- * exact-vs-wildcard pattern membership — that check belongs to the parser
- * helper that produces `kind`.
+ * Shared base schema for artifact declarations. Not exported — variant schemas
+ * extend this with their `kind` literal.
  */
-export const ArtifactDeclarationSchema = z.object({
+const ArtifactDeclarationFieldsSchema = z.object({
   name: z.string().regex(NAMED_IDENTIFIER_PATTERN),
   key: z.string().min(1),
-  kind: z.enum(['exact', 'wildcard']),
 });
+
+/**
+ * Zod schema for an exact-key artifact declaration.
+ */
+export const ExactArtifactDeclarationSchema = ArtifactDeclarationFieldsSchema.extend({
+  kind: z.literal('exact'),
+});
+
+/**
+ * Zod schema for a wildcard-key artifact declaration.
+ */
+export const WildcardArtifactDeclarationSchema = ArtifactDeclarationFieldsSchema.extend({
+  kind: z.literal('wildcard'),
+});
+
+/**
+ * Zod schema for `ArtifactDeclaration`.
+ *
+ * Discriminated on `kind`. Validates the shape of one parsed artifact alias entry.
+ * The `key` field is a literal string and is not template-expanded; the schema
+ * does not enforce exact-vs-wildcard pattern membership — that check belongs
+ * to the parser helper that produces `kind`.
+ */
+export const ArtifactDeclarationSchema = z.discriminatedUnion('kind', [
+  ExactArtifactDeclarationSchema,
+  WildcardArtifactDeclarationSchema,
+]);
 
 /** Artifact declaration, inferred from `ArtifactDeclarationSchema`. */
 export type ArtifactDeclarationSchemaType = Readonly<z.output<typeof ArtifactDeclarationSchema>>;

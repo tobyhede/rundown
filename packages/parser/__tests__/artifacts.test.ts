@@ -7,6 +7,7 @@ import {
   parseRunbookDocument,
   RunbookSyntaxError,
 } from '../src/index.js';
+import type { ExactArtifactDeclaration } from '../src/index.js';
 
 describe('parseArtifactDeclaration', () => {
   it('parses an exact key (alphanumerics, dot, dash, underscore)', () => {
@@ -15,6 +16,19 @@ describe('parseArtifactDeclaration', () => {
       key: 'plan.json',
       kind: 'exact',
     });
+  });
+
+  it('narrows on kind discriminant', () => {
+    const decl = parseArtifactDeclaration('PlanPath "plan.json"');
+    if (decl === null) throw new Error('expected declaration');
+
+    if (decl.kind === 'exact') {
+      // Type-level assertion: narrowing produced ExactArtifactDeclaration.
+      const e: ExactArtifactDeclaration = decl;
+      expect(e.kind).toBe('exact');
+    } else {
+      throw new Error('expected exact');
+    }
   });
 
   it('parses a wildcard key with `*`', () => {

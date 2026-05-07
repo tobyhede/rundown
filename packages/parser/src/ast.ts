@@ -271,24 +271,50 @@ export interface OutputDeclaration {
 }
 
 /**
- * A named artifact alias declaration on an execution unit.
+ * Shared fields across both artifact declaration variants.
  *
- * Produced by `- ARTIFACTS\n  - Name "key"` syntax. The `key` field is a
- * literal artifact key (no template expansion). `kind` indicates whether the
- * key is exact (one artifact, may be created) or wildcard (matches existing
- * manifest entries). Resolution into structured `ArtifactRecord` values is the
- * runtime's responsibility.
- *
- * See docs/spec/language.md §10.1 Step `ARTIFACTS`.
+ * Not exported — consumers should use `ArtifactDeclaration` (the union) or one
+ * of the narrowed variants `ExactArtifactDeclaration` / `WildcardArtifactDeclaration`.
  */
-export interface ArtifactDeclaration {
+interface ArtifactDeclarationFields {
   /** Variable name to publish (e.g., "PlanPath") — must match `NAMED_IDENTIFIER_PATTERN` and not be a reserved template name. */
   readonly name: string;
   /** Quoted artifact key literal — exact (`plan.json`) or wildcard (`review-*.json`). */
   readonly key: string;
-  /** Discriminant: `'exact'` matches one artifact, `'wildcard'` enumerates manifest matches. */
-  readonly kind: 'exact' | 'wildcard';
 }
+
+/**
+ * Exact-key artifact declaration. The `key` field is a literal artifact key
+ * matching `EXACT_ARTIFACT_KEY_PATTERN`. At runtime this declaration resolves
+ * to a single `ArtifactRecord`, creating a manifest entry if one does not
+ * already exist for the (contextId, runId, runbook, key) identity.
+ */
+export interface ExactArtifactDeclaration extends ArtifactDeclarationFields {
+  readonly kind: 'exact';
+}
+
+/**
+ * Wildcard-key artifact declaration. The `key` field is a glob pattern matching
+ * `WILDCARD_ARTIFACT_KEY_PATTERN`. At runtime this declaration enumerates
+ * matching manifest entries from the same context (and eligible sibling runs);
+ * it never creates new manifest rows.
+ */
+export interface WildcardArtifactDeclaration extends ArtifactDeclarationFields {
+  readonly kind: 'wildcard';
+}
+
+/**
+ * A named artifact alias declaration on an execution unit.
+ *
+ * Discriminated by `kind` — exact declarations may create artifacts; wildcard
+ * declarations only read existing manifest entries.
+ *
+ * Produced by `- ARTIFACTS\n  - Name "key"` syntax. The `key` field is a
+ * literal artifact key (no template expansion).
+ *
+ * See docs/spec/language.md §10.1 Step `ARTIFACTS`.
+ */
+export type ArtifactDeclaration = ExactArtifactDeclaration | WildcardArtifactDeclaration;
 
 /**
  * Shared fields common to all step variants.
