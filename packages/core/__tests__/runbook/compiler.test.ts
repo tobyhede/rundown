@@ -8710,6 +8710,11 @@ echo "processing"
   });
 
   describe('OUTPUTS actions', () => {
+    // Compiler-only actor tests intentionally assert structural placement of
+    // storeStepOutputs. Naked step/substep OUTPUTS are file-backed channels:
+    // values only enter context.variables when the executor prepares
+    // RD_OUTPUTS_* files, runs the command, reads captured content, and sends
+    // SET_VARIABLES.
     function getState(machine: ReturnType<typeof compileRunbookToMachine>, id: string): any {
       return (machine.config.states as Record<string, unknown>)[id] as any;
     }
@@ -8995,10 +9000,11 @@ echo "processing"
     it('does not synthesize naked parent OUTPUTS values after BREAK without captured files', () => {
       // After BREAK the parent's always transitions evaluate and the parent-exit
       // transition carries storeStepOutputs for the parent's OUTPUTS (via
-      // decorateParentTransition). Parent OUTPUTS therefore DO appear in
-      // context.variables at terminal state — they fire on exit, not on the BREAK
-      // self-targeting signal. This is distinct from the structural test asserting
-      // that the self-targeting BREAK transition does not carry storeStepOutputs.
+      // decorateParentTransition). Because these declarations are naked, the
+      // compiler action does not synthesize values in core-only actor tests;
+      // executor-captured RD_OUTPUTS_* files are the only runtime value source.
+      // This is distinct from the structural test asserting that the self-targeting
+      // BREAK transition does not carry storeStepOutputs.
       const steps = createRunbook(`## 1. Loop
 - FOR i IN 1 TO 2
 - PASS CONTINUE
@@ -9153,10 +9159,10 @@ echo "processing"
 
     it('fires storeStepOutputs on the parent-exit transition of a FOR step', () => {
       // The parent-exit always transition (target === 'step::2') must carry
-      // storeStepOutputs so the FOR step's OUTPUTS are recorded after the last
-      // iteration. The loop-back transitions stay within the same parent and
-      // are intentionally NOT decorated. Last-iteration-wins runtime behavior
-      // is covered by the adjacent 'last iteration wins…' test.
+      // storeStepOutputs so executor-captured FOR outputs have a transition
+      // point at parent exit. The loop-back transitions stay within the same
+      // parent and are intentionally NOT decorated. This test is structural;
+      // value capture is covered by CLI integration tests.
       const steps = createRunbook(`## 1. Loop
 - FOR i IN 1 TO 2
 - PASS CONTINUE
@@ -9513,7 +9519,9 @@ echo "processing"
       const substepGotoTransition = getState(machine, 'step::1::1').on.PASS;
       expect(getActionTypes(substepGotoTransition.actions)).not.toContain('storeStepOutputs');
 
-      // Behavioral: parent outputs fire exactly once (via substep 1.2's COMPLETE exit).
+      // Structural/runtime cutoff: parent storeStepOutputs fires once via
+      // substep 1.2's COMPLETE exit, but naked OUTPUTS do not synthesize values
+      // without executor-captured files.
       const actor = createActor(machine);
       actor.start();
       actor.send({ type: 'PASS' }); // substep 1.1 GOTOs 1.2
