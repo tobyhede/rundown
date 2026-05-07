@@ -41,7 +41,7 @@ const RUNBOOK_REF = {
   path: 'planning/review/review-plan-risk-safety.runbook.md',
 } as const;
 const DEFAULT_TEMPLATE_HELPER_OPTIONS = {
-  cwd: path.join(tmpdir(), `rd-template-renderer-${process.pid}`),
+  cwd: path.join(tmpdir(), `rd-template-renderer-${String(process.pid)}`),
 };
 
 describe('expandLoopVariables', () => {

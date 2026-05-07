@@ -246,9 +246,10 @@ jest.unstable_mockModule('@rundown-org/core', () => {
         frame: Record<string, unknown>,
         options: { cwd: string },
       ) => {
-        const contextId = String(frame.ContextId ?? 'ctx');
-        const runId = String(frame.RunId ?? 'rd_0123456789abcdef0123456789abcdef');
-        const workPath = String(frame.WorkPath ?? '.rundown/work');
+        const contextId = typeof frame.ContextId === 'string' ? frame.ContextId : 'ctx';
+        const runId =
+          typeof frame.RunId === 'string' ? frame.RunId : 'rd_0123456789abcdef0123456789abcdef';
+        const workPath = typeof frame.WorkPath === 'string' ? frame.WorkPath : '.rundown/work';
         const uri = `rd://artifacts/${contextId}/runs/${runId}/${key}`;
         return kind === 'artifact'
           ? uri

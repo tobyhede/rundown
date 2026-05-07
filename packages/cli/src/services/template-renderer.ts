@@ -853,6 +853,7 @@ export function substituteText(
  *
  * @param command - Parsed command block, if present
  * @param variables - Variable map for substitution
+ * @param helperOptions - Filesystem options for artifact-producing helpers
  * @returns Command with code expanded and shell-escaped, or undefined
  */
 function substituteCommand(
@@ -864,6 +865,14 @@ function substituteCommand(
   return substituteRequiredCommand(command, variables, helperOptions);
 }
 
+/**
+ * Substitute template variables in a guaranteed command, applying shell escaping.
+ *
+ * @param command - Parsed command block (required)
+ * @param variables - Variable map for substitution
+ * @param helperOptions - Filesystem options for artifact-producing helpers
+ * @returns Command with code expanded and shell-escaped
+ */
 function substituteRequiredCommand(
   command: Command,
   variables: Record<string, unknown>,
@@ -880,6 +889,7 @@ function substituteRequiredCommand(
  *
  * @param substep - Parsed substep node
  * @param variables - Variable map for substitution
+ * @param helperOptions - Filesystem options for artifact-producing helpers
  * @param forVariable - FOR loop variable name — runbook paths scoped to it are skipped
  * @returns Substep with all string fields expanded
  */
@@ -912,6 +922,7 @@ function substituteSubstep(
  *
  * @param step - Parsed step node
  * @param variables - Variable map for substitution
+ * @param helperOptions - Filesystem options for artifact-producing helpers
  * @returns Step with all string fields expanded
  */
 function substituteStep(

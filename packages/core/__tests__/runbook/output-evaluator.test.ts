@@ -20,7 +20,7 @@ import {
 import { resetHelperInvokeWarnings } from '../../src/runbook/helper-invoke.js';
 
 const DEFAULT_EVALUATE_OPTIONS = {
-  cwd: path.join(tmpdir(), `rd-output-evaluator-${process.pid}`),
+  cwd: path.join(tmpdir(), `rd-output-evaluator-${String(process.pid)}`),
 } satisfies EvaluateOutputOptions;
 
 function evaluateOutputExpression(

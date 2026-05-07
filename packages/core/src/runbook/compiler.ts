@@ -725,6 +725,7 @@ function isNumberedStep(step: ResolvedStep): boolean {
  * @param stepName - The step name for target resolution
  * @param substepId - Optional substep ID within the step
  * @param steps - All parsed runbook steps for target lookup
+ * @param evaluationOptions - Filesystem options threaded through to OUTPUTS evaluation
  * @returns XState transition configuration
  */
 function buildTransition(
@@ -910,6 +911,7 @@ function buildParentExitAssign(
  *
  * @param config - The parent state config (discriminated by isParentState=true)
  * @param steps - The full steps array
+ * @param evaluationOptions - Filesystem options threaded through to OUTPUTS evaluation
  * @returns XState state config with `always` transitions
  */
 function buildParentStateConfig(
@@ -1713,6 +1715,7 @@ function buildParentStateConfig(
  * @param transition - The always transition entry to decorate
  * @param stepName - The parent step name
  * @param outputs - The parent step's OUTPUTS declarations (if any)
+ * @param evaluationOptions - Filesystem options threaded through to OUTPUTS evaluation
  * @returns The decorated transition (or the original if no decoration applies)
  */
 function decorateParentTransition<T extends RunbookAlwaysEntry & object>(
@@ -1764,6 +1767,7 @@ function decorateParentTransition<T extends RunbookAlwaysEntry & object>(
  * @param substepId - Substep ID for the exhausted action builder
  * @param steps - All parsed steps
  * @param resultKind - 'pass' or 'fail' for iteration result recording
+ * @param evaluationOptions - Filesystem options threaded through to OUTPUTS evaluation
  * @returns XState state config with `always` transitions
  */
 function buildRetryStateConfig(
@@ -2201,6 +2205,7 @@ function prependActions<T extends RunbookTransitionObject | (RunbookAlwaysEntry 
  * @param substepId - Optional current substep ID
  * @param steps - All parsed runbook steps
  * @param kind - Whether this transition is for 'pass' or 'fail'
+ * @param evaluationOptions - Filesystem options threaded through to OUTPUTS evaluation
  * @returns XState transition configuration
  */
 function buildActionTransition(
