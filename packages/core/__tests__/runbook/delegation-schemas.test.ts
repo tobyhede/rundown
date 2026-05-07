@@ -11,10 +11,13 @@ import {
 import { DelegationStatusEntrySchema, StatusResponseSchema } from '../../src/output/zod-schemas.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 
+const PARENT_RUN_ID = `rd_${'1'.repeat(32)}`;
+const CHILD_RUN_ID = `rd_${'2'.repeat(32)}`;
+
 describe('AncestorSnapshotSchema', () => {
   it('accepts valid ancestor snapshot', () => {
     const result = AncestorSnapshotSchema.safeParse({
-      runId: 'run-123',
+      runId: PARENT_RUN_ID,
       runbook: 'deploy.md',
       step: '1',
       substep: '2',
@@ -25,7 +28,7 @@ describe('AncestorSnapshotSchema', () => {
 
   it('accepts null substep', () => {
     const result = AncestorSnapshotSchema.safeParse({
-      runId: 'run-123',
+      runId: PARENT_RUN_ID,
       runbook: 'deploy.md',
       step: '1',
       substep: null,
@@ -38,7 +41,7 @@ describe('AncestorSnapshotSchema', () => {
 describe('AncestorSnapshotSchema structural fields', () => {
   it('accepts at and index fields', () => {
     const result = AncestorSnapshotSchema.safeParse({
-      runId: 'run-1',
+      runId: PARENT_RUN_ID,
       runbook: 'parent.md',
       step: '2',
       substep: '1',
@@ -51,7 +54,7 @@ describe('AncestorSnapshotSchema structural fields', () => {
 
   it('accepts without at and index (backward compat)', () => {
     const result = AncestorSnapshotSchema.safeParse({
-      runId: 'run-1',
+      runId: PARENT_RUN_ID,
       runbook: 'parent.md',
       step: '2',
       substep: null,
@@ -67,7 +70,7 @@ describe('ContextSnapshotSchema', () => {
       vars: { env: 'staging', version: '1.2.3' },
       ancestors: [
         {
-          runId: 'parent-1',
+          runId: PARENT_RUN_ID,
           runbook: 'parent.md',
           step: '1',
           substep: null,
@@ -179,6 +182,7 @@ describe('StepDelegationSchema', () => {
   const validDelegation = {
     tokenHash: `sha256:${'a'.repeat(64)}`,
     childRunbookPath: 'child-runbook.md',
+    childRunbookRef: { source: 'project', path: 'child-runbook.md' },
     contextSnapshot: {
       vars: { env: 'staging' },
       ancestors: [],
@@ -212,7 +216,7 @@ describe('StepDelegationSchema', () => {
   it('accepts non-null childRunId', () => {
     const result = StepDelegationSchema.safeParse({
       ...validDelegation,
-      childRunId: 'child-run-456',
+      childRunId: CHILD_RUN_ID,
     });
     expect(result.success).toBe(true);
   });
@@ -221,7 +225,7 @@ describe('StepDelegationSchema', () => {
     const result = StepDelegationSchema.safeParse({
       ...validDelegation,
       token: 'rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ234567',
-      childRunId: 'child-run-456',
+      childRunId: CHILD_RUN_ID,
     });
     expect(result.success).toBe(false);
   });
@@ -280,9 +284,9 @@ describe('ClaimRecordSchema', () => {
   const validClaim = {
     kind: 'claim-record',
     claimId: 'rdclm_abcdefghijklmnopqrstu1',
-    childRunId: 'wf-2026-05-01-child',
+    childRunId: CHILD_RUN_ID,
     tokenHash: `sha256:${'a'.repeat(64)}`,
-    parentRunId: 'wf-2026-05-01-parent',
+    parentRunId: PARENT_RUN_ID,
     parentStepId: '1.1',
     parentStep: '1',
     parentFrameKey: '1|',
@@ -304,7 +308,7 @@ describe('ClaimRecordSchema', () => {
 
 describe('SessionDataSchema claims registry', () => {
   it('loads sessions without claims using an empty claims registry', () => {
-    const result = SessionDataSchema.safeParse({ defaultStack: ['parent'] });
+    const result = SessionDataSchema.safeParse({ defaultStack: [PARENT_RUN_ID] });
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.claims).toEqual({});
@@ -313,14 +317,14 @@ describe('SessionDataSchema claims registry', () => {
 
   it('rejects claim records whose map key differs from claimId', () => {
     const result = SessionDataSchema.safeParse({
-      defaultStack: ['parent'],
+      defaultStack: [PARENT_RUN_ID],
       claims: {
         rdclm_abcdefghijklmnopqrstu1: {
           kind: 'claim-record',
           claimId: 'rdclm_1234567890abcdefghijkl',
-          childRunId: 'child',
+          childRunId: CHILD_RUN_ID,
           tokenHash: `sha256:${'a'.repeat(64)}`,
-          parentRunId: 'parent',
+          parentRunId: PARENT_RUN_ID,
           parentStepId: '1.1',
           claimedAt: '2026-05-01T00:00:00.000Z',
           updatedAt: '2026-05-01T00:00:01.000Z',
@@ -333,16 +337,16 @@ describe('SessionDataSchema claims registry', () => {
   it('rejects duplicate claim records for the same childRunId', () => {
     const base = {
       kind: 'claim-record',
-      childRunId: 'child',
+      childRunId: CHILD_RUN_ID,
       tokenHash: `sha256:${'b'.repeat(64)}`,
-      parentRunId: 'parent',
+      parentRunId: PARENT_RUN_ID,
       parentStepId: '1.1',
       claimedAt: '2026-05-01T00:00:00.000Z',
       updatedAt: '2026-05-01T00:00:01.000Z',
     };
 
     const result = SessionDataSchema.safeParse({
-      defaultStack: ['parent'],
+      defaultStack: [PARENT_RUN_ID],
       claims: {
         rdclm_abcdefghijklmnopqrstu1: {
           ...base,
@@ -411,6 +415,7 @@ describe('SubstepStateSchema backward compatibility', () => {
       delegation: {
         tokenHash: `sha256:${'b'.repeat(64)}`,
         childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
         contextSnapshot: { vars: {}, ancestors: [] },
         childRunId: null,
         createdAt: '2026-02-27T10:00:00.000Z',
@@ -430,11 +435,12 @@ describe('RunbookStateSchema round-trip with delegation', () => {
     const delegation = {
       tokenHash: `sha256:${'c'.repeat(64)}`,
       childRunbookPath: 'child.md',
+      childRunbookRef: { source: 'project', path: 'child.md' },
       contextSnapshot: {
         vars: { env: 'prod' },
         ancestors: [
           {
-            runId: 'parent-1',
+            runId: PARENT_RUN_ID,
             runbook: 'parent.md',
             step: '1',
             substep: '2',
@@ -442,7 +448,7 @@ describe('RunbookStateSchema round-trip with delegation', () => {
           },
         ],
       },
-      childRunId: 'child-run-789',
+      childRunId: CHILD_RUN_ID,
       createdAt: '2026-02-27T10:00:00.000Z',
       cancelledAt: null,
     };
@@ -457,7 +463,7 @@ describe('RunbookStateSchema round-trip with delegation', () => {
       expect(ss?.delegation?.childRunbookPath).toBe('child.md');
       expect(ss?.delegation?.contextSnapshot.vars).toEqual({ env: 'prod' });
       expect(ss?.delegation?.contextSnapshot.ancestors).toHaveLength(1);
-      expect(ss?.delegation?.childRunId).toBe('child-run-789');
+      expect(ss?.delegation?.childRunId).toBe(CHILD_RUN_ID);
     }
   });
 });
@@ -578,8 +584,8 @@ describe('StatusResponseSchema with delegations', () => {
 /** Helper to create a minimal valid RunbookState for schema testing. */
 function createMinimalRunbookState(overrides: Record<string, unknown> = {}) {
   return {
-    id: 'test-id',
-    runbook: 'test.md',
+    id: PARENT_RUN_ID,
+    runbook: { source: 'project', path: 'test.md' },
     runbookPath: 'test.md',
     step: '1',
     stepName: 'Test step',

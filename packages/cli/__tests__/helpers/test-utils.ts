@@ -12,6 +12,8 @@ import {
   setWriter,
   ConsoleWriter,
   getErrorMessage,
+  RUNBOOK_SOURCES,
+  isRunId,
   runsDir,
   sessionPath as _sessionPath,
   runbooksDir,
@@ -498,9 +500,16 @@ function isRunbookState(value: unknown): value is RunbookState {
     variables?: unknown;
     steps?: unknown;
   };
+  const runbook = state.runbook;
+  if (typeof runbook !== 'object' || runbook === null) return false;
+  const runbookRef = runbook as { source?: unknown; path?: unknown };
+  const hasKnownSource =
+    typeof runbookRef.source === 'string' &&
+    (RUNBOOK_SOURCES as readonly string[]).includes(runbookRef.source);
   return (
-    typeof state.id === 'string' &&
-    typeof state.runbook === 'string' &&
+    isRunId(state.id) &&
+    hasKnownSource &&
+    typeof runbookRef.path === 'string' &&
     typeof state.runbookPath === 'string' &&
     typeof state.step === 'string' &&
     typeof state.stepName === 'string' &&
@@ -521,7 +530,9 @@ export async function readRunbookState(
   try {
     const content = await readFile(join(workspace.statePath(), `${id}.json`), 'utf-8');
     const parsed = JSON.parse(content) as unknown;
-    return isRunbookState(parsed) ? parsed : null;
+    if (!isRunbookState(parsed)) return null;
+    if (parsed.id !== id) return null;
+    return parsed;
   } catch {
     return null;
   }
@@ -1072,20 +1083,20 @@ export function buildSubstep(overrides: Partial<Substep> = {}): Substep {
  *   3.  Delegation tokens (`rdtk_` + alnum, including truncated `rdtk_XXX...YYYY`) → `<token>`
  *   4.  SHA-256 hex digests (e.g. delegation token_hash field) → `<tokenHash>`
  *   5.  Full UUIDs → `<uuid>`
- *   6.  Runbook state IDs of the form `wf-YYYY-MM-DD-xxxxxx` (base-36 suffix) → `<runbookId>`
+ *   6.  Runbook state IDs of the form `rd_<32 lowercase hex>` → `<runbookId>`
  *   7.  Numeric `"startedAt"` / `"completedAt"` / `"expiresAt"` / etc. epoch ms field values → `<epochMs>`
  *   8.  `"durationMs"` / `"took"` numeric field values → `<ms>`
  *   9.  Any 8-char lowercase hex string at word boundaries → `<hex8>` (see note)
  *   10. ISO 8601 timestamps → `<timestamp>`
  *   11. PID banners → `<pid>`
  *
- * Rule 9 note: the 8-hex rule is the catch-all for built-in template variables
- * `{{RunId}}` and `{{ContextId}}` (both `randomBytes(4).toString('hex')`, see
+ * Rule 9 note: the 8-hex rule is the catch-all for the built-in `{{ContextId}}`
+ * template variable (`randomBytes(4).toString('hex')`, see
  * `packages/cli/src/services/variable-discovery.ts`). It is deliberately
  * aggressive and will ALSO mask git short SHAs, step-frame hashes, and any
- * 8-hex token that happens to appear in user prompt text. Rules 7 and 8
- * (field-scoped epoch ms and duration) run BEFORE this rule so pure-digit
- * 8-char values in known fields aren't stolen by the generic hex8 pattern.
+ * 8-hex token that happens to appear in user prompt text. Rules 6, 7, and 8
+ * run BEFORE this rule so concrete run IDs, pure-digit epoch ms values in
+ * known fields, and durations aren't stolen by the generic hex8 pattern.
  * When reviewing a snapshot diff, confirm each `<hex8>` substitution is
  * legitimate — anything unexpected masked by this rule is a signal, not noise.
  *
@@ -1149,8 +1160,8 @@ export function normalizeCliOutput(output: string, workspace: TestWorkspace): st
     '<uuid>',
   );
 
-  // 6. Runbook state IDs of the form `wf-YYYY-MM-DD-xxxxxx` (base-36 suffix, 1-6 chars)
-  text = text.replace(/\bwf-\d{4}-\d{2}-\d{2}-[a-z0-9]{1,6}\b/g, '<runbookId>');
+  // 6. Runbook state IDs of the form `rd_<32 lowercase hex>`.
+  text = text.replace(/\brd_[a-f0-9]{32}\b/g, '<runbookId>');
 
   // 7. Numeric epoch ms for known fields (field-scoped so we don't eat arbitrary numbers).
   //    Runs BEFORE rule 9 so an 8-digit epoch ms value isn't stolen by the
@@ -1165,13 +1176,13 @@ export function normalizeCliOutput(output: string, workspace: TestWorkspace): st
   text = text.replace(/"durationMs":\s*\d+/g, '"durationMs": <ms>');
   text = text.replace(/"took":\s*\d+/g, '"took": <ms>');
 
-  // 9. Any 8-char lowercase hex at word boundaries — the catch-all for
-  //    {{RunId}} and {{ContextId}} template variables (both 4 random bytes
-  //    rendered as hex, see variable-discovery.ts). Deliberately aggressive:
-  //    also masks git short SHAs, step-frame hashes, and 8-hex tokens in
-  //    user prompt text. Rules 5, 6, 7, and 8 run first so UUIDs, wf-* ids,
-  //    field-scoped epoch ms, and duration values are preserved. Review
-  //    each `<hex8>` substitution in snapshot diffs.
+  // 9. Any 8-char lowercase hex at word boundaries — the catch-all for the
+  //    {{ContextId}} template variable (4 random bytes rendered as hex, see
+  //    variable-discovery.ts). Deliberately aggressive: also masks git short
+  //    SHAs, step-frame hashes, and 8-hex tokens in user prompt text. Rules
+  //    5, 6, 7, and 8 run first so UUIDs, run IDs, field-scoped epoch ms, and
+  //    duration values are preserved. Review each `<hex8>` substitution in
+  //    snapshot diffs.
   text = text.replace(/\b[0-9a-f]{8}\b/g, '<hex8>');
 
   // 10. ISO 8601 timestamps (with or without fractional seconds, Z or ±HH:MM)

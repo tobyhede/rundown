@@ -21,6 +21,7 @@ import {
   type StepId,
   type RunbookState,
   type ClaimId,
+  type RunId,
 } from '@rundown-org/core';
 import { runExecutionLoop, type ExecutionTerminalReleaseMode } from '../services/execution.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
@@ -83,7 +84,7 @@ export type BuildGotoContextResult =
  */
 export async function resolveTerminalReleaseModeForRunbook(
   manager: RunbookStateManager,
-  runbookId: RunbookState['id'],
+  runbookId: RunId,
 ): Promise<ExecutionTerminalReleaseMode> {
   const session = await manager.loadSession();
   const claimed = Object.values(session.claims).some((claim) => claim.childRunId === runbookId);

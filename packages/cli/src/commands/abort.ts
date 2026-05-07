@@ -14,6 +14,7 @@ import {
   buildCompletionKey,
   buildResolvedCompletion,
   deriveActiveFrame,
+  type RunId,
   type RunbookState,
 } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
@@ -40,7 +41,7 @@ import type { TransitionOrchestrationPolicy } from '../helpers/transition-orches
  */
 async function propagateForceAbort(
   manager: RunbookStateManager,
-  parentRunId: string,
+  parentRunId: RunId,
   cwd: string,
   output: OutputEmitter,
 ): Promise<void> {
@@ -173,7 +174,7 @@ export function registerAbortCommand(program: Command): void {
 
           let abortResult: ReturnType<typeof abortDelegation>;
           let freshParent: RunbookState | null = null;
-          let childRunId: string | null = null;
+          let childRunId: RunId | null = null;
           let childRunbookPath: string = scanResult.delegation.childRunbookPath;
 
           /**

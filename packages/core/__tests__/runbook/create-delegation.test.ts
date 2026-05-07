@@ -7,10 +7,11 @@ import {
   TOKEN_PREFIX,
 } from '../../src/runbook/delegation-token.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
-import type { ResolvedStep, AncestorSnapshot } from '../../src/runbook/types.js';
+import type { ResolvedStep, AncestorSnapshot, StepDelegation } from '../../src/runbook/types.js';
 import {
   brandEffectiveVarsForTest,
   brandInitialTemplateVarsForTest,
+  brandRunIdForTest,
 } from '../helpers/effective-vars.js';
 import {
   DEFAULT_TRANSITIONS,
@@ -21,6 +22,11 @@ import {
   makeSteps,
 } from './delegation-service-fixtures.js';
 
+const CLAIMED_RUN_ID = brandRunIdForTest(`rd_${'4'.repeat(32)}`);
+const COMPLETED_RUN_ID = brandRunIdForTest(`rd_${'5'.repeat(32)}`);
+const ANCESTOR_RUN_ID = brandRunIdForTest(`rd_${'6'.repeat(32)}`);
+const PARENT_RUN_ID = brandRunIdForTest(`rd_${'7'.repeat(32)}`);
+
 describe('createDelegation', () => {
   it('succeeds on a step with substeps', () => {
     const state = makeState();
@@ -29,6 +35,10 @@ describe('createDelegation', () => {
       state,
       stepId: '1.1',
       childRunbookPath: 'child.md',
+      childRunbookRef: {
+        source: 'plugin',
+        path: 'planning/review/review-plan-risk-safety.runbook.md',
+      },
       frameKey: buildFrameKey('1'),
     };
 
@@ -39,6 +49,10 @@ describe('createDelegation', () => {
     expect(result.token).toBeDefined();
     expect(result.tokenHash).toBeDefined();
     expect(result.delegation).toBeDefined();
+    expect(result.delegation.childRunbookRef).toEqual({
+      source: 'plugin',
+      path: 'planning/review/review-plan-risk-safety.runbook.md',
+    });
     expect(result.updatedSubstepStates).toBeDefined();
   });
 
@@ -46,7 +60,13 @@ describe('createDelegation', () => {
     const state = makeState();
     const steps = makeSteps();
     const result = createDelegation(
-      { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+      {
+        state,
+        stepId: '1.1',
+        childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
+        frameKey: buildFrameKey('1'),
+      },
       steps,
     );
 
@@ -62,7 +82,13 @@ describe('createDelegation', () => {
     const state = makeState();
     const steps = makeSteps();
     const result = createDelegation(
-      { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+      {
+        state,
+        stepId: '1.1',
+        childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
+        frameKey: buildFrameKey('1'),
+      },
       steps,
     );
 
@@ -75,7 +101,13 @@ describe('createDelegation', () => {
     const state = makeState();
     const steps = makeSteps();
     const result = createDelegation(
-      { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+      {
+        state,
+        stepId: '1.1',
+        childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
+        frameKey: buildFrameKey('1'),
+      },
       steps,
     );
 
@@ -93,7 +125,13 @@ describe('createDelegation', () => {
     const steps = makeSteps();
 
     const result = createDelegation(
-      { state, stepId: '99.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+      {
+        state,
+        stepId: '99.1',
+        childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
+        frameKey: buildFrameKey('1'),
+      },
       steps,
     );
 
@@ -109,7 +147,13 @@ describe('createDelegation', () => {
     const steps = makeSteps();
 
     const result = createDelegation(
-      { state, stepId: '1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+      {
+        state,
+        stepId: '1',
+        childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
+        frameKey: buildFrameKey('1'),
+      },
       steps,
     );
 
@@ -134,7 +178,13 @@ describe('createDelegation', () => {
     ];
 
     const result = createDelegation(
-      { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+      {
+        state,
+        stepId: '1.1',
+        childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
+        frameKey: buildFrameKey('1'),
+      },
       steps,
     );
 
@@ -147,9 +197,10 @@ describe('createDelegation', () => {
   });
 
   it('returns { status: "delegation_exists" } for duplicate active delegation', () => {
-    const existingDelegation = {
+    const existingDelegation: StepDelegation = {
       tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
       childRunbookPath: 'other-child.md',
+      childRunbookRef: { source: 'project', path: 'other-child.md' },
       contextSnapshot: { vars: brandEffectiveVarsForTest({}), ancestors: [] },
       childRunId: null,
       createdAt: '2026-02-27T10:00:00.000Z',
@@ -169,7 +220,13 @@ describe('createDelegation', () => {
     const steps = makeSteps();
 
     const result = createDelegation(
-      { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+      {
+        state,
+        stepId: '1.1',
+        childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
+        frameKey: buildFrameKey('1'),
+      },
       steps,
     );
 
@@ -181,11 +238,12 @@ describe('createDelegation', () => {
   });
 
   it('allows re-delegation when previous delegation has childRunId set', () => {
-    const claimedDelegation = {
+    const claimedDelegation: StepDelegation = {
       tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
       childRunbookPath: 'other-child.md',
+      childRunbookRef: { source: 'project', path: 'other-child.md' },
       contextSnapshot: { vars: brandEffectiveVarsForTest({}), ancestors: [] },
-      childRunId: 'run_123',
+      childRunId: CLAIMED_RUN_ID,
       createdAt: '2026-02-27T10:00:00.000Z',
       cancelledAt: null,
     };
@@ -198,7 +256,13 @@ describe('createDelegation', () => {
     const steps = makeSteps();
 
     const result = createDelegation(
-      { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+      {
+        state,
+        stepId: '1.1',
+        childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
+        frameKey: buildFrameKey('1'),
+      },
       steps,
     );
 
@@ -212,9 +276,10 @@ describe('createDelegation', () => {
   });
 
   it('allows re-delegation when previous delegation is cancelled', () => {
-    const cancelledDelegation = {
+    const cancelledDelegation: StepDelegation = {
       tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
       childRunbookPath: 'other-child.md',
+      childRunbookRef: { source: 'project', path: 'other-child.md' },
       contextSnapshot: { vars: brandEffectiveVarsForTest({}), ancestors: [] },
       childRunId: null,
       createdAt: '2026-02-27T10:00:00.000Z',
@@ -234,7 +299,13 @@ describe('createDelegation', () => {
     const steps = makeSteps();
 
     const result = createDelegation(
-      { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+      {
+        state,
+        stepId: '1.1',
+        childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
+        frameKey: buildFrameKey('1'),
+      },
       steps,
     );
 
@@ -254,7 +325,13 @@ describe('createDelegation', () => {
     });
     const steps = makeSteps();
     const result = createDelegation(
-      { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+      {
+        state,
+        stepId: '1.1',
+        childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
+        frameKey: buildFrameKey('1'),
+      },
       steps,
     );
 
@@ -270,7 +347,7 @@ describe('createDelegation', () => {
   it('includes provided ancestors in snapshot', () => {
     const ancestors: readonly AncestorSnapshot[] = [
       {
-        runId: 'grandparent-1',
+        runId: ANCESTOR_RUN_ID,
         runbook: 'grandparent.md',
         step: '1',
         substep: null,
@@ -284,6 +361,7 @@ describe('createDelegation', () => {
         state,
         stepId: '1.1',
         childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
         ancestors,
         frameKey: buildFrameKey('1'),
       },
@@ -294,7 +372,7 @@ describe('createDelegation', () => {
     if (result.status !== 'created') return;
 
     expect(result.delegation.contextSnapshot.ancestors).toHaveLength(1);
-    expect(result.delegation.contextSnapshot.ancestors[0].runId).toBe('grandparent-1');
+    expect(result.delegation.contextSnapshot.ancestors[0].runId).toBe(ANCESTOR_RUN_ID);
   });
 
   it('merges extra vars into snapshot vars', () => {
@@ -307,6 +385,7 @@ describe('createDelegation', () => {
         state,
         stepId: '1.1',
         childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
         extraVars: { version: '3.0', env: 'override' },
         frameKey: buildFrameKey('1'),
       },
@@ -331,7 +410,13 @@ describe('createDelegation', () => {
     });
     const steps = makeSteps();
     const result = createDelegation(
-      { state, stepId: '1.2', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+      {
+        state,
+        stepId: '1.2',
+        childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
+        frameKey: buildFrameKey('1'),
+      },
       steps,
     );
 
@@ -365,7 +450,13 @@ describe('createDelegation', () => {
     });
     const steps = makeSteps();
     const result = createDelegation(
-      { state, stepId: '1.2', childRunbookPath: 'child.md', frameKey: buildFrameKey('1', 3) },
+      {
+        state,
+        stepId: '1.2',
+        childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
+        frameKey: buildFrameKey('1', 3),
+      },
       steps,
     );
 
@@ -385,7 +476,13 @@ describe('createDelegation', () => {
     });
     const steps = makeSteps();
     const result = createDelegation(
-      { state, stepId: '1.2', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+      {
+        state,
+        stepId: '1.2',
+        childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
+        frameKey: buildFrameKey('1'),
+      },
       steps,
     );
 
@@ -401,7 +498,13 @@ describe('createDelegation', () => {
     const state = makeState();
     const steps = makeSteps();
     const result = createDelegation(
-      { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+      {
+        state,
+        stepId: '1.1',
+        childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
+        frameKey: buildFrameKey('1'),
+      },
       steps,
     );
 
@@ -418,7 +521,13 @@ describe('createDelegation', () => {
     });
     const steps = makeSimpleSteps();
     const result = createDelegation(
-      { state, stepId: '1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+      {
+        state,
+        stepId: '1',
+        childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
+        frameKey: buildFrameKey('1'),
+      },
       steps,
     );
 
@@ -437,7 +546,13 @@ describe('createDelegation', () => {
     const steps = makeSteps();
 
     const result = createDelegation(
-      { state, stepId: 'invalid', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+      {
+        state,
+        stepId: 'invalid',
+        childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
+        frameKey: buildFrameKey('1'),
+      },
       steps,
     );
 
@@ -455,7 +570,13 @@ describe('createDelegation', () => {
     // Parses as step=1, at=2, substep=1. Substep '1' is valid, so 3b passes.
     // Branch 3c fires because kind !== 'for' and kind !== 'prompted-for'.
     const result = createDelegation(
-      { state, stepId: '1.2.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1', 2) },
+      {
+        state,
+        stepId: '1.2.1',
+        childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
+        frameKey: buildFrameKey('1', 2),
+      },
       steps,
     );
 
@@ -472,7 +593,13 @@ describe('createDelegation', () => {
 
     // Parses as step=1, at=2, substep=3. Branch 3b fires because '3' is not in ['1','2'].
     const result = createDelegation(
-      { state, stepId: '1.2.3', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+      {
+        state,
+        stepId: '1.2.3',
+        childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
+        frameKey: buildFrameKey('1'),
+      },
       steps,
     );
 
@@ -491,7 +618,13 @@ describe('createDelegation', () => {
 
     // Parses as step=1, substep=1. Branch 3b fires because step has no substeps at all.
     const result = createDelegation(
-      { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+      {
+        state,
+        stepId: '1.1',
+        childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
+        frameKey: buildFrameKey('1'),
+      },
       steps,
     );
 
@@ -510,7 +643,13 @@ describe('createDelegation', () => {
 
     // 1.2.1 → step=1, at=2, substep=1; prompted-for is allowed by 3c
     const delegation = createDelegation(
-      { state, stepId: '1.2.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1', 2) },
+      {
+        state,
+        stepId: '1.2.1',
+        childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
+        frameKey: buildFrameKey('1', 2),
+      },
       steps,
     );
     expect(delegation.status).toBe('created');
@@ -522,7 +661,13 @@ describe('createDelegation', () => {
     const state = makeState({ forStack: undefined });
     const steps = makeForSteps();
     const result = createDelegation(
-      { state, stepId: '1.2.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1', 2) },
+      {
+        state,
+        stepId: '1.2.1',
+        childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
+        frameKey: buildFrameKey('1', 2),
+      },
       steps,
     );
 
@@ -549,7 +694,13 @@ describe('createDelegation', () => {
     });
     const steps = makeForSteps();
     const result = createDelegation(
-      { state, stepId: '1.3.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1', 3) },
+      {
+        state,
+        stepId: '1.3.1',
+        childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
+        frameKey: buildFrameKey('1', 3),
+      },
       steps,
     );
 
@@ -565,7 +716,13 @@ describe('createDelegation', () => {
     const state = makeState({ templateVars: undefined });
     const steps = makeSteps();
     const result = createDelegation(
-      { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+      {
+        state,
+        stepId: '1.1',
+        childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
+        frameKey: buildFrameKey('1'),
+      },
       steps,
     );
 
@@ -576,11 +733,12 @@ describe('createDelegation', () => {
   });
 
   it('allows re-delegation after child run completes (childRunId set)', () => {
-    const completedDelegation = {
+    const completedDelegation: StepDelegation = {
       tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
       childRunbookPath: 'old-child.md',
+      childRunbookRef: { source: 'project', path: 'old-child.md' },
       contextSnapshot: { vars: brandEffectiveVarsForTest({}), ancestors: [] },
-      childRunId: 'completed-run-123',
+      childRunId: COMPLETED_RUN_ID,
       createdAt: '2026-02-27T10:00:00.000Z',
       cancelledAt: null,
     };
@@ -593,7 +751,13 @@ describe('createDelegation', () => {
     const steps = makeSteps();
 
     const result = createDelegation(
-      { state, stepId: '1.1', childRunbookPath: 'new-child.md', frameKey: buildFrameKey('1') },
+      {
+        state,
+        stepId: '1.1',
+        childRunbookPath: 'new-child.md',
+        childRunbookRef: { source: 'project', path: 'new-child.md' },
+        frameKey: buildFrameKey('1'),
+      },
       steps,
     );
 
@@ -617,6 +781,7 @@ describe('createDelegation', () => {
         state,
         stepId: '1.1',
         childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
         extraVars: { env: 'production', tier: 'premium' },
         frameKey: buildFrameKey('1'),
       },
@@ -641,7 +806,13 @@ describe('createDelegation', () => {
     });
     const steps = makeSteps();
     const result = createDelegation(
-      { state, stepId: '1.2', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+      {
+        state,
+        stepId: '1.2',
+        childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
+        frameKey: buildFrameKey('1'),
+      },
       steps,
     );
 
@@ -666,7 +837,13 @@ describe('createDelegation', () => {
     const steps = makeSteps();
 
     const result1 = createDelegation(
-      { state, stepId: '1.1', childRunbookPath: 'child1.md', frameKey: buildFrameKey('1') },
+      {
+        state,
+        stepId: '1.1',
+        childRunbookPath: 'child1.md',
+        childRunbookRef: { source: 'project', path: 'child1.md' },
+        frameKey: buildFrameKey('1'),
+      },
       steps,
     );
 
@@ -675,7 +852,13 @@ describe('createDelegation', () => {
 
     // Create delegation on different substep
     const result2 = createDelegation(
-      { state, stepId: '1.2', childRunbookPath: 'child2.md', frameKey: buildFrameKey('1') },
+      {
+        state,
+        stepId: '1.2',
+        childRunbookPath: 'child2.md',
+        childRunbookRef: { source: 'project', path: 'child2.md' },
+        frameKey: buildFrameKey('1'),
+      },
       steps,
     );
 
@@ -703,7 +886,13 @@ describe('createDelegation', () => {
     });
     const steps = makeSteps();
     const result = createDelegation(
-      { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+      {
+        state,
+        stepId: '1.1',
+        childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
+        frameKey: buildFrameKey('1'),
+      },
       steps,
     );
 
@@ -718,7 +907,13 @@ describe('createDelegation', () => {
     const state = makeState({ forStack: [] });
     const steps = makeSteps();
     const result = createDelegation(
-      { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+      {
+        state,
+        stepId: '1.1',
+        childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
+        frameKey: buildFrameKey('1'),
+      },
       steps,
     );
 
@@ -732,7 +927,13 @@ describe('createDelegation', () => {
     const state = makeState({ substep: undefined });
     const steps = makeSteps();
     const result = createDelegation(
-      { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+      {
+        state,
+        stepId: '1.1',
+        childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
+        frameKey: buildFrameKey('1'),
+      },
       steps,
     );
 
@@ -745,7 +946,7 @@ describe('createDelegation', () => {
 
   it('handles ancestors with empty vars', () => {
     const ancestor: AncestorSnapshot = {
-      runId: 'anc-1',
+      runId: ANCESTOR_RUN_ID,
       runbook: 'ancestor.md',
       step: '2',
       substep: null,
@@ -758,6 +959,7 @@ describe('createDelegation', () => {
         state,
         stepId: '1.1',
         childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
         ancestors: [ancestor],
         frameKey: buildFrameKey('1'),
       },
@@ -776,7 +978,13 @@ describe('createDelegation', () => {
     const steps = makeSteps();
     const before = new Date();
     const result = createDelegation(
-      { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+      {
+        state,
+        stepId: '1.1',
+        childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
+        frameKey: buildFrameKey('1'),
+      },
       steps,
     );
 
@@ -799,7 +1007,13 @@ describe('createDelegation', () => {
     });
     const steps = makeSteps();
     const result = createDelegation(
-      { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1', 2) },
+      {
+        state,
+        stepId: '1.1',
+        childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
+        frameKey: buildFrameKey('1', 2),
+      },
       steps,
     );
 
@@ -814,9 +1028,10 @@ describe('createDelegation', () => {
   });
 
   it('allows delegation on iteration 2 when iteration 1 has active delegation', () => {
-    const delegation1 = {
+    const delegation1: StepDelegation = {
       tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
       childRunbookPath: 'child.md',
+      childRunbookRef: { source: 'project', path: 'child.md' },
       contextSnapshot: { vars: brandEffectiveVarsForTest({}), ancestors: [] },
       childRunId: null,
       createdAt: '2026-02-27T10:00:00.000Z',
@@ -832,7 +1047,13 @@ describe('createDelegation', () => {
 
     // Delegate on iteration 2 — should succeed even though iteration 1 has active delegation
     const result = createDelegation(
-      { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1', 2) },
+      {
+        state,
+        stepId: '1.1',
+        childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
+        frameKey: buildFrameKey('1', 2),
+      },
       steps,
     );
 
@@ -853,7 +1074,13 @@ describe('createDelegation', () => {
     const state = makeState({ substepStates: undefined });
     const steps = makeSimpleSteps();
     const result = createDelegation(
-      { state, stepId: '1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1', 3) },
+      {
+        state,
+        stepId: '1',
+        childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
+        frameKey: buildFrameKey('1', 3),
+      },
       steps,
     );
 
@@ -872,6 +1099,7 @@ describe('createDelegation', () => {
         state,
         stepId: '1.1',
         childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
         extraVars: { items: ['a', 'b', 'c'] },
         frameKey: buildFrameKey('1'),
       },
@@ -892,6 +1120,7 @@ describe('createDelegation', () => {
         state,
         stepId: '1.1',
         childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
         frameKey: buildFrameKey('1'),
       },
       steps,
@@ -910,6 +1139,7 @@ describe('createDelegation', () => {
         state,
         stepId: '1.1',
         childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
         extraVars: { environment: 'staging', port: 3000 },
         ancestors: [],
         frameKey: buildFrameKey('1'),
@@ -930,6 +1160,7 @@ describe('createDelegation', () => {
         state,
         stepId: '1.1',
         childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
         extraVars: undefined,
         ancestors: [],
         frameKey: buildFrameKey('1'),
@@ -951,7 +1182,7 @@ describe('createDelegation', () => {
       const state = makeState({
         parentLinkage: {
           kind: 'delegation',
-          parentRunId: 'parent-run-id',
+          parentRunId: PARENT_RUN_ID,
           parentStepId: '1',
           tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
         },
@@ -959,13 +1190,19 @@ describe('createDelegation', () => {
       const steps = makeSteps();
 
       const result = createDelegation(
-        { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+        {
+          state,
+          stepId: '1.1',
+          childRunbookPath: 'child.md',
+          childRunbookRef: { source: 'project', path: 'child.md' },
+          frameKey: buildFrameKey('1'),
+        },
         steps,
       );
 
       expect(result.status).toBe('parent_is_delegated');
       if (result.status !== 'parent_is_delegated') return;
-      expect(result.parentRunId).toBe('parent-run-id');
+      expect(result.parentRunId).toBe(PARENT_RUN_ID);
       expect(result.error.code).toBe('RD-819');
       expect(result.error.message).toMatch(/nested delegation forbidden/i);
     });
@@ -975,7 +1212,13 @@ describe('createDelegation', () => {
       const steps = makeSteps();
 
       const result = createDelegation(
-        { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+        {
+          state,
+          stepId: '1.1',
+          childRunbookPath: 'child.md',
+          childRunbookRef: { source: 'project', path: 'child.md' },
+          frameKey: buildFrameKey('1'),
+        },
         steps,
       );
 
@@ -990,14 +1233,20 @@ describe('createDelegation', () => {
       const state = makeState({
         parentLinkage: {
           kind: 'inline',
-          parentRunId: 'parent-run-id',
+          parentRunId: PARENT_RUN_ID,
           parentStepId: '1',
         },
       });
       const steps = makeSteps();
 
       const result = createDelegation(
-        { state, stepId: '1.1', childRunbookPath: 'child.md', frameKey: buildFrameKey('1') },
+        {
+          state,
+          stepId: '1.1',
+          childRunbookPath: 'child.md',
+          childRunbookRef: { source: 'project', path: 'child.md' },
+          frameKey: buildFrameKey('1'),
+        },
         steps,
       );
 

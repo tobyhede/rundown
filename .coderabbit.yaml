@@ -2,7 +2,7 @@
 language: "en-US"
 tone_instructions: >-
   Focus on type safety, state machine correctness, security policy correctness,
-  persisted state compatibility, CLI output stability, and design principles
+  persisted state no-migration, CLI output stability, and design principles
   from CLAUDE.md. Be direct and specific. Flag action-type mapping violations.
 
 reviews:
@@ -56,7 +56,11 @@ reviews:
         - No silent mapping: STOP, COMPLETE, BREAK, DEFER, GOTO, NEXT, CONTINUE, and RETRY must preserve their distinct semantics.
         - No synthetic IDs: use XState native event system and state graph structure.
         - Guard functions must express domain conditions only.
-        - Persisted state compatibility: changes to RunbookState, snapshots, lifecycle, variables, delegation state, or schemaVersion must follow the no-migration rule from CLAUDE.md.
+        - Persisted state no-migration: this project is pre-release. Do not request
+          migrations, compatibility shims, fallback reconstruction, or legacy identity
+          derivation for RunbookState, snapshots, lifecycle, variables, delegation state,
+          or schemaVersion changes. Flag explicit or implicit migration/adaptation; stale
+          state should be rejected and require complete, stop, prune, or restart.
     - path: "packages/core/src/policy/**/*.ts"
       instructions: |
         Security-sensitive policy code. Focus on:
@@ -200,12 +204,18 @@ reviews:
     docstrings:
       mode: "off"         # Handled by eslint-plugin-jsdoc in CI
     custom_checks:
-      - name: "Persisted state compatibility"
+      - name: "Persisted state no-migration"
         mode: "warning"
         instructions: |
-          Warn if files that define persisted runbook state, state snapshots, lifecycle fields, variable storage, delegation state, or schemaVersion behavior change and the PR also silently migrates existing .rundown/runs/ data.
+          This project is pre-release. There is no supported legacy .rundown/runs state.
+          Do not request migrations, compatibility shims, fallback reconstruction, or legacy runbookRef derivation.
+
+          Warn if files that define persisted runbook state, state snapshots,
+          lifecycle fields, variable storage, delegation state, or schemaVersion behavior
+          change and the PR explicitly or implicitly adapts, rewrites, or migrates stale
+          .rundown/runs/ data.
           Pass if the PR does not touch persisted state behavior.
-          Pass if the PR preserves compatibility or detects stale state and requires completion, stop, or prune before restart.
+          Pass if stale or incompatible state is rejected and the user must complete, stop, prune, or restart.
       - name: "CLI schema coverage"
         mode: "warning"
         instructions: |
@@ -246,7 +256,7 @@ code_generation:
           Generate Jest tests that cover valid syntax, invalid syntax, diagnostics, frontmatter edge cases, code blocks, transitions, FOR clauses, and DELEGATE annotations.
       - path: "packages/core/**/*.ts"
         instructions: |
-          Generate Jest tests that cover state transitions, result/handler/action separation, persisted-state stale detection, policy enforcement, sandbox edge cases, output schema stability, and error paths.
+          Generate Jest tests that cover state transitions, result/handler/action separation, stale persisted-state rejection requiring complete, stop, prune, or restart, policy enforcement, sandbox edge cases, output schema stability, and error paths.
       - path: "packages/cli/**/*.ts"
         instructions: |
           Generate Jest tests that verify JSON output, --text output, --schema output, command option validation, and user-facing errors. Prefer existing CLI test helpers and snapshots only when the repository already uses them for that behavior.

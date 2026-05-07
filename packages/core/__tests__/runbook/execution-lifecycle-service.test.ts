@@ -35,7 +35,7 @@ describe('ExecutionLifecycleService', () => {
 
   describe('ensureActiveEntry', () => {
     it('initializes entry to 1 on first call', async () => {
-      const state = await manager.create('test.md', mockRunbook, {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
       });
 
@@ -47,7 +47,7 @@ describe('ExecutionLifecycleService', () => {
     });
 
     it('persists initialized entry to disk', async () => {
-      const state = await manager.create('test.md', mockRunbook, {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
       });
 
@@ -59,7 +59,7 @@ describe('ExecutionLifecycleService', () => {
     });
 
     it('increments entry on frame switch', async () => {
-      const state = await manager.create('test.md', mockRunbook, {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
       });
 
@@ -82,7 +82,7 @@ describe('ExecutionLifecycleService', () => {
     });
 
     it('increments entry on GOTO re-entry to same frame', async () => {
-      const state = await manager.create('test.md', mockRunbook, {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
       });
 
@@ -101,7 +101,7 @@ describe('ExecutionLifecycleService', () => {
     });
 
     it('increments entry on RETRY re-entry to same frame', async () => {
-      const state = await manager.create('test.md', mockRunbook, {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
       });
 
@@ -120,7 +120,7 @@ describe('ExecutionLifecycleService', () => {
     });
 
     it('returns without persisting when unchanged', async () => {
-      const state = await manager.create('test.md', mockRunbook, {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
       });
 
@@ -139,7 +139,7 @@ describe('ExecutionLifecycleService', () => {
     });
 
     it('uses provided nextState instead of loading from disk', async () => {
-      const state = await manager.create('test.md', mockRunbook, {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
       });
 
@@ -160,7 +160,7 @@ describe('ExecutionLifecycleService', () => {
 
   describe('upsertResolvedCompletion', () => {
     it('stores a new completion', async () => {
-      const state = await manager.create('test.md', mockRunbook, {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
       });
 
@@ -180,7 +180,7 @@ describe('ExecutionLifecycleService', () => {
     });
 
     it('overwrites existing completion', async () => {
-      const state = await manager.create('test.md', mockRunbook, {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
       });
 
@@ -211,7 +211,7 @@ describe('ExecutionLifecycleService', () => {
     });
 
     it('persists completion to disk', async () => {
-      const state = await manager.create('test.md', mockRunbook, {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
       });
 
@@ -235,7 +235,7 @@ describe('ExecutionLifecycleService', () => {
 
   describe('getResolvedCompletion', () => {
     it('returns null for missing key', async () => {
-      const state = await manager.create('test.md', mockRunbook, {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
       });
 
@@ -251,7 +251,7 @@ describe('ExecutionLifecycleService', () => {
 
   describe('consumeResolvedCompletion', () => {
     it('returns and removes completion', async () => {
-      const state = await manager.create('test.md', mockRunbook, {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
       });
 
@@ -276,7 +276,7 @@ describe('ExecutionLifecycleService', () => {
     });
 
     it('returns null for missing key', async () => {
-      const state = await manager.create('test.md', mockRunbook, {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
       });
 
@@ -290,7 +290,7 @@ describe('ExecutionLifecycleService', () => {
     });
 
     it('persists removal to disk', async () => {
-      const state = await manager.create('test.md', mockRunbook, {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
       });
 
@@ -316,7 +316,7 @@ describe('ExecutionLifecycleService', () => {
 
   describe('listResolvedCompletions', () => {
     it('returns completions matching frameKey and entry', async () => {
-      const state = await manager.create('test.md', mockRunbook, {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
       });
 
@@ -353,7 +353,7 @@ describe('ExecutionLifecycleService', () => {
     });
 
     it('filters out non-matching entries', async () => {
-      const state = await manager.create('test.md', mockRunbook, {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
       });
 
@@ -384,7 +384,7 @@ describe('ExecutionLifecycleService', () => {
     });
 
     it('returns empty array when no matches', async () => {
-      const state = await manager.create('test.md', mockRunbook, {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
       });
 
@@ -404,7 +404,7 @@ describe('ExecutionLifecycleService', () => {
 
   describe('listResolvedCompletions with sentinel', () => {
     it('includes entry=0 sentinel alongside exact matches', async () => {
-      const state = await manager.create('test.md', mockRunbook, {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
       });
 
@@ -442,7 +442,7 @@ describe('ExecutionLifecycleService', () => {
 
   describe('consumeResolvedCompletion with sentinel', () => {
     it('falls back to sentinel when exact key missing', async () => {
-      const state = await manager.create('test.md', mockRunbook, {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
       });
 

@@ -16,6 +16,7 @@ import {
   type RunbookState,
   type RunbookStateManager,
   type RunbookStoppedPayload,
+  type RunId,
   type SessionService,
   type ResolvedStep,
   type StepPosition,
@@ -76,7 +77,7 @@ interface OrchestrateTransitionArgs {
   /** Event sink for emitting transition lifecycle events. */
   sink: TransitionEventSink;
   /** Unique identifier of the runbook being executed. */
-  runbookId: string;
+  runbookId: RunId;
   /** All steps in the runbook, used for position calculations. */
   steps: ResolvedStep[];
   /** The step that was just evaluated. */
@@ -140,7 +141,7 @@ function buildTransitionPositions(
 async function applyTerminalSideEffects(
   sessionService: SessionService,
   policy: TerminalSideEffectsPolicy,
-  runbookId: RunbookState['id'],
+  runbookId: RunId,
 ): Promise<void> {
   if (policy.releaseRunbook) {
     await sessionService.releaseRunbook(runbookId);

@@ -94,6 +94,7 @@ jest.unstable_mockModule('@rundown-org/core', () => {
     executeCommand: jest.fn(),
     executeCommandWithEnv: (jest.fn() as any).mockResolvedValue({ success: true, exitCode: 0 }),
     executeCommandWithPolicy: jest.fn(),
+    assertRunId: jest.fn((value: string) => value),
     evaluatePassCondition: jest.fn(),
     evaluateFailCondition: jest.fn(),
     extractLastAction: jest.fn((snapshot: any) => snapshot?.context?.lastAction),
@@ -244,6 +245,7 @@ jest.unstable_mockModule('@rundown-org/core', () => {
     CONFIG_FILE: '.rundown/config.yaml',
     isJsonValue: jest.fn((v: unknown) => v != null),
     createJsonArrayStream: jest.fn(),
+    generateRunId: jest.fn(() => 'rd_0123456789abcdef0123456789abcdef'),
     createDelegation: jest.fn(),
     Errors: RealErrors,
     RundownError: RealRundownError,
@@ -272,6 +274,13 @@ jest.unstable_mockModule('../../src/helpers/delegate-inference', () => ({
 
 jest.unstable_mockModule('../../src/helpers/resolve-runbook', () => ({
   resolveRunbookFile: (jest.fn() as any).mockResolvedValue(null),
+  buildRunbookRef: jest.fn((resolved: { source: string; path: string; sourceRoot?: string }) => ({
+    source: resolved.source,
+    path:
+      resolved.sourceRoot && resolved.path.startsWith(`${resolved.sourceRoot}/`)
+        ? resolved.path.slice(resolved.sourceRoot.length + 1)
+        : resolved.path,
+  })),
 }));
 
 jest.unstable_mockModule('../../src/services/internal-commands', () => ({
@@ -336,7 +345,7 @@ const asSteps = (s: readonly LooseStep[]): ResolvedStepType[] => s as unknown as
 describe('runExecutionLoop', () => {
   let mockManager: MockManagerLike;
   let mockEmitter: MockEmitterLike;
-  const runbookId = 'test-run-123';
+  const runbookId = `rd_${'1'.repeat(32)}`;
   const steps: LooseStep[] = [
     {
       kind: 'command',
@@ -359,6 +368,18 @@ describe('runExecutionLoop', () => {
       },
     },
   ];
+  const makeLoopState = (
+    step = '1',
+    overrides: Record<string, unknown> = {},
+  ): Record<string, unknown> => ({
+    id: runbookId,
+    runbook: { source: 'project', path: 'test.runbook.md' },
+    runbookPath: 'test.runbook.md',
+    step,
+    status: 'running',
+    templateVars: { RunId: runbookId, RunbookRef: { source: 'project', path: 'test.runbook.md' } },
+    ...overrides,
+  });
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -370,6 +391,12 @@ describe('runExecutionLoop', () => {
 
     mockedPolicyContext.isPolicyEnforced.mockReturnValue(false);
     mockedPolicyContext.getSandboxOptions.mockReturnValue({ sandbox: true, sandboxStrict: false });
+    mockedPolicyContext.getPolicyEvaluator.mockReturnValue({
+      setRunbookPath: jest.fn(),
+    } as unknown as ReturnType<typeof policyContext.getPolicyEvaluator>);
+    mockedPolicyContext.getPolicyPrompter.mockReturnValue(
+      {} as unknown as ReturnType<typeof policyContext.getPolicyPrompter>,
+    );
     (core.executeCommand as any).mockReset();
     (core.executeCommandWithPolicy as any).mockReset();
 
@@ -434,11 +461,7 @@ describe('runExecutionLoop', () => {
   });
 
   it('returns waiting if prompted mode is on', async () => {
-    mockManager.load.mockResolvedValue({
-      id: runbookId,
-      step: '1',
-      status: 'running',
-    });
+    mockManager.load.mockResolvedValue(makeLoopState());
 
     const result = await runExecutionLoop(
       asManager(mockManager),
@@ -468,11 +491,7 @@ describe('runExecutionLoop', () => {
         transitions: { pass: { next: 'COMPLETE' } },
       },
     ];
-    mockManager.load.mockResolvedValue({
-      id: runbookId,
-      step: '1',
-      status: 'running',
-    });
+    mockManager.load.mockResolvedValue(makeLoopState());
 
     const result = await runExecutionLoop(
       asManager(mockManager),
@@ -488,13 +507,11 @@ describe('runExecutionLoop', () => {
 
   it('executes command and advances to next step', async () => {
     mockManager.load
-      .mockResolvedValueOnce({ id: runbookId, step: '1', status: 'running' })
-      .mockResolvedValueOnce({ id: runbookId, step: '2', status: 'running' });
-
-    jest.mocked(core.executeCommand).mockResolvedValue({ success: true, exitCode: 0 });
+      .mockResolvedValueOnce(makeLoopState('1'))
+      .mockResolvedValueOnce(makeLoopState('2'));
 
     mockActorService.sendAndSync.mockResolvedValue({
-      state: { id: runbookId, step: '2', status: 'running' },
+      state: makeLoopState('2'),
       snapshot: {
         status: 'active',
         value: '2',
@@ -522,22 +539,23 @@ describe('runExecutionLoop', () => {
     );
 
     expect(result).toBe('waiting');
-    expect(core.executeCommand).toHaveBeenCalled();
+    expect(core.executeCommandWithEnv).toHaveBeenCalled();
   });
 
-  it('injects RD_WORK_PATH, RD_CONTEXT_ID, and RD_RUN_ID together when all three are strings in stepVars', async () => {
+  it('injects canonical RD_RUN_ID from template vars and persisted runbook identity', async () => {
     // Downstream tools (e.g. rdpath) treat these env vars as a structurally
     // paired triple. Asserting them here keeps a regression in the injection
     // gates at execution.ts (`if (typeof workPath === 'string') ...`) from
     // silently dropping one half of the pair without any test failing.
     mockManager.load.mockResolvedValue({
       id: runbookId,
+      runbook: { source: 'project', path: 'test.runbook.md' },
       step: '1',
       status: 'running',
       templateVars: {
         WorkPath: '/tmp/work',
         ContextId: 'ctx-abc',
-        RunId: 'run-123',
+        RunId: runbookId,
       },
     });
 
@@ -550,10 +568,11 @@ describe('runExecutionLoop', () => {
         step: '1',
         status: 'done',
         variables: {},
+        runbook: { source: 'project', path: 'test.runbook.md' },
         templateVars: {
           WorkPath: '/tmp/work',
           ContextId: 'ctx-abc',
-          RunId: 'run-123',
+          RunId: runbookId,
         },
       },
       snapshot: {
@@ -576,11 +595,67 @@ describe('runExecutionLoop', () => {
     const envArg = jest.mocked(core.executeCommandWithEnv).mock.calls[0][2];
     expect(envArg.RD_WORK_PATH).toBe('/tmp/work');
     expect(envArg.RD_CONTEXT_ID).toBe('ctx-abc');
-    expect(envArg.RD_RUN_ID).toBe('run-123');
+    expect(envArg.RD_RUN_ID).toBe(runbookId);
+    expect(envArg.RD_RUNBOOK_REF).toBe('test.runbook.md');
+    expect(envArg.RD_RUNBOOK_SOURCE).toBe('project');
+  });
+
+  it.each([
+    { source: 'plugin', path: 'planning/review.runbook.md' },
+    { source: 'external', path: '/tmp/review.runbook.md' },
+  ])('injects persisted $source runbook identity into RD env', async (runbook) => {
+    mockManager.load.mockResolvedValue({
+      id: runbookId,
+      runbook,
+      step: '1',
+      status: 'running',
+      templateVars: {
+        WorkPath: '/tmp/work',
+        ContextId: 'ctx-abc',
+        RunId: runbookId,
+      },
+    });
+
+    jest.mocked(core.executeCommand).mockResolvedValue({ success: true, exitCode: 0 });
+    jest.mocked(core.executeCommandWithEnv).mockResolvedValue({ success: true, exitCode: 0 });
+
+    mockActorService.sendAndSync.mockResolvedValue({
+      state: {
+        id: runbookId,
+        step: '1',
+        status: 'done',
+        variables: {},
+        runbook,
+        templateVars: {
+          WorkPath: '/tmp/work',
+          ContextId: 'ctx-abc',
+          RunId: runbookId,
+        },
+      },
+      snapshot: {
+        status: 'done',
+        value: 'COMPLETE',
+        context: { lastAction: { type: 'COMPLETE' } },
+      },
+    });
+
+    await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps([steps[0]]),
+      '/tmp',
+      false,
+      asEmitter(mockEmitter),
+    );
+
+    expect(core.executeCommandWithEnv).toHaveBeenCalledTimes(1);
+    const envArg = jest.mocked(core.executeCommandWithEnv).mock.calls[0][2];
+    expect(envArg.RD_RUNBOOK_REF).toBe(runbook.path);
+    expect(envArg.RD_RUNBOOK_SOURCE).toBe(runbook.source);
   });
 
   it('handles policy denial', async () => {
-    mockManager.load.mockResolvedValue({ id: runbookId, step: '1', status: 'running' });
+    mockManager.load.mockResolvedValue(makeLoopState());
     jest.mocked(policyContext.isPolicyEnforced).mockReturnValue(true);
 
     // ExecutionResult requires `exitCode`; this fixture omits it because
@@ -610,7 +685,7 @@ describe('runExecutionLoop', () => {
   });
 
   it('stops with policy-denied when prepareIteration throws ForResolutionError policy-violation', async () => {
-    mockManager.load.mockResolvedValue({ id: runbookId, step: '1', status: 'running' });
+    mockManager.load.mockResolvedValue(makeLoopState());
 
     (core.ForIterationService as unknown as jest.Mock).mockImplementation(() => {
       const prepareIteration = mockFn<(...args: unknown[]) => Promise<{ status: string }>>();
@@ -656,7 +731,7 @@ describe('runExecutionLoop', () => {
   });
 
   it('completes the runbook', async () => {
-    mockManager.load.mockResolvedValue({ id: runbookId, step: '1', status: 'running' });
+    mockManager.load.mockResolvedValue(makeLoopState());
     jest.mocked(core.executeCommand).mockResolvedValue({ success: true, exitCode: 0 });
 
     mockActorService.sendAndSync.mockResolvedValue({
@@ -690,7 +765,7 @@ describe('runExecutionLoop', () => {
         message: 'Success',
       }),
     );
-    expect(mockSessionService.releaseRunbook).toHaveBeenCalledWith('test-run-123');
+    expect(mockSessionService.releaseRunbook).toHaveBeenCalledWith(runbookId);
     expect(mockSessionService.popRunbook).not.toHaveBeenCalled();
   });
 
@@ -699,7 +774,7 @@ describe('runExecutionLoop', () => {
     // lastAction variant on the returned snapshot. runExecutionLoop should
     // emit ERROR_OCCURRED with the hook error's code + message before the
     // terminal RUNBOOK_STOPPED event.
-    mockManager.load.mockResolvedValue({ id: runbookId, step: '1', status: 'running' });
+    mockManager.load.mockResolvedValue(makeLoopState());
     jest.mocked(core.executeCommand).mockResolvedValue({ success: false, exitCode: 1 });
 
     mockActorService.sendAndSync.mockResolvedValue({
@@ -1012,28 +1087,15 @@ describe('runExecutionLoop', () => {
       // orchestrateTransition calls manager.load once more (for the reloaded continue state),
       // so we need two sequential returns: step 1 (initial load) → step 2 (reload after transition).
       mockManager.load
-        .mockResolvedValueOnce({
-          id: runbookId,
-          step: '1',
-          status: 'running',
-          templateVars: { ContextId: 'ctx-unit' },
-        })
-        .mockResolvedValueOnce({
-          id: runbookId,
-          step: '2',
-          status: 'running',
-          templateVars: { ContextId: 'ctx-unit' },
-        });
+        .mockResolvedValueOnce(makeLoopState('1', { templateVars: { ContextId: 'ctx-unit' } }))
+        .mockResolvedValueOnce(makeLoopState('2', { templateVars: { ContextId: 'ctx-unit' } }));
 
       jest.mocked(core.executeCommand).mockResolvedValue({ success: true, exitCode: 0 });
 
       // Non-terminal snapshot (active/CONTINUE) → orchestrateTransition takes the reload path
       mockActorService.sendAndSync.mockResolvedValue({
         state: {
-          id: runbookId,
-          step: '2',
-          status: 'running',
-          templateVars: { ContextId: 'ctx-unit' },
+          ...makeLoopState('2', { templateVars: { ContextId: 'ctx-unit' } }),
         },
         snapshot: {
           status: 'active',
@@ -1105,10 +1167,12 @@ describe('runExecutionLoop', () => {
       .mockResolvedValueOnce({
         path: '/project/.rundown/runbooks/child-a.runbook.md',
         source: 'project',
+        sourceRoot: '/project',
       })
       .mockResolvedValueOnce({
         path: '/project/.rundown/runbooks/child-b.runbook.md',
         source: 'project',
+        sourceRoot: '/project',
       });
 
     // createDelegation returns a token for each substep. The fixtures use
@@ -1286,6 +1350,7 @@ describe('runExecutionLoop', () => {
     jest.mocked(resolveRunbook.resolveRunbookFile).mockResolvedValue({
       path: '/project/.rundown/runbooks/child-a.runbook.md',
       source: 'project',
+      sourceRoot: '/project',
     });
 
     jest.mocked(core.createDelegation).mockReturnValue({
@@ -1376,6 +1441,7 @@ describe('runExecutionLoop', () => {
     jest.mocked(resolveRunbook.resolveRunbookFile).mockResolvedValue({
       path: '/project/.rundown/runbooks/child-a.runbook.md',
       source: 'project',
+      sourceRoot: '/project',
     });
 
     // Real createDelegation enforces the guard — let it run rather than mock

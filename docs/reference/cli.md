@@ -302,7 +302,7 @@ rundown status
 **Output:**
 ```text
 File:     my-runbook.runbook.md
-State:    .rundown/runs/wf-2024-01-07-abc123.json
+State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
 Action:   CONTINUE
 Result:   PASS
 
@@ -652,7 +652,7 @@ Output formatting is implemented in `packages/cli/src/services/output-emitter.ts
 
 ```text
 File:     runbook.runbook.md
-State:    .rundown/runs/wf-xxx.json
+State:    .rundown/runs/rd_0123456789abcdef0123456789abcdef.json
 Action:   START
 At:       1
 

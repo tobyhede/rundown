@@ -62,7 +62,7 @@ describe('pass command', () => {
       await runCliInProcess('pass --text', workspace);
 
       const states = await getAllStates(workspace);
-      const state = states.find((s) => s.runbook === 'runbooks/simple.runbook.md');
+      const state = states.find((s) => s.runbook.path === 'runbooks/simple.runbook.md');
       expect(state?.lifecycle).toBe('completed');
     });
   });
@@ -148,7 +148,7 @@ This step stops on pass.
       await runCliInProcess('pass --text', workspace);
 
       const states = await getAllStates(workspace);
-      const state = states.find((s) => s.runbook === 'runbooks/stop-on-pass.md');
+      const state = states.find((s) => s.runbook.path === 'runbooks/stop-on-pass.md');
       expect(state?.lifecycle).toBe('stopped');
     });
   });
@@ -292,7 +292,10 @@ Do child work.
       const claimId2 = child2Output.claim_id;
 
       const anonymousActive = await getActiveState(workspace);
-      expect(anonymousActive?.runbook).toBe('runbooks/parent.runbook.md');
+      expect(anonymousActive?.runbook).toEqual({
+        source: 'project',
+        path: 'runbooks/parent.runbook.md',
+      });
 
       let status = await runCliInProcess(['status', '--claim-id', claimId1], workspace);
       expect(JSON.parse(status.stdout).state).toContain(child1Id);
@@ -424,7 +427,7 @@ This step stops on pass.
       await runCliInProcess('pass --text', workspace);
 
       const states = await getAllStates(workspace);
-      const state = states.find((s) => s.runbook === 'runbooks/stop-on-pass.md');
+      const state = states.find((s) => s.runbook.path === 'runbooks/stop-on-pass.md');
 
       // lastResult should reflect user's choice (pass), not transition outcome
       expect(state?.lastResult).toBe('pass');

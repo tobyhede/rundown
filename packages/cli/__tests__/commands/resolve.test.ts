@@ -52,6 +52,26 @@ echo hello
     expect(output.variables).toHaveProperty('WorkPath');
   });
 
+  it('shows RunbookRef without minting RunId', async () => {
+    const runbookPath = path.join(workspace.cwd, 'parent.runbook.md');
+    fs.writeFileSync(
+      runbookPath,
+      `## Step 1
+echo hello
+`,
+    );
+
+    const result = await runCliInProcess('resolve parent.runbook.md', workspace);
+
+    expect(result.exitCode).toBe(0);
+    const payload = JSON.parse(result.stdout);
+    expect(payload.variables.RunbookRef).toEqual({
+      source: 'project',
+      path: 'parent.runbook.md',
+    });
+    expect(payload.variables).not.toHaveProperty('RunId');
+  });
+
   it('resolves declared inputs from CLI — shows resolved variables', async () => {
     const runbookPath = path.join(workspace.cwd, 'vars.runbook.md');
     fs.writeFileSync(

@@ -3,12 +3,12 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { isError } from '../../src/errors.js';
-import { RunbookStateManager } from '../../src/runbook/state.js';
+import { generateRunId, RunbookStateManager } from '../../src/runbook/state.js';
 import { statePath as _statePath } from '../../src/paths.js';
 import { SessionService } from '../../src/runbook/session-service.js';
 import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
-import type { Step, Runbook } from '../../src/runbook/types.js';
+import type { Step, Runbook, RunId } from '../../src/runbook/types.js';
 import { makeBaseStep, makeSubstep } from '../helpers/step-factories.js';
 
 describe('RunbookStateManager', () => {
@@ -34,11 +34,40 @@ describe('RunbookStateManager', () => {
     await rm(testDir, { recursive: true, force: true });
   });
 
+  describe('run id identity', () => {
+    it('generates canonical branded Rundown run ids', () => {
+      const runId = generateRunId();
+      const branded: RunId = runId;
+
+      expect(branded).toMatch(/^rd_[a-f0-9]{32}$/);
+    });
+
+    it('brands RunbookState.id on create/load round trip', async () => {
+      const state = await manager.create(
+        { source: 'project', path: 'test.runbook.md' },
+        mockRunbook,
+        {
+          runbookPath: 'test.runbook.md',
+        },
+      );
+
+      const loaded = await manager.load(state.id);
+      const branded: RunId = loaded!.id;
+
+      expect(branded).toBe(state.id);
+      expect(branded).toMatch(/^rd_[a-f0-9]{32}$/);
+    });
+  });
+
   describe('getChildRunbookResult', () => {
     it('should return pass when child has lifecycle completed', async () => {
-      const child = await manager.create('child.runbook.md', mockRunbook, {
-        runbookPath: 'child.runbook.md',
-      });
+      const child = await manager.create(
+        { source: 'project', path: 'child.runbook.md' },
+        mockRunbook,
+        {
+          runbookPath: 'child.runbook.md',
+        },
+      );
       await manager.update(child.id, { lifecycle: 'completed' });
 
       const result = await lifecycleService.getChildRunbookResult(child.id);
@@ -46,9 +75,13 @@ describe('RunbookStateManager', () => {
     });
 
     it('should return fail when child has lifecycle stopped', async () => {
-      const child = await manager.create('child.runbook.md', mockRunbook, {
-        runbookPath: 'child.runbook.md',
-      });
+      const child = await manager.create(
+        { source: 'project', path: 'child.runbook.md' },
+        mockRunbook,
+        {
+          runbookPath: 'child.runbook.md',
+        },
+      );
       await manager.update(child.id, { lifecycle: 'stopped' });
 
       const result = await lifecycleService.getChildRunbookResult(child.id);
@@ -56,9 +89,13 @@ describe('RunbookStateManager', () => {
     });
 
     it('should return null when child is still active', async () => {
-      const child = await manager.create('child.runbook.md', mockRunbook, {
-        runbookPath: 'child.runbook.md',
-      });
+      const child = await manager.create(
+        { source: 'project', path: 'child.runbook.md' },
+        mockRunbook,
+        {
+          runbookPath: 'child.runbook.md',
+        },
+      );
       await sessionService.pushRunbook(child.id);
 
       const result = await lifecycleService.getChildRunbookResult(child.id);
@@ -71,9 +108,13 @@ describe('RunbookStateManager', () => {
     });
 
     it('should return null when child is stashed', async () => {
-      const child = await manager.create('child.runbook.md', mockRunbook, {
-        runbookPath: 'child.runbook.md',
-      });
+      const child = await manager.create(
+        { source: 'project', path: 'child.runbook.md' },
+        mockRunbook,
+        {
+          runbookPath: 'child.runbook.md',
+        },
+      );
       await sessionService.pushRunbook(child.id);
       await sessionService.stash();
 
@@ -89,9 +130,13 @@ describe('RunbookStateManager', () => {
         makeSubstep({ id: '2', description: 'Second reviewer' }),
       ];
 
-      const state = await manager.create('test.runbook.md', mockRunbook, {
-        runbookPath: 'test.runbook.md',
-      });
+      const state = await manager.create(
+        { source: 'project', path: 'test.runbook.md' },
+        mockRunbook,
+        {
+          runbookPath: 'test.runbook.md',
+        },
+      );
       await manager.initializeSubsteps(state.id, substeps, buildFrameKey('1'));
 
       const updated = await manager.load(state.id);
@@ -110,9 +155,13 @@ describe('RunbookStateManager', () => {
         makeSubstep({ id: '2', description: 'Second' }),
       ];
 
-      const state = await manager.create('test.runbook.md', mockRunbook, {
-        runbookPath: 'test.runbook.md',
-      });
+      const state = await manager.create(
+        { source: 'project', path: 'test.runbook.md' },
+        mockRunbook,
+        {
+          runbookPath: 'test.runbook.md',
+        },
+      );
       await manager.initializeSubsteps(state.id, substeps, buildFrameKey('1', 1));
 
       const updated = await manager.load(state.id);
@@ -128,9 +177,13 @@ describe('RunbookStateManager', () => {
     it('preserves entries from other frames when frameKey is provided', async () => {
       const substeps = [makeSubstep({ id: '1', description: 'First' })];
 
-      const state = await manager.create('test.runbook.md', mockRunbook, {
-        runbookPath: 'test.runbook.md',
-      });
+      const state = await manager.create(
+        { source: 'project', path: 'test.runbook.md' },
+        mockRunbook,
+        {
+          runbookPath: 'test.runbook.md',
+        },
+      );
 
       // Initialize iteration 1
       await manager.initializeSubsteps(state.id, substeps, buildFrameKey('1', 1));
@@ -156,9 +209,13 @@ describe('RunbookStateManager', () => {
     it('replaces entries from same frame on re-initialization', async () => {
       const substeps = [makeSubstep({ id: '1', description: 'First' })];
 
-      const state = await manager.create('test.runbook.md', mockRunbook, {
-        runbookPath: 'test.runbook.md',
-      });
+      const state = await manager.create(
+        { source: 'project', path: 'test.runbook.md' },
+        mockRunbook,
+        {
+          runbookPath: 'test.runbook.md',
+        },
+      );
 
       await manager.initializeSubsteps(state.id, substeps, buildFrameKey('1', 1));
       // Re-initialize same frame — should replace, not duplicate
@@ -171,9 +228,13 @@ describe('RunbookStateManager', () => {
 
   describe('RunbookStateManager substep lifecycle', () => {
     it('completes substep with result', async () => {
-      const state = await manager.create('test.runbook.md', mockRunbook, {
-        runbookPath: 'test.runbook.md',
-      });
+      const state = await manager.create(
+        { source: 'project', path: 'test.runbook.md' },
+        mockRunbook,
+        {
+          runbookPath: 'test.runbook.md',
+        },
+      );
       await manager.update(state.id, {
         substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'running' }],
       });
@@ -190,9 +251,13 @@ describe('RunbookStateManager', () => {
     });
 
     it('completes substep scoped by frameKey', async () => {
-      const state = await manager.create('test.runbook.md', mockRunbook, {
-        runbookPath: 'test.runbook.md',
-      });
+      const state = await manager.create(
+        { source: 'project', path: 'test.runbook.md' },
+        mockRunbook,
+        {
+          runbookPath: 'test.runbook.md',
+        },
+      );
       // Initialize substeps for two different frames (simulating FOR loop iterations)
       const frameA = buildFrameKey('1', 1);
       const frameB = buildFrameKey('1', 2);
@@ -225,13 +290,23 @@ describe('RunbookStateManager', () => {
   });
 
   describe('create with prompted flag', () => {
+    it('generates canonical rd-prefixed run ids', async () => {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
+
+      expect(state.id).toMatch(/^rd_[a-f0-9]{32}$/);
+    });
+
     it('defaults to auto mode (prompted undefined)', async () => {
-      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
       expect(state.prompted).toBeUndefined();
     });
 
     it('accepts prompted option', async () => {
-      const state = await manager.create('test.md', mockRunbook, {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
         prompted: true,
       });
@@ -239,26 +314,33 @@ describe('RunbookStateManager', () => {
     });
   });
 
-  describe('create with runbookRef', () => {
-    it('persists a canonical runbookRef through create/load round-trip', async () => {
+  describe('create with runbook identity', () => {
+    it('persists canonical runbook identity through create/load round-trip', async () => {
       const runbookRef = { source: 'plugin' as const, path: 'planning/write-plan.runbook.md' };
-      const state = await manager.create('rundown:write-plan', mockRunbook, {
+      const state = await manager.create(runbookRef, mockRunbook, {
         runbookPath: '../../plugin/runbooks/planning/write-plan.runbook.md',
-        runbookRef,
       });
 
-      expect(state.runbookRef).toEqual(runbookRef);
+      expect(state.runbook).toEqual(runbookRef);
+      expect(Object.hasOwn(state, 'runbookRef')).toBe(false);
 
       const loaded = await manager.load(state.id);
-      expect(loaded?.runbookRef).toEqual(runbookRef);
+      expect(loaded?.runbook).toEqual(runbookRef);
+      expect(Object.hasOwn(loaded ?? {}, 'runbookRef')).toBe(false);
     });
   });
 
   describe('List and delete operations', () => {
     it('list returns all runbook states', async () => {
-      await manager.create('one.md', mockRunbook, { runbookPath: 'one.md' });
-      await manager.create('two.md', mockRunbook, { runbookPath: 'two.md' });
-      await manager.create('three.md', mockRunbook, { runbookPath: 'three.md' });
+      await manager.create({ source: 'project', path: 'one.md' }, mockRunbook, {
+        runbookPath: 'one.md',
+      });
+      await manager.create({ source: 'project', path: 'two.md' }, mockRunbook, {
+        runbookPath: 'two.md',
+      });
+      await manager.create({ source: 'project', path: 'three.md' }, mockRunbook, {
+        runbookPath: 'three.md',
+      });
 
       const states = await manager.list();
 
@@ -271,7 +353,9 @@ describe('RunbookStateManager', () => {
     });
 
     it('delete removes runbook state', async () => {
-      const state = await manager.create('delete.md', mockRunbook, { runbookPath: 'delete.md' });
+      const state = await manager.create({ source: 'project', path: 'delete.md' }, mockRunbook, {
+        runbookPath: 'delete.md',
+      });
 
       await manager.delete(state.id);
 
@@ -332,7 +416,9 @@ describe('RunbookStateManager', () => {
     });
 
     it('setLastResult updates last result', async () => {
-      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
 
       await lifecycleService.setLastResult(state.id, 'pass');
 
@@ -345,7 +431,9 @@ describe('RunbookStateManager', () => {
     });
 
     it('loads legacy targetPath fields and strips them on save', async () => {
-      const state = await manager.create('legacy.md', mockRunbook, { runbookPath: 'legacy.md' });
+      const state = await manager.create({ source: 'project', path: 'legacy.md' }, mockRunbook, {
+        runbookPath: 'legacy.md',
+      });
       const resolvedKey = '1||1|';
 
       await manager.update(state.id, {
@@ -385,7 +473,7 @@ describe('RunbookStateManager', () => {
 
   describe('update variables/templateVars semantics', () => {
     it('replaces templateVars wholesale when updates.templateVars is defined', async () => {
-      const state = await manager.create('test.md', mockRunbook, {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
         templateVars: { env: 'staging', port: 3000 },
       });
@@ -399,7 +487,7 @@ describe('RunbookStateManager', () => {
     });
 
     it('preserves existing templateVars when updates.templateVars is undefined', async () => {
-      const state = await manager.create('test.md', mockRunbook, {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
         templateVars: { env: 'staging', port: 3000 },
       });
@@ -410,7 +498,7 @@ describe('RunbookStateManager', () => {
     });
 
     it('shallow-merges variables when updates.variables is defined', async () => {
-      const state = await manager.create('test.md', mockRunbook, {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
       });
       await manager.update(state.id, { variables: { A: '1', B: '2' } });
@@ -421,7 +509,7 @@ describe('RunbookStateManager', () => {
     });
 
     it('preserves existing variables when updates.variables is undefined', async () => {
-      const state = await manager.create('test.md', mockRunbook, {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
       });
       await manager.update(state.id, { variables: { A: '1' } });
@@ -434,7 +522,7 @@ describe('RunbookStateManager', () => {
 
   describe('isPrompted', () => {
     it('returns true when parent has prompted flag', async () => {
-      const parent = await manager.create('parent.md', mockRunbook, {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
         runbookPath: 'parent.md',
         prompted: true,
       });
@@ -444,7 +532,9 @@ describe('RunbookStateManager', () => {
     });
 
     it('returns false when parent has no prompted flag', async () => {
-      const parent = await manager.create('parent.md', mockRunbook, { runbookPath: 'parent.md' });
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
 
       const result = await lifecycleService.isPrompted(parent.id);
       expect(result).toBe(false);
@@ -460,10 +550,14 @@ describe('RunbookStateManager', () => {
     it('should store runbookSrc when provided to create()', async () => {
       const runbookSrc = '# Test Runbook\n\n## 1. Step 1\n\nRendered content';
 
-      const state = await manager.create('test.runbook.md', mockRunbook, {
-        runbookPath: 'test.runbook.md',
-        runbookSrc,
-      });
+      const state = await manager.create(
+        { source: 'project', path: 'test.runbook.md' },
+        mockRunbook,
+        {
+          runbookPath: 'test.runbook.md',
+          runbookSrc,
+        },
+      );
 
       expect(state.runbookSrc).toBe(runbookSrc);
 
@@ -473,9 +567,13 @@ describe('RunbookStateManager', () => {
     });
 
     it('should allow runbookSrc to be undefined', async () => {
-      const state = await manager.create('test.runbook.md', mockRunbook, {
-        runbookPath: 'test.runbook.md',
-      });
+      const state = await manager.create(
+        { source: 'project', path: 'test.runbook.md' },
+        mockRunbook,
+        {
+          runbookPath: 'test.runbook.md',
+        },
+      );
 
       expect(state.runbookSrc).toBeUndefined();
     });
@@ -488,9 +586,13 @@ describe('RunbookStateManager', () => {
         return;
       }
 
-      const state = await manager.create('test.runbook.md', mockRunbook, {
-        runbookPath: 'test.runbook.md',
-      });
+      const state = await manager.create(
+        { source: 'project', path: 'test.runbook.md' },
+        mockRunbook,
+        {
+          runbookPath: 'test.runbook.md',
+        },
+      );
 
       const statePath = _statePath(testDir, state.id);
       const stats = await stat(statePath);
@@ -503,7 +605,9 @@ describe('RunbookStateManager', () => {
 
   describe('FOR loop context persistence', () => {
     it('persists FOR fields through round-trip', async () => {
-      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
 
       // Update with forStack
       const updated = await manager.update(state.id, {
@@ -554,7 +658,9 @@ describe('RunbookStateManager', () => {
 
   describe('Legacy snapshot rejection', () => {
     it('rejects state with GOTO_NEXT action in lastAction', async () => {
-      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
 
       // Manually save legacy state with GOTO_NEXT
       const fs = await import('node:fs/promises');
@@ -570,7 +676,9 @@ describe('RunbookStateManager', () => {
     });
 
     it('rejects state with instance field', async () => {
-      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
 
       // Manually save legacy state with instance field
       const fs = await import('node:fs/promises');
@@ -586,7 +694,9 @@ describe('RunbookStateManager', () => {
     });
 
     it('provides helpful error message for legacy snapshots', async () => {
-      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
 
       // Manually save legacy state with GOTO_NEXT
       const fs = await import('node:fs/promises');
@@ -618,7 +728,7 @@ describe('RunbookStateManager', () => {
         env: 'prod',
       };
 
-      const state = await manager.create('test.md', mockRunbook, {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
         templateVars: templateVars,
       });
@@ -635,9 +745,13 @@ describe('RunbookStateManager', () => {
 
   describe('RunbookStateManager.delete — output capture cleanup', () => {
     it('removes the per-run outputs directory alongside the state JSON', async () => {
-      const state = await manager.create('demo.runbook.md', mockRunbook, {
-        runbookPath: '/abs/demo.runbook.md',
-      });
+      const state = await manager.create(
+        { source: 'project', path: 'demo.runbook.md' },
+        mockRunbook,
+        {
+          runbookPath: '/abs/demo.runbook.md',
+        },
+      );
       // Simulate captured output files written during a run
       const outDir = join(testDir, '.rundown', 'runs', state.id, 'outputs', '1');
       await (await import('node:fs/promises')).mkdir(outDir, { recursive: true });
@@ -658,9 +772,13 @@ describe('RunbookStateManager', () => {
     });
 
     it('is a no-op when the outputs directory does not exist', async () => {
-      const state = await manager.create('demo.runbook.md', mockRunbook, {
-        runbookPath: '/abs/demo.runbook.md',
-      });
+      const state = await manager.create(
+        { source: 'project', path: 'demo.runbook.md' },
+        mockRunbook,
+        {
+          runbookPath: '/abs/demo.runbook.md',
+        },
+      );
       // No outputs dir created — delete must still succeed
       await expect(manager.delete(state.id)).resolves.toBeUndefined();
     });

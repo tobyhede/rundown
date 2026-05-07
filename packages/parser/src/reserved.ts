@@ -5,7 +5,8 @@
  *
  * These names are owned by runtime context resolution. Allowing them to be
  * shadowed by user values would corrupt template rendering of `{{step}}`,
- * `{{index}}`, and the entire `{{context.*}}` namespace.
+ * `{{index}}`, runtime identity values, and the entire `{{context.*}}`
+ * namespace.
  *
  * Stored lowercased — comparison is case-insensitive (`Step`, `STEP`, and
  * `step` are equivalent).
@@ -14,15 +15,37 @@
  */
 
 /**
+ * Canonical runtime identity built-ins that belong to each individual runbook
+ * execution and must not be inherited from a parent delegation context.
+ */
+export const IDENTITY_OWNED_BUILTINS = ['RunId', 'RunbookRef'] as const;
+
+const IDENTITY_OWNED_RESERVED_NAMES = IDENTITY_OWNED_BUILTINS.map((name) => name.toLowerCase());
+
+/**
  * Canonical reserved set (lowercased). Re-exported by the CLI as
  * `RUNTIME_RESERVED_VARIABLES` to keep one source of truth across packages.
  */
-export const RESERVED_TEMPLATE_NAMES: ReadonlySet<string> = new Set(['step', 'index', 'context']);
+export const RESERVED_TEMPLATE_NAMES: ReadonlySet<string> = new Set([
+  'step',
+  'index',
+  'context',
+  ...IDENTITY_OWNED_RESERVED_NAMES,
+]);
+
+/**
+ * Comma-separated reserved-name list for diagnostics.
+ *
+ * @returns Human-readable list of runtime-reserved template names
+ */
+export function formatReservedTemplateNames(): string {
+  return [...RESERVED_TEMPLATE_NAMES].join(', ');
+}
 
 /**
  * Check whether a name collides with a runtime-reserved template variable.
  *
- * Case-insensitive — `Context`, `CONTEXT`, and `context` all return `true`.
+ * Case-insensitive — `Context`, `RunId`, and `RUNBOOKREF` all return `true`.
  *
  * @param name - Identifier to test
  * @returns `true` if the identifier is reserved

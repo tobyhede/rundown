@@ -10,7 +10,7 @@
  * @module
  */
 
-import { createHash, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { execFileSync as nodeExecFileSync } from 'node:child_process';
@@ -41,36 +41,6 @@ let execFileSyncImpl: typeof nodeExecFileSync = nodeExecFileSync;
  */
 export function setExecFileSyncImpl(fn: typeof nodeExecFileSync): void {
   execFileSyncImpl = fn;
-}
-
-/**
- * Sanitize a git branch name for use in filesystem paths.
- *
- * Replaces `/` with `-`, strips characters not in `[a-zA-Z0-9._-]`,
- * collapses consecutive hyphens, and trims leading/trailing hyphens.
- *
- * When sanitization is lossy (characters were stripped), an 8-character SHA-256
- * hash of the original branch name is appended to prevent collisions (e.g.
- * `release/1.2` vs `release/12` producing distinct paths). If all characters
- * are stripped (e.g. non-ASCII-only names), the hash alone is returned.
- *
- * @param branch - Raw git branch name
- * @returns Sanitized branch name safe for filesystem paths
- */
-export function sanitizeBranchName(branch: string): string {
-  const slashNormalized = branch.replace(/\//g, '-');
-  const charStripped = slashNormalized.replace(/[^a-zA-Z0-9._-]/g, '');
-  const isLossy = charStripped !== slashNormalized;
-  const sanitized = charStripped.replace(/-{2,}/g, '-').replace(/^-+|-+$/g, '');
-
-  if (!sanitized) {
-    return isLossy ? createHash('sha256').update(branch).digest('hex').slice(0, 8) : '';
-  }
-  if (isLossy) {
-    const hash = createHash('sha256').update(branch).digest('hex').slice(0, 8);
-    return `${sanitized}-${hash}`;
-  }
-  return sanitized;
 }
 
 /**
@@ -259,23 +229,21 @@ function normalizeToStringVariables(
 export const DEFAULT_WORK_PATH = WORK_DIR;
 
 /**
- * Compute the branch-scoped `WorkPath` value.
+ * Compute the fixed artifact `WorkPath` value.
  *
- * @param branch - Raw git branch name, or `null` when not in a git repo
- * @returns `.rundown/work/<sanitized-branch>` inside git, otherwise `.rundown/work`
+ * @returns `.rundown/work`
  */
-function computeWorkPath(branch: string | null): string {
-  const sanitized = branch ? sanitizeBranchName(branch) : null;
-  return sanitized ? `${WORK_DIR}/${sanitized}` : WORK_DIR;
+function computeWorkPath(): string {
+  return WORK_DIR;
 }
 
 /**
- * Canonical names of rundown built-in template variables.
+ * Canonical names of Rundown runtime template variables.
  *
- * Single source of truth for the keys produced by {@link getBuiltinVariables}.
- * Consumers (e.g. shell-env injection in `execution.ts`) should reference these
- * constants rather than hardcoding string literals so a rename here surfaces
- * as a typecheck error at every call site.
+ * Some keys are produced by {@link getBuiltinVariables}; resolver-owned
+ * identity (`RunbookRef`) is injected during preparation, while execution-owned
+ * identity (`RunId`) is injected only when creating a `RunnableRunbook`.
+ * Both are merged after user input so user values cannot override them.
  */
 export const BUILTIN_VARIABLES = {
   Date: 'Date',
@@ -286,14 +254,16 @@ export const BUILTIN_VARIABLES = {
   Branch: 'Branch',
   WorkPath: 'WorkPath',
   RunId: 'RunId',
+  RunbookRef: 'RunbookRef',
   ContextId: 'ContextId',
 } as const;
 
 /**
  * Returns built-in default template variables.
  *
- * These have the lowest precedence and can be overridden by any other source
- * (frontmatter, config file, --input-file, or --input flags).
+ * These discovery defaults have the lowest precedence. `RunbookRef` is
+ * injected later by preparation and `RunId` is injected later by runnable
+ * preparation so neither identity can be spoofed by user input.
  *
  * @returns Built-in variables with PascalCase names
  */
@@ -307,8 +277,7 @@ export function getBuiltinVariables(): Record<string, string> {
     [BUILTIN_VARIABLES.Month]: String(now.getUTCMonth() + 1).padStart(2, '0'), // MM (01-12, UTC)
     [BUILTIN_VARIABLES.Day]: String(now.getUTCDate()).padStart(2, '0'), // DD (01-31, UTC)
     [BUILTIN_VARIABLES.Branch]: branch ?? '', // Raw git branch name (empty when not in git)
-    [BUILTIN_VARIABLES.WorkPath]: computeWorkPath(branch), // Branch-isolated artifact directory
-    [BUILTIN_VARIABLES.RunId]: randomBytes(4).toString('hex'), // 8-char hex
+    [BUILTIN_VARIABLES.WorkPath]: computeWorkPath(), // Fixed artifact directory
     [BUILTIN_VARIABLES.ContextId]: randomBytes(4).toString('hex'), // 8-char hex
   };
 }
@@ -692,7 +661,7 @@ function collectEnvBridgeVars(warnings?: string[]): Record<string, unknown> {
  * earlier ones for the same key during processing in `resolveVariables`.
  *
  * ```
- * Layer 0: builtins        ← Date, Branch, WorkPath, RunId, ContextId (fresh)
+ * Layer 0: builtins        ← Date, Branch, WorkPath, ContextId (fresh)
  * Layer 1: discovered      ← .rundown/config.yaml (auto-discovered)
  * Layer 2: inheritedVars   ← parent delegation vars (overrides builtins/config)
  * Layer 3: envBridge       ← RD_INPUT_* environment variables
@@ -701,7 +670,9 @@ function collectEnvBridgeVars(warnings?: string[]): Record<string, unknown> {
  *
  * The inherited layer ensures that parent ContextId survives into child
  * runbooks during delegation, rather than being replaced by a fresh builtin
- * or shadowed by project-local config.
+ * or shadowed by project-local config. Resolver/runtime identity (`RunbookRef`
+ * and `RunId`) is merged after this discovery stack in the preparation
+ * pipeline.
  *
  * @param options - Variable sources from CLI flags, input-file, and inherited vars
  * @param options.inputFile - Array of paths to YAML files containing variable definitions (repeatable)
@@ -792,7 +763,7 @@ async function enforceFileSourcePolicy(
  * Resolve variables into the unified template variable map.
  *
  * Processes variable layers in precedence order (lowest to highest):
- * 1. Built-in defaults (Date, DateTime, Year, Month, Day, Branch, WorkPath, RunId, ContextId)
+ * 1. Built-in defaults (Date, DateTime, Year, Month, Day, Branch, WorkPath, ContextId)
  * 2. Auto-discovered .rundown/config.yaml
  * 2b. Inherited vars from parent delegation
  * 2c. Environment bridge (RD_INPUT_* env vars)
@@ -806,6 +777,9 @@ async function enforceFileSourcePolicy(
  * - Non-array object (JsonObject) → preserved for dotted template access
  * - Number → preserved, not stringified
  * - Other scalar (boolean, null, plain string) → stringified
+ *
+ * `RunbookRef` and `RunId` are not returned by this function; callers that
+ * prepare or launch runbooks inject those identity values after user input.
  *
  * @param options - Variable sources from CLI flags, input-file, and inherited vars
  * @param options.inputFile - Array of paths to YAML files containing variable definitions (repeatable)

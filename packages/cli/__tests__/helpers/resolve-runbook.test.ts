@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { resolveRunbookFile, parseIdentifier } from '../../src/helpers/resolve-runbook.js';
+import {
+  resolveRunbookFile,
+  resolveRunbookRef,
+  buildRunbookRef,
+  parseIdentifier,
+} from '../../src/helpers/resolve-runbook.js';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -33,6 +38,7 @@ describe('resolveRunbookFile', () => {
 
     expect(result).not.toBeNull();
     expect(result!.path).toBe(path.join(claudeDir, 'test.runbook.md'));
+    expect(result!.sourceRoot).toBe(testDir);
   });
 
   it('should find runbook in plugin runbooks directory', async () => {
@@ -46,6 +52,7 @@ describe('resolveRunbookFile', () => {
     const result = await resolveRunbookFile(testDir, 'plugin.runbook.md');
     expect(result).not.toBeNull();
     expect(result!.path).toBe(path.join(pluginDir, 'plugin.runbook.md'));
+    expect(result!.sourceRoot).toBe(pluginDir);
     // afterEach restores originalPluginRoot
   });
 
@@ -56,6 +63,7 @@ describe('resolveRunbookFile', () => {
 
     expect(result).not.toBeNull();
     expect(result!.path).toBe(path.join(testDir, 'relative.runbook.md'));
+    expect(result!.sourceRoot).toBe(testDir);
   });
 
   it('should return null if runbook not found', async () => {
@@ -75,6 +83,7 @@ describe('resolveRunbookFile', () => {
 
     expect(result).not.toBeNull();
     expect(result!.path).toBe(path.join(claudeDir, 'test.runbook.md'));
+    expect(result!.sourceRoot).toBe(testDir);
   });
 
   describe('resolution precedence', () => {
@@ -311,6 +320,165 @@ describe('resolveRunbookFile', () => {
       expect(result).not.toBeNull();
       expect(result!.source).toBe('plugin');
     });
+
+    it('returns source-root-relative runbookRef for nested plugin runbooks', async () => {
+      const pluginRunbooksDir = path.join(testDir, 'plugin/runbooks');
+      const runbookRef = 'planning/review/review-plan-risk-safety.runbook.md';
+      await fs.mkdir(path.join(pluginRunbooksDir, 'planning', 'review'), { recursive: true });
+      await fs.writeFile(path.join(pluginRunbooksDir, runbookRef), '# Risk Safety');
+      process.env.CLAUDE_PLUGIN_ROOT = path.join(testDir, 'plugin');
+
+      const result = await resolveRunbookFile(testDir, runbookRef);
+
+      expect(result).not.toBeNull();
+      expect(result!.source).toBe('plugin');
+      expect(result!.sourceRoot).toBe(pluginRunbooksDir);
+      expect(await buildRunbookRef(result!)).toEqual({ source: 'plugin', path: runbookRef });
+    });
+
+    it('keeps project-local runbook refs project-root-relative', async () => {
+      const projectRunbooksDir = runbooksDir(testDir);
+      await fs.mkdir(path.join(projectRunbooksDir, 'ops'), { recursive: true });
+      await fs.writeFile(path.join(projectRunbooksDir, 'ops/deploy.runbook.md'), '# Deploy');
+
+      const result = await resolveRunbookFile(testDir, 'ops/deploy.runbook.md');
+
+      expect(result).not.toBeNull();
+      expect(result!.source).toBe('project');
+      expect(result!.sourceRoot).toBe(testDir);
+      expect(await buildRunbookRef(result!)).toEqual({
+        source: 'project',
+        path: '.rundown/runbooks/ops/deploy.runbook.md',
+      });
+    });
+
+    it('derives cwd-relative refs for absolute project runbook paths under .rundown/runbooks', async () => {
+      const filePath = path.join(testDir, '.rundown/runbooks/ops/deploy.md');
+      await fs.mkdir(path.dirname(filePath), { recursive: true });
+      await fs.writeFile(filePath, '# Deploy');
+
+      const result = await resolveRunbookFile(testDir, filePath);
+
+      expect(result).toMatchObject({
+        source: 'project',
+        sourceRoot: testDir,
+      });
+      expect(await buildRunbookRef(result!)).toEqual({
+        source: 'project',
+        path: '.rundown/runbooks/ops/deploy.md',
+      });
+    });
+
+    it('derives cwd-relative refs for absolute direct project file paths', async () => {
+      const filePath = path.join(testDir, 'scratch/deploy.md');
+      await fs.mkdir(path.dirname(filePath), { recursive: true });
+      await fs.writeFile(filePath, '# Deploy');
+
+      const result = await resolveRunbookFile(testDir, filePath);
+
+      expect(result).toMatchObject({
+        source: 'project',
+        sourceRoot: testDir,
+      });
+      expect(await buildRunbookRef(result!)).toEqual({
+        source: 'project',
+        path: 'scratch/deploy.md',
+      });
+    });
+
+    it('re-resolves absolute external runbook refs to the original file path', async () => {
+      const externalDir = await fs.mkdtemp(path.join(path.dirname(testDir), 'external-runbook-'));
+      try {
+        const filePath = path.join(externalDir, 'external-child.runbook.md');
+        await fs.writeFile(filePath, '# External Child');
+
+        const resolved = await resolveRunbookFile(testDir, filePath);
+
+        expect(resolved).toMatchObject({
+          path: filePath,
+          source: 'external',
+          sourceRoot: externalDir,
+        });
+        const runbookRef = await buildRunbookRef(resolved!);
+        expect(runbookRef).toEqual({
+          source: 'external',
+          path: filePath,
+        });
+
+        const rehydrated = await resolveRunbookRef(testDir, runbookRef);
+        expect(rehydrated.ok).toBe(true);
+        if (rehydrated.ok) {
+          expect(rehydrated.resolved).toMatchObject({
+            path: filePath,
+            source: 'external',
+            sourceRoot: externalDir,
+          });
+        }
+      } finally {
+        await fs.rm(externalDir, { recursive: true, force: true });
+      }
+    });
+
+    it('re-resolves persisted refs to the exact Markdown file path', async () => {
+      const filePath = path.join(testDir, '.rundown/runbooks/ops/deploy.md');
+      await fs.mkdir(path.dirname(filePath), { recursive: true });
+      await fs.writeFile(filePath, '# Deploy');
+
+      const result = await resolveRunbookRef(testDir, {
+        source: 'project',
+        path: '.rundown/runbooks/ops/deploy.md',
+      });
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.resolved).toMatchObject({
+          path: filePath,
+          source: 'project',
+          sourceRoot: testDir,
+        });
+        expect(await buildRunbookRef(result.resolved)).toEqual({
+          source: 'project',
+          path: '.rundown/runbooks/ops/deploy.md',
+        });
+      }
+    });
+
+    it('reports missing plugin files when plugin context is available', async () => {
+      process.env.CLAUDE_PLUGIN_ROOT = path.join(testDir, 'plugin');
+      const runbookRef = { source: 'plugin' as const, path: 'planning/write-plan.runbook.md' };
+
+      const result = await resolveRunbookRef(testDir, runbookRef);
+
+      expect(result).toEqual({
+        ok: false,
+        reason: 'file-missing',
+        runbookRef,
+      });
+    });
+  });
+});
+
+describe('buildRunbookRef', () => {
+  it('rejects a symlinked runbook that escapes the source root', async () => {
+    const realDir = await fs.mkdtemp(path.join(os.tmpdir(), 'real-'));
+    const sourceRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'src-'));
+    try {
+      // Real file lives outside sourceRoot
+      const realFile = path.join(realDir, 'escaped.runbook.md');
+      await fs.writeFile(realFile, '# Escaped');
+
+      // Symlink lives inside sourceRoot but resolves outside
+      const symlinkInside = path.join(sourceRoot, 'inside.runbook.md');
+      await fs.symlink(realFile, symlinkInside);
+
+      // buildRunbookRef should reject because realpath(symlinkInside) is not under sourceRoot
+      await expect(
+        buildRunbookRef({ path: symlinkInside, source: 'project', sourceRoot }),
+      ).rejects.toThrow(/outside/i);
+    } finally {
+      await fs.rm(realDir, { recursive: true, force: true });
+      await fs.rm(sourceRoot, { recursive: true, force: true });
+    }
   });
 });
 

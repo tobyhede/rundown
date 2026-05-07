@@ -70,7 +70,8 @@ function isRecoverableActiveStateLookupError(error: unknown): boolean {
     message.includes('schema validation failed') ||
     message.includes('previous schema version') ||
     message.includes('Legacy per-agent session format detected') ||
-    message.includes('Session file contains invalid entries')
+    message.includes('Legacy session ownership format detected') ||
+    message.includes('Session file contains invalid')
   ) {
     return true;
   }

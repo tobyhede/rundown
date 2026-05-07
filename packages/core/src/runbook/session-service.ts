@@ -11,6 +11,7 @@
  */
 
 import type { RunbookStateManager } from './state.js';
+import type { RunId } from './run-id.js';
 import { SessionLock } from './session-lock.js';
 import {
   createClaimRecord,
@@ -24,12 +25,12 @@ import type { DelegationLinkage, RunbookState } from './types.js';
 
 /** Result of removing a runbook from session targeting structures. */
 export type ReleaseRunbookResult =
-  | { readonly status: 'not-found'; readonly runbookId: RunbookState['id'] }
+  | { readonly status: 'not-found'; readonly runbookId: RunId }
   | {
       readonly status: 'released';
-      readonly runbookId: RunbookState['id'];
+      readonly runbookId: RunId;
       readonly removedFromDefaultStack: boolean;
-      readonly nextDefaultRunbookId: RunbookState['id'] | null;
+      readonly nextDefaultRunbookId: RunId | null;
     };
 
 /**
@@ -54,6 +55,18 @@ function linkageMatchesLinkage(
     persisted.parentStepId === incoming.parentStepId &&
     persisted.tokenHash === incoming.tokenHash
   );
+}
+
+function claimRecordToDelegationLinkage(claim: ClaimRecord): DelegationLinkage {
+  return {
+    kind: 'delegation',
+    parentRunId: claim.parentRunId,
+    parentStepId: claim.parentStepId,
+    tokenHash: claim.tokenHash,
+    ...(claim.parentStep !== undefined ? { parentStep: claim.parentStep } : {}),
+    ...(claim.parentFrameKey !== undefined ? { parentFrameKey: claim.parentFrameKey } : {}),
+    ...(claim.parentEntry !== undefined ? { parentEntry: claim.parentEntry } : {}),
+  };
 }
 
 /**
@@ -117,7 +130,7 @@ export class SessionService {
 
   private findClaimByChildRunId(
     claims: Record<string, ClaimRecord>,
-    childRunId: RunbookState['id'],
+    childRunId: RunId,
   ): ClaimRecord | undefined {
     return Object.values(claims).find((claim) => claim.childRunId === childRunId);
   }
@@ -156,7 +169,7 @@ export class SessionService {
    *
    * @param id - The runbook state ID to push
    */
-  async pushRunbook(id: string): Promise<void> {
+  async pushRunbook(id: RunId): Promise<void> {
     await this.withLock(async () => {
       const session = await this.manager.loadSession();
       session.defaultStack.push(id);
@@ -192,41 +205,24 @@ export class SessionService {
    * @param linkage - Delegation linkage to record in the claim. Caller must build
    *   this from freshly token-validated parent state.
    * @returns A claim record on success, or a failure variant when the child is
-   *   missing or its persisted linkage diverges from `linkage`.
+   *   missing, terminal, or its persisted linkage diverges from `linkage`.
    */
-  async claimRunbook(
-    childRunId: RunbookState['id'],
-    linkage: DelegationLinkage,
-  ): Promise<ClaimRunbookResult> {
+  async claimRunbook(childRunId: RunId, linkage: DelegationLinkage): Promise<ClaimRunbookResult> {
     return this.withLock(async () => {
-      const childState = await this.manager.load(childRunId);
-      if (!childState) {
-        return { status: 'missing-child', childRunId };
-      }
-      if (!linkageMatchesLinkage(childState.parentLinkage, linkage)) {
-        return {
-          status: 'linkage-mismatch',
-          childRunId,
-          incoming: linkage,
-          persisted: childState.parentLinkage,
-        };
-      }
-
       const session = await this.manager.loadSession();
       const now = new Date().toISOString();
-      const existing = this.findClaimByChildRunId(session.claims, childRunId);
-      if (existing !== undefined) {
-        const refreshed = { ...existing, updatedAt: now };
-        session.claims[existing.claimId] = refreshed;
-        await this.manager.saveSession(session);
-        return { status: 'claimed', claim: refreshed };
-      }
-
       const existingForDelegation = this.findClaimByDelegationLinkage(session.claims, linkage);
       if (existingForDelegation !== undefined) {
         const existingState = await this.manager.load(existingForDelegation.childRunId);
         if (!existingState) {
           return { status: 'missing-child', childRunId: existingForDelegation.childRunId };
+        }
+        if (existingState.lifecycle === 'completed' || existingState.lifecycle === 'stopped') {
+          return {
+            status: 'terminal-child',
+            childRunId: existingForDelegation.childRunId,
+            lifecycle: existingState.lifecycle,
+          };
         }
         if (!linkageMatchesLinkage(existingState.parentLinkage, linkage)) {
           return {
@@ -238,6 +234,39 @@ export class SessionService {
         }
         const refreshed = { ...existingForDelegation, updatedAt: now };
         session.claims[existingForDelegation.claimId] = refreshed;
+        await this.manager.saveSession(session);
+        return { status: 'claimed', claim: refreshed };
+      }
+
+      const childState = await this.manager.load(childRunId);
+      if (!childState) {
+        return { status: 'missing-child', childRunId };
+      }
+      if (childState.lifecycle === 'completed' || childState.lifecycle === 'stopped') {
+        return { status: 'terminal-child', childRunId, lifecycle: childState.lifecycle };
+      }
+      if (!linkageMatchesLinkage(childState.parentLinkage, linkage)) {
+        return {
+          status: 'linkage-mismatch',
+          childRunId,
+          incoming: linkage,
+          persisted: childState.parentLinkage,
+        };
+      }
+
+      const existing = this.findClaimByChildRunId(session.claims, childRunId);
+      if (existing !== undefined) {
+        const existingLinkage = claimRecordToDelegationLinkage(existing);
+        if (!linkageMatchesLinkage(existingLinkage, linkage)) {
+          return {
+            status: 'linkage-mismatch',
+            childRunId,
+            incoming: linkage,
+            persisted: existingLinkage,
+          };
+        }
+        const refreshed = { ...existing, updatedAt: now };
+        session.claims[existing.claimId] = refreshed;
         await this.manager.saveSession(session);
         return { status: 'claimed', claim: refreshed };
       }
@@ -309,7 +338,7 @@ export class SessionService {
    * @param runbookId - Runbook id to release
    * @returns Structured release result
    */
-  async releaseRunbook(runbookId: RunbookState['id']): Promise<ReleaseRunbookResult> {
+  async releaseRunbook(runbookId: RunId): Promise<ReleaseRunbookResult> {
     return this.withLock(() => this.releaseRunbookLocked(runbookId));
   }
 
@@ -319,7 +348,7 @@ export class SessionService {
    * @param runbookId - Runbook id to release from session targeting structures
    * @returns Structured release result describing what was removed
    */
-  private async releaseRunbookLocked(runbookId: RunbookState['id']): Promise<ReleaseRunbookResult> {
+  private async releaseRunbookLocked(runbookId: RunId): Promise<ReleaseRunbookResult> {
     const session = await this.manager.loadSession();
 
     const originalDefaultStackLength = session.defaultStack.length;
@@ -360,7 +389,7 @@ export class SessionService {
    *
    * @returns The new active runbook ID (parent), or null if the stack is empty
    */
-  async popRunbook(): Promise<string | null> {
+  async popRunbook(): Promise<RunId | null> {
     return this.withLock(async () => {
       const session = await this.manager.loadSession();
       const topId = session.defaultStack[session.defaultStack.length - 1];
@@ -378,7 +407,7 @@ export class SessionService {
    *
    * @returns The stashed runbook ID, or null if no runbook was active or a stash already exists
    */
-  async stash(): Promise<string | null> {
+  async stash(): Promise<RunId | null> {
     return this.withLock(async () => {
       const session = await this.manager.loadSession();
 
@@ -404,7 +433,7 @@ export class SessionService {
    * @param runbookId - Runbook id to move into the single session stash slot
    * @returns The stashed runbook id, or null if no slot is available or the runbook was not targeted
    */
-  async stashRunbook(runbookId: RunbookState['id']): Promise<string | null> {
+  async stashRunbook(runbookId: RunId): Promise<RunId | null> {
     return this.withLock(async () => {
       const session = await this.manager.loadSession();
       if (session.stashedRunbookId) return null;
@@ -508,7 +537,7 @@ export class SessionService {
    *
    * @returns The stashed runbook ID, or null if nothing is stashed
    */
-  async getStashedRunbookId(): Promise<string | null> {
+  async getStashedRunbookId(): Promise<RunId | null> {
     const session = await this.manager.loadSession();
     return session.stashedRunbookId ?? null;
   }

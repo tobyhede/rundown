@@ -3,11 +3,8 @@ import * as path from 'node:path';
 import { isNodeErrorCode } from '../errors.js';
 import { assertSafeId } from '../paths.js';
 import { ARTIFACT_ERROR_TEXT } from './artifact-errors.js';
-
-/**
- * Concrete run identifier syntax used by artifact producer URIs and metadata.
- */
-export const RUN_ID_PATTERN = /^wf_[a-f0-9]{32}$/;
+import { RUN_ID_PATTERN } from './run-id.js';
+export { RUN_ID_PATTERN } from './run-id.js';
 const TEMPLATE_MARKER_PATTERN = /{{.*}}/;
 const BARE_BUILTIN_PLACEHOLDERS = new Set(['ContextId', 'RunId']);
 const SUPPORTED_SELECTOR_QUERY_KEYS = new Set(['status', 'runbook', 'source', 'latest']);
@@ -284,7 +281,7 @@ function validateConcreteRunId(runId: string): void {
  * Validate that a run id names one concrete run.
  *
  * @param runId - Candidate run identifier
- * @throws {Error} When the run id is not `wf_` plus 32 lowercase hex characters
+ * @throws {Error} When the run id is not `rd_` plus 32 lowercase hex characters
  */
 export function assertConcreteRunId(runId: string): void {
   validateConcreteRunId(runId);

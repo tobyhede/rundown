@@ -1,6 +1,6 @@
 import matter from 'gray-matter';
 import { z } from 'zod';
-import { isReservedTemplateName } from './reserved.js';
+import { formatReservedTemplateNames, isReservedTemplateName } from './reserved.js';
 import type { ValidationDiagnostic } from './validator.js';
 import type { OutputDeclaration } from './ast.js';
 import { parseFrontmatterOutputDeclaration } from './helpers.js';
@@ -253,7 +253,7 @@ function filterInputDeclarations(
     if (isReservedTemplateName(entry)) {
       diagnostics.push({
         severity: 'error',
-        message: `Frontmatter "inputs[${String(index)}]" — "${entry}" is a reserved variable name (step, index, context — case-insensitive)`,
+        message: `Frontmatter "inputs[${String(index)}]" — "${entry}" is a reserved variable name (${formatReservedTemplateNames()} — case-insensitive)`,
       });
       return;
     }
@@ -310,7 +310,7 @@ function filterIdentifierArray(
     if (isReservedTemplateName(entry)) {
       diagnostics.push({
         severity: 'error',
-        message: `Frontmatter "${field}[${String(index)}]" — "${entry}" is a reserved variable name (step, index, context — case-insensitive)`,
+        message: `Frontmatter "${field}[${String(index)}]" — "${entry}" is a reserved variable name (${formatReservedTemplateNames()} — case-insensitive)`,
       });
       return;
     }
@@ -389,7 +389,7 @@ function filterOutputDeclarationArray(
     if (isReservedTemplateName(decl.name)) {
       diagnostics.push({
         severity: 'error',
-        message: `Frontmatter "outputs[${String(index)}]" — "${decl.name}" is a reserved variable name (step, index, context — case-insensitive)`,
+        message: `Frontmatter "outputs[${String(index)}]" — "${decl.name}" is a reserved variable name (${formatReservedTemplateNames()} — case-insensitive)`,
       });
       return;
     }

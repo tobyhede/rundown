@@ -2,6 +2,7 @@ import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type { ResolvedStep, RunbookState, Transitions } from '../../src/runbook/types.js';
 import {
   brandInitialTemplateVarsForTest,
+  brandRunIdForTest,
   brandStoredOutputsForTest,
 } from '../helpers/effective-vars.js';
 
@@ -94,8 +95,8 @@ function makeTestSubstep(id: string): {
 /** Helper: create minimal RunbookState for testing. */
 export function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
   return {
-    id: 'run-1',
-    runbook: 'parent.md',
+    id: brandRunIdForTest(`rd_${'c'.repeat(32)}`),
+    runbook: { source: 'project', path: 'parent.md' },
     runbookPath: 'parent.md',
     step: '1',
     stepName: 'Main step',

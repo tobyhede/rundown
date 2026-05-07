@@ -13,6 +13,9 @@ import {
   makeState,
   makeSteps,
 } from './delegation-service-fixtures.js';
+import { brandRunIdForTest } from '../helpers/effective-vars.js';
+
+const CHILD_RUN_ID = brandRunIdForTest(`rd_${'d'.repeat(32)}`);
 
 describe('retryDelegation', () => {
   it('returns { status: "retried" } with a fresh token on success', () => {
@@ -23,6 +26,7 @@ describe('retryDelegation', () => {
         state: baseState,
         stepId: '1.1',
         childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
         ancestors: [],
         frameKey: buildFrameKey('1'),
       },
@@ -46,6 +50,13 @@ describe('retryDelegation', () => {
     if (result.status !== 'retried') return;
     expect(result.tokenHash).not.toBe(initial.tokenHash);
     expect(result.token.startsWith(TOKEN_PREFIX)).toBe(true);
+    // childRunbookRef must be preserved verbatim across retry — the operator
+    // did not pass a new child runbook, so the canonical RunbookRef captured
+    // at original delegation time must round-trip into the replacement.
+    expect(result.delegation.childRunbookRef).toEqual({
+      source: 'project',
+      path: 'child.md',
+    });
 
     const replaced = result.updatedSubstepStates.find((ss) => ss.id === '1');
     expect(replaced?.delegation?.tokenHash).toBe(result.tokenHash);
@@ -60,6 +71,7 @@ describe('retryDelegation', () => {
         state: baseState,
         stepId: '1.1',
         childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
         extraVars: { environment: 'staging' },
         ancestors: [],
         frameKey: buildFrameKey('1'),
@@ -82,6 +94,13 @@ describe('retryDelegation', () => {
 
     expect(result.status).toBe('retried');
     if (result.status !== 'retried') return;
+    // childRunbookRef must be preserved verbatim across retry — the operator
+    // did not pass a new child runbook, so the canonical RunbookRef captured
+    // at original delegation time must round-trip into the replacement.
+    expect(result.delegation.childRunbookRef).toEqual({
+      source: 'project',
+      path: 'child.md',
+    });
     expect(result.updatedSubstepStates.find((ss) => ss.id === '1')?.delegation?.extraVars).toEqual({
       environment: 'staging',
     });
@@ -95,6 +114,7 @@ describe('retryDelegation', () => {
         state: baseState,
         stepId: '1.1',
         childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
         extraVars: { environment: 'staging', port: 3000 },
         ancestors: [],
         frameKey: buildFrameKey('1'),
@@ -118,6 +138,13 @@ describe('retryDelegation', () => {
 
     expect(result.status).toBe('retried');
     if (result.status !== 'retried') return;
+    // childRunbookRef must be preserved verbatim across retry — the operator
+    // did not pass a new child runbook, so the canonical RunbookRef captured
+    // at original delegation time must round-trip into the replacement.
+    expect(result.delegation.childRunbookRef).toEqual({
+      source: 'project',
+      path: 'child.md',
+    });
     expect(result.updatedSubstepStates.find((ss) => ss.id === '1')?.delegation?.extraVars).toEqual({
       environment: 'production',
       port: 3000,
@@ -132,6 +159,7 @@ describe('retryDelegation', () => {
         state: baseState,
         stepId: '1.1',
         childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
         ancestors: [],
         frameKey: buildFrameKey('1'),
       },
@@ -146,7 +174,7 @@ describe('retryDelegation', () => {
             ...ss,
             status: 'done' as const,
             result: 'fail' as const,
-            delegation: { ...ss.delegation, childRunId: 'child-run-1' },
+            delegation: { ...ss.delegation, childRunId: CHILD_RUN_ID },
           }
         : ss,
     );
@@ -187,6 +215,7 @@ describe('retryDelegation', () => {
         state: { ...baseState, step: '1' },
         stepId: '1.1',
         childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
         ancestors: [],
         frameKey: buildFrameKey('1'),
       },
@@ -229,6 +258,7 @@ describe('retryDelegation', () => {
         state: baseState,
         stepId: '1.1',
         childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
         ancestors: [],
         frameKey: buildFrameKey('1'),
       },
@@ -270,6 +300,7 @@ describe('retryDelegation', () => {
         state: baseState,
         stepId: '1',
         childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
         ancestors: [],
         frameKey: buildFrameKey('1'),
       },
@@ -316,6 +347,7 @@ describe('retryDelegation', () => {
         state: baseState,
         stepId: '1.1',
         childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
         ancestors: [],
         frameKey: buildFrameKey('1', 2),
       },
@@ -352,6 +384,7 @@ describe('retryDelegation', () => {
         state: baseState,
         stepId: '1.1',
         childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
         ancestors: [],
         frameKey: buildFrameKey('1'),
       },
@@ -415,6 +448,7 @@ describe('retryDelegation', () => {
         state: baseState,
         stepId: '1.2.1',
         childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
         ancestors: [],
         frameKey: buildFrameKey('1', 2),
       },
@@ -460,6 +494,7 @@ describe('retryDelegation', () => {
         state: baseState,
         stepId: '1.1',
         childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
         ancestors: [],
         frameKey: buildFrameKey('1'),
       },
@@ -527,6 +562,7 @@ describe('retryDelegation', () => {
         state: baseState,
         stepId: '1',
         childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
         ancestors: [],
         frameKey: buildFrameKey('1', 2),
       },
@@ -576,6 +612,7 @@ describe('retryDelegation', () => {
         state: baseState,
         stepId: '1.1',
         childRunbookPath: 'child.md',
+        childRunbookRef: { source: 'project', path: 'child.md' },
         ancestors: [],
         frameKey: buildFrameKey('1'),
       },

@@ -1,9 +1,11 @@
-import { readdir } from 'node:fs/promises';
+import { readdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { describe, it, expect } from '@jest/globals';
 import {
   createRunbook,
   createTestWorkspace,
   parseConcatenatedJson,
+  readRunbookState,
   runCliInProcess,
   stripExitArtefact,
 } from './test-utils.js';
@@ -380,6 +382,111 @@ describe('createRunbook', () => {
 describe('parseConcatenatedJson', () => {
   it('skips leading non-JSON text and parses subsequent concatenated objects', () => {
     expect(parseConcatenatedJson('debug\n{"a":1}{"b":2}')).toEqual([{ a: 1 }, { b: 2 }]);
+  });
+});
+
+describe('readRunbookState', () => {
+  it('accepts persisted states that reference external runbooks', async () => {
+    const workspace = await createTestWorkspace({ fixtureDir: 'snapshots' });
+    try {
+      const runId = `rd_${'a'.repeat(32)}`;
+      const state = {
+        id: runId,
+        runbook: { source: 'external', path: '/tmp/external.runbook.md' },
+        runbookPath: '/tmp/external.runbook.md',
+        step: '1',
+        stepName: 'External step',
+        retryCount: 0,
+        variables: {},
+        steps: [],
+        startedAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      };
+      await writeFile(join(workspace.statePath(), `${runId}.json`), JSON.stringify(state));
+
+      await expect(readRunbookState(workspace, runId)).resolves.toEqual(
+        expect.objectContaining({
+          id: runId,
+          runbook: { source: 'external', path: '/tmp/external.runbook.md' },
+        }),
+      );
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  it('rejects persisted states whose ids are not canonical run ids', async () => {
+    const workspace = await createTestWorkspace({ fixtureDir: 'snapshots' });
+    try {
+      const state = {
+        id: 'wf_legacy',
+        runbook: { source: 'project', path: 'legacy.runbook.md' },
+        runbookPath: 'legacy.runbook.md',
+        step: '1',
+        stepName: 'Legacy step',
+        retryCount: 0,
+        variables: {},
+        steps: [],
+        startedAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      };
+      await writeFile(join(workspace.statePath(), 'wf_legacy.json'), JSON.stringify(state));
+
+      await expect(readRunbookState(workspace, 'wf_legacy')).resolves.toBeNull();
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  it('returns null when filename id does not match embedded state.id', async () => {
+    const workspace = await createTestWorkspace({ fixtureDir: 'snapshots' });
+    try {
+      const filenameId = `rd_${'a'.repeat(32)}`;
+      const embeddedId = `rd_${'b'.repeat(32)}`;
+      const state = {
+        id: embeddedId,
+        runbook: { source: 'project', path: 'x.md' },
+        runbookPath: 'x.md',
+        step: '1',
+        stepName: 'Step',
+        retryCount: 0,
+        variables: {},
+        steps: [],
+        startedAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      };
+      await writeFile(join(workspace.statePath(), `${filenameId}.json`), JSON.stringify(state));
+
+      await expect(readRunbookState(workspace, filenameId)).resolves.toBeNull();
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  it('returns the parsed state when filename id matches embedded state.id', async () => {
+    const workspace = await createTestWorkspace({ fixtureDir: 'snapshots' });
+    try {
+      const id = `rd_${'c'.repeat(32)}`;
+      const state = {
+        id,
+        runbook: { source: 'project', path: 'x.md' },
+        runbookPath: 'x.md',
+        step: '1',
+        stepName: 'Step',
+        retryCount: 0,
+        variables: {},
+        steps: [],
+        startedAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      };
+      await writeFile(join(workspace.statePath(), `${id}.json`), JSON.stringify(state));
+
+      await expect(readRunbookState(workspace, id)).resolves.toEqual(
+        expect.objectContaining({ id }),
+      );
+    } finally {
+      await workspace.cleanup();
+    }
   });
 });
 

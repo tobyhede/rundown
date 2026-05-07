@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { RUN_ID_PATTERN } from '@rundown-org/core';
 import { createTestWorkspace, runCliInProcess, type TestWorkspace } from '../helpers/test-utils.js';
+
+function expectRunId(text: string): void {
+  const unanchoredRunIdSource = RUN_ID_PATTERN.source.replace(/^\^/, '').replace(/\$$/, '');
+  expect(text).toMatch(new RegExp(`\\b${unanchoredRunIdSource}\\b`));
+}
 
 describe('output format integration tests', () => {
   let workspace: TestWorkspace;
@@ -34,7 +40,7 @@ describe('output format integration tests', () => {
         workspace,
       );
 
-      expect(result.stdout).toMatch(/wf-\d{4}-\d{2}-\d{2}/);
+      expectRunId(result.stdout);
     });
 
     it('shows first step details in action block', async () => {
@@ -164,7 +170,7 @@ describe('output format integration tests', () => {
       const result = await runCliInProcess('status --text', workspace);
 
       expect(result.stdout).toContain('State:');
-      expect(result.stdout).toMatch(/wf-\d{4}-\d{2}-\d{2}/);
+      expectRunId(result.stdout);
     });
 
     it('shows current step block', async () => {
@@ -191,7 +197,7 @@ describe('output format integration tests', () => {
     it('includes runbook ID in output', async () => {
       const result = await runCliInProcess('stop --text', workspace);
 
-      expect(result.stdout).toMatch(/wf-\d{4}-\d{2}-\d{2}/);
+      expectRunId(result.stdout);
     });
 
     it('shows confirmation message', async () => {

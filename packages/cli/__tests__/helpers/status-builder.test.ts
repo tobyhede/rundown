@@ -3,6 +3,7 @@ import { mockErrorHelpers } from './mock-error-helpers.js';
 import {
   brandDelegationTokenHashForTest,
   brandInitialTemplateVarsForTest,
+  brandRunIdForTest,
   brandStoredOutputsForTest,
 } from './brand-helpers.js';
 import { mockFn } from './typed-mocks.js';
@@ -10,6 +11,10 @@ import { mockFn } from './typed-mocks.js';
 import type * as CoreModule from '@rundown-org/core';
 import type { BaseStep, ResolvedStep } from '@rundown-org/parser';
 import type * as ExecutionModule from '../../src/services/execution.js';
+
+const PARENT_RUN_ID = brandRunIdForTest(`rd_${'9'.repeat(32)}`);
+const SECOND_PARENT_RUN_ID = brandRunIdForTest(`rd_${'a'.repeat(32)}`);
+const DEFAULT_RUN_ID = brandRunIdForTest(`rd_${'b'.repeat(32)}`);
 
 // Mock @rundown-org/core
 jest.unstable_mockModule('@rundown-org/core', () => {
@@ -79,8 +84,8 @@ const { buildInactiveStatus, buildStashedStatus, buildActiveStatus } = await imp
 
 function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
   const baseState: RunbookState = {
-    id: 'test-id',
-    runbook: 'test.runbook.md',
+    id: DEFAULT_RUN_ID,
+    runbook: { source: 'project', path: 'test.runbook.md' },
     runbookPath: 'test.runbook.md',
     step: '1',
     stepName: 'First Step',
@@ -287,7 +292,7 @@ describe('parentLinkage projection', () => {
         tokenHash: brandDelegationTokenHashForTest(
           'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
         ),
-        parentRunId: 'parent-run-1',
+        parentRunId: PARENT_RUN_ID,
         parentStepId: '1.1',
         parentStep: '1',
       },
@@ -298,7 +303,7 @@ describe('parentLinkage projection', () => {
     expect(result.parentLinkage).toEqual({
       kind: 'delegation',
       tokenHash: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
-      parentRunId: 'parent-run-1',
+      parentRunId: PARENT_RUN_ID,
       parentStepId: '1.1',
       parentStep: '1',
     });
@@ -308,7 +313,7 @@ describe('parentLinkage projection', () => {
     const state = makeState({
       parentLinkage: {
         kind: 'inline',
-        parentRunId: 'parent-run-1',
+        parentRunId: PARENT_RUN_ID,
         parentStepId: '1.1',
       },
     });
@@ -317,7 +322,7 @@ describe('parentLinkage projection', () => {
 
     expect(result.parentLinkage).toEqual({
       kind: 'inline',
-      parentRunId: 'parent-run-1',
+      parentRunId: PARENT_RUN_ID,
       parentStepId: '1.1',
     });
     expect(result.parentLinkage).not.toHaveProperty('tokenHash');
@@ -331,16 +336,18 @@ describe('parentLinkage projection', () => {
     expect(result.parentLinkage).toBeUndefined();
   });
 
-  it('surfaces parentLinkage in stashed status', () => {
+  it('surfaces parentLinkage in stashed status and redacts vars for caller-scoped child', () => {
     const state = makeState({
       parentLinkage: {
         kind: 'delegation',
         tokenHash: brandDelegationTokenHashForTest(
           'sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210',
         ),
-        parentRunId: 'parent-run-2',
+        parentRunId: SECOND_PARENT_RUN_ID,
         parentStepId: '2.1',
       },
+      templateVars: brandInitialTemplateVarsForTest({ secret: 'inherited-from-parent' }),
+      variables: brandStoredOutputsForTest({ output_value: 'child-output' }),
     });
 
     const result = buildStashedStatus(state, '/test');
@@ -348,9 +355,23 @@ describe('parentLinkage projection', () => {
     expect(result.parentLinkage).toEqual({
       kind: 'delegation',
       tokenHash: 'sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210',
-      parentRunId: 'parent-run-2',
+      parentRunId: SECOND_PARENT_RUN_ID,
       parentStepId: '2.1',
     });
+    // Caller-scoped (parentLinkage set) → vars must be redacted from stashed status.
+    expect(result.vars).toBeUndefined();
+  });
+
+  it('surfaces vars in stashed status when no parentLinkage is set', () => {
+    const state = makeState({
+      templateVars: brandInitialTemplateVarsForTest({ visible: 'value' }),
+      variables: brandStoredOutputsForTest(),
+    });
+
+    const result = buildStashedStatus(state, '/test');
+
+    expect(result.parentLinkage).toBeUndefined();
+    expect(result.vars).toEqual(expect.objectContaining({ visible: 'value' }));
   });
 });
 

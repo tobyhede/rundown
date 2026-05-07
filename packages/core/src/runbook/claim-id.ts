@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import type { DelegationTokenHash } from './delegation-token.js';
+import type { RunId } from './run-id.js';
 import type { FrameKey } from './targeting.js';
 import type { DelegationLinkage, ParentLinkageBase, RunbookState } from './types.js';
 
@@ -21,7 +22,7 @@ export interface ClaimRecord {
   /** Stable command-targeting handle returned by rd claim. */
   readonly claimId: ClaimId;
   /** Child runbook state id controlled by this claim. */
-  readonly childRunId: RunbookState['id'];
+  readonly childRunId: RunId;
   /** Hash of the delegation token that produced this claimed child. */
   readonly tokenHash: DelegationTokenHash;
   /** Parent runbook state id that delegated the child. */
@@ -47,6 +48,9 @@ export interface ClaimRecord {
  *   freshly created or idempotently refreshed record.
  * - `missing-child` — Transient failure: the child run state file is absent
  *   on disk. May be recoverable by pruning + restarting the parent.
+ * - `terminal-child` — The child run exists but is already completed or
+ *   stopped, so the delegation should be treated as resolved rather than
+ *   claimed again.
  * - `linkage-mismatch` — Corruption signal: the child's persisted
  *   `parentLinkage` disagrees with the freshly token-validated `incoming`
  *   linkage on at least one identifying field (`parentRunId`,
@@ -58,10 +62,15 @@ export interface ClaimRecord {
  */
 export type ClaimRunbookResult =
   | { readonly status: 'claimed'; readonly claim: ClaimRecord }
-  | { readonly status: 'missing-child'; readonly childRunId: RunbookState['id'] }
+  | { readonly status: 'missing-child'; readonly childRunId: RunId }
+  | {
+      readonly status: 'terminal-child';
+      readonly childRunId: RunId;
+      readonly lifecycle: 'completed' | 'stopped';
+    }
   | {
       readonly status: 'linkage-mismatch';
-      readonly childRunId: RunbookState['id'];
+      readonly childRunId: RunId;
       readonly incoming: DelegationLinkage;
       readonly persisted: RunbookState['parentLinkage'];
     };
@@ -126,7 +135,7 @@ export function generateClaimId(): ClaimId {
  */
 export function createClaimRecord(
   claimId: ClaimId,
-  childRunId: RunbookState['id'],
+  childRunId: RunId,
   linkage: DelegationLinkage,
   now: string,
 ): ClaimRecord {

@@ -56,7 +56,7 @@ export function getRunbookFromState(state: RunbookState, _cwd: string): readonly
     const errors = diagnostics.filter((d) => d.severity === 'error');
     if (errors.length > 0) {
       throw new Error(
-        `Runbook ${state.runbook} has structural errors: ${errors[0].message}. ` +
+        `Runbook ${state.runbook.path} has structural errors: ${errors[0].message}. ` +
           `Delete state and re-run the runbook.`,
       );
     }
@@ -72,7 +72,7 @@ export function getRunbookFromState(state: RunbookState, _cwd: string): readonly
   // mergeEffectiveVars to include OUTPUTS for descriptions, prompts, and
   // downstream OUTPUTS expressions.
   if (state.templateVars) {
-    const { runbook, diagnostics } = parseRunbookDocument(state.runbookSrc, state.runbook);
+    const { runbook, diagnostics } = parseRunbookDocument(state.runbookSrc, state.runbook.path);
     checkDiagnostics(diagnostics);
     const { runbook: resolved } = resolveForBounds(runbook, state.templateVars);
     const substituted = substituteRunbookVariables(resolved, state.templateVars);
@@ -82,12 +82,12 @@ export function getRunbookFromState(state: RunbookState, _cwd: string): readonly
   }
 
   // Backward compat: old state files have pre-expanded runbookSrc, no templateVars
-  const { runbook, diagnostics } = parseRunbookDocument(state.runbookSrc, state.runbook);
+  const { runbook, diagnostics } = parseRunbookDocument(state.runbookSrc, state.runbook.path);
   checkDiagnostics(diagnostics);
 
   if (!areAllStepsResolved(runbook.steps)) {
     throw new Error(
-      `Runbook ${state.runbook} has unresolved FOR bounds or runbook references in pre-expanded state. ` +
+      `Runbook ${state.runbook.path} has unresolved FOR bounds or runbook references in pre-expanded state. ` +
         `This indicates stale state. Delete and re-run the runbook.`,
     );
   }

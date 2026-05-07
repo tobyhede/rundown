@@ -6,6 +6,7 @@ import {
   type InitialTemplateVars,
   type StoredOutputs,
 } from '../../src/runbook/effective-vars.js';
+import { assertRunId, type RunId } from '../../src/runbook/run-id.js';
 import {
   flattenTemplateVars,
   type FlattenedTemplateVars,
@@ -42,6 +43,20 @@ export function brandInitialTemplateVarsForTest(
  */
 export function brandStoredOutputsForTest(vars: Readonly<Record<string, string>>): StoredOutputs {
   return brandStoredOutputs(vars);
+}
+
+/**
+ * Test-only producer of {@link RunId}.
+ *
+ * Delegates to the production assertion helper so test fixtures use the
+ * same canonical run-id validation as production code.
+ *
+ * @param runId - Candidate persisted run id
+ * @returns Branded `RunId`
+ * @throws {Error} If `runId` is not a canonical `rd_<32 lowercase hex>` value
+ */
+export function brandRunIdForTest(runId: string): RunId {
+  return assertRunId(runId);
 }
 
 /**

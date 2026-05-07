@@ -7,7 +7,6 @@
  * @module helpers/runbook-pipeline
  */
 
-import * as fsSync from 'node:fs';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import {
@@ -22,12 +21,12 @@ import {
   type ExecutionEventEmitter,
   type ResolvedRunbook,
   type RunbookRef,
-  RunbookRefSchema,
+  type RunbookSource,
+  type RunId,
   type DelegationLinkage,
   type ParentLinkage,
   type ClaimId,
   RUNS_DIR,
-  runbooksDir,
   DelegationScanService,
   DelegationLock,
   DelegationLockTimeoutError,
@@ -41,6 +40,7 @@ import {
   type TemplateVarValue,
   isJsonArray,
   isJsonArrayStream,
+  generateRunId,
 } from '@rundown-org/core';
 import {
   parseRunbookDocument,
@@ -53,13 +53,16 @@ import {
   type RunbookFrontmatter,
   type Runbook,
 } from '@rundown-org/parser';
-import { resolveRunbookFile } from './resolve-runbook.js';
+import { buildRunbookRef, resolveRunbookFile, resolveRunbookRef } from './resolve-runbook.js';
 import type { ResolvedRunbook as ResolvedRunbookFile } from './resolve-runbook.js';
 import { runExecutionLoop } from '../services/execution.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
-import { getBundledRunbooksPath } from './bundled-runbooks.js';
-import { FileSourcePolicyError, resolveVariables } from '../services/variable-discovery.js';
+import {
+  BUILTIN_VARIABLES,
+  FileSourcePolicyError,
+  resolveVariables,
+} from '../services/variable-discovery.js';
 import {
   substituteRunbookVariables,
   resolveForBounds,
@@ -99,12 +102,31 @@ export interface RunPipelineContext {
   cwd: string;
 }
 
+/** Template variables available after runbook resolution but before execution starts. */
+export type PreparedTemplateVariables = Record<string, TemplateVarValue> & {
+  /** Canonical identity for the resolved runbook. */
+  readonly RunbookRef: RunbookRef;
+};
+
+/** Template variables available to a runnable runbook execution. */
+export type RunnableTemplateVariables = PreparedTemplateVariables & {
+  /** Fresh execution identifier for this run. */
+  readonly RunId: RunId;
+};
+
 /**
- * A fully prepared runbook ready for state creation.
+ * A resolved, validated, template-substituted runbook.
+ *
+ * This shape is safe for `rd resolve`: it contains resolver-owned identity
+ * (`RunbookRef`) but never mints execution-owned identity (`RunId`).
  */
 export interface PreparedRunbook {
   /** Absolute path to the resolved runbook file */
   filePath: string;
+  /** Source where the runbook was discovered from */
+  source: RunbookSource;
+  /** Source root used to derive persisted runbook identity */
+  sourceRoot: string;
   /** Canonical runbook reference for events and artifact metadata */
   runbookRef: RunbookRef;
   /** Raw markdown content of the runbook file */
@@ -112,11 +134,29 @@ export interface PreparedRunbook {
   /** Parsed and variable-substituted runbook AST (all FOR bounds resolved) */
   runbook: ResolvedRunbook;
   /** Merged template variables from all sources */
-  mergedVariables: Record<string, TemplateVarValue>;
+  mergedVariables: PreparedTemplateVariables;
   /** Step and substep counts */
   stats: { steps: number; substeps: number };
   /** Validated frontmatter, or null if absent/invalid */
   frontmatter: RunbookFrontmatter | null;
+}
+
+/**
+ * A prepared runbook with execution identity allocated.
+ *
+ * Only `rd run`, fresh `rd claim`, and other state-creating paths should
+ * accept this type. `runId` must be passed into `RunbookStateManager.create()`.
+ */
+export interface RunnableRunbook extends PreparedRunbook {
+  readonly runId: RunId;
+  readonly mergedVariables: RunnableTemplateVariables;
+}
+
+function deriveClaudePluginRoot(sourceRoot: string): string {
+  const normalized = sourceRoot.replace(/\\/g, '/').replace(/\/+$/, '');
+  const lastSlash = normalized.lastIndexOf('/');
+  const pluginRoot = lastSlash >= 0 ? normalized.slice(0, lastSlash) : '.';
+  return `${pluginRoot}/`;
 }
 
 /** Failure produced while initializing a runbook launch. */
@@ -130,7 +170,7 @@ export interface RunbookStartFailure {
 
 /** Result of starting a runbook execution loop via {@link startRunbook}. */
 export type RunbookStartResult =
-  | { ok: true; loopResult: 'done' | 'stopped' | 'waiting'; stateId: string }
+  | { ok: true; loopResult: 'done' | 'stopped' | 'waiting'; stateId: RunId }
   | RunbookStartFailure;
 
 type LaunchSessionActivation = { readonly kind: 'default-stack' } | { readonly kind: 'none' };
@@ -205,11 +245,11 @@ export type ClaimResult =
       /** Discriminator indicating success. */
       ok: true;
       /** Unique identifier of the launched (or idempotently returned) child run. */
-      childRunId: string;
+      childRunId: RunId;
       /** Claim id for explicit child targeting. */
       claimId: ClaimId;
       /** Unique identifier of the parent run that owns the delegation. */
-      parentRunId: string;
+      parentRunId: RunId;
       /** Step (or substep) ID on the parent that holds the delegation. */
       stepId: string;
       /** Terminal state of the child execution loop. */
@@ -246,105 +286,6 @@ export function validateForVariables(
       }
     }
   }
-}
-
-/**
- * Build a canonical runbook reference from a resolved file and source root.
- *
- * @param resolved - Resolved runbook file and discovery source
- * @param cwd - Project working directory used for project-relative paths
- * @returns Validated canonical runbook reference
- * @throws {Error} If the resolved file cannot be represented canonically
- */
-export function buildRunbookRef(resolved: ResolvedRunbookFile, cwd: string): RunbookRef {
-  const rootRelativePath = sourceRelativeRunbookPath(resolved, cwd);
-  return RunbookRefSchema.parse({
-    source: resolved.source,
-    path: toCanonicalRunbookRefPath(toPosixPath(rootRelativePath)),
-  });
-}
-
-function sourceRelativeRunbookPath(resolved: ResolvedRunbookFile, cwd: string): string {
-  switch (resolved.source) {
-    case 'project': {
-      const projectRunbooksRelative = pathRelativeWithin(runbooksDir(cwd), resolved.path);
-      return projectRunbooksRelative ?? pathRelativeRequired(cwd, resolved.path);
-    }
-    case 'plugin': {
-      const pluginRunbooksRoot = findRunbooksAncestor(resolved.path);
-      if (!pluginRunbooksRoot) {
-        throw new Error(`Plugin runbook is not beneath a runbooks directory: ${resolved.path}`);
-      }
-      return pathRelativeRequired(pluginRunbooksRoot, resolved.path);
-    }
-    case 'bundled':
-      return pathRelativeRequired(getBundledRunbooksPath(), resolved.path);
-    default: {
-      const _exhaustive: never = resolved.source;
-      throw new Error(`Unhandled runbook source: ${String(_exhaustive)}`);
-    }
-  }
-}
-
-function pathRelativeRequired(root: string, target: string): string {
-  const relativePath = pathRelativeWithin(root, target);
-  if (relativePath === null) {
-    throw new Error(`Resolved runbook path escapes source root: ${target}`);
-  }
-  return relativePath;
-}
-
-function pathRelativeWithin(root: string, target: string): string | null {
-  const relativePath = path.relative(resolveComparablePath(root), resolveComparablePath(target));
-  if (relativePath === '' || escapesRoot(relativePath)) {
-    return null;
-  }
-  return relativePath;
-}
-
-function resolveComparablePath(value: string): string {
-  try {
-    return fsSync.realpathSync.native(value);
-  } catch {
-    return path.resolve(value);
-  }
-}
-
-function escapesRoot(relativePath: string): boolean {
-  return (
-    relativePath === '..' ||
-    relativePath.startsWith(`..${path.sep}`) ||
-    path.isAbsolute(relativePath)
-  );
-}
-
-function findRunbooksAncestor(filePath: string): string | null {
-  let current = path.dirname(path.resolve(filePath));
-  let outermost: string | null = null;
-  for (;;) {
-    if (path.basename(current) === 'runbooks') {
-      outermost = current;
-    }
-    const parent = path.dirname(current);
-    if (parent === current) {
-      return outermost;
-    }
-    current = parent;
-  }
-}
-
-function toPosixPath(value: string): string {
-  return value.split(path.sep).join('/');
-}
-
-function toCanonicalRunbookRefPath(value: string): string {
-  if (value.endsWith('.runbook.md')) {
-    return value;
-  }
-  if (value.endsWith('.md')) {
-    return `${value.slice(0, -'.md'.length)}.runbook.md`;
-  }
-  return value;
 }
 
 /**
@@ -410,6 +351,34 @@ export function buildTemplateVars(
     ...buildContextVars(effectiveUserVars), // aliases from FULL user-var set
     ...(options?.inheritedContextVars ?? {}), // context.parent.vars.* etc.
   };
+}
+
+function withPreparedVariables(
+  variables: Record<string, TemplateVarValue>,
+  runbookRef: RunbookRef,
+): PreparedTemplateVariables {
+  return {
+    ...variables,
+    [BUILTIN_VARIABLES.RunbookRef]: runbookRef,
+  };
+}
+
+function withRunnableVariables(
+  variables: PreparedTemplateVariables,
+  runId: RunId,
+): RunnableTemplateVariables {
+  return {
+    ...variables,
+    [BUILTIN_VARIABLES.RunId]: runId,
+  };
+}
+
+/** Options that influence runbook preparation for delegation and context inheritance. */
+export interface PrepareRunbookOptions {
+  /** Context variables inherited from a parent delegation. */
+  readonly inheritedContextVars?: Readonly<Record<string, TemplateVarValue>>;
+  /** User variables inherited from a parent delegation. */
+  readonly inheritedUserVars?: Readonly<Record<string, TemplateVarValue>>;
 }
 
 /** Success result from {@link prepareRunbook}. */
@@ -488,7 +457,11 @@ export interface LoadAndParseSuccess {
   /** Absolute path to the resolved runbook file */
   filePath: string;
   /** Source where the runbook was discovered from */
-  source: 'project' | 'plugin' | 'bundled';
+  source: RunbookSource;
+  /** Source root used to derive persisted runbook identity */
+  sourceRoot: string;
+  /** Canonical runbook reference derived from the resolved file identity. */
+  runbookRef: RunbookRef;
   /** Raw markdown content */
   rawContent: string;
   /** Parsed runbook AST (before variable substitution) */
@@ -509,7 +482,7 @@ export interface LoadAndParseSuccess {
 export interface LoadAndParseFailure {
   ok: false;
   error: string;
-  code: 'RUNBOOK_NOT_FOUND' | 'PARSE_ERROR';
+  code: 'RUNBOOK_NOT_FOUND' | 'PARSE_ERROR' | 'RUNBOOK_REF_RESOLUTION_ERROR';
   details: { runbook: string };
 }
 
@@ -531,22 +504,96 @@ export type LoadAndParseResult = LoadAndParseSuccess | LoadAndParseFailure;
  * `diagnostics` array combines parser diagnostics with outputs validation only.
  *
  * @param file - Runbook file path or namespace:name
- * @param cwd - Current working directory for resolution
  * @returns Discriminated union: ok with loaded data, or error with message
+ */
+function runbookNotFound(file: string): LoadAndParseFailure {
+  return {
+    ok: false,
+    error: `Runbook not found: ${file}. Try 'rd ls --all' to list available runbooks.`,
+    code: 'RUNBOOK_NOT_FOUND',
+    details: { runbook: file },
+  };
+}
+
+/** Request for preparing an already-resolved runbook identity. */
+export interface ResolvedRunbookRequest {
+  /** Filesystem resolution result. */
+  readonly resolved: ResolvedRunbookFile;
+  /** Canonical persisted runbook identity expected for the resolved file. */
+  readonly runbookRef: RunbookRef;
+  /** User-facing name or path used in diagnostics. */
+  readonly displayName: string;
+}
+
+/**
+ * Resolve, load, and parse a runbook file.
+ *
+ * @param file - Runbook file path or namespace:name
+ * @param cwd - Current working directory for resolution
+ * @returns Loaded runbook data or a structured load failure
  */
 export async function loadAndParseRunbook(file: string, cwd: string): Promise<LoadAndParseResult> {
   const resolved = await resolveRunbookFile(cwd, file);
 
   if (!resolved) {
+    return runbookNotFound(file);
+  }
+
+  let runbookRef: RunbookRef;
+  try {
+    runbookRef = await buildRunbookRef(resolved);
+  } catch (error: unknown) {
     return {
       ok: false,
-      error: `Runbook not found: ${file}. Try 'rd ls --all' to list available runbooks.`,
-      code: 'RUNBOOK_NOT_FOUND',
+      error: getErrorMessage(error),
+      code: 'RUNBOOK_REF_RESOLUTION_ERROR',
       details: { runbook: file },
     };
   }
 
-  const { path: filePath, source } = resolved;
+  return loadAndParseResolvedRunbook({
+    resolved,
+    runbookRef,
+    displayName: file,
+  });
+}
+
+/**
+ * Load and parse a runbook from an already-resolved request.
+ *
+ * @param request - Resolved runbook request carrying source metadata and identity
+ * @returns Loaded runbook data or a structured load failure
+ */
+export async function loadAndParseResolvedRunbook(
+  request: ResolvedRunbookRequest,
+): Promise<LoadAndParseResult> {
+  const { resolved, displayName } = request;
+  const { path: filePath, source, sourceRoot } = resolved;
+  const runbookRef = request.runbookRef;
+
+  let derivedRunbookRef: RunbookRef;
+  try {
+    derivedRunbookRef = await buildRunbookRef({ path: filePath, source, sourceRoot });
+  } catch (error: unknown) {
+    return {
+      ok: false,
+      error: getErrorMessage(error),
+      code: 'RUNBOOK_REF_RESOLUTION_ERROR',
+      details: { runbook: displayName },
+    };
+  }
+
+  if (
+    derivedRunbookRef.source !== runbookRef.source ||
+    derivedRunbookRef.path !== runbookRef.path
+  ) {
+    return {
+      ok: false,
+      error: `Resolved runbook identity ${derivedRunbookRef.source}:${derivedRunbookRef.path} does not match requested ${runbookRef.source}:${runbookRef.path}`,
+      code: 'RUNBOOK_REF_RESOLUTION_ERROR',
+      details: { runbook: displayName },
+    };
+  }
 
   try {
     const rawContent = await fs.readFile(filePath, 'utf8');
@@ -571,6 +618,8 @@ export async function loadAndParseRunbook(file: string, cwd: string): Promise<Lo
       ok: true,
       filePath,
       source,
+      sourceRoot,
+      runbookRef,
       rawContent,
       runbook,
       frontmatter,
@@ -582,7 +631,7 @@ export async function loadAndParseRunbook(file: string, cwd: string): Promise<Lo
       ok: false,
       error: getErrorMessage(error),
       code: 'PARSE_ERROR',
-      details: { runbook: file },
+      details: { runbook: displayName },
     };
   }
 }
@@ -608,17 +657,102 @@ export async function prepareRunbook(
   file: string,
   inputOpts: InputOptions,
   cwd: string,
-  options?: {
-    inheritedContextVars?: Readonly<Record<string, TemplateVarValue>>;
-    inheritedUserVars?: Readonly<Record<string, TemplateVarValue>>;
-  },
+  options?: PrepareRunbookOptions,
 ): Promise<PrepareResult> {
-  // Phase 1-2: Parse + Validate
   const parsed = await loadAndParseRunbook(file, cwd);
+  return prepareLoadedRunbook(parsed, file, inputOpts, cwd, { kind: 'prepared' }, options);
+}
+
+/** Success/failure result from preparing a runnable execution. */
+export type RunnablePrepareResult =
+  | (Omit<PrepareSuccess, 'prepared'> & { readonly prepared: RunnableRunbook })
+  | PrepareFailure;
+
+/**
+ * Prepare a runbook for execution, minting a fresh `RunId`.
+ *
+ * @param file - Runbook file path or name
+ * @param inputOpts - Input options from CLI flags
+ * @param cwd - Current working directory
+ * @param options - Optional settings including inherited variables from parent runbook
+ * @returns Runnable preparation result with execution identity on success
+ */
+export async function prepareRunnableRunbook(
+  file: string,
+  inputOpts: InputOptions,
+  cwd: string,
+  options?: PrepareRunbookOptions,
+): Promise<RunnablePrepareResult> {
+  const parsed = await loadAndParseRunbook(file, cwd);
+  return prepareLoadedRunbook(
+    parsed,
+    file,
+    inputOpts,
+    cwd,
+    { kind: 'runnable', runId: generateRunId() },
+    options,
+  );
+}
+
+/**
+ * Prepare an already-resolved runbook for execution, minting a fresh `RunId`.
+ *
+ * @param request - Resolved runbook request carrying source metadata and identity
+ * @param inputOpts - Input options from CLI flags
+ * @param cwd - Current working directory
+ * @param options - Optional settings including inherited variables from parent runbook
+ * @returns Runnable preparation result with execution identity on success
+ */
+export async function prepareResolvedRunnableRunbook(
+  request: ResolvedRunbookRequest,
+  inputOpts: InputOptions,
+  cwd: string,
+  options?: PrepareRunbookOptions,
+): Promise<RunnablePrepareResult> {
+  const parsed = await loadAndParseResolvedRunbook(request);
+  return prepareLoadedRunbook(
+    parsed,
+    request.displayName,
+    inputOpts,
+    cwd,
+    { kind: 'runnable', runId: generateRunId() },
+    options,
+  );
+}
+
+type PreparedIdentity = { readonly kind: 'prepared' };
+type RunnableIdentity = { readonly kind: 'runnable'; readonly runId: RunId };
+
+function prepareLoadedRunbook(
+  parsed: LoadAndParseResult,
+  displayName: string,
+  inputOpts: InputOptions,
+  cwd: string,
+  identity: PreparedIdentity,
+  options?: PrepareRunbookOptions,
+): Promise<PrepareResult>;
+function prepareLoadedRunbook(
+  parsed: LoadAndParseResult,
+  displayName: string,
+  inputOpts: InputOptions,
+  cwd: string,
+  identity: RunnableIdentity,
+  options?: PrepareRunbookOptions,
+): Promise<RunnablePrepareResult>;
+async function prepareLoadedRunbook(
+  parsed: LoadAndParseResult,
+  displayName: string,
+  inputOpts: InputOptions,
+  cwd: string,
+  identity: PreparedIdentity | RunnableIdentity,
+  options?: PrepareRunbookOptions,
+): Promise<PrepareResult | RunnablePrepareResult> {
   if (!parsed.ok) return parsed;
   const {
     filePath,
     source,
+    sourceRoot,
+    runbookRef,
     rawContent,
     runbook: rawRunbook,
     frontmatter,
@@ -626,28 +760,7 @@ export async function prepareRunbook(
     stats,
   } = parsed;
 
-  // Derive CLAUDE_PLUGIN_ROOT from resolved path when source is plugin
-  let runbookRef: RunbookRef;
-  let pluginRoot: string | undefined;
-  try {
-    runbookRef = buildRunbookRef({ path: filePath, source }, cwd);
-    if (source === 'plugin') {
-      const runbooksSep = `${path.sep}runbooks${path.sep}`;
-      const runbooksIdx = filePath.indexOf(runbooksSep);
-      if (runbooksIdx !== -1) {
-        pluginRoot = filePath.slice(0, runbooksIdx + 1); // include trailing separator
-      }
-    }
-  } catch (error) {
-    return {
-      ok: false,
-      error: getErrorMessage(error),
-      code: 'RUNBOOK_REF_RESOLUTION_ERROR',
-      details: { runbook: file },
-      stats,
-      diagnostics,
-    };
-  }
+  const pluginRoot = source === 'plugin' ? deriveClaudePluginRoot(sourceRoot) : undefined;
 
   // Inherited user vars pass through untouched here. Context OUTPUTS are
   // inherited after variable resolution (stage 3.5 below), once the child's
@@ -689,7 +802,7 @@ export async function prepareRunbook(
         error: error.message,
         code: error.code,
         details: {
-          runbook: file,
+          runbook: displayName,
           variable: error.variable,
           filePath: error.filePath,
           reason: error.reason,
@@ -702,13 +815,23 @@ export async function prepareRunbook(
       ok: false,
       error: getErrorMessage(error),
       code: 'VARIABLE_RESOLUTION_ERROR',
-      details: { runbook: file },
+      details: { runbook: displayName },
       variables: {},
       stats,
       diagnostics,
     };
   }
-  const templateVars = buildTemplateVars(mergedVariables, options);
+  const baseTemplateVars = buildTemplateVars(mergedVariables, options);
+  const preparedTemplateVars = withPreparedVariables(baseTemplateVars, runbookRef);
+  const templateScope =
+    identity.kind === 'runnable'
+      ? {
+          kind: 'runnable' as const,
+          runId: identity.runId,
+          vars: withRunnableVariables(preparedTemplateVars, identity.runId),
+        }
+      : { kind: 'prepared' as const, vars: preparedTemplateVars };
+  const templateVars = templateScope.vars;
 
   // Bail early if there are structural errors — don't pass a broken AST to transform passes
   // This must run before the missing-required check so that malformed `required` entries
@@ -720,7 +843,7 @@ export async function prepareRunbook(
       ok: false,
       error: earlyErrors[0].message,
       code: 'VALIDATION_ERROR',
-      details: { runbook: file },
+      details: { runbook: displayName },
       variables: templateVars,
       stats,
       diagnostics,
@@ -753,7 +876,7 @@ export async function prepareRunbook(
         ok: false,
         error: `Missing required variable${missing.length > 1 ? 's' : ''}: ${names}. Provide via --input, --input-file, config.yaml, RD_INPUT_* environment variable, or prior runbook OUTPUTS.`,
         code: 'MISSING_REQUIRED_VARS',
-        details: { runbook: file, missing },
+        details: { runbook: displayName, missing },
         variables: templateVars,
         stats,
         diagnostics,
@@ -773,7 +896,7 @@ export async function prepareRunbook(
       ok: false,
       error: getErrorMessage(err),
       code: 'VALIDATION_ERROR',
-      details: { runbook: file },
+      details: { runbook: displayName },
       variables: templateVars,
       stats,
       diagnostics,
@@ -793,7 +916,7 @@ export async function prepareRunbook(
       ok: false,
       error: getErrorMessage(err),
       code: 'VALIDATION_ERROR',
-      details: { runbook: file },
+      details: { runbook: displayName },
       variables: templateVars,
       stats,
       diagnostics,
@@ -806,7 +929,7 @@ export async function prepareRunbook(
       ok: false,
       error: 'Runbook has no steps',
       code: 'VALIDATION_ERROR',
-      details: { runbook: file },
+      details: { runbook: displayName },
       variables: templateVars,
       stats,
       diagnostics,
@@ -814,17 +937,41 @@ export async function prepareRunbook(
     };
   }
 
+  const preparedBaseFields = {
+    filePath,
+    source,
+    sourceRoot,
+    runbookRef,
+    rawContent,
+    runbook,
+    stats,
+    frontmatter,
+  };
+
+  if (templateScope.kind === 'runnable') {
+    const prepared: RunnableRunbook = {
+      ...preparedBaseFields,
+      runId: templateScope.runId,
+      mergedVariables: templateScope.vars,
+    };
+
+    return {
+      ok: true,
+      prepared,
+      warnings: allWarnings.length > 0 ? allWarnings : undefined,
+      diagnostics,
+      unresolved: unresolvedNames,
+    };
+  }
+
+  const prepared: PreparedRunbook = {
+    ...preparedBaseFields,
+    mergedVariables: preparedTemplateVars,
+  };
+
   return {
     ok: true,
-    prepared: {
-      filePath,
-      runbookRef,
-      rawContent,
-      runbook,
-      mergedVariables: templateVars,
-      stats,
-      frontmatter,
-    },
+    prepared,
     warnings: allWarnings.length > 0 ? allWarnings : undefined,
     diagnostics,
     unresolved: unresolvedNames,
@@ -849,13 +996,13 @@ export async function prepareRunbook(
  */
 async function launchRunbook(
   ctx: RunPipelineContext,
-  prepared: PreparedRunbook,
+  prepared: RunnableRunbook,
   options: {
     runbookName: string;
     prompted: boolean;
     parentLinkage?: ParentLinkage;
     sessionActivation?: LaunchSessionActivation;
-    afterInit?: (stateId: string) => Promise<void>;
+    afterInit?: (stateId: RunId) => Promise<void>;
   },
 ): Promise<RunbookStartResult> {
   const { output, manager, actorService, sessionService, lifecycleService, cwd } = ctx;
@@ -867,13 +1014,13 @@ async function launchRunbook(
   // produce a structured launch failure so callers (notably claimAndLaunch)
   // can release locks and report cleanly. The loop itself is outside the
   // try/catch — loop failures still propagate as exceptions.
-  let stateId: string;
+  let stateId: RunId;
   let runbookSteps: ResolvedStep[];
   let emitter: ExecutionEventEmitter;
   try {
-    const state = await manager.create(options.runbookName, runbook, {
+    const state = await manager.create(prepared.runbookRef, runbook, {
+      runId: prepared.runId,
       runbookPath,
-      runbookRef: prepared.runbookRef,
       prompted: options.prompted,
       parentLinkage: options.parentLinkage,
       runbookSrc: rawContent,
@@ -919,7 +1066,7 @@ async function launchRunbook(
     await manager.update(state.id, { lastAction: { type: 'START' } });
 
     // Create emitter bridged to unified output
-    emitter = createBridgedEmitter(state, output, prepared.runbookRef);
+    emitter = createBridgedEmitter(state, output);
 
     // Emit RUNBOOK_STARTED
     emitRunbookStarted(emitter, state, options.prompted);
@@ -966,12 +1113,12 @@ async function launchRunbook(
  */
 export async function startRunbook(
   ctx: RunPipelineContext,
-  prepared: PreparedRunbook,
+  prepared: RunnableRunbook,
   options: {
     file: string;
     prompted?: boolean;
     parentLinkage?: ParentLinkage;
-    afterInit?: (stateId: string) => Promise<void>;
+    afterInit?: (stateId: RunId) => Promise<void>;
   },
 ): Promise<RunbookStartResult> {
   return launchRunbook(ctx, prepared, {
@@ -1012,9 +1159,9 @@ export function inferEntryFromState(state: RunbookState, frameKey: FrameKey): nu
  */
 async function updateStepDelegationChildRunId(
   manager: RunbookStateManager,
-  runId: string,
+  runId: RunId,
   substepId: string,
-  childRunId: string,
+  childRunId: RunId,
   tokenHash?: string,
 ): Promise<void> {
   const state = await manager.load(runId);
@@ -1039,16 +1186,31 @@ async function updateStepDelegationChildRunId(
 
 /** Outcome of {@link claimChildForPipeline}. */
 type ClaimChildResult =
-  | { readonly ok: true; readonly claimId: ClaimId; readonly childRunId: string }
+  | { readonly ok: true; readonly claimId: ClaimId; readonly childRunId: RunId }
   | {
       readonly ok: false;
-      readonly reason: 'child-missing' | 'linkage-mismatch';
-      readonly childRunId: string;
+      readonly reason: 'child-missing' | 'delegation-resolved' | 'linkage-mismatch';
+      readonly childRunId: RunId;
     };
 
+/**
+ * Claim or refresh a delegated child through {@link SessionService.claimRunbook}.
+ *
+ * `claimRunbook` owns the idempotent delegation contract: for a matching
+ * parent linkage it refreshes an existing claim before validating the incoming
+ * child id, and returns discriminated failures for missing, terminal, or
+ * linkage-divergent children. The 4b already-linked branch in
+ * {@link claimAndLaunch} intentionally relies on those source-of-truth
+ * semantics instead of re-loading the child locally.
+ *
+ * @param ctx - Run pipeline context carrying the session service
+ * @param childRunId - Child run id linked from the delegation or orphan scan
+ * @param linkage - Fresh linkage rebuilt from token-validated parent state
+ * @returns Claim id and child id on success, or a mapped failure variant
+ */
 async function claimChildForPipeline(
   ctx: RunPipelineContext,
-  childRunId: string,
+  childRunId: RunId,
   linkage: DelegationLinkage,
 ): Promise<ClaimChildResult> {
   const claim = await ctx.sessionService.claimRunbook(childRunId, linkage);
@@ -1057,10 +1219,12 @@ async function claimChildForPipeline(
       return {
         ok: true,
         claimId: claim.claim.claimId,
-        childRunId: (claim.claim as { readonly childRunId?: string }).childRunId ?? childRunId,
+        childRunId: claim.claim.childRunId,
       };
     case 'missing-child':
       return { ok: false, reason: 'child-missing', childRunId: claim.childRunId };
+    case 'terminal-child':
+      return { ok: false, reason: 'delegation-resolved', childRunId: claim.childRunId };
     case 'linkage-mismatch':
       return { ok: false, reason: 'linkage-mismatch', childRunId: claim.childRunId };
     default: {
@@ -1145,9 +1309,9 @@ function emitClaimedOutput(
 function buildClaimedPayload(args: {
   readonly truncatedToken: string;
   readonly claimId: ClaimId;
-  readonly childRunId: string;
+  readonly childRunId: RunId;
   readonly childRunbookPath: string;
-  readonly parentRunId: string;
+  readonly parentRunId: RunId;
   readonly parentStepAt: string | undefined;
 }): ClaimedOutputPayload {
   return {
@@ -1158,6 +1322,33 @@ function buildClaimedPayload(args: {
     runbook: args.childRunbookPath,
     parent_run_id: args.parentRunId,
     parent_step: args.parentStepAt,
+  };
+}
+
+function emitClaimedSuccess(args: {
+  readonly output: OutputEmitter;
+  readonly truncatedToken: string;
+  readonly claimId: ClaimId;
+  readonly childRunId: RunId;
+  readonly childRunbookPath: string;
+  readonly parentRunId: RunId;
+  readonly stepId: string;
+  readonly parentStepAt: string | undefined;
+  readonly loopResult: 'done' | 'stopped' | 'waiting';
+}): Extract<ClaimResult, { ok: true }> {
+  emitClaimedOutput(
+    args.output,
+    `Claimed ${args.truncatedToken} -> ${args.childRunbookPath}`,
+    buildClaimedPayload(args),
+  );
+
+  return {
+    ok: true,
+    childRunId: args.childRunId,
+    claimId: args.claimId,
+    parentRunId: args.parentRunId,
+    stepId: args.stepId,
+    loopResult: args.loopResult,
   };
 }
 
@@ -1265,27 +1456,6 @@ export async function claimAndLaunch(
 
     // 4b. Idempotent return if already claimed
     if (freshDelegation.childRunId) {
-      const existingChild = await manager.load(freshDelegation.childRunId);
-      if (!existingChild) {
-        // Parent points at a child run that no longer exists on disk. Fail
-        // closed rather than minting a claim against a missing run.
-        return {
-          ok: false,
-          reason: 'child-missing',
-          parentRunId: freshParent.id,
-          stepId,
-          childRunId: freshDelegation.childRunId,
-        };
-      }
-      if (existingChild.lifecycle === 'completed' || existingChild.lifecycle === 'stopped') {
-        return {
-          ok: false,
-          reason: 'delegation-resolved',
-          parentRunId: freshParent.id,
-          stepId,
-          childRunId: freshDelegation.childRunId,
-        };
-      }
       const delegationFrameKey = freshSubstep.frameKey;
       const freshLinkage: DelegationLinkage = {
         kind: 'delegation',
@@ -1304,28 +1474,17 @@ export async function claimAndLaunch(
       if (!claimResult.ok) {
         return claimResultToFailure(claimResult, freshParent.id, stepId);
       }
-      const claimId = claimResult.claimId;
-      emitClaimedOutput(
+      return emitClaimedSuccess({
         output,
-        `Claimed ${truncatedToken} -> ${freshDelegation.childRunbookPath}`,
-        buildClaimedPayload({
-          truncatedToken,
-          claimId,
-          childRunId: freshDelegation.childRunId,
-          childRunbookPath: freshDelegation.childRunbookPath,
-          parentRunId: freshParent.id,
-          parentStepAt: freshDelegation.contextSnapshot.at,
-        }),
-      );
-
-      return {
-        ok: true,
-        childRunId: freshDelegation.childRunId,
-        claimId,
+        truncatedToken,
+        childRunId: claimResult.childRunId,
+        claimId: claimResult.claimId,
+        childRunbookPath: freshDelegation.childRunbookPath,
         parentRunId: freshParent.id,
-        stepId,
+        stepId: substepId ?? stepId,
+        parentStepAt: freshDelegation.contextSnapshot.at,
         loopResult: 'waiting',
-      };
+      });
     }
 
     // 4c. Check for cancellation
@@ -1365,27 +1524,17 @@ export async function claimAndLaunch(
         adoptedChildRunId,
         tokenHash,
       );
-      const claimId = claimResult.claimId;
-      emitClaimedOutput(
+      return emitClaimedSuccess({
         output,
-        `Claimed ${truncatedToken} -> ${freshDelegation.childRunbookPath}`,
-        buildClaimedPayload({
-          truncatedToken,
-          claimId,
-          childRunId: adoptedChildRunId,
-          childRunbookPath: freshDelegation.childRunbookPath,
-          parentRunId: freshParent.id,
-          parentStepAt: freshDelegation.contextSnapshot.at,
-        }),
-      );
-      return {
-        ok: true,
+        truncatedToken,
         childRunId: adoptedChildRunId,
-        claimId,
+        claimId: claimResult.claimId,
+        childRunbookPath: freshDelegation.childRunbookPath,
         parentRunId: freshParent.id,
-        stepId,
+        stepId: substepId ?? stepId,
+        parentStepAt: freshDelegation.contextSnapshot.at,
         loopResult: 'waiting',
-      };
+      });
     }
 
     // Build delegation linkage for the child.
@@ -1402,12 +1551,7 @@ export async function claimAndLaunch(
       parentEntry: inferEntryFromState(freshParent, delegationFrameKey),
     };
 
-    const sessionServiceWithOptionalLookup = ctx.sessionService as Partial<
-      Pick<SessionService, 'findClaimForDelegation'>
-    >;
-    const existingClaim = sessionServiceWithOptionalLookup.findClaimForDelegation
-      ? await sessionServiceWithOptionalLookup.findClaimForDelegation(delegationLinkage)
-      : null;
+    const existingClaim = await ctx.sessionService.findClaimForDelegation(delegationLinkage);
     if (existingClaim !== null) {
       const existingChild = await manager.load(existingClaim.childRunId);
       if (!existingChild) {
@@ -1428,52 +1572,82 @@ export async function claimAndLaunch(
           childRunId: existingClaim.childRunId,
         };
       }
+      const claimResult = await claimChildForPipeline(
+        ctx,
+        existingClaim.childRunId,
+        delegationLinkage,
+      );
+      if (!claimResult.ok) {
+        return claimResultToFailure(claimResult, freshParent.id, stepId);
+      }
       await updateStepDelegationChildRunId(
         manager,
         freshParent.id,
         substepId ?? stepId,
-        existingClaim.childRunId,
+        claimResult.childRunId,
         tokenHash,
       );
-      emitClaimedOutput(
+      return emitClaimedSuccess({
         output,
-        `Claimed ${truncatedToken} -> ${freshDelegation.childRunbookPath}`,
-        buildClaimedPayload({
-          truncatedToken,
-          claimId: existingClaim.claimId,
-          childRunId: existingClaim.childRunId,
-          childRunbookPath: freshDelegation.childRunbookPath,
-          parentRunId: freshParent.id,
-          parentStepAt: freshDelegation.contextSnapshot.at,
-        }),
-      );
-      return {
-        ok: true,
-        childRunId: existingClaim.childRunId,
-        claimId: existingClaim.claimId,
+        truncatedToken,
+        childRunId: claimResult.childRunId,
+        claimId: claimResult.claimId,
+        childRunbookPath: freshDelegation.childRunbookPath,
         parentRunId: freshParent.id,
-        stepId,
+        stepId: substepId ?? stepId,
+        parentStepAt: freshDelegation.contextSnapshot.at,
         loopResult: 'waiting',
-      };
+      });
     }
 
     // 4e. Reconstitute context vars from frozen snapshot
     const inheritedContextVars = reconstituteContextVars(freshDelegation.contextSnapshot);
     const inheritedUserVars = extractInheritedUserVars(freshDelegation.contextSnapshot);
 
-    // 4f. Prepare child runbook
-    const prepResult = await prepareRunbook(freshDelegation.childRunbookPath, inputOpts, cwd, {
-      inheritedContextVars,
-      inheritedUserVars,
-    });
+    // 4f. Prepare child runbook from persisted source identity
+    const childRunbookRef = freshDelegation.childRunbookRef;
+    const childDisplayPath = freshDelegation.childRunbookPath;
+    const childResolution = await resolveRunbookRef(cwd, childRunbookRef);
+    if (!childResolution.ok) {
+      if (childResolution.reason === 'plugin-context-missing') {
+        return {
+          ok: false,
+          reason: 'prepare-failed',
+          runbook: childDisplayPath,
+          code: 'RUNBOOK_REF_RESOLUTION_ERROR',
+          cause: `Plugin runbook context is unavailable for ${childRunbookRef.source}:${childRunbookRef.path}. Set CLAUDE_PLUGIN_ROOT or install the Rundown Claude Code plugin alongside the CLI.`,
+          details: { runbook: childDisplayPath },
+        };
+      }
+      return {
+        ok: false,
+        reason: 'prepare-failed',
+        runbook: childDisplayPath,
+        code: 'RUNBOOK_NOT_FOUND',
+        cause: `Runbook not found: ${childRunbookRef.source}:${childRunbookRef.path}`,
+        details: { runbook: childDisplayPath },
+      };
+    }
+    const childResolved = childResolution.resolved;
+
+    const prepResult = await prepareResolvedRunnableRunbook(
+      {
+        resolved: childResolved,
+        runbookRef: childRunbookRef,
+        displayName: childDisplayPath,
+      },
+      inputOpts,
+      cwd,
+      { inheritedContextVars, inheritedUserVars },
+    );
     if (!prepResult.ok) {
       return {
         ok: false,
         reason: 'prepare-failed',
-        runbook: freshDelegation.childRunbookPath,
+        runbook: childDisplayPath,
         code: prepResult.code,
         cause: prepResult.error,
-        details: prepResult.details,
+        details: { ...prepResult.details, runbook: childDisplayPath },
       };
     }
 
@@ -1489,7 +1663,7 @@ export async function claimAndLaunch(
     const parentPrompted = freshParent.prompted ?? false;
 
     // 4g. Launch child runbook
-    let capturedChildRunId: string | undefined;
+    let capturedChildRunId: RunId | undefined;
     let capturedClaimId: ClaimId | undefined;
     // Captures a write-side claim invariant violation in `afterInit` so we
     // can surface it as a structured launch-failed result instead of an
@@ -1498,7 +1672,7 @@ export async function claimAndLaunch(
     let invariantViolation: Extract<ClaimChildResult, { ok: false }> | undefined;
 
     const launchResult = await launchRunbook(ctx, prepResult.prepared, {
-      runbookName: freshDelegation.childRunbookPath,
+      runbookName: childDisplayPath,
       prompted: parentPrompted,
       parentLinkage: delegationLinkage,
       sessionActivation: { kind: 'none' },
@@ -1528,12 +1702,12 @@ export async function claimAndLaunch(
       return {
         ok: false,
         reason: 'launch-failed',
-        runbook: freshDelegation.childRunbookPath,
+        runbook: childDisplayPath,
         code: ErrorCodes.CLAIM_INVARIANT_VIOLATED.code,
         cause: `Claim invariant violated for fresh child ${invariantViolation.childRunId}: ${invariantViolation.reason}`,
         details: {
-          runbookName: freshDelegation.childRunbookPath,
-          runbook: freshDelegation.childRunbookPath,
+          runbookName: childDisplayPath,
+          runbook: childDisplayPath,
         },
       };
     }
@@ -1542,10 +1716,10 @@ export async function claimAndLaunch(
       return {
         ok: false,
         reason: 'launch-failed',
-        runbook: freshDelegation.childRunbookPath,
+        runbook: childDisplayPath,
         code: launchResult.code,
         cause: launchResult.error,
-        details: { ...launchResult.details, runbook: freshDelegation.childRunbookPath },
+        details: { ...launchResult.details, runbook: childDisplayPath },
       };
     }
 
@@ -1554,12 +1728,12 @@ export async function claimAndLaunch(
       return {
         ok: false,
         reason: 'launch-failed',
-        runbook: freshDelegation.childRunbookPath,
+        runbook: childDisplayPath,
         code: ErrorCodes.LAUNCH_FAILED.code,
         cause: 'Claim id was not created for delegated child.',
         details: {
-          runbookName: freshDelegation.childRunbookPath,
-          runbook: freshDelegation.childRunbookPath,
+          runbookName: childDisplayPath,
+          runbook: childDisplayPath,
         },
       };
     }
@@ -1570,39 +1744,28 @@ export async function claimAndLaunch(
       return {
         ok: false,
         reason: 'launch-failed',
-        runbook: freshDelegation.childRunbookPath,
+        runbook: childDisplayPath,
         code: ErrorCodes.LAUNCH_FAILED.code,
         cause: 'Child run id was not captured for delegated child.',
         details: {
-          runbookName: freshDelegation.childRunbookPath,
-          runbook: freshDelegation.childRunbookPath,
+          runbookName: childDisplayPath,
+          runbook: childDisplayPath,
         },
       };
     }
     const childRunId = capturedChildRunId;
 
-    // Emit claimed output
-    emitClaimedOutput(
+    return emitClaimedSuccess({
       output,
-      `Claimed ${truncatedToken} -> ${freshDelegation.childRunbookPath}`,
-      buildClaimedPayload({
-        truncatedToken,
-        claimId,
-        childRunId,
-        childRunbookPath: freshDelegation.childRunbookPath,
-        parentRunId: freshParent.id,
-        parentStepAt: freshDelegation.contextSnapshot.at,
-      }),
-    );
-
-    return {
-      ok: true,
+      truncatedToken,
       childRunId,
       claimId,
+      childRunbookPath: childDisplayPath,
       parentRunId: freshParent.id,
-      stepId,
+      stepId: substepId ?? stepId,
+      parentStepAt: freshDelegation.contextSnapshot.at,
       loopResult: launchResult.loopResult,
-    };
+    });
   } finally {
     // 5. Always release lock
     await lock.release(parentState.id);

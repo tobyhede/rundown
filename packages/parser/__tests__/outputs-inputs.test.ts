@@ -250,6 +250,8 @@ name: no-inputs
     'context',
     'Step',
     'Index',
+    'RunId',
+    'RunbookRef',
   ])('rejects reserved name "%s" in frontmatter required', (name) => {
     const md = `---
 name: bad-required
@@ -358,6 +360,8 @@ describe('parseRunbookDocument OUTPUTS directive — reserved-name guard', () =>
     'Context',
     'STEP',
     'Index',
+    'RunId',
+    'RunbookRef',
   ])('throws RunbookSyntaxError when OUTPUTS uses reserved name "%s"', (name) => {
     const md = `## 1. Step
 - OUTPUTS

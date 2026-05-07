@@ -162,9 +162,18 @@ describe('delegate command', () => {
       const substepStates = state?.substepStates as Array<Record<string, unknown>> | undefined;
       const ss1 = substepStates?.find((ss) => ss.id === '1');
       const delegation = ss1?.delegation as Record<string, unknown>;
-      expect(delegation.childRunId).toEqual(expect.stringMatching(/^wf-/));
+      expect(delegation.childRunId).toEqual(expect.stringMatching(/^rd_[a-f0-9]{32}$/));
       expect(delegation.tokenHash).toEqual(expect.stringMatching(/^sha256:[a-f0-9]{64}$/));
       expect(delegation.token).toBeUndefined();
+      // Persisted childRunbookRef must be a structured RunbookRef object, not
+      // just a path string. A regression to path-only persistence would break
+      // source-aware claim resolution for plugin/bundled/external children.
+      // Path is source-root-relative: setupDelegation writes the child to
+      // ${cwd}/runbooks/child.runbook.md and project sourceRoot === cwd.
+      expect(delegation.childRunbookRef).toEqual({
+        source: 'project',
+        path: 'runbooks/child.runbook.md',
+      });
 
       const statusResult = await runCliInProcess('status', workspace);
       expect(statusResult.exitCode).toBe(0);
@@ -371,7 +380,7 @@ describe('delegate command', () => {
             ...state,
             parentLinkage: {
               kind: 'delegation',
-              parentRunId: 'parent-run-id',
+              parentRunId: `rd_${'9'.repeat(32)}`,
               parentStepId: '1',
               tokenHash: `sha256:${'a'.repeat(64)}`,
             },

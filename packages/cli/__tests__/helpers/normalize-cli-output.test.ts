@@ -62,15 +62,12 @@ describe('normalizeCliOutput', () => {
     expect(normalizeCliOutput(input, workspace)).toBe('"runId": "<uuid>"');
   });
 
-  it('masks an 8-char hex RunId template-variable value as <hex8>', () => {
-    // {{RunId}} is a built-in template variable — `randomBytes(4).toString('hex')`.
-    const input = 'RunId value is abcd1234 done';
-    expect(normalizeCliOutput(input, workspace)).toBe('RunId value is <hex8> done');
+  it('masks a concrete RunId template-variable value as <runbookId>', () => {
+    const input = 'RunId value is rd_0123456789abcdef0123456789abcdef done';
+    expect(normalizeCliOutput(input, workspace)).toBe('RunId value is <runbookId> done');
   });
 
   it('masks an 8-char hex ContextId template-variable value as <hex8>', () => {
-    // {{ContextId}} shares the same randomBytes(4)→hex shape as {{RunId}};
-    // one rule covers both.
     const input = 'ContextId value is deadbeef';
     expect(normalizeCliOutput(input, workspace)).toBe('ContextId value is <hex8>');
   });
@@ -145,40 +142,26 @@ describe('normalizeCliOutput', () => {
     expect(normalizeCliOutput(input, workspace)).toBe('loaded from <tmpdir>/other-file');
   });
 
-  it('replaces wf-YYYY-MM-DD-xxxxxx runbookId values with <runbookId>', () => {
-    // cspell:disable-next-line
-    const input = '"runbookId":"wf-2026-04-22-8gcrrf"';
+  it('replaces rd-prefixed runbookId values with <runbookId>', () => {
+    const input = '"runbookId":"rd_0123456789abcdef0123456789abcdef"';
     expect(normalizeCliOutput(input, workspace)).toBe('"runbookId":"<runbookId>"');
   });
 
   it('replaces runbookId values embedded in state paths', () => {
-    const input = '"statePath":".rundown/runs/wf-2026-04-22-zxn59z.json"';
+    const input = '"statePath":".rundown/runs/rd_0123456789abcdef0123456789abcdef.json"';
     expect(normalizeCliOutput(input, workspace)).toBe(
       '"statePath":".rundown/runs/<runbookId>.json"',
     );
   });
 
-  it('replaces runbookId with shorter base-36 suffix', () => {
-    const input = '"runbookId":"wf-2026-04-22-a1"';
-    expect(normalizeCliOutput(input, workspace)).toBe('"runbookId":"<runbookId>"');
-  });
-
-  describe('runbook ID normalization is bounded to 1-6 base-36 chars', () => {
-    it('normalizes a 3-char base-36 suffix', () => {
-      const input = '"runbookId":"wf-2026-04-23-abc"';
-      expect(normalizeCliOutput(input, workspace)).toBe('"runbookId":"<runbookId>"');
+  describe('runbook ID normalization is bounded to 32 lowercase hex chars', () => {
+    it('does NOT normalize uppercase hex', () => {
+      const input = '"runbookId":"rd_0123456789abcdef0123456789ABCDEF"';
+      expect(normalizeCliOutput(input, workspace)).toBe(input);
     });
 
-    it('normalizes a 6-char suffix (upper boundary)', () => {
-      const input = '"runbookId":"wf-2026-04-23-abcdef"';
-      expect(normalizeCliOutput(input, workspace)).toBe('"runbookId":"<runbookId>"');
-    });
-
-    it('does NOT normalize a 7-char suffix (malformed runbook ID)', () => {
-      // Suffixes longer than 6 base-36 chars do not match the production
-      // ID generator; leave them alone so genuine garbage stays visible
-      // in snapshot diffs rather than getting masked.
-      const input = '"runbookId":"wf-2026-04-23-abcdefg"';
+    it('does NOT normalize malformed lengths', () => {
+      const input = '"runbookId":"rd_0123456789abcdef0123456789abcde"';
       expect(normalizeCliOutput(input, workspace)).toBe(input);
     });
   });

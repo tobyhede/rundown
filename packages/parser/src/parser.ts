@@ -28,7 +28,7 @@ import {
   parseForClause,
   parseStepOutputDeclaration,
 } from './helpers.js';
-import { isReservedTemplateName } from './reserved.js';
+import { formatReservedTemplateNames, isReservedTemplateName } from './reserved.js';
 import { validateRunbook } from './validator.js';
 import type { ValidationDiagnostic } from './validator.js';
 import { extractFrontmatter, nameFromFilename } from './frontmatter.js';
@@ -683,7 +683,7 @@ function handleOutputsDirective(node: ListItem, ctx: ActiveStepContext): typeof 
     }
     if (isReservedTemplateName(decl.name)) {
       throw new RunbookSyntaxError(
-        `Invalid OUTPUTS declaration in ${targetLabel}${formatLineNum(item)}: "${decl.name}" is a reserved variable name (step, index, context — case-insensitive)`,
+        `Invalid OUTPUTS declaration in ${targetLabel}${formatLineNum(item)}: "${decl.name}" is a reserved variable name (${formatReservedTemplateNames()} — case-insensitive)`,
       );
     }
     if (seen.has(decl.name)) {

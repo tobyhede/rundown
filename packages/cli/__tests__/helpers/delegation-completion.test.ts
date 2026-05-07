@@ -4,6 +4,7 @@ import {
   brandDelegationTokenHashForTest,
   brandEffectiveVarsForTest,
   brandFrameKeyForTest,
+  brandRunIdForTest,
   brandStoredOutputsForTest,
 } from './brand-helpers.js';
 import { mockFn } from './typed-mocks.js';
@@ -23,6 +24,11 @@ import type { ResolvedStep } from '@rundown-org/parser';
 import type { OutputEmitter } from '../../src/services/output-emitter.js';
 
 type SubstepStatePatch = Partial<Pick<SubstepState, 'status' | 'result' | 'delegation'>>;
+
+const PARENT_RUN_ID = brandRunIdForTest('rd_11111111111111111111111111111111');
+const CHILD_RUN_ID = brandRunIdForTest('rd_22222222222222222222222222222222');
+const GRANDPARENT_RUN_ID = brandRunIdForTest('rd_33333333333333333333333333333333');
+const OLD_CHILD_RUN_ID = brandRunIdForTest('rd_44444444444444444444444444444444');
 
 function upsertSubstepStateForTest(
   substepStates: readonly SubstepState[],
@@ -149,10 +155,10 @@ const { handleParentCompletion, extractParentLinkage } = await import(
   '../../src/helpers/delegation-completion.js'
 );
 
-function makeState(id: string, overrides: Partial<RunbookState> = {}): RunbookState {
+function makeState(id: RunbookState['id'], overrides: Partial<RunbookState> = {}): RunbookState {
   const base: RunbookState = {
     id,
-    runbook: 'test.md',
+    runbook: { source: 'project', path: 'test.md' },
     runbookPath: '/tmp/test.md',
     runbookSrc: '## 1. Step\n- PASS COMPLETE',
     step: '1',
@@ -169,7 +175,7 @@ function makeState(id: string, overrides: Partial<RunbookState> = {}): RunbookSt
 function makeDelegationLinkage(overrides: Partial<DelegationLinkage> = {}): DelegationLinkage {
   return {
     kind: 'delegation' as const,
-    parentRunId: 'parent-run-id',
+    parentRunId: PARENT_RUN_ID,
     parentStepId: '1',
     tokenHash: brandDelegationTokenHashForTest(`sha256:${'a'.repeat(64)}`),
     parentStep: '1',
@@ -321,7 +327,7 @@ beforeEach(() => {
     unresolved: 0,
     status: 'continue',
     applied: 1,
-    state: makeState('parent-run-id'),
+    state: makeState(PARENT_RUN_ID),
   };
   jest.mocked(drainResolvedCompletions).mockResolvedValue(defaultDrainResult);
   jest.mocked(runExecutionLoop).mockResolvedValue('waiting');
@@ -337,7 +343,7 @@ beforeEach(() => {
 
 describe('handleParentCompletion', () => {
   it('returns not-applicable when child has no delegation linkage', async () => {
-    const childState = makeState('child-run-id');
+    const childState = makeState(CHILD_RUN_ID);
     const output = makeOutput();
 
     const result = await handleParentCompletion(childState, 'pass', '/test', output);
@@ -347,8 +353,8 @@ describe('handleParentCompletion', () => {
 
   it('acquires delegation lock on parent run ID', async () => {
     const delegation = makeDelegationLinkage();
-    const childState = makeState('child-run-id', { parentLinkage: delegation });
-    const parentState = makeState('parent-run-id', {
+    const childState = makeState(CHILD_RUN_ID, { parentLinkage: delegation });
+    const parentState = makeState(PARENT_RUN_ID, {
       substepStates: [{ id: '1', frameKey: brandFrameKeyForTest('1'), status: 'pending' }],
     });
 
@@ -362,15 +368,15 @@ describe('handleParentCompletion', () => {
 
     await handleParentCompletion(childState, 'pass', '/test', output);
 
-    expect(lock.acquire).toHaveBeenCalledWith('parent-run-id');
-    expect(lock.release).toHaveBeenCalledWith('parent-run-id');
+    expect(lock.acquire).toHaveBeenCalledWith(PARENT_RUN_ID);
+    expect(lock.release).toHaveBeenCalledWith(PARENT_RUN_ID);
   });
 
   it('returns not-applicable when parent no longer exists', async () => {
     const delegation = makeDelegationLinkage();
-    const childState = makeState('child-run-id', { parentLinkage: delegation });
+    const childState = makeState(CHILD_RUN_ID, { parentLinkage: delegation });
 
-    const states = new Map([['parent-run-id', null]]);
+    const states = new Map([[PARENT_RUN_ID, null]]);
     const manager = makeManager(states);
     const lock = makeLock();
     const lifecycleService = makeLifecycleService();
@@ -385,17 +391,17 @@ describe('handleParentCompletion', () => {
   });
 
   it('does not block inline child when substep has cancelled delegation', async () => {
-    const childState = makeState('child-run-id', {
+    const childState = makeState(CHILD_RUN_ID, {
       parentLinkage: {
         kind: 'inline' as const,
-        parentRunId: 'parent-run-id',
+        parentRunId: PARENT_RUN_ID,
         parentStepId: '1',
         parentStep: '1',
         parentFrameKey: brandFrameKeyForTest('1'),
         parentEntry: 1,
       },
     });
-    const parentState = makeState('parent-run-id', {
+    const parentState = makeState(PARENT_RUN_ID, {
       step: '1',
       activeEntry: 1,
       activeFrameKey: brandFrameKeyForTest('1'),
@@ -407,8 +413,9 @@ describe('handleParentCompletion', () => {
           delegation: {
             tokenHash: brandDelegationTokenHashForTest(`sha256:${'b'.repeat(64)}`),
             childRunbookPath: 'old-child.md',
+            childRunbookRef: { source: 'project', path: 'old-child.md' },
             contextSnapshot: { vars: brandEffectiveVarsForTest(), ancestors: [] },
-            childRunId: 'old-child-run-id',
+            childRunId: OLD_CHILD_RUN_ID,
             createdAt: '2026-01-01T00:00:00.000Z',
             cancelledAt: '2026-01-01T00:00:00.000Z',
           },
@@ -436,7 +443,7 @@ describe('handleParentCompletion', () => {
     // Inline child should NOT be blocked by the cancelled delegation
     expect(result).not.toBe('not-applicable');
     expect(lifecycleService.upsertResolvedCompletion).toHaveBeenCalledWith(
-      'parent-run-id',
+      PARENT_RUN_ID,
       expect.any(String),
       expect.objectContaining({
         agentId: 'inline',
@@ -448,8 +455,8 @@ describe('handleParentCompletion', () => {
 
   it('skips propagation when delegation was cancelled', async () => {
     const delegation = makeDelegationLinkage();
-    const childState = makeState('child-run-id', { parentLinkage: delegation });
-    const parentState = makeState('parent-run-id', {
+    const childState = makeState(CHILD_RUN_ID, { parentLinkage: delegation });
+    const parentState = makeState(PARENT_RUN_ID, {
       substepStates: [
         {
           id: '1',
@@ -458,8 +465,9 @@ describe('handleParentCompletion', () => {
           delegation: {
             tokenHash: brandDelegationTokenHashForTest(`sha256:${'a'.repeat(64)}`),
             childRunbookPath: 'child.md',
+            childRunbookRef: { source: 'project', path: 'child.md' },
             contextSnapshot: { vars: brandEffectiveVarsForTest(), ancestors: [] },
-            childRunId: 'child-run-id',
+            childRunId: CHILD_RUN_ID,
             createdAt: '2026-02-27T10:00:00.000Z',
             cancelledAt: '2026-02-27T10:05:00.000Z',
           },
@@ -483,8 +491,8 @@ describe('handleParentCompletion', () => {
 
   it('records resolved completion on parent', async () => {
     const delegation = makeDelegationLinkage();
-    const childState = makeState('child-run-id', { parentLinkage: delegation });
-    const parentState = makeState('parent-run-id', {
+    const childState = makeState(CHILD_RUN_ID, { parentLinkage: delegation });
+    const parentState = makeState(PARENT_RUN_ID, {
       step: '1',
       activeEntry: 1,
       activeFrameKey: brandFrameKeyForTest('1'),
@@ -509,7 +517,7 @@ describe('handleParentCompletion', () => {
     await handleParentCompletion(childState, 'pass', '/test', output);
 
     expect(lifecycleService.upsertResolvedCompletion).toHaveBeenCalledWith(
-      'parent-run-id',
+      PARENT_RUN_ID,
       '1||1|1',
       expect.objectContaining({
         agentId: 'delegation',
@@ -521,8 +529,8 @@ describe('handleParentCompletion', () => {
 
   it('drains resolved completions on parent after recording', async () => {
     const delegation = makeDelegationLinkage();
-    const childState = makeState('child-run-id', { parentLinkage: delegation });
-    const parentState = makeState('parent-run-id', {
+    const childState = makeState(CHILD_RUN_ID, { parentLinkage: delegation });
+    const parentState = makeState(PARENT_RUN_ID, {
       substepStates: [{ id: '1', frameKey: brandFrameKeyForTest('1'), status: 'pending' }],
     });
 
@@ -545,7 +553,7 @@ describe('handleParentCompletion', () => {
 
     expect(drainResolvedCompletions).toHaveBeenCalledWith(
       expect.objectContaining({
-        runbookId: 'parent-run-id',
+        runbookId: PARENT_RUN_ID,
         currentState: parentState,
       }),
     );
@@ -553,8 +561,8 @@ describe('handleParentCompletion', () => {
 
   it('runs execution loop when completions were applied', async () => {
     const delegation = makeDelegationLinkage();
-    const childState = makeState('child-run-id', { parentLinkage: delegation });
-    const parentState = makeState('parent-run-id', {
+    const childState = makeState(CHILD_RUN_ID, { parentLinkage: delegation });
+    const parentState = makeState(PARENT_RUN_ID, {
       substepStates: [{ id: '1', frameKey: brandFrameKeyForTest('1'), status: 'pending' }],
     });
 
@@ -577,7 +585,7 @@ describe('handleParentCompletion', () => {
 
     expect(runExecutionLoop).toHaveBeenCalledWith(
       manager as unknown as RunbookStateManagerType,
-      'parent-run-id',
+      PARENT_RUN_ID,
       expect.any(Array),
       '/test',
       false,
@@ -588,8 +596,8 @@ describe('handleParentCompletion', () => {
 
   it('returns stopped when drain results in stopped status', async () => {
     const delegation = makeDelegationLinkage();
-    const childState = makeState('child-run-id', { parentLinkage: delegation });
-    const parentState = makeState('parent-run-id', {
+    const childState = makeState(CHILD_RUN_ID, { parentLinkage: delegation });
+    const parentState = makeState(PARENT_RUN_ID, {
       substepStates: [{ id: '1', frameKey: brandFrameKeyForTest('1'), status: 'pending' }],
     });
 
@@ -614,16 +622,16 @@ describe('handleParentCompletion', () => {
 
   it('cascades to grandparent when parent completes', async () => {
     const delegation = makeDelegationLinkage();
-    const childState = makeState('child-run-id', { parentLinkage: delegation });
+    const childState = makeState(CHILD_RUN_ID, { parentLinkage: delegation });
     const grandparentDelegation = makeDelegationLinkage({
-      parentRunId: 'grandparent-run-id',
+      parentRunId: GRANDPARENT_RUN_ID,
       parentStepId: '2',
     });
-    const parentState = makeState('parent-run-id', {
+    const parentState = makeState(PARENT_RUN_ID, {
       substepStates: [{ id: '1', frameKey: brandFrameKeyForTest('1'), status: 'pending' }],
       parentLinkage: grandparentDelegation,
     });
-    const grandparentState = makeState('grandparent-run-id', {
+    const grandparentState = makeState(GRANDPARENT_RUN_ID, {
       substepStates: [{ id: '2', frameKey: brandFrameKeyForTest('1'), status: 'pending' }],
     });
 
@@ -647,13 +655,13 @@ describe('handleParentCompletion', () => {
     await handleParentCompletion(childState, 'pass', '/test', output);
 
     // Should cascade - second acquire should be on grandparent
-    expect(lock.acquire).toHaveBeenCalledWith('parent-run-id');
-    expect(lock.acquire).toHaveBeenCalledWith('grandparent-run-id');
+    expect(lock.acquire).toHaveBeenCalledWith(PARENT_RUN_ID);
+    expect(lock.acquire).toHaveBeenCalledWith(GRANDPARENT_RUN_ID);
   });
 
   it('respects maximum recursion depth', async () => {
     const delegation = makeDelegationLinkage();
-    const childState = makeState('child-run-id', { parentLinkage: delegation });
+    const childState = makeState(CHILD_RUN_ID, { parentLinkage: delegation });
     const output = makeOutput();
 
     // Call with depth already at limit
@@ -667,8 +675,8 @@ describe('handleParentCompletion', () => {
 
   it('passes delegation-specific releaseRunbook:false policy to drain', async () => {
     const delegation = makeDelegationLinkage();
-    const childState = makeState('child-run-id', { parentLinkage: delegation });
-    const parentState = makeState('parent-run-id', {
+    const childState = makeState(CHILD_RUN_ID, { parentLinkage: delegation });
+    const parentState = makeState(PARENT_RUN_ID, {
       substepStates: [{ id: '1', frameKey: brandFrameKeyForTest('1'), status: 'pending' }],
     });
 
@@ -701,8 +709,8 @@ describe('handleParentCompletion', () => {
 
   it('explicitly releases parent runbook when drain returns done', async () => {
     const delegation = makeDelegationLinkage();
-    const childState = makeState('child-run-id', { parentLinkage: delegation });
-    const parentState = makeState('parent-run-id', {
+    const childState = makeState(CHILD_RUN_ID, { parentLinkage: delegation });
+    const parentState = makeState(PARENT_RUN_ID, {
       substepStates: [{ id: '1', frameKey: brandFrameKeyForTest('1'), status: 'pending' }],
     });
 
@@ -726,13 +734,13 @@ describe('handleParentCompletion', () => {
     const sessionInstance = MockSession.mock.results[0]?.value as {
       releaseRunbook: jest.Mock<(runbookId: string) => Promise<unknown>>;
     };
-    expect(sessionInstance.releaseRunbook).toHaveBeenCalledWith('parent-run-id');
+    expect(sessionInstance.releaseRunbook).toHaveBeenCalledWith(PARENT_RUN_ID);
   });
 
   it('explicitly releases parent runbook when drain returns stopped', async () => {
     const delegation = makeDelegationLinkage();
-    const childState = makeState('child-run-id', { parentLinkage: delegation });
-    const parentState = makeState('parent-run-id', {
+    const childState = makeState(CHILD_RUN_ID, { parentLinkage: delegation });
+    const parentState = makeState(PARENT_RUN_ID, {
       substepStates: [{ id: '1', frameKey: brandFrameKeyForTest('1'), status: 'pending' }],
     });
 
@@ -756,13 +764,13 @@ describe('handleParentCompletion', () => {
     const sessionInstance = MockSession.mock.results[0]?.value as {
       releaseRunbook: jest.Mock<(runbookId: string) => Promise<unknown>>;
     };
-    expect(sessionInstance.releaseRunbook).toHaveBeenCalledWith('parent-run-id');
+    expect(sessionInstance.releaseRunbook).toHaveBeenCalledWith(PARENT_RUN_ID);
   });
 
   it('uses fail transition config when result is fail', async () => {
     const delegation = makeDelegationLinkage();
-    const childState = makeState('child-run-id', { parentLinkage: delegation });
-    const parentState = makeState('parent-run-id', {
+    const childState = makeState(CHILD_RUN_ID, { parentLinkage: delegation });
+    const parentState = makeState(PARENT_RUN_ID, {
       substepStates: [{ id: '1', frameKey: brandFrameKeyForTest('1'), status: 'pending' }],
     });
 
@@ -789,8 +797,8 @@ describe('handleParentCompletion', () => {
 
   it('flushes output after handling', async () => {
     const delegation = makeDelegationLinkage();
-    const childState = makeState('child-run-id', { parentLinkage: delegation });
-    const parentState = makeState('parent-run-id', {
+    const childState = makeState(CHILD_RUN_ID, { parentLinkage: delegation });
+    const parentState = makeState(PARENT_RUN_ID, {
       substepStates: [{ id: '1', frameKey: brandFrameKeyForTest('1'), status: 'pending' }],
     });
 
@@ -816,8 +824,8 @@ describe('handleParentCompletion', () => {
 
   it('passes parentFrameKey as frameKeyOverride to drain', async () => {
     const delegation = makeDelegationLinkage({ parentFrameKey: brandFrameKeyForTest('1', 3) });
-    const childState = makeState('child-run-id', { parentLinkage: delegation });
-    const parentState = makeState('parent-run-id', {
+    const childState = makeState(CHILD_RUN_ID, { parentLinkage: delegation });
+    const parentState = makeState(PARENT_RUN_ID, {
       substepStates: [{ id: '1', frameKey: brandFrameKeyForTest('1', 3), status: 'pending' }],
     });
 
@@ -847,8 +855,8 @@ describe('handleParentCompletion', () => {
 
   it('does not pass frameKeyOverride when parentFrameKey is undefined', async () => {
     const delegation = makeDelegationLinkage({ parentFrameKey: undefined });
-    const childState = makeState('child-run-id', { parentLinkage: delegation });
-    const parentState = makeState('parent-run-id', {
+    const childState = makeState(CHILD_RUN_ID, { parentLinkage: delegation });
+    const parentState = makeState(PARENT_RUN_ID, {
       substepStates: [{ id: '1', frameKey: brandFrameKeyForTest('1'), status: 'pending' }],
     });
 
@@ -875,11 +883,11 @@ describe('handleParentCompletion', () => {
 
   it('forwards child finalVars to parent actor via SET_VARIABLES before drain', async () => {
     const delegation = makeDelegationLinkage();
-    const childState = makeState('child-run-id', {
+    const childState = makeState(CHILD_RUN_ID, {
       parentLinkage: delegation,
       finalVars: { PlanPath: '/work/plan.json', version: '2.1' },
     });
-    const parentState = makeState('parent-run-id', {
+    const parentState = makeState(PARENT_RUN_ID, {
       substepStates: [{ id: '1', frameKey: brandFrameKeyForTest('1'), status: 'pending' }],
     });
 
@@ -904,7 +912,7 @@ describe('handleParentCompletion', () => {
     const actorInstance = MockActor.mock.results[0]?.value as {
       sendAndSync: jest.Mock<(...args: unknown[]) => Promise<unknown>>;
     };
-    expect(actorInstance.sendAndSync).toHaveBeenCalledWith('parent-run-id', expect.any(Array), {
+    expect(actorInstance.sendAndSync).toHaveBeenCalledWith(PARENT_RUN_ID, expect.any(Array), {
       type: 'SET_VARIABLES',
       vars: { PlanPath: '/work/plan.json', version: '2.1' },
     });
@@ -912,11 +920,11 @@ describe('handleParentCompletion', () => {
 
   it('surfaces a warning to output when SET_VARIABLES fails', async () => {
     const delegation = makeDelegationLinkage();
-    const childState = makeState('child-run-id', {
+    const childState = makeState(CHILD_RUN_ID, {
       parentLinkage: delegation,
       finalVars: { PlanPath: '/work/plan.json' },
     });
-    const parentState = makeState('parent-run-id', {
+    const parentState = makeState(PARENT_RUN_ID, {
       substepStates: [{ id: '1', frameKey: brandFrameKeyForTest('1'), status: 'pending' }],
     });
 
@@ -969,8 +977,8 @@ describe('handleParentCompletion', () => {
 
   it('does not call sendAndSync when child has no finalVars', async () => {
     const delegation = makeDelegationLinkage();
-    const childState = makeState('child-run-id', { parentLinkage: delegation });
-    const parentState = makeState('parent-run-id', {
+    const childState = makeState(CHILD_RUN_ID, { parentLinkage: delegation });
+    const parentState = makeState(PARENT_RUN_ID, {
       substepStates: [{ id: '1', frameKey: brandFrameKeyForTest('1'), status: 'pending' }],
     });
 
@@ -1005,10 +1013,10 @@ describe('handleParentCompletion', () => {
 
 describe('inline linkage path', () => {
   it('extractParentLinkage returns inline linkage from state', () => {
-    const state = makeState('child-run', {
+    const state = makeState(CHILD_RUN_ID, {
       parentLinkage: {
         kind: 'inline' as const,
-        parentRunId: 'parent-run',
+        parentRunId: PARENT_RUN_ID,
         parentStepId: '1',
         parentStep: '1',
         parentFrameKey: brandFrameKeyForTest('1'),
@@ -1017,21 +1025,21 @@ describe('inline linkage path', () => {
     });
     const linkage = extractParentLinkage(state);
     expect(linkage).toBeDefined();
-    expect(linkage!.parentRunId).toBe('parent-run');
+    expect(linkage!.parentRunId).toBe(PARENT_RUN_ID);
   });
 
   it('agentId is inline for inline children', async () => {
-    const childState = makeState('child-run-id', {
+    const childState = makeState(CHILD_RUN_ID, {
       parentLinkage: {
         kind: 'inline' as const,
-        parentRunId: 'parent-run-id',
+        parentRunId: PARENT_RUN_ID,
         parentStepId: '1',
         parentStep: '1',
         parentFrameKey: brandFrameKeyForTest('1'),
         parentEntry: 1,
       },
     });
-    const parentState = makeState('parent-run-id', {
+    const parentState = makeState(PARENT_RUN_ID, {
       step: '1',
       activeEntry: 1,
       activeFrameKey: brandFrameKeyForTest('1'),
@@ -1056,7 +1064,7 @@ describe('inline linkage path', () => {
     await handleParentCompletion(childState, 'pass', '/test', output);
 
     expect(lifecycleService.upsertResolvedCompletion).toHaveBeenCalledWith(
-      'parent-run-id',
+      PARENT_RUN_ID,
       expect.any(String),
       expect.objectContaining({
         agentId: 'inline',

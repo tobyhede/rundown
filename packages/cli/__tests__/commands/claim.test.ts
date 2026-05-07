@@ -12,7 +12,7 @@ import {
   getCliPath,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
-import { writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { ErrorResponseSchema } from '@rundown-org/core';
@@ -466,7 +466,47 @@ Execute with {{Env}} environment.
       expect(childTemplateVars.ContextId).toBe('ctx-parent');
       expect(typeof parentTemplateVars.RunId).toBe('string');
       expect(typeof childTemplateVars.RunId).toBe('string');
+      expect(childTemplateVars.RunId).toBe(childState?.id);
       expect(childTemplateVars.RunId).not.toBe(parentTemplateVars.RunId);
+      expect(childTemplateVars.RunbookRef).toEqual(childState?.runbook);
+      expect(childTemplateVars.RunbookRef).not.toEqual(parentTemplateVars.RunbookRef);
+    });
+
+    it('claims nested plugin child runbooks with source-root-relative RunbookRef', async () => {
+      const childRel = 'planning/review/review-plan-risk-safety.runbook.md';
+      await mkdir(join(workspace.pluginRunbooksDir(), 'planning', 'review'), { recursive: true });
+      await writeFile(
+        join(workspace.pluginRunbooksDir(), childRel),
+        createRunbook({
+          title: 'Risk Safety',
+          steps: [{ title: 'Child', pass: 'COMPLETE', content: 'Run child.' }],
+        }),
+      );
+      await writeFile(
+        join(workspace.cwd, 'parent.runbook.md'),
+        createRunbook({
+          title: 'Parent',
+          steps: [{ title: 'Delegate', substeps: [{ title: 'Review', content: 'Review.' }] }],
+        }),
+      );
+
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      expect(result.exitCode).toBe(0);
+      result = await runCliInProcess(`delegate ${childRel} --step 1.1`, workspace);
+      expect(result.exitCode).toBe(0);
+      const token = extractToken(result.stdout);
+      result = await runCliInProcess(`claim ${token}`, workspace);
+      expect(result.exitCode).toBe(0);
+      const action = findActionOutput(result.stdout);
+      const childState = await readRunbookState(workspace, String(action?.run_id));
+
+      expect(childState).not.toBeNull();
+      expect(childState!.runbook).toEqual({
+        source: 'plugin',
+        path: childRel,
+      });
+      expect(childState!.templateVars?.RunbookRef).toEqual(childState!.runbook);
+      expect(childState!.templateVars?.RunId).toBe(childState!.id);
     });
   });
 

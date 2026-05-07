@@ -2,8 +2,8 @@
 
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { parseRunbook, countNumberedSteps } from '@rundown-org/core';
-import { resolveRunbookFile } from './resolve-runbook.js';
+import { parseRunbook, countNumberedSteps, type RunbookRef } from '@rundown-org/core';
+import { resolveRunbookFile, resolveRunbookRef } from './resolve-runbook.js';
 
 /**
  * Get current working directory.
@@ -18,14 +18,21 @@ export function getCwd(): string {
  * Named steps (like "RECOVER") are excluded from the count.
  *
  * @param cwd - Current working directory
- * @param runbookPath - Path to the runbook file
+ * @param runbook - Path to the runbook file or persisted source-aware runbook identity
  * @returns Numbered step count or 0 on error
  */
-export async function getStepTotal(cwd: string, runbookPath: string): Promise<number> {
+export async function getStepTotal(cwd: string, runbook: string | RunbookRef): Promise<number> {
   try {
-    const resolved = await resolveRunbookFile(cwd, runbookPath);
-    if (!resolved) return 0;
-    const content = await fs.readFile(resolved.path, 'utf8');
+    let filePath: string | undefined;
+    if (typeof runbook === 'string') {
+      filePath = (await resolveRunbookFile(cwd, runbook))?.path;
+    } else {
+      const resolved = await resolveRunbookRef(cwd, runbook);
+      if (!resolved.ok) return 0;
+      filePath = resolved.resolved.path;
+    }
+    if (!filePath) return 0;
+    const content = await fs.readFile(filePath, 'utf8');
     const steps = parseRunbook(content);
     return countNumberedSteps(steps);
   } catch {

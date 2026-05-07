@@ -227,6 +227,6 @@ review/
 Guidelines:
 - Use `#!/usr/bin/env bash` and `set -euo pipefail`
 - Accept parameters positionally with usage messages
-- By default write output to `.rundown/work/<runbook-name>/` for intermediate artifacts; override via the `WorkPath` template variable (set with `--input WorkPath=...` or config) or the `WORK_PATH` environment variable read by scripts
+- By default write intermediate artifacts under the project-shared `.rundown/work` base, using `rdpath --ctx <ContextId>` or `{{ path "..." }}` when artifacts need workflow isolation
 - Exit 0 for success (PASS), non-zero for failure (FAIL)
 - Keep scripts focused — one responsibility per script

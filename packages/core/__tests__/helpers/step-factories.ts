@@ -210,6 +210,7 @@ export function makeStepDelegation(partial: Partial<StepDelegation> = {}): StepD
   return {
     tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
     childRunbookPath: 'child.md',
+    childRunbookRef: { source: 'project', path: 'child.md' },
     contextSnapshot: makeContextSnapshot(),
     childRunId: null,
     createdAt: '2026-02-27T10:00:00.000Z',

@@ -3,13 +3,22 @@ import { abortDelegation } from '../../src/runbook/delegation-service.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type { RunbookState, StepDelegation, SubstepState } from '../../src/runbook/types.js';
-import { brandStoredOutputsForTest, brandEffectiveVarsForTest } from '../helpers/effective-vars.js';
+import {
+  brandStoredOutputsForTest,
+  brandEffectiveVarsForTest,
+  brandRunIdForTest,
+} from '../helpers/effective-vars.js';
+
+const RUN_ID = brandRunIdForTest(`rd_${'1'.repeat(32)}`);
+const CHILD_RUN_ID = brandRunIdForTest(`rd_${'2'.repeat(32)}`);
+const OTHER_CHILD_RUN_ID = brandRunIdForTest(`rd_${'3'.repeat(32)}`);
 
 /** Helper: create a delegation object. */
 function makeDelegation(overrides: Partial<StepDelegation> = {}): StepDelegation {
   return {
     tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
     childRunbookPath: 'child.md',
+    childRunbookRef: { source: 'project', path: 'child.md' },
     contextSnapshot: { vars: brandEffectiveVarsForTest({}), ancestors: [] },
     childRunId: null,
     createdAt: '2026-02-27T10:00:00.000Z',
@@ -21,8 +30,8 @@ function makeDelegation(overrides: Partial<StepDelegation> = {}): StepDelegation
 /** Helper: create minimal RunbookState for testing. */
 function makeState(substepStates: SubstepState[]): RunbookState {
   return {
-    id: 'run-1',
-    runbook: 'parent.md',
+    id: RUN_ID,
+    runbook: { source: 'project', path: 'parent.md' },
     runbookPath: 'parent.md',
     step: '1',
     stepName: 'Main step',
@@ -78,7 +87,7 @@ describe('abortDelegation', () => {
   });
 
   it('returns needs_force when delegation is claimed without force', () => {
-    const delegation = makeDelegation({ childRunId: 'child-run-1' });
+    const delegation = makeDelegation({ childRunId: CHILD_RUN_ID });
     const state = makeState([
       { id: '1', frameKey: buildFrameKey('1'), status: 'pending', delegation },
     ]);
@@ -91,12 +100,12 @@ describe('abortDelegation', () => {
 
     expect(result.status).toBe('needs_force');
     if (result.status === 'needs_force') {
-      expect(result.childRunId).toBe('child-run-1');
+      expect(result.childRunId).toBe(CHILD_RUN_ID);
     }
   });
 
   it('cancels a claimed delegation when force=true', () => {
-    const delegation = makeDelegation({ childRunId: 'child-run-1' });
+    const delegation = makeDelegation({ childRunId: CHILD_RUN_ID });
     const state = makeState([
       { id: '1', frameKey: buildFrameKey('1'), status: 'pending', delegation },
     ]);
@@ -134,7 +143,7 @@ describe('abortDelegation', () => {
 
   it('only cancels delegation in the targeted frame (cross-frame isolation)', () => {
     const delegation = makeDelegation();
-    const otherDelegation = makeDelegation({ childRunId: 'other-child' });
+    const otherDelegation = makeDelegation({ childRunId: OTHER_CHILD_RUN_ID });
     const state = makeState([
       { id: '1', frameKey: buildFrameKey('1', 1), status: 'pending', delegation },
       { id: '1', frameKey: buildFrameKey('1', 2), status: 'pending', delegation: otherDelegation },
@@ -159,7 +168,7 @@ describe('abortDelegation', () => {
         (ss) => ss.id === '1' && ss.frameKey === buildFrameKey('1', 2),
       );
       expect(other?.delegation?.cancelledAt).toBeNull();
-      expect(other?.delegation?.childRunId).toBe('other-child');
+      expect(other?.delegation?.childRunId).toBe(OTHER_CHILD_RUN_ID);
     }
   });
 

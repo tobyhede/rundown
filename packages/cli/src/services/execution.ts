@@ -2,6 +2,8 @@
 
 import * as fs from 'node:fs/promises';
 import {
+  assertRunId,
+  type RunId,
   buildStepPosition,
   deriveExecutionAt,
   buildCompletionKey,
@@ -61,7 +63,7 @@ import {
 import { isInternalRdCommand, executeRdCommandInternal } from './internal-commands.js';
 import type { StepVariables } from './execution-vars.js';
 import { inferAllDelegateSubsteps } from '../helpers/delegate-inference.js';
-import { resolveRunbookFile } from '../helpers/resolve-runbook.js';
+import { buildRunbookRef, resolveRunbookFile } from '../helpers/resolve-runbook.js';
 import {
   getPolicyEvaluator,
   getPolicyPrompter,
@@ -295,7 +297,7 @@ interface ApplyResultTransitionArgs {
   sessionService: SessionService;
   lifecycleService: ExecutionLifecycleService;
   emitter: ExecutionEventEmitter;
-  runbookId: string;
+  runbookId: RunId;
   steps: ResolvedStep[];
   currentState: RunbookState;
   currentStep: ResolvedStep;
@@ -341,7 +343,7 @@ export interface ExecutionLoopOptions {
 
 async function applyExecutionTerminalRelease(
   sessionService: SessionService,
-  runbookId: string,
+  runbookId: RunId,
   mode: ExecutionTerminalReleaseMode,
 ): Promise<void> {
   if (mode === 'release-runbook') {
@@ -468,7 +470,7 @@ export interface DrainResolvedCompletionsArgs {
   /** Event emitter for execution progress notifications. */
   emitter: ExecutionEventEmitter;
   /** ID of the runbook being drained. */
-  runbookId: string;
+  runbookId: RunId;
   /** Parsed step definitions for the runbook. */
   steps: ResolvedStep[];
   /** Current persisted runbook state. */
@@ -622,7 +624,7 @@ export async function drainResolvedCompletions({
  * - In prompted mode (no auto-execution)
  *
  * @param manager - Runbook state manager instance
- * @param runbookId - ID of the runbook to execute
+ * @param runbookIdRaw - Unbranded run id; branded to RunId on entry
  * @param steps - Array of runbook steps
  * @param cwd - Current working directory for command execution
  * @param prompted - Whether to run in prompted mode (no auto-execution)
@@ -632,13 +634,14 @@ export async function drainResolvedCompletions({
  */
 export async function runExecutionLoop(
   manager: RunbookStateManager,
-  runbookId: string,
+  runbookIdRaw: string,
   steps: ResolvedStep[],
   cwd: string,
   prompted: boolean,
   emitter: ExecutionEventEmitter,
   options: ExecutionLoopOptions = {},
 ): Promise<'done' | 'stopped' | 'waiting'> {
+  const runbookId: RunId = assertRunId(runbookIdRaw);
   const state = await manager.load(runbookId);
   if (!state) return 'stopped';
 
@@ -674,9 +677,8 @@ export async function runExecutionLoop(
     // Determine the active execution unit: substep if we're at one, otherwise the step.
     const itemToRender = resolveCurrentExecutionUnit(currentStep, currentState.substep);
 
-    // Resolve dynamic values for all data sources (array, file, range).
-    // The ForIterationService resolves currentValue before each iteration,
-    // replacing the previous file-only inline resolution.
+    // Resolve dynamic values for all FOR sources before each iteration.
+    // ForIterationService owns array, file, and range currentValue hydration.
     let iterResult: Awaited<ReturnType<typeof iterationService.prepareIteration>>;
     try {
       iterResult = await iterationService.prepareIteration(runbookId, steps);
@@ -876,12 +878,14 @@ export async function runExecutionLoop(
                 if (!childResolved) {
                   throw Errors.delegationRunbookNotFound(target.runbookRef);
                 }
+                const childRunbookRef = await buildRunbookRef(childResolved);
 
                 const result = createDelegation(
                   {
                     state: threadedState,
                     stepId: target.stepId,
                     childRunbookPath: childResolved.path,
+                    childRunbookRef,
                     extraVars: undefined,
                     ancestors: [],
                     frameKey,
@@ -1001,10 +1005,11 @@ export async function runExecutionLoop(
     const rdInjected: Record<string, string> = { ...channels.env };
     const workPath = stepVars[BUILTIN_VARIABLES.WorkPath];
     const contextId = stepVars[BUILTIN_VARIABLES.ContextId];
-    const runId = stepVars[BUILTIN_VARIABLES.RunId];
     if (typeof workPath === 'string') rdInjected.RD_WORK_PATH = workPath;
     if (typeof contextId === 'string') rdInjected.RD_CONTEXT_ID = contextId;
-    if (typeof runId === 'string') rdInjected.RD_RUN_ID = runId;
+    rdInjected.RD_RUN_ID = currentState.id;
+    rdInjected.RD_RUNBOOK_REF = currentState.runbook.path;
+    rdInjected.RD_RUNBOOK_SOURCE = currentState.runbook.source;
 
     // Execute command (unchanged — still routed via internal vs spawn)
     const extracted = extractDisplayCommand(expandedCommandCode);
@@ -1170,7 +1175,7 @@ export function getStepRetryMax(item: Step | ResolvedStep | Substep): number {
  */
 export function buildMetadata(state: RunbookState): RunbookMetadata {
   return {
-    file: state.runbook,
+    file: state.runbook.path,
     state: `${RUNS_DIR}/${state.id}.json`,
     prompted: state.prompted ?? undefined,
   };

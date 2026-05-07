@@ -3,6 +3,7 @@ import type { OutputDeclaration } from '@rundown-org/parser';
 import type { DelegationTokenHash } from './delegation-token.js';
 import type { EffectiveVars, InitialTemplateVars, StoredOutputs } from './effective-vars.js';
 import type { RunbookRef } from './runbook-ref.js';
+import type { RunId } from './run-id.js';
 import type { FrameKey } from './targeting.js';
 
 // Re-export parser types needed by core package consumers
@@ -15,6 +16,7 @@ import type { FrameKey } from './targeting.js';
  * @see `@rundown-org/parser` Step
  */
 export type { Step } from '@rundown-org/parser';
+export type { RunId } from './run-id.js';
 
 /** Prompt-only or empty step — no command, no substeps. */
 export type { BaseStep } from '@rundown-org/parser';
@@ -439,8 +441,9 @@ export interface StepDelegation {
   readonly token?: string;
   readonly tokenHash: DelegationTokenHash;
   readonly childRunbookPath: string;
+  readonly childRunbookRef: RunbookRef;
   readonly contextSnapshot: ContextSnapshot;
-  readonly childRunId: string | null;
+  readonly childRunId: RunId | null;
   readonly createdAt: string;
   readonly cancelledAt: string | null;
   /**
@@ -482,7 +485,7 @@ export interface ContextSnapshot {
 
 /** Single ancestor in the runbook lineage snapshot. */
 export interface AncestorSnapshot {
-  readonly runId: string;
+  readonly runId: RunId;
   readonly runbook: string;
   readonly step: string;
   readonly substep: string | null;
@@ -501,7 +504,7 @@ export interface AncestorSnapshot {
  * propagate a child's terminal result back to the parent substep.
  */
 export interface ParentLinkageBase {
-  readonly parentRunId: string;
+  readonly parentRunId: RunId;
   readonly parentStepId: string;
   /** Parent's step name at link time (e.g., "1"). */
   readonly parentStep?: string;
@@ -708,11 +711,9 @@ export type Lifecycle = 'running' | 'completed' | 'stopped';
  * Runbook execution state (persisted)
  */
 export interface RunbookState {
-  readonly id: string;
-  readonly runbook: string; // runbook identifier (name or path)
+  readonly id: RunId;
+  readonly runbook: RunbookRef; // canonical persisted runbook identity
   readonly runbookPath: string; // repo-relative resolved file path
-  /** Canonical runbook reference for events and artifact metadata. */
-  readonly runbookRef?: RunbookRef;
   readonly title?: string;
   readonly description?: string;
   readonly step: string; // "1" or "ErrorHandler"

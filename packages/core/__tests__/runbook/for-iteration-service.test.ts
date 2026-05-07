@@ -2,6 +2,7 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import type { RunbookState, ForContext, ResolvedStep } from '../../src/runbook/types.js';
 import {
   brandInitialTemplateVarsForTest,
+  brandRunIdForTest,
   brandStoredOutputsForTest,
 } from '../helpers/effective-vars.js';
 import { makeResolvedStepWithFor } from '../helpers/step-factories.js';
@@ -53,8 +54,8 @@ const mockedIsStopped = isRunbookStopped as jest.MockedFunction<typeof isRunbook
 
 function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
   return {
-    id: 'test-123',
-    runbook: 'test.md',
+    id: brandRunIdForTest(`rd_${'d'.repeat(32)}`),
+    runbook: { source: 'project', path: 'test.md' },
     runbookPath: '/tmp/test.md',
     step: '1',
     stepName: 'Step 1',

@@ -6,8 +6,9 @@ import { RunbookStateManager } from '../../src/runbook/state.js';
 import { SessionService } from '../../src/runbook/session-service.js';
 import { assertClaimId } from '../../src/runbook/claim-id.js';
 import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
-import type { Step, Runbook } from '../../src/runbook/types.js';
+import type { Step, Runbook, RunId } from '../../src/runbook/types.js';
 import { makeBaseStep } from '../helpers/step-factories.js';
+import { brandRunIdForTest } from '../helpers/effective-vars.js';
 
 describe('SessionService', () => {
   let testDir: string;
@@ -32,7 +33,9 @@ describe('SessionService', () => {
 
   describe('Runbook stack operations', () => {
     it('pushRunbook adds to stack', async () => {
-      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
       await sessionService.pushRunbook(state.id);
 
       const active = await sessionService.getActive();
@@ -40,8 +43,12 @@ describe('SessionService', () => {
     });
 
     it('popRunbook removes from stack and returns new top', async () => {
-      const parent = await manager.create('parent.md', mockRunbook, { runbookPath: 'parent.md' });
-      const child = await manager.create('child.md', mockRunbook, { runbookPath: 'child.md' });
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+      });
 
       await sessionService.pushRunbook(parent.id);
       await sessionService.pushRunbook(child.id);
@@ -54,9 +61,15 @@ describe('SessionService', () => {
     });
 
     it('supports arbitrary nesting depth', async () => {
-      const wf1 = await manager.create('level1.md', mockRunbook, { runbookPath: 'level1.md' });
-      const wf2 = await manager.create('level2.md', mockRunbook, { runbookPath: 'level2.md' });
-      const wf3 = await manager.create('level3.md', mockRunbook, { runbookPath: 'level3.md' });
+      const wf1 = await manager.create({ source: 'project', path: 'level1.md' }, mockRunbook, {
+        runbookPath: 'level1.md',
+      });
+      const wf2 = await manager.create({ source: 'project', path: 'level2.md' }, mockRunbook, {
+        runbookPath: 'level2.md',
+      });
+      const wf3 = await manager.create({ source: 'project', path: 'level3.md' }, mockRunbook, {
+        runbookPath: 'level3.md',
+      });
 
       await sessionService.pushRunbook(wf1.id);
       await sessionService.pushRunbook(wf2.id);
@@ -74,7 +87,9 @@ describe('SessionService', () => {
 
   describe('Stash and pop operations', () => {
     it('stash saves current runbook and removes from stack', async () => {
-      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
       await sessionService.pushRunbook(state.id);
 
       const stashedId = await sessionService.stash();
@@ -85,7 +100,9 @@ describe('SessionService', () => {
     });
 
     it('unstash restores stashed runbook', async () => {
-      const state = await manager.create('test.md', mockRunbook, { runbookPath: 'test.md' });
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
       await sessionService.pushRunbook(state.id);
       await sessionService.stash();
 
@@ -97,7 +114,9 @@ describe('SessionService', () => {
     });
 
     it('unstash returns null and clears stash when persisted state is missing', async () => {
-      const state = await manager.create('temp.md', mockRunbook, { runbookPath: 'temp.md' });
+      const state = await manager.create({ source: 'project', path: 'temp.md' }, mockRunbook, {
+        runbookPath: 'temp.md',
+      });
       await sessionService.pushRunbook(state.id);
       await sessionService.stash();
 
@@ -110,8 +129,12 @@ describe('SessionService', () => {
     });
 
     it('stash refuses to overwrite existing stash', async () => {
-      const s1 = await manager.create('a.md', mockRunbook, { runbookPath: 'a.md' });
-      const s2 = await manager.create('b.md', mockRunbook, { runbookPath: 'b.md' });
+      const s1 = await manager.create({ source: 'project', path: 'a.md' }, mockRunbook, {
+        runbookPath: 'a.md',
+      });
+      const s2 = await manager.create({ source: 'project', path: 'b.md' }, mockRunbook, {
+        runbookPath: 'b.md',
+      });
       await sessionService.pushRunbook(s1.id);
 
       const first = await sessionService.stash();
@@ -128,7 +151,7 @@ describe('SessionService', () => {
 
   describe('claim-id runbook targeting', () => {
     const linkageFor = (
-      parentId: string,
+      parentId: RunId,
       fill: string,
     ): Parameters<SessionService['claimRunbook']>[1] => ({
       kind: 'delegation' as const,
@@ -151,8 +174,10 @@ describe('SessionService', () => {
     };
 
     it('registers a delegated child claim without changing the default stack', async () => {
-      const parent = await manager.create('parent.md', mockRunbook, { runbookPath: 'parent.md' });
-      const child = await manager.create('child.md', mockRunbook, {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
         runbookPath: 'child.md',
         parentLinkage: linkageFor(parent.id, 'a'),
       });
@@ -174,9 +199,11 @@ describe('SessionService', () => {
     });
 
     it('reuses the same claim id for the same child', async () => {
-      const parent = await manager.create('parent.md', mockRunbook, { runbookPath: 'parent.md' });
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
       const linkage = linkageFor(parent.id, 'b');
-      const child = await manager.create('child.md', mockRunbook, {
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
         runbookPath: 'child.md',
         parentLinkage: linkage,
       });
@@ -185,6 +212,30 @@ describe('SessionService', () => {
       const second = assertClaimed(await sessionService.claimRunbook(child.id, linkage));
 
       expect(second.claim.claimId).toBe(first.claim.claimId);
+      expect(second.claim.claimedAt).toBe(first.claim.claimedAt);
+      expect(second.claim.updatedAt >= first.claim.updatedAt).toBe(true);
+    });
+
+    it('refreshes an existing delegation claim before treating a new child id as claimable', async () => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const linkage = linkageFor(parent.id, '9');
+      const existingChild = await manager.create(
+        { source: 'project', path: 'existing-child.md' },
+        mockRunbook,
+        {
+          runbookPath: 'existing-child.md',
+          parentLinkage: linkage,
+        },
+      );
+      const first = assertClaimed(await sessionService.claimRunbook(existingChild.id, linkage));
+
+      const missingChildId = brandRunIdForTest(`rd_${'f'.repeat(32)}`);
+      const second = assertClaimed(await sessionService.claimRunbook(missingChildId, linkage));
+
+      expect(second.claim.claimId).toBe(first.claim.claimId);
+      expect(second.claim.childRunId).toBe(existingChild.id);
       expect(second.claim.claimedAt).toBe(first.claim.claimedAt);
       expect(second.claim.updatedAt >= first.claim.updatedAt).toBe(true);
     });
@@ -200,9 +251,11 @@ describe('SessionService', () => {
     });
 
     it('returns stale for a claim whose child state is missing', async () => {
-      const parent = await manager.create('parent.md', mockRunbook, { runbookPath: 'parent.md' });
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
       const linkage = linkageFor(parent.id, 'c');
-      const child = await manager.create('child.md', mockRunbook, {
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
         runbookPath: 'child.md',
         parentLinkage: linkage,
       });
@@ -218,9 +271,11 @@ describe('SessionService', () => {
     });
 
     it('returns terminal for a completed claim child', async () => {
-      const parent = await manager.create('parent.md', mockRunbook, { runbookPath: 'parent.md' });
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
       const linkage = linkageFor(parent.id, 'd');
-      const child = await manager.create('child.md', mockRunbook, {
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
         runbookPath: 'child.md',
         parentLinkage: linkage,
       });
@@ -235,10 +290,32 @@ describe('SessionService', () => {
       }
     });
 
+    it('returns terminal for a stopped claim child', async () => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const linkage = linkageFor(parent.id, '7');
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkage,
+      });
+      const claimed = assertClaimed(await sessionService.claimRunbook(child.id, linkage));
+
+      await manager.update(child.id, { lifecycle: 'stopped' });
+
+      const resolved = await sessionService.getActiveForClaimId(claimed.claim.claimId);
+      expect(resolved.status).toBe('terminal');
+      if (resolved.status === 'terminal') {
+        expect(resolved.lifecycle).toBe('stopped');
+      }
+    });
+
     it('returns unlinked for a child whose delegation linkage no longer matches the claim', async () => {
-      const parent = await manager.create('parent.md', mockRunbook, { runbookPath: 'parent.md' });
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
       const linkage = linkageFor(parent.id, 'e');
-      const child = await manager.create('child.md', mockRunbook, {
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
         runbookPath: 'child.md',
         parentLinkage: linkage,
       });
@@ -259,9 +336,11 @@ describe('SessionService', () => {
     });
 
     it('returns unlinked when the parent has ended', async () => {
-      const parent = await manager.create('parent.md', mockRunbook, { runbookPath: 'parent.md' });
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
       const linkage = linkageFor(parent.id, 'f');
-      const child = await manager.create('child.md', mockRunbook, {
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
         runbookPath: 'child.md',
         parentLinkage: linkage,
       });
@@ -277,9 +356,11 @@ describe('SessionService', () => {
     });
 
     it('returns unlinked when the parent state is missing', async () => {
-      const parent = await manager.create('parent.md', mockRunbook, { runbookPath: 'parent.md' });
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
       const linkage = linkageFor(parent.id, '0');
-      const child = await manager.create('child.md', mockRunbook, {
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
         runbookPath: 'child.md',
         parentLinkage: linkage,
       });
@@ -295,9 +376,11 @@ describe('SessionService', () => {
     });
 
     it('claimRunbook refuses when the child run state is missing', async () => {
-      const parent = await manager.create('parent.md', mockRunbook, { runbookPath: 'parent.md' });
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
       const linkage = linkageFor(parent.id, '1');
-      const child = await manager.create('child.md', mockRunbook, {
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
         runbookPath: 'child.md',
         parentLinkage: linkage,
       });
@@ -311,9 +394,11 @@ describe('SessionService', () => {
     });
 
     it('claimRunbook refuses when persisted child linkage diverges from incoming linkage', async () => {
-      const parent = await manager.create('parent.md', mockRunbook, { runbookPath: 'parent.md' });
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
       const linkage = linkageFor(parent.id, '2');
-      const child = await manager.create('child.md', mockRunbook, {
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
         runbookPath: 'child.md',
         parentLinkage: linkage,
       });
@@ -329,9 +414,42 @@ describe('SessionService', () => {
       }
     });
 
+    it('claimRunbook refuses to refresh an existing child claim with different linkage', async () => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const originalLinkage = linkageFor(parent.id, '5');
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: originalLinkage,
+      });
+      const first = assertClaimed(await sessionService.claimRunbook(child.id, originalLinkage));
+
+      const incomingLinkage = linkageFor(parent.id, '6');
+      await manager.update(child.id, { parentLinkage: incomingLinkage });
+
+      const result = await sessionService.claimRunbook(child.id, incomingLinkage);
+
+      expect(result.status).toBe('linkage-mismatch');
+      if (result.status === 'linkage-mismatch') {
+        expect(result.childRunId).toBe(child.id);
+        expect(result.incoming).toBe(incomingLinkage);
+        expect(result.persisted).toEqual({
+          kind: 'delegation',
+          parentRunId: first.claim.parentRunId,
+          parentStepId: first.claim.parentStepId,
+          tokenHash: first.claim.tokenHash,
+        });
+      }
+    });
+
     it('claimRunbook refuses when child has no parent linkage at all', async () => {
-      const parent = await manager.create('parent.md', mockRunbook, { runbookPath: 'parent.md' });
-      const child = await manager.create('child.md', mockRunbook, { runbookPath: 'child.md' });
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+      });
       const linkage = linkageFor(parent.id, '4');
 
       const result = await sessionService.claimRunbook(child.id, linkage);
@@ -342,9 +460,11 @@ describe('SessionService', () => {
     });
 
     it('releaseRunbook removes matching claim records', async () => {
-      const parent = await manager.create('parent.md', mockRunbook, { runbookPath: 'parent.md' });
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
       const linkage = linkageFor(parent.id, 'f');
-      const child = await manager.create('child.md', mockRunbook, {
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
         runbookPath: 'child.md',
         parentLinkage: linkage,
       });
@@ -358,9 +478,11 @@ describe('SessionService', () => {
     });
 
     it('stash preserves a claim record and unstashForClaimId restores only the matching child', async () => {
-      const parent = await manager.create('parent.md', mockRunbook, { runbookPath: 'parent.md' });
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
       const linkage = linkageFor(parent.id, '1');
-      const child = await manager.create('child.md', mockRunbook, {
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
         runbookPath: 'child.md',
         parentLinkage: linkage,
       });
@@ -386,9 +508,11 @@ describe('SessionService', () => {
     });
 
     it('exposes a stashed claimed child read-only via includeStashed', async () => {
-      const parent = await manager.create('parent.md', mockRunbook, { runbookPath: 'parent.md' });
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
       const linkage = linkageFor(parent.id, '1');
-      const child = await manager.create('child.md', mockRunbook, {
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
         runbookPath: 'child.md',
         parentLinkage: linkage,
       });
@@ -416,9 +540,11 @@ describe('SessionService', () => {
     });
 
     it('releaseRunbook clears defaultStack and claim records together when the child completes', async () => {
-      const parent = await manager.create('parent.md', mockRunbook, { runbookPath: 'parent.md' });
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
       const linkage = linkageFor(parent.id, '1');
-      const child = await manager.create('child.md', mockRunbook, {
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
         runbookPath: 'child.md',
         parentLinkage: linkage,
       });
@@ -447,8 +573,12 @@ describe('SessionService', () => {
 
   describe('releaseRunbook default stack cleanup', () => {
     it('releaseRunbook pops a default-stack child by id', async () => {
-      const parent = await manager.create('parent.md', mockRunbook, { runbookPath: 'parent.md' });
-      const child = await manager.create('child.md', mockRunbook, { runbookPath: 'child.md' });
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+      });
       await sessionService.pushRunbook(parent.id);
       await sessionService.pushRunbook(child.id);
 
@@ -462,9 +592,13 @@ describe('SessionService', () => {
     });
 
     it('releaseRunbook removes a non-top default-stack entry by id', async () => {
-      const parent = await manager.create('parent.md', mockRunbook, { runbookPath: 'parent.md' });
-      const child = await manager.create('child.md', mockRunbook, { runbookPath: 'child.md' });
-      const sibling = await manager.create('sibling.md', mockRunbook, {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+      });
+      const sibling = await manager.create({ source: 'project', path: 'sibling.md' }, mockRunbook, {
         runbookPath: 'sibling.md',
       });
       await sessionService.pushRunbook(parent.id);

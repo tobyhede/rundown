@@ -1,21 +1,39 @@
 import { describe, it, expect } from '@jest/globals';
+import { IDENTITY_OWNED_BUILTINS } from '@rundown-org/parser';
 import {
   buildContextSnapshot,
+  extractInheritedUserVars,
   reconstituteContextVars,
   MAX_ANCESTOR_DEPTH,
 } from '../../src/runbook/delegation-context.js';
 import { mergeEffectiveVars } from '../../src/runbook/effective-vars.js';
-import type { AncestorSnapshot, ContextSnapshot, RunbookState } from '../../src/runbook/types.js';
+import type {
+  AncestorSnapshot,
+  ContextSnapshot,
+  RunbookState,
+  RunId,
+} from '../../src/runbook/types.js';
 import {
+  brandEffectiveVarsForTest,
   brandInitialTemplateVarsForTest,
+  brandRunIdForTest,
   brandStoredOutputsForTest,
 } from '../helpers/effective-vars.js';
+
+const RUN_ID = brandRunIdForTest(`rd_${'8'.repeat(32)}`);
+const GRANDPARENT_RUN_ID = brandRunIdForTest(`rd_${'9'.repeat(32)}`);
+const GREAT_GRANDPARENT_RUN_ID = brandRunIdForTest(`rd_${'a'.repeat(32)}`);
+const ANCESTOR_RUN_ID = brandRunIdForTest(`rd_${'b'.repeat(32)}`);
+
+function ancestorRunId(index: number): RunId {
+  return brandRunIdForTest(`rd_${index.toString(16).padStart(32, '0')}`);
+}
 
 /** Helper: create minimal RunbookState for buildContextSnapshot tests. */
 function makeMinimalState(overrides: Partial<RunbookState> = {}): RunbookState {
   return {
-    id: 'run-1',
-    runbook: 'parent.md',
+    id: RUN_ID,
+    runbook: { source: 'project', path: 'parent.md' },
     runbookPath: 'parent.md',
     step: '1',
     stepName: 'Main step',
@@ -64,7 +82,7 @@ describe('reconstituteContextVars', () => {
 
   it('produces grandparent from snapshot.ancestors[0] with offset', () => {
     const grandparent: AncestorSnapshot = {
-      runId: 'gp-run',
+      runId: GRANDPARENT_RUN_ID,
       runbook: 'grandparent.md',
       step: '3',
       substep: '2',
@@ -90,14 +108,14 @@ describe('reconstituteContextVars', () => {
 
   it('handles 3-level nesting', () => {
     const grandparent: AncestorSnapshot = {
-      runId: 'gp-run',
+      runId: GRANDPARENT_RUN_ID,
       runbook: 'grandparent.md',
       step: '2',
       substep: null,
       vars: { gp_var: 'gp_value' },
     };
     const greatGrandparent: AncestorSnapshot = {
-      runId: 'ggp-run',
+      runId: GREAT_GRANDPARENT_RUN_ID,
       runbook: 'great-grandparent.md',
       step: '1',
       substep: '3',
@@ -184,7 +202,7 @@ describe('reconstituteContextVars', () => {
 
   it('emits at and index for ancestors', () => {
     const ancestor: AncestorSnapshot = {
-      runId: 'anc-run',
+      runId: ANCESTOR_RUN_ID,
       runbook: 'ancestor.md',
       step: '3',
       substep: '1',
@@ -210,7 +228,7 @@ describe('reconstituteContextVars', () => {
 
   it('omits substep when null in ancestor', () => {
     const ancestor: AncestorSnapshot = {
-      runId: 'anc-run',
+      runId: ANCESTOR_RUN_ID,
       runbook: 'ancestor.md',
       step: '5',
       substep: null,
@@ -233,7 +251,7 @@ describe('reconstituteContextVars', () => {
     const ancestors: AncestorSnapshot[] = [];
     for (let i = 0; i < MAX_ANCESTOR_DEPTH + 1; i++) {
       ancestors.push({
-        runId: `run-${String(i)}`,
+        runId: ancestorRunId(i),
         runbook: `runbook-${String(i)}.md`,
         step: String(i + 1),
         substep: null,
@@ -255,7 +273,7 @@ describe('reconstituteContextVars', () => {
     const ancestors: AncestorSnapshot[] = [];
     for (let i = 0; i < MAX_ANCESTOR_DEPTH; i++) {
       ancestors.push({
-        runId: `run-${String(i)}`,
+        runId: ancestorRunId(i),
         runbook: `runbook-${String(i)}.md`,
         step: String(i + 1),
         substep: null,
@@ -277,7 +295,7 @@ describe('reconstituteContextVars', () => {
     const ancestors: AncestorSnapshot[] = [];
     for (let i = 0; i < 10; i++) {
       ancestors.push({
-        runId: `run-${String(i)}`,
+        runId: ancestorRunId(i),
         runbook: `runbook-${String(i)}.md`,
         step: String(i + 1),
         substep: null,
@@ -339,7 +357,7 @@ describe('reconstituteContextVars', () => {
 
   it('handles ancestors with no vars field', () => {
     const ancestor: AncestorSnapshot = {
-      runId: 'anc-run',
+      runId: ANCESTOR_RUN_ID,
       runbook: 'ancestor.md',
       step: '2',
       substep: null,
@@ -383,7 +401,7 @@ describe('reconstituteContextVars', () => {
       vars: mergeEffectiveVars({ templateVars: { env: 'staging' } }),
       ancestors: [
         {
-          runId: 'anc',
+          runId: ANCESTOR_RUN_ID,
           runbook: 'anc.md',
           step: '1',
           substep: null,
@@ -466,7 +484,7 @@ describe('reconstituteContextVars', () => {
 
   it('preserves JsonObject values in ancestor vars', () => {
     const ancestor: AncestorSnapshot = {
-      runId: 'gp-1',
+      runId: GRANDPARENT_RUN_ID,
       runbook: 'grandparent.md',
       step: '1',
       substep: null,
@@ -495,6 +513,45 @@ describe('reconstituteContextVars', () => {
     const result = reconstituteContextVars(snapshot);
 
     expect(result['context.parent.vars.port']).toBe(8080);
+  });
+});
+
+describe('extractInheritedUserVars', () => {
+  it('filters runtime identity while preserving user variables and outputs', () => {
+    const snapshot = {
+      vars: brandEffectiveVarsForTest({
+        RunId: 'rd_parent',
+        RunbookRef: { source: 'project', path: 'parent.runbook.md' },
+        UserInput: 'ok',
+        OutputValue: 'published',
+        'context.parent.vars.UserInput': 'ignored',
+      }),
+      ancestors: [],
+      step: '1',
+    };
+
+    expect(extractInheritedUserVars(snapshot)).toEqual(
+      expect.objectContaining({ UserInput: 'ok', OutputValue: 'published' }),
+    );
+    expect(extractInheritedUserVars(snapshot)).not.toHaveProperty('RunId');
+    expect(extractInheritedUserVars(snapshot)).not.toHaveProperty('RunbookRef');
+  });
+
+  it('filters every parser-declared identity-owned built-in', () => {
+    expect(IDENTITY_OWNED_BUILTINS).toEqual(['RunId', 'RunbookRef']);
+
+    const snapshot = {
+      vars: brandEffectiveVarsForTest({
+        ...Object.fromEntries(IDENTITY_OWNED_BUILTINS.map((key) => [key, `parent-${key}`])),
+        UserInput: 'ok',
+      }),
+      ancestors: [],
+      step: '1',
+    };
+
+    const inherited = extractInheritedUserVars(snapshot);
+
+    expect(inherited).toEqual({ UserInput: 'ok' });
   });
 });
 

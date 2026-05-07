@@ -68,7 +68,7 @@ describe('fail command', () => {
       // After blocking, the runbook is saved but no longer active
       // Retrieve from all states
       const states = await getAllStates(workspace);
-      const state = states.find((s) => s.runbook === 'runbooks/simple.runbook.md');
+      const state = states.find((s) => s.runbook.path === 'runbooks/simple.runbook.md');
       expect(state?.lifecycle).toBe('stopped');
     });
   });
@@ -416,7 +416,7 @@ Final step.
 
       expect(result.exitCode).toBe(1);
       const states = await getAllStates(workspace);
-      const state = states.find((s) => s.runbook === 'runbooks/substep-fail-any.md');
+      const state = states.find((s) => s.runbook.path === 'runbooks/substep-fail-any.md');
       expect(state?.lifecycle).toBe('stopped');
     });
 

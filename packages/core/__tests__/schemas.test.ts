@@ -1,6 +1,7 @@
 import { describe, it, expect } from '@jest/globals';
 import {
   parseHookInput,
+  RunIdSchema,
   RunbookStateSchema,
   StepIdSchema,
   ActionSchema,
@@ -9,15 +10,17 @@ import {
   makeTemplateVarValueSchema,
   makeRunbookStateSchema,
 } from '../src/schemas.js';
-import { isJsonArrayStream } from '../src/runbook/types.js';
+import { isJsonArrayStream, type RunId } from '../src/runbook/types.js';
+
+const VALID_RUN_ID = `rd_${'a'.repeat(32)}`;
 
 /**
  * Creates a valid runbook state object for testing.
  * Note: step is now a string ("1", "ErrorHandler", etc.)
  */
 const createValidState = (overrides: Record<string, unknown> = {}) => ({
-  id: 'test-id',
-  runbook: 'test.md',
+  id: VALID_RUN_ID,
+  runbook: { source: 'project', path: 'test.md' },
   runbookPath: 'test.md',
   step: '1',
   stepName: 'Test Step',
@@ -27,6 +30,15 @@ const createValidState = (overrides: Record<string, unknown> = {}) => ({
   startedAt: '2025-01-01T00:00:00Z',
   updatedAt: '2025-01-01T00:00:00Z',
   ...overrides,
+});
+
+describe('RunIdSchema', () => {
+  it('parses canonical rd-prefixed run ids as branded RunId values', () => {
+    const runId = RunIdSchema.parse(VALID_RUN_ID);
+    const branded: RunId = runId;
+
+    expect(branded).toBe(VALID_RUN_ID);
+  });
 });
 
 describe('parseHookInput', () => {
@@ -357,22 +369,35 @@ describe('RunbookStateSchema frontmatterOutputs', () => {
   });
 });
 
-describe('RunbookStateSchema runbookRef', () => {
-  it('accepts a canonical optional runbookRef', () => {
+describe('RunbookStateSchema runbookRef cleanup', () => {
+  it('rejects the removed runbookRef field', () => {
     const state = createValidState({
-      runbookRef: { source: 'plugin', path: 'planning/write-plan.runbook.md' },
+      runbookRef: { source: 'project', path: 'ops/deploy.md' },
     });
 
-    expect(RunbookStateSchema.parse(state).runbookRef).toEqual({
-      source: 'plugin',
-      path: 'planning/write-plan.runbook.md',
+    expect(() => RunbookStateSchema.parse(state)).toThrow(/runbookRef/);
+  });
+});
+
+describe('RunbookStateSchema runbook identity', () => {
+  it('accepts persisted state with canonical RunbookRef runbook object', () => {
+    const state = createValidState({
+      runbook: { source: 'project', path: 'ops/deploy.md' },
+    });
+
+    expect(RunbookStateSchema.parse(state).runbook).toEqual({
+      source: 'project',
+      path: 'ops/deploy.md',
     });
   });
 
-  it('rejects an invalid optional runbookRef', () => {
-    const state = createValidState({
-      runbookRef: { source: 'plugin', path: 'planning/write-plan.md' },
-    });
+  it.each([
+    { source: 'project', path: '../deploy.md' },
+    { source: 'project', path: '/deploy.md' },
+    { source: 'project', path: 'ops\\deploy.md' },
+    { source: 'project', path: 'ops/deploy.txt' },
+  ])('rejects unsafe persisted runbook identity %#', (runbook) => {
+    const state = createValidState({ runbook });
 
     expect(() => RunbookStateSchema.parse(state)).toThrow();
   });
@@ -719,6 +744,7 @@ describe('makeRunbookStateSchema — SEC1 nested snapshot var protection', () =>
           delegation: {
             tokenHash: `sha256:${'a'.repeat(64)}`,
             childRunbookPath: '/project/child.md',
+            childRunbookRef: { source: 'project', path: 'child.md' },
             contextSnapshot: {
               vars: { items: escaping },
               ancestors: [],
@@ -746,6 +772,7 @@ describe('makeRunbookStateSchema — SEC1 nested snapshot var protection', () =>
           delegation: {
             tokenHash: `sha256:${'a'.repeat(64)}`,
             childRunbookPath: '/project/child.md',
+            childRunbookRef: { source: 'project', path: 'child.md' },
             contextSnapshot: {
               vars: { items: safe },
               ancestors: [],
@@ -773,6 +800,7 @@ describe('makeRunbookStateSchema — SEC1 nested snapshot var protection', () =>
           delegation: {
             tokenHash: `sha256:${'a'.repeat(64)}`,
             childRunbookPath: '/project/child.md',
+            childRunbookRef: { source: 'project', path: 'child.md' },
             contextSnapshot: {
               vars: {},
               ancestors: [

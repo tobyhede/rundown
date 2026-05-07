@@ -12,11 +12,13 @@ import type {
   RunbookState,
 } from '../../src/runbook/types.js';
 import { createDelegation } from '../../src/runbook/delegation-service.js';
+import type { RunbookRef } from '../../src/runbook/runbook-ref.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import { createRunbook } from './fixtures.js';
 import {
   brandFlattenedTemplateVarsForTest,
   brandInitialTemplateVarsForTest,
+  brandRunIdForTest,
   brandStoredOutputsForTest,
 } from '../helpers/effective-vars.js';
 
@@ -9885,12 +9887,19 @@ echo "processing"
 
   describe('parent-aggregation retry with DELEGATE substeps', () => {
     /** Seed fresh delegations for the named substeps of step `1` (frameKey = buildFrameKey('1')). */
-    function seedDelegations(steps: ResolvedStep[], substepIds: string[]): readonly SubstepState[] {
+    function seedDelegations(
+      steps: ResolvedStep[],
+      substepIds: string[],
+      childRunbookRefForSubstep: (substepId: string) => RunbookRef = (substepId) => ({
+        source: 'project',
+        path: `child-${substepId}.md`,
+      }),
+    ): readonly SubstepState[] {
       const frameKey = buildFrameKey('1');
       // Start from a minimal persistent state; createDelegation updates substepStates.
       let state: RunbookState = {
-        id: 'test-run',
-        runbook: 'parent.md',
+        id: brandRunIdForTest(`rd_${'a'.repeat(32)}`),
+        runbook: { source: 'project', path: 'parent.md' },
         runbookPath: 'parent.md',
         step: '1',
         stepName: 'Parent',
@@ -9904,11 +9913,13 @@ echo "processing"
       };
 
       for (const substepId of substepIds) {
+        const childRunbookRef = childRunbookRefForSubstep(substepId);
         const result = createDelegation(
           {
             state,
             stepId: `1.${substepId}`,
-            childRunbookPath: `child-${substepId}.md`,
+            childRunbookPath: childRunbookRef.path,
+            childRunbookRef,
             ancestors: [],
             frameKey,
           },
@@ -9933,6 +9944,7 @@ echo "processing"
       results: Record<string, 'pass' | 'fail' | undefined>;
       seedIds: string[];
       trimSteps?: boolean;
+      childRunbookRefForSubstep?: (substepId: string) => RunbookRef;
     }): { actor: ReturnType<typeof createActor>; frameKey: ReturnType<typeof buildFrameKey> } {
       const substepDefer = {
         pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
@@ -9964,7 +9976,7 @@ echo "processing"
 
       // Seed delegations using the full step list — createDelegation validates
       // the substep exists in the step definitions.
-      const seededStates = seedDelegations(fullSteps, args.seedIds);
+      const seededStates = seedDelegations(fullSteps, args.seedIds, args.childRunbookRefForSubstep);
 
       // Apply result markers (pass/fail) to the seeded delegations per args.results.
       // Skip the active substep (the one the dispatched event is supposed to close
@@ -10094,6 +10106,26 @@ echo "processing"
       expect(activeFrameSubsteps.length).toBe(2);
       const activeFrameIds = activeFrameSubsteps.map((ss) => ss.id).sort();
       expect(activeFrameIds).toEqual(['1', '2']);
+
+      actor.stop();
+    });
+
+    it('preserves external child runbook refs when retry reissues delegated substeps', () => {
+      const externalChildRef: RunbookRef = {
+        source: 'external',
+        path: '/tmp/external-child.runbook.md',
+      };
+      const { actor } = buildRetryScenario({
+        seedIds: ['1'],
+        results: { '1': 'fail' },
+        childRunbookRefForSubstep: () => externalChildRef,
+      });
+
+      actor.send({ type: 'FAIL' });
+
+      const ctx = actor.getSnapshot().context as RunbookContext;
+      const post = ctx.substepStates?.find((ss) => ss.id === '1');
+      expect(post?.delegation?.childRunbookRef).toEqual(externalChildRef);
 
       actor.stop();
     });
@@ -10497,11 +10529,15 @@ echo "processing"
       steps: ResolvedStep[],
       substepId: string,
       iteration: number,
+      childRunbookRef: RunbookRef = {
+        source: 'project',
+        path: `child-${substepId}-iter${String(iteration)}.md`,
+      },
     ): SubstepState {
       const frameKey = buildFrameKey('1', iteration);
       const baseState: RunbookState = {
-        id: 'test-run',
-        runbook: 'parent.md',
+        id: brandRunIdForTest(`rd_${'b'.repeat(32)}`),
+        runbook: { source: 'project', path: 'parent.md' },
         runbookPath: 'parent.md',
         step: '1',
         stepName: 'Parent',
@@ -10518,7 +10554,8 @@ echo "processing"
         {
           state: baseState,
           stepId: `1.${substepId}`,
-          childRunbookPath: `child-${substepId}-iter${String(iteration)}.md`,
+          childRunbookPath: childRunbookRef.path,
+          childRunbookRef,
           ancestors: [],
           frameKey,
         },
@@ -10565,9 +10602,13 @@ echo "processing"
 
       const iter1FrameKey = buildFrameKey('1', 1);
       const iter2FrameKey = buildFrameKey('1', 2);
+      const iter1ChildRef: RunbookRef = {
+        source: 'external',
+        path: '/tmp/external-iteration-child.runbook.md',
+      };
 
       // Seed delegations on both iteration frames.
-      const iter1Seeded = seedIterationDelegation(steps, '1', 1);
+      const iter1Seeded = seedIterationDelegation(steps, '1', 1, iter1ChildRef);
       const iter2Seeded = seedIterationDelegation(steps, '1', 2);
 
       // Iteration 1: leave pending — the dispatched FAIL below is what closes
@@ -10657,6 +10698,7 @@ echo "processing"
       // Iteration 1's delegation must have a fresh tokenHash (different from seeded).
       const post1 = ctx.substepStates?.find((ss) => ss.id === '1' && ss.frameKey === iter1FrameKey);
       expect(post1?.delegation?.tokenHash).not.toBe(iter1Seeded.delegation?.tokenHash);
+      expect(post1?.delegation?.childRunbookRef).toEqual(iter1ChildRef);
 
       actor.stop();
     });

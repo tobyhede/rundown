@@ -10,12 +10,14 @@ import {
   brandEffectiveVars,
   brandInitialTemplateVars,
   brandStoredOutputs,
+  assertRunId,
   assertDelegationTokenHash,
   buildFrameKey,
   type DelegationTokenHash,
   type EffectiveVars,
   type FrameKey,
   type InitialTemplateVars,
+  type RunId,
   type StoredOutputs,
   type TemplateVarValue,
 } from '@rundown-org/core';
@@ -47,6 +49,20 @@ export function brandFrameKeyForTest(step: string, iteration?: number): FrameKey
  */
 export function brandDelegationTokenHashForTest(hash: string): DelegationTokenHash {
   return assertDelegationTokenHash(hash);
+}
+
+/**
+ * Test-only producer of {@link RunId}.
+ *
+ * Delegates to the production assertion helper so test fixtures use the
+ * same canonical run-id validation as production code.
+ *
+ * @param runId - Candidate persisted run id
+ * @returns Branded `RunId`
+ * @throws {Error} If `runId` is not a canonical `rd_<32 lowercase hex>` value
+ */
+export function brandRunIdForTest(runId: string): RunId {
+  return assertRunId(runId);
 }
 
 /**

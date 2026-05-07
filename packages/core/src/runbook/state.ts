@@ -1,4 +1,5 @@
 // src/runbook/state.ts
+import { randomBytes } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type { OutputDeclaration } from '@rundown-org/parser';
@@ -19,6 +20,7 @@ import { makeRunbookStateSchema, SessionDataSchema } from '../schemas.js';
 import { isNodeError } from '../errors.js';
 import { logger } from '../logger.js';
 import { brandInitialTemplateVars, brandStoredOutputs } from './effective-vars.js';
+import { assertRunId, RUN_ID_PREFIX, type RunId } from './run-id.js';
 import {
   runsDir as _runsDir,
   sessionPath as _sessionPath,
@@ -65,11 +67,13 @@ export class StaleRunbookStateError extends Error {
   }
 }
 
-function generateId(): string {
-  const now = new Date();
-  const date = now.toISOString().slice(0, 10);
-  const random = Math.random().toString(36).slice(2, 8);
-  return `wf-${date}-${random}`;
+/**
+ * Generate a concrete Rundown run identifier.
+ *
+ * @returns Run ID in canonical `rd_<32 lowercase hex>` form
+ */
+export function generateRunId(): RunId {
+  return assertRunId(`${RUN_ID_PREFIX}${randomBytes(16).toString('hex')}`);
 }
 
 /**
@@ -79,16 +83,16 @@ function generateId(): string {
  */
 export interface SessionData {
   /** Active runbook stack for default targeting. */
-  defaultStack: string[];
+  defaultStack: RunId[];
   /** ID of a temporarily stashed runbook, if any. */
-  stashedRunbookId?: string;
+  stashedRunbookId?: RunId;
   /** Explicit claim-id records for delegated child runbook targeting. */
   claims: Record<string, ClaimRecord>;
 }
 
 interface CreateOptions {
   readonly runbookPath: string;
-  readonly runbookRef?: RunbookRef;
+  readonly runId?: RunId;
   readonly prompted?: boolean;
   /** Parent linkage when this run is a child (delegation or inline). */
   readonly parentLinkage?: ParentLinkage;
@@ -195,26 +199,25 @@ export class RunbookStateManager {
   /**
    * Create a new runbook state and persist it to disk.
    *
-   * @param runbookFile - Path to the runbook source file
+   * @param runbookRef - Canonical runbook identity
    * @param runbook - The parsed runbook definition
    * @param options - Configuration including agentId, parent runbook info, prompted flag, and templateVars for template variable replacements
    * @returns The newly created RunbookState
    */
   async create(
-    runbookFile: string,
+    runbookRef: RunbookRef,
     runbook: Runbook | ResolvedRunbook,
     options: CreateOptions,
   ): Promise<RunbookState> {
-    const id = generateId();
+    const id = options.runId ?? generateRunId();
     const now = new Date().toISOString();
 
     const initialStep = runbook.steps[0];
 
     const state: RunbookState = {
       id,
-      runbook: runbookFile,
+      runbook: runbookRef,
       runbookPath: options.runbookPath,
-      runbookRef: options.runbookRef,
       title: runbook.title,
       description: runbook.description,
       step: initialStep.name,
@@ -245,7 +248,7 @@ export class RunbookStateManager {
   /**
    * Load a runbook state from disk by ID.
    *
-   * @param id - The runbook state ID (e.g., 'wf-2025-01-12-abc123')
+   * @param id - The runbook state ID (e.g., 'rd_0123456789abcdef0123456789abcdef')
    * @returns The loaded RunbookState, or null if file not found
    * @throws {Error} If the state file exists but fails schema validation (stale state)
    * @throws {Error} If the runbook state uses deprecated dynamic-step snapshots

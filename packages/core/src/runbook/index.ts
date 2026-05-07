@@ -11,9 +11,22 @@ export {
 export * from './step-id.js';
 export * from './step-utils.js';
 export * from './targeting.js';
+export { RUNBOOK_SOURCES } from './runbook-ref.js';
+export {
+  assertRunId,
+  isRunId,
+  RUN_ID_PATTERN,
+  RUN_ID_PREFIX,
+  type RunId,
+} from './run-id.js';
 export * from './claim-id.js';
 export * from './transition-kernel.js';
-export { RunbookStateManager, StaleRunbookStateError, type SessionData } from './state.js';
+export {
+  generateRunId,
+  RunbookStateManager,
+  StaleRunbookStateError,
+  type SessionData,
+} from './state.js';
 export { SessionService, type ReleaseRunbookResult } from './session-service.js';
 export { readActiveRunScope, type ActiveRunScope } from './session-reader.js';
 export { ExecutionLifecycleService } from './execution-lifecycle-service.js';
@@ -106,7 +119,6 @@ export {
   buildArtifactUri,
   parseExactArtifactUriParts,
   parseArtifactUri,
-  RUN_ID_PATTERN,
   type ArtifactPathOptions,
   type ArtifactIdentity,
   type ArtifactRef,

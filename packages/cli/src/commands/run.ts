@@ -29,7 +29,7 @@ import { getCwd } from '../helpers/context.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { parseInputOption, parseInputJsonOption, collect } from '../helpers/option-utils.js';
 import {
-  prepareRunbook,
+  prepareRunnableRunbook,
   startRunbook,
   inferEntryFromState,
   type RunPipelineContext,
@@ -161,7 +161,7 @@ export function registerRunCommand(program: Command): void {
               };
             }
 
-            const prepResult = await prepareRunbook(file, inputOpts, cwd, inheritedOptions);
+            const prepResult = await prepareRunnableRunbook(file, inputOpts, cwd, inheritedOptions);
             if (!prepResult.ok) {
               output.error(prepResult.error, prepResult.code, prepResult.details);
               output.flush();
