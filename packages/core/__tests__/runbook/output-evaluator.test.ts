@@ -197,20 +197,20 @@ describe('evaluateOutputExpression', () => {
     ).toThrow(/ContextId/);
   });
 
-  it('preserves legacy ctx= path helper syntax as literal text', () => {
+  it('resolves legacy ctx= path helper syntax to a context-scoped workspace path', () => {
     expect(
       evaluateOutputExpression('{{ path "plan.json" ctx={{ childCtx }} }}', {
         WorkPath: '.rundown/work/demo',
         ContextId: 'parent',
         childCtx: 'child-123',
       }),
-    ).toBe('{{ path "plan.json" ctx=child-123 }}');
+    ).toMatch(/^\.rundown\/work\/demo\/\.rd-child-123\/\d{4}-\d{2}-\d{2}-plan\.json$/);
     expect(
       evaluateOutputExpression('{{ path "plan.json" ctx=alt-ctx }}', {
         WorkPath: '.rundown/work/demo',
         ContextId: 'parent',
       }),
-    ).toBe('{{ path "plan.json" ctx=alt-ctx }}');
+    ).toMatch(/^\.rundown\/work\/demo\/\.rd-alt-ctx\/\d{4}-\d{2}-\d{2}-plan\.json$/);
   });
 
   it('expands template references inside quoted strings', () => {

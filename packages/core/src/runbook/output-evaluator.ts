@@ -5,7 +5,7 @@ import { mergeEffectiveVars } from './effective-vars.js';
 import type { ForContext, JsonValue, TemplateVarValue } from './types.js';
 import { assertResolvedVariableForContext, isJsonArrayStream } from './types.js';
 import { deriveExecutionAt } from './targeting.js';
-import { assembleRunArtifactPath } from './artifact-paths.js';
+import { assembleArtifactPath, assembleRunArtifactPath, VALID_CTX } from './artifact-paths.js';
 import { appendArtifactManifestRecordSync } from './artifact-manifest.js';
 import { buildArtifactUri } from './artifact-uri.js';
 import { invokeHelperSafely } from './helper-invoke.js';
@@ -113,6 +113,8 @@ export function resetHelperRegistry(): void {
 const TEMPLATE_PATH_REGEX =
   /{{\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)\s*}}/g;
 const PATH_HELPER_REGEX = /^\{\{\s*path\s+"([^"]+)"\s*\}\}$/;
+const LEGACY_CTX_PATH_HELPER_REGEX =
+  /^\{\{\s*path\s+"([^"]+)"\s+ctx=(\{\{[^}]*\}\}|[^\s}]+)\s*\}\}$/;
 const ARTIFACT_HELPER_REGEX = /^\{\{\s*artifact\s+"([^"]+)"\s*\}\}$/;
 
 /**
@@ -267,6 +269,25 @@ export function applyRunArtifactHelper(
   return rendered;
 }
 
+function resolveLegacyCtxPathHelper(
+  filename: string,
+  ctxExpr: string,
+  variables: OutputVars,
+): string {
+  const workPath = requireOutputString('WorkPath', variables);
+  const expandedContextId = ctxExpr.trim().startsWith('{{')
+    ? expandOutputVariables(ctxExpr.trim(), variables)
+    : ctxExpr.trim();
+
+  if (!VALID_CTX.test(expandedContextId)) {
+    throw new Error(
+      `evaluateOutputExpression: ctx=${ctxExpr.trim()} expanded to "${expandedContextId}", which is not a valid ContextId.`,
+    );
+  }
+
+  return assembleArtifactPath(workPath, expandedContextId, filename);
+}
+
 function hasUnresolvedTemplateReferences(text: string, variables: OutputVars): boolean {
   const regex = new RegExp(TEMPLATE_PATH_REGEX.source, 'g');
   let match: RegExpExecArray | null = regex.exec(text);
@@ -328,21 +349,23 @@ function tryDispatchHelper(trimmed: string, variables: OutputVars): string | nul
  * Supported forms (evaluated in order):
  * 1. `{{ artifact "file.json" }}` — built-in artifact URI helper
  * 2. `{{ path "file.json" }}` — built-in run-scoped artifact path helper
- * 3. `{{ ./VarName }}` — explicit variable lookup; throws if not found in frame
- * 4. `{{ helperName varRef }}` — registered helper called with a variable value
- * 5. `{{ helperName "literal" }}` — registered helper called with a string literal
- * 6. `"quoted literal"` — may contain `{{ template }}` references expanded inline
- * 7. `{{ template }}` — template reference expanded against the variable frame
- * 8. `bare_Identifier` — direct variable lookup; throws if not found in frame
+ * 3. `{{ path "file.json" ctx=child }}` — legacy context-scoped path helper
+ * 4. `{{ ./VarName }}` — explicit variable lookup; throws if not found in frame
+ * 5. `{{ helperName varRef }}` — registered helper called with a variable value
+ * 6. `{{ helperName "literal" }}` — registered helper called with a string literal
+ * 7. `"quoted literal"` — may contain `{{ template }}` references expanded inline
+ * 8. `{{ template }}` — template reference expanded against the variable frame
+ * 9. `bare_Identifier` — direct variable lookup; throws if not found in frame
  *
- * For forms 3–4, if the helper throws the expression returns the original literal
- * text (best-effort; the error is logged as a warning).
+ * For registered helper forms, if the helper throws the expression returns the
+ * original literal text (best-effort; the error is logged as a warning).
  *
  * @param expr - Raw expression text from the runbook source
  * @param variables - Variable frame used to resolve references
  * @param options - Filesystem options used by artifact-producing helpers
  * @returns Rendered string value
  * @throws {Error} If an artifact-producing helper is used but options or required variables are missing
+ * @throws {Error} If the legacy `path` helper is used but `WorkPath` is missing or `ctx=` is invalid
  * @throws {Error} If an explicit variable lookup `{{ ./VarName }}` references a variable not in the output frame
  * @throws {Error} If a `{{ helperName varRef }}` form references a variable not in the output frame
  * @throws {Error} If the template reference has unresolved variables after expansion
@@ -375,7 +398,12 @@ export function evaluateOutputExpression(
     );
   }
 
-  // 2. Explicit variable lookup: {{ ./VarName }} — bypasses helper registry
+  const legacyCtxPathMatch = LEGACY_CTX_PATH_HELPER_REGEX.exec(trimmed);
+  if (legacyCtxPathMatch) {
+    return resolveLegacyCtxPathHelper(legacyCtxPathMatch[1], legacyCtxPathMatch[2], variables);
+  }
+
+  // Explicit variable lookup: {{ ./VarName }} — bypasses helper registry
   const explicitMatch = EXPLICIT_VAR_REGEX.exec(trimmed);
   if (explicitMatch) {
     const varName = explicitMatch[1];
@@ -386,13 +414,13 @@ export function evaluateOutputExpression(
     );
   }
 
-  // 3. Helper call dispatch
+  // Helper call dispatch
   const helperResult = tryDispatchHelper(trimmed, variables);
   if (helperResult !== null) {
     return helperResult ?? trimmed; // undefined = helper threw, return literal as best-effort
   }
 
-  // 4. Existing forms follow (quoted literal, template reference, bare identifier)
+  // Existing forms follow (quoted literal, template reference, bare identifier)
   const quotedMatch = /^"([^"]*)"$/.exec(trimmed);
   if (quotedMatch) {
     const inner = quotedMatch[1];
