@@ -1,6 +1,5 @@
 import {
   asTerminalSnapshotOrDefault,
-  assertRunId,
   buildStepPosition,
   countNumberedSteps,
   derivePositionAt,
@@ -78,7 +77,7 @@ interface OrchestrateTransitionArgs {
   /** Event sink for emitting transition lifecycle events. */
   sink: TransitionEventSink;
   /** Unique identifier of the runbook being executed. */
-  runbookId: string;
+  runbookId: RunId;
   /** All steps in the runbook, used for position calculations. */
   steps: ResolvedStep[];
   /** The step that was just evaluated. */
@@ -231,7 +230,7 @@ export async function orchestrateTransition(
       finalPosition: positions.to,
     });
 
-    await applyTerminalSideEffects(sessionService, policy.onComplete, assertRunId(runbookId));
+    await applyTerminalSideEffects(sessionService, policy.onComplete, runbookId);
     return { status: 'done', action: actionType, from: fromStr, at: atStr, message };
   }
 
@@ -249,7 +248,7 @@ export async function orchestrateTransition(
       reason: 'fail_transition',
     });
 
-    await applyTerminalSideEffects(sessionService, policy.onStopped, assertRunId(runbookId));
+    await applyTerminalSideEffects(sessionService, policy.onStopped, runbookId);
     return { status: 'stopped', action: actionType, from: fromStr, at: atStr, message };
   }
 

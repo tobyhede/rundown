@@ -297,7 +297,7 @@ interface ApplyResultTransitionArgs {
   sessionService: SessionService;
   lifecycleService: ExecutionLifecycleService;
   emitter: ExecutionEventEmitter;
-  runbookId: string;
+  runbookId: RunId;
   steps: ResolvedStep[];
   currentState: RunbookState;
   currentStep: ResolvedStep;
@@ -470,7 +470,7 @@ export interface DrainResolvedCompletionsArgs {
   /** Event emitter for execution progress notifications. */
   emitter: ExecutionEventEmitter;
   /** ID of the runbook being drained. */
-  runbookId: string;
+  runbookId: RunId;
   /** Parsed step definitions for the runbook. */
   steps: ResolvedStep[];
   /** Current persisted runbook state. */
