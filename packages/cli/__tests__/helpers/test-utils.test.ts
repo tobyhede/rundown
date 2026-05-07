@@ -437,6 +437,57 @@ describe('readRunbookState', () => {
       await workspace.cleanup();
     }
   });
+
+  it('returns null when filename id does not match embedded state.id', async () => {
+    const workspace = await createTestWorkspace({ fixtureDir: 'snapshots' });
+    try {
+      const filenameId = `rd_${'a'.repeat(32)}`;
+      const embeddedId = `rd_${'b'.repeat(32)}`;
+      const state = {
+        id: embeddedId,
+        runbook: { source: 'project', path: 'x.md' },
+        runbookPath: 'x.md',
+        step: '1',
+        stepName: 'Step',
+        retryCount: 0,
+        variables: {},
+        steps: [],
+        startedAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      };
+      await writeFile(join(workspace.statePath(), `${filenameId}.json`), JSON.stringify(state));
+
+      await expect(readRunbookState(workspace, filenameId)).resolves.toBeNull();
+    } finally {
+      await workspace.cleanup();
+    }
+  });
+
+  it('returns the parsed state when filename id matches embedded state.id', async () => {
+    const workspace = await createTestWorkspace({ fixtureDir: 'snapshots' });
+    try {
+      const id = `rd_${'c'.repeat(32)}`;
+      const state = {
+        id,
+        runbook: { source: 'project', path: 'x.md' },
+        runbookPath: 'x.md',
+        step: '1',
+        stepName: 'Step',
+        retryCount: 0,
+        variables: {},
+        steps: [],
+        startedAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      };
+      await writeFile(join(workspace.statePath(), `${id}.json`), JSON.stringify(state));
+
+      await expect(readRunbookState(workspace, id)).resolves.toEqual(
+        expect.objectContaining({ id }),
+      );
+    } finally {
+      await workspace.cleanup();
+    }
+  });
 });
 
 describe('createTestWorkspace fixtureDir option', () => {

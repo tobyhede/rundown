@@ -530,7 +530,9 @@ export async function readRunbookState(
   try {
     const content = await readFile(join(workspace.statePath(), `${id}.json`), 'utf-8');
     const parsed = JSON.parse(content) as unknown;
-    return isRunbookState(parsed) ? parsed : null;
+    if (!isRunbookState(parsed)) return null;
+    if (parsed.id !== id) return null;
+    return parsed;
   } catch {
     return null;
   }
