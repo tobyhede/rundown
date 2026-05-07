@@ -9,6 +9,7 @@ import type {
   ParsedForClause,
   ParseResult,
   OutputDeclaration,
+  ArtifactDeclaration,
   RunbookEntry,
 } from './ast.js';
 import type { Transitions } from './schemas.js';
@@ -27,6 +28,7 @@ import {
   validateDEFERUsage,
   parseForClause,
   parseStepOutputDeclaration,
+  parseArtifactDeclaration,
 } from './helpers.js';
 import { formatReservedTemplateNames, isReservedTemplateName } from './reserved.js';
 import { validateRunbook } from './validator.js';
@@ -133,6 +135,7 @@ interface SubstepBuilder {
   pendingConditionals: ParsedConditional[];
   line?: number;
   outputs?: readonly OutputDeclaration[];
+  artifacts?: readonly ArtifactDeclaration[];
   runbooks: RunbookEntry[];
   /**
    * Marks a substep synthesized from a runbook list entry rather than an explicit H3 heading.
@@ -162,6 +165,7 @@ interface StepBuilder {
   stepConditionals?: ParsedConditional[];
   invalidH3s: Array<{ line: number; text: string }>;
   outputs?: readonly OutputDeclaration[];
+  artifacts?: readonly ArtifactDeclaration[];
   hasRunbookListSubsteps?: true;
 }
 
@@ -247,6 +251,7 @@ function finalizePendingSubstep(ctx: VisitorContext): void {
       runbooks: ps.runbooks.length > 0 ? ps.runbooks : undefined,
       line: ps.line,
       outputs: ps.outputs,
+      artifacts: ps.artifacts,
       delegate: ps.hasSeenDelegate ? true : undefined,
     };
     ctx.currentStep.substeps.push(substep);
@@ -366,6 +371,7 @@ function handleH3Heading(node: Heading, ctx: ActiveStepContext): void {
       pendingConditionals: [],
       line: node.position?.start.line,
       outputs: undefined,
+      artifacts: undefined,
       runbooks: [],
     };
   } else {
@@ -621,6 +627,108 @@ function handleListItemContent(
 }
 
 /**
+ * Process an `- ARTIFACTS` directive list item.
+ *
+ * Reads the nested list under `- ARTIFACTS` and collects each item as an
+ * ArtifactDeclaration. Returns `SKIP` to prevent double-traversal of the nested list.
+ *
+ * Ordering: ARTIFACTS must be the first directive after the heading. It is
+ * rejected after OUTPUTS, FOR (step-level), DELEGATE, transitions, prompt,
+ * or body content.
+ *
+ * @param node - The list item node whose first paragraph text is "ARTIFACTS"
+ * @param ctx - Active step context
+ * @returns `SKIP` to stop the visitor from descending into child nodes
+ * @throws {RunbookSyntaxError} When the directive is misordered, duplicated,
+ *   missing nested entries, or contains invalid declarations.
+ */
+function handleArtifactsDirective(node: ListItem, ctx: ActiveStepContext): typeof SKIP {
+  const target = getDirectiveTarget(ctx);
+  const targetLabel = formatDirectiveTarget(ctx);
+  const lineNum = formatLineNum(node);
+
+  if (target.outputs !== undefined) {
+    throw new RunbookSyntaxError(
+      `ARTIFACTS directive in ${targetLabel}${lineNum}: must appear before OUTPUTS`,
+    );
+  }
+  if (!ctx.currentStep.pendingSubstep && ctx.currentStep.hasSeenForClause) {
+    throw new RunbookSyntaxError(
+      `ARTIFACTS directive in ${targetLabel}${lineNum}: must appear before FOR`,
+    );
+  }
+  if (target.hasSeenDelegate) {
+    throw new RunbookSyntaxError(
+      `ARTIFACTS directive in ${targetLabel}${lineNum}: must appear before DELEGATE`,
+    );
+  }
+  if (target.hasSeenTransitions) {
+    throw new RunbookSyntaxError(
+      `ARTIFACTS directive in ${targetLabel}${lineNum}: must appear before transitions`,
+    );
+  }
+
+  let hasBlockingContent: boolean;
+  if (ctx.currentStep.pendingSubstep) {
+    const ps = ctx.currentStep.pendingSubstep;
+    hasBlockingContent = ps.hasSeenPromptText || ps.hasSeenNonRunbookContent;
+  } else {
+    hasBlockingContent = target.hasSeenContent || target.hasSeenPromptText;
+  }
+  if (hasBlockingContent) {
+    throw new RunbookSyntaxError(
+      `ARTIFACTS directive in ${targetLabel}${lineNum}: must appear before prompt text and body content`,
+    );
+  }
+
+  if (target.artifacts && target.artifacts.length > 0) {
+    throw new RunbookSyntaxError(
+      `Duplicate ARTIFACTS directive in ${targetLabel}${lineNum}: a target may declare ARTIFACTS at most once`,
+    );
+  }
+
+  const nestedList = node.children.find((c): c is List => c.type === 'list');
+  if (!nestedList || nestedList.children.length === 0) {
+    throw new RunbookSyntaxError(
+      `ARTIFACTS directive in ${targetLabel}${lineNum} requires at least one artifact declaration (e.g., "  - PlanPath \\"plan.json\\"")`,
+    );
+  }
+
+  const declarations: ArtifactDeclaration[] = [];
+  const seen = new Set<string>();
+  for (const item of nestedList.children) {
+    const paragraph = item.children.find((c) => c.type === 'paragraph');
+    if (!paragraph) {
+      throw new RunbookSyntaxError(
+        `Invalid ARTIFACTS declaration in ${targetLabel}${formatLineNum(item)}: expected "Name \\"key\\""`,
+      );
+    }
+    const text = extractText(paragraph);
+    const decl = parseArtifactDeclaration(text);
+    if (!decl) {
+      throw new RunbookSyntaxError(
+        `Invalid ARTIFACTS declaration in ${targetLabel}${formatLineNum(item)}: "${text.trim()}" — expected "Name \\"key\\"" with a safe artifact key (alphanumerics, dot, dash, underscore; wildcards may use \`*\` and \`?\`; slashes, \`.\`, \`..\`, traversal, and \`**\` are invalid)`,
+      );
+    }
+    if (isReservedTemplateName(decl.name)) {
+      throw new RunbookSyntaxError(
+        `Invalid ARTIFACTS declaration in ${targetLabel}${formatLineNum(item)}: "${decl.name}" is a reserved variable name (${formatReservedTemplateNames()} — case-insensitive)`,
+      );
+    }
+    if (seen.has(decl.name)) {
+      throw new RunbookSyntaxError(
+        `Duplicate artifact alias "${decl.name}" in ${targetLabel}${formatLineNum(item)}: each alias must be unique within an ARTIFACTS block`,
+      );
+    }
+    seen.add(decl.name);
+    declarations.push(decl);
+  }
+
+  target.artifacts = declarations;
+  return SKIP;
+}
+
+/**
  * Process an OUTPUTS directive list item.
  *
  * Reads the nested list under `- OUTPUTS` and collects each item as an
@@ -759,16 +867,21 @@ function handleListItem(node: ListItem, ctx: ActiveStepContext): typeof SKIP | u
   if (!firstParagraph) return;
 
   const text = extractText(firstParagraph);
+  const trimmedText = text.trim();
+
+  // Check for ARTIFACTS directive on the active execution unit (step or substep).
+  if (trimmedText === 'ARTIFACTS') {
+    return handleArtifactsDirective(node, ctx);
+  }
 
   // Check for OUTPUTS directive on the active execution unit (step or substep)
-  if (text.trim() === 'OUTPUTS') {
+  if (trimmedText === 'OUTPUTS') {
     return handleOutputsDirective(node, ctx);
   }
 
   // The - INPUTS step directive has been removed.
   // Exact match only — prose starting with "INPUTS" (e.g., "INPUTS are validated by…")
   // is not a directive and is not affected.
-  const trimmedText = text.trim();
   if (trimmedText === 'INPUTS') {
     ctx.diagnostics.push({
       severity: 'error',
@@ -855,6 +968,7 @@ function handleListItem(node: ListItem, ctx: ActiveStepContext): typeof SKIP | u
         pendingConditionals: [],
         line: node.position?.start.line,
         outputs: undefined,
+        artifacts: undefined,
         runbooks: [entry],
         isRunbookDerived: true,
       };
@@ -1127,6 +1241,7 @@ function finalizeStep(
     transitions: stepTransitions,
     line: step.line,
     outputs: step.outputs,
+    artifacts: step.artifacts,
   };
 
   if (step.forClause) {
