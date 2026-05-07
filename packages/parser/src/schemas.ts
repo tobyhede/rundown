@@ -300,6 +300,35 @@ export const OutputDeclarationSchema = z.object({
 export type OutputDeclarationSchemaType = Readonly<z.output<typeof OutputDeclarationSchema>>;
 
 /**
+ * Shape of an exact artifact key — `[A-Za-z0-9._-]+`. Mirrors
+ * `exact_artifact_key` in docs/spec/grammar.md.
+ */
+export const EXACT_ARTIFACT_KEY_PATTERN = /^[A-Za-z0-9._-]+$/;
+
+/**
+ * Shape of a wildcard artifact key — `[A-Za-z0-9._*?-]+` containing `*` or `?`.
+ * Mirrors `wildcard_artifact_key` in docs/spec/grammar.md.
+ */
+export const WILDCARD_ARTIFACT_KEY_PATTERN = /^[A-Za-z0-9._*?-]+$/;
+
+/**
+ * Zod schema for `ArtifactDeclaration`.
+ *
+ * Validates the shape of one parsed artifact alias entry. The `key` field is a
+ * literal string and is not template-expanded; the schema does not enforce
+ * exact-vs-wildcard pattern membership — that check belongs to the parser
+ * helper that produces `kind`.
+ */
+export const ArtifactDeclarationSchema = z.object({
+  name: z.string().regex(NAMED_IDENTIFIER_PATTERN),
+  key: z.string().min(1),
+  kind: z.enum(['exact', 'wildcard']),
+});
+
+/** Artifact declaration, inferred from `ArtifactDeclarationSchema`. */
+export type ArtifactDeclarationSchemaType = Readonly<z.output<typeof ArtifactDeclarationSchema>>;
+
+/**
  * Valid transition kinds
  */
 export const TransitionKindSchema = z.enum(['pass', 'fail', 'yes', 'no']);

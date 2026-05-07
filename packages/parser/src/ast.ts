@@ -184,12 +184,17 @@ export type UnresolvedForClause = UnresolvedNumericWindow | UnresolvedSourceWind
 export type ParsedForClause = ForClause | UnresolvedForClause;
 
 /**
- * Shared OUTPUTS fields for any directive-capable execution unit.
+ * Shared OUTPUTS / ARTIFACTS fields for any directive-capable execution unit.
  *
- * Steps and substeps can declare the context values they publish.
+ * Steps and substeps can declare both:
+ * - `artifacts` — pre-execution artifact aliases (resolved at step entry)
+ * - `outputs` — post-execution context values (captured after the unit completes)
+ *
  * The INPUTS step directive has been removed — use frontmatter inputs: field instead.
  */
 interface ContextDirectiveFields {
+  /** Artifact alias declarations resolved at step/substep entry */
+  readonly artifacts?: readonly ArtifactDeclaration[];
   /** Values to publish to context after this execution unit passes */
   readonly outputs?: readonly OutputDeclaration[];
 }
@@ -263,6 +268,26 @@ export interface OutputDeclaration {
    *   exports its path as `RD_OUTPUTS_<VarName>` for the spawned shell.
    */
   readonly value?: string;
+}
+
+/**
+ * A named artifact alias declaration on an execution unit.
+ *
+ * Produced by `- ARTIFACTS\n  - Name "key"` syntax. The `key` field is a
+ * literal artifact key (no template expansion). `kind` indicates whether the
+ * key is exact (one artifact, may be created) or wildcard (matches existing
+ * manifest entries). Resolution into structured `ArtifactRecord` values is the
+ * runtime's responsibility.
+ *
+ * See docs/spec/language.md §10.1 Step `ARTIFACTS`.
+ */
+export interface ArtifactDeclaration {
+  /** Variable name to publish (e.g., "PlanPath") — must match `NAMED_IDENTIFIER_PATTERN` and not be a reserved template name. */
+  readonly name: string;
+  /** Quoted artifact key literal — exact (`plan.json`) or wildcard (`review-*.json`). */
+  readonly key: string;
+  /** Discriminant: `'exact'` matches one artifact, `'wildcard'` enumerates manifest matches. */
+  readonly kind: 'exact' | 'wildcard';
 }
 
 /**
