@@ -50,6 +50,13 @@ describe('retryDelegation', () => {
     if (result.status !== 'retried') return;
     expect(result.tokenHash).not.toBe(initial.tokenHash);
     expect(result.token.startsWith(TOKEN_PREFIX)).toBe(true);
+    // childRunbookRef must be preserved verbatim across retry — the operator
+    // did not respecify the child runbook, so the canonical RunbookRef captured
+    // at original delegation time must round-trip into the replacement.
+    expect(result.delegation.childRunbookRef).toEqual({
+      source: 'project',
+      path: 'child.md',
+    });
 
     const replaced = result.updatedSubstepStates.find((ss) => ss.id === '1');
     expect(replaced?.delegation?.tokenHash).toBe(result.tokenHash);
@@ -87,6 +94,13 @@ describe('retryDelegation', () => {
 
     expect(result.status).toBe('retried');
     if (result.status !== 'retried') return;
+    // childRunbookRef must be preserved verbatim across retry — the operator
+    // did not respecify the child runbook, so the canonical RunbookRef captured
+    // at original delegation time must round-trip into the replacement.
+    expect(result.delegation.childRunbookRef).toEqual({
+      source: 'project',
+      path: 'child.md',
+    });
     expect(result.updatedSubstepStates.find((ss) => ss.id === '1')?.delegation?.extraVars).toEqual({
       environment: 'staging',
     });
@@ -124,6 +138,13 @@ describe('retryDelegation', () => {
 
     expect(result.status).toBe('retried');
     if (result.status !== 'retried') return;
+    // childRunbookRef must be preserved verbatim across retry — the operator
+    // did not respecify the child runbook, so the canonical RunbookRef captured
+    // at original delegation time must round-trip into the replacement.
+    expect(result.delegation.childRunbookRef).toEqual({
+      source: 'project',
+      path: 'child.md',
+    });
     expect(result.updatedSubstepStates.find((ss) => ss.id === '1')?.delegation?.extraVars).toEqual({
       environment: 'production',
       port: 3000,
