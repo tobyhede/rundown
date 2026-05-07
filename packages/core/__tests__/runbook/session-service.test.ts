@@ -290,6 +290,26 @@ describe('SessionService', () => {
       }
     });
 
+    it('returns terminal for a stopped claim child', async () => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const linkage = linkageFor(parent.id, '7');
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkage,
+      });
+      const claimed = assertClaimed(await sessionService.claimRunbook(child.id, linkage));
+
+      await manager.update(child.id, { lifecycle: 'stopped' });
+
+      const resolved = await sessionService.getActiveForClaimId(claimed.claim.claimId);
+      expect(resolved.status).toBe('terminal');
+      if (resolved.status === 'terminal') {
+        expect(resolved.lifecycle).toBe('stopped');
+      }
+    });
+
     it('returns unlinked for a child whose delegation linkage no longer matches the claim', async () => {
       const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
         runbookPath: 'parent.md',
