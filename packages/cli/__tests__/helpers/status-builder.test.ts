@@ -336,7 +336,7 @@ describe('parentLinkage projection', () => {
     expect(result.parentLinkage).toBeUndefined();
   });
 
-  it('surfaces parentLinkage in stashed status', () => {
+  it('surfaces parentLinkage in stashed status and redacts vars for caller-scoped child', () => {
     const state = makeState({
       parentLinkage: {
         kind: 'delegation',
@@ -346,6 +346,8 @@ describe('parentLinkage projection', () => {
         parentRunId: SECOND_PARENT_RUN_ID,
         parentStepId: '2.1',
       },
+      templateVars: brandInitialTemplateVarsForTest({ secret: 'inherited-from-parent' }),
+      variables: brandStoredOutputsForTest({ output_value: 'child-output' }),
     });
 
     const result = buildStashedStatus(state, '/test');
@@ -356,6 +358,20 @@ describe('parentLinkage projection', () => {
       parentRunId: SECOND_PARENT_RUN_ID,
       parentStepId: '2.1',
     });
+    // Caller-scoped (parentLinkage set) → vars must be redacted from stashed status.
+    expect(result.vars).toBeUndefined();
+  });
+
+  it('surfaces vars in stashed status when no parentLinkage is set', () => {
+    const state = makeState({
+      templateVars: brandInitialTemplateVarsForTest({ visible: 'value' }),
+      variables: brandStoredOutputsForTest(),
+    });
+
+    const result = buildStashedStatus(state, '/test');
+
+    expect(result.parentLinkage).toBeUndefined();
+    expect(result.vars).toEqual(expect.objectContaining({ visible: 'value' }));
   });
 });
 
