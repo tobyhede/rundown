@@ -984,11 +984,26 @@ describe('resolveVariables', () => {
   });
 
   describe('collectEnvBridgeVars (via resolveVariables)', () => {
+    let originalRdInputEnv = new Map<string, string | undefined>();
+
+    beforeEach(() => {
+      originalRdInputEnv = new Map(
+        Object.entries(process.env).filter(([key]) => key.startsWith('RD_INPUT_')),
+      );
+    });
+
     afterEach(() => {
-      // Clean up any RD_INPUT_* env vars set during tests
       for (const key of Object.keys(process.env)) {
-        if (key.startsWith('RD_INPUT_')) {
+        if (key.startsWith('RD_INPUT_') && !originalRdInputEnv.has(key)) {
           delete process.env[key];
+        }
+      }
+
+      for (const [key, value] of originalRdInputEnv) {
+        if (value === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = value;
         }
       }
     });
