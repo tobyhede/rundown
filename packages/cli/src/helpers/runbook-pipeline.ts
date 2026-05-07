@@ -1481,7 +1481,7 @@ export async function claimAndLaunch(
         claimId: claimResult.claimId,
         childRunbookPath: freshDelegation.childRunbookPath,
         parentRunId: freshParent.id,
-        stepId,
+        stepId: substepId ?? stepId,
         parentStepAt: freshDelegation.contextSnapshot.at,
         loopResult: 'waiting',
       });
@@ -1531,7 +1531,7 @@ export async function claimAndLaunch(
         claimId: claimResult.claimId,
         childRunbookPath: freshDelegation.childRunbookPath,
         parentRunId: freshParent.id,
-        stepId,
+        stepId: substepId ?? stepId,
         parentStepAt: freshDelegation.contextSnapshot.at,
         loopResult: 'waiting',
       });
@@ -1594,7 +1594,7 @@ export async function claimAndLaunch(
         claimId: claimResult.claimId,
         childRunbookPath: freshDelegation.childRunbookPath,
         parentRunId: freshParent.id,
-        stepId,
+        stepId: substepId ?? stepId,
         parentStepAt: freshDelegation.contextSnapshot.at,
         loopResult: 'waiting',
       });
@@ -1762,7 +1762,7 @@ export async function claimAndLaunch(
       claimId,
       childRunbookPath: childDisplayPath,
       parentRunId: freshParent.id,
-      stepId,
+      stepId: substepId ?? stepId,
       parentStepAt: freshDelegation.contextSnapshot.at,
       loopResult: launchResult.loopResult,
     });

@@ -1662,6 +1662,71 @@ describe('claimAndLaunch', () => {
     }
   });
 
+  it('returns substepId (not stepId) on idempotent claim of a delegated substep', async () => {
+    const delegation = {
+      tokenHash: MOCK_TOKEN_HASH,
+      childRunbookPath: 'child.md',
+      childRunbookRef: { source: 'project', path: 'child.md' },
+      contextSnapshot: { vars: {}, ancestors: [] },
+      childRunId: 'existing-child-id',
+      createdAt: new Date().toISOString(),
+      cancelledAt: null,
+    };
+
+    const parentState = makeState(PARENT_RUN_ID, {
+      substepStates: [{ id: '1', status: 'pending', delegation }],
+    });
+
+    const mockScanner = {
+      findByToken: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
+        parentState,
+        stepId: '2', // outer step id
+        substepId: '1', // delegation lives on substep 2.1
+        delegation,
+      }),
+    };
+    jest
+      .mocked(core.DelegationScanService)
+      .mockImplementation(() => mockScanner as unknown as jest.MockedObject<DelegationScanService>);
+
+    const mockManager = {
+      load: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(parentState),
+    };
+    jest
+      .mocked(core.RunbookStateManager)
+      .mockImplementation(() => mockManager as unknown as jest.MockedObject<RunbookStateManager>);
+
+    jest.mocked(core.DelegationLock).mockImplementation(
+      () =>
+        ({
+          acquire: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
+          release: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
+        }) as unknown as jest.MockedObject<DelegationLock>,
+    );
+
+    const claimSpy = mockClaimRunbookSuccess();
+    const ctx = {
+      output: { status: jest.fn(), flush: jest.fn() } as unknown as OutputEmitter,
+      manager: mockManager as unknown as RunbookStateManager,
+      actorService: {} as unknown as RunbookActorService,
+      sessionService: { claimRunbook: claimSpy } as unknown as SessionService,
+      lifecycleService: {} as unknown as ExecutionLifecycleService,
+      cwd: '/test',
+    } satisfies RunPipelineContext;
+
+    const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
+    // cspell:disable-next-line
+    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      // ClaimResult.stepId contract: "Step (or substep) ID on the parent that
+      // holds the delegation". For a delegated substep, that's substepId, not
+      // the outer stepId.
+      expect(result.stepId).toBe('1');
+    }
+  });
+
   it('returns error when delegation was cancelled', async () => {
     const delegation = {
       tokenHash: MOCK_TOKEN_HASH,
