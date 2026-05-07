@@ -467,5 +467,76 @@ Active step.
       expect(normalizeOutputPath(result.stdout)).toMatch(/^\.work\/\d{4}-\d{2}-\d{2}-plan\.json$/);
       expect(result.stderr).not.toContain('Invalid id');
     });
+
+    it('soft-fails legacy session ownership format when RD_WORK_PATH is set', async () => {
+      // SessionService.loadSession throws 'Legacy session ownership format
+      // detected' when session.json contains 'ownedRunbooks' (or
+      // 'stashedRunbookOwnership'). isRecoverableActiveStateLookupError must
+      // recognize this so rdpath assembles a path without a context segment.
+      await fs.mkdir(path.join(testDir, '.rundown'), { recursive: true });
+      await fs.writeFile(
+        path.join(testDir, '.rundown', 'session.json'),
+        JSON.stringify({ ownedRunbooks: { 'wf-old-run': { runbookPath: 'foo.md' } } }, null, 2),
+      );
+
+      const result = await runRdpath(
+        ['--file', 'plan.json'],
+        {
+          RD_WORK_PATH: '.work',
+          RD_CONTEXT_ID: undefined,
+        },
+        testDir,
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(normalizeOutputPath(result.stdout)).toMatch(/^\.work\/\d{4}-\d{2}-\d{2}-plan\.json$/);
+      expect(result.stderr).toBe('');
+    });
+
+    it('soft-fails legacy stacks session format when RD_WORK_PATH is set', async () => {
+      // Second variant of the legacy ownership branch: 'stacks' key triggers
+      // the same recoverable error path.
+      await fs.mkdir(path.join(testDir, '.rundown'), { recursive: true });
+      await fs.writeFile(
+        path.join(testDir, '.rundown', 'session.json'),
+        JSON.stringify({ stacks: { default: [] } }, null, 2),
+      );
+
+      const result = await runRdpath(
+        ['--file', 'plan.json'],
+        {
+          RD_WORK_PATH: '.work',
+          RD_CONTEXT_ID: undefined,
+        },
+        testDir,
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(normalizeOutputPath(result.stdout)).toMatch(/^\.work\/\d{4}-\d{2}-\d{2}-plan\.json$/);
+      expect(result.stderr).toBe('');
+    });
+
+    it('soft-fails session.json that fails schema validation when RD_WORK_PATH is set', async () => {
+      // 'Session file contains invalid runbook targeting data' is thrown when
+      // session.json parses as JSON but fails SessionDataSchema validation.
+      await fs.mkdir(path.join(testDir, '.rundown'), { recursive: true });
+      await fs.writeFile(
+        path.join(testDir, '.rundown', 'session.json'),
+        JSON.stringify({ defaultStack: [{ not: 'a-string' }] }, null, 2),
+      );
+
+      const result = await runRdpath(
+        ['--file', 'plan.json'],
+        {
+          RD_WORK_PATH: '.work',
+          RD_CONTEXT_ID: undefined,
+        },
+        testDir,
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(normalizeOutputPath(result.stdout)).toMatch(/^\.work\/\d{4}-\d{2}-\d{2}-plan\.json$/);
+      expect(result.stderr).toBe('');
+    });
   });
 });
