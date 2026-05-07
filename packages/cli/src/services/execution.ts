@@ -624,7 +624,7 @@ export async function drainResolvedCompletions({
  * - In prompted mode (no auto-execution)
  *
  * @param manager - Runbook state manager instance
- * @param runbookId - ID of the runbook to execute
+ * @param runbookIdRaw - Unbranded run id; branded to RunId on entry
  * @param steps - Array of runbook steps
  * @param cwd - Current working directory for command execution
  * @param prompted - Whether to run in prompted mode (no auto-execution)
