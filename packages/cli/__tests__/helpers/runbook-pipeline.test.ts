@@ -303,7 +303,7 @@ const { setHelperRegistry, resetHelperRegistry } = await import(
   '../../src/services/helper-registry.js'
 );
 
-function makeState(id: string, overrides: Record<string, unknown> = {}): Record<string, unknown> {
+function makeState(id: RunId, overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     id,
     runbook: { source: 'project', path: 'test.md' },
@@ -1345,7 +1345,7 @@ describe('prepareRunbook', () => {
 
 describe('startRunbook', () => {
   it('creates state and runs execution loop', async () => {
-    const createdState = makeState('new-id') as unknown as RunbookState;
+    const createdState = makeState(MOCK_RUN_ID) as unknown as RunbookState;
     const mockCreate = mockFn<RunbookStateManager['create']>().mockResolvedValue(createdState);
     const mockUpdate = mockFn<RunbookStateManager['update']>().mockResolvedValue(createdState);
     const mockLoad = mockFn<RunbookStateManager['load']>().mockResolvedValue(createdState);
