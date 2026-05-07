@@ -14,16 +14,28 @@ import type {
   TerminalAction,
   Transitions,
 } from './schemas.js';
-import { MAX_STEP_NUMBER, MAX_FOR_BOUND } from './schemas.js';
+import {
+  EXACT_ARTIFACT_KEY_PATTERN,
+  MAX_FOR_BOUND,
+  MAX_STEP_NUMBER,
+  TEMPLATE_VAR_PATH_PATTERN,
+  WILDCARD_ARTIFACT_KEY_PATTERN,
+} from './schemas.js';
 import {
   parseStepIdFromString,
   stepIdToString,
   isReservedWord,
   NAMED_IDENTIFIER_PATTERN,
 } from './step-id.js';
-import type { ParsedForClause, Bound, RunbookEntry, RunbookRef, OutputDeclaration } from './ast.js';
+import type {
+  ArtifactDeclaration,
+  Bound,
+  OutputDeclaration,
+  ParsedForClause,
+  RunbookEntry,
+  RunbookRef,
+} from './ast.js';
 import { isBoundRef } from './guards.js';
-import { TEMPLATE_VAR_PATH_PATTERN } from './schemas.js';
 
 /**
  * Check if an action accumulates results into parent aggregation (DEFER only).
@@ -1126,6 +1138,76 @@ export function parseFrontmatterOutputDeclaration(text: string): OutputDeclarati
 
   // With-value form: delegate to existing step-level parser
   return parseOutputDeclaration(text);
+}
+
+/**
+ * Recursive `**` is reserved for future glob support and rejected outright today.
+ *
+ * The `WILDCARD_ARTIFACT_KEY_PATTERN` accepts any number of `*` characters
+ * because the regex character class doesn't distinguish single from double, so
+ * `**` is filtered explicitly here.
+ */
+const RECURSIVE_GLOB_RE = /\*\*/;
+
+/** Disallowed literal keys per docs/spec/grammar.md `artifact_key` lexical rules. */
+const FORBIDDEN_LITERAL_KEYS: ReadonlySet<string> = new Set(['', '.', '..']);
+
+/**
+ * Test whether an artifact key is a wildcard pattern.
+ *
+ * Wildcard keys contain `*` or `?`. Callers that need the discriminated `kind`
+ * field should use {@link parseArtifactDeclaration} instead.
+ *
+ * @param key - Candidate artifact key (raw string, no surrounding quotes)
+ * @returns `true` when the key contains `*` or `?`
+ */
+export function isWildcardArtifactKey(key: string): boolean {
+  return /[*?]/.test(key);
+}
+
+/**
+ * Parse a single ARTIFACTS directive item into an ArtifactDeclaration.
+ *
+ * Accepts the form `Name "key"` where `Name` matches `NAMED_IDENTIFIER_PATTERN`
+ * and `"key"` is a quoted literal that satisfies `exact_artifact_key` or
+ * `wildcard_artifact_key` per docs/spec/grammar.md. Empty keys, `.`, `..`,
+ * slashes, paths, and recursive `**` patterns are rejected.
+ *
+ * Template markers are not expanded inside keys: `"{{var}}"` is rejected
+ * because `{` is not in the allowed character class.
+ *
+ * @param text - Raw declaration text from the ARTIFACTS block list item
+ * @returns Parsed ArtifactDeclaration with discriminated `kind`, or null
+ *   when the text is empty, malformed, or violates the artifact key shape.
+ *   Callers (the directive handler) wrap null returns in a RunbookSyntaxError
+ *   with line context.
+ */
+export function parseArtifactDeclaration(text: string): ArtifactDeclaration | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+
+  const spaceIdx = trimmed.search(/\s/);
+  if (spaceIdx === -1) return null;
+
+  const name = trimmed.slice(0, spaceIdx);
+  if (!NAMED_IDENTIFIER_PATTERN.test(name)) return null;
+
+  const rawKey = trimmed.slice(spaceIdx).trim();
+  if (rawKey.length < 2 || rawKey[0] !== '"' || rawKey[rawKey.length - 1] !== '"') {
+    return null;
+  }
+
+  const key = rawKey.slice(1, -1);
+  if (FORBIDDEN_LITERAL_KEYS.has(key)) return null;
+  if (RECURSIVE_GLOB_RE.test(key)) return null;
+
+  if (isWildcardArtifactKey(key)) {
+    if (!WILDCARD_ARTIFACT_KEY_PATTERN.test(key)) return null;
+    return { name, key, kind: 'wildcard' };
+  }
+
+  if (!EXACT_ARTIFACT_KEY_PATTERN.test(key)) return null;
+  return { name, key, kind: 'exact' };
 }
 
 /**
