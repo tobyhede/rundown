@@ -543,7 +543,12 @@ describe('resolveVariables', () => {
       try {
         const result = await resolveVariables({}, tmpDir);
 
-        expect(result.vars[name]).toBeUndefined();
+        expect(
+          Object.keys(result.vars).some((key) => key.toLowerCase() === name.toLowerCase()),
+        ).toBe(false);
+        expect(
+          Array.from(result.providedKeys).some((key) => key.toLowerCase() === name.toLowerCase()),
+        ).toBe(false);
         expect(result.warnings.some((w) => w.includes(envKey) && w.includes('reserved'))).toBe(
           true,
         );
