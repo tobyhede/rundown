@@ -7,12 +7,15 @@
 // through the same brand seam so the brand contract stays in one place.
 
 import {
+  brandArtifactVars,
   brandEffectiveVars,
   brandInitialTemplateVars,
   brandStoredOutputs,
   assertRunId,
   assertDelegationTokenHash,
   buildFrameKey,
+  type ArtifactVars,
+  type ArtifactVarValue,
   type DelegationTokenHash,
   type EffectiveVars,
   type FrameKey,
@@ -112,4 +115,20 @@ export function brandStoredOutputsForTest(
   vars: Readonly<Record<string, string>> = {},
 ): StoredOutputs {
   return brandStoredOutputs(vars);
+}
+
+/**
+ * Test-only producer of {@link ArtifactVars}.
+ *
+ * Delegates to the production `brandArtifactVars`. Use when a call site
+ * requires `ArtifactVars` but the specific values aren't the subject of the
+ * test (e.g. fixture construction for status output assertions).
+ *
+ * @param vars - Optional plain artifact-variable record; defaults to empty
+ * @returns Branded `ArtifactVars`
+ */
+export function brandArtifactVarsForTest(
+  vars: Readonly<Record<string, ArtifactVarValue>> = {},
+): ArtifactVars {
+  return brandArtifactVars(vars);
 }

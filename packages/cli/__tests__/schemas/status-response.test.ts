@@ -98,4 +98,39 @@ describe('StatusResponseSchema', () => {
       expect(parseResult.success).toBe(false);
     });
   });
+
+  describe('artifact fields', () => {
+    const artifact = {
+      uri: 'rd://artifacts/ctx1/runs/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
+      runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      contextId: 'ctx1',
+      runbook: { source: 'project', path: 'test.runbook.md' },
+      key: 'plan.json',
+      timestamp: '2026-05-08T00:00:00.000Z',
+    };
+
+    it('accepts current artifacts and accumulated artifactVars on active status', () => {
+      const statusResponse = {
+        kind: 'status',
+        active: true,
+        stashed: false,
+        artifacts: { PlanPath: artifact },
+        artifactVars: { PlanPath: artifact, Plans: [artifact] },
+      };
+
+      const parseResult = StatusResponseSchema.safeParse(statusResponse);
+
+      expect(parseResult.success).toBe(true);
+    });
+
+    it('accepts inactive status without artifact fields', () => {
+      const parseResult = StatusResponseSchema.safeParse({
+        kind: 'status',
+        active: false,
+        stashed: false,
+      });
+
+      expect(parseResult.success).toBe(true);
+    });
+  });
 });

@@ -15,7 +15,7 @@
  */
 
 import { z } from 'zod';
-import { TemplateVarValueSchema } from '../schemas.js';
+import { ArtifactVarValueSchema, TemplateVarValueSchema } from '../schemas.js';
 import { CLAIM_ID_PATTERN } from '../runbook/claim-id.js';
 import { DELEGATION_TOKEN_PATTERN } from '../runbook/delegation-token.js';
 
@@ -434,6 +434,16 @@ export const StatusResponseSchema = z
     file: z.string().optional().describe('Path to the active runbook file'),
     state: z.string().optional().describe('Current runbook execution state'),
     prompted: z.boolean().optional().describe('Whether awaiting user input'),
+    /** Current execution unit ARTIFACTS working set */
+    artifacts: z
+      .record(z.string(), ArtifactVarValueSchema)
+      .optional()
+      .describe('Current execution unit ARTIFACTS working set'),
+    /** Accumulated ARTIFACTS variables resolved so far */
+    artifactVars: z
+      .record(z.string(), ArtifactVarValueSchema)
+      .optional()
+      .describe('Accumulated ARTIFACTS variables resolved so far'),
   })
   .describe('Response from the status command')
   .passthrough();

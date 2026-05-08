@@ -12,6 +12,7 @@ import {
   countNumberedSteps,
   mergeEffectiveVars,
   type ActionBlockData,
+  type ArtifactVarValue,
   type ResolvedCompletion,
   type RunbookState,
 } from '@rundown-org/core';
@@ -95,6 +96,10 @@ export interface StatusOutputData {
   };
   /** Effective variable space: templateVars (base) merged with step OUTPUTS (state.variables). */
   vars?: Record<string, string>;
+  /** Current execution unit ARTIFACTS working set. Empty object means the active unit has no ARTIFACTS. */
+  artifacts?: Readonly<Record<string, ArtifactVarValue>>;
+  /** Accumulated ARTIFACTS variables resolved so far in this run. */
+  artifactVars?: Readonly<Record<string, ArtifactVarValue>>;
 }
 
 /**
@@ -220,6 +225,8 @@ export function buildStashedStatus(stashedState: RunbookState, cwd: string): Sta
     ),
     ...(parentLinkage ? { parentLinkage } : {}),
     ...(vars != null && !isCallerScoped && { vars }),
+    artifacts: stashedState.artifacts ?? {},
+    ...(stashedState.artifactVars ? { artifactVars: stashedState.artifactVars } : {}),
   };
 }
 
@@ -334,5 +341,7 @@ export function buildActiveStatus(
     ...(delegations.length > 0 ? { delegations } : {}),
     ...(parentLinkage ? { parentLinkage } : {}),
     vars: buildVars(activeState),
+    artifacts: activeState.artifacts ?? {},
+    ...(activeState.artifactVars ? { artifactVars: activeState.artifactVars } : {}),
   };
 }

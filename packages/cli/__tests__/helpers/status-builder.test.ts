@@ -1,6 +1,7 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { mockErrorHelpers } from './mock-error-helpers.js';
 import {
+  brandArtifactVarsForTest,
   brandDelegationTokenHashForTest,
   brandInitialTemplateVarsForTest,
   brandRunIdForTest,
@@ -271,6 +272,57 @@ describe('buildActiveStatus', () => {
     const result = buildActiveStatus(state, '/test');
 
     expect(result.step).toBeUndefined();
+  });
+});
+
+describe('artifact status fields', () => {
+  const artifact = {
+    uri: 'rd://artifacts/ctx1/runs/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
+    runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    contextId: 'ctx1',
+    runbook: { source: 'project' as const, path: 'test.runbook.md' },
+    key: 'plan.json',
+    timestamp: '2026-05-08T00:00:00.000Z',
+  };
+
+  beforeEach(() => {
+    jest.mocked(getRunbookFromState).mockReturnValue([]);
+    jest.mocked(core.countNumberedSteps).mockReturnValue(0);
+    jest.mocked(buildMetadata).mockReturnValue({
+      file: 'test.runbook.md',
+      state: '.rundown/runs/test-id.json',
+    });
+  });
+
+  it('buildActiveStatus includes current-unit artifacts and accumulated artifactVars', () => {
+    const state = makeState({
+      artifacts: brandArtifactVarsForTest({ PlanPath: artifact }),
+      artifactVars: brandArtifactVarsForTest({ PlanPath: artifact }),
+    });
+
+    const result = buildActiveStatus(state, '/project');
+
+    expect(result.artifacts).toEqual({ PlanPath: artifact });
+    expect(result.artifactVars).toEqual({ PlanPath: artifact });
+  });
+
+  it('buildActiveStatus includes empty current-unit artifacts when active unit has none', () => {
+    const state = makeState({
+      artifacts: brandArtifactVarsForTest({}),
+      artifactVars: undefined,
+    });
+
+    const result = buildActiveStatus(state, '/project');
+
+    expect(result.artifacts).toEqual({});
+    expect(result.artifactVars).toBeUndefined();
+  });
+
+  it('buildInactiveStatus omits artifact fields', () => {
+    const result = buildInactiveStatus();
+
+    expect(result).not.toHaveProperty('artifacts');
+    expect(result).not.toHaveProperty('artifactVars');
   });
 });
 
