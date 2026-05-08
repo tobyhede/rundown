@@ -1,5 +1,5 @@
 import type { OutputValue } from './output-evaluator.js';
-import type { TemplateVarValue } from './types.js';
+import type { ArtifactVarValue, TemplateVarValue } from './types.js';
 
 /**
  * Module-private nominal brand applied to the output of {@link mergeEffectiveVars}.
@@ -13,13 +13,36 @@ import type { TemplateVarValue } from './types.js';
  */
 declare const effectiveVarsBrand: unique symbol;
 
+declare const artifactVarsBrand: unique symbol;
+
+/**
+ * Persisted ARTIFACTS variable accumulator.
+ *
+ * Carries exact `ArtifactRecord` values and wildcard `ArtifactRecord[]` values
+ * separately from string-only step OUTPUTS.
+ */
+export type ArtifactVars = Readonly<Record<string, ArtifactVarValue>> & {
+  readonly [artifactVarsBrand]: true;
+};
+
+/**
+ * Sole producer of {@link ArtifactVars}.
+ *
+ * @param vars - Plain artifact variable map
+ * @returns The same object, branded
+ */
+export function brandArtifactVars(vars: Readonly<Record<string, ArtifactVarValue>>): ArtifactVars {
+  return vars as ArtifactVars;
+}
+
 /**
  * Fully-merged effective variable space at a moment in execution.
  *
  * Layered, lowest precedence first:
  *   1. `state.templateVars` — CLI-seeded inputs / built-ins / frontmatter
- *   2. `state.variables`   — accumulated step OUTPUTS
- *   3. caller-supplied `extraVars` — delegation-side overrides (e.g. --input)
+ *   2. `state.artifactVars` — accumulated ARTIFACTS declarations
+ *   3. `state.variables`   — accumulated step OUTPUTS
+ *   4. caller-supplied `extraVars` — delegation-side overrides (e.g. --input)
  *
  * Used wherever delegation snapshots, OUTPUTS frames, or template renderers need
  * "the variables a child or expression should see right now". By accepting only
@@ -51,8 +74,9 @@ export type EffectiveVars<V = TemplateVarValue> = Readonly<Record<string, V>> & 
  *
  * Merges the variable sources in precedence order:
  *   1. `state.templateVars` (low) — CLI-seeded inputs / built-ins / frontmatter
- *   2. `state.variables`     (mid) — accumulated step OUTPUTS
- *   3. `extraVars`           (top) — caller-supplied overrides (typically --input
+ *   2. `state.artifactVars`  (mid) — accumulated ARTIFACTS declarations
+ *   3. `state.variables`     (mid) — accumulated step OUTPUTS
+ *   4. `extraVars`           (top) — caller-supplied overrides (typically --input
  *                                     flags routed through delegation/run commands)
  *
  * Mirrors the precedence used by `buildExecutionFrame` for OUTPUTS evaluation
@@ -66,24 +90,44 @@ export type EffectiveVars<V = TemplateVarValue> = Readonly<Record<string, V>> & 
  * both `TemplateVarValue` and `OutputValue`, so the field shape is uniform.
  *
  * @template V - Value type of the merged record (inferred from arguments)
- * @param state - Runbook-state subset providing the two persisted variable sources
+ * @param state - Runbook-state subset providing the persisted variable sources
  * @param state.templateVars - Seeded template variables (built-ins, frontmatter inputs, CLI overrides)
+ * @param state.artifactVars - Accumulated ARTIFACTS variables
  * @param state.variables - Accumulated step OUTPUTS already rendered to strings
  * @param extraVars - Optional caller-supplied variables overlaid on top
  * @returns Branded effective variable space
  */
-export function mergeEffectiveVars<V extends TemplateVarValue | OutputValue = TemplateVarValue>(
+export function mergeEffectiveVars<V extends OutputValue>(
   state: {
     readonly templateVars?: Readonly<Record<string, V>>;
     readonly variables?: Readonly<Record<string, string>>;
   },
   extraVars?: Readonly<Record<string, V>>,
-): EffectiveVars<V> {
+): EffectiveVars<V>;
+
+export function mergeEffectiveVars<V extends TemplateVarValue = TemplateVarValue>(
+  state: {
+    readonly templateVars?: Readonly<Record<string, V>>;
+    readonly artifactVars?: Readonly<Record<string, ArtifactVarValue>>;
+    readonly variables?: Readonly<Record<string, string>>;
+  },
+  extraVars?: Readonly<Record<string, V>>,
+): EffectiveVars<V | ArtifactVarValue>;
+
+export function mergeEffectiveVars<V extends TemplateVarValue | OutputValue = TemplateVarValue>(
+  state: {
+    readonly templateVars?: Readonly<Record<string, V>>;
+    readonly artifactVars?: Readonly<Record<string, ArtifactVarValue>>;
+    readonly variables?: Readonly<Record<string, string>>;
+  },
+  extraVars?: Readonly<Record<string, V>>,
+): EffectiveVars<V | ArtifactVarValue> {
   return {
     ...(state.templateVars ?? {}),
+    ...(state.artifactVars ?? {}),
     ...(state.variables ?? {}),
     ...(extraVars ?? {}),
-  } as EffectiveVars<V>;
+  } as EffectiveVars<V | ArtifactVarValue>;
 }
 
 /**

@@ -171,9 +171,11 @@ export {
 export { invokeHelperSafely, resetHelperInvokeWarnings } from './helper-invoke.js';
 export {
   mergeEffectiveVars,
+  brandArtifactVars,
   brandInitialTemplateVars,
   brandStoredOutputs,
   brandEffectiveVars,
+  type ArtifactVars,
   type EffectiveVars,
   type InitialTemplateVars,
   type StoredOutputs,

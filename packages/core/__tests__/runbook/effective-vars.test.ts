@@ -8,8 +8,19 @@ import {
   type InitialTemplateVars,
   type StoredOutputs,
 } from '../../src/runbook/effective-vars.js';
+import type { ArtifactRecord } from '../../src/runbook/artifact-schema.js';
 import { resolveForValue } from '../../src/runbook/source-resolver.js';
 import type { ForContext, TemplateVarValue } from '../../src/runbook/types.js';
+import { brandArtifactVarsForTest } from '../helpers/effective-vars.js';
+
+const ARTIFACT_RECORD = {
+  uri: 'rd://artifacts/ctx1/runs/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
+  runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+  contextId: 'ctx1',
+  runbook: { source: 'project', path: 'planning/write-plan.runbook.md' },
+  key: 'plan.json',
+  timestamp: '2026-05-07T00:00:00.000Z',
+} satisfies ArtifactRecord;
 
 describe('brandInitialTemplateVars', () => {
   it('returns the same reference (zero runtime cost)', () => {
@@ -70,6 +81,15 @@ describe('brandEffectiveVars', () => {
   });
 });
 
+describe('brandArtifactVars', () => {
+  it('returns the same reference (zero runtime cost)', async () => {
+    const { brandArtifactVars } = await import('../../src/runbook/effective-vars.js');
+    const input = { PlanPath: ARTIFACT_RECORD };
+    const out = brandArtifactVars(input);
+    expect(out).toBe(input);
+  });
+});
+
 describe('mergeEffectiveVars accepts the new brands', () => {
   it('merges branded sources without further casting', () => {
     const tv = brandInitialTemplateVars({ a: 'tv', b: 'tv' });
@@ -84,6 +104,42 @@ describe('mergeEffectiveVars accepts the new brands', () => {
     const extra: Readonly<Record<string, TemplateVarValue>> = { c: 'extra', d: 'extra' };
     const merged = mergeEffectiveVars({ templateVars: tv, variables: sv }, extra);
     expect(merged).toEqual({ a: 'tv', b: 'sv', c: 'extra', d: 'extra' });
+  });
+});
+
+describe('mergeEffectiveVars with artifactVars', () => {
+  it('applies precedence templateVars < artifactVars < variables < extraVars', () => {
+    const tv = brandInitialTemplateVars({ PlanPath: 'from-template', OnlyTemplate: 't' });
+    const artifactVars = brandArtifactVarsForTest({
+      PlanPath: ARTIFACT_RECORD,
+      OnlyArtifact: [ARTIFACT_RECORD],
+      OutputWins: ARTIFACT_RECORD,
+    });
+    const sv = brandStoredOutputs({ OutputWins: 'from-output' });
+    const extra: Readonly<Record<string, TemplateVarValue>> = { OutputWins: 'from-extra' };
+
+    const merged = mergeEffectiveVars({ templateVars: tv, artifactVars, variables: sv }, extra);
+
+    expect(merged).toEqual({
+      PlanPath: ARTIFACT_RECORD,
+      OnlyTemplate: 't',
+      OnlyArtifact: [ARTIFACT_RECORD],
+      OutputWins: 'from-extra',
+    });
+  });
+
+  it('extraVars overrides artifactVars even when no variables are present', () => {
+    const artifactVars = brandArtifactVarsForTest({ PlanPath: ARTIFACT_RECORD });
+    const merged = mergeEffectiveVars({ artifactVars }, { PlanPath: 'from-extra' });
+    expect(merged).toEqual({ PlanPath: 'from-extra' });
+  });
+
+  it('merges cleanly when artifactVars is empty', () => {
+    const merged = mergeEffectiveVars({
+      templateVars: brandInitialTemplateVars({ PlanPath: 'from-template' }),
+      artifactVars: brandArtifactVarsForTest({}),
+    });
+    expect(merged).toEqual({ PlanPath: 'from-template' });
   });
 });
 
