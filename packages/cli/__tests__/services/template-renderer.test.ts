@@ -2475,3 +2475,72 @@ describe('empty wildcard renders consistently across all helper forms', () => {
     expect(out).toBe(`echo '[]' && echo '[]'`);
   });
 });
+
+describe('substituteText preserves placeholder when helperOptions is undefined', () => {
+  it('preserves {{ PlanPath }} for an ArtifactRecord with no helperOptions', () => {
+    expect(substituteText('Plan: {{ PlanPath }}', { PlanPath: PLAN })).toBe('Plan: {{ PlanPath }}');
+  });
+
+  it('preserves {{ artifact PlanPath }} with no helperOptions', () => {
+    expect(substituteText('{{ artifact PlanPath }}', { PlanPath: PLAN })).toBe(
+      '{{ artifact PlanPath }}',
+    );
+  });
+});
+
+describe('artifact helpers reject missing frame fields', () => {
+  it('throws when WorkPath is missing for {{ path Var }}', () => {
+    expect(() =>
+      substituteText('{{ path PlanPath }}', { PlanPath: PLAN }, undefined, ARTIFACT_HELPER_OPTIONS),
+    ).toThrow(/WorkPath/);
+  });
+
+  it('throws when ContextId is missing for literal {{ path "key" }}', () => {
+    expect(() =>
+      substituteText(
+        '{{ path "plan.json" }}',
+        { WorkPath: '.rundown/work', RunId: ARTIFACT_RUN_ID },
+        undefined,
+        ARTIFACT_HELPER_OPTIONS,
+      ),
+    ).toThrow(/ContextId/);
+  });
+
+  it('throws when RunId is missing for literal {{ path "key" }}', () => {
+    expect(() =>
+      substituteText(
+        '{{ path "plan.json" }}',
+        { WorkPath: '.rundown/work', ContextId: ARTIFACT_CONTEXT },
+        undefined,
+        ARTIFACT_HELPER_OPTIONS,
+      ),
+    ).toThrow(/RunId/);
+  });
+});
+
+describe('isArtifactRecordArray rejects mixed-element arrays', () => {
+  it('treats a [ArtifactRecord, non-record] array via {{ path Var }} as a non-artifact value', () => {
+    // The structural guard requires every element to be an ArtifactRecord; a
+    // mixed array falls through to the non-artifact error branch.
+    expect(() =>
+      substituteText(
+        '{{ path Reviews }}',
+        { Reviews: [PLAN, 'string'], WorkPath: '.rundown/work' },
+        undefined,
+        ARTIFACT_HELPER_OPTIONS,
+      ),
+    ).toThrow(/ArtifactRecord/);
+  });
+});
+
+describe('substituteRunbookVariables with ArtifactRecord direct-alias', () => {
+  it('renders an ArtifactRecord direct-alias as URI in the title', () => {
+    const runbook = parseResolvedRunbook('# {{ PlanPath }}\n\n## 1. Step\n\nGo.\n');
+    const result = substituteRunbookVariables(
+      runbook,
+      { PlanPath: PLAN, WorkPath: '.rundown/work' },
+      ARTIFACT_HELPER_OPTIONS,
+    );
+    expect(result.title).toBe(PLAN.uri);
+  });
+});
