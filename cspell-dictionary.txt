@@ -164,6 +164,7 @@ rustc
 sandboxing
 sarif
 selfref
+serialised
 serialises
 serializable
 shellquote

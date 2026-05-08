@@ -1,14 +1,11 @@
 import type { OutputDeclaration } from '@rundown-org/parser';
-import { mkdirSync } from 'node:fs';
-import * as path from 'node:path';
 import { mergeEffectiveVars } from './effective-vars.js';
 import type { ForContext, JsonValue, TemplateVarValue } from './types.js';
 import { assertResolvedVariableForContext, isJsonArrayStream } from './types.js';
 import { deriveExecutionAt } from './targeting.js';
-import { assembleArtifactPath, assembleRunArtifactPath, VALID_CTX } from './artifact-paths.js';
-import { appendArtifactManifestRecordSync } from './artifact-manifest.js';
-import { buildArtifactUri } from './artifact-uri.js';
+import { assembleArtifactPath, VALID_CTX } from './artifact-paths.js';
 import { invokeHelperSafely } from './helper-invoke.js';
+import { renderLiteralArtifactPath } from './renderer/artifact-helper.js';
 import { RunbookRefSchema, type RunbookRef } from './runbook-ref.js';
 import { logger } from '../logger.js';
 
@@ -112,10 +109,10 @@ export function resetHelperRegistry(): void {
 
 const TEMPLATE_PATH_REGEX =
   /{{\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)\s*}}/g;
-const PATH_HELPER_REGEX = /^\{\{\s*path\s+"([^"]+)"\s*\}\}$/;
+const PATH_HELPER_REGEX = /^\{\{\s*path\s+"([^"]*)"\s*\}\}$/;
 const LEGACY_CTX_PATH_HELPER_REGEX =
   /^\{\{\s*path\s+"([^"]+)"\s+ctx=(\{\{[^}]*\}\}|[^\s}]+)\s*\}\}$/;
-const ARTIFACT_HELPER_REGEX = /^\{\{\s*artifact\s+"([^"]+)"\s*\}\}$/;
+const ARTIFACT_HELPER_REGEX = /^\{\{\s*artifact\s+"([^"]*)"\s*\}\}$/;
 
 /**
  * Matches `{{ ./VarName }}` — explicit variable lookup escape hatch.
@@ -226,24 +223,33 @@ function requireEvaluateOutputOptions(
 }
 
 /**
- * Apply a built-in artifact-producing helper against an OUTPUTS/runtime frame.
+ * Render a built-in artifact-producing template helper against an OUTPUTS frame.
  *
- * Both `artifact` and `path` helpers intentionally append a manifest row. The
- * local-path variant also creates the artifact parent directory synchronously so
- * the returned path is immediately writable by shell commands.
+ * Pure: does NOT append manifest rows, create directories, or mutate runbook
+ * state. Phase 3 made every artifact-producing helper render-only; only the
+ * `ARTIFACTS` directive resolver writes to the manifest.
  *
- * Accepts an unconstrained record because the helper validates each required
- * frame field internally (`requireOutputString` / `requireRunbookRef`) and
- * throws on missing or malformed entries. Callers that already hold a typed
- * `OutputVars` (a subtype) pass through unchanged.
+ * Cardinality:
+ * - `kind === 'path'` and a literal key — projects to a local artifact path.
+ *   Spec §327 explicitly permits this because a path projection does not
+ *   assert the artifact is in the manifest; commands may write to it.
+ * - `kind === 'artifact'` and a literal key — REJECTED. Spec §327: a record
+ *   projection from a literal would invent metadata for an artifact that may
+ *   not be in the manifest. The CLI renderer (Pass 2 in `template-renderer.ts`)
+ *   already rejects the same shape; this sibling raises so frontmatter
+ *   `outputs:` expression evaluation matches.
+ *
+ * The function still validates that the OUTPUTS frame supplies `WorkPath`,
+ * `ContextId`, `RunId`, and `RunbookRef` because the projector needs them to
+ * build canonical paths.
  *
  * @param kind - Helper kind to evaluate
- * @param key - Artifact key / filename segment from the helper call
- * @param frame - Variable frame containing WorkPath, ContextId, RunId, and RunbookRef
- * @param options - Filesystem options for path resolution and manifest append
- * @returns Canonical artifact URI for `artifact`, local artifact path for `path`
- * @throws {Error} When required variables are missing or invalid, or when the
- *   artifact key fails identity validation.
+ * @param key - Artifact key from the helper call
+ * @param frame - Variable frame
+ * @param options - Filesystem options (`cwd`)
+ * @returns Local artifact path for literal `path`
+ * @throws {Error} When `kind === 'artifact'` (literal-key artifact form is forbidden, spec §327)
+ * @throws {Error} When required frame variables are missing or the key fails validation
  */
 export function applyRunArtifactHelper(
   kind: 'artifact' | 'path',
@@ -251,31 +257,22 @@ export function applyRunArtifactHelper(
   frame: Readonly<Record<string, unknown>>,
   options: EvaluateOutputOptions,
 ): string {
+  if (kind === 'artifact') {
+    throw new Error(
+      `artifact helper does not accept a literal key ("${key}"); declare it via ARTIFACTS and pass the alias.`,
+    );
+  }
   const workPath = requireOutputString('WorkPath', frame);
   const contextId = requireOutputString('ContextId', frame);
   const runId = requireOutputString('RunId', frame);
-  const runbookRef = requireRunbookRef(frame);
-  const uri = buildArtifactUri({ contextId, runId, key });
+  // `requireRunbookRef` survives as a frame-validation invariant: its absence
+  // signals a misconfigured caller (the OUTPUTS evaluator must always have a
+  // runbook ref attached). The projector itself does not consume the value,
+  // so do NOT delete this call as dead — the throw is the load-bearing
+  // behaviour that catches frame mis-assembly upstream.
+  requireRunbookRef(frame);
 
-  let rendered = uri;
-  if (kind === 'path') {
-    rendered = assembleRunArtifactPath({ cwd: options.cwd, workPath }, contextId, runId, key);
-    mkdirSync(path.dirname(rendered), { recursive: true });
-  }
-
-  appendArtifactManifestRecordSync(
-    { cwd: options.cwd, workPath },
-    {
-      uri,
-      runId,
-      contextId,
-      runbook: runbookRef,
-      key,
-      timestamp: new Date().toISOString(),
-    },
-  );
-
-  return rendered;
+  return renderLiteralArtifactPath(key, { cwd: options.cwd, workPath, contextId, runId });
 }
 
 function resolveLegacyCtxPathHelper(

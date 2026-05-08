@@ -37,10 +37,17 @@ import {
   RunbookSyntaxError,
 } from '@rundown-org/parser';
 import {
-  applyRunArtifactHelper,
   invokeHelperSafely,
   isJsonArrayStream,
+  parseExactArtifactUriParts,
+  renderArtifactPathValue,
+  renderArtifactRecordValue,
+  renderArtifactValue,
+  renderLiteralArtifactPath,
+  type ArtifactRecord,
+  type ArtifactVarValue,
   type EvaluateOutputOptions,
+  type RenderArtifactOptions,
   type TemplateVarValue,
 } from '@rundown-org/core';
 import type { StepVariables } from './execution-vars.js';
@@ -99,12 +106,29 @@ const HELPER_CALL_TEMPLATE_REGEX =
   /\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s+(?:([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)|"([^"]*)")\s*\}\}/g;
 
 /**
- * Matches the built-in artifact path helper in inline template text.
+ * Matches the built-in `path` helper in either form:
+ *  - `{{ path "literal-key" }}`  (group 1)
+ *  - `{{ path VarRef }}`          (group 2; dotted paths permitted)
  */
-const PATH_HELPER_TEMPLATE_REGEX = /\{\{\s*path\s+"([^"]+)"\s*\}\}/g;
+const PATH_HELPER_TEMPLATE_REGEX =
+  /\{\{\s*path\s+(?:"([^"]*)"|([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*))\s*\}\}/g;
 
-/** Matches the built-in artifact URI helper in inline template text. */
-const ARTIFACT_HELPER_TEMPLATE_REGEX = /\{\{\s*artifact\s+"([^"]+)"\s*\}\}/g;
+/**
+ * Matches the built-in `artifact` helper in variable-reference form only:
+ *  - `{{ artifact VarRef }}`      (group 1)
+ *
+ * The literal-key form `{{ artifact "key" }}` is intentionally NOT matched
+ * here. It is rejected separately so the runtime never silently produces a
+ * record-shaped projection from a literal key (spec §327).
+ */
+const ARTIFACT_HELPER_TEMPLATE_REGEX =
+  /\{\{\s*artifact\s+([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)\s*\}\}/g;
+
+/**
+ * Matches the explicitly-rejected literal `artifact` helper form, so we can
+ * raise a hard error rather than fall through to the generic helper dispatch.
+ */
+const LITERAL_ARTIFACT_HELPER_REGEX = /\{\{\s*artifact\s+"([^"]*)"\s*\}\}/g;
 
 type TemplateHelperOptions = EvaluateOutputOptions;
 
@@ -143,20 +167,138 @@ function resolveDottedPath(obj: unknown, path: string): unknown {
 }
 
 /**
+ * Detect an `ArtifactRecord` value structurally.
+ *
+ * The render frame may carry both `TemplateVarValue` and `ArtifactVarValue`
+ * (Phase 2 widened the merge), so the renderer must distinguish records from
+ * generic JSON objects without relying on a Symbol brand. A record always
+ * has all of: string `uri`, string `runId`, string `contextId`, string `key`,
+ * string `timestamp`, and a `runbook` object with string `source` and `path`.
+ *
+ * Defensive: callers may pass arbitrary `unknown` values from the variable map.
+ *
+ * @param value - Value to test
+ * @returns `true` when the value matches the `ArtifactRecord` structural shape
+ */
+function isArtifactRecord(value: unknown): value is ArtifactRecord {
+  if (typeof value !== 'object' || value === null) return false;
+  const record = value as Partial<ArtifactRecord>;
+  return (
+    typeof record.uri === 'string' &&
+    // Defensive: refuse records whose URI is not a well-formed exact artifact
+    // URI. Records reaching the renderer via `artifactVars` are Zod-validated
+    // upstream by the resolver, but variable values from frontmatter `inputs:`
+    // and CLI `--input-json` are not. A malformed URI would later throw deep
+    // inside `artifactUriToPath`; rejecting at the guard surface keeps the
+    // contract at the structural-detection layer.
+    parseExactArtifactUriParts(record.uri) !== null &&
+    typeof record.runId === 'string' &&
+    typeof record.contextId === 'string' &&
+    typeof record.key === 'string' &&
+    typeof record.timestamp === 'string' &&
+    typeof record.runbook === 'object' &&
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- load-bearing: typeof null === 'object', so the next access would throw on null despite the declared `runbook: RunbookRef` type
+    record.runbook !== null &&
+    typeof record.runbook.source === 'string' &&
+    typeof record.runbook.path === 'string'
+  );
+}
+
+/**
+ * Detect an `ArtifactRecord[]` value structurally.
+ *
+ * Treats a JSON array as an artifact-record array only when it is non-empty
+ * AND every element matches `isArtifactRecord`. The empty-array case is
+ * intentionally NOT routed through the artifact projector here — there is no
+ * runtime brand on individual variable values (the `artifactVarsBrand` in
+ * `effective-vars.ts` is purely type-level), so we cannot distinguish a
+ * wildcard with zero matches from a user `OUTPUTS: Items: []`. Both produce
+ * `'[]'` when serialised — `renderArtifactValue([], …)` returns `'[]'` and
+ * `JSON.stringify([])` returns `'[]'` — so falling through to the generic
+ * JSON-stringify path for empty arrays preserves the spec-required rendering
+ * without coupling unrelated semantics. The non-empty-array short-circuit
+ * stays because element-shape detection is unambiguous in that case.
+ *
+ * @param value - Value to test
+ * @returns `true` when the value is a non-empty array of `ArtifactRecord`
+ */
+function isArtifactRecordArray(value: unknown): value is readonly ArtifactRecord[] {
+  if (!Array.isArray(value)) return false;
+  if (value.length === 0) return false;
+  return value.every(isArtifactRecord);
+}
+
+/**
+ * Sentinel value returned by `renderTemplateValue` when an artifact value is
+ * encountered without a `helperOptions` frame. Pass 4 detects this and leaves
+ * the original `{{ Var }}` placeholder in place, mirroring the helper-call
+ * convention.
+ *
+ * Implemented as a unique `Symbol` so identity comparison is collision-proof
+ * — no user variable string value can equal it, eliminating the silent-drop
+ * risk a string sentinel would carry (CLAUDE.md "No silent mapping").
+ */
+const ARTIFACT_PLACEHOLDER_SENTINEL: unique symbol = Symbol('rundown_artifact_no_options');
+type ArtifactPlaceholderSentinel = typeof ARTIFACT_PLACEHOLDER_SENTINEL;
+
+/**
  * Render a template value for interpolation.
  *
  * Accepts renderable variable types: string, number, JsonObject, or JsonArray
- * (i.e. TemplateVarValue excluding JsonArrayStream).
- * Strings are preserved as-is. Non-strings are serialized with JSON to keep
+ * (i.e. TemplateVarValue excluding JsonArrayStream), plus `ArtifactRecord` and
+ * `ArtifactRecord[]` from the artifact-aware render frame.
+ * Strings are preserved as-is. Artifact-record values are routed through the
+ * pure projector so they render as URIs (or JSON arrays of URIs) instead of
+ * record-shaped JSON. Other non-strings are serialized with JSON to keep
  * deterministic display behavior across text and command expansion paths.
  *
  * @param value - Resolved template value (must not be JsonArrayStream, which is iterable-only)
+ * @param variables - Render-frame variables (used for `WorkPath` lookup)
+ * @param helperOptions - Filesystem options. When undefined (AST walks before runtime is wired), artifact values produce a sentinel that Pass 4 honours by preserving the original `{{ Var }}` placeholder.
  * @returns String representation for interpolation
  * @throws {Error} if value is a JsonArrayStream, which is iterable but not renderable
  */
-function renderTemplateValue(value: unknown): string {
+function renderTemplateValue(
+  value: unknown,
+  variables: Readonly<Record<string, unknown>>,
+  helperOptions?: TemplateHelperOptions,
+): string | ArtifactPlaceholderSentinel {
   if (typeof value === 'string') {
     return value;
+  }
+  // Artifact-aware short-circuits — must come before the generic JSON fallback so
+  // ArtifactRecord values render as URIs (or JSON arrays of URIs) rather than as
+  // record-shaped JSON. When `helperOptions` is absent (e.g. AST walks at startup
+  // before runtime is wired), preserve the original `{{ Var }}` placeholder by
+  // returning a sentinel that Pass 4 detects — mirroring the helper-call
+  // convention. This avoids the silent-mapping anti-pattern of `JSON.stringify`-ing
+  // an `ArtifactRecord` (CLAUDE.md "No silent mapping").
+  if (isArtifactRecord(value) || isArtifactRecordArray(value)) {
+    if (helperOptions === undefined) {
+      return ARTIFACT_PLACEHOLDER_SENTINEL;
+    }
+    // Empty arrays never reach here — `isArtifactRecordArray` rejects them so
+    // the JSON-stringify fallback below produces `'[]'` (same output as the
+    // projector). For non-empty arrays the first record's identity stands in
+    // for the array as a whole; the projector reads URIs off each record and
+    // does not consume `contextId`/`runId` for the array case.
+    //
+    // `renderArtifactValue` only needs `cwd` for symmetry with the other
+    // projectors — it returns URIs from the records' own `.uri` fields and
+    // does not touch the filesystem. `workPath` is read lazily here so the
+    // direct-alias path does not require `WorkPath` to be present in the
+    // variable frame; the helper-call path (`{{ path Var }}`) always has it.
+    const workPath = typeof variables.WorkPath === 'string' ? variables.WorkPath : '';
+    const artifactValue: ArtifactVarValue = value;
+    const renderOptions: RenderArtifactOptions = {
+      cwd: helperOptions.cwd,
+      workPath,
+      contextId: isArtifactRecord(artifactValue)
+        ? artifactValue.contextId
+        : artifactValue[0].contextId,
+      runId: isArtifactRecord(artifactValue) ? artifactValue.runId : artifactValue[0].runId,
+    };
+    return renderArtifactValue(artifactValue, renderOptions);
   }
   // JsonArrayStream cannot be rendered in templates — it's a lazy file reference
   if (typeof value === 'object' && value !== null && isJsonArrayStream(value as TemplateVarValue)) {
@@ -179,11 +321,25 @@ function renderTemplateValue(value: unknown): string {
  *
  * @param path - Placeholder path (e.g. `item.name`, `context.vars.config.host`)
  * @param variables - Runtime/template variable map
+ * @param helperOptions - Filesystem options forwarded to `renderTemplateValue` so artifact-record values render via the pure projector
  * @returns Rendered value string or undefined when unresolved
  */
-function resolveTemplatePath(path: string, variables: Record<string, unknown>): string | undefined {
+function resolveTemplatePath(
+  path: string,
+  variables: Record<string, unknown>,
+  helperOptions?: TemplateHelperOptions,
+): string | undefined {
+  // Translate the sentinel into `undefined` so Pass 1 and Pass 3 can use
+  // their existing "value is undefined" branch to preserve the placeholder.
+  // Pass 4 calls `renderTemplateValue` directly via `resolveTemplatePathRaw`
+  // and handles the sentinel with an explicit Symbol comparison.
+  const renderOrSentinel = (raw: unknown): string | undefined => {
+    const rendered = renderTemplateValue(raw, variables, helperOptions);
+    return rendered === ARTIFACT_PLACEHOLDER_SENTINEL ? undefined : rendered;
+  };
+
   if (Object.hasOwn(variables, path) && variables[path] !== undefined) {
-    return renderTemplateValue(variables[path]);
+    return renderOrSentinel(variables[path]);
   }
 
   if (!path.includes('.')) {
@@ -203,10 +359,39 @@ function resolveTemplatePath(path: string, variables: Record<string, unknown>): 
     const remainder = segments.slice(i).join('.');
     const resolved = resolveDottedPath(variables[prefix], remainder);
     if (resolved !== undefined) {
-      return renderTemplateValue(resolved);
+      return renderOrSentinel(resolved);
     }
   }
 
+  return undefined;
+}
+
+/**
+ * Resolve a template path to its raw value. Distinct from `resolveTemplatePath`,
+ * which renders the value as a string. Used by the artifact-aware Pass 4 so the
+ * raw `ArtifactRecord` / `ArtifactRecord[]` value reaches the renderer with its
+ * structural identity intact.
+ *
+ * @param path - Placeholder path
+ * @param variables - Runtime/template variable map
+ * @returns Raw resolved value or undefined when unresolved
+ */
+function resolveTemplatePathRaw(
+  path: string,
+  variables: Readonly<Record<string, unknown>>,
+): unknown {
+  if (Object.hasOwn(variables, path) && variables[path] !== undefined) {
+    return variables[path];
+  }
+  if (!path.includes('.')) return undefined;
+  const segments = path.split('.');
+  for (let i = 1; i < segments.length; i++) {
+    const prefix = segments.slice(0, i).join('.');
+    if (!Object.hasOwn(variables, prefix)) continue;
+    const remainder = segments.slice(i).join('.');
+    const resolved = resolveDottedPath(variables[prefix], remainder);
+    if (resolved !== undefined) return resolved;
+  }
   return undefined;
 }
 
@@ -726,36 +911,145 @@ function resolveHelperCall(helperName: string, argValue: string, original: strin
 }
 
 /**
- * Resolve a built-in artifact-producing helper against a template variable frame.
+ * Pull `WorkPath` out of the variable frame, throwing when missing.
  *
- * The helper is intentionally handled here, not in the user helper registry,
- * so prompt text, command text, descriptions, and OUTPUTS all share the same
- * reserved built-in semantics.
+ * Direct-alias rendering of `ArtifactRecord[]` (and the `path` helper) needs
+ * the work path to assemble local paths. The projector accepts the same
+ * options shape for API symmetry across the four projector functions.
  *
- * Fail-closed: when `helperOptions` is provided, errors from
- * `applyRunArtifactHelper` (missing required frame variables, invalid artifact
- * key, manifest write failure) propagate to the caller. Returning the original
- * placeholder text is reserved for the case where helper resolution is
- * intentionally disabled (`helperOptions === undefined`, e.g. AST walks at
- * startup before runtime variables are available).
- *
- * @param kind - Helper kind to resolve
- * @param key - Artifact key from the helper call
- * @param variables - Template variables available at the render site
- * @param helperOptions - Filesystem options for path resolution and manifest writes
- * @param original - Original helper call text to preserve when resolution is disabled
- * @returns Artifact URI/local path, or `original` when `helperOptions` is undefined
- * @throws {Error} When `helperOptions` is provided and helper resolution fails
+ * @param variables - Render-frame variables
+ * @returns The `WorkPath` string
+ * @throws {Error} when `WorkPath` is missing or non-string
  */
-function resolveRunArtifactHelperCall(
-  kind: 'artifact' | 'path',
-  key: string,
-  variables: Record<string, unknown>,
+function requireWorkPath(variables: Readonly<Record<string, unknown>>): string {
+  const wp = variables.WorkPath;
+  if (typeof wp !== 'string') {
+    throw new Error('Artifact rendering requires WorkPath in the render frame');
+  }
+  return wp;
+}
+
+/**
+ * Pull a required string field out of the render frame.
+ *
+ * @param name - Variable name
+ * @param variables - Render-frame variables
+ * @returns The value as a string
+ * @throws {Error} when the value is missing or not a string
+ */
+function requireFrameString(name: string, variables: Readonly<Record<string, unknown>>): string {
+  const value = variables[name];
+  if (typeof value !== 'string') {
+    throw new Error(`Artifact rendering requires string ${name} in the render frame`);
+  }
+  return value;
+}
+
+/**
+ * Render the `path` helper for either a literal key or a variable reference.
+ *
+ * Cardinality rules (spec §317):
+ * - literal key -> single local path string
+ * - `ArtifactRecord` -> single local path string
+ * - `ArtifactRecord[]` -> JSON array of local paths (`[]` when empty)
+ *
+ * Pure: no manifest writes, no `mkdir`, no file truncation.
+ *
+ * @param literalKey - Quoted literal key from `{{ path "key" }}`, or undefined
+ * @param varRef - Variable reference from `{{ path Var }}`, or undefined
+ * @param variables - Render-frame variables (for variable-reference resolution and `WorkPath`)
+ * @param helperOptions - Filesystem options (`cwd`); render-only
+ * @param original - Original match text returned when `helperOptions` is unavailable (AST-walk path)
+ * @returns Rendered string
+ * @throws {Error} When the variable reference resolves to a non-artifact value, or when `WorkPath` is missing
+ */
+function resolvePathHelperCall(
+  literalKey: string | undefined,
+  varRef: string | undefined,
+  variables: Readonly<Record<string, unknown>>,
   helperOptions: TemplateHelperOptions | undefined,
   original: string,
 ): string {
   if (helperOptions === undefined) return original;
-  return applyRunArtifactHelper(kind, key, variables, helperOptions);
+  const workPath = requireWorkPath(variables);
+
+  if (literalKey !== undefined) {
+    return renderLiteralArtifactPath(literalKey, {
+      cwd: helperOptions.cwd,
+      workPath,
+      contextId: requireFrameString('ContextId', variables),
+      runId: requireFrameString('RunId', variables),
+    });
+  }
+  if (varRef === undefined) return original;
+
+  const value = resolveTemplatePathRaw(varRef, variables);
+  if (value === undefined) return original;
+  // Accept empty arrays explicitly here (the structural `isArtifactRecordArray`
+  // guard rejects them to avoid false positives in Pass 4 — see its TSDoc).
+  // In a helper call site the user has explicitly opted into artifact
+  // semantics by writing `{{ path Var }}`, so an empty array is treated as a
+  // wildcard with zero matches and renders as `[]`.
+  const isEmptyArray = Array.isArray(value) && value.length === 0;
+  if (!isArtifactRecord(value) && !isArtifactRecordArray(value) && !isEmptyArray) {
+    throw new Error(
+      `path helper expects an ArtifactRecord or ArtifactRecord[] for "${varRef}", got ${typeof value}`,
+    );
+  }
+  const artifactValue = value as ArtifactVarValue;
+  return renderArtifactPathValue(artifactValue, {
+    cwd: helperOptions.cwd,
+    workPath,
+    /**
+     * Empty arrays carry no identity; the projector ignores `contextId`/`runId`
+     * for the array case (and the empty-array short-circuit returns `'[]'`
+     * before any URI/path assembly). Accepting `''` here is load-bearing —
+     * see `RenderArtifactOptions` documentation in `renderer/artifact-helper.ts`.
+     */
+    contextId: isArtifactRecord(artifactValue) ? artifactValue.contextId : '',
+    runId: isArtifactRecord(artifactValue) ? artifactValue.runId : '',
+  });
+}
+
+/**
+ * Render the `artifact` helper for a variable reference only.
+ *
+ * Literal-key form is rejected separately (`LITERAL_ARTIFACT_HELPER_REGEX`).
+ *
+ * @param varRef - Variable reference from `{{ artifact Var }}`
+ * @param variables - Render-frame variables
+ * @param helperOptions - Filesystem options; required to render
+ * @param original - Original match text returned when `helperOptions` is unavailable
+ * @returns Full record JSON (or array of records)
+ * @throws {Error} When the variable reference resolves to a non-artifact value
+ */
+function resolveArtifactHelperCall(
+  varRef: string,
+  variables: Readonly<Record<string, unknown>>,
+  helperOptions: TemplateHelperOptions | undefined,
+  original: string,
+): string {
+  if (helperOptions === undefined) return original;
+  const value = resolveTemplatePathRaw(varRef, variables);
+  if (value === undefined) return original;
+  const isEmptyArray = Array.isArray(value) && value.length === 0;
+  if (!isArtifactRecord(value) && !isArtifactRecordArray(value) && !isEmptyArray) {
+    throw new Error(
+      `artifact helper expects an ArtifactRecord or ArtifactRecord[] for "${varRef}", got ${typeof value}`,
+    );
+  }
+  const artifactValue = value as ArtifactVarValue;
+  // `renderArtifactRecordValue` projects URIs (spec §9.3) and never reads
+  // `workPath` — match the lazy read in `renderTemplateValue` so the helper
+  // does not require `WorkPath` in the variable frame.
+  const workPath = typeof variables.WorkPath === 'string' ? variables.WorkPath : '';
+  return renderArtifactRecordValue(artifactValue, {
+    cwd: helperOptions.cwd,
+    workPath,
+    /** Empty-array projection ignores contextId/runId — see notes above. */
+    contextId: isArtifactRecord(artifactValue) ? artifactValue.contextId : '',
+    runId: isArtifactRecord(artifactValue) ? artifactValue.runId : '',
+  });
 }
 
 /**
@@ -801,23 +1095,34 @@ export function substituteText(
 ): string {
   // Pass 1: {{ ./VarName }} explicit variable lookup, bypasses helper registry
   let result = text.replace(EXPLICIT_VAR_TEMPLATE_REGEX, (match, varPath: string) => {
-    const value = resolveTemplatePath(varPath, variables);
+    const value = resolveTemplatePath(varPath, variables, helperOptions);
     if (value === undefined) return match;
     return escapeFn ? escapeFn(value) : value;
   });
 
-  // Pass 2: built-in artifact-producing helpers.
-  result = result.replace(ARTIFACT_HELPER_TEMPLATE_REGEX, (match, key: string) => {
-    const raw = resolveRunArtifactHelperCall('artifact', key, variables, helperOptions, match);
+  // Pass 2: built-in artifact-producing helpers — pure render-only projection.
+  // The literal `artifact` form is rejected before any other dispatch so a
+  // misuse fails fast, even if the input also contains valid helper calls.
+  result = result.replace(LITERAL_ARTIFACT_HELPER_REGEX, (match, _key: string) => {
+    throw new Error(
+      `artifact helper does not accept a literal key (${match}); declare it via ARTIFACTS and pass the alias.`,
+    );
+  });
+
+  result = result.replace(ARTIFACT_HELPER_TEMPLATE_REGEX, (match, varRef: string) => {
+    const raw = resolveArtifactHelperCall(varRef, variables, helperOptions, match);
     if (raw === match) return match;
     return escapeFn ? escapeFn(raw) : raw;
   });
 
-  result = result.replace(PATH_HELPER_TEMPLATE_REGEX, (match, key: string) => {
-    const raw = resolveRunArtifactHelperCall('path', key, variables, helperOptions, match);
-    if (raw === match) return match;
-    return escapeFn ? escapeFn(raw) : raw;
-  });
+  result = result.replace(
+    PATH_HELPER_TEMPLATE_REGEX,
+    (match, literalKey: string | undefined, varRef: string | undefined) => {
+      const raw = resolvePathHelperCall(literalKey, varRef, variables, helperOptions, match);
+      if (raw === match) return match;
+      return escapeFn ? escapeFn(raw) : raw;
+    },
+  );
 
   // Pass 3: {{ helperName varRef }} or {{ helperName "literal" }}
   result = result.replace(
@@ -825,11 +1130,11 @@ export function substituteText(
     (match, helperName: string, varRef: string | undefined, literal: string | undefined) => {
       let argValue: string;
       if (varRef !== undefined) {
-        const resolved = resolveTemplatePath(varRef, variables);
+        const resolved = resolveTemplatePath(varRef, variables, helperOptions);
         // Preserve the original placeholder when the variable arg is unresolved.
-        // Mirrors Pass 3 below and the `./VarName` branch in Pass 1: silently
-        // substituting `''` would corrupt downstream output (see "No silent
-        // mapping" principle in CLAUDE.md).
+        // `resolveTemplatePath` already maps the artifact-no-options sentinel to
+        // `undefined`, so this single branch covers both. Silently substituting
+        // `''` would corrupt downstream output (CLAUDE.md "No silent mapping").
         if (resolved === undefined) return match;
         argValue = resolved;
       } else {
@@ -843,9 +1148,11 @@ export function substituteText(
 
   // Pass 4: {{ identifier }} standard variable substitution
   result = result.replace(TEMPLATE_PATH_REGEX, (match, path: string) => {
-    const value = resolveTemplatePath(path, variables);
+    const value = resolveTemplatePathRaw(path, variables);
     if (value === undefined) return match;
-    return escapeFn ? escapeFn(value) : value;
+    const rendered = renderTemplateValue(value, variables, helperOptions);
+    if (rendered === ARTIFACT_PLACEHOLDER_SENTINEL) return match;
+    return escapeFn ? escapeFn(rendered) : rendered;
   });
 
   return result;

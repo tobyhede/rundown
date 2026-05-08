@@ -249,7 +249,7 @@ describe('substituteRunbookVariables', () => {
     expect(step.command.code).toBe('git checkout {{BRANCH}}');
   });
 
-  it('renders path helper in command text and records a manifest row', async () => {
+  it('renders literal path helper in command text without mutating the manifest', async () => {
     const cwd = await mkdtemp(path.join(tmpdir(), 'rd-template-'));
     try {
       const runbook = parseResolvedRunbook(
@@ -274,23 +274,15 @@ describe('substituteRunbookVariables', () => {
       );
       expect(step.command.code).toBe(`printf '{}' > '${expectedPath}'`);
 
+      // Phase 3: template helpers are pure render-only projections (spec §313).
       const records = await readArtifactManifest({ cwd, workPath: variables.WorkPath }, 'ctx1');
-      expect(records).toEqual([
-        expect.objectContaining({
-          uri: 'rd://artifacts/ctx1/runs/rd_0123456789abcdef0123456789abcdef/review.json',
-          runId: variables.RunId,
-          contextId: variables.ContextId,
-          runbook: variables.RunbookRef,
-          key: 'review.json',
-          timestamp: expect.any(String),
-        }),
-      ]);
+      expect(records).toEqual([]);
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
   });
 
-  it('renders path helper in prompt text and records a manifest row', async () => {
+  it('renders literal path helper in prompt text without mutating the manifest', async () => {
     const cwd = await mkdtemp(path.join(tmpdir(), 'rd-template-'));
     try {
       const runbook = parseResolvedRunbook(
@@ -314,22 +306,13 @@ describe('substituteRunbookVariables', () => {
       expect(result.steps[0].prompt).toContain(expectedPath);
 
       const records = await readArtifactManifest({ cwd, workPath: variables.WorkPath }, 'ctx1');
-      expect(records).toEqual([
-        expect.objectContaining({
-          uri: 'rd://artifacts/ctx1/runs/rd_0123456789abcdef0123456789abcdef/review.json',
-          runId: variables.RunId,
-          contextId: variables.ContextId,
-          runbook: variables.RunbookRef,
-          key: 'review.json',
-          timestamp: expect.any(String),
-        }),
-      ]);
+      expect(records).toEqual([]);
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
   });
 
-  it('renders artifact helper to an exact URI and records a manifest row', async () => {
+  it('rejects literal {{ artifact "key" }} form in prompt text (spec §327)', async () => {
     const cwd = await mkdtemp(path.join(tmpdir(), 'rd-template-'));
     try {
       const runbook = parseResolvedRunbook(
@@ -345,22 +328,10 @@ describe('substituteRunbookVariables', () => {
         },
       };
 
-      const result = substituteRunbookVariables(runbook, variables, { cwd });
-      expect(result.steps[0].prompt).toContain(
-        'rd://artifacts/ctx1/runs/rd_0123456789abcdef0123456789abcdef/review.json',
-      );
+      expect(() => substituteRunbookVariables(runbook, variables, { cwd })).toThrow(/literal key/);
 
       const records = await readArtifactManifest({ cwd, workPath: variables.WorkPath }, 'ctx1');
-      expect(records).toEqual([
-        expect.objectContaining({
-          uri: 'rd://artifacts/ctx1/runs/rd_0123456789abcdef0123456789abcdef/review.json',
-          runId: variables.RunId,
-          contextId: variables.ContextId,
-          runbook: variables.RunbookRef,
-          key: 'review.json',
-          timestamp: expect.any(String),
-        }),
-      ]);
+      expect(records).toEqual([]);
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
@@ -383,7 +354,7 @@ describe('substituteRunbookVariables', () => {
     const cwd = await mkdtemp(path.join(tmpdir(), 'rd-template-'));
     try {
       const runbook = parseResolvedRunbook(
-        '# Test\n\n## 1. Confirm\n\n> Review {{ artifact "../escape" }}\n',
+        '# Test\n\n## 1. Confirm\n\n> Review {{ path "../escape" }}\n',
       );
       expect(() =>
         substituteRunbookVariables(
@@ -2287,5 +2258,293 @@ describe('substituteText call-time helper validation', () => {
     // Two `{{ asyncReturn ... }}` calls in one substitution pass — only one warning.
     substituteText('{{ asyncReturn name }} {{ asyncReturn "literal" }}', { name: 'val' });
     expect(warnSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+import type { ArtifactRecord, RenderArtifactOptions } from '@rundown-org/core';
+
+const ARTIFACT_RUN_ID = 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const ARTIFACT_CONTEXT = 'ctx1';
+const ARTIFACT_RUNBOOK = { source: 'project' as const, path: 'planning/write-plan.runbook.md' };
+
+const PLAN: ArtifactRecord = {
+  uri: `rd://artifacts/${ARTIFACT_CONTEXT}/runs/${ARTIFACT_RUN_ID}/plan.json`,
+  runId: ARTIFACT_RUN_ID,
+  contextId: ARTIFACT_CONTEXT,
+  runbook: ARTIFACT_RUNBOOK,
+  key: 'plan.json',
+  timestamp: '2026-05-07T00:00:00.000Z',
+};
+
+const REVIEW_A: ArtifactRecord = {
+  uri: `rd://artifacts/${ARTIFACT_CONTEXT}/runs/${ARTIFACT_RUN_ID}/review-plan-a.json`,
+  runId: ARTIFACT_RUN_ID,
+  contextId: ARTIFACT_CONTEXT,
+  runbook: ARTIFACT_RUNBOOK,
+  key: 'review-plan-a.json',
+  timestamp: '2026-05-07T00:00:00.000Z',
+};
+
+const ARTIFACT_HELPER_OPTIONS: RenderArtifactOptions = {
+  cwd: '/tmp/project',
+  workPath: '.rundown/work',
+  contextId: ARTIFACT_CONTEXT,
+  runId: ARTIFACT_RUN_ID,
+};
+
+describe('substituteText with ArtifactRecord values', () => {
+  it('renders {{ PlanPath }} as the artifact URI when value is an ArtifactRecord', () => {
+    const out = substituteText(
+      'Plan at {{ PlanPath }}',
+      { PlanPath: PLAN },
+      undefined,
+      ARTIFACT_HELPER_OPTIONS,
+    );
+    expect(out).toBe(`Plan at ${PLAN.uri}`);
+  });
+
+  it('renders {{ Reviews }} as a JSON array of URIs when value is ArtifactRecord[]', () => {
+    const out = substituteText(
+      'Reviews: {{ Reviews }}',
+      { Reviews: [REVIEW_A] },
+      undefined,
+      ARTIFACT_HELPER_OPTIONS,
+    );
+    expect(out).toBe(`Reviews: ${JSON.stringify([REVIEW_A.uri])}`);
+  });
+
+  it('renders {{ Reviews }} as "[]" when value is empty ArtifactRecord[]', () => {
+    const out = substituteText(
+      'Reviews: {{ Reviews }}',
+      { Reviews: [] },
+      undefined,
+      ARTIFACT_HELPER_OPTIONS,
+    );
+    expect(out).toBe('Reviews: []');
+  });
+
+  it('does not flatten an ArtifactRecord through JSON.stringify', () => {
+    const out = substituteText(
+      '{{ PlanPath }}',
+      { PlanPath: PLAN },
+      undefined,
+      ARTIFACT_HELPER_OPTIONS,
+    );
+    expect(out.startsWith('rd://')).toBe(true);
+    expect(out.startsWith('{')).toBe(false);
+  });
+});
+
+describe('substituteText with path helper', () => {
+  it('renders {{ path PlanPath }} as the local path for an ArtifactRecord', () => {
+    const out = substituteText(
+      'Plan: {{ path PlanPath }}',
+      { PlanPath: PLAN, WorkPath: '.rundown/work' },
+      undefined,
+      ARTIFACT_HELPER_OPTIONS,
+    );
+    expect(out).toContain(`.rd-${ARTIFACT_CONTEXT}`);
+    expect(out).toContain(ARTIFACT_RUN_ID);
+    expect(out.endsWith('plan.json')).toBe(true);
+  });
+
+  it('renders {{ path Reviews }} as a JSON array of local paths', () => {
+    const out = substituteText(
+      'Reviews: {{ path Reviews }}',
+      { Reviews: [REVIEW_A], WorkPath: '.rundown/work' },
+      undefined,
+      ARTIFACT_HELPER_OPTIONS,
+    );
+    const prefix = 'Reviews: ';
+    expect(out.startsWith(prefix)).toBe(true);
+    const parsed = JSON.parse(out.slice(prefix.length)) as string[];
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0].endsWith('review-plan-a.json')).toBe(true);
+  });
+
+  it('renders {{ path Reviews }} as "[]" for an empty ArtifactRecord[]', () => {
+    const out = substituteText(
+      'Reviews: {{ path Reviews }}',
+      { Reviews: [], WorkPath: '.rundown/work' },
+      undefined,
+      ARTIFACT_HELPER_OPTIONS,
+    );
+    expect(out).toBe('Reviews: []');
+  });
+
+  it('renders literal {{ path "plan.json" }} as the current-run local path', () => {
+    const out = substituteText(
+      'Plan: {{ path "plan.json" }}',
+      {
+        WorkPath: '.rundown/work',
+        ContextId: ARTIFACT_CONTEXT,
+        RunId: ARTIFACT_RUN_ID,
+      },
+      undefined,
+      ARTIFACT_HELPER_OPTIONS,
+    );
+    expect(out).toContain(`.rd-${ARTIFACT_CONTEXT}`);
+    expect(out).toContain(ARTIFACT_RUN_ID);
+    expect(out.endsWith('plan.json')).toBe(true);
+  });
+});
+
+describe('substituteText with artifact helper', () => {
+  // Spec §9.3: `{{ artifact Var }}` renders artifact URI values with the same
+  // shape as the direct alias `{{ Var }}` — scalar URI for an ArtifactRecord,
+  // JSON array of URIs for ArtifactRecord[].
+
+  it('renders {{ artifact PlanPath }} as the artifact URI', () => {
+    const out = substituteText(
+      '{{ artifact PlanPath }}',
+      { PlanPath: PLAN, WorkPath: '.rundown/work' },
+      undefined,
+      ARTIFACT_HELPER_OPTIONS,
+    );
+    expect(out).toBe(PLAN.uri);
+  });
+
+  it('renders {{ artifact Reviews }} as a JSON array of URIs', () => {
+    const out = substituteText(
+      '{{ artifact Reviews }}',
+      { Reviews: [REVIEW_A], WorkPath: '.rundown/work' },
+      undefined,
+      ARTIFACT_HELPER_OPTIONS,
+    );
+    expect(out).toBe(JSON.stringify([REVIEW_A.uri]));
+  });
+
+  it('renders {{ artifact Reviews }} as "[]" for an empty ArtifactRecord[]', () => {
+    const out = substituteText(
+      '{{ artifact Reviews }}',
+      { Reviews: [], WorkPath: '.rundown/work' },
+      undefined,
+      ARTIFACT_HELPER_OPTIONS,
+    );
+    expect(out).toBe('[]');
+  });
+
+  it('rejects literal {{ artifact "plan.json" }} as a hard error', () => {
+    expect(() =>
+      substituteText(
+        '{{ artifact "plan.json" }}',
+        { WorkPath: '.rundown/work' },
+        undefined,
+        ARTIFACT_HELPER_OPTIONS,
+      ),
+    ).toThrow(/literal key/);
+  });
+
+  it('throws when {{ path Var }} variable is not an ArtifactRecord/ArtifactRecord[]', () => {
+    expect(() =>
+      substituteText(
+        '{{ path PlanPath }}',
+        { PlanPath: 'not-a-record', WorkPath: '.rundown/work' },
+        undefined,
+        ARTIFACT_HELPER_OPTIONS,
+      ),
+    ).toThrow(/ArtifactRecord/);
+  });
+
+  it('throws when {{ artifact Var }} variable is not an ArtifactRecord/ArtifactRecord[]', () => {
+    expect(() =>
+      substituteText(
+        '{{ artifact PlanPath }}',
+        { PlanPath: 42, WorkPath: '.rundown/work' },
+        undefined,
+        ARTIFACT_HELPER_OPTIONS,
+      ),
+    ).toThrow(/ArtifactRecord/);
+  });
+});
+
+describe('empty wildcard renders consistently across all helper forms', () => {
+  it('renders direct alias, path, and artifact helpers as "[]"', () => {
+    const out = substituteText(
+      'A:{{ Reviews }} B:{{ path Reviews }} C:{{ artifact Reviews }}',
+      { Reviews: [], WorkPath: '.rundown/work' },
+      undefined,
+      ARTIFACT_HELPER_OPTIONS,
+    );
+    expect(out).toBe('A:[] B:[] C:[]');
+  });
+
+  it('renders empty wildcards in command code with shell escaping', () => {
+    const out = expandLoopVariablesForCommand(
+      'echo {{ Reviews }} && echo {{ path Reviews }}',
+      { Reviews: [], WorkPath: '.rundown/work' },
+      ARTIFACT_HELPER_OPTIONS,
+    );
+    // shellEscapeValue wraps `[]` because brackets are not in SAFE_SHELL_VALUE
+    expect(out).toBe(`echo '[]' && echo '[]'`);
+  });
+});
+
+describe('substituteText preserves placeholder when helperOptions is undefined', () => {
+  it('preserves {{ PlanPath }} for an ArtifactRecord with no helperOptions', () => {
+    expect(substituteText('Plan: {{ PlanPath }}', { PlanPath: PLAN })).toBe('Plan: {{ PlanPath }}');
+  });
+
+  it('preserves {{ artifact PlanPath }} with no helperOptions', () => {
+    expect(substituteText('{{ artifact PlanPath }}', { PlanPath: PLAN })).toBe(
+      '{{ artifact PlanPath }}',
+    );
+  });
+});
+
+describe('artifact helpers reject missing frame fields', () => {
+  it('throws when WorkPath is missing for {{ path Var }}', () => {
+    expect(() =>
+      substituteText('{{ path PlanPath }}', { PlanPath: PLAN }, undefined, ARTIFACT_HELPER_OPTIONS),
+    ).toThrow(/WorkPath/);
+  });
+
+  it('throws when ContextId is missing for literal {{ path "key" }}', () => {
+    expect(() =>
+      substituteText(
+        '{{ path "plan.json" }}',
+        { WorkPath: '.rundown/work', RunId: ARTIFACT_RUN_ID },
+        undefined,
+        ARTIFACT_HELPER_OPTIONS,
+      ),
+    ).toThrow(/ContextId/);
+  });
+
+  it('throws when RunId is missing for literal {{ path "key" }}', () => {
+    expect(() =>
+      substituteText(
+        '{{ path "plan.json" }}',
+        { WorkPath: '.rundown/work', ContextId: ARTIFACT_CONTEXT },
+        undefined,
+        ARTIFACT_HELPER_OPTIONS,
+      ),
+    ).toThrow(/RunId/);
+  });
+});
+
+describe('isArtifactRecordArray rejects mixed-element arrays', () => {
+  it('treats a [ArtifactRecord, non-record] array via {{ path Var }} as a non-artifact value', () => {
+    // The structural guard requires every element to be an ArtifactRecord; a
+    // mixed array falls through to the non-artifact error branch.
+    expect(() =>
+      substituteText(
+        '{{ path Reviews }}',
+        { Reviews: [PLAN, 'string'], WorkPath: '.rundown/work' },
+        undefined,
+        ARTIFACT_HELPER_OPTIONS,
+      ),
+    ).toThrow(/ArtifactRecord/);
+  });
+});
+
+describe('substituteRunbookVariables with ArtifactRecord direct-alias', () => {
+  it('renders an ArtifactRecord direct-alias as URI in the title', () => {
+    const runbook = parseResolvedRunbook('# {{ PlanPath }}\n\n## 1. Step\n\nGo.\n');
+    const result = substituteRunbookVariables(
+      runbook,
+      { PlanPath: PLAN, WorkPath: '.rundown/work' },
+      ARTIFACT_HELPER_OPTIONS,
+    );
+    expect(result.title).toBe(PLAN.uri);
   });
 });

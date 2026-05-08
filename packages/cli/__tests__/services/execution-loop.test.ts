@@ -256,6 +256,41 @@ jest.unstable_mockModule('@rundown-org/core', () => {
           : `${options.cwd}/${workPath}/.rd-${contextId}/runs/${runId}/${key}`;
       },
     ),
+    parseExactArtifactUriParts: jest.fn((uri: string) => {
+      const m = /^rd:\/\/artifacts\/([^/]+)\/runs\/([^/]+)\/(.+)$/.exec(uri);
+      if (!m) return null;
+      return { contextId: m[1], runId: m[2], key: m[3] };
+    }),
+    renderArtifactValue: jest.fn((value: unknown) => {
+      if (Array.isArray(value)) {
+        return JSON.stringify(value.map((r: { uri: string }) => r.uri));
+      }
+      return (value as { uri: string }).uri;
+    }),
+    renderArtifactPathValue: jest.fn(
+      (value: unknown, options: { cwd: string; workPath: string }) => {
+        const buildPath = (record: { contextId: string; runId: string; key: string }) =>
+          `${options.cwd}/${options.workPath}/.rd-${record.contextId}/runs/${record.runId}/${record.key}`;
+        if (Array.isArray(value)) {
+          return JSON.stringify(
+            (value as ReadonlyArray<{ contextId: string; runId: string; key: string }>).map(
+              buildPath,
+            ),
+          );
+        }
+        return buildPath(value as { contextId: string; runId: string; key: string });
+      },
+    ),
+    renderArtifactRecordValue: jest.fn((value: unknown) => {
+      if (Array.isArray(value)) {
+        return JSON.stringify(value.map((r: { uri: string }) => r.uri));
+      }
+      return (value as { uri: string }).uri;
+    }),
+    renderLiteralArtifactPath: jest.fn(
+      (key: string, options: { cwd: string; workPath: string; contextId: string; runId: string }) =>
+        `${options.cwd}/${options.workPath}/.rd-${options.contextId}/runs/${options.runId}/${key}`,
+    ),
     ...mockErrorHelpers,
     RUNS_DIR: '.rundown/runs',
     WORK_DIR: '.rundown/work',
