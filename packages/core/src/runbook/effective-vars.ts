@@ -97,14 +97,6 @@ export type EffectiveVars<V = TemplateVarValue> = Readonly<Record<string, V>> & 
  * @param extraVars - Optional caller-supplied variables overlaid on top
  * @returns Branded effective variable space
  */
-export function mergeEffectiveVars<V extends OutputValue>(
-  state: {
-    readonly templateVars?: Readonly<Record<string, V>>;
-    readonly variables?: Readonly<Record<string, string>>;
-  },
-  extraVars?: Readonly<Record<string, V>>,
-): EffectiveVars<V>;
-
 export function mergeEffectiveVars<V extends TemplateVarValue = TemplateVarValue>(
   state: {
     readonly templateVars?: Readonly<Record<string, V>>;
@@ -113,6 +105,14 @@ export function mergeEffectiveVars<V extends TemplateVarValue = TemplateVarValue
   },
   extraVars?: Readonly<Record<string, V>>,
 ): EffectiveVars<V | ArtifactVarValue>;
+
+export function mergeEffectiveVars<V extends OutputValue>(
+  state: {
+    readonly templateVars?: Readonly<Record<string, V>>;
+    readonly variables?: Readonly<Record<string, string>>;
+  },
+  extraVars?: Readonly<Record<string, V>>,
+): EffectiveVars<V>;
 
 export function mergeEffectiveVars<V extends TemplateVarValue | OutputValue = TemplateVarValue>(
   state: {

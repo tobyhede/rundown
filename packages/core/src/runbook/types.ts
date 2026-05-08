@@ -248,11 +248,10 @@ export type ArtifactVarValue = ArtifactRecord | readonly ArtifactRecord[];
 /**
  * Value shape carried by delegation context snapshots.
  *
- * Existing OUTPUTS-frame callers can produce `JsonValue`-typed effective vars,
- * while ARTIFACTS-aware snapshots can additionally carry structured artifact
- * records.
+ * ARTIFACTS-aware snapshots can additionally carry structured artifact
+ * records alongside ordinary template values.
  */
-export type ContextSnapshotVarValue = TemplateVarValue | ArtifactVarValue | JsonValue;
+export type ContextSnapshotVarValue = TemplateVarValue | ArtifactVarValue;
 
 /**
  * Type guard for JSON object values within the template variable map.
