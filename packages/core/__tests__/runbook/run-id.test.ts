@@ -117,4 +117,74 @@ describe('RUN_ID_PATTERN / RUN_ID_PREFIX', () => {
     expect(RUN_ID_PATTERN.test(value)).toBe(false);
     expect(isRunId(value)).toBe(false);
   });
+
+  it('does not have the global flag (stateless across repeated calls)', () => {
+    expect(RUN_ID_PATTERN.global).toBe(false);
+  });
+
+  it('pattern prefix matches RUN_ID_PREFIX', () => {
+    // The pattern must start with ^ followed by RUN_ID_PREFIX so generated ids
+    // remain consistent with the constant.
+    expect(RUN_ID_PATTERN.source).toContain(RUN_ID_PREFIX);
+  });
+
+  it('rejects values that isRunId rejects', () => {
+    expect(RUN_ID_PATTERN.test('not-a-run-id')).toBe(false);
+    expect(RUN_ID_PATTERN.test('')).toBe(false);
+    expect(RUN_ID_PATTERN.test('RD_00000000000000000000000000000000')).toBe(false);
+  });
+});
+
+describe('isRunId – additional boundary cases', () => {
+  it('rejects a valid id with leading whitespace', () => {
+    expect(isRunId(' rd_00000000000000000000000000000000')).toBe(false);
+  });
+
+  it('rejects a valid id with trailing whitespace', () => {
+    expect(isRunId('rd_00000000000000000000000000000000 ')).toBe(false);
+  });
+
+  it('rejects a valid id with embedded newline', () => {
+    expect(isRunId('rd_00000000000000000000000000000000\n')).toBe(false);
+  });
+
+  it('accepts all valid hex digit characters in one id', () => {
+    // Contains every valid hex digit: 0-9, a-f
+    expect(isRunId('rd_0123456789abcdef0123456789abcdef')).toBe(true);
+  });
+
+  it('rejects boolean values', () => {
+    expect(isRunId(true)).toBe(false);
+    expect(isRunId(false)).toBe(false);
+  });
+
+  it('rejects array values', () => {
+    expect(isRunId(['rd_00000000000000000000000000000000'])).toBe(false);
+  });
+
+  it('rejects ids that merely contain rd_ without the exact prefix', () => {
+    // Extra characters before 'rd_' must fail.
+    expect(isRunId('xrd_00000000000000000000000000000000')).toBe(false);
+  });
+});
+
+describe('assertRunId – error message', () => {
+  it('throws an Error instance (not a plain string)', () => {
+    expect(() => assertRunId('bad')).toThrow(Error);
+  });
+
+  it('error message references the expected hex length', () => {
+    expect(() => assertRunId('rd_short')).toThrow(/32/);
+  });
+
+  it('error message is informative for a completely unrelated string', () => {
+    let message = '';
+    try {
+      assertRunId('totally-wrong');
+    } catch (e) {
+      message = e instanceof Error ? e.message : String(e);
+    }
+    expect(message).toMatch(/rd_/);
+    expect(message.length).toBeGreaterThan(0);
+  });
 });
