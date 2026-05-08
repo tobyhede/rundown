@@ -62,4 +62,35 @@ describe('render projector properties', () => {
       }),
     );
   });
+
+  it('renderArtifactValue array projection is per-element URI', () => {
+    fc.assert(
+      fc.property(fc.array(recordArb, { maxLength: 20, minLength: 1 }), (records) => {
+        const parsed = JSON.parse(renderArtifactValue(records, OPTIONS)) as string[];
+        for (const [i, r] of records.entries()) {
+          expect(parsed[i]).toBe(r.uri);
+        }
+      }),
+    );
+  });
+
+  it('renderArtifactPathValue array length and per-element key match', () => {
+    fc.assert(
+      fc.property(fc.array(recordArb, { maxLength: 20, minLength: 1 }), (records) => {
+        const parsed = JSON.parse(renderArtifactPathValue(records, OPTIONS)) as string[];
+        expect(parsed).toHaveLength(records.length);
+        for (const [i, r] of records.entries()) {
+          expect(parsed[i].endsWith(r.key)).toBe(true);
+        }
+      }),
+    );
+  });
+
+  it('renderArtifactRecordValue array round-trips per element', () => {
+    fc.assert(
+      fc.property(fc.array(recordArb, { maxLength: 10, minLength: 1 }), (records) => {
+        expect(JSON.parse(renderArtifactRecordValue(records, OPTIONS))).toEqual(records);
+      }),
+    );
+  });
 });
