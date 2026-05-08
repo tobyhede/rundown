@@ -4,9 +4,11 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import type { ArtifactRecord } from '../../src/runbook/artifact-schema.js';
 import { artifactUriToPath } from '../../src/runbook/artifact-uri.js';
+import { ArtifactRuntimeService } from '../../src/runbook/artifact-runtime-service.js';
+import { RunbookActorService } from '../../src/runbook/actor-service.js';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 import type { RunId } from '../../src/runbook/run-id.js';
-import type { ResolvedRunbook } from '../../src/runbook/types.js';
+import type { ResolvedRunbook, ResolvedStep } from '../../src/runbook/types.js';
 import { brandRunIdForTest } from '../helpers/effective-vars.js';
 import { makeBaseStep } from '../helpers/step-factories.js';
 
@@ -16,20 +18,25 @@ const RUNBOOK_REF = { source: 'project' as const, path: 'artifact.integration.md
 const SIBLING_RUN = brandRunIdForTest('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
 const CURRENT_RUN = brandRunIdForTest('rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
 
-const runbook: ResolvedRunbook = {
-  title: 'Artifact Integration',
-  description: 'Artifact integration test',
-  steps: [
-    makeBaseStep({
-      name: '1',
-      description: 'Only step',
-      transitions: {
-        pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
-        fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
-      },
-    }),
-  ],
-};
+function makeStep(artifacts: ResolvedStep['artifacts']): ResolvedStep {
+  return makeBaseStep({
+    name: '1',
+    description: 'Only step',
+    artifacts,
+    transitions: {
+      pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+      fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+    },
+  });
+}
+
+function runbookForSteps(steps: readonly ResolvedStep[]): ResolvedRunbook {
+  return {
+    title: 'Artifact Integration',
+    description: 'Artifact integration test',
+    steps: [...steps],
+  };
+}
 
 let tempDirs: string[] = [];
 
@@ -44,8 +51,12 @@ async function tempCwd(): Promise<string> {
   return cwd;
 }
 
-async function createRun(manager: RunbookStateManager, runId: RunId) {
-  return manager.create(RUNBOOK_REF, runbook, {
+async function createRun(
+  manager: RunbookStateManager,
+  runId: RunId,
+  steps: readonly ResolvedStep[],
+) {
+  return manager.create(RUNBOOK_REF, runbookForSteps(steps), {
     runbookPath: RUNBOOK_REF.path,
     runId,
     frontmatterOutputs: [],
@@ -62,26 +73,28 @@ describe('artifact resolver integration', () => {
   it('resolves artifacts from a completed sibling run in the same context', async () => {
     const cwd = await tempCwd();
     const manager = new RunbookStateManager(cwd);
+    const actorService = new RunbookActorService(manager);
+    const service = new ArtifactRuntimeService(manager, actorService);
 
-    const sibling = await createRun(manager, SIBLING_RUN);
-    const siblingArtifacts = await manager.resolveArtifactsForRun(sibling.id, [
-      { name: 'PlanPath', key: 'plan.json', kind: 'exact' },
-    ]);
-    const siblingRecord = siblingArtifacts.PlanPath as ArtifactRecord;
+    const siblingSteps = [makeStep([{ name: 'PlanPath', key: 'plan.json', kind: 'exact' }])];
+    const sibling = await createRun(manager, SIBLING_RUN, siblingSteps);
+    await actorService.initializeState(sibling.id, [...siblingSteps]);
+    const siblingResult = await service.resolveCurrentUnitArtifacts(sibling.id, siblingSteps);
+    if (siblingResult.status !== 'resolved') throw new Error('expected resolved');
+    const siblingRecord = siblingResult.artifacts.PlanPath as ArtifactRecord;
     const siblingPath = artifactUriToPath(siblingRecord.uri, { cwd, workPath: WORK_PATH });
     await fsp.mkdir(path.dirname(siblingPath), { recursive: true });
     await fsp.writeFile(siblingPath, '{}');
-    await manager.update(sibling.id, {
-      lifecycle: 'completed',
-    });
+    await manager.update(sibling.id, { lifecycle: 'completed' });
 
-    const current = await createRun(manager, CURRENT_RUN);
-    const artifacts = await manager.resolveArtifactsForRun(current.id, [
-      { name: 'Plans', key: 'plan*.json', kind: 'wildcard' },
-    ]);
+    const currentSteps = [makeStep([{ name: 'Plans', key: 'plan*.json', kind: 'wildcard' }])];
+    const current = await createRun(manager, CURRENT_RUN, currentSteps);
+    await actorService.initializeState(current.id, [...currentSteps]);
+    const currentResult = await service.resolveCurrentUnitArtifacts(current.id, currentSteps);
+    if (currentResult.status !== 'resolved') throw new Error('expected resolved');
 
-    expect(artifacts.Plans).toHaveLength(1);
-    expect((artifacts.Plans as ArtifactRecord[])[0]).toMatchObject({
+    expect(currentResult.artifacts.Plans).toHaveLength(1);
+    expect((currentResult.artifacts.Plans as ArtifactRecord[])[0]).toMatchObject({
       contextId: CONTEXT_ID,
       runId: sibling.id,
       key: 'plan.json',

@@ -2,7 +2,7 @@
 import { randomBytes } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import type { ArtifactDeclaration, OutputDeclaration } from '@rundown-org/parser';
+import type { OutputDeclaration } from '@rundown-org/parser';
 import type { FrameKey } from './targeting.js';
 import type {
   RunbookState,
@@ -13,11 +13,9 @@ import type {
   ResolvedRunbook,
   ParentLinkage,
   TemplateVarValue,
-  ArtifactVarValue,
 } from './types.js';
 import {
   applyOp,
-  merge,
   type ArtifactVarsOp,
   type CurrentArtifactsOp,
   type FrameEntriesOp,
@@ -25,10 +23,6 @@ import {
   type TemplateVarsOp,
   type VariablesOp,
 } from './state-update-ops.js';
-import {
-  resolveArtifactDeclarations,
-  type ArtifactRunEligibility,
-} from './artifact-directive-resolver.js';
 import type { ClaimRecord } from './claim-id.js';
 import type { RunbookRef } from './runbook-ref.js';
 import { makeRunbookStateSchema, SessionDataSchema } from '../schemas.js';
@@ -141,9 +135,9 @@ export class RunbookStateManager {
    * Per-process registry of run ids whose `RunbookActor` is currently running.
    *
    * Maintained by {@link RunbookActorService} via {@link markActorStarted} and
-   * {@link markActorStopped}. {@link resolveArtifactsForRun} consults this set
-   * to refuse writes that would race with the actor's stale-context replay
-   * through `RunbookActorService.updateFromActor`.
+   * {@link markActorStopped}. Available for callers that need to detect a live
+   * actor before performing work that would race with the actor's snapshot
+   * replay through `RunbookActorService.updateFromActor`.
    */
   private readonly liveActors = new Set<string>();
 
@@ -402,6 +396,7 @@ export class RunbookStateManager {
    * - `variables` — `merge(...)` shallow-merges OUTPUTS (merge-only)
    * - `templateVars` — `replace(...)` wholesale-replaces (replace-only; seeded once)
    * - `artifactVars` — `merge(...)` adds entries; `replace(...)` mirrors the full set
+   * - `artifacts` — `replace(...)` wholesale-replaces the current-unit working set (replace-only)
    * - `resolvedCompletions` — `merge(...)` adds one entry; `replace(...)` rewrites the map
    * - `frameEntries` — `replace(...)` wholesale-replaces (replace-only)
    * - All other fields — provided value is taken verbatim; omitted fields are preserved
@@ -495,79 +490,6 @@ export class RunbookStateManager {
 
     await this.save(updated);
     return updated;
-  }
-
-  /**
-   * Resolve one ARTIFACTS block for a persisted run and merge the result into
-   * `RunbookState.artifactVars`.
-   *
-   * This method is intentionally explicit: it does not inspect the active step
-   * or emit events. Phase 4 owns deciding when to call it at step/substep entry.
-   *
-   * @remarks
-   * Refuses to run while a live `RunbookActor` exists for the same `id` (as
-   * tracked by {@link markActorStarted}/{@link markActorStopped}). The actor
-   * seeds `context.artifactVars` once at compile time (`actor-service.ts`
-   * `compileMachineFromState`); a later `RunbookActorService.updateFromActor`
-   * mirrors the actor's stale view back to disk via `replace(...)`
-   * (`actor-service.ts` artifactVars patches), which would overwrite this
-   * method's writes. Phase 4 will replace the refusal with a machine-mediated
-   * write path so resolver output flows through the actor's context.
-   *
-   * @param id - Current run id
-   * @param declarations - Parser-owned artifact declarations for one execution unit
-   * @returns The current execution unit's resolved artifact working set
-   * @throws {Error} If a live `RunbookActor` exists for `id`, the run is not
-   * found, is missing required built-ins (`WorkPath`, `ContextId`), has
-   * corrupt artifact manifests, or encounters unexpected artifact filesystem
-   * failures
-   */
-  async resolveArtifactsForRun(
-    id: string,
-    declarations: readonly ArtifactDeclaration[],
-  ): Promise<Record<string, ArtifactVarValue>> {
-    if (this.liveActors.has(id)) {
-      throw new Error(
-        `Refusing to resolve artifacts for "${id}": a live RunbookActor exists for this run. ` +
-          `Stop the actor (RunbookActorService.stopActor) before calling resolveArtifactsForRun, ` +
-          `or wait for Phase 4 machine-mediated artifact resolution.`,
-      );
-    }
-    const state = await this.load(id);
-    if (!state) {
-      throw new Error(`Runbook ${id} not found`);
-    }
-    const workPath = state.templateVars?.WorkPath;
-    const contextId = state.templateVars?.ContextId;
-    if (typeof workPath !== 'string') {
-      throw new Error(`Runbook ${id} cannot resolve ARTIFACTS without string WorkPath`);
-    }
-    if (typeof contextId !== 'string') {
-      throw new Error(`Runbook ${id} cannot resolve ARTIFACTS without string ContextId`);
-    }
-
-    const runId: RunId = assertRunId(state.id);
-    const resolved = await resolveArtifactDeclarations(declarations, {
-      cwd: this.cwd,
-      workPath,
-      contextId,
-      runId,
-      runbook: state.runbook,
-      loadRunEligibility: async (otherRunId: RunId): Promise<ArtifactRunEligibility | null> => {
-        const other = await this.load(otherRunId);
-        if (!other) return null;
-        if (other.id === state.id) return null;
-        if (other.lifecycle === 'completed' && other.updatedAt) {
-          return { runId: otherRunId, terminalAt: other.updatedAt };
-        }
-        return null;
-      },
-    });
-
-    await this.update(id, {
-      artifactVars: merge(resolved),
-    });
-    return resolved;
   }
 
   /**

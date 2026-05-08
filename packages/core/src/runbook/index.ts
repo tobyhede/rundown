@@ -180,6 +180,12 @@ export {
   type ResolveArtifactDeclarationsOptions,
 } from './artifact-directive-resolver.js';
 export {
+  ArtifactRuntimeService,
+  type ArtifactRuntimeMissingRun,
+  type ArtifactRuntimeResolved,
+  type ArtifactRuntimeResult,
+} from './artifact-runtime-service.js';
+export {
   applyRunArtifactHelper,
   buildExecutionFrame,
   evaluateFrontmatterOutputDeclarations,
