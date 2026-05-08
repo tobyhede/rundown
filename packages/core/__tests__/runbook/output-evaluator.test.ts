@@ -108,6 +108,52 @@ describe('evaluateOutputExpression', () => {
     }
   });
 
+  it('rejects empty literal {{ artifact "" }} via the evaluator dispatch', async () => {
+    const cwd = await mkdtemp(path.join(tmpdir(), 'rd-helper-'));
+    try {
+      expect(() =>
+        evaluateOutputExpression(
+          '{{ artifact "" }}',
+          {
+            WorkPath: '.rundown/work',
+            ContextId: 'ctx1',
+            RunId: 'rd_0123456789abcdef0123456789abcdef',
+            RunbookRef: {
+              source: 'plugin',
+              path: 'planning/review/review-plan-risk-safety.runbook.md',
+            },
+          },
+          { cwd },
+        ),
+      ).toThrow(/literal key/);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects empty literal {{ path "" }} via the evaluator dispatch', async () => {
+    const cwd = await mkdtemp(path.join(tmpdir(), 'rd-helper-'));
+    try {
+      expect(() =>
+        evaluateOutputExpression(
+          '{{ path "" }}',
+          {
+            WorkPath: '.rundown/work',
+            ContextId: 'ctx1',
+            RunId: 'rd_0123456789abcdef0123456789abcdef',
+            RunbookRef: {
+              source: 'plugin',
+              path: 'planning/review/review-plan-risk-safety.runbook.md',
+            },
+          },
+          { cwd },
+        ),
+      ).toThrow(/key must not be empty/);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it('evaluates path helper to run-scoped artifact path', async () => {
     const cwd = await mkdtemp(path.join(tmpdir(), 'rd-helper-'));
     try {

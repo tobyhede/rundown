@@ -111,7 +111,7 @@ const HELPER_CALL_TEMPLATE_REGEX =
  *  - `{{ path VarRef }}`          (group 2; dotted paths permitted)
  */
 const PATH_HELPER_TEMPLATE_REGEX =
-  /\{\{\s*path\s+(?:"([^"]+)"|([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*))\s*\}\}/g;
+  /\{\{\s*path\s+(?:"([^"]*)"|([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*))\s*\}\}/g;
 
 /**
  * Matches the built-in `artifact` helper in variable-reference form only:
@@ -128,7 +128,7 @@ const ARTIFACT_HELPER_TEMPLATE_REGEX =
  * Matches the explicitly-rejected literal `artifact` helper form, so we can
  * raise a hard error rather than fall through to the generic helper dispatch.
  */
-const LITERAL_ARTIFACT_HELPER_REGEX = /\{\{\s*artifact\s+"([^"]+)"\s*\}\}/g;
+const LITERAL_ARTIFACT_HELPER_REGEX = /\{\{\s*artifact\s+"([^"]*)"\s*\}\}/g;
 
 type TemplateHelperOptions = EvaluateOutputOptions;
 
@@ -1039,9 +1039,13 @@ function resolveArtifactHelperCall(
     );
   }
   const artifactValue = value as ArtifactVarValue;
+  // `renderArtifactRecordValue` projects URIs (spec §9.3) and never reads
+  // `workPath` — match the lazy read in `renderTemplateValue` so the helper
+  // does not require `WorkPath` in the variable frame.
+  const workPath = typeof variables.WorkPath === 'string' ? variables.WorkPath : '';
   return renderArtifactRecordValue(artifactValue, {
     cwd: helperOptions.cwd,
-    workPath: requireWorkPath(variables),
+    workPath,
     /** Empty-array projection ignores contextId/runId — see notes above. */
     contextId: isArtifactRecord(artifactValue) ? artifactValue.contextId : '',
     runId: isArtifactRecord(artifactValue) ? artifactValue.runId : '',

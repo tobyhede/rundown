@@ -109,10 +109,10 @@ export function resetHelperRegistry(): void {
 
 const TEMPLATE_PATH_REGEX =
   /{{\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\.(?:[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+))*)\s*}}/g;
-const PATH_HELPER_REGEX = /^\{\{\s*path\s+"([^"]+)"\s*\}\}$/;
+const PATH_HELPER_REGEX = /^\{\{\s*path\s+"([^"]*)"\s*\}\}$/;
 const LEGACY_CTX_PATH_HELPER_REGEX =
   /^\{\{\s*path\s+"([^"]+)"\s+ctx=(\{\{[^}]*\}\}|[^\s}]+)\s*\}\}$/;
-const ARTIFACT_HELPER_REGEX = /^\{\{\s*artifact\s+"([^"]+)"\s*\}\}$/;
+const ARTIFACT_HELPER_REGEX = /^\{\{\s*artifact\s+"([^"]*)"\s*\}\}$/;
 
 /**
  * Matches `{{ ./VarName }}` — explicit variable lookup escape hatch.

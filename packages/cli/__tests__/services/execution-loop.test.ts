@@ -267,11 +267,26 @@ jest.unstable_mockModule('@rundown-org/core', () => {
       }
       return (value as { uri: string }).uri;
     }),
-    renderArtifactPathValue: jest.fn((value: unknown) => {
-      if (Array.isArray(value)) return JSON.stringify(value.map((r: { key: string }) => r.key));
-      return (value as { key: string }).key;
+    renderArtifactPathValue: jest.fn(
+      (value: unknown, options: { cwd: string; workPath: string }) => {
+        const buildPath = (record: { contextId: string; runId: string; key: string }) =>
+          `${options.cwd}/${options.workPath}/.rd-${record.contextId}/runs/${record.runId}/${record.key}`;
+        if (Array.isArray(value)) {
+          return JSON.stringify(
+            (value as ReadonlyArray<{ contextId: string; runId: string; key: string }>).map(
+              buildPath,
+            ),
+          );
+        }
+        return buildPath(value as { contextId: string; runId: string; key: string });
+      },
+    ),
+    renderArtifactRecordValue: jest.fn((value: unknown) => {
+      if (Array.isArray(value)) {
+        return JSON.stringify(value.map((r: { uri: string }) => r.uri));
+      }
+      return (value as { uri: string }).uri;
     }),
-    renderArtifactRecordValue: jest.fn((value: unknown) => JSON.stringify(value)),
     renderLiteralArtifactPath: jest.fn(
       (key: string, options: { cwd: string; workPath: string; contextId: string; runId: string }) =>
         `${options.cwd}/${options.workPath}/.rd-${options.contextId}/runs/${options.runId}/${key}`,
