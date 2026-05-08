@@ -126,6 +126,107 @@ describe('resolveArtifactDeclarations', () => {
     ]);
   });
 
+  it('reuses a same-block exact record for duplicate exact declarations', async () => {
+    const cwd = await tempCwd();
+    const timestamps = ['2026-05-07T01:00:00.000Z', '2026-05-07T01:00:01.000Z'];
+    let timestampIndex = 0;
+
+    const result = await resolveArtifactDeclarations(
+      [exact('FirstPlan', 'plan.json'), exact('SecondPlan', 'plan.json')],
+      {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        now: () => timestamps[timestampIndex++] ?? '2026-05-07T01:00:02.000Z',
+        loadRunEligibility: eligibility(new Map()),
+      },
+    );
+
+    expect(result.SecondPlan).toBe(result.FirstPlan);
+    expect(result.FirstPlan).toMatchObject({
+      key: 'plan.json',
+      timestamp: '2026-05-07T01:00:00.000Z',
+    });
+    await expect(readArtifactManifest({ cwd, workPath: WORK_PATH }, CONTEXT_ID)).resolves.toEqual([
+      result.FirstPlan,
+    ]);
+  });
+
+  it('uses the system clock for exact declarations when no clock is injected', async () => {
+    const cwd = await tempCwd();
+
+    const result = await resolveArtifactDeclarations([exact('PlanPath', 'plan.json')], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      loadRunEligibility: eligibility(new Map()),
+    });
+
+    expect(result.PlanPath).toMatchObject({
+      runId: CURRENT_RUN,
+      contextId: CONTEXT_ID,
+      runbook: RUNBOOK,
+      key: 'plan.json',
+    });
+    expect(typeof (result.PlanPath as ArtifactRecord).timestamp).toBe('string');
+    expect(Number.isNaN(Date.parse((result.PlanPath as ArtifactRecord).timestamp))).toBe(false);
+  });
+
+  it('does not reuse exact records that differ by run, runbook, or key', async () => {
+    const nearMatches = [
+      record({
+        runId: CHILD_RUN,
+        runbook: RUNBOOK,
+        key: 'plan.json',
+      }),
+      record({
+        runId: CURRENT_RUN,
+        runbook: { source: 'plugin', path: RUNBOOK.path },
+        key: 'plan.json',
+      }),
+      record({
+        runId: CURRENT_RUN,
+        runbook: { source: RUNBOOK.source, path: 'planning/other.runbook.md' },
+        key: 'plan.json',
+      }),
+      record({
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        key: 'other.json',
+      }),
+    ];
+
+    for (const nearMatch of nearMatches) {
+      const cwd = await tempCwd();
+      await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, nearMatch);
+
+      const result = await resolveArtifactDeclarations([exact('PlanPath', 'plan.json')], {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        now: () => '2026-05-07T01:00:00.000Z',
+        loadRunEligibility: eligibility(new Map()),
+      });
+
+      expect(result.PlanPath).not.toEqual(nearMatch);
+      expect(result.PlanPath).toMatchObject({
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        key: 'plan.json',
+        timestamp: '2026-05-07T01:00:00.000Z',
+      });
+      await expect(
+        readArtifactManifest({ cwd, workPath: WORK_PATH }, CONTEXT_ID),
+      ).resolves.toHaveLength(2);
+    }
+  });
+
   it('wildcards match current-run files and completed sibling runbook files in the same context', async () => {
     const cwd = await tempCwd();
     const current = record({
@@ -164,6 +265,58 @@ describe('resolveArtifactDeclarations', () => {
     expect(result.Reviews).toEqual(
       [current, completedChild].sort((a, b) => a.uri.localeCompare(b.uri)),
     );
+  });
+
+  it('wildcards match dotfile artifact keys', async () => {
+    const cwd = await tempCwd();
+    const hidden = record({
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      key: '.review-plan.json',
+    });
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, hidden);
+    await touchArtifact(cwd, hidden);
+
+    const result = await resolveArtifactDeclarations([wildcard('Reviews', '*.json')], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      now: () => '2026-05-07T01:00:00.000Z',
+      loadRunEligibility: eligibility(new Map()),
+    });
+
+    expect(result.Reviews).toEqual([hidden]);
+  });
+
+  it('wildcards ignore existing same-context files whose keys do not match', async () => {
+    const cwd = await tempCwd();
+    const matching = record({
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      key: 'review-plan-current.json',
+    });
+    const nonmatching = record({
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      key: 'notes.json',
+    });
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, nonmatching);
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, matching);
+    await Promise.all([matching, nonmatching].map((row) => touchArtifact(cwd, row)));
+
+    const result = await resolveArtifactDeclarations([wildcard('Reviews', 'review-plan-*.json')], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      now: () => '2026-05-07T01:00:00.000Z',
+      loadRunEligibility: eligibility(new Map()),
+    });
+
+    expect(result.Reviews).toEqual([matching]);
   });
 
   it('wildcards ignore incomplete other runs and missing files', async () => {
