@@ -2453,3 +2453,25 @@ describe('substituteText with artifact helper', () => {
     ).toThrow(/ArtifactRecord/);
   });
 });
+
+describe('empty wildcard renders consistently across all helper forms', () => {
+  it('renders direct alias, path, and artifact helpers as "[]"', () => {
+    const out = substituteText(
+      'A:{{ Reviews }} B:{{ path Reviews }} C:{{ artifact Reviews }}',
+      { Reviews: [], WorkPath: '.rundown/work' },
+      undefined,
+      ARTIFACT_HELPER_OPTIONS,
+    );
+    expect(out).toBe('A:[] B:[] C:[]');
+  });
+
+  it('renders empty wildcards in command code with shell escaping', () => {
+    const out = expandLoopVariablesForCommand(
+      'echo {{ Reviews }} && echo {{ path Reviews }}',
+      { Reviews: [], WorkPath: '.rundown/work' },
+      ARTIFACT_HELPER_OPTIONS,
+    );
+    // shellEscapeValue wraps `[]` because brackets are not in SAFE_SHELL_VALUE
+    expect(out).toBe(`echo '[]' && echo '[]'`);
+  });
+});
