@@ -52,6 +52,7 @@ import {
   prepareOutputChannels,
   readCapturedOutputs,
   resolveCurrentExecutionUnit,
+  ArtifactRuntimeService,
   type OutputScope,
   type PreparedChannel,
 } from '@rundown-org/core';
@@ -653,6 +654,7 @@ export async function runExecutionLoop(
 
   // Service for resolving FOR loop iteration values (array, file, range)
   const actorService = new RunbookActorService(manager);
+  const artifactRuntimeService = new ArtifactRuntimeService(manager, actorService);
   const sessionService = new SessionService(manager);
   const lifecycleService = new ExecutionLifecycleService(manager);
   let projectRoot: string;
@@ -797,6 +799,22 @@ export async function runExecutionLoop(
       currentState = drainResult.state;
       continue;
     }
+
+    // Resolve ARTIFACTS for the active execution unit through the core
+    // runtime service. The dispatch updates current-unit `artifacts` and merges
+    // accumulated `artifactVars` in the actor mirror, so this MUST run before
+    // `mergeEffectiveVars`, template/prompt expansion, STEP_ENTERED, and
+    // command execution — otherwise the rendered output would lag the latest
+    // resolution.
+    const artifactResolution = await artifactRuntimeService.resolveCurrentUnitArtifacts(
+      runbookId,
+      steps,
+    );
+    if (artifactResolution.status === 'missing-run') {
+      return 'stopped';
+    }
+    currentState = artifactResolution.state;
+    const currentArtifacts = artifactResolution.artifacts;
 
     // Expand per-step dynamic variables ({{Step}}, {{Index}}, {{var}}) for current iteration.
     // mergeEffectiveVars overlays state.variables (step OUTPUTS) on state.templateVars
@@ -975,6 +993,7 @@ export async function runExecutionLoop(
       isSubstep,
       prompted: prompted || stepIsPrompted,
       delegateFrontier,
+      artifacts: currentArtifacts,
     });
 
     if (pendingFrontierConsumed) {

@@ -30,6 +30,12 @@ const mockSessionService = {
   releaseRunbook: mockFn<(id: string) => Promise<void>>() as any,
 };
 
+const mockArtifactRuntimeService = {
+  resolveCurrentUnitArtifacts: mockFn<
+    (id: string, steps: unknown) => Promise<Record<string, unknown>>
+  >() as any,
+};
+
 const ensureActiveEntryFn =
   mockFn<
     (
@@ -156,6 +162,7 @@ jest.unstable_mockModule('@rundown-org/core', () => {
       step: state?.step ?? '1',
     })),
     RunbookActorService: jest.fn(() => mockActorService),
+    ArtifactRuntimeService: jest.fn(() => mockArtifactRuntimeService),
     SessionService: jest.fn(() => mockSessionService),
     ExecutionLifecycleService: jest.fn(() => mockLifecycleService),
     ForIterationService: jest.fn(() => {
@@ -490,6 +497,22 @@ describe('runExecutionLoop', () => {
     mockActorService.getContextSnapshot.mockReset();
     mockActorService.getContextSnapshot.mockResolvedValue(null);
 
+    mockArtifactRuntimeService.resolveCurrentUnitArtifacts.mockReset();
+    // Default passthrough: peek at the most recent `manager.load` result so
+    // currentState is preserved across the artifact runtime call without
+    // consuming another `mockResolvedValueOnce` value. Tests that need to
+    // assert artifact payloads should override this mock.
+    mockArtifactRuntimeService.resolveCurrentUnitArtifacts.mockImplementation(async () => {
+      const lastResult = mockManager.load.mock.results.at(-1);
+      const lastState = lastResult ? await lastResult.value : null;
+      return {
+        status: 'resolved',
+        state: lastState ?? {},
+        snapshot: undefined,
+        artifacts: {},
+      };
+    });
+
     mockEmitter = {
       emit: mockFn<(event: string, payload?: unknown) => void>(),
     };
@@ -520,6 +543,71 @@ describe('runExecutionLoop', () => {
       false,
       asEmitter(mockEmitter),
     );
+    expect(result).toBe('stopped');
+  });
+
+  it('resolves ARTIFACTS through core before STEP_ENTERED and includes the current working set', async () => {
+    const artifact = {
+      uri: 'rd://artifacts/ctx1/runs/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
+      runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      contextId: 'ctx1',
+      runbook: { source: 'project' as const, path: 'test.runbook.md' },
+      key: 'plan.json',
+      timestamp: '2026-05-08T00:00:00.000Z',
+    };
+    const initial = makeLoopState();
+    const resolved = {
+      ...initial,
+      artifacts: { PlanPath: artifact },
+      artifactVars: { PlanPath: artifact },
+    };
+    mockManager.load.mockResolvedValue(initial);
+    mockArtifactRuntimeService.resolveCurrentUnitArtifacts.mockReset();
+    mockArtifactRuntimeService.resolveCurrentUnitArtifacts.mockResolvedValueOnce({
+      status: 'resolved',
+      state: resolved,
+      snapshot: undefined,
+      artifacts: { PlanPath: artifact },
+    });
+
+    const result = await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(steps),
+      '/tmp',
+      true,
+      asEmitter(mockEmitter),
+    );
+
+    expect(result).toBe('waiting');
+    expect(mockArtifactRuntimeService.resolveCurrentUnitArtifacts).toHaveBeenCalledWith(
+      runbookId,
+      expect.any(Array),
+    );
+    expect(mockEmitter.emit).toHaveBeenCalledWith(
+      'STEP_ENTERED',
+      expect.objectContaining({
+        artifacts: { PlanPath: artifact },
+      }),
+    );
+  });
+
+  it('stops when artifact runtime reports missing-run', async () => {
+    mockManager.load.mockResolvedValue(makeLoopState());
+    mockArtifactRuntimeService.resolveCurrentUnitArtifacts.mockReset();
+    mockArtifactRuntimeService.resolveCurrentUnitArtifacts.mockResolvedValueOnce({
+      status: 'missing-run',
+    });
+
+    const result = await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(steps),
+      '/tmp',
+      false,
+      asEmitter(mockEmitter),
+    );
+
     expect(result).toBe('stopped');
   });
 
