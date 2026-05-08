@@ -53,6 +53,34 @@ describe('prune command', () => {
       expect(statesAfter.length).toBe(0);
     });
 
+    it('removes artifactVars when pruning a completed run', async () => {
+      await runCliInProcess('run runbooks/simple.runbook.md --text', workspace);
+      const statesBefore = await listRunbookStates(workspace);
+      expect(statesBefore).toHaveLength(1);
+
+      const stateFile = statesBefore[0];
+      const stateId = stateFile.replace('.json', '');
+      const state = await readRunbookState(workspace, stateId);
+      expect(state).not.toBeNull();
+      const artifact = {
+        uri: `rd://artifacts/ctx1/runs/${stateId}/plan.json`,
+        runId: stateId,
+        contextId: 'ctx1',
+        runbook: state!.runbook,
+        key: 'plan.json',
+        timestamp: '2026-05-07T00:00:00.000Z',
+      };
+      await writeFile(
+        join(workspace.statePath(), stateFile),
+        JSON.stringify({ ...state, artifactVars: { PlanPath: artifact } }, null, 2),
+      );
+
+      await runCliInProcess('prune --completed --text', workspace);
+
+      const loaded = await readRunbookState(workspace, stateId);
+      expect(loaded).toBeNull();
+    });
+
     it('prunes stopped runbook state by default', async () => {
       // Start runbook then stop it — leaves state with lifecycle=stopped
       await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
