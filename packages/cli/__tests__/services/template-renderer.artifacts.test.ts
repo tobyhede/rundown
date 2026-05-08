@@ -80,6 +80,17 @@ describe('template rendering does not mutate the artifact manifest', () => {
       Reviews: [REVIEW_A],
     } as const;
 
+    // Sample render once to assert rendering actually happened — kills mutants
+    // that return '' (or any stable string) for everything while still passing
+    // the manifest/dir purity snapshots below.
+    const sampleSubstitute = substituteText('Plan {{ PlanPath }}', variables, undefined, { cwd });
+    expect(sampleSubstitute).toBe(`Plan ${PLAN.uri}`);
+    const sampleCommand = expandLoopVariablesForCommand('cat {{ path PlanPath }}', variables, {
+      cwd,
+    });
+    expect(sampleCommand).toContain(`.rd-${CONTEXT_ID}`);
+    expect(sampleCommand.endsWith('plan.json')).toBe(true);
+
     for (let i = 0; i < 100; i++) {
       substituteText(
         'Plan {{ PlanPath }} at {{ path PlanPath }} record {{ artifact PlanPath }} reviews {{ Reviews }} paths {{ path Reviews }} records {{ artifact Reviews }} literal {{ path "plan.json" }}',
@@ -108,6 +119,15 @@ describe('template rendering does not mutate the artifact manifest', () => {
       RunId: RUN_ID,
       Reviews: [],
     } as const;
+
+    // Sample once to assert each helper form renders an empty array as '[]'.
+    const sampleEmpty = substituteText(
+      '{{ Reviews }} | {{ path Reviews }} | {{ artifact Reviews }}',
+      variables,
+      undefined,
+      { cwd },
+    );
+    expect(sampleEmpty).toBe('[] | [] | []');
 
     for (let i = 0; i < 50; i++) {
       substituteText(
