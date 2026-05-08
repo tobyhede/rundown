@@ -215,26 +215,20 @@ export class RunbookActorService {
 
     const actor = createActor(machine, { snapshot });
     actor.start();
-    this.manager.markActorStarted(id);
     return actor;
   }
 
   /**
-   * Stop a `RunbookActor` and deregister its run id from the manager's
-   * live-actor registry.
+   * Stop a `RunbookActor`.
    *
-   * Replaces direct `actor.stop()` calls so {@link RunbookStateManager} sees
-   * a balanced started/stopped pair. Required for callers that hold an actor
-   * ref returned by {@link createActor}; internal helpers
-   * ({@link initializeState}, {@link sendAndSync}) call this in their
-   * `finally` blocks already.
+   * Funnel for `actor.stop()` so callers go through one lifecycle seam.
+   * Internal helpers ({@link initializeState}, {@link sendAndSync}) already
+   * call this in their `finally` blocks.
    *
-   * @param id - Runbook state id matching the one passed to {@link createActor}
    * @param actor - The actor returned by {@link createActor}
    */
-  stopActor(id: string, actor: AnyActorRef): void {
+  stopActor(actor: AnyActorRef): void {
     actor.stop();
-    this.manager.markActorStopped(id);
   }
 
   /**
@@ -464,7 +458,7 @@ export class RunbookActorService {
       const { state } = await this.updateFromActor(id, actor, steps);
       return state;
     } finally {
-      this.stopActor(id, actor);
+      this.stopActor(actor);
     }
   }
 
@@ -557,7 +551,7 @@ export class RunbookActorService {
       const { state, snapshot } = await this.updateFromActor(id, actor, steps);
       return { state, snapshot };
     } finally {
-      this.stopActor(id, actor);
+      this.stopActor(actor);
     }
   }
 }

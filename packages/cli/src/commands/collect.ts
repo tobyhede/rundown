@@ -86,7 +86,7 @@ export function registerCollectCommand(program: Command): void {
                 text: options.text,
               });
             } finally {
-              ctx.actorService.stopActor(ctx.state.id, ctx.actor);
+              ctx.actorService.stopActor(ctx.actor);
             }
 
             if (shouldExitWithError) {

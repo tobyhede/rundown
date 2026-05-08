@@ -132,57 +132,12 @@ export class RunbookStateManager {
   private readonly _cwd: string;
 
   /**
-   * Per-process registry of run ids whose `RunbookActor` is currently running.
-   *
-   * Maintained by {@link RunbookActorService} via {@link markActorStarted} and
-   * {@link markActorStopped}. Available for callers that need to detect a live
-   * actor before performing work that would race with the actor's snapshot
-   * replay through `RunbookActorService.updateFromActor`.
-   */
-  private readonly liveActors = new Set<string>();
-
-  /**
    * Create a new RunbookStateManager.
    *
    * @param cwd - The working directory (project root) for state file paths
    */
   constructor(cwd: string) {
     this._cwd = cwd;
-  }
-
-  /**
-   * Register a run id as having a live actor in this process.
-   *
-   * Called by {@link RunbookActorService.createActor} after `actor.start()`.
-   * Idempotent: re-registering a live id is a no-op.
-   *
-   * @param id - Runbook state id
-   */
-  markActorStarted(id: string): void {
-    this.liveActors.add(id);
-  }
-
-  /**
-   * Deregister a run id whose actor has been stopped.
-   *
-   * Called by {@link RunbookActorService.stopActor} after `actor.stop()`.
-   * Idempotent: removing an unknown id is a no-op.
-   *
-   * @param id - Runbook state id
-   */
-  markActorStopped(id: string): void {
-    this.liveActors.delete(id);
-  }
-
-  /**
-   * Whether a `RunbookActor` is currently live for the given run id.
-   *
-   * @param id - Runbook state id
-   * @returns `true` if {@link markActorStarted} was called without a matching
-   *   {@link markActorStopped}
-   */
-  isActorLive(id: string): boolean {
-    return this.liveActors.has(id);
   }
 
   /**
