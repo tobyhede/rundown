@@ -105,4 +105,16 @@ describe('RUN_ID_PATTERN / RUN_ID_PREFIX', () => {
     expect(RUN_ID_PATTERN.test(id)).toBe(true);
     expect(isRunId(id)).toBe(true);
   });
+
+  it.each([
+    ['missing rd_ prefix', '00000000000000000000000000000000'],
+    ['uppercase hex', 'rd_ABCDEF00000000000000000000000000'],
+    ['31-char body (too short)', 'rd_0000000000000000000000000000000'],
+    ['33-char body (too long)', 'rd_000000000000000000000000000000000'],
+    ['non-hex character in body', 'rd_g0000000000000000000000000000000'],
+    ['hyphenated UUID body', 'rd_550e8400-e29b-41d4-a716-446655440000'],
+  ])('rejects %s in both RUN_ID_PATTERN and isRunId', (_label, value) => {
+    expect(RUN_ID_PATTERN.test(value)).toBe(false);
+    expect(isRunId(value)).toBe(false);
+  });
 });
