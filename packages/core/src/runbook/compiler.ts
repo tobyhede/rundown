@@ -9,6 +9,7 @@ import type {
   ResolvedStepHavingSubsteps,
   Lifecycle,
   SubstepState,
+  ArtifactVarValue,
 } from './types.js';
 import { isResolvedVariableForContext } from './types.js';
 import type { ArtifactVars } from './effective-vars.js';
@@ -214,6 +215,11 @@ export interface RunbookContext {
   variables: Record<string, string>;
   /** Accumulated ARTIFACTS variables, mirrored from persisted RunbookState. */
   readonly artifactVars?: ArtifactVars;
+  /**
+   * Current execution unit ARTIFACTS working set. Replaced on every active-unit
+   * resolution; an empty object means the active unit has no ARTIFACTS.
+   */
+  readonly artifacts?: ArtifactVars;
   /** Last action taken by the state machine (source of truth for transition type) */
   lastAction?: LastAction;
   /** Message from STOP/COMPLETE actions */
@@ -258,6 +264,7 @@ export interface RunbookContext {
  * - RETRY: Increment retry count and re-enter the current step
  * - GOTO: Jump directly to a specific step by ID
  * - SET_VARIABLES: Merge variables into context.variables without changing step
+ * - ARTIFACTS_RESOLVED: Replace current-unit artifacts; merge non-empty values into accumulated artifactVars
  */
 export type RunbookEvent =
   | { type: 'PASS' }
@@ -265,7 +272,8 @@ export type RunbookEvent =
   | { type: 'RETRY' }
   | { type: 'GOTO'; target: StepId }
   | { type: 'SET_VARIABLES'; vars: Record<string, string> }
-  | { type: 'PENDING_FRONTIER_CONSUMED' };
+  | { type: 'PENDING_FRONTIER_CONSUMED' }
+  | { type: 'ARTIFACTS_RESOLVED'; artifacts: Readonly<Record<string, ArtifactVarValue>> };
 
 /**
  * Object-form XState transition entry — the `{ target?, actions?, guard? }` variant.
@@ -2747,6 +2755,24 @@ export function compileRunbookToMachine(
           return { pendingDelegateFrontier: undefined };
         }),
       },
+      ARTIFACTS_RESOLVED: {
+        actions: runbookSetup.assign({
+          artifacts: ({ event }) => {
+            assertEvent(event, 'ARTIFACTS_RESOLVED');
+            return event.artifacts as ArtifactVars;
+          },
+          artifactVars: ({ context, event }) => {
+            assertEvent(event, 'ARTIFACTS_RESOLVED');
+            if (Object.keys(event.artifacts).length === 0) {
+              return context.artifactVars;
+            }
+            return {
+              ...(context.artifactVars ?? {}),
+              ...event.artifacts,
+            } as ArtifactVars;
+          },
+        }),
+      },
     },
     context: {
       retryCount: 0,
@@ -2758,6 +2784,7 @@ export function compileRunbookToMachine(
       completedForContext: undefined,
       variables: {},
       artifactVars: options?.artifactVars,
+      artifacts: undefined,
       lastAction: undefined,
       lastMessage: undefined,
       forStack: [],

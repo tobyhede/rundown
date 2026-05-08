@@ -8709,6 +8709,73 @@ echo "processing"
     });
   });
 
+  describe('ARTIFACTS_RESOLVED event', () => {
+    const plan = {
+      uri: 'rd://artifacts/ctx1/runs/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
+      runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      contextId: 'ctx1',
+      runbook: { source: 'project' as const, path: 'artifact-test.md' },
+      key: 'plan.json',
+      timestamp: '2026-05-08T00:00:00.000Z',
+    };
+    const review = {
+      uri: 'rd://artifacts/ctx1/runs/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/review.json',
+      runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      contextId: 'ctx1',
+      runbook: { source: 'project' as const, path: 'artifact-test.md' },
+      key: 'review.json',
+      timestamp: '2026-05-08T00:00:00.000Z',
+    };
+
+    it('sets current-unit artifacts and merges accumulated artifactVars', () => {
+      const steps = inferSteps([
+        {
+          name: '1',
+          description: 'Only',
+          transitions: {
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+          },
+        },
+      ]);
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'ARTIFACTS_RESOLVED', artifacts: { PlanPath: plan } });
+      actor.send({ type: 'ARTIFACTS_RESOLVED', artifacts: { ReviewPath: review } });
+
+      const ctx = actor.getSnapshot().context;
+      expect(ctx.artifacts).toEqual({ ReviewPath: review });
+      expect(ctx.artifactVars).toEqual({ PlanPath: plan, ReviewPath: review });
+      actor.stop();
+    });
+
+    it('clears current-unit artifacts to an empty object without clearing accumulated artifactVars', () => {
+      const steps = inferSteps([
+        {
+          name: '1',
+          description: 'Only',
+          transitions: {
+            pass: { kind: 'pass' as const, retry: 0, action: { type: 'COMPLETE' as const } },
+            fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+          },
+        },
+      ]);
+      const machine = compileRunbookToMachine(steps);
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({ type: 'ARTIFACTS_RESOLVED', artifacts: { PlanPath: plan } });
+      actor.send({ type: 'ARTIFACTS_RESOLVED', artifacts: {} });
+
+      const ctx = actor.getSnapshot().context;
+      expect(ctx.artifacts).toEqual({});
+      expect(ctx.artifactVars).toEqual({ PlanPath: plan });
+      actor.stop();
+    });
+  });
+
   describe('OUTPUTS actions', () => {
     // Compiler-only actor tests intentionally assert structural placement of
     // storeStepOutputs. Naked step/substep OUTPUTS are file-backed channels:

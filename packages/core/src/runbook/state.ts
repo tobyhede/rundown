@@ -19,6 +19,7 @@ import {
   applyOp,
   merge,
   type ArtifactVarsOp,
+  type CurrentArtifactsOp,
   type FrameEntriesOp,
   type ResolvedCompletionsOp,
   type TemplateVarsOp,
@@ -47,7 +48,7 @@ import {
 } from '../paths.js';
 
 /** Current persisted state schema version. Bump whenever RunbookState shape changes incompatibly. */
-const CURRENT_SCHEMA_VERSION = 3;
+const CURRENT_SCHEMA_VERSION = 4;
 
 function patchSnapshotSubstepStates(
   snapshot: unknown,
@@ -426,6 +427,7 @@ export class RunbookStateManager {
         | 'variables'
         | 'templateVars'
         | 'artifactVars'
+        | 'artifacts'
         | 'resolvedCompletions'
         | 'frameEntries'
       >
@@ -437,6 +439,7 @@ export class RunbookStateManager {
       readonly variables?: VariablesOp;
       readonly templateVars?: TemplateVarsOp;
       readonly artifactVars?: ArtifactVarsOp;
+      readonly artifacts?: CurrentArtifactsOp;
       readonly resolvedCompletions?: ResolvedCompletionsOp;
       readonly frameEntries?: FrameEntriesOp;
     },
@@ -453,6 +456,7 @@ export class RunbookStateManager {
       variables: variablesOp,
       templateVars: templateVarsOp,
       artifactVars: artifactVarsOp,
+      artifacts: artifactsOp,
       resolvedCompletions: resolvedCompletionsOp,
       frameEntries: frameEntriesOp,
       ...restUpdates
@@ -478,6 +482,9 @@ export class RunbookStateManager {
         : {}),
       ...(artifactVarsOp !== undefined
         ? { artifactVars: brandArtifactVars(applyOp(existing.artifactVars, artifactVarsOp)) }
+        : {}),
+      ...(artifactsOp !== undefined
+        ? { artifacts: brandArtifactVars(applyOp(existing.artifacts, artifactsOp)) }
         : {}),
       ...(resolvedCompletionsOp !== undefined
         ? { resolvedCompletions: applyOp(existing.resolvedCompletions, resolvedCompletionsOp) }

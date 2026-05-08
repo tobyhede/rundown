@@ -475,7 +475,7 @@ rd echo "hello"
       updatedAt: new Date().toISOString(),
       runbookSrc, // Include runbookSrc so pop can read steps
       lifecycle: 'running',
-      schemaVersion: 3,
+      schemaVersion: 4,
     };
     await writeFile(stateFile, JSON.stringify(state, null, 2));
 
@@ -509,7 +509,7 @@ rd echo "hello"
           updatedAt: new Date().toISOString(),
           runbookSrc: '# Parent\n\n## 1. Parent step\n- PASS CONTINUE\n',
           lifecycle: 'running',
-          schemaVersion: 3,
+          schemaVersion: 4,
         },
         null,
         2,
@@ -549,7 +549,7 @@ rd echo "hello"
             tokenHash: `sha256:${'a'.repeat(64)}`,
           },
           lifecycle: 'running',
-          schemaVersion: 3,
+          schemaVersion: 4,
         },
         null,
         2,

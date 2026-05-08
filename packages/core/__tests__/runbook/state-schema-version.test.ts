@@ -20,16 +20,16 @@ const BASE_SCHEMA_STATE = {
   updatedAt: '2026-04-19T00:00:00.000Z',
 };
 
-describe('RunbookStateSchema — schema version 3 and lifecycle fields', () => {
-  it('accepts state with schemaVersion 3 and lifecycle field', () => {
+describe('RunbookStateSchema — schema version 4 and lifecycle fields', () => {
+  it('accepts state with schemaVersion 4 and lifecycle field', () => {
     const parsed = RunbookStateSchema.parse({
       ...BASE_SCHEMA_STATE,
       variables: {},
       lifecycle: 'running',
-      schemaVersion: 3,
+      schemaVersion: 4,
     });
     expect(parsed.lifecycle).toBe('running');
-    expect(parsed.schemaVersion).toBe(3);
+    expect(parsed.schemaVersion).toBe(4);
   });
 
   it('accepts all lifecycle enum values', () => {
@@ -38,7 +38,7 @@ describe('RunbookStateSchema — schema version 3 and lifecycle fields', () => {
         ...BASE_SCHEMA_STATE,
         variables: {},
         lifecycle: lc,
-        schemaVersion: 3,
+        schemaVersion: 4,
       });
       expect(parsed.lifecycle).toBe(lc);
     }
@@ -50,7 +50,7 @@ describe('RunbookStateSchema — schema version 3 and lifecycle fields', () => {
         ...BASE_SCHEMA_STATE,
         variables: { completed: true },
         lifecycle: 'running',
-        schemaVersion: 3,
+        schemaVersion: 4,
       }),
     ).toThrow();
   });
@@ -61,7 +61,7 @@ describe('RunbookStateSchema — schema version 3 and lifecycle fields', () => {
         ...BASE_SCHEMA_STATE,
         variables: { count: 42 },
         lifecycle: 'running',
-        schemaVersion: 3,
+        schemaVersion: 4,
       }),
     ).toThrow();
   });
@@ -71,7 +71,7 @@ describe('RunbookStateSchema — schema version 3 and lifecycle fields', () => {
       ...BASE_SCHEMA_STATE,
       variables: {},
       lifecycle: 'running',
-      schemaVersion: 3,
+      schemaVersion: 4,
     });
     expect(parsed.variables).toEqual({});
   });
@@ -81,7 +81,7 @@ describe('RunbookStateSchema — schema version 3 and lifecycle fields', () => {
       ...BASE_SCHEMA_STATE,
       variables: { env: 'staging', version: '1.2.3' },
       lifecycle: 'running',
-      schemaVersion: 3,
+      schemaVersion: 4,
     });
     expect(parsed.variables).toEqual({ env: 'staging', version: '1.2.3' });
   });
@@ -104,12 +104,39 @@ describe('RunbookStateSchema — schema version 3 and lifecycle fields', () => {
         Reviews: [artifact],
       },
       lifecycle: 'running',
-      schemaVersion: 3,
+      schemaVersion: 4,
     });
 
     expect(parsed.artifactVars).toEqual({
       PlanPath: artifact,
       Reviews: [artifact],
+    });
+  });
+
+  it('accepts current-unit artifacts with exact and wildcard artifact records', () => {
+    const artifact = {
+      uri: 'rd://artifacts/ctx1/runs/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
+      runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      contextId: 'ctx1',
+      runbook: { source: 'project', path: 'planning/write-plan.runbook.md' },
+      key: 'plan.json',
+      timestamp: '2026-05-08T00:00:00.000Z',
+    };
+
+    const parsed = RunbookStateSchema.parse({
+      ...BASE_SCHEMA_STATE,
+      variables: {},
+      artifacts: {
+        PlanPath: artifact,
+        Plans: [artifact],
+      },
+      lifecycle: 'running',
+      schemaVersion: 4,
+    });
+
+    expect(parsed.artifacts).toEqual({
+      PlanPath: artifact,
+      Plans: [artifact],
     });
   });
 });
@@ -169,19 +196,34 @@ describe('RunbookStateManager.load() — stale state enforcement', () => {
     expect(result).toBeNull();
   });
 
-  it('loads valid v3 state successfully', async () => {
+  it('loads valid v4 state successfully', async () => {
     const runsDir = path.join(tmpDir, '.rundown', 'runs');
     await fs.mkdir(runsDir, { recursive: true });
+    const v4State = {
+      ...STALE_V2_STATE,
+      runbook: { source: 'project', path: 'x.md' },
+      schemaVersion: 4,
+    };
+    await fs.writeFile(path.join(runsDir, `${v4State.id}.json`), JSON.stringify(v4State, null, 2));
+
+    const result = await manager.load(v4State.id);
+    expect(result).not.toBeNull();
+    expect(result?.id).toBe(v4State.id);
+  });
+
+  it('throws StaleRunbookStateError when loading v3 state under the v4 schema', async () => {
+    const runsDir = path.join(tmpDir, '.rundown', 'runs');
+    await fs.mkdir(runsDir, { recursive: true });
+    const id = 'rd_33333333333333333333333333333333';
     const v3State = {
       ...STALE_V2_STATE,
+      id,
       runbook: { source: 'project', path: 'x.md' },
       schemaVersion: 3,
     };
-    await fs.writeFile(path.join(runsDir, `${v3State.id}.json`), JSON.stringify(v3State, null, 2));
+    await fs.writeFile(path.join(runsDir, `${id}.json`), JSON.stringify(v3State, null, 2));
 
-    const result = await manager.load(v3State.id);
-    expect(result).not.toBeNull();
-    expect(result?.id).toBe(v3State.id);
+    await expect(manager.load(id)).rejects.toBeInstanceOf(StaleRunbookStateError);
   });
 
   it('rejects state with missing schemaVersion', async () => {
@@ -199,7 +241,7 @@ describe('RunbookStateManager.load() — stale state enforcement', () => {
     const id = 'rd_ffffffffffffffffffffffffffffffff';
     await fs.writeFile(
       path.join(runsDir, `${id}.json`),
-      JSON.stringify({ ...STALE_V2_STATE, id, schemaVersion: 4 }, null, 2),
+      JSON.stringify({ ...STALE_V2_STATE, id, schemaVersion: 5 }, null, 2),
     );
     await expect(manager.load(id)).rejects.toBeInstanceOf(StaleRunbookStateError);
   });

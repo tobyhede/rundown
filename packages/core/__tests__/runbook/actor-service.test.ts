@@ -737,6 +737,56 @@ describe('RunbookActorService', () => {
       }
     });
 
+    it('mirrors current-unit artifacts from actor context', async () => {
+      const harness = await createLifecycleHarness('## 1. Only\n- PASS COMPLETE\n- FAIL STOP\n');
+      try {
+        const actor = mockActor({
+          value: 'step::1',
+          context: {
+            variables: {},
+            retryCount: 0,
+            artifacts: { PlanPath: ARTIFACT_RECORD },
+            artifactVars: { PlanPath: ARTIFACT_RECORD },
+          },
+        });
+
+        const { state } = await harness.service.updateFromActor(
+          harness.state.id,
+          actor,
+          harness.steps,
+        );
+
+        expect(state.artifacts).toEqual({ PlanPath: ARTIFACT_RECORD });
+        expect(state.artifactVars).toEqual({ PlanPath: ARTIFACT_RECORD });
+      } finally {
+        harness.actor.stop();
+        await rm(harness.testDir, { recursive: true, force: true });
+      }
+    });
+
+    it('preserves persisted current-unit artifacts when actor context omits the field', async () => {
+      const harness = await createLifecycleHarness('## 1. Only\n- PASS COMPLETE\n- FAIL STOP\n', {
+        artifacts: replace({ PlanPath: ARTIFACT_RECORD }),
+      });
+      try {
+        const actor = mockActor({
+          value: 'step::1',
+          context: { variables: {}, retryCount: 0 },
+        });
+
+        const { state } = await harness.service.updateFromActor(
+          harness.state.id,
+          actor,
+          harness.steps,
+        );
+
+        expect(state.artifacts).toEqual({ PlanPath: ARTIFACT_RECORD });
+      } finally {
+        harness.actor.stop();
+        await rm(harness.testDir, { recursive: true, force: true });
+      }
+    });
+
     it('persists lifecycle = "completed" when machine reaches COMPLETE', async () => {
       const harness = await createLifecycleHarness('## 1. Only\n- PASS COMPLETE\n- FAIL STOP\n');
       try {

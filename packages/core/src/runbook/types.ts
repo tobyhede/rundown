@@ -768,6 +768,12 @@ export interface RunbookState {
    * must never overwrite this map.
    */
   readonly artifactVars?: ArtifactVars;
+  /**
+   * Current execution unit ARTIFACTS working set. Replaced on every active-unit
+   * resolution and is `{}` for units without ARTIFACTS. Mirrored from XState
+   * machine context after `ARTIFACTS_RESOLVED` is dispatched.
+   */
+  readonly artifacts?: ArtifactVars;
   readonly steps: readonly StepState[];
 
   // Orchestration fields

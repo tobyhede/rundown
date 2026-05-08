@@ -520,6 +520,7 @@ const RunbookStateObjectSchema = z
     retryCount: z.number().nonnegative().int(),
     variables: z.record(z.string(), z.string()),
     artifactVars: z.record(z.string(), ArtifactVarValueSchema).optional(),
+    artifacts: z.record(z.string(), ArtifactVarValueSchema).optional(),
     steps: z.array(
       z.object({
         id: z.string(),
@@ -846,6 +847,10 @@ export function makeRunbookStateSchema(projectRoot: string): z.ZodTypeAny {
     ),
     variables: z.record(z.string(), z.string()).transform((v) => brandStoredOutputs(v)),
     artifactVars: z
+      .record(z.string(), ArtifactVarValueSchema)
+      .optional()
+      .transform((v) => (v === undefined ? undefined : brandArtifactVars(v))),
+    artifacts: z
       .record(z.string(), ArtifactVarValueSchema)
       .optional()
       .transform((v) => (v === undefined ? undefined : brandArtifactVars(v))),

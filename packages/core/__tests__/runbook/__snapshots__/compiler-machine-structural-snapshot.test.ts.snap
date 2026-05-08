@@ -17,6 +17,9 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
   "id": "runbook",
   "initial": "step::1::1",
   "on": {
+    "ARTIFACTS_RESOLVED": {
+      "actions": "[fn]",
+    },
     "PENDING_FRONTIER_CONSUMED": {
       "actions": "[fn]",
     },
@@ -271,6 +274,9 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
   "id": "runbook",
   "initial": "step::1::1",
   "on": {
+    "ARTIFACTS_RESOLVED": {
+      "actions": "[fn]",
+    },
     "PENDING_FRONTIER_CONSUMED": {
       "actions": "[fn]",
     },
@@ -576,6 +582,9 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
   "id": "runbook",
   "initial": "step::1",
   "on": {
+    "ARTIFACTS_RESOLVED": {
+      "actions": "[fn]",
+    },
     "PENDING_FRONTIER_CONSUMED": {
       "actions": "[fn]",
     },
@@ -754,6 +763,9 @@ exports[`compileRunbookToMachine (lifecycle cleanup structural snapshot) produce
   "id": "runbook",
   "initial": "step::1::1",
   "on": {
+    "ARTIFACTS_RESOLVED": {
+      "actions": "[fn]",
+    },
     "PENDING_FRONTIER_CONSUMED": {
       "actions": "[fn]",
     },

@@ -317,6 +317,17 @@ jest.unstable_mockModule('@rundown-org/core', () => {
     partitionOutputDeclarations: (jest.fn() as any).mockReturnValue({ naked: [], expression: [] }),
     prepareOutputChannels: (jest.fn() as any).mockResolvedValue({ env: {}, prepared: [] }),
     readCapturedOutputs: (jest.fn() as any).mockResolvedValue({}),
+    resolveCurrentExecutionUnit: jest.fn(
+      (
+        currentStep: { kind?: string; substeps?: ReadonlyArray<{ id: string }> },
+        substepId: string | undefined,
+      ) => {
+        if (!substepId || !currentStep.substeps?.length) {
+          return currentStep;
+        }
+        return currentStep.substeps.find((s) => s.id === substepId) ?? currentStep;
+      },
+    ),
   };
 });
 

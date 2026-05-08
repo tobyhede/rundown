@@ -33,6 +33,7 @@ export {
   merge,
   replace,
   type ArtifactVarsOp,
+  type CurrentArtifactsOp,
   type FrameEntriesOp,
   type MergeOp,
   type ReplaceOp,

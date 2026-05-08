@@ -61,13 +61,22 @@ export type VariablesOp = MergeOp<string>;
 export type TemplateVarsOp = ReplaceOp<Readonly<Record<string, TemplateVarValue>>>;
 
 /**
- * Op shape accepted for `RunbookState.artifactVars`. Both ops are real:
- * `resolveArtifactsForRun` adds entries (merge); the actor mirror replays
- * the full XState context (replace).
+ * Op shape accepted for `RunbookState.artifactVars`. The actor mirror replays
+ * the full XState context (replace). Merge remains supported for callers that
+ * incrementally extend the accumulated map.
  */
 export type ArtifactVarsOp =
   | MergeOp<ArtifactVarValue>
   | ReplaceOp<Readonly<Record<string, ArtifactVarValue>>>;
+
+/**
+ * Op shape accepted for `RunbookState.artifacts`.
+ *
+ * The actor mirror owns the full current-unit working set, so this field is
+ * replace-only. Do not add merge support: `{}` is a meaningful value indicating
+ * that the active execution unit has no ARTIFACTS declarations.
+ */
+export type CurrentArtifactsOp = ReplaceOp<Readonly<Record<string, ArtifactVarValue>>>;
 
 /**
  * Op shape accepted for `RunbookState.resolvedCompletions`. `recordCompletion`
