@@ -819,6 +819,35 @@ describe('RunbookActorService', () => {
       }
     });
 
+    it('mirrors current-unit artifacts and accumulated artifactVars on a terminal snapshot', async () => {
+      const harness = await createLifecycleHarness('## 1. Only\n- PASS COMPLETE\n- FAIL STOP\n');
+      try {
+        const actor = mockActor({
+          value: 'COMPLETE',
+          context: {
+            variables: {},
+            retryCount: 0,
+            lifecycle: 'completed',
+            artifacts: { PlanPath: ARTIFACT_RECORD },
+            artifactVars: { PlanPath: ARTIFACT_RECORD },
+          },
+        });
+
+        const { state } = await harness.service.updateFromActor(
+          harness.state.id,
+          actor,
+          harness.steps,
+        );
+
+        expect(state.lifecycle).toBe('completed');
+        expect(state.artifacts).toEqual({ PlanPath: ARTIFACT_RECORD });
+        expect(state.artifactVars).toEqual({ PlanPath: ARTIFACT_RECORD });
+      } finally {
+        harness.actor.stop();
+        await rm(harness.testDir, { recursive: true, force: true });
+      }
+    });
+
     it('persists lifecycle = "running" for non-terminal snapshots', async () => {
       const harness = await createLifecycleHarness(
         '## 1. First\n- PASS CONTINUE\n- FAIL STOP\n\n## 2. Last\n- PASS COMPLETE\n- FAIL STOP\n',

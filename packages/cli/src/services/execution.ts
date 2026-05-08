@@ -811,6 +811,11 @@ export async function runExecutionLoop(
       steps,
     );
     if (artifactResolution.status === 'missing-run') {
+      // The run was deleted concurrently (pruned, claimed elsewhere). Mirrors
+      // the silent-stop pattern at the top-level `manager.load` failure
+      // earlier in this function — both cases signify "the run no longer
+      // exists on disk," not an in-band runtime stop, so no RUNBOOK_STOPPED
+      // event or terminal release is emitted.
       return 'stopped';
     }
     currentState = artifactResolution.state;

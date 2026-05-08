@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from '@jest/globals';
+import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import * as fsp from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -173,5 +173,53 @@ describe('ArtifactRuntimeService', () => {
     if (result.status !== 'resolved') throw new Error('expected resolved');
     expect(result.artifacts).toHaveProperty('ChildPath');
     expect(result.artifacts).not.toHaveProperty('ParentPath');
+
+    const loaded = await manager.load(state.id);
+    expect(loaded?.artifacts).toHaveProperty('ChildPath');
+    expect(loaded?.artifacts).not.toHaveProperty('ParentPath');
+  });
+
+  it('returns missing-run when the persisted state is absent', async () => {
+    const cwd = await tempCwd();
+    const manager = new RunbookStateManager(cwd);
+    const actorService = new RunbookActorService(manager);
+    const service = new ArtifactRuntimeService(manager, actorService);
+
+    const result = await service.resolveCurrentUnitArtifacts(
+      'rd_ffffffffffffffffffffffffffffffff',
+      [],
+    );
+
+    expect(result).toEqual({ status: 'missing-run' });
+  });
+
+  it('skips dispatch when the active unit has no ARTIFACTS and persisted state.artifacts is already empty', async () => {
+    const cwd = await tempCwd();
+    const manager = new RunbookStateManager(cwd);
+    const actorService = new RunbookActorService(manager);
+    const service = new ArtifactRuntimeService(manager, actorService);
+    const steps = [
+      makeBaseStep({
+        name: '1',
+        description: 'No artifacts',
+        transitions: {
+          pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+          fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+        },
+      }),
+    ];
+    const runbook = runbookWithSteps(steps);
+    const state = await createRun(manager, runbook);
+    await actorService.initializeState(state.id, steps);
+    await manager.update(state.id, { artifacts: replace({}) });
+
+    const sendAndSyncSpy = jest.spyOn(actorService, 'sendAndSync');
+
+    const result = await service.resolveCurrentUnitArtifacts(state.id, steps);
+
+    expect(result).toMatchObject({ status: 'resolved', artifacts: {} });
+    expect(sendAndSyncSpy).not.toHaveBeenCalled();
+
+    sendAndSyncSpy.mockRestore();
   });
 });

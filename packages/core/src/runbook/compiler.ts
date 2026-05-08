@@ -12,7 +12,7 @@ import type {
   ArtifactVarValue,
 } from './types.js';
 import { isResolvedVariableForContext } from './types.js';
-import type { ArtifactVars } from './effective-vars.js';
+import { brandArtifactVars, type ArtifactVars } from './effective-vars.js';
 import type { StepId } from './step-id.js';
 import type { ForClause, OutputDeclaration } from '@rundown-org/parser';
 import {
@@ -2759,17 +2759,17 @@ export function compileRunbookToMachine(
         actions: runbookSetup.assign({
           artifacts: ({ event }) => {
             assertEvent(event, 'ARTIFACTS_RESOLVED');
-            return event.artifacts as ArtifactVars;
+            return brandArtifactVars(event.artifacts);
           },
           artifactVars: ({ context, event }) => {
             assertEvent(event, 'ARTIFACTS_RESOLVED');
             if (Object.keys(event.artifacts).length === 0) {
               return context.artifactVars;
             }
-            return {
+            return brandArtifactVars({
               ...(context.artifactVars ?? {}),
               ...event.artifacts,
-            } as ArtifactVars;
+            });
           },
         }),
       },

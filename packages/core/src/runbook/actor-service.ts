@@ -315,8 +315,11 @@ export class RunbookActorService {
         snapshot.context && 'activeFrameKey' in snapshot.context
           ? { activeFrameKey: snapshot.context.activeFrameKey }
           : {};
-      // Same `'in'`-vs-`!== undefined` rationale as activeFrameKeyTermPatch
-      // above: preserves persisted value when context omits the field.
+      // Diverges from activeFrameKeyTermPatch above: that one mirrors `undefined`
+      // because exiting an active frame is a meaningful state. The artifact
+      // fields are replace-only with `{}` as the meaningful "no ARTIFACTS"
+      // sentinel, so a `undefined` here means "no mirror this turn" and the
+      // persisted value should be preserved.
       const artifactVarsTermPatch =
         snapshot.context &&
         'artifactVars' in snapshot.context &&
@@ -407,8 +410,11 @@ export class RunbookActorService {
       snapshot.context && 'activeFrameKey' in snapshot.context
         ? { activeFrameKey: snapshot.context.activeFrameKey }
         : {};
-    // Same `'in'`-vs-`!== undefined` rationale as activeFrameKeyPatch above:
-    // preserves persisted value when context omits the field.
+    // Diverges from activeFrameKeyPatch above: that one mirrors `undefined`
+    // because exiting an active frame is a meaningful state. The artifact
+    // fields are replace-only with `{}` as the meaningful "no ARTIFACTS"
+    // sentinel, so a `undefined` here means "no mirror this turn" and the
+    // persisted value should be preserved.
     const artifactVarsPatch =
       snapshot.context &&
       'artifactVars' in snapshot.context &&

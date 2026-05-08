@@ -37,10 +37,15 @@ jest.unstable_mockModule('@rundown-org/core', () => {
     countNumberedSteps,
     mergeEffectiveVars: jest.fn(
       (
-        state: { templateVars?: Record<string, unknown>; variables?: Record<string, string> },
+        state: {
+          templateVars?: Record<string, unknown>;
+          artifactVars?: Record<string, unknown>;
+          variables?: Record<string, string>;
+        },
         extraVars?: Record<string, unknown>,
       ) => ({
         ...(state.templateVars ?? {}),
+        ...(state.artifactVars ?? {}),
         ...(state.variables ?? {}),
         ...(extraVars ?? {}),
       }),
@@ -494,11 +499,13 @@ describe('vars field', () => {
 
 describe('mergeEffectiveVars mock contract', () => {
   // Direct gate against mock drift: the mock must match production's
-  // (state, extraVars?) signature with precedence templateVars < variables < extraVars.
+  // (state, extraVars?) signature with precedence
+  // templateVars < artifactVars < variables < extraVars.
   // See packages/core/src/runbook/effective-vars.ts:mergeEffectiveVars.
-  it('applies precedence extraVars > variables > templateVars', () => {
+  it('applies precedence extraVars > variables > artifactVars > templateVars', () => {
     const state = {
       templateVars: { key: 'from-templateVars', tOnly: 't' },
+      artifactVars: { key: 'from-artifactVars', aOnly: 'a' },
       variables: { key: 'from-variables', vOnly: 'v' },
     };
     const extraVars = { key: 'from-extraVars', eOnly: 'e' };
@@ -511,6 +518,7 @@ describe('mergeEffectiveVars mock contract', () => {
     expect(merged).toEqual({
       key: 'from-extraVars',
       tOnly: 't',
+      aOnly: 'a',
       vOnly: 'v',
       eOnly: 'e',
     });
