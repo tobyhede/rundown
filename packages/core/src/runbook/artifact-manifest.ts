@@ -173,19 +173,39 @@ export async function readArtifactManifest(
 }
 
 /**
- * Coalesce repeated manifest rows by context, run, and artifact key.
+ * Coalesce repeated manifest rows by artifact identity.
+ *
+ * **Identity:** `(contextId, runId, runbook.source, runbook.path, key)`.
+ *
+ * **Selection rule:** the newest `timestamp` wins.
+ *
+ * **Tie-break rule:** when two rows share the same identity AND the same
+ * timestamp, the row appearing LATER in the input order wins. This is
+ * implemented by the `>=` comparison below (not `>`); equal timestamps
+ * deliberately allow the later row to overwrite the earlier one. This rule
+ * is observable to callers and stable: it lets a caller append a duplicate
+ * identity row to the manifest and have the new row take precedence on the
+ * next coalesced read.
  *
  * @param records - Manifest records to coalesce
- * @returns Records with duplicate identities reduced to the newest timestamp
+ * @returns Records with duplicate identities reduced to the winning row
  */
 export function coalesceManifestRecords(
   records: readonly ArtifactManifestRecord[],
 ): ArtifactManifestRecord[] {
   const byIdentity = new Map<string, ArtifactManifestRecord>();
   for (const record of records) {
-    const identity = `${record.contextId}\0${record.runId}\0${record.key}`;
+    const identity = [
+      record.contextId,
+      record.runId,
+      record.runbook.source,
+      record.runbook.path,
+      record.key,
+    ].join('\0');
     const existing = byIdentity.get(identity);
-    if (existing === undefined || record.timestamp > existing.timestamp) {
+    // `>=` (not `>`) implements the tie-break rule documented above:
+    // equal timestamps allow the later row to overwrite the earlier one.
+    if (existing === undefined || record.timestamp >= existing.timestamp) {
       byIdentity.set(identity, record);
     }
   }

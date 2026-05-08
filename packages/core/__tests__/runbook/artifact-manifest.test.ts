@@ -151,6 +151,30 @@ describe('artifact manifest storage', () => {
     expect(coalesceManifestRecords([record, newer])).toEqual([newer]);
   });
 
+  it('does not coalesce records from different runbook refs', () => {
+    const sameRunAndKeyDifferentRunbook = withRunId(RUN_ID, {
+      runbook: { source: 'project', path: 'planning/write-plan.runbook.md' },
+      timestamp: '2026-05-04T04:15:24.000Z',
+    });
+
+    expect(coalesceManifestRecords([record, sameRunAndKeyDifferentRunbook])).toEqual([
+      record,
+      sameRunAndKeyDifferentRunbook,
+    ]);
+  });
+
+  it('breaks coalescing timestamp ties by later manifest row', () => {
+    const first = withRunId(RUN_ID, { timestamp: '2026-05-04T03:15:24.000Z' });
+    const later = withRunId(RUN_ID, {
+      timestamp: '2026-05-04T03:15:24.000Z',
+      uri: first.uri,
+    });
+
+    const result = coalesceManifestRecords([first, later]);
+    expect(result).toEqual([later]);
+    expect(result[0]).toBe(later);
+  });
+
   it('returns an empty manifest for missing, empty, and whitespace-only files', async () => {
     const missingCwd = await tempCwd();
     await expect(readArtifactManifest(optionsFor(missingCwd), 'ctx1')).resolves.toEqual([]);
