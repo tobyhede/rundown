@@ -86,6 +86,140 @@ describe('RunbookStateManager', () => {
     expect(loaded?.variables).toEqual({ PlanPath: 'output-mask' });
   });
 
+  it('resolveArtifactsForRun persists resolved artifactVars and leaves variables untouched', async () => {
+    const state = await manager.create(
+      { source: 'project', path: 'test.runbook.md' },
+      mockRunbook,
+      {
+        runbookPath: 'test.runbook.md',
+        runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as RunId,
+        templateVars: {
+          WorkPath: '.rundown/work',
+          ContextId: 'ctx1',
+          RunId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          RunbookRef: { source: 'project', path: 'test.runbook.md' },
+        },
+      },
+    );
+    await manager.update(state.id, { variables: { PlanPath: 'output-mask' } });
+
+    const artifacts = await manager.resolveArtifactsForRun(state.id, [
+      { name: 'PlanPath', key: 'plan.json', kind: 'exact' },
+    ]);
+
+    const loaded = await manager.load(state.id);
+    expect(artifacts.PlanPath).toMatchObject({ key: 'plan.json' });
+    expect(loaded?.artifactVars?.PlanPath).toEqual(artifacts.PlanPath);
+    expect(loaded?.variables).toEqual({ PlanPath: 'output-mask' });
+  });
+
+  it('resolveArtifactsForRun throws when WorkPath is missing', async () => {
+    const state = await manager.create(
+      { source: 'project', path: 'test.runbook.md' },
+      mockRunbook,
+      {
+        runbookPath: 'test.runbook.md',
+        runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as RunId,
+        templateVars: {
+          ContextId: 'ctx1',
+          RunId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        },
+      },
+    );
+    await expect(
+      manager.resolveArtifactsForRun(state.id, [
+        { name: 'PlanPath', key: 'plan.json', kind: 'exact' },
+      ]),
+    ).rejects.toThrow(/WorkPath/);
+  });
+
+  it('resolveArtifactsForRun throws when ContextId is missing', async () => {
+    const state = await manager.create(
+      { source: 'project', path: 'test.runbook.md' },
+      mockRunbook,
+      {
+        runbookPath: 'test.runbook.md',
+        runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as RunId,
+        templateVars: {
+          WorkPath: '.rundown/work',
+          RunId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        },
+      },
+    );
+    await expect(
+      manager.resolveArtifactsForRun(state.id, [
+        { name: 'PlanPath', key: 'plan.json', kind: 'exact' },
+      ]),
+    ).rejects.toThrow(/ContextId/);
+  });
+
+  it('resolveArtifactsForRun throws when run id is not found', async () => {
+    await expect(
+      manager.resolveArtifactsForRun('rd_zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz', [
+        { name: 'PlanPath', key: 'plan.json', kind: 'exact' },
+      ]),
+    ).rejects.toThrow(/not found/);
+  });
+
+  it('round-trips empty artifactVars through persistence', async () => {
+    const state = await manager.create(
+      { source: 'project', path: 'test.runbook.md' },
+      mockRunbook,
+      { runbookPath: 'test.runbook.md' },
+    );
+    await manager.update(state.id, { artifactVars: {} });
+    const loaded = await manager.load(state.id);
+    expect(loaded?.artifactVars ?? {}).toEqual({});
+  });
+
+  it('round-trips 100+ artifactVars entries through persistence', async () => {
+    const state = await manager.create(
+      { source: 'project', path: 'test.runbook.md' },
+      mockRunbook,
+      { runbookPath: 'test.runbook.md' },
+    );
+    const baseRecord = {
+      uri: 'rd://artifacts/ctx1/runs/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
+      runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      contextId: 'ctx1',
+      runbook: { source: 'project' as const, path: 'planning/write-plan.runbook.md' },
+      key: 'plan.json',
+      timestamp: '2026-05-07T00:00:00.000Z',
+    } satisfies ArtifactRecord;
+    const entries: Record<string, ArtifactRecord> = {};
+    for (let i = 0; i < 120; i++) {
+      entries[`Var${String(i)}`] = baseRecord;
+    }
+    await manager.update(state.id, { artifactVars: entries });
+    const loaded = await manager.load(state.id);
+    expect(Object.keys(loaded?.artifactVars ?? {})).toHaveLength(120);
+  });
+
+  it('subsequent resolveArtifactsForRun calls with the same alias name overwrite', async () => {
+    const state = await manager.create(
+      { source: 'project', path: 'test.runbook.md' },
+      mockRunbook,
+      {
+        runbookPath: 'test.runbook.md',
+        runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as RunId,
+        templateVars: {
+          WorkPath: '.rundown/work',
+          ContextId: 'ctx1',
+          RunId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          RunbookRef: { source: 'project', path: 'test.runbook.md' },
+        },
+      },
+    );
+    await manager.resolveArtifactsForRun(state.id, [
+      { name: 'Output', key: 'first.json', kind: 'exact' },
+    ]);
+    await manager.resolveArtifactsForRun(state.id, [
+      { name: 'Output', key: 'second.json', kind: 'exact' },
+    ]);
+    const loaded = await manager.load(state.id);
+    expect(loaded?.artifactVars?.Output).toMatchObject({ key: 'second.json' });
+  });
+
   describe('getChildRunbookResult', () => {
     it('should return pass when child has lifecycle completed', async () => {
       const child = await manager.create(

@@ -2,7 +2,7 @@
 import { randomBytes } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import type { OutputDeclaration } from '@rundown-org/parser';
+import type { ArtifactDeclaration, OutputDeclaration } from '@rundown-org/parser';
 import type { FrameKey } from './targeting.js';
 import type {
   RunbookState,
@@ -15,6 +15,10 @@ import type {
   TemplateVarValue,
   ArtifactVarValue,
 } from './types.js';
+import {
+  resolveArtifactDeclarations,
+  type ArtifactRunEligibility,
+} from './artifact-directive-resolver.js';
 import type { ClaimRecord } from './claim-id.js';
 import type { RunbookRef } from './runbook-ref.js';
 import { makeRunbookStateSchema, SessionDataSchema } from '../schemas.js';
@@ -399,6 +403,64 @@ export class RunbookStateManager {
 
     await this.save(updated);
     return updated;
+  }
+
+  /**
+   * Resolve one ARTIFACTS block for a persisted run and merge the result into
+   * `RunbookState.artifactVars`.
+   *
+   * This method is intentionally explicit: it does not inspect the active step
+   * or emit events. Phase 4 owns deciding when to call it at step/substep entry.
+   *
+   * @param id - Current run id
+   * @param declarations - Parser-owned artifact declarations for one execution unit
+   * @returns The current execution unit's resolved artifact working set
+   * @throws {Error} If the run is not found, is missing required built-ins
+   * (`WorkPath`, `ContextId`), has corrupt artifact manifests, or encounters
+   * unexpected artifact filesystem failures
+   */
+  async resolveArtifactsForRun(
+    id: string,
+    declarations: readonly ArtifactDeclaration[],
+  ): Promise<Record<string, ArtifactVarValue>> {
+    const state = await this.load(id);
+    if (!state) {
+      throw new Error(`Runbook ${id} not found`);
+    }
+    const workPath = state.templateVars?.WorkPath;
+    const contextId = state.templateVars?.ContextId;
+    if (typeof workPath !== 'string') {
+      throw new Error(`Runbook ${id} cannot resolve ARTIFACTS without string WorkPath`);
+    }
+    if (typeof contextId !== 'string') {
+      throw new Error(`Runbook ${id} cannot resolve ARTIFACTS without string ContextId`);
+    }
+
+    const runId: RunId = assertRunId(state.id);
+    const resolved = await resolveArtifactDeclarations(declarations, {
+      cwd: this.cwd,
+      workPath,
+      contextId,
+      runId,
+      runbook: state.runbook,
+      loadRunEligibility: async (otherRunId: RunId): Promise<ArtifactRunEligibility | null> => {
+        const other = await this.load(otherRunId);
+        if (!other) return null;
+        if (other.id === state.id) return null;
+        if (other.lifecycle === 'completed' && other.updatedAt) {
+          return { runId: otherRunId, terminalAt: other.updatedAt };
+        }
+        return null;
+      },
+    });
+
+    await this.update(id, {
+      artifactVars: {
+        ...(state.artifactVars ?? {}),
+        ...resolved,
+      },
+    });
+    return resolved;
   }
 
   /**
