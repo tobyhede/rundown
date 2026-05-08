@@ -75,7 +75,7 @@ Each task should produce self-contained changes that make sense independently.
 - PASS CONTINUE
 - FAIL STOP
 
-{{ path "plan.json" }}
+{{ PlanPath }}
 
 
 ## 8. Write the plan

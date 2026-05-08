@@ -50,7 +50,7 @@ Read the plan at `{{ PlanPath }}`.
 - PASS CONTINUE
 - FAIL STOP
 
-{{ path "review-plan-structural-integrity.json" }}
+{{ ReviewPath }}
 
 
 ## 5. Write the review

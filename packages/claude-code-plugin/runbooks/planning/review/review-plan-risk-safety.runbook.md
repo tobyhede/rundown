@@ -48,7 +48,7 @@ Read the plan at `{{ PlanPath }}`.
 - PASS CONTINUE
 - FAIL STOP
 
-{{ path "review-plan-risk-safety.json" }}
+{{ ReviewPath }}
 
 
 ## 5. Write the review

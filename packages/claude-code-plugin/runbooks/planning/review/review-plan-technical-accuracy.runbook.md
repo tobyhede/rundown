@@ -45,7 +45,7 @@ Read the plan at `{{ PlanPath }}`.
 - PASS CONTINUE
 - FAIL STOP
 
-{{ path "review-plan-technical-accuracy.json" }}
+{{ ReviewPath }}
 
 
 ## 5. Write the review

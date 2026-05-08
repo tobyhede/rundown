@@ -53,7 +53,8 @@ describe('OUTPUTS AST shape — snapshot', () => {
 - PASS CONTINUE
 - FAIL STOP
 `;
-    const { runbook } = parseRunbookDocument(md);
+    const { runbook, diagnostics } = parseRunbookDocument(md);
+    expect(diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
     // Snapshot only the outputs field for this step.
     expect(runbook.steps[0].outputs).toMatchSnapshot();
   });

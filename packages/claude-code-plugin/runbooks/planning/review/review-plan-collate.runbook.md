@@ -52,7 +52,7 @@ The combined context may influence recommended actions.
 - PASS CONTINUE
 - FAIL STOP
 
-{{ path "review-plan-collated.json" }}
+{{ ReviewPlanPath }}
 
 
 ## 5. Write the collated review

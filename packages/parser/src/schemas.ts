@@ -306,10 +306,13 @@ export type OutputDeclarationSchemaType = Readonly<z.output<typeof OutputDeclara
 export const EXACT_ARTIFACT_KEY_PATTERN = /^[A-Za-z0-9._-]+$/;
 
 /**
- * Shape of a wildcard artifact key — `[A-Za-z0-9._*?-]+` containing `*` or `?`.
- * Mirrors `wildcard_artifact_key` in docs/spec/grammar.md.
+ * Shape of a wildcard artifact key — `[A-Za-z0-9._*?-]+` with at least one
+ * `*` or `?` character. Mirrors `wildcard_artifact_key` in docs/spec/grammar.md.
+ * The leading lookahead enforces presence of a wildcard token so the pattern
+ * cannot match an exact-artifact-key shape (defense in depth — callers also
+ * gate the wildcard branch via `isWildcardArtifactKey`).
  */
-export const WILDCARD_ARTIFACT_KEY_PATTERN = /^[A-Za-z0-9._*?-]+$/;
+export const WILDCARD_ARTIFACT_KEY_PATTERN = /^(?=.*[*?])[A-Za-z0-9._*?-]+$/;
 
 /**
  * Valid transition kinds
