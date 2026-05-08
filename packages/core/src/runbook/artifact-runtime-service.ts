@@ -27,6 +27,13 @@ export interface ArtifactRuntimeMissingRun {
   readonly status: 'missing-run';
 }
 
+/**
+ * Result of {@link ArtifactRuntimeService.resolveCurrentUnitArtifacts}.
+ *
+ * Discriminated on `status`: `'resolved'` carries the updated state and
+ * current-unit artifacts; `'missing-run'` indicates the run was deleted
+ * concurrently and the caller should treat the runbook as stopped.
+ */
 export type ArtifactRuntimeResult = ArtifactRuntimeResolved | ArtifactRuntimeMissingRun;
 
 /**
