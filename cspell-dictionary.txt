@@ -64,6 +64,7 @@ delegatable
 deps
 deserialized
 dirfd
+documentational
 dogfooding
 dotdot
 émoji
@@ -74,6 +75,7 @@ exfiltration
 fdisk
 featurebranch
 finalvars
+footgun
 frontmatter
 gitdir
 gopath
@@ -115,6 +117,7 @@ netcat
 nocase
 nodenext
 nodenv
+nonmatching
 noninteractive
 normalise
 normaliser
