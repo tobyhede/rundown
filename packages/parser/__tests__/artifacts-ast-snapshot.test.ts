@@ -52,7 +52,8 @@ describe('ARTIFACTS AST shape — snapshot', () => {
 - PASS CONTINUE
 - FAIL STOP
 `;
-    const { runbook } = parseRunbookDocument(md);
+    const { runbook, diagnostics } = parseRunbookDocument(md);
+    expect(diagnostics.filter((d) => d.severity === 'error')).toEqual([]);
     expect({
       artifacts: runbook.steps[0].artifacts,
       outputs: runbook.steps[0].outputs,

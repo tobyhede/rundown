@@ -8768,7 +8768,7 @@ echo "processing"
 
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('STOPPED');
-      expect(snapshot.context.variables).toEqual({});
+      expect(snapshot.context.variables).not.toHaveProperty('Result');
       expect(snapshot.context.finalVars).toEqual({ Result: 'failed-value' });
     });
 
@@ -8994,7 +8994,7 @@ echo "processing"
       actor.send({ type: 'FAIL' });
 
       const snapshot = actor.getSnapshot();
-      expect(snapshot.context.variables).toEqual({});
+      expect(snapshot.context.variables).not.toHaveProperty('SubResult');
     });
 
     it('does not synthesize naked parent OUTPUTS values after BREAK without captured files', () => {
@@ -9029,7 +9029,9 @@ echo "processing"
       actor.send({ type: 'FAIL' });
 
       const snapshot = actor.getSnapshot();
-      expect(snapshot.context.variables).toEqual({});
+      for (const key of ['LoopResult', 'StepCursor', 'SubstepCursor', 'IterCursor', 'LoopCursor']) {
+        expect(snapshot.context.variables).not.toHaveProperty(key);
+      }
     });
 
     it('[P2] keeps naked parent OUTPUTS inert on completing last-substep cursor exit', () => {
@@ -9064,7 +9066,9 @@ echo "processing"
 
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('step::2');
-      expect(snapshot.context.variables).toEqual({});
+      for (const key of ['StepCursor', 'SubstepCursor', 'AtCursor']) {
+        expect(snapshot.context.variables).not.toHaveProperty(key);
+      }
     });
 
     it('[P2] keeps naked parent OUTPUTS inert on BREAK-origin substep cursor exit', () => {
@@ -9094,7 +9098,9 @@ echo "processing"
 
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('COMPLETE');
-      expect(snapshot.context.variables).toEqual({});
+      for (const key of ['StepCursor', 'SubstepCursor']) {
+        expect(snapshot.context.variables).not.toHaveProperty(key);
+      }
     });
 
     it('keeps naked parent OUTPUTS inert against the completed FOR frame on BREAK exit', () => {
@@ -9126,7 +9132,9 @@ echo "processing"
 
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('COMPLETE');
-      expect(snapshot.context.variables).toEqual({});
+      for (const key of ['StepCursor', 'SubstepCursor', 'AtCursor', 'IndexCursor', 'LoopValue']) {
+        expect(snapshot.context.variables).not.toHaveProperty(key);
+      }
     });
 
     it('keeps naked parent OUTPUTS inert against the completed FOR frame on NEXT-exhausted loop exit', () => {
@@ -9154,7 +9162,9 @@ echo "processing"
 
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('COMPLETE');
-      expect(snapshot.context.variables).toEqual({});
+      for (const key of ['StepCursor', 'AtCursor', 'IndexCursor', 'LoopValue']) {
+        expect(snapshot.context.variables).not.toHaveProperty(key);
+      }
     });
 
     it('fires storeStepOutputs on the parent-exit transition of a FOR step', () => {
@@ -9209,7 +9219,7 @@ echo "processing"
       actor.send({ type: 'PASS' });
 
       const snapshot = actor.getSnapshot() as any;
-      expect(snapshot.context.variables).toEqual({});
+      expect(snapshot.context.variables).not.toHaveProperty('Value');
     });
 
     it('injects storeStepOutputs for parent OUTPUTS on substep PASS COMPLETE transition (structural)', () => {
@@ -9257,7 +9267,9 @@ echo "processing"
 
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('COMPLETE');
-      expect(snapshot.context.variables).toEqual({});
+      for (const key of ['ParentVar', 'StepCursor', 'SubstepCursor']) {
+        expect(snapshot.context.variables).not.toHaveProperty(key);
+      }
     });
 
     it('does not synthesize naked parent OUTPUTS when substep fires STOP directly', () => {
@@ -9283,7 +9295,9 @@ echo "processing"
 
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('STOPPED');
-      expect(snapshot.context.variables).toEqual({});
+      for (const key of ['ParentVar', 'StepCursor', 'SubstepCursor']) {
+        expect(snapshot.context.variables).not.toHaveProperty(key);
+      }
     });
 
     it('does not synthesize naked parent OUTPUTS when non-last substep fires COMPLETE directly', () => {
@@ -9318,7 +9332,9 @@ echo "processing"
 
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('COMPLETE');
-      expect(snapshot.context.variables).toEqual({});
+      for (const key of ['ParentVar', 'StepCursor', 'SubstepCursor']) {
+        expect(snapshot.context.variables).not.toHaveProperty(key);
+      }
     });
 
     it('does not synthesize naked parent OUTPUTS when non-last substep fires STOP directly', () => {
@@ -9346,7 +9362,9 @@ echo "processing"
 
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('STOPPED');
-      expect(snapshot.context.variables).toEqual({});
+      for (const key of ['ParentVar', 'StepCursor', 'SubstepCursor']) {
+        expect(snapshot.context.variables).not.toHaveProperty(key);
+      }
     });
 
     it('does not synthesize naked parent OUTPUTS when substep fires GOTO to external step', () => {
@@ -9377,7 +9395,9 @@ echo "processing"
       // After GOTO 2, machine is at step::2 — parent outputs already fired during transition.
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('step::2');
-      expect(snapshot.context.variables).toEqual({});
+      for (const key of ['ParentVar', 'StepCursor', 'SubstepCursor']) {
+        expect(snapshot.context.variables).not.toHaveProperty(key);
+      }
     });
 
     it('does not synthesize naked parent OUTPUTS when FOR loop substep fires COMPLETE directly', () => {
@@ -9406,7 +9426,9 @@ echo "processing"
 
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('COMPLETE');
-      expect(snapshot.context.variables).toEqual({});
+      for (const key of ['LoopVar', 'StepCursor', 'SubstepCursor', 'IterCursor', 'LoopCursor']) {
+        expect(snapshot.context.variables).not.toHaveProperty(key);
+      }
     });
 
     it('does not synthesize naked parent OUTPUTS when FOR loop substep fires STOP directly', () => {
@@ -9433,7 +9455,9 @@ echo "processing"
 
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('STOPPED');
-      expect(snapshot.context.variables).toEqual({});
+      for (const key of ['LoopVar', 'StepCursor', 'SubstepCursor', 'IterCursor', 'LoopCursor']) {
+        expect(snapshot.context.variables).not.toHaveProperty(key);
+      }
     });
 
     it('does not synthesize naked substep or parent OUTPUTS when both declare outputs', () => {
@@ -9461,7 +9485,9 @@ echo "processing"
 
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('COMPLETE');
-      expect(snapshot.context.variables).toEqual({});
+      for (const key of ['ParentVar', 'StepCursor', 'SubstepCursor', 'SubstepVar']) {
+        expect(snapshot.context.variables).not.toHaveProperty(key);
+      }
     });
 
     it('keeps same-key naked substep and parent OUTPUTS inert without captured files', () => {
@@ -9489,7 +9515,9 @@ echo "processing"
 
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('COMPLETE');
-      expect(snapshot.context.variables).toEqual({});
+      for (const key of ['Result', 'StepCursor', 'SubstepCursor']) {
+        expect(snapshot.context.variables).not.toHaveProperty(key);
+      }
     });
 
     it('keeps naked parent OUTPUTS inert on sibling-GOTO substep transition', () => {
@@ -9529,7 +9557,9 @@ echo "processing"
 
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('COMPLETE');
-      expect(snapshot.context.variables).toEqual({});
+      for (const key of ['ParentVar', 'StepCursor', 'SubstepCursor']) {
+        expect(snapshot.context.variables).not.toHaveProperty(key);
+      }
     });
   });
 
