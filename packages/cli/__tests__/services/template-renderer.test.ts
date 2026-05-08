@@ -2390,24 +2390,28 @@ describe('substituteText with path helper', () => {
 });
 
 describe('substituteText with artifact helper', () => {
-  it('renders {{ artifact PlanPath }} as full record JSON', () => {
+  // Spec §9.3: `{{ artifact Var }}` renders artifact URI values with the same
+  // shape as the direct alias `{{ Var }}` — scalar URI for an ArtifactRecord,
+  // JSON array of URIs for ArtifactRecord[].
+
+  it('renders {{ artifact PlanPath }} as the artifact URI', () => {
     const out = substituteText(
       '{{ artifact PlanPath }}',
       { PlanPath: PLAN, WorkPath: '.rundown/work' },
       undefined,
       ARTIFACT_HELPER_OPTIONS,
     );
-    expect(JSON.parse(out)).toEqual(PLAN);
+    expect(out).toBe(PLAN.uri);
   });
 
-  it('renders {{ artifact Reviews }} as a JSON array of records', () => {
+  it('renders {{ artifact Reviews }} as a JSON array of URIs', () => {
     const out = substituteText(
       '{{ artifact Reviews }}',
       { Reviews: [REVIEW_A], WorkPath: '.rundown/work' },
       undefined,
       ARTIFACT_HELPER_OPTIONS,
     );
-    expect(JSON.parse(out)).toEqual([REVIEW_A]);
+    expect(out).toBe(JSON.stringify([REVIEW_A.uri]));
   });
 
   it('renders {{ artifact Reviews }} as "[]" for an empty ArtifactRecord[]', () => {

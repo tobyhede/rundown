@@ -86,10 +86,14 @@ describe('render projector properties', () => {
     );
   });
 
-  it('renderArtifactRecordValue array round-trips per element', () => {
+  it('renderArtifactRecordValue array projection is per-element URI (spec §9.3)', () => {
     fc.assert(
       fc.property(fc.array(recordArb, { maxLength: 10, minLength: 1 }), (records) => {
-        expect(JSON.parse(renderArtifactRecordValue(records, OPTIONS))).toEqual(records);
+        const parsed = JSON.parse(renderArtifactRecordValue(records, OPTIONS)) as string[];
+        expect(parsed).toHaveLength(records.length);
+        for (const [i, r] of records.entries()) {
+          expect(parsed[i]).toBe(r.uri);
+        }
       }),
     );
   });

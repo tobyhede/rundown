@@ -74,12 +74,18 @@ describe('renderArtifactPathValue (path helper)', () => {
 });
 
 describe('renderArtifactRecordValue (artifact helper)', () => {
-  it('renders an ArtifactRecord as its full JSON record', () => {
-    expect(renderArtifactRecordValue(PLAN, OPTIONS)).toBe(JSON.stringify(PLAN));
+  // Per spec §9.3 the `artifact` helper renders URI values with the same shape
+  // as direct-alias rendering — scalar URI for an ArtifactRecord, JSON array
+  // of URIs for ArtifactRecord[]. It is functionally identical to
+  // `renderArtifactValue`; the helper exists as an explicit author-visible
+  // surface for "render this as an artifact URI".
+
+  it('renders an ArtifactRecord as its URI string', () => {
+    expect(renderArtifactRecordValue(PLAN, OPTIONS)).toBe(PLAN.uri);
   });
 
-  it('renders an ArtifactRecord[] as a JSON array of records', () => {
-    expect(renderArtifactRecordValue([REVIEW_A], OPTIONS)).toBe(JSON.stringify([REVIEW_A]));
+  it('renders an ArtifactRecord[] as a JSON array of URIs', () => {
+    expect(renderArtifactRecordValue([REVIEW_A], OPTIONS)).toBe(JSON.stringify([REVIEW_A.uri]));
   });
 
   it('renders empty ArtifactRecord[] as "[]"', () => {

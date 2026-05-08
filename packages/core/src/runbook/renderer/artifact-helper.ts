@@ -107,21 +107,26 @@ export function renderArtifactPathValue(
 }
 
 /**
- * Render an artifact variable value as full record JSON (`{{ artifact Var }}`).
+ * Render an artifact variable value as URI(s) for the `{{ artifact Var }}` form.
  *
- * - `ArtifactRecord` -> JSON serialisation of the record.
- * - `ArtifactRecord[]` -> JSON array of records; empty array renders as `"[]"`.
+ * Per spec §9.3, the `artifact` helper "renders artifact URI values with the
+ * same scalar or array shape" — i.e. its output matches direct-alias rendering
+ * (`{{ Var }}`). The helper exists as an explicit, type-marked surface for
+ * authors who want to assert "render this as an artifact URI" at the call
+ * site; the projection itself is identical to `renderArtifactValue`.
+ *
+ * - `ArtifactRecord` -> the canonical artifact URI string.
+ * - `ArtifactRecord[]` -> JSON array of URI strings; empty array renders as `"[]"`.
  *
  * @param value - Artifact variable value
- * @param _options - Render options (unused; included for API symmetry)
- * @returns JSON string
+ * @param options - Render options (unused; included for API symmetry)
+ * @returns Rendered string
  */
 export function renderArtifactRecordValue(
   value: ArtifactVarValue,
-  _options: RenderArtifactOptions,
+  options: RenderArtifactOptions,
 ): string {
-  if (isArtifactRecordArray(value) && value.length === 0) return '[]';
-  return JSON.stringify(value);
+  return renderArtifactValue(value, options);
 }
 
 /**
