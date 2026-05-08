@@ -90,4 +90,34 @@ describe('ExecutionEventEmitter', () => {
 
     expect(received).toHaveLength(0);
   });
+
+  it('emits STEP_ENTERED with current-unit artifacts when provided', () => {
+    const received: RunbookEventV1[] = [];
+    emitter.subscribe((event) => received.push(event));
+    const artifact = {
+      uri: 'rd://artifacts/ctx1/runs/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
+      runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      contextId: 'ctx1',
+      runbook: { source: 'project' as const, path: 'test.runbook.md' },
+      key: 'plan.json',
+      timestamp: '2026-05-08T00:00:00.000Z',
+    };
+
+    emitter.emit('STEP_ENTERED', {
+      position: { current: '1', total: 1 },
+      stepName: '1',
+      description: 'Test step',
+      hasCommand: false,
+      isSubstep: false,
+      prompted: false,
+      artifacts: { PlanPath: artifact },
+    });
+
+    expect(received[0]).toMatchObject({
+      type: 'STEP_ENTERED',
+      payload: {
+        artifacts: { PlanPath: artifact },
+      },
+    });
+  });
 });

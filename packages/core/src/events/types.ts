@@ -1,6 +1,7 @@
 import type { StepPosition } from '../cli/types.js';
 import type { RunbookRef } from '../runbook/runbook-ref.js';
 import type { ActionType } from '../runbook/transition-kernel.js';
+import type { ArtifactVarValue } from '../runbook/types.js';
 
 // Re-export StepPosition for backwards compatibility and event payload typing
 export type { StepPosition };
@@ -69,6 +70,12 @@ export interface StepEnteredPayload {
    * The agent dispatches N subagents using these tokens, then calls `rd collect`.
    */
   readonly delegateFrontier?: ReadonlyArray<DelegateFrontierEntry>;
+  /**
+   * Current execution unit ARTIFACTS working set. Optional for compatibility with
+   * older event producers; subscribers must treat `undefined` and `{}` equivalently.
+   * Runtime CLI emitters send `{}` for units without ARTIFACTS declarations.
+   */
+  readonly artifacts?: Readonly<Record<string, ArtifactVarValue>>;
 }
 
 /** Payload emitted when a step command begins execution (COMMAND_STARTED event). */

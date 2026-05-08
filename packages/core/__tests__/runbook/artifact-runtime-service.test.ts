@@ -141,7 +141,7 @@ describe('ArtifactRuntimeService', () => {
     const manager = new RunbookStateManager(cwd);
     const actorService = new RunbookActorService(manager);
     const service = new ArtifactRuntimeService(manager, actorService);
-    const steps: ResolvedRunbook['steps'] = [
+    const steps = [
       makeResolvedStepWithSubsteps({
         name: '1',
         description: 'Parent',
