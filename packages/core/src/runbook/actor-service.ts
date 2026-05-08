@@ -93,6 +93,7 @@ function hydrateSnapshot(
       ...baseSnapshot.context,
       substepStates: state.substepStates ?? baseSnapshot.context.substepStates,
       activeFrameKey: state.activeFrameKey ?? baseSnapshot.context.activeFrameKey,
+      artifactVars: state.artifactVars ?? baseSnapshot.context.artifactVars,
     },
   } as unknown as Snapshot<unknown>;
 }
@@ -143,6 +144,7 @@ export class RunbookActorService {
       frontmatterOutputs: state.frontmatterOutputs,
       substepStates: state.substepStates,
       activeFrameKey: state.activeFrameKey,
+      artifactVars: state.artifactVars,
     });
   }
 
@@ -298,6 +300,10 @@ export class RunbookActorService {
         snapshot.context && 'activeFrameKey' in snapshot.context
           ? { activeFrameKey: snapshot.context.activeFrameKey }
           : {};
+      const artifactVarsTermPatch =
+        snapshot.context && 'artifactVars' in snapshot.context
+          ? { artifactVars: snapshot.context.artifactVars }
+          : {};
       const state = await this.manager.update(id, {
         variables,
         finalVars,
@@ -308,6 +314,7 @@ export class RunbookActorService {
         iterationResults: undefined,
         ...substepStatesTermPatch,
         ...activeFrameKeyTermPatch,
+        ...artifactVarsTermPatch,
       });
       return { state, snapshot };
     }
@@ -374,6 +381,10 @@ export class RunbookActorService {
       snapshot.context && 'activeFrameKey' in snapshot.context
         ? { activeFrameKey: snapshot.context.activeFrameKey }
         : {};
+    const artifactVarsPatch =
+      snapshot.context && 'artifactVars' in snapshot.context
+        ? { artifactVars: snapshot.context.artifactVars }
+        : {};
 
     const state = await this.manager.update(id, {
       step: stepName, // string
@@ -388,6 +399,7 @@ export class RunbookActorService {
       lastAction,
       ...substepStatesPatch,
       ...activeFrameKeyPatch,
+      ...artifactVarsPatch,
     });
     return { state, snapshot };
   }
