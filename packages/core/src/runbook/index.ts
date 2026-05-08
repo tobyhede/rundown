@@ -146,12 +146,18 @@ export {
   appendArtifactManifestRecordSync,
   coalesceManifestRecords,
   findArtifactMatches,
+  isExistingRegularArtifactFile,
   manifestPathForContext,
   readArtifactManifest,
   type ArtifactManifestRecord,
   type ArtifactSelectorMatch,
   type FindArtifactOptions,
 } from './artifact-manifest.js';
+export {
+  resolveArtifactDeclarations,
+  type ArtifactRunEligibility,
+  type ResolveArtifactDeclarationsOptions,
+} from './artifact-directive-resolver.js';
 export {
   applyRunArtifactHelper,
   buildExecutionFrame,

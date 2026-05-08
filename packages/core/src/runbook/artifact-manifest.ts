@@ -286,6 +286,32 @@ export async function findArtifactMatches(
   return latestMatches.sort((left, right) => left.record.uri.localeCompare(right.record.uri));
 }
 
+/**
+ * Check whether an exact artifact URI resolves to an existing regular file
+ * contained under the configured work root.
+ *
+ * Returns `false` for missing files, non-directories, symlinks, and invalid
+ * artifact path shapes. Throws only for unexpected filesystem failures.
+ *
+ * @param uri - Exact artifact URI to check
+ * @param options - Project root and work directory options
+ * @returns `true` when the artifact is an existing contained regular file
+ * @throws {Error} For unexpected filesystem failures while opening the file
+ */
+export function isExistingRegularArtifactFile(uri: string, options: ArtifactPathOptions): boolean {
+  let artifactPath: string;
+  try {
+    artifactPath = artifactUriToPath(uri, options);
+  } catch (error) {
+    if (error instanceof Error && error.message === ARTIFACT_ERROR_TEXT.INVALID_URI_PATH_SHAPE) {
+      return false;
+    }
+    throw error;
+  }
+  const workRoot = resolveContainedWorkRoot(options);
+  return isExistingRegularContainedFile(workRoot, artifactPath);
+}
+
 function writeManifestLineSync(
   workRoot: string,
   manifestPath: string,
