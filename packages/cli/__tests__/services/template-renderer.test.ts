@@ -2404,6 +2404,19 @@ describe('substituteText with artifact helper', () => {
     expect(out).toBe(PLAN.uri);
   });
 
+  it('renders {{ artifact PlanPath }} as an artifact URI rather than full record JSON', () => {
+    const out = substituteText(
+      '{{ artifact PlanPath }}',
+      { PlanPath: PLAN },
+      undefined,
+      ARTIFACT_HELPER_OPTIONS,
+    );
+
+    expect(out).toBe(PLAN.uri);
+    expect(out).not.toContain('"runbook"');
+    expect(out).not.toContain('"timestamp"');
+  });
+
   it('renders {{ artifact Reviews }} as a JSON array of URIs', () => {
     const out = substituteText(
       '{{ artifact Reviews }}',
@@ -2412,6 +2425,19 @@ describe('substituteText with artifact helper', () => {
       ARTIFACT_HELPER_OPTIONS,
     );
     expect(out).toBe(JSON.stringify([REVIEW_A.uri]));
+  });
+
+  it('renders {{ artifact Reviews }} as a JSON array of artifact URIs rather than records', () => {
+    const out = substituteText(
+      '{{ artifact Reviews }}',
+      { Reviews: [REVIEW_A] },
+      undefined,
+      ARTIFACT_HELPER_OPTIONS,
+    );
+
+    expect(out).toBe(JSON.stringify([REVIEW_A.uri]));
+    expect(out).not.toContain('"runbook"');
+    expect(out).not.toContain('"timestamp"');
   });
 
   it('renders {{ artifact Reviews }} as "[]" for an empty ArtifactRecord[]', () => {

@@ -646,4 +646,38 @@ describe('buildContextSnapshot', () => {
 
     expect(snap.vars.PlanPath).toEqual(ARTIFACT_RECORD);
   });
+
+  it('applies effective variable precedence templateVars < artifactVars < variables < extraVars', () => {
+    const state = {
+      templateVars: brandInitialTemplateVarsForTest({ X: 'template', T: 't' }),
+      artifactVars: brandArtifactVarsForTest({ X: ARTIFACT_RECORD, A: ARTIFACT_RECORD }),
+      variables: brandStoredOutputsForTest({ X: 'output', V: 'v' }),
+    };
+
+    const merged = mergeEffectiveVars(state, { X: 'extra', E: 'e' });
+
+    expect(merged).toMatchObject({
+      X: 'extra',
+      T: 't',
+      A: ARTIFACT_RECORD,
+      V: 'v',
+      E: 'e',
+    });
+  });
+
+  it('includes artifactVars in delegation context snapshots through mergeEffectiveVars', () => {
+    const state = makeMinimalState({
+      templateVars: brandInitialTemplateVarsForTest({ Env: 'staging' }),
+      artifactVars: brandArtifactVarsForTest({ PlanPath: ARTIFACT_RECORD }),
+      variables: brandStoredOutputsForTest({ Result: 'ok' }),
+    });
+
+    const snap = buildContextSnapshot(state);
+
+    expect(snap.vars).toMatchObject({
+      Env: 'staging',
+      PlanPath: ARTIFACT_RECORD,
+      Result: 'ok',
+    });
+  });
 });
