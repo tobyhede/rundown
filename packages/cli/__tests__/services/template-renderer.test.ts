@@ -2289,3 +2289,77 @@ describe('substituteText call-time helper validation', () => {
     expect(warnSpy).toHaveBeenCalledTimes(1);
   });
 });
+
+import type { ArtifactRecord, RenderArtifactOptions } from '@rundown-org/core';
+
+const ARTIFACT_RUN_ID = 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const ARTIFACT_CONTEXT = 'ctx1';
+const ARTIFACT_RUNBOOK = { source: 'project' as const, path: 'planning/write-plan.runbook.md' };
+
+const PLAN: ArtifactRecord = {
+  uri: `rd://artifacts/${ARTIFACT_CONTEXT}/runs/${ARTIFACT_RUN_ID}/plan.json`,
+  runId: ARTIFACT_RUN_ID,
+  contextId: ARTIFACT_CONTEXT,
+  runbook: ARTIFACT_RUNBOOK,
+  key: 'plan.json',
+  timestamp: '2026-05-07T00:00:00.000Z',
+};
+
+const REVIEW_A: ArtifactRecord = {
+  uri: `rd://artifacts/${ARTIFACT_CONTEXT}/runs/${ARTIFACT_RUN_ID}/review-plan-a.json`,
+  runId: ARTIFACT_RUN_ID,
+  contextId: ARTIFACT_CONTEXT,
+  runbook: ARTIFACT_RUNBOOK,
+  key: 'review-plan-a.json',
+  timestamp: '2026-05-07T00:00:00.000Z',
+};
+
+const ARTIFACT_HELPER_OPTIONS: RenderArtifactOptions = {
+  cwd: '/tmp/project',
+  workPath: '.rundown/work',
+  contextId: ARTIFACT_CONTEXT,
+  runId: ARTIFACT_RUN_ID,
+};
+
+describe('substituteText with ArtifactRecord values', () => {
+  it('renders {{ PlanPath }} as the artifact URI when value is an ArtifactRecord', () => {
+    const out = substituteText(
+      'Plan at {{ PlanPath }}',
+      { PlanPath: PLAN },
+      undefined,
+      ARTIFACT_HELPER_OPTIONS,
+    );
+    expect(out).toBe(`Plan at ${PLAN.uri}`);
+  });
+
+  it('renders {{ Reviews }} as a JSON array of URIs when value is ArtifactRecord[]', () => {
+    const out = substituteText(
+      'Reviews: {{ Reviews }}',
+      { Reviews: [REVIEW_A] },
+      undefined,
+      ARTIFACT_HELPER_OPTIONS,
+    );
+    expect(out).toBe(`Reviews: ${JSON.stringify([REVIEW_A.uri])}`);
+  });
+
+  it('renders {{ Reviews }} as "[]" when value is empty ArtifactRecord[]', () => {
+    const out = substituteText(
+      'Reviews: {{ Reviews }}',
+      { Reviews: [] },
+      undefined,
+      ARTIFACT_HELPER_OPTIONS,
+    );
+    expect(out).toBe('Reviews: []');
+  });
+
+  it('does not flatten an ArtifactRecord through JSON.stringify', () => {
+    const out = substituteText(
+      '{{ PlanPath }}',
+      { PlanPath: PLAN },
+      undefined,
+      ARTIFACT_HELPER_OPTIONS,
+    );
+    expect(out.startsWith('rd://')).toBe(true);
+    expect(out.startsWith('{')).toBe(false);
+  });
+});

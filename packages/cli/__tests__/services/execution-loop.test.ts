@@ -256,6 +256,12 @@ jest.unstable_mockModule('@rundown-org/core', () => {
           : `${options.cwd}/${workPath}/.rd-${contextId}/runs/${runId}/${key}`;
       },
     ),
+    renderArtifactValue: jest.fn((value: unknown) => {
+      if (Array.isArray(value)) {
+        return JSON.stringify(value.map((r: { uri: string }) => r.uri));
+      }
+      return (value as { uri: string }).uri;
+    }),
     ...mockErrorHelpers,
     RUNS_DIR: '.rundown/runs',
     WORK_DIR: '.rundown/work',
