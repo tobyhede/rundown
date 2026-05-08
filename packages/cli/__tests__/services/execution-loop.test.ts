@@ -256,6 +256,11 @@ jest.unstable_mockModule('@rundown-org/core', () => {
           : `${options.cwd}/${workPath}/.rd-${contextId}/runs/${runId}/${key}`;
       },
     ),
+    parseExactArtifactUriParts: jest.fn((uri: string) => {
+      const m = /^rd:\/\/artifacts\/([^/]+)\/runs\/([^/]+)\/(.+)$/.exec(uri);
+      if (!m) return null;
+      return { contextId: m[1], runId: m[2], key: m[3] };
+    }),
     renderArtifactValue: jest.fn((value: unknown) => {
       if (Array.isArray(value)) {
         return JSON.stringify(value.map((r: { uri: string }) => r.uri));

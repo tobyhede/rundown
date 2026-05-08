@@ -39,6 +39,7 @@ import {
 import {
   invokeHelperSafely,
   isJsonArrayStream,
+  parseExactArtifactUriParts,
   renderArtifactPathValue,
   renderArtifactRecordValue,
   renderArtifactValue,
@@ -184,6 +185,13 @@ function isArtifactRecord(value: unknown): value is ArtifactRecord {
   const record = value as Partial<ArtifactRecord>;
   return (
     typeof record.uri === 'string' &&
+    // Defensive: refuse records whose URI is not a well-formed exact artifact
+    // URI. Records reaching the renderer via `artifactVars` are Zod-validated
+    // upstream by the resolver, but variable values from frontmatter `inputs:`
+    // and CLI `--input-json` are not. A malformed URI would later throw deep
+    // inside `artifactUriToPath`; rejecting at the guard surface keeps the
+    // contract at the structural-detection layer.
+    parseExactArtifactUriParts(record.uri) !== null &&
     typeof record.runId === 'string' &&
     typeof record.contextId === 'string' &&
     typeof record.key === 'string' &&
@@ -221,17 +229,17 @@ function isArtifactRecordArray(value: unknown): value is readonly ArtifactRecord
 }
 
 /**
- * Sentinel string returned by `renderTemplateValue` when an artifact value is
+ * Sentinel value returned by `renderTemplateValue` when an artifact value is
  * encountered without a `helperOptions` frame. Pass 4 detects this and leaves
  * the original `{{ Var }}` placeholder in place, mirroring the helper-call
  * convention.
  *
- * The leading and trailing spaces and `__rundown_` prefix make collision with
- * legitimate rendered output essentially impossible — the Pass 4 detection is
- * a `===` comparison, so any user content that happened to contain this token
- * as a substring would not trigger the placeholder fallback.
+ * Implemented as a unique `Symbol` so identity comparison is collision-proof
+ * — no user variable string value can equal it, eliminating the silent-drop
+ * risk a string sentinel would carry (CLAUDE.md "No silent mapping").
  */
-const ARTIFACT_PLACEHOLDER_SENTINEL = ' __rundown_artifact_no_options__ ';
+const ARTIFACT_PLACEHOLDER_SENTINEL: unique symbol = Symbol('rundown_artifact_no_options');
+type ArtifactPlaceholderSentinel = typeof ARTIFACT_PLACEHOLDER_SENTINEL;
 
 /**
  * Render a template value for interpolation.
@@ -254,7 +262,7 @@ function renderTemplateValue(
   value: unknown,
   variables: Readonly<Record<string, unknown>>,
   helperOptions?: TemplateHelperOptions,
-): string {
+): string | ArtifactPlaceholderSentinel {
   if (typeof value === 'string') {
     return value;
   }
@@ -321,8 +329,17 @@ function resolveTemplatePath(
   variables: Record<string, unknown>,
   helperOptions?: TemplateHelperOptions,
 ): string | undefined {
+  // Translate the sentinel into `undefined` so Pass 1 and Pass 3 can use
+  // their existing "value is undefined" branch to preserve the placeholder.
+  // Pass 4 calls `renderTemplateValue` directly via `resolveTemplatePathRaw`
+  // and handles the sentinel with an explicit Symbol comparison.
+  const renderOrSentinel = (raw: unknown): string | undefined => {
+    const rendered = renderTemplateValue(raw, variables, helperOptions);
+    return rendered === ARTIFACT_PLACEHOLDER_SENTINEL ? undefined : rendered;
+  };
+
   if (Object.hasOwn(variables, path) && variables[path] !== undefined) {
-    return renderTemplateValue(variables[path], variables, helperOptions);
+    return renderOrSentinel(variables[path]);
   }
 
   if (!path.includes('.')) {
@@ -342,7 +359,7 @@ function resolveTemplatePath(
     const remainder = segments.slice(i).join('.');
     const resolved = resolveDottedPath(variables[prefix], remainder);
     if (resolved !== undefined) {
-      return renderTemplateValue(resolved, variables, helperOptions);
+      return renderOrSentinel(resolved);
     }
   }
 
@@ -1075,7 +1092,7 @@ export function substituteText(
   // Pass 1: {{ ./VarName }} explicit variable lookup, bypasses helper registry
   let result = text.replace(EXPLICIT_VAR_TEMPLATE_REGEX, (match, varPath: string) => {
     const value = resolveTemplatePath(varPath, variables, helperOptions);
-    if (value === undefined || value === ARTIFACT_PLACEHOLDER_SENTINEL) return match;
+    if (value === undefined) return match;
     return escapeFn ? escapeFn(value) : value;
   });
 
@@ -1110,12 +1127,11 @@ export function substituteText(
       let argValue: string;
       if (varRef !== undefined) {
         const resolved = resolveTemplatePath(varRef, variables, helperOptions);
-        // Preserve the original placeholder when the variable arg is unresolved
-        // or is an unrenderable artifact value (no helper options available).
-        // Mirrors Pass 3 below and the `./VarName` branch in Pass 1: silently
-        // substituting `''` would corrupt downstream output (see "No silent
-        // mapping" principle in CLAUDE.md).
-        if (resolved === undefined || resolved === ARTIFACT_PLACEHOLDER_SENTINEL) return match;
+        // Preserve the original placeholder when the variable arg is unresolved.
+        // `resolveTemplatePath` already maps the artifact-no-options sentinel to
+        // `undefined`, so this single branch covers both. Silently substituting
+        // `''` would corrupt downstream output (CLAUDE.md "No silent mapping").
+        if (resolved === undefined) return match;
         argValue = resolved;
       } else {
         argValue = literal ?? '';
