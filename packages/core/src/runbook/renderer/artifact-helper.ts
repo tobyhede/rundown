@@ -19,6 +19,9 @@ import type { ArtifactVarValue } from '../types.js';
  * narrow `readonly T[]` unions in strict mode — see TypeScript issue #17002 —
  * so callers route through this guard to expose `value` as either
  * `ArtifactRecord` or `readonly ArtifactRecord[]` to the body.
+ *
+ * @param value - Artifact variable value to test
+ * @returns `true` when the value is an `ArtifactRecord[]` (readonly)
  */
 function isArtifactRecordArray(value: ArtifactVarValue): value is readonly ArtifactRecord[] {
   return Array.isArray(value);

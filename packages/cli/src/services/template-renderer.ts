@@ -189,6 +189,7 @@ function isArtifactRecord(value: unknown): value is ArtifactRecord {
     typeof record.key === 'string' &&
     typeof record.timestamp === 'string' &&
     typeof record.runbook === 'object' &&
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- load-bearing: typeof null === 'object', so the next access would throw on null despite the declared `runbook: RunbookRef` type
     record.runbook !== null &&
     typeof record.runbook.source === 'string' &&
     typeof record.runbook.path === 'string'
