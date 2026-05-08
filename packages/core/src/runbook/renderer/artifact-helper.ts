@@ -74,6 +74,7 @@ export function renderArtifactValue(
   _options: RenderArtifactOptions,
 ): string {
   if (isArtifactRecordArray(value)) {
+    if (value.length === 0) return '[]';
     return JSON.stringify(value.map((record) => record.uri));
   }
   return value.uri;
@@ -99,6 +100,7 @@ export function renderArtifactPathValue(
   options: RenderArtifactOptions,
 ): string {
   if (isArtifactRecordArray(value)) {
+    if (value.length === 0) return '[]';
     return JSON.stringify(value.map((record) => artifactUriToPath(record.uri, options)));
   }
   return artifactUriToPath(value.uri, options);
@@ -118,6 +120,7 @@ export function renderArtifactRecordValue(
   value: ArtifactVarValue,
   _options: RenderArtifactOptions,
 ): string {
+  if (isArtifactRecordArray(value) && value.length === 0) return '[]';
   return JSON.stringify(value);
 }
 
