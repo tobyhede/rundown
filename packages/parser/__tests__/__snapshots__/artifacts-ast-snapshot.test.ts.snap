@@ -1,0 +1,53 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`ARTIFACTS AST shape — snapshot locks the AST for exact + wildcard ARTIFACTS at step level 1`] = `
+[
+  {
+    "artifacts": [
+      {
+        "key": "plan.json",
+        "kind": "exact",
+        "name": "PlanPath",
+      },
+      {
+        "key": "*-reviews.json",
+        "kind": "wildcard",
+        "name": "Reviews",
+      },
+    ],
+    "kind": "base",
+  },
+  {
+    "artifacts": undefined,
+    "kind": "substeps",
+    "substepArtifacts": [
+      {
+        "artifacts": [
+          {
+            "key": "inner.json",
+            "kind": "exact",
+            "name": "InnerPath",
+          },
+        ],
+      },
+    ],
+  },
+]
+`;
+
+exports[`ARTIFACTS AST shape — snapshot locks the AST for same-name ARTIFACTS + OUTPUTS pair 1`] = `
+{
+  "artifacts": [
+    {
+      "key": "plan.json",
+      "kind": "exact",
+      "name": "PlanPath",
+    },
+  ],
+  "outputs": [
+    {
+      "name": "PlanPath",
+    },
+  ],
+}
+`;

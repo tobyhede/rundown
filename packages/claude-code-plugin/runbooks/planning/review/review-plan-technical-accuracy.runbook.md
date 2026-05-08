@@ -38,12 +38,14 @@ Read the plan at `{{ PlanPath }}`.
 
 
 ## 4. Output Path
+- ARTIFACTS
+  - ReviewPath "review-plan-technical-accuracy.json"
 - OUTPUTS
-  - ReviewPath {{ path "review-plan-technical-accuracy.json" }}
+  - ReviewPath
 - PASS CONTINUE
 - FAIL STOP
 
-{{ path "review-plan-technical-accuracy.json" }}
+{{ ReviewPath }}
 
 
 ## 5. Write the review

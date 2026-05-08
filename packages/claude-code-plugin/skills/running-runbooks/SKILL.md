@@ -85,8 +85,10 @@ Steps and runbooks may declare OUTPUTS to flow data forward — between steps in
 **Step OUTPUTS** — evaluated on every step transition (independent of PASS/FAIL), merged into the run's live variable space:
 ```markdown
 ## 7. Output Path
+- ARTIFACTS
+  - PlanPath "plan.json"
 - OUTPUTS
-  - PlanPath {{ path "plan.json" }}
+  - PlanPath
 - PASS CONTINUE
 - FAIL STOP
 ```

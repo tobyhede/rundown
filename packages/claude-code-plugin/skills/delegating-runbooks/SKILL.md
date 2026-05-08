@@ -156,8 +156,10 @@ OUTPUTS:
 ---
 
 ## 7. Output Path
+- ARTIFACTS
+  - PlanPath "plan.json"
 - OUTPUTS
-  - PlanPath {{ path "plan.json" }}
+  - PlanPath
 - PASS CONTINUE
 - FAIL STOP
 

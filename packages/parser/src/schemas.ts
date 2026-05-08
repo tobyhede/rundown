@@ -300,6 +300,21 @@ export const OutputDeclarationSchema = z.object({
 export type OutputDeclarationSchemaType = Readonly<z.output<typeof OutputDeclarationSchema>>;
 
 /**
+ * Shape of an exact artifact key — `[A-Za-z0-9._-]+`. Mirrors
+ * `exact_artifact_key` in docs/spec/grammar.md.
+ */
+export const EXACT_ARTIFACT_KEY_PATTERN = /^[A-Za-z0-9._-]+$/;
+
+/**
+ * Shape of a wildcard artifact key — `[A-Za-z0-9._*?-]+` with at least one
+ * `*` or `?` character. Mirrors `wildcard_artifact_key` in docs/spec/grammar.md.
+ * The leading lookahead enforces presence of a wildcard token so the pattern
+ * cannot match an exact-artifact-key shape (defense in depth — callers also
+ * gate the wildcard branch via `isWildcardArtifactKey`).
+ */
+export const WILDCARD_ARTIFACT_KEY_PATTERN = /^(?=.*[*?])[A-Za-z0-9._*?-]+$/;
+
+/**
  * Valid transition kinds
  */
 export const TransitionKindSchema = z.enum(['pass', 'fail', 'yes', 'no']);

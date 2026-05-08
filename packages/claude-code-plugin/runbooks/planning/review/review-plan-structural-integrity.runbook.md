@@ -43,12 +43,14 @@ Read the plan at `{{ PlanPath }}`.
 
 
 ## 4. Output Path
+- ARTIFACTS
+  - ReviewPath "review-plan-structural-integrity.json"
 - OUTPUTS
-  - ReviewPath {{ path "review-plan-structural-integrity.json" }}
+  - ReviewPath
 - PASS CONTINUE
 - FAIL STOP
 
-{{ path "review-plan-structural-integrity.json" }}
+{{ ReviewPath }}
 
 
 ## 5. Write the review

@@ -100,20 +100,20 @@ Declares values to publish into the run's live variable space after a step PASSe
 
 ```markdown
 ## 7. Output Path
+- ARTIFACTS
+  - PlanPath "plan.json"
 - OUTPUTS
-  - PlanPath {{ path "plan.json" }}
+  - PlanPath
 - PASS CONTINUE
 - FAIL STOP
 ```
 
 After PASS, `PlanPath` is added to `state.variables` and is available to every later step in the same run as `{{ PlanPath }}`.
 
-Output values may be:
+At step/substep level, `OUTPUTS` is name-only:
 - **Naked form (file-backed channel)**: `PlanPath` — pre-creates a file at `.rundown/runs/<runId>/outputs/<stepId>/<VarName>` and exports its absolute path as `RD_OUTPUTS_<VarName>` to the spawned shell. The command writes the value into that file; on exit, Rundown reads, trims, and merges it.
-- **Helper call**: `PlanPath {{ path "file.json" }}` (resolves to a context-scoped path)
-- **Template variable**: `PlanPath {{ VarName }}`
-- **Quoted literal**: `PlanPath "value"`
-- **Bare variable reference**: `PlanPath VarName`
+
+Use `ARTIFACTS` to declare structured artifact paths/keys (for example: `PlanPath "plan.json"`), then list the alias in `OUTPUTS`.
 
 ### Frontmatter `OUTPUTS:` — exporting to the parent
 

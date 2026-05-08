@@ -107,17 +107,38 @@ describe('parseRunbookDocument INPUTS step directive (removed)', () => {
 });
 
 describe('parseRunbookDocument with OUTPUTS directive', () => {
-  it('attaches parsed outputs to step when OUTPUTS directive is present', () => {
+  it('attaches parsed outputs (naked form) to step when OUTPUTS directive is present', () => {
+    const md = `## 1. Write plan
+- PASS CONTINUE
+- FAIL STOP
+- OUTPUTS
+  - PlanPath
+`;
+    const { runbook } = parseRunbookDocument(md);
+    expect(runbook.steps[0].outputs).toEqual([{ name: 'PlanPath' }]);
+  });
+
+  it('rejects expression-form step OUTPUTS at parse time', () => {
     const md = `## 1. Write plan
 - PASS CONTINUE
 - FAIL STOP
 - OUTPUTS
   - PlanPath {{ path "plan.json" }}
 `;
-    const { runbook } = parseRunbookDocument(md);
-    expect(runbook.steps[0].outputs).toEqual([
-      { name: 'PlanPath', value: '{{ path "plan.json" }}' },
-    ]);
+    expect(() => parseRunbookDocument(md)).toThrow(RunbookSyntaxError);
+    expect(() => parseRunbookDocument(md)).toThrow(/expression-form.*OUTPUTS/i);
+  });
+
+  it('rejects mixed naked + expression entries (expression entry triggers parse error)', () => {
+    const md = `## 1. Mixed
+- OUTPUTS
+  - DeployUrl
+  - Tag "{{ RunId }}-staging"
+- PASS CONTINUE
+- FAIL STOP
+`;
+    expect(() => parseRunbookDocument(md)).toThrow(RunbookSyntaxError);
+    expect(() => parseRunbookDocument(md)).toThrow(/expression-form/i);
   });
 
   it('leaves outputs undefined when no OUTPUTS directive is present', () => {
@@ -159,11 +180,11 @@ describe('parseRunbookDocument with OUTPUTS directive', () => {
     expect(runbook.steps[0].prompt).toContain('OUTPUTS are validated');
   });
 
-  it('attaches parsed outputs to a substep when OUTPUTS directive is present', () => {
+  it('attaches parsed outputs (naked form) to a substep', () => {
     const md = `## 1. Parent step
 ### 1.1 Child substep
 - OUTPUTS
-  - ChildPath {{ path "child.json" }}
+  - ChildPath
 `;
     const { runbook } = parseRunbookDocument(md);
     const step = runbook.steps[0];
@@ -171,16 +192,14 @@ describe('parseRunbookDocument with OUTPUTS directive', () => {
     if (step.kind !== 'substeps') {
       throw new Error('expected substeps step');
     }
-    expect(step.substeps[0].outputs).toEqual([
-      { name: 'ChildPath', value: '{{ path "child.json" }}' },
-    ]);
+    expect(step.substeps[0].outputs).toEqual([{ name: 'ChildPath' }]);
   });
 
   it('throws RunbookSyntaxError when OUTPUTS block contains duplicate names', () => {
     const md = `## 1. Step
 - OUTPUTS
-  - PlanPath {{ path "a.json" }}
-  - PlanPath {{ path "b.json" }}
+  - PlanPath
+  - PlanPath
 `;
     expect(() => parseRunbookDocument(md)).toThrow(RunbookSyntaxError);
     expect(() => parseRunbookDocument(md)).toThrow(/duplicate.*output.*PlanPath/i);
@@ -204,9 +223,9 @@ describe('parseRunbookDocument with OUTPUTS directive', () => {
   it('throws RunbookSyntaxError on duplicate OUTPUTS directive for the same target', () => {
     const md = `## 1. Duplicate outputs
 - OUTPUTS
-  - First {{ path "a.json" }}
+  - First
 - OUTPUTS
-  - Second {{ path "b.json" }}
+  - Second
 `;
     expect(() => parseRunbookDocument(md)).toThrow(RunbookSyntaxError);
     expect(() => parseRunbookDocument(md)).toThrow(/duplicate.*OUTPUTS/i);
@@ -215,21 +234,19 @@ describe('parseRunbookDocument with OUTPUTS directive', () => {
   it('preserves both parent-step and substep OUTPUTS when both are declared', () => {
     const md = `## 1. Parent step
 - OUTPUTS
-  - ParentPath {{ path "parent.json" }}
+  - ParentPath
 ### 1.1 Child substep
 - OUTPUTS
-  - ChildPath {{ path "child.json" }}
+  - ChildPath
 `;
     const { runbook } = parseRunbookDocument(md);
     const step = runbook.steps[0];
-    expect(step.outputs).toEqual([{ name: 'ParentPath', value: '{{ path "parent.json" }}' }]);
+    expect(step.outputs).toEqual([{ name: 'ParentPath' }]);
     expect(step.kind).toBe('substeps');
     if (step.kind !== 'substeps') {
       throw new Error('expected substeps step');
     }
-    expect(step.substeps[0].outputs).toEqual([
-      { name: 'ChildPath', value: '{{ path "child.json" }}' },
-    ]);
+    expect(step.substeps[0].outputs).toEqual([{ name: 'ChildPath' }]);
   });
 });
 
@@ -365,7 +382,7 @@ describe('parseRunbookDocument OUTPUTS directive — reserved-name guard', () =>
   ])('throws RunbookSyntaxError when OUTPUTS uses reserved name "%s"', (name) => {
     const md = `## 1. Step
 - OUTPUTS
-  - ${name} {{ path "x.json" }}
+  - ${name}
 `;
     expect(() => parseRunbookDocument(md)).toThrow(RunbookSyntaxError);
     expect(() => parseRunbookDocument(md)).toThrow(/reserved/i);
@@ -375,7 +392,7 @@ describe('parseRunbookDocument OUTPUTS directive — reserved-name guard', () =>
     const md = `## 1. Parent
 ### 1.1 Child
 - OUTPUTS
-  - context {{ path "x.json" }}
+  - context
 `;
     expect(() => parseRunbookDocument(md)).toThrow(RunbookSyntaxError);
   });
@@ -390,11 +407,16 @@ describe('parseStepOutputDeclaration', () => {
     expect(parseStepOutputDeclaration('123bad')).toBeNull();
   });
 
-  it('preserves expression-form parsing', () => {
-    expect(parseStepOutputDeclaration('PlanPath {{ path "plan.json" }}')).toEqual({
-      name: 'PlanPath',
-      value: '{{ path "plan.json" }}',
-    });
+  it('rejects expression-form (`Name {{ helper }}`) by returning null', () => {
+    expect(parseStepOutputDeclaration('PlanPath {{ path "plan.json" }}')).toBeNull();
+  });
+
+  it('rejects expression-form with a quoted literal value by returning null', () => {
+    expect(parseStepOutputDeclaration('Tag "{{ RunId }}-staging"')).toBeNull();
+  });
+
+  it('rejects expression-form with a bare variable reference by returning null', () => {
+    expect(parseStepOutputDeclaration('CopyOf OtherVar')).toBeNull();
   });
 
   it('returns null for empty / whitespace-only input', () => {
@@ -438,7 +460,7 @@ describe('parseRunbookDocument step OUTPUTS naked form', () => {
     ]);
   });
 
-  it('accepts mixed naked + expression entries in a single OUTPUTS block', () => {
+  it('rejects mixed naked + expression entries (expression triggers parse error)', () => {
     const md = `## 1. Capture
 - OUTPUTS
   - DeployUrl
@@ -446,13 +468,8 @@ describe('parseRunbookDocument step OUTPUTS naked form', () => {
 - PASS CONTINUE
 - FAIL STOP
 `;
-    const { runbook, diagnostics } = parseRunbookDocument(md);
-    const errors = diagnostics.filter((d) => d.severity === 'error');
-    expect(errors).toEqual([]);
-    expect(runbook.steps[0].outputs).toEqual([
-      { name: 'DeployUrl' },
-      { name: 'Tag', value: '"{{ RunId }}-staging"' },
-    ]);
+    expect(() => parseRunbookDocument(md)).toThrow(RunbookSyntaxError);
+    expect(() => parseRunbookDocument(md)).toThrow(/expression-form/i);
   });
 
   it('still rejects reserved names in naked form', () => {

@@ -10,7 +10,6 @@ exports[`OUTPUTS AST shape — snapshot locks the AST for naked-form OUTPUTS at 
       },
       {
         "name": "Tag",
-        "value": ""{{ RunId }}-staging"",
       },
     ],
   },
@@ -30,7 +29,7 @@ exports[`OUTPUTS AST shape — snapshot locks the AST for naked-form OUTPUTS at 
 ]
 `;
 
-exports[`OUTPUTS AST shape — snapshot locks the full step AST for a step bearing mixed naked + expression OUTPUTS 1`] = `
+exports[`OUTPUTS AST shape — snapshot locks the full step AST for multiple name-only OUTPUTS 1`] = `
 [
   {
     "name": "DeployUrl",

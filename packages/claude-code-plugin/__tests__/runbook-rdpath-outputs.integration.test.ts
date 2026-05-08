@@ -36,7 +36,7 @@ name: rdpath-outputs-integration
 
 ## 1. Write fixture and record its path
 - OUTPUTS
-  - FixturePath {{ path "fixture.json" }}
+  - FixturePath
 - PASS CONTINUE
 - FAIL STOP
 
@@ -44,6 +44,7 @@ name: rdpath-outputs-integration
 TARGET="$(rdpath --dir "$RD_WORK_PATH" --ctx "$RD_CONTEXT_ID" --file fixture.json)"
 mkdir -p "$(dirname "$TARGET")"
 printf '%s\\n' '{"ok":true}' > "$TARGET"
+printf '%s' "$TARGET" > "$RD_OUTPUTS_FixturePath"
 \`\`\`
 
 ## 2. Discover fixture via rdpath find

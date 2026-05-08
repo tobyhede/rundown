@@ -14,16 +14,28 @@ import type {
   TerminalAction,
   Transitions,
 } from './schemas.js';
-import { MAX_STEP_NUMBER, MAX_FOR_BOUND } from './schemas.js';
+import {
+  EXACT_ARTIFACT_KEY_PATTERN,
+  MAX_FOR_BOUND,
+  MAX_STEP_NUMBER,
+  TEMPLATE_VAR_PATH_PATTERN,
+  WILDCARD_ARTIFACT_KEY_PATTERN,
+} from './schemas.js';
 import {
   parseStepIdFromString,
   stepIdToString,
   isReservedWord,
   NAMED_IDENTIFIER_PATTERN,
 } from './step-id.js';
-import type { ParsedForClause, Bound, RunbookEntry, RunbookRef, OutputDeclaration } from './ast.js';
+import type {
+  ArtifactDeclaration,
+  Bound,
+  OutputDeclaration,
+  ParsedForClause,
+  RunbookEntry,
+  RunbookRef,
+} from './ast.js';
 import { isBoundRef } from './guards.js';
-import { TEMPLATE_VAR_PATH_PATTERN } from './schemas.js';
 
 /**
  * Check if an action accumulates results into parent aggregation (DEFER only).
@@ -1069,33 +1081,25 @@ export function parseOutputDeclaration(text: string): OutputDeclaration | null {
 /**
  * Parse a step or substep OUTPUTS declaration entry.
  *
- * Accepts both naked form (name only — declares a file-backed output channel)
- * and expression form (`PlanPath {{ path "plan.json" }}`). Step-level naked
- * outputs are activated by the executor: a file is pre-created at
- * `.rundown/runs/<runId>/outputs/<stepId>/<VarName>` and the path is exported
- * as `RD_OUTPUTS_<VarName>` to the spawned shell.
+ * Step/substep OUTPUTS entries are name-only as of the ARTIFACTS directive
+ * design (see docs/spec/language.md §10.2 Step OUTPUTS). Expression-form
+ * entries (`PlanPath {{ path "plan.json" }}`, `Tag "{{ RunId }}-staging"`,
+ * `CopyOf OtherVar`) are parse errors and produce `null` here so the caller
+ * can wrap the rejection in a RunbookSyntaxError with line context.
  *
- * Mirrors {@link parseFrontmatterOutputDeclaration}. The two functions
- * intentionally diverge in semantics (frontmatter naked = export by name from
- * live vars; step naked = file-backed channel) but share grammar.
+ * Frontmatter `outputs:` retains expression-form behavior; that path uses
+ * {@link parseFrontmatterOutputDeclaration}.
  *
  * @param text - Raw declaration text from the OUTPUTS block list item
- * @returns Parsed OutputDeclaration, or null when the text is empty / invalid
+ * @returns Parsed naked OutputDeclaration, or null when the text is empty,
+ *   contains an invalid identifier, or is in expression form.
  */
 export function parseStepOutputDeclaration(text: string): OutputDeclaration | null {
   const trimmed = text.trim();
   if (!trimmed) return null;
-
-  const spaceIdx = trimmed.search(/\s/);
-  if (spaceIdx === -1) {
-    // Naked form: just a name, no value expression
-    const name = trimmed;
-    if (!NAMED_IDENTIFIER_PATTERN.test(name)) return null;
-    return { name };
-  }
-
-  // With-value form: delegate to the existing expression-form parser
-  return parseOutputDeclaration(text);
+  if (/\s/.test(trimmed)) return null;
+  if (!NAMED_IDENTIFIER_PATTERN.test(trimmed)) return null;
+  return { name: trimmed };
 }
 
 /**
@@ -1126,6 +1130,76 @@ export function parseFrontmatterOutputDeclaration(text: string): OutputDeclarati
 
   // With-value form: delegate to existing step-level parser
   return parseOutputDeclaration(text);
+}
+
+/**
+ * Recursive `**` is reserved for future glob support and rejected outright today.
+ *
+ * The `WILDCARD_ARTIFACT_KEY_PATTERN` accepts any number of `*` characters
+ * because the regex character class doesn't distinguish single from double, so
+ * `**` is filtered explicitly here.
+ */
+const RECURSIVE_GLOB = '**';
+
+/** Disallowed literal keys per docs/spec/grammar.md `artifact_key` lexical rules. */
+const FORBIDDEN_LITERAL_KEYS: ReadonlySet<string> = new Set(['', '.', '..']);
+
+/**
+ * Test whether an artifact key is a wildcard pattern.
+ *
+ * Wildcard keys contain `*` or `?`. Callers that need the discriminated `kind`
+ * field should use {@link parseArtifactDeclaration} instead.
+ *
+ * @param key - Candidate artifact key (raw string, no surrounding quotes)
+ * @returns `true` when the key contains `*` or `?`
+ */
+export function isWildcardArtifactKey(key: string): boolean {
+  return /[*?]/.test(key);
+}
+
+/**
+ * Parse a single ARTIFACTS directive item into an ArtifactDeclaration.
+ *
+ * Accepts the form `Name "key"` where `Name` matches `NAMED_IDENTIFIER_PATTERN`
+ * and `"key"` is a quoted literal that satisfies `exact_artifact_key` or
+ * `wildcard_artifact_key` per docs/spec/grammar.md. Empty keys, `.`, `..`,
+ * slashes, paths, and recursive `**` patterns are rejected.
+ *
+ * Template markers are not expanded inside keys: `"{{var}}"` is rejected
+ * because `{` is not in the allowed character class.
+ *
+ * @param text - Raw declaration text from the ARTIFACTS block list item
+ * @returns Parsed ArtifactDeclaration with discriminated `kind`, or null
+ *   when the text is empty, malformed, or violates the artifact key shape.
+ *   Callers (the directive handler) wrap null returns in a RunbookSyntaxError
+ *   with line context.
+ */
+export function parseArtifactDeclaration(text: string): ArtifactDeclaration | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+
+  const spaceIdx = trimmed.search(/\s/);
+  if (spaceIdx === -1) return null;
+
+  const name = trimmed.slice(0, spaceIdx);
+  if (!NAMED_IDENTIFIER_PATTERN.test(name)) return null;
+
+  const rawKey = trimmed.slice(spaceIdx).trim();
+  if (rawKey.length < 2 || !rawKey.startsWith('"') || !rawKey.endsWith('"')) {
+    return null;
+  }
+
+  const key = rawKey.slice(1, -1);
+  if (FORBIDDEN_LITERAL_KEYS.has(key)) return null;
+  if (key.includes(RECURSIVE_GLOB)) return null;
+
+  if (isWildcardArtifactKey(key)) {
+    if (!WILDCARD_ARTIFACT_KEY_PATTERN.test(key)) return null;
+    return { name, key, kind: 'wildcard' };
+  }
+
+  if (!EXACT_ARTIFACT_KEY_PATTERN.test(key)) return null;
+  return { name, key, kind: 'exact' };
 }
 
 /**

@@ -24,22 +24,30 @@ name: substep-context-test
 ## 1. Parent step
 - PASS CONTINUE
 - FAIL STOP
-- OUTPUTS
-  - ParentValue "parent-complete"
 
 ### 1.fetch Produce child output
 - PASS CONTINUE
 - FAIL STOP
 - OUTPUTS
-  - ChildValue "substep-fetch"
+  - ChildValue
 
 Plan path: {{PlanPath}}
+
+\`\`\`sh
+printf 'substep-fetch' > "$RD_OUTPUTS_ChildValue"
+\`\`\`
 
 ### 1.use Consume child output
 - PASS CONTINUE
 - FAIL STOP
+- OUTPUTS
+  - ParentValue
 
 Child value: {{ChildValue}}
+
+\`\`\`sh
+printf 'parent-complete' > "$RD_OUTPUTS_ParentValue"
+\`\`\`
 
 ## 2. Consume parent output
 - PASS COMPLETE
@@ -61,9 +69,9 @@ describe('substep INPUTS/OUTPUTS round-trip', () => {
   });
 
   it('inherits parent inputs into substeps and publishes substep then parent outputs', async () => {
-    // Start runbook in prompted mode, passing PlanPath via --input (no outputs.json seeding)
+    // Start runbook, passing PlanPath via --input (no outputs.json seeding)
     const start = runCli(
-      'run --prompted substep-context.runbook.md --input PlanPath=/seeded/path/plan.json',
+      'run substep-context.runbook.md --input PlanPath=/seeded/path/plan.json --allow-all',
       workspace,
     );
     expect(start.exitCode).toBe(0);
@@ -77,34 +85,23 @@ describe('substep INPUTS/OUTPUTS round-trip', () => {
     expect(fetchEntered?.prompt).toContain('/seeded/path/plan.json');
     expect(fetchEntered?.prompt).not.toContain('{{PlanPath}}');
 
-    // Pass substep 1.fetch — triggers OUTPUTS: ChildValue="substep-fetch"
-    const passFetch = runCli('pass', workspace);
-    expect(passFetch.exitCode).toBe(0);
-
-    // After passing 1.fetch, state.variables should contain ChildValue
-    const statesAfterFetch = await getAllRunbookStates(workspace);
-    const stateAfterFetch = statesAfterFetch[0] as { variables?: Record<string, unknown> };
-    expect(stateAfterFetch.variables?.ChildValue).toBe('substep-fetch');
+    // Auto execution of 1.fetch writes ChildValue.
+    const statesAfterRun = await getAllRunbookStates(workspace);
+    const stateAfterRun = statesAfterRun[0] as { variables?: Record<string, unknown> };
+    expect(stateAfterRun.variables?.ChildValue).toBe('substep-fetch');
 
     // The 1.use substep entered event should have {{ChildValue}} substituted
-    const fetchEvents = parseJsonOutput(passFetch.stdout);
+    const fetchEvents = parseJsonOutput(start.stdout);
     const useEntered = fetchEvents.find((e) => e.type === 'step_entered' && e.stepName === 'use');
     expect(useEntered).toBeDefined();
     expect(useEntered?.prompt).toContain('substep-fetch');
     expect(useEntered?.prompt).not.toContain('{{ChildValue}}');
 
-    // Pass substep 1.use — completes step 1, triggers parent OUTPUTS: ParentValue="parent-complete"
-    const passUse = runCli('pass', workspace);
-    expect(passUse.exitCode).toBe(0);
-
-    // After passing 1.use, state.variables should contain both ChildValue and ParentValue
-    const statesAfterUse = await getAllRunbookStates(workspace);
-    const stateAfterUse = statesAfterUse[0] as { variables?: Record<string, unknown> };
-    expect(stateAfterUse.variables?.ChildValue).toBe('substep-fetch');
-    expect(stateAfterUse.variables?.ParentValue).toBe('parent-complete');
+    // After auto-running 1.use, state.variables should contain both ChildValue and ParentValue.
+    expect(stateAfterRun.variables?.ParentValue).toBe('parent-complete');
 
     // Step 2's entered event should have {{ParentValue}} substituted
-    const useEvents = parseJsonOutput(passUse.stdout);
+    const useEvents = parseJsonOutput(start.stdout);
     const step2Entered = useEvents.find(
       (e) => e.type === 'step_entered' && (e.position as { current?: string }).current === '2',
     );
@@ -128,7 +125,7 @@ scenarios:
   outputs-flow:
     description: Auto-executed OUTPUTS stored and INPUTS injected across steps
     commands:
-      - rd run auto-outputs-scenario.runbook.md
+      - rd run auto-outputs-scenario.runbook.md --allow-all
     result: COMPLETE
 ---
 # Auto Outputs Scenario
@@ -137,10 +134,10 @@ scenarios:
 - PASS CONTINUE
 - FAIL STOP
 - OUTPUTS
-  - Tag "v1.0"
+  - Tag
 
 \`\`\`sh
-rd echo --result pass
+printf 'v1.0' > "$RD_OUTPUTS_Tag"
 \`\`\`
 
 ## 2. Complete

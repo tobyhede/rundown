@@ -184,12 +184,17 @@ export type UnresolvedForClause = UnresolvedNumericWindow | UnresolvedSourceWind
 export type ParsedForClause = ForClause | UnresolvedForClause;
 
 /**
- * Shared OUTPUTS fields for any directive-capable execution unit.
+ * Shared OUTPUTS / ARTIFACTS fields for any directive-capable execution unit.
  *
- * Steps and substeps can declare the context values they publish.
+ * Steps and substeps can declare both:
+ * - `artifacts` — pre-execution artifact aliases (resolved at step entry)
+ * - `outputs` — post-execution context values (captured after the unit completes)
+ *
  * The INPUTS step directive has been removed — use frontmatter inputs: field instead.
  */
 interface ContextDirectiveFields {
+  /** Artifact alias declarations resolved at step/substep entry */
+  readonly artifacts?: readonly ArtifactDeclaration[];
   /** Values to publish to context after this execution unit passes */
   readonly outputs?: readonly OutputDeclaration[];
 }
@@ -264,6 +269,52 @@ export interface OutputDeclaration {
    */
   readonly value?: string;
 }
+
+/**
+ * Shared fields across both artifact declaration variants.
+ *
+ * Not exported — consumers should use `ArtifactDeclaration` (the union) or one
+ * of the narrowed variants `ExactArtifactDeclaration` / `WildcardArtifactDeclaration`.
+ */
+interface ArtifactDeclarationFields {
+  /** Variable name to publish (e.g., "PlanPath") — must match `NAMED_IDENTIFIER_PATTERN` and not be a reserved template name. */
+  readonly name: string;
+  /** Quoted artifact key literal — exact (`plan.json`) or wildcard (`review-*.json`). */
+  readonly key: string;
+}
+
+/**
+ * Exact-key artifact declaration. The `key` field is a literal artifact key
+ * matching `EXACT_ARTIFACT_KEY_PATTERN`. At runtime this declaration resolves
+ * to a single `ArtifactRecord`, creating a manifest entry if one does not
+ * already exist for the (contextId, runId, runbook, key) identity.
+ */
+export interface ExactArtifactDeclaration extends ArtifactDeclarationFields {
+  readonly kind: 'exact';
+}
+
+/**
+ * Wildcard-key artifact declaration. The `key` field is a glob pattern matching
+ * `WILDCARD_ARTIFACT_KEY_PATTERN`. At runtime this declaration enumerates
+ * matching manifest entries from the same context (and eligible sibling runs);
+ * it never creates new manifest rows.
+ */
+export interface WildcardArtifactDeclaration extends ArtifactDeclarationFields {
+  readonly kind: 'wildcard';
+}
+
+/**
+ * A named artifact alias declaration on an execution unit.
+ *
+ * Discriminated by `kind` — exact declarations may create artifacts; wildcard
+ * declarations only read existing manifest entries.
+ *
+ * Produced by `- ARTIFACTS\n  - Name "key"` syntax. The `key` field is a
+ * literal artifact key (no template expansion).
+ *
+ * See docs/spec/language.md §10.1 Step `ARTIFACTS`.
+ */
+export type ArtifactDeclaration = ExactArtifactDeclaration | WildcardArtifactDeclaration;
 
 /**
  * Shared fields common to all step variants.

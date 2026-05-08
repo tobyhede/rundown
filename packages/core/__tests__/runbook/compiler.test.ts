@@ -8710,6 +8710,11 @@ echo "processing"
   });
 
   describe('OUTPUTS actions', () => {
+    // Compiler-only actor tests intentionally assert structural placement of
+    // storeStepOutputs. Naked step/substep OUTPUTS are file-backed channels:
+    // values only enter context.variables when the executor prepares
+    // RD_OUTPUTS_* files, runs the command, reads captured content, and sends
+    // SET_VARIABLES.
     function getState(machine: ReturnType<typeof compileRunbookToMachine>, id: string): any {
       return (machine.config.states as Record<string, unknown>)[id] as any;
     }
@@ -8724,7 +8729,7 @@ echo "processing"
 - PASS COMPLETE
 - FAIL STOP
 - OUTPUTS
-  - Result "failed-value"
+  - Result
 `);
 
       const machine = compileRunbookToMachine(steps, {
@@ -8746,16 +8751,16 @@ echo "processing"
       expect(getActionTypes(stoppedEntry)[0]).toBe('storeFrontmatterOutputs');
     });
 
-    it('stores FAIL-path step outputs and STOPPED frontmatter outputs in the terminal snapshot', () => {
+    it('stores STOPPED frontmatter outputs while naked step OUTPUTS do not synthesize values', () => {
       const steps = createRunbook(`## 1. Produce
 - PASS COMPLETE
 - FAIL STOP
 - OUTPUTS
-  - Result "failed-value"
+  - Result
 `);
 
       const machine = compileRunbookToMachine(steps, {
-        frontmatterOutputs: [{ name: 'Result' }],
+        frontmatterOutputs: [{ name: 'Result', value: '"failed-value"' }],
       });
       const actor = createActor(machine);
       actor.start();
@@ -8763,7 +8768,7 @@ echo "processing"
 
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('STOPPED');
-      expect(snapshot.context.variables).toMatchObject({ Result: 'failed-value' });
+      expect(snapshot.context.variables).not.toHaveProperty('Result');
       expect(snapshot.context.finalVars).toEqual({ Result: 'failed-value' });
     });
 
@@ -8777,7 +8782,7 @@ echo "processing"
 - PASS COMPLETE
 - FAIL STOP
 - OUTPUTS
-  - ArtifactPath {{ path "review.json" }}
+  - ArtifactPath
 `);
 
         const machine = compileRunbookToMachine(steps, {
@@ -8810,7 +8815,7 @@ echo "processing"
 - PASS CONTINUE
 - FAIL STOP
 - OUTPUTS
-  - ParentVar "parent-value"
+  - ParentVar
 
 ### 1.1 First
 - PASS CONTINUE
@@ -8856,7 +8861,7 @@ echo "processing"
 - PASS COMPLETE
 - FAIL STOP
 - OUTPUTS
-  - ParentVar "parent-value"
+  - ParentVar
 `);
 
       const machine = compileRunbookToMachine(steps, {
@@ -8879,7 +8884,7 @@ echo "processing"
 - PASS CONTINUE
 - FAIL STOP
 - OUTPUTS
-  - ParentVar "parent-value"
+  - ParentVar
 
 ### 1.1 First
 - PASS CONTINUE
@@ -8914,7 +8919,7 @@ echo "processing"
 - PASS CONTINUE
 - FAIL STOP
 - OUTPUTS
-  - LoopVar "loop-value"
+  - LoopVar
 
 ### 1.1 Inside
 - PASS CONTINUE
@@ -8955,7 +8960,7 @@ echo "processing"
 - PASS CONTINUE
 - FAIL BREAK
 - OUTPUTS
-  - SubResult "partial-value"
+  - SubResult
 `);
 
       const machine = compileRunbookToMachine(steps);
@@ -8965,12 +8970,10 @@ echo "processing"
       expect(getActionTypes(failEntry?.actions)).toContain('storeStepOutputs');
     });
 
-    it('stores substep OUTPUTS in context.variables after FAIL BREAK', () => {
-      // Behavioral counterpart to the structural test above: storeStepOutputs fires
-      // on the substep's FAIL→BREAK transition, so context.variables must contain
-      // the substep's evaluated output even though the loop exited via BREAK.
-      // Terminal state is COMPLETE because the single-step loop's PASS CONTINUE
-      // routes to terminal when there is no following step.
+    it('does not synthesize naked substep OUTPUTS values after FAIL BREAK', () => {
+      // Naked OUTPUTS are file-backed executor channels. The compiler still
+      // attaches storeStepOutputs structurally, but there is no expression value
+      // to evaluate in core-only actor tests.
       const steps = createRunbook(`## 1. Loop
 - FOR i IN 1 TO 2
 - PASS CONTINUE
@@ -8980,7 +8983,7 @@ echo "processing"
 - PASS CONTINUE
 - FAIL BREAK
 - OUTPUTS
-  - SubResult "partial-value"
+  - SubResult
 `);
 
       const machine = compileRunbookToMachine(steps, {
@@ -8991,26 +8994,27 @@ echo "processing"
       actor.send({ type: 'FAIL' });
 
       const snapshot = actor.getSnapshot();
-      expect(snapshot.context.variables).toMatchObject({ SubResult: 'partial-value' });
+      expect(snapshot.context.variables).not.toHaveProperty('SubResult');
     });
 
-    it('stores parent OUTPUTS on the parent-exit transition after BREAK (not on the BREAK signal itself)', () => {
+    it('does not synthesize naked parent OUTPUTS values after BREAK without captured files', () => {
       // After BREAK the parent's always transitions evaluate and the parent-exit
       // transition carries storeStepOutputs for the parent's OUTPUTS (via
-      // decorateParentTransition). Parent OUTPUTS therefore DO appear in
-      // context.variables at terminal state — they fire on exit, not on the BREAK
-      // self-targeting signal. This is distinct from the structural test asserting
-      // that the self-targeting BREAK transition does not carry storeStepOutputs.
+      // decorateParentTransition). Because these declarations are naked, the
+      // compiler action does not synthesize values in core-only actor tests;
+      // executor-captured RD_OUTPUTS_* files are the only runtime value source.
+      // This is distinct from the structural test asserting that the self-targeting
+      // BREAK transition does not carry storeStepOutputs.
       const steps = createRunbook(`## 1. Loop
 - FOR i IN 1 TO 2
 - PASS CONTINUE
 - FAIL STOP
 - OUTPUTS
-  - LoopResult "loop-value"
-  - StepCursor "{{ Step }}"
-  - SubstepCursor "{{ context.current.substep }}"
-  - IterCursor "{{ Index }}"
-  - LoopCursor "{{ i }}"
+  - LoopResult
+  - StepCursor
+  - SubstepCursor
+  - IterCursor
+  - LoopCursor
 
 ### 1.1 Inside
 - PASS CONTINUE
@@ -9025,23 +9029,19 @@ echo "processing"
       actor.send({ type: 'FAIL' });
 
       const snapshot = actor.getSnapshot();
-      expect(snapshot.context.variables).toMatchObject({
-        LoopResult: 'loop-value',
-        StepCursor: '1.1',
-        SubstepCursor: '1',
-        IterCursor: '1',
-        LoopCursor: '1',
-      });
+      for (const key of ['LoopResult', 'StepCursor', 'SubstepCursor', 'IterCursor', 'LoopCursor']) {
+        expect(snapshot.context.variables).not.toHaveProperty(key);
+      }
     });
 
-    it('[P2] resolves parent OUTPUTS against the completing last-substep cursor on parent always exit', () => {
+    it('[P2] keeps naked parent OUTPUTS inert on completing last-substep cursor exit', () => {
       const steps = createRunbook(`## 1. Parent
 - PASS CONTINUE
 - FAIL STOP
 - OUTPUTS
-  - StepCursor "{{ Step }}"
-  - SubstepCursor "{{ context.current.substep }}"
-  - AtCursor "{{ context.current.at }}"
+  - StepCursor
+  - SubstepCursor
+  - AtCursor
 
 ### 1.1 First
 - PASS CONTINUE
@@ -9066,21 +9066,19 @@ echo "processing"
 
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('step::2');
-      expect(snapshot.context.variables).toMatchObject({
-        StepCursor: '1.2',
-        SubstepCursor: '2',
-        AtCursor: '1.2',
-      });
+      for (const key of ['StepCursor', 'SubstepCursor', 'AtCursor']) {
+        expect(snapshot.context.variables).not.toHaveProperty(key);
+      }
     });
 
-    it('[P2] resolves parent OUTPUTS against the BREAK-origin substep cursor on parent exit', () => {
+    it('[P2] keeps naked parent OUTPUTS inert on BREAK-origin substep cursor exit', () => {
       const steps = createRunbook(`## 1. Loop
 - FOR i IN 1 TO 2
 - PASS COMPLETE
 - FAIL STOP
 - OUTPUTS
-  - StepCursor "{{ Step }}"
-  - SubstepCursor "{{ context.current.substep }}"
+  - StepCursor
+  - SubstepCursor
 
 ### 1.1 Breaker
 - PASS CONTINUE
@@ -9100,23 +9098,22 @@ echo "processing"
 
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('COMPLETE');
-      expect(snapshot.context.variables).toMatchObject({
-        StepCursor: '1.1',
-        SubstepCursor: '1',
-      });
+      for (const key of ['StepCursor', 'SubstepCursor']) {
+        expect(snapshot.context.variables).not.toHaveProperty(key);
+      }
     });
 
-    it('resolves parent OUTPUTS against the completed FOR frame on BREAK exit', () => {
+    it('keeps naked parent OUTPUTS inert against the completed FOR frame on BREAK exit', () => {
       const steps = createRunbook(`## 1. Loop
 - FOR i IN 1 TO 3
 - PASS COMPLETE
 - FAIL STOP
 - OUTPUTS
-  - StepCursor "{{ Step }}"
-  - SubstepCursor "{{ context.current.substep }}"
-  - AtCursor "{{ context.current.at }}"
-  - IndexCursor "{{ Index }}"
-  - LoopValue "{{ i }}"
+  - StepCursor
+  - SubstepCursor
+  - AtCursor
+  - IndexCursor
+  - LoopValue
 
 ### 1.1 Breaker
 - PASS CONTINUE
@@ -9135,25 +9132,21 @@ echo "processing"
 
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('COMPLETE');
-      expect(snapshot.context.variables).toMatchObject({
-        StepCursor: '1.1',
-        SubstepCursor: '1',
-        AtCursor: '1.1.1',
-        IndexCursor: '1',
-        LoopValue: '1',
-      });
+      for (const key of ['StepCursor', 'SubstepCursor', 'AtCursor', 'IndexCursor', 'LoopValue']) {
+        expect(snapshot.context.variables).not.toHaveProperty(key);
+      }
     });
 
-    it('resolves parent OUTPUTS against the completed FOR frame on NEXT-exhausted loop exit', () => {
+    it('keeps naked parent OUTPUTS inert against the completed FOR frame on NEXT-exhausted loop exit', () => {
       const steps = createRunbook(`## 1. Loop
 - FOR i IN 1 TO 2
 - PASS COMPLETE
 - FAIL STOP
 - OUTPUTS
-  - StepCursor "{{ Step }}"
-  - AtCursor "{{ context.current.at }}"
-  - IndexCursor "{{ Index }}"
-  - LoopValue "{{ i }}"
+  - StepCursor
+  - AtCursor
+  - IndexCursor
+  - LoopValue
 
 ### 1.1 Walker
 - PASS NEXT
@@ -9169,26 +9162,23 @@ echo "processing"
 
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('COMPLETE');
-      expect(snapshot.context.variables).toMatchObject({
-        StepCursor: '1.1',
-        AtCursor: '1.2.1',
-        IndexCursor: '2',
-        LoopValue: '2',
-      });
+      for (const key of ['StepCursor', 'AtCursor', 'IndexCursor', 'LoopValue']) {
+        expect(snapshot.context.variables).not.toHaveProperty(key);
+      }
     });
 
     it('fires storeStepOutputs on the parent-exit transition of a FOR step', () => {
       // The parent-exit always transition (target === 'step::2') must carry
-      // storeStepOutputs so the FOR step's OUTPUTS are recorded after the last
-      // iteration. The loop-back transitions stay within the same parent and
-      // are intentionally NOT decorated. Last-iteration-wins runtime behavior
-      // is covered by the adjacent 'last iteration wins…' test.
+      // storeStepOutputs so executor-captured FOR outputs have a transition
+      // point at parent exit. The loop-back transitions stay within the same
+      // parent and are intentionally NOT decorated. This test is structural;
+      // value capture is covered by CLI integration tests.
       const steps = createRunbook(`## 1. Loop
 - FOR i IN 1 TO 2
 - PASS CONTINUE
 - FAIL STOP
 - OUTPUTS
-  - Value "{{ Index }}"
+  - Value
 
 ### 1.1 Inside
 - PASS CONTINUE
@@ -9206,15 +9196,15 @@ echo "processing"
       expect(getActionTypes(exitToNext.actions)).toContain('storeStepOutputs');
     });
 
-    it('last iteration wins when the same FOR output key is overwritten', () => {
-      // Spec Testing §: "FOR loop, two iterations, same output key:
-      // context.variables holds iteration 2's value."
+    it('does not synthesize FOR output values without executor channel capture', () => {
+      // Naked OUTPUTS require executor-created channel files; the compiler
+      // action alone does not derive values from the FOR frame.
       const steps = createRunbook(`## 1. Loop
 - FOR i IN 1 TO 2
 - PASS CONTINUE
 - FAIL STOP
 - OUTPUTS
-  - Value "{{ Index }}"
+  - Value
 
 ### 1.1 Inside
 - PASS CONTINUE
@@ -9229,7 +9219,7 @@ echo "processing"
       actor.send({ type: 'PASS' });
 
       const snapshot = actor.getSnapshot() as any;
-      expect(snapshot.context.variables.Value).toBe('2');
+      expect(snapshot.context.variables).not.toHaveProperty('Value');
     });
 
     it('injects storeStepOutputs for parent OUTPUTS on substep PASS COMPLETE transition (structural)', () => {
@@ -9241,7 +9231,7 @@ echo "processing"
 - PASS COMPLETE
 - FAIL STOP
 - OUTPUTS
-  - ParentVar "parent-value"
+  - ParentVar
 
 ### 1.1 Only
 - PASS COMPLETE
@@ -9254,16 +9244,16 @@ echo "processing"
       expect(getActionTypes(substepPassTransition.actions)).toContain('storeStepOutputs');
     });
 
-    it('stores parent OUTPUTS in context.variables when substep fires COMPLETE directly', () => {
-      // Runtime counterpart: the parent's OUTPUTS must appear in variables after a
-      // substep takes COMPLETE directly, bypassing the parent aggregation state.
+    it('does not synthesize naked parent OUTPUTS when substep fires COMPLETE directly', () => {
+      // Runtime counterpart: naked parent OUTPUTS still carry storeStepOutputs
+      // structurally, but no value is produced without an executor-captured file.
       const steps = createRunbook(`## 1. Parent
 - PASS COMPLETE
 - FAIL STOP
 - OUTPUTS
-  - ParentVar "parent-value"
-  - StepCursor "{{ Step }}"
-  - SubstepCursor "{{ context.current.substep }}"
+  - ParentVar
+  - StepCursor
+  - SubstepCursor
 
 ### 1.1 Only
 - PASS COMPLETE
@@ -9277,23 +9267,21 @@ echo "processing"
 
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('COMPLETE');
-      expect(snapshot.context.variables).toMatchObject({
-        ParentVar: 'parent-value',
-        StepCursor: '1.1',
-        SubstepCursor: '1',
-      });
+      for (const key of ['ParentVar', 'StepCursor', 'SubstepCursor']) {
+        expect(snapshot.context.variables).not.toHaveProperty(key);
+      }
     });
 
-    it('stores parent OUTPUTS in context.variables when substep fires STOP directly', () => {
+    it('does not synthesize naked parent OUTPUTS when substep fires STOP directly', () => {
       // Same as above but for FAIL STOP: the parent's OUTPUTS must fire even when
       // a substep routes directly to STOPPED without entering the parent state.
       const steps = createRunbook(`## 1. Parent
 - PASS COMPLETE
 - FAIL STOP
 - OUTPUTS
-  - ParentVar "parent-value"
-  - StepCursor "{{ Step }}"
-  - SubstepCursor "{{ context.current.substep }}"
+  - ParentVar
+  - StepCursor
+  - SubstepCursor
 
 ### 1.1 Only
 - PASS CONTINUE
@@ -9307,14 +9295,12 @@ echo "processing"
 
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('STOPPED');
-      expect(snapshot.context.variables).toMatchObject({
-        ParentVar: 'parent-value',
-        StepCursor: '1.1',
-        SubstepCursor: '1',
-      });
+      for (const key of ['ParentVar', 'StepCursor', 'SubstepCursor']) {
+        expect(snapshot.context.variables).not.toHaveProperty(key);
+      }
     });
 
-    it('stores parent OUTPUTS when non-last substep fires COMPLETE directly (multi-substep early exit)', () => {
+    it('does not synthesize naked parent OUTPUTS when non-last substep fires COMPLETE directly', () => {
       // Substep 1.1 of a 3-substep parent fires COMPLETE, bypassing 1.2, 1.3, and
       // the parent aggregation state. exitsParent is position-agnostic — the check
       // only cares that the target is not the parent or a sibling substep.
@@ -9322,9 +9308,9 @@ echo "processing"
 - PASS COMPLETE
 - FAIL STOP
 - OUTPUTS
-  - ParentVar "parent-value"
-  - StepCursor "{{ Step }}"
-  - SubstepCursor "{{ context.current.substep }}"
+  - ParentVar
+  - StepCursor
+  - SubstepCursor
 
 ### 1.1 First
 - PASS COMPLETE
@@ -9346,21 +9332,19 @@ echo "processing"
 
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('COMPLETE');
-      expect(snapshot.context.variables).toMatchObject({
-        ParentVar: 'parent-value',
-        StepCursor: '1.1',
-        SubstepCursor: '1',
-      });
+      for (const key of ['ParentVar', 'StepCursor', 'SubstepCursor']) {
+        expect(snapshot.context.variables).not.toHaveProperty(key);
+      }
     });
 
-    it('stores parent OUTPUTS when non-last substep fires STOP directly (multi-substep early exit)', () => {
+    it('does not synthesize naked parent OUTPUTS when non-last substep fires STOP directly', () => {
       const steps = createRunbook(`## 1. Parent
 - PASS COMPLETE
 - FAIL STOP
 - OUTPUTS
-  - ParentVar "parent-value"
-  - StepCursor "{{ Step }}"
-  - SubstepCursor "{{ context.current.substep }}"
+  - ParentVar
+  - StepCursor
+  - SubstepCursor
 
 ### 1.1 First
 - PASS CONTINUE
@@ -9378,23 +9362,21 @@ echo "processing"
 
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('STOPPED');
-      expect(snapshot.context.variables).toMatchObject({
-        ParentVar: 'parent-value',
-        StepCursor: '1.1',
-        SubstepCursor: '1',
-      });
+      for (const key of ['ParentVar', 'StepCursor', 'SubstepCursor']) {
+        expect(snapshot.context.variables).not.toHaveProperty(key);
+      }
     });
 
-    it('stores parent OUTPUTS when substep fires GOTO to external step', () => {
+    it('does not synthesize naked parent OUTPUTS when substep fires GOTO to external step', () => {
       // When a substep GOTOs a different step, the parent aggregation state is also
       // bypassed. The exitsParent check applies equally to GOTO targets.
       const steps = createRunbook(`## 1. Parent
 - PASS CONTINUE
 - FAIL STOP
 - OUTPUTS
-  - ParentVar "parent-value"
-  - StepCursor "{{ Step }}"
-  - SubstepCursor "{{ context.current.substep }}"
+  - ParentVar
+  - StepCursor
+  - SubstepCursor
 
 ### 1.1 Only
 - PASS GOTO 2
@@ -9413,14 +9395,12 @@ echo "processing"
       // After GOTO 2, machine is at step::2 — parent outputs already fired during transition.
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('step::2');
-      expect(snapshot.context.variables).toMatchObject({
-        ParentVar: 'parent-value',
-        StepCursor: '1.1',
-        SubstepCursor: '1',
-      });
+      for (const key of ['ParentVar', 'StepCursor', 'SubstepCursor']) {
+        expect(snapshot.context.variables).not.toHaveProperty(key);
+      }
     });
 
-    it('stores parent OUTPUTS when FOR loop substep fires COMPLETE directly', () => {
+    it('does not synthesize naked parent OUTPUTS when FOR loop substep fires COMPLETE directly', () => {
       // resolvedStepHasSubsteps returns true for FOR steps, so the exitsParent
       // guard applies equally — the FOR parent's outputs must fire.
       const steps = createRunbook(`## 1. Loop
@@ -9428,11 +9408,11 @@ echo "processing"
 - PASS CONTINUE
 - FAIL STOP
 - OUTPUTS
-  - LoopVar "for-parent-value"
-  - StepCursor "{{ Step }}"
-  - SubstepCursor "{{ context.current.substep }}"
-  - IterCursor "{{ Index }}"
-  - LoopCursor "{{ i }}"
+  - LoopVar
+  - StepCursor
+  - SubstepCursor
+  - IterCursor
+  - LoopCursor
 
 ### 1.1 Inside
 - PASS COMPLETE
@@ -9446,26 +9426,22 @@ echo "processing"
 
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('COMPLETE');
-      expect(snapshot.context.variables).toMatchObject({
-        LoopVar: 'for-parent-value',
-        StepCursor: '1.1',
-        SubstepCursor: '1',
-        IterCursor: '1',
-        LoopCursor: '1',
-      });
+      for (const key of ['LoopVar', 'StepCursor', 'SubstepCursor', 'IterCursor', 'LoopCursor']) {
+        expect(snapshot.context.variables).not.toHaveProperty(key);
+      }
     });
 
-    it('stores parent OUTPUTS when FOR loop substep fires STOP directly', () => {
+    it('does not synthesize naked parent OUTPUTS when FOR loop substep fires STOP directly', () => {
       const steps = createRunbook(`## 1. Loop
 - FOR i IN 1 TO 2
 - PASS CONTINUE
 - FAIL STOP
 - OUTPUTS
-  - LoopVar "for-parent-value"
-  - StepCursor "{{ Step }}"
-  - SubstepCursor "{{ context.current.substep }}"
-  - IterCursor "{{ Index }}"
-  - LoopCursor "{{ i }}"
+  - LoopVar
+  - StepCursor
+  - SubstepCursor
+  - IterCursor
+  - LoopCursor
 
 ### 1.1 Inside
 - PASS CONTINUE
@@ -9479,32 +9455,27 @@ echo "processing"
 
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('STOPPED');
-      expect(snapshot.context.variables).toMatchObject({
-        LoopVar: 'for-parent-value',
-        StepCursor: '1.1',
-        SubstepCursor: '1',
-        IterCursor: '1',
-        LoopCursor: '1',
-      });
+      for (const key of ['LoopVar', 'StepCursor', 'SubstepCursor', 'IterCursor', 'LoopCursor']) {
+        expect(snapshot.context.variables).not.toHaveProperty(key);
+      }
     });
 
-    it('stores both substep and parent OUTPUTS when substep fires COMPLETE and both declare outputs', () => {
-      // Both the substep and the parent declare OUTPUTS. The substep's storeStepOutputs
-      // fires first (unitOutputs), then the parent's (parent injection). Both variables
-      // must appear in context.variables.
+    it('does not synthesize naked substep or parent OUTPUTS when both declare outputs', () => {
+      // Both the substep and the parent declare naked OUTPUTS. The structural
+      // storeStepOutputs actions still exist, but no expression values are produced.
       const steps = createRunbook(`## 1. Parent
 - PASS COMPLETE
 - FAIL STOP
 - OUTPUTS
-  - ParentVar "parent-value"
-  - StepCursor "{{ Step }}"
-  - SubstepCursor "{{ context.current.substep }}"
+  - ParentVar
+  - StepCursor
+  - SubstepCursor
 
 ### 1.1 Only
 - PASS COMPLETE
 - FAIL STOP
 - OUTPUTS
-  - SubstepVar "substep-value"
+  - SubstepVar
 `);
 
       const machine = compileRunbookToMachine(steps);
@@ -9514,31 +9485,27 @@ echo "processing"
 
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('COMPLETE');
-      expect(snapshot.context.variables).toMatchObject({
-        SubstepVar: 'substep-value',
-        ParentVar: 'parent-value',
-        StepCursor: '1.1',
-        SubstepCursor: '1',
-      });
+      for (const key of ['ParentVar', 'StepCursor', 'SubstepCursor', 'SubstepVar']) {
+        expect(snapshot.context.variables).not.toHaveProperty(key);
+      }
     });
 
-    it('parent OUTPUTS overwrite substep OUTPUTS when both declare the same key (last-writer-wins)', () => {
-      // Parent fires after substep (to mirror the CONTINUE path ordering where
-      // substep storeStepOutputs fires first, then parent storeStepOutputs fires
-      // via decorateParentTransition). Last writer wins on shared keys.
+    it('keeps same-key naked substep and parent OUTPUTS inert without captured files', () => {
+      // Parent fires after substep structurally, but neither naked declaration
+      // has a value in core-only actor tests.
       const steps = createRunbook(`## 1. Parent
 - PASS COMPLETE
 - FAIL STOP
 - OUTPUTS
-  - Result "parent-wins"
-  - StepCursor "{{ Step }}"
-  - SubstepCursor "{{ context.current.substep }}"
+  - Result
+  - StepCursor
+  - SubstepCursor
 
 ### 1.1 Only
 - PASS COMPLETE
 - FAIL STOP
 - OUTPUTS
-  - Result "substep-first"
+  - Result
 `);
 
       const machine = compileRunbookToMachine(steps);
@@ -9548,14 +9515,12 @@ echo "processing"
 
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('COMPLETE');
-      expect(snapshot.context.variables).toMatchObject({
-        Result: 'parent-wins',
-        StepCursor: '1.1',
-        SubstepCursor: '1',
-      });
+      for (const key of ['Result', 'StepCursor', 'SubstepCursor']) {
+        expect(snapshot.context.variables).not.toHaveProperty(key);
+      }
     });
 
-    it('does not inject parent OUTPUTS on sibling-GOTO substep transition (exitsParent=false)', () => {
+    it('keeps naked parent OUTPUTS inert on sibling-GOTO substep transition', () => {
       // When substep 1.1 GOTOs sibling substep 1.2, the target is 'step::1::2' which
       // starts with 'step::1::' — exitsParent=false. Parent outputs must NOT fire here;
       // they fire later when substep 1.2 actually exits the parent.
@@ -9563,9 +9528,9 @@ echo "processing"
 - PASS COMPLETE
 - FAIL STOP
 - OUTPUTS
-  - ParentVar "parent-value"
-  - StepCursor "{{ Step }}"
-  - SubstepCursor "{{ context.current.substep }}"
+  - ParentVar
+  - StepCursor
+  - SubstepCursor
 
 ### 1.1 First
 - PASS GOTO 1.2
@@ -9582,7 +9547,9 @@ echo "processing"
       const substepGotoTransition = getState(machine, 'step::1::1').on.PASS;
       expect(getActionTypes(substepGotoTransition.actions)).not.toContain('storeStepOutputs');
 
-      // Behavioral: parent outputs fire exactly once (via substep 1.2's COMPLETE exit).
+      // Structural/runtime cutoff: parent storeStepOutputs fires once via
+      // substep 1.2's COMPLETE exit, but naked OUTPUTS do not synthesize values
+      // without executor-captured files.
       const actor = createActor(machine);
       actor.start();
       actor.send({ type: 'PASS' }); // substep 1.1 GOTOs 1.2
@@ -9590,11 +9557,9 @@ echo "processing"
 
       const snapshot = actor.getSnapshot();
       expect(snapshot.value).toBe('COMPLETE');
-      expect(snapshot.context.variables).toMatchObject({
-        ParentVar: 'parent-value',
-        StepCursor: '1.2',
-        SubstepCursor: '2',
-      });
+      for (const key of ['ParentVar', 'StepCursor', 'SubstepCursor']) {
+        expect(snapshot.context.variables).not.toHaveProperty(key);
+      }
     });
   });
 

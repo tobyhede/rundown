@@ -68,12 +68,14 @@ Each task should produce self-contained changes that make sense independently.
 
 
 ## 7. Output Path
+- ARTIFACTS
+  - PlanPath "plan.json"
 - OUTPUTS
-  - PlanPath {{ path "plan.json" }}
+  - PlanPath
 - PASS CONTINUE
 - FAIL STOP
 
-{{ path "plan.json" }}
+{{ PlanPath }}
 
 
 ## 8. Write the plan
@@ -110,4 +112,3 @@ Verify the saved plan includes all required sections:
 - [ ] Tasks decomposed into granular subtasks
 - [ ] Tasks structured with TDD principles
 - [ ] Tasks include atomic commit if required
-
