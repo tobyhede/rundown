@@ -1,5 +1,6 @@
 // src/runbook/execution-lifecycle-service.ts
 import type { RunbookStateManager } from './state.js';
+import { merge, replace } from './state-update-ops.js';
 import {
   buildCompletionKey,
   deriveActiveFrame,
@@ -122,7 +123,7 @@ export class ExecutionLifecycleService {
     const updated = await this.manager.update(id, {
       activeFrameKey: toFrameKey,
       activeEntry: entry,
-      frameEntries,
+      frameEntries: replace(frameEntries),
     });
 
     return { state: updated, frameKey: toFrameKey, entry };
@@ -145,10 +146,7 @@ export class ExecutionLifecycleService {
     if (!state) throw new Error(`Runbook ${id} not found`);
 
     await this.manager.update(id, {
-      resolvedCompletions: {
-        ...(state.resolvedCompletions ?? {}),
-        [key]: completion,
-      },
+      resolvedCompletions: merge({ [key]: completion }),
     });
   }
 
@@ -197,7 +195,7 @@ export class ExecutionLifecycleService {
     const next = { ...(state.resolvedCompletions ?? {}) };
     delete next[actualKey];
     await this.manager.update(id, {
-      resolvedCompletions: Object.keys(next).length > 0 ? next : {},
+      resolvedCompletions: replace(next),
     });
     return existing;
   }

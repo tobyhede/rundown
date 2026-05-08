@@ -128,8 +128,7 @@ describe('resolveArtifactDeclarations', () => {
 
   it('reuses a same-block exact record for duplicate exact declarations', async () => {
     const cwd = await tempCwd();
-    const timestamps = ['2026-05-07T01:00:00.000Z', '2026-05-07T01:00:01.000Z'];
-    let timestampIndex = 0;
+    const fixedTimestamp = '2026-05-07T01:00:00.000Z';
 
     const result = await resolveArtifactDeclarations(
       [exact('FirstPlan', 'plan.json'), exact('SecondPlan', 'plan.json')],
@@ -139,19 +138,100 @@ describe('resolveArtifactDeclarations', () => {
         contextId: CONTEXT_ID,
         runId: CURRENT_RUN,
         runbook: RUNBOOK,
-        now: () => timestamps[timestampIndex++] ?? '2026-05-07T01:00:02.000Z',
+        now: () => fixedTimestamp,
         loadRunEligibility: eligibility(new Map()),
       },
     );
 
+    // Second declaration must reuse the first declaration's record (same identity).
     expect(result.SecondPlan).toBe(result.FirstPlan);
-    expect(result.FirstPlan).toMatchObject({
-      key: 'plan.json',
-      timestamp: '2026-05-07T01:00:00.000Z',
-    });
+    expect(result.FirstPlan).toMatchObject({ key: 'plan.json', timestamp: fixedTimestamp });
     await expect(readArtifactManifest({ cwd, workPath: WORK_PATH }, CONTEXT_ID)).resolves.toEqual([
       result.FirstPlan,
     ]);
+  });
+
+  it('returns an empty result map for an empty declarations array', async () => {
+    const cwd = await tempCwd();
+
+    const result = await resolveArtifactDeclarations([], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      loadRunEligibility: eligibility(new Map()),
+    });
+
+    expect(result).toEqual({});
+    // Manifest is absent (no exact declarations were processed); reading it
+    // returns an empty list rather than throwing.
+    await expect(readArtifactManifest({ cwd, workPath: WORK_PATH }, CONTEXT_ID)).resolves.toEqual(
+      [],
+    );
+  });
+
+  it('a wildcard declaration overwrites an exact declaration sharing the same alias name', async () => {
+    const cwd = await tempCwd();
+    const existing = record({
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      key: 'plan.json',
+    });
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, existing);
+    await touchArtifact(cwd, existing);
+
+    const result = await resolveArtifactDeclarations(
+      [exact('Out', 'plan.json'), wildcard('Out', '*.json')],
+      {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        loadRunEligibility: eligibility(new Map()),
+      },
+    );
+
+    // Wildcards run after exacts and overwrite the alias slot when names collide.
+    expect(Array.isArray(result.Out)).toBe(true);
+    expect(result.Out).toHaveLength(1);
+    expect((result.Out as ArtifactRecord[])[0]).toMatchObject({ key: 'plan.json' });
+  });
+
+  it('later wildcard declarations sharing an alias name overwrite earlier ones', async () => {
+    const cwd = await tempCwd();
+    const planRecord = record({
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      key: 'plan.json',
+    });
+    const reviewRecord = record({
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      key: 'review.json',
+    });
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, planRecord);
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, reviewRecord);
+    await touchArtifact(cwd, planRecord);
+    await touchArtifact(cwd, reviewRecord);
+
+    const result = await resolveArtifactDeclarations(
+      [wildcard('Out', 'plan*'), wildcard('Out', 'review*')],
+      {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        loadRunEligibility: eligibility(new Map()),
+      },
+    );
+
+    // Last writer wins at the alias level.
+    expect(Array.isArray(result.Out)).toBe(true);
+    expect(result.Out).toHaveLength(1);
+    expect((result.Out as ArtifactRecord[])[0]).toMatchObject({ key: 'review.json' });
   });
 
   it('uses the system clock for exact declarations when no clock is injected', async () => {

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { isError } from '../../src/errors.js';
 import { generateRunId, RunbookStateManager } from '../../src/runbook/state.js';
+import { merge, replace } from '../../src/runbook/state-update-ops.js';
 import { statePath as _statePath } from '../../src/paths.js';
 import { SessionService } from '../../src/runbook/session-service.js';
 import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
@@ -77,8 +78,8 @@ describe('RunbookStateManager', () => {
     );
 
     await manager.update(state.id, {
-      artifactVars: { PlanPath: artifact, Reviews: [artifact] },
-      variables: { PlanPath: 'output-mask' },
+      artifactVars: replace({ PlanPath: artifact, Reviews: [artifact] }),
+      variables: merge({ PlanPath: 'output-mask' }),
     });
 
     const loaded = await manager.load(state.id);
@@ -101,7 +102,7 @@ describe('RunbookStateManager', () => {
         },
       },
     );
-    await manager.update(state.id, { variables: { PlanPath: 'output-mask' } });
+    await manager.update(state.id, { variables: merge({ PlanPath: 'output-mask' }) });
 
     const artifacts = await manager.resolveArtifactsForRun(state.id, [
       { name: 'PlanPath', key: 'plan.json', kind: 'exact' },
@@ -130,7 +131,7 @@ describe('RunbookStateManager', () => {
       manager.resolveArtifactsForRun(state.id, [
         { name: 'PlanPath', key: 'plan.json', kind: 'exact' },
       ]),
-    ).rejects.toThrow(/WorkPath/);
+    ).rejects.toThrow(/cannot resolve ARTIFACTS without string WorkPath/);
   });
 
   it('resolveArtifactsForRun throws when ContextId is missing', async () => {
@@ -150,7 +151,7 @@ describe('RunbookStateManager', () => {
       manager.resolveArtifactsForRun(state.id, [
         { name: 'PlanPath', key: 'plan.json', kind: 'exact' },
       ]),
-    ).rejects.toThrow(/ContextId/);
+    ).rejects.toThrow(/cannot resolve ARTIFACTS without string ContextId/);
   });
 
   it('resolveArtifactsForRun throws when run id is not found', async () => {
@@ -167,7 +168,7 @@ describe('RunbookStateManager', () => {
       mockRunbook,
       { runbookPath: 'test.runbook.md' },
     );
-    await manager.update(state.id, { artifactVars: {} });
+    await manager.update(state.id, { artifactVars: replace({}) });
     const loaded = await manager.load(state.id);
     expect(loaded?.artifactVars ?? {}).toEqual({});
   });
@@ -178,21 +179,23 @@ describe('RunbookStateManager', () => {
       mockRunbook,
       { runbookPath: 'test.runbook.md' },
     );
-    const baseRecord = {
-      uri: 'rd://artifacts/ctx1/runs/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
-      runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-      contextId: 'ctx1',
-      runbook: { source: 'project' as const, path: 'planning/write-plan.runbook.md' },
-      key: 'plan.json',
-      timestamp: '2026-05-07T00:00:00.000Z',
-    } satisfies ArtifactRecord;
     const entries: Record<string, ArtifactRecord> = {};
     for (let i = 0; i < 120; i++) {
-      entries[`Var${String(i)}`] = baseRecord;
+      const key = `plan-${String(i)}.json`;
+      entries[`Var${String(i)}`] = {
+        uri: `rd://artifacts/ctx1/runs/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/${key}`,
+        runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        contextId: 'ctx1',
+        runbook: { source: 'project' as const, path: 'planning/write-plan.runbook.md' },
+        key,
+        timestamp: '2026-05-07T00:00:00.000Z',
+      } satisfies ArtifactRecord;
     }
-    await manager.update(state.id, { artifactVars: entries });
+    await manager.update(state.id, { artifactVars: replace(entries) });
     const loaded = await manager.load(state.id);
     expect(Object.keys(loaded?.artifactVars ?? {})).toHaveLength(120);
+    expect(loaded?.artifactVars?.Var0).toMatchObject({ key: 'plan-0.json' });
+    expect(loaded?.artifactVars?.Var119).toMatchObject({ key: 'plan-119.json' });
   });
 
   it('subsequent resolveArtifactsForRun calls with the same alias name overwrite', async () => {
@@ -218,6 +221,9 @@ describe('RunbookStateManager', () => {
     ]);
     const loaded = await manager.load(state.id);
     expect(loaded?.artifactVars?.Output).toMatchObject({ key: 'second.json' });
+    // Catch a per-key merge regression: the old key must be gone.
+    const output = loaded?.artifactVars?.Output as ArtifactRecord;
+    expect(output.key).not.toBe('first.json');
   });
 
   describe('getChildRunbookResult', () => {
@@ -598,7 +604,7 @@ describe('RunbookStateManager', () => {
       const resolvedKey = '1||1|';
 
       await manager.update(state.id, {
-        resolvedCompletions: {
+        resolvedCompletions: merge({
           [resolvedKey]: {
             agentId: 'agent-1',
             result: 'pass',
@@ -607,7 +613,7 @@ describe('RunbookStateManager', () => {
             targetEntry: 1,
             completedAt: new Date().toISOString(),
           },
-        },
+        }),
       });
 
       const stateFilePath = _statePath(testDir, state.id);
@@ -640,7 +646,7 @@ describe('RunbookStateManager', () => {
       });
 
       const updated = await manager.update(state.id, {
-        templateVars: { env: 'prod' },
+        templateVars: replace({ env: 'prod' }),
       });
 
       expect(updated.templateVars).toEqual({ env: 'prod' });
@@ -662,9 +668,9 @@ describe('RunbookStateManager', () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
       });
-      await manager.update(state.id, { variables: { A: '1', B: '2' } });
+      await manager.update(state.id, { variables: merge({ A: '1', B: '2' }) });
 
-      const updated = await manager.update(state.id, { variables: { B: 'two', C: '3' } });
+      const updated = await manager.update(state.id, { variables: merge({ B: 'two', C: '3' }) });
 
       expect(updated.variables).toEqual({ A: '1', B: 'two', C: '3' });
     });
@@ -673,7 +679,7 @@ describe('RunbookStateManager', () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
       });
-      await manager.update(state.id, { variables: { A: '1' } });
+      await manager.update(state.id, { variables: merge({ A: '1' }) });
 
       const updated = await manager.update(state.id, { stepName: 'next' });
 

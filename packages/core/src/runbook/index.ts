@@ -27,6 +27,18 @@ export {
   StaleRunbookStateError,
   type SessionData,
 } from './state.js';
+export {
+  applyOp,
+  merge,
+  replace,
+  type ArtifactVarsOp,
+  type FrameEntriesOp,
+  type MergeOp,
+  type ReplaceOp,
+  type ResolvedCompletionsOp,
+  type TemplateVarsOp,
+  type VariablesOp,
+} from './state-update-ops.js';
 export { SessionService, type ReleaseRunbookResult } from './session-service.js';
 export { readActiveRunScope, type ActiveRunScope } from './session-reader.js';
 export { ExecutionLifecycleService } from './execution-lifecycle-service.js';

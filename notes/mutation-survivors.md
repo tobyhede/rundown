@@ -1,11 +1,11 @@
-# Mutation Survivors: Artifact Resolver and Coalescing
+# Mutation Survivors: Artifact Resolver, Coalescing, and Update-Op Dispatch
 
 Date: 2026-05-08
 
 Command:
 
 ```bash
-npx stryker run --inPlace --force --mutate src/runbook/artifact-manifest.ts:193-213,src/runbook/artifact-directive-resolver.ts:75-181 --testFiles __tests__/runbook/artifact-manifest.test.ts,__tests__/runbook/artifact-directive-resolver.test.ts
+npx stryker run --inPlace --force --mutate src/runbook/artifact-manifest.ts:193-213,src/runbook/artifact-directive-resolver.ts:75-181,src/runbook/state-update-ops.ts,src/runbook/state.ts:422-440 --testFiles __tests__/runbook/artifact-manifest.test.ts,__tests__/runbook/artifact-directive-resolver.test.ts,__tests__/runbook/state-update-ops.test.ts,__tests__/runbook/state.test.ts
 ```
 
 Report:
@@ -13,10 +13,12 @@ Report:
 - `packages/core/reports/mutation/mutation-report.json`
 - `packages/core/reports/mutation/index.html`
 
-Targeted range result, parsed from the JSON report:
+Targeted range result:
 
 - `src/runbook/artifact-manifest.ts:193-213`: 14 killed, 0 survived
 - `src/runbook/artifact-directive-resolver.ts:75-181`: 63 killed, 6 survived
+- `src/runbook/state-update-ops.ts`: 15 killed, 0 survived (full file)
+- `src/runbook/state.ts:422-440` (`update()` dispatch): 20 killed, 0 survived
 
 Remaining justified survivors:
 

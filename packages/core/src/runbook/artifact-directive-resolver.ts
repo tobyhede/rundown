@@ -98,6 +98,9 @@ export async function resolveArtifactDeclarations(
     recordsForExacts = coalesceManifestRecords([...recordsForExacts, record]);
   }
 
+  // The reread observes external concurrent manifest writes; that timing isn't
+  // injectable through the resolver API, so the two branches are equivalent
+  // under deterministic unit tests. See notes/mutation-survivors.md.
   const recordsForWildcards =
     exacts.length > 0
       ? coalesceManifestRecords(await readArtifactManifest(options, options.contextId))
@@ -149,6 +152,10 @@ function findExistingExactRecord(
 ): ArtifactManifestRecord | undefined {
   return records.find(
     (record) =>
+      // Defense-in-depth: readArtifactManifest already rejects rows whose
+      // contextId differs (artifact-manifest.ts readArtifactManifest). Kept
+      // here so a refactor of the manifest reader cannot silently weaken
+      // the resolver's identity check. See notes/mutation-survivors.md.
       record.contextId === options.contextId &&
       record.runId === options.runId &&
       record.runbook.source === options.runbook.source &&
@@ -166,6 +173,9 @@ async function resolveWildcardDeclaration(
   const matches: ArtifactRecord[] = [];
 
   for (const record of records) {
+    // Defense-in-depth on contextId: readArtifactManifest already rejects
+    // mismatched rows; this guard catches a contract weakening in the reader.
+    // See notes/mutation-survivors.md.
     if (record.contextId !== options.contextId || !matcher(record.key)) {
       continue;
     }

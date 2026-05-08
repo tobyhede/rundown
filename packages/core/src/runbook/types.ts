@@ -250,6 +250,12 @@ export type ArtifactVarValue = ArtifactRecord | readonly ArtifactRecord[];
  *
  * ARTIFACTS-aware snapshots can additionally carry structured artifact
  * records alongside ordinary template values.
+ *
+ * @remarks
+ * Documentational widening only. `ArtifactRecord` is structurally assignable
+ * to {@link JsonObject}, and `readonly ArtifactRecord[]` is assignable to
+ * {@link JsonArray}, so this union does not strengthen any type checks beyond
+ * `TemplateVarValue`. The named alias clarifies intent at delegation sites.
  */
 export type ContextSnapshotVarValue = TemplateVarValue | ArtifactVarValue;
 

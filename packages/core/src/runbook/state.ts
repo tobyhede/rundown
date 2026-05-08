@@ -16,6 +16,15 @@ import type {
   ArtifactVarValue,
 } from './types.js';
 import {
+  applyOp,
+  merge,
+  type ArtifactVarsOp,
+  type FrameEntriesOp,
+  type ResolvedCompletionsOp,
+  type TemplateVarsOp,
+  type VariablesOp,
+} from './state-update-ops.js';
+import {
   resolveArtifactDeclarations,
   type ArtifactRunEligibility,
 } from './artifact-directive-resolver.js';
@@ -343,26 +352,46 @@ export class RunbookStateManager {
   /**
    * Update an existing runbook state with partial changes.
    *
-   * Merges the provided updates with the existing state. Variables are
-   * shallow-merged rather than replaced entirely.
+   * Per-field semantics:
+   * - `variables` — `merge(...)` shallow-merges OUTPUTS (merge-only)
+   * - `templateVars` — `replace(...)` wholesale-replaces (replace-only; seeded once)
+   * - `artifactVars` — `merge(...)` adds entries; `replace(...)` mirrors the full set
+   * - `resolvedCompletions` — `merge(...)` adds one entry; `replace(...)` rewrites the map
+   * - `frameEntries` — `replace(...)` wholesale-replaces (replace-only)
+   * - All other fields — provided value is taken verbatim; omitted fields are preserved
+   *
+   * Use the {@link merge} and {@link replace} constructors at call sites to make
+   * intent visible at the type level; passing a raw record without a tag is a
+   * compile error.
    *
    * @param id - The runbook state ID to update
-   * @param updates - Partial state updates to apply (id and startedAt cannot be changed)
+   * @param updates - Partial state updates with tagged ops on record-shaped fields
    * @returns The updated runbook state
    * @throws {Error} If the runbook with the given ID is not found
    */
   async update(
     id: string,
     updates: Partial<
-      Omit<RunbookState, 'id' | 'startedAt' | 'variables' | 'templateVars' | 'artifactVars'>
+      Omit<
+        RunbookState,
+        | 'id'
+        | 'startedAt'
+        | 'variables'
+        | 'templateVars'
+        | 'artifactVars'
+        | 'resolvedCompletions'
+        | 'frameEntries'
+      >
     > & {
-      // Accept unbranded records on the update path; the manager re-mints
-      // the brand inside the merge below. Internal callers (actor-service
-      // sync, compiler reducers) hold the unbranded XState context shape
-      // and shouldn't need to know about the persistence-layer brand.
-      readonly variables?: Readonly<Record<string, string>>;
-      readonly templateVars?: Readonly<Record<string, TemplateVarValue>>;
-      readonly artifactVars?: Readonly<Record<string, ArtifactVarValue>>;
+      // Tagged ops on record-shaped fields make merge-vs-replace intent
+      // visible at the call site. Internal callers (actor-service sync,
+      // compiler reducers) hold the unbranded XState context shape; the
+      // manager re-mints persistence brands inside the dispatch below.
+      readonly variables?: VariablesOp;
+      readonly templateVars?: TemplateVarsOp;
+      readonly artifactVars?: ArtifactVarsOp;
+      readonly resolvedCompletions?: ResolvedCompletionsOp;
+      readonly frameEntries?: FrameEntriesOp;
     },
   ): Promise<RunbookState> {
     const existing = await this.load(id);
@@ -370,13 +399,15 @@ export class RunbookStateManager {
       throw new Error(`Runbook ${id} not found`);
     }
 
-    // Pull branded/unbranded fields out of updates so the subsequent
-    // `...updates` spread does not leak the unbranded types into the
-    // strictly-typed RunbookState literal.
+    // Pull tagged-op fields out of updates so the subsequent `...updates`
+    // spread does not leak the wrapper shapes into the strictly-typed
+    // RunbookState literal.
     const {
-      artifactVars: updatesArtifactVars,
-      variables: updatesVariables,
-      templateVars: updatesTemplateVars,
+      variables: variablesOp,
+      templateVars: templateVarsOp,
+      artifactVars: artifactVarsOp,
+      resolvedCompletions: resolvedCompletionsOp,
+      frameEntries: frameEntriesOp,
       ...restUpdates
     } = updates;
     const shouldPatchSnapshotSubstepStates =
@@ -391,13 +422,20 @@ export class RunbookStateManager {
     const updated: RunbookState = {
       ...existing,
       ...patchedRestUpdates,
-      variables: brandStoredOutputs({ ...existing.variables, ...(updatesVariables ?? {}) }),
-      ...(updatesTemplateVars !== undefined
-        ? { templateVars: brandInitialTemplateVars(updatesTemplateVars) }
+      variables:
+        variablesOp !== undefined
+          ? brandStoredOutputs(applyOp(existing.variables, variablesOp))
+          : existing.variables,
+      ...(templateVarsOp !== undefined
+        ? { templateVars: brandInitialTemplateVars(templateVarsOp.value) }
         : {}),
-      ...(updatesArtifactVars !== undefined
-        ? { artifactVars: brandArtifactVars(updatesArtifactVars) }
+      ...(artifactVarsOp !== undefined
+        ? { artifactVars: brandArtifactVars(applyOp(existing.artifactVars, artifactVarsOp)) }
         : {}),
+      ...(resolvedCompletionsOp !== undefined
+        ? { resolvedCompletions: applyOp(existing.resolvedCompletions, resolvedCompletionsOp) }
+        : {}),
+      ...(frameEntriesOp !== undefined ? { frameEntries: frameEntriesOp.value } : {}),
       updatedAt: new Date().toISOString(),
     };
 
@@ -411,6 +449,15 @@ export class RunbookStateManager {
    *
    * This method is intentionally explicit: it does not inspect the active step
    * or emit events. Phase 4 owns deciding when to call it at step/substep entry.
+   *
+   * @remarks
+   * Must not be called while a live `RunbookActor` exists for the same `id`.
+   * The actor seeds `context.artifactVars` once at compile time
+   * (`actor-service.ts` `compileMachineFromState`); a later
+   * `RunbookActorService.updateFromActor` mirrors the actor's stale view back
+   * to disk via `replace(...)` (`actor-service.ts` artifactVars patches),
+   * which would overwrite this method's writes. Phase 4 will own scheduling
+   * resolver calls relative to actor lifecycle.
    *
    * @param id - Current run id
    * @param declarations - Parser-owned artifact declarations for one execution unit
@@ -455,10 +502,7 @@ export class RunbookStateManager {
     });
 
     await this.update(id, {
-      artifactVars: {
-        ...(state.artifactVars ?? {}),
-        ...resolved,
-      },
+      artifactVars: merge(resolved),
     });
     return resolved;
   }

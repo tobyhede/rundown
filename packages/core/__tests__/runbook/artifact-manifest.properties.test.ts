@@ -10,17 +10,33 @@ const recordArb: fc.Arbitrary<ArtifactManifestRecord> = fc.record({
   runId: fc.constantFrom(
     'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
     'rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    'rd_cccccccccccccccccccccccccccccccc',
   ),
   contextId: fc.constantFrom('ctx1', 'ctx2'),
   runbook: fc.record({
     source: fc.constantFrom('project' as const, 'plugin' as const, 'bundled' as const),
-    path: fc.constantFrom('a.runbook.md', 'b.runbook.md'),
+    path: fc.constantFrom(
+      'a.runbook.md',
+      'b.runbook.md',
+      'c.runbook.md',
+      'planning/write-plan.runbook.md',
+      'planning/review.runbook.md',
+    ),
   }),
-  key: fc.constantFrom('plan.json', 'review.json', 'output.json'),
+  key: fc.constantFrom(
+    'plan.json',
+    'review.json',
+    'output.json',
+    'review-plan-a.json',
+    'review-plan-b.json',
+    'config.yaml',
+  ),
   timestamp: fc.constantFrom(
     '2026-05-07T00:00:00.000Z',
     '2026-05-07T01:00:00.000Z',
     '2026-05-07T02:00:00.000Z',
+    '2026-05-07T03:00:00.000Z',
+    '2026-05-07T04:00:00.000Z',
   ),
 });
 
@@ -51,6 +67,24 @@ describe('coalesceManifestRecords properties', () => {
         const inputIdentities = new Set(records.map(identityKey));
         const outputIdentities = new Set(coalesceManifestRecords(records).map(identityKey));
         expect(outputIdentities).toEqual(inputIdentities);
+      }),
+    );
+  });
+
+  it('newest timestamp wins per identity', () => {
+    fc.assert(
+      fc.property(fc.array(recordArb, { maxLength: 50 }), (records) => {
+        const coalesced = coalesceManifestRecords(records);
+        // For each identity in the coalesced output, the timestamp must equal
+        // the maximum timestamp of all input rows sharing that identity.
+        for (const row of coalesced) {
+          const id = identityKey(row);
+          const maxInputTs = records
+            .filter((r) => identityKey(r) === id)
+            .map((r) => r.timestamp)
+            .reduce((a, b) => (a > b ? a : b));
+          expect(row.timestamp).toBe(maxInputTs);
+        }
       }),
     );
   });

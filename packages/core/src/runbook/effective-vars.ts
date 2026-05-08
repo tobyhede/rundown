@@ -28,6 +28,15 @@ export type ArtifactVars = Readonly<Record<string, ArtifactVarValue>> & {
 /**
  * Sole producer of {@link ArtifactVars}.
  *
+ * Apply at the two seams where artifact variables enter {@link RunbookState}:
+ *   1. The Zod parse seam in {@link makeRunbookStateSchema} when state is
+ *      loaded from disk.
+ *   2. {@link RunbookStateManager.update} when the resolver or actor mirror
+ *      writes the field through `merge(...)` / `replace(...)`.
+ *
+ * Identity-preserving — the brand is type-only. Mirrors the seam-application
+ * pattern of {@link brandInitialTemplateVars} and {@link brandStoredOutputs}.
+ *
  * @param vars - Plain artifact variable map
  * @returns The same object, branded
  */

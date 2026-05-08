@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readActiveRunScope } from '../../src/runbook/session-reader.js';
 import { RunbookStateManager } from '../../src/runbook/state.js';
+import { merge } from '../../src/runbook/state-update-ops.js';
 import { SessionService } from '../../src/runbook/session-service.js';
 import type { Runbook, Step } from '../../src/runbook/types.js';
 import { makeBaseStep } from '../helpers/step-factories.js';
@@ -58,10 +59,10 @@ describe('readActiveRunScope', () => {
       },
     });
     await manager.update(state.id, {
-      variables: {
+      variables: merge({
         WorkPath: '.rundown/work/output',
         ContextId: 'ctx-output',
-      },
+      }),
     });
     await sessionService.pushRunbook(state.id);
 

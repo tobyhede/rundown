@@ -82,6 +82,11 @@ describe('artifact resolver integration', () => {
     ]);
 
     expect(artifacts.Plans).toHaveLength(1);
-    expect((artifacts.Plans as ArtifactRecord[])[0].runId).toBe(sibling.id);
+    expect((artifacts.Plans as ArtifactRecord[])[0]).toMatchObject({
+      contextId: CONTEXT_ID,
+      runId: sibling.id,
+      key: 'plan.json',
+      runbook: RUNBOOK_REF,
+    });
   });
 });

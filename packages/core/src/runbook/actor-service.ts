@@ -17,6 +17,7 @@ import type { ResolvedStep, RunbookState, ForContext } from './types.js';
 import type { RunbookStateManager } from './state.js';
 import { compileRunbookToMachine, type RunbookEvent, type RunbookContext } from './compiler.js';
 import { flattenTemplateVars } from './output-evaluator.js';
+import { merge, replace } from './state-update-ops.js';
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { logger } from '../logger.js';
 
@@ -300,12 +301,16 @@ export class RunbookActorService {
         snapshot.context && 'activeFrameKey' in snapshot.context
           ? { activeFrameKey: snapshot.context.activeFrameKey }
           : {};
+      // Same `'in'`-vs-`!== undefined` rationale as activeFrameKeyTermPatch
+      // above: preserves persisted value when context omits the field.
       const artifactVarsTermPatch =
-        snapshot.context && 'artifactVars' in snapshot.context
-          ? { artifactVars: snapshot.context.artifactVars }
+        snapshot.context &&
+        'artifactVars' in snapshot.context &&
+        snapshot.context.artifactVars !== undefined
+          ? { artifactVars: replace(snapshot.context.artifactVars) }
           : {};
       const state = await this.manager.update(id, {
-        variables,
+        variables: merge(variables),
         finalVars,
         lifecycle,
         snapshot,
@@ -381,9 +386,13 @@ export class RunbookActorService {
       snapshot.context && 'activeFrameKey' in snapshot.context
         ? { activeFrameKey: snapshot.context.activeFrameKey }
         : {};
+    // Same `'in'`-vs-`!== undefined` rationale as activeFrameKeyPatch above:
+    // preserves persisted value when context omits the field.
     const artifactVarsPatch =
-      snapshot.context && 'artifactVars' in snapshot.context
-        ? { artifactVars: snapshot.context.artifactVars }
+      snapshot.context &&
+      'artifactVars' in snapshot.context &&
+      snapshot.context.artifactVars !== undefined
+        ? { artifactVars: replace(snapshot.context.artifactVars) }
         : {};
 
     const state = await this.manager.update(id, {
@@ -391,7 +400,7 @@ export class RunbookActorService {
       substep,
       stepName: step.description,
       retryCount,
-      variables,
+      variables: merge(variables),
       lifecycle: snapshot.context?.lifecycle ?? 'running',
       snapshot,
       forStack: computedForStack,
