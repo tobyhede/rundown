@@ -4,11 +4,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { isError } from '../../src/errors.js';
 import { generateRunId, RunbookStateManager } from '../../src/runbook/state.js';
+import { merge, replace } from '../../src/runbook/state-update-ops.js';
 import { statePath as _statePath } from '../../src/paths.js';
 import { SessionService } from '../../src/runbook/session-service.js';
 import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type { Step, Runbook, RunId } from '../../src/runbook/types.js';
+import type { ArtifactRecord } from '../../src/runbook/artifact-schema.js';
 import { makeBaseStep, makeSubstep } from '../helpers/step-factories.js';
 
 describe('RunbookStateManager', () => {
@@ -57,6 +59,208 @@ describe('RunbookStateManager', () => {
       expect(branded).toBe(state.id);
       expect(branded).toMatch(/^rd_[a-f0-9]{32}$/);
     });
+  });
+
+  it('persists artifactVars separately from string-only variables', async () => {
+    const artifact = {
+      uri: 'rd://artifacts/ctx1/runs/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
+      runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      contextId: 'ctx1',
+      runbook: { source: 'project' as const, path: 'planning/write-plan.runbook.md' },
+      key: 'plan.json',
+      timestamp: '2026-05-07T00:00:00.000Z',
+    } satisfies ArtifactRecord;
+
+    const state = await manager.create(
+      { source: 'project', path: 'test.runbook.md' },
+      mockRunbook,
+      { runbookPath: 'test.runbook.md' },
+    );
+
+    await manager.update(state.id, {
+      artifactVars: replace({ PlanPath: artifact, Reviews: [artifact] }),
+      variables: merge({ PlanPath: 'output-mask' }),
+    });
+
+    const loaded = await manager.load(state.id);
+    expect(loaded?.artifactVars).toEqual({ PlanPath: artifact, Reviews: [artifact] });
+    expect(loaded?.variables).toEqual({ PlanPath: 'output-mask' });
+  });
+
+  it('resolveArtifactsForRun persists resolved artifactVars and leaves variables untouched', async () => {
+    const state = await manager.create(
+      { source: 'project', path: 'test.runbook.md' },
+      mockRunbook,
+      {
+        runbookPath: 'test.runbook.md',
+        runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as RunId,
+        templateVars: {
+          WorkPath: '.rundown/work',
+          ContextId: 'ctx1',
+          RunId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          RunbookRef: { source: 'project', path: 'test.runbook.md' },
+        },
+      },
+    );
+    await manager.update(state.id, { variables: merge({ PlanPath: 'output-mask' }) });
+
+    const artifacts = await manager.resolveArtifactsForRun(state.id, [
+      { name: 'PlanPath', key: 'plan.json', kind: 'exact' },
+    ]);
+
+    const loaded = await manager.load(state.id);
+    expect(artifacts.PlanPath).toMatchObject({ key: 'plan.json' });
+    expect(loaded?.artifactVars?.PlanPath).toEqual(artifacts.PlanPath);
+    expect(loaded?.variables).toEqual({ PlanPath: 'output-mask' });
+  });
+
+  it('resolveArtifactsForRun throws when WorkPath is missing', async () => {
+    const state = await manager.create(
+      { source: 'project', path: 'test.runbook.md' },
+      mockRunbook,
+      {
+        runbookPath: 'test.runbook.md',
+        runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as RunId,
+        templateVars: {
+          ContextId: 'ctx1',
+          RunId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        },
+      },
+    );
+    await expect(
+      manager.resolveArtifactsForRun(state.id, [
+        { name: 'PlanPath', key: 'plan.json', kind: 'exact' },
+      ]),
+    ).rejects.toThrow(/cannot resolve ARTIFACTS without string WorkPath/);
+  });
+
+  it('resolveArtifactsForRun throws when ContextId is missing', async () => {
+    const state = await manager.create(
+      { source: 'project', path: 'test.runbook.md' },
+      mockRunbook,
+      {
+        runbookPath: 'test.runbook.md',
+        runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as RunId,
+        templateVars: {
+          WorkPath: '.rundown/work',
+          RunId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        },
+      },
+    );
+    await expect(
+      manager.resolveArtifactsForRun(state.id, [
+        { name: 'PlanPath', key: 'plan.json', kind: 'exact' },
+      ]),
+    ).rejects.toThrow(/cannot resolve ARTIFACTS without string ContextId/);
+  });
+
+  it('resolveArtifactsForRun throws when run id is not found', async () => {
+    // Canonical run-id format (lowercase hex), guaranteed absent from disk.
+    // See run-id.ts RUN_ID_PATTERN — non-hex literals fail validation before
+    // reaching the not-found branch this test is covering.
+    await expect(
+      manager.resolveArtifactsForRun('rd_ffffffffffffffffffffffffffffffff', [
+        { name: 'PlanPath', key: 'plan.json', kind: 'exact' },
+      ]),
+    ).rejects.toThrow(/not found/);
+  });
+
+  it('resolveArtifactsForRun refuses while a live actor is registered for the run id', async () => {
+    const state = await manager.create(
+      { source: 'project', path: 'test.runbook.md' },
+      mockRunbook,
+      {
+        runbookPath: 'test.runbook.md',
+        runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as RunId,
+        templateVars: {
+          WorkPath: '.rundown/work',
+          ContextId: 'ctx1',
+          RunId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          RunbookRef: { source: 'project', path: 'test.runbook.md' },
+        },
+      },
+    );
+
+    manager.markActorStarted(state.id);
+    expect(manager.isActorLive(state.id)).toBe(true);
+
+    await expect(
+      manager.resolveArtifactsForRun(state.id, [
+        { name: 'PlanPath', key: 'plan.json', kind: 'exact' },
+      ]),
+    ).rejects.toThrow(/live RunbookActor exists/);
+
+    manager.markActorStopped(state.id);
+    expect(manager.isActorLive(state.id)).toBe(false);
+
+    const artifacts = await manager.resolveArtifactsForRun(state.id, [
+      { name: 'PlanPath', key: 'plan.json', kind: 'exact' },
+    ]);
+    expect(artifacts.PlanPath).toMatchObject({ key: 'plan.json' });
+  });
+
+  it('round-trips empty artifactVars through persistence', async () => {
+    const state = await manager.create(
+      { source: 'project', path: 'test.runbook.md' },
+      mockRunbook,
+      { runbookPath: 'test.runbook.md' },
+    );
+    await manager.update(state.id, { artifactVars: replace({}) });
+    const loaded = await manager.load(state.id);
+    expect(loaded?.artifactVars ?? {}).toEqual({});
+  });
+
+  it('round-trips 100+ artifactVars entries through persistence', async () => {
+    const state = await manager.create(
+      { source: 'project', path: 'test.runbook.md' },
+      mockRunbook,
+      { runbookPath: 'test.runbook.md' },
+    );
+    const entries: Record<string, ArtifactRecord> = {};
+    for (let i = 0; i < 120; i++) {
+      const key = `plan-${String(i)}.json`;
+      entries[`Var${String(i)}`] = {
+        uri: `rd://artifacts/ctx1/runs/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/${key}`,
+        runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        contextId: 'ctx1',
+        runbook: { source: 'project' as const, path: 'planning/write-plan.runbook.md' },
+        key,
+        timestamp: '2026-05-07T00:00:00.000Z',
+      } satisfies ArtifactRecord;
+    }
+    await manager.update(state.id, { artifactVars: replace(entries) });
+    const loaded = await manager.load(state.id);
+    expect(Object.keys(loaded?.artifactVars ?? {})).toHaveLength(120);
+    expect(loaded?.artifactVars?.Var0).toMatchObject({ key: 'plan-0.json' });
+    expect(loaded?.artifactVars?.Var119).toMatchObject({ key: 'plan-119.json' });
+  });
+
+  it('subsequent resolveArtifactsForRun calls with the same alias name overwrite', async () => {
+    const state = await manager.create(
+      { source: 'project', path: 'test.runbook.md' },
+      mockRunbook,
+      {
+        runbookPath: 'test.runbook.md',
+        runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as RunId,
+        templateVars: {
+          WorkPath: '.rundown/work',
+          ContextId: 'ctx1',
+          RunId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          RunbookRef: { source: 'project', path: 'test.runbook.md' },
+        },
+      },
+    );
+    await manager.resolveArtifactsForRun(state.id, [
+      { name: 'Output', key: 'first.json', kind: 'exact' },
+    ]);
+    await manager.resolveArtifactsForRun(state.id, [
+      { name: 'Output', key: 'second.json', kind: 'exact' },
+    ]);
+    const loaded = await manager.load(state.id);
+    expect(loaded?.artifactVars?.Output).toMatchObject({ key: 'second.json' });
+    // Catch a per-key merge regression: the old key must be gone.
+    const output = loaded?.artifactVars?.Output as ArtifactRecord;
+    expect(output.key).not.toBe('first.json');
   });
 
   describe('getChildRunbookResult', () => {
@@ -437,7 +641,7 @@ describe('RunbookStateManager', () => {
       const resolvedKey = '1||1|';
 
       await manager.update(state.id, {
-        resolvedCompletions: {
+        resolvedCompletions: merge({
           [resolvedKey]: {
             agentId: 'agent-1',
             result: 'pass',
@@ -446,7 +650,7 @@ describe('RunbookStateManager', () => {
             targetEntry: 1,
             completedAt: new Date().toISOString(),
           },
-        },
+        }),
       });
 
       const stateFilePath = _statePath(testDir, state.id);
@@ -479,7 +683,7 @@ describe('RunbookStateManager', () => {
       });
 
       const updated = await manager.update(state.id, {
-        templateVars: { env: 'prod' },
+        templateVars: replace({ env: 'prod' }),
       });
 
       expect(updated.templateVars).toEqual({ env: 'prod' });
@@ -501,9 +705,9 @@ describe('RunbookStateManager', () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
       });
-      await manager.update(state.id, { variables: { A: '1', B: '2' } });
+      await manager.update(state.id, { variables: merge({ A: '1', B: '2' }) });
 
-      const updated = await manager.update(state.id, { variables: { B: 'two', C: '3' } });
+      const updated = await manager.update(state.id, { variables: merge({ B: 'two', C: '3' }) });
 
       expect(updated.variables).toEqual({ A: '1', B: 'two', C: '3' });
     });
@@ -512,7 +716,7 @@ describe('RunbookStateManager', () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
       });
-      await manager.update(state.id, { variables: { A: '1' } });
+      await manager.update(state.id, { variables: merge({ A: '1' }) });
 
       const updated = await manager.update(state.id, { stepName: 'next' });
 

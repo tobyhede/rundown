@@ -1,6 +1,12 @@
 import { IDENTITY_OWNED_BUILTINS } from '@rundown-org/parser';
 import { mergeEffectiveVars } from './effective-vars.js';
-import type { AncestorSnapshot, ContextSnapshot, RunbookState, TemplateVarValue } from './types.js';
+import type {
+  AncestorSnapshot,
+  ContextSnapshot,
+  ContextSnapshotVarValue,
+  RunbookState,
+  TemplateVarValue,
+} from './types.js';
 import { getActiveForContext, deriveExecutionAt } from './targeting.js';
 
 /** Maximum depth for parent context chain addressing. */
@@ -25,19 +31,20 @@ const IDENTITY_OWNED_BUILTIN_SET = new Set<string>(IDENTITY_OWNED_BUILTINS);
  *
  * @param snapshot - The frozen context snapshot from delegation metadata
  * @returns Variable map with string values for structural fields (step, substep, at, index)
- *          and TemplateVarValue entries (strings, numbers, or objects) from snapshot.vars
+ *          and ContextSnapshotVarValue entries (template values or artifact records)
+ *          from snapshot.vars
  * @throws {Error} When the ancestor chain exceeds {@link MAX_ANCESTOR_DEPTH} levels
  */
 export function reconstituteContextVars(
   snapshot: ContextSnapshot,
-): Record<string, TemplateVarValue> {
+): Record<string, ContextSnapshotVarValue> {
   if (snapshot.ancestors.length > MAX_ANCESTOR_DEPTH) {
     throw new Error(
       `Parent context chain depth (${String(snapshot.ancestors.length)}) exceeds maximum of ${String(MAX_ANCESTOR_DEPTH)} levels`,
     );
   }
 
-  const result: Record<string, TemplateVarValue> = {};
+  const result: Record<string, ContextSnapshotVarValue> = {};
 
   // Parent structural fields: step, substep, at, index
   if (snapshot.step) {
@@ -180,8 +187,8 @@ export function buildContextSnapshot(
  */
 export function extractInheritedUserVars(
   snapshot: ContextSnapshot,
-): Record<string, TemplateVarValue> {
-  const result: Record<string, TemplateVarValue> = {};
+): Record<string, ContextSnapshotVarValue> {
+  const result: Record<string, ContextSnapshotVarValue> = {};
   for (const [key, value] of Object.entries(snapshot.vars)) {
     if (!key.startsWith('context.') && !IDENTITY_OWNED_BUILTIN_SET.has(key)) {
       result[key] = value;

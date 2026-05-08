@@ -1,7 +1,13 @@
 // src/runbook/types.ts
 import type { OutputDeclaration } from '@rundown-org/parser';
+import type { ArtifactRecord } from './artifact-schema.js';
 import type { DelegationTokenHash } from './delegation-token.js';
-import type { EffectiveVars, InitialTemplateVars, StoredOutputs } from './effective-vars.js';
+import type {
+  ArtifactVars,
+  EffectiveVars,
+  InitialTemplateVars,
+  StoredOutputs,
+} from './effective-vars.js';
 import type { RunbookRef } from './runbook-ref.js';
 import type { RunId } from './run-id.js';
 import type { FrameKey } from './targeting.js';
@@ -229,6 +235,29 @@ export type IterableVarValue = JsonArray | JsonArrayStream;
  * @see IterableVarValue for the subset that drives FOR loop iteration
  */
 export type TemplateVarValue = string | number | JsonObject | JsonArray | JsonArrayStream;
+
+/**
+ * Structured value stored by an `ARTIFACTS` declaration.
+ *
+ * Exact declarations store one {@link ArtifactRecord}; wildcard declarations
+ * store an array of records. These values live in `RunbookState.artifactVars`,
+ * not in string-only step OUTPUTS (`RunbookState.variables`).
+ */
+export type ArtifactVarValue = ArtifactRecord | readonly ArtifactRecord[];
+
+/**
+ * Value shape carried by delegation context snapshots.
+ *
+ * ARTIFACTS-aware snapshots can additionally carry structured artifact
+ * records alongside ordinary template values.
+ *
+ * @remarks
+ * Documentational widening only. `ArtifactRecord` is structurally assignable
+ * to {@link JsonObject}, and `readonly ArtifactRecord[]` is assignable to
+ * {@link JsonArray}, so this union does not strengthen any type checks beyond
+ * `TemplateVarValue`. The named alias clarifies intent at delegation sites.
+ */
+export type ContextSnapshotVarValue = TemplateVarValue | ArtifactVarValue;
 
 /**
  * Type guard for JSON object values within the template variable map.
@@ -471,7 +500,7 @@ export interface ContextSnapshot {
    * prevents the regression class fixed in commit `19067f6f`, where
    * `buildContextSnapshot` silently dropped `state.variables`.
    */
-  readonly vars: EffectiveVars;
+  readonly vars: EffectiveVars<ContextSnapshotVarValue>;
   readonly ancestors: readonly AncestorSnapshot[];
   /** Current step identifier at delegation time (e.g., "1"). */
   readonly step?: string;
@@ -489,7 +518,7 @@ export interface AncestorSnapshot {
   readonly runbook: string;
   readonly step: string;
   readonly substep: string | null;
-  readonly vars: Readonly<Record<string, TemplateVarValue>>;
+  readonly vars: Readonly<Record<string, ContextSnapshotVarValue>>;
   /** Qualified execution location at delegation time (e.g., "1.2.1"). */
   readonly at?: string;
   /** FOR loop iteration number at delegation time (1-based). */
@@ -730,6 +759,15 @@ export interface RunbookState {
    * variables were declared up-front versus produced during execution.
    */
   readonly variables: StoredOutputs;
+  /**
+   * Accumulated ARTIFACTS variables. Exact declarations store one
+   * `ArtifactRecord`; wildcard declarations store `ArtifactRecord[]`.
+   *
+   * This field is persisted separately from string-only step OUTPUTS. Same-name
+   * OUTPUTS can mask an artifact variable in the effective render context, but
+   * must never overwrite this map.
+   */
+  readonly artifactVars?: ArtifactVars;
   readonly steps: readonly StepState[];
 
   // Orchestration fields

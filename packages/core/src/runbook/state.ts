@@ -2,7 +2,7 @@
 import { randomBytes } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import type { OutputDeclaration } from '@rundown-org/parser';
+import type { ArtifactDeclaration, OutputDeclaration } from '@rundown-org/parser';
 import type { FrameKey } from './targeting.js';
 import type {
   RunbookState,
@@ -13,13 +13,31 @@ import type {
   ResolvedRunbook,
   ParentLinkage,
   TemplateVarValue,
+  ArtifactVarValue,
 } from './types.js';
+import {
+  applyOp,
+  merge,
+  type ArtifactVarsOp,
+  type FrameEntriesOp,
+  type ResolvedCompletionsOp,
+  type TemplateVarsOp,
+  type VariablesOp,
+} from './state-update-ops.js';
+import {
+  resolveArtifactDeclarations,
+  type ArtifactRunEligibility,
+} from './artifact-directive-resolver.js';
 import type { ClaimRecord } from './claim-id.js';
 import type { RunbookRef } from './runbook-ref.js';
 import { makeRunbookStateSchema, SessionDataSchema } from '../schemas.js';
 import { isNodeError } from '../errors.js';
 import { logger } from '../logger.js';
-import { brandInitialTemplateVars, brandStoredOutputs } from './effective-vars.js';
+import {
+  brandArtifactVars,
+  brandInitialTemplateVars,
+  brandStoredOutputs,
+} from './effective-vars.js';
 import { assertRunId, RUN_ID_PREFIX, type RunId } from './run-id.js';
 import {
   runsDir as _runsDir,
@@ -29,7 +47,7 @@ import {
 } from '../paths.js';
 
 /** Current persisted state schema version. Bump whenever RunbookState shape changes incompatibly. */
-const CURRENT_SCHEMA_VERSION = 2;
+const CURRENT_SCHEMA_VERSION = 3;
 
 function patchSnapshotSubstepStates(
   snapshot: unknown,
@@ -119,12 +137,57 @@ export class RunbookStateManager {
   private readonly _cwd: string;
 
   /**
+   * Per-process registry of run ids whose `RunbookActor` is currently running.
+   *
+   * Maintained by {@link RunbookActorService} via {@link markActorStarted} and
+   * {@link markActorStopped}. {@link resolveArtifactsForRun} consults this set
+   * to refuse writes that would race with the actor's stale-context replay
+   * through `RunbookActorService.updateFromActor`.
+   */
+  private readonly liveActors = new Set<string>();
+
+  /**
    * Create a new RunbookStateManager.
    *
    * @param cwd - The working directory (project root) for state file paths
    */
   constructor(cwd: string) {
     this._cwd = cwd;
+  }
+
+  /**
+   * Register a run id as having a live actor in this process.
+   *
+   * Called by {@link RunbookActorService.createActor} after `actor.start()`.
+   * Idempotent: re-registering a live id is a no-op.
+   *
+   * @param id - Runbook state id
+   */
+  markActorStarted(id: string): void {
+    this.liveActors.add(id);
+  }
+
+  /**
+   * Deregister a run id whose actor has been stopped.
+   *
+   * Called by {@link RunbookActorService.stopActor} after `actor.stop()`.
+   * Idempotent: removing an unknown id is a no-op.
+   *
+   * @param id - Runbook state id
+   */
+  markActorStopped(id: string): void {
+    this.liveActors.delete(id);
+  }
+
+  /**
+   * Whether a `RunbookActor` is currently live for the given run id.
+   *
+   * @param id - Runbook state id
+   * @returns `true` if {@link markActorStarted} was called without a matching
+   *   {@link markActorStopped}
+   */
+  isActorLive(id: string): boolean {
+    return this.liveActors.has(id);
   }
 
   /**
@@ -334,23 +397,48 @@ export class RunbookStateManager {
   /**
    * Update an existing runbook state with partial changes.
    *
-   * Merges the provided updates with the existing state. Variables are
-   * shallow-merged rather than replaced entirely.
+   * Per-field semantics:
+   * - `variables` — `merge(...)` shallow-merges OUTPUTS (merge-only)
+   * - `templateVars` — `replace(...)` wholesale-replaces (replace-only; seeded once)
+   * - `artifactVars` — `merge(...)` adds entries; `replace(...)` mirrors the full set
+   * - `resolvedCompletions` — `merge(...)` adds one entry; `replace(...)` rewrites the map
+   * - `frameEntries` — `replace(...)` wholesale-replaces (replace-only)
+   * - All other fields — provided value is taken verbatim; omitted fields are preserved
+   *
+   * Use the {@link merge} and {@link replace} constructors at call sites to make
+   * intent visible at the type level; passing a raw record without a tag is a
+   * compile error.
    *
    * @param id - The runbook state ID to update
-   * @param updates - Partial state updates to apply (id and startedAt cannot be changed)
+   * @param updates - Partial state updates with tagged ops on record-shaped fields
    * @returns The updated runbook state
    * @throws {Error} If the runbook with the given ID is not found
    */
   async update(
     id: string,
-    updates: Partial<Omit<RunbookState, 'id' | 'startedAt' | 'variables' | 'templateVars'>> & {
-      // Accept unbranded records on the update path; the manager re-mints
-      // the brand inside the merge below. Internal callers (actor-service
-      // sync, compiler reducers) hold the unbranded XState context shape
-      // and shouldn't need to know about the persistence-layer brand.
-      readonly variables?: Readonly<Record<string, string>>;
-      readonly templateVars?: Readonly<Record<string, TemplateVarValue>>;
+    updates: Partial<
+      Omit<
+        RunbookState,
+        | 'id'
+        | 'startedAt'
+        | 'updatedAt'
+        | 'schemaVersion'
+        | 'variables'
+        | 'templateVars'
+        | 'artifactVars'
+        | 'resolvedCompletions'
+        | 'frameEntries'
+      >
+    > & {
+      // Tagged ops on record-shaped fields make merge-vs-replace intent
+      // visible at the call site. Internal callers (actor-service sync,
+      // compiler reducers) hold the unbranded XState context shape; the
+      // manager re-mints persistence brands inside the dispatch below.
+      readonly variables?: VariablesOp;
+      readonly templateVars?: TemplateVarsOp;
+      readonly artifactVars?: ArtifactVarsOp;
+      readonly resolvedCompletions?: ResolvedCompletionsOp;
+      readonly frameEntries?: FrameEntriesOp;
     },
   ): Promise<RunbookState> {
     const existing = await this.load(id);
@@ -358,12 +446,15 @@ export class RunbookStateManager {
       throw new Error(`Runbook ${id} not found`);
     }
 
-    // Pull branded/unbranded fields out of updates so the subsequent
-    // `...updates` spread does not leak the unbranded types into the
-    // strictly-typed RunbookState literal.
+    // Pull tagged-op fields out of updates so the subsequent `...updates`
+    // spread does not leak the wrapper shapes into the strictly-typed
+    // RunbookState literal.
     const {
-      variables: updatesVariables,
-      templateVars: updatesTemplateVars,
+      variables: variablesOp,
+      templateVars: templateVarsOp,
+      artifactVars: artifactVarsOp,
+      resolvedCompletions: resolvedCompletionsOp,
+      frameEntries: frameEntriesOp,
       ...restUpdates
     } = updates;
     const shouldPatchSnapshotSubstepStates =
@@ -378,15 +469,98 @@ export class RunbookStateManager {
     const updated: RunbookState = {
       ...existing,
       ...patchedRestUpdates,
-      variables: brandStoredOutputs({ ...existing.variables, ...(updatesVariables ?? {}) }),
-      ...(updatesTemplateVars !== undefined
-        ? { templateVars: brandInitialTemplateVars(updatesTemplateVars) }
+      variables:
+        variablesOp !== undefined
+          ? brandStoredOutputs(applyOp(existing.variables, variablesOp))
+          : existing.variables,
+      ...(templateVarsOp !== undefined
+        ? { templateVars: brandInitialTemplateVars(templateVarsOp.value) }
         : {}),
+      ...(artifactVarsOp !== undefined
+        ? { artifactVars: brandArtifactVars(applyOp(existing.artifactVars, artifactVarsOp)) }
+        : {}),
+      ...(resolvedCompletionsOp !== undefined
+        ? { resolvedCompletions: applyOp(existing.resolvedCompletions, resolvedCompletionsOp) }
+        : {}),
+      ...(frameEntriesOp !== undefined ? { frameEntries: frameEntriesOp.value } : {}),
       updatedAt: new Date().toISOString(),
     };
 
     await this.save(updated);
     return updated;
+  }
+
+  /**
+   * Resolve one ARTIFACTS block for a persisted run and merge the result into
+   * `RunbookState.artifactVars`.
+   *
+   * This method is intentionally explicit: it does not inspect the active step
+   * or emit events. Phase 4 owns deciding when to call it at step/substep entry.
+   *
+   * @remarks
+   * Refuses to run while a live `RunbookActor` exists for the same `id` (as
+   * tracked by {@link markActorStarted}/{@link markActorStopped}). The actor
+   * seeds `context.artifactVars` once at compile time (`actor-service.ts`
+   * `compileMachineFromState`); a later `RunbookActorService.updateFromActor`
+   * mirrors the actor's stale view back to disk via `replace(...)`
+   * (`actor-service.ts` artifactVars patches), which would overwrite this
+   * method's writes. Phase 4 will replace the refusal with a machine-mediated
+   * write path so resolver output flows through the actor's context.
+   *
+   * @param id - Current run id
+   * @param declarations - Parser-owned artifact declarations for one execution unit
+   * @returns The current execution unit's resolved artifact working set
+   * @throws {Error} If a live `RunbookActor` exists for `id`, the run is not
+   * found, is missing required built-ins (`WorkPath`, `ContextId`), has
+   * corrupt artifact manifests, or encounters unexpected artifact filesystem
+   * failures
+   */
+  async resolveArtifactsForRun(
+    id: string,
+    declarations: readonly ArtifactDeclaration[],
+  ): Promise<Record<string, ArtifactVarValue>> {
+    if (this.liveActors.has(id)) {
+      throw new Error(
+        `Refusing to resolve artifacts for "${id}": a live RunbookActor exists for this run. ` +
+          `Stop the actor (RunbookActorService.stopActor) before calling resolveArtifactsForRun, ` +
+          `or wait for Phase 4 machine-mediated artifact resolution.`,
+      );
+    }
+    const state = await this.load(id);
+    if (!state) {
+      throw new Error(`Runbook ${id} not found`);
+    }
+    const workPath = state.templateVars?.WorkPath;
+    const contextId = state.templateVars?.ContextId;
+    if (typeof workPath !== 'string') {
+      throw new Error(`Runbook ${id} cannot resolve ARTIFACTS without string WorkPath`);
+    }
+    if (typeof contextId !== 'string') {
+      throw new Error(`Runbook ${id} cannot resolve ARTIFACTS without string ContextId`);
+    }
+
+    const runId: RunId = assertRunId(state.id);
+    const resolved = await resolveArtifactDeclarations(declarations, {
+      cwd: this.cwd,
+      workPath,
+      contextId,
+      runId,
+      runbook: state.runbook,
+      loadRunEligibility: async (otherRunId: RunId): Promise<ArtifactRunEligibility | null> => {
+        const other = await this.load(otherRunId);
+        if (!other) return null;
+        if (other.id === state.id) return null;
+        if (other.lifecycle === 'completed' && other.updatedAt) {
+          return { runId: otherRunId, terminalAt: other.updatedAt };
+        }
+        return null;
+      },
+    });
+
+    await this.update(id, {
+      artifactVars: merge(resolved),
+    });
+    return resolved;
   }
 
   /**

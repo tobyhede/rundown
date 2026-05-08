@@ -7,6 +7,8 @@ import {
   MAX_ANCESTOR_DEPTH,
 } from '../../src/runbook/delegation-context.js';
 import { mergeEffectiveVars } from '../../src/runbook/effective-vars.js';
+import { RunbookStateSchema } from '../../src/schemas.js';
+import type { ArtifactRecord } from '../../src/runbook/artifact-schema.js';
 import type {
   AncestorSnapshot,
   ContextSnapshot,
@@ -14,6 +16,7 @@ import type {
   RunId,
 } from '../../src/runbook/types.js';
 import {
+  brandArtifactVarsForTest,
   brandEffectiveVarsForTest,
   brandInitialTemplateVarsForTest,
   brandRunIdForTest,
@@ -556,6 +559,15 @@ describe('extractInheritedUserVars', () => {
 });
 
 describe('buildContextSnapshot', () => {
+  const ARTIFACT_RECORD = {
+    uri: 'rd://artifacts/ctx1/runs/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
+    runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    contextId: 'ctx1',
+    runbook: { source: 'project' as const, path: 'planning/write-plan.runbook.md' },
+    key: 'plan.json',
+    timestamp: '2026-05-07T00:00:00.000Z',
+  } satisfies ArtifactRecord;
+
   it('merges state.variables (step OUTPUTS) into snapshot.vars', () => {
     const state = makeMinimalState({
       templateVars: brandInitialTemplateVarsForTest({ Other: 'kept' }),
@@ -599,5 +611,39 @@ describe('buildContextSnapshot', () => {
     });
     const snap = buildContextSnapshot(state);
     expect(snap.vars.Just).toBe('outputs');
+  });
+
+  it('includes artifactVars in snapshot vars below step OUTPUTS', () => {
+    const state = makeMinimalState({
+      templateVars: brandInitialTemplateVarsForTest({ PlanPath: 'from-template' }),
+      artifactVars: brandArtifactVarsForTest({
+        PlanPath: ARTIFACT_RECORD,
+        OutputWins: ARTIFACT_RECORD,
+      }),
+      variables: brandStoredOutputsForTest({ OutputWins: 'from-output' }),
+    });
+
+    const snap = buildContextSnapshot(state);
+
+    expect(snap.vars.PlanPath).toEqual(ARTIFACT_RECORD);
+    expect(snap.vars.OutputWins).toBe('from-output');
+  });
+
+  it('keeps artifactVars after RunbookStateSchema parse before snapshot build', () => {
+    // Cast required: this test deliberately exercises the unbranded
+    // RunbookStateSchema (parses to ValidatedRunbookState, no brand transforms).
+    // The branded variant is makeRunbookStateSchema(projectRoot). buildContextSnapshot
+    // consumes the branded RunbookState type, so we coerce after parse.
+    const parsed = RunbookStateSchema.parse({
+      ...makeMinimalState({
+        templateVars: brandInitialTemplateVarsForTest({}),
+        artifactVars: brandArtifactVarsForTest({ PlanPath: ARTIFACT_RECORD }),
+      }),
+      schemaVersion: 3,
+    }) as unknown as RunbookState;
+
+    const snap = buildContextSnapshot(parsed);
+
+    expect(snap.vars.PlanPath).toEqual(ARTIFACT_RECORD);
   });
 });

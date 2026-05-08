@@ -12,12 +12,14 @@ import { createJsonArrayStream } from './runbook/types.js';
 import type { JsonValue, TemplateVarValue } from './runbook/types.js';
 import { RUN_ID_PATTERN, type RunId, type runIdBrand } from './runbook/run-id.js';
 import {
+  brandArtifactVars,
   brandEffectiveVars,
   brandInitialTemplateVars,
   brandStoredOutputs,
 } from './runbook/effective-vars.js';
 import { getErrorMessage } from './errors.js';
 import { RunbookRefSchema } from './runbook/runbook-ref.js';
+import { ArtifactRecordSchema } from './runbook/artifact-schema.js';
 
 /** Zod schema that parses strings and brands them as {@link FrameKey}. */
 const FrameKeySchema = z.string().transform((v) => v as FrameKey);
@@ -261,6 +263,43 @@ export const TemplateVarValueSchema: z.ZodType<TemplateVarValue> = z.union([
 ]);
 
 /**
+ * Zod schema for a persisted ARTIFACTS variable value.
+ *
+ * Exact aliases store one `ArtifactRecord`; wildcard aliases store an array of
+ * `ArtifactRecord` values, including empty arrays for no matches.
+ */
+export const ArtifactVarValueSchema = z.union([
+  ArtifactRecordSchema,
+  z.array(ArtifactRecordSchema).readonly(),
+]);
+
+/**
+ * Build the union schema for a single context-vars value.
+ *
+ * `vars` records on persisted snapshots may carry either a template value
+ * (`TemplateVarValue`) or an artifact value (`ArtifactVarValue`). When
+ * `projectRoot` is provided, the template variant is path-validated via
+ * {@link makeTemplateVarValueSchema}; otherwise the static
+ * {@link TemplateVarValueSchema} is used.
+ *
+ * Centralised so the three callers (the static
+ * `ContextSnapshotVarValueSchema`, {@link makeAncestorSnapshotSchema}, and
+ * {@link makeContextSnapshotSchema}) cannot drift independently when the
+ * value union changes.
+ *
+ * @param projectRoot - Optional project root for path-validated template variant
+ * @returns Zod union schema accepting both template and artifact values
+ */
+function makeContextVarValueSchema(projectRoot?: string): z.ZodTypeAny {
+  return z.union([
+    projectRoot === undefined ? TemplateVarValueSchema : makeTemplateVarValueSchema(projectRoot),
+    ArtifactVarValueSchema,
+  ]);
+}
+
+const ContextSnapshotVarValueSchema = makeContextVarValueSchema();
+
+/**
  * Zod schema for a single ancestor in the runbook lineage snapshot.
  */
 export const AncestorSnapshotSchema = z.object({
@@ -268,7 +307,7 @@ export const AncestorSnapshotSchema = z.object({
   runbook: z.string(),
   step: z.string(),
   substep: z.string().nullable(),
-  vars: z.record(z.string(), TemplateVarValueSchema),
+  vars: z.record(z.string(), ContextSnapshotVarValueSchema),
   at: z.string().optional(),
   index: z.number().int().positive().optional(),
 });
@@ -278,7 +317,7 @@ export const AncestorSnapshotSchema = z.object({
  */
 export const ContextSnapshotSchema = z
   .object({
-    vars: z.record(z.string(), TemplateVarValueSchema),
+    vars: z.record(z.string(), ContextSnapshotVarValueSchema),
     ancestors: z.array(AncestorSnapshotSchema).readonly(),
     step: z.string().optional(),
     substep: z.string().optional(),
@@ -480,6 +519,7 @@ const RunbookStateObjectSchema = z
     stepName: z.string(),
     retryCount: z.number().nonnegative().int(),
     variables: z.record(z.string(), z.string()),
+    artifactVars: z.record(z.string(), ArtifactVarValueSchema).optional(),
     steps: z.array(
       z.object({
         id: z.string(),
@@ -677,12 +717,13 @@ export function makeTemplateVarValueSchema(projectRoot: string): z.ZodType<Templ
  * @returns Zod schema for AncestorSnapshot with path-validated vars
  */
 function makeAncestorSnapshotSchema(projectRoot: string): z.ZodTypeAny {
+  const ContextVarsSchema = makeContextVarValueSchema(projectRoot);
   return z.object({
     runId: RunIdSchema,
     runbook: z.string(),
     step: z.string(),
     substep: z.string().nullable(),
-    vars: z.record(z.string(), makeTemplateVarValueSchema(projectRoot)),
+    vars: z.record(z.string(), ContextVarsSchema),
     at: z.string().optional(),
     index: z.number().int().positive().optional(),
   });
@@ -700,15 +741,14 @@ function makeAncestorSnapshotSchema(projectRoot: string): z.ZodTypeAny {
  * @returns Zod schema for ContextSnapshot with path-validated vars and ancestors
  */
 function makeContextSnapshotSchema(projectRoot: string): z.ZodTypeAny {
+  const ContextVarsSchema = makeContextVarValueSchema(projectRoot);
   return z
     .object({
       // Brand at the parse seam so disk-loaded ContextSnapshot.vars re-enters
       // the process through a sanctioned producer, matching how
       // makeRunbookStateSchema handles templateVars / variables. The brand is
       // purely nominal — identity-preserving, zero runtime cost.
-      vars: z
-        .record(z.string(), makeTemplateVarValueSchema(projectRoot))
-        .transform((v) => brandEffectiveVars(v)),
+      vars: z.record(z.string(), ContextVarsSchema).transform((v) => brandEffectiveVars(v)),
       ancestors: z.array(makeAncestorSnapshotSchema(projectRoot)).readonly(),
       step: z.string().optional(),
       substep: z.string().optional(),
@@ -805,6 +845,10 @@ export function makeRunbookStateSchema(projectRoot: string): z.ZodTypeAny {
       v === undefined ? undefined : brandInitialTemplateVars(v),
     ),
     variables: z.record(z.string(), z.string()).transform((v) => brandStoredOutputs(v)),
+    artifactVars: z
+      .record(z.string(), ArtifactVarValueSchema)
+      .optional()
+      .transform((v) => (v === undefined ? undefined : brandArtifactVars(v))),
     substepStates: z.array(SubstepStateSchemaValidated).optional(),
   }).superRefine(rejectRemovedRunbookRefField);
 }

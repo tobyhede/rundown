@@ -3,9 +3,16 @@ import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RunbookStateManager } from '../../src/runbook/state.js';
+import { replace } from '../../src/runbook/state-update-ops.js';
 import { RunbookActorService } from '../../src/runbook/actor-service.js';
 import type { AnyActorRef } from '../../src/runbook/actor-service.js';
-import type { ResolvedRunbook, ResolvedStep, SubstepState } from '../../src/runbook/types.js';
+import type { ArtifactRecord } from '../../src/runbook/artifact-schema.js';
+import type {
+  ResolvedRunbook,
+  ResolvedStep,
+  RunbookState,
+  SubstepState,
+} from '../../src/runbook/types.js';
 import { makeBaseStep } from '../helpers/step-factories.js';
 import { createJsonArrayStream } from '../../src/runbook/types.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
@@ -18,13 +25,18 @@ function mockActor(snapshot: { value: string; context: Record<string, unknown> }
 
 interface LifecycleHarness {
   actor: AnyActorRef;
+  manager: RunbookStateManager;
   service: RunbookActorService;
+  state: RunbookState;
   runbookId: string;
   steps: ResolvedStep[];
   testDir: string;
 }
 
-async function createLifecycleHarness(markdown: string): Promise<LifecycleHarness> {
+async function createLifecycleHarness(
+  markdown: string,
+  overrides: Parameters<RunbookStateManager['update']>[1] = {},
+): Promise<LifecycleHarness> {
   const steps = createRunbook(markdown);
   const testDir = await mkdtemp(join(tmpdir(), 'lifecycle-harness-'));
   const manager = new RunbookStateManager(testDir);
@@ -35,7 +47,7 @@ async function createLifecycleHarness(markdown: string): Promise<LifecycleHarnes
     description: 'Lifecycle test runbook',
     steps,
   };
-  const state = await manager.create(
+  const created = await manager.create(
     { source: 'project', path: 'lifecycle-test.md' },
     mockRunbookDef,
     {
@@ -43,12 +55,25 @@ async function createLifecycleHarness(markdown: string): Promise<LifecycleHarnes
       frontmatterOutputs: [],
     },
   );
+  if (Object.keys(overrides).length > 0) {
+    await manager.update(created.id, overrides);
+  }
+  const state = (await manager.load(created.id))!;
 
   const actor = await service.createActor(state.id, steps);
   if (!actor) throw new Error('createLifecycleHarness: actor creation failed');
 
-  return { actor, service, runbookId: state.id, steps, testDir };
+  return { actor, manager, service, state, runbookId: state.id, steps, testDir };
 }
+
+const ARTIFACT_RECORD = {
+  uri: 'rd://artifacts/ctx1/runs/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
+  runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+  contextId: 'ctx1',
+  runbook: { source: 'project' as const, path: 'lifecycle-test.md' },
+  key: 'plan.json',
+  timestamp: '2026-05-07T00:00:00.000Z',
+} satisfies ArtifactRecord;
 
 describe('RunbookActorService', () => {
   let testDir: string;
@@ -616,6 +641,102 @@ describe('RunbookActorService', () => {
   });
 
   describe('lifecycle surfacing from actor snapshot', () => {
+    it('preserves artifactVars when syncing actor snapshots', async () => {
+      const harness = await createLifecycleHarness('## 1. Only\n- PASS COMPLETE\n- FAIL STOP\n', {
+        artifactVars: replace({ PlanPath: ARTIFACT_RECORD }),
+      });
+      try {
+        const result = await harness.service.initializeState(harness.state.id, harness.steps);
+        const loaded = await harness.manager.load(harness.state.id);
+
+        expect(result?.artifactVars).toEqual({ PlanPath: ARTIFACT_RECORD });
+        expect(loaded?.artifactVars).toEqual({ PlanPath: ARTIFACT_RECORD });
+      } finally {
+        harness.actor.stop();
+        await rm(harness.testDir, { recursive: true, force: true });
+      }
+    });
+
+    it('preserves artifactVars persisted after an older actor snapshot was created', async () => {
+      const harness = await createLifecycleHarness('## 1. Only\n- PASS COMPLETE\n- FAIL STOP\n');
+      try {
+        await harness.service.initializeState(harness.state.id, harness.steps);
+
+        await harness.manager.update(harness.state.id, {
+          artifactVars: replace({ PlanPath: ARTIFACT_RECORD }),
+        });
+
+        const result = await harness.service.initializeState(harness.state.id, harness.steps);
+        const loaded = await harness.manager.load(harness.state.id);
+
+        expect(result?.artifactVars).toEqual({ PlanPath: ARTIFACT_RECORD });
+        expect(loaded?.artifactVars).toEqual({ PlanPath: ARTIFACT_RECORD });
+      } finally {
+        harness.actor.stop();
+        await rm(harness.testDir, { recursive: true, force: true });
+      }
+    });
+
+    it('overrides persisted artifactVars when actor context provides a new value', async () => {
+      const persisted = {
+        ...ARTIFACT_RECORD,
+        key: 'old.json',
+        uri: ARTIFACT_RECORD.uri.replace('plan', 'old'),
+      };
+      const updated = {
+        ...ARTIFACT_RECORD,
+        key: 'new.json',
+        uri: ARTIFACT_RECORD.uri.replace('plan', 'new'),
+      };
+      const harness = await createLifecycleHarness('## 1. Only\n- PASS COMPLETE\n- FAIL STOP\n', {
+        artifactVars: replace({ PlanPath: persisted }),
+      });
+      try {
+        const actor = mockActor({
+          value: 'step::1',
+          context: { variables: {}, retryCount: 0, artifactVars: { PlanPath: updated } },
+        });
+
+        const { state } = await harness.service.updateFromActor(
+          harness.state.id,
+          actor,
+          harness.steps,
+        );
+
+        expect(state.artifactVars).toEqual({ PlanPath: updated });
+
+        // Verify the override survived the round-trip to disk.
+        const reloaded = await harness.manager.load(harness.state.id);
+        expect(reloaded?.artifactVars).toEqual({ PlanPath: updated });
+      } finally {
+        harness.actor.stop();
+        await rm(harness.testDir, { recursive: true, force: true });
+      }
+    });
+
+    it('preserves persisted artifactVars when actor context omits the field', async () => {
+      const harness = await createLifecycleHarness('## 1. Only\n- PASS COMPLETE\n- FAIL STOP\n', {
+        artifactVars: replace({ PlanPath: ARTIFACT_RECORD }),
+      });
+      try {
+        const actor = mockActor({
+          value: 'step::1',
+          context: { variables: {}, retryCount: 0 },
+        });
+
+        const { state } = await harness.service.updateFromActor(
+          harness.state.id,
+          actor,
+          harness.steps,
+        );
+
+        expect(state.artifactVars).toEqual({ PlanPath: ARTIFACT_RECORD });
+      } finally {
+        harness.actor.stop();
+        await rm(harness.testDir, { recursive: true, force: true });
+      }
+    });
+
     it('persists lifecycle = "completed" when machine reaches COMPLETE', async () => {
       const harness = await createLifecycleHarness('## 1. Only\n- PASS COMPLETE\n- FAIL STOP\n');
       try {

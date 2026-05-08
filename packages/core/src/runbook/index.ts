@@ -27,6 +27,18 @@ export {
   StaleRunbookStateError,
   type SessionData,
 } from './state.js';
+export {
+  applyOp,
+  merge,
+  replace,
+  type ArtifactVarsOp,
+  type FrameEntriesOp,
+  type MergeOp,
+  type ReplaceOp,
+  type ResolvedCompletionsOp,
+  type TemplateVarsOp,
+  type VariablesOp,
+} from './state-update-ops.js';
 export { SessionService, type ReleaseRunbookResult } from './session-service.js';
 export { readActiveRunScope, type ActiveRunScope } from './session-reader.js';
 export { ExecutionLifecycleService } from './execution-lifecycle-service.js';
@@ -146,12 +158,18 @@ export {
   appendArtifactManifestRecordSync,
   coalesceManifestRecords,
   findArtifactMatches,
+  isExistingRegularArtifactFile,
   manifestPathForContext,
   readArtifactManifest,
   type ArtifactManifestRecord,
   type ArtifactSelectorMatch,
   type FindArtifactOptions,
 } from './artifact-manifest.js';
+export {
+  resolveArtifactDeclarations,
+  type ArtifactRunEligibility,
+  type ResolveArtifactDeclarationsOptions,
+} from './artifact-directive-resolver.js';
 export {
   applyRunArtifactHelper,
   buildExecutionFrame,
@@ -171,9 +189,11 @@ export {
 export { invokeHelperSafely, resetHelperInvokeWarnings } from './helper-invoke.js';
 export {
   mergeEffectiveVars,
+  brandArtifactVars,
   brandInitialTemplateVars,
   brandStoredOutputs,
   brandEffectiveVars,
+  type ArtifactVars,
   type EffectiveVars,
   type InitialTemplateVars,
   type StoredOutputs,

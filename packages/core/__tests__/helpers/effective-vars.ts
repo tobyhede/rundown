@@ -1,7 +1,9 @@
 import {
+  brandArtifactVars,
   brandEffectiveVars,
   brandInitialTemplateVars,
   brandStoredOutputs,
+  type ArtifactVars,
   type EffectiveVars,
   type InitialTemplateVars,
   type StoredOutputs,
@@ -11,7 +13,19 @@ import {
   flattenTemplateVars,
   type FlattenedTemplateVars,
 } from '../../src/runbook/output-evaluator.js';
-import type { TemplateVarValue } from '../../src/runbook/types.js';
+import type { ArtifactVarValue, TemplateVarValue } from '../../src/runbook/types.js';
+
+/**
+ * Test-only producer of {@link ArtifactVars} for fixture construction.
+ *
+ * @param vars - Plain artifact-variable record
+ * @returns The same record typed as `ArtifactVars`
+ */
+export function brandArtifactVarsForTest(
+  vars: Readonly<Record<string, ArtifactVarValue>>,
+): ArtifactVars {
+  return brandArtifactVars(vars);
+}
 
 /**
  * Test-only producer of {@link InitialTemplateVars} for fixture construction.

@@ -151,6 +151,54 @@ describe('artifact manifest storage', () => {
     expect(coalesceManifestRecords([record, newer])).toEqual([newer]);
   });
 
+  it('keeps the newest duplicate even when it appears before an older row', () => {
+    const newer = { ...record, timestamp: '2026-05-04T04:15:24.000Z' };
+    const older = { ...record, timestamp: '2026-05-04T03:15:24.000Z' };
+
+    const result = coalesceManifestRecords([newer, older]);
+
+    expect(result).toEqual([newer]);
+    expect(result[0]).toBe(newer);
+  });
+
+  it('does not coalesce identities that only collide without field separators', () => {
+    const first = withRunId(RUN_ID, {
+      runbook: { source: 'plugin', path: 'a.md' },
+      key: 'b.md-c',
+    });
+    const second = withRunId(RUN_ID, {
+      runbook: { source: 'plugin', path: 'a.mdb.md' },
+      key: '-c',
+      timestamp: '2026-05-04T04:15:24.000Z',
+    });
+
+    expect(coalesceManifestRecords([first, second])).toEqual([first, second]);
+  });
+
+  it('does not coalesce records from different runbook refs', () => {
+    const sameRunAndKeyDifferentRunbook = withRunId(RUN_ID, {
+      runbook: { source: 'project', path: 'planning/write-plan.runbook.md' },
+      timestamp: '2026-05-04T04:15:24.000Z',
+    });
+
+    expect(coalesceManifestRecords([record, sameRunAndKeyDifferentRunbook])).toEqual([
+      record,
+      sameRunAndKeyDifferentRunbook,
+    ]);
+  });
+
+  it('breaks coalescing timestamp ties by later manifest row', () => {
+    const first = withRunId(RUN_ID, { timestamp: '2026-05-04T03:15:24.000Z' });
+    const later = withRunId(RUN_ID, {
+      timestamp: '2026-05-04T03:15:24.000Z',
+      uri: first.uri,
+    });
+
+    const result = coalesceManifestRecords([first, later]);
+    expect(result).toEqual([later]);
+    expect(result[0]).toBe(later);
+  });
+
   it('returns an empty manifest for missing, empty, and whitespace-only files', async () => {
     const missingCwd = await tempCwd();
     await expect(readArtifactManifest(optionsFor(missingCwd), 'ctx1')).resolves.toEqual([]);
