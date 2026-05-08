@@ -55,6 +55,13 @@ export {
   type PolicyExecutionOptions,
 } from './executor.js';
 export { renderRunbook, renderStep } from './renderer/renderer.js';
+export {
+  renderArtifactValue,
+  renderArtifactPathValue,
+  renderArtifactRecordValue,
+  renderLiteralArtifactPath,
+  type RenderArtifactOptions,
+} from './renderer/artifact-helper.js';
 export { evaluateFailCondition, evaluatePassCondition } from './transition-handler.js';
 export { createFileProvider, computeFileSnapshot, validateFileSnapshot } from './file-provider.js';
 export type { FileProvider } from './file-provider.js';
