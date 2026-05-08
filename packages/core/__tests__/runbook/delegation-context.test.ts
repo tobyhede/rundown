@@ -7,6 +7,7 @@ import {
   MAX_ANCESTOR_DEPTH,
 } from '../../src/runbook/delegation-context.js';
 import { mergeEffectiveVars } from '../../src/runbook/effective-vars.js';
+import { RunbookStateSchema } from '../../src/schemas.js';
 import type { ArtifactRecord } from '../../src/runbook/artifact-schema.js';
 import type {
   AncestorSnapshot,
@@ -626,5 +627,19 @@ describe('buildContextSnapshot', () => {
 
     expect(snap.vars.PlanPath).toEqual(ARTIFACT_RECORD);
     expect(snap.vars.OutputWins).toBe('from-output');
+  });
+
+  it('keeps artifactVars after RunbookStateSchema parse before snapshot build', () => {
+    const parsed = RunbookStateSchema.parse({
+      ...makeMinimalState({
+        templateVars: brandInitialTemplateVarsForTest({}),
+        artifactVars: brandArtifactVarsForTest({ PlanPath: ARTIFACT_RECORD }),
+      }),
+      schemaVersion: 3,
+    }) as unknown as RunbookState;
+
+    const snap = buildContextSnapshot(parsed);
+
+    expect(snap.vars.PlanPath).toEqual(ARTIFACT_RECORD);
   });
 });

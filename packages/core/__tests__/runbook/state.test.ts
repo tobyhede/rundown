@@ -9,6 +9,7 @@ import { SessionService } from '../../src/runbook/session-service.js';
 import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type { Step, Runbook, RunId } from '../../src/runbook/types.js';
+import type { ArtifactRecord } from '../../src/runbook/artifact-schema.js';
 import { makeBaseStep, makeSubstep } from '../helpers/step-factories.js';
 
 describe('RunbookStateManager', () => {
@@ -57,6 +58,32 @@ describe('RunbookStateManager', () => {
       expect(branded).toBe(state.id);
       expect(branded).toMatch(/^rd_[a-f0-9]{32}$/);
     });
+  });
+
+  it('persists artifactVars separately from string-only variables', async () => {
+    const artifact = {
+      uri: 'rd://artifacts/ctx1/runs/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
+      runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      contextId: 'ctx1',
+      runbook: { source: 'project' as const, path: 'planning/write-plan.runbook.md' },
+      key: 'plan.json',
+      timestamp: '2026-05-07T00:00:00.000Z',
+    } satisfies ArtifactRecord;
+
+    const state = await manager.create(
+      { source: 'project', path: 'test.runbook.md' },
+      mockRunbook,
+      { runbookPath: 'test.runbook.md' },
+    );
+
+    await manager.update(state.id, {
+      artifactVars: { PlanPath: artifact, Reviews: [artifact] },
+      variables: { PlanPath: 'output-mask' },
+    });
+
+    const loaded = await manager.load(state.id);
+    expect(loaded?.artifactVars).toEqual({ PlanPath: artifact, Reviews: [artifact] });
+    expect(loaded?.variables).toEqual({ PlanPath: 'output-mask' });
   });
 
   describe('getChildRunbookResult', () => {

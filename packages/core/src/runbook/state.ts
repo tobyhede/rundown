@@ -13,13 +13,18 @@ import type {
   ResolvedRunbook,
   ParentLinkage,
   TemplateVarValue,
+  ArtifactVarValue,
 } from './types.js';
 import type { ClaimRecord } from './claim-id.js';
 import type { RunbookRef } from './runbook-ref.js';
 import { makeRunbookStateSchema, SessionDataSchema } from '../schemas.js';
 import { isNodeError } from '../errors.js';
 import { logger } from '../logger.js';
-import { brandInitialTemplateVars, brandStoredOutputs } from './effective-vars.js';
+import {
+  brandArtifactVars,
+  brandInitialTemplateVars,
+  brandStoredOutputs,
+} from './effective-vars.js';
 import { assertRunId, RUN_ID_PREFIX, type RunId } from './run-id.js';
 import {
   runsDir as _runsDir,
@@ -29,7 +34,7 @@ import {
 } from '../paths.js';
 
 /** Current persisted state schema version. Bump whenever RunbookState shape changes incompatibly. */
-const CURRENT_SCHEMA_VERSION = 2;
+const CURRENT_SCHEMA_VERSION = 3;
 
 function patchSnapshotSubstepStates(
   snapshot: unknown,
@@ -344,13 +349,16 @@ export class RunbookStateManager {
    */
   async update(
     id: string,
-    updates: Partial<Omit<RunbookState, 'id' | 'startedAt' | 'variables' | 'templateVars'>> & {
+    updates: Partial<
+      Omit<RunbookState, 'id' | 'startedAt' | 'variables' | 'templateVars' | 'artifactVars'>
+    > & {
       // Accept unbranded records on the update path; the manager re-mints
       // the brand inside the merge below. Internal callers (actor-service
       // sync, compiler reducers) hold the unbranded XState context shape
       // and shouldn't need to know about the persistence-layer brand.
       readonly variables?: Readonly<Record<string, string>>;
       readonly templateVars?: Readonly<Record<string, TemplateVarValue>>;
+      readonly artifactVars?: Readonly<Record<string, ArtifactVarValue>>;
     },
   ): Promise<RunbookState> {
     const existing = await this.load(id);
@@ -362,6 +370,7 @@ export class RunbookStateManager {
     // `...updates` spread does not leak the unbranded types into the
     // strictly-typed RunbookState literal.
     const {
+      artifactVars: updatesArtifactVars,
       variables: updatesVariables,
       templateVars: updatesTemplateVars,
       ...restUpdates
@@ -381,6 +390,9 @@ export class RunbookStateManager {
       variables: brandStoredOutputs({ ...existing.variables, ...(updatesVariables ?? {}) }),
       ...(updatesTemplateVars !== undefined
         ? { templateVars: brandInitialTemplateVars(updatesTemplateVars) }
+        : {}),
+      ...(updatesArtifactVars !== undefined
+        ? { artifactVars: brandArtifactVars(updatesArtifactVars) }
         : {}),
       updatedAt: new Date().toISOString(),
     };
