@@ -2,13 +2,13 @@
 
 Date: 2026-05-08
 
-Command:
+Command (run from `packages/core`):
 
 ```bash
 npx stryker run --inPlace --force --mutate src/runbook/artifact-manifest.ts:193-213,src/runbook/artifact-directive-resolver.ts:75-181,src/runbook/state-update-ops.ts,src/runbook/state.ts:422-440 --testFiles __tests__/runbook/artifact-manifest.test.ts,__tests__/runbook/artifact-directive-resolver.test.ts,__tests__/runbook/state-update-ops.test.ts,__tests__/runbook/state.test.ts
 ```
 
-Report:
+Report (paths relative to repo root; written by Stryker into `packages/core/reports/mutation/`):
 
 - `packages/core/reports/mutation/mutation-report.json`
 - `packages/core/reports/mutation/index.html`

@@ -73,7 +73,6 @@ describe('artifact resolver integration', () => {
     await fsp.writeFile(siblingPath, '{}');
     await manager.update(sibling.id, {
       lifecycle: 'completed',
-      updatedAt: new Date().toISOString(),
     });
 
     const current = await createRun(manager, CURRENT_RUN);

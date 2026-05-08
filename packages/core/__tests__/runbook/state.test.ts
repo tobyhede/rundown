@@ -155,11 +155,48 @@ describe('RunbookStateManager', () => {
   });
 
   it('resolveArtifactsForRun throws when run id is not found', async () => {
+    // Canonical run-id format (lowercase hex), guaranteed absent from disk.
+    // See run-id.ts RUN_ID_PATTERN — non-hex literals fail validation before
+    // reaching the not-found branch this test is covering.
     await expect(
-      manager.resolveArtifactsForRun('rd_zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz', [
+      manager.resolveArtifactsForRun('rd_ffffffffffffffffffffffffffffffff', [
         { name: 'PlanPath', key: 'plan.json', kind: 'exact' },
       ]),
     ).rejects.toThrow(/not found/);
+  });
+
+  it('resolveArtifactsForRun refuses while a live actor is registered for the run id', async () => {
+    const state = await manager.create(
+      { source: 'project', path: 'test.runbook.md' },
+      mockRunbook,
+      {
+        runbookPath: 'test.runbook.md',
+        runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as RunId,
+        templateVars: {
+          WorkPath: '.rundown/work',
+          ContextId: 'ctx1',
+          RunId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          RunbookRef: { source: 'project', path: 'test.runbook.md' },
+        },
+      },
+    );
+
+    manager.markActorStarted(state.id);
+    expect(manager.isActorLive(state.id)).toBe(true);
+
+    await expect(
+      manager.resolveArtifactsForRun(state.id, [
+        { name: 'PlanPath', key: 'plan.json', kind: 'exact' },
+      ]),
+    ).rejects.toThrow(/live RunbookActor exists/);
+
+    manager.markActorStopped(state.id);
+    expect(manager.isActorLive(state.id)).toBe(false);
+
+    const artifacts = await manager.resolveArtifactsForRun(state.id, [
+      { name: 'PlanPath', key: 'plan.json', kind: 'exact' },
+    ]);
+    expect(artifacts.PlanPath).toMatchObject({ key: 'plan.json' });
   });
 
   it('round-trips empty artifactVars through persistence', async () => {

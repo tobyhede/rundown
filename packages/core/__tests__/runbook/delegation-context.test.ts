@@ -630,6 +630,10 @@ describe('buildContextSnapshot', () => {
   });
 
   it('keeps artifactVars after RunbookStateSchema parse before snapshot build', () => {
+    // Cast required: this test deliberately exercises the unbranded
+    // RunbookStateSchema (parses to ValidatedRunbookState, no brand transforms).
+    // The branded variant is makeRunbookStateSchema(projectRoot). buildContextSnapshot
+    // consumes the branded RunbookState type, so we coerce after parse.
     const parsed = RunbookStateSchema.parse({
       ...makeMinimalState({
         templateVars: brandInitialTemplateVarsForTest({}),

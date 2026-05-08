@@ -1,5 +1,6 @@
 import { describe, it, expect } from '@jest/globals';
 import {
+  brandArtifactVars,
   brandEffectiveVars,
   brandInitialTemplateVars,
   brandStoredOutputs,
@@ -82,8 +83,7 @@ describe('brandEffectiveVars', () => {
 });
 
 describe('brandArtifactVars', () => {
-  it('returns the same reference (zero runtime cost)', async () => {
-    const { brandArtifactVars } = await import('../../src/runbook/effective-vars.js');
+  it('returns the same reference (zero runtime cost)', () => {
     const input = { PlanPath: ARTIFACT_RECORD };
     const out = brandArtifactVars(input);
     expect(out).toBe(input);

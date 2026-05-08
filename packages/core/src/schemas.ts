@@ -273,7 +273,31 @@ export const ArtifactVarValueSchema = z.union([
   z.array(ArtifactRecordSchema).readonly(),
 ]);
 
-const ContextSnapshotVarValueSchema = z.union([TemplateVarValueSchema, ArtifactVarValueSchema]);
+/**
+ * Build the union schema for a single context-vars value.
+ *
+ * `vars` records on persisted snapshots may carry either a template value
+ * (`TemplateVarValue`) or an artifact value (`ArtifactVarValue`). When
+ * `projectRoot` is provided, the template variant is path-validated via
+ * {@link makeTemplateVarValueSchema}; otherwise the static
+ * {@link TemplateVarValueSchema} is used.
+ *
+ * Centralised so the three callers (the static
+ * `ContextSnapshotVarValueSchema`, {@link makeAncestorSnapshotSchema}, and
+ * {@link makeContextSnapshotSchema}) cannot drift independently when the
+ * value union changes.
+ *
+ * @param projectRoot - Optional project root for path-validated template variant
+ * @returns Zod union schema accepting both template and artifact values
+ */
+function makeContextVarValueSchema(projectRoot?: string): z.ZodTypeAny {
+  return z.union([
+    projectRoot === undefined ? TemplateVarValueSchema : makeTemplateVarValueSchema(projectRoot),
+    ArtifactVarValueSchema,
+  ]);
+}
+
+const ContextSnapshotVarValueSchema = makeContextVarValueSchema();
 
 /**
  * Zod schema for a single ancestor in the runbook lineage snapshot.
@@ -693,10 +717,7 @@ export function makeTemplateVarValueSchema(projectRoot: string): z.ZodType<Templ
  * @returns Zod schema for AncestorSnapshot with path-validated vars
  */
 function makeAncestorSnapshotSchema(projectRoot: string): z.ZodTypeAny {
-  const ContextVarsSchema = z.union([
-    makeTemplateVarValueSchema(projectRoot),
-    ArtifactVarValueSchema,
-  ]);
+  const ContextVarsSchema = makeContextVarValueSchema(projectRoot);
   return z.object({
     runId: RunIdSchema,
     runbook: z.string(),
@@ -720,10 +741,7 @@ function makeAncestorSnapshotSchema(projectRoot: string): z.ZodTypeAny {
  * @returns Zod schema for ContextSnapshot with path-validated vars and ancestors
  */
 function makeContextSnapshotSchema(projectRoot: string): z.ZodTypeAny {
-  const ContextVarsSchema = z.union([
-    makeTemplateVarValueSchema(projectRoot),
-    ArtifactVarValueSchema,
-  ]);
+  const ContextVarsSchema = makeContextVarValueSchema(projectRoot);
   return z
     .object({
       // Brand at the parse seam so disk-loaded ContextSnapshot.vars re-enters

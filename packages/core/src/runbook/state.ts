@@ -137,12 +137,57 @@ export class RunbookStateManager {
   private readonly _cwd: string;
 
   /**
+   * Per-process registry of run ids whose `RunbookActor` is currently running.
+   *
+   * Maintained by {@link RunbookActorService} via {@link markActorStarted} and
+   * {@link markActorStopped}. {@link resolveArtifactsForRun} consults this set
+   * to refuse writes that would race with the actor's stale-context replay
+   * through `RunbookActorService.updateFromActor`.
+   */
+  private readonly liveActors = new Set<string>();
+
+  /**
    * Create a new RunbookStateManager.
    *
    * @param cwd - The working directory (project root) for state file paths
    */
   constructor(cwd: string) {
     this._cwd = cwd;
+  }
+
+  /**
+   * Register a run id as having a live actor in this process.
+   *
+   * Called by {@link RunbookActorService.createActor} after `actor.start()`.
+   * Idempotent: re-registering a live id is a no-op.
+   *
+   * @param id - Runbook state id
+   */
+  markActorStarted(id: string): void {
+    this.liveActors.add(id);
+  }
+
+  /**
+   * Deregister a run id whose actor has been stopped.
+   *
+   * Called by {@link RunbookActorService.stopActor} after `actor.stop()`.
+   * Idempotent: deregistering an unknown id is a no-op.
+   *
+   * @param id - Runbook state id
+   */
+  markActorStopped(id: string): void {
+    this.liveActors.delete(id);
+  }
+
+  /**
+   * Whether a `RunbookActor` is currently live for the given run id.
+   *
+   * @param id - Runbook state id
+   * @returns `true` if {@link markActorStarted} was called without a matching
+   *   {@link markActorStopped}
+   */
+  isActorLive(id: string): boolean {
+    return this.liveActors.has(id);
   }
 
   /**
@@ -376,6 +421,8 @@ export class RunbookStateManager {
         RunbookState,
         | 'id'
         | 'startedAt'
+        | 'updatedAt'
+        | 'schemaVersion'
         | 'variables'
         | 'templateVars'
         | 'artifactVars'
@@ -451,25 +498,34 @@ export class RunbookStateManager {
    * or emit events. Phase 4 owns deciding when to call it at step/substep entry.
    *
    * @remarks
-   * Must not be called while a live `RunbookActor` exists for the same `id`.
-   * The actor seeds `context.artifactVars` once at compile time
-   * (`actor-service.ts` `compileMachineFromState`); a later
-   * `RunbookActorService.updateFromActor` mirrors the actor's stale view back
-   * to disk via `replace(...)` (`actor-service.ts` artifactVars patches),
-   * which would overwrite this method's writes. Phase 4 will own scheduling
-   * resolver calls relative to actor lifecycle.
+   * Refuses to run while a live `RunbookActor` exists for the same `id` (as
+   * tracked by {@link markActorStarted}/{@link markActorStopped}). The actor
+   * seeds `context.artifactVars` once at compile time (`actor-service.ts`
+   * `compileMachineFromState`); a later `RunbookActorService.updateFromActor`
+   * mirrors the actor's stale view back to disk via `replace(...)`
+   * (`actor-service.ts` artifactVars patches), which would overwrite this
+   * method's writes. Phase 4 will replace the refusal with a machine-mediated
+   * write path so resolver output flows through the actor's context.
    *
    * @param id - Current run id
    * @param declarations - Parser-owned artifact declarations for one execution unit
    * @returns The current execution unit's resolved artifact working set
-   * @throws {Error} If the run is not found, is missing required built-ins
-   * (`WorkPath`, `ContextId`), has corrupt artifact manifests, or encounters
-   * unexpected artifact filesystem failures
+   * @throws {Error} If a live `RunbookActor` exists for `id`, the run is not
+   * found, is missing required built-ins (`WorkPath`, `ContextId`), has
+   * corrupt artifact manifests, or encounters unexpected artifact filesystem
+   * failures
    */
   async resolveArtifactsForRun(
     id: string,
     declarations: readonly ArtifactDeclaration[],
   ): Promise<Record<string, ArtifactVarValue>> {
+    if (this.liveActors.has(id)) {
+      throw new Error(
+        `Refusing to resolve artifacts for "${id}": a live RunbookActor exists for this run. ` +
+          `Stop the actor (RunbookActorService.stopActor) before calling resolveArtifactsForRun, ` +
+          `or wait for Phase 4 machine-mediated artifact resolution.`,
+      );
+    }
     const state = await this.load(id);
     if (!state) {
       throw new Error(`Runbook ${id} not found`);

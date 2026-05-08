@@ -31,7 +31,8 @@ const IDENTITY_OWNED_BUILTIN_SET = new Set<string>(IDENTITY_OWNED_BUILTINS);
  *
  * @param snapshot - The frozen context snapshot from delegation metadata
  * @returns Variable map with string values for structural fields (step, substep, at, index)
- *          and TemplateVarValue entries (strings, numbers, or objects) from snapshot.vars
+ *          and ContextSnapshotVarValue entries (template values or artifact records)
+ *          from snapshot.vars
  * @throws {Error} When the ancestor chain exceeds {@link MAX_ANCESTOR_DEPTH} levels
  */
 export function reconstituteContextVars(

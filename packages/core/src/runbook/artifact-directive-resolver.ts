@@ -106,11 +106,17 @@ export async function resolveArtifactDeclarations(
       ? coalesceManifestRecords(await readArtifactManifest(options, options.contextId))
       : recordsForExacts;
 
+  // Memoize sibling-run eligibility for the duration of one resolve pass so
+  // a manifest containing many records from the same sibling run only loads
+  // that run's state once.
+  const eligibilityCache = new Map<RunId, ArtifactRunEligibility | null>();
+
   for (const declaration of wildcards) {
     result[declaration.name] = await resolveWildcardDeclaration(
       declaration,
       options,
       recordsForWildcards,
+      eligibilityCache,
     );
   }
 
@@ -168,6 +174,7 @@ async function resolveWildcardDeclaration(
   declaration: WildcardArtifactDeclaration,
   options: ResolveArtifactDeclarationsOptions,
   records: readonly ArtifactManifestRecord[],
+  eligibilityCache: Map<RunId, ArtifactRunEligibility | null>,
 ): Promise<ArtifactRecord[]> {
   const matcher = picomatch(declaration.key, { dot: true });
   const matches: ArtifactRecord[] = [];
@@ -179,7 +186,7 @@ async function resolveWildcardDeclaration(
     if (record.contextId !== options.contextId || !matcher(record.key)) {
       continue;
     }
-    if (!(await isEligibleWildcardRecord(record, options))) {
+    if (!(await isEligibleWildcardRecord(record, options, eligibilityCache))) {
       continue;
     }
     if (!isExistingRegularArtifactFile(record.uri, options)) {
@@ -194,12 +201,21 @@ async function resolveWildcardDeclaration(
 async function isEligibleWildcardRecord(
   record: ArtifactManifestRecord,
   options: ResolveArtifactDeclarationsOptions,
+  eligibilityCache: Map<RunId, ArtifactRunEligibility | null>,
 ): Promise<boolean> {
   if (record.runId === options.runId) {
     return true;
   }
-  const eligibility = await options.loadRunEligibility(assertRunId(record.runId));
-  return eligibility !== null;
+  const runId = assertRunId(record.runId);
+  let eligibility = eligibilityCache.get(runId);
+  if (eligibility === undefined) {
+    eligibility = await options.loadRunEligibility(runId);
+    eligibilityCache.set(runId, eligibility);
+  }
+  // Validate the loader response: only accept rows whose eligibility record
+  // refers back to the requested runId. Defends against a loader that
+  // returns cached data for a different sibling run.
+  return eligibility !== null && eligibility.runId === runId;
 }
 
 async function ensureArtifactParentDirectory(

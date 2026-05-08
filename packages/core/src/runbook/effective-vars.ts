@@ -258,6 +258,14 @@ export function brandStoredOutputs(vars: Readonly<Record<string, string>>): Stor
  * @param vars - Plain merged-record shape
  * @returns The same object, branded.
  */
+export function brandEffectiveVars(
+  vars: Readonly<Record<string, TemplateVarValue | ArtifactVarValue>>,
+): EffectiveVars<TemplateVarValue | ArtifactVarValue>;
+
+export function brandEffectiveVars<V extends TemplateVarValue | OutputValue = TemplateVarValue>(
+  vars: Readonly<Record<string, V>>,
+): EffectiveVars<V>;
+
 export function brandEffectiveVars<V extends TemplateVarValue | OutputValue = TemplateVarValue>(
   vars: Readonly<Record<string, V>>,
 ): EffectiveVars<V> {
