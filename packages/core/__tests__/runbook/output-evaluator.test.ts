@@ -85,10 +85,10 @@ describe('evaluateOutputExpression', () => {
     expect(evaluateOutputExpression('PlanPath', { PlanPath: '/tmp/plan.md' })).toBe('/tmp/plan.md');
   });
 
-  it('evaluates artifact helper to an exact URI', async () => {
+  it('rejects literal {{ artifact "key" }} form (spec §327)', async () => {
     const cwd = await mkdtemp(path.join(tmpdir(), 'rd-helper-'));
     try {
-      expect(
+      expect(() =>
         evaluateOutputExpression(
           '{{ artifact "review.json" }}',
           {
@@ -102,7 +102,7 @@ describe('evaluateOutputExpression', () => {
           },
           { cwd },
         ),
-      ).toBe('rd://artifacts/ctx1/runs/rd_0123456789abcdef0123456789abcdef/review.json');
+      ).toThrow(/literal key/);
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
@@ -131,7 +131,7 @@ describe('evaluateOutputExpression', () => {
     }
   });
 
-  it('records manifest rows when helpers are evaluated', async () => {
+  it('does not record manifest rows when helpers are evaluated (spec §313)', async () => {
     const cwd = await mkdtemp(path.join(tmpdir(), 'rd-helper-'));
     try {
       const vars = {
@@ -144,31 +144,12 @@ describe('evaluateOutputExpression', () => {
         },
       };
 
-      const reviewUri = evaluateOutputExpression('{{ artifact "review.json" }}', vars, { cwd });
+      evaluateOutputExpression('{{ path "review.json" }}', vars, { cwd });
       evaluateOutputExpression('{{ path "summary.md" }}', vars, { cwd });
 
+      // Phase 3: template helpers are pure render-only projections.
       const records = await readArtifactManifest({ cwd, workPath: vars.WorkPath }, 'ctx1');
-      expect(records).toHaveLength(2);
-      expect(records).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            uri: reviewUri,
-            runId: vars.RunId,
-            contextId: vars.ContextId,
-            runbook: vars.RunbookRef,
-            key: 'review.json',
-            timestamp: expect.any(String),
-          }),
-          expect.objectContaining({
-            uri: 'rd://artifacts/ctx1/runs/rd_0123456789abcdef0123456789abcdef/summary.md',
-            runId: vars.RunId,
-            contextId: vars.ContextId,
-            runbook: vars.RunbookRef,
-            key: 'summary.md',
-            timestamp: expect.any(String),
-          }),
-        ]),
-      );
+      expect(records).toEqual([]);
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
@@ -195,9 +176,13 @@ describe('evaluateOutputExpression', () => {
         },
       };
 
+      // Phase 3: literal {{ artifact "key" }} is hard-rejected (spec §327)
+      // before any key validation runs.
       expect(() => evaluateOutputExpression(`{{ artifact "${key}" }}`, vars, { cwd })).toThrow(
-        /Invalid ArtifactKey/,
+        /literal key/,
       );
+      // Literal {{ path "key" }} is allowed and continues to enforce the
+      // ArtifactKey safety rules.
       expect(() => evaluateOutputExpression(`{{ path "${key}" }}`, vars, { cwd })).toThrow(
         /Invalid ArtifactKey/,
       );
@@ -792,5 +777,65 @@ describe('evaluateOutputExpression call-time helper validation', () => {
     } finally {
       process.off('unhandledRejection', unhandledHandler);
     }
+  });
+});
+
+describe('evaluateOutputExpression run-artifact helpers do not mutate the manifest', () => {
+  let cwd: string;
+
+  beforeEach(async () => {
+    cwd = await mkdtemp(path.join(tmpdir(), 'output-evaluator-purity-'));
+  });
+
+  afterEach(async () => {
+    await rm(cwd, { recursive: true, force: true });
+  });
+
+  it('rejects literal {{ artifact "key" }} as a hard error (spec §327)', async () => {
+    const variables: OutputVars = {
+      WorkPath: '.rundown/work',
+      ContextId: 'ctx1',
+      RunId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      RunbookRef: { source: 'project', path: 'a.runbook.md' },
+    };
+
+    expect(() =>
+      evaluateOutputExpressionRaw('{{ artifact "plan.json" }}', variables, { cwd }),
+    ).toThrow(/literal key/);
+
+    const records = await readArtifactManifest({ cwd, workPath: '.rundown/work' }, 'ctx1');
+    expect(records).toEqual([]);
+  });
+
+  it('does not append a manifest row when {{ path "key" }} is evaluated', async () => {
+    const variables: OutputVars = {
+      WorkPath: '.rundown/work',
+      ContextId: 'ctx1',
+      RunId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      RunbookRef: { source: 'project', path: 'a.runbook.md' },
+    };
+
+    evaluateOutputExpressionRaw('{{ path "plan.json" }}', variables, { cwd });
+
+    const records = await readArtifactManifest({ cwd, workPath: '.rundown/work' }, 'ctx1');
+    expect(records).toEqual([]);
+  });
+
+  it('does not create the parent directory when {{ path "key" }} is evaluated', async () => {
+    const variables: OutputVars = {
+      WorkPath: '.rundown/work',
+      ContextId: 'ctx1',
+      RunId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      RunbookRef: { source: 'project', path: 'a.runbook.md' },
+    };
+
+    evaluateOutputExpressionRaw('{{ path "plan.json" }}', variables, { cwd });
+
+    const fsp = await import('node:fs/promises');
+    await expect(
+      fsp.stat(
+        path.join(cwd, '.rundown/work', '.rd-ctx1', 'runs', 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
+      ),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
   });
 });
