@@ -171,7 +171,7 @@ export class RunbookStateManager {
    * Deregister a run id whose actor has been stopped.
    *
    * Called by {@link RunbookActorService.stopActor} after `actor.stop()`.
-   * Idempotent: deregistering an unknown id is a no-op.
+   * Idempotent: removing an unknown id is a no-op.
    *
    * @param id - Runbook state id
    */
