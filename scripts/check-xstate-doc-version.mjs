@@ -7,10 +7,23 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const docPath = resolve(repoRoot, 'docs/internal/xstate-patterns.md');
 const xstatePkgPath = resolve(repoRoot, 'node_modules/xstate/package.json');
 
-const installed = JSON.parse(readFileSync(xstatePkgPath, 'utf8')).version;
-const banner = readFileSync(docPath, 'utf8').match(
-  /^> Living reference\. Verified against xstate@(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?) on \d{4}-\d{2}-\d{2}\. Re-verify on each xstate upgrade\.\r?$/m,
-);
+let installed;
+try {
+  installed = JSON.parse(readFileSync(xstatePkgPath, 'utf8')).version;
+} catch (err) {
+  console.error(`error: failed to read ${xstatePkgPath}: ${err.message}`);
+  process.exit(1);
+}
+
+let banner;
+try {
+  banner = readFileSync(docPath, 'utf8').match(
+    /^> Living reference\. Verified against xstate@(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?) on \d{4}-\d{2}-\d{2}\. Re-verify on each xstate upgrade\.\r?$/m,
+  );
+} catch (err) {
+  console.error(`error: failed to read ${docPath}: ${err.message}`);
+  process.exit(1);
+}
 
 if (!banner) {
   console.error(
