@@ -707,6 +707,27 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
     expect(result.Plan).toEqual(planRecord);
   });
 
+  it('rejects an ArtifactRecord bound in scope from a different context', async () => {
+    const cwd = await tempCwd();
+    const planRecord = record({
+      runId: OTHER_CONTEXT_RUN,
+      contextId: 'ctx2',
+      key: 'plan.json',
+    });
+
+    await expect(
+      resolveArtifactDeclarations([decl('Plan', null)], {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        scopeVars: { Plan: planRecord },
+        loadRunEligibility: eligibility(new Map()),
+      }),
+    ).rejects.toThrow(/cross-context flow is not supported/);
+  });
+
   it('passes through an ArtifactRecord[] bound in scope', async () => {
     const cwd = await tempCwd();
     const a = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'a.json' });
@@ -723,6 +744,28 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
     });
 
     expect(result.Plans).toEqual([a, b]);
+  });
+
+  it('rejects an ArtifactRecord[] bound in scope when any record is from a different context', async () => {
+    const cwd = await tempCwd();
+    const a = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'a.json' });
+    const b = record({
+      runId: OTHER_CONTEXT_RUN,
+      contextId: 'ctx2',
+      key: 'b.json',
+    });
+
+    await expect(
+      resolveArtifactDeclarations([decl('Plans', null)], {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        scopeVars: { Plans: [a, b] },
+        loadRunEligibility: eligibility(new Map()),
+      }),
+    ).rejects.toThrow(/cross-context flow is not supported/);
   });
 
   it('resolves a URI string bound in scope against the manifest', async () => {
@@ -759,6 +802,27 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
       runId: CURRENT_RUN,
       runbook: RUNBOOK,
       scopeVars: { Plans: [a.uri, b.uri] },
+      loadRunEligibility: eligibility(new Map()),
+    });
+
+    expect(result.Plans).toEqual([a, b]);
+  });
+
+  it('resolves a JSON string URI array bound in scope into ArtifactRecord[]', async () => {
+    const cwd = await tempCwd();
+    const a = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'a.json' });
+    const b = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'b.json' });
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, a);
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, b);
+    await Promise.all([a, b].map((r) => touchArtifact(cwd, r)));
+
+    const result = await resolveArtifactDeclarations([decl('Plans', null)], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      scopeVars: { Plans: JSON.stringify([a.uri, b.uri]) },
       loadRunEligibility: eligibility(new Map()),
     });
 
@@ -861,6 +925,43 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
         loadRunEligibility: eligibility(new Map()),
       }),
     ).rejects.toThrow(/partial-resolve/);
+  });
+
+  it('errors `partial-resolve` when one URI in a JSON string URI array fails to resolve', async () => {
+    const cwd = await tempCwd();
+    const a = record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'a.json' });
+    await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, a);
+    await touchArtifact(cwd, a);
+
+    await expect(
+      resolveArtifactDeclarations([decl('Plans', null)], {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        scopeVars: {
+          Plans: JSON.stringify([a.uri, `rd://artifacts/${CONTEXT_ID}/*/missing.json`]),
+        },
+        loadRunEligibility: eligibility(new Map()),
+      }),
+    ).rejects.toThrow(/partial-resolve/);
+  });
+
+  it('does not accept JSON string arrays containing non-rd URI values as URI arrays', async () => {
+    const cwd = await tempCwd();
+
+    await expect(
+      resolveArtifactDeclarations([decl('Plans', null)], {
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+        scopeVars: { Plans: JSON.stringify([`rd://artifacts/${CONTEXT_ID}/*/plan.json`, 42]) },
+        loadRunEligibility: eligibility(new Map()),
+      }),
+    ).rejects.toThrow(/unresolvable-uri/);
   });
 });
 

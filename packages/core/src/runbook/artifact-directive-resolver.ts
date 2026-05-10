@@ -48,7 +48,8 @@ export interface ArtifactRunEligibility {
  * In-scope variable map consulted for the naked-form ARTIFACTS assertion.
  *
  * Keys are variable names; values are the structured artifact values, URI
- * strings, or `URI[]` strings the resolver may rehydrate. The shape is
+ * strings, URI string arrays, or JSON URI array strings the resolver may
+ * rehydrate. The shape is
  * intentionally `unknown` so callers can pass merged effective vars (which
  * carry mixed string/object values from `templateVars` and `variables`
  * together) without an upfront cast.
@@ -107,7 +108,8 @@ export interface ResolveArtifactDeclarationsOptions extends ArtifactPathOptions 
  *   flow is not supported).
  * - **Naked form** (`rawToken === null`) — assertion form (§10.1.2). Looks up
  *   `name` in `options.scopeVars`, validates the bound value is artifact-shaped
- *   (`ArtifactRecord`, `ArtifactRecord[]`, URI string, or `URI[]`), and
+ *   (`ArtifactRecord`, `ArtifactRecord[]`, URI string, URI string array, or
+ *   JSON URI array string), and
  *   resolves URI strings against the same-context manifest. Errors with named
  *   reasons (`unbound`, `not-an-artifact`, `unresolvable-uri`,
  *   `partial-resolve`). No manifest writes.
@@ -547,10 +549,12 @@ async function isEligibleSelectorRecord(
  * Resolve a naked-form declaration (assertion that `name` is bound in scope).
  *
  * Per spec §10.1.2, the bound value MUST be one of:
- * - `ArtifactRecord` — emitted as-is.
- * - `ArtifactRecord[]` — emitted as-is.
+ * - `ArtifactRecord` — validated same-context and emitted as-is.
+ * - `ArtifactRecord[]` — validated same-context and emitted as a copy.
  * - URI string (`rd://...`) — resolved against the same-context manifest.
  * - URI string array — each URI resolved; all-or-nothing.
+ * - JSON URI array string — decoded only when every entry is an `rd://` URI
+ *   string, then resolved as a URI string array.
  *
  * @param name - Variable name to look up in `options.scopeVars`
  * @param options - Resolver options carrying `scopeVars` and manifest context
@@ -572,13 +576,28 @@ async function resolveNakedDeclaration(
   const value = scope[name];
 
   if (isArtifactValue(value)) {
-    // Pass through ArtifactRecord or readonly ArtifactRecord[] unchanged.
-    if (isArtifactRecord(value)) return value;
+    if (isArtifactRecord(value)) {
+      assertSameContextRecord(name, value, options.contextId);
+      return value;
+    }
+    for (const record of value) {
+      assertSameContextRecord(name, record, options.contextId);
+    }
     return [...value];
   }
 
-  // URI string — resolve via manifest.
+  // URI string or JSON URI[] string transport — resolve via manifest.
   if (typeof value === 'string') {
+    const uriArray = parseJsonArtifactUriArrayTransport(value);
+    if (uriArray !== null) {
+      return await resolveUriStringArray(
+        name,
+        uriArray,
+        options,
+        await readManifest(),
+        eligibilityCache,
+      );
+    }
     return await resolveUriString(name, value, options, await readManifest(), eligibilityCache);
   }
 
@@ -594,8 +613,43 @@ async function resolveNakedDeclaration(
   }
 
   throw new Error(
-    `not-an-artifact: ARTIFACTS naked declaration "${name}" is not artifact-shaped (expected ArtifactRecord, ArtifactRecord[], URI string, or URI string[])`,
+    `not-an-artifact: ARTIFACTS naked declaration "${name}" is not artifact-shaped (expected ArtifactRecord, ArtifactRecord[], URI string, URI string[], or JSON URI[] string)`,
   );
+}
+
+function assertSameContextRecord(name: string, record: ArtifactRecord, contextId: string): void {
+  if (record.contextId !== contextId) {
+    throw new Error(
+      `ARTIFACTS naked declaration "${name}" targets context "${record.contextId}" but the current context is "${contextId}"; cross-context flow is not supported`,
+    );
+  }
+}
+
+function parseJsonArtifactUriArrayTransport(value: string): readonly string[] | null {
+  if (!value.trimStart().startsWith('[')) {
+    return null;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return null;
+  }
+
+  if (!Array.isArray(parsed)) {
+    return null;
+  }
+
+  if (
+    !parsed.every(
+      (entry): entry is string => typeof entry === 'string' && entry.startsWith('rd://'),
+    )
+  ) {
+    return null;
+  }
+
+  return parsed;
 }
 
 async function resolveUriString(

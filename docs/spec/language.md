@@ -478,17 +478,18 @@ The bound value MUST be one of:
 - `ArtifactRecord[]` — emitted as-is.
 - A URI string matching the `rd://` form ([uri.md §6](./uri.md#6-forms)) — resolved against the same-context manifest, coerced to `ArtifactRecord` or `ArtifactRecord[]` per the manifest's yield.
 - A `URI[]` of URI strings — each URI resolved against the manifest, emitted as `ArtifactRecord[]`.
+- A JSON string containing a `URI[]` of `rd://` URI strings — decoded only in this naked `ARTIFACTS` boundary, then resolved like `URI[]`.
 
-The `URI[]` form mirrors `ArtifactRecord[]`, allowing string-form references to cross process or delegation boundaries and rehydrate at the consumer.
+Structured records MUST target the current `ContextId`; cross-context records are rejected the same way cross-context URI strings are rejected. The `URI[]` and JSON string `URI[]` forms mirror `ArtifactRecord[]`, allowing string-form references to cross process or delegation boundaries and rehydrate at the consumer. Implementations MUST NOT parse arbitrary JSON strings as variables; JSON decoding is limited to this artifact boundary and only succeeds when the decoded value is an array whose entries are all `rd://` URI strings.
 
 Resolution MUST be all-or-nothing. The directive MUST error at evaluation when:
 
 | Failure | When |
 |---------|------|
 | `unbound` | The variable is not present in scope. |
-| `not-an-artifact` | The bound value is not one of the four shapes above. |
+| `not-an-artifact` | The bound value is not one of the supported shapes above. |
 | `unresolvable-uri` | A URI string does not parse, or parses but matches no manifest row. |
-| `partial-resolve` | A `URI[]` contains at least one URI that fails resolution. No partial emission. |
+| `partial-resolve` | A `URI[]` or JSON string `URI[]` contains at least one URI that fails resolution. No partial emission. |
 
 The naked form is intended for consumer runbooks (e.g. a reviewer asserting that `Plan` was inherited from the parent's delegation chain) where the variable is expected to exist before the step runs.
 
@@ -556,7 +557,7 @@ File-backed output path scopes:
 
 Frontmatter `outputs` is evaluated at terminal `COMPLETE` or `STOPPED` transition against the merged effective variable context. Entries may be name-only or may include expression values. Name-only frontmatter entries read variables by name and do not create file-backed channels.
 
-Frontmatter `outputs:` expression behavior is separate from step/substep `OUTPUTS`. A frontmatter output may export an artifact variable by name through normal variable flow; no artifact-specific frontmatter syntax is needed. For example, if `PlanPath` resolves to an `ArtifactRecord`, `outputs: [PlanPath]` exports that value through the established context-passing path.
+Frontmatter `outputs:` expression behavior is separate from step/substep `OUTPUTS`. Final run state is a string-only transport boundary: exporting an `ArtifactRecord` writes its URI string, and exporting an `ArtifactRecord[]` writes a JSON string containing the record URIs. Consumers that need structured artifact values declare naked `ARTIFACTS` aliases to rehydrate those URI strings through the same-context manifest.
 
 Results are written to final run state and forwarded from child runbooks to parent live variables on completion.
 
@@ -570,7 +571,7 @@ Effective delegation variables use the same merge order as rendering:
 templateVars < variables < extraVars
 ```
 
-Step `OUTPUTS` and step `ARTIFACTS` both accumulate during execution in the unified `state.variables` map (typed via `VariableValueSchema`). Terminal frontmatter `outputs` propagate selected values, including artifact values, back to the parent through normal variable flow.
+Step `OUTPUTS` and step `ARTIFACTS` both accumulate during execution in the unified `state.variables` map (typed via `VariableValueSchema`). Terminal frontmatter `outputs` propagate selected values through string-only `finalVars`; artifact records cross this boundary as URI strings or JSON URI-array strings and can be rehydrated by naked `ARTIFACTS` declarations in the receiver.
 
 ## 11. Conformance
 
