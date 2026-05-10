@@ -1,4 +1,15 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
+
+const FOOTER_STEP = '[data-testid="footer-step"]';
+const FOOTER_RESULT = '[data-testid="footer-result"]';
+
+async function expectTerminalEmpty(page: Page) {
+  // xterm flushes via requestAnimationFrame, so retry until the DOM catches up.
+  await expect(async () => {
+    const xtermText = await page.locator('.xterm-rows').innerText();
+    expect(xtermText.replace(/\s+/g, '')).toBe('');
+  }).toPass({ timeout: 5000 });
+}
 
 test.describe('Landing Page', () => {
   test.describe.configure({ mode: 'serial' });
@@ -31,15 +42,15 @@ test.describe('Landing Page', () => {
     // Switch to a different card.
     await page.getByRole('button', { name: /Skip to end/ }).click();
 
-    // Terminal must be cleared. xterm's renderer flushes on the next frame,
-    // so use auto-retry via expect().toPass to wait for the clear to land.
-    await expect(async () => {
-      const xtermText = await page.locator('.xterm-rows').innerText();
-      expect(xtermText.replace(/\s+/g, '')).toBe('');
-    }).toPass({ timeout: 5000 });
+    // Terminal must be cleared.
+    await expectTerminalEmpty(page);
 
-    // No `rd` command echoed (would prove auto-run kicked off).
+    // Confirm no auto-run kicked off: terminal stays empty across a 2s window
+    // and contains no `rd run` echo. Hard wait is correct here — we're
+    // proving absence over a window, which `.not.toContainText` polling
+    // cannot do (it returns as soon as the negative is true).
     await page.waitForTimeout(2000);
+    await expectTerminalEmpty(page);
     await expect(page.locator('.xterm-rows')).not.toContainText('rd run');
   });
 
@@ -47,57 +58,78 @@ test.describe('Landing Page', () => {
     await page.getByRole('button', { name: /Happy path/ }).click();
     await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
 
-    // Click Next — status flips to `running` and the regex parser fires
-    // synchronously per chunk. Immediately attempt to click the JSON tab.
+    // Click Next — status flips to `running`. Both tabs gain `disabled`.
     await page.getByRole('button', { name: 'Next', exact: true }).click();
 
-    // While running, the JSON tab is disabled. Playwright's auto-waiting on
-    // `click()` will not bypass the disabled attribute — the click is a no-op.
-    // Verify by attempting the click (forcing past auto-wait) and checking
-    // that mode did not flip.
-    await page.getByRole('tab', { name: 'JSON' }).click({ force: true, trial: false }).catch(() => {
-      // If the click is rejected (disabled), that's the expected outcome.
-    });
-
-    // Mode must still be Text (the active tab's `aria-selected` remains true).
+    // Direct disabled-state assertion (auto-retries until disabled appears).
+    await expect(page.getByRole('tab', { name: 'Text' })).toBeDisabled();
+    await expect(page.getByRole('tab', { name: 'JSON' })).toBeDisabled();
     await expect(page.getByRole('tab', { name: 'Text' })).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByRole('tab', { name: 'JSON' })).toHaveAttribute('aria-selected', 'false');
 
-    // Terminal must still contain the in-progress text-mode output.
-    // Wait for the command to finish before asserting (avoid flaky races).
+    // After execution finishes the tabs re-enable.
     await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
+    await expect(page.getByRole('tab', { name: 'Text' })).toBeEnabled();
+    await expect(page.getByRole('tab', { name: 'JSON' })).toBeEnabled();
     await expect(page.locator('.xterm-rows')).toContainText('rd');
   });
 
+  test('clicking the already-selected card is a no-op (state preserved)', async ({ page }) => {
+    // Happy path is the default. Step one command.
+    await page.getByRole('button', { name: /Happy path/ }).click();
+    await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
+    await page.getByRole('button', { name: 'Next', exact: true }).click();
+    await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
+    await expect(page.locator('.xterm-rows')).toContainText('rd');
+
+    // Click the same card again — should NOT clear or reset.
+    await page.getByRole('button', { name: /Happy path/ }).click();
+
+    // Still ready, terminal still has content, footer still shows step.
+    await expect(page.getByText('Ready', { exact: true })).toBeVisible();
+    await expect(page.locator('.xterm-rows')).toContainText('rd');
+    await expect(page.locator(FOOTER_STEP)).not.toContainText('—/');
+  });
+
+  test('clicking the already-active tab is a no-op (state preserved)', async ({ page }) => {
+    await page.getByRole('button', { name: /Happy path/ }).click();
+    await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
+    await page.getByRole('button', { name: 'Next', exact: true }).click();
+    await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
+
+    // Default mode is Text; click the Text tab again. State must be preserved.
+    await page.getByRole('tab', { name: 'Text' }).click();
+    await expect(page.getByText('Ready', { exact: true })).toBeVisible();
+    await expect(page.locator('.xterm-rows')).toContainText('rd');
+    await expect(page.locator(FOOTER_STEP)).not.toContainText('—/');
+  });
+
   test('Text mode: Happy path steps to STEP 6/6 and RESULT COMPLETE', async ({ page }) => {
-    // Happy path is the default scenario; clicking it is a no-op (same-card
-    // click). autoStart prefires step 0 of the runbook, so click Reset to
-    // start the step-through from currentStep=0.
+    // Happy path is the default scenario; clicking it is a no-op (same-card).
+    // autoStart prefires step 0, so click Reset to start from currentStep=0.
     await page.getByRole('button', { name: /Happy path/ }).click();
     await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
     await page.getByRole('button', { name: 'Reset' }).click();
     await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
 
-    // Happy path = 7 commands (1 run + 6 pass). Click Next 6 times then Complete on the 7th.
-    // The label flips to 'Complete' when about to run the final command
-    // (currentStep === scenario.commands.length - 1 with length > 1).
+    // After reset, footer total should display exactly `—/6`.
+    await expect(page.locator(FOOTER_STEP)).toContainText('—/6');
+
+    const action = page.getByRole('button', { name: /^(Next|Complete)$/ });
+
+    // Happy path = 7 commands (1 run + 6 pass). Label is 'Next' for the
+    // first 6 clicks, 'Complete' on the 7th (final command).
     for (let i = 0; i < 7; i++) {
-      const label = i === 6 ? 'Complete' : 'Next';
-      await page.getByRole('button', { name: label, exact: true }).click();
-      // Wait for the click to take effect (status returns to ready or the button label flips).
+      const expectedLabel = i === 6 ? 'Complete' : 'Next';
+      await expect(action).toHaveText(new RegExp(`^${expectedLabel}$`), { timeout: 60000 });
+      await action.click();
       if (i < 6) {
         await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
       }
     }
 
-    const resultContainer = page.locator('div.flex.items-center.gap-2')
-      .filter({ has: page.getByText('Result', { exact: true }) })
-      .last();
-    await expect(resultContainer).toContainText('COMPLETE', { timeout: 60000 });
-
-    const stepContainer = page.locator('div.flex.items-center.gap-2')
-      .filter({ has: page.getByText('Step', { exact: true }) });
-    await expect(stepContainer).toContainText('6/6');
+    await expect(page.locator(FOOTER_RESULT)).toContainText('COMPLETE', { timeout: 60000 });
+    await expect(page.locator(FOOTER_STEP)).toContainText('6/6');
   });
 
   test('Text mode: Skip to end completes via goto+pass', async ({ page }) => {
@@ -105,18 +137,8 @@ test.describe('Landing Page', () => {
     await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
 
     // Skip to end = 3 commands: rd run --prompted, rd goto 6, rd pass.
-    // Per the verified emit table in Conventions:
-    //   Click 1 (rd run --prompted): NO `At:` line emitted (action: START
-    //     has no `at` field; see packages/core/src/cli/output.ts:120-122).
-    //     `runbookStep` stays at the placeholder `'—'`.
-    //   Click 2 (rd goto 6): emits `At: 6` (derivePositionAt of the new
-    //     position). `runbookStep` = '6'.
-    //   Click 3 (rd pass, final): emits `At: 6` then `Runbook: COMPLETE`.
-    //     `runbookStep` = '6', `runbookResult` = 'COMPLETE'.
-    //
-    // We do NOT assert intermediate values for Click 1 (would fail — step
-    // stays at `'—'`). We assert only the final stable state. This avoids
-    // brittleness on transition-order details.
+    // We do NOT assert intermediate values for Click 1 — `rd run --prompted`
+    // emits no `At:` line, so `runbookStep` stays at the placeholder `'—'`.
     await page.getByRole('button', { name: 'Next', exact: true }).click();
     await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
 
@@ -126,14 +148,8 @@ test.describe('Landing Page', () => {
     // Final click — `rd pass` completes the runbook.
     await page.getByRole('button', { name: 'Complete', exact: true }).click();
 
-    const resultContainer = page.locator('div.flex.items-center.gap-2')
-      .filter({ has: page.getByText('Result', { exact: true }) })
-      .last();
-    await expect(resultContainer).toContainText('COMPLETE', { timeout: 60000 });
-
-    const stepContainer = page.locator('div.flex.items-center.gap-2')
-      .filter({ has: page.getByText('Step', { exact: true }) });
-    await expect(stepContainer).toContainText('6/6');
+    await expect(page.locator(FOOTER_RESULT)).toContainText('COMPLETE', { timeout: 60000 });
+    await expect(page.locator(FOOTER_STEP)).toContainText('6/6');
   });
 
   test('Tab switch to JSON resets state and clears terminal', async ({ page }) => {
@@ -148,23 +164,15 @@ test.describe('Landing Page', () => {
     await page.getByRole('tab', { name: 'JSON' }).click();
     await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
 
-    // Terminal cleared (auto-retry until xterm flushes the clear).
-    await expect(async () => {
-      const xtermText = await page.locator('.xterm-rows').innerText();
-      expect(xtermText.replace(/\s+/g, '')).toBe('');
-    }).toPass({ timeout: 5000 });
+    await expectTerminalEmpty(page);
 
     // Footer reset to placeholders. Step row shows `—/6`; Result row hides
     // because runbookResult is null after reset.
-    const stepContainer = page.locator('div.flex.items-center.gap-2')
-      .filter({ has: page.getByText('Step', { exact: true }) });
-    await expect(stepContainer).toContainText('—/');
-    await expect(page.locator('div.flex.items-center.gap-2')
-      .filter({ has: page.getByText('Result', { exact: true }) })
-    ).toHaveCount(0);
+    await expect(page.locator(FOOTER_STEP)).toContainText('—/6');
+    await expect(page.locator(FOOTER_RESULT)).toHaveCount(0);
   });
 
-  test('JSON mode: clicking Next emits the runbook_started JSONL event', async ({ page }) => {
+  test('JSON mode: Next emits runbook_started and the footer stays at placeholders', async ({ page }) => {
     await page.getByRole('button', { name: /Happy path/ }).click();
     await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
 
@@ -173,11 +181,16 @@ test.describe('Landing Page', () => {
     await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
 
     // Click Next once — `rd run --prompted` emits RUNBOOK_STARTED, lowercased
-    // to "runbook_started" by the JSON renderer. This event fires only on
-    // `rd run` (the first command of the scenario), not on subsequent
-    // pass/fail/goto commands — so a single click is sufficient.
+    // to "runbook_started" by the JSON renderer.
     await page.getByRole('button', { name: 'Next', exact: true }).click();
     await expect(page.locator('.xterm-rows')).toContainText('"type":"runbook_started"', { timeout: 60000 });
+
+    // The footer's text-mode regex parser does NOT fire in JSON mode, so the
+    // step value stays at the placeholder and the Result row stays hidden
+    // even though the runbook is making progress.
+    await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
+    await expect(page.locator(FOOTER_STEP)).toContainText('—/6');
+    await expect(page.locator(FOOTER_RESULT)).toHaveCount(0);
   });
 
   test('Tab switch back to Text resets state', async ({ page }) => {
@@ -193,11 +206,9 @@ test.describe('Landing Page', () => {
     await page.getByRole('tab', { name: 'Text' }).click();
     await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
 
-    // Auto-retry until xterm flushes the clear.
-    await expect(async () => {
-      const xtermText = await page.locator('.xterm-rows').innerText();
-      expect(xtermText.replace(/\s+/g, '')).toBe('');
-    }).toPass({ timeout: 5000 });
+    await expectTerminalEmpty(page);
+    await expect(page.locator(FOOTER_STEP)).toContainText('—/6');
+    await expect(page.locator(FOOTER_RESULT)).toHaveCount(0);
   });
 
   test('Reset mid-scenario clears terminal and footer', async ({ page }) => {
@@ -216,19 +227,12 @@ test.describe('Landing Page', () => {
     await page.getByRole('button', { name: 'Reset' }).click();
 
     // Tight emptiness check: combine negative (no completion marker) and
-    // positive (terminal text content collapses to whitespace after `term.clear()`).
+    // positive (terminal text content collapses to whitespace).
     await expect(page.locator('.xterm-rows')).not.toContainText('COMPLETE');
-    await expect(async () => {
-      const xtermText = await page.locator('.xterm-rows').innerText();
-      expect(xtermText.replace(/\s+/g, '')).toBe('');
-    }).toPass({ timeout: 5000 });
+    await expectTerminalEmpty(page);
 
     // Footer reset.
-    const stepContainer = page.locator('div.flex.items-center.gap-2')
-      .filter({ has: page.getByText('Step', { exact: true }) });
-    await expect(stepContainer).toContainText('—/');
-    await expect(page.locator('div.flex.items-center.gap-2')
-      .filter({ has: page.getByText('Result', { exact: true }) })
-    ).toHaveCount(0);
+    await expect(page.locator(FOOTER_STEP)).toContainText('—/6');
+    await expect(page.locator(FOOTER_RESULT)).toHaveCount(0);
   });
 });
