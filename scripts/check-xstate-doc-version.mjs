@@ -9,7 +9,7 @@ const xstatePkgPath = resolve(repoRoot, 'node_modules/xstate/package.json');
 
 const installed = JSON.parse(readFileSync(xstatePkgPath, 'utf8')).version;
 const banner = readFileSync(docPath, 'utf8').match(
-  /^> Living reference\. Verified against xstate@(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?) on \d{4}-\d{2}-\d{2}\. Re-verify on each xstate upgrade\.$/m,
+  /^> Living reference\. Verified against xstate@(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?) on \d{4}-\d{2}-\d{2}\. Re-verify on each xstate upgrade\.\r?$/m,
 );
 
 if (!banner) {
