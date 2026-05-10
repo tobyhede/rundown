@@ -110,13 +110,16 @@ Substeps cannot contain nested substeps. See [docs/spec/language.md §1.1](langu
 ## Context Directives
 
 ```ebnf
-artifacts_directive ::= "- ARTIFACTS" newline artifact_list
-artifact_list       ::= ( ws "- " artifact_entry newline )+
-artifact_entry      ::= variable_name ws quoted_artifact_key
-quoted_artifact_key ::= '"' artifact_key '"'
-artifact_key        ::= exact_artifact_key | wildcard_artifact_key
-exact_artifact_key  ::= [A-Za-z0-9._-]+
-wildcard_artifact_key ::= [A-Za-z0-9._*?-]+
+artifacts_directive    ::= "- ARTIFACTS" newline artifact_list
+artifact_list          ::= ( ws "- " artifact_entry newline )+
+artifact_entry         ::= variable_name [ ws quoted_artifact_token ]
+quoted_artifact_token  ::= '"' artifact_token '"'
+artifact_token         ::= artifact_key | uri_artifact_token
+artifact_key           ::= exact_artifact_key | wildcard_artifact_key
+exact_artifact_key     ::= [A-Za-z0-9._-]+
+wildcard_artifact_key  ::= [A-Za-z0-9._*?-]+
+uri_artifact_token     ::= "rd://artifacts/" ctx_ref "/" run_segment "/" artifact_key
+run_segment            ::= [A-Za-z0-9_-]+ | "*"
 
 outputs_directive ::= "- OUTPUTS" newline output_list
 output_list       ::= ( ws "- " output_entry newline )+
@@ -130,9 +133,9 @@ keyed_argument    ::= variable_name "=" ( quoted_string | variable_path | ctx_re
 
 A step or substep may declare at most one `ARTIFACTS` directive and at most one `OUTPUTS` directive. Duplicate directives on the same target are rejected. `ARTIFACTS` is valid only on steps and substeps; it is not a frontmatter field.
 
-`ARTIFACTS` declares the current execution unit's artifact working set. Each entry maps a variable name to a quoted artifact key. The variable name must match `variable_name` and must not be a [reserved variable name](#reserved-variable-names). Duplicate names in one `ARTIFACTS` block are syntax errors.
+`ARTIFACTS` declares the current execution unit's artifact working set. Each entry maps a variable name to an optional quoted artifact token. The variable name must match `variable_name` and must not be a [reserved variable name](#reserved-variable-names). Duplicate names in one `ARTIFACTS` block are syntax errors.
 
-Artifact keys are quoted literals. Template markers are not expanded inside keys. Exact keys use `exact_artifact_key`; wildcard keys use `wildcard_artifact_key` and contain `*` or `?`. Empty keys, `.`, `..`, slashes, absolute paths, traversal, and recursive `**` are invalid.
+Artifact entries take three forms: (1) **naked** — a bare `variable_name` with no token, asserting the name is already bound as an artifact reference; (2) **quoted bare key** — `"plan.json"` or `"review-*.json"`; (3) **quoted URI literal** — `"rd://artifacts/<ctx>/<run>/<key>"` or selector form with `*` in the run segment. Quoted tokens are template-expanded BEFORE classification, so `"{{ContextId}}-plan.json"` is valid. After expansion, exact bare keys use `exact_artifact_key`; wildcard bare keys use `wildcard_artifact_key` and contain `*` or `?`. Empty keys, `.`, `..`, slashes, absolute paths, traversal, and recursive `**` are invalid in bare-key form. The full URI grammar — including selector form, scheme registration, and component constraints — is normatively defined in [docs/spec/uri.md §4](uri.md#4-grammar-ebnf). Naked-form semantics are defined in [docs/spec/language.md §10.1.2](language.md#1012-naked-declaration-assertion-form).
 
 `OUTPUTS` at step/substep level declares name-only command output channels. Expression-form step/substep `OUTPUTS` entries are parse errors. Naked entries activate a file-backed channel: Rundown creates an empty file whose path is composed from the active scope tiers (step id, optional substep id, optional FOR iteration index) followed by `<VarName>` and exports its absolute path as `RD_OUTPUTS_<VarName>` to the spawned command. The three possible paths are:
 
@@ -372,7 +375,7 @@ Upper bounds: step identifiers are capped at 999,999; FOR loop bounds at 10,000.
 
 `filename` and `ctx_ref` source from `VALID_FILE` and `VALID_CTX` in `packages/core/src/runbook/artifact-paths.ts`. They constrain the arguments of the [`path`](#context-directives) helper used in OUTPUTS and the underlying `rdpath` CLI.
 
-`exact_artifact_key` shares the safe artifact key character set used by `filename`, but exact artifact keys identify manifest entries rather than path-helper output files. `wildcard_artifact_key` permits `*` and `?` for manifest lookup. Artifact keys reject slashes, traversal, empty keys, `.`, `..`, and recursive `**`.
+`exact_artifact_key` shares the safe artifact key character set used by `filename`, but exact artifact keys identify manifest entries rather than path-helper output files. `wildcard_artifact_key` permits `*` and `?` for manifest lookup. Artifact keys reject slashes, traversal, empty keys, `.`, `..`, and recursive `**`. Quoted artifact tokens may also be a `uri_artifact_token` (a literal `rd://artifacts/...` URI, exact or selector); see [Context Directives](#context-directives) and [docs/spec/uri.md](uri.md).
 
 ## Artifact URIs
 

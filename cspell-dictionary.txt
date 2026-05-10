@@ -84,6 +84,7 @@ gopath
 gopls
 handlebars
 hono
+hostnames
 idempotently
 iife
 initialisation
@@ -209,6 +210,7 @@ unrepresentable
 unsandboxed
 unstash
 unsub
+unwritable
 uppercased
 urandom
 userdel

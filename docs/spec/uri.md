@@ -268,7 +268,9 @@ The required field set is:
 | `key` | string | Artifact key; MUST satisfy `exact_artifact_key`. |
 | `timestamp` | string | RFC 3339 / ISO 8601 datetime. |
 
-All fields are required.
+All fields are required. The manifest record is intentionally limited to these
+six fields; the `kind` discriminator used by in-memory `state.variables` values
+is added by the loader and is NOT persisted in the manifest.
 
 **Canonical write order.** Manifest writers MUST emit the JSON object keys in
 the order shown above (`uri`, `runId`, `contextId`, `runbook`, `key`,

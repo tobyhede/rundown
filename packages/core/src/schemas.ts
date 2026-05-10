@@ -287,6 +287,9 @@ const VariableValueSchema = z.union([
   z.array(ArtifactRecordSchema).readonly(),
 ]);
 
+/** Shared schema for the `variables` record on persisted runbook state. */
+const RunbookVariablesSchema = z.record(z.string(), VariableValueSchema);
+
 /**
  * Build the union schema for a single context-vars value.
  *
@@ -548,7 +551,7 @@ const RunbookStateObjectSchema = z
     substep: z.string().optional(),
     stepName: z.string(),
     retryCount: z.number().nonnegative().int(),
-    variables: z.record(z.string(), VariableValueSchema),
+    variables: RunbookVariablesSchema,
     steps: z.array(
       z.object({
         id: z.string(),
@@ -874,7 +877,7 @@ export function makeRunbookStateSchema(projectRoot: string): z.ZodTypeAny {
     templateVars: VarsSchema.optional().transform((v) =>
       v === undefined ? undefined : brandInitialTemplateVars(v),
     ),
-    variables: z.record(z.string(), VariableValueSchema).transform((v) => brandStoredOutputs(v)),
+    variables: RunbookVariablesSchema.transform((v) => brandStoredOutputs(v)),
     substepStates: z.array(SubstepStateSchemaValidated).optional(),
   }).superRefine((value, ctx) => {
     rejectRemovedRunbookRefField(value, ctx);

@@ -169,24 +169,11 @@ Step description here.
   "prompted": true,
   "position": { "current": "1", "total": 3 },
   "step": { "name": "1", "description": "First Step" },
-  "artifacts": {},
-  "artifactVars": {
-    "PlanPath": {
-      "uri": "rd://artifacts/ctx1/rd_0123456789abcdef0123456789abcdef/plan.json",
-      "runId": "rd_0123456789abcdef0123456789abcdef",
-      "contextId": "ctx1",
-      "runbook": {
-        "source": "project",
-        "path": "planning/write-plan.runbook.md"
-      },
-      "key": "plan.json",
-      "timestamp": "2026-05-07T00:00:00.000Z"
-    }
-  }
+  "artifacts": {}
 }
 ```
 
-`artifacts` is required for active status responses and contains the active step/substep working set. It is `{}` when the active execution unit has no artifacts. `artifactVars` contains the accumulated persisted artifact variable map and is omitted when there are no accumulated artifact variables.
+`artifacts` is required for active status responses and contains the active step/substep working set. It is `{}` when the active execution unit has no artifacts. Accumulated artifact records live in the unified `state.variables` map alongside other variables and are surfaced through `vars` rather than a separate field.
 
 ### `rd status` (no active runbook)
 
@@ -203,7 +190,7 @@ No active runbook.
 }
 ```
 
-Inactive status responses omit both `artifacts` and `artifactVars`.
+Inactive status responses omit `artifacts`.
 
 ### `rd status --claim-id <claim_id>`
 
@@ -244,7 +231,7 @@ Runbook:  COMPLETE
 {"type":"runbook_completed","finalPosition":{"current":"1","total":1},"timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":5}
 ```
 
-The internal event payload field is `STEP_ENTERED.payload.artifacts`; the CLI JSONL field is flattened as `artifacts` on the `step_entered` line. `artifacts` is required and contains only the entered step/substep's working set. It is `{}` when that execution unit has no `ARTIFACTS` directive. It is not the full accumulated `artifactVars` map.
+The internal event payload field is `STEP_ENTERED.payload.artifacts`; the CLI JSONL field is flattened as `artifacts` on the `step_entered` line. `artifacts` is required and contains only the entered step/substep's working set. It is `{}` when that execution unit has no `ARTIFACTS` directive. It is not the full accumulated variable map; accumulated artifact records live in `state.variables`.
 
 Runtime command text is rendered once per execution. The exact rendered string is reused for the flattened `step_entered.commandCode` field and actual command execution.
 

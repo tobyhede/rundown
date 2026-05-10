@@ -628,6 +628,7 @@ function toResolvedSubstep(substep: ParsedSubstep, runbooks: string[] | undefine
     prompt: substep.prompt,
     transitions: substep.transitions,
     outputs: substep.outputs,
+    artifacts: substep.artifacts,
     runbooks: runbooks?.length ? runbooks : undefined,
     line: substep.line,
     // Sentinel marker — preserved when truthy so auto-issue (execution.ts)

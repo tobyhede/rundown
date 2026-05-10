@@ -970,3 +970,70 @@ describe('makeRunbookStateSchema — SEC4 cwd canonicalization note', () => {
     expect(result.success).toBe(false);
   });
 });
+
+describe('makeRunbookStateSchema variables value discriminated union', () => {
+  it('preserves URI-shaped string variables as strings (not ArtifactRecord)', () => {
+    const schema = makeRunbookStateSchema('/project');
+    const planUri = `rd://artifacts/ctx-1/${VALID_RUN_ID}/Plan`;
+    const state = createValidState({ variables: { Plan: planUri } });
+    const result = schema.safeParse(state);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.variables.Plan).toBe(planUri);
+      expect(typeof result.data.variables.Plan).toBe('string');
+    }
+  });
+
+  it('accepts ArtifactRecord values in variables', () => {
+    const schema = makeRunbookStateSchema('/project');
+    const record = {
+      kind: 'artifact-record' as const,
+      uri: `rd://artifacts/ctx-1/${VALID_RUN_ID}/plan.json`,
+      runId: VALID_RUN_ID,
+      contextId: 'ctx-1',
+      runbook: { source: 'project', path: 'planning/write-plan.runbook.md' },
+      key: 'plan.json',
+      timestamp: '2026-05-07T00:00:00.000Z',
+    };
+    const state = createValidState({ variables: { Plan: record } });
+    const result = schema.safeParse(state);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.variables.Plan).toEqual(record);
+    }
+  });
+
+  it('accepts ArtifactRecord[] values in variables', () => {
+    const schema = makeRunbookStateSchema('/project');
+    const record = {
+      kind: 'artifact-record' as const,
+      uri: `rd://artifacts/ctx-1/${VALID_RUN_ID}/plan.json`,
+      runId: VALID_RUN_ID,
+      contextId: 'ctx-1',
+      runbook: { source: 'project', path: 'planning/write-plan.runbook.md' },
+      key: 'plan.json',
+      timestamp: '2026-05-07T00:00:00.000Z',
+    };
+    const state = createValidState({ variables: { Plans: [record] } });
+    const result = schema.safeParse(state);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.variables.Plans).toEqual([record]);
+    }
+  });
+
+  it('rejects a record-shaped value missing the artifact-record kind tag', () => {
+    const schema = makeRunbookStateSchema('/project');
+    const untagged = {
+      uri: `rd://artifacts/ctx-1/${VALID_RUN_ID}/plan.json`,
+      runId: VALID_RUN_ID,
+      contextId: 'ctx-1',
+      runbook: { source: 'project', path: 'planning/write-plan.runbook.md' },
+      key: 'plan.json',
+      timestamp: '2026-05-07T00:00:00.000Z',
+    };
+    const state = createValidState({ variables: { Plan: untagged } });
+    const result = schema.safeParse(state);
+    expect(result.success).toBe(false);
+  });
+});

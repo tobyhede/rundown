@@ -9,13 +9,17 @@ import {
 } from '@rundown-org/core';
 import type {
   ArtifactDeclaration,
+  ParsedSubstep,
   ResolvedRunbook,
   ResolvedStep,
+  Runbook,
+  StepWithSubsteps,
   Substep,
   Transitions,
 } from '@rundown-org/parser';
 import {
   expandLoopVariablesForCommand,
+  resolveForBounds,
   substituteRunbookVariables,
   substituteText,
 } from '../../src/services/template-renderer.js';
@@ -344,5 +348,39 @@ describe('substituteRunbookVariables expands ARTIFACTS rawToken', () => {
     const resolvedSubstep = (result.steps[0] as Extract<ResolvedStep, { kind: 'substeps' }>)
       .substeps[0];
     expect(resolvedSubstep.artifacts?.[0].rawToken).toBe('rd://artifacts/ctx1/*/inner.json');
+  });
+});
+
+describe('resolveForBounds preserves substep ARTIFACTS', () => {
+  const DEFAULT_TRANSITIONS: Transitions = {
+    pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+    fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+  };
+
+  it('passes substep.artifacts through ParsedSubstep -> Substep resolution', () => {
+    const decl: ArtifactDeclaration = {
+      name: 'Plan',
+      rawToken: 'rd://artifacts/{{ContextId}}/{{RunId}}/plan.json',
+    };
+    const parsedSubstep: ParsedSubstep = {
+      id: '1',
+      description: 'sub',
+      transitions: DEFAULT_TRANSITIONS,
+      artifacts: [decl],
+    };
+    const step: StepWithSubsteps = {
+      kind: 'substeps',
+      name: '1',
+      description: 'parent',
+      transitions: DEFAULT_TRANSITIONS,
+      substeps: [parsedSubstep],
+    };
+    const runbook: Runbook = { name: 'rb', steps: [step] };
+
+    const { runbook: resolved } = resolveForBounds(runbook, {});
+
+    const resolvedSubstep = (resolved.steps[0] as Extract<ResolvedStep, { kind: 'substeps' }>)
+      .substeps[0];
+    expect(resolvedSubstep.artifacts).toEqual([decl]);
   });
 });

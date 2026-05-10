@@ -567,10 +567,10 @@ Delegated children inherit the parent's `ContextId` and non-context template var
 Effective delegation variables use the same merge order as rendering:
 
 ```text
-templateVars < artifactVars < variables < extraVars
+templateVars < variables < extraVars
 ```
 
-Step `OUTPUTS` accumulate during execution in `state.variables`. Step `ARTIFACTS` accumulate in `artifactVars`. Terminal frontmatter `outputs` propagate selected values, including artifact values, back to the parent through normal variable flow.
+Step `OUTPUTS` and step `ARTIFACTS` both accumulate during execution in the unified `state.variables` map (typed via `VariableValueSchema`). Terminal frontmatter `outputs` propagate selected values, including artifact values, back to the parent through normal variable flow.
 
 ## 11. Conformance
 
@@ -620,4 +620,4 @@ prune the run and restart from the source document. See
 [runtime recovery](../reference/runtime.md#stale-persisted-state--no-migration)
 for operational details.
 
-Adding persisted `artifactVars` is a `RunbookState` schema/version change. Stale active state from versions without compatible artifact state MUST be rejected and surfaced to the user for completion, stopping, or pruning. Implementations MUST NOT migrate or shim older persisted state into the new artifact-aware shape.
+Persisted `artifactVars` is a rejected legacy field; encountering it triggers a `RunbookState` schema/version error. Stale active state from versions without compatible artifact state MUST be rejected and surfaced to the user for completion, stopping, or pruning. Implementations MUST NOT migrate or shim older persisted state into the unified `state.variables` shape.

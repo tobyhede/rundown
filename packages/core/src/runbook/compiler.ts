@@ -266,7 +266,7 @@ export type RunbookEvent =
   | { type: 'FAIL' }
   | { type: 'RETRY' }
   | { type: 'GOTO'; target: StepId }
-  | { type: 'SET_VARIABLES'; vars: Record<string, string> }
+  | { type: 'SET_VARIABLES'; vars: Record<string, VariableValue> }
   | { type: 'PENDING_FRONTIER_CONSUMED' };
 
 /**
@@ -2735,9 +2735,8 @@ export function compileRunbookToMachine(
       SET_VARIABLES: {
         actions: runbookSetup.assign({
           variables: ({ context, event }) => {
-            // XState v5 does not narrow event type in root on: handlers — explicit cast required.
-            const vars = (event as Extract<RunbookEvent, { type: 'SET_VARIABLES' }>).vars;
-            return { ...context.variables, ...vars };
+            assertEvent(event, 'SET_VARIABLES');
+            return { ...context.variables, ...event.vars };
           },
         }),
       },
