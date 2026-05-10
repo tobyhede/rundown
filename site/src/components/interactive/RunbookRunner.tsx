@@ -111,6 +111,11 @@ export function RunbookRunner({
     Object.keys(scenarios)[0] || ''
   );
   const [mode, setMode] = useState<'text' | 'json'>('text');
+  // Set while reset()'s async cleanRundownState is awaiting. Without this
+  // gate, status stays `ready` during cleanup, which would let a Next click
+  // start a new run before `.rundown/runs` / `session.json` / locks are
+  // gone — and the new run would inherit stale persisted state.
+  const [isResetting, setIsResetting] = useState(false);
 
   const [isDarkMode, setIsDarkMode] = useState(false);
 
@@ -231,7 +236,7 @@ export function RunbookRunner({
   }, [runbookPath, runbookContent]);
 
   const executeStep = useCallback(async () => {
-    if (!container || !selectedScenario || status !== 'ready') return;
+    if (!container || !selectedScenario || status !== 'ready' || isResetting) return;
     const term = xtermInstance.current;
     if (!term) return;
 
@@ -280,7 +285,7 @@ export function RunbookRunner({
       term.writeln(`\x1b[31mError: ${msg}\x1b[0m`);
       setStatus('error');
     }
-  }, [container, selectedScenario, scenarios, currentStep, status, mode]);
+  }, [container, selectedScenario, scenarios, currentStep, status, mode, isResetting]);
 
   useEffect(() => {
     if (autoStart && !hasAutoStarted.current && status === 'ready' && currentStep === 0) {
@@ -290,9 +295,14 @@ export function RunbookRunner({
   }, [autoStart, status, currentStep, executeStep]);
 
   const reset = useCallback(async () => {
+    setIsResetting(true);
     resetInternalState();
-    // cleanRundownState uses Promise.allSettled internally — never rejects.
-    if (container) await cleanRundownState(container);
+    try {
+      // cleanRundownState uses Promise.allSettled internally — never rejects.
+      if (container) await cleanRundownState(container);
+    } finally {
+      setIsResetting(false);
+    }
   }, [container, resetInternalState]);
 
   const switchMode = useCallback(
@@ -311,7 +321,7 @@ export function RunbookRunner({
 
   const scenario = scenarios[selectedScenario];
   const isComplete = scenario && currentStep >= scenario.commands.length;
-  const canRun = status === 'ready' && !isComplete;
+  const canRun = status === 'ready' && !isComplete && !isResetting;
   // The action button shows 'Complete' on the click that runs the final
   // command of a multi-command scenario. Single-command scenarios stay on
   // 'Next' (the only command isn't a "final" step in a sequence) — this

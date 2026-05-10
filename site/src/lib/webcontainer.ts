@@ -103,6 +103,11 @@ export async function cleanRundownState(container: WebContainer): Promise<void> 
  * @param timeoutMs - Timeout in milliseconds (default: 10000)
  * @param onOutput - Optional callback for streaming output
  * @returns Object containing command output and exit code
+ * @throws Error - Rejects if {@link WebContainer.spawn} fails or if the
+ *   spawned process's `exit` promise itself rejects. Non-zero exit codes
+ *   are NOT thrown — they are returned in the resolved `exitCode` field.
+ *   Timeouts also resolve (with `output: '(command timed out)'` and
+ *   `exitCode: -1`) rather than throwing.
  */
 export async function runCommand(
   container: WebContainer,
@@ -190,6 +195,11 @@ export async function runCommand(
  * @param onOutput - Optional callback for streaming output
  * @param mode - Output mode (default: `'text'`)
  * @returns Object containing command output and exit code
+ * @throws Error - Rejects with the underlying error from {@link runCommand}
+ *   if the WebContainer fails to spawn the `node` process or the process's
+ *   `exit` promise rejects. Non-zero exit codes are NOT thrown — they are
+ *   returned in the resolved `exitCode` field. Timeouts also resolve (with
+ *   `exitCode: -1`) rather than throwing.
  */
 export async function runRdCommand(
   container: WebContainer,

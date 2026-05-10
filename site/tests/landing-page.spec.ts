@@ -237,6 +237,47 @@ test.describe('Landing Page', () => {
     await expect(page.locator(FOOTER_STEP)).toContainText('6/6');
   });
 
+  test('Tab keyboard nav: roving tabindex, Arrow/Home/End move focus and selection', async ({ page }) => {
+    await page.getByRole('button', { name: /Happy path/ }).click();
+    await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
+
+    const textTab = page.getByRole('tab', { name: 'Text' });
+    const jsonTab = page.getByRole('tab', { name: 'JSON' });
+
+    // Roving tabindex: only the active tab is in the tab sequence.
+    await expect(textTab).toHaveAttribute('tabindex', '0');
+    await expect(jsonTab).toHaveAttribute('tabindex', '-1');
+
+    // ArrowRight from Text → JSON gains focus + selection. switchMode also
+    // resets state, so wait for Ready before continuing.
+    await textTab.focus();
+    await page.keyboard.press('ArrowRight');
+    await expect(jsonTab).toBeFocused();
+    await expect(jsonTab).toHaveAttribute('aria-selected', 'true');
+    await expect(textTab).toHaveAttribute('aria-selected', 'false');
+    await expect(jsonTab).toHaveAttribute('tabindex', '0');
+    await expect(textTab).toHaveAttribute('tabindex', '-1');
+    await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
+
+    // ArrowLeft from JSON → Text.
+    await page.keyboard.press('ArrowLeft');
+    await expect(textTab).toBeFocused();
+    await expect(textTab).toHaveAttribute('aria-selected', 'true');
+    await expect(jsonTab).toHaveAttribute('aria-selected', 'false');
+    await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
+
+    // End jumps to last tab; Home jumps to first.
+    await page.keyboard.press('End');
+    await expect(jsonTab).toBeFocused();
+    await expect(jsonTab).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
+
+    await page.keyboard.press('Home');
+    await expect(textTab).toBeFocused();
+    await expect(textTab).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
+  });
+
   test('Reset mid-scenario clears terminal and footer', async ({ page }) => {
     await page.getByRole('button', { name: /Skip to end/ }).click();
     await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
