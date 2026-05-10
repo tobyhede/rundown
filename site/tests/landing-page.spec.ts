@@ -135,4 +135,68 @@ test.describe('Landing Page', () => {
       .filter({ has: page.getByText('Step', { exact: true }) });
     await expect(stepContainer).toContainText('6/6');
   });
+
+  test('Tab switch to JSON resets state and clears terminal', async ({ page }) => {
+    // Step through one Text-mode command so state is non-empty.
+    await page.getByRole('button', { name: /Happy path/ }).click();
+    await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
+    await page.getByRole('button', { name: 'Next', exact: true }).click();
+    await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
+    await expect(page.locator('.xterm-rows')).toContainText('rd');
+
+    // Click the JSON tab — should clean state, clear terminal, reset scenario.
+    await page.getByRole('tab', { name: 'JSON' }).click();
+    await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
+
+    // Terminal cleared (auto-retry until xterm flushes the clear).
+    await expect(async () => {
+      const xtermText = await page.locator('.xterm-rows').innerText();
+      expect(xtermText.replace(/\s+/g, '')).toBe('');
+    }).toPass({ timeout: 5000 });
+
+    // Footer reset to placeholders. Step row shows `—/6`; Result row hides
+    // because runbookResult is null after reset.
+    const stepContainer = page.locator('div.flex.items-center.gap-2')
+      .filter({ has: page.getByText('Step', { exact: true }) });
+    await expect(stepContainer).toContainText('—/');
+    await expect(page.locator('div.flex.items-center.gap-2')
+      .filter({ has: page.getByText('Result', { exact: true }) })
+    ).toHaveCount(0);
+  });
+
+  test('JSON mode: clicking Next emits the runbook_started JSONL event', async ({ page }) => {
+    await page.getByRole('button', { name: /Happy path/ }).click();
+    await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
+
+    // Switch to JSON mode (this also resets state — tab click is destructive).
+    await page.getByRole('tab', { name: 'JSON' }).click();
+    await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
+
+    // Click Next once — `rd run --prompted` emits RUNBOOK_STARTED, lowercased
+    // to "runbook_started" by the JSON renderer. This event fires only on
+    // `rd run` (the first command of the scenario), not on subsequent
+    // pass/fail/goto commands — so a single click is sufficient.
+    await page.getByRole('button', { name: 'Next', exact: true }).click();
+    await expect(page.locator('.xterm-rows')).toContainText('"type":"runbook_started"', { timeout: 60000 });
+  });
+
+  test('Tab switch back to Text resets state', async ({ page }) => {
+    await page.getByRole('button', { name: /Happy path/ }).click();
+    await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
+
+    // Go to JSON, click Next once, then back to Text.
+    await page.getByRole('tab', { name: 'JSON' }).click();
+    await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
+    await page.getByRole('button', { name: 'Next', exact: true }).click();
+    await expect(page.locator('.xterm-rows')).toContainText('"type":"runbook_started"', { timeout: 60000 });
+
+    await page.getByRole('tab', { name: 'Text' }).click();
+    await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
+
+    // Auto-retry until xterm flushes the clear.
+    await expect(async () => {
+      const xtermText = await page.locator('.xterm-rows').innerText();
+      expect(xtermText.replace(/\s+/g, '')).toBe('');
+    }).toPass({ timeout: 5000 });
+  });
 });
