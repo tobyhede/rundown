@@ -33,6 +33,22 @@ interface Props {
 
 type Status = 'idle' | 'booting' | 'loading' | 'ready' | 'running' | 'error';
 
+type ScenarioCardCopy = { title: string; description: string };
+
+/**
+ * UI-layer card copy keyed by scenario ID in
+ * `site/public/this-is-rundown.runbook.md`. The runbook's own
+ * `description:` fields are flavour text and not card-friendly. If a
+ * scenario isn't in this map, the runbook description (or the key, then
+ * the empty string) is used as a fallback so other consumers
+ * (e.g. `auto-execution` on `/explore/code-blocks`) keep rendering.
+ */
+const SCENARIO_CARD_COPY: Record<string, ScenarioCardCopy> = {
+  rundown: { title: 'Happy path', description: 'Runs 6 steps, all pass' },
+  retry: { title: 'Retry on fail', description: 'Fails, retries, eventually passes' },
+  start: { title: 'Skip to end', description: 'Jumps straight to the last step' },
+};
+
 function parseRdArgs(cmd: string): string[] {
   // Dynamic import would complicate React component — use inline mini-parser
   // that handles quoted strings (sufficient for predefined scenario commands)
@@ -352,29 +368,37 @@ export function RunbookRunner({
         <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-bold mb-2 block">
           Select Scenario
         </label>
-        <div className="flex flex-wrap gap-2">
-          {Object.entries(scenarios).map(([key]) => (
-            <button
-              key={key}
-              disabled={status === 'running'}
-              onClick={() => {
-                setSelectedScenario(key);
-                reset();
-              }}
-              className={`px-3 py-1.5 text-xs font-mono rounded-md border transition-all whitespace-normal text-left ${selectedScenario === key
-                ? 'bg-foreground/90 text-background border-foreground/90'
-                : 'bg-background border-border text-muted-foreground hover:text-foreground hover:border-foreground/50'
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {Object.entries(scenarios).map(([key, sc]) => {
+            const copy = SCENARIO_CARD_COPY[key];
+            const title = copy?.title ?? key;
+            const description = copy?.description ?? sc.description ?? '';
+            const selected = selectedScenario === key;
+            return (
+              <button
+                key={key}
+                disabled={status === 'running'}
+                onClick={() => {
+                  setSelectedScenario(key);
+                  reset();
+                }}
+                aria-pressed={selected}
+                className={`text-left rounded-md p-3 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                  selected
+                    ? 'border-2 border-accent bg-background'
+                    : 'border border-border bg-background hover:border-foreground/50'
                 }`}
-            >
-              {key}
-            </button>
-          ))}
+              >
+                <div className="text-sm font-mono font-bold text-foreground mb-1">
+                  {title}
+                </div>
+                <div className="text-xs text-muted-foreground leading-relaxed">
+                  {description}
+                </div>
+              </button>
+            );
+          })}
         </div>
-        {scenario?.description && (
-          <p className="mt-2 text-xs text-muted-foreground italic leading-relaxed">
-            {scenario.description}
-          </p>
-        )}
       </div>
 
       {/* Controls */}
