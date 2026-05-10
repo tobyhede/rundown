@@ -346,7 +346,7 @@ export class RunbookActorService {
     const stepName = match[1];
 
     let substep = snapshot.context?.substep;
-    if (!substep && match?.[2]) {
+    if (!substep && match[2]) {
       substep = match[2];
     }
 
