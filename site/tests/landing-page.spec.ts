@@ -68,4 +68,71 @@ test.describe('Landing Page', () => {
     await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
     await expect(page.locator('.xterm-rows')).toContainText('rd');
   });
+
+  test('Text mode: Happy path steps to STEP 6/6 and RESULT COMPLETE', async ({ page }) => {
+    // Happy path is the default scenario; clicking it is a no-op (same-card
+    // click). autoStart prefires step 0 of the runbook, so click Reset to
+    // start the step-through from currentStep=0.
+    await page.getByRole('button', { name: /Happy path/ }).click();
+    await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
+    await page.getByRole('button', { name: 'Reset' }).click();
+    await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
+
+    // Happy path = 7 commands (1 run + 6 pass). Click Next 6 times then Complete on the 7th.
+    // The label flips to 'Complete' when about to run the final command
+    // (currentStep === scenario.commands.length - 1 with length > 1).
+    for (let i = 0; i < 7; i++) {
+      const label = i === 6 ? 'Complete' : 'Next';
+      await page.getByRole('button', { name: label, exact: true }).click();
+      // Wait for the click to take effect (status returns to ready or the button label flips).
+      if (i < 6) {
+        await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
+      }
+    }
+
+    const resultContainer = page.locator('div.flex.items-center.gap-2')
+      .filter({ has: page.getByText('Result', { exact: true }) })
+      .last();
+    await expect(resultContainer).toContainText('COMPLETE', { timeout: 60000 });
+
+    const stepContainer = page.locator('div.flex.items-center.gap-2')
+      .filter({ has: page.getByText('Step', { exact: true }) });
+    await expect(stepContainer).toContainText('6/6');
+  });
+
+  test('Text mode: Skip to end completes via goto+pass', async ({ page }) => {
+    await page.getByRole('button', { name: /Skip to end/ }).click();
+    await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
+
+    // Skip to end = 3 commands: rd run --prompted, rd goto 6, rd pass.
+    // Per the verified emit table in Conventions:
+    //   Click 1 (rd run --prompted): NO `At:` line emitted (action: START
+    //     has no `at` field; see packages/core/src/cli/output.ts:120-122).
+    //     `runbookStep` stays at the placeholder `'—'`.
+    //   Click 2 (rd goto 6): emits `At: 6` (derivePositionAt of the new
+    //     position). `runbookStep` = '6'.
+    //   Click 3 (rd pass, final): emits `At: 6` then `Runbook: COMPLETE`.
+    //     `runbookStep` = '6', `runbookResult` = 'COMPLETE'.
+    //
+    // We do NOT assert intermediate values for Click 1 (would fail — step
+    // stays at `'—'`). We assert only the final stable state. This avoids
+    // brittleness on transition-order details.
+    await page.getByRole('button', { name: 'Next', exact: true }).click();
+    await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
+
+    await page.getByRole('button', { name: 'Next', exact: true }).click();
+    await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
+
+    // Final click — `rd pass` completes the runbook.
+    await page.getByRole('button', { name: 'Complete', exact: true }).click();
+
+    const resultContainer = page.locator('div.flex.items-center.gap-2')
+      .filter({ has: page.getByText('Result', { exact: true }) })
+      .last();
+    await expect(resultContainer).toContainText('COMPLETE', { timeout: 60000 });
+
+    const stepContainer = page.locator('div.flex.items-center.gap-2')
+      .filter({ has: page.getByText('Step', { exact: true }) });
+    await expect(stepContainer).toContainText('6/6');
+  });
 });
