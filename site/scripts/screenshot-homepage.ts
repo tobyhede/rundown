@@ -20,14 +20,14 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const siteRoot = resolve(__dirname, '..');
 
-const URL = process.env.URL ?? 'http://localhost:4321';
-const OUT = process.env.OUT ?? 'screenshots/homepage.png';
-const VIEWPORT = { width: 1280, height: 800 };
-const READY_TIMEOUT_MS = 60_000;
-const SERVER_BOOT_TIMEOUT_MS = 60_000;
-const SERVER_POLL_INTERVAL_MS = 500;
+const targetUrl: string = process.env.URL ?? 'http://localhost:4321';
+const outputPath: string = process.env.OUT ?? 'screenshots/homepage.png';
+const viewport: { width: number; height: number } = { width: 1280, height: 800 };
+const readyTimeoutMs: number = 60_000;
+const serverBootTimeoutMs: number = 60_000;
+const serverPollIntervalMs: number = 500;
 
-const SNAPSHOT_PATH = resolve(siteRoot, 'public', 'rundown-snapshot.bin');
+const snapshotPath: string = resolve(siteRoot, 'public', 'rundown-snapshot.bin');
 
 async function isServerRunning(url: string): Promise<boolean> {
   try {
@@ -40,13 +40,13 @@ async function isServerRunning(url: string): Promise<boolean> {
 }
 
 async function waitForServer(url: string): Promise<void> {
-  const deadline = Date.now() + SERVER_BOOT_TIMEOUT_MS;
+  const deadline = Date.now() + serverBootTimeoutMs;
   while (Date.now() < deadline) {
     if (await isServerRunning(url)) return;
-    await new Promise((r) => setTimeout(r, SERVER_POLL_INTERVAL_MS));
+    await new Promise((r) => setTimeout(r, serverPollIntervalMs));
   }
   throw new Error(
-    `Dev server did not become reachable at ${url} within ${SERVER_BOOT_TIMEOUT_MS}ms`
+    `Dev server did not become reachable at ${url} within ${serverBootTimeoutMs}ms`
   );
 }
 
@@ -62,11 +62,10 @@ function spawnDevServer(): ChildProcess {
   return proc;
 }
 
-async function main() {
-  if (!existsSync(SNAPSHOT_PATH)) {
+async function main(): Promise<void> {
+  if (!existsSync(snapshotPath)) {
     throw new Error(
-      `Missing WebContainer snapshot at ${SNAPSHOT_PATH}. ` +
-        `Run \`npm run build:snapshot\` first — without it the homepage will never reach \`Ready\`.`
+      `Missing WebContainer snapshot at ${snapshotPath}. Run \`npm run build:snapshot\` first — without it the homepage will never reach \`Ready\`.`
     );
   }
 
@@ -87,27 +86,27 @@ async function main() {
   });
 
   try {
-    if (await isServerRunning(URL)) {
-      console.log(`[screenshot] Reusing existing server at ${URL}`);
+    if (await isServerRunning(targetUrl)) {
+      console.log(`[screenshot] Reusing existing server at ${targetUrl}`);
     } else {
-      console.log(`[screenshot] No server on ${URL} — starting \`npm run dev\`...`);
+      console.log(`[screenshot] No server on ${targetUrl} — starting \`npm run dev\`...`);
       devProcess = spawnDevServer();
-      await waitForServer(URL);
+      await waitForServer(targetUrl);
       console.log('[screenshot] Dev server ready.');
     }
 
-    const outAbsolute = resolve(siteRoot, OUT);
+    const outAbsolute = resolve(siteRoot, outputPath);
     mkdirSync(dirname(outAbsolute), { recursive: true });
 
     const browser = await chromium.launch();
     try {
-      const context = await browser.newContext({ viewport: VIEWPORT });
+      const context = await browser.newContext({ viewport });
       const page = await context.newPage();
-      await page.goto(URL);
+      await page.goto(targetUrl);
       console.log('[screenshot] Waiting for runner to reach `Ready`...');
-      await page.getByText('Ready', { exact: true }).waitFor({ timeout: READY_TIMEOUT_MS });
+      await page.getByText('Ready', { exact: true }).waitFor({ timeout: readyTimeoutMs });
       await page.screenshot({ path: outAbsolute, fullPage: true });
-      console.log(`[screenshot] Saved ${OUT}`);
+      console.log(`[screenshot] Saved ${outputPath}`);
     } finally {
       await browser.close();
     }
