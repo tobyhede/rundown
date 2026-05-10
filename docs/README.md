@@ -41,6 +41,7 @@ This index routes you to the right document based on what you're trying to do.
 ### Contribute to or develop Rundown
 
 - **[docs/internal/architecture.md](internal/architecture.md)** — State machine design, XState compilation, design principles.
+- **[docs/internal/xstate-patterns.md](internal/xstate-patterns.md)** — XState v5 + TypeScript patterns reference for compiler contributors.
 - **[docs/internal/docker.md](internal/docker.md)** — Docker testing: verification, E2E, plugin smoke tests.
 - **[docs/internal/scenarios.md](internal/scenarios.md)** — Scenarios and test runbook standard.
 

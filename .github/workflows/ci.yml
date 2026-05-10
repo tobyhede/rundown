@@ -34,6 +34,9 @@ jobs:
       - name: Fast lint (Biome)
         run: npm run check:lint:fast
 
+      - name: Check xstate doc version banner
+        run: npm run check:docs:xstate-version
+
   complexity-checks:
     runs-on: ubuntu-latest
     steps:

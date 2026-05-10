@@ -1,6 +1,6 @@
 # Rundown Internal Architecture
 
-This document describes Rundown's implementation architecture: the state machine design, core abstractions, design principles, and internal subsystems. For the CLI user reference, see [docs/reference/cli.md](../reference/cli.md). For the execution model and runtime semantics, see [docs/reference/runtime.md](../reference/runtime.md).
+This document describes Rundown's implementation architecture: the state machine design, core abstractions, design principles, and internal subsystems. For the CLI user reference, see [docs/reference/cli.md](../reference/cli.md). For the execution model and runtime semantics, see [docs/reference/runtime.md](../reference/runtime.md). For generic XState v5 + TypeScript patterns, see [xstate-patterns.md](./xstate-patterns.md).
 
 ---
 
@@ -28,7 +28,7 @@ The CLI is an orchestration and control interface. Claude executes the actual wo
 
 ## Design Principles
 
-**Type-driven dispatch:** The state machine uses types and events to drive logic. Steps raise typed events; parent states dispatch on event type via `on:` handlers. Guards should express domain conditions (e.g., "has more iterations") through typed helpers where practical, rather than open-coded action-string checks. When code does inspect a discriminant such as `lastAction.type`, it should narrow a purpose-built union and keep variant-specific fields behind that narrowing. Example: `LastAction` is a discriminated union whose variants encode transition context. The `GOTO` variant carries target information that other variants like `CONTINUE` or `DEFER` do not, so TypeScript prevents accessing it without narrowing first.
+**Type-driven dispatch:** The state machine uses types and events to drive logic. Steps raise typed events; parent states dispatch on event type via `on:` handlers. Guards should express domain conditions (e.g., "has more iterations") through typed helpers where practical, rather than open-coded action-string checks. When code does inspect a discriminant such as `lastAction.type`, it should narrow a purpose-built union and keep variant-specific fields behind that narrowing. Example: `LastAction` is a discriminated union whose variants encode transition context. The `GOTO` variant carries target information that other variants like `CONTINUE` or `DEFER` do not, so TypeScript prevents accessing it without narrowing first. See [§ XState Compiler](#xstate-compiler) for how this principle is enforced through the hybrid named-action pattern.
 
 **No silent mapping.** Actions like STOP, COMPLETE, BREAK must propagate as themselves. Never silently convert one action type to another (e.g., mapping DEFER to CONTINUE). Each action type has distinct semantics that must be preserved through the entire dispatch chain.
 
@@ -80,6 +80,92 @@ Transition evaluation:
 1. Check condition (PASS or FAIL)
 2. For RETRY: check if `retryCount < max`
 3. Execute action (CONTINUE, COMPLETE, STOP, GOTO)
+
+---
+
+## XState Compiler
+
+The compiler in `packages/core/src/runbook/compiler.ts` builds XState v5 machines from parsed Markdown. State IDs, transition targets, and per-step actions are determined at runtime, so XState's compile-time checks of state names and transition targets do not apply to the generated graph. This section captures the patterns that keep type safety where it matters despite dynamic generation. For generic XState v5 + TypeScript reference material, see [xstate-patterns.md](./xstate-patterns.md).
+
+### Why dynamic compilation matters for type safety
+
+The compiler builds machine configs from parsed Markdown:
+
+- State IDs are computed strings (`"step::1::2"`, not literal types)
+- Transition targets are computed — TypeScript cannot verify they exist
+- The set of states and transitions changes per runbook
+
+`setup({ types })` is still used for context/event typing, and that typing is enforced exactly as it is for a hand-authored machine. The dynamic part is the state graph layered on top.
+
+### Where type safety matters: boundaries vs the generated graph
+
+Focus type safety on **boundaries** and **stable operations**, not on the generated graph:
+
+| Boundary | Status | Target pattern |
+|----------|--------|----------------|
+| `RunbookEvent` discriminated union | Strong | (already correct) |
+| `RunbookContext` interface | Strong | (already correct) |
+| `LastAction` discriminated union | Strong | (already correct) |
+| `assign()` internals | Weak — `AssignAction = (...args: never[]) => unknown` erases context types | `runbookSetup.assign()` |
+| State config shape | Weak — `TransitionEntry` uses `unknown` fields | `setup().createStateConfig()` |
+| Stable per-step operations | Inline, untyped | Named actions in `setup()` with typed `params` |
+| Snapshot persistence | Weak — `as any` casts in narrowing | Typed narrowing functions |
+
+### Hybrid pattern: stable named actions + dynamic params
+
+Even though the graph is dynamic, many operations are stable and repeat across generated states: reset retry counters, set `lastAction`, append pass/fail results, initialize/clear FOR context, set current substep.
+
+Register these as named actions in `setup()` with typed `params`:
+
+```typescript
+const runbookSetup = setup({
+  types: {} as { context: RunbookContext; events: RunbookEvent },
+  actions: {
+    setLastAction: assign({
+      lastAction: (_, params: { action: LastAction }) => params.action,
+      lastMessage: (_, params: { action: LastAction; msg?: string }) => params.msg,
+    }),
+    resetRetry: assign({
+      retryCount: 0,
+      iterationRetryCount: 0,
+    }),
+  },
+});
+
+// In the generator — compile-time checked:
+actions: {
+  type: 'setLastAction',
+  params: { action: { type: 'CONTINUE' }, msg: undefined },
+}
+```
+
+This gives compile-time check that the action exists, compile-time check that `params` matches the expected shape, and runtime flexibility for the dynamic state generation.
+
+### Validated graph builder
+
+For dynamic compilers, use a two-phase build:
+
+1. Generate all state IDs first (single source of truth)
+2. Resolve transition targets through a `toStateId(...)` resolver — never raw strings
+3. Validate graph integrity before `createMachine()`:
+   - **Target existence** — every `target` resolves to a generated state or a known terminal (`COMPLETE`, `STOPPED`). Fail fast: `"unknown target step::9::2 referenced from step::4::1 PASS"`.
+   - **Uniqueness** — no duplicate state IDs were generated.
+   - **Valid initial** — the computed `initial` state exists in the generated set.
+   - **Semantic invariants** — e.g. `BREAK` must not appear in parent aggregation transitions; retry states must exist when `retry > 0`.
+4. Only then emit XState state configs.
+
+Optional hardening: brand `StateId` (`string & { __brand: 'StateId' }`) so raw string targets are a type error. Keep target resolution in one module so failures include source/target context.
+
+### Migration priorities
+
+1. **`runbookSetup.assign()`** instead of raw `assign()` — immediate type-safety win, no restructuring needed.
+2. **Named stable actions in `setup()`** with typed `params` — hybrid pattern above.
+3. **`createStateConfig()` wrapping** at insertion — validates each generated state config. Build incrementally as today, then pass through `runbookSetup.createStateConfig(...)` as the final step before inserting into `states`.
+4. **Validated graph builder + target resolver API** — eliminate raw target strings during generation.
+5. **Runtime graph validation** — catches what TypeScript cannot prove.
+6. **Explicit return type** on `compileRunbookToMachine()`.
+7. **Specialize `AnyActorRef`** with `ActorRefFrom<typeof machine>` in `actor-service.ts`.
+8. **Reduce `as any`** in snapshot migration with typed narrowing functions.
 
 ---
 
