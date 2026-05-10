@@ -199,4 +199,36 @@ test.describe('Landing Page', () => {
       expect(xtermText.replace(/\s+/g, '')).toBe('');
     }).toPass({ timeout: 5000 });
   });
+
+  test('Reset mid-scenario clears terminal and footer', async ({ page }) => {
+    await page.getByRole('button', { name: /Skip to end/ }).click();
+    await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
+
+    // Step through two commands so state is non-empty AND the footer's
+    // step value has updated (Click 2 = `rd goto 6` emits `At: 6`).
+    await page.getByRole('button', { name: 'Next', exact: true }).click();
+    await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
+    await page.getByRole('button', { name: 'Next', exact: true }).click();
+    await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
+    await expect(page.locator('.xterm-rows')).toContainText('rd');
+
+    // Reset.
+    await page.getByRole('button', { name: 'Reset' }).click();
+
+    // Tight emptiness check: combine negative (no completion marker) and
+    // positive (terminal text content collapses to whitespace after `term.clear()`).
+    await expect(page.locator('.xterm-rows')).not.toContainText('COMPLETE');
+    await expect(async () => {
+      const xtermText = await page.locator('.xterm-rows').innerText();
+      expect(xtermText.replace(/\s+/g, '')).toBe('');
+    }).toPass({ timeout: 5000 });
+
+    // Footer reset.
+    const stepContainer = page.locator('div.flex.items-center.gap-2')
+      .filter({ has: page.getByText('Step', { exact: true }) });
+    await expect(stepContainer).toContainText('—/');
+    await expect(page.locator('div.flex.items-center.gap-2')
+      .filter({ has: page.getByText('Result', { exact: true }) })
+    ).toHaveCount(0);
+  });
 });
