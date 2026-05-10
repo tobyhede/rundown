@@ -211,6 +211,32 @@ test.describe('Landing Page', () => {
     await expect(page.locator(FOOTER_RESULT)).toHaveCount(0);
   });
 
+  test('Text mode: Retry on fail completes via RECOVER routing', async ({ page }) => {
+    await page.getByRole('button', { name: /Retry on fail/ }).click();
+    await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
+
+    const action = page.getByRole('button', { name: /^(Next|Complete)$/ });
+    const seenSteps: string[] = [];
+
+    // Retry scenario = 11 commands (1 run + 10 mixed pass/fail). The runbook
+    // routes through the named `## RECOVER` step on FAIL transitions, so the
+    // footer step value must capture the non-numeric ID. This test exercises
+    // the `/At:\s+([\w.]+)/` branch for named steps.
+    for (let i = 0; i < 11; i++) {
+      await action.click();
+      if (i < 10) {
+        await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
+      }
+      seenSteps.push(await page.locator(FOOTER_STEP).innerText());
+    }
+
+    expect(seenSteps.join(' | ')).toContain('RECOVER');
+
+    // Final completion state.
+    await expect(page.locator(FOOTER_RESULT)).toContainText('COMPLETE', { timeout: 60000 });
+    await expect(page.locator(FOOTER_STEP)).toContainText('6/6');
+  });
+
   test('Reset mid-scenario clears terminal and footer', async ({ page }) => {
     await page.getByRole('button', { name: /Skip to end/ }).click();
     await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
