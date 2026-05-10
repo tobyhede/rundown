@@ -538,5 +538,84 @@ Active step.
       expect(normalizeOutputPath(result.stdout)).toMatch(/^\.work\/\d{4}-\d{2}-\d{2}-plan\.json$/);
       expect(result.stderr).toBe('');
     });
+
+    it('soft-fails legacy stashedRunbookOwnership session format when RD_WORK_PATH is set', async () => {
+      // 'stashedRunbookOwnership' is a third key that triggers the same
+      // 'Legacy session ownership format detected' error path in state.ts.
+      // Confirm isRecoverableActiveStateLookupError catches it too.
+      await fs.mkdir(path.join(testDir, '.rundown'), { recursive: true });
+      await fs.writeFile(
+        path.join(testDir, '.rundown', 'session.json'),
+        JSON.stringify(
+          { stashedRunbookOwnership: { runbookId: 'wf-old', sessionId: 'session-1' } },
+          null,
+          2,
+        ),
+      );
+
+      const result = await runRdpath(
+        ['--file', 'plan.json'],
+        {
+          RD_WORK_PATH: '.work',
+          RD_CONTEXT_ID: undefined,
+        },
+        testDir,
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(normalizeOutputPath(result.stdout)).toMatch(/^\.work\/\d{4}-\d{2}-\d{2}-plan\.json$/);
+      expect(result.stderr).toBe('');
+    });
+
+    it('soft-fails corrupt JSON session.json when RD_WORK_PATH is set', async () => {
+      // A session.json that is not valid JSON at all triggers a SyntaxError,
+      // which isRecoverableActiveStateLookupError catches by error.name.
+      await fs.mkdir(path.join(testDir, '.rundown'), { recursive: true });
+      await fs.writeFile(
+        path.join(testDir, '.rundown', 'session.json'),
+        '{ this is not : valid json',
+      );
+
+      const result = await runRdpath(
+        ['--file', 'plan.json'],
+        {
+          RD_WORK_PATH: '.work',
+          RD_CONTEXT_ID: undefined,
+        },
+        testDir,
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(normalizeOutputPath(result.stdout)).toMatch(/^\.work\/\d{4}-\d{2}-\d{2}-plan\.json$/);
+      expect(result.stderr).toBe('');
+    });
+
+    it('find subcommand soft-fails legacy session ownership format when RD_WORK_PATH is set', async () => {
+      // Verify that the soft-fail path applies to the `find` subcommand as
+      // well, not just the default path-assembly command.
+      await fs.mkdir(path.join(testDir, '.rundown'), { recursive: true });
+      await fs.writeFile(
+        path.join(testDir, '.rundown', 'session.json'),
+        JSON.stringify({ ownedRunbooks: { 'wf-old-run': { runbookPath: 'foo.md' } } }, null, 2),
+      );
+
+      const workDir = path.join(testDir, 'work');
+      await fs.mkdir(workDir);
+      await fs.writeFile(path.join(workDir, 'result.json'), '{}');
+
+      const result = await runRdpath(
+        ['find', '*.json'],
+        {
+          RD_WORK_PATH: workDir,
+          RD_CONTEXT_ID: undefined,
+        },
+        testDir,
+      );
+
+      // Matches without context segment – no 'error:' on stderr.
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.trim()).toContain('result.json');
+      expect(result.stderr).toBe('');
+    });
   });
 });
