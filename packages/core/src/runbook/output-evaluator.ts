@@ -1,4 +1,5 @@
 import type { OutputDeclaration } from '@rundown-org/parser';
+import { isArtifactRecord } from './artifact-schema.js';
 import { mergeEffectiveVars, type StoredOutputsValue } from './effective-vars.js';
 import type { ForContext, JsonValue, TemplateVarValue } from './types.js';
 import { assertResolvedVariableForContext, isJsonArrayStream } from './types.js';
@@ -163,6 +164,10 @@ function resolveDottedPath(obj: unknown, path: string): unknown {
 
 function renderOutputValue(value: unknown): string {
   if (typeof value === 'string') return value;
+  if (isArtifactRecord(value)) return value.uri;
+  if (Array.isArray(value) && value.length > 0 && value.every(isArtifactRecord)) {
+    return JSON.stringify(value.map((record) => record.uri));
+  }
   return JSON.stringify(value);
 }
 
