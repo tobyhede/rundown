@@ -118,7 +118,7 @@ artifact_token         ::= artifact_key | uri_artifact_token
 artifact_key           ::= exact_artifact_key | wildcard_artifact_key
 exact_artifact_key     ::= [A-Za-z0-9._-]+
 wildcard_artifact_key  ::= [A-Za-z0-9._*?-]+
-uri_artifact_token     ::= "rd://artifacts/" ctx_ref "/" run_segment "/" artifact_key
+uri_artifact_token     ::= "rd://artifacts/" ctx_ref "/" run_segment "/" exact_artifact_key
 run_segment            ::= [A-Za-z0-9_-]+ | "*"
 
 outputs_directive ::= "- OUTPUTS" newline output_list
@@ -363,7 +363,7 @@ non_ws_char      ::= [^ \t\n]
 non_ws_text      ::= [^ \t\n\r]+
 language_tag     ::= [a-zA-Z] [a-zA-Z0-9]*
 filename         ::= [A-Za-z0-9._-]+   /* rejected at runtime: "." and ".." */
-ctx_ref          ::= [A-Za-z0-9_-]+    /* must not be "." or ".." */
+ctx_ref          ::= [A-Za-z0-9._-]+   /* rejected at runtime: "." and ".." */
 ws               ::= ( " " | "\t" )+
 newline          ::= "\n"
 yaml_block       ::= (* opaque YAML content *)

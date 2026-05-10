@@ -448,7 +448,7 @@ Selector matching includes current-run active records when the artifact file exi
 
 #### 10.1.1 Expansion rules
 
-The quoted token in a declaration is template-expanded before parsing. Any in-scope variable, including the built-ins `{{ContextId}}` and `{{RunId}}`, may appear inside the quoted string. Expansion follows the same rules as `FOR` clauses (§9.2).
+The quoted token in a declaration is template-expanded before parsing. Any in-scope variable, including the built-ins `{{ContextId}}` and `{{RunId}}`, may appear inside the quoted string. Expansion follows the same rules as `FOR` clauses (§8).
 
 After expansion, the parser classifies the token:
 

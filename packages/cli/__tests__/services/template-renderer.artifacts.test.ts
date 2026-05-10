@@ -384,3 +384,111 @@ describe('resolveForBounds preserves substep ARTIFACTS', () => {
     expect(resolvedSubstep.artifacts).toEqual([decl]);
   });
 });
+
+describe('substituteRunbookVariables preserves FOR-scoped placeholders in substep ARTIFACTS', () => {
+  const DEFAULT_TRANSITIONS: Transitions = {
+    pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+    fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+  };
+
+  // Outer-scope `item` collides with the FOR loop variable name. Without
+  // FOR-scope filtering, substituteText would resolve `{{ item }}` against this
+  // outer value at substitution time and freeze the wrong rawToken before
+  // iteration ever starts.
+  it('does not bind {{ item }} from outer scope into a FOR substep rawToken', () => {
+    const substepDecl: ArtifactDeclaration = {
+      name: 'Plan',
+      rawToken: 'rd://artifacts/{{ContextId}}/{{RunId}}/{{ item }}.json',
+    };
+    const substep: Substep = {
+      id: '1',
+      description: 'sub',
+      transitions: DEFAULT_TRANSITIONS,
+      artifacts: [substepDecl],
+    };
+    const forStep: ResolvedStep = {
+      kind: 'for',
+      name: '1',
+      description: 'loop',
+      transitions: DEFAULT_TRANSITIONS,
+      forClause: { variable: 'item', start: 1, end: 3 },
+      substeps: [substep],
+    };
+
+    const result = substituteRunbookVariables(
+      { name: 'rb', steps: [forStep] },
+      { ContextId: 'ctx1', RunId: 'rd_0123456789abcdef0123456789abcdef', item: 'OUTER' },
+    );
+
+    const resolvedSubstep = (result.steps[0] as Extract<ResolvedStep, { kind: 'for' }>).substeps[0];
+    expect(resolvedSubstep.artifacts?.[0].rawToken).toBe(
+      'rd://artifacts/ctx1/rd_0123456789abcdef0123456789abcdef/{{ item }}.json',
+    );
+  });
+
+  it('does not bind {{ item.path }} from outer scope into a FOR substep rawToken', () => {
+    const substepDecl: ArtifactDeclaration = {
+      name: 'Plan',
+      rawToken: 'rd://artifacts/{{ContextId}}/{{RunId}}/{{ item.path }}',
+    };
+    const substep: Substep = {
+      id: '1',
+      description: 'sub',
+      transitions: DEFAULT_TRANSITIONS,
+      artifacts: [substepDecl],
+    };
+    const forStep: ResolvedStep = {
+      kind: 'for',
+      name: '1',
+      description: 'loop',
+      transitions: DEFAULT_TRANSITIONS,
+      forClause: { variable: 'item', start: 1, end: 3 },
+      substeps: [substep],
+    };
+
+    const result = substituteRunbookVariables(
+      { name: 'rb', steps: [forStep] },
+      {
+        ContextId: 'ctx1',
+        RunId: 'rd_0123456789abcdef0123456789abcdef',
+        item: { path: 'OUTER.json' },
+      },
+    );
+
+    const resolvedSubstep = (result.steps[0] as Extract<ResolvedStep, { kind: 'for' }>).substeps[0];
+    expect(resolvedSubstep.artifacts?.[0].rawToken).toBe(
+      'rd://artifacts/ctx1/rd_0123456789abcdef0123456789abcdef/{{ item.path }}',
+    );
+  });
+
+  it('still expands non-FOR-scoped variables in a FOR substep rawToken', () => {
+    const substepDecl: ArtifactDeclaration = {
+      name: 'Tagged',
+      rawToken: 'rd://artifacts/{{ContextId}}/*/{{Tag}}-{{ item }}.json',
+    };
+    const substep: Substep = {
+      id: '1',
+      description: 'sub',
+      transitions: DEFAULT_TRANSITIONS,
+      artifacts: [substepDecl],
+    };
+    const forStep: ResolvedStep = {
+      kind: 'for',
+      name: '1',
+      description: 'loop',
+      transitions: DEFAULT_TRANSITIONS,
+      forClause: { variable: 'item', start: 1, end: 3 },
+      substeps: [substep],
+    };
+
+    const result = substituteRunbookVariables(
+      { name: 'rb', steps: [forStep] },
+      { ContextId: 'ctx1', Tag: 'review' },
+    );
+
+    const resolvedSubstep = (result.steps[0] as Extract<ResolvedStep, { kind: 'for' }>).substeps[0];
+    expect(resolvedSubstep.artifacts?.[0].rawToken).toBe(
+      'rd://artifacts/ctx1/*/review-{{ item }}.json',
+    );
+  });
+});

@@ -1174,6 +1174,10 @@ function substituteRequiredCommand(
  * @param artifacts - Artifact declaration list from a step or substep
  * @param variables - Variable map for substitution
  * @param helperOptions - Filesystem options for artifact-producing helpers
+ * @param forVariable - FOR loop variable name — references scoped to it
+ *   (`forVariable` itself or dotted descendants) are filtered from the
+ *   substitution frame so the placeholder is preserved until iteration time
+ *   instead of being captured by an outer-scope variable of the same name.
  * @returns A new readonly array with `rawToken` expanded, or the original
  *   reference when there is nothing to do.
  */
@@ -1181,11 +1185,17 @@ function substituteArtifacts(
   artifacts: readonly ArtifactDeclaration[] | undefined,
   variables: Record<string, unknown>,
   helperOptions?: TemplateHelperOptions,
+  forVariable?: string,
 ): readonly ArtifactDeclaration[] | undefined {
   if (!artifacts || artifacts.length === 0) return artifacts;
+  const scopedVariables = forVariable
+    ? Object.fromEntries(
+        Object.entries(variables).filter(([name]) => !isForScoped(name, forVariable)),
+      )
+    : variables;
   return artifacts.map((decl) => {
     if (decl.rawToken === null) return decl;
-    const expanded = substituteText(decl.rawToken, variables, undefined, helperOptions);
+    const expanded = substituteText(decl.rawToken, scopedVariables, undefined, helperOptions);
     return { ...decl, rawToken: expanded };
   });
 }
@@ -1220,7 +1230,7 @@ function substituteSubstep(
       }
       return substituteText(runbookPath, variables, undefined, helperOptions);
     }),
-    artifacts: substituteArtifacts(substep.artifacts, variables, helperOptions),
+    artifacts: substituteArtifacts(substep.artifacts, variables, helperOptions, forVariable),
   };
 }
 
