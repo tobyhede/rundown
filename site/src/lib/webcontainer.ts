@@ -199,8 +199,7 @@ export async function runRdCommand(
 ): Promise<{ output: string; exitCode: number }> {
   // Use node to run the CLI script directly (avoids execute permission issues)
   const cliPath = './node_modules/@rundown-org/cli/dist/cli.js';
-  const finalArgs =
-    mode === 'text' && !args.includes('--text') ? [...args, '--text'] : args;
+  const finalArgs = mode === 'text' ? [...args, '--text'] : args;
   console.log(`[WebContainer] Running rd via node (${mode}): ${cliPath} ${finalArgs.join(' ')}`);
   return runCommand(container, 'node', [cliPath, ...finalArgs], 10000, onOutput);
 }

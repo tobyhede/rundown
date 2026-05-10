@@ -48,6 +48,28 @@ const SCENARIO_CARD_COPY: Record<string, ScenarioCardCopy> = {
   start: { title: 'Skip to end', description: 'Jumps straight to the last step' },
 };
 
+// Matches numbered H2 headings (`## 1`, `## 12`, etc.). Mirrors
+// `countNumberedSteps` in packages/core/src/runbook/step-utils.ts:26-28.
+const NUMBERED_H2_RE = /^## \d/gm;
+
+const TAB_MODES = ['text', 'json'] as const;
+
+function buildXtermTheme(isDarkMode: boolean) {
+  const fg = isDarkMode ? '#fafafa' : '#171717';
+  const bg = isDarkMode ? '#0a0a0a' : '#fafafa';
+  const selection = isDarkMode ? 'rgba(250,250,250,0.2)' : 'rgba(23,23,23,0.2)';
+  // All ANSI colors neutralized to foreground for monochrome output.
+  return {
+    background: bg,
+    foreground: fg,
+    cursor: fg,
+    selectionBackground: selection,
+    black: fg, red: fg, green: fg, yellow: fg, blue: fg, magenta: fg, cyan: fg, white: fg,
+    brightBlack: fg, brightRed: fg, brightGreen: fg, brightYellow: fg, brightBlue: fg,
+    brightMagenta: fg, brightCyan: fg, brightWhite: fg,
+  };
+}
+
 function parseRdArgs(cmd: string): string[] {
   // Dynamic import would complicate React component — use inline mini-parser
   // that handles quoted strings (sufficient for predefined scenario commands)
@@ -105,15 +127,11 @@ export function RunbookRunner({
   }, []);
 
   const hasAutoStarted = useRef(false);
+  const statusRef = useRef<Status>('idle');
 
   const [runbookStep, setRunbookStep] = useState<string>('—');
   const [runbookTotal] = useState<string>(() => {
-    // Count only numbered H2 headings to match the codebase's `countNumberedSteps`
-    // semantics (packages/core/src/runbook/step-utils.ts:26-28). Named steps like
-    // `## RECOVER` are deliberately excluded — the runtime emits position.total
-    // counting only numbered steps, and `formatPosition` omits the total for
-    // named steps (see packages/core/src/cli/output.ts:23-30).
-    const numberedCount = (runbookContent.match(/^## \d/gm) || []).length;
+    const numberedCount = (runbookContent.match(NUMBERED_H2_RE) || []).length;
     return numberedCount > 0 ? String(numberedCount) : '—';
   });
   const [runbookResult, setRunbookResult] = useState<string | null>(null);
@@ -126,29 +144,7 @@ export function RunbookRunner({
     if (!terminalRef.current || xtermInstance.current) return;
 
     const term = new Terminal({
-      theme: {
-        background: isDarkMode ? '#0a0a0a' : '#fafafa',
-        foreground: isDarkMode ? '#fafafa' : '#171717',
-        cursor: isDarkMode ? '#fafafa' : '#171717',
-        selectionBackground: isDarkMode ? 'rgba(250,250,250,0.2)' : 'rgba(23,23,23,0.2)',
-        // All ANSI colors neutralized to foreground for monochrome output
-        black: isDarkMode ? '#fafafa' : '#171717',
-        red: isDarkMode ? '#fafafa' : '#171717',
-        green: isDarkMode ? '#fafafa' : '#171717',
-        yellow: isDarkMode ? '#fafafa' : '#171717',
-        blue: isDarkMode ? '#fafafa' : '#171717',
-        magenta: isDarkMode ? '#fafafa' : '#171717',
-        cyan: isDarkMode ? '#fafafa' : '#171717',
-        white: isDarkMode ? '#fafafa' : '#171717',
-        brightBlack: isDarkMode ? '#fafafa' : '#171717',
-        brightRed: isDarkMode ? '#fafafa' : '#171717',
-        brightGreen: isDarkMode ? '#fafafa' : '#171717',
-        brightYellow: isDarkMode ? '#fafafa' : '#171717',
-        brightBlue: isDarkMode ? '#fafafa' : '#171717',
-        brightMagenta: isDarkMode ? '#fafafa' : '#171717',
-        brightCyan: isDarkMode ? '#fafafa' : '#171717',
-        brightWhite: isDarkMode ? '#fafafa' : '#171717',
-      },
+      theme: buildXtermTheme(isDarkMode),
       fontFamily: '"JetBrains Mono", "Fira Code", monospace',
       fontSize: 12,
       lineHeight: 1.4,
@@ -177,42 +173,27 @@ export function RunbookRunner({
 
   useEffect(() => {
     if (xtermInstance.current) {
-      xtermInstance.current.options.theme = {
-        background: isDarkMode ? '#0a0a0a' : '#fafafa',
-        foreground: isDarkMode ? '#fafafa' : '#171717',
-        cursor: isDarkMode ? '#fafafa' : '#171717',
-        selectionBackground: isDarkMode ? 'rgba(250,250,250,0.2)' : 'rgba(23,23,23,0.2)',
-        // All ANSI colors neutralized to foreground for monochrome output
-        black: isDarkMode ? '#fafafa' : '#171717',
-        red: isDarkMode ? '#fafafa' : '#171717',
-        green: isDarkMode ? '#fafafa' : '#171717',
-        yellow: isDarkMode ? '#fafafa' : '#171717',
-        blue: isDarkMode ? '#fafafa' : '#171717',
-        magenta: isDarkMode ? '#fafafa' : '#171717',
-        cyan: isDarkMode ? '#fafafa' : '#171717',
-        white: isDarkMode ? '#fafafa' : '#171717',
-        brightBlack: isDarkMode ? '#fafafa' : '#171717',
-        brightRed: isDarkMode ? '#fafafa' : '#171717',
-        brightGreen: isDarkMode ? '#fafafa' : '#171717',
-        brightYellow: isDarkMode ? '#fafafa' : '#171717',
-        brightBlue: isDarkMode ? '#fafafa' : '#171717',
-        brightMagenta: isDarkMode ? '#fafafa' : '#171717',
-        brightCyan: isDarkMode ? '#fafafa' : '#171717',
-        brightWhite: isDarkMode ? '#fafafa' : '#171717',
-      };
+      xtermInstance.current.options.theme = buildXtermTheme(isDarkMode);
     }
   }, [isDarkMode]);
+
+  // Keep statusRef in sync with status state so callbacks can read the
+  // current value without listing `status` in their dep arrays. This breaks
+  // the cascade where every status flip recreated reset/switchMode/etc.
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
 
   const resetInternalState = useCallback(() => {
     setRunbookStep('—');
     setRunbookResult(null);
     setCurrentStep(0);
-    if (status === 'error') {
+    if (statusRef.current === 'error') {
       setStatus('ready');
       setError(null);
     }
     xtermInstance.current?.clear();
-  }, [status]);
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -310,20 +291,20 @@ export function RunbookRunner({
 
   const reset = useCallback(async () => {
     resetInternalState();
-    if (container) {
-      try {
-        await cleanRundownState(container);
-      } catch {
-        // Ignore cleanup errors
-      }
-    }
+    // cleanRundownState uses Promise.allSettled internally — never rejects.
+    if (container) await cleanRundownState(container);
   }, [container, resetInternalState]);
 
   const switchMode = useCallback(
     async (next: 'text' | 'json') => {
       if (next === mode) return;
-      await reset();
+      // Update mode first so the UI reflects the active tab while reset runs.
+      // Then clean state and clear the terminal. autoStart is NOT re-armed
+      // (`hasAutoStarted` stays true) — after a mode switch the user drives
+      // the walk-through manually, avoiding a race between the autoStart
+      // effect and the user's first click in the new mode.
       setMode(next);
+      await reset();
     },
     [mode, reset]
   );
@@ -331,6 +312,12 @@ export function RunbookRunner({
   const scenario = scenarios[selectedScenario];
   const isComplete = scenario && currentStep >= scenario.commands.length;
   const canRun = status === 'ready' && !isComplete;
+  // The action button shows 'Complete' on the click that runs the final
+  // command of a multi-command scenario. Single-command scenarios stay on
+  // 'Next' (the only command isn't a "final" step in a sequence) — this
+  // also keeps `runbook-runner.spec.ts`'s `auto-execution` test passing.
+  const onFinalCommand =
+    scenario != null && scenario.commands.length > 1 && currentStep >= scenario.commands.length - 1;
 
   const statusText = {
     idle: 'Initializing...',
@@ -388,14 +375,33 @@ export function RunbookRunner({
       {/* Tabs + actions */}
       <div className="flex items-center justify-between gap-4 mb-4 border-b border-border">
         <div role="tablist" aria-label="Output format" className="flex">
-          {(['text', 'json'] as const).map((m) => {
+          {TAB_MODES.map((m) => {
             const active = mode === m;
+            const label = m === 'text' ? 'Text' : 'JSON';
             return (
               <button
                 key={m}
                 role="tab"
+                id={`tab-${m}`}
                 aria-selected={active}
+                aria-controls="runbook-runner-tabpanel"
+                tabIndex={active ? 0 : -1}
                 onClick={() => void switchMode(m)}
+                onKeyDown={(e) => {
+                  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' ||
+                      e.key === 'Home' || e.key === 'End') {
+                    e.preventDefault();
+                    const idx = TAB_MODES.indexOf(m);
+                    let nextIdx: number;
+                    if (e.key === 'Home') nextIdx = 0;
+                    else if (e.key === 'End') nextIdx = TAB_MODES.length - 1;
+                    else if (e.key === 'ArrowLeft') nextIdx = (idx - 1 + TAB_MODES.length) % TAB_MODES.length;
+                    else nextIdx = (idx + 1) % TAB_MODES.length;
+                    const nextMode = TAB_MODES[nextIdx];
+                    void switchMode(nextMode);
+                    document.getElementById(`tab-${nextMode}`)?.focus();
+                  }
+                }}
                 disabled={status === 'running'}
                 className={`px-4 py-2 text-xs font-mono uppercase tracking-wider transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                   active
@@ -403,7 +409,7 @@ export function RunbookRunner({
                     : 'border-b-2 border-transparent text-muted-foreground hover:text-foreground'
                 }`}
               >
-                {m === 'text' ? 'Text' : 'JSON'}
+                {label}
               </button>
             );
           })}
@@ -417,7 +423,7 @@ export function RunbookRunner({
             disabled={!canRun}
             className="h-9 px-4 text-sm btn-primary flex items-center gap-2"
           >
-            {scenario && scenario.commands.length > 1 && currentStep >= scenario.commands.length - 1 ? 'Complete' : 'Next'}
+            {onFinalCommand ? 'Complete' : 'Next'}
             <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
             </svg>
@@ -444,6 +450,9 @@ export function RunbookRunner({
 
       {/* Terminal Output Container */}
       <div
+        id="runbook-runner-tabpanel"
+        role="tabpanel"
+        aria-labelledby={`tab-${mode}`}
         className={`bg-background rounded-md p-4 border border-border overflow-hidden relative ${compact ? 'h-[250px]' : 'flex-1 min-h-[400px]'
           }`}
       >
@@ -460,7 +469,7 @@ export function RunbookRunner({
       {/* Footer Progress & Status */}
       <div className="mt-4 flex items-center justify-between text-[10px] font-mono border-t border-border pt-4">
         <div className="flex items-center gap-6">
-          <div className="flex items-center gap-2">
+          <div data-testid="footer-step" className="flex items-center gap-2">
             <span className="text-muted-foreground uppercase tracking-tighter">Step</span>
             <span className="text-foreground font-bold">
               {runbookStep}/{runbookTotal}
@@ -469,14 +478,14 @@ export function RunbookRunner({
 
           {runbookResult && (
             <>
-              <div className="flex items-center gap-2">
+              <div data-testid="footer-result" className="flex items-center gap-2">
                 <span className="text-muted-foreground uppercase tracking-tighter">Result</span>
                 <span className="text-foreground font-bold">
                   {runbookResult}
                 </span>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div data-testid="footer-expected" className="flex items-center gap-2">
                 <span className="text-muted-foreground uppercase tracking-tighter">Expected</span>
                 <span className="text-foreground font-bold">{scenario?.result || '—'}</span>
               </div>
