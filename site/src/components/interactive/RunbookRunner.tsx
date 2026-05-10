@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import * as xtermPkg from '@xterm/xterm';
 // @ts-ignore
 const Terminal = xtermPkg.Terminal || xtermPkg.default?.Terminal;
@@ -135,10 +135,10 @@ export function RunbookRunner({
   const statusRef = useRef<Status>('idle');
 
   const [runbookStep, setRunbookStep] = useState<string>('—');
-  const [runbookTotal] = useState<string>(() => {
+  const runbookTotal = useMemo(() => {
     const numberedCount = (runbookContent.match(NUMBERED_H2_RE) || []).length;
     return numberedCount > 0 ? String(numberedCount) : '—';
-  });
+  }, [runbookContent]);
   const [runbookResult, setRunbookResult] = useState<string | null>(null);
 
   const terminalRef = useRef<HTMLDivElement>(null);
@@ -193,12 +193,17 @@ export function RunbookRunner({
     setRunbookStep('—');
     setRunbookResult(null);
     setCurrentStep(0);
-    if (statusRef.current === 'error') {
+    // Only recover from `error` to `ready` when the WebContainer environment
+    // actually exists. Bootstrap failures (getWebContainer / setupRundown /
+    // mountRunbook) leave `container === null`, in which case clearing the
+    // banner would make the runner look healthy while `executeStep` silently
+    // no-ops on `!container`.
+    if (statusRef.current === 'error' && container) {
       setStatus('ready');
       setError(null);
     }
     xtermInstance.current?.clear();
-  }, []);
+  }, [container]);
 
   useEffect(() => {
     let mounted = true;
@@ -268,9 +273,12 @@ export function RunbookRunner({
             // `data.at` directly; `data.at` is `derivePositionAt(...)` (see
             // packages/cli/src/helpers/transition-orchestrator.ts:188 and
             // goto-workflow.ts:285), which returns just the step ID.
-            const stepMatch = line.match(/At:\s+([\w.]+)/);
+            // Anchor with `^` so only true CLI footer lines match — runbook
+            // content or future emitted text containing the substrings
+            // mid-line cannot spuriously overwrite the footer.
+            const stepMatch = line.match(/^At:\s+([\w.]+)/);
             if (stepMatch) setRunbookStep(stepMatch[1]);
-            const resultMatch = line.match(/Runbook:\s+([A-Z]+)/);
+            const resultMatch = line.match(/^Runbook:\s+([A-Z]+)/);
             if (resultMatch) setRunbookResult(resultMatch[1]);
           }
         }
