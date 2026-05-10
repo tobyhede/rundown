@@ -6,7 +6,7 @@ export const ignores = [
   '**/dist/**',
   '**/coverage/**',
   '**/*.js',
-  '**/stryker.config.mjs',
+  '**/*.mjs',
   '**/*.d.ts',
   'site/**',
   '.rundown/work/**',

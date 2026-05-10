@@ -8,10 +8,14 @@ const docPath = resolve(repoRoot, 'docs/internal/xstate-patterns.md');
 const xstatePkgPath = resolve(repoRoot, 'node_modules/xstate/package.json');
 
 const installed = JSON.parse(readFileSync(xstatePkgPath, 'utf8')).version;
-const banner = readFileSync(docPath, 'utf8').match(/xstate@(\d+\.\d+\.\d+)/);
+const banner = readFileSync(docPath, 'utf8').match(
+  /^> Living reference\. Verified against xstate@(\d+\.\d+\.\d+) on \d{4}-\d{2}-\d{2}\. Re-verify on each xstate upgrade\.$/m,
+);
 
 if (!banner) {
-  console.error(`error: no \`xstate@<version>\` banner found in ${docPath}`);
+  console.error(
+    `error: no \`> Living reference. Verified against xstate@<version> on YYYY-MM-DD. ...\` banner found in ${docPath}`,
+  );
   process.exit(1);
 }
 

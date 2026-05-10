@@ -313,6 +313,7 @@ context: {} as {
 <a id="guards-inline"></a>
 
 **Inline** (full inference):
+
 ```typescript
 on: { submit: { guard: ({ context }) => context.count > 0 } }
 ```
@@ -320,6 +321,7 @@ on: { submit: { guard: ({ context }) => context.count > 0 } }
 <a id="guards-named"></a>
 
 **Named in setup()** (context typed, event is full union):
+
 ```typescript
 setup({
   guards: { isValid: ({ context }) => context.feedback.length > 0 },
@@ -330,6 +332,7 @@ setup({
 <a id="guards-parameterized"></a>
 
 **Parameterized** (best for reusability):
+
 ```typescript
 setup({
   guards: {
@@ -344,6 +347,7 @@ guard: { type: 'isGreaterThan', params: ({ context }) => ({ count: context.items
 <a id="guards-combinators"></a>
 
 **Combinators:** `and()`, `or()`, `not()`, `stateIn()`:
+
 ```typescript
 import { and, or, not, stateIn } from 'xstate';
 
@@ -441,6 +445,7 @@ snapshot.hasTag('invalid');   // TypeScript error
 ### state.can()
 
 Type-safe check whether an event would trigger a transition (including guard evaluation):
+
 ```typescript
 snapshot.can({ type: 'PASS' });  // type-checked against event union
 ```
