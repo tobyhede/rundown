@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useId, useMemo, useRef } from 'react';
 import * as xtermPkg from '@xterm/xterm';
 // @ts-ignore
 const Terminal = xtermPkg.Terminal || xtermPkg.default?.Terminal;
@@ -28,10 +28,47 @@ interface Props {
   scenarios: Record<string, Scenario>;
   compact?: boolean;
   autoStart?: boolean;
-  showFooterButtons?: boolean;
 }
 
 type Status = 'idle' | 'booting' | 'loading' | 'ready' | 'running' | 'error';
+
+type ScenarioCardCopy = { title: string; description: string };
+
+/**
+ * UI-layer card copy keyed by scenario ID in
+ * `site/public/this-is-rundown.runbook.md`. The runbook's own
+ * `description:` fields are flavour text and not card-friendly. If a
+ * scenario isn't in this map, the runbook description (or the key, then
+ * the empty string) is used as a fallback so other consumers
+ * (e.g. `auto-execution` on `/explore/code-blocks`) keep rendering.
+ */
+const SCENARIO_CARD_COPY: Record<string, ScenarioCardCopy> = {
+  rundown: { title: 'Happy path', description: 'Runs 6 steps, all pass' },
+  retry: { title: 'Retry on fail', description: 'Fails, retries, eventually passes' },
+  start: { title: 'Skip to end', description: 'Jumps straight to the last step' },
+};
+
+// Matches numbered H2 headings (`## 1`, `## 12`, etc.). Mirrors
+// `countNumberedSteps` in packages/core/src/runbook/step-utils.ts:26-28.
+const NUMBERED_H2_RE = /^## \d/gm;
+
+const TAB_MODES = ['text', 'json'] as const;
+
+function buildXtermTheme(isDarkMode: boolean) {
+  const fg = isDarkMode ? '#fafafa' : '#171717';
+  const bg = isDarkMode ? '#0a0a0a' : '#fafafa';
+  const selection = isDarkMode ? 'rgba(250,250,250,0.2)' : 'rgba(23,23,23,0.2)';
+  // All ANSI colors neutralized to foreground for monochrome output.
+  return {
+    background: bg,
+    foreground: fg,
+    cursor: fg,
+    selectionBackground: selection,
+    black: fg, red: fg, green: fg, yellow: fg, blue: fg, magenta: fg, cyan: fg, white: fg,
+    brightBlack: fg, brightRed: fg, brightGreen: fg, brightYellow: fg, brightBlue: fg,
+    brightMagenta: fg, brightCyan: fg, brightWhite: fg,
+  };
+}
 
 function parseRdArgs(cmd: string): string[] {
   // Dynamic import would complicate React component — use inline mini-parser
@@ -65,7 +102,6 @@ export function RunbookRunner({
   scenarios,
   compact = false,
   autoStart = false,
-  showFooterButtons = false,
 }: Props) {
   const [container, setContainer] = useState<WebContainer | null>(null);
   const [status, setStatus] = useState<Status>('idle');
@@ -74,6 +110,19 @@ export function RunbookRunner({
   const [selectedScenario, setSelectedScenario] = useState<string>(
     Object.keys(scenarios)[0] || ''
   );
+  const [mode, setMode] = useState<'text' | 'json'>('text');
+  // Set while reset()'s async cleanRundownState is awaiting. Without this
+  // gate, status stays `ready` during cleanup, which would let a Next click
+  // start a new run before `.rundown/runs` / `session.json` / locks are
+  // gone — and the new run would inherit stale persisted state.
+  const [isResetting, setIsResetting] = useState(false);
+
+  // Instance-scoped IDs so multiple RunbookRunner instances on the same page
+  // don't collide on `aria-controls` / `aria-labelledby` / the keyboard
+  // handler's `getElementById` lookup.
+  const reactId = useId();
+  const tabId = (m: string) => `${reactId}-tab-${m}`;
+  const panelId = `${reactId}-tabpanel`;
 
   const [isDarkMode, setIsDarkMode] = useState(false);
 
@@ -90,15 +139,13 @@ export function RunbookRunner({
   }, []);
 
   const hasAutoStarted = useRef(false);
-  const previousScenario = useRef<string | null>(null);
-  const isResetting = useRef(false);
+  const statusRef = useRef<Status>('idle');
 
   const [runbookStep, setRunbookStep] = useState<string>('—');
-  const [runbookTotal] = useState<string>(() => {
-    // Derive total step count from H2 headings in runbook content
-    const h2Count = (runbookContent.match(/^## /gm) || []).length;
-    return h2Count > 0 ? String(h2Count) : '—';
-  });
+  const runbookTotal = useMemo(() => {
+    const numberedCount = (runbookContent.match(NUMBERED_H2_RE) || []).length;
+    return numberedCount > 0 ? String(numberedCount) : '—';
+  }, [runbookContent]);
   const [runbookResult, setRunbookResult] = useState<string | null>(null);
 
   const terminalRef = useRef<HTMLDivElement>(null);
@@ -109,29 +156,7 @@ export function RunbookRunner({
     if (!terminalRef.current || xtermInstance.current) return;
 
     const term = new Terminal({
-      theme: {
-        background: isDarkMode ? '#0a0a0a' : '#fafafa',
-        foreground: isDarkMode ? '#fafafa' : '#171717',
-        cursor: isDarkMode ? '#fafafa' : '#171717',
-        selectionBackground: isDarkMode ? 'rgba(250,250,250,0.2)' : 'rgba(23,23,23,0.2)',
-        // All ANSI colors neutralized to foreground for monochrome output
-        black: isDarkMode ? '#fafafa' : '#171717',
-        red: isDarkMode ? '#fafafa' : '#171717',
-        green: isDarkMode ? '#fafafa' : '#171717',
-        yellow: isDarkMode ? '#fafafa' : '#171717',
-        blue: isDarkMode ? '#fafafa' : '#171717',
-        magenta: isDarkMode ? '#fafafa' : '#171717',
-        cyan: isDarkMode ? '#fafafa' : '#171717',
-        white: isDarkMode ? '#fafafa' : '#171717',
-        brightBlack: isDarkMode ? '#fafafa' : '#171717',
-        brightRed: isDarkMode ? '#fafafa' : '#171717',
-        brightGreen: isDarkMode ? '#fafafa' : '#171717',
-        brightYellow: isDarkMode ? '#fafafa' : '#171717',
-        brightBlue: isDarkMode ? '#fafafa' : '#171717',
-        brightMagenta: isDarkMode ? '#fafafa' : '#171717',
-        brightCyan: isDarkMode ? '#fafafa' : '#171717',
-        brightWhite: isDarkMode ? '#fafafa' : '#171717',
-      },
+      theme: buildXtermTheme(isDarkMode),
       fontFamily: '"JetBrains Mono", "Fira Code", monospace',
       fontSize: 12,
       lineHeight: 1.4,
@@ -160,38 +185,45 @@ export function RunbookRunner({
 
   useEffect(() => {
     if (xtermInstance.current) {
-      xtermInstance.current.options.theme = {
-        background: isDarkMode ? '#0a0a0a' : '#fafafa',
-        foreground: isDarkMode ? '#fafafa' : '#171717',
-        cursor: isDarkMode ? '#fafafa' : '#171717',
-        selectionBackground: isDarkMode ? 'rgba(250,250,250,0.2)' : 'rgba(23,23,23,0.2)',
-        // All ANSI colors neutralized to foreground for monochrome output
-        black: isDarkMode ? '#fafafa' : '#171717',
-        red: isDarkMode ? '#fafafa' : '#171717',
-        green: isDarkMode ? '#fafafa' : '#171717',
-        yellow: isDarkMode ? '#fafafa' : '#171717',
-        blue: isDarkMode ? '#fafafa' : '#171717',
-        magenta: isDarkMode ? '#fafafa' : '#171717',
-        cyan: isDarkMode ? '#fafafa' : '#171717',
-        white: isDarkMode ? '#fafafa' : '#171717',
-        brightBlack: isDarkMode ? '#fafafa' : '#171717',
-        brightRed: isDarkMode ? '#fafafa' : '#171717',
-        brightGreen: isDarkMode ? '#fafafa' : '#171717',
-        brightYellow: isDarkMode ? '#fafafa' : '#171717',
-        brightBlue: isDarkMode ? '#fafafa' : '#171717',
-        brightMagenta: isDarkMode ? '#fafafa' : '#171717',
-        brightCyan: isDarkMode ? '#fafafa' : '#171717',
-        brightWhite: isDarkMode ? '#fafafa' : '#171717',
-      };
+      xtermInstance.current.options.theme = buildXtermTheme(isDarkMode);
     }
   }, [isDarkMode]);
+
+  // Keep statusRef in sync with status state so callbacks can read the
+  // current value without listing `status` in their dep arrays. This breaks
+  // the cascade where every status flip recreated reset/switchMode/etc.
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
 
   const resetInternalState = useCallback(() => {
     setRunbookStep('—');
     setRunbookResult(null);
     setCurrentStep(0);
+    // Only recover from `error` to `ready` when the WebContainer environment
+    // actually exists. Bootstrap failures (getWebContainer / setupRundown /
+    // mountRunbook) leave `container === null`, in which case clearing the
+    // banner would make the runner look healthy while `executeStep` silently
+    // no-ops on `!container`.
+    if (statusRef.current === 'error' && container) {
+      setStatus('ready');
+      setError(null);
+    }
     xtermInstance.current?.clear();
-  }, []);
+  }, [container]);
+
+  // Reset session state when the runbook props change. All current call sites
+  // (HomepageRunner.astro, /explore/[pattern].astro) re-mount the React tree
+  // on route change, so this is defensive — but it keeps the component
+  // reusable: if a parent ever swaps `runbookContent` mid-mount, the footer,
+  // selected scenario, and autoStart latch all reinitialize together.
+  useEffect(() => {
+    setRunbookStep('—');
+    setRunbookResult(null);
+    setCurrentStep(0);
+    setSelectedScenario(Object.keys(scenarios)[0] || '');
+    hasAutoStarted.current = false;
+  }, [runbookPath, runbookContent, scenarios]);
 
   useEffect(() => {
     let mounted = true;
@@ -229,7 +261,7 @@ export function RunbookRunner({
   }, [runbookPath, runbookContent]);
 
   const executeStep = useCallback(async () => {
-    if (!container || !selectedScenario || status !== 'ready') return;
+    if (!container || !selectedScenario || status !== 'ready' || isResetting) return;
     const term = xtermInstance.current;
     if (!term) return;
 
@@ -246,26 +278,41 @@ export function RunbookRunner({
     term.writeln('');
 
     try {
+      // Footer parsing is text-only — `At: <stepId>` / `Runbook: STATUS`
+      // lines appear only in `--text` output. In JSON mode the footer stays
+      // at placeholder values for the entire walk-through (V1 simplicity).
+      //
+      // Stream chunks have no newline-alignment guarantee — a footer token
+      // could arrive split across `onOutput` calls. Buffer partial trailing
+      // lines across chunks and only run the regexes on complete lines.
+      // Anchor with `^` so only true CLI footer lines match (runbook content
+      // containing the substrings mid-line cannot spuriously overwrite).
+      // Source for the emit format: packages/core/src/cli/output.ts:120-122
+      // writes `data.at` directly; `data.at` is `derivePositionAt(...)`,
+      // which returns just the step ID — `1`, `2.1`, `RECOVER`, etc.
+      let lineBuffer = '';
+      const matchFooterLine = (line: string) => {
+        const stepMatch = line.match(/^At:\s+([\w.]+)/);
+        if (stepMatch) setRunbookStep(stepMatch[1]);
+        const resultMatch = line.match(/^Runbook:\s+([A-Z]+)/);
+        if (resultMatch) setRunbookResult(resultMatch[1]);
+      };
+
       const processChunk = (chunk: string) => {
         term.write(chunk);
-
-        const cleanChunk = stripAnsi(chunk);
-        const lines = cleanChunk.split('\n');
-
-        for (const line of lines) {
-          // CLI outputs "At: X" for step position (just the step number)
-          const stepMatch = line.match(/At:\s+(\d+)/);
-          if (stepMatch) {
-            setRunbookStep(stepMatch[1]);
-          }
-          const resultMatch = line.match(/Runbook:\s+([A-Z]+)/);
-          if (resultMatch) {
-            setRunbookResult(resultMatch[1]);
-          }
+        if (mode === 'text') {
+          lineBuffer += stripAnsi(chunk);
+          const lines = lineBuffer.split('\n');
+          lineBuffer = lines.pop() ?? '';
+          for (const line of lines) matchFooterLine(line);
         }
       };
 
-      await runRdCommand(container, args, processChunk);
+      await runRdCommand(container, args, processChunk, mode);
+
+      // Flush any trailing partial line — the CLI's last write may not end
+      // in a newline if the stream closed mid-line.
+      if (mode === 'text' && lineBuffer.length > 0) matchFooterLine(lineBuffer);
 
       setCurrentStep((prev) => prev + 1);
       setStatus('ready');
@@ -274,7 +321,7 @@ export function RunbookRunner({
       term.writeln(`\x1b[31mError: ${msg}\x1b[0m`);
       setStatus('error');
     }
-  }, [container, selectedScenario, scenarios, currentStep, status]);
+  }, [container, selectedScenario, scenarios, currentStep, status, mode, isResetting]);
 
   useEffect(() => {
     if (autoStart && !hasAutoStarted.current && status === 'ready' && currentStep === 0) {
@@ -283,55 +330,40 @@ export function RunbookRunner({
     }
   }, [autoStart, status, currentStep, executeStep]);
 
-  useEffect(() => {
-    if (previousScenario.current === null) {
-      previousScenario.current = selectedScenario;
-      return;
-    }
-
-    // Don't auto-execute while reset is in progress
-    if (isResetting.current) {
-      previousScenario.current = selectedScenario;
-      return;
-    }
-
-    if (
-      selectedScenario !== previousScenario.current &&
-      status === 'ready' &&
-      currentStep === 0
-    ) {
-      previousScenario.current = selectedScenario;
-      executeStep();
-    }
-  }, [selectedScenario, status, currentStep, executeStep]);
-
   const reset = useCallback(async () => {
-    // Set flag to prevent auto-execute during reset
-    isResetting.current = true;
-
-    // Reset internal state first (synchronous)
+    setIsResetting(true);
     resetInternalState();
-    if (status === 'error') {
-      setStatus('ready');
-      setError(null);
+    try {
+      // cleanRundownState uses Promise.allSettled internally — never rejects.
+      if (container) await cleanRundownState(container);
+    } finally {
+      setIsResetting(false);
     }
+  }, [container, resetInternalState]);
 
-    // Then clean runbook state (async)
-    if (container) {
-      try {
-        await cleanRundownState(container);
-      } catch {
-        // Ignore cleanup errors
-      }
-    }
-
-    // Clear the flag after reset is complete
-    isResetting.current = false;
-  }, [container, status, resetInternalState]);
+  const switchMode = useCallback(
+    async (next: 'text' | 'json') => {
+      if (next === mode) return;
+      // Update mode first so the UI reflects the active tab while reset runs.
+      // Then clean state and clear the terminal. autoStart is NOT re-armed
+      // (`hasAutoStarted` stays true) — after a mode switch the user drives
+      // the walk-through manually, avoiding a race between the autoStart
+      // effect and the user's first click in the new mode.
+      setMode(next);
+      await reset();
+    },
+    [mode, reset]
+  );
 
   const scenario = scenarios[selectedScenario];
   const isComplete = scenario && currentStep >= scenario.commands.length;
-  const canRun = status === 'ready' && !isComplete;
+  const canRun = status === 'ready' && !isComplete && !isResetting;
+  // The action button shows 'Complete' on the click that runs the final
+  // command of a multi-command scenario. Single-command scenarios stay on
+  // 'Next' (the only command isn't a "final" step in a sequence) — this
+  // also keeps `runbook-runner.spec.ts`'s `auto-execution` test passing.
+  const onFinalCommand =
+    scenario != null && scenario.commands.length > 1 && currentStep >= scenario.commands.length - 1;
 
   const statusText = {
     idle: 'Initializing...',
@@ -352,52 +384,98 @@ export function RunbookRunner({
         <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-bold mb-2 block">
           Select Scenario
         </label>
-        <div className="flex flex-wrap gap-2">
-          {Object.entries(scenarios).map(([key]) => (
-            <button
-              key={key}
-              disabled={status === 'running'}
-              onClick={() => {
-                setSelectedScenario(key);
-                reset();
-              }}
-              className={`px-3 py-1.5 text-xs font-mono rounded-md border transition-all whitespace-normal text-left ${selectedScenario === key
-                ? 'bg-foreground/90 text-background border-foreground/90'
-                : 'bg-background border-border text-muted-foreground hover:text-foreground hover:border-foreground/50'
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {Object.entries(scenarios).map(([key, sc]) => {
+            const copy = SCENARIO_CARD_COPY[key];
+            const title = copy?.title ?? key;
+            const description = copy?.description ?? sc.description ?? '';
+            const selected = selectedScenario === key;
+            return (
+              <button
+                key={key}
+                disabled={status === 'running'}
+                onClick={() => {
+                  if (selectedScenario === key) return;
+                  setSelectedScenario(key);
+                  void reset();
+                }}
+                aria-pressed={selected}
+                className={`text-left rounded-md p-3 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                  selected
+                    ? 'border-2 border-accent bg-background'
+                    : 'border border-border bg-background hover:border-foreground/50'
                 }`}
-            >
-              {key}
-            </button>
-          ))}
+              >
+                <div className="text-sm font-mono font-bold text-foreground mb-1">
+                  {title}
+                </div>
+                <div className="text-xs text-muted-foreground leading-relaxed">
+                  {description}
+                </div>
+              </button>
+            );
+          })}
         </div>
-        {scenario?.description && (
-          <p className="mt-2 text-xs text-muted-foreground italic leading-relaxed">
-            {scenario.description}
-          </p>
-        )}
       </div>
 
-      {/* Controls */}
-      <div className="flex flex-wrap items-center justify-between gap-4 mb-4 pt-4 border-t border-border">
-        <div className="flex items-center gap-3">
-          <span className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
+      {/* Tabs + actions */}
+      <div className="flex items-center justify-between gap-4 mb-4 border-b border-border">
+        <div role="tablist" aria-label="Output format" className="flex">
+          {TAB_MODES.map((m) => {
+            const active = mode === m;
+            const label = m === 'text' ? 'Text' : 'JSON';
+            return (
+              <button
+                key={m}
+                role="tab"
+                id={tabId(m)}
+                aria-selected={active}
+                aria-controls={panelId}
+                tabIndex={active ? 0 : -1}
+                onClick={() => void switchMode(m)}
+                onKeyDown={(e) => {
+                  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' ||
+                      e.key === 'Home' || e.key === 'End') {
+                    e.preventDefault();
+                    const idx = TAB_MODES.indexOf(m);
+                    let nextIdx: number;
+                    if (e.key === 'Home') nextIdx = 0;
+                    else if (e.key === 'End') nextIdx = TAB_MODES.length - 1;
+                    else if (e.key === 'ArrowLeft') nextIdx = (idx - 1 + TAB_MODES.length) % TAB_MODES.length;
+                    else nextIdx = (idx + 1) % TAB_MODES.length;
+                    const nextMode = TAB_MODES[nextIdx];
+                    void switchMode(nextMode);
+                    document.getElementById(tabId(nextMode))?.focus();
+                  }
+                }}
+                disabled={status === 'running'}
+                className={`px-4 py-2 text-xs font-mono uppercase tracking-wider transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                  active
+                    ? 'border-b-2 border-accent text-foreground'
+                    : 'border-b-2 border-transparent text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+        <div className="flex items-center gap-2 pb-2">
+          <span className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground mr-2">
             {statusText}
           </span>
-        </div>
-
-        <div className="flex gap-2">
           <button
             onClick={executeStep}
             disabled={!canRun}
             className="h-9 px-4 text-sm btn-primary flex items-center gap-2"
           >
-            {isComplete ? 'Complete' : 'Next'}
+            {onFinalCommand ? 'Complete' : 'Next'}
             <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
             </svg>
           </button>
           <button
-            onClick={reset}
+            onClick={() => void reset()}
             disabled={status === 'running' || (currentStep === 0 && !error)}
             className="h-9 px-3 text-sm btn-secondary flex items-center gap-2"
           >
@@ -418,6 +496,9 @@ export function RunbookRunner({
 
       {/* Terminal Output Container */}
       <div
+        id={panelId}
+        role="tabpanel"
+        aria-labelledby={tabId(mode)}
         className={`bg-background rounded-md p-4 border border-border overflow-hidden relative ${compact ? 'h-[250px]' : 'flex-1 min-h-[400px]'
           }`}
       >
@@ -434,7 +515,7 @@ export function RunbookRunner({
       {/* Footer Progress & Status */}
       <div className="mt-4 flex items-center justify-between text-[10px] font-mono border-t border-border pt-4">
         <div className="flex items-center gap-6">
-          <div className="flex items-center gap-2">
+          <div data-testid="footer-step" className="flex items-center gap-2">
             <span className="text-muted-foreground uppercase tracking-tighter">Step</span>
             <span className="text-foreground font-bold">
               {runbookStep}/{runbookTotal}
@@ -443,45 +524,20 @@ export function RunbookRunner({
 
           {runbookResult && (
             <>
-              <div className="flex items-center gap-2">
+              <div data-testid="footer-result" className="flex items-center gap-2">
                 <span className="text-muted-foreground uppercase tracking-tighter">Result</span>
                 <span className="text-foreground font-bold">
                   {runbookResult}
                 </span>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div data-testid="footer-expected" className="flex items-center gap-2">
                 <span className="text-muted-foreground uppercase tracking-tighter">Expected</span>
                 <span className="text-foreground font-bold">{scenario?.result || '—'}</span>
               </div>
             </>
           )}
         </div>
-
-        {showFooterButtons && (
-          <div className="flex gap-2">
-            <button
-              onClick={executeStep}
-              disabled={!canRun}
-              className="h-9 px-4 text-sm btn-primary flex items-center gap-2"
-            >
-              {isComplete ? 'Complete' : 'Next'}
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
-              </svg>
-            </button>
-            <button
-              onClick={reset}
-              disabled={status === 'running' || (currentStep === 0 && !error)}
-              className="h-9 px-3 text-sm btn-secondary flex items-center gap-2"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
-              </svg>
-              Reset
-            </button>
-          </div>
-        )}
       </div>
     </div>
   );
