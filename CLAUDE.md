@@ -10,6 +10,23 @@ Rundown is a format for defining executable runbooks using Markdown.
 - `@rundown-org/mcp` - MCP server for AI agent integration
 - `@rundown-org/claude-code-plugin` - Claude Code plugin for runbook orchestration
 
+## Architectural Principles
+
+These principles are foundational. They take precedence over local convenience and are not negotiable on a per-PR basis.
+
+**State machine drives Rundown logic.** All runbook behaviour — step transitions, result aggregation, action dispatch, lifecycle — lives in the XState state machine in `@rundown-org/core`. Other packages MUST invoke the state machine; they MUST NOT re-implement, replicate, or work around its logic. If a desired behaviour isn't expressible in the state machine today, extend the state machine — don't add a shadow implementation elsewhere.
+
+**The CLI is a thin wrapper.** `@rundown-org/cli` exposes the core state machine to agents and humans. Its job is to invoke state transitions and observe their output (events, diagnostics, exit codes). Runbook logic does not live in the CLI. New CLI commands must dispatch into existing core APIs; they do not introduce parallel execution paths, hidden state, or transition rules of their own. The same constraint applies to `@rundown-org/mcp` and `@rundown-org/claude-code-plugin` — they are alternate front ends to the same core.
+
+**Core values, in priority order.** When trade-offs arise, resolve them in this order:
+
+1. **Correctness** — the behaviour matches the spec and the runbook author's intent.
+2. **Type safety** — invalid states are unrepresentable; types drive dispatch (see [Design Principles](#design-principles)).
+3. **Clean architecture** — small, self-contained modules with clear seams between packages and within packages.
+4. **Test coverage** — every behaviour-bearing change is pinned by tests at the right layer (unit, integration, property, mutation).
+
+**Correctness over pragmatism.** Prefer making the work correct over shipping a "pragmatic" shortcut that compromises the values above. A workaround that papers over a state-machine gap, an `any` that hides a typing bug, a skipped test that masks a regression, or a one-off branch in the CLI that should have been a core capability — all are net-negative regardless of the time they save in the short term. When in doubt, raise the design question rather than patching around it.
+
 ## Installation
 
 ```bash
@@ -413,6 +430,8 @@ Three distinct concepts govern step execution. Never conflate them:
 A step produces a **result** (pass/fail). The runbook's **handler** for that result determines the **action** to take. These are separate layers — a result is not an action, and a handler is not a result.
 
 ## Design Principles
+
+These principles govern state-machine internals and implementation style. They sit underneath the [Architectural Principles](#architectural-principles) — the latter constrains *where* logic lives; these constrain *how* it is written.
 
 **Type-driven dispatch.** Types drive logic everywhere possible. Use discriminated unions and type narrowing to make invalid states unrepresentable. Guards express domain conditions through typed return values, never raw action-type string checks. If logic branches on a string discriminant, that discriminant should be encoded in a purpose-built type that forces callers to narrow before accessing variant-specific fields. `if` statements checking action types in guards are code smells — missing type structure. See [docs/internal/architecture.md](docs/internal/architecture.md#design-principles) for state machine specifics.
 
