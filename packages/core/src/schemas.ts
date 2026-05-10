@@ -281,10 +281,7 @@ export const ArtifactVarValueSchema = z.union([
  * union member order is no longer semantically load-bearing.
  */
 const VariableValueSchema = z.union([
-  // Order is for readability only after Task 1 (S3) — the `kind: 'artifact-record'`
-  // discriminator on ArtifactRecordSchema makes the union members structurally
-  // disjoint, so reordering does not change parse outcomes. The pre-tag ordering
-  // rule (z.string() first to prevent URI-string misclassification) is obsolete.
+  // Order is for readability — the kind tag makes the arms structurally disjoint.
   z.string(),
   ArtifactRecordSchema,
   z.array(ArtifactRecordSchema).readonly(),
