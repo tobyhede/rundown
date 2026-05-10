@@ -35,6 +35,26 @@ const record = {
   timestamp: '2026-05-04T03:15:24.000Z',
 } satisfies ArtifactRecord;
 
+const manifestRecord = {
+  uri: record.uri,
+  runId: record.runId,
+  contextId: record.contextId,
+  runbook: record.runbook,
+  key: record.key,
+  timestamp: record.timestamp,
+};
+
+function asManifestRecord(row: ArtifactRecord) {
+  return {
+    uri: row.uri,
+    runId: row.runId,
+    contextId: row.contextId,
+    runbook: row.runbook,
+    key: row.key,
+    timestamp: row.timestamp,
+  };
+}
+
 const optionsFor = (cwd: string): ArtifactPathOptions => ({ cwd, workPath: '.rundown/work' });
 const manifestPath = (cwd: string, contextId = 'ctx1'): string =>
   path.join(cwd, '.rundown/work', `.rd-${contextId}`, 'manifest.jsonl');
@@ -114,8 +134,15 @@ describe('artifact manifest storage', () => {
     await appendArtifactManifestRecord(optionsFor(cwd), record);
 
     await expect(fsp.readFile(manifestPath(cwd), 'utf8')).resolves.toBe(
-      `${JSON.stringify(record)}\n`,
+      `${JSON.stringify(manifestRecord)}\n`,
     );
+  });
+
+  it('reads documented six-field manifest rows without requiring kind', async () => {
+    const cwd = await tempCwd();
+    await writeManifest(cwd, [manifestRecord]);
+
+    await expect(readArtifactManifest(optionsFor(cwd), 'ctx1')).resolves.toEqual([record]);
   });
 
   it('appends one JSONL record synchronously', async () => {
@@ -124,7 +151,7 @@ describe('artifact manifest storage', () => {
     appendArtifactManifestRecordSync(optionsFor(cwd), record);
 
     await expect(fsp.readFile(manifestPath(cwd), 'utf8')).resolves.toBe(
-      `${JSON.stringify(record)}\n`,
+      `${JSON.stringify(manifestRecord)}\n`,
     );
   });
 
@@ -138,7 +165,7 @@ describe('artifact manifest storage', () => {
     appendArtifactManifestRecordSync(optionsFor(cwd), secondRecord);
 
     await expect(fsp.readFile(manifestPath(cwd), 'utf8')).resolves.toBe(
-      `${JSON.stringify(record)}\n${JSON.stringify(secondRecord)}\n`,
+      `${JSON.stringify(manifestRecord)}\n${JSON.stringify(asManifestRecord(secondRecord))}\n`,
     );
     await expect(readArtifactManifest(optionsFor(cwd), 'ctx1')).resolves.toEqual([
       record,

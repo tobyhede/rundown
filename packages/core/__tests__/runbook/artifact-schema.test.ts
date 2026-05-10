@@ -4,6 +4,7 @@ import {
   ArtifactKeySchema,
   ArtifactMetadataSchema,
   ArtifactRecordSchema,
+  isArtifactRecord,
 } from '../../src/runbook/artifact-schema.js';
 import { RUNBOOK_REF_ERROR_TEXT, RunbookRefSchema } from '../../src/runbook/runbook-ref.js';
 
@@ -31,6 +32,10 @@ describe('artifact schemas', () => {
 
   it('validates an exact artifact record', () => {
     expect(ArtifactRecordSchema.parse(VALID_RECORD)).toEqual(VALID_RECORD);
+  });
+
+  it('does not narrow arbitrary tagged objects as artifact records', () => {
+    expect(isArtifactRecord({ kind: 'artifact-record' })).toBe(false);
   });
 
   it('validates plugin and project source-root-relative runbook paths', () => {
