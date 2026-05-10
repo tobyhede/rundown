@@ -505,6 +505,49 @@ describe('substituteRunbookVariables preserves FOR-scoped placeholders in subste
     );
   });
 
+  // Loop-index placeholders are populated per-iteration at execution time
+  // (execution.ts builds `Index`/`context.current.index` from the active FOR
+  // frame). If they leak into the initial substitution frame via inheritance
+  // or any future plumbing, they must still survive substituteArtifacts so
+  // the runtime can resolve them per-iteration.
+  it('preserves Index / index / context.current.index placeholders in FOR substep ARTIFACTS', () => {
+    const substepDecl: ArtifactDeclaration = {
+      name: 'Iter',
+      rawToken:
+        'rd://artifacts/{{ContextId}}/{{RunId}}/iter-{{index}}-{{Index}}-{{context.current.index}}.json',
+    };
+    const substep: Substep = {
+      id: '1',
+      description: 'sub',
+      transitions: DEFAULT_TRANSITIONS,
+      artifacts: [substepDecl],
+    };
+    const forStep: ResolvedStep = {
+      kind: 'for',
+      name: '1',
+      description: 'loop',
+      transitions: DEFAULT_TRANSITIONS,
+      forClause: { variable: 'item', start: 1, end: 3 },
+      substeps: [substep],
+    };
+
+    const result = substituteRunbookVariables(
+      { name: 'rb', steps: [forStep] },
+      {
+        ContextId: 'ctx1',
+        RunId: 'rd_0123456789abcdef0123456789abcdef',
+        index: 'OUTER_idx',
+        Index: 'OUTER_Idx',
+        'context.current.index': 'OUTER_ccx',
+      },
+    );
+
+    const resolvedSubstep = (result.steps[0] as Extract<ResolvedStep, { kind: 'for' }>).substeps[0];
+    expect(resolvedSubstep.artifacts?.[0].rawToken).toBe(
+      'rd://artifacts/ctx1/rd_0123456789abcdef0123456789abcdef/iter-{{index}}-{{Index}}-{{context.current.index}}.json',
+    );
+  });
+
   it('still expands non-FOR-scoped variables in a FOR substep rawToken', () => {
     const substepDecl: ArtifactDeclaration = {
       name: 'Tagged',

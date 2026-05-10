@@ -1175,9 +1175,11 @@ function substituteRequiredCommand(
  * @param variables - Variable map for substitution
  * @param helperOptions - Filesystem options for artifact-producing helpers
  * @param forVariable - FOR loop variable name — references scoped to it
- *   (`forVariable` itself or dotted descendants) are filtered from the
- *   substitution frame so the placeholder is preserved until iteration time
- *   instead of being captured by an outer-scope variable of the same name.
+ *   (`forVariable` itself or dotted descendants) and FOR loop runtime
+ *   variables (`Index`, `index`, `context.current.index`) are filtered
+ *   from the substitution frame so those placeholders survive until
+ *   iteration time instead of being captured by an outer-scope binding
+ *   of the same name.
  * @returns A new readonly array with `rawToken` expanded, or the original
  *   reference when there is nothing to do.
  */
@@ -1190,7 +1192,9 @@ function substituteArtifacts(
   if (!artifacts || artifacts.length === 0) return artifacts;
   const scopedVariables = forVariable
     ? Object.fromEntries(
-        Object.entries(variables).filter(([name]) => !isForScoped(name, forVariable)),
+        Object.entries(variables).filter(
+          ([name]) => !isForScoped(name, forVariable) && !FOR_LOOP_RUNTIME_VARIABLES.has(name),
+        ),
       )
     : variables;
   // substituteText returns the same string instance when no placeholders
