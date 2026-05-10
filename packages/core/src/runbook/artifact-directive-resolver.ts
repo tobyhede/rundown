@@ -50,8 +50,8 @@ export interface ArtifactRunEligibility {
  * Keys are variable names; values are the structured artifact values, URI
  * strings, or `URI[]` strings the resolver may rehydrate. The shape is
  * intentionally `unknown` so callers can pass merged effective vars (which
- * carry mixed string/object values from `templateVars`, `artifactVars`, and
- * `variables` together) without an upfront cast.
+ * carry mixed string/object values from `templateVars` and `variables`
+ * together) without an upfront cast.
  */
 export type ArtifactScopeVars = Readonly<Record<string, unknown>>;
 
@@ -67,9 +67,9 @@ export interface ResolveArtifactDeclarationsOptions extends ArtifactPathOptions 
   readonly runbook: RunbookRef;
   /**
    * In-scope variables consulted by naked-form (`Plan`) declarations. Merged
-   * effective vars (templateVars + artifactVars + variables) are typical.
-   * Optional — naked-form declarations against an empty/absent scope produce
-   * an `unbound` error.
+   * effective vars (templateVars + variables) are typical. Optional —
+   * naked-form declarations against an empty/absent scope produce an
+   * `unbound` error.
    */
   readonly scopeVars?: ArtifactScopeVars;
   /**

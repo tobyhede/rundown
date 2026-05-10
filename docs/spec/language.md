@@ -435,7 +435,7 @@ Rules:
 | Names | MUST match variable-name rules and MUST NOT be reserved runtime names, case-insensitively. |
 | Keys | A quoted artifact key literal or quoted `rd://` URI. Templates are expanded before parsing (see §10.1.1). The key MAY be omitted to use the assertion form (§10.1.2). |
 | Scope | Applies only to the declaring step or substep's current execution-unit working set. |
-| Persistence | Writes resolved values to persisted `artifactVars`, not to string-only `state.variables`. |
+| Persistence | Writes resolved values into persisted `state.variables`, which carries mixed string `OUTPUTS` and structured `ArtifactRecord` values via `VariableValueSchema`. |
 | Resolution order | Declarations resolve in source order. |
 
 Each declaration binds the named alias according to its form (see §10.1.1). Bare-key and exact-URI declarations CREATE a manifest entry for the current context and current run (the producer surface). Selector-URI declarations query the same-context manifest read-only and may yield `ArtifactRecord` (one match), `ArtifactRecord[]` (many), or an empty array. Selectors have no opinion on arity — the runbook's structure (step/substep scope, FOR loops, delegation) determines the expected number of records.
@@ -512,15 +512,15 @@ The record carries the six fields shown above. All fields are required. The norm
 
 URI grammar, storage layout, manifest scoping, and coalescing are normatively defined in [docs/spec/uri.md](./uri.md). This section refers to URIs and manifests using terms defined there.
 
-Persisted runbook state stores artifact variables separately from command outputs:
+Persisted runbook state stores artifact and output values together in a single bucket:
 
 ```text
-templateVars < artifactVars < variables < extraVars
+templateVars < variables < extraVars
 ```
 
-`state.variables` remains string-only command `OUTPUTS`. `artifactVars` stores `ArtifactRecord` or `ArtifactRecord[]` values. Effective rendering and delegation contexts merge `templateVars`, `artifactVars`, `variables`, and `extraVars` in the order shown, so same-name `OUTPUTS` values mask artifact aliases after command completion without deleting the stored artifact value.
+`state.variables` carries mixed values (typed via `VariableValueSchema`): string command `OUTPUTS` and structured `ArtifactRecord` / `ArtifactRecord[]` from `ARTIFACTS`. Effective rendering and delegation contexts merge `templateVars`, `variables`, and `extraVars` in the order shown.
 
-Same-name `ARTIFACTS` and `OUTPUTS` declarations are allowed. `ARTIFACTS` writes `artifactVars` at step/substep entry. `OUTPUTS` writes `state.variables` after command completion and wins in the merged effective variable context because `variables` has higher precedence than `artifactVars`.
+Same-name `ARTIFACTS` and `OUTPUTS` declarations are allowed. `ARTIFACTS` writes a structured value at step/substep entry. `OUTPUTS` writes a string value after command completion and overwrites the entry under the same name in `state.variables`. The legacy `artifactVars` field is rejected by `RunbookStateSchema` via `superRefine`.
 
 <a id="71-outputs"></a>
 
