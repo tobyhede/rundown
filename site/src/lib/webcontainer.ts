@@ -173,21 +173,34 @@ export async function runCommand(
 /**
  * Run an rd command using node to invoke the CLI directly (avoids permission issues).
  *
+ * The `mode` parameter controls the CLI's output format:
+ *
+ * - `'text'` (default) appends `--text` to the args. The site's interactive demo
+ *   relies on this for the status footer regex parser in `RunbookRunner.tsx`,
+ *   which extracts step/result info from text-mode output patterns
+ *   (`At: <stepId>`, `Runbook: STATUS`).
+ * - `'json'` leaves args untouched, so the CLI emits its default JSONL event
+ *   stream. The footer regex parser does not fire in JSON mode (those lines
+ *   aren't in the JSON output); footer values stay at placeholders.
+ *
+ * The parameter is optional and last-position so existing callers compile unchanged.
+ *
  * @param container - The WebContainer instance to run the command in
  * @param args - Arguments to pass to the rd command
  * @param onOutput - Optional callback for streaming output
+ * @param mode - Output mode (default: `'text'`)
  * @returns Object containing command output and exit code
  */
 export async function runRdCommand(
   container: WebContainer,
   args: string[],
-  onOutput?: (chunk: string) => void
+  onOutput?: (chunk: string) => void,
+  mode: 'text' | 'json' = 'text'
 ): Promise<{ output: string; exitCode: number }> {
   // Use node to run the CLI script directly (avoids execute permission issues)
   const cliPath = './node_modules/@rundown-org/cli/dist/cli.js';
-  // Always use --text for the site's interactive demo — the processChunk parser
-  // in RunbookRunner.tsx extracts step/result info from text-mode output patterns.
-  const textArgs = args.includes('--text') ? args : [...args, '--text'];
-  console.log(`[WebContainer] Running rd via node: ${cliPath} ${textArgs.join(' ')}`);
-  return runCommand(container, 'node', [cliPath, ...textArgs], 10000, onOutput);
+  const finalArgs =
+    mode === 'text' && !args.includes('--text') ? [...args, '--text'] : args;
+  console.log(`[WebContainer] Running rd via node (${mode}): ${cliPath} ${finalArgs.join(' ')}`);
+  return runCommand(container, 'node', [cliPath, ...finalArgs], 10000, onOutput);
 }
