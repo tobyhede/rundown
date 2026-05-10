@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useId, useMemo, useRef } from 'react';
 import * as xtermPkg from '@xterm/xterm';
 // @ts-ignore
 const Terminal = xtermPkg.Terminal || xtermPkg.default?.Terminal;
@@ -117,6 +117,13 @@ export function RunbookRunner({
   // gone — and the new run would inherit stale persisted state.
   const [isResetting, setIsResetting] = useState(false);
 
+  // Instance-scoped IDs so multiple RunbookRunner instances on the same page
+  // don't collide on `aria-controls` / `aria-labelledby` / the keyboard
+  // handler's `getElementById` lookup.
+  const reactId = useId();
+  const tabId = (m: string) => `${reactId}-tab-${m}`;
+  const panelId = `${reactId}-tabpanel`;
+
   const [isDarkMode, setIsDarkMode] = useState(false);
 
   useEffect(() => {
@@ -205,6 +212,19 @@ export function RunbookRunner({
     xtermInstance.current?.clear();
   }, [container]);
 
+  // Reset session state when the runbook props change. All current call sites
+  // (HomepageRunner.astro, /explore/[pattern].astro) re-mount the React tree
+  // on route change, so this is defensive — but it keeps the component
+  // reusable: if a parent ever swaps `runbookContent` mid-mount, the footer,
+  // selected scenario, and autoStart latch all reinitialize together.
+  useEffect(() => {
+    setRunbookStep('—');
+    setRunbookResult(null);
+    setCurrentStep(0);
+    setSelectedScenario(Object.keys(scenarios)[0] || '');
+    hasAutoStarted.current = false;
+  }, [runbookPath, runbookContent, scenarios]);
+
   useEffect(() => {
     let mounted = true;
 
@@ -258,33 +278,41 @@ export function RunbookRunner({
     term.writeln('');
 
     try {
+      // Footer parsing is text-only — `At: <stepId>` / `Runbook: STATUS`
+      // lines appear only in `--text` output. In JSON mode the footer stays
+      // at placeholder values for the entire walk-through (V1 simplicity).
+      //
+      // Stream chunks have no newline-alignment guarantee — a footer token
+      // could arrive split across `onOutput` calls. Buffer partial trailing
+      // lines across chunks and only run the regexes on complete lines.
+      // Anchor with `^` so only true CLI footer lines match (runbook content
+      // containing the substrings mid-line cannot spuriously overwrite).
+      // Source for the emit format: packages/core/src/cli/output.ts:120-122
+      // writes `data.at` directly; `data.at` is `derivePositionAt(...)`,
+      // which returns just the step ID — `1`, `2.1`, `RECOVER`, etc.
+      let lineBuffer = '';
+      const matchFooterLine = (line: string) => {
+        const stepMatch = line.match(/^At:\s+([\w.]+)/);
+        if (stepMatch) setRunbookStep(stepMatch[1]);
+        const resultMatch = line.match(/^Runbook:\s+([A-Z]+)/);
+        if (resultMatch) setRunbookResult(resultMatch[1]);
+      };
+
       const processChunk = (chunk: string) => {
         term.write(chunk);
-
-        // Footer parsing is text-only — `At: <stepId>` / `Runbook: STATUS`
-        // lines appear only in `--text` output. In JSON mode the footer stays
-        // at placeholder values for the entire walk-through (V1 simplicity).
         if (mode === 'text') {
-          const cleanChunk = stripAnsi(chunk);
-          for (const line of cleanChunk.split('\n')) {
-            // The `At:` line emits ONLY a step ID — never `step/total`.
-            // Examples: `At:       1`, `At:       2.1`, `At:       RECOVER`.
-            // Source: packages/core/src/cli/output.ts:120-122 writes
-            // `data.at` directly; `data.at` is `derivePositionAt(...)` (see
-            // packages/cli/src/helpers/transition-orchestrator.ts:188 and
-            // goto-workflow.ts:285), which returns just the step ID.
-            // Anchor with `^` so only true CLI footer lines match — runbook
-            // content or future emitted text containing the substrings
-            // mid-line cannot spuriously overwrite the footer.
-            const stepMatch = line.match(/^At:\s+([\w.]+)/);
-            if (stepMatch) setRunbookStep(stepMatch[1]);
-            const resultMatch = line.match(/^Runbook:\s+([A-Z]+)/);
-            if (resultMatch) setRunbookResult(resultMatch[1]);
-          }
+          lineBuffer += stripAnsi(chunk);
+          const lines = lineBuffer.split('\n');
+          lineBuffer = lines.pop() ?? '';
+          for (const line of lines) matchFooterLine(line);
         }
       };
 
       await runRdCommand(container, args, processChunk, mode);
+
+      // Flush any trailing partial line — the CLI's last write may not end
+      // in a newline if the stream closed mid-line.
+      if (mode === 'text' && lineBuffer.length > 0) matchFooterLine(lineBuffer);
 
       setCurrentStep((prev) => prev + 1);
       setStatus('ready');
@@ -400,9 +428,9 @@ export function RunbookRunner({
               <button
                 key={m}
                 role="tab"
-                id={`tab-${m}`}
+                id={tabId(m)}
                 aria-selected={active}
-                aria-controls="runbook-runner-tabpanel"
+                aria-controls={panelId}
                 tabIndex={active ? 0 : -1}
                 onClick={() => void switchMode(m)}
                 onKeyDown={(e) => {
@@ -417,7 +445,7 @@ export function RunbookRunner({
                     else nextIdx = (idx + 1) % TAB_MODES.length;
                     const nextMode = TAB_MODES[nextIdx];
                     void switchMode(nextMode);
-                    document.getElementById(`tab-${nextMode}`)?.focus();
+                    document.getElementById(tabId(nextMode))?.focus();
                   }
                 }}
                 disabled={status === 'running'}
@@ -468,9 +496,9 @@ export function RunbookRunner({
 
       {/* Terminal Output Container */}
       <div
-        id="runbook-runner-tabpanel"
+        id={panelId}
         role="tabpanel"
-        aria-labelledby={`tab-${mode}`}
+        aria-labelledby={tabId(mode)}
         className={`bg-background rounded-md p-4 border border-border overflow-hidden relative ${compact ? 'h-[250px]' : 'flex-1 min-h-[400px]'
           }`}
       >
