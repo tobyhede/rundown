@@ -6,6 +6,7 @@
   "scripts": {
     "prebuild": "tsx scripts/build-snapshot.ts",
     "build:snapshot": "tsx scripts/build-snapshot.ts",
+    "screenshot:home": "tsx scripts/screenshot-homepage.ts",
     "dev": "astro dev",
     "test": "playwright test",
     "test:ui": "playwright test --ui",

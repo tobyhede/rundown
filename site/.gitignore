@@ -27,3 +27,6 @@ pnpm-debug.log*
 public/rundown-snapshot.bin
 playwright-report/
 test-results/
+
+# Local screenshot artifacts
+screenshots/
