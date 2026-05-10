@@ -1,7 +1,6 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import type { ExecutionEventEmitter, RunbookStateManager } from '@rundown-org/core';
 import type { ResolvedStep } from '@rundown-org/parser';
-import { mockErrorHelpers } from '../helpers/mock-error-helpers.js';
 import { mockFn } from '../helpers/typed-mocks.js';
 
 // Permissive runbook-state shape used by lifecycle / actor mocks. The real
@@ -59,31 +58,33 @@ const mockLifecycleService = {
   consumeResolvedCompletion: consumeResolvedCompletionFn,
 };
 
-// Capture the real isJsonArrayStream before the mock is registered.
+// Capture the real @rundown-org/core module before the mock is registered.
 // jest.unstable_mockModule does NOT hoist (unlike jest.mock), so this top-level
-// await executes first and always captures the real branded implementation.
-const {
-  isJsonArrayStream: realIsJsonArrayStream,
-  ForResolutionError: RealForResolutionError,
-  Errors: RealErrors,
-  RundownError: RealRundownError,
-  ErrorCodes: RealErrorCodes,
-} = await import('@rundown-org/core');
+// await executes first and captures the real implementations. The mock factory
+// then closure-captures `actualCore` and spreads it — `await import` inside the
+// factory would recurse through the registered mock and OOM the heap.
+const actualCore = await import('@rundown-org/core');
+const { ForResolutionError: RealForResolutionError, Errors: RealErrors } = actualCore;
 
 jest.unstable_mockModule('@rundown-org/core', () => {
-  const asTerminalSnapshot = jest.fn((snapshot: unknown) => {
-    if (
-      typeof snapshot === 'object' &&
-      snapshot !== null &&
-      'status' in snapshot &&
-      'value' in snapshot &&
-      typeof (snapshot as Record<string, unknown>).status === 'string'
-    ) {
-      return snapshot as { status: string; value: unknown };
-    }
-    return null;
-  });
   return {
+    ...actualCore,
+    // I/O — fork shell processes
+    executeCommand: jest.fn(),
+    executeCommandWithEnv: (jest.fn() as any).mockResolvedValue({ success: true, exitCode: 0 }),
+    executeCommandWithPolicy: jest.fn(),
+
+    // Pass/fail evaluators — introspected via jest.mocked(core.evaluate*Condition)
+    evaluatePassCondition: jest.fn(),
+    evaluateFailCondition: jest.fn(),
+
+    // Transition coordinator — chains into evaluators; stub returns the
+    // transition message tests assert on.
+    deriveTransitionMessage: jest.fn((result: 'pass' | 'fail') =>
+      result === 'pass' ? 'Success' : 'Failed',
+    ),
+
+    // Print / terminal output
     printActionBlock: jest.fn(),
     printStepBlock: jest.fn(),
     printStepSeparator: jest.fn(),
@@ -91,247 +92,26 @@ jest.unstable_mockModule('@rundown-org/core', () => {
     printRunbookComplete: jest.fn(),
     printRunbookStoppedAtStep: jest.fn(),
     printPolicyDenied: jest.fn(),
-    executeCommand: jest.fn(),
-    executeCommandWithEnv: (jest.fn() as any).mockResolvedValue({ success: true, exitCode: 0 }),
-    executeCommandWithPolicy: jest.fn(),
-    assertRunId: jest.fn((value: string) => value),
-    evaluatePassCondition: jest.fn(),
-    evaluateFailCondition: jest.fn(),
-    extractLastAction: jest.fn((snapshot: any) => snapshot?.context?.lastAction),
-    extractLastMessage: jest.fn((snapshot: any) =>
-      typeof snapshot?.context?.lastMessage === 'string' ? snapshot.context.lastMessage : undefined,
-    ),
-    extractRetryMax: jest.fn((snapshot: any) => snapshot?.context?.retryMax ?? 0),
-    extractRetryDisplayCount: jest.fn((snapshot: any, retryCount: number) => {
-      const iterationRetryCount = snapshot?.context?.iterationRetryCount;
-      return typeof iterationRetryCount === 'number' && iterationRetryCount > 0
-        ? iterationRetryCount
-        : retryCount;
-    }),
-    formatActionForDisplay: jest.fn((lastAction: any, retryCount: number, retryMax: number) => {
-      if (!lastAction) return 'CONTINUE';
-      if (lastAction.type === 'RETRY') return `RETRY (${String(retryCount)}/${String(retryMax)})`;
-      if (lastAction.type === 'GOTO') return `GOTO ${String(lastAction.target)}`;
-      return lastAction.type;
-    }),
-    deriveTransitionMessage: jest.fn((result: 'pass' | 'fail') =>
-      result === 'pass' ? 'Success' : 'Failed',
-    ),
-    parseActionType: jest.fn((lastAction: any) => {
-      if (!lastAction) return 'CONTINUE';
-      if (lastAction.type === 'GOTO') return 'GOTO';
-      if (lastAction.type === 'RETRY') return 'RETRY';
-      if (lastAction.type === 'RETRY_ERROR') return 'RETRY_ERROR';
-      if (lastAction.type === 'COMPLETE') return 'COMPLETE';
-      if (lastAction.type === 'STOP') return 'STOP';
-      return 'CONTINUE';
-    }),
-    countNumberedSteps: (() => {
-      const fn = mockFn<(steps: unknown) => number>();
-      fn.mockReturnValue(2);
-      return fn;
-    })(),
-    extractDisplayCommand: jest.fn((cmd) => cmd),
+
+    // Actor / session / lifecycle services — replaced by test doubles
+    RunbookActorService: jest.fn(() => mockActorService),
+    SessionService: jest.fn(() => mockSessionService),
+    ExecutionLifecycleService: jest.fn(() => mockLifecycleService),
+    ForIterationService: jest.fn(() => ({
+      prepareIteration: (jest.fn() as any).mockResolvedValue({ status: 'no-resolution-needed' }),
+    })),
+
+    // Delegation factory — introspected via jest.mocked(core.createDelegation)
+    createDelegation: jest.fn(),
+
+    // Run-id generator — deterministic for assertions
+    generateRunId: jest.fn(() => 'rd_0123456789abcdef0123456789abcdef'),
+
+    // Resolver — depends on filesystem in real impl
     resolveCurrentExecutionUnit: jest.fn((step: any, substepId: string | undefined) => {
       if (!substepId || !Array.isArray(step?.substeps)) return step;
       return step.substeps.find((s: any) => s.id === substepId) ?? step;
     }),
-    createFileProvider: jest.fn(),
-    computeFileSnapshot: jest.fn(),
-    buildStepPosition: jest.fn((current: string, total: number, substep?: string) => ({
-      current,
-      total,
-      ...(substep ? { substep } : {}),
-    })),
-    deriveExecutionAt: jest.fn(
-      (step: string, substep?: string, iteration?: number) =>
-        `${step}${iteration != null ? `.${String(iteration)}` : ''}${substep ? `.${substep}` : ''}`,
-    ),
-    derivePositionAt: jest.fn(
-      (pos: { current: string; substep?: string; for?: { index: number } }) =>
-        `${pos.current}${pos.for?.index != null ? `.${String(pos.for.index)}` : ''}${pos.substep ? `.${pos.substep}` : ''}`,
-    ),
-    buildCompletionKey: jest.fn(
-      (frameKey: string, entry: number, substep?: string) =>
-        `${frameKey}|${String(entry)}|${substep ?? ''}`,
-    ),
-    deriveActiveFrame: jest.fn((state: any) => ({
-      frameKey: `${String(state?.step ?? '1')}|`,
-      step: state?.step ?? '1',
-    })),
-    RunbookActorService: jest.fn(() => mockActorService),
-    SessionService: jest.fn(() => mockSessionService),
-    ExecutionLifecycleService: jest.fn(() => mockLifecycleService),
-    ForIterationService: jest.fn(() => {
-      const prepareIteration = mockFn<(...args: unknown[]) => Promise<{ status: string }>>() as any;
-      prepareIteration.mockResolvedValue({ status: 'no-resolution-needed' });
-      return { prepareIteration };
-    }),
-    isRunbookComplete: jest.fn((s: any) => s?.status === 'done' && s?.value === 'COMPLETE'),
-    isRunbookStopped: jest.fn((s: any) => s?.status === 'done' && s?.value === 'STOPPED'),
-    asTerminalSnapshot,
-    asTerminalSnapshotOrDefault: jest.fn((snapshot: unknown) => {
-      return asTerminalSnapshot(snapshot) ?? { status: 'active', value: undefined };
-    }),
-    logger: {
-      debug: (() => {
-        const fn = mockFn<(...args: unknown[]) => Promise<void>>() as any;
-        fn.mockResolvedValue(undefined);
-        return fn;
-      })(),
-      info: (() => {
-        const fn = mockFn<(...args: unknown[]) => Promise<void>>() as any;
-        fn.mockResolvedValue(undefined);
-        return fn;
-      })(),
-      warn: (() => {
-        const fn = mockFn<(...args: unknown[]) => Promise<void>>() as any;
-        fn.mockResolvedValue(undefined);
-        return fn;
-      })(),
-      error: (() => {
-        const fn = mockFn<(...args: unknown[]) => Promise<void>>() as any;
-        fn.mockResolvedValue(undefined);
-        return fn;
-      })(),
-      always: (() => {
-        const fn = mockFn<(...args: unknown[]) => Promise<void>>() as any;
-        fn.mockResolvedValue(undefined);
-        return fn;
-      })(),
-      event: (() => {
-        const fn = mockFn<(...args: unknown[]) => Promise<void>>() as any;
-        fn.mockResolvedValue(undefined);
-        return fn;
-      })(),
-      getLogFilePath: (() => {
-        const fn = mockFn<() => string>() as any;
-        fn.mockReturnValue('/tmp/rundown-test.log');
-        return fn;
-      })(),
-      getLogDir: (() => {
-        const fn = mockFn<() => string>() as any;
-        fn.mockReturnValue('/tmp');
-        return fn;
-      })(),
-    },
-    isJsonArray: jest.fn((v: unknown) => Array.isArray(v)),
-    isJsonArrayStream: jest.fn(realIsJsonArrayStream),
-    mergeEffectiveVars: jest.fn((state: any, extra?: Record<string, unknown>) => ({
-      ...(state?.templateVars ?? {}),
-      ...(state?.variables ?? {}),
-      ...(extra ?? {}),
-    })),
-    ForResolutionError: RealForResolutionError,
-    assertResolvedVariableForContext: jest.fn(
-      (fc: {
-        currentValue?: unknown;
-        source?: { kind: string; name?: string };
-        stepId?: string;
-        iteration?: number;
-      }) => {
-        if (fc.currentValue === undefined) {
-          const name = fc.source?.kind === 'variable' ? String(fc.source.name) : '(unknown)';
-          throw new Error(
-            `ForContext for step "${String(fc.stepId)}" (variable source "${name}") ` +
-              `has not been resolved — currentValue is undefined at iteration ${String(fc.iteration)}`,
-          );
-        }
-      },
-    ),
-    assembleArtifactPath: jest.fn((dir: string, ctx: string, file: string) => {
-      const date = new Date().toISOString().slice(0, 10);
-      return `${dir}/.rd-${ctx}/${date}-${file}`;
-    }),
-    applyRunArtifactHelper: jest.fn(
-      (
-        kind: 'artifact' | 'path',
-        key: string,
-        frame: Record<string, unknown>,
-        options: { cwd: string },
-      ) => {
-        const contextId = typeof frame.ContextId === 'string' ? frame.ContextId : 'ctx';
-        const runId =
-          typeof frame.RunId === 'string' ? frame.RunId : 'rd_0123456789abcdef0123456789abcdef';
-        const workPath = typeof frame.WorkPath === 'string' ? frame.WorkPath : '.rundown/work';
-        const uri = `rd://artifacts/${contextId}/${runId}/${key}`;
-        return kind === 'artifact'
-          ? uri
-          : `${options.cwd}/${workPath}/.rd-${contextId}/${runId}/${key}`;
-      },
-    ),
-    parseExactArtifactUriParts: jest.fn((uri: string) => {
-      const m = /^rd:\/\/artifacts\/([^/]+)\/([^/]+)\/(.+)$/.exec(uri);
-      if (!m) return null;
-      return { contextId: m[1], runId: m[2], key: m[3] };
-    }),
-    isArtifactRecord: jest.fn((value: unknown): boolean => {
-      return (
-        typeof value === 'object' &&
-        value !== null &&
-        (value as { kind?: unknown }).kind === 'artifact-record'
-      );
-    }),
-    isArtifactValue: jest.fn((value: unknown): boolean => {
-      if (Array.isArray(value)) return value.length > 0;
-      return typeof value === 'object' && value !== null && 'uri' in value;
-    }),
-    renderArtifactValue: jest.fn((value: unknown) => {
-      if (Array.isArray(value)) {
-        return JSON.stringify(value.map((r: { uri: string }) => r.uri));
-      }
-      return (value as { uri: string }).uri;
-    }),
-    renderArtifactPathValue: jest.fn(
-      (value: unknown, options: { cwd: string; workPath: string }) => {
-        const buildPath = (record: { contextId: string; runId: string; key: string }) =>
-          `${options.cwd}/${options.workPath}/.rd-${record.contextId}/${record.runId}/${record.key}`;
-        if (Array.isArray(value)) {
-          return JSON.stringify(
-            (value as ReadonlyArray<{ contextId: string; runId: string; key: string }>).map(
-              buildPath,
-            ),
-          );
-        }
-        return buildPath(value as { contextId: string; runId: string; key: string });
-      },
-    ),
-    renderArtifactRecordValue: jest.fn((value: unknown) => {
-      if (Array.isArray(value)) {
-        return JSON.stringify(value.map((r: { uri: string }) => r.uri));
-      }
-      return (value as { uri: string }).uri;
-    }),
-    renderLiteralArtifactPath: jest.fn(
-      (key: string, options: { cwd: string; workPath: string; contextId: string; runId: string }) =>
-        `${options.cwd}/${options.workPath}/.rd-${options.contextId}/${options.runId}/${key}`,
-    ),
-    ...mockErrorHelpers,
-    RUNS_DIR: '.rundown/runs',
-    WORK_DIR: '.rundown/work',
-    CONFIG_FILE: '.rundown/config.yaml',
-    isJsonValue: jest.fn((v: unknown) => v != null),
-    createJsonArrayStream: jest.fn(),
-    generateRunId: jest.fn(() => 'rd_0123456789abcdef0123456789abcdef'),
-    createDelegation: jest.fn(),
-    Errors: RealErrors,
-    RundownError: RealRundownError,
-    ErrorCodes: RealErrorCodes,
-    // Helper-call validator imported by template-renderer; the real impl is fine.
-    invokeHelperSafely: jest.fn(
-      (_name: string, helper: (v: string) => string, arg: string): string | undefined => {
-        try {
-          const r = helper(arg);
-          return typeof r === 'string' ? r : undefined;
-        } catch {
-          return undefined;
-        }
-      },
-    ),
-    resetHelperInvokeWarnings: jest.fn(),
-    partitionOutputDeclarations: (jest.fn() as any).mockReturnValue({ naked: [], expression: [] }),
-    prepareOutputChannels: (jest.fn() as any).mockResolvedValue({ env: {}, prepared: [] }),
-    readCapturedOutputs: (jest.fn() as any).mockResolvedValue({}),
   };
 });
 
