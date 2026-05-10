@@ -199,6 +199,8 @@ State persists in `.rundown/runs/` (execution state) and `.rundown/session.json`
 
 There is no in-memory migration scenario. In-memory state does not survive process restarts. Any state that reaches `createActor` originates from disk and is subject to the same no-migration rule.
 
+Rundown has no released compatibility contract for persisted runbook state. Breaking active runs is acceptable and preferred over compatibility code for consumers that do not exist. When a state shape, XState state ID, snapshot context, variable layout, or run/session schema changes, update the current model and reject old persisted state. Do not add runtime migrations, fallback parsers, legacy field hydration, compatibility shims, warning-only adapters, or branches that preserve older behavior. The recovery path is always explicit user action: finish, stop, prune, or restart from the source runbook.
+
 ## Runbook Discovery
 
 Runbooks are discovered from multiple sources with the following priority (highest to lowest):

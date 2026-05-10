@@ -620,4 +620,9 @@ prune the run and restart from the source document. See
 [runtime recovery](../reference/runtime.md#stale-persisted-state--no-migration)
 for operational details.
 
+There is no compatibility promise for persisted active run state. Implementations
+SHOULD break stale `.rundown/` state explicitly instead of preserving old
+behavior with runtime migrations, legacy fallback parsers, or compatibility
+shims.
+
 Persisted `artifactVars` is a rejected legacy field; encountering it triggers a `RunbookState` schema/version error. Stale active state from versions without compatible artifact state MUST be rejected and surfaced to the user for completion, stopping, or pruning. Implementations MUST NOT migrate or shim older persisted state into the unified `state.variables` shape.

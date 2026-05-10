@@ -155,6 +155,39 @@ describe('RunbookActorService', () => {
       expect(updated.step).toBe('3');
       expect(updated.substep).toBeUndefined();
     });
+
+    it('rejects legacy persisted state IDs instead of adapting them', async () => {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
+      const actor = mockActor({
+        value: 'step_1',
+        context: { variables: {}, retryCount: 0 },
+      });
+      const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      try {
+        await expect(actorService.updateFromActor(state.id, actor, mockSteps)).rejects.toThrow(
+          /Unsupported persisted stateValue/,
+        );
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it('rejects persisted state IDs that no longer exist in the runbook', async () => {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
+      const actor = mockActor({
+        value: 'step::missing',
+        context: { variables: {}, retryCount: 0 },
+      });
+
+      await expect(actorService.updateFromActor(state.id, actor, mockSteps)).rejects.toThrow(
+        /references missing step "missing"/,
+      );
+    });
   });
 
   describe('initializeState', () => {

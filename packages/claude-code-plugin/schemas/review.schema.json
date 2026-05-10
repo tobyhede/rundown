@@ -32,16 +32,16 @@
       },
       "items": [
         {
-          "title": "Missing migration step",
+          "title": "Invalid persisted state migration",
           "level": "error",
-          "description": "Plan modifies the persisted state schema but does not include a migration step.",
+          "description": "Plan modifies persisted active runbook state and proposes runtime migration or compatibility shims.",
           "references": [
             {
               "uri": "packages/core/src/state.ts",
               "line": 42
             }
           ],
-          "recommendation": "Add a migration step before the deploy step, or document that running runbooks should be completed before upgrade."
+          "recommendation": "Reject stale persisted state, surface a prune/restart recovery path, and remove migration code."
         }
       ]
     }

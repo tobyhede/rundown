@@ -33,7 +33,8 @@ Read the plan at `{{ PlanPath }}`.
 - Security concerns are assessed: input validation, authentication, authorization, data exposure, injection risks
 - Performance-sensitive changes include benchmarks or impact analysis
 - All breaking changes to public APIs, data formats, or behavior are explicitly identified
-- Breaking changes include a migration path or deprecation strategy
+- Released public-surface breaking changes include a migration path or deprecation strategy
+- Persisted active runbook state is not a released public surface: stale `.rundown/` state must be rejected, pruned, and restarted rather than migrated or shimmed
 - Operations involving persistent data protect against corruption and data loss
 - Concurrent or parallel operations are safe from race conditions and resource conflicts
 - Failure scenarios have documented recovery procedures beyond "retry"

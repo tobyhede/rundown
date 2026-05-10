@@ -296,9 +296,8 @@ describe('RunbookStateSchema forStack', () => {
     }
   });
 
-  it('passes through unknown legacy flat FOR fields without migration', () => {
+  it('rejects unknown legacy flat FOR fields', () => {
     // Old-format state with forIteration/forStart/forEnd/forVariable
-    // Schema uses passthrough() so legacy fields are preserved (not stripped/migrated)
     const oldState = createValidState({
       forIteration: 2,
       forStart: 1,
@@ -308,17 +307,7 @@ describe('RunbookStateSchema forStack', () => {
 
     const result = RunbookStateSchema.safeParse(oldState);
 
-    expect(result.success).toBe(true);
-    if (result.success) {
-      // No migration — forStack should remain undefined
-      expect(result.data.forStack).toBeUndefined();
-      // Verify legacy fields are preserved by passthrough (not stripped)
-      const data = result.data as Record<string, unknown>;
-      expect(data.forIteration).toBe(2);
-      expect(data.forStart).toBe(1);
-      expect(data.forEnd).toBe(3);
-      expect(data.forVariable).toBe('item');
-    }
+    expect(result.success).toBe(false);
   });
 });
 
@@ -488,7 +477,7 @@ describe('RunbookStateSchema runbook identity', () => {
 });
 
 describe('RunbookStateSchema sources field', () => {
-  it('passes through unknown fields via passthrough', () => {
+  it('rejects legacy sources field', () => {
     const state = createValidState({
       sources: {
         items: {
@@ -499,12 +488,7 @@ describe('RunbookStateSchema sources field', () => {
     });
 
     const result = RunbookStateSchema.safeParse(state);
-    expect(result.success).toBe(true);
-    if (result.success) {
-      // passthrough preserves unknown fields without validation
-      const data = result.data as Record<string, unknown>;
-      expect(data.sources).toBeDefined();
-    }
+    expect(result.success).toBe(false);
   });
 
   it('rejects forStack entry with legacy array source', () => {

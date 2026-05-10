@@ -541,7 +541,7 @@ describe('RunbookStateManager', () => {
       await expect(manager.update('nonexistent', { step: '2' })).rejects.toThrow('not found');
     });
 
-    it('loads legacy targetPath fields and strips them on save', async () => {
+    it('rejects legacy targetPath fields instead of stripping them on save', async () => {
       const state = await manager.create({ source: 'project', path: 'legacy.md' }, mockRunbook, {
         runbookPath: 'legacy.md',
       });
@@ -569,16 +569,7 @@ describe('RunbookStateManager', () => {
       resolved.targetPath = '1';
       await writeFile(stateFilePath, JSON.stringify(raw), { mode: 0o600 });
 
-      const loaded = await manager.load(state.id);
-      expect(loaded).not.toBeNull();
-      const loadedResolved = loaded?.resolvedCompletions?.[resolvedKey] as
-        | { targetPath?: string }
-        | undefined;
-      expect(loadedResolved?.targetPath).toBeUndefined();
-
-      await manager.update(state.id, { stepName: 'updated' });
-      const saved = await readFile(stateFilePath, 'utf8');
-      expect(saved).not.toContain('targetPath');
+      await expect(manager.load(state.id)).rejects.toThrow(/schema validation failed/);
     });
   });
 

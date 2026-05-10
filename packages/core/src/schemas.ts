@@ -391,16 +391,18 @@ const SubstepStateSchema = z.object({
   delegation: StepDelegationSchema.optional(),
 });
 
-const ResolvedCompletionSchema = z.object({
-  agentId: z.string(),
-  result: z.enum(['pass', 'fail']),
-  targetStep: z.string(),
-  targetSubstep: z.string().optional(),
-  targetIteration: z.number().int().positive().max(MAX_FOR_BOUND).optional(),
-  targetFrameKey: FrameKeySchema,
-  targetEntry: z.number().int().nonnegative().max(MAX_FOR_BOUND),
-  completedAt: z.string(),
-});
+const ResolvedCompletionSchema = z
+  .object({
+    agentId: z.string(),
+    result: z.enum(['pass', 'fail']),
+    targetStep: z.string(),
+    targetSubstep: z.string().optional(),
+    targetIteration: z.number().int().positive().max(MAX_FOR_BOUND).optional(),
+    targetFrameKey: FrameKeySchema,
+    targetEntry: z.number().int().nonnegative().max(MAX_FOR_BOUND),
+    completedAt: z.string(),
+  })
+  .strict();
 
 /** Zod schema that parses strings and brands them as {@link ClaimId}. */
 export const ClaimIdSchema = z
@@ -640,10 +642,10 @@ const RunbookStateObjectSchema = z
     lifecycle: z.enum(['running', 'completed', 'stopped']).optional(),
     schemaVersion: z.number().int().nonnegative().optional(),
   })
-  // passthrough() allows unknown fields (e.g., legacy pendingSteps, agentBindings,
-  // agentId, parentRunbookId) to survive schema validation without breaking existing
-  // persisted state files. They are simply ignored in the typed result.
-  .passthrough();
+  // Persisted state has no compatibility contract. `state.load()` checks
+  // schemaVersion before this schema parses, so stale files do not need
+  // pass-through compatibility to reach a useful error.
+  .strict();
 
 /**
  * Runbook state validation schema.

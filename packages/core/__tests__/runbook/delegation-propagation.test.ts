@@ -165,9 +165,7 @@ describe('parentLinkage discriminated union schema', () => {
     expect(result.success).toBe(false);
   });
 
-  it('does not recognize old delegation field as parentLinkage', () => {
-    // Old 'delegation' field is passthrough'd but NOT treated as parentLinkage.
-    // State with only the old field should have no parentLinkage in the typed result.
+  it('rejects old delegation field instead of treating it as parentLinkage', () => {
     const state = makeBaseState({
       delegation: {
         parentRunId: PARENT_RUN_ID,
@@ -177,15 +175,10 @@ describe('parentLinkage discriminated union schema', () => {
     });
 
     const result = RunbookStateSchema.safeParse(state);
-    expect(result.success).toBe(true);
-    if (result.success) {
-      // The typed output should NOT have parentLinkage (it was never set)
-      expect(result.data.parentLinkage).toBeUndefined();
-    }
+    expect(result.success).toBe(false);
   });
 
-  it('does not recognize old inlineLinkage field as parentLinkage', () => {
-    // Old 'inlineLinkage' field is passthrough'd but NOT treated as parentLinkage.
+  it('rejects old inlineLinkage field instead of treating it as parentLinkage', () => {
     const state = makeBaseState({
       inlineLinkage: {
         kind: 'inline',
@@ -195,11 +188,7 @@ describe('parentLinkage discriminated union schema', () => {
     });
 
     const result = RunbookStateSchema.safeParse(state);
-    expect(result.success).toBe(true);
-    if (result.success) {
-      // The typed output should NOT have parentLinkage (it was never set)
-      expect(result.data.parentLinkage).toBeUndefined();
-    }
+    expect(result.success).toBe(false);
   });
 });
 

@@ -270,6 +270,8 @@ export class RunbookActorService {
    * @param steps - Parsed runbook steps for step name lookup
    * @returns Updated persisted RunbookState and the raw snapshot
    * @throws {Error} If the actor snapshot's stateValue is not a string
+   * @throws {Error} If the actor snapshot's active state ID is stale or unsupported
+   * @throws {Error} If the actor snapshot references a step missing from the current runbook
    * @throws {Error} If the provided steps array is empty (for non-terminal states)
    */
   async updateFromActor(
@@ -332,16 +334,16 @@ export class RunbookActorService {
       );
     }
 
-    // Parse step name from XState state value
-    const primaryMatch = /^step::(.+?)(?:::(.+))?$/.exec(stateValue);
-    const legacyMatch = !primaryMatch ? /^step_([^_]+)(?:_([^_]+))?$/.exec(stateValue) : null;
-    if (legacyMatch) {
-      console.warn(
-        'Deprecated state-ID format "step_…" detected. Please restart execution to migrate to "step::…" format.',
+    // Parse only the current XState state ID format. Older or malformed
+    // persisted snapshots are stale state and must fail closed.
+    const match = /^step::(.+?)(?:::(.+))?$/.exec(stateValue);
+    if (!match) {
+      throw new Error(
+        `Unsupported persisted stateValue "${stateValue}" for runbook "${id}". ` +
+          'Prune stale runbook state and restart execution.',
       );
     }
-    const match = primaryMatch ?? legacyMatch;
-    const stepName = match ? match[1] : steps[0].name;
+    const stepName = match[1];
 
     let substep = snapshot.context?.substep;
     if (!substep && match?.[2]) {
@@ -349,7 +351,13 @@ export class RunbookActorService {
     }
 
     // Find step by name (unified lookup)
-    const step = steps.find((s) => s.name === stepName) ?? steps[0];
+    const step = steps.find((s) => s.name === stepName);
+    if (!step) {
+      throw new Error(
+        `Persisted stateValue "${stateValue}" for runbook "${id}" references missing step "${stepName}". ` +
+          'Prune stale runbook state and restart execution.',
+      );
+    }
 
     const retryCount = snapshot.context?.retryCount ?? 0;
     const variables = snapshot.context?.variables ?? {};
